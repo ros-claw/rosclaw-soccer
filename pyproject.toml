@@ -7,10 +7,14 @@ name = "rosclaw-soccer"
 version = "0.1.0.dev0"
 description = "Evidence-driven academy for growing self-improving humanoid footballers"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.14"
 license = { text = "MIT" }
 authors = [{ name = "ROSClaw Contributors" }]
-dependencies = ["rosclaw"]
+dependencies = [
+  "mujoco>=3.3",
+  "numpy>=1.26,<2.4",
+  "rosclaw",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -18,6 +22,7 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.8",
 ]
+training = ["onnxruntime>=1.18"]
 
 [project.entry-points."rosclaw.cli_extensions"]
 soccer = "rosclaw_soccer.plugin:register_cli"
@@ -32,12 +37,17 @@ packages = ["src/rosclaw_soccer"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+markers = ["integration: runs a bounded simulator integration check"]
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 packages = ["rosclaw_soccer"]
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["rosclaw.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100

@@ -11,6 +11,11 @@ from typing import Any
 from rosclaw_soccer.academy.player_card import load_player_card
 from rosclaw_soccer.evidence.age04 import validate_age04_manifest
 from rosclaw_soccer.media.age04_reel import build_age04_reel
+from rosclaw_soccer.physics.reality_pack import run_reality_pack
+from rosclaw_soccer.training.age04_regulation import (
+    Age04RegulationAssets,
+    run_age04_regulation_training,
+)
 
 
 def register_cli(subparsers: Any) -> None:
@@ -26,6 +31,18 @@ def register_cli(subparsers: Any) -> None:
     academy_commands = academy.add_subparsers(dest="academy_command", required=True)
     academy_status = academy_commands.add_parser("status", help="Show the current flagship age")
     academy_status.set_defaults(rosclaw_extension_handler=_academy_status)
+    train_age04 = academy_commands.add_parser(
+        "train-age04", help="Train a fresh Age-4 actor under regulation physics"
+    )
+    train_age04.add_argument("--asset-root", type=Path, required=True)
+    train_age04.add_argument("--gait-policy-root", type=Path, required=True)
+    train_age04.add_argument("--sonic-model-root", type=Path, required=True)
+    train_age04.add_argument("--seed-request", type=Path, required=True)
+    train_age04.add_argument("--approach-strike-candidate", type=Path, required=True)
+    train_age04.add_argument("--football-motion-prior", type=Path, required=True)
+    train_age04.add_argument("--output-dir", type=Path, required=True)
+    train_age04.add_argument("--source-checkout", type=Path, required=True)
+    train_age04.set_defaults(rosclaw_extension_handler=_train_age04)
 
     player = commands.add_parser("player", help="Inspect a player growth card")
     player_commands = player.add_subparsers(dest="player_command", required=True)
@@ -40,6 +57,14 @@ def register_cli(subparsers: Any) -> None:
     age04.add_argument("--evidence-root", type=Path)
     age04.add_argument("--output", type=Path, required=True)
     age04.set_defaults(rosclaw_extension_handler=_build_age04_media)
+
+    physics = commands.add_parser("physics", help="Validate football physics before training")
+    physics_commands = physics.add_subparsers(dest="physics_command", required=True)
+    benchmark = physics_commands.add_parser(
+        "benchmark", help="Run the CPU MuJoCo Soccer Reality Pack"
+    )
+    benchmark.add_argument("--output-dir", type=Path, required=True)
+    benchmark.set_defaults(rosclaw_extension_handler=_physics_benchmark)
 
 
 def _doctor(args: Any) -> int:
@@ -82,6 +107,23 @@ def _academy_status(_args: Any) -> int:
     return 0
 
 
+def _train_age04(args: Any) -> int:
+    report = run_age04_regulation_training(
+        assets=Age04RegulationAssets(
+            asset_root=args.asset_root,
+            gait_policy_root=args.gait_policy_root,
+            sonic_model_root=args.sonic_model_root,
+            seed_request=args.seed_request,
+            approach_strike_candidate=args.approach_strike_candidate,
+            football_motion_prior=args.football_motion_prior,
+        ),
+        output_dir=args.output_dir,
+        source_checkout=args.source_checkout,
+    )
+    print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    return 0 if report.passed else 2
+
+
 def _player_show(args: Any) -> int:
     if args.player_id.lower().replace("-", "") != "claw7":
         raise ValueError("the bootstrap academy currently contains only Claw-7")
@@ -101,6 +143,15 @@ def _build_age04_media(args: Any) -> int:
     )
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0
+
+
+def _physics_benchmark(args: Any) -> int:
+    report = run_reality_pack(
+        output_dir=args.output_dir,
+        source_checkout=_repository_root(),
+    )
+    print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    return 0 if report.passed else 2
 
 
 def _evidence_root(argument: Path | None) -> Path | None:
