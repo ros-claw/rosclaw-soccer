@@ -1,0 +1,120 @@
+{
+  "academy_age": 4,
+  "activation_ceiling": "SIM_ONLY",
+  "cases": [
+    {
+      "body_hash": "sha256:1525aafc953293dd340475e8660b58fae7ea1a22715222ab06331b644340626c",
+      "case_id": "bilateral-physical-corners",
+      "evidence_relpath": "g1-bilateral-physical-corners-v3-final/g1-bilateral-foot-showcase.json",
+      "evidence_sha256": "sha256:917cf22b01c2517a159ffdeedcde6d976b511e279dba2014ee2c4f9f4ad221d1",
+      "facts": {
+        "cases.0.result.target_error_m": 0.02401138516196053,
+        "cases.0.strict_replay": true,
+        "cases.1.result.target_error_m": 0.061078182615066784,
+        "cases.1.strict_replay": true,
+        "passed": true
+      },
+      "media_label": "CERTIFIED",
+      "media_relpath": "g1-bilateral-physical-corners-v3-final/g1-bilateral-physical-corners-1080p.mp4",
+      "media_sha256": "sha256:466cea2e5070ed039c97686e555c2d11b9fc5c44caefec1a7b616c4c43c5e9be",
+      "title": "Bilateral Physical Finishing",
+      "verdict": "PASS"
+    },
+    {
+      "body_hash": "sha256:1525aafc953293dd340475e8660b58fae7ea1a22715222ab06331b644340626c",
+      "case_id": "three-player-long-relay",
+      "evidence_relpath": "g1-three-player-long-relay-v3-final/g1-three-player-showcase.json",
+      "evidence_sha256": "sha256:577ecece9ee01a1b9188043d79c603d2e1715a95e7273ec116f4f047d28f775d",
+      "facts": {
+        "passed": true,
+        "result.goalkeeper_ball_contact_observed": false,
+        "result.goalkeeper_lateral_displacement_m": 1.2062846273880412,
+        "result.pass_delivery_error_m": 0.03631496309501864,
+        "result.target_error_m": 0.0017869920084817117,
+        "strict_replay": true
+      },
+      "media_label": "CERTIFIED",
+      "media_relpath": "g1-three-player-long-relay-v3-final/g1-three-player-long-relay-1080p.mp4",
+      "media_sha256": "sha256:740d8b7e4e8cd832f88eb9c1f63832731f8d41f041a104282870bb68d1233a1f",
+      "title": "Long Relay and Reactive Goalkeeper",
+      "verdict": "PASS"
+    },
+    {
+      "body_hash": "sha256:1525aafc953293dd340475e8660b58fae7ea1a22715222ab06331b644340626c",
+      "case_id": "five-challenge-retention",
+      "evidence_relpath": "g1-coupled-shared-cerebellum-v2/g1-coupled-showcase.json",
+      "evidence_sha256": "sha256:59228a418a56b0fa24c8baa58379047a62504f8a0c09fcc4c1b432857c4fe42e",
+      "facts": {
+        "cases.0.result.target_error_m": 0.06419039969901404,
+        "cases.0.strict_replay": true,
+        "cases.4.result.target_error_m": 0.0812577709718678,
+        "cases.4.strict_replay": true,
+        "passed": true
+      },
+      "media_label": "CERTIFIED",
+      "media_relpath": "g1-coupled-shared-cerebellum-v2/g1-shared-cerebellum-five-challenge-v2.mp4",
+      "media_sha256": "sha256:8ab2e14933769e37547437412270e5ae7daa56b9a43f630983c24069a569fd0a",
+      "title": "Five-Challenge Retention",
+      "verdict": "PASS"
+    },
+    {
+      "body_hash": "sha256:1525aafc953293dd340475e8660b58fae7ea1a22715222ab06331b644340626c",
+      "case_id": "far75-upper-corner-development",
+      "evidence_relpath": "g1-growth-c141-far75-upper-corner-learned-net-pocket-final/g1-free-kick.json",
+      "evidence_sha256": "sha256:c172bd8f72af7f6bf863d248608742c96c0d5bdc6aaa342fcb5e9041e01293d6",
+      "facts": {
+        "passed": false,
+        "result.actuator_saturation_steps": 27,
+        "result.goal_plane_target_error_m": 0.005832741557228023,
+        "result.pre_contact_motion_pause_sec": 0.0,
+        "strict_replay": true
+      },
+      "media_label": "DEVELOPMENT",
+      "media_relpath": "g1-growth-c141-far75-upper-corner-learned-net-pocket-final/g1-far75-upper-left-1080p.mp4",
+      "media_sha256": "sha256:bdafff75fe2df5a6bad2e5f53c5751ded51a3e8a02ba6a81088453432fd6434c",
+      "title": "7.5 m Upper-Corner Development",
+      "verdict": "DEVELOPMENT"
+    }
+  ],
+  "player_id": "claw7",
+  "reel": [
+    {
+      "case_id": "bilateral-physical-corners",
+      "chapter": "RIGHT FOOT  •  CONTROLLED FINISH",
+      "duration_sec": 10.5,
+      "start_sec": 1.0,
+      "subtitle": "ACTUAL MUJOCO CONTACT  •  TARGET ERROR 2.4 cm"
+    },
+    {
+      "case_id": "bilateral-physical-corners",
+      "chapter": "LEFT FOOT  •  REAL BILATERAL PHYSICS",
+      "duration_sec": 10.5,
+      "start_sec": 16.0,
+      "subtitle": "NOT A VIDEO MIRROR  •  TARGET ERROR 6.1 cm"
+    },
+    {
+      "case_id": "three-player-long-relay",
+      "chapter": "PASS  →  FINISH  →  REACT",
+      "duration_sec": 22.0,
+      "start_sec": 1.0,
+      "subtitle": "ONE BALL  •  THREE G1  •  ONE PHYSICS WORLD"
+    },
+    {
+      "case_id": "five-challenge-retention",
+      "chapter": "STABILITY ACROSS FIVE CHALLENGES",
+      "duration_sec": 11.5,
+      "start_sec": 24.0,
+      "subtitle": "TIMING + FRICTION VARIANTS  •  ALL FIVE PASS"
+    },
+    {
+      "case_id": "far75-upper-corner-development",
+      "chapter": "7.5 m UPPER-CORNER STRIKE",
+      "duration_sec": 17.0,
+      "start_sec": 1.0,
+      "subtitle": "5.8 mm ERROR  •  KEPT IN DEVELOPMENT FOR SATURATION"
+    }
+  ],
+  "schema_version": "rosclaw_soccer.age04_manifest.v1",
+  "source_commit": "dbdbba00c8a0814ef822e565d0b66451f47aaf7c",
+  "source_repository": "ros-claw/rosclaw"
+}

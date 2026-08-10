@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use ROSClaw Soccer Academy, please cite this project."
+title: "ROSClaw Soccer Academy"
+type: software
+version: 0.1.0-dev
+date-released: 2026-08-10
+license: MIT
+repository-code: "https://github.com/ros-claw/rosclaw-soccer"
+authors:
+  - name: "ROSClaw Contributors"

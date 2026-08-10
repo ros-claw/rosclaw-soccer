@@ -1,0 +1,27 @@
+{
+  "academy_age": 4,
+  "activation_ceiling": "SIM_ONLY",
+  "age_title": "First Footballer",
+  "certification_status": "PROVISIONAL_BASELINE",
+  "display_name": "Claw-7",
+  "embodiment": "unitree_g1_29dof",
+  "generation": 1,
+  "next_exam": "Age 5 — First Touch",
+  "parent_generation": null,
+  "player_id": "claw7",
+  "schema_version": "rosclaw_soccer.player_card.v1",
+  "strengths": [
+    "bilateral physical finishing",
+    "target-directed shooting",
+    "shared-world passing and shooting",
+    "strict deterministic replay",
+    "post-impact recovery without falls in certified cases"
+  ],
+  "weaknesses": [
+    "unified run-to-strike transition",
+    "dynamic left-foot approach",
+    "continuous first touch and dribbling",
+    "successful learned goalkeeping",
+    "broad randomized-physics generalization"
+  ]
+}

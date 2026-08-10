@@ -1,0 +1,2 @@
+No uncommitted source diff at migration freeze.
+Football feature commit: 41 files changed, 7220 insertions(+), 422 deletions(-).
