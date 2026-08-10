@@ -104,7 +104,9 @@ rosclaw soccer academy train-age04 \
   --output-dir /outside/source/age04-regulation-training
 ```
 
-See the [regulation Age-4 experiment report](docs/age04-regulation-training-v1.zh-CN.md).
+See the [regulation Age-4 v2 experiment report](docs/age04-regulation-training-v2.zh-CN.md)
+for the zero-saturation contact actor, independent multi-axis gate, and the
+remaining dynamic-stability boundary.
 
 ## The growth loop
 

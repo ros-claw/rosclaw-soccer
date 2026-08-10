@@ -14,9 +14,12 @@ import json
 import math
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from rosclaw_soccer.physics.standards import IFABRegulationSpec
+
+if TYPE_CHECKING:
+    from rosclaw.simforge.g1_free_kick_showcase import G1FreeKickEvidence
 
 _ConfigT = TypeVar("_ConfigT")
 _TUPLE_FIELDS = {
@@ -48,13 +51,19 @@ class Age04RegulationCurriculum:
     target_z_m: float = 1.04
     precision_radius_m: float = 0.10
     net_capture_depth_m: float = 1.35
+    aim_bias_y_m: float = 1.13
+    aim_bias_z_m: float = 0.20
+    shot_loft_synergy_rad: float = 0.30
+    sonic_planner_seed: int = 0
+    torque_authority_projection_ratio: float = 0.98
+    torque_authority_projection_max_fraction: float = 0.01
     teacher_force_pairs_n: tuple[tuple[float, float], ...] = (
         (250.0, 250.0),
         (245.0, 245.0),
         (250.0, 10.0),
+        (250.0, 20.0),
+        (250.0, 30.0),
         (10.0, 10.0),
-        (20.0, 10.0),
-        (30.0, 10.0),
         (10.0, 20.0),
         (10.0, 30.0),
     )
@@ -67,6 +76,11 @@ class Age04RegulationCurriculum:
             self.target_z_m,
             self.precision_radius_m,
             self.net_capture_depth_m,
+            self.aim_bias_y_m,
+            self.aim_bias_z_m,
+            self.shot_loft_synergy_rad,
+            self.torque_authority_projection_ratio,
+            self.torque_authority_projection_max_fraction,
         )
         if not all(math.isfinite(value) for value in values):
             raise ValueError("Age-4 curriculum values must be finite")
@@ -79,11 +93,31 @@ class Age04RegulationCurriculum:
             for lateral, vertical in self.teacher_force_pairs_n
         ):
             raise ValueError("Age-4 teacher forces must be in [10, 250] N")
+        if not 0.5 <= self.aim_bias_y_m <= 1.5 or not 0.0 <= self.aim_bias_z_m <= 0.5:
+            raise ValueError("Age-4 aim bias is outside the bounded curriculum")
+        if not 0.0 <= self.shot_loft_synergy_rad <= 0.30:
+            raise ValueError("Age-4 loft synergy must be in [0, 0.30] rad")
+        if not 0 <= self.sonic_planner_seed <= 1_000_000:
+            raise ValueError("Age-4 SONIC planner seed must be in [0, 1000000]")
+        if not 0.90 <= self.torque_authority_projection_ratio <= 0.99:
+            raise ValueError("Age-4 torque authority ratio must be in [0.90, 0.99]")
+        if not 0.001 <= self.torque_authority_projection_max_fraction <= 0.05:
+            raise ValueError("Age-4 torque authority fraction must be in [0.001, 0.05]")
 
 
 @dataclass(frozen=True)
 class Age04RegulationTrainingReport:
     passed: bool
+    verdict: str
+    failure_codes: tuple[str, ...]
+    provenance_passed: bool
+    precision_passed: bool
+    continuity_passed: bool
+    dynamic_stability_passed: bool
+    recovery_passed: bool
+    torque_authority_passed: bool
+    development_breakthrough: bool
+    core_showcase_passed: bool
     actor_hash: str
     final_evidence_path: str
     final_goal_plane_target_error_m: float | None
@@ -91,13 +125,152 @@ class Age04RegulationTrainingReport:
     final_ball_retained_in_goal: bool
     final_post_kick_fall: bool
     final_post_contact_backward_displacement_m: float
+    final_actuator_saturation_steps: int
+    final_torque_authority_projection_steps: int
+    final_torque_authority_projection_fraction: float
+    final_torque_authority_projection_peak_correction_nm: float
+    final_torque_authority_preprojection_peak_demand_ratio: float
+    final_torque_authority_projection_qualified: bool
+    final_contact_task_authority_projection_steps: int
+    final_contact_task_authority_scale_min: float
+    final_perceptual_continuity_passed: bool
+    final_runup_min_pelvis_height_m: float
+    final_runup_peak_tilt_rad: float
+    final_runup_terminal_speed_mps: float
+    final_kick_min_pelvis_height_m: float
+    final_kick_peak_tilt_rad: float
+    final_post_contact_settling_time_sec: float
+    final_post_contact_final_joint_velocity_rms_rad_s: float
     probe_evidence_paths: tuple[str, ...]
     output_path: str
     activation_ceiling: str = "SIM_ONLY"
-    schema_version: str = "rosclaw_soccer.age04_regulation_training_report.v1"
+    schema_version: str = "rosclaw_soccer.age04_regulation_training_report.v2"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class Age04RegulationAssessment:
+    """Independent, multi-axis gate for the regulation-target curriculum.
+
+    The core free-kick showcase intentionally certifies a declared goal corner
+    and a narrow net-capture location.  Age 4 currently trains a regulation
+    placement target inside the goal, so reusing that aggregate Boolean would
+    conflate contact learning with a different exam.  This gate preserves the
+    same physical safety and stability requirements while scoring precision at
+    the curriculum target.  It never turns a stability failure into a pass.
+    """
+
+    passed: bool
+    verdict: str
+    failure_codes: tuple[str, ...]
+    provenance_passed: bool
+    precision_passed: bool
+    continuity_passed: bool
+    dynamic_stability_passed: bool
+    recovery_passed: bool
+    torque_authority_passed: bool
+    development_breakthrough: bool
+    schema_version: str = "rosclaw_soccer.age04_regulation_assessment.v1"
+
+
+def assess_age04_regulation(
+    evidence: G1FreeKickEvidence,
+    curriculum: Age04RegulationCurriculum,
+) -> Age04RegulationAssessment:
+    """Score one teacher-free replay without inheriting an unrelated corner gate."""
+
+    result = evidence.result
+    sonic_eligible = evidence.sonic_qualification is not None and bool(
+        evidence.sonic_qualification.eligible
+    )
+    provenance_passed = bool(
+        evidence.strict_replay
+        and evidence.learned_gait_qualification.eligible
+        and sonic_eligible
+        and evidence.activation_ceiling == "SIM_ONLY"
+        and not evidence.hardware_command_sent
+    )
+    precision_passed = bool(
+        result.finite_state
+        and result.learned_runup_executed
+        and result.ballistic_contact_impulse_actor_executed
+        and not result.loft_teacher_executed
+        and result.continuous_single_world
+        and not result.state_reset_after_start
+        and result.kick_contact_observed
+        and result.goal_crossed
+        and result.goal_mouth_hit
+        and _finite_at_most(result.goal_plane_target_error_m, curriculum.precision_radius_m)
+        and result.ball_retained_in_goal
+    )
+    continuity_passed = bool(
+        result.perceptual_continuity_passed
+        and _finite_at_least(result.initial_ball_distance_m, 4.0)
+        and _finite_at_least(result.runup_distance_m, 3.0)
+        and _finite_at_least(result.runup_peak_speed_mps, 1.0)
+    )
+    dynamic_stability_passed = bool(
+        _finite_at_least(result.runup_min_pelvis_height_m, 0.70)
+        and _finite_at_most(result.runup_peak_tilt_rad, 0.30)
+        and _finite_between(result.runup_terminal_speed_mps, 0.10, 0.40)
+        and _finite_at_least(result.kick_min_pelvis_height_m, 0.68)
+        and _finite_at_most(result.kick_peak_tilt_rad, 0.40)
+    )
+    recovery_passed = bool(
+        not result.post_kick_fall
+        and not result.joint_limit_violation
+        and _finite_at_least(result.final_pelvis_height_m, 0.70)
+        and _finite_at_most(result.final_speed_mps, 0.20)
+        and _finite_at_most(result.post_contact_backward_displacement_m, 0.20)
+        and result.post_contact_forward_velocity_reversals <= 12
+        and _finite_at_most(result.post_contact_settling_time_sec, 5.0)
+        and _finite_at_most(result.post_contact_final_joint_velocity_rms_rad_s, 0.10)
+        and _finite_at_most(result.post_contact_mean_pelvis_speed_mps, 0.12)
+        and _finite_at_most(result.post_contact_mean_joint_velocity_rms_rad_s, 0.25)
+    )
+    torque_authority_passed = bool(
+        not result.torque_limit_violation
+        and not result.actuator_saturation
+        and result.actuator_saturation_steps == 0
+        and result.torque_authority_projection_qualified
+        and _finite_at_most(
+            result.torque_authority_projection_fraction,
+            curriculum.torque_authority_projection_max_fraction,
+        )
+        and _finite_at_least(result.contact_task_authority_scale_min, 0.95)
+    )
+    axes = {
+        "PROVENANCE_GATE": provenance_passed,
+        "PRECISION_GATE": precision_passed,
+        "CONTINUITY_GATE": continuity_passed,
+        "DYNAMIC_STABILITY_GATE": dynamic_stability_passed,
+        "RECOVERY_GATE": recovery_passed,
+        "TORQUE_AUTHORITY_GATE": torque_authority_passed,
+    }
+    failure_codes = tuple(name for name, passed in axes.items() if not passed)
+    passed = not failure_codes
+    development_breakthrough = bool(
+        provenance_passed
+        and precision_passed
+        and continuity_passed
+        and recovery_passed
+        and torque_authority_passed
+    )
+    verdict = "PASS" if passed else "DEVELOPMENT" if development_breakthrough else "REJECTED"
+    return Age04RegulationAssessment(
+        passed=passed,
+        verdict=verdict,
+        failure_codes=failure_codes,
+        provenance_passed=provenance_passed,
+        precision_passed=precision_passed,
+        continuity_passed=continuity_passed,
+        dynamic_stability_passed=dynamic_stability_passed,
+        recovery_passed=recovery_passed,
+        torque_authority_passed=torque_authority_passed,
+        development_breakthrough=development_breakthrough,
+    )
 
 
 def run_age04_regulation_training(
@@ -136,6 +309,7 @@ def run_age04_regulation_training(
     seed = _read_json(assets.seed_request)
     runup = _config_from_json(G1LearnedRunupConfig, dict(seed["runup_config"]))
     sonic = _config_from_json(G1SonicRunupConfig, dict(seed["sonic_runup_config"]))
+    sonic = replace(sonic, planner_seed=academy.sonic_planner_seed)
     flow = _config_from_json(G1FreeKickFlowConfig, dict(seed["flow_config"]))
     flow = replace(
         flow,
@@ -148,8 +322,11 @@ def run_age04_regulation_training(
         shot_recovery_step_yaw_rad=-0.05,
         post_contact_damping_delay_sec=0.18,
         post_contact_damping_ramp_sec=0.45,
-        aim_bias_z_m=0.20,
-        shot_loft_synergy_rad=0.30,
+        torque_authority_projection_ratio=academy.torque_authority_projection_ratio,
+        torque_authority_projection_max_fraction=(academy.torque_authority_projection_max_fraction),
+        aim_bias_y_m=academy.aim_bias_y_m,
+        aim_bias_z_m=academy.aim_bias_z_m,
+        shot_loft_synergy_rad=academy.shot_loft_synergy_rad,
     )
     goal = G1TrainingGoalSpec(
         plane_x_m=academy.goal_plane_x_m,
@@ -231,9 +408,20 @@ def run_age04_regulation_training(
         **shared,
     )
     result = final.result
+    assessment = assess_age04_regulation(final, academy)
     report_path = root / "age04-regulation-training.json"
     report = Age04RegulationTrainingReport(
-        passed=final.passed,
+        passed=assessment.passed,
+        verdict=assessment.verdict,
+        failure_codes=assessment.failure_codes,
+        provenance_passed=assessment.provenance_passed,
+        precision_passed=assessment.precision_passed,
+        continuity_passed=assessment.continuity_passed,
+        dynamic_stability_passed=assessment.dynamic_stability_passed,
+        recovery_passed=assessment.recovery_passed,
+        torque_authority_passed=assessment.torque_authority_passed,
+        development_breakthrough=assessment.development_breakthrough,
+        core_showcase_passed=final.passed,
         actor_hash=actor.actor_hash,
         final_evidence_path=str(final_dir / "g1-free-kick.json"),
         final_goal_plane_target_error_m=result.goal_plane_target_error_m,
@@ -241,6 +429,30 @@ def run_age04_regulation_training(
         final_ball_retained_in_goal=result.ball_retained_in_goal,
         final_post_kick_fall=result.post_kick_fall,
         final_post_contact_backward_displacement_m=result.post_contact_backward_displacement_m,
+        final_actuator_saturation_steps=result.actuator_saturation_steps,
+        final_torque_authority_projection_steps=result.torque_authority_projection_steps,
+        final_torque_authority_projection_fraction=(result.torque_authority_projection_fraction),
+        final_torque_authority_projection_peak_correction_nm=(
+            result.torque_authority_projection_peak_correction_nm
+        ),
+        final_torque_authority_preprojection_peak_demand_ratio=(
+            result.torque_authority_preprojection_peak_demand_ratio
+        ),
+        final_torque_authority_projection_qualified=(result.torque_authority_projection_qualified),
+        final_contact_task_authority_projection_steps=(
+            result.contact_task_authority_projection_steps
+        ),
+        final_contact_task_authority_scale_min=result.contact_task_authority_scale_min,
+        final_perceptual_continuity_passed=result.perceptual_continuity_passed,
+        final_runup_min_pelvis_height_m=result.runup_min_pelvis_height_m,
+        final_runup_peak_tilt_rad=result.runup_peak_tilt_rad,
+        final_runup_terminal_speed_mps=result.runup_terminal_speed_mps,
+        final_kick_min_pelvis_height_m=result.kick_min_pelvis_height_m,
+        final_kick_peak_tilt_rad=result.kick_peak_tilt_rad,
+        final_post_contact_settling_time_sec=result.post_contact_settling_time_sec,
+        final_post_contact_final_joint_velocity_rms_rad_s=(
+            result.post_contact_final_joint_velocity_rms_rad_s
+        ),
         probe_evidence_paths=tuple(str(path) for path in evidence_paths),
         output_path=str(report_path),
     )
@@ -283,9 +495,23 @@ def _hash_json(value: Any) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
+def _finite_at_most(value: float | None, maximum: float) -> bool:
+    return value is not None and math.isfinite(value) and value <= maximum
+
+
+def _finite_at_least(value: float | None, minimum: float) -> bool:
+    return value is not None and math.isfinite(value) and value >= minimum
+
+
+def _finite_between(value: float | None, minimum: float, maximum: float) -> bool:
+    return _finite_at_least(value, minimum) and _finite_at_most(value, maximum)
+
+
 __all__ = [
     "Age04RegulationAssets",
+    "Age04RegulationAssessment",
     "Age04RegulationCurriculum",
     "Age04RegulationTrainingReport",
+    "assess_age04_regulation",
     "run_age04_regulation_training",
 ]
