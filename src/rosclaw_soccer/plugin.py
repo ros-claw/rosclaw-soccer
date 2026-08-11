@@ -39,7 +39,11 @@ def register_cli(subparsers: Any) -> None:
     train_age04.add_argument("--sonic-model-root", type=Path, required=True)
     train_age04.add_argument("--seed-request", type=Path, required=True)
     train_age04.add_argument("--approach-strike-candidate", type=Path, required=True)
-    train_age04.add_argument("--football-motion-prior", type=Path, required=True)
+    train_age04.add_argument(
+        "--football-motion-prior",
+        type=Path,
+        help="optional MotionDecode prior; the stability-first curriculum defaults to no blend",
+    )
     train_age04.add_argument("--output-dir", type=Path, required=True)
     train_age04.add_argument("--source-checkout", type=Path, required=True)
     train_age04.set_defaults(rosclaw_extension_handler=_train_age04)

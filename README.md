@@ -39,6 +39,13 @@ missing.
 second video remains `DEVELOPMENT`, not certified, because 34 control steps
 reached actuator saturation.
 
+The latest local joint-growth curriculum now closes that candidate's missing
+stability loop: a phase-conditioned support actor and a newly distilled
+teacher-free contact actor pass all six Age-4 axes at 2.04 cm goal-plane error,
+zero saturation, zero backward displacement, and strict replay. It remains a
+`SIM_ONLY` development result until the harder true-frame-corner and randomized
+retention exams pass. See the [v3 joint-growth report](docs/age04-joint-growth-v3.zh-CN.md).
+
 ## Regulation football physics
 
 The simulator selects measurements inside the current IFAB ranges: a
@@ -98,15 +105,16 @@ rosclaw soccer academy train-age04 \
   --gait-policy-root /path/to/g1/policy \
   --sonic-model-root /path/to/GEAR-SONIC \
   --seed-request /path/to/seed/request.json \
-  --approach-strike-candidate /path/to/candidate.json \
-  --football-motion-prior /path/to/motion-prior.json \
+  --approach-strike-candidate /path/to/base-candidate.json \
   --source-checkout /path/to/rosclaw \
   --output-dir /outside/source/age04-regulation-training
 ```
 
-See the [regulation Age-4 v2 experiment report](docs/age04-regulation-training-v2.zh-CN.md)
-for the zero-saturation contact actor, independent multi-axis gate, and the
-remaining dynamic-stability boundary.
+`--football-motion-prior` is optional; a non-zero curriculum blend must be
+retrained in the same eight-probe context. See the
+[regulation Age-4 v2 report](docs/age04-regulation-training-v2.zh-CN.md) for the
+former dynamic-stability boundary and the
+[v3 joint-growth report](docs/age04-joint-growth-v3.zh-CN.md) for its closure.
 
 ## The growth loop
 

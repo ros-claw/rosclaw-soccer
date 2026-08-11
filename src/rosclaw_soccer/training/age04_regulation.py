@@ -41,7 +41,7 @@ class Age04RegulationAssets:
     sonic_model_root: Path
     seed_request: Path
     approach_strike_candidate: Path
-    football_motion_prior: Path
+    football_motion_prior: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -51,23 +51,44 @@ class Age04RegulationCurriculum:
     target_z_m: float = 1.04
     precision_radius_m: float = 0.10
     net_capture_depth_m: float = 1.35
-    aim_bias_y_m: float = 1.13
-    aim_bias_z_m: float = 0.20
+    aim_bias_y_m: float = 1.12
+    aim_bias_z_m: float = 0.205
     shot_loft_synergy_rad: float = 0.30
-    sonic_planner_seed: int = 0
+    shot_foot_yaw_offset_rad: float = 0.02
+    ballistic_contact_policy_frame: int = 258
+    ballistic_contact_torque_policy_frame: int = 258
+    ballistic_contact_residual_rad: tuple[float, ...] = (
+        -0.0218,
+        -0.010682792158923404,
+        -0.06,
+        -0.06,
+        0.225,
+        0.0305,
+    )
+    sonic_planner_seed: int = 21
+    sonic_execution_duration_sec: float = 3.95
+    residual_fraction: float = 0.50
+    maximum_residual_nm: float = 20.0
+    maximum_standardized_rms: float = 20.0
+    maximum_standardized_abs: float = 100.0
+    residual_active_event_phase_ids: tuple[int, ...] = (0, 1, 2, 3, 4)
+    support_chain_event_phase_id: int = 4
+    support_chain_left_knee_delta_nm: float = -1.20
+    football_motion_prior_blend: float = 0.0
     torque_authority_projection_ratio: float = 0.98
     torque_authority_projection_max_fraction: float = 0.01
-    teacher_force_pairs_n: tuple[tuple[float, float], ...] = (
-        (250.0, 250.0),
-        (245.0, 245.0),
-        (250.0, 10.0),
-        (250.0, 20.0),
-        (250.0, 30.0),
-        (10.0, 10.0),
-        (10.0, 20.0),
-        (10.0, 30.0),
+    teacher_velocity_gain_n_per_mps: float = 50.0
+    teacher_probe_specs: tuple[tuple[float, float, float], ...] = (
+        (7.0, 80.0, 50.0),
+        (7.0, 80.0, 55.0),
+        (7.0, 80.0, 60.0),
+        (7.0, 80.0, 65.0),
+        (7.0, 80.0, 70.0),
+        (-1.0, 80.0, 10.0),
+        (-2.0, 80.0, 20.0),
+        (-3.0, 80.0, 30.0),
     )
-    schema_version: str = "rosclaw_soccer.age04_regulation_curriculum.v1"
+    schema_version: str = "rosclaw_soccer.age04_regulation_curriculum.v2"
 
     def __post_init__(self) -> None:
         values = (
@@ -79,26 +100,73 @@ class Age04RegulationCurriculum:
             self.aim_bias_y_m,
             self.aim_bias_z_m,
             self.shot_loft_synergy_rad,
+            self.shot_foot_yaw_offset_rad,
+            self.sonic_execution_duration_sec,
+            self.residual_fraction,
+            self.maximum_residual_nm,
+            self.maximum_standardized_rms,
+            self.maximum_standardized_abs,
+            self.support_chain_left_knee_delta_nm,
+            self.football_motion_prior_blend,
             self.torque_authority_projection_ratio,
             self.torque_authority_projection_max_fraction,
+            self.teacher_velocity_gain_n_per_mps,
         )
         if not all(math.isfinite(value) for value in values):
             raise ValueError("Age-4 curriculum values must be finite")
-        if len(self.teacher_force_pairs_n) != 8:
+        if len(self.teacher_probe_specs) != 8:
             raise ValueError("Age-4 actor curriculum requires exactly eight teacher probes")
-        if len(set(self.teacher_force_pairs_n)) != len(self.teacher_force_pairs_n):
+        if len(set(self.teacher_probe_specs)) != len(self.teacher_probe_specs):
             raise ValueError("Age-4 teacher probes must be unique")
         if not all(
-            10.0 <= lateral <= 250.0 and 10.0 <= vertical <= 250.0
-            for lateral, vertical in self.teacher_force_pairs_n
+            (-4.0 <= target_vertical <= -0.5 or 3.0 <= target_vertical <= 7.0)
+            and 10.0 <= lateral <= 250.0
+            and 10.0 <= vertical <= 250.0
+            for target_vertical, lateral, vertical in self.teacher_probe_specs
         ):
-            raise ValueError("Age-4 teacher forces must be in [10, 250] N")
+            raise ValueError("Age-4 teacher probe speeds or forces are outside bounds")
         if not 0.5 <= self.aim_bias_y_m <= 1.5 or not 0.0 <= self.aim_bias_z_m <= 0.5:
             raise ValueError("Age-4 aim bias is outside the bounded curriculum")
         if not 0.0 <= self.shot_loft_synergy_rad <= 0.30:
             raise ValueError("Age-4 loft synergy must be in [0, 0.30] rad")
+        if not -0.10 <= self.shot_foot_yaw_offset_rad <= 0.10:
+            raise ValueError("Age-4 foot yaw offset must be in [-0.10, 0.10] rad")
+        if len(self.ballistic_contact_residual_rad) != 6 or not all(
+            math.isfinite(value) and abs(value) <= 0.25
+            for value in self.ballistic_contact_residual_rad
+        ):
+            raise ValueError("Age-4 contact residual must contain six bounded values")
+        if not 150 <= self.ballistic_contact_policy_frame <= 430 or not (
+            150 <= self.ballistic_contact_torque_policy_frame <= 430
+        ):
+            raise ValueError("Age-4 contact policy frames must be in [150, 430]")
         if not 0 <= self.sonic_planner_seed <= 1_000_000:
             raise ValueError("Age-4 SONIC planner seed must be in [0, 1000000]")
+        if not 3.0 <= self.sonic_execution_duration_sec <= 4.5:
+            raise ValueError("Age-4 SONIC duration must be in [3.0, 4.5] s")
+        if not 0.0 < self.residual_fraction <= 0.50:
+            raise ValueError("Age-4 residual fraction must be in (0, 0.50]")
+        if not 0.10 <= self.maximum_residual_nm <= 20.0:
+            raise ValueError("Age-4 maximum residual must be in [0.10, 20] Nm")
+        if not 0.50 <= self.maximum_standardized_rms <= 20.0:
+            raise ValueError("Age-4 standardized RMS bound must be in [0.50, 20]")
+        if not 1.0 <= self.maximum_standardized_abs <= 100.0:
+            raise ValueError("Age-4 standardized absolute bound must be in [1, 100]")
+        if (
+            not self.residual_active_event_phase_ids
+            or len(set(self.residual_active_event_phase_ids))
+            != len(self.residual_active_event_phase_ids)
+            or not set(self.residual_active_event_phase_ids).issubset({0, 1, 2, 3, 4})
+        ):
+            raise ValueError("Age-4 residual active phases must be unique ids in [0, 4]")
+        if self.support_chain_event_phase_id not in self.residual_active_event_phase_ids:
+            raise ValueError("Age-4 support-chain phase must be active")
+        if not -20.0 <= self.support_chain_left_knee_delta_nm <= -0.10:
+            raise ValueError("Age-4 support-chain knee delta must be in [-20, -0.10] Nm")
+        if not 0.0 <= self.football_motion_prior_blend <= 0.35:
+            raise ValueError("Age-4 motion-prior blend must be in [0, 0.35]")
+        if not 5.0 <= self.teacher_velocity_gain_n_per_mps <= 50.0:
+            raise ValueError("Age-4 teacher velocity gain must be in [5, 50]")
         if not 0.90 <= self.torque_authority_projection_ratio <= 0.99:
             raise ValueError("Age-4 torque authority ratio must be in [0.90, 0.99]")
         if not 0.001 <= self.torque_authority_projection_max_fraction <= 0.05:
@@ -118,6 +186,8 @@ class Age04RegulationTrainingReport:
     torque_authority_passed: bool
     development_breakthrough: bool
     core_showcase_passed: bool
+    support_candidate_hash: str
+    support_candidate_path: str
     actor_hash: str
     final_evidence_path: str
     final_goal_plane_target_error_m: float | None
@@ -133,6 +203,8 @@ class Age04RegulationTrainingReport:
     final_torque_authority_projection_qualified: bool
     final_contact_task_authority_projection_steps: int
     final_contact_task_authority_scale_min: float
+    final_joint_boundary_guard_active_steps: int
+    final_joint_boundary_guard_peak_correction_nm: float
     final_perceptual_continuity_passed: bool
     final_runup_min_pelvis_height_m: float
     final_runup_peak_tilt_rad: float
@@ -144,7 +216,7 @@ class Age04RegulationTrainingReport:
     probe_evidence_paths: tuple[str, ...]
     output_path: str
     activation_ceiling: str = "SIM_ONLY"
-    schema_version: str = "rosclaw_soccer.age04_regulation_training_report.v2"
+    schema_version: str = "rosclaw_soccer.age04_regulation_training_report.v3"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -288,6 +360,10 @@ def run_age04_regulation_training(
         derive_g1_ballistic_contact_impulse_actor,
     )
     from rosclaw.growth.football_motion_prior import load_g1_football_motion_prior
+    from rosclaw.growth.phase_conditioned_residual import (
+        G1PhaseConditionedResidualConfig,
+        derive_g1_phase_conditioned_residual_candidate,
+    )
     from rosclaw.simforge.g1_free_kick_showcase import (
         G1FreeKickFlowConfig,
         run_g1_free_kick_showcase,
@@ -309,7 +385,11 @@ def run_age04_regulation_training(
     seed = _read_json(assets.seed_request)
     runup = _config_from_json(G1LearnedRunupConfig, dict(seed["runup_config"]))
     sonic = _config_from_json(G1SonicRunupConfig, dict(seed["sonic_runup_config"]))
-    sonic = replace(sonic, planner_seed=academy.sonic_planner_seed)
+    sonic = replace(
+        sonic,
+        planner_seed=academy.sonic_planner_seed,
+        execution_duration_sec=academy.sonic_execution_duration_sec,
+    )
     flow = _config_from_json(G1FreeKickFlowConfig, dict(seed["flow_config"]))
     flow = replace(
         flow,
@@ -327,6 +407,13 @@ def run_age04_regulation_training(
         aim_bias_y_m=academy.aim_bias_y_m,
         aim_bias_z_m=academy.aim_bias_z_m,
         shot_loft_synergy_rad=academy.shot_loft_synergy_rad,
+        shot_foot_yaw_offset_rad=academy.shot_foot_yaw_offset_rad,
+        ballistic_contact_policy_frame=academy.ballistic_contact_policy_frame,
+        ballistic_contact_torque_policy_frame=(academy.ballistic_contact_torque_policy_frame),
+        ballistic_contact_residual_rad=academy.ballistic_contact_residual_rad,
+        football_motion_prior_hash=None,
+        football_motion_prior_blend=academy.football_motion_prior_blend,
+        shot_loft_teacher_gain_n_per_mps=academy.teacher_velocity_gain_n_per_mps,
     )
     goal = G1TrainingGoalSpec(
         plane_x_m=academy.goal_plane_x_m,
@@ -353,10 +440,31 @@ def run_age04_regulation_training(
         penalty_area_depth_m=regulation.penalty_area_depth_m,
         penalty_mark_distance_m=regulation.penalty_mark_distance_m,
     )
-    motion_prior = load_g1_football_motion_prior(assets.football_motion_prior)
+    motion_prior = None
+    if academy.football_motion_prior_blend > 0.0:
+        if assets.football_motion_prior is None:
+            raise ValueError("Age-4 motion-prior blend requires a motion-prior artifact")
+        motion_prior = load_g1_football_motion_prior(assets.football_motion_prior)
+        flow = replace(flow, football_motion_prior_hash=motion_prior.prior_hash)
+    support_delta = [0.0] * 29
+    support_delta[3] = academy.support_chain_left_knee_delta_nm
+    support_candidate_path = derive_g1_phase_conditioned_residual_candidate(
+        base_candidate_path=assets.approach_strike_candidate,
+        output_dir=root / "support-chain-candidate",
+        source_checkout=checkout,
+        config=G1PhaseConditionedResidualConfig(
+            event_phase_id=academy.support_chain_event_phase_id,
+            joint_delta_nm=tuple(support_delta),
+        ),
+    )
+    support_candidate = _read_json(support_candidate_path)
+    support_candidate_hash = str(support_candidate["candidate_hash"])
     residual = G1ApproachStrikeResidualConfig(
-        residual_fraction=0.2,
-        maximum_residual_nm=5.0,
+        residual_fraction=academy.residual_fraction,
+        maximum_residual_nm=academy.maximum_residual_nm,
+        maximum_standardized_rms=academy.maximum_standardized_rms,
+        maximum_standardized_abs=academy.maximum_standardized_abs,
+        active_event_phase_ids=academy.residual_active_event_phase_ids,
     )
     shared: dict[str, Any] = {
         "asset_root": assets.asset_root,
@@ -366,24 +474,28 @@ def run_age04_regulation_training(
         "goal_spec": goal,
         "sonic_model_root": assets.sonic_model_root,
         "sonic_runup_config": sonic,
-        "approach_strike_candidate_path": assets.approach_strike_candidate,
+        "approach_strike_candidate_path": support_candidate_path,
         "approach_strike_residual_config": residual,
-        "football_motion_prior": motion_prior,
     }
+    if motion_prior is not None:
+        shared["football_motion_prior"] = motion_prior
 
     evidence_paths: list[Path] = []
-    for index, (lateral_force, vertical_force) in enumerate(academy.teacher_force_pairs_n):
+    for index, (target_vertical, lateral_force, vertical_force) in enumerate(
+        academy.teacher_probe_specs
+    ):
         probe_flow = replace(
             flow,
-            shot_loft_teacher_target_vy_mps=10.0,
-            shot_loft_teacher_target_vz_mps=7.0,
-            shot_loft_teacher_lateral_gain_n_per_mps=35.0,
-            shot_loft_teacher_gain_n_per_mps=50.0,
+            shot_loft_teacher_target_vy_mps=0.0,
+            shot_loft_teacher_target_vz_mps=target_vertical,
+            shot_loft_teacher_gain_n_per_mps=(academy.teacher_velocity_gain_n_per_mps),
             shot_loft_teacher_max_lateral_force_n=lateral_force,
             shot_loft_teacher_max_force_n=vertical_force,
             shot_loft_teacher_max_foot_ball_distance_m=0.18,
         )
-        probe_dir = root / f"probe-{index:02d}-l{lateral_force:.0f}-v{vertical_force:.0f}"
+        probe_dir = root / (
+            f"probe-{index:02d}-vz{target_vertical:+.0f}-l{lateral_force:.0f}-v{vertical_force:.0f}"
+        )
         run_g1_free_kick_showcase(output_dir=probe_dir, flow_config=probe_flow, **shared)
         evidence_paths.append(probe_dir / "g1-free-kick.json")
 
@@ -422,6 +534,8 @@ def run_age04_regulation_training(
         torque_authority_passed=assessment.torque_authority_passed,
         development_breakthrough=assessment.development_breakthrough,
         core_showcase_passed=final.passed,
+        support_candidate_hash=support_candidate_hash,
+        support_candidate_path=str(support_candidate_path),
         actor_hash=actor.actor_hash,
         final_evidence_path=str(final_dir / "g1-free-kick.json"),
         final_goal_plane_target_error_m=result.goal_plane_target_error_m,
@@ -443,6 +557,10 @@ def run_age04_regulation_training(
             result.contact_task_authority_projection_steps
         ),
         final_contact_task_authority_scale_min=result.contact_task_authority_scale_min,
+        final_joint_boundary_guard_active_steps=result.joint_boundary_guard_active_steps,
+        final_joint_boundary_guard_peak_correction_nm=(
+            result.joint_boundary_guard_peak_correction_nm
+        ),
         final_perceptual_continuity_passed=result.perceptual_continuity_passed,
         final_runup_min_pelvis_height_m=result.runup_min_pelvis_height_m,
         final_runup_peak_tilt_rad=result.runup_peak_tilt_rad,

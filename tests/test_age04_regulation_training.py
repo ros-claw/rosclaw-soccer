@@ -15,19 +15,29 @@ from rosclaw_soccer.training.age04_regulation import (
 def test_regulation_curriculum_binds_eight_unique_probes() -> None:
     curriculum = Age04RegulationCurriculum()
 
-    assert len(curriculum.teacher_force_pairs_n) == 8
-    assert curriculum.teacher_force_pairs_n[:2] == ((250.0, 250.0), (245.0, 245.0))
+    assert len(curriculum.teacher_probe_specs) == 8
+    assert curriculum.teacher_probe_specs[:2] == (
+        (7.0, 80.0, 50.0),
+        (7.0, 80.0, 55.0),
+    )
+    assert sum(target < 0.0 for target, _, _ in curriculum.teacher_probe_specs) == 3
     assert curriculum.precision_radius_m == 0.10
     assert (curriculum.target_y_m, curriculum.target_z_m) == (1.32, 1.04)
     assert curriculum.torque_authority_projection_ratio == 0.98
     assert curriculum.torque_authority_projection_max_fraction == 0.01
-    assert (curriculum.aim_bias_y_m, curriculum.aim_bias_z_m) == (1.13, 0.20)
-    assert curriculum.sonic_planner_seed == 0
+    assert (curriculum.aim_bias_y_m, curriculum.aim_bias_z_m) == (1.12, 0.205)
+    assert curriculum.sonic_planner_seed == 21
+    assert curriculum.sonic_execution_duration_sec == 3.95
+    assert curriculum.residual_active_event_phase_ids == (0, 1, 2, 3, 4)
+    assert curriculum.support_chain_event_phase_id == 4
+    assert curriculum.support_chain_left_knee_delta_nm == -1.2
+    assert curriculum.ballistic_contact_policy_frame == 258
+    assert curriculum.ballistic_contact_residual_rad[4] == 0.225
 
 
 def test_regulation_curriculum_rejects_duplicate_probe() -> None:
     with pytest.raises(ValueError, match="unique"):
-        Age04RegulationCurriculum(teacher_force_pairs_n=((10.0, 10.0),) * 8)
+        Age04RegulationCurriculum(teacher_probe_specs=((7.0, 10.0, 10.0),) * 8)
 
 
 @pytest.mark.parametrize(
@@ -36,10 +46,22 @@ def test_regulation_curriculum_rejects_duplicate_probe() -> None:
         ("torque_authority_projection_ratio", 0.89, "authority"),
         ("torque_authority_projection_max_fraction", 0.051, "authority"),
         ("sonic_planner_seed", -1, "planner seed"),
+        ("sonic_execution_duration_sec", 4.6, "duration"),
+        ("residual_fraction", 0.0, "residual fraction"),
+        ("maximum_residual_nm", 20.1, "maximum residual"),
+        ("maximum_standardized_rms", 20.1, "RMS"),
+        ("maximum_standardized_abs", 100.1, "absolute"),
+        ("residual_active_event_phase_ids", (0, 0), "active phases"),
+        ("residual_active_event_phase_ids", (5,), "active phases"),
+        ("support_chain_event_phase_id", 5, "support-chain phase"),
+        ("support_chain_left_knee_delta_nm", 0.0, "knee delta"),
+        ("ballistic_contact_policy_frame", 149, "contact policy"),
+        ("ballistic_contact_residual_rad", (0.0,) * 5, "contact residual"),
+        ("teacher_velocity_gain_n_per_mps", 50.1, "teacher velocity"),
     ],
 )
 def test_regulation_curriculum_rejects_invalid_contract(
-    field: str, value: float, match: str
+    field: str, value: object, match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
         Age04RegulationCurriculum(**{field: value})
