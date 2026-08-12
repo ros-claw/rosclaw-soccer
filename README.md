@@ -66,6 +66,11 @@ are now dimensionally separate, and every passing trajectory must prove rolling
 from measured linear and angular velocity. The frozen S3 relay is correctly
 rejected as sliding; see the [S4a rolling report](docs/rolling-authenticity-s4a.zh-CN.md).
 
+S4b now gives passer, shooter, and goalkeeper independent policy identity,
+counterfactual contribution rewards, and a joint all-role promotion gate.  The
+corrected-world drift diagnosis and first safe learning sweep are documented in
+the [S4b multi-agent report](docs/multi-agent-growth-s4b.zh-CN.md).
+
 ## Attach to ROSClaw
 
 Install this downstream package beside a ROSClaw checkout that includes the

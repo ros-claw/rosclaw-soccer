@@ -21,7 +21,7 @@ from rosclaw_soccer.skills.shoot.free_kick import (
     _net_capture_plane_x,
     _select_contextual_phase,
 )
-from rosclaw_soccer.world.field import G1TrainingGoalSpec
+from rosclaw_soccer.world.field import G1CompliantGoalNetState, G1TrainingGoalSpec
 
 
 def test_migrated_contract_schemas_remain_artifact_compatible() -> None:
@@ -103,6 +103,30 @@ def test_compliant_net_is_free_flight_then_dissipates_inside_pocket() -> None:
     assert data.xfrc_applied[0, 0] < 0.0
     assert abs(data.xfrc_applied[0, 1]) < abs(data.xfrc_applied[0, 0]) * 0.1
     assert abs(data.xfrc_applied[0, 2]) < abs(data.xfrc_applied[0, 0]) * 0.1
+
+
+def test_stateful_net_binds_first_contact_not_requested_target() -> None:
+    goal = G1TrainingGoalSpec(plane_x_m=6.0, target_y_m=0.8, target_z_m=1.2)
+    flow = G1FreeKickFlowConfig(net_capture_depth_m=0.20)
+    data = SimpleNamespace(
+        qpos=np.asarray((6.15, -0.3, 0.7), dtype=np.float64),
+        qvel=np.asarray((8.0, 1.0, 2.0), dtype=np.float64),
+        xfrc_applied=np.zeros((1, 6), dtype=np.float64),
+    )
+    ids = SimpleNamespace(ball=0, ball_qpos=0, ball_qvel=0)
+    state = G1CompliantGoalNetState()
+
+    _apply_compliant_net_force(data, ids, goal, flow, state)
+    assert state.engaged
+    assert state.anchor_xyz_m == pytest.approx((6.085, -0.3, 0.7))
+    assert state.anchor_xyz_m[1:] != pytest.approx((goal.target_y_m, goal.target_z_m))
+    np.testing.assert_allclose(data.xfrc_applied, 0.0)
+
+    data.qpos[:] = (6.18, -0.25, 0.76)
+    _apply_compliant_net_force(data, ids, goal, flow, state)
+    assert state.peak_force_n > 0.0
+    assert state.peak_anchor_displacement_m > 0.0
+    assert np.linalg.norm(data.xfrc_applied[0, :3]) > 0.0
 
 
 def test_net_capture_geometry_and_deepest_point_are_physics_bound() -> None:

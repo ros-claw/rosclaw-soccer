@@ -33,11 +33,14 @@ def test_extension_objects_import_without_core_runtime_side_effects() -> None:
         "soccer.first_touch",
         "soccer.free_kick",
         "soccer.passing",
+        "soccer.shooting",
+        "soccer.goalkeeping",
     )
     assert SOCCER_TASK_PROVIDER.provider_id == "soccer.academy"
     assert SOCCER_TASK_PROVIDER.task_ids == (
         "soccer.age04_regulation",
         "soccer.first_touch",
+        "soccer.three_role_league",
     )
     with pytest.raises(KeyError, match="unknown soccer task"):
         SOCCER_TASK_PROVIDER.task_spec("soccer.unknown")
@@ -170,9 +173,16 @@ def test_simforge_provider_registers_descriptions_without_running_physics() -> N
 
     age04 = registry.task_spec("soccer.age04_regulation")
     age05 = registry.task_spec("soccer.first_touch")
+    league = registry.task_spec("soccer.three_role_league")
     assert age04.evidence_requirements.minimum_seeds == 8
     assert age05.evidence_requirements.minimum_seeds == 20
     assert age05.scenario_distribution_ref == "soccer://age05/first-touch-v1"
+    assert league.evidence_requirements.minimum_seeds == 8
+    assert league.candidate_allowed_paths == (
+        "/roles/passer/policy",
+        "/roles/shooter/policy",
+        "/roles/goalkeeper/policy",
+    )
 
 
 def test_migrated_growth_modules_have_no_checkout_absolute_paths() -> None:

@@ -26,6 +26,8 @@ class SoccerGrowthAdapter:
         "soccer.first_touch",
         "soccer.free_kick",
         "soccer.passing",
+        "soccer.shooting",
+        "soccer.goalkeeping",
     )
 
     def normalize_experience(self, payload: Mapping[str, Any]) -> ExperienceSegment:

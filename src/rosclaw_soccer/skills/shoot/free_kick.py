@@ -87,6 +87,7 @@ from rosclaw_soccer.skills.shoot.loft_teacher import (
     g1_loft_teacher_effect,
 )
 from rosclaw_soccer.world.field import (
+    G1CompliantGoalNetState,
     G1TrainingGoalSpec,
     apply_g1_compliant_goal_net_force,
     build_g1_stadium_model,
@@ -1120,6 +1121,7 @@ def _simulate(
     mujoco.mj_forward(model, data)
     if sonic is not None:
         sonic.reset(data)
+    goal_net_state = G1CompliantGoalNetState()
 
     trace: dict[str, list[Any]] = {
         "time": [],
@@ -2041,7 +2043,7 @@ def _simulate(
             last_torque = project_authority(raw)
             torque_violation = torque_violation or bool(np.any(np.abs(last_torque) > hard_limits))
             data.ctrl[:] = last_torque
-            _apply_compliant_net_force(data, ids, goal, flow)
+            _apply_compliant_net_force(data, ids, goal, flow, goal_net_state)
             mujoco.mj_step(model, data)
             physics_steps += 1
             contacts = contact_observation(model, data, ids)
@@ -2602,6 +2604,7 @@ def _apply_compliant_net_force(
     ids: ModelIds,
     goal: G1TrainingGoalSpec,
     flow: G1FreeKickFlowConfig,
+    state: G1CompliantGoalNetState | None = None,
 ) -> None:
     """Apply a deterministic one-sided soft-net force to the ball body."""
     apply_g1_compliant_goal_net_force(
@@ -2613,6 +2616,7 @@ def _apply_compliant_net_force(
         capture_depth_m=flow.net_capture_depth_m,
         stiffness_n_m=flow.net_stiffness_n_m,
         damping_n_s_m=flow.net_damping_n_s_m,
+        state=state,
     )
 
 

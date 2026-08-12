@@ -1,6 +1,7 @@
 """Football worlds, fields, goals, nets, and regulation geometry."""
 
 from rosclaw_soccer.world.field import (
+    G1CompliantGoalNetState,
     G1TrainingGoalSpec,
     apply_g1_compliant_goal_net_force,
     build_g1_coupled_stadium_model,
@@ -11,6 +12,7 @@ from rosclaw_soccer.world.field import (
 )
 
 __all__ = [
+    "G1CompliantGoalNetState",
     "G1TrainingGoalSpec",
     "apply_g1_compliant_goal_net_force",
     "build_g1_coupled_stadium_model",
