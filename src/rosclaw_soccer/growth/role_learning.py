@@ -344,6 +344,36 @@ class JointGrowthDecision:
         }
 
 
+@dataclass(frozen=True)
+class JointGrowthRoundDecision:
+    """Atomic discovery/holdout decision for one three-role generation."""
+
+    passed: bool
+    discovery: JointGrowthDecision
+    holdout: JointGrowthDecision
+    promoted_policies: tuple[RolePolicyBinding, ...]
+    reasons: tuple[str, ...]
+    activation_ceiling: str = "SIM_ONLY"
+    hardware_authorized: bool = False
+    schema_version: str = "rosclaw_soccer.joint_growth_round_decision.v1"
+
+    @property
+    def round_hash(self) -> str:
+        return str(hash_json(self.to_dict()))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "passed": self.passed,
+            "discovery": self.discovery.to_dict(),
+            "holdout": self.holdout.to_dict(),
+            "promoted_policies": [item.to_dict() for item in self.promoted_policies],
+            "reasons": list(self.reasons),
+            "activation_ceiling": self.activation_ceiling,
+            "hardware_authorized": self.hardware_authorized,
+        }
+
+
 def evaluate_joint_growth(
     *,
     parent: tuple[SharedWorldTeamEpisode, ...],
@@ -474,6 +504,69 @@ def evaluate_joint_growth(
     )
 
 
+def evaluate_joint_growth_round(
+    *,
+    discovery_parent: tuple[SharedWorldTeamEpisode, ...],
+    discovery_candidate: tuple[SharedWorldTeamEpisode, ...],
+    holdout_parent: tuple[SharedWorldTeamEpisode, ...],
+    holdout_candidate: tuple[SharedWorldTeamEpisode, ...],
+    config: JointGrowthGateConfig | None = None,
+) -> JointGrowthRoundDecision:
+    """Promote the same three candidates only after disjoint holdout retention."""
+
+    discovery_seeds = {episode.seed for episode in (*discovery_parent, *discovery_candidate)}
+    holdout_seeds = {episode.seed for episode in (*holdout_parent, *holdout_candidate)}
+    if discovery_seeds & holdout_seeds:
+        raise ValueError("joint growth discovery and holdout seeds must be disjoint")
+    _require_same_policy_generation(discovery_parent, holdout_parent, "parent")
+    _require_same_policy_generation(discovery_candidate, holdout_candidate, "candidate")
+    discovery = evaluate_joint_growth(
+        parent=discovery_parent,
+        candidate=discovery_candidate,
+        config=config,
+    )
+    holdout = evaluate_joint_growth(
+        parent=holdout_parent,
+        candidate=holdout_candidate,
+        config=config,
+    )
+    reasons: list[str] = []
+    if not discovery.passed:
+        reasons.append("discovery_joint_gate_failed")
+    if not holdout.passed:
+        reasons.append("holdout_joint_gate_failed")
+    candidates = tuple(discovery_candidate[0].policy(role) for role in SoccerRole)
+    return JointGrowthRoundDecision(
+        passed=not reasons,
+        discovery=discovery,
+        holdout=holdout,
+        promoted_policies=candidates if not reasons else (),
+        reasons=tuple(reasons),
+    )
+
+
+def _require_same_policy_generation(
+    left: tuple[SharedWorldTeamEpisode, ...],
+    right: tuple[SharedWorldTeamEpisode, ...],
+    label: str,
+) -> None:
+    if not left or not right:
+        raise ValueError(f"joint growth {label} partitions must not be empty")
+    for role in SoccerRole:
+        left_policy = left[0].policy(role)
+        right_policy = right[0].policy(role)
+        fields = (
+            "agent_id",
+            "artifact_hash",
+            "parent_artifact_hash",
+            "observation_contract_hash",
+            "action_contract_hash",
+            "generation",
+        )
+        if any(getattr(left_policy, field) != getattr(right_policy, field) for field in fields):
+            raise ValueError(f"joint growth {label} policy differs across evaluation partitions")
+
+
 def _episode_suite(
     episodes: tuple[SharedWorldTeamEpisode, ...], label: str
 ) -> dict[int, SharedWorldTeamEpisode]:
@@ -504,6 +597,7 @@ def _identifier(label: str, value: str) -> None:
 __all__ = [
     "JointGrowthDecision",
     "JointGrowthGateConfig",
+    "JointGrowthRoundDecision",
     "RoleEpisodeOutcome",
     "RoleGrowthMetrics",
     "RolePolicyBinding",
@@ -511,4 +605,5 @@ __all__ = [
     "SoccerRole",
     "SoccerSide",
     "evaluate_joint_growth",
+    "evaluate_joint_growth_round",
 ]

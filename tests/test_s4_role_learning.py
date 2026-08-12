@@ -11,6 +11,7 @@ from rosclaw_soccer.growth.role_learning import (
     SharedWorldTeamEpisode,
     SoccerRole,
     evaluate_joint_growth,
+    evaluate_joint_growth_round,
 )
 
 
@@ -69,6 +70,10 @@ def _episode(seed: int, generation: int, improvement: float) -> SharedWorldTeamE
 
 def _suite(generation: int, improvement: float) -> tuple[SharedWorldTeamEpisode, ...]:
     return tuple(_episode(seed, generation, improvement) for seed in (11, 17, 23))
+
+
+def _holdout_suite(generation: int, improvement: float) -> tuple[SharedWorldTeamEpisode, ...]:
+    return tuple(_episode(seed, generation, improvement) for seed in (101, 107, 113))
 
 
 def test_joint_growth_accepts_three_independent_improved_role_policies() -> None:
@@ -201,3 +206,39 @@ def test_joint_growth_rejects_contract_or_generation_drift() -> None:
     candidate[0] = replace(candidate[0], policies=policies)
     with pytest.raises(ValueError, match="generation must increment"):
         evaluate_joint_growth(parent=_suite(1, 0.0), candidate=tuple(candidate))
+
+
+def test_joint_growth_round_promotes_all_roles_atomically_after_holdout() -> None:
+    decision = evaluate_joint_growth_round(
+        discovery_parent=_suite(1, 0.0),
+        discovery_candidate=_suite(2, 0.05),
+        holdout_parent=_holdout_suite(1, 0.0),
+        holdout_candidate=_holdout_suite(2, 0.04),
+    )
+
+    assert decision.passed
+    assert tuple(item.role for item in decision.promoted_policies) == tuple(SoccerRole)
+    assert not decision.hardware_authorized
+
+
+def test_joint_growth_round_rejects_training_only_improvement() -> None:
+    decision = evaluate_joint_growth_round(
+        discovery_parent=_suite(1, 0.0),
+        discovery_candidate=_suite(2, 0.05),
+        holdout_parent=_holdout_suite(1, 0.0),
+        holdout_candidate=_holdout_suite(2, -0.02),
+    )
+
+    assert not decision.passed
+    assert not decision.promoted_policies
+    assert decision.reasons == ("holdout_joint_gate_failed",)
+
+
+def test_joint_growth_round_rejects_seed_leakage() -> None:
+    with pytest.raises(ValueError, match="seeds must be disjoint"):
+        evaluate_joint_growth_round(
+            discovery_parent=_suite(1, 0.0),
+            discovery_candidate=_suite(2, 0.05),
+            holdout_parent=_suite(1, 0.0),
+            holdout_candidate=_suite(2, 0.05),
+        )

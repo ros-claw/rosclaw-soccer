@@ -67,6 +67,10 @@ passer 和 shooter 属于 attack side；goalkeeper 属于 defense side，因此�
 
 任何一个角色不成长、搭便车、跌倒、越界或证据缺失，整代都不能晋级。
 
+发现集通过仍不够：`evaluate_joint_growth_round()` 要求同一组三角色候选在随机种子完全
+隔离的 holdout 再通过一次，才原子化返回三份 promoted policy。训练集成功但 holdout
+退化时，三个角色一起保留 parent，不产生“半支新队伍”。
+
 ## 本轮同时完成的基础修复
 
 - 球门网升级为 target-independent 的三轴形变口袋：以首次实际触网点为锚，不以射门

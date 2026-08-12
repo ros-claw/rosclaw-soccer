@@ -9,6 +9,7 @@ from rosclaw_soccer.growth.adapter import SOCCER_GROWTH_ADAPTER, SoccerGrowthAda
 from rosclaw_soccer.growth.role_learning import (
     JointGrowthDecision,
     JointGrowthGateConfig,
+    JointGrowthRoundDecision,
     RoleEpisodeOutcome,
     RoleGrowthMetrics,
     RolePolicyBinding,
@@ -16,11 +17,13 @@ from rosclaw_soccer.growth.role_learning import (
     SoccerRole,
     SoccerSide,
     evaluate_joint_growth,
+    evaluate_joint_growth_round,
 )
 
 __all__ = [
     "JointGrowthDecision",
     "JointGrowthGateConfig",
+    "JointGrowthRoundDecision",
     "RoleEpisodeOutcome",
     "RoleGrowthMetrics",
     "RolePolicyBinding",
@@ -30,4 +33,5 @@ __all__ = [
     "SoccerRole",
     "SoccerSide",
     "evaluate_joint_growth",
+    "evaluate_joint_growth_round",
 ]
