@@ -106,6 +106,29 @@ python -m rosclaw_soccer.media.age04_reel \
 
 Every frame remains `SIM_ONLY`. Media is visualization, never promotion truth.
 
+Every implementation milestone that changes observable football behaviour must
+also publish a reviewable stage video outside the source checkout. The stage is
+not complete until the video:
+
+- replays the same immutable trajectory used by the JSON evidence;
+- binds the evidence, trajectory, and renderer hashes in a sidecar manifest;
+- passes post-encode resolution, frame-rate, frame-count, and duration checks;
+- shows the complete approach, contact, goal-plane crossing, and recovery tail;
+- labels rejected evidence as `DEVELOPMENT · NOT PROMOTED · SIM ONLY`.
+
+The renderer is downstream of scoring: pixels never change the verdict. A
+rejected candidate may be rendered only with an explicit review flag:
+
+```bash
+rosclaw soccer media free-kick \
+  --evidence /outside/source/g1-free-kick.json \
+  --asset-root /path/to/RoboNaldo_Deploy \
+  --output /outside/source/stage-video.mp4 \
+  --source-checkout /path/to/rosclaw-soccer \
+  --resolution 1080p \
+  --allow-rejected-candidate
+```
+
 Train a fresh regulation-physics Age-4 contact actor (eight bound probes,
 teacher-free final replay):
 

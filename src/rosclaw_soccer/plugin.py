@@ -11,6 +11,7 @@ from typing import Any
 from rosclaw_soccer.academy.player_card import load_player_card
 from rosclaw_soccer.evidence.age04 import validate_age04_manifest
 from rosclaw_soccer.media.age04_reel import build_age04_reel
+from rosclaw_soccer.media.free_kick_video import render_g1_free_kick_showcase_video
 from rosclaw_soccer.physics.reality_pack import run_reality_pack
 from rosclaw_soccer.training.age04_regulation import (
     Age04RegulationAssets,
@@ -61,6 +62,21 @@ def register_cli(subparsers: Any) -> None:
     age04.add_argument("--evidence-root", type=Path)
     age04.add_argument("--output", type=Path, required=True)
     age04.set_defaults(rosclaw_extension_handler=_build_age04_media)
+    free_kick = media_commands.add_parser(
+        "free-kick", help="Render one strict-replay free-kick trajectory"
+    )
+    free_kick.add_argument("--evidence", type=Path, required=True)
+    free_kick.add_argument("--asset-root", type=Path, required=True)
+    free_kick.add_argument("--output", type=Path, required=True)
+    free_kick.add_argument("--source-checkout", type=Path, default=_repository_root())
+    free_kick.add_argument("--fps", type=int, default=30)
+    free_kick.add_argument("--resolution", choices=("720p", "1080p"), default="1080p")
+    free_kick.add_argument(
+        "--allow-rejected-candidate",
+        action="store_true",
+        help="render a visibly labelled development/rejected candidate",
+    )
+    free_kick.set_defaults(rosclaw_extension_handler=_build_free_kick_media)
 
     physics = commands.add_parser("physics", help="Validate football physics before training")
     physics_commands = physics.add_subparsers(dest="physics_command", required=True)
@@ -144,6 +160,20 @@ def _build_age04_media(args: Any) -> int:
         manifest_path=args.manifest,
         evidence_root=evidence_root,
         output_path=args.output,
+    )
+    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
+def _build_free_kick_media(args: Any) -> int:
+    result = render_g1_free_kick_showcase_video(
+        evidence_path=args.evidence,
+        asset_root=args.asset_root,
+        output_path=args.output,
+        source_checkout=args.source_checkout,
+        fps=args.fps,
+        resolution=args.resolution,
+        allow_rejected_candidate=args.allow_rejected_candidate,
     )
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0
