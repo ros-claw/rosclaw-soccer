@@ -12,6 +12,7 @@ from rosclaw_soccer.academy.player_card import load_player_card
 from rosclaw_soccer.evidence.age04 import validate_age04_manifest
 from rosclaw_soccer.media.age04_reel import build_age04_reel
 from rosclaw_soccer.media.free_kick_video import render_g1_free_kick_showcase_video
+from rosclaw_soccer.media.three_player_video import render_three_player_showcase_video
 from rosclaw_soccer.physics.reality_pack import run_reality_pack
 from rosclaw_soccer.training.age04_regulation import (
     Age04RegulationAssets,
@@ -77,6 +78,16 @@ def register_cli(subparsers: Any) -> None:
         help="render a visibly labelled development/rejected candidate",
     )
     free_kick.set_defaults(rosclaw_extension_handler=_build_free_kick_media)
+    three_player = media_commands.add_parser(
+        "three-player", help="Render strict passer/shooter/goalkeeper evidence"
+    )
+    three_player.add_argument("--evidence", type=Path, required=True)
+    three_player.add_argument("--asset-root", type=Path, required=True)
+    three_player.add_argument("--output", type=Path, required=True)
+    three_player.add_argument("--source-checkout", type=Path, default=_repository_root())
+    three_player.add_argument("--fps", type=int, default=30)
+    three_player.add_argument("--resolution", choices=("720p", "1080p"), default="1080p")
+    three_player.set_defaults(rosclaw_extension_handler=_build_three_player_media)
 
     physics = commands.add_parser("physics", help="Validate football physics before training")
     physics_commands = physics.add_subparsers(dest="physics_command", required=True)
@@ -174,6 +185,19 @@ def _build_free_kick_media(args: Any) -> int:
         fps=args.fps,
         resolution=args.resolution,
         allow_rejected_candidate=args.allow_rejected_candidate,
+    )
+    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
+def _build_three_player_media(args: Any) -> int:
+    result = render_three_player_showcase_video(
+        evidence_path=args.evidence,
+        asset_root=args.asset_root,
+        output_path=args.output,
+        source_checkout=args.source_checkout,
+        fps=args.fps,
+        resolution=args.resolution,
     )
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0

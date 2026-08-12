@@ -172,6 +172,24 @@ memory below the same boundary. A canonical strict replay produced a byte-identi
 trajectory and zero result-field differences from the frozen pre-extraction run.
 See the [S2 extraction report](docs/domain-extraction-s2.zh-CN.md).
 
+S3 has extracted the evidence validator and evidence-downstream renderer for one
+passer, one shooter, one reactive goalkeeper, and one shared ball. The first local
+baseline binds all source and renderer hashes and visibly identifies its legacy
+3.00 × 2.00 m training goal; it is the migration baseline for the next regulation-
+goal rerun, not a regulation claim. See the
+[S3 three-player report](docs/three-player-media-s3.zh-CN.md).
+
+Build the three-player review video from an external frozen evidence bundle:
+
+```bash
+rosclaw soccer media three-player \
+  --evidence /outside/source/g1-three-player-showcase.json \
+  --asset-root /path/to/RoboNaldo_Deploy \
+  --output /outside/source/three-player-stage.mp4 \
+  --source-checkout /path/to/rosclaw-soccer \
+  --resolution 1080p
+```
+
 ## Next milestone
 
 **Academy Age 5: First Touch** will require a continuous closed loop:
