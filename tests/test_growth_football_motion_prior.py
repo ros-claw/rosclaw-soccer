@@ -7,11 +7,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-pytest.importorskip(
-    "rosclaw.simforge.backends.unitree_mujoco_backend",
-    reason="requires the stacked ROSClaw G1 provider until embodiment extraction",
-)
-
 from rosclaw_soccer.growth.football_motion_prior import (
     G1FootballMotionEvent,
     G1FootballMotionPrior,

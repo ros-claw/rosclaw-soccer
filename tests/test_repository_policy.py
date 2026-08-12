@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import tomllib
 from pathlib import Path
@@ -55,3 +56,36 @@ def test_age04_training_no_longer_imports_football_growth_from_core() -> None:
     )
 
     assert all(value not in training for value in forbidden)
+
+
+def test_soccer_domain_does_not_fall_back_to_core_football_implementations() -> None:
+    root = Path(__file__).resolve().parents[1]
+    forbidden_prefixes = (
+        "rosclaw.growth.ballistic_contact_residual",
+        "rosclaw.growth.ballistic_contact_torque_residual",
+        "rosclaw.growth.ballistic_skill_memory",
+        "rosclaw.growth.football_motion_prior",
+        "rosclaw.growth.football_outcome_model",
+        "rosclaw.growth.proprioceptive_expert_router",
+        "rosclaw.simforge.backends.unitree_mujoco_backend",
+        "rosclaw.simforge.g1_free_kick_showcase",
+        "rosclaw.simforge.g1_learned_runup",
+        "rosclaw.simforge.g1_loft_teacher",
+        "rosclaw.simforge.g1_sonic_runup",
+        "rosclaw.simforge.g1_stadium_scene",
+    )
+
+    imported: set[str] = set()
+    for path in sorted((root / "src/rosclaw_soccer").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module is not None:
+                imported.add(node.module)
+            elif isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+
+    assert not {
+        module
+        for module in imported
+        if any(module == prefix or module.startswith(prefix + ".") for prefix in forbidden_prefixes)
+    }

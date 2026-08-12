@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from rosclaw_soccer.physics.standards import IFABRegulationSpec
 
 if TYPE_CHECKING:
-    from rosclaw.simforge.g1_free_kick_showcase import G1FreeKickEvidence
+    from rosclaw_soccer.skills.shoot.free_kick import G1FreeKickEvidence
 
 _ConfigT = TypeVar("_ConfigT")
 _TUPLE_FIELDS = {
@@ -355,14 +355,6 @@ def run_age04_regulation_training(
 ) -> Age04RegulationTrainingReport:
     """Run eight bounded probes, distil an actor, and replay it teacher-free."""
 
-    from rosclaw.simforge.g1_free_kick_showcase import (
-        G1FreeKickFlowConfig,
-        run_g1_free_kick_showcase,
-    )
-    from rosclaw.simforge.g1_learned_runup import G1LearnedRunupConfig
-    from rosclaw.simforge.g1_sonic_runup import G1SonicRunupConfig
-    from rosclaw.simforge.g1_stadium_scene import G1TrainingGoalSpec
-
     from rosclaw_soccer.growth.approach_strike_residual import G1ApproachStrikeResidualConfig
     from rosclaw_soccer.growth.ballistic_contact_impulse_actor import (
         derive_g1_ballistic_contact_impulse_actor,
@@ -372,6 +364,13 @@ def run_age04_regulation_training(
         G1PhaseConditionedResidualConfig,
         derive_g1_phase_conditioned_residual_candidate,
     )
+    from rosclaw_soccer.providers.g1.learned_runup import G1LearnedRunupConfig
+    from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupConfig
+    from rosclaw_soccer.skills.shoot.free_kick import (
+        G1FreeKickFlowConfig,
+        run_g1_free_kick_showcase,
+    )
+    from rosclaw_soccer.world.field import G1TrainingGoalSpec
 
     root = output_dir.expanduser().resolve()
     checkout = source_checkout.expanduser().resolve()

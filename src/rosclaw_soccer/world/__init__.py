@@ -1,0 +1,21 @@
+"""Football worlds, fields, goals, nets, and regulation geometry."""
+
+from rosclaw_soccer.world.field import (
+    G1TrainingGoalSpec,
+    apply_g1_compliant_goal_net_force,
+    build_g1_coupled_stadium_model,
+    build_g1_stadium_model,
+    build_g1_three_player_stadium_model,
+    g1_goal_net_contact_plane_x,
+    g1_stadium_scene_hash,
+)
+
+__all__ = [
+    "G1TrainingGoalSpec",
+    "apply_g1_compliant_goal_net_force",
+    "build_g1_coupled_stadium_model",
+    "build_g1_stadium_model",
+    "build_g1_three_player_stadium_model",
+    "g1_goal_net_contact_plane_x",
+    "g1_stadium_scene_hash",
+]

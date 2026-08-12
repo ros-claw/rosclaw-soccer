@@ -143,6 +143,12 @@ behind this downstream boundary. Artifact schemas and hashes remain compatible
 with the frozen pre-extraction implementation. See the
 [S1 extraction report](docs/domain-extraction-s1.zh-CN.md).
 
+S2 extraction now owns the regulation stadium, goal/net/ball physics, free-kick
+runner, run-up providers, contact/recovery bridges, and football-specific expert
+memory below the same boundary. A canonical strict replay produced a byte-identical
+trajectory and zero result-field differences from the frozen pre-extraction run.
+See the [S2 extraction report](docs/domain-extraction-s2.zh-CN.md).
+
 ## Next milestone
 
 **Academy Age 5: First Touch** will require a continuous closed loop:
