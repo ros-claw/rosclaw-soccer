@@ -50,6 +50,7 @@ def test_three_player_trajectory_is_no_pickle_and_fail_closed(tmp_path: Path) ->
     values: dict[str, np.ndarray] = {
         "time": np.asarray((0.0, 1.0)),
         "ball_pose": np.asarray(((0, 0, 0.1, 1, 0, 0, 0),) * 2, dtype=float),
+        "ball_velocity": np.zeros((2, 6), dtype=float),
     }
     for role in ("passer", "shooter", "goalkeeper"):
         values[f"{role}_pelvis_pose"] = np.asarray(((0, 0, 0.8, 1, 0, 0, 0),) * 2, dtype=float)
@@ -164,3 +165,13 @@ def test_three_player_request_rejects_target_outside_goal_contract() -> None:
     }
     with pytest.raises(ValueError, match="does not match the goal contract"):
         _validate_request(request, {"body_hash": "sha256:body"})
+
+
+def test_frozen_three_player_evidence_is_rejected_as_sliding() -> None:
+    source = Path("/code/rosclaw/phase8_evidence/g1-three-player-long-relay-v3-final")
+    if not source.is_dir():
+        pytest.skip("frozen three-player evidence is unavailable")
+    checkout = Path(__file__).resolve().parents[1]
+
+    with pytest.raises(ValueError, match="sliding rather than rolling"):
+        validate_bundle(source / "g1-three-player-showcase.json", source_checkout=checkout)

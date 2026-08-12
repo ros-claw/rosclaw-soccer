@@ -12,8 +12,10 @@ from rosclaw_soccer.academy.player_card import load_player_card
 from rosclaw_soccer.evidence.age04 import validate_age04_manifest
 from rosclaw_soccer.media.age04_reel import build_age04_reel
 from rosclaw_soccer.media.free_kick_video import render_g1_free_kick_showcase_video
+from rosclaw_soccer.media.rolling_comparison_video import render_rolling_comparison_video
 from rosclaw_soccer.media.three_player_video import render_three_player_showcase_video
 from rosclaw_soccer.physics.reality_pack import run_reality_pack
+from rosclaw_soccer.physics.rolling_authenticity import audit_pass_rolling_physics
 from rosclaw_soccer.training.age04_regulation import (
     Age04RegulationAssets,
     run_age04_regulation_training,
@@ -88,6 +90,16 @@ def register_cli(subparsers: Any) -> None:
     three_player.add_argument("--fps", type=int, default=30)
     three_player.add_argument("--resolution", choices=("720p", "1080p"), default="1080p")
     three_player.set_defaults(rosclaw_extension_handler=_build_three_player_media)
+    rolling_media = media_commands.add_parser(
+        "rolling-audit", help="Render legacy sliding versus corrected rolling evidence"
+    )
+    rolling_media.add_argument("--audit", type=Path, required=True)
+    rolling_media.add_argument("--asset-root", type=Path, required=True)
+    rolling_media.add_argument("--output", type=Path, required=True)
+    rolling_media.add_argument("--source-checkout", type=Path, default=_repository_root())
+    rolling_media.add_argument("--fps", type=int, default=30)
+    rolling_media.add_argument("--resolution", choices=("720p", "1080p"), default="1080p")
+    rolling_media.set_defaults(rosclaw_extension_handler=_build_rolling_media)
 
     physics = commands.add_parser("physics", help="Validate football physics before training")
     physics_commands = physics.add_subparsers(dest="physics_command", required=True)
@@ -96,6 +108,14 @@ def register_cli(subparsers: Any) -> None:
     )
     benchmark.add_argument("--output-dir", type=Path, required=True)
     benchmark.set_defaults(rosclaw_extension_handler=_physics_benchmark)
+    rolling = physics_commands.add_parser(
+        "rolling-audit", help="Compare legacy sliding against corrected ball roll"
+    )
+    rolling.add_argument("--asset-root", type=Path, required=True)
+    rolling.add_argument("--source-evidence", type=Path, required=True)
+    rolling.add_argument("--output-dir", type=Path, required=True)
+    rolling.add_argument("--source-checkout", type=Path, default=_repository_root())
+    rolling.set_defaults(rosclaw_extension_handler=_rolling_audit)
 
 
 def _doctor(args: Any) -> int:
@@ -203,10 +223,34 @@ def _build_three_player_media(args: Any) -> int:
     return 0
 
 
+def _build_rolling_media(args: Any) -> int:
+    result = render_rolling_comparison_video(
+        audit_path=args.audit,
+        asset_root=args.asset_root,
+        output_path=args.output,
+        source_checkout=args.source_checkout,
+        fps=args.fps,
+        resolution=args.resolution,
+    )
+    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
 def _physics_benchmark(args: Any) -> int:
     report = run_reality_pack(
         output_dir=args.output_dir,
         source_checkout=_repository_root(),
+    )
+    print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    return 0 if report.passed else 2
+
+
+def _rolling_audit(args: Any) -> int:
+    report = audit_pass_rolling_physics(
+        asset_root=args.asset_root,
+        source_evidence_path=args.source_evidence,
+        output_dir=args.output_dir,
+        source_checkout=args.source_checkout,
     )
     print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
     return 0 if report.passed else 2

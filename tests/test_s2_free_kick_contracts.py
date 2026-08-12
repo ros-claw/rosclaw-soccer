@@ -28,7 +28,7 @@ def test_migrated_contract_schemas_remain_artifact_compatible() -> None:
     assert G1FreeKickFlowConfig().schema_version == (
         "rosclaw.simforge.g1_free_kick_flow_config.v36"
     )
-    assert G1TrainingGoalSpec().schema_version == ("rosclaw.simforge.g1_training_goal_spec.v7")
+    assert G1TrainingGoalSpec().schema_version == ("rosclaw.simforge.g1_training_goal_spec.v8")
     assert G1LearnedRunupConfig().schema_version == ("rosclaw.simforge.g1_learned_runup_config.v2")
     assert G1SonicRunupConfig().schema_version == ("rosclaw.simforge.g1_sonic_runup_config.v1")
 
@@ -50,6 +50,7 @@ def test_training_goal_uses_regulation_geometry_and_ball_dimensions() -> None:
 
     assert 2.0 * np.pi * goal.ball_radius_m == pytest.approx(0.69)
     assert goal.ball_mass_kg == pytest.approx(0.43)
+    assert goal.ball_angular_damping_n_m_s_rad == pytest.approx(0.00002)
     assert (goal.field_length_m, goal.field_width_m) == (105.0, 68.0)
     assert (goal.goal_area_depth_m, goal.penalty_area_depth_m) == (5.5, 16.5)
     assert goal.target_corner == "left_upper"

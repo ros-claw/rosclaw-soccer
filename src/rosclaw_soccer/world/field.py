@@ -33,6 +33,7 @@ class G1TrainingGoalSpec:
     target_z_m: float = 0.115
     precision_radius_m: float = 0.16
     ball_free_joint_damping_n_s_m: float = 0.02
+    ball_angular_damping_n_m_s_rad: float = 0.00002
     ball_radius_m: float = 0.115
     ball_mass_kg: float = 0.41
     ball_contact_sliding_friction: float = 0.05
@@ -46,7 +47,7 @@ class G1TrainingGoalSpec:
     goal_area_depth_m: float = 5.50
     penalty_area_depth_m: float = 16.50
     penalty_mark_distance_m: float = 11.0
-    schema_version: str = "rosclaw.simforge.g1_training_goal_spec.v7"
+    schema_version: str = "rosclaw.simforge.g1_training_goal_spec.v8"
 
     def __post_init__(self) -> None:
         values = (
@@ -60,6 +61,7 @@ class G1TrainingGoalSpec:
             self.target_z_m,
             self.precision_radius_m,
             self.ball_free_joint_damping_n_s_m,
+            self.ball_angular_damping_n_m_s_rad,
             self.ball_radius_m,
             self.ball_mass_kg,
             self.ball_contact_sliding_friction,
@@ -95,6 +97,8 @@ class G1TrainingGoalSpec:
             raise ValueError("precision radius must be in [0.05, 0.30] m")
         if not 0.001 <= self.ball_free_joint_damping_n_s_m <= 0.10:
             raise ValueError("ball free-joint damping must be in [0.001, 0.10] N s/m")
+        if not 0.0 <= self.ball_angular_damping_n_m_s_rad <= 0.001:
+            raise ValueError("ball angular damping must be in [0, 0.001] N m s/rad")
         if not 0.105 <= self.ball_radius_m <= 0.115:
             raise ValueError("football radius must be in [0.105, 0.115] m")
         if not 0.40 <= self.ball_mass_kg <= 0.46:
@@ -125,7 +129,7 @@ class G1TrainingGoalSpec:
 
     @property
     def spec_hash(self) -> str:
-        return hash_json(asdict(self))
+        return str(hash_json(asdict(self)))
 
     @property
     def target_corner(self) -> str:
@@ -152,6 +156,7 @@ def build_g1_stadium_model(asset_root: Path, spec: G1TrainingGoalSpec | None = N
     goal = spec or G1TrainingGoalSpec()
     parent = _stadium_spec(asset_root, goal)
     model = parent.compile()
+    _configure_ball_dof_damping(model, goal)
     _require_stadium_model(model)
     return model
 
@@ -188,6 +193,7 @@ def build_g1_coupled_stadium_model(
         raise ValueError("qualified G1 model does not contain a root body")
     frame.attach_body(first_body, prefix="passer_")
     model = parent.compile()
+    _configure_ball_dof_damping(model, goal)
     _require_stadium_model(model)
     if model.nu != 58:
         raise ValueError(f"coupled stadium model has {model.nu} actuators, expected 58")
@@ -233,6 +239,7 @@ def build_g1_three_player_stadium_model(
         mujoco=mujoco,
     )
     model = parent.compile()
+    _configure_ball_dof_damping(model, goal)
     _require_stadium_model(model)
     if model.nu != 87:
         raise ValueError(f"three-player stadium model has {model.nu} actuators, expected 87")
@@ -288,17 +295,40 @@ def _require_stadium_model(model: Any) -> None:
             raise AssertionError(f"stadium scene is missing {name}")
 
 
+def _configure_ball_dof_damping(model: Any, spec: G1TrainingGoalSpec) -> None:
+    """Separate translational drag from rotational drag after compilation.
+
+    MuJoCo's free-joint ``damping`` shortcut expands one scalar across all six
+    degrees of freedom.  Applying the football's linear value to rotation is
+    dimensionally wrong and erases rolling spin in roughly a tenth of a
+    second.  The compiled model exposes the six physical DOFs explicitly, so
+    bind their two units here and fail closed if the qualified scene changes.
+    """
+
+    ball_joint = model.joint("ball_free")
+    addresses = tuple(int(value) for value in ball_joint.dofadr)
+    if len(addresses) != 1:
+        raise ValueError("qualified stadium ball_free does not have one DOF address")
+    dof_address = addresses[0]
+    if dof_address < 0 or dof_address + 6 > int(model.nv):
+        raise ValueError("qualified stadium ball_free does not expose six DOFs")
+    model.dof_damping[dof_address : dof_address + 3] = spec.ball_free_joint_damping_n_s_m
+    model.dof_damping[dof_address + 3 : dof_address + 6] = spec.ball_angular_damping_n_m_s_rad
+
+
 def g1_stadium_scene_hash(asset_root: Path, spec: G1TrainingGoalSpec | None = None) -> str:
     """Bind the derived scene to both its source XML and declarative goal spec."""
 
     goal = spec or G1TrainingGoalSpec()
     scene = asset_root.expanduser().resolve() / _SCENE_REL
-    return hash_json(
-        {
-            "source_scene_hash": hash_bytes(scene.read_bytes()),
-            "goal_spec_hash": goal.spec_hash,
-            "builder_hash": hash_bytes(Path(__file__).read_bytes()),
-        }
+    return str(
+        hash_json(
+            {
+                "source_scene_hash": hash_bytes(scene.read_bytes()),
+                "goal_spec_hash": goal.spec_hash,
+                "builder_hash": hash_bytes(Path(__file__).read_bytes()),
+            }
+        )
     )
 
 
@@ -636,12 +666,10 @@ def _style_pitch_and_ball(parent: Any, spec: G1TrainingGoalSpec) -> None:
     ball_joints = list(ball.joints)
     if len(ball_joints) != 1 or ball_joints[0].name != "ball_free":
         raise ValueError("qualified stadium ball must expose exactly one ball_free joint")
-    # The upstream demonstration scene uses 0.3 N*s/m on all six free-joint
-    # DOFs.  For a 0.41 kg ball this erases about a quarter of the shot speed
-    # per second and damps spin almost instantly, making flight and net entry
-    # look submerged.  Keep only a small numerical damping term; goal capture
-    # is handled separately by the compliant net after the back-net depth.
-    ball_joints[0].damping = (spec.ball_free_joint_damping_n_s_m, 0.0, 0.0)
+    # Clear the upstream scalar shortcut.  Linear and angular damping have
+    # different units and are assigned to compiled DOFs by
+    # ``_configure_ball_dof_damping``.
+    ball_joints[0].damping = (0.0, 0.0, 0.0)
     radius = spec.ball_radius_m
     inertia = 0.4 * spec.ball_mass_kg * radius * radius
     ball.mass = spec.ball_mass_kg

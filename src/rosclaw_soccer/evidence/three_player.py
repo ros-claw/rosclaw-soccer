@@ -11,6 +11,7 @@ from typing import Any, TypeAlias
 import numpy as np
 from numpy.typing import NDArray
 
+from rosclaw_soccer.physics.rolling_authenticity import measure_rolling_authenticity
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 
 Array: TypeAlias = NDArray[np.generic]
@@ -66,6 +67,7 @@ def validate_three_player_evidence(
     _validate_authority(report)
     _validate_metrics(report)
     _validate_request(request, report)
+    _validate_pass_roll(report, request, trajectory)
 
     return ThreePlayerEvidenceBundle(
         evidence_path=evidence,
@@ -89,7 +91,11 @@ def load_three_player_trajectory(path: Path) -> dict[str, Array]:
         raise ValueError("three-player trajectory is missing, empty, or too large")
     with np.load(resolved, allow_pickle=False) as archive:
         value = {name: archive[name] for name in archive.files}
-    expected: dict[str, tuple[int, ...]] = {"time": (), "ball_pose": (7,)}
+    expected: dict[str, tuple[int, ...]] = {
+        "time": (),
+        "ball_pose": (7,),
+        "ball_velocity": (6,),
+    }
     for role in _ROLES:
         expected[f"{role}_pelvis_pose"] = (7,)
         expected[f"{role}_joint_position"] = (29,)
@@ -200,6 +206,35 @@ def _validate_request(request: dict[str, Any], report: dict[str, Any]) -> None:
     actual = tuple(_finite_number(value, "physical scoring target") for value in target)
     if not np.allclose(actual, expected, rtol=0.0, atol=1e-9):
         raise ValueError("three-player physical target does not match the goal contract")
+
+
+def _validate_pass_roll(
+    report: dict[str, Any],
+    request: dict[str, Any],
+    trajectory: dict[str, Array],
+) -> None:
+    result = report["result"]
+    pass_time = _finite_number(result.get("pass_contact_time_sec"), "pass contact time")
+    shot_time = _finite_number(result.get("shot_contact_time_sec"), "shot contact time")
+    goal = request["goal_spec"]
+    radius = _finite_number(goal.get("ball_radius_m", 0.115), "ball radius")
+    time = np.asarray(trajectory["time"], dtype=np.float64)
+    start = int(np.searchsorted(time, pass_time + 0.10, side="left"))
+    end = int(np.searchsorted(time, shot_time - 0.15, side="right"))
+    if end - start < 2:
+        raise ValueError("three-player pass roll interval is too short")
+    metrics, _ = measure_rolling_authenticity(
+        time=time[start:end],
+        ball_pose=np.asarray(trajectory["ball_pose"])[start:end],
+        ball_velocity=np.asarray(trajectory["ball_velocity"])[start:end],
+        ball_radius_m=radius,
+        ignore_initial_sec=0.0,
+    )
+    if not metrics.passed:
+        raise ValueError(
+            "three-player pass is sliding rather than rolling "
+            f"(median_slip_ratio={metrics.median_slip_ratio:.3f})"
+        )
 
 
 def _finite_number(value: Any, label: str) -> float:

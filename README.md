@@ -60,6 +60,12 @@ ball/pitch contact tuple. This fixes the legacy three-value contact tuple whose
 second tangential coefficient was effectively near zero and could make the
 ball look as if it slid like a cube.
 
+S4a additionally closes the integration gap between that isolated Reality Pack
+and actual three-player evidence. Translational and angular free-ball damping
+are now dimensionally separate, and every passing trajectory must prove rolling
+from measured linear and angular velocity. The frozen S3 relay is correctly
+rejected as sliding; see the [S4a rolling report](docs/rolling-authenticity-s4a.zh-CN.md).
+
 ## Attach to ROSClaw
 
 Install this downstream package beside a ROSClaw checkout that includes the
