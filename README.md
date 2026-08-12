@@ -20,8 +20,8 @@ steps. Claw-7 is currently a provisional **Age 4: First Footballer**.
 | Capability | Current evidence |
 | --- | --- |
 | Bilateral finishing | Physical right- and left-foot contact; 2.4 cm and 6.1 cm target error |
-| Shared-world football | One ball, passer, shooter, and reactive goalkeeper in one MuJoCo world |
-| Pass → finish | 2.90 m pass at 3.6 cm error; 6.61 m shot at 1.8 mm error |
+| Shared-world football | One ball and three independent role agents; old highlight withdrawn after rolling audit |
+| Pass → finish | Corrected-physics retraining in progress; old 3.6 cm / 1.8 mm result relied on sliding |
 | Recovery | No falls or joint-limit violations in the certified Age-4 cases |
 | Long-range highlight | 7.5 m upper-corner shot, explicitly `DEVELOPMENT` due to saturation |
 

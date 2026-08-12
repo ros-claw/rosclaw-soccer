@@ -37,6 +37,12 @@ artifact；换世界、换随机种子或用不相干的旧回放都无法冒充
 训练可以采用 centralized training / decentralized execution：critic 可看共享球场状态，
 执行时每个 actor 只获得自己的角色观察和动作权限。
 
+本轮还新增 `joint_policy_search.py`，不再只靠手改补丁参数。passer、shooter 和
+goalkeeper 各自拥有独立、带边界的策略向量；同一共享世界 seed 下执行 `+epsilon` 与
+`-epsilon` 镜像实验，从真实成功/失败分数估计角色局部更新方向。任何跌倒、越界、非
+严格回放或滚动失败的 probe 都不能给策略加权；若某角色剩余安全样本不足或没有学习
+信号，则整组三角色 proposal 失败。该搜索只产生 candidate，不能绕过下方 holdout 门。
+
 ## 为什么不用一个“全队进球奖励”
 
 只给全队一个进球奖励会产生 free-rider：传球者可以传烂球，只要射手偶然救回来也拿满
