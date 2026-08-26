@@ -285,6 +285,93 @@ def build_g1_three_player_stadium_model(
     return model
 
 
+def build_g1_four_player_two_ball_stadium_model(
+    asset_root: Path,
+    *,
+    passer_origin_m: tuple[float, float, float],
+    passer_yaw_rad: float = math.pi,
+    goalkeeper_origin_m: tuple[float, float, float],
+    second_striker_origin_m: tuple[float, float, float],
+    first_ball_origin_m: tuple[float, float, float],
+    second_ball_origin_m: tuple[float, float, float],
+    spec: G1TrainingGoalSpec | None = None,
+) -> Any:
+    """Compile a no-reset four-G1 stadium with a second physical football.
+
+    This builder is infrastructure for a future second-striker exam. It does
+    not claim that the fourth G1 has kicked the ball: that claim belongs to a
+    rollout with ordered foot contact, post-contact speed gain and goal/save
+    scoring. Both balls exist from model compilation onward, so consumers do
+    not need to teleport or replace the first save's live ball.
+    """
+
+    goal = spec or G1TrainingGoalSpec()
+    root = asset_root.expanduser().resolve()
+    parent = _stadium_spec(root, goal)
+
+    import mujoco
+
+    _attach_g1(
+        parent,
+        root=root,
+        frame_name="passer_frame",
+        prefix="passer_",
+        origin_m=passer_origin_m,
+        yaw_rad=passer_yaw_rad,
+        mujoco=mujoco,
+    )
+    _attach_g1(
+        parent,
+        root=root,
+        frame_name="goalkeeper_frame",
+        prefix="goalkeeper_",
+        origin_m=goalkeeper_origin_m,
+        yaw_rad=math.pi,
+        mujoco=mujoco,
+    )
+    _attach_g1(
+        parent,
+        root=root,
+        frame_name="second_striker_frame",
+        prefix="second_striker_",
+        origin_m=second_striker_origin_m,
+        yaw_rad=0.0,
+        mujoco=mujoco,
+    )
+    _add_goalkeeper_hand_envelopes(
+        parent,
+        body_prefix="goalkeeper_",
+        geom_prefix="goalkeeper_",
+        mujoco=mujoco,
+    )
+    if (
+        len(first_ball_origin_m) != 3
+        or not all(math.isfinite(value) for value in first_ball_origin_m)
+        or abs(first_ball_origin_m[1]) > goal.field_width_m / 2.0
+        or first_ball_origin_m[2] < goal.ball_radius_m
+    ):
+        raise ValueError("first football origin is outside the declared pitch")
+    first_ball = parent.body("ball")
+    if first_ball is None:
+        raise ValueError("four-player stadium source football is unavailable")
+    first_ball.pos = first_ball_origin_m
+    _add_secondary_football(
+        parent,
+        origin_m=second_ball_origin_m,
+        spec=goal,
+        mujoco=mujoco,
+    )
+    model = parent.compile()
+    _configure_ball_dof_damping(model, goal)
+    _configure_ball_dof_damping(model, goal, joint_name="second_ball_free")
+    _require_stadium_model(model)
+    if model.nu != 116:
+        raise ValueError(f"four-player stadium model has {model.nu} actuators, expected 116")
+    if model.body("second_ball").id < 0 or model.geom("second_ball_geom").id < 0:
+        raise ValueError("four-player stadium model lacks its second physical ball")
+    return model
+
+
 def _attach_g1(
     parent: Any,
     *,
@@ -308,6 +395,74 @@ def _attach_g1(
     if first_body is None:
         raise ValueError("qualified G1 model does not contain a root body")
     frame.attach_body(first_body, prefix=prefix)
+
+
+def _add_secondary_football(
+    parent: Any,
+    *,
+    origin_m: tuple[float, float, float],
+    spec: G1TrainingGoalSpec,
+    mujoco: Any,
+) -> None:
+    """Add one regulation-mass physical ball at a declared initial pose."""
+
+    if (
+        len(origin_m) != 3
+        or not all(math.isfinite(value) for value in origin_m)
+        or abs(origin_m[1]) > spec.field_width_m / 2.0
+        or origin_m[2] < spec.ball_radius_m
+    ):
+        raise ValueError("second football origin is outside the declared pitch")
+    body = parent.worldbody.add_body(name="second_ball", pos=origin_m)
+    joint = body.add_freejoint(name="second_ball_free")
+    try:
+        joint.damping = 0.0
+    except TypeError:
+        joint.damping = (0.0, 0.0, 0.0)
+    inertia = 0.4 * spec.ball_mass_kg * spec.ball_radius_m**2
+    body.mass = spec.ball_mass_kg
+    body.inertia = (inertia, inertia, inertia)
+    # MjSpec otherwise infers the explicit inertial position from the body's
+    # world spawn coordinates when mass/inertia are assigned programmatically.
+    # That creates a metre-scale COM offset and turns a resting floor force
+    # into a large rolling torque. The source ball's COM is at its body origin.
+    body.ipos = (0.0, 0.0, 0.0)
+    body.add_geom(
+        name="second_ball_geom",
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=(spec.ball_radius_m, 0.0, 0.0),
+        rgba=(0.93, 0.93, 0.91, 1.0),
+        density=0.0,
+        contype=1,
+        conaffinity=1,
+        condim=3,
+        solref=(0.001, 0.05),
+        solimp=(0.95, 0.99, 0.001, 0.5, 2.0),
+        friction=(
+            spec.ball_contact_sliding_friction,
+            spec.ball_torsional_friction,
+            spec.ball_rolling_friction,
+        ),
+    )
+    # Match the qualified source football's explicit six-dimensional floor
+    # pair. Relying on an auto-generated condim=6 contact causes small
+    # tangential solver noise to self-excite a resting sphere in MuJoCo; the
+    # named pair keeps both footballs under the same rolling contract.
+    parent.add_pair(
+        name="second_ball_floor",
+        geomname1="second_ball_geom",
+        geomname2="floor",
+        condim=6,
+        solref=(0.001, 1.0),
+        solimp=(0.95, 0.99, 0.001, 0.5, 2.0),
+        friction=(
+            spec.ball_sliding_friction,
+            spec.ball_sliding_friction,
+            spec.ball_torsional_friction,
+            spec.ball_rolling_friction,
+            spec.ball_rolling_friction,
+        ),
+    )
 
 
 def _add_goalkeeper_hand_envelopes(
@@ -378,7 +533,12 @@ def _require_stadium_model(model: Any) -> None:
             raise AssertionError(f"stadium scene is missing {name}")
 
 
-def _configure_ball_dof_damping(model: Any, spec: G1TrainingGoalSpec) -> None:
+def _configure_ball_dof_damping(
+    model: Any,
+    spec: G1TrainingGoalSpec,
+    *,
+    joint_name: str = "ball_free",
+) -> None:
     """Separate translational drag from rotational drag after compilation.
 
     MuJoCo's free-joint ``damping`` shortcut expands one scalar across all six
@@ -388,13 +548,13 @@ def _configure_ball_dof_damping(model: Any, spec: G1TrainingGoalSpec) -> None:
     bind their two units here and fail closed if the qualified scene changes.
     """
 
-    ball_joint = model.joint("ball_free")
+    ball_joint = model.joint(joint_name)
     addresses = tuple(int(value) for value in ball_joint.dofadr)
     if len(addresses) != 1:
-        raise ValueError("qualified stadium ball_free does not have one DOF address")
+        raise ValueError(f"qualified stadium {joint_name} does not have one DOF address")
     dof_address = addresses[0]
     if dof_address < 0 or dof_address + 6 > int(model.nv):
-        raise ValueError("qualified stadium ball_free does not expose six DOFs")
+        raise ValueError(f"qualified stadium {joint_name} does not expose six DOFs")
     model.dof_damping[dof_address : dof_address + 3] = spec.ball_free_joint_damping_n_s_m
     model.dof_damping[dof_address + 3 : dof_address + 6] = spec.ball_angular_damping_n_m_s_rad
 
@@ -867,6 +1027,7 @@ __all__ = [
     "G1TrainingGoalSpec",
     "apply_g1_compliant_goal_net_force",
     "build_g1_coupled_stadium_model",
+    "build_g1_four_player_two_ball_stadium_model",
     "build_g1_stadium_model",
     "build_g1_three_player_stadium_model",
     "g1_stadium_scene_hash",

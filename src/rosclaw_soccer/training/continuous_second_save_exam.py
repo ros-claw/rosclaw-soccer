@@ -312,7 +312,7 @@ def evaluate_continuous_second_save(
         config=config.ready,
     )
     second_contact = result.goalkeeper_second_glove_contact_time_sec
-    post_second_height = math.inf
+    post_second_height: float | None = None
     if second_contact is not None:
         post_second = time >= second_contact
         post_second_height = float(
@@ -333,6 +333,13 @@ def evaluate_continuous_second_save(
             and continuity.get("launcher_active_frame_count", 0) >= 3
             and continuity.get("post_launch_speed_gain_mps", -math.inf)
             >= config.minimum_post_launch_speed_gain_mps
+        ),
+        "forward_field_side_second_threat": bool(
+            result.second_threat_launch_position_m is not None
+            and result.second_threat_target_velocity_mps is not None
+            and result.second_threat_launch_position_m[0] + goal.ball_radius_m
+            < goal.plane_x_m - config.threat.target_depth_before_goal_m
+            and result.second_threat_target_velocity_mps[0] > 0.0
         ),
         "new_causal_threat_epoch": bool(
             continuity.get("flight_epoch_clear_at_launch") is True
@@ -378,7 +385,9 @@ def evaluate_continuous_second_save(
             result.goalkeeper_second_save_observed and not result.goal_crossed
         ),
         "post_second_stability": bool(
-            post_second_height >= config.minimum_post_second_pelvis_height_m
+            post_second_height is not None
+            and math.isfinite(post_second_height)
+            and post_second_height >= config.minimum_post_second_pelvis_height_m
             and result.finite_state
             and not result.goalkeeper_joint_limit_violation
             and not result.torque_limit_violation
@@ -479,8 +488,28 @@ def run_continuous_second_save_exam(
         parent_kwargs = dict(kwargs)
         parent_kwargs["second_threat_config"] = None
         parent_result, parent_trajectory = simulate_shared_world(asset_root, **parent_kwargs)
-        result, trajectory = simulate_shared_world(asset_root, **kwargs)
-        replay_result, replay_trajectory = simulate_shared_world(asset_root, **kwargs)
+        parent_path = destination / f"{lane_id}-parent-trajectory.npz"
+        _atomic_trajectory(parent_path, parent_trajectory)
+        try:
+            result, trajectory = simulate_shared_world(asset_root, **kwargs)
+            replay_result, replay_trajectory = simulate_shared_world(asset_root, **kwargs)
+        except RuntimeError as exc:
+            cases[lane_id] = {
+                "passed": False,
+                "gates": {"simulation_completed": False},
+                "evaluation": {
+                    "passed": False,
+                    "reason": "continuous second-save simulation rejected",
+                    "failure_type": type(exc).__name__,
+                    "failure_message": str(exc),
+                },
+                "strict_replay": False,
+                "parent_trajectory_file": parent_path.name,
+                "parent_trajectory_hash": hash_bytes(parent_path.read_bytes()),
+                "trajectory_file": None,
+                "trajectory_hash": None,
+            }
+            continue
         evaluation = evaluate_continuous_second_save(
             result=result,
             trajectory=trajectory,
@@ -514,9 +543,7 @@ def run_continuous_second_save_exam(
             "continuous_candidate_passed": evaluation.get("passed") is True,
             "strict_replay": strict_replay,
         }
-        parent_path = destination / f"{lane_id}-parent-trajectory.npz"
         trajectory_path = destination / f"{lane_id}-continuous-trajectory.npz"
-        _atomic_trajectory(parent_path, parent_trajectory)
         _atomic_trajectory(trajectory_path, trajectory)
         cases[lane_id] = {
             "passed": bool(all(lane_gates.values())),
@@ -532,7 +559,7 @@ def run_continuous_second_save_exam(
     portfolio_gates = {
         "all_requested_lanes_pass": set(cases) == set(active.lane_ids)
         and all(case["passed"] for case in cases.values()),
-        "at_least_one_continuous_second_save": len(cases) >= 1,
+        "at_least_one_continuous_second_save": any(case["passed"] for case in cases.values()),
     }
     passed = bool(all(portfolio_gates.values()))
     report: dict[str, Any] = {
