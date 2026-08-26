@@ -1,4 +1,4 @@
-"""Three-role football rollout in one deterministic MuJoCo world.
+"""Multi-role football rollout in one deterministic MuJoCo world.
 
 This module is the Soccer-owned successor to the historical Core experiment.
 It runs one passer, one shooter, one goalkeeper and one physical ball under a
@@ -140,6 +140,7 @@ from rosclaw_soccer.world.field import (
     G1TrainingGoalSpec,
     apply_g1_compliant_goal_net_force,
     build_g1_coupled_stadium_model,
+    build_g1_four_player_two_ball_stadium_model,
     build_g1_three_player_stadium_model,
     g1_ball_inside_goal_mouth,
 )
@@ -881,6 +882,115 @@ class G1SecondThreatConfig:
             raise ValueError("second-threat curriculum must remain SIM_ONLY")
 
 
+@dataclass(frozen=True)
+class G1PhysicalSecondStrikerConfig:
+    """Fourth-G1/second-football provider for a no-reset second threat.
+
+    Both the robot and football exist from model compilation onward.  The
+    fourth G1 starts its frozen RoboNaldo policy late enough for the first
+    goalkeeper save to finish, while its exact foot contact—not a timer—owns
+    the causal handoff to the goalkeeper observer.
+    """
+
+    policy_start_time_sec: float = 11.49
+    observer_rearm_earliest_sec: float = 16.0
+    origin_m: tuple[float, float, float] = (0.50, 0.30, 0.0)
+    ball_origin_m: tuple[float, float, float] = (1.785, 0.282, 0.115)
+    # ROSClaw exposes each robot's sensed world state in its attached actor
+    # frame.  This is therefore the inverse-calibrated FreeKick target in that
+    # same policy frame, not the physical scoring target at the goal plane.
+    policy_target_m: tuple[float, float, float] = (7.50, 0.70, 1.20)
+    swing_amplitude: float = 1.0
+    swing_speed_scale: float = 0.90
+    foot_yaw_offset: float = 0.01
+    foot_pitch_offset: float = 0.10
+    loft_synergy: float = 0.10
+    contact_phase_offset: float = 0.0
+    goalkeeper_punch_force_n: float = 90.0
+    goalkeeper_punch_outward_force_scale: float = 0.0
+    post_policy_frame: int = 275
+    post_policy_blend_frames: int = 0
+    minimum_contact_force_n: float = 20.0
+    maximum_contact_force_n: float = 1500.0
+    minimum_post_contact_speed_gain_mps: float = 4.0
+    minimum_forward_ball_speed_mps: float = 3.0
+    minimum_pelvis_height_m: float = 0.60
+    activation_ceiling: str = "SIM_ONLY"
+    hardware_authorized: bool = False
+    schema_version: str = "rosclaw_soccer.g1_physical_second_striker_config.v1"
+
+    def __post_init__(self) -> None:
+        values = (
+            self.policy_start_time_sec,
+            self.observer_rearm_earliest_sec,
+            *self.origin_m,
+            *self.ball_origin_m,
+            *self.policy_target_m,
+            self.swing_amplitude,
+            self.swing_speed_scale,
+            self.foot_yaw_offset,
+            self.foot_pitch_offset,
+            self.loft_synergy,
+            self.contact_phase_offset,
+            self.goalkeeper_punch_force_n,
+            self.goalkeeper_punch_outward_force_scale,
+            self.minimum_contact_force_n,
+            self.maximum_contact_force_n,
+            self.minimum_post_contact_speed_gain_mps,
+            self.minimum_forward_ball_speed_mps,
+            self.minimum_pelvis_height_m,
+        )
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("physical second-striker settings must be finite")
+        if not 9.0 <= self.policy_start_time_sec <= 15.0:
+            raise ValueError("physical second-striker start time is invalid")
+        if not 14.0 <= self.observer_rearm_earliest_sec <= 20.0:
+            raise ValueError("physical second-striker observer rearm time is invalid")
+        if self.observer_rearm_earliest_sec <= self.policy_start_time_sec:
+            raise ValueError("physical second-striker rearm must follow policy start")
+        local_ball = np.asarray(self.ball_origin_m) - np.asarray(self.origin_m)
+        if not (
+            1.15 <= local_ball[0] <= 1.40
+            and -0.25 <= local_ball[1] <= 0.15
+            and 0.105 <= local_ball[2] <= 0.130
+        ):
+            raise ValueError("physical second football is outside the qualified strike pocket")
+        if not 4.0 <= self.policy_target_m[0] <= 12.0 or not (
+            -3.2 <= self.policy_target_m[1] <= 3.2 and 0.115 <= self.policy_target_m[2] <= 1.2
+        ):
+            raise ValueError("physical second-striker policy target is invalid")
+        ShotParameters(
+            swing_amplitude=self.swing_amplitude,
+            swing_speed_scale=self.swing_speed_scale,
+            foot_yaw_offset=self.foot_yaw_offset,
+            foot_pitch_offset=self.foot_pitch_offset,
+            loft_synergy=self.loft_synergy,
+            contact_phase_offset=self.contact_phase_offset,
+        )
+        if not 20.0 <= self.goalkeeper_punch_force_n <= 120.0:
+            raise ValueError("physical second-striker goalkeeper punch force is invalid")
+        if not 0.0 <= self.goalkeeper_punch_outward_force_scale <= 0.75:
+            raise ValueError("physical second-striker goalkeeper punch scale is invalid")
+        if not 220 <= self.post_policy_frame <= 340:
+            raise ValueError("physical second-striker post-policy frame is invalid")
+        if not 0 <= self.post_policy_blend_frames <= 40:
+            raise ValueError("physical second-striker handoff blend is invalid")
+        if not 5.0 <= self.minimum_contact_force_n <= 100.0 or not (
+            200.0 <= self.maximum_contact_force_n <= 3000.0
+        ):
+            raise ValueError("physical second-striker contact-force gate is invalid")
+        if self.maximum_contact_force_n <= self.minimum_contact_force_n:
+            raise ValueError("physical second-striker force interval is empty")
+        if not 2.0 <= self.minimum_post_contact_speed_gain_mps <= 8.0:
+            raise ValueError("physical second-striker speed-gain gate is invalid")
+        if not 2.0 <= self.minimum_forward_ball_speed_mps <= 8.0:
+            raise ValueError("physical second-striker forward-speed gate is invalid")
+        if not 0.50 <= self.minimum_pelvis_height_m <= 0.72:
+            raise ValueError("physical second-striker pelvis-height gate is invalid")
+        if self.activation_ceiling != "SIM_ONLY" or self.hardware_authorized:
+            raise ValueError("physical second-striker provider must remain SIM_ONLY")
+
+
 def shared_post_impact_simulation_kwargs() -> dict[str, Any]:
     recovery = shared_post_impact_recovery_config()
     guard = G1JointGuardConfig()
@@ -1093,10 +1203,28 @@ class G1SharedWorldResult:
     goalkeeper_second_contact_left_hand_ball_distance_m: float | None = None
     goalkeeper_second_contact_right_hand_ball_distance_m: float | None = None
     goalkeeper_second_save_observed: bool = False
+    physical_second_striker_enabled: bool = False
+    second_striker_ball_existed_from_time_zero: bool = False
+    second_striker_contact_observed: bool = False
+    second_striker_contact_time_sec: float | None = None
+    second_striker_contact_foot: str | None = None
+    second_striker_contact_force_peak_n: float = 0.0
+    second_striker_precontact_peak_ball_speed_mps: float = 0.0
+    second_striker_postcontact_peak_ball_speed_mps: float = 0.0
+    second_striker_postcontact_peak_forward_ball_speed_mps: float = 0.0
+    second_striker_min_pelvis_height_m: float | None = None
+    second_striker_ballistic_actor_active_fraction: float = 0.0
+    second_striker_ballistic_actor_peak_torque_nm: float = 0.0
+    second_striker_unexpected_precontact_collision_geoms: tuple[str, ...] = ()
+    second_striker_joint_limit_violation: bool = False
+    second_ball_goal_plane_crossed: bool = False
+    second_ball_goal_crossed: bool = False
+    second_ball_goal_crossing_y_m: float | None = None
+    second_ball_goal_crossing_z_m: float | None = None
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v17"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v18"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1530,6 +1658,11 @@ def _simulate_shared_world(
     goal_spec: G1TrainingGoalSpec | None = None,
     goalkeeper_config: G1GoalkeeperConfig | None = None,
     second_threat_config: G1SecondThreatConfig | None = None,
+    physical_second_striker_config: G1PhysicalSecondStrikerConfig | None = None,
+    second_striker_ballistic_contact_config: G1BallisticContactResidualConfig | None = None,
+    second_striker_ballistic_contact_torque_config: (
+        G1BallisticContactTorqueResidualConfig | None
+    ) = None,
     unified_stadium_scene: bool = True,
     shooter_ball_initial_position_m: tuple[float, float, float] | None = None,
     ball_launcher_position_m: tuple[float, float, float] | None = None,
@@ -1563,6 +1696,21 @@ def _simulate_shared_world(
         raise ValueError(
             "second-threat curriculum requires a recovered goalkeeper, continuous first chain "
             "and enough unprobed simulation time"
+        )
+    if physical_second_striker_config is not None and (
+        goalkeeper_config is None
+        or not goalkeeper_config.post_contact_ready_recovery_enabled
+        or goalkeeper_config.successor_lateral_probe_enabled
+        or second_threat_config is not None
+        or ball_launcher_position_m is not None
+        or shooter_ball_initial_position_m is not None
+        or shooter_ballistic_actor_path is None
+        or simulation_duration_sec
+        < physical_second_striker_config.observer_rearm_earliest_sec + 4.0
+    ):
+        raise ValueError(
+            "physical second striker requires a recovered goalkeeper, ballistic contact "
+            "actor, continuous first chain, no launcher and enough simulation time"
         )
     if second_threat_config is not None and goalkeeper_config is not None:
         second_peak_punch_vector = second_threat_config.goalkeeper_punch_force_n * math.sqrt(
@@ -1755,6 +1903,7 @@ def _simulate_shared_world(
         passer_yaw_rad=passer_yaw_rad,
         goal=active_goal,
         goalkeeper_config=goalkeeper_config,
+        physical_second_striker_config=physical_second_striker_config,
         unified_stadium_scene=unified_stadium_scene,
     )
     data = mujoco.MjData(model)
@@ -1765,6 +1914,16 @@ def _simulate_shared_world(
     ball_joint = int(model.body_jntadr[ball_body])
     ball_qpos = int(model.jnt_qposadr[ball_joint])
     ball_qvel = int(model.jnt_dofadr[ball_joint])
+    second_ball_body: int | None = None
+    second_ball_geom: int | None = None
+    second_ball_qpos: int | None = None
+    second_ball_qvel: int | None = None
+    if physical_second_striker_config is not None:
+        second_ball_body = _id(model, mujoco.mjtObj.mjOBJ_BODY, "second_ball")
+        second_ball_geom = _id(model, mujoco.mjtObj.mjOBJ_GEOM, "second_ball_geom")
+        second_ball_joint = _id(model, mujoco.mjtObj.mjOBJ_JOINT, "second_ball_free")
+        second_ball_qpos = int(model.jnt_qposadr[second_ball_joint])
+        second_ball_qvel = int(model.jnt_dofadr[second_ball_joint])
     floor_geom = _id(model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
     if not 0.03 <= ball_ground_friction <= 0.80:
         raise ValueError("coupled relay ball friction must be in [0.03, 0.80]")
@@ -1960,6 +2119,19 @@ def _simulate_shared_world(
         if shooter_early_arrival_parameter_overrides
         else None
     )
+    second_striker_parameters = (
+        replace(
+            shooter_parameters,
+            swing_amplitude=physical_second_striker_config.swing_amplitude,
+            swing_speed_scale=physical_second_striker_config.swing_speed_scale,
+            foot_yaw_offset=physical_second_striker_config.foot_yaw_offset,
+            foot_pitch_offset=physical_second_striker_config.foot_pitch_offset,
+            loft_synergy=physical_second_striker_config.loft_synergy,
+            contact_phase_offset=physical_second_striker_config.contact_phase_offset,
+        )
+        if physical_second_striker_config is not None
+        else None
+    )
     passer_parameters = ShotParameters(
         stance_offset_y=-0.04,
         pelvis_yaw_offset=0.10,
@@ -2007,8 +2179,24 @@ def _simulate_shared_world(
     shooter_recovery = _build_recovery_controller(
         qualification, shooter_scenario, shooter_recovery_config
     )
+    second_striker_recovery = (
+        None
+        if physical_second_striker_config is None
+        else _build_recovery_controller(
+            qualification,
+            replace(
+                shooter_scenario,
+                scenario_id="goalforge-fourth-g1-physical-second-strike",
+                ball_velocity_x_mps=0.0,
+                ball_velocity_y_mps=0.0,
+            ),
+            shooter_recovery_config,
+        )
+    )
     passer_recovery.reset()
     shooter_recovery.reset()
+    if second_striker_recovery is not None:
+        second_striker_recovery.reset()
     if shooter_recovery_candidate_path is not None:
         shooter_recovery_actor: NumpyIQLActor | SupportBoundIQLResidualActor | None
         if shooter_recovery_residual_config is None:
@@ -2348,7 +2536,60 @@ def _simulate_shared_world(
                 device=torch.device("cpu"),
             )
             goalkeeper_recovery_athlete_torch = torch
-    robots = (passer, shooter) if goalkeeper is None else (passer, shooter, goalkeeper)
+    second_striker: _Robot | None = None
+    if physical_second_striker_config is not None:
+        second_striker = _make_robot(
+            model=model,
+            data=data,
+            role="second_striker",
+            prefix="second_striker_",
+            origin=np.asarray(physical_second_striker_config.origin_m, dtype=np.float64),
+            yaw=0.0,
+            state_type=state_type,
+            output_type=output_type,
+            policy_type=policy_type,
+            parameters=cast(ShotParameters, second_striker_parameters),
+            start_sec=physical_second_striker_config.policy_start_time_sec,
+            initial_position=initial_position,
+            initial_quaternion=initial_quaternion,
+            initial_joints=standby_target,
+            target_local=np.asarray(
+                physical_second_striker_config.policy_target_m,
+                dtype=np.float32,
+            ),
+            phase_hold_frames=0,
+            standby_target=standby_target,
+            standby_kp=standby_kp,
+            standby_kd=standby_kd,
+            use_locomotion_standby=True,
+            recovery_controller=second_striker_recovery,
+            post_policy_frame=physical_second_striker_config.post_policy_frame,
+            post_policy_blend_frames=(physical_second_striker_config.post_policy_blend_frames),
+            phase_sync_enabled=False,
+            recovery_torque_actor=None,
+            joint_guard_enabled=True,
+            post_policy_neutral_velocity_enabled=False,
+            post_policy_forward_velocity_mps=0.0,
+            joint_guard_config=shooter_joint_guard_config or G1JointGuardConfig(),
+            joint_guard_late_config=shooter_joint_guard_late_config,
+            post_policy_recovery_enabled=True,
+            early_arrival_parameters=shooter_early_arrival_parameters,
+            motion_prior=None,
+            motion_prior_position_blend=0.0,
+            motion_prior_velocity_blend=0.0,
+            motion_prior_strike_leg_scale=1.0,
+            motion_prior_joint_scales=(1.0,) * 29,
+            motion_prior_velocity_joint_scales=(1.0,) * 29,
+            motion_prior_contact_policy_frame=253,
+            contact_prior=None,
+            contact_prior_position_blend=0.0,
+            contact_prior_velocity_blend=0.0,
+            contact_prior_contact_policy_frame=253,
+            contact_prior_joint_scales=(1.0,) * 6,
+        )
+    robots = tuple(
+        robot for robot in (passer, shooter, goalkeeper, second_striker) if robot is not None
+    )
     passer_geoms = _robot_geom_ids(model, passer.pelvis_body)
     shooter_geoms = _robot_geom_ids(model, shooter.pelvis_body)
     goalkeeper_geoms = (
@@ -2356,6 +2597,11 @@ def _simulate_shared_world(
     )
     goalkeeper_left_glove_geoms: frozenset[int] = frozenset()
     goalkeeper_right_glove_geoms: frozenset[int] = frozenset()
+    second_striker_geoms = (
+        frozenset()
+        if second_striker is None
+        else _robot_geom_ids(model, second_striker.pelvis_body)
+    )
     if goalkeeper is not None and goalkeeper_config is not None:
         goalkeeper_gloves = _goalkeeper_glove_geoms(
             model=model,
@@ -2394,7 +2640,11 @@ def _simulate_shared_world(
     mujoco.mj_forward(model, data)
 
     for robot in robots:
-        _fill_local_state(robot, data, ball_body, ball_qvel)
+        if robot is second_striker:
+            assert second_ball_body is not None and second_ball_qvel is not None
+            _fill_local_state(robot, data, second_ball_body, second_ball_qvel)
+        else:
+            _fill_local_state(robot, data, ball_body, ball_qvel)
     if launcher_position is None and direct_shot_position is None:
         _enter_policy(passer)
 
@@ -2476,6 +2726,33 @@ def _simulate_shared_world(
         "second_threat_launcher_force": [],
         "robot_robot_contact_count": [],
     }
+    if second_striker is not None:
+        trace.update(
+            {
+                "second_ball_pose": [],
+                "second_ball_velocity": [],
+                "second_striker_pelvis_pose": [],
+                "second_striker_left_foot_position": [],
+                "second_striker_right_foot_position": [],
+                "second_striker_joint_position": [],
+                "second_striker_joint_velocity": [],
+                "second_striker_commanded_torque": [],
+                "second_striker_safety_projected_torque": [],
+                "second_striker_executed_torque": [],
+                "second_striker_policy_action": [],
+                "second_striker_policy_frame": [],
+                "second_striker_foot_contact": [],
+                "second_striker_contact_force_n": [],
+                "second_striker_ballistic_actor_active": [],
+                "second_striker_ballistic_actor_torque": [],
+                "second_striker_ballistic_actor_force_yz_n": [],
+                "second_striker_ballistic_actor_foot_velocity_yz_mps": [],
+                "second_striker_ballistic_contact_active": [],
+                "second_striker_ballistic_contact_target_delta": [],
+                "second_striker_ballistic_contact_torque_active": [],
+                "second_striker_ballistic_contact_torque": [],
+            }
+        )
     if goalkeeper is not None:
         trace.update(
             {
@@ -2565,6 +2842,13 @@ def _simulate_shared_world(
     passer_pitch_peak = 0.0
     shooter_roll_peak = 0.0
     shooter_pitch_peak = 0.0
+    second_striker_min_height = math.inf
+    second_striker_contact_force_peak = 0.0
+    second_striker_precontact_peak_speed = 0.0
+    second_striker_postcontact_peak_speed = 0.0
+    second_striker_postcontact_peak_forward_speed = 0.0
+    second_striker_contact_foot: str | None = None
+    second_striker_unexpected_precontact_collision_geoms: set[str] = set()
     pass_peak_speed = 0.0
     shot_peak_speed = 0.0
     goal_crossed = False
@@ -2616,6 +2900,14 @@ def _simulate_shared_world(
     goalkeeper_initial_y = 0.0 if goalkeeper is None else float(data.qpos[goalkeeper.qpos_base + 1])
     previous_ball_x = float(data.qpos[ball_qpos])
     goal_net_state = G1CompliantGoalNetState()
+    previous_second_ball_x = (
+        None if second_ball_qpos is None else float(data.qpos[second_ball_qpos])
+    )
+    second_goal_net_state = G1CompliantGoalNetState()
+    second_ball_goal_plane_crossed = False
+    second_ball_goal_crossed = False
+    second_ball_crossing_y: float | None = None
+    second_ball_crossing_z: float | None = None
     goalkeeper_previous_actor_residual: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
     goalkeeper_contact_epoch = 0
     second_threat_rearmed = False
@@ -2637,18 +2929,33 @@ def _simulate_shared_world(
     goalkeeper_second_contact_right_hand_height: float | None = None
     goalkeeper_second_contact_left_hand_ball_distance: float | None = None
     goalkeeper_second_contact_right_hand_ball_distance: float | None = None
+    physical_rearm_earliest = (
+        None
+        if physical_second_striker_config is None
+        else physical_second_striker_config.observer_rearm_earliest_sec
+    )
 
     for frame in range(total_frames):
         for robot in robots:
-            _fill_local_state(robot, data, ball_body, ball_qvel)
+            if robot is second_striker or (
+                robot is goalkeeper and second_striker is not None and second_threat_rearmed
+            ):
+                assert second_ball_body is not None and second_ball_qvel is not None
+                _fill_local_state(robot, data, second_ball_body, second_ball_qvel)
+            else:
+                _fill_local_state(robot, data, ball_body, ball_qvel)
         if (
-            second_threat_config is not None
+            (second_threat_config is not None or physical_rearm_earliest is not None)
             and goalkeeper is not None
             and goalkeeper_observer is not None
             and not second_threat_rearmed
             and goalkeeper_contact_time is not None
             and float(data.time)
-            >= second_threat_config.launch_time_sec - second_threat_config.rearm_lead_sec
+            >= (
+                second_threat_config.launch_time_sec - second_threat_config.rearm_lead_sec
+                if second_threat_config is not None
+                else cast(float, physical_rearm_earliest)
+            )
             and _goalkeeper_ready_for_second_threat(goalkeeper, data=data)
         ):
             # Rearm only controller memory.  Physical qpos/qvel, the live ball
@@ -2730,6 +3037,12 @@ def _simulate_shared_world(
             and data.time + 1e-12 >= shooter.start_sec
         ):
             _enter_policy(shooter)
+        if (
+            second_striker is not None
+            and not second_striker.entered
+            and data.time + 1e-12 >= second_striker.start_sec
+        ):
+            _enter_policy(second_striker)
         policy_frames: dict[str, int] = {}
         goalkeeper_command_mps = 0.0
         goalkeeper_target_y_m = 0.0
@@ -2760,7 +3073,21 @@ def _simulate_shared_world(
         goalkeeper_reference_action: HumanoidGoalkeeperReferenceAction | None = None
         shooter_ballistic_contact_active = False
         shooter_ballistic_contact_target_delta: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        second_striker_ballistic_contact_active = False
+        second_striker_ballistic_contact_target_delta: NDArray[np.float64] = np.zeros(
+            29, dtype=np.float64
+        )
         if goalkeeper is not None and goalkeeper_config is not None:
+            physical_second_tracking = bool(second_striker is not None and second_threat_rearmed)
+            keeper_shooter: _Robot = (
+                cast(_Robot, second_striker) if physical_second_tracking else shooter
+            )
+            keeper_ball_qpos = (
+                cast(int, second_ball_qpos) if physical_second_tracking else ball_qpos
+            )
+            keeper_ball_qvel = (
+                cast(int, second_ball_qvel) if physical_second_tracking else ball_qvel
+            )
             (
                 goalkeeper_command_mps,
                 goalkeeper_target_y_m,
@@ -2769,13 +3096,13 @@ def _simulate_shared_world(
                 goalkeeper_actor_observation,
             ) = _command_goalkeeper(
                 goalkeeper,
-                shooter=shooter,
+                shooter=keeper_shooter,
                 data=data,
-                ball_qpos=ball_qpos,
-                ball_qvel=ball_qvel,
+                ball_qpos=keeper_ball_qpos,
+                ball_qvel=keeper_ball_qvel,
                 goal=active_goal,
                 config=goalkeeper_config,
-                shot_contact_time=shooter.contact_time,
+                shot_contact_time=keeper_shooter.contact_time,
                 observer=goalkeeper_observer,
                 learned_actor=goalkeeper_actor,
                 previous_actor_residual=goalkeeper_previous_actor_residual,
@@ -2814,17 +3141,29 @@ def _simulate_shared_world(
             ):
                 robot.state.vel_cmd = _normalized_zero_locomotion_command(robot.standby_policy)
             policy_frames[robot.role] = _update_policy(robot, frame, timestamp_sec=float(data.time))
-            if robot.role == "shooter" and shooter_ballistic_contact_config is not None:
+            role_contact_config = (
+                second_striker_ballistic_contact_config
+                if robot.role == "second_striker"
+                and second_striker_ballistic_contact_config is not None
+                else shooter_ballistic_contact_config
+            )
+            if robot.role in {"shooter", "second_striker"} and role_contact_config is not None:
                 (
                     robot.last_target,
-                    shooter_ballistic_contact_target_delta,
-                    shooter_ballistic_contact_active,
+                    contact_target_delta,
+                    contact_target_active,
                 ) = blend_g1_ballistic_contact_target(
                     target=robot.last_target,
                     policy_frame=policy_frames[robot.role],
                     control_dt_sec=_CONTROL_DT,
-                    config=shooter_ballistic_contact_config,
+                    config=role_contact_config,
                 )
+                if robot.role == "second_striker":
+                    second_striker_ballistic_contact_target_delta = contact_target_delta
+                    second_striker_ballistic_contact_active = contact_target_active
+                else:
+                    shooter_ballistic_contact_target_delta = contact_target_delta
+                    shooter_ballistic_contact_active = contact_target_active
             robot.motion_prior_position_active_frame_count += int(
                 robot.last_motion_prior_position_active
             )
@@ -3653,15 +3992,33 @@ def _simulate_shared_world(
         goalkeeper_support = (False, False)
         frame_ballistic_actor_active = False
         frame_ballistic_actor_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        frame_second_striker_ballistic_actor_active = False
+        frame_second_striker_ballistic_actor_torque: NDArray[np.float64] = np.zeros(
+            29, dtype=np.float64
+        )
+        frame_second_striker_ballistic_actor_force_yz_n: NDArray[np.float64] = np.zeros(
+            2, dtype=np.float64
+        )
+        frame_second_striker_ballistic_actor_foot_velocity_yz_mps: NDArray[np.float64] = np.zeros(
+            2, dtype=np.float64
+        )
+        frame_second_striker_contact = False
+        frame_second_striker_contact_force_n = 0.0
         frame_loft_teacher_active = False
         frame_loft_teacher_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         frame_loft_teacher_force_xyz_n: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
         frame_ballistic_contact_torque_active = False
         frame_ballistic_contact_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        frame_second_striker_ballistic_contact_torque_active = False
+        frame_second_striker_ballistic_contact_torque: NDArray[np.float64] = np.zeros(
+            29, dtype=np.float64
+        )
         frame_goalkeeper_bimanual_punch_active = False
         frame_goalkeeper_bimanual_punch_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         for _ in range(_SUBSTEPS):
             data.xfrc_applied[ball_body, :3] = 0.0
+            if second_ball_body is not None:
+                data.xfrc_applied[second_ball_body, :3] = 0.0
             for robot in robots:
                 q = data.qpos[robot.joint_qpos]
                 dq = data.qvel[robot.joint_qvel]
@@ -3696,21 +4053,33 @@ def _simulate_shared_world(
                         data=data,
                         observation=goalkeeper_actor_observation,
                         force_n=(
-                            second_threat_config.goalkeeper_punch_force_n
-                            if second_threat_config is not None
+                            physical_second_striker_config.goalkeeper_punch_force_n
+                            if physical_second_striker_config is not None
                             and second_threat_rearmed
                             and goalkeeper_contact_epoch == 1
-                            else goalkeeper_config.actor_bimanual_punch_force_n + central_boost
+                            else (
+                                second_threat_config.goalkeeper_punch_force_n
+                                if second_threat_config is not None
+                                and second_threat_rearmed
+                                and goalkeeper_contact_epoch == 1
+                                else goalkeeper_config.actor_bimanual_punch_force_n + central_boost
+                            )
                         ),
                         vertical_force_scale=(
                             goalkeeper_config.actor_bimanual_punch_vertical_force_scale
                         ),
                         outward_force_scale=(
-                            second_threat_config.goalkeeper_punch_outward_force_scale
-                            if second_threat_config is not None
+                            physical_second_striker_config.goalkeeper_punch_outward_force_scale
+                            if physical_second_striker_config is not None
                             and second_threat_rearmed
                             and goalkeeper_contact_epoch == 1
-                            else goalkeeper_config.actor_bimanual_punch_outward_force_scale
+                            else (
+                                second_threat_config.goalkeeper_punch_outward_force_scale
+                                if second_threat_config is not None
+                                and second_threat_rearmed
+                                and goalkeeper_contact_epoch == 1
+                                else goalkeeper_config.actor_bimanual_punch_outward_force_scale
+                            )
                         ),
                         window_sec=goalkeeper_config.actor_bimanual_punch_window_sec,
                     )
@@ -3722,7 +4091,12 @@ def _simulate_shared_world(
                         np.max(np.abs(frame_goalkeeper_bimanual_punch_torque))
                     ):
                         frame_goalkeeper_bimanual_punch_torque = punch_torque.copy()
-                if robot.role == "shooter" and shooter_ballistic_actor is not None:
+                if robot.role in {"shooter", "second_striker"} and (
+                    shooter_ballistic_actor is not None
+                ):
+                    actor_ball_qpos = (
+                        cast(int, second_ball_qpos) if robot.role == "second_striker" else ball_qpos
+                    )
                     effect = g1_ballistic_contact_impulse_effect(
                         model=model,
                         data=data,
@@ -3731,16 +4105,37 @@ def _simulate_shared_world(
                         policy_frame=policy_frames[robot.role],
                         contact_observed=robot.contact_latched,
                         ball_position=np.asarray(
-                            data.qpos[ball_qpos : ball_qpos + 3],
+                            data.qpos[actor_ball_qpos : actor_ball_qpos + 3],
                             dtype=np.float64,
                         ),
+                        actuated_dof_indices=np.asarray(robot.joint_qvel, dtype=np.int64),
                     )
                     raw_torque = raw_torque + effect.torque
-                    frame_ballistic_actor_active = frame_ballistic_actor_active or effect.active
-                    if float(np.max(np.abs(effect.torque))) >= float(
-                        np.max(np.abs(frame_ballistic_actor_torque))
-                    ):
-                        frame_ballistic_actor_torque = effect.torque.copy()
+                    if robot.role == "second_striker":
+                        frame_second_striker_ballistic_actor_active = (
+                            frame_second_striker_ballistic_actor_active or effect.active
+                        )
+                        if float(np.max(np.abs(effect.torque))) >= float(
+                            np.max(np.abs(frame_second_striker_ballistic_actor_torque))
+                        ):
+                            frame_second_striker_ballistic_actor_torque = effect.torque.copy()
+                            frame_second_striker_ballistic_actor_force_yz_n = np.asarray(
+                                (effect.lateral_force_n, effect.vertical_force_n),
+                                dtype=np.float64,
+                            )
+                            frame_second_striker_ballistic_actor_foot_velocity_yz_mps = np.asarray(
+                                (
+                                    effect.foot_lateral_speed_mps,
+                                    effect.foot_vertical_speed_mps,
+                                ),
+                                dtype=np.float64,
+                            )
+                    else:
+                        frame_ballistic_actor_active = frame_ballistic_actor_active or effect.active
+                        if float(np.max(np.abs(effect.torque))) >= float(
+                            np.max(np.abs(frame_ballistic_actor_torque))
+                        ):
+                            frame_ballistic_actor_torque = effect.torque.copy()
                 if robot.role == "shooter" and shooter_loft_teacher_config is not None:
                     teacher_effect = g1_loft_teacher_effect(
                         model=model,
@@ -3768,20 +4163,38 @@ def _simulate_shared_world(
                             ),
                             dtype=np.float64,
                         )
-                if robot.role == "shooter" and shooter_ballistic_contact_torque_config is not None:
+                role_contact_torque_config = (
+                    second_striker_ballistic_contact_torque_config
+                    if robot.role == "second_striker"
+                    and second_striker_ballistic_contact_torque_config is not None
+                    else shooter_ballistic_contact_torque_config
+                )
+                if robot.role in {"shooter", "second_striker"} and (
+                    role_contact_torque_config is not None
+                ):
                     contact_torque, contact_torque_active = g1_ballistic_contact_torque_residual(
                         policy_frame=policy_frames[robot.role],
                         control_dt_sec=_CONTROL_DT,
-                        config=shooter_ballistic_contact_torque_config,
+                        config=role_contact_torque_config,
                     )
                     raw_torque = raw_torque + contact_torque
-                    frame_ballistic_contact_torque_active = (
-                        frame_ballistic_contact_torque_active or contact_torque_active
-                    )
-                    if float(np.max(np.abs(contact_torque))) >= float(
-                        np.max(np.abs(frame_ballistic_contact_torque))
-                    ):
-                        frame_ballistic_contact_torque = contact_torque.copy()
+                    if robot.role == "second_striker":
+                        frame_second_striker_ballistic_contact_torque_active = (
+                            frame_second_striker_ballistic_contact_torque_active
+                            or contact_torque_active
+                        )
+                        if float(np.max(np.abs(contact_torque))) >= float(
+                            np.max(np.abs(frame_second_striker_ballistic_contact_torque))
+                        ):
+                            frame_second_striker_ballistic_contact_torque = contact_torque.copy()
+                    else:
+                        frame_ballistic_contact_torque_active = (
+                            frame_ballistic_contact_torque_active or contact_torque_active
+                        )
+                        if float(np.max(np.abs(contact_torque))) >= float(
+                            np.max(np.abs(frame_ballistic_contact_torque))
+                        ):
+                            frame_ballistic_contact_torque = contact_torque.copy()
                 safety_projected = raw_torque
                 # The candidate is a post-impact recovery module.  Keeping the
                 # guard behind the measured contact latch preserves the frozen
@@ -3849,6 +4262,22 @@ def _simulate_shared_world(
                     damping_n_s_m=10.0,
                     state=goal_net_state,
                 )
+                if (
+                    second_ball_body is not None
+                    and second_ball_qpos is not None
+                    and second_ball_qvel is not None
+                ):
+                    apply_g1_compliant_goal_net_force(
+                        data,
+                        ball_body_id=second_ball_body,
+                        ball_qpos=second_ball_qpos,
+                        ball_qvel=second_ball_qvel,
+                        spec=active_goal,
+                        capture_depth_m=max(0.20, 0.80 * active_goal.depth_m),
+                        stiffness_n_m=180.0,
+                        damping_n_s_m=10.0,
+                        state=second_goal_net_state,
+                    )
             if (
                 second_threat_force is not None
                 and second_threat_force_stop_sec is not None
@@ -3874,6 +4303,20 @@ def _simulate_shared_world(
                 goalkeeper_left_glove_geoms=goalkeeper_left_glove_geoms,
                 goalkeeper_right_glove_geoms=goalkeeper_right_glove_geoms,
             )
+            second_observation: dict[str, Any] | None = None
+            if second_ball_geom is not None and second_striker is not None:
+                second_observation = _contacts(
+                    model=model,
+                    data=data,
+                    ball_geom=second_ball_geom,
+                    floor_geom=floor_geom,
+                    passer_geoms=passer_geoms | shooter_geoms,
+                    shooter_geoms=second_striker_geoms,
+                    goalkeeper_geoms=goalkeeper_geoms,
+                    goalkeeper_left_glove_geoms=goalkeeper_left_glove_geoms,
+                    goalkeeper_right_glove_geoms=goalkeeper_right_glove_geoms,
+                    shooter_geom_prefix="second_striker_",
+                )
             passer_support = (
                 passer_support[0] or observation["passer_left"],
                 passer_support[1] or observation["passer_right"],
@@ -3912,7 +4355,11 @@ def _simulate_shared_world(
                     shooter.contact_latched = True
                     shooter.contact_time = float(data.time)
                     _reset_post_contact_support_anchors(shooter)
-            if goalkeeper is not None and observation["ball_goalkeeper"]:
+            if (
+                goalkeeper is not None
+                and observation["ball_goalkeeper"]
+                and (second_striker is None or not second_striker.contact_latched)
+            ):
                 contact_role = 3
                 if not goalkeeper.contact_latched:
                     goalkeeper.contact_latched = True
@@ -4037,23 +4484,164 @@ def _simulate_shared_world(
                         and float(data.xpos[goalkeeper.right_hand_body, 2]) >= 1.05
                         and max(left_distance, right_distance) <= 0.38
                     )
-            if goalkeeper is not None and shooter.contact_latched:
+            if second_observation is not None and second_striker is not None:
+                frame_robot_contacts += int(second_observation["robot_robot"])
+                if not second_striker.contact_latched and second_ball_geom is not None:
+                    for contact_index in range(int(data.ncon)):
+                        candidate_contact = data.contact[contact_index]
+                        geoms = {
+                            int(candidate_contact.geom1),
+                            int(candidate_contact.geom2),
+                        }
+                        if second_ball_geom not in geoms:
+                            continue
+                        other_geom = next(geom for geom in geoms if geom != second_ball_geom)
+                        if other_geom == floor_geom or other_geom in second_striker_geoms:
+                            continue
+                        other_name = (
+                            mujoco.mj_id2name(
+                                model,
+                                mujoco.mjtObj.mjOBJ_GEOM,
+                                other_geom,
+                            )
+                            or f"geom-{other_geom}"
+                        )
+                        second_striker_unexpected_precontact_collision_geoms.add(other_name)
+                if second_observation["ball_shooter"]:
+                    contact_role = 4
+                    frame_second_striker_contact = True
+                    frame_second_striker_contact_force_n = max(
+                        frame_second_striker_contact_force_n,
+                        float(second_observation["ball_shooter_force_n"]),
+                    )
+                    second_striker_contact_force_peak = max(
+                        second_striker_contact_force_peak,
+                        float(second_observation["ball_shooter_force_n"]),
+                    )
+                    if not second_striker.contact_latched:
+                        second_striker.contact_latched = True
+                        second_striker.contact_time = float(data.time)
+                        second_striker_contact_foot = (
+                            "left"
+                            if second_observation["ball_shooter_left"]
+                            else "right"
+                            if second_observation["ball_shooter_right"]
+                            else None
+                        )
+                        _reset_post_contact_support_anchors(second_striker)
+                        if goalkeeper_observer is not None:
+                            # The physical foot collision—not a configured
+                            # timestamp—starts threat epoch two.
+                            goalkeeper_observer.rearm()
+                            goalkeeper_previous_actor_residual.fill(0.0)
+                if (
+                    goalkeeper is not None
+                    and second_striker.contact_latched
+                    and second_observation["ball_goalkeeper"]
+                ):
+                    if not goalkeeper.contact_latched:
+                        goalkeeper.contact_latched = True
+                        goalkeeper.contact_time = float(data.time)
+                        goalkeeper_contact_epoch = 2
+                        goalkeeper_second_contact_time = float(data.time)
+                    if (
+                        second_observation["ball_goalkeeper_glove"]
+                        and goalkeeper_second_glove_contact_time is None
+                    ):
+                        assert second_ball_qpos is not None
+                        goalkeeper_second_glove_contact_time = float(data.time)
+                        goalkeeper_second_glove_contact_position = np.asarray(
+                            data.qpos[second_ball_qpos : second_ball_qpos + 3],
+                            dtype=np.float64,
+                        ).copy()
+                        goalkeeper_second_glove_contact_height = float(
+                            goalkeeper_second_glove_contact_position[2]
+                        )
+                        second_left = bool(second_observation["ball_goalkeeper_left_glove"])
+                        second_right = bool(second_observation["ball_goalkeeper_right_glove"])
+                        goalkeeper_second_glove_contact_side = (
+                            "both"
+                            if second_left and second_right
+                            else "left"
+                            if second_left
+                            else "right"
+                        )
+                        second_surface_distances = [
+                            float(value)
+                            for value in (
+                                second_observation["ball_goalkeeper_left_glove_surface_distance_m"],
+                                second_observation[
+                                    "ball_goalkeeper_right_glove_surface_distance_m"
+                                ],
+                            )
+                            if value is not None
+                        ]
+                        goalkeeper_second_glove_contact_surface_distance = min(
+                            second_surface_distances
+                        )
+                        second_left_hand = np.asarray(
+                            data.xpos[goalkeeper.left_hand_body], dtype=np.float64
+                        )
+                        second_right_hand = np.asarray(
+                            data.xpos[goalkeeper.right_hand_body], dtype=np.float64
+                        )
+                        goalkeeper_second_contact_left_hand_height = float(second_left_hand[2])
+                        goalkeeper_second_contact_right_hand_height = float(second_right_hand[2])
+                        goalkeeper_second_contact_left_hand_ball_distance = float(
+                            np.linalg.norm(
+                                second_left_hand - goalkeeper_second_glove_contact_position
+                            )
+                        )
+                        goalkeeper_second_contact_right_hand_ball_distance = float(
+                            np.linalg.norm(
+                                second_right_hand - goalkeeper_second_glove_contact_position
+                            )
+                        )
+            active_contact_observation = (
+                second_observation
+                if second_striker is not None and second_striker.contact_latched
+                else observation
+            )
+            active_contact_qpos = (
+                cast(int, second_ball_qpos)
+                if second_striker is not None and second_striker.contact_latched
+                else ball_qpos
+            )
+            active_contact_qvel = (
+                cast(int, second_ball_qvel)
+                if second_striker is not None and second_striker.contact_latched
+                else ball_qvel
+            )
+            active_contact_time = (
+                goalkeeper_second_glove_contact_time
+                if second_striker is not None and second_striker.contact_latched
+                else goalkeeper_glove_contact_time
+            )
+            active_shot_latched = bool(
+                shooter.contact_latched
+                or (second_striker is not None and second_striker.contact_latched)
+            )
+            if (
+                goalkeeper is not None
+                and active_shot_latched
+                and active_contact_observation is not None
+            ):
                 ball_keeper_separation_x = abs(
-                    float(data.qpos[ball_qpos]) - float(data.qpos[goalkeeper.qpos_base])
+                    float(data.qpos[active_contact_qpos]) - float(data.qpos[goalkeeper.qpos_base])
                 )
                 recent_glove_contact = bool(
-                    goalkeeper_glove_contact_time is not None
-                    and float(data.time) <= goalkeeper_glove_contact_time + 0.80
+                    active_contact_time is not None
+                    and float(data.time) <= active_contact_time + 0.80
                 )
                 if ball_keeper_separation_x <= 1.40 or recent_glove_contact:
                     goalkeeper_contact_trace["goalkeeper_contact_window_time"].append(
                         float(data.time)
                     )
                     goalkeeper_contact_trace["goalkeeper_contact_window_ball_pose"].append(
-                        data.qpos[ball_qpos : ball_qpos + 7].copy()
+                        data.qpos[active_contact_qpos : active_contact_qpos + 7].copy()
                     )
                     goalkeeper_contact_trace["goalkeeper_contact_window_ball_velocity"].append(
-                        data.qvel[ball_qvel : ball_qvel + 6].copy()
+                        data.qvel[active_contact_qvel : active_contact_qvel + 6].copy()
                     )
                     goalkeeper_contact_trace["goalkeeper_contact_window_pelvis_pose"].append(
                         data.qpos[goalkeeper.qpos_base : goalkeeper.qpos_base + 7].copy()
@@ -4068,24 +4656,38 @@ def _simulate_shared_world(
                         "goalkeeper_contact_window_right_hand_position"
                     ].append(data.xpos[goalkeeper.right_hand_body].copy())
                     goalkeeper_contact_trace["goalkeeper_contact_window_left_glove_contact"].append(
-                        bool(observation["ball_goalkeeper_left_glove"])
+                        bool(active_contact_observation["ball_goalkeeper_left_glove"])
                     )
                     goalkeeper_contact_trace[
                         "goalkeeper_contact_window_right_glove_contact"
-                    ].append(bool(observation["ball_goalkeeper_right_glove"]))
+                    ].append(bool(active_contact_observation["ball_goalkeeper_right_glove"]))
                     goalkeeper_contact_trace[
                         "goalkeeper_contact_window_left_surface_distance_m"
                     ].append(
                         np.nan
-                        if observation["ball_goalkeeper_left_glove_surface_distance_m"] is None
-                        else float(observation["ball_goalkeeper_left_glove_surface_distance_m"])
+                        if active_contact_observation[
+                            "ball_goalkeeper_left_glove_surface_distance_m"
+                        ]
+                        is None
+                        else float(
+                            active_contact_observation[
+                                "ball_goalkeeper_left_glove_surface_distance_m"
+                            ]
+                        )
                     )
                     goalkeeper_contact_trace[
                         "goalkeeper_contact_window_right_surface_distance_m"
                     ].append(
                         np.nan
-                        if observation["ball_goalkeeper_right_glove_surface_distance_m"] is None
-                        else float(observation["ball_goalkeeper_right_glove_surface_distance_m"])
+                        if active_contact_observation[
+                            "ball_goalkeeper_right_glove_surface_distance_m"
+                        ]
+                        is None
+                        else float(
+                            active_contact_observation[
+                                "ball_goalkeeper_right_glove_surface_distance_m"
+                            ]
+                        )
                     )
         goalkeeper_bimanual_punch_frames += int(frame_goalkeeper_bimanual_punch_active)
         goalkeeper_bimanual_punch_peak_torque = max(
@@ -4141,6 +4743,47 @@ def _simulate_shared_world(
             )
         previous_ball_x = float(ball_position[0])
 
+        if (
+            second_striker is not None
+            and second_ball_qpos is not None
+            and second_ball_qvel is not None
+            and previous_second_ball_x is not None
+        ):
+            second_position = data.qpos[second_ball_qpos : second_ball_qpos + 3].copy()
+            second_velocity = data.qvel[second_ball_qvel : second_ball_qvel + 3].copy()
+            second_speed = float(np.linalg.norm(second_velocity))
+            if second_striker.contact_latched:
+                second_striker_postcontact_peak_speed = max(
+                    second_striker_postcontact_peak_speed,
+                    second_speed,
+                )
+                second_striker_postcontact_peak_forward_speed = max(
+                    second_striker_postcontact_peak_forward_speed,
+                    float(second_velocity[0]),
+                )
+            else:
+                second_striker_precontact_peak_speed = max(
+                    second_striker_precontact_peak_speed,
+                    second_speed,
+                )
+            if (
+                not second_ball_goal_plane_crossed
+                and previous_second_ball_x < active_goal.plane_x_m <= float(second_position[0])
+            ):
+                second_ball_goal_plane_crossed = True
+                second_ball_crossing_y = float(second_position[1])
+                second_ball_crossing_z = float(second_position[2])
+                second_ball_goal_crossed = g1_ball_inside_goal_mouth(
+                    active_goal,
+                    ball_y_m=second_ball_crossing_y,
+                    ball_z_m=second_ball_crossing_z,
+                )
+            previous_second_ball_x = float(second_position[0])
+            second_striker_min_height = min(
+                second_striker_min_height,
+                float(data.qpos[second_striker.qpos_base + 2]),
+            )
+
         heights = (float(data.qpos[passer.qpos_base + 2]), float(data.qpos[2]))
         passer_min_height = min(passer_min_height, heights[0])
         shooter_min_height = min(shooter_min_height, heights[1])
@@ -4185,6 +4828,67 @@ def _simulate_shared_world(
         trace["shooter_loft_teacher_active"].append(frame_loft_teacher_active)
         trace["shooter_loft_teacher_torque"].append(frame_loft_teacher_torque)
         trace["shooter_loft_teacher_force_xyz_n"].append(frame_loft_teacher_force_xyz_n)
+        if (
+            second_striker is not None
+            and second_ball_qpos is not None
+            and second_ball_qvel is not None
+        ):
+            trace["second_ball_pose"].append(
+                data.qpos[second_ball_qpos : second_ball_qpos + 7].copy()
+            )
+            trace["second_ball_velocity"].append(
+                data.qvel[second_ball_qvel : second_ball_qvel + 6].copy()
+            )
+            trace["second_striker_pelvis_pose"].append(
+                data.qpos[second_striker.qpos_base : second_striker.qpos_base + 7].copy()
+            )
+            trace["second_striker_left_foot_position"].append(
+                data.xpos[second_striker.left_ankle_body].copy()
+            )
+            trace["second_striker_right_foot_position"].append(
+                data.xpos[second_striker.right_ankle_body].copy()
+            )
+            trace["second_striker_joint_position"].append(
+                data.qpos[second_striker.joint_qpos].copy()
+            )
+            trace["second_striker_joint_velocity"].append(
+                data.qvel[second_striker.joint_qvel].copy()
+            )
+            trace["second_striker_commanded_torque"].append(
+                commanded_torque["second_striker"].copy()
+            )
+            trace["second_striker_safety_projected_torque"].append(
+                projected_torque["second_striker"].copy()
+            )
+            trace["second_striker_executed_torque"].append(executed_torque["second_striker"].copy())
+            trace["second_striker_policy_action"].append(second_striker.last_target.copy())
+            trace["second_striker_policy_frame"].append(policy_frames["second_striker"])
+            trace["second_striker_foot_contact"].append(frame_second_striker_contact)
+            trace["second_striker_contact_force_n"].append(frame_second_striker_contact_force_n)
+            trace["second_striker_ballistic_actor_active"].append(
+                frame_second_striker_ballistic_actor_active
+            )
+            trace["second_striker_ballistic_actor_torque"].append(
+                frame_second_striker_ballistic_actor_torque
+            )
+            trace["second_striker_ballistic_actor_force_yz_n"].append(
+                frame_second_striker_ballistic_actor_force_yz_n
+            )
+            trace["second_striker_ballistic_actor_foot_velocity_yz_mps"].append(
+                frame_second_striker_ballistic_actor_foot_velocity_yz_mps
+            )
+            trace["second_striker_ballistic_contact_active"].append(
+                second_striker_ballistic_contact_active
+            )
+            trace["second_striker_ballistic_contact_target_delta"].append(
+                second_striker_ballistic_contact_target_delta
+            )
+            trace["second_striker_ballistic_contact_torque_active"].append(
+                frame_second_striker_ballistic_contact_torque_active
+            )
+            trace["second_striker_ballistic_contact_torque"].append(
+                frame_second_striker_ballistic_contact_torque
+            )
         if goalkeeper is not None:
             trace["goalkeeper_pelvis_pose"].append(
                 data.qpos[goalkeeper.qpos_base : goalkeeper.qpos_base + 7].copy()
@@ -4709,8 +5413,49 @@ def _simulate_shared_world(
             goalkeeper_second_contact_right_hand_ball_distance
         ),
         goalkeeper_second_save_observed=(
-            goalkeeper_second_glove_contact_time is not None and not goal_crossed
+            goalkeeper_second_glove_contact_time is not None
+            and not (
+                second_ball_goal_crossed
+                if physical_second_striker_config is not None
+                else goal_crossed
+            )
         ),
+        physical_second_striker_enabled=physical_second_striker_config is not None,
+        second_striker_ball_existed_from_time_zero=(physical_second_striker_config is not None),
+        second_striker_contact_observed=(
+            second_striker is not None and second_striker.contact_latched
+        ),
+        second_striker_contact_time_sec=(
+            None if second_striker is None else second_striker.contact_time
+        ),
+        second_striker_contact_foot=second_striker_contact_foot,
+        second_striker_contact_force_peak_n=second_striker_contact_force_peak,
+        second_striker_precontact_peak_ball_speed_mps=(second_striker_precontact_peak_speed),
+        second_striker_postcontact_peak_ball_speed_mps=(second_striker_postcontact_peak_speed),
+        second_striker_postcontact_peak_forward_ball_speed_mps=(
+            second_striker_postcontact_peak_forward_speed
+        ),
+        second_striker_min_pelvis_height_m=(
+            None if second_striker is None else second_striker_min_height
+        ),
+        second_striker_ballistic_actor_active_fraction=(
+            float(np.mean(trajectory["second_striker_ballistic_actor_active"]))
+            if second_striker is not None
+            else 0.0
+        ),
+        second_striker_ballistic_actor_peak_torque_nm=(
+            float(np.max(np.abs(trajectory["second_striker_ballistic_actor_torque"])))
+            if second_striker is not None
+            else 0.0
+        ),
+        second_striker_unexpected_precontact_collision_geoms=tuple(
+            sorted(second_striker_unexpected_precontact_collision_geoms)
+        ),
+        second_striker_joint_limit_violation=role_joint_violation.get("second_striker", False),
+        second_ball_goal_plane_crossed=second_ball_goal_plane_crossed,
+        second_ball_goal_crossed=second_ball_goal_crossed,
+        second_ball_goal_crossing_y_m=second_ball_crossing_y,
+        second_ball_goal_crossing_z_m=second_ball_crossing_z,
         passer_joint_limit_violation=role_joint_violation["passer"],
         shooter_joint_limit_violation=role_joint_violation["shooter"],
         goalkeeper_joint_limit_violation=role_joint_violation.get("goalkeeper", False),
@@ -4725,6 +5470,7 @@ def _coupled_model(
     passer_yaw_rad: float = _PASSER_YAW,
     goal: G1TrainingGoalSpec | None = None,
     goalkeeper_config: G1GoalkeeperConfig | None = None,
+    physical_second_striker_config: G1PhysicalSecondStrikerConfig | None = None,
     unified_stadium_scene: bool = False,
 ) -> Any:
     """Build the one corrected Soccer-owned stadium physics contract."""
@@ -4737,6 +5483,8 @@ def _coupled_model(
     if not unified_stadium_scene:
         raise ValueError("shared-world Soccer rollouts require the corrected stadium scene")
     if goalkeeper_config is None:
+        if physical_second_striker_config is not None:
+            raise ValueError("physical second striker requires a goalkeeper")
         return build_g1_coupled_stadium_model(
             root,
             passer_origin_m=origin_m,
@@ -4744,17 +5492,30 @@ def _coupled_model(
             spec=goal,
         )
     active_goal = goal or G1TrainingGoalSpec()
-    model = build_g1_three_player_stadium_model(
-        root,
-        passer_origin_m=origin_m,
-        passer_yaw_rad=passer_yaw_rad,
-        goalkeeper_origin_m=(
-            active_goal.plane_x_m - goalkeeper_config.depth_from_goal_line_m,
-            goalkeeper_config.initial_lateral_position_m,
-            0.0,
-        ),
-        spec=active_goal,
+    goalkeeper_origin = (
+        active_goal.plane_x_m - goalkeeper_config.depth_from_goal_line_m,
+        goalkeeper_config.initial_lateral_position_m,
+        0.0,
     )
+    if physical_second_striker_config is None:
+        model = build_g1_three_player_stadium_model(
+            root,
+            passer_origin_m=origin_m,
+            passer_yaw_rad=passer_yaw_rad,
+            goalkeeper_origin_m=goalkeeper_origin,
+            spec=active_goal,
+        )
+    else:
+        model = build_g1_four_player_two_ball_stadium_model(
+            root,
+            passer_origin_m=origin_m,
+            passer_yaw_rad=passer_yaw_rad,
+            goalkeeper_origin_m=goalkeeper_origin,
+            second_striker_origin_m=physical_second_striker_config.origin_m,
+            first_ball_origin_m=(1.0, 0.0, active_goal.ball_radius_m),
+            second_ball_origin_m=physical_second_striker_config.ball_origin_m,
+            spec=active_goal,
+        )
     _configure_goalkeeper_glove_contact(model, goalkeeper_config)
     return model
 
@@ -6702,6 +7463,7 @@ def _contacts(
     goalkeeper_geoms: frozenset[int] = frozenset(),
     goalkeeper_left_glove_geoms: frozenset[int] = frozenset(),
     goalkeeper_right_glove_geoms: frozenset[int] = frozenset(),
+    shooter_geom_prefix: str = "",
 ) -> dict[str, Any]:
     import mujoco
 
@@ -6743,9 +7505,9 @@ def _contacts(
                 result["goalkeeper_left"] = True
             elif other.startswith("goalkeeper_right_foot"):
                 result["goalkeeper_right"] = True
-            elif other.startswith("left_foot"):
+            elif other.startswith(shooter_geom_prefix + "left_foot"):
                 result["shooter_left"] = True
-            elif other.startswith("right_foot"):
+            elif other.startswith(shooter_geom_prefix + "right_foot"):
                 result["shooter_right"] = True
         if ball_geom in {geom1, geom2}:
             other_geom = geom2 if geom1 == ball_geom else geom1
@@ -6758,8 +7520,12 @@ def _contacts(
             elif other_geom in shooter_geoms:
                 result["ball_shooter"] = True
                 other_name = name2 if geom1 == ball_geom else name1
-                result["ball_shooter_left"] = other_name.startswith("left_foot")
-                result["ball_shooter_right"] = other_name.startswith("right_foot")
+                result["ball_shooter_left"] = other_name.startswith(
+                    shooter_geom_prefix + "left_foot"
+                )
+                result["ball_shooter_right"] = other_name.startswith(
+                    shooter_geom_prefix + "right_foot"
+                )
                 mujoco.mj_contactForce(model, data, index, force)
                 result["ball_shooter_force_n"] = max(
                     float(result["ball_shooter_force_n"]), float(np.linalg.norm(force[:3]))

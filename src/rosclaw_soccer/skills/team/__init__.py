@@ -81,6 +81,7 @@ from rosclaw_soccer.skills.team.player_lineage import (
 from rosclaw_soccer.skills.team.shared_world import (
     G1GoalkeeperConfig,
     G1JointGuardConfig,
+    G1PhysicalSecondStrikerConfig,
     G1SharedWorldResult,
     shared_post_impact_simulation_kwargs,
     simulate_shared_world,
@@ -110,6 +111,7 @@ __all__ = [
     "G1CompositeImitationSearchResult",
     "G1ContactImitationMetrics",
     "G1JointGuardConfig",
+    "G1PhysicalSecondStrikerConfig",
     "G1SharedWorldResult",
     "GoalkeeperBlockSearchConfig",
     "GoalkeeperBlockSearchResult",

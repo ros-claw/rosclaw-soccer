@@ -122,6 +122,52 @@ def test_impulse_actor_outputs_bounded_direct_joint_torque(monkeypatch) -> None:
     assert np.count_nonzero(effect.torque) == 3
 
 
+def test_impulse_actor_decodes_role_specific_dofs_in_coupled_world(monkeypatch) -> None:
+    actor = _actor()
+
+    def fake_jac(_model, _data, jacobian, _rotation, _point, _body_id) -> None:
+        # The selected ankle belongs to a later robot.  Its Jacobian has no
+        # support in the legacy first-G1 slice.
+        jacobian[1, 99] = 0.5
+        jacobian[1, 100] = -0.25
+        jacobian[2, 101] = 0.4
+
+    monkeypatch.setitem(sys.modules, "mujoco", SimpleNamespace(mj_jac=fake_jac))
+    model = SimpleNamespace(nv=128)
+    data = SimpleNamespace(
+        xmat=np.asarray([np.eye(3)]),
+        xpos=np.asarray([[0.0, 0.0, 0.0]]),
+        qvel=np.zeros(128, dtype=np.float64),
+    )
+
+    effect = g1_ballistic_contact_impulse_effect(
+        model=model,
+        data=data,
+        right_ankle_body_id=0,
+        actor=actor,
+        policy_frame=255,
+        contact_observed=False,
+        ball_position=np.asarray((0.13, 0.0, -0.025)),
+        actuated_dof_indices=np.arange(99, 128, dtype=np.int64),
+    )
+
+    assert effect.active
+    np.testing.assert_allclose(effect.torque[:3], (125.0, -62.5, 100.0))
+    assert np.count_nonzero(effect.torque) == 3
+
+    with pytest.raises(ValueError, match="29 unique"):
+        g1_ballistic_contact_impulse_effect(
+            model=model,
+            data=data,
+            right_ankle_body_id=0,
+            actor=actor,
+            policy_frame=255,
+            contact_observed=False,
+            ball_position=np.asarray((0.13, 0.0, -0.025)),
+            actuated_dof_indices=np.full(29, 99, dtype=np.int64),
+        )
+
+
 def test_impulse_actor_cannot_authorize_promotion_or_duplicate_support() -> None:
     actor = _actor()
 
