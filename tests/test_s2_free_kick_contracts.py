@@ -12,8 +12,15 @@ from rosclaw_soccer.providers.g1.asset_qualification import (
     trajectory_digest,
 )
 from rosclaw_soccer.providers.g1.learned_runup import G1LearnedRunupConfig
-from rosclaw_soccer.providers.g1.mujoco_primitives import build_shared_recovery_controller
+from rosclaw_soccer.providers.g1.mujoco_primitives import (
+    adapt_shot_target,
+    build_shared_recovery_controller,
+    mirror_g1_joint_gains,
+    mirror_g1_joint_positions,
+    quaternion_multiply,
+)
 from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupConfig
+from rosclaw_soccer.sim.contracts import ShotParameters
 from rosclaw_soccer.skills.shoot.free_kick import (
     G1FreeKickFlowConfig,
     _apply_compliant_net_force,
@@ -21,16 +28,21 @@ from rosclaw_soccer.skills.shoot.free_kick import (
     _net_capture_plane_x,
     _select_contextual_phase,
 )
-from rosclaw_soccer.world.field import G1TrainingGoalSpec
+from rosclaw_soccer.world.field import (
+    G1CompliantGoalNetState,
+    G1TrainingGoalSpec,
+    apply_g1_compliant_goal_net_force,
+    g1_ball_inside_goal_mouth,
+)
 
 
 def test_migrated_contract_schemas_remain_artifact_compatible() -> None:
     assert G1FreeKickFlowConfig().schema_version == (
-        "rosclaw.simforge.g1_free_kick_flow_config.v36"
+        "rosclaw.simforge.g1_free_kick_flow_config.v37"
     )
-    assert G1TrainingGoalSpec().schema_version == ("rosclaw.simforge.g1_training_goal_spec.v7")
+    assert G1TrainingGoalSpec().schema_version == ("rosclaw.simforge.g1_training_goal_spec.v8")
     assert G1LearnedRunupConfig().schema_version == ("rosclaw.simforge.g1_learned_runup_config.v2")
-    assert G1SonicRunupConfig().schema_version == ("rosclaw.simforge.g1_sonic_runup_config.v1")
+    assert G1SonicRunupConfig().schema_version == ("rosclaw.simforge.g1_sonic_runup_config.v2")
 
 
 def test_training_goal_uses_regulation_geometry_and_ball_dimensions() -> None:
@@ -50,6 +62,7 @@ def test_training_goal_uses_regulation_geometry_and_ball_dimensions() -> None:
 
     assert 2.0 * np.pi * goal.ball_radius_m == pytest.approx(0.69)
     assert goal.ball_mass_kg == pytest.approx(0.43)
+    assert goal.ball_angular_damping_n_m_s_rad == pytest.approx(0.00002)
     assert (goal.field_length_m, goal.field_width_m) == (105.0, 68.0)
     assert (goal.goal_area_depth_m, goal.penalty_area_depth_m) == (5.5, 16.5)
     assert goal.target_corner == "left_upper"
@@ -102,6 +115,105 @@ def test_compliant_net_is_free_flight_then_dissipates_inside_pocket() -> None:
     assert data.xfrc_applied[0, 0] < 0.0
     assert abs(data.xfrc_applied[0, 1]) < abs(data.xfrc_applied[0, 0]) * 0.1
     assert abs(data.xfrc_applied[0, 2]) < abs(data.xfrc_applied[0, 0]) * 0.1
+
+
+def test_stateful_net_binds_first_contact_not_requested_target() -> None:
+    goal = G1TrainingGoalSpec(plane_x_m=6.0, target_y_m=0.8, target_z_m=1.2)
+    flow = G1FreeKickFlowConfig(net_capture_depth_m=0.20)
+    data = SimpleNamespace(
+        qpos=np.asarray((6.15, -0.3, 0.7), dtype=np.float64),
+        qvel=np.asarray((8.0, 1.0, 2.0), dtype=np.float64),
+        xfrc_applied=np.zeros((1, 6), dtype=np.float64),
+    )
+    ids = SimpleNamespace(ball=0, ball_qpos=0, ball_qvel=0)
+    state = G1CompliantGoalNetState()
+
+    _apply_compliant_net_force(data, ids, goal, flow, state)
+    assert state.engaged
+    assert state.anchor_xyz_m == pytest.approx((6.085, -0.3, 0.7))
+    assert state.anchor_xyz_m[1:] != pytest.approx((goal.target_y_m, goal.target_z_m))
+    np.testing.assert_allclose(data.xfrc_applied, 0.0)
+
+    data.qpos[:] = (6.18, -0.25, 0.76)
+    _apply_compliant_net_force(data, ids, goal, flow, state)
+    assert state.peak_force_n > 0.0
+    assert state.peak_anchor_displacement_m > 0.0
+    assert np.linalg.norm(data.xfrc_applied[0, :3]) > 0.0
+
+
+def test_goal_mouth_requires_complete_ball_and_net_is_not_an_infinite_wall() -> None:
+    goal = G1TrainingGoalSpec(plane_x_m=6.0, width_m=2.4, height_m=1.6)
+    assert g1_ball_inside_goal_mouth(goal, ball_y_m=1.085, ball_z_m=0.115)
+    assert not g1_ball_inside_goal_mouth(goal, ball_y_m=1.086, ball_z_m=0.115)
+    assert not g1_ball_inside_goal_mouth(goal, ball_y_m=0.0, ball_z_m=0.114)
+
+    data = SimpleNamespace(
+        qpos=np.asarray((6.20, 1.20, 0.30), dtype=np.float64),
+        qvel=np.asarray((8.0, 0.0, 0.0), dtype=np.float64),
+        xfrc_applied=np.zeros((1, 6), dtype=np.float64),
+    )
+    state = G1CompliantGoalNetState()
+    apply_g1_compliant_goal_net_force(
+        data,
+        ball_body_id=0,
+        ball_qpos=0,
+        ball_qvel=0,
+        spec=goal,
+        capture_depth_m=0.20,
+        stiffness_n_m=180.0,
+        damping_n_s_m=10.0,
+        state=state,
+    )
+    assert not state.engaged
+    np.testing.assert_allclose(data.xfrc_applied, 0.0)
+
+
+def test_quaternion_multiply_normalizes_and_rejects_bad_inputs() -> None:
+    half = np.sqrt(0.5)
+    value = quaternion_multiply(
+        np.asarray((half, 0.0, 0.0, half)),
+        np.asarray((half, 0.0, 0.0, half)),
+    )
+    np.testing.assert_allclose(value, (0.0, 0.0, 0.0, 1.0), atol=1e-12)
+    with pytest.raises(ValueError, match="finite wxyz"):
+        quaternion_multiply(np.ones(3), np.ones(4))
+
+
+def test_left_foot_option_is_an_exact_anatomical_mirror() -> None:
+    target = np.linspace(-0.7, 0.7, 29, dtype=np.float64)
+    default = np.linspace(0.2, -0.2, 29, dtype=np.float64)
+    right = adapt_shot_target(
+        target=target,
+        default=default,
+        parameters=ShotParameters(
+            kick_foot="right",
+            foot_yaw_offset=0.08,
+            foot_pitch_offset=-0.04,
+            loft_synergy=0.12,
+        ),
+        policy_frame=250,
+    )
+    left = adapt_shot_target(
+        target=target,
+        default=default,
+        parameters=ShotParameters(
+            kick_foot="left",
+            foot_yaw_offset=0.08,
+            foot_pitch_offset=-0.04,
+            loft_synergy=0.12,
+        ),
+        policy_frame=250,
+    )
+
+    np.testing.assert_allclose(left, mirror_g1_joint_positions(right))
+    np.testing.assert_allclose(
+        mirror_g1_joint_positions(mirror_g1_joint_positions(target)),
+        target,
+    )
+    gains = np.arange(1.0, 30.0, dtype=np.float64)
+    np.testing.assert_allclose(mirror_g1_joint_gains(mirror_g1_joint_gains(gains)), gains)
+    with pytest.raises(ValueError, match="finite"):
+        mirror_g1_joint_positions(np.zeros(28, dtype=np.float64))
 
 
 def test_net_capture_geometry_and_deepest_point_are_physics_bound() -> None:

@@ -294,7 +294,7 @@ def derive_g1_football_outcome_model(
         baseline_saturation_sum=baseline_saturation_sum,
         minimum_precision_improvement=minimum_precision_improvement,
     )
-    maximum_retry_distance = float(max(0.5, np.quantile(retry_distances, 0.95)))
+    maximum_retry_distance = max(0.5, float(np.quantile(retry_distances, 0.95)))
     minimum_safety_probability = 0.75
     failures: list[str] = []
     if cv_metrics[0] < baseline_metrics[0]:

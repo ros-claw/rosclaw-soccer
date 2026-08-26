@@ -7,7 +7,10 @@ name = "rosclaw-soccer"
 version = "0.1.0.dev0"
 description = "Evidence-driven academy for growing self-improving humanoid footballers"
 readme = "README.md"
-requires-python = ">=3.12,<3.14"
+# Isaac Sim 5.1 is distributed for CPython 3.11.  ROSClaw Core also supports
+# 3.11, and Soccer avoids 3.12-only syntax so one source tree can serve both
+# the lightweight CPU evidence environment and the official GPU simulator.
+requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }
 authors = [{ name = "ROSClaw Contributors" }]
 dependencies = [
@@ -59,6 +62,71 @@ mypy_path = "src"
 [[tool.mypy.overrides]]
 module = ["mujoco.*", "onnxruntime.*", "rosclaw.*"]
 ignore_missing_imports = true
+
+# PyTorch is an intentionally optional, GPU-host-only training dependency.
+# Runtime/evidence readers remain NumPy-only; these modules import torch only
+# inside explicitly invoked training or extraction functions.
+[[tool.mypy.overrides]]
+module = [
+  "rosclaw_soccer.skills.goalkeeper_v2.external_reference",
+  "rosclaw_soccer.skills.team.agility_evidence",
+  "rosclaw_soccer.skills.team.composite_imitation_evidence",
+  "rosclaw_soccer.skills.team.development_evidence",
+  "rosclaw_soccer.skills.team.follow_through_evidence",
+  "rosclaw_soccer.skills.team.goalkeeper_evidence",
+  "rosclaw_soccer.skills.team.imitation_evidence",
+  "rosclaw_soccer.training.recovery_student_stateful_train",
+  "rosclaw_soccer.training.recovery_student_train",
+]
+disable_error_code = ["import-not-found"]
+
+[[tool.mypy.overrides]]
+module = [
+  "rosclaw_soccer.growth.mjlab_getup",
+  "rosclaw_soccer.growth.mosaic_gmt",
+  "rosclaw_soccer.media.physics_goalkeeper_video",
+  "rosclaw_soccer.skills.athlete_foundation.full_body_goalkeeper_motion",
+  "rosclaw_soccer.skills.goalkeeper_v2.external_motion",
+  "rosclaw_soccer.training.goalkeeper_agility",
+  "rosclaw_soccer.training.goalkeeper_combat_curriculum",
+  "rosclaw_soccer.training.goalkeeper_combat_mjwarp",
+  "rosclaw_soccer.training.goalkeeper_combat_teacher",
+  "rosclaw_soccer.training.goalkeeper_consolidation",
+  "rosclaw_soccer.training.goalkeeper_cpu_exam",
+  "rosclaw_soccer.training.goalkeeper_dive_memory",
+  "rosclaw_soccer.training.goalkeeper_mobility_option",
+  "rosclaw_soccer.training.goalkeeper_mjwarp",
+  "rosclaw_soccer.training.goalkeeper_multistep_torch",
+  "rosclaw_soccer.training.goalkeeper_physics_ppo",
+  "rosclaw_soccer.training.goalkeeper_ppo",
+  "rosclaw_soccer.training.goalkeeper_reach",
+  "rosclaw_soccer.training.goalkeeper_targeted_dive",
+  "rosclaw_soccer.training.goalkeeper_targeted_dive_actor_exam",
+  "rosclaw_soccer.training.goalkeeper_targeted_dive_exam",
+  "rosclaw_soccer.training.goalkeeper_targeted_dive_mjwarp",
+  "rosclaw_soccer.training.goalkeeper_teacher",
+  "rosclaw_soccer.training.joint_guard",
+  "rosclaw_soccer.training.mjlab_getup_probe",
+  "rosclaw_soccer.training.mosaic_getup_probe",
+  "rosclaw_soccer.training.mosaic_gmt_goalkeeper_probe",
+  "rosclaw_soccer.training.opentrack_recovery_mjx_ppo",
+  "rosclaw_soccer.training.opentrack_recovery_mjx_teacher_ppo",
+  "rosclaw_soccer.training.opentrack_recovery_mjx_failure_collect",
+  "rosclaw_soccer.training.opentrack_recovery_mjx_failure_exam",
+  "rosclaw_soccer.training.opentrack_recovery_corrective_teacher",
+  "rosclaw_soccer.training.opentrack_recovery_corrective_student",
+  "rosclaw_soccer.training.recovery_snapshot_collector",
+  "rosclaw_soccer.training.recovery_snapshot_exam",
+  "rosclaw_soccer.training.recovery_snapshot_settler",
+]
+disable_error_code = [
+  "import-not-found",
+  "misc",
+  "no-untyped-call",
+  "no-untyped-def",
+  "untyped-decorator",
+  "unused-ignore",
+]
 
 [tool.ruff]
 line-length = 100

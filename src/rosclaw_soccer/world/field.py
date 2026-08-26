@@ -18,6 +18,29 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 _SCENE_REL = Path("g1_description/scene_with_ball.xml")
 _MODEL_REL = Path("g1_description/g1_liao.xml")
 
+# Conservative collision envelope for a visible adult goalkeeper glove.  The
+# ellipsoid stays inside the 19 x 10 x 6.5 cm rendered glove instead of using
+# the football radius as a hidden reach multiplier.
+G1_GOALKEEPER_GLOVE_CENTER_M = (0.090, 0.0, 0.0)
+G1_GOALKEEPER_GLOVE_HALF_EXTENTS_M = (0.095, 0.050, 0.0325)
+
+
+@dataclass
+class G1CompliantGoalNetState:
+    """Target-independent state of a deformable three-axis goal-net pocket."""
+
+    engaged: bool = False
+    anchor_xyz_m: tuple[float, float, float] | None = None
+    engagement_count: int = 0
+    peak_force_n: float = 0.0
+    peak_anchor_displacement_m: float = 0.0
+    last_force_xyz_n: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    def reset(self) -> None:
+        self.engaged = False
+        self.anchor_xyz_m = None
+        self.last_force_xyz_n = (0.0, 0.0, 0.0)
+
 
 @dataclass(frozen=True)
 class G1TrainingGoalSpec:
@@ -33,6 +56,7 @@ class G1TrainingGoalSpec:
     target_z_m: float = 0.115
     precision_radius_m: float = 0.16
     ball_free_joint_damping_n_s_m: float = 0.02
+    ball_angular_damping_n_m_s_rad: float = 0.00002
     ball_radius_m: float = 0.115
     ball_mass_kg: float = 0.41
     ball_contact_sliding_friction: float = 0.05
@@ -46,7 +70,7 @@ class G1TrainingGoalSpec:
     goal_area_depth_m: float = 5.50
     penalty_area_depth_m: float = 16.50
     penalty_mark_distance_m: float = 11.0
-    schema_version: str = "rosclaw.simforge.g1_training_goal_spec.v7"
+    schema_version: str = "rosclaw.simforge.g1_training_goal_spec.v8"
 
     def __post_init__(self) -> None:
         values = (
@@ -60,6 +84,7 @@ class G1TrainingGoalSpec:
             self.target_z_m,
             self.precision_radius_m,
             self.ball_free_joint_damping_n_s_m,
+            self.ball_angular_damping_n_m_s_rad,
             self.ball_radius_m,
             self.ball_mass_kg,
             self.ball_contact_sliding_friction,
@@ -95,6 +120,8 @@ class G1TrainingGoalSpec:
             raise ValueError("precision radius must be in [0.05, 0.30] m")
         if not 0.001 <= self.ball_free_joint_damping_n_s_m <= 0.10:
             raise ValueError("ball free-joint damping must be in [0.001, 0.10] N s/m")
+        if not 0.0 <= self.ball_angular_damping_n_m_s_rad <= 0.001:
+            raise ValueError("ball angular damping must be in [0, 0.001] N m s/rad")
         if not 0.105 <= self.ball_radius_m <= 0.115:
             raise ValueError("football radius must be in [0.105, 0.115] m")
         if not 0.40 <= self.ball_mass_kg <= 0.46:
@@ -125,7 +152,7 @@ class G1TrainingGoalSpec:
 
     @property
     def spec_hash(self) -> str:
-        return hash_json(asdict(self))
+        return str(hash_json(asdict(self)))
 
     @property
     def target_corner(self) -> str:
@@ -149,9 +176,18 @@ class G1TrainingGoalSpec:
 def build_g1_stadium_model(asset_root: Path, spec: G1TrainingGoalSpec | None = None) -> Any:
     """Compile a qualified G1 scene with the wall replaced by a native goal."""
 
+    import mujoco
+
     goal = spec or G1TrainingGoalSpec()
     parent = _stadium_spec(asset_root, goal)
+    _add_goalkeeper_hand_envelopes(
+        parent,
+        body_prefix="",
+        geom_prefix="",
+        mujoco=mujoco,
+    )
     model = parent.compile()
+    _configure_ball_dof_damping(model, goal)
     _require_stadium_model(model)
     return model
 
@@ -160,6 +196,7 @@ def build_g1_coupled_stadium_model(
     asset_root: Path,
     *,
     passer_origin_m: tuple[float, float, float],
+    passer_yaw_rad: float = math.pi,
     spec: G1TrainingGoalSpec | None = None,
 ) -> Any:
     """Compile the two-G1 replay scene with the same native football goal.
@@ -181,13 +218,14 @@ def build_g1_coupled_stadium_model(
     frame = parent.worldbody.add_frame(
         name="passer_frame",
         pos=passer_origin_m,
-        quat=(0.0, 0.0, 0.0, 1.0),
+        quat=(math.cos(0.5 * passer_yaw_rad), 0.0, 0.0, math.sin(0.5 * passer_yaw_rad)),
     )
     first_body = child.worldbody.first_body()
     if first_body is None:
         raise ValueError("qualified G1 model does not contain a root body")
     frame.attach_body(first_body, prefix="passer_")
     model = parent.compile()
+    _configure_ball_dof_damping(model, goal)
     _require_stadium_model(model)
     if model.nu != 58:
         raise ValueError(f"coupled stadium model has {model.nu} actuators, expected 58")
@@ -198,6 +236,7 @@ def build_g1_three_player_stadium_model(
     asset_root: Path,
     *,
     passer_origin_m: tuple[float, float, float],
+    passer_yaw_rad: float = math.pi,
     goalkeeper_origin_m: tuple[float, float, float],
     spec: G1TrainingGoalSpec | None = None,
 ) -> Any:
@@ -220,7 +259,7 @@ def build_g1_three_player_stadium_model(
         frame_name="passer_frame",
         prefix="passer_",
         origin_m=passer_origin_m,
-        yaw_rad=math.pi,
+        yaw_rad=passer_yaw_rad,
         mujoco=mujoco,
     )
     _attach_g1(
@@ -232,7 +271,14 @@ def build_g1_three_player_stadium_model(
         yaw_rad=math.pi,
         mujoco=mujoco,
     )
+    _add_goalkeeper_hand_envelopes(
+        parent,
+        body_prefix="goalkeeper_",
+        geom_prefix="goalkeeper_",
+        mujoco=mujoco,
+    )
     model = parent.compile()
+    _configure_ball_dof_damping(model, goal)
     _require_stadium_model(model)
     if model.nu != 87:
         raise ValueError(f"three-player stadium model has {model.nu} actuators, expected 87")
@@ -264,6 +310,40 @@ def _attach_g1(
     frame.attach_body(first_body, prefix=prefix)
 
 
+def _add_goalkeeper_hand_envelopes(
+    parent: Any,
+    *,
+    body_prefix: str,
+    geom_prefix: str,
+    mujoco: Any,
+) -> None:
+    """Add visible, collision-faithful goalkeeper gloves to both wrists.
+
+    The 0.19 m palm-to-fingertip length, 0.10 m width and 0.065 m thickness
+    conservatively cover the source G1 hand while remaining inside the visible
+    blue glove.  They are attached to the real wrist bodies, so the physics
+    scorer can distinguish a hand save from a torso/leg block without adding
+    an invisible reach advantage.
+    """
+
+    for side in ("left", "right"):
+        body = parent.body(f"{body_prefix}{side}_wrist_yaw_link")
+        if body is None:
+            raise ValueError(f"qualified G1 is missing the goalkeeper {side} wrist")
+        body.add_geom(
+            name=f"{geom_prefix}{side}_goalkeeper_glove",
+            type=mujoco.mjtGeom.mjGEOM_ELLIPSOID,
+            pos=G1_GOALKEEPER_GLOVE_CENTER_M,
+            # ``size`` stores ellipsoid half-extents.  These dimensions are a
+            # collision inset, not a ball-radius-wide reach paddle.
+            size=G1_GOALKEEPER_GLOVE_HALF_EXTENTS_M,
+            rgba=(0.03, 0.22, 0.92, 1.0),
+            friction=(0.8, 0.005, 0.0001),
+            contype=1,
+            conaffinity=1,
+        )
+
+
 def _stadium_spec(asset_root: Path, spec: G1TrainingGoalSpec) -> Any:
     import mujoco
 
@@ -272,7 +352,17 @@ def _stadium_spec(asset_root: Path, spec: G1TrainingGoalSpec) -> Any:
     wall = parent.body("box")
     if wall is None:
         raise ValueError("qualified G1 scene does not contain the replaceable box body")
-    parent.delete(wall)
+    # MuJoCo renamed the MjSpec removal operation: 3.3 exposes
+    # ``detach_body`` while current releases expose generic ``delete``.
+    # Keep the qualified scene valid at both the declared floor and the
+    # modern MJWarp toolchain instead of pinning either side to an obsolete
+    # editor API.
+    if hasattr(parent, "detach_body"):
+        parent.detach_body(wall)
+    elif hasattr(parent, "delete"):
+        parent.delete(wall)
+    else:
+        raise RuntimeError("MuJoCo MjSpec cannot remove the replaceable box body")
     _style_pitch_and_ball(parent, spec)
     _add_goal(parent, spec)
     return parent
@@ -288,17 +378,40 @@ def _require_stadium_model(model: Any) -> None:
             raise AssertionError(f"stadium scene is missing {name}")
 
 
+def _configure_ball_dof_damping(model: Any, spec: G1TrainingGoalSpec) -> None:
+    """Separate translational drag from rotational drag after compilation.
+
+    MuJoCo's free-joint ``damping`` shortcut expands one scalar across all six
+    degrees of freedom.  Applying the football's linear value to rotation is
+    dimensionally wrong and erases rolling spin in roughly a tenth of a
+    second.  The compiled model exposes the six physical DOFs explicitly, so
+    bind their two units here and fail closed if the qualified scene changes.
+    """
+
+    ball_joint = model.joint("ball_free")
+    addresses = tuple(int(value) for value in ball_joint.dofadr)
+    if len(addresses) != 1:
+        raise ValueError("qualified stadium ball_free does not have one DOF address")
+    dof_address = addresses[0]
+    if dof_address < 0 or dof_address + 6 > int(model.nv):
+        raise ValueError("qualified stadium ball_free does not expose six DOFs")
+    model.dof_damping[dof_address : dof_address + 3] = spec.ball_free_joint_damping_n_s_m
+    model.dof_damping[dof_address + 3 : dof_address + 6] = spec.ball_angular_damping_n_m_s_rad
+
+
 def g1_stadium_scene_hash(asset_root: Path, spec: G1TrainingGoalSpec | None = None) -> str:
     """Bind the derived scene to both its source XML and declarative goal spec."""
 
     goal = spec or G1TrainingGoalSpec()
     scene = asset_root.expanduser().resolve() / _SCENE_REL
-    return hash_json(
-        {
-            "source_scene_hash": hash_bytes(scene.read_bytes()),
-            "goal_spec_hash": goal.spec_hash,
-            "builder_hash": hash_bytes(Path(__file__).read_bytes()),
-        }
+    return str(
+        hash_json(
+            {
+                "source_scene_hash": hash_bytes(scene.read_bytes()),
+                "goal_spec_hash": goal.spec_hash,
+                "builder_hash": hash_bytes(Path(__file__).read_bytes()),
+            }
+        )
     )
 
 
@@ -318,6 +431,22 @@ def g1_goal_net_contact_plane_x(
     return spec.plane_x_m + selected_depth - spec.ball_radius_m
 
 
+def g1_ball_inside_goal_mouth(
+    spec: G1TrainingGoalSpec,
+    *,
+    ball_y_m: float,
+    ball_z_m: float,
+) -> bool:
+    """Return whether the complete ball fits through the scoring aperture."""
+
+    if not math.isfinite(ball_y_m) or not math.isfinite(ball_z_m):
+        return False
+    return bool(
+        abs(ball_y_m) <= spec.width_m / 2.0 - spec.ball_radius_m
+        and spec.ball_radius_m <= ball_z_m <= spec.height_m - spec.ball_radius_m
+    )
+
+
 def apply_g1_compliant_goal_net_force(
     data: Any,
     *,
@@ -328,14 +457,23 @@ def apply_g1_compliant_goal_net_force(
     capture_depth_m: float,
     stiffness_n_m: float,
     damping_n_s_m: float,
+    state: G1CompliantGoalNetState | None = None,
 ) -> None:
-    """Apply a bounded spring-damper force matching the visible back/side/roof net."""
+    """Apply a bounded spring-damper force matching the visible goal net.
+
+    Passing ``state`` upgrades the legacy depth-only damping to a deformable
+    three-axis pocket.  Its anchor is the first physical net-contact point and
+    is independent of the requested scoring target, so capture cannot improve
+    accuracy.  Omitting ``state`` preserves the stateless compatibility path.
+    """
 
     if not 10.0 <= stiffness_n_m <= 250.0:
         raise ValueError("goal net stiffness must be in [10, 250] N/m")
     if not 2.0 <= damping_n_s_m <= 30.0:
         raise ValueError("goal net damping must be in [2, 30] N s/m")
     data.xfrc_applied[ball_body_id, :] = 0.0
+    if state is not None:
+        state.last_force_xyz_n = (0.0, 0.0, 0.0)
     x, y, z = (float(value) for value in data.qpos[ball_qpos : ball_qpos + 3])
     vx, vy, vz = (float(value) for value in data.qvel[ball_qvel : ball_qvel + 3])
     capture_x = g1_goal_net_contact_plane_x(
@@ -343,6 +481,34 @@ def apply_g1_compliant_goal_net_force(
         capture_depth_m=capture_depth_m,
         ball_z_m=z,
     )
+    if state is not None and state.engaged and x < spec.plane_x_m - spec.ball_radius_m:
+        state.reset()
+    if state is not None and state.engaged:
+        if state.anchor_xyz_m is None:
+            raise RuntimeError("engaged goal net is missing its physical anchor")
+        anchor_x, anchor_y, anchor_z = state.anchor_xyz_m
+        displacement = (x - anchor_x, y - anchor_y, z - anchor_z)
+        fx = -stiffness_n_m * displacement[0] - damping_n_s_m * vx
+        fy = -0.35 * stiffness_n_m * displacement[1] - 0.55 * damping_n_s_m * vy
+        fz = -0.35 * stiffness_n_m * displacement[2] - 0.55 * damping_n_s_m * vz
+        force = (
+            max(-250.0, min(250.0, fx)),
+            max(-250.0, min(250.0, fy)),
+            max(-250.0, min(250.0, fz)),
+        )
+        data.xfrc_applied[ball_body_id, :3] = force
+        state.last_force_xyz_n = force
+        state.peak_force_n = max(
+            state.peak_force_n,
+            math.sqrt(sum(value * value for value in force)),
+        )
+        state.peak_anchor_displacement_m = max(
+            state.peak_anchor_displacement_m,
+            math.sqrt(sum(value * value for value in displacement)),
+        )
+        return
+    if not g1_ball_inside_goal_mouth(spec, ball_y_m=y, ball_z_m=z):
+        return
     if x <= capture_x:
         if x > spec.plane_x_m and vx < 0.0:
             data.xfrc_applied[ball_body_id, :3] = (
@@ -350,6 +516,12 @@ def apply_g1_compliant_goal_net_force(
                 max(-250.0, min(250.0, -0.12 * damping_n_s_m * vy)),
                 max(-250.0, min(250.0, -0.08 * damping_n_s_m * vz)),
             )
+        return
+
+    if state is not None:
+        state.engaged = True
+        state.anchor_xyz_m = (capture_x, y, z)
+        state.engagement_count += 1
         return
 
     penetration = x - capture_x
@@ -636,12 +808,15 @@ def _style_pitch_and_ball(parent: Any, spec: G1TrainingGoalSpec) -> None:
     ball_joints = list(ball.joints)
     if len(ball_joints) != 1 or ball_joints[0].name != "ball_free":
         raise ValueError("qualified stadium ball must expose exactly one ball_free joint")
-    # The upstream demonstration scene uses 0.3 N*s/m on all six free-joint
-    # DOFs.  For a 0.41 kg ball this erases about a quarter of the shot speed
-    # per second and damps spin almost instantly, making flight and net entry
-    # look submerged.  Keep only a small numerical damping term; goal capture
-    # is handled separately by the compliant net after the back-net depth.
-    ball_joints[0].damping = (spec.ball_free_joint_damping_n_s_m, 0.0, 0.0)
+    # Clear the upstream scalar shortcut.  Linear and angular damping have
+    # different units and are assigned to compiled DOFs by
+    # ``_configure_ball_dof_damping``.
+    try:
+        ball_joints[0].damping = 0.0
+    except TypeError:
+        # MuJoCo >= 3.10 exposes the joint default triple as an ndarray,
+        # whereas the 3.3 API accepts the scalar XML shortcut directly.
+        ball_joints[0].damping = (0.0, 0.0, 0.0)
     radius = spec.ball_radius_m
     inertia = 0.4 * spec.ball_mass_kg * radius * radius
     ball.mass = spec.ball_mass_kg
@@ -688,6 +863,7 @@ def _style_pitch_and_ball(parent: Any, spec: G1TrainingGoalSpec) -> None:
 
 
 __all__ = [
+    "G1CompliantGoalNetState",
     "G1TrainingGoalSpec",
     "apply_g1_compliant_goal_net_force",
     "build_g1_coupled_stadium_model",

@@ -20,8 +20,8 @@ steps. Claw-7 is currently a provisional **Age 4: First Footballer**.
 | Capability | Current evidence |
 | --- | --- |
 | Bilateral finishing | Physical right- and left-foot contact; 2.4 cm and 6.1 cm target error |
-| Shared-world football | One ball, passer, shooter, and reactive goalkeeper in one MuJoCo world |
-| Pass → finish | 2.90 m pass at 3.6 cm error; 6.61 m shot at 1.8 mm error |
+| Shared-world football | One ball and three independent role agents; old highlight withdrawn after rolling audit |
+| Pass → finish | Corrected-physics retraining in progress; old 3.6 cm / 1.8 mm result relied on sliding |
 | Recovery | No falls or joint-limit violations in the certified Age-4 cases |
 | Long-range highlight | 7.5 m upper-corner shot, explicitly `DEVELOPMENT` due to saturation |
 
@@ -59,6 +59,17 @@ training. Its five CPU MuJoCo cases pass with the current symmetric five-value
 ball/pitch contact tuple. This fixes the legacy three-value contact tuple whose
 second tangential coefficient was effectively near zero and could make the
 ball look as if it slid like a cube.
+
+S4a additionally closes the integration gap between that isolated Reality Pack
+and actual three-player evidence. Translational and angular free-ball damping
+are now dimensionally separate, and every passing trajectory must prove rolling
+from measured linear and angular velocity. The frozen S3 relay is correctly
+rejected as sliding; see the [S4a rolling report](docs/rolling-authenticity-s4a.zh-CN.md).
+
+S4b now gives passer, shooter, and goalkeeper independent policy identity,
+counterfactual contribution rewards, and a joint all-role promotion gate.  The
+corrected-world drift diagnosis and first safe learning sweep are documented in
+the [S4b multi-agent report](docs/multi-agent-growth-s4b.zh-CN.md).
 
 ## Attach to ROSClaw
 
@@ -106,6 +117,29 @@ python -m rosclaw_soccer.media.age04_reel \
 
 Every frame remains `SIM_ONLY`. Media is visualization, never promotion truth.
 
+Every implementation milestone that changes observable football behaviour must
+also publish a reviewable stage video outside the source checkout. The stage is
+not complete until the video:
+
+- replays the same immutable trajectory used by the JSON evidence;
+- binds the evidence, trajectory, and renderer hashes in a sidecar manifest;
+- passes post-encode resolution, frame-rate, frame-count, and duration checks;
+- shows the complete approach, contact, goal-plane crossing, and recovery tail;
+- labels rejected evidence as `DEVELOPMENT · NOT PROMOTED · SIM ONLY`.
+
+The renderer is downstream of scoring: pixels never change the verdict. A
+rejected candidate may be rendered only with an explicit review flag:
+
+```bash
+rosclaw soccer media free-kick \
+  --evidence /outside/source/g1-free-kick.json \
+  --asset-root /path/to/RoboNaldo_Deploy \
+  --output /outside/source/stage-video.mp4 \
+  --source-checkout /path/to/rosclaw-soccer \
+  --resolution 1080p \
+  --allow-rejected-candidate
+```
+
 Train a fresh regulation-physics Age-4 contact actor (eight bound probes,
 teacher-free final replay):
 
@@ -148,6 +182,24 @@ runner, run-up providers, contact/recovery bridges, and football-specific expert
 memory below the same boundary. A canonical strict replay produced a byte-identical
 trajectory and zero result-field differences from the frozen pre-extraction run.
 See the [S2 extraction report](docs/domain-extraction-s2.zh-CN.md).
+
+S3 has extracted the evidence validator and evidence-downstream renderer for one
+passer, one shooter, one reactive goalkeeper, and one shared ball. The first local
+baseline binds all source and renderer hashes and visibly identifies its legacy
+3.00 × 2.00 m training goal; it is the migration baseline for the next regulation-
+goal rerun, not a regulation claim. See the
+[S3 three-player report](docs/three-player-media-s3.zh-CN.md).
+
+Build the three-player review video from an external frozen evidence bundle:
+
+```bash
+rosclaw soccer media three-player \
+  --evidence /outside/source/g1-three-player-showcase.json \
+  --asset-root /path/to/RoboNaldo_Deploy \
+  --output /outside/source/three-player-stage.mp4 \
+  --source-checkout /path/to/rosclaw-soccer \
+  --resolution 1080p
+```
 
 ## Next milestone
 

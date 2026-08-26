@@ -1,0 +1,594 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "ROSClaw Soccer S1–S49 全链路实施总报告：传球、射门、扑救与恢复",
+    "description": "面向讨论与决策的全景报告：按证据等级复盘传球、射门、滚动物理、多智能体、门将扑救、扑后恢复和 ROSClaw 通用 Growth 闭环。",
+    "generatedAt": "2026-08-20T06:33:53+08:00",
+    "sources": [
+      {
+        "id": "early_chain",
+        "label": "S1–S7 传球、射门、滚动物理与多角色证据",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Reviewed Markdown and JSON",
+          "language": "json",
+          "id": "s1_s7_chain_review_20260820",
+          "executed_at": "2026-08-20T05:35:00+08:00",
+          "description": "交叉核对固定场景结果、球滚动 A/B、三角色开发证据和代表视频元数据。",
+          "sql": "SELECT * FROM reviewed_s1_s7_chain_evidence ORDER BY evidence_order",
+          "tables_used": [
+            "three-role-growth-s4c.zh-CN.md",
+            "goalkeeper-growth-s4d.zh-CN.md",
+            "imitation-growth-s5.zh-CN.md",
+            "composite-imitation-growth-s6.zh-CN.md",
+            "joint-group-agility-growth-s7.zh-CN.md",
+            "g1-three-player-showcase.json",
+            "g1-goalkeeper-block.json",
+            "g1-agility-growth.json"
+          ],
+          "metric_definitions": [
+            "传球误差：球到达接球队员约定接球点时的平面距离误差。",
+            "射门误差：球穿过球门平面时与约定目标点的三维距离。",
+            "滚动真实性：用球面线速度与角速度对应表面速度之间的滑移比判断，不能只看球发生平移。"
+          ]
+        }
+      },
+      {
+        "id": "goalkeeper_chain",
+        "label": "S8–S46 门将训练、晋级与失败证据",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Reviewed Markdown and JSON",
+          "language": "json",
+          "id": "s8_s46_goalkeeper_review_20260820",
+          "executed_at": "2026-08-20T05:55:00+08:00",
+          "description": "复核多步物理 PPO、CPU matched-seed 考试、困难分层、侧扑记忆、全身基础和被拒候选。",
+          "sql": "SELECT * FROM reviewed_s8_s46_goalkeeper_evidence ORDER BY evidence_order",
+          "tables_used": [
+            "rosclaw-soccer-discussion2-to-s32-report.artifact.json",
+            "s33-athlete-foundation-motion-reboot.zh-CN.md",
+            "s34-stable-foundation-residual-adaptation.zh-CN.md",
+            "s35-contract-aligned-athlete-adaptation.zh-CN.md",
+            "s36-goalkeeper-combat-growth.zh-CN.md",
+            "s37-agile-goalkeeper-double-save-growth.zh-CN.md",
+            "s38-mobile-goalkeeper-80-target.zh-CN.md",
+            "s39-controlled-dive-foundation.zh-CN.md",
+            "s40-mobile-goalkeeper-hard-corner-growth.zh-CN.md",
+            "s41-far-corner-failure-driven-growth.zh-CN.md",
+            "s42-s44-hard-corner-goalkeeper-growth.zh-CN.md",
+            "native-rollout-report.json"
+          ],
+          "metric_definitions": [
+            "首球扑救率、手部首触率、恢复率、第二次来球扑救率和严格连续二扑率分别报告，不互相替代。",
+            "跨阶段的场景、球速、目标分层、父代和 episode 数不同；仅在同一行、同一 suite 内做直接比较。",
+            "只有 paired promotion 明确通过的候选可称为晋升；开发视频和训练内最好值不构成晋升。"
+          ]
+        }
+      },
+      {
+        "id": "recovery_chain",
+        "label": "S47–S49 起身、交接与真实扑后恢复证据",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Reviewed Markdown and JSON",
+          "language": "json",
+          "id": "s47_s49_recovery_review_20260820",
+          "executed_at": "2026-08-20T06:08:00+08:00",
+          "description": "核对神经起身专家、终端保持、热交接、真实扑后快照、冲量沉降和 MotionDecode 恢复教师路由。",
+          "sql": "SELECT * FROM reviewed_s47_s49_recovery_evidence ORDER BY evidence_order",
+          "tables_used": [
+            "s47-neural-getup-skill-growth.zh-CN.md",
+            "s48-terminal-hold-recovery-handoff.zh-CN.md",
+            "s49-full-chain-recovery-learning.zh-CN.md",
+            "collection-report.json",
+            "neural-getup-failure-terminal-exam.json",
+            "neural-getup-impact-absorption-exam.json",
+            "settling-report.json",
+            "teacher-routing.json"
+          ],
+          "metric_definitions": [
+            "局部起身组件成功：从固定源姿态及小扰动完成起身、热交接并保持稳定。",
+            "完整恢复成功：从真实扑救产生的高动量状态连续完成卸力、起身、站稳和重新 ready，期间不得 teleport 或借 auto-reset 计分。"
+          ]
+        }
+      },
+      {
+        "id": "full_chain_review",
+        "label": "S1–S49 全链路交叉复核",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Cross-source evidence review",
+          "language": "json",
+          "id": "s1_s49_full_chain_review_20260820",
+          "executed_at": "2026-08-20T06:20:00+08:00",
+          "description": "将早期传射、门将训练、恢复链路、外部数据适配和晋级治理按统一证据等级交叉对齐。",
+          "sql": "SELECT * FROM reviewed_s1_s49_full_chain_evidence ORDER BY evidence_order",
+          "tables_used": [
+            "S1–S7 passing and shooting evidence",
+            "S8–S46 goalkeeper reports and exams",
+            "S47–S49 recovery reports and exams",
+            "local dataset and reference-framework audits"
+          ]
+        }
+      },
+      {
+        "id": "validation_run",
+        "label": "当前源码与媒体复查",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Local CLI and prior durable validation",
+          "language": "shell",
+          "id": "local_validation_20260820",
+          "executed_at": "2026-08-20T06:34:00+08:00",
+          "description": "引用 S49 最近一次完整测试与静态检查，并重新用 ffprobe 检查本报告选取的九个视频。",
+          "sql": "SELECT * FROM local_validation_results WHERE report_date = DATE '2026-08-20' ORDER BY execution_order",
+          "tables_used": [
+            "current soccer working tree",
+            "nine selected MP4 files",
+            "S49 validation record"
+          ]
+        }
+      }
+    ],
+    "cards": [
+      {
+        "id": "card_pass",
+        "description": "S7 固定三角色开发场景；不是随机化传球晋级率。",
+        "dataset": "headline_metrics",
+        "sourceId": "early_chain",
+        "metrics": [
+          {"label": "传球误差（m）", "field": "pass_error_m", "format": "number"},
+          {"label": "传球距离（m）", "field": "pass_distance_m", "format": "number"}
+        ]
+      },
+      {
+        "id": "card_shot",
+        "description": "S7 固定目标开发场景；误差为球门平面目标误差。",
+        "dataset": "headline_metrics",
+        "sourceId": "early_chain",
+        "metrics": [
+          {"label": "射门误差（m）", "field": "shot_error_m", "format": "number"},
+          {"label": "射门速度（m/s）", "field": "shot_speed_mps", "format": "number"}
+        ]
+      },
+      {
+        "id": "card_s12",
+        "description": "S12 同一 CPU96 双球考试；首个正式多步物理晋升候选。",
+        "dataset": "headline_metrics",
+        "sourceId": "goalkeeper_chain",
+        "metrics": [
+          {"label": "S12 首扑", "field": "s12_first_save_rate", "format": "percent"},
+          {"label": "S12 二扑", "field": "s12_second_save_rate", "format": "percent"}
+        ]
+      },
+      {
+        "id": "card_s48",
+        "description": "S48 固定源姿态与局部扰动组件考试；不代表真实扑后分布。",
+        "dataset": "headline_metrics",
+        "sourceId": "recovery_chain",
+        "metrics": [
+          {"label": "局部起身通过", "field": "s48_component_passed", "format": "number"},
+          {"label": "局部考试总数", "field": "s48_component_total", "format": "number"}
+        ]
+      },
+      {
+        "id": "card_s49",
+        "description": "S49 真实扑后失败状态；揭示完整链路分布断层。",
+        "dataset": "headline_metrics",
+        "sourceId": "recovery_chain",
+        "metrics": [
+          {"label": "扑后失败率", "field": "s49_post_save_failure_rate", "format": "percent"},
+          {"label": "真实状态恢复", "field": "s49_real_state_recovered", "format": "number"}
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "chart_shot_precision",
+        "title": "固定三角色场景的射门目标误差演进",
+        "subtitle": "单位：米，越低越好；S4c、S5、S6、S7 使用同一类固定开发场景，可作局部纵向比较，但不能外推为随机比赛成功率。",
+        "showDescription": true,
+        "intent": "comparison",
+        "question": "模仿先验、接触先验和关节组敏捷性是否改善固定场景的射门精度？",
+        "rationale": "四个同口径阶段的单指标适合用水平条形图展示绝对误差；同时在标题和正文保留开发证据边界。",
+        "type": "bar",
+        "dataset": "shot_precision_progression",
+        "sourceId": "early_chain",
+        "encodings": {
+          "x": {"field": "phase", "type": "nominal", "label": "阶段"},
+          "y": {"field": "target_error_m", "type": "quantitative", "label": "目标误差（m）"},
+          "tooltip": [
+            {"field": "method", "type": "text", "label": "主要变化"},
+            {"field": "truth", "type": "text", "label": "证据边界"}
+          ]
+        },
+        "xAxisTitle": "阶段",
+        "yAxisTitle": "目标误差（m）",
+        "valueFormat": "number",
+        "unit": "m",
+        "layout": "full",
+        "maxRows": 8,
+        "settings": {
+          "orientation": "horizontal",
+          "showValues": true,
+          "sort": "custom"
+        },
+        "palette": {
+          "kind": "categorical",
+          "colors": ["blue"]
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "table_chain_matrix",
+        "title": "完整足球链路能力矩阵",
+        "subtitle": "‘已实现’描述软件与实验事实；‘晋级状态’描述能否作为当前可信能力对外宣称，两者严格分开。",
+        "showDescription": true,
+        "dataset": "chain_matrix",
+        "density": "spacious",
+        "sourceId": "full_chain_review",
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "link", "label": "链路环节", "type": "text"},
+          {"field": "implemented", "label": "当前实现", "type": "text"},
+          {"field": "best_evidence", "label": "最佳/关键证据", "type": "text"},
+          {"field": "status", "label": "可信状态", "type": "text"},
+          {"field": "gap", "label": "尚缺什么", "type": "text"}
+        ]
+      },
+      {
+        "id": "table_phase_timeline",
+        "title": "S1–S49 关键阶段与因果认识",
+        "subtitle": "把四十九个编号归并为十二个真正改变系统能力或结论的阶段簇。",
+        "showDescription": true,
+        "dataset": "phase_timeline",
+        "density": "spacious",
+        "sourceId": "full_chain_review",
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "phase", "label": "阶段", "type": "text"},
+          {"field": "change", "label": "实现变化", "type": "text"},
+          {"field": "result", "label": "关键结果", "type": "text"},
+          {"field": "decision", "label": "结论", "type": "text"}
+        ]
+      },
+      {
+        "id": "table_keeper_exams",
+        "title": "门将关键考试：同一行内可比，跨行不可直接排名",
+        "subtitle": "场景从训练球、双球，到 match、全远角困难球和真实扑后状态逐步变难；分母、目标和安全门均保留。",
+        "showDescription": true,
+        "dataset": "keeper_exams",
+        "density": "spacious",
+        "sourceId": "goalkeeper_chain",
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "phase", "label": "阶段", "type": "text"},
+          {"field": "suite", "label": "考试", "type": "text"},
+          {"field": "baseline", "label": "基线", "type": "text"},
+          {"field": "candidate", "label": "候选/结果", "type": "text"},
+          {"field": "verdict", "label": "门控结论", "type": "text"}
+        ]
+      },
+      {
+        "id": "table_recovery_chain",
+        "title": "扑后恢复链路逐级验收",
+        "subtitle": "组件考试与完整链路考试不能互相替代；S49 的 0/9 是决定下一步训练方向的权威负证据。",
+        "showDescription": true,
+        "dataset": "recovery_chain",
+        "density": "spacious",
+        "sourceId": "recovery_chain",
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "stage", "label": "恢复环节", "type": "text"},
+          {"field": "evidence", "label": "实验结果", "type": "text"},
+          {"field": "meaning", "label": "能证明什么", "type": "text"},
+          {"field": "limit", "label": "不能证明什么", "type": "text"}
+        ]
+      },
+      {
+        "id": "table_data_frameworks",
+        "title": "数据集与参考框架在完整链路中的实际作用",
+        "subtitle": "数据和框架是教师、初始化、课程或编排工具；没有任何一个外部项目可直接替代当前 G1 场景的物理训练与考试。",
+        "showDescription": true,
+        "dataset": "data_frameworks",
+        "density": "spacious",
+        "sourceId": "full_chain_review",
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "resource", "label": "数据/框架", "type": "text"},
+          {"field": "used_for", "label": "已经用于", "type": "text"},
+          {"field": "finding", "label": "得到的认识", "type": "text"},
+          {"field": "next_role", "label": "下一步正确位置", "type": "text"}
+        ]
+      },
+      {
+        "id": "table_videos",
+        "title": "传球、射门、滚动、扑救代表视频索引",
+        "subtitle": "均为 1920×1080、30 fps；路径相对于 rosclaw_football/evidence。视频用于观察，不参与成功率计分。",
+        "showDescription": true,
+        "dataset": "video_inventory",
+        "density": "spacious",
+        "sourceId": "validation_run",
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "phase", "label": "阶段", "type": "text"},
+          {"field": "content", "label": "可观察内容", "type": "text"},
+          {"field": "duration_sec", "label": "时长（s）", "type": "number", "align": "right"},
+          {"field": "truth", "label": "证据标签", "type": "text"},
+          {"field": "relative_path", "label": "相对路径", "type": "text"}
+        ]
+      },
+      {
+        "id": "table_validation",
+        "title": "当前报告的验证与可复现边界",
+        "subtitle": "昂贵训练没有在生成本报告时重跑；数值来自现存耐久证据，代码门引用 S49 最近一次全量验证。",
+        "showDescription": true,
+        "dataset": "validation_results",
+        "density": "spacious",
+        "sourceId": "validation_run",
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "check", "label": "检查项", "type": "text"},
+          {"field": "result", "label": "结果", "type": "text"},
+          {"field": "scope", "label": "范围与解释", "type": "text"}
+        ]
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "# ROSClaw Soccer S1–S49 全链路实施总报告：传球、射门、扑救与恢复"
+      },
+      {
+        "id": "executive_summary",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Executive Summary\n\n- **传球与射门已经有厘米级固定场景证据，但还不是独立、可晋级、能泛化的角色策略。** 当前三角色链路中，传球误差约 2.33 cm；S7 射门在 6.64 m 距离、9.04 m/s 球速下目标误差约 0.86 cm。两项均来自固定开发场景，不能解释为随机对手、随机来球下的成功率。\n\n- **球的物理真实性和共享多智能体时间线已经修正；门将学习链也确实产生过晋级。** S4a 将中位滑移比从 65.72% 降至 0.78%；S12 在同一 CPU96 双球考试里把首扑从 20.83% 提到 39.58%、恢复从 20.83% 提到 36.46%、严格二扑从 6.25% 提到 14.58%，是当前证据最清楚的全局物理晋级。\n\n- **更难门将课程暴露了能力拓扑上限，而不是简单的训练轮数不足。** 站立式门将对中央低/中球可达 83.33%/100%，但首球远角低、中、高均曾为 0%；放大腰臂或全身权限会先造成角速度尖峰和跌倒。S38–S46 多个候选因此被严格拒绝，S45 的 49.22% 首扑同时伴随 61.72% 失败率和仅 4.69% 恢复，不能称为更强冠军。\n\n- **扑后恢复的接口闭环已经建立，完整能力尚未打通。** S48 在局部起身分布达到 28/28，但 S49 从真实扑救状态测试冻结专家为 0/9；1 秒物理卸力能显著降低角速度，却仍不能完成多姿态起身。下一步不是继续拼接模块，而是从真实失败快照训练‘冲量吸收—多姿态起身—热交接—重新守门’的连续策略。"
+      },
+      {
+        "id": "headline_context",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 五个数字先建立共同口径\n\n下面五组数字来自不同考试面，故不能相加成一个‘总成长分’：前两组是固定传射开发场景，S12 是双球 CPU 晋级考试，S48 是局部组件考试，S49 是真实扑后分布审计。"
+      },
+      {
+        "id": "headline_strip",
+        "type": "metric-strip",
+        "layout": "full",
+        "cardIds": ["card_pass", "card_shot", "card_s12", "card_s48", "card_s49"]
+      },
+      {
+        "id": "scope",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 这份报告补齐了什么\n\n现有 `s49-full-chain-recovery-learning.zh-CN.md` 只回答‘扑救以后为什么恢复失败，以及怎样形成下一轮课程’；`rosclaw-soccer-discussion2-to-s32-report.zh-CN.html` 详细覆盖 S8–S32，但没有早期传射链，也没有 S33–S49 的全身基础、困难远角、神经起身和真实扑后恢复。本文首次把 S1–S49 串成一条可讨论的全景链路，并统一使用四级证据标签：\n\n1. **晋级能力**：同一 suite 成对考试通过，允许进入 SIM_ONLY 冠军/专项注册表；\n2. **组件通过**：某个技能在限定输入邻域通过，但尚未接入完整任务；\n3. **开发证据**：可复现实验或视频有效，但缺随机化、样本量或晋级门；\n4. **拒绝/历史证据**：实验揭示了根因或上限，但不得当作能力宣传。"
+      },
+      {
+        "id": "chain_architecture",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 当前完整链路到底是什么\n\n```text\n射手/传球队员感知与本体状态\n        ↓\n跑动/调整步 → 支撑脚切换 → 触球 → 随挥与恢复\n        ↓                 同一个有滚动与碰撞的物理球\n传球落点 → 接球准备 → 射门目标/球门平面\n        ↓\n门将预判 → 横移/起扑 → 手套或身体触球 → 落地卸力\n        ↓\n多姿态起身 → 终端稳定保持 → locomotion 热交接 → 再次 ready\n        ↓\nPractice 记录全过程与失败前真实状态\n        ↓\nMemory 按角色、难度、姿态、冲量和失败原因重放\n        ↓\nGrowth 训练候选；冻结冠军保持稳定性\n        ↓\n同种子 sealed exam：角色局部门 + 团队门 + 安全门\n        ↓\n通过才晋级；失败回流 Memory，且不覆盖冠军\n```\n\n代码已经覆盖这条链的大多数‘接口’，但能力成熟度不均：传射侧在固定轨迹上精确，门将侧有真正的 actor-critic、严格 CPU 考试和大量困难负证据，恢复侧刚刚把真实分布断层转成可训练数据。团队级、无重置、每个角色共同成长的持续比赛还未完成。"
+      },
+      {
+        "id": "chain_matrix_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 一张表看清传球、射门、扑救和恢复"
+      },
+      {"id": "chain_matrix", "type": "table", "layout": "full", "tableId": "table_chain_matrix"},
+      {
+        "id": "pass_shoot",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 传球与射门：精度变好了，但学习闭环明显弱于门将\n\nS3 首次把 3 个 G1 和 1 个球放进同一 CPU MuJoCo 时间线，得到 2.899 m 传球、3.63 cm 误差和 6.609 m 射门、0.18 cm 误差；随后 S4a 证明这条历史轨迹的球主要在滑动而不是滚动，因此 S3 只能作为回归基线，不能继续当作真实足球物理成功。\n\nS4a 修正平动/转动阻尼后，中位滑移比从 65.72% 降至 0.78%，100% 可评估帧进入真实滚动；这一修复也让旧三角色控制立即暴露退化：传球误差升到 0.323 m、射门误差升到 2.919 m。S4b/S4c 在不回退物理的前提下重新搜索，恢复到 2.35 cm 传球误差和 5.51 cm 射门误差。S5 加入 MotionDecode 全身小残差后，射门误差降到 1.77 cm且踢后后退速度下降约 94%；S6 加入 24 个 OmniContact 右脚触球事件，改善接触与滑移；S7 分组开放腰臂和随挥，把固定目标误差进一步降到 0.86 cm。\n\n这些结果证明数据先验和受限关节组可塑性对自然度、稳定与精度有帮助，但当前传球与射门仍主要由场景专用搜索、教师与残差组合完成，没有像门将那样形成独立的 Playmaker/Finisher actor-critic、失败记忆、父代池和 sealed randomized promotion。因此报告不称其为‘已经学会泛化传射’。"
+      },
+      {"id": "shot_chart", "type": "chart", "layout": "full", "chartId": "chart_shot_precision"},
+      {
+        "id": "keeper_summary",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 扑救：从站立挡球走到了困难分层，但真正侧扑尚未学成\n\nS8–S11 建立角色血统、因果观测、Coverage–Time、4GPU PPO 和 CPU matched-seed 门，却也证明解析 fast world 的高奖励不能替代真实碰撞。S12 改成 5 秒、多步、双球 G1+球+门物理环境后，首次出现正式晋级。S16–S32 又把‘身体挡到’和‘规范手套首触’分开，并通过 arm-only 权限、任务空间 reach 和角速度门避免用抽搐换覆盖。\n\nS33 以后转向全身数据驱动底座：OpenTrack 从头拟合、Humanoid-GPT、Motion Atlas、稳定 locomotion residual、分层脚步、因果意图和侧扑 atlas 都进入实验。最重要的发现来自困难分层：当前门将在中央低/中球可以很强，但远角与高球需要支撑切换、腾空、保护性落地和恢复；把旧教师或上肢权限直接放大，只会使角速度达到 8–13 rad/s并增加跌倒。强化学习不会从一个没有侧扑拓扑的动作空间里自动发明完整侧扑。"
+      },
+      {"id": "keeper_table", "type": "table", "layout": "full", "tableId": "table_keeper_exams"},
+      {
+        "id": "recovery_summary",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 扑后恢复：为什么‘会起身’仍然接不成‘扑救后能回来’\n\nS47 证明 RoboNaldo/MJLab 神经专家能让固定倒地姿态的 4/4 G1 短暂站起，但错误的终止和冷启动交接使最终稳定为 0/4。S48 修复为‘专家末帧闭环保持—连续 1 秒稳定包络—locomotion LSTM 预热—1 秒渐进权限交接’，在固定姿态和 ±0.05 局部扰动上实现 28/28，末尾连续稳定 6.14–9.10 秒。\n\nS49 随后做了真正关键的考试：从冻结门将策略的真实扑救轨迹保存隔离前物理状态。64 个剧集有 11 次扑救，其中 9 次随后失败；这些状态带 2.577–8.558 rad/s 根角速度、0.100–0.119 m 骨盆高度和复杂接触。冻结起身专家在这 9 个终态上 0/9；用 1 秒物理阻尼卸力可把角速度降至 0.088–0.403 rad/s，但仍是 0/9。结论是卸力问题和多姿态起身问题都存在，S48 的局部组件不能直接外推。\n\n真正的数据驱动突破是已经保存了内容绑定、无 pickle 的真实失败快照，并把 50 个快照分成高动量、跪姿/支撑、站立、俯卧等簇；失败记忆会优先重放高动量和稀有姿态。MotionDecode 恢复适配器也从错误的‘文件最后 240 帧’改为‘最低骨盆到连续站立再加终端保持’，已能路由左侧、右侧、俯卧、仰卧教师。下一轮可以开始训练，而不是再靠手工串模块。"
+      },
+      {"id": "recovery_table", "type": "table", "layout": "full", "tableId": "table_recovery_chain"},
+      {
+        "id": "timeline_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 四十九个阶段如何汇成一条成长路线"
+      },
+      {"id": "timeline_table", "type": "table", "layout": "full", "tableId": "table_phase_timeline"},
+      {
+        "id": "rosclaw_value",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 对 ROSClaw 本体的价值：足球是压力测试，Core 学到的是‘如何成长’\n\n不应把球门、手套或 G1 关节名继续塞进通用 Growth。当前已经抽象出的任务无关能力包括：\n\n- **Practice 证据协议**：连续物理剧集、事件边界、失败前状态和不可变内容哈希；\n- **Memory 失败记忆**：按困难、稀有、失败原因重放，且禁止混合身体、场景、源策略和配置；\n- **Growth 稳定—可塑闭环**：冻结冠军、隔离候选、受限 residual、旧技能回放、matched seeds、非劣门和 fail-closed 晋级；\n- **技能组合协议**：因果启动、终端闭环保持、连续成功条件、下游策略预热和渐进权限交接；\n- **治理与可复现**：`NumericalRuntimeContract`、`IndividualGrowthScope`、条件教师权限、checkpoint/场景/实现哈希、canonical champion registry 与 SIM_ONLY 上限。\n\n足球适配器只负责定义传球落点、球门平面、来球分层、手套碰撞、射门目标和比赛角色。将来抓取后复位、碰撞脱困、跌倒恢复、装配失败重试都可以复用同一套 Practice→Memory→Growth→Exam 协议；这才是从 G1 足球实验反哺 ROSClaw 的架构成果。"
+      },
+      {
+        "id": "data_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 之前的数据集和框架到底有没有帮助\n\n答案是有，而且帮助非常具体；但它们解决的是动作先验、局部专家、课程或分布式编排，不会自动解决当前场景的动力学闭环。"
+      },
+      {"id": "data_table", "type": "table", "layout": "full", "tableId": "table_data_frameworks"},
+      {
+        "id": "stability_plasticity",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Stability–Plasticity Dilemma 的工程答案\n\n当前正确方案不是让在线 actor 在比赛中持续改自己，也不是把所有关节一次性放开。冠军策略和外部专家保持冻结，保证稳定性；候选只在隔离仿真中从真实失败簇学习，保证可塑性。动作权限按脚步、腰、手臂、支撑切换、侧扑、卸力、起身和交接分阶段解冻；每层都要通过组件门，再进入完整链路门。\n\n为了防遗忘，候选训练必须混合三类回放：当前困难失败、旧冠军已会的基础球、角色协作样本。为了防刷分，奖励必须分开记录精准传球、球门平面误差、手套首触、身体封堵、落地冲击、恢复时间和重新 ready；任何一个平均奖励都不能替代这些真实事件。为了防错误晋级，最终只比较冻结父代和候选在同一 sealed seeds 上的分层指标与尾部风险。"
+      },
+      {
+        "id": "decision_plan",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 建议大家讨论并拍板的下一阶段实施顺序\n\n1. **先完成 Recovery Stage A/B。** 扩大真实扑救采集，定向获得左侧、右侧、俯卧、仰卧各至少 64 个独立沉降状态；训练高动量冲量吸收 residual，再训练四姿态 tracking-RL 专家。没有这一步，侧扑成功越多，摔倒后留在场上的失败越多。\n\n2. **再做统一恢复学生和完整门将闭环。** 用 OpenTrack/DAgger 将路由专家蒸馏为只看本体感的恢复策略，接入 S48 热交接；在至少 1,000 个固定困难射门上考‘扑救—落地—起身—ready’，同时报告条件恢复率、P50/P95 恢复时间、头部冲击、二次碰撞和扑救非劣。\n\n3. **把 Finisher 与 Playmaker 补成真正独立学习者。** 各自拥有 actor/critic、父代、失败记忆和 sealed exam；传球至少随机化球位、队友位置和距离，射门至少随机化助跑、左右脚、远距离与左右上角。固定场景的厘米级误差只能作为回归门，正式成功要求跨种子误差不高于 0.10 m且安全、自然度不退化。\n\n4. **建立三角色联合但不混权重的团队训练。** 使用冻结对手池和角色局部奖励，先过 role-local promotion，再过 team promotion；传球队员的传球按一次低风险射门训练，接球队员必须从真实滚球状态接球，门将只从可观测动作意图预判。\n\n5. **最后做连续比赛展示。** 一个共享、真实滚动的标准足球；标准尺寸球门；至少 30 秒无 teleport、无 reset；包含左右脚传射、远距离跑射、左右上角、机动门将扑救、允许受控倒地并能起身继续。视频只从已通过证据中取材，不反向替代考试。"
+      },
+      {
+        "id": "discussion_questions",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 讨论会上最值得问的八个问题\n\n1. 我们是否同意把‘S12 全局物理冠军、S31 手臂专项、S48 局部恢复组件’分开注册，而不再用一个 champion 名称覆盖所有能力？\n2. 下一阶段是否优先用算力补齐真实扑后四姿态覆盖，而不是继续在旧站立门将上堆 PPO？\n3. 传球和射门的正式 suite 应采用哪些距离、左右脚、球位、目标高度和感知噪声分层？\n4. 0.10 m 传射误差门是要求均值、P95，还是每个难度层都要达到？\n5. 门将 80% 应按低/中/高、近角/宽角/远角逐层要求，还是只对总体要求？建议继续逐层，避免简单球掩盖困难球。\n6. 受控侧扑倒地的安全例外如何定义：允许哪些膝、前臂、躯干接触，头部冲击和角速度上限是多少？\n7. 完整链路晋级应优先优化首扑率，还是‘扑救后 10 秒内重新 ready 的条件成功率’？建议作为双主指标，任一不得退化。\n8. 哪些通用协议进入 ROSClaw Core，哪些球场语义严格留在 Soccer 插件？"
+      },
+      {
+        "id": "videos_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 可直接拿来讨论的代表视频\n\n推荐先看 S4a 理解为什么旧球是在滑，再看 S4c/S4d 理解三角色共享物理链，随后看 S7、S12、S38、S45。S45 画面可能更激进，但其原始报告明确拒绝，观看时要同时看跌倒和恢复，不应只剪成功帧。"
+      },
+      {"id": "videos_table", "type": "table", "layout": "full", "tableId": "table_videos"},
+      {
+        "id": "validation_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 验证、限制与证据卫生\n\n所有结果均为 `SIM_ONLY`，真实机器人命令为 0。本报告没有重新运行数千万物理步的训练，而是复核现存带配置、种子、哈希和门控结论的 durable evidence；九个代表视频本轮重新读取成功。当前仓库仍是包含大量未提交实现与证据文档的工作树快照，因此报告适合架构和实验决策，不应被误认为已发布版本说明。"
+      },
+      {"id": "validation_table", "type": "table", "layout": "full", "tableId": "table_validation"},
+      {
+        "id": "plain_language",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 最通俗的一句话\n\n现在的 ROSClaw 足球队已经会在同一个真实物理球上完成精准的定点传射，也培养出一个经过严格考试的基础门将；但门将遇到真正远角时还不会完整飞扑，扑倒以后虽然有一个‘标准姿态起身高手’，却接不住真实比赛里带冲量、侧卧和碰撞的烂摊子。我们这轮最重要的进步，是不再把漂亮片段当成学会，而是把每次失败前的身体状态保存下来，让下一代候选专门从这些失败里学，同时永远不覆盖已经会的冠军。"
+      },
+      {
+        "id": "handoff",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 交付说明\n\n本报告生成于 2026年8月20日，覆盖 S1–S49；以当前 Soccer 工作树 `362de9950fb2` 及现存外部 evidence 为快照。它不触发训练、硬件、提交或推送，只提供面向团队讨论的全链路事实、证据边界和下一阶段决策建议。"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-20T06:33:53+08:00",
+    "status": "ready",
+    "datasets": {
+      "headline_metrics": [
+        {
+          "pass_error_m": 0.0233356,
+          "pass_distance_m": 2.8461,
+          "shot_error_m": 0.00858988,
+          "shot_speed_mps": 9.0402,
+          "s12_first_save_rate": 0.3958,
+          "s12_second_save_rate": 0.1458,
+          "s48_component_passed": 28,
+          "s48_component_total": 28,
+          "s49_post_save_failure_rate": 0.8182,
+          "s49_real_state_recovered": 0
+        }
+      ],
+      "shot_precision_progression": [
+        {"phase": "S4c", "target_error_m": 0.0550696, "method": "真实滚动后的三角色联合搜索", "truth": "固定开发场景"},
+        {"phase": "S5", "target_error_m": 0.017651, "method": "MotionDecode 全身小残差", "truth": "固定开发场景"},
+        {"phase": "S6", "target_error_m": 0.019, "method": "MotionDecode + 24 个 OmniContact 触球事件", "truth": "固定开发场景"},
+        {"phase": "S7", "target_error_m": 0.00858988, "method": "关节组敏捷性与腰臂随挥", "truth": "固定开发场景"}
+      ],
+      "chain_matrix": [
+        {"order": 1, "link": "标准足球滚动与碰撞", "implemented": "线/角阻尼解耦、滑移比、球门/球/场景合同", "best_evidence": "中位滑移 65.72%→0.78%，P95 74.03%→1.62%，滚动帧 0→100%", "status": "组件通过", "gap": "仍需在所有新比赛场景持续执行滚动门，防止媒体脚本回退"},
+        {"order": 2, "link": "传球", "implemented": "同一物理时间线、传球落点、独立角色合同和联合搜索", "best_evidence": "2.846 m 传球，落点误差 0.0233 m，真实滚动", "status": "开发证据", "gap": "缺独立 Playmaker actor-critic、随机位置/距离 suite 与晋级"},
+        {"order": 3, "link": "接球—射门", "implemented": "接球阶段、远距离目标、MotionDecode/OmniContact 先验、关节组可塑与随挥", "best_evidence": "6.642 m、9.040 m/s、目标误差 0.00859 m", "status": "开发证据", "gap": "缺左右脚、移动来球、随机高角、助跑连续性和 Finisher 晋级"},
+        {"order": 4, "link": "三角色共享世界", "implemented": "Passer、Shooter、Keeper 共用 1 个球和 1 条 CPU MuJoCo 时间线", "best_evidence": "S4d 门将产生真实接触并改变球速；传球误差维持 0.0235 m", "status": "开发门通过，未晋级", "gap": "没有三角色独立学习、冻结对手池和 team promotion"},
+        {"order": 5, "link": "基础门将", "implemented": "因果观测、横移、手套接触、多步 PPO、双球、CPU matched exam", "best_evidence": "S12 CPU96：首扑 39.58%、恢复 36.46%、严格二扑 14.58%", "status": "PROMOTED_SIM_ONLY", "gap": "旧 suite 难度有限，缺现代远角/高球与完整自然度门"},
+        {"order": 6, "link": "困难远角/高球", "implemented": "难度分层、因果意图、非线性 reach、镜像侧扑记忆、4GPU actor-critic", "best_evidence": "中央低/中 83.33%/100%；远角低/中/高曾均为 0%", "status": "拒绝", "gap": "缺目标条件化支撑切换、腾空、触球、保护落地的完整 option"},
+        {"order": 7, "link": "扑后冲量吸收", "implemented": "真实失败快照、1 秒纯物理阻尼沉降、困难簇重放", "best_evidence": "9 个终态根角速度由 2.577–8.558 降至 0.088–0.403 rad/s", "status": "组件诊断通过", "gap": "需训练有界 residual 并验证头部冲击、关节、滑移和跨簇泛化"},
+        {"order": 8, "link": "多姿态起身与交接", "implemented": "MJLab 神经专家、终端保持、locomotion 预热、渐进交接、MotionDecode 四姿态教师", "best_evidence": "局部源姿态 28/28；真实扑后状态 0/9", "status": "局部组件通过，完整链拒绝", "gap": "需左右侧卧/俯卧/仰卧真实样本与 tracking-RL/DAgger"},
+        {"order": 9, "link": "完整比赛恢复", "implemented": "完整考试协议和候选/冠军治理已定义", "best_evidence": "真实链路已采集 64 episode、50 快照并确认分布断层", "status": "未打通", "gap": "尚无‘扑救—落地—起身—ready—再扑’晋级候选"},
+        {"order": 10, "link": "ROSClaw 通用自进化", "implemented": "Practice、失败 Memory、Growth、内容哈希、条件教师、配对门、fail-closed", "best_evidence": "会保存失败、训练候选、拒绝退化，并保留父代", "status": "架构主链已成形", "gap": "通用 Core API 尚需从 Soccer 工作树整理、提交并在非足球任务复用"}
+      ],
+      "phase_timeline": [
+        {"order": 1, "phase": "S1–S2", "change": "从 Core 抽出 Soccer 域；建立远距离助跑射门严格回放", "result": "3.472 m 助跑、0.946 s handoff→contact、0 停顿、0.0204 m 目标误差", "decision": "开发视频；旧总门因网捕获/角点语义未通过"},
+        {"order": 2, "phase": "S3–S4a", "change": "三 G1 一球时间线；随后建立滚动真实性门", "result": "发现 S3 球约 99.9% 滑动；修复后中位滑移降至 0.78%", "decision": "S3 数字降级为历史回归；滚动物理组件通过"},
+        {"order": 3, "phase": "S4b–S4d", "change": "真实滚动下重训三角色；独立角色合同与联合晋级", "result": "传球 0.0235 m；射门 0.0551 m；门将真实接触但非 holdout 泛化", "decision": "开发门通过，不是正式冠军"},
+        {"order": 4, "phase": "S5–S7", "change": "MotionDecode、OmniContact、关节组敏捷与可见随挥", "result": "固定射门误差降至 0.00859 m；踢后后退与脚滑改善", "decision": "自然度和精度开发证据，未形成独立角色 RL"},
+        {"order": 5, "phase": "S8–S12", "change": "角色血统、因果观测、4GPU PPO、CPU exam；转入多步物理双球", "result": "S12 首扑 20.83→39.58%，恢复 20.83→36.46%，严格二扑 6.25→14.58%", "decision": "首个 PROMOTED_SIM_ONLY 物理候选"},
+        {"order": 6, "phase": "S13–S32", "change": "横移、回中、手套语义、MotionDecode/SONIC、task-space reach、arm-only", "result": "S31 手位移 5.05→13.36 cm且 p95 手速下降；扑救率未增", "decision": "S31 仅手臂专项；多数候选拒绝/归档"},
+        {"order": 7, "phase": "S33–S35", "change": "全身基础重启、Motion Atlas、OpenTrack/Humanoid-GPT 与稳定底座 residual", "result": "OpenTrack 从头策略 1.04 s 全倒；S35 总成功 40%、恢复70%但多项安全/绝对门失败", "decision": "数据管线有效，候选不晋级"},
+        {"order": 8, "phase": "S36–S39", "change": "战斗课程、二次尝试指标、机动脚步、因果意图、受控侧扑状态机", "result": "S38 match64 首/二次 34.38%，零跌倒；仍低于 80%", "decision": "稳定开发候选，严格拒绝"},
+        {"order": 9, "phase": "S40–S44", "change": "低/中/高×中心/宽/远分层；镜像侧扑与等变神经肌肉记忆", "result": "中央低/中 83.33%/100%，远角三层 0%；v19 拟合 RMSE 0.002832 rad", "decision": "教师拟合组件通过，物理门将未通过"},
+        {"order": 10, "phase": "S45–S46", "change": "原生全身 actor、平衡/高球/跌倒起身 PPO", "result": "代表候选首扑 49.22%，但失败 61.72%、恢复 4.69%；后续无安全候选", "decision": "REJECTED_NO_SAFE_CANDIDATE"},
+        {"order": 11, "phase": "S47–S48", "change": "神经起身专家、终端闭环保持、locomotion 热交接、多卡设备修复", "result": "从 S47 最终稳定 0/4 提升到局部源姿态与扰动 28/28", "decision": "PASS_SIM_COMPONENT_LOCAL_PERTURBATION"},
+        {"order": 12, "phase": "S49", "change": "真实扑后快照、失败记忆、冲量沉降、MotionDecode 四姿态教师路由", "result": "64 剧集 11 扑救、9 扑后失败；冻结专家在真实终态 0/9", "decision": "完整链路不晋级；获得正确课程入口"}
+      ],
+      "keeper_exams": [
+        {"order": 1, "phase": "S4d", "suite": "单固定三角色场景", "baseline": "S4c 门将仅提前横移 0.251 m，无接触", "candidate": "移动 0.592 m并真实触球；球速 8.370→5.736 m/s", "verdict": "开发门通过；多候选搜索、无广泛 holdout"},
+        {"order": 2, "phase": "S12", "suite": "CPU MuJoCo 96 / 双球", "baseline": "首扑20.83%；恢复20.83%；严格二扑6.25%", "candidate": "首扑39.58%；恢复36.46%；严格二扑14.58%；硬安全0", "verdict": "PROMOTED_SIM_ONLY"},
+        {"order": 3, "phase": "S31", "suite": "CPU MuJoCo 160 / elite arm", "baseline": "首扑24.38%；手扑7.50%；二扑3.75%；手位移5.05 cm", "candidate": "首扑24.38%；手扑7.50%；二扑3.13%；手位移13.36 cm", "verdict": "手臂专项通过；不是全局冠军提升"},
+        {"order": 4, "phase": "S38", "suite": "CPU match 64", "baseline": "首/二次21.88%/21.88%", "candidate": "首/二次34.38%/34.38%；零跌倒；峰值角速2.680", "verdict": "安全门通过；两项低于80%，拒绝"},
+        {"order": 5, "phase": "S39", "suite": "CPU match 64 / 语义修复", "baseline": "同一冻结候选修复前二次34.38%", "candidate": "首34.38%；二次35.94%；严格二扑3.13%；零跌倒", "verdict": "仍低于80%，恢复仅17.19%，拒绝"},
+        {"order": 6, "phase": "S40", "suite": "CPU 64 分层", "baseline": "同权重父/候选轨迹一致", "candidate": "中心低83.33%、中100%、高20%；宽35.71%/61.54%/0%；远角三层0%", "verdict": "明确远角/高球架构缺口"},
+        {"order": 7, "phase": "S41", "suite": "CPU 90 / 全远角快速球", "baseline": "失稳2.22%；二次25.56%", "candidate": "首球低/中/高均0%；失稳6.67%；峰值角速9.86", "verdict": "严格拒绝"},
+        {"order": 8, "phase": "S42–S44", "suite": "CPU hard-24 + 教师拟合", "baseline": "旧 actor 低50%、中12.5%、高0%", "candidate": "v19 教师拟合 RMSE 0.002832 rad、对称误差0", "verdict": "教师组件合格；物理 actor 未过每层80%"},
+        {"order": 9, "phase": "S45", "suite": "原生 rollout 128", "baseline": "不同原生全身训练线，不与 S12 直接比较", "candidate": "首扑49.22%；失败61.72%；恢复4.69%", "verdict": "REJECTED_NO_SAFE_CANDIDATE"},
+        {"order": 10, "phase": "S49", "suite": "真实扑后终态 9", "baseline": "S48 局部分布28/28", "candidate": "直接专家0/9；卸力后仍0/9", "verdict": "完整恢复链路未通过"}
+      ],
+      "recovery_chain": [
+        {"order": 1, "stage": "局部神经起身", "evidence": "S47 固定源倒地姿态 4/4 瞬时起身，但最终稳定 0/4", "meaning": "冻结专家的主体动作有效", "limit": "终止与下游交接错误会让已站起再次倒地"},
+        {"order": 2, "stage": "终端保持与热交接", "evidence": "S48 固定与 ±0.05 局部扰动合计 28/28，末尾稳定 6.14–9.10 s", "meaning": "局部吸引域内的技能组合已解决", "limit": "输入仍不是实际扑救产生的状态"},
+        {"order": 3, "stage": "真实扑后状态采集", "evidence": "64 episode、11 save、9 post-save failures、50 snapshots，无 NaN 入库", "meaning": "Practice→Memory 已绑定真实前序技能分布", "limit": "样本仍偏俯卧/高动量，缺右侧卧和仰卧"},
+        {"order": 4, "stage": "冻结专家直接接入", "evidence": "9 个真实失败终态最终稳定 0/9；峰值角速 8.81–12.58 rad/s", "meaning": "证实 S48 到真实扑后分布存在断层", "limit": "不能把局部28/28称为完整恢复成功"},
+        {"order": 5, "stage": "纯物理冲量吸收", "evidence": "1 s 阻尼使角速度降至 0.088–0.403 rad/s，但恢复仍0/9", "meaning": "卸力子问题可单独解决", "limit": "姿态与接触模式仍超出专家分布"},
+        {"order": 6, "stage": "真实状态沉降课程", "evidence": "9 个入口沉降为 8 俯卧、1 左侧卧，无非有限值", "meaning": "Stage A 可开始，Stage B 课程入口可制造", "limit": "左右/仰卧覆盖未满足每类至少64的计划门"},
+        {"order": 7, "stage": "多姿态教师路由", "evidence": "MotionDecode 左/右/俯/仰四族可路由，当前9/9匹配同姿态片段", "meaning": "训练期动作参考选择正确", "limit": "TRAIN_ONLY_KINEMATIC_REFERENCE，不是物理策略成功"},
+        {"order": 8, "stage": "完整连续晋级", "evidence": "协议已定义，当前未申请", "meaning": "可以用同种子比较冠军与候选", "limit": "尚无‘扑—落—起—稳—再守’合格候选"}
+      ],
+      "data_frameworks": [
+        {"order": 1, "resource": "MotionDecode", "used_for": "S5–S7 射门全身自然度；S49 多姿态恢复教师", "finding": "动作形状有效；旧尾窗抽取会只取到站立尾部，已修为最低骨盆到连续站立", "next_role": "tracking-RL/判别器教师与旧技能自然度正则，不直接控制电机"},
+        {"order": 2, "resource": "OmniContact", "used_for": "24 个高质量右脚触球事件进入 S6 接触先验", "finding": "可改善触球、滑移和随挥，但覆盖与左右脚数量有限", "next_role": "扩为左右脚、移动球、不同鞋面与球速的接触事件库"},
+        {"order": 3, "resource": "Humanoid-Goalkeeper", "used_for": "423 帧左侧、333 帧右侧动作及镜像双向侧扑 atlas", "finding": "可提供侧扑动作拓扑；原始两侧质量不对称，直接物理跟踪受力矩与稳定约束", "next_role": "只作模仿/判别器训练种子，经目标条件化物理 RL 后考试"},
+        {"order": 4, "resource": "MOSAIC", "used_for": "29 个 G1 起身 NPZ、GMT 迁移和恢复动作多样性", "finding": "原生动作有价值，但旧 GMT 在当前场景直接迁移 0/4", "next_role": "补多姿态教师与课程，不作为免考试的部署策略"},
+        {"order": 5, "resource": "RoboNaldo / MJLab", "used_for": "beyondmimic_mj 神经起身专家与局部物理考试", "finding": "S48 局部28/28，但 S49 真实扑后0/9，清楚暴露分布断层", "next_role": "冻结局部专家，训练冲量吸收和多姿态入口，再蒸馏统一学生"},
+        {"order": 6, "resource": "OpenTrack", "used_for": "100k-step 适配器训练/导出；计划中的多专家 DAgger", "finding": "工具链可运行，但从头策略动作 1.04 s 全倒，不能替代稳定父策略", "next_role": "在物理合格的四姿态专家之后做本体感学生蒸馏"},
+        {"order": 7, "resource": "Humanoid-GPT", "used_for": "四个动态动作回放与全身基础对照", "finding": "动作能完成但幅度压缩、证据不足，未形成足球父策略", "next_role": "动作语义与多样性教师，而非当前冠军"},
+        {"order": 8, "resource": "ProtoMotions", "used_for": "参考 recovery reset 与恢复课程组织方式", "finding": "随机倒地有课程价值，但不能替代真实前序技能快照", "next_role": "用于真实快照周围的物理扰动与课程扩展"},
+        {"order": 9, "resource": "SONIC / GR00T-WBC", "used_for": "locomotion 先验审计、跑动和稳定底座参考", "finding": "可提供小脑候选，但尚未在统一 Soccer suite 中成为可追溯父策略", "next_role": "先做内容绑定 A/B 与 sealed locomotion exam，再进入传射/门将底座"},
+        {"order": 10, "resource": "AReaL 类分布式 RL 编排", "used_for": "架构调研：rollout、资源、checkpoint 和持续任务调度", "finding": "能提高训练编排效率，不决定关节动作、奖励和安全语义", "next_role": "放在 Growth orchestration 层，不越过候选隔离和晋级门"}
+      ],
+      "video_inventory": [
+        {"order": 1, "phase": "S2b", "content": "远距离助跑、零停顿触球与定点射门", "duration_sec": 21.47, "truth": "DEVELOPMENT", "relative_path": "s2b-free-kick-video-v3/s2b-free-kick-development-1080p.mp4"},
+        {"order": 2, "phase": "S4a", "content": "旧滑动足球与真实滚动的并排 A/B", "duration_sec": 10.8, "truth": "PHYSICS_COMPONENT_A/B", "relative_path": "s4a-rolling-video-v1/s4a-football-rolling-before-after-1080p.mp4"},
+        {"order": 3, "phase": "S4c", "content": "传球—接球—射门—预判门将，共享一球", "duration_sec": 37.73, "truth": "REJECTED_DEVELOPMENT", "relative_path": "s4c-three-role-anticipation-video-v1/s4c-three-g1-proprioceptive-keeper-development-1080p.mp4"},
+        {"order": 4, "phase": "S4d", "content": "学习门将产生真实接触并改变球运动", "duration_sec": 38.3, "truth": "DEVELOPMENT_GATE_PASS / NOT PROMOTED", "relative_path": "s4d-goalkeeper-block-video-v2/s4d-three-g1-learned-goalkeeper-save-1080p.mp4"},
+        {"order": 5, "phase": "S7", "content": "关节组敏捷、传射精度和更自然随挥", "duration_sec": 36.73, "truth": "DEVELOPMENT", "relative_path": "s7-joint-group-agility-video-v3/g1-joint-group-agility-growth-1080p.mp4"},
+        {"order": 6, "phase": "S12", "content": "首个正式晋级的多步物理 RL 门将", "duration_sec": 20, "truth": "PROMOTED_SIM_ONLY", "relative_path": "s12-goalkeeper-corrected-teacher-ppo-4gpu-dev-v1/g1-physics-rl-goalkeeper-champion-v2-1080p.mp4"},
+        {"order": 7, "phase": "S31", "content": "精英高速球手臂专项与稳定性", "duration_sec": 30, "truth": "SPECIALIST_QUALIFIED", "relative_path": "s31-conservative-elite-ppo-4gpu-dev-v1/g1-elite-goalkeeper-arm-growth-s31-v2-1080p.mp4"},
+        {"order": 8, "phase": "S38", "content": "match 分布下因果预判与机动脚步", "duration_sec": 20, "truth": "CPU EXAM REJECTED / NOT PROMOTED", "relative_path": "s38-goalkeeper-match-stable-4gpu-v5/g1-match-predictive-goalkeeper-development-1080p.mp4"},
+        {"order": 9, "phase": "S45", "content": "更激进原生全身扑救；同时观察失败与低恢复", "duration_sec": 30, "truth": "REJECTED_NO_SAFE_CANDIDATE", "relative_path": "s45-v190-native-development-video-v192/g1-v190-hard-low-save-development-1080p.mp4"}
+      ],
+      "validation_results": [
+        {"order": 1, "check": "Torch/MJWarp 环境全量 pytest", "result": "438 passed, 12 skipped", "scope": "S49 最近一次完整源码验证；skip 不计作能力通过"},
+        {"order": 2, "check": "轻量环境全量 pytest", "result": "355 passed, 95 skipped", "scope": "无重型仿真依赖的兼容检查"},
+        {"order": 3, "check": "S49 相关物理与回归测试", "result": "31 passed, 1 skipped", "scope": "恢复快照、沉降、课程、MJWarp/MJLab 相关路径"},
+        {"order": 4, "check": "Ruff", "result": "通过", "scope": "当前 S49 验证记录"},
+        {"order": 5, "check": "严格 mypy", "result": "通过", "scope": "当前 S49 验证记录"},
+        {"order": 6, "check": "代表视频 ffprobe", "result": "9/9 可读", "scope": "2026-08-20 重检；全部 1920×1080、30 fps"},
+        {"order": 7, "check": "运行边界", "result": "SIM_ONLY；硬件命令 0", "scope": "未打开 ROS/DDS/CAN/串口或真实 G1 运动权限"},
+        {"order": 8, "check": "昂贵训练重跑", "result": "本报告未重跑", "scope": "引用现存 durable evidence；避免把文档生成误报为新训练结果"},
+        {"order": 9, "check": "Git 可发布状态", "result": "未就绪", "scope": "分支 agent/s4-multiagent-roll，HEAD 362de9950fb2；工作树含大量未提交实现与证据"}
+      ]
+    }
+  }
+}

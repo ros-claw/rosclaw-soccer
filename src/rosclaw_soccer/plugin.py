@@ -11,7 +11,21 @@ from typing import Any
 from rosclaw_soccer.academy.player_card import load_player_card
 from rosclaw_soccer.evidence.age04 import validate_age04_manifest
 from rosclaw_soccer.media.age04_reel import build_age04_reel
+from rosclaw_soccer.media.free_kick_video import render_g1_free_kick_showcase_video
+from rosclaw_soccer.media.rolling_comparison_video import render_rolling_comparison_video
+from rosclaw_soccer.media.three_player_video import render_three_player_showcase_video
 from rosclaw_soccer.physics.reality_pack import run_reality_pack
+from rosclaw_soccer.physics.rolling_authenticity import audit_pass_rolling_physics
+from rosclaw_soccer.skills.team.agility_evidence import run_g1_agility_development
+from rosclaw_soccer.skills.team.composite_imitation_evidence import (
+    run_g1_composite_imitation_development,
+)
+from rosclaw_soccer.skills.team.development_evidence import run_three_role_development
+from rosclaw_soccer.skills.team.follow_through_evidence import (
+    run_g1_follow_through_development,
+)
+from rosclaw_soccer.skills.team.goalkeeper_evidence import run_goalkeeper_block_development
+from rosclaw_soccer.skills.team.imitation_evidence import run_g1_imitation_development
 from rosclaw_soccer.training.age04_regulation import (
     Age04RegulationAssets,
     run_age04_regulation_training,
@@ -47,6 +61,61 @@ def register_cli(subparsers: Any) -> None:
     train_age04.add_argument("--output-dir", type=Path, required=True)
     train_age04.add_argument("--source-checkout", type=Path, required=True)
     train_age04.set_defaults(rosclaw_extension_handler=_train_age04)
+    train_three_role = academy_commands.add_parser(
+        "train-three-role", help="Run the shared-world keeper anticipation development loop"
+    )
+    train_three_role.add_argument("--asset-root", type=Path, required=True)
+    train_three_role.add_argument("--output-dir", type=Path, required=True)
+    train_three_role.add_argument("--source-checkout", type=Path, default=_repository_root())
+    train_three_role.set_defaults(rosclaw_extension_handler=_train_three_role)
+    train_goalkeeper = academy_commands.add_parser(
+        "train-goalkeeper-block",
+        help="Discover and strictly replay one safe shared-world goalkeeper block",
+    )
+    train_goalkeeper.add_argument("--asset-root", type=Path, required=True)
+    train_goalkeeper.add_argument("--output-dir", type=Path, required=True)
+    train_goalkeeper.add_argument("--source-checkout", type=Path, default=_repository_root())
+    train_goalkeeper.set_defaults(rosclaw_extension_handler=_train_goalkeeper_block)
+    train_imitation = academy_commands.add_parser(
+        "train-imitation",
+        help="Search and strictly replay a MotionDecode-informed G1 movement candidate",
+    )
+    train_imitation.add_argument("--asset-root", type=Path, required=True)
+    train_imitation.add_argument("--motion-prior", type=Path, required=True)
+    train_imitation.add_argument("--output-dir", type=Path, required=True)
+    train_imitation.add_argument("--source-checkout", type=Path, default=_repository_root())
+    train_imitation.set_defaults(rosclaw_extension_handler=_train_imitation)
+    train_composite = academy_commands.add_parser(
+        "train-composite-imitation",
+        help="Search a MotionDecode + train-only OmniContact G1 candidate",
+    )
+    train_composite.add_argument("--asset-root", type=Path, required=True)
+    train_composite.add_argument("--motion-prior", type=Path, required=True)
+    train_composite.add_argument("--contact-prior", type=Path, required=True)
+    train_composite.add_argument("--output-dir", type=Path, required=True)
+    train_composite.add_argument("--source-checkout", type=Path, default=_repository_root())
+    train_composite.set_defaults(rosclaw_extension_handler=_train_composite_imitation)
+    train_agility = academy_commands.add_parser(
+        "train-agility",
+        help="Search robust joint-group imitation agility in the shared world",
+    )
+    train_agility.add_argument("--asset-root", type=Path, required=True)
+    train_agility.add_argument("--motion-prior", type=Path, required=True)
+    train_agility.add_argument("--contact-prior", type=Path, required=True)
+    train_agility.add_argument("--output-dir", type=Path, required=True)
+    train_agility.add_argument("--source-checkout", type=Path, default=_repository_root())
+    train_agility.set_defaults(rosclaw_extension_handler=_train_agility)
+    train_follow_through = academy_commands.add_parser(
+        "train-follow-through",
+        help="Search visible arm follow-through with a semantic MOSAIC teacher",
+    )
+    train_follow_through.add_argument("--asset-root", type=Path, required=True)
+    train_follow_through.add_argument("--motion-prior", type=Path, required=True)
+    train_follow_through.add_argument("--contact-prior", type=Path, required=True)
+    train_follow_through.add_argument("--mosaic-prior", type=Path, required=True)
+    train_follow_through.add_argument("--output-dir", type=Path, required=True)
+    train_follow_through.add_argument("--source-checkout", type=Path, default=_repository_root())
+    train_follow_through.set_defaults(rosclaw_extension_handler=_train_follow_through)
 
     player = commands.add_parser("player", help="Inspect a player growth card")
     player_commands = player.add_subparsers(dest="player_command", required=True)
@@ -61,6 +130,46 @@ def register_cli(subparsers: Any) -> None:
     age04.add_argument("--evidence-root", type=Path)
     age04.add_argument("--output", type=Path, required=True)
     age04.set_defaults(rosclaw_extension_handler=_build_age04_media)
+    free_kick = media_commands.add_parser(
+        "free-kick", help="Render one strict-replay free-kick trajectory"
+    )
+    free_kick.add_argument("--evidence", type=Path, required=True)
+    free_kick.add_argument("--asset-root", type=Path, required=True)
+    free_kick.add_argument("--output", type=Path, required=True)
+    free_kick.add_argument("--source-checkout", type=Path, default=_repository_root())
+    free_kick.add_argument("--fps", type=int, default=30)
+    free_kick.add_argument("--resolution", choices=("720p", "1080p"), default="1080p")
+    free_kick.add_argument(
+        "--allow-rejected-candidate",
+        action="store_true",
+        help="render a visibly labelled development/rejected candidate",
+    )
+    free_kick.set_defaults(rosclaw_extension_handler=_build_free_kick_media)
+    three_player = media_commands.add_parser(
+        "three-player", help="Render strict passer/shooter/goalkeeper evidence"
+    )
+    three_player.add_argument("--evidence", type=Path, required=True)
+    three_player.add_argument("--asset-root", type=Path, required=True)
+    three_player.add_argument("--output", type=Path, required=True)
+    three_player.add_argument("--source-checkout", type=Path, default=_repository_root())
+    three_player.add_argument("--fps", type=int, default=30)
+    three_player.add_argument("--resolution", choices=("720p", "1080p"), default="1080p")
+    three_player.add_argument(
+        "--allow-rejected-candidate",
+        action="store_true",
+        help="render a visibly labelled development/rejected keeper candidate",
+    )
+    three_player.set_defaults(rosclaw_extension_handler=_build_three_player_media)
+    rolling_media = media_commands.add_parser(
+        "rolling-audit", help="Render legacy sliding versus corrected rolling evidence"
+    )
+    rolling_media.add_argument("--audit", type=Path, required=True)
+    rolling_media.add_argument("--asset-root", type=Path, required=True)
+    rolling_media.add_argument("--output", type=Path, required=True)
+    rolling_media.add_argument("--source-checkout", type=Path, default=_repository_root())
+    rolling_media.add_argument("--fps", type=int, default=30)
+    rolling_media.add_argument("--resolution", choices=("720p", "1080p"), default="1080p")
+    rolling_media.set_defaults(rosclaw_extension_handler=_build_rolling_media)
 
     physics = commands.add_parser("physics", help="Validate football physics before training")
     physics_commands = physics.add_subparsers(dest="physics_command", required=True)
@@ -69,6 +178,14 @@ def register_cli(subparsers: Any) -> None:
     )
     benchmark.add_argument("--output-dir", type=Path, required=True)
     benchmark.set_defaults(rosclaw_extension_handler=_physics_benchmark)
+    rolling = physics_commands.add_parser(
+        "rolling-audit", help="Compare legacy sliding against corrected ball roll"
+    )
+    rolling.add_argument("--asset-root", type=Path, required=True)
+    rolling.add_argument("--source-evidence", type=Path, required=True)
+    rolling.add_argument("--output-dir", type=Path, required=True)
+    rolling.add_argument("--source-checkout", type=Path, default=_repository_root())
+    rolling.set_defaults(rosclaw_extension_handler=_rolling_audit)
 
 
 def _doctor(args: Any) -> int:
@@ -128,6 +245,74 @@ def _train_age04(args: Any) -> int:
     return 0 if report.passed else 2
 
 
+def _train_three_role(args: Any) -> int:
+    report = run_three_role_development(
+        asset_root=args.asset_root,
+        output_dir=args.output_dir,
+        source_checkout=args.source_checkout,
+    )
+    print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    return 0 if report.passed else 2
+
+
+def _train_goalkeeper_block(args: Any) -> int:
+    report = run_goalkeeper_block_development(
+        asset_root=args.asset_root,
+        output_dir=args.output_dir,
+        source_checkout=args.source_checkout,
+    )
+    print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    return 0 if report.passed else 2
+
+
+def _train_imitation(args: Any) -> int:
+    report = run_g1_imitation_development(
+        asset_root=args.asset_root,
+        motion_prior_path=args.motion_prior,
+        output_dir=args.output_dir,
+        source_checkout=args.source_checkout,
+    )
+    print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    return 0 if report.passed else 2
+
+
+def _train_composite_imitation(args: Any) -> int:
+    report = run_g1_composite_imitation_development(
+        asset_root=args.asset_root,
+        motion_prior_path=args.motion_prior,
+        contact_prior_path=args.contact_prior,
+        output_dir=args.output_dir,
+        source_checkout=args.source_checkout,
+    )
+    print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    return 0 if report.passed else 2
+
+
+def _train_agility(args: Any) -> int:
+    report = run_g1_agility_development(
+        asset_root=args.asset_root,
+        motion_prior_path=args.motion_prior,
+        contact_prior_path=args.contact_prior,
+        output_dir=args.output_dir,
+        source_checkout=args.source_checkout,
+    )
+    print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    return 0 if report.passed else 2
+
+
+def _train_follow_through(args: Any) -> int:
+    report = run_g1_follow_through_development(
+        asset_root=args.asset_root,
+        motion_prior_path=args.motion_prior,
+        contact_prior_path=args.contact_prior,
+        mosaic_prior_path=args.mosaic_prior,
+        output_dir=args.output_dir,
+        source_checkout=args.source_checkout,
+    )
+    print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    return 0 if report.passed else 2
+
+
 def _player_show(args: Any) -> int:
     if args.player_id.lower().replace("-", "") != "claw7":
         raise ValueError("the bootstrap academy currently contains only Claw-7")
@@ -149,10 +334,62 @@ def _build_age04_media(args: Any) -> int:
     return 0
 
 
+def _build_free_kick_media(args: Any) -> int:
+    result = render_g1_free_kick_showcase_video(
+        evidence_path=args.evidence,
+        asset_root=args.asset_root,
+        output_path=args.output,
+        source_checkout=args.source_checkout,
+        fps=args.fps,
+        resolution=args.resolution,
+        allow_rejected_candidate=args.allow_rejected_candidate,
+    )
+    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
+def _build_three_player_media(args: Any) -> int:
+    result = render_three_player_showcase_video(
+        evidence_path=args.evidence,
+        asset_root=args.asset_root,
+        output_path=args.output,
+        source_checkout=args.source_checkout,
+        fps=args.fps,
+        resolution=args.resolution,
+        allow_rejected_candidate=args.allow_rejected_candidate,
+    )
+    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
+def _build_rolling_media(args: Any) -> int:
+    result = render_rolling_comparison_video(
+        audit_path=args.audit,
+        asset_root=args.asset_root,
+        output_path=args.output,
+        source_checkout=args.source_checkout,
+        fps=args.fps,
+        resolution=args.resolution,
+    )
+    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
 def _physics_benchmark(args: Any) -> int:
     report = run_reality_pack(
         output_dir=args.output_dir,
         source_checkout=_repository_root(),
+    )
+    print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    return 0 if report.passed else 2
+
+
+def _rolling_audit(args: Any) -> int:
+    report = audit_pass_rolling_physics(
+        asset_root=args.asset_root,
+        source_evidence_path=args.source_evidence,
+        output_dir=args.output_dir,
+        source_checkout=args.source_checkout,
     )
     print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
     return 0 if report.passed else 2

@@ -86,10 +86,17 @@ from rosclaw_soccer.skills.shoot.loft_teacher import (
     G1LoftTeacherConfig,
     g1_loft_teacher_effect,
 )
+from rosclaw_soccer.skills.team.front_duel import (
+    G1FrontDuelConfig,
+    G1FrontDuelController,
+    G1FrontDuelSummary,
+)
 from rosclaw_soccer.world.field import (
+    G1CompliantGoalNetState,
     G1TrainingGoalSpec,
     apply_g1_compliant_goal_net_force,
     build_g1_stadium_model,
+    build_g1_three_player_stadium_model,
     g1_goal_net_contact_plane_x,
     g1_stadium_scene_hash,
 )
@@ -192,14 +199,17 @@ class G1FreeKickFlowConfig:
     post_contact_damping_ramp_sec: float = 0.45
     torque_authority_projection_ratio: float = 0.0
     torque_authority_projection_max_fraction: float = 0.01
+    contact_task_direction_projection_enabled: bool = True
     ballistic_skill_memory_hash: str | None = None
     ballistic_skill_id: str | None = None
     approach_provider: str = "groot_history"
-    schema_version: str = "rosclaw.simforge.g1_free_kick_flow_config.v36"
+    schema_version: str = "rosclaw.simforge.g1_free_kick_flow_config.v37"
 
     def __post_init__(self) -> None:
         if not isinstance(self.shared_cerebellar_recovery_enabled, bool):
             raise ValueError("shared cerebellar recovery flag must be boolean")
+        if not isinstance(self.contact_task_direction_projection_enabled, bool):
+            raise ValueError("contact-task direction projection flag must be boolean")
         values = (
             self.bridge_duration_sec,
             self.contextual_phase_yaw_threshold_rad,
@@ -445,6 +455,13 @@ class G1FreeKickFlowConfig:
             raise ValueError("torque authority ratio must be zero or in [0.90, 0.99]")
         if not 0.001 <= self.torque_authority_projection_max_fraction <= 0.05:
             raise ValueError("torque authority projection fraction must be in [0.001, 0.05]")
+        if (
+            not self.contact_task_direction_projection_enabled
+            and self.torque_authority_projection_ratio == 0.0
+        ):
+            raise ValueError(
+                "jointwise contact-task projection requires an enabled final authority bound"
+            )
         if (self.ballistic_skill_memory_hash is None) != (self.ballistic_skill_id is None):
             raise ValueError("ballistic skill memory hash and skill id must be paired")
         if self.ballistic_skill_memory_hash is not None and not (
@@ -687,11 +704,13 @@ class G1FreeKickEvidence:
     flow_config: G1FreeKickFlowConfig
     goal_spec: G1TrainingGoalSpec
     result: G1FreeKickResult
+    front_duel_config: G1FrontDuelConfig | None = None
+    front_duel_summary: G1FrontDuelSummary | None = None
     activation_ceiling: str = "SIM_ONLY"
     evidence_domain: str = "DEVELOPMENT_SHOWCASE"
     physics_authority: str = "CPU_MUJOCO"
     hardware_command_sent: bool = False
-    schema_version: str = "rosclaw.simforge.g1_free_kick_evidence.v24"
+    schema_version: str = "rosclaw.simforge.g1_free_kick_evidence.v25"
 
     @property
     def passed(self) -> bool:
@@ -717,6 +736,10 @@ class G1FreeKickEvidence:
                 )
             )
             and self.result.passed
+            and (
+                self.front_duel_config is None
+                or (self.front_duel_summary is not None and self.front_duel_summary.passed)
+            )
             and self.activation_ceiling == "SIM_ONLY"
             and not self.hardware_command_sent
         )
@@ -740,6 +763,12 @@ class G1FreeKickEvidence:
             "flow_config": asdict(self.flow_config),
             "goal_spec": asdict(self.goal_spec),
             "result": self.result.to_dict(),
+            "front_duel_config": (
+                None if self.front_duel_config is None else self.front_duel_config.to_dict()
+            ),
+            "front_duel_summary": (
+                None if self.front_duel_summary is None else self.front_duel_summary.to_dict()
+            ),
             "passed": self.passed,
             "claims": {
                 "learned_neural_runup_policy": True,
@@ -775,6 +804,17 @@ class G1FreeKickEvidence:
                 ),
                 "event_phase_contract": {phase.name: int(phase) for phase in G1FootballEventPhase},
                 "continuous_runup_kick_recovery": True,
+                "front_striker_generated_hard_shot": bool(
+                    self.front_duel_config is not None and self.result.kick_contact_observed
+                ),
+                "physical_three_g1_shared_world": bool(
+                    self.front_duel_summary is not None
+                    and self.front_duel_summary.three_agents_share_physics_world
+                ),
+                "independently_controlled_three_g1_agents": bool(
+                    self.front_duel_summary is not None
+                    and self.front_duel_summary.all_agents_have_independent_controllers
+                ),
                 "perceptual_run_to_strike_continuity": (self.result.perceptual_continuity_passed),
                 "scoring_goal_decoupled_from_motion_reference": (
                     self.flow_config.shot_reference_plane_x_m > 0.0
@@ -843,6 +883,7 @@ def run_g1_free_kick_showcase(
     football_motion_prior: G1FootballMotionPrior | None = None,
     ballistic_skill_memory: G1BallisticSkillMemory | None = None,
     ballistic_contact_impulse_actor: G1BallisticContactImpulseActor | None = None,
+    front_duel_config: G1FrontDuelConfig | None = None,
 ) -> G1FreeKickEvidence:
     """Execute and strictly replay one continuous long run-up free kick."""
 
@@ -911,7 +952,10 @@ def run_g1_free_kick_showcase(
         if sonic_model_root is None:
             raise ValueError("sonic_fullbody approach requires sonic_model_root")
         sonic_config = sonic_runup_config or G1SonicRunupConfig()
-        sonic_qualification = qualify_g1_sonic(sonic_model_root)
+        sonic_qualification = qualify_g1_sonic(
+            sonic_model_root,
+            sonic_config.model_variant,
+        )
         sonic_qualification.require_eligible()
     residual_controller: G1ApproachStrikeResidualController | None = None
     residual_config: G1ApproachStrikeResidualConfig | None = None
@@ -932,24 +976,56 @@ def run_g1_free_kick_showcase(
             approach_strike_candidate_hash=(
                 None if residual_controller is None else residual_controller.candidate_hash
             ),
+            target_conditioned=ballistic_contact_impulse_actor.target_conditioned,
+            front_duel_config=(None if front_duel_config is None else front_duel_config.to_dict()),
         )
-        if actor_context_hash != ballistic_contact_impulse_actor.experiment_context_hash:
+        legacy_actor_context_hash = _legacy_ballistic_actor_context_hash(
+            flow=flow,
+            goal=goal,
+            runup=runup,
+            sonic=sonic_config,
+            approach_strike_candidate_hash=(
+                None if residual_controller is None else residual_controller.candidate_hash
+            ),
+            front_duel_config=front_duel_config,
+        )
+        if ballistic_contact_impulse_actor.experiment_context_hash not in {
+            actor_context_hash,
+            legacy_actor_context_hash,
+        }:
             raise ValueError("contact impulse actor experiment context mismatch")
     implementation_hash = _soccer_free_kick_implementation_hash()
+    if (
+        front_duel_config is not None
+        and ballistic_contact_impulse_actor is not None
+        and ballistic_contact_impulse_actor.implementation_hash != implementation_hash
+    ):
+        raise ValueError("front-duel contact actor implementation hash mismatch")
     if (
         ballistic_skill_memory is not None
         and ballistic_skill_memory.implementation_hash != implementation_hash
     ):
         raise ValueError("ballistic skill memory implementation hash mismatch")
+    base_scene_hash = g1_stadium_scene_hash(asset_root, goal)
+    stadium_scene_hash = (
+        base_scene_hash
+        if front_duel_config is None
+        else hash_json(
+            {
+                "base_scene_hash": base_scene_hash,
+                "front_duel_config": front_duel_config.to_dict(),
+            }
+        )
+    )
     request = {
-        "schema_version": "rosclaw.simforge.g1_free_kick_request.v33",
+        "schema_version": "rosclaw.simforge.g1_free_kick_request.v34",
         "body_hash": qualification.body_hash,
         "kick_prior_hash": qualification.kick_prior_hash,
         "learned_gait_qualification_hash": gait_qualification.qualification_hash,
         "sonic_qualification_hash": (
             None if sonic_qualification is None else sonic_qualification.qualification_hash
         ),
-        "stadium_scene_hash": g1_stadium_scene_hash(asset_root, goal),
+        "stadium_scene_hash": stadium_scene_hash,
         "implementation_hash": implementation_hash,
         "runup_config": asdict(runup),
         "flow_config": asdict(flow),
@@ -969,6 +1045,7 @@ def run_g1_free_kick_showcase(
             else ballistic_contact_impulse_actor.actor_hash
         ),
         "goal_spec": asdict(goal),
+        "front_duel_config": (None if front_duel_config is None else front_duel_config.to_dict()),
         "activation_ceiling": "SIM_ONLY",
         "environment": {
             "python": platform.python_version(),
@@ -1004,7 +1081,7 @@ def run_g1_free_kick_showcase(
             raise ValueError("ballistic skill memory experiment context mismatch")
     request_path = root / "request.json"
     _write_json(request_path, request)
-    result, trajectory = _simulate(
+    result, trajectory, front_duel_summary = _simulate(
         asset_root=asset_root,
         gait_policy_root=gait_policy_root,
         runup=runup,
@@ -1018,8 +1095,9 @@ def run_g1_free_kick_showcase(
         football_motion_prior=football_motion_prior,
         ballistic_skill_memory=ballistic_skill_memory,
         ballistic_contact_impulse_actor=ballistic_contact_impulse_actor,
+        front_duel_config=front_duel_config,
     )
-    replay_result, replay_trajectory = _simulate(
+    replay_result, replay_trajectory, replay_front_duel_summary = _simulate(
         asset_root=asset_root,
         gait_policy_root=gait_policy_root,
         runup=runup,
@@ -1033,10 +1111,13 @@ def run_g1_free_kick_showcase(
         football_motion_prior=football_motion_prior,
         ballistic_skill_memory=ballistic_skill_memory,
         ballistic_contact_impulse_actor=ballistic_contact_impulse_actor,
+        front_duel_config=front_duel_config,
     )
     digest = trajectory_digest(trajectory)
     strict_replay = bool(
         result.to_dict() == replay_result.to_dict()
+        and (None if front_duel_summary is None else front_duel_summary.to_dict())
+        == (None if replay_front_duel_summary is None else replay_front_duel_summary.to_dict())
         and digest == trajectory_digest(replay_trajectory)
     )
     trajectory_path = root / "g1-free-kick-trajectory.npz"
@@ -1067,6 +1148,8 @@ def run_g1_free_kick_showcase(
         flow_config=flow,
         goal_spec=goal,
         result=result,
+        front_duel_config=front_duel_config,
+        front_duel_summary=front_duel_summary,
     )
     _write_json(root / "g1-free-kick.json", evidence.to_dict())
     return evidence
@@ -1087,11 +1170,26 @@ def _simulate(
     football_motion_prior: G1FootballMotionPrior | None,
     ballistic_skill_memory: G1BallisticSkillMemory | None,
     ballistic_contact_impulse_actor: G1BallisticContactImpulseActor | None,
-) -> tuple[G1FreeKickResult, dict[str, np.ndarray]]:
+    front_duel_config: G1FrontDuelConfig | None,
+) -> tuple[G1FreeKickResult, dict[str, np.ndarray], G1FrontDuelSummary | None]:
     import mujoco
 
     asset = asset_root.expanduser().resolve()
-    model = build_g1_stadium_model(asset, goal)
+    model = (
+        build_g1_stadium_model(asset, goal)
+        if front_duel_config is None
+        else build_g1_three_player_stadium_model(
+            asset,
+            passer_origin_m=front_duel_config.teammate_origin_m,
+            passer_yaw_rad=0.0,
+            goalkeeper_origin_m=(
+                goal.plane_x_m - front_duel_config.goalkeeper_depth_from_goal_line_m,
+                0.0,
+                0.0,
+            ),
+            spec=goal,
+        )
+    )
     data = mujoco.MjData(model)
     model.opt.timestep = runup.physics_dt_sec
     ids = ModelIds.from_model(model)
@@ -1117,9 +1215,25 @@ def _simulate(
         data.qpos[7:22] = gait.default_lower
     data.qpos[ids.ball_qpos : ids.ball_qpos + 3] = (1.0, 0.0, goal.ball_radius_m)
     data.qpos[ids.ball_qpos + 3 : ids.ball_qpos + 7] = (1.0, 0.0, 0.0, 0.0)
+    front_duel = (
+        None
+        if front_duel_config is None
+        else G1FrontDuelController(
+            model=model,
+            data=data,
+            asset_root=asset,
+            goal=goal,
+            config=front_duel_config,
+            ball_body=ids.ball,
+            ball_qpos=ids.ball_qpos,
+            ball_qvel=ids.ball_qvel,
+            ball_geom=ids.ball_geom,
+        )
+    )
     mujoco.mj_forward(model, data)
     if sonic is not None:
         sonic.reset(data)
+    goal_net_state = G1CompliantGoalNetState()
 
     trace: dict[str, list[Any]] = {
         "time": [],
@@ -1175,6 +1289,33 @@ def _simulate(
         "policy_phase": [],
         "goal_crossing": [],
     }
+    if front_duel is not None:
+        front_duel.add_trace_keys(trace)
+    team_control_frame = 0
+
+    def update_front_duel(striker_contact_time: float | None) -> None:
+        nonlocal team_control_frame
+        if front_duel is None:
+            return
+        front_duel.update(
+            data,
+            simulation_frame=team_control_frame,
+            striker_contact_time=striker_contact_time,
+        )
+        team_control_frame += 1
+
+    def apply_front_duel_torque() -> None:
+        if front_duel is not None:
+            front_duel.apply_torque(data)
+
+    def observe_front_duel_physics() -> None:
+        if front_duel is not None:
+            front_duel.observe_physics(data)
+
+    def append_front_duel_trace() -> None:
+        if front_duel is not None:
+            front_duel.append_trace(trace, data)
+
     hard_limits = np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
     loft_teacher_config = G1LoftTeacherConfig(
         target_vertical_speed_mps=flow.shot_loft_teacher_target_vz_mps,
@@ -1290,6 +1431,7 @@ def _simulate(
         return np.clip(projected, -hard_limits, hard_limits)
 
     for frame in range(runup_frames):
+        update_front_duel(None)
         if sonic is not None:
             sonic.update(data, frame)
             mode = 5
@@ -1337,8 +1479,10 @@ def _simulate(
                 raw = np.concatenate((raw_lower, raw_arms)) + residual
             last_torque = project_authority(raw)
             torque_violation = torque_violation or bool(np.any(np.abs(last_torque) > hard_limits))
-            data.ctrl[:] = last_torque
+            data.ctrl[:29] = last_torque
+            apply_front_duel_torque()
             mujoco.mj_step(model, data)
+            observe_front_duel_physics()
             physics_steps += 1
         if sonic is not None:
             sonic.observe(data)
@@ -1367,6 +1511,7 @@ def _simulate(
             residual_accepted,
             residual_confidence,
         )
+        append_front_duel_trace()
 
     from rosclaw_soccer.growth.proprioceptive_expert_router import strike_handoff_features
 
@@ -1442,6 +1587,7 @@ def _simulate(
         )
         sonic.extend_stationary_recovery(recovery_frames)
         for recovery_frame in range(recovery_frames):
+            update_front_duel(None)
             sonic.update_recovery_extension(data, recovery_frame)
             retry_target = sonic.target.copy()
             baseline = sonic.raw_torque(data)
@@ -1459,8 +1605,10 @@ def _simulate(
                 torque_violation = torque_violation or bool(
                     np.any(np.abs(last_torque) > hard_limits)
                 )
-                data.ctrl[:] = last_torque
+                data.ctrl[:29] = last_torque
+                apply_front_duel_torque()
                 mujoco.mj_step(model, data)
+                observe_front_duel_physics()
                 physics_steps += 1
             sonic.observe(data)
             roll, pitch = roll_pitch(data.xquat[ids.torso])
@@ -1485,6 +1633,7 @@ def _simulate(
                 residual_accepted,
                 residual_confidence,
             )
+            append_front_duel_trace()
         handoff_features = strike_handoff_features(
             np.asarray(data.qpos[:7], dtype=np.float64),
             np.asarray(data.qvel[6:35], dtype=np.float64),
@@ -1582,6 +1731,7 @@ def _simulate(
     )
     bridge_kd = np.asarray(policy.kds, dtype=np.float64) * 0.72
     for bridge_frame in range(bridge_frames):
+        update_front_duel(None)
         bridge_sample = transition_bridge.sample((bridge_frame + 1) * runup.control_dt_sec)
         bridge_target = bridge_sample.position
         bridge_target_velocity = bridge_sample.velocity
@@ -1608,8 +1758,10 @@ def _simulate(
             )
             last_torque = project_authority(raw)
             torque_violation = torque_violation or bool(np.any(np.abs(last_torque) > hard_limits))
-            data.ctrl[:] = last_torque
+            data.ctrl[:29] = last_torque
+            apply_front_duel_torque()
             mujoco.mj_step(model, data)
+            observe_front_duel_physics()
             physics_steps += 1
         fill_policy_state(state, model, data, ids)
         if bridge_frame >= bridge_frames - flow.history_prime_frames:
@@ -1653,6 +1805,7 @@ def _simulate(
             residual_accepted,
             residual_confidence,
         )
+        append_front_duel_trace()
     bridge_entry_velocity_rms = float(np.sqrt(np.mean(np.square(transition_bridge.entry_velocity))))
     bridge_target_exit_velocity_rms = float(
         np.sqrt(np.mean(np.square(transition_bridge.exit_velocity)))
@@ -1713,6 +1866,7 @@ def _simulate(
     previous_ball = data.qpos[ids.ball_qpos : ids.ball_qpos + 3].copy()
 
     for frame in range(total_kick_frames):
+        update_front_duel(contact_time)
         fill_policy_state(state, model, data, ids)
         motion_prior_delta: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         motion_prior_active = False
@@ -1809,13 +1963,14 @@ def _simulate(
                 right_support=support.right_floor,
             )
             target = recovery.target
+            terminal_group = str(getattr(recovery, "terminal_damping_joint_group", "whole_body"))
             terminal_slice = {
                 "whole_body": slice(None),
                 "legs": slice(0, 12),
                 "upper_body": slice(12, None),
-            }[recovery.terminal_damping_joint_group]
-            kp[terminal_slice] *= recovery.terminal_kp_scale
-            kd[terminal_slice] *= recovery.terminal_kd_scale
+            }[terminal_group]
+            kp[terminal_slice] *= float(getattr(recovery, "terminal_kp_scale", 1.0))
+            kd[terminal_slice] *= float(getattr(recovery, "terminal_kd_scale", 1.0))
             cerebellar_recovery_active = recovery.active
             cerebellar_recovery_blend_fraction = recovery.blend_fraction
             cerebellar_recovery_active_frames += int(recovery.active)
@@ -1952,6 +2107,13 @@ def _simulate(
                         data.qpos[ids.ball_qpos : ids.ball_qpos + 3],
                         dtype=np.float64,
                     ),
+                    ball_velocity=np.asarray(
+                        data.qvel[ids.ball_qvel : ids.ball_qvel + 3],
+                        dtype=np.float64,
+                    ),
+                    goal_plane_x_m=goal.plane_x_m,
+                    target_y_m=goal.target_y_m,
+                    target_z_m=goal.target_z_m,
                 )
             )
             impulse_effect_torque = (
@@ -1976,8 +2138,10 @@ def _simulate(
                 + ballistic_contact_torque
             )
             contact_task_torque = loft_effect_torque + impulse_effect_torque
-            if flow.torque_authority_projection_ratio > 0.0 and np.any(
-                np.abs(contact_task_torque) > 1e-12
+            if (
+                flow.torque_authority_projection_ratio > 0.0
+                and flow.contact_task_direction_projection_enabled
+                and np.any(np.abs(contact_task_torque) > 1e-12)
             ):
                 task_projection = project_g1_additive_torque_authority(
                     parent_torque_nm=controller_torque,
@@ -2040,9 +2204,11 @@ def _simulate(
                 )
             last_torque = project_authority(raw)
             torque_violation = torque_violation or bool(np.any(np.abs(last_torque) > hard_limits))
-            data.ctrl[:] = last_torque
-            _apply_compliant_net_force(data, ids, goal, flow)
+            data.ctrl[:29] = last_torque
+            apply_front_duel_torque()
+            _apply_compliant_net_force(data, ids, goal, flow, goal_net_state)
             mujoco.mj_step(model, data)
+            observe_front_duel_physics()
             physics_steps += 1
             contacts = contact_observation(model, data, ids)
             contact_in_frame = contact_in_frame or contacts.ball_right
@@ -2204,6 +2370,7 @@ def _simulate(
             cerebellar_recovery_active=cerebellar_recovery_active,
             cerebellar_recovery_blend_fraction=(cerebellar_recovery_blend_fraction),
         )
+        append_front_duel_trace()
 
     # A compliant net can arrest a valid shot before its centre reaches the
     # nominal capture-depth plane.  In that case the deepest measured point
@@ -2484,7 +2651,7 @@ def _simulate(
     trajectory["sonic_reference_digest"] = np.asarray(
         "" if sonic is None else sonic.reference_digest
     )
-    return result, trajectory
+    return result, trajectory, (None if front_duel is None else front_duel.summary())
 
 
 def _runup_command(time_sec: float, config: G1LearnedRunupConfig) -> tuple[np.ndarray, int]:
@@ -2602,6 +2769,7 @@ def _apply_compliant_net_force(
     ids: ModelIds,
     goal: G1TrainingGoalSpec,
     flow: G1FreeKickFlowConfig,
+    state: G1CompliantGoalNetState | None = None,
 ) -> None:
     """Apply a deterministic one-sided soft-net force to the ball body."""
     apply_g1_compliant_goal_net_force(
@@ -2613,6 +2781,7 @@ def _apply_compliant_net_force(
         capture_depth_m=flow.net_capture_depth_m,
         stiffness_n_m=flow.net_stiffness_n_m,
         damping_n_s_m=flow.net_damping_n_s_m,
+        state=state,
     )
 
 
@@ -2994,6 +3163,51 @@ def _football_experiment_context_hash(
     )
 
 
+def _legacy_ballistic_actor_context_hash(
+    *,
+    flow: G1FreeKickFlowConfig,
+    goal: G1TrainingGoalSpec,
+    runup: G1LearnedRunupConfig,
+    sonic: G1SonicRunupConfig | None,
+    approach_strike_candidate_hash: str | None,
+    front_duel_config: G1FrontDuelConfig | None,
+) -> str:
+    """Reconstruct the pre-v33 actor context without weakening new bindings.
+
+    Older, already sealed actors predate three semantically default fields.
+    Runtime first checks the complete current context and accepts this second
+    hash only when those fields still equal their historical defaults.
+    """
+
+    flow_value = asdict(flow)
+    goal_value = asdict(goal)
+    sonic_value = None if sonic is None else asdict(sonic)
+    if (
+        flow.torque_authority_projection_ratio != 0.0
+        or flow.torque_authority_projection_max_fraction != 0.01
+        or not flow.contact_task_direction_projection_enabled
+        or goal.ball_angular_damping_n_m_s_rad != 0.00002
+        or (sonic is not None and sonic.model_variant != "low_latency")
+    ):
+        return ""
+    flow_value.pop("torque_authority_projection_ratio", None)
+    flow_value.pop("torque_authority_projection_max_fraction", None)
+    flow_value.pop("contact_task_direction_projection_enabled", None)
+    goal_value.pop("ball_angular_damping_n_m_s_rad", None)
+    goal_value["schema_version"] = "rosclaw.simforge.g1_training_goal_spec.v7"
+    if sonic_value is not None:
+        sonic_value.pop("model_variant", None)
+        sonic_value["schema_version"] = "rosclaw.simforge.g1_sonic_runup_config.v1"
+    return g1_ballistic_contact_impulse_context_hash(
+        flow_config=flow_value,
+        goal_spec=goal_value,
+        runup_config=asdict(runup),
+        sonic_runup_config=sonic_value,
+        approach_strike_candidate_hash=approach_strike_candidate_hash,
+        front_duel_config=(None if front_duel_config is None else front_duel_config.to_dict()),
+    )
+
+
 def _soccer_free_kick_implementation_hash() -> str:
     """Bind downstream execution code without checkout-specific paths."""
 
@@ -3016,6 +3230,8 @@ def _soccer_free_kick_implementation_hash() -> str:
         "sim/contracts.py",
         "skills/shoot/free_kick.py",
         "skills/shoot/loft_teacher.py",
+        "skills/team/front_duel.py",
+        "skills/team/shared_world.py",
         "world/field.py",
     )
     return hash_json(
@@ -3035,6 +3251,8 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
 
 __all__ = [
     "G1FootballEventPhase",
+    "G1FrontDuelConfig",
+    "G1FrontDuelSummary",
     "G1FreeKickEvidence",
     "G1FreeKickFlowConfig",
     "G1FreeKickResult",

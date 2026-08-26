@@ -17,6 +17,7 @@ class SoccerTaskProvider:
     task_ids: tuple[str, ...] = (
         "soccer.age04_regulation",
         "soccer.first_touch",
+        "soccer.three_role_league",
     )
 
     def task_spec(self, task_id: str) -> SimForgeTaskSpec:
@@ -54,33 +55,70 @@ class SoccerTaskProvider:
                     holdout_required=True,
                 ),
             )
+        if task_id == "soccer.first_touch":
+            return SimForgeTaskSpec(
+                task_id=task_id,
+                suite_id="soccer.academy.age05",
+                body_id="unitree.g1.sim",
+                required_capabilities=("locomotion", "whole_body_contact", "ball_tracking"),
+                discovery_backends=("mujoco",),
+                evaluation_backends=("mujoco",),
+                differential_backends=(),
+                scenario_distribution_ref="soccer://age05/first-touch-v1",
+                success_spec=(
+                    ("continuous_episode_sec.min", 30.0),
+                    ("controlled_first_touch", True),
+                ),
+                safety_spec=(
+                    ("fall_count.max", 0),
+                    ("torque_limit_violation", False),
+                ),
+                candidate_allowed_paths=(
+                    "/intercept_policy",
+                    "/touch_policy",
+                    "/recovery_policy",
+                ),
+                evidence_requirements=EvidenceRequirements(
+                    physics_executed=True,
+                    strict_replay=True,
+                    artifact_hashes=True,
+                    minimum_seeds=20,
+                    holdout_required=True,
+                ),
+            )
         return SimForgeTaskSpec(
             task_id=task_id,
-            suite_id="soccer.academy.age05",
+            suite_id="soccer.academy.three-role-league",
             body_id="unitree.g1.sim",
-            required_capabilities=("locomotion", "whole_body_contact", "ball_tracking"),
+            required_capabilities=(
+                "locomotion",
+                "whole_body_contact",
+                "ball_tracking",
+                "multi_agent_coordination",
+            ),
             discovery_backends=("mujoco",),
             evaluation_backends=("mujoco",),
             differential_backends=(),
-            scenario_distribution_ref="soccer://age05/first-touch-v1",
+            scenario_distribution_ref="soccer://league/pass-shot-save-v1",
             success_spec=(
-                ("continuous_episode_sec.min", 30.0),
-                ("controlled_first_touch", True),
+                ("all_role_growth_gates", True),
+                ("rolling_authenticity", True),
+                ("counterfactual_credit_bound", True),
             ),
             safety_spec=(
                 ("fall_count.max", 0),
                 ("torque_limit_violation", False),
             ),
             candidate_allowed_paths=(
-                "/intercept_policy",
-                "/touch_policy",
-                "/recovery_policy",
+                "/roles/passer/policy",
+                "/roles/shooter/policy",
+                "/roles/goalkeeper/policy",
             ),
             evidence_requirements=EvidenceRequirements(
                 physics_executed=True,
                 strict_replay=True,
                 artifact_hashes=True,
-                minimum_seeds=20,
+                minimum_seeds=8,
                 holdout_required=True,
             ),
         )

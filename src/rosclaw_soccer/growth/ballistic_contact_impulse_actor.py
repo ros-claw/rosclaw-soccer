@@ -64,6 +64,7 @@ def g1_ballistic_contact_impulse_context_hash(
     sonic_runup_config: dict[str, Any] | None,
     approach_strike_candidate_hash: str | None,
     target_conditioned: bool = False,
+    front_duel_config: dict[str, Any] | None = None,
 ) -> str:
     """Bind an actor to its non-teacher task and controller context."""
 
@@ -82,17 +83,16 @@ def g1_ballistic_contact_impulse_context_hash(
     if target_conditioned:
         context_goal.pop("target_y_m", None)
         context_goal.pop("target_z_m", None)
-    return str(
-        canonical_hash(
-            {
-                "flow_config_without_teacher": context_flow,
-                "goal_spec": context_goal,
-                "runup_config": runup_config,
-                "sonic_runup_config": sonic_runup_config,
-                "approach_strike_candidate_hash": approach_strike_candidate_hash,
-            }
-        )
-    )
+    context = {
+        "flow_config_without_teacher": context_flow,
+        "goal_spec": context_goal,
+        "runup_config": runup_config,
+        "sonic_runup_config": sonic_runup_config,
+        "approach_strike_candidate_hash": approach_strike_candidate_hash,
+    }
+    if front_duel_config is not None:
+        context["front_duel_config"] = front_duel_config
+    return str(canonical_hash(context))
 
 
 @dataclass(frozen=True)
@@ -232,6 +232,12 @@ class G1BallisticContactImpulseActor:
     @property
     def actor_hash(self) -> str:
         return str(canonical_hash(self.to_dict(include_hash=False)))
+
+    @property
+    def target_conditioned(self) -> bool:
+        """Whether runtime must condition the actor on ball and goal state."""
+
+        return self.schema_version == _V2_SCHEMA
 
     def to_dict(self, *, include_hash: bool = True) -> dict[str, Any]:
         fields = asdict(self)
@@ -386,6 +392,11 @@ def derive_g1_ballistic_contact_impulse_actor(
                 ),
                 approach_strike_candidate_hash=evidence.get("approach_strike_candidate_hash"),
                 target_conditioned=target_conditioned,
+                front_duel_config=(
+                    None
+                    if evidence.get("front_duel_config") is None
+                    else dict(evidence["front_duel_config"])
+                ),
             )
         )
         result = dict(evidence.get("result", {}))
@@ -417,6 +428,7 @@ def derive_g1_ballistic_contact_impulse_actor(
             raise ValueError("contact impulse actor torque demand must be numeric")
         preprojection_demand = float(raw_preprojection_demand)
         contact_task_scale = float(result.get("contact_task_authority_scale_min", 1.0))
+        saturation_fraction = float(result.get("actuator_saturation_fraction", 0.0))
         if (
             not math.isfinite(projection_fraction)
             or projection_fraction < 0.0
@@ -424,8 +436,19 @@ def derive_g1_ballistic_contact_impulse_actor(
             or preprojection_demand < 0.0
             or not math.isfinite(contact_task_scale)
             or not 0.0 <= contact_task_scale <= 1.0
+            or not math.isfinite(saturation_fraction)
+            or not 0.0 <= saturation_fraction <= 1.0
         ):
             raise ValueError("contact impulse actor authority metrics are invalid")
+        # Development distillation may learn from a narrowly clipped contact
+        # rollout (at most one percent of physics steps).  This does not relax
+        # the final free-kick promotion gate: a replay with any saturation
+        # remains rejected and the resulting actor stays SIM_ONLY.  Keeping
+        # these informative near-boundary failures is important for failure-
+        # driven growth without silently declaring them hardware-safe.
+        bounded_training_saturation = bool(
+            result.get("actuator_saturation") is not True or saturation_fraction <= 0.01
+        )
         hard_safe = bool(
             math.isfinite(error)
             and result.get("kick_contact_observed") is True
@@ -433,7 +456,7 @@ def derive_g1_ballistic_contact_impulse_actor(
             and result.get("post_kick_fall") is False
             and result.get("joint_limit_violation") is False
             and result.get("torque_limit_violation") is False
-            and result.get("actuator_saturation") is not True
+            and bounded_training_saturation
             and result.get("torque_authority_projection_qualified", True) is True
             and contact_task_scale >= 0.95
         )
