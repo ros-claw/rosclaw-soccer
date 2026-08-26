@@ -28,6 +28,11 @@ from rosclaw_soccer.growth.canonical_champion import (
     reconstruct_s33_champion_registry,
     write_s33_champion_registry,
 )
+from rosclaw_soccer.growth.dynamic_lead_pass import (
+    DynamicLeadPassPolicy,
+    LeadPassCalibrationSample,
+    fit_dynamic_lead_pass_policy,
+)
 from rosclaw_soccer.growth.joint_policy_search import (
     JointPolicySearchConfig,
     JointPolicySearchDecision,
@@ -79,6 +84,10 @@ from rosclaw_soccer.growth.role_learning import (
     evaluate_joint_growth,
     evaluate_joint_growth_round,
 )
+from rosclaw_soccer.growth.upper_corner_strike import (
+    UpperCornerLaneAction,
+    UpperCornerStrikePolicy,
+)
 
 __all__ = [
     "AlternatingGrowthDecision",
@@ -86,6 +95,7 @@ __all__ = [
     "AlternatingGrowthRoundDecision",
     "AlternatingTeamEpisode",
     "CurriculumCell",
+    "DynamicLeadPassPolicy",
     "FailureMemoryRecord",
     "GrowthPartition",
     "JointGrowthDecision",
@@ -93,6 +103,7 @@ __all__ = [
     "JointGrowthRoundDecision",
     "JointPolicySearchConfig",
     "JointPolicySearchDecision",
+    "LeadPassCalibrationSample",
     "G1MosaicGMTGetUpSkill",
     "G1MosaicGMTOverheadSkill",
     "ChampionMetricSpec",
@@ -122,12 +133,15 @@ __all__ = [
     "SoccerSide",
     "TeamFailureCode",
     "TeamSkillPhase",
+    "UpperCornerLaneAction",
+    "UpperCornerStrikePolicy",
     "build_failure_conditioned_dreams",
     "evaluate_alternating_growth",
     "evaluate_alternating_growth_round",
     "evaluate_joint_growth",
     "evaluate_joint_growth_round",
     "evaluate_paired_champion",
+    "fit_dynamic_lead_pass_policy",
     "decision_payload",
     "default_three_role_search_spaces",
     "build_g1_mosaic_gmt_overhead_skill",

@@ -258,6 +258,22 @@ def test_successful_trajectory_replay_excludes_unsafe_and_inactive_steps() -> No
     assert "dist.ReduceOp.MIN" in rollout_source
 
 
+def test_successful_trajectory_replay_does_not_count_a_passive_save_episode() -> None:
+    torch = pytest.importorskip("torch")
+
+    mask, eligible = _successful_trajectory_replay_mask(
+        torch=torch,
+        active_steps=torch.tensor(((False, True), (False, False))),
+        first_save=torch.tensor((True, True)),
+        quarantined=torch.tensor((False, False)),
+        maximum_root_angular_speed_rad_s=torch.tensor((1.0, 1.0)),
+        angular_speed_ceiling_rad_s=3.5,
+    )
+
+    assert eligible.tolist() == [False, True]
+    assert mask.tolist() == [[False, True], [False, False]]
+
+
 def test_successful_trajectory_memory_is_bounded_and_height_balanced() -> None:
     torch = pytest.importorskip("torch")
 

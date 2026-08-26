@@ -1936,10 +1936,17 @@ def _successful_trajectory_replay_mask(
     vectors = (first_save, quarantined, maximum_root_angular_speed_rad_s)
     if any(tuple(value.shape) != (environment_count,) for value in vectors):
         raise ValueError("successful-trajectory episode vectors are misaligned")
+    active = active_steps.to(torch.bool)
     eligible = first_save.to(torch.bool) & ~quarantined.to(torch.bool)
     eligible &= torch.isfinite(maximum_root_angular_speed_rad_s)
     eligible &= maximum_root_angular_speed_rad_s <= angular_speed_ceiling_rad_s
-    return active_steps.to(torch.bool) & eligible.unsqueeze(0), eligible
+    # A safe save is not a replay episode unless the plastic actor actually
+    # owned at least one causal transition.  Counting passive saves made the
+    # diversity ledger claim that rare strata were populated while their
+    # replay buffers contained no rows, which in turn reported a non-zero
+    # effective replay coefficient with an identically zero replay loss.
+    eligible &= torch.any(active, dim=0)
+    return active & eligible.unsqueeze(0), eligible
 
 
 def _append_successful_trajectory_memory(
