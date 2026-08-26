@@ -85,8 +85,10 @@ module = [
   "rosclaw_soccer.training.lateral_athlete_cpu_exam",
   "rosclaw_soccer.training.lateral_athlete_expert",
   "rosclaw_soccer.training.opentrack_teacher_source_exam",
+  "rosclaw_soccer.training.recovery_athlete_student",
+  "rosclaw_soccer.training.recovery_athlete_cpu_exam",
 ]
-disable_error_code = ["import-not-found"]
+disable_error_code = ["import-not-found", "no-untyped-call"]
 
 [[tool.mypy.overrides]]
 module = [

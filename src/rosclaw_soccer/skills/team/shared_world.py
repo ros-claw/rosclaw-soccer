@@ -206,6 +206,9 @@ class G1GoalkeeperConfig:
     post_contact_ready_lateral_position_gain: float = 0.6
     post_contact_ready_maximum_lateral_speed_mps: float = 0.12
     post_contact_ready_lateral_deadband_m: float = 0.04
+    recovery_athlete_checkpoint_path: Path | None = None
+    recovery_athlete_exam_path: Path | None = None
+    recovery_athlete_blend: float = 0.0
     successor_lateral_probe_enabled: bool = False
     successor_lateral_probe_delay_sec: float = 8.0
     successor_lateral_probe_duration_sec: float = 0.8
@@ -309,7 +312,7 @@ class G1GoalkeeperConfig:
     block_action_shoulder_pitch_rad: float = 0.0
     block_action_shoulder_roll_rad: float = 0.0
     block_action_elbow_flex_rad: float = 0.0
-    schema_version: str = "rosclaw_soccer.g1_goalkeeper_config.v30"
+    schema_version: str = "rosclaw_soccer.g1_goalkeeper_config.v31"
 
     def __post_init__(self) -> None:
         values = (
@@ -399,6 +402,7 @@ class G1GoalkeeperConfig:
             self.post_contact_ready_lateral_position_gain,
             self.post_contact_ready_maximum_lateral_speed_mps,
             self.post_contact_ready_lateral_deadband_m,
+            self.recovery_athlete_blend,
             self.successor_lateral_probe_delay_sec,
             self.successor_lateral_probe_duration_sec,
             self.successor_lateral_probe_command_mps,
@@ -745,6 +749,25 @@ class G1GoalkeeperConfig:
             raise ValueError("goalkeeper post-contact ready lateral speed is invalid")
         if not 0.02 <= self.post_contact_ready_lateral_deadband_m <= 0.20:
             raise ValueError("goalkeeper post-contact ready lateral deadband is invalid")
+        recovery_athlete_paths = (
+            self.recovery_athlete_checkpoint_path,
+            self.recovery_athlete_exam_path,
+        )
+        if not 0.0 <= self.recovery_athlete_blend <= 1.0:
+            raise ValueError("goalkeeper recovery athlete blend is invalid")
+        if (any(path is not None for path in recovery_athlete_paths)) != (
+            self.recovery_athlete_blend > 0.0
+        ) or (
+            self.recovery_athlete_blend > 0.0
+            and (
+                not all(path is not None and path.is_file() for path in recovery_athlete_paths)
+                or not self.post_contact_stabilization_enabled
+                or not self.post_contact_ready_recovery_enabled
+            )
+        ):
+            raise ValueError(
+                "goalkeeper recovery athlete requires checkpoint, exam and ready recovery"
+            )
         if not isinstance(self.successor_lateral_probe_enabled, bool):
             raise ValueError("goalkeeper successor lateral probe flag must be boolean")
         if not 2.0 <= self.successor_lateral_probe_delay_sec <= 10.0:
@@ -991,10 +1014,13 @@ class G1SharedWorldResult:
     goalkeeper_balanced_dive_peak_blend: float = 0.0
     goalkeeper_dive_athlete_checkpoint_hash: str | None = None
     goalkeeper_dive_athlete_blend: float = 0.0
+    goalkeeper_recovery_athlete_checkpoint_hash: str | None = None
+    goalkeeper_recovery_athlete_blend: float = 0.0
+    goalkeeper_recovery_athlete_active_fraction: float = 0.0
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v14"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v15"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1158,6 +1184,9 @@ class _Robot:
     goalkeeper_reach_memory_side: int = 0
     goalkeeper_reach_memory_peak_rad: float = 0.0
     standby_locomotion_mirror_active: bool = False
+    recovery_athlete_active_frame_count: int = 0
+    last_recovery_athlete_active: bool = False
+    last_recovery_athlete_world_command: np.ndarray | None = None
 
 
 def _base_scenario() -> GoalForgeScenario:
@@ -2003,6 +2032,10 @@ def _simulate_shared_world(
     goalkeeper_dive_athlete_model: Any | None = None
     goalkeeper_dive_athlete_checkpoint: dict[str, Any] | None = None
     goalkeeper_dive_athlete_checkpoint_hash: str | None = None
+    goalkeeper_recovery_athlete_torch: Any | None = None
+    goalkeeper_recovery_athlete_model: Any | None = None
+    goalkeeper_recovery_athlete_checkpoint: dict[str, Any] | None = None
+    goalkeeper_recovery_athlete_checkpoint_hash: str | None = None
     goalkeeper_origin: np.ndarray | None = None
     if goalkeeper_config is not None:
         goalkeeper_origin = np.asarray(
@@ -2121,7 +2154,7 @@ def _simulate_shared_world(
             goalkeeper_config.mosaic_gmt_model_path is not None
             and goalkeeper_config.mosaic_gmt_skill_path is not None
         ):
-            import torch  # type: ignore[import-not-found]
+            import torch
 
             gmt_policy, goalkeeper_mosaic_gmt_contract = load_mosaic_gmt_torch(
                 goalkeeper_config.mosaic_gmt_model_path,
@@ -2182,6 +2215,38 @@ def _simulate_shared_world(
                 device=torch.device("cpu"),
             )
             goalkeeper_dive_athlete_torch = torch
+        if (
+            goalkeeper_config.recovery_athlete_checkpoint_path is not None
+            and goalkeeper_config.recovery_athlete_exam_path is not None
+        ):
+            import torch
+
+            from rosclaw_soccer.training.recovery_athlete_cpu_exam import (
+                validate_recovery_athlete_cpu_exam,
+            )
+            from rosclaw_soccer.training.recovery_athlete_student import (
+                load_recovery_athlete_student,
+            )
+
+            recovery_checkpoint_path = goalkeeper_config.recovery_athlete_checkpoint_path
+            recovery_exam = validate_recovery_athlete_cpu_exam(
+                goalkeeper_config.recovery_athlete_exam_path
+            )
+            goalkeeper_recovery_athlete_checkpoint_hash = hash_bytes(
+                recovery_checkpoint_path.read_bytes()
+            )
+            if recovery_exam.get("checkpoint_hash") != goalkeeper_recovery_athlete_checkpoint_hash:
+                raise ValueError("goalkeeper recovery athlete checkpoint/exam binding changed")
+            locomotion_policy_path = root / "policy" / "loco_mode" / "model" / "policy_29dof.pt"
+            (
+                goalkeeper_recovery_athlete_model,
+                goalkeeper_recovery_athlete_checkpoint,
+            ) = load_recovery_athlete_student(
+                checkpoint_path=recovery_checkpoint_path,
+                locomotion_policy_path=locomotion_policy_path,
+                device=torch.device("cpu"),
+            )
+            goalkeeper_recovery_athlete_torch = torch
     robots = (passer, shooter) if goalkeeper is None else (passer, shooter, goalkeeper)
     passer_geoms = _robot_geom_ids(model, passer.pelvis_body)
     shooter_geoms = _robot_geom_ids(model, shooter.pelvis_body)
@@ -2351,6 +2416,8 @@ def _simulate_shared_world(
                 "goalkeeper_balanced_dive_target_delta": [],
                 "goalkeeper_landing_capture_active": [],
                 "goalkeeper_landing_capture_blend": [],
+                "goalkeeper_recovery_athlete_active": [],
+                "goalkeeper_recovery_athlete_world_command": [],
                 "goalkeeper_ball_contact": [],
                 "goalkeeper_left_glove_contact": [],
                 "goalkeeper_right_glove_contact": [],
@@ -2498,6 +2565,9 @@ def _simulate_shared_world(
                 observer=goalkeeper_observer,
                 learned_actor=goalkeeper_actor,
                 previous_actor_residual=goalkeeper_previous_actor_residual,
+                recovery_athlete_torch=goalkeeper_recovery_athlete_torch,
+                recovery_athlete_model=goalkeeper_recovery_athlete_model,
+                recovery_athlete_checkpoint=goalkeeper_recovery_athlete_checkpoint,
             )
             goalkeeper.standby_locomotion_mirror_active = bool(
                 goalkeeper_config.canonical_locomotion_mirror_enabled
@@ -3924,6 +3994,14 @@ def _simulate_shared_world(
             )
             trace["goalkeeper_landing_capture_active"].append(goalkeeper_landing_capture_active)
             trace["goalkeeper_landing_capture_blend"].append(goalkeeper_landing_capture_blend)
+            trace["goalkeeper_recovery_athlete_active"].append(
+                goalkeeper.last_recovery_athlete_active
+            )
+            trace["goalkeeper_recovery_athlete_world_command"].append(
+                np.zeros(3, dtype=np.float64)
+                if goalkeeper.last_recovery_athlete_world_command is None
+                else goalkeeper.last_recovery_athlete_world_command.copy()
+            )
             trace["goalkeeper_ball_contact"].append(
                 goalkeeper_contact_time is not None
                 and abs(float(data.time) - goalkeeper_contact_time) <= _CONTROL_DT + 1e-9
@@ -4221,6 +4299,15 @@ def _simulate_shared_world(
         goalkeeper_dive_athlete_checkpoint_hash=(goalkeeper_dive_athlete_checkpoint_hash),
         goalkeeper_dive_athlete_blend=(
             0.0 if goalkeeper_config is None else goalkeeper_config.dive_athlete_blend
+        ),
+        goalkeeper_recovery_athlete_checkpoint_hash=(goalkeeper_recovery_athlete_checkpoint_hash),
+        goalkeeper_recovery_athlete_blend=(
+            0.0 if goalkeeper_config is None else goalkeeper_config.recovery_athlete_blend
+        ),
+        goalkeeper_recovery_athlete_active_fraction=(
+            0.0
+            if goalkeeper is None
+            else goalkeeper.recovery_athlete_active_frame_count / max(1, total_frames)
         ),
         passer_joint_limit_violation=role_joint_violation["passer"],
         shooter_joint_limit_violation=role_joint_violation["shooter"],
@@ -4796,6 +4883,9 @@ def _command_goalkeeper(
     observer: GoalkeeperActorObserver | None,
     learned_actor: NumpyGoalkeeperActor | None,
     previous_actor_residual: np.ndarray,
+    recovery_athlete_torch: Any | None,
+    recovery_athlete_model: Any | None,
+    recovery_athlete_checkpoint: dict[str, Any] | None,
     _force_legacy: bool = False,
 ) -> tuple[float, float, bool, bool, GoalkeeperActorObservation | None]:
     """Issue a causal lateral shuffle from intent, proprioception and ball flight."""
@@ -4814,6 +4904,9 @@ def _command_goalkeeper(
             observer=observer,
             learned_actor=learned_actor,
             previous_actor_residual=previous_actor_residual,
+            recovery_athlete_torch=recovery_athlete_torch,
+            recovery_athlete_model=recovery_athlete_model,
+            recovery_athlete_checkpoint=recovery_athlete_checkpoint,
         )
         observation = visible[4]
         if (
@@ -4837,6 +4930,9 @@ def _command_goalkeeper(
                 observer=observer,
                 learned_actor=None,
                 previous_actor_residual=previous_actor_residual,
+                recovery_athlete_torch=recovery_athlete_torch,
+                recovery_athlete_model=recovery_athlete_model,
+                recovery_athlete_checkpoint=recovery_athlete_checkpoint,
                 _force_legacy=True,
             )
             return legacy[0], legacy[1], legacy[2], legacy[3], observation
@@ -4920,6 +5016,9 @@ def _command_goalkeeper_visible_ball(
     observer: GoalkeeperActorObserver,
     learned_actor: NumpyGoalkeeperActor | None,
     previous_actor_residual: np.ndarray,
+    recovery_athlete_torch: Any | None,
+    recovery_athlete_model: Any | None,
+    recovery_athlete_checkpoint: dict[str, Any] | None,
 ) -> tuple[float, float, bool, bool, GoalkeeperActorObservation]:
     """Issue a causal command without reading shooter state or internal phase."""
 
@@ -4943,6 +5042,8 @@ def _command_goalkeeper_visible_ball(
         # distribution shift.
         previous_action_rad=np.asarray(previous_actor_residual, dtype=np.float64),
     )
+    robot.last_recovery_athlete_active = False
+    robot.last_recovery_athlete_world_command = None
     if robot.contact_latched and config.post_contact_stabilization_enabled:
         # A deflected ball is no longer an incoming threat.  Continuing to
         # extrapolate its outgoing flight made the keeper reverse direction
@@ -5005,6 +5106,47 @@ def _command_goalkeeper_visible_ball(
                 config.maximum_depth_correction_mps,
             )
         )
+        if (
+            not probe_active
+            and recovery_athlete_torch is not None
+            and recovery_athlete_model is not None
+            and recovery_athlete_checkpoint is not None
+        ):
+            learned_world_command = _recovery_athlete_world_command(
+                robot,
+                data=data,
+                desired_depth_m=desired_world_x,
+                yaw_error_rad=yaw_error,
+                elapsed_since_contact_sec=elapsed_since_contact,
+                torch=recovery_athlete_torch,
+                model=recovery_athlete_model,
+                checkpoint=recovery_athlete_checkpoint,
+            )
+            blend = config.recovery_athlete_blend
+            world_velocity_x = float(
+                np.clip(
+                    (1.0 - blend) * world_velocity_x + blend * learned_world_command[0],
+                    -config.maximum_depth_correction_mps,
+                    config.maximum_depth_correction_mps,
+                )
+            )
+            world_velocity_y = float(
+                np.clip(
+                    (1.0 - blend) * world_velocity_y + blend * learned_world_command[1],
+                    -config.post_contact_ready_maximum_lateral_speed_mps,
+                    config.post_contact_ready_maximum_lateral_speed_mps,
+                )
+            )
+            yaw_rate = float(
+                np.clip(
+                    (1.0 - blend) * yaw_rate + blend * learned_world_command[2],
+                    -config.post_contact_ready_maximum_yaw_rate_rad_s,
+                    config.post_contact_ready_maximum_yaw_rate_rad_s,
+                )
+            )
+            robot.last_recovery_athlete_active = True
+            robot.last_recovery_athlete_world_command = learned_world_command.copy()
+            robot.recovery_athlete_active_frame_count += 1
         local_velocity = _rotate_z(
             np.asarray((world_velocity_x, world_velocity_y, 0.0), dtype=np.float64),
             -current_yaw,
@@ -6468,6 +6610,59 @@ def _yaw(robot: _Robot) -> float:
         float(robot.world_from_local_quat[3]),
         float(robot.world_from_local_quat[0]),
     )
+
+
+def _recovery_athlete_world_command(
+    robot: _Robot,
+    *,
+    data: Any,
+    desired_depth_m: float,
+    yaw_error_rad: float,
+    elapsed_since_contact_sec: float,
+    torch: Any,
+    model: Any,
+    checkpoint: dict[str, Any],
+) -> NDArray[np.float64]:
+    """Decode one bounded high-level command from live proprioception."""
+
+    from rosclaw_soccer.training.recovery_athlete_student import (
+        decode_recovery_athlete_command,
+        recovery_athlete_features_numpy,
+    )
+
+    pelvis = np.asarray(data.qpos[robot.qpos_base : robot.qpos_base + 7], dtype=np.float64)
+    velocity = np.asarray(data.qvel[robot.qvel_base : robot.qvel_base + 6], dtype=np.float64)
+    torso = np.asarray(data.xquat[robot.torso_body], dtype=np.float64)
+    upright = 1.0 - 2.0 * (torso[1] ** 2 + torso[2] ** 2)
+    features = recovery_athlete_features_numpy(
+        depth_error_m=np.asarray((desired_depth_m - pelvis[0],), dtype=np.float64),
+        lateral_position_m=np.asarray((pelvis[1],), dtype=np.float64),
+        yaw_error_rad=np.asarray((yaw_error_rad,), dtype=np.float64),
+        root_velocity=velocity.reshape(1, 6),
+        pelvis_height_m=np.asarray((pelvis[2],), dtype=np.float64),
+        upright_projection=np.asarray((upright,), dtype=np.float64),
+        foot_contact=np.asarray(
+            ((robot.latest_left_support, robot.latest_right_support),),
+            dtype=np.bool_,
+        ),
+        elapsed_since_contact_sec=np.asarray((elapsed_since_contact_sec,), dtype=np.float64),
+    )
+    with torch.inference_mode():
+        normalized = (
+            decode_recovery_athlete_command(
+                torch=torch,
+                model=model,
+                features=torch.as_tensor(features, dtype=torch.float32),
+            )
+            .detach()
+            .cpu()
+            .numpy()[0]
+        )
+    output_scale = np.asarray(checkpoint.get("output_scale"), dtype=np.float64)
+    command = np.asarray(normalized, dtype=np.float64) * output_scale
+    if command.shape != (3,) or not np.all(np.isfinite(command)):
+        raise RuntimeError("goalkeeper recovery athlete produced an invalid command")
+    return command
 
 
 def _current_root_yaw(robot: _Robot, *, data: Any) -> float:
