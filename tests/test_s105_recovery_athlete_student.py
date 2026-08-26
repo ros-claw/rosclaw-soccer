@@ -10,7 +10,10 @@ from rosclaw_soccer.media.recovery_athlete_video import (
     validate_recovery_athlete_video_manifest,
 )
 from rosclaw_soccer.sim.contracts import hash_bytes
-from rosclaw_soccer.skills.team.shared_world import G1GoalkeeperConfig
+from rosclaw_soccer.skills.team.shared_world import (
+    G1GoalkeeperConfig,
+    _recovery_athlete_authority_envelope,
+)
 from rosclaw_soccer.training.recovery_athlete_integration_exam import (
     RecoveryAthleteIntegrationConfig,
     _recovery_command_metrics,
@@ -177,14 +180,47 @@ def test_shared_world_recovery_actor_contract_fails_closed(tmp_path: Path) -> No
         G1GoalkeeperConfig(),
         post_contact_stabilization_enabled=True,
         post_contact_ready_recovery_enabled=True,
+        post_contact_ready_lateral_deadband_m=0.15,
         recovery_athlete_checkpoint_path=checkpoint,
         recovery_athlete_exam_path=exam,
         recovery_athlete_blend=1.0,
     )
-    assert active.schema_version == "rosclaw_soccer.g1_goalkeeper_config.v31"
+    assert active.schema_version == "rosclaw_soccer.g1_goalkeeper_config.v32"
     assert replace(active, recovery_athlete_blend=0.5).recovery_athlete_blend == 0.5
     with pytest.raises(ValueError, match="blend"):
         replace(active, recovery_athlete_blend=1.1)
+    assert replace(
+        active, recovery_athlete_authority_envelope_enabled=True
+    ).recovery_athlete_authority_envelope_enabled
+    with pytest.raises(ValueError, match="requires an actor"):
+        replace(G1GoalkeeperConfig(), recovery_athlete_authority_envelope_enabled=True)
+
+
+def test_recovery_authority_envelope_is_sparse_monotone_and_nonexpansive() -> None:
+    config = replace(
+        G1GoalkeeperConfig(),
+        post_contact_stabilization_enabled=True,
+        post_contact_ready_recovery_enabled=True,
+        post_contact_ready_lateral_deadband_m=0.15,
+    )
+    raw = np.asarray((0.25, -0.08, 0.10), dtype=np.float64)
+    projected = _recovery_athlete_authority_envelope(
+        raw,
+        depth_error_m=0.10,
+        lateral_position_m=0.14,
+        yaw_error_rad=0.05,
+        config=config,
+    )
+    np.testing.assert_allclose(projected, (0.12, 0.0, 0.02), atol=1.0e-12)
+    assert np.all(np.abs(projected) <= np.abs(raw) + 1.0e-12)
+    wrong_direction = _recovery_athlete_authority_envelope(
+        np.asarray((-0.20, 0.08, -0.10), dtype=np.float64),
+        depth_error_m=0.10,
+        lateral_position_m=0.30,
+        yaw_error_rad=0.05,
+        config=config,
+    )
+    np.testing.assert_array_equal(wrong_direction, np.zeros(3))
 
 
 def test_integration_metrics_measure_only_recovery_segments() -> None:
@@ -216,10 +252,13 @@ def test_integration_metrics_measure_only_recovery_segments() -> None:
 def test_integration_contract_remains_sim_only() -> None:
     config = RecoveryAthleteIntegrationConfig()
     assert config.candidate_blend == 1.0
+    assert config.candidate_authority_envelope_enabled
     assert config.activation_ceiling == "SIM_ONLY"
     assert not config.hardware_authorized
     with pytest.raises(ValueError, match="full candidate"):
         replace(config, candidate_blend=0.5)
+    with pytest.raises(ValueError, match="authority envelope"):
+        replace(config, candidate_authority_envelope_enabled=False)
     with pytest.raises(ValueError, match="SIM_ONLY"):
         replace(config, hardware_authorized=True)
 

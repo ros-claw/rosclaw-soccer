@@ -209,6 +209,7 @@ class G1GoalkeeperConfig:
     recovery_athlete_checkpoint_path: Path | None = None
     recovery_athlete_exam_path: Path | None = None
     recovery_athlete_blend: float = 0.0
+    recovery_athlete_authority_envelope_enabled: bool = False
     successor_lateral_probe_enabled: bool = False
     successor_lateral_probe_delay_sec: float = 8.0
     successor_lateral_probe_duration_sec: float = 0.8
@@ -312,7 +313,7 @@ class G1GoalkeeperConfig:
     block_action_shoulder_pitch_rad: float = 0.0
     block_action_shoulder_roll_rad: float = 0.0
     block_action_elbow_flex_rad: float = 0.0
-    schema_version: str = "rosclaw_soccer.g1_goalkeeper_config.v31"
+    schema_version: str = "rosclaw_soccer.g1_goalkeeper_config.v32"
 
     def __post_init__(self) -> None:
         values = (
@@ -755,6 +756,8 @@ class G1GoalkeeperConfig:
         )
         if not 0.0 <= self.recovery_athlete_blend <= 1.0:
             raise ValueError("goalkeeper recovery athlete blend is invalid")
+        if not isinstance(self.recovery_athlete_authority_envelope_enabled, bool):
+            raise ValueError("goalkeeper recovery athlete authority envelope flag is invalid")
         if (any(path is not None for path in recovery_athlete_paths)) != (
             self.recovery_athlete_blend > 0.0
         ) or (
@@ -768,6 +771,8 @@ class G1GoalkeeperConfig:
             raise ValueError(
                 "goalkeeper recovery athlete requires checkpoint, exam and ready recovery"
             )
+        if self.recovery_athlete_authority_envelope_enabled and self.recovery_athlete_blend <= 0.0:
+            raise ValueError("goalkeeper recovery athlete authority envelope requires an actor")
         if not isinstance(self.successor_lateral_probe_enabled, bool):
             raise ValueError("goalkeeper successor lateral probe flag must be boolean")
         if not 2.0 <= self.successor_lateral_probe_delay_sec <= 10.0:
@@ -1016,11 +1021,13 @@ class G1SharedWorldResult:
     goalkeeper_dive_athlete_blend: float = 0.0
     goalkeeper_recovery_athlete_checkpoint_hash: str | None = None
     goalkeeper_recovery_athlete_blend: float = 0.0
+    goalkeeper_recovery_athlete_authority_envelope_enabled: bool = False
     goalkeeper_recovery_athlete_active_fraction: float = 0.0
+    goalkeeper_recovery_athlete_suppressed_fraction: float = 0.0
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v15"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v16"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1185,7 +1192,10 @@ class _Robot:
     goalkeeper_reach_memory_peak_rad: float = 0.0
     standby_locomotion_mirror_active: bool = False
     recovery_athlete_active_frame_count: int = 0
+    recovery_athlete_suppressed_frame_count: int = 0
     last_recovery_athlete_active: bool = False
+    last_recovery_athlete_suppressed: bool = False
+    last_recovery_athlete_raw_world_command: np.ndarray | None = None
     last_recovery_athlete_world_command: np.ndarray | None = None
 
 
@@ -2417,6 +2427,8 @@ def _simulate_shared_world(
                 "goalkeeper_landing_capture_active": [],
                 "goalkeeper_landing_capture_blend": [],
                 "goalkeeper_recovery_athlete_active": [],
+                "goalkeeper_recovery_athlete_suppressed": [],
+                "goalkeeper_recovery_athlete_raw_world_command": [],
                 "goalkeeper_recovery_athlete_world_command": [],
                 "goalkeeper_ball_contact": [],
                 "goalkeeper_left_glove_contact": [],
@@ -3997,6 +4009,14 @@ def _simulate_shared_world(
             trace["goalkeeper_recovery_athlete_active"].append(
                 goalkeeper.last_recovery_athlete_active
             )
+            trace["goalkeeper_recovery_athlete_suppressed"].append(
+                goalkeeper.last_recovery_athlete_suppressed
+            )
+            trace["goalkeeper_recovery_athlete_raw_world_command"].append(
+                np.zeros(3, dtype=np.float64)
+                if goalkeeper.last_recovery_athlete_raw_world_command is None
+                else goalkeeper.last_recovery_athlete_raw_world_command.copy()
+            )
             trace["goalkeeper_recovery_athlete_world_command"].append(
                 np.zeros(3, dtype=np.float64)
                 if goalkeeper.last_recovery_athlete_world_command is None
@@ -4304,10 +4324,21 @@ def _simulate_shared_world(
         goalkeeper_recovery_athlete_blend=(
             0.0 if goalkeeper_config is None else goalkeeper_config.recovery_athlete_blend
         ),
+        goalkeeper_recovery_athlete_authority_envelope_enabled=(
+            False
+            if goalkeeper_config is None
+            else goalkeeper_config.recovery_athlete_authority_envelope_enabled
+        ),
         goalkeeper_recovery_athlete_active_fraction=(
             0.0
             if goalkeeper is None
             else goalkeeper.recovery_athlete_active_frame_count / max(1, total_frames)
+        ),
+        goalkeeper_recovery_athlete_suppressed_fraction=(
+            0.0
+            if goalkeeper is None or goalkeeper.recovery_athlete_active_frame_count <= 0
+            else goalkeeper.recovery_athlete_suppressed_frame_count
+            / goalkeeper.recovery_athlete_active_frame_count
         ),
         passer_joint_limit_violation=role_joint_violation["passer"],
         shooter_joint_limit_violation=role_joint_violation["shooter"],
@@ -5043,6 +5074,8 @@ def _command_goalkeeper_visible_ball(
         previous_action_rad=np.asarray(previous_actor_residual, dtype=np.float64),
     )
     robot.last_recovery_athlete_active = False
+    robot.last_recovery_athlete_suppressed = False
+    robot.last_recovery_athlete_raw_world_command = None
     robot.last_recovery_athlete_world_command = None
     if robot.contact_latched and config.post_contact_stabilization_enabled:
         # A deflected ball is no longer an incoming threat.  Continuing to
@@ -5122,6 +5155,26 @@ def _command_goalkeeper_visible_ball(
                 model=recovery_athlete_model,
                 checkpoint=recovery_athlete_checkpoint,
             )
+            raw_learned_world_command = learned_world_command.copy()
+            if config.recovery_athlete_authority_envelope_enabled:
+                learned_world_command = _recovery_athlete_authority_envelope(
+                    learned_world_command,
+                    depth_error_m=desired_world_x - current_world_x,
+                    lateral_position_m=current_y,
+                    yaw_error_rad=yaw_error,
+                    config=config,
+                )
+                robot.last_recovery_athlete_suppressed = bool(
+                    not np.allclose(
+                        learned_world_command,
+                        raw_learned_world_command,
+                        rtol=0.0,
+                        atol=1.0e-9,
+                    )
+                )
+                robot.recovery_athlete_suppressed_frame_count += int(
+                    robot.last_recovery_athlete_suppressed
+                )
             blend = config.recovery_athlete_blend
             world_velocity_x = float(
                 np.clip(
@@ -5145,6 +5198,7 @@ def _command_goalkeeper_visible_ball(
                 )
             )
             robot.last_recovery_athlete_active = True
+            robot.last_recovery_athlete_raw_world_command = raw_learned_world_command
             robot.last_recovery_athlete_world_command = learned_world_command.copy()
             robot.recovery_athlete_active_frame_count += 1
         local_velocity = _rotate_z(
@@ -6610,6 +6664,77 @@ def _yaw(robot: _Robot) -> float:
         float(robot.world_from_local_quat[3]),
         float(robot.world_from_local_quat[0]),
     )
+
+
+def _recovery_athlete_authority_envelope(
+    command: NDArray[np.float64],
+    *,
+    depth_error_m: float,
+    lateral_position_m: float,
+    yaw_error_rad: float,
+    config: G1GoalkeeperConfig,
+) -> NDArray[np.float64]:
+    """Project a learned recovery proposal into a monotone sparse envelope.
+
+    The neural actor still chooses the command magnitude.  This causal safety
+    layer removes approximation residue in a qualified deadband, rejects a
+    command that would increase the measured error, and caps each component by
+    the corresponding continuous recovery field.  It never increases actor
+    authority.
+    """
+
+    proposal = np.asarray(command, dtype=np.float64)
+    state = np.asarray((depth_error_m, lateral_position_m, yaw_error_rad), dtype=np.float64)
+    if (
+        proposal.shape != (3,)
+        or not np.all(np.isfinite(proposal))
+        or not np.all(np.isfinite(state))
+    ):
+        raise ValueError("recovery athlete authority envelope input is invalid")
+
+    def monotone(value: float, error: float, cap: float, *, opposite: bool = False) -> float:
+        desired_sign = -math.copysign(1.0, error) if opposite else math.copysign(1.0, error)
+        if abs(error) <= 1.0e-12 or value * desired_sign <= 0.0:
+            return 0.0
+        return desired_sign * min(abs(value), max(0.0, cap))
+
+    lateral_outside = max(
+        abs(lateral_position_m) - config.post_contact_ready_lateral_deadband_m,
+        0.0,
+    )
+    projected = np.asarray(
+        (
+            monotone(
+                float(proposal[0]),
+                depth_error_m,
+                min(
+                    config.maximum_depth_correction_mps,
+                    config.depth_position_gain * abs(depth_error_m),
+                ),
+            ),
+            monotone(
+                float(proposal[1]),
+                lateral_position_m,
+                min(
+                    config.post_contact_ready_maximum_lateral_speed_mps,
+                    config.post_contact_ready_lateral_position_gain * lateral_outside,
+                ),
+                opposite=True,
+            ),
+            monotone(
+                float(proposal[2]),
+                yaw_error_rad,
+                min(
+                    config.post_contact_ready_maximum_yaw_rate_rad_s,
+                    config.post_contact_ready_yaw_gain * abs(yaw_error_rad),
+                ),
+            ),
+        ),
+        dtype=np.float64,
+    )
+    if np.any(np.abs(projected) > np.abs(proposal) + 1.0e-12):
+        raise RuntimeError("recovery athlete authority envelope increased authority")
+    return projected
 
 
 def _recovery_athlete_world_command(

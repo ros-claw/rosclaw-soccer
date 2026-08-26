@@ -70,20 +70,25 @@ class RecoveryAthleteIntegrationConfig:
 
     successor: SaveToReadySuccessorConfig = SaveToReadySuccessorConfig()
     candidate_blend: float = 1.0
+    candidate_authority_envelope_enabled: bool = True
     maximum_portfolio_command_variation_ratio: float = 0.90
     minimum_improved_lane_count: int = 2
+    maximum_lane_peak_step_regression_mps: float = 1.0e-6
+    maximum_zero_context_variation_mps: float = 1.0e-6
     maximum_ready_latency_regression_sec: float = 0.50
     minimum_actor_active_fraction: float = 0.30
     readiness_scan_stride_frames: int = 5
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
     commercial_use_allowed: bool = False
-    schema_version: str = "rosclaw_soccer.recovery_athlete_integration_config.v1"
+    schema_version: str = "rosclaw_soccer.recovery_athlete_integration_config.v2"
 
     def __post_init__(self) -> None:
         values = (
             self.candidate_blend,
             self.maximum_portfolio_command_variation_ratio,
+            self.maximum_lane_peak_step_regression_mps,
+            self.maximum_zero_context_variation_mps,
             self.maximum_ready_latency_regression_sec,
             self.minimum_actor_active_fraction,
         )
@@ -91,10 +96,18 @@ class RecoveryAthleteIntegrationConfig:
             raise ValueError("recovery athlete integration settings must be finite")
         if not math.isclose(self.candidate_blend, 1.0, rel_tol=0.0, abs_tol=1.0e-12):
             raise ValueError("recovery athlete integration requires full candidate authority")
+        if self.candidate_authority_envelope_enabled is not True:
+            raise ValueError(
+                "recovery athlete integration requires the contextual authority envelope"
+            )
         if not 0.50 <= self.maximum_portfolio_command_variation_ratio < 1.0:
             raise ValueError("recovery athlete variation ratio is invalid")
         if not 1 <= self.minimum_improved_lane_count <= 4:
             raise ValueError("recovery athlete improved lane count is invalid")
+        if not 0.0 < self.maximum_lane_peak_step_regression_mps <= 1.0e-4:
+            raise ValueError("recovery athlete peak-step tolerance is invalid")
+        if not 0.0 < self.maximum_zero_context_variation_mps <= 1.0e-4:
+            raise ValueError("recovery athlete zero-context tolerance is invalid")
         if not 0.0 <= self.maximum_ready_latency_regression_sec <= 1.0:
             raise ValueError("recovery athlete ready latency allowance is invalid")
         if not 0.10 <= self.minimum_actor_active_fraction <= 0.80:
@@ -271,6 +284,9 @@ def _lane_kwargs(
         recovery_athlete_blend=(
             0.0 if recovery_checkpoint_path is None else config.candidate_blend
         ),
+        recovery_athlete_authority_envelope_enabled=(
+            recovery_checkpoint_path is not None and config.candidate_authority_envelope_enabled
+        ),
     )
     return kwargs, goalkeeper, goal, expected_probe
 
@@ -371,7 +387,7 @@ def run_recovery_athlete_integration_exam(
     destination.mkdir(parents=True, exist_ok=True)
     checkout = source_checkout.expanduser().resolve()
     request = {
-        "schema_version": "rosclaw_soccer.recovery_athlete_integration_request.v1",
+        "schema_version": "rosclaw_soccer.recovery_athlete_integration_request.v2",
         "config": asdict(active),
         "config_hash": active.config_hash,
         "source_commit": _git_head(checkout),
@@ -395,6 +411,8 @@ def run_recovery_athlete_integration_exam(
     candidate_variation = 0.0
     improved_lane_count = 0
     maximum_latency_regression = -math.inf
+    maximum_peak_step_regression = -math.inf
+    zero_context_lane_count = 0
     for lane in expanded_dynamic_corner_lanes():
         parent_kwargs, goalkeeper, goal, expected_probe = _lane_kwargs(
             lane=lane,
@@ -457,6 +475,19 @@ def run_recovery_athlete_integration_exam(
                 "lateral_command_total_variation_mps", math.inf
             )
         )
+        parent_peak_step = float(
+            cast(dict[str, Any], parent.get("command_metrics", {})).get(
+                "lateral_command_peak_step_mps", math.inf
+            )
+        )
+        candidate_peak_step = float(
+            cast(dict[str, Any], candidate.get("command_metrics", {})).get(
+                "lateral_command_peak_step_mps", math.inf
+            )
+        )
+        peak_step_regression = candidate_peak_step - parent_peak_step
+        zero_context_lane = parent_tv <= active.maximum_zero_context_variation_mps
+        zero_context_lane_count += int(zero_context_lane)
         parent_latency = parent.get("ready_latency_sec")
         candidate_latency = candidate.get("ready_latency_sec")
         latency_regression = (
@@ -474,6 +505,7 @@ def run_recovery_athlete_integration_exam(
                 rel_tol=0.0,
                 abs_tol=1.0e-12,
             )
+            and candidate_result.goalkeeper_recovery_athlete_authority_envelope_enabled
         )
         lane_gates = {
             "qualified_parent": parent.get("passed") is True,
@@ -484,11 +516,19 @@ def run_recovery_athlete_integration_exam(
             "actor_route_active": actor_fraction >= active.minimum_actor_active_fraction,
             "ready_latency_not_regressed": latency_regression
             <= active.maximum_ready_latency_regression_sec,
+            "peak_step_not_regressed": peak_step_regression
+            <= active.maximum_lane_peak_step_regression_mps,
+            "zero_context_sparse": not zero_context_lane
+            or candidate_tv <= active.maximum_zero_context_variation_mps,
+            "authority_envelope_observed": (
+                candidate_result.goalkeeper_recovery_athlete_suppressed_fraction > 0.0
+            ),
         }
         parent_variation += parent_tv
         candidate_variation += candidate_tv
         improved_lane_count += int(candidate_tv < parent_tv - 1.0e-9)
         maximum_latency_regression = max(maximum_latency_regression, latency_regression)
+        maximum_peak_step_regression = max(maximum_peak_step_regression, peak_step_regression)
         parent_path = destination / f"{lane.lane_id}-parent-trajectory.npz"
         candidate_path = destination / f"{lane.lane_id}-candidate-trajectory.npz"
         _atomic_trajectory(parent_path, parent_trajectory)
@@ -500,6 +540,8 @@ def run_recovery_athlete_integration_exam(
             "candidate": candidate,
             "strict_replay": strict_replay,
             "latency_regression_sec": latency_regression,
+            "peak_step_regression_mps": peak_step_regression,
+            "zero_context_lane": zero_context_lane,
             "parent_trajectory_file": parent_path.name,
             "parent_trajectory_hash": hash_bytes(parent_path.read_bytes()),
             "candidate_trajectory_file": candidate_path.name,
@@ -515,15 +557,18 @@ def run_recovery_athlete_integration_exam(
         "heldout_right_inner_passed": cases.get("right-inner", {}).get("passed") is True,
         "ready_latency_not_regressed": maximum_latency_regression
         <= active.maximum_ready_latency_regression_sec,
+        "every_lane_peak_step_noninferior": maximum_peak_step_regression
+        <= active.maximum_lane_peak_step_regression_mps,
+        "zero_context_lane_present": zero_context_lane_count >= 1,
     }
     passed = bool(all(portfolio_gates.values()))
     report: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.recovery_athlete_integration_exam.v1",
+        "schema_version": "rosclaw_soccer.recovery_athlete_integration_exam.v2",
         "passed": passed,
         "promotion_status": (
             "PROMOTED_SIM_ONLY_RECOVERY_ATHLETE" if passed else "REJECTED_DEVELOPMENT"
         ),
-        "claim": "PAIRED_PHYSICS_SAVE_TO_SMOOTHER_READY_NEURAL_RECOVERY",
+        "claim": "CONTEXT_GATED_NEURAL_RECOVERY_WITH_PER_LANE_PEAK_NONREGRESSION",
         "request_hash": request["request_hash"],
         "source_commit": request["source_commit"],
         "checkpoint_hash": checkpoint_hash,
@@ -535,6 +580,8 @@ def run_recovery_athlete_integration_exam(
             "candidate_to_parent_variation_ratio": variation_ratio,
             "improved_lane_count": improved_lane_count,
             "maximum_ready_latency_regression_sec": maximum_latency_regression,
+            "maximum_lane_peak_step_regression_mps": maximum_peak_step_regression,
+            "zero_context_lane_count": zero_context_lane_count,
         },
         "cases": cases,
         "physics_backend": "mujoco_cpu",
@@ -563,7 +610,7 @@ def validate_recovery_athlete_integration_exam(path: Path) -> dict[str, Any]:
     cases = payload.get("cases")
     if not (
         claimed == hash_json(unhashed)
-        and payload.get("schema_version") == "rosclaw_soccer.recovery_athlete_integration_exam.v1"
+        and payload.get("schema_version") == "rosclaw_soccer.recovery_athlete_integration_exam.v2"
         and payload.get("passed") is True
         and payload.get("promotion_status") == "PROMOTED_SIM_ONLY_RECOVERY_ATHLETE"
         and payload.get("physics_backend") == "mujoco_cpu"
