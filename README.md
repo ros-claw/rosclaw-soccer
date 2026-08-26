@@ -30,6 +30,36 @@ fully unified, left-foot dynamic approach is immature, the goalkeeper reacts
 but does not save the shot, and broad randomized-physics certification is still
 missing.
 
+**Age-4 homepage reel (certified cases):**
+[watch/download 1080p](https://github.com/ros-claw/rosclaw-soccer/releases/download/age04-showcase-v0.1.0/claw7-academy-age04-hero-1080p.mp4)
+
+**Separately trained regulation-physics candidate:**
+[watch/download 1080p](https://github.com/ros-claw/rosclaw-soccer/releases/download/age04-showcase-v0.1.0/claw7-age04-regulation-development-1080p.mp4)
+— 7.5 m shot, 3.5 mm goal-plane error, no fall/backward displacement. This
+second video remains `DEVELOPMENT`, not certified, because 34 control steps
+reached actuator saturation.
+
+The latest local joint-growth curriculum now closes that candidate's missing
+stability loop: a phase-conditioned support actor and a newly distilled
+teacher-free contact actor pass all six Age-4 axes at 2.04 cm goal-plane error,
+zero saturation, zero backward displacement, and strict replay. It remains a
+`SIM_ONLY` development result until the harder true-frame-corner and randomized
+retention exams pass. See the [v3 joint-growth report](docs/age04-joint-growth-v3.zh-CN.md).
+
+## Regulation football physics
+
+The simulator selects measurements inside the current IFAB ranges: a
+105 × 68 m field, 7.32 × 2.44 m inside goal, 0.10 m frame and field lines,
+and a 0.69 m circumference / 0.43 kg ball. Net depth and MuJoCo contact
+coefficients are explicitly non-normative engineering parameters.
+
+The Soccer Reality Pack now checks drop/compression, matched-spin rolling,
+slide-to-roll transition, post rebound, and compliant-net retention before
+training. Its five CPU MuJoCo cases pass with the current symmetric five-value
+ball/pitch contact tuple. This fixes the legacy three-value contact tuple whose
+second tangential coefficient was effectively near zero and could make the
+ball look as if it slid like a cube.
+
 ## Attach to ROSClaw
 
 Install this downstream package beside a ROSClaw checkout that includes the
@@ -41,6 +71,7 @@ export ROSCLAW_SOCCER_EVIDENCE=/code/rosclaw/phase8_evidence
 rosclaw soccer doctor
 rosclaw soccer academy status
 rosclaw soccer player show claw7
+rosclaw soccer physics benchmark --output-dir /tmp/rosclaw-soccer-reality-pack
 ```
 
 The adapter contributes only a namespaced command tree. It receives no robot
@@ -64,6 +95,26 @@ python -m rosclaw_soccer.media.age04_reel \
 ```
 
 Every frame remains `SIM_ONLY`. Media is visualization, never promotion truth.
+
+Train a fresh regulation-physics Age-4 contact actor (eight bound probes,
+teacher-free final replay):
+
+```bash
+rosclaw soccer academy train-age04 \
+  --asset-root /path/to/RoboNaldo_Deploy \
+  --gait-policy-root /path/to/g1/policy \
+  --sonic-model-root /path/to/GEAR-SONIC \
+  --seed-request /path/to/seed/request.json \
+  --approach-strike-candidate /path/to/base-candidate.json \
+  --source-checkout /path/to/rosclaw \
+  --output-dir /outside/source/age04-regulation-training
+```
+
+`--football-motion-prior` is optional; a non-zero curriculum blend must be
+retrained in the same eight-probe context. See the
+[regulation Age-4 v2 report](docs/age04-regulation-training-v2.zh-CN.md) for the
+former dynamic-stability boundary and the
+[v3 joint-growth report](docs/age04-joint-growth-v3.zh-CN.md) for its closure.
 
 ## The growth loop
 
