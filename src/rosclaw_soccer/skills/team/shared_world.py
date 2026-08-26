@@ -199,6 +199,17 @@ class G1GoalkeeperConfig:
     canonical_locomotion_mirror_enabled: bool = False
     regulation_goal_positioning_enabled: bool = False
     post_contact_stabilization_enabled: bool = False
+    post_contact_ready_recovery_enabled: bool = False
+    post_contact_ready_recovery_delay_sec: float = 4.0
+    post_contact_ready_yaw_gain: float = 0.4
+    post_contact_ready_maximum_yaw_rate_rad_s: float = 0.12
+    post_contact_ready_lateral_position_gain: float = 0.6
+    post_contact_ready_maximum_lateral_speed_mps: float = 0.12
+    post_contact_ready_lateral_deadband_m: float = 0.04
+    successor_lateral_probe_enabled: bool = False
+    successor_lateral_probe_delay_sec: float = 8.0
+    successor_lateral_probe_duration_sec: float = 0.8
+    successor_lateral_probe_command_mps: float = 0.0
     arm_spread_rad: float = 0.24
     maximum_waist_lean_rad: float = 0.08
     actor_observation_mode: str = "legacy_shooter_phase"
@@ -298,7 +309,7 @@ class G1GoalkeeperConfig:
     block_action_shoulder_pitch_rad: float = 0.0
     block_action_shoulder_roll_rad: float = 0.0
     block_action_elbow_flex_rad: float = 0.0
-    schema_version: str = "rosclaw_soccer.g1_goalkeeper_config.v29"
+    schema_version: str = "rosclaw_soccer.g1_goalkeeper_config.v30"
 
     def __post_init__(self) -> None:
         values = (
@@ -382,6 +393,15 @@ class G1GoalkeeperConfig:
             self.balanced_dive_landing_capture_sec,
             self.balanced_dive_landing_damping_scale,
             self.dive_athlete_blend,
+            self.post_contact_ready_recovery_delay_sec,
+            self.post_contact_ready_yaw_gain,
+            self.post_contact_ready_maximum_yaw_rate_rad_s,
+            self.post_contact_ready_lateral_position_gain,
+            self.post_contact_ready_maximum_lateral_speed_mps,
+            self.post_contact_ready_lateral_deadband_m,
+            self.successor_lateral_probe_delay_sec,
+            self.successor_lateral_probe_duration_sec,
+            self.successor_lateral_probe_command_mps,
             self.block_action_waist_yaw_rad,
             self.block_action_waist_roll_rad,
             self.block_action_waist_pitch_rad,
@@ -703,6 +723,52 @@ class G1GoalkeeperConfig:
         ):
             raise ValueError(
                 "goalkeeper dive athlete requires checkpoint, passing exam and dive source"
+            )
+        if not isinstance(self.post_contact_ready_recovery_enabled, bool):
+            raise ValueError("goalkeeper post-contact ready recovery flag must be boolean")
+        if self.post_contact_ready_recovery_enabled and not self.post_contact_stabilization_enabled:
+            raise ValueError(
+                "goalkeeper post-contact ready recovery requires contact stabilization"
+            )
+        if not 2.0 <= self.post_contact_ready_recovery_delay_sec <= 5.5:
+            raise ValueError("goalkeeper post-contact ready recovery delay is invalid")
+        if not 0.1 <= self.post_contact_ready_yaw_gain <= 4.0:
+            raise ValueError("goalkeeper post-contact ready yaw gain is invalid")
+        if not 0.02 <= self.post_contact_ready_maximum_yaw_rate_rad_s <= 0.8:
+            raise ValueError("goalkeeper post-contact ready yaw rate is invalid")
+        if not 0.1 <= self.post_contact_ready_lateral_position_gain <= 2.0:
+            raise ValueError("goalkeeper post-contact ready lateral gain is invalid")
+        if (
+            not 0.05 <= self.post_contact_ready_maximum_lateral_speed_mps <= 0.20
+            or self.post_contact_ready_maximum_lateral_speed_mps > self.maximum_lateral_speed_mps
+        ):
+            raise ValueError("goalkeeper post-contact ready lateral speed is invalid")
+        if not 0.02 <= self.post_contact_ready_lateral_deadband_m <= 0.20:
+            raise ValueError("goalkeeper post-contact ready lateral deadband is invalid")
+        if not isinstance(self.successor_lateral_probe_enabled, bool):
+            raise ValueError("goalkeeper successor lateral probe flag must be boolean")
+        if not 2.0 <= self.successor_lateral_probe_delay_sec <= 10.0:
+            raise ValueError("goalkeeper successor lateral probe delay is invalid")
+        if not 0.4 <= self.successor_lateral_probe_duration_sec <= 1.5:
+            raise ValueError("goalkeeper successor lateral probe duration is invalid")
+        probe_command_configured = abs(self.successor_lateral_probe_command_mps) > 1.0e-12
+        probe_command_active = abs(self.successor_lateral_probe_command_mps) >= 0.05
+        if (
+            self.successor_lateral_probe_enabled != probe_command_configured
+            or (self.successor_lateral_probe_enabled and not probe_command_active)
+            or abs(self.successor_lateral_probe_command_mps) > self.maximum_lateral_speed_mps
+            or (
+                self.successor_lateral_probe_enabled
+                and (
+                    not self.post_contact_stabilization_enabled
+                    or not self.post_contact_ready_recovery_enabled
+                    or self.successor_lateral_probe_delay_sec
+                    < self.post_contact_ready_recovery_delay_sec + 0.5
+                )
+            )
+        ):
+            raise ValueError(
+                "goalkeeper successor probe requires bounded post-contact ready recovery"
             )
         if not 180 <= self.anticipation_start_policy_frame <= 270:
             raise ValueError("goalkeeper anticipation frame must be in [180, 270]")
@@ -1406,8 +1472,8 @@ def _simulate_shared_world(
         or float(np.linalg.norm(launcher_velocity)) <= 0.10
     ):
         raise ValueError("ball launcher state must contain finite xyz position and velocity")
-    if not math.isfinite(simulation_duration_sec) or not 2.0 <= simulation_duration_sec <= 15.0:
-        raise ValueError("shared-world duration must be in [2, 15] seconds")
+    if not math.isfinite(simulation_duration_sec) or not 2.0 <= simulation_duration_sec <= 25.0:
+        raise ValueError("shared-world duration must be in [2, 25] seconds")
 
     for label, blend in (
         ("position", shooter_motion_prior_position_blend),
@@ -4884,9 +4950,70 @@ def _command_goalkeeper_visible_ball(
         # locomotion foundation absorb the impact with its exact zero command;
         # the bounded dive/reach envelopes release their own joint authority
         # independently and continuously.
-        robot.state.vel_cmd = _normalized_zero_locomotion_command(robot.standby_policy)
         current_y = float(data.qpos[robot.qpos_base + 1])
-        return 0.0, current_y, False, False, observation
+        if not config.post_contact_ready_recovery_enabled:
+            robot.state.vel_cmd = _normalized_zero_locomotion_command(robot.standby_policy)
+            return 0.0, current_y, False, False, observation
+        contact_time = robot.contact_time
+        if contact_time is None:
+            raise RuntimeError("goalkeeper post-contact recovery lacks a contact timestamp")
+        elapsed_since_contact = max(0.0, timestamp - contact_time)
+        if elapsed_since_contact < config.post_contact_ready_recovery_delay_sec:
+            robot.state.vel_cmd = _normalized_zero_locomotion_command(robot.standby_policy)
+            return 0.0, current_y, False, False, observation
+        probe_active = bool(
+            config.successor_lateral_probe_enabled
+            and config.successor_lateral_probe_delay_sec
+            <= elapsed_since_contact
+            < config.successor_lateral_probe_delay_sec + config.successor_lateral_probe_duration_sec
+        )
+        if probe_active:
+            world_velocity_y = config.successor_lateral_probe_command_mps
+            target_y = current_y + world_velocity_y * config.successor_lateral_probe_duration_sec
+        else:
+            world_velocity_y = (
+                0.0
+                if abs(current_y) <= config.post_contact_ready_lateral_deadband_m
+                else float(
+                    np.clip(
+                        -config.post_contact_ready_lateral_position_gain * current_y,
+                        -config.post_contact_ready_maximum_lateral_speed_mps,
+                        config.post_contact_ready_maximum_lateral_speed_mps,
+                    )
+                )
+            )
+            target_y = 0.0
+        desired_yaw = math.pi
+        current_yaw = _current_root_yaw(robot, data=data)
+        yaw_error = math.atan2(
+            math.sin(desired_yaw - current_yaw),
+            math.cos(desired_yaw - current_yaw),
+        )
+        yaw_rate = float(
+            np.clip(
+                config.post_contact_ready_yaw_gain * yaw_error,
+                -config.post_contact_ready_maximum_yaw_rate_rad_s,
+                config.post_contact_ready_maximum_yaw_rate_rad_s,
+            )
+        )
+        desired_world_x = goal.plane_x_m - config.depth_from_goal_line_m
+        current_world_x = float(data.qpos[robot.qpos_base])
+        world_velocity_x = float(
+            np.clip(
+                config.depth_position_gain * (desired_world_x - current_world_x),
+                -config.maximum_depth_correction_mps,
+                config.maximum_depth_correction_mps,
+            )
+        )
+        local_velocity = _rotate_z(
+            np.asarray((world_velocity_x, world_velocity_y, 0.0), dtype=np.float64),
+            -current_yaw,
+        )
+        robot.state.vel_cmd = _normalized_locomotion_command(
+            robot.standby_policy,
+            np.asarray((local_velocity[0], local_velocity[1], yaw_rate), dtype=np.float64),
+        )
+        return world_velocity_y, target_y, False, False, observation
     flight_start = observation.observed_flight_start_sec
     learned_action = (
         None
@@ -6341,6 +6468,22 @@ def _yaw(robot: _Robot) -> float:
         float(robot.world_from_local_quat[3]),
         float(robot.world_from_local_quat[0]),
     )
+
+
+def _current_root_yaw(robot: _Robot, *, data: Any) -> float:
+    """Return measured floating-base yaw instead of the immutable spawn yaw."""
+
+    quaternion = np.asarray(
+        data.qpos[robot.qpos_base + 3 : robot.qpos_base + 7],
+        dtype=np.float64,
+    )
+    if quaternion.shape != (4,) or not np.all(np.isfinite(quaternion)):
+        raise RuntimeError("goalkeeper root quaternion must be a finite wxyz vector")
+    norm = float(np.linalg.norm(quaternion))
+    if norm <= 1e-8:
+        raise RuntimeError("goalkeeper root quaternion must be non-degenerate")
+    w, x, y, z = quaternion / norm
+    return float(math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
 
 
 def _rotate_z(vector: np.ndarray, yaw: float) -> np.ndarray:
