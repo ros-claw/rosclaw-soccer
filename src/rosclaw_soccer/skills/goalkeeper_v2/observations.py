@@ -161,6 +161,12 @@ class GoalkeeperActorObserver:
         self._ball_history: deque[NDArray[np.float64]] = deque(maxlen=self.spec.ball_history_steps)
         self._flight_start_sec: float | None = None
 
+    def rearm(self) -> None:
+        """Begin a new causal threat epoch without touching physical state."""
+
+        self._ball_history.clear()
+        self._flight_start_sec = None
+
     def observe(
         self,
         *,

@@ -833,6 +833,54 @@ class G1GoalkeeperConfig:
                 raise ValueError(f"goalkeeper block-action {label} exceeds its bound")
 
 
+@dataclass(frozen=True)
+class G1SecondThreatConfig:
+    """SIM-only live-ball launcher for a continuous second-threat curriculum."""
+
+    launch_time_sec: float = 17.0
+    rearm_lead_sec: float = 0.60
+    force_duration_sec: float = 0.08
+    flight_time_sec: float = 0.82
+    target_depth_before_goal_m: float = 0.72
+    target_y_m: float = 0.45
+    target_z_m: float = 1.10
+    goalkeeper_punch_force_n: float = 85.0
+    goalkeeper_punch_outward_force_scale: float = 0.75
+    maximum_force_n: float = 80.0
+    activation_ceiling: str = "SIM_ONLY"
+    hardware_authorized: bool = False
+    schema_version: str = "rosclaw_soccer.g1_second_threat_config.v1"
+
+    def __post_init__(self) -> None:
+        values = tuple(
+            value
+            for value in asdict(self).values()
+            if isinstance(value, int | float) and not isinstance(value, bool)
+        )
+        if not all(math.isfinite(float(value)) for value in values):
+            raise ValueError("second-threat settings must be finite")
+        if not 14.0 <= self.launch_time_sec <= 21.0:
+            raise ValueError("second-threat launch time is invalid")
+        if not 0.30 <= self.rearm_lead_sec <= 1.20:
+            raise ValueError("second-threat rearm lead is invalid")
+        if not 0.04 <= self.force_duration_sec <= 0.15:
+            raise ValueError("second-threat force duration is invalid")
+        if not 0.55 <= self.flight_time_sec <= 1.20:
+            raise ValueError("second-threat flight time is invalid")
+        if not 0.50 <= self.target_depth_before_goal_m <= 1.00:
+            raise ValueError("second-threat target depth is invalid")
+        if not -2.5 <= self.target_y_m <= 2.5 or not 1.10 <= self.target_z_m <= 1.80:
+            raise ValueError("second-threat target is invalid")
+        if not 20.0 <= self.goalkeeper_punch_force_n <= 120.0:
+            raise ValueError("second-threat punch force is invalid")
+        if not 0.0 <= self.goalkeeper_punch_outward_force_scale <= 0.75:
+            raise ValueError("second-threat outward punch scale is invalid")
+        if not 40.0 <= self.maximum_force_n <= 120.0:
+            raise ValueError("second-threat force limit is invalid")
+        if self.activation_ceiling != "SIM_ONLY" or self.hardware_authorized:
+            raise ValueError("second-threat curriculum must remain SIM_ONLY")
+
+
 def shared_post_impact_simulation_kwargs() -> dict[str, Any]:
     recovery = shared_post_impact_recovery_config()
     guard = G1JointGuardConfig()
@@ -1024,10 +1072,31 @@ class G1SharedWorldResult:
     goalkeeper_recovery_athlete_authority_envelope_enabled: bool = False
     goalkeeper_recovery_athlete_active_fraction: float = 0.0
     goalkeeper_recovery_athlete_suppressed_fraction: float = 0.0
+    second_threat_enabled: bool = False
+    second_threat_rearmed: bool = False
+    second_threat_rearm_time_sec: float | None = None
+    second_threat_launch_observed: bool = False
+    second_threat_launch_time_sec: float | None = None
+    second_threat_launch_position_m: tuple[float, float, float] | None = None
+    second_threat_target_velocity_mps: tuple[float, float, float] | None = None
+    second_threat_peak_force_n: float = 0.0
+    goalkeeper_second_ball_contact_observed: bool = False
+    goalkeeper_second_ball_contact_time_sec: float | None = None
+    goalkeeper_second_glove_contact_observed: bool = False
+    goalkeeper_second_glove_contact_time_sec: float | None = None
+    goalkeeper_second_glove_contact_height_m: float | None = None
+    goalkeeper_second_glove_contact_position_m: tuple[float, float, float] | None = None
+    goalkeeper_second_glove_contact_surface_distance_m: float | None = None
+    goalkeeper_second_glove_contact_side: str | None = None
+    goalkeeper_second_contact_left_hand_height_m: float | None = None
+    goalkeeper_second_contact_right_hand_height_m: float | None = None
+    goalkeeper_second_contact_left_hand_ball_distance_m: float | None = None
+    goalkeeper_second_contact_right_hand_ball_distance_m: float | None = None
+    goalkeeper_second_save_observed: bool = False
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v16"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v17"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1460,6 +1529,7 @@ def _simulate_shared_world(
     pass_reception_target_m: tuple[float, float, float] = (1.00, 0.0, 0.115),
     goal_spec: G1TrainingGoalSpec | None = None,
     goalkeeper_config: G1GoalkeeperConfig | None = None,
+    second_threat_config: G1SecondThreatConfig | None = None,
     unified_stadium_scene: bool = True,
     shooter_ball_initial_position_m: tuple[float, float, float] | None = None,
     ball_launcher_position_m: tuple[float, float, float] | None = None,
@@ -1481,6 +1551,27 @@ def _simulate_shared_world(
         raise ValueError("ball launcher position and velocity must be configured together")
     if shooter_ball_initial_position_m is not None and ball_launcher_position_m is not None:
         raise ValueError("direct-shot and launcher ball initializations are mutually exclusive")
+    if second_threat_config is not None and (
+        goalkeeper_config is None
+        or not goalkeeper_config.post_contact_ready_recovery_enabled
+        or goalkeeper_config.successor_lateral_probe_enabled
+        or ball_launcher_position_m is not None
+        or shooter_ball_initial_position_m is not None
+        or simulation_duration_sec
+        < second_threat_config.launch_time_sec + second_threat_config.flight_time_sec + 2.0
+    ):
+        raise ValueError(
+            "second-threat curriculum requires a recovered goalkeeper, continuous first chain "
+            "and enough unprobed simulation time"
+        )
+    if second_threat_config is not None and goalkeeper_config is not None:
+        second_peak_punch_vector = second_threat_config.goalkeeper_punch_force_n * math.sqrt(
+            1.0
+            + goalkeeper_config.actor_bimanual_punch_vertical_force_scale**2
+            + second_threat_config.goalkeeper_punch_outward_force_scale**2
+        )
+        if second_peak_punch_vector > 160.0:
+            raise ValueError("second-threat punch exceeds the goalkeeper force envelope")
     direct_shot_position = (
         None
         if shooter_ball_initial_position_m is None
@@ -2380,6 +2471,9 @@ def _simulate_shared_world(
         # foot-ball contact in this control frame.
         "shooter_ball_contact_foot": [],
         "ball_contact_role": [],
+        "second_threat_rearmed": [],
+        "second_threat_launcher_active": [],
+        "second_threat_launcher_force": [],
         "robot_robot_contact_count": [],
     }
     if goalkeeper is not None:
@@ -2410,6 +2504,7 @@ def _simulate_shared_world(
                 "goalkeeper_actor_height_routed": [],
                 "goalkeeper_mosaic_gmt_central_routed": [],
                 "goalkeeper_observed_flight_active": [],
+                "goalkeeper_observed_flight_start_sec": [],
                 "goalkeeper_reaction_active": [],
                 "goalkeeper_useful_reaction_active": [],
                 "goalkeeper_anticipation_active": [],
@@ -2430,6 +2525,10 @@ def _simulate_shared_world(
                 "goalkeeper_recovery_athlete_suppressed": [],
                 "goalkeeper_recovery_athlete_raw_world_command": [],
                 "goalkeeper_recovery_athlete_world_command": [],
+                "goalkeeper_contact_epoch": [],
+                "goalkeeper_second_ball_contact": [],
+                "goalkeeper_second_left_glove_contact": [],
+                "goalkeeper_second_right_glove_contact": [],
                 "goalkeeper_ball_contact": [],
                 "goalkeeper_left_glove_contact": [],
                 "goalkeeper_right_glove_contact": [],
@@ -2518,10 +2617,103 @@ def _simulate_shared_world(
     previous_ball_x = float(data.qpos[ball_qpos])
     goal_net_state = G1CompliantGoalNetState()
     goalkeeper_previous_actor_residual: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+    goalkeeper_contact_epoch = 0
+    second_threat_rearmed = False
+    second_threat_rearm_time: float | None = None
+    second_threat_launch_time: float | None = None
+    second_threat_launch_position: NDArray[np.float64] | None = None
+    second_threat_target_velocity: NDArray[np.float64] | None = None
+    second_threat_force: NDArray[np.float64] | None = None
+    second_threat_force_stop_sec: float | None = None
+    second_threat_peak_force = 0.0
+    first_goal_crossed_before_second_threat = False
+    goalkeeper_second_contact_time: float | None = None
+    goalkeeper_second_glove_contact_time: float | None = None
+    goalkeeper_second_glove_contact_height: float | None = None
+    goalkeeper_second_glove_contact_position: NDArray[np.float64] | None = None
+    goalkeeper_second_glove_contact_surface_distance: float | None = None
+    goalkeeper_second_glove_contact_side: str | None = None
+    goalkeeper_second_contact_left_hand_height: float | None = None
+    goalkeeper_second_contact_right_hand_height: float | None = None
+    goalkeeper_second_contact_left_hand_ball_distance: float | None = None
+    goalkeeper_second_contact_right_hand_ball_distance: float | None = None
 
     for frame in range(total_frames):
         for robot in robots:
             _fill_local_state(robot, data, ball_body, ball_qvel)
+        if (
+            second_threat_config is not None
+            and goalkeeper is not None
+            and goalkeeper_observer is not None
+            and not second_threat_rearmed
+            and goalkeeper_contact_time is not None
+            and float(data.time)
+            >= second_threat_config.launch_time_sec - second_threat_config.rearm_lead_sec
+            and _goalkeeper_ready_for_second_threat(goalkeeper, data=data)
+        ):
+            # Rearm only controller memory.  Physical qpos/qvel, the live ball
+            # and the simulation clock remain untouched.
+            goalkeeper.contact_latched = False
+            goalkeeper.contact_time = None
+            goalkeeper_observer.rearm()
+            goalkeeper_previous_actor_residual.fill(0.0)
+            if goalkeeper.goalkeeper_reach_memory is not None:
+                goalkeeper.goalkeeper_reach_memory.fill(0.0)
+            goalkeeper_mosaic_gmt_arrival_time_sec = None
+            goalkeeper_mosaic_gmt_target_height_m = 0.0
+            goalkeeper_mosaic_gmt_route = None
+            goalkeeper_mosaic_gmt_mirror_latch = None
+            goalkeeper_balanced_dive_flight_start_sec = None
+            goalkeeper_balanced_dive_flight_duration_sec = None
+            goalkeeper_balanced_dive_direction_index = None
+            goalkeeper_balanced_dive_anchor_target = None
+            goalkeeper_balanced_dive_was_airborne = False
+            goalkeeper_landing_capture_start_sec = None
+            goalkeeper_landing_capture_anchor = None
+            second_threat_rearmed = True
+            second_threat_rearm_time = float(data.time)
+        if (
+            second_threat_config is not None
+            and second_threat_rearmed
+            and second_threat_launch_time is None
+            and float(data.time) + 1.0e-12 >= second_threat_config.launch_time_sec
+        ):
+            if goalkeeper_observer is None:
+                raise RuntimeError("second-threat launch lost its causal observer")
+            # The readiness event occurs before the launch.  Clear only the
+            # causal ball history again at the exact force epoch so residual
+            # motion from the first save cannot masquerade as threat two.
+            goalkeeper_observer.rearm()
+            goalkeeper_previous_actor_residual.fill(0.0)
+            position = np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64)
+            current_velocity = np.asarray(data.qvel[ball_qvel : ball_qvel + 3], dtype=np.float64)
+            duration = second_threat_config.flight_time_sec
+            target = np.asarray(
+                (
+                    active_goal.plane_x_m - second_threat_config.target_depth_before_goal_m,
+                    second_threat_config.target_y_m,
+                    second_threat_config.target_z_m,
+                ),
+                dtype=np.float64,
+            )
+            target_velocity = (target - position) / duration
+            target_velocity[2] += 0.5 * 9.81 * duration
+            force = active_goal.ball_mass_kg * (
+                (target_velocity - current_velocity) / second_threat_config.force_duration_sec
+                + np.asarray((0.0, 0.0, 9.81), dtype=np.float64)
+            )
+            force_norm = float(np.linalg.norm(force))
+            if force_norm > second_threat_config.maximum_force_n:
+                raise RuntimeError("second-threat live-ball launch exceeded its force bound")
+            second_threat_launch_time = float(data.time)
+            second_threat_launch_position = position.copy()
+            second_threat_target_velocity = target_velocity.copy()
+            second_threat_force = force.copy()
+            second_threat_force_stop_sec = (
+                float(data.time) + second_threat_config.force_duration_sec
+            )
+            second_threat_peak_force = force_norm
+            first_goal_crossed_before_second_threat = goal_crossed
         if (
             launcher_position is None
             and not shooter.entered
@@ -3459,6 +3651,7 @@ def _simulate_shared_world(
         frame_goalkeeper_bimanual_punch_active = False
         frame_goalkeeper_bimanual_punch_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         for _ in range(_SUBSTEPS):
+            data.xfrc_applied[ball_body, :3] = 0.0
             for robot in robots:
                 q = data.qpos[robot.joint_qpos]
                 dq = data.qvel[robot.joint_qvel]
@@ -3492,12 +3685,22 @@ def _simulate_shared_world(
                         model=model,
                         data=data,
                         observation=goalkeeper_actor_observation,
-                        force_n=(goalkeeper_config.actor_bimanual_punch_force_n + central_boost),
+                        force_n=(
+                            second_threat_config.goalkeeper_punch_force_n
+                            if second_threat_config is not None
+                            and second_threat_rearmed
+                            and goalkeeper_contact_epoch == 1
+                            else goalkeeper_config.actor_bimanual_punch_force_n + central_boost
+                        ),
                         vertical_force_scale=(
                             goalkeeper_config.actor_bimanual_punch_vertical_force_scale
                         ),
                         outward_force_scale=(
-                            goalkeeper_config.actor_bimanual_punch_outward_force_scale
+                            second_threat_config.goalkeeper_punch_outward_force_scale
+                            if second_threat_config is not None
+                            and second_threat_rearmed
+                            and goalkeeper_contact_epoch == 1
+                            else goalkeeper_config.actor_bimanual_punch_outward_force_scale
                         ),
                         window_sec=goalkeeper_config.actor_bimanual_punch_window_sec,
                     )
@@ -3636,6 +3839,17 @@ def _simulate_shared_world(
                     damping_n_s_m=10.0,
                     state=goal_net_state,
                 )
+            if (
+                second_threat_force is not None
+                and second_threat_force_stop_sec is not None
+                and float(data.time) < second_threat_force_stop_sec - 1.0e-12
+            ):
+                # The compliant net owns the base ball-force buffer and clears
+                # it on every physics substep.  Add the bounded curriculum
+                # impulse afterwards so the recorded launcher event is also a
+                # real force in the MuJoCo integration, while preserving any
+                # simultaneous net response.
+                data.xfrc_applied[ball_body, :3] += second_threat_force
             mujoco.mj_step(model, data)
             for robot in robots:
                 executed_torque[robot.role] = data.actuator_force[robot.actuators].copy()
@@ -3690,23 +3904,75 @@ def _simulate_shared_world(
                     _reset_post_contact_support_anchors(shooter)
             if goalkeeper is not None and observation["ball_goalkeeper"]:
                 contact_role = 3
-                if goalkeeper_contact_time is None:
+                if not goalkeeper.contact_latched:
                     goalkeeper.contact_latched = True
                     goalkeeper.contact_time = float(data.time)
-                    goalkeeper_contact_time = float(data.time)
-                if observation["ball_goalkeeper_left_glove"]:
+                    goalkeeper_contact_epoch += 1
+                    if goalkeeper_contact_epoch == 1:
+                        goalkeeper_contact_time = float(data.time)
+                    elif goalkeeper_contact_epoch == 2:
+                        goalkeeper_second_contact_time = float(data.time)
+                if goalkeeper_contact_epoch == 1 and observation["ball_goalkeeper_left_glove"]:
                     goalkeeper_left_glove_contact_time = (
                         float(data.time)
                         if goalkeeper_left_glove_contact_time is None
                         else goalkeeper_left_glove_contact_time
                     )
-                if observation["ball_goalkeeper_right_glove"]:
+                if goalkeeper_contact_epoch == 1 and observation["ball_goalkeeper_right_glove"]:
                     goalkeeper_right_glove_contact_time = (
                         float(data.time)
                         if goalkeeper_right_glove_contact_time is None
                         else goalkeeper_right_glove_contact_time
                     )
-                if observation["ball_goalkeeper_glove"] and goalkeeper_glove_contact_time is None:
+                if (
+                    goalkeeper_contact_epoch == 2
+                    and observation["ball_goalkeeper_glove"]
+                    and goalkeeper_second_glove_contact_time is None
+                ):
+                    goalkeeper_second_glove_contact_time = float(data.time)
+                    goalkeeper_second_glove_contact_position = np.asarray(
+                        data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
+                    ).copy()
+                    goalkeeper_second_glove_contact_height = float(
+                        goalkeeper_second_glove_contact_position[2]
+                    )
+                    second_left = bool(observation["ball_goalkeeper_left_glove"])
+                    second_right = bool(observation["ball_goalkeeper_right_glove"])
+                    goalkeeper_second_glove_contact_side = (
+                        "both"
+                        if second_left and second_right
+                        else "left"
+                        if second_left
+                        else "right"
+                    )
+                    second_surface_distances = [
+                        float(value)
+                        for value in (
+                            observation["ball_goalkeeper_left_glove_surface_distance_m"],
+                            observation["ball_goalkeeper_right_glove_surface_distance_m"],
+                        )
+                        if value is not None
+                    ]
+                    goalkeeper_second_glove_contact_surface_distance = min(second_surface_distances)
+                    second_left_hand = np.asarray(
+                        data.xpos[goalkeeper.left_hand_body], dtype=np.float64
+                    )
+                    second_right_hand = np.asarray(
+                        data.xpos[goalkeeper.right_hand_body], dtype=np.float64
+                    )
+                    goalkeeper_second_contact_left_hand_height = float(second_left_hand[2])
+                    goalkeeper_second_contact_right_hand_height = float(second_right_hand[2])
+                    goalkeeper_second_contact_left_hand_ball_distance = float(
+                        np.linalg.norm(second_left_hand - goalkeeper_second_glove_contact_position)
+                    )
+                    goalkeeper_second_contact_right_hand_ball_distance = float(
+                        np.linalg.norm(second_right_hand - goalkeeper_second_glove_contact_position)
+                    )
+                if (
+                    goalkeeper_contact_epoch == 1
+                    and observation["ball_goalkeeper_glove"]
+                    and goalkeeper_glove_contact_time is None
+                ):
                     goalkeeper_glove_contact_time = float(data.time)
                     goalkeeper_glove_contact_position = np.asarray(
                         data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
@@ -3968,6 +4234,12 @@ def _simulate_shared_world(
                 goalkeeper_actor_observation is not None
                 and goalkeeper_actor_observation.observed_flight_start_sec is not None
             )
+            trace["goalkeeper_observed_flight_start_sec"].append(
+                math.nan
+                if goalkeeper_actor_observation is None
+                or goalkeeper_actor_observation.observed_flight_start_sec is None
+                else goalkeeper_actor_observation.observed_flight_start_sec
+            )
             trace["goalkeeper_reaction_active"].append(goalkeeper_reaction_active)
             lateral_error = goalkeeper_target_y_m - float(data.qpos[goalkeeper.qpos_base + 1])
             trace["goalkeeper_useful_reaction_active"].append(
@@ -4022,6 +4294,23 @@ def _simulate_shared_world(
                 if goalkeeper.last_recovery_athlete_world_command is None
                 else goalkeeper.last_recovery_athlete_world_command.copy()
             )
+            trace["goalkeeper_contact_epoch"].append(goalkeeper_contact_epoch)
+            trace["goalkeeper_second_ball_contact"].append(
+                goalkeeper_second_contact_time is not None
+                and abs(float(data.time) - goalkeeper_second_contact_time) <= _CONTROL_DT + 1e-9
+            )
+            trace["goalkeeper_second_left_glove_contact"].append(
+                goalkeeper_second_glove_contact_time is not None
+                and goalkeeper_second_glove_contact_side in {"left", "both"}
+                and abs(float(data.time) - goalkeeper_second_glove_contact_time)
+                <= _CONTROL_DT + 1e-9
+            )
+            trace["goalkeeper_second_right_glove_contact"].append(
+                goalkeeper_second_glove_contact_time is not None
+                and goalkeeper_second_glove_contact_side in {"right", "both"}
+                and abs(float(data.time) - goalkeeper_second_glove_contact_time)
+                <= _CONTROL_DT + 1e-9
+            )
             trace["goalkeeper_ball_contact"].append(
                 goalkeeper_contact_time is not None
                 and abs(float(data.time) - goalkeeper_contact_time) <= _CONTROL_DT + 1e-9
@@ -4040,6 +4329,18 @@ def _simulate_shared_world(
             trace["goalkeeper_bimanual_punch_torque"].append(
                 frame_goalkeeper_bimanual_punch_torque.copy()
             )
+        second_launcher_active = bool(
+            second_threat_force is not None
+            and second_threat_force_stop_sec is not None
+            and float(data.time) <= second_threat_force_stop_sec + 1.0e-12
+        )
+        trace["second_threat_rearmed"].append(second_threat_rearmed)
+        trace["second_threat_launcher_active"].append(second_launcher_active)
+        trace["second_threat_launcher_force"].append(
+            np.zeros(3, dtype=np.float64)
+            if not second_launcher_active or second_threat_force is None
+            else second_threat_force.copy()
+        )
         _append_trace(
             trace,
             data=data,
@@ -4242,7 +4543,14 @@ def _simulate_shared_world(
         goalkeeper_min_pelvis_height_m=(None if goalkeeper is None else goalkeeper_min_height),
         goalkeeper_ball_contact_observed=goalkeeper_contact_time is not None,
         goalkeeper_ball_contact_time_sec=goalkeeper_contact_time,
-        goalkeeper_save_observed=(goalkeeper_contact_time is not None and not goal_crossed),
+        goalkeeper_save_observed=(
+            goalkeeper_contact_time is not None
+            and not (
+                first_goal_crossed_before_second_threat
+                if second_threat_launch_time is not None
+                else goal_crossed
+            )
+        ),
         goalkeeper_left_glove_contact_observed=(goalkeeper_left_glove_contact_time is not None),
         goalkeeper_right_glove_contact_observed=(goalkeeper_right_glove_contact_time is not None),
         goalkeeper_glove_contact_height_m=goalkeeper_glove_contact_height,
@@ -4340,6 +4648,59 @@ def _simulate_shared_world(
             else goalkeeper.recovery_athlete_suppressed_frame_count
             / goalkeeper.recovery_athlete_active_frame_count
         ),
+        second_threat_enabled=second_threat_config is not None,
+        second_threat_rearmed=second_threat_rearmed,
+        second_threat_rearm_time_sec=second_threat_rearm_time,
+        second_threat_launch_observed=second_threat_launch_time is not None,
+        second_threat_launch_time_sec=second_threat_launch_time,
+        second_threat_launch_position_m=(
+            None
+            if second_threat_launch_position is None
+            else (
+                float(second_threat_launch_position[0]),
+                float(second_threat_launch_position[1]),
+                float(second_threat_launch_position[2]),
+            )
+        ),
+        second_threat_target_velocity_mps=(
+            None
+            if second_threat_target_velocity is None
+            else (
+                float(second_threat_target_velocity[0]),
+                float(second_threat_target_velocity[1]),
+                float(second_threat_target_velocity[2]),
+            )
+        ),
+        second_threat_peak_force_n=second_threat_peak_force,
+        goalkeeper_second_ball_contact_observed=goalkeeper_second_contact_time is not None,
+        goalkeeper_second_ball_contact_time_sec=goalkeeper_second_contact_time,
+        goalkeeper_second_glove_contact_observed=(goalkeeper_second_glove_contact_time is not None),
+        goalkeeper_second_glove_contact_time_sec=goalkeeper_second_glove_contact_time,
+        goalkeeper_second_glove_contact_height_m=goalkeeper_second_glove_contact_height,
+        goalkeeper_second_glove_contact_position_m=(
+            None
+            if goalkeeper_second_glove_contact_position is None
+            else (
+                float(goalkeeper_second_glove_contact_position[0]),
+                float(goalkeeper_second_glove_contact_position[1]),
+                float(goalkeeper_second_glove_contact_position[2]),
+            )
+        ),
+        goalkeeper_second_glove_contact_surface_distance_m=(
+            goalkeeper_second_glove_contact_surface_distance
+        ),
+        goalkeeper_second_glove_contact_side=goalkeeper_second_glove_contact_side,
+        goalkeeper_second_contact_left_hand_height_m=(goalkeeper_second_contact_left_hand_height),
+        goalkeeper_second_contact_right_hand_height_m=(goalkeeper_second_contact_right_hand_height),
+        goalkeeper_second_contact_left_hand_ball_distance_m=(
+            goalkeeper_second_contact_left_hand_ball_distance
+        ),
+        goalkeeper_second_contact_right_hand_ball_distance_m=(
+            goalkeeper_second_contact_right_hand_ball_distance
+        ),
+        goalkeeper_second_save_observed=(
+            goalkeeper_second_glove_contact_time is not None and not goal_crossed
+        ),
         passer_joint_limit_violation=role_joint_violation["passer"],
         shooter_joint_limit_violation=role_joint_violation["shooter"],
         goalkeeper_joint_limit_violation=role_joint_violation.get("goalkeeper", False),
@@ -4421,11 +4782,12 @@ def _configure_goalkeeper_glove_contact(
             # The source MJCF leaves joint-limit margin at zero and uses the
             # soft global 20 ms constraint.  A fast, low-damping punch contact
             # can consequently push a wrist through its declared mechanical
-            # range before the controller reacts.  Use a symmetric early
-            # hard-stop only for the explicitly enabled punch material; this
-            # changes neither legacy rollouts nor the commanded pose.
-            model.jnt_margin[wrist_pitch_joint] = 0.04
-            model.jnt_solref[wrist_pitch_joint] = (0.005, 1.0)
+            # range before the controller reacts.  Align the physical
+            # constraint activation with the configured predictive guard and
+            # solve it inside one 50 Hz control interval.  This remains local
+            # to the explicitly enabled punch material and never writes qpos.
+            model.jnt_margin[wrist_pitch_joint] = max(0.04, config.joint_guard_margin_rad)
+            model.jnt_solref[wrist_pitch_joint] = (0.003, 1.0)
 
 
 def _goalkeeper_neutral_root_pose(
@@ -6735,6 +7097,29 @@ def _recovery_athlete_authority_envelope(
     if np.any(np.abs(projected) > np.abs(proposal) + 1.0e-12):
         raise RuntimeError("recovery athlete authority envelope increased authority")
     return projected
+
+
+def _goalkeeper_ready_for_second_threat(robot: _Robot, *, data: Any) -> bool:
+    """Return a causal live-state rearm decision for a new threat epoch."""
+
+    pelvis_height = float(data.qpos[robot.qpos_base + 2])
+    velocity = np.asarray(data.qvel[robot.qvel_base : robot.qvel_base + 6], dtype=np.float64)
+    torso = np.asarray(data.xquat[robot.torso_body], dtype=np.float64)
+    if (
+        velocity.shape != (6,)
+        or torso.shape != (4,)
+        or not np.all(np.isfinite(np.concatenate((velocity, torso))))
+    ):
+        return False
+    upright = 1.0 - 2.0 * (torso[1] ** 2 + torso[2] ** 2)
+    return bool(
+        pelvis_height >= 0.70
+        and upright >= 0.90
+        and float(np.linalg.norm(velocity[:3])) <= 0.25
+        and float(np.linalg.norm(velocity[3:])) <= 0.50
+        and robot.latest_left_support
+        and robot.latest_right_support
+    )
 
 
 def _recovery_athlete_world_command(
