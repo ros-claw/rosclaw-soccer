@@ -63,6 +63,15 @@ mypy_path = "src"
 module = ["mujoco.*", "onnxruntime.*", "rosclaw.*"]
 ignore_missing_imports = true
 
+# Optional JAX/Brax training hosts currently publish no complete typing
+# contract, and recent JAX wheels ship Python-3.12-only stub syntax while this
+# package deliberately retains a Python 3.11 compatibility target.
+[[tool.mypy.overrides]]
+module = ["brax.*", "jax.*", "optax.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+ignore_missing_imports = true
+
 # PyTorch is an intentionally optional, GPU-host-only training dependency.
 # Runtime/evidence readers remain NumPy-only; these modules import torch only
 # inside explicitly invoked training or extraction functions.
@@ -84,11 +93,13 @@ module = [
   "rosclaw_soccer.training.high_corner_reachability_audit",
   "rosclaw_soccer.training.lateral_athlete_cpu_exam",
   "rosclaw_soccer.training.lateral_athlete_expert",
+  "rosclaw_soccer.training.opentrack_recovery_residual_exam",
+  "rosclaw_soccer.training.opentrack_recovery_residual_ppo",
   "rosclaw_soccer.training.opentrack_teacher_source_exam",
   "rosclaw_soccer.training.recovery_athlete_student",
   "rosclaw_soccer.training.recovery_athlete_cpu_exam",
 ]
-disable_error_code = ["import-not-found", "no-untyped-call"]
+disable_error_code = ["import-not-found", "no-untyped-call", "unused-ignore"]
 
 [[tool.mypy.overrides]]
 module = [

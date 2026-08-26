@@ -6,11 +6,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from rosclaw_soccer.media.recovery_athlete_video import (
+    validate_recovery_athlete_video_manifest,
+)
 from rosclaw_soccer.sim.contracts import hash_bytes
 from rosclaw_soccer.skills.team.shared_world import G1GoalkeeperConfig
 from rosclaw_soccer.training.recovery_athlete_integration_exam import (
     RecoveryAthleteIntegrationConfig,
     _recovery_command_metrics,
+    validate_recovery_athlete_integration_exam,
 )
 from rosclaw_soccer.training.recovery_athlete_student import (
     RecoveryAthleteStudentConfig,
@@ -21,6 +25,12 @@ from rosclaw_soccer.training.recovery_athlete_student import (
     recovery_teacher_numpy,
 )
 from rosclaw_soccer.training.save_to_ready_successor import SaveToReadySuccessorConfig
+
+_EXTERNAL_ROOT = Path("/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1")
+_INTEGRATION_EVIDENCE = _EXTERNAL_ROOT / "s105-recovery-athlete-integration-v1/evidence.json"
+_VIDEO_MANIFEST = (
+    _EXTERNAL_ROOT / "s105-recovery-athlete-showcase-v1/s105-neural-recovery-athlete.json"
+)
 
 
 def _mirrored_features() -> np.ndarray:
@@ -212,3 +222,22 @@ def test_integration_contract_remains_sim_only() -> None:
         replace(config, candidate_blend=0.5)
     with pytest.raises(ValueError, match="SIM_ONLY"):
         replace(config, hardware_authorized=True)
+
+
+def test_current_integration_evidence_is_content_bound_when_available() -> None:
+    if not _INTEGRATION_EVIDENCE.is_file():
+        pytest.skip("external S105 physics evidence is not installed")
+    report = validate_recovery_athlete_integration_exam(_INTEGRATION_EVIDENCE)
+    assert report["passed"] is True
+    assert report["portfolio_gates"]["heldout_right_inner_passed"] is True
+    assert report["portfolio_metrics"]["candidate_to_parent_variation_ratio"] < 1.0
+
+
+def test_current_video_is_content_bound_when_available() -> None:
+    if not _VIDEO_MANIFEST.is_file():
+        pytest.skip("external S105 video is not installed")
+    manifest = validate_recovery_athlete_video_manifest(_VIDEO_MANIFEST)
+    assert manifest["evidence_passed"] is True
+    assert manifest["duration_sec"] > 50.0
+    assert manifest["width"] == 1920
+    assert manifest["height"] == 1080
