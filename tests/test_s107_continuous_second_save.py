@@ -6,6 +6,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from rosclaw_soccer.media.continuous_second_save_video import (
+    validate_continuous_second_save_video_manifest,
+)
 from rosclaw_soccer.skills.goalkeeper_v2.observations import (
     GoalkeeperActorObservation,
     GoalkeeperActorObserver,
@@ -23,6 +26,10 @@ from rosclaw_soccer.training.continuous_second_save_exam import (
 _EVIDENCE = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
     "s107-continuous-second-save-exam-v1/evidence.json"
+)
+_VIDEO_MANIFEST = Path(
+    "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
+    "s107-continuous-second-save-showcase-v1/s107-continuous-second-save.json"
 )
 
 
@@ -169,4 +176,12 @@ def test_external_continuous_second_save_evidence_if_available() -> None:
         pytest.skip("external S107 physics evidence is not present")
     payload = validate_continuous_second_save_exam(_EVIDENCE)
     assert payload["passed"] is True
+    assert payload["second_striker_claimed"] is False
+
+
+def test_external_continuous_second_save_video_if_available() -> None:
+    if not _VIDEO_MANIFEST.is_file():
+        pytest.skip("external S107 development video is not present")
+    payload = validate_continuous_second_save_video_manifest(_VIDEO_MANIFEST)
+    assert payload["visualization_only"] is True
     assert payload["second_striker_claimed"] is False
