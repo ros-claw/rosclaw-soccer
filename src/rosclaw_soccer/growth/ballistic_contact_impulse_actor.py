@@ -705,7 +705,7 @@ def g1_ballistic_contact_impulse_effect(
 ) -> G1BallisticContactImpulseEffect:
     """Run the learned proprioceptive actor and decode direct joint torques."""
 
-    import mujoco  # type: ignore[import-untyped]
+    import mujoco
 
     zero: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
     target_conditioned = actor.schema_version == _V2_SCHEMA

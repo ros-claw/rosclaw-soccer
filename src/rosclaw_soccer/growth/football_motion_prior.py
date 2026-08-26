@@ -21,8 +21,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 from rosclaw.feedback.contracts import canonical_hash
-from rosclaw.simforge.backends.unitree_mujoco_backend import qualify_g1_assets
 
+from rosclaw_soccer.providers.g1.asset_qualification import qualify_g1_assets
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 
 _SOCCER_CASES = (

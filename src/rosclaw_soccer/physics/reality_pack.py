@@ -104,7 +104,7 @@ def run_reality_pack(
 
 
 def _model(spec: IFABRegulationSpec) -> tuple[Any, Any, int, int]:
-    import mujoco  # type: ignore[import-untyped]
+    import mujoco
 
     radius = spec.ball_radius_m
     inertia = spec.ball_solid_sphere_inertia_kg_m2
