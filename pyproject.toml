@@ -75,8 +75,16 @@ module = [
   "rosclaw_soccer.skills.team.follow_through_evidence",
   "rosclaw_soccer.skills.team.goalkeeper_evidence",
   "rosclaw_soccer.skills.team.imitation_evidence",
+  "rosclaw_soccer.growth.opentrack_tracking",
+  "rosclaw_soccer.training.dynamic_lead_pass_evidence",
   "rosclaw_soccer.training.recovery_student_stateful_train",
   "rosclaw_soccer.training.recovery_student_train",
+  "rosclaw_soccer.training.dive_athlete_cpu_exam",
+  "rosclaw_soccer.training.dive_athlete_expert",
+  "rosclaw_soccer.training.high_corner_reachability_audit",
+  "rosclaw_soccer.training.lateral_athlete_cpu_exam",
+  "rosclaw_soccer.training.lateral_athlete_expert",
+  "rosclaw_soccer.training.opentrack_teacher_source_exam",
 ]
 disable_error_code = ["import-not-found"]
 

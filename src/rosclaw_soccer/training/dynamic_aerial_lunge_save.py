@@ -167,6 +167,9 @@ def dynamic_aerial_lunge_kwargs(
     gmt_model_path: Path,
     gmt_skill_path: Path,
     dive_source_checkout: Path,
+    dive_athlete_checkpoint_path: Path | None = None,
+    dive_athlete_exam_path: Path | None = None,
+    dive_athlete_blend: float = 1.0,
     config: DynamicAerialLungeSaveConfig | None = None,
 ) -> dict[str, Any]:
     """Compose the learned modules without granting the atlas arm authority."""
@@ -206,6 +209,11 @@ def dynamic_aerial_lunge_kwargs(
         balanced_dive_landing_capture_enabled=active.landing_capture_enabled,
         balanced_dive_landing_capture_sec=active.landing_capture_sec,
         balanced_dive_landing_damping_scale=active.landing_damping_scale,
+        dive_athlete_checkpoint_path=dive_athlete_checkpoint_path,
+        dive_athlete_exam_path=dive_athlete_exam_path,
+        dive_athlete_blend=(
+            dive_athlete_blend if dive_athlete_checkpoint_path is not None else 0.0
+        ),
         post_contact_stabilization_enabled=True,
     )
     return kwargs
@@ -239,18 +247,14 @@ def evaluate_dynamic_aerial_lunge_save(
         return {"passed": False, "reason": "dynamic aerial lunge trajectory is invalid"}
     root_velocity_value = trajectory.get("goalkeeper_root_velocity")
     root_velocity = (
-        None
-        if root_velocity_value is None
-        else np.asarray(root_velocity_value, dtype=np.float64)
+        None if root_velocity_value is None else np.asarray(root_velocity_value, dtype=np.float64)
     )
     if root_velocity is not None and (
         root_velocity.shape != (time.size, 6) or not np.all(np.isfinite(root_velocity))
     ):
         return {"passed": False, "reason": "dynamic aerial lunge root velocity is invalid"}
     velocity = (
-        np.gradient(pelvis[:, :3], time, axis=0)
-        if root_velocity is None
-        else root_velocity[:, :3]
+        np.gradient(pelvis[:, :3], time, axis=0) if root_velocity is None else root_velocity[:, :3]
     )
     active_indices = np.flatnonzero(dive_blend > 1.0e-6)
     if active_indices.size:
@@ -289,8 +293,7 @@ def evaluate_dynamic_aerial_lunge_save(
                 and lunge_peak_speed >= config.minimum_peak_lateral_speed_mps
             ),
             "controlled_lunge_envelope": bool(
-                metrics["minimum_pelvis_height_m"]
-                >= config.minimum_controlled_pelvis_height_m
+                metrics["minimum_pelvis_height_m"] >= config.minimum_controlled_pelvis_height_m
             ),
             "post_save_recovered": bool(
                 metrics["recovery_minimum_pelvis_height_m"]

@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -136,7 +136,7 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
 def _atomic_npz(path: Path, arrays: Mapping[str, NDArray[Any]]) -> None:
     temporary = path.with_name(f".{path.name}.tmp")
     with temporary.open("wb") as stream:
-        np.savez_compressed(stream, **arrays)
+        np.savez_compressed(stream, **arrays)  # type: ignore[arg-type]
         stream.flush()
         os.fsync(stream.fileno())
     temporary.replace(path)
@@ -385,9 +385,7 @@ def build_recovery_reachability_bank(
     manifest["report_hash"] = hash_json(manifest)
     manifest_path = destination / "failure-state-manifest.json"
     _atomic_json(manifest_path, manifest)
-    return cast(
-        dict[str, Any], validate_recovery_mjx_failure_state_manifest(manifest_path)
-    )
+    return validate_recovery_mjx_failure_state_manifest(manifest_path)
 
 
 def decide_recovery_mainline(

@@ -163,12 +163,8 @@ def render_dynamic_corner_video(
         if not isinstance(lanes, list) or not lanes:
             raise ValueError("dynamic corner video config is incomplete")
         first_takeoff = lanes[0].get("takeoff_config")
-        first_lunge = (
-            first_takeoff.get("lunge_config") if isinstance(first_takeoff, dict) else None
-        )
-        first_aerial = (
-            first_lunge.get("aerial_config") if isinstance(first_lunge, dict) else None
-        )
+        first_lunge = first_takeoff.get("lunge_config") if isinstance(first_takeoff, dict) else None
+        first_aerial = first_lunge.get("aerial_config") if isinstance(first_lunge, dict) else None
         if not isinstance(first_aerial, dict):
             raise ValueError("dynamic corner aerial config is incomplete")
         import mujoco
@@ -251,6 +247,7 @@ def render_dynamic_corner_video(
         "case_count": len(cases_value),
         "contact_span_m": evidence["contact_span_m"],
         "contact_positions_y_m": evidence["contact_positions_y_m"],
+        "dive_athlete": evidence.get("dive_athlete"),
         "fps": fps,
         "width": width,
         "height": height,
@@ -282,9 +279,16 @@ def _timeline(
     clips: list[_Clip] = []
     first_lane = next(iter(cases))
     start = float(trajectories[first_lane]["time"][0])
+    athlete = evidence.get("dive_athlete")
+    authority_by_lane = athlete.get("authority_by_lane") if isinstance(athlete, dict) else None
+    title = (
+        "S103 TARGET-CONDITIONED NEURAL DIVE · FOUR STRICT HIGH-CORNER SAVES"
+        if isinstance(authority_by_lane, dict)
+        else "FOUR HIGH CORNERS · TWO GLOVES · FOUR STRICT AIRBORNE SAVES"
+    )
     clips.append(
         _Clip(
-            "FOUR HIGH CORNERS · TWO GLOVES · FOUR STRICT AIRBORNE SAVES",
+            title,
             tuple(_Frame(first_lane, start, "wide") for _ in range(round(1.5 * fps))),
         )
     )
@@ -302,9 +306,15 @@ def _timeline(
         flight_ms = 1_000.0 * float(metrics["airborne_duration_sec"])
         rise_mm = 1_000.0 * float(metrics["flight_pelvis_rise_m"])
         incoming = float(base["incoming_speed_mps"])
+        authority_label = ""
+        if isinstance(authority_by_lane, dict):
+            authority = authority_by_lane.get(lane_id)
+            if isinstance(authority, int | float) and not isinstance(authority, bool):
+                authority_label = f" · NEURAL RESIDUAL {100.0 * float(authority):.0f}%"
         clips.append(
             _Clip(
-                f"SAVE {index}/4 · {lane['label']} · CONTINUOUS PASS → STRIKE → SAVE",
+                f"SAVE {index}/4 · {lane['label']}{authority_label} · "
+                "CONTINUOUS PASS → STRIKE → SAVE",
                 (
                     *_segment(lane_id, pass_time - 0.55, shot_time + 0.15, 1.0, "chain", fps),
                     *_segment(lane_id, shot_time + 0.15, save_time + 0.55, 0.80, "hero", fps),
@@ -327,8 +337,7 @@ def _timeline(
         )
         clips.append(
             _Clip(
-                f"TRUE FLIGHT {flight_ms:.0f} ms · {rise_mm:.1f} mm RISE · "
-                "FOOT-CONTACT LANDING",
+                f"TRUE FLIGHT {flight_ms:.0f} ms · {rise_mm:.1f} mm RISE · FOOT-CONTACT LANDING",
                 _segment(lane_id, save_time - 0.10, landing_time + 0.35, 0.35, "hero", fps),
             )
         )

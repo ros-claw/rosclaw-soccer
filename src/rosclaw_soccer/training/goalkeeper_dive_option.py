@@ -500,6 +500,7 @@ def qualify_balanced_dive_seed_cpu_mujoco(
     joint_position_rad: NDArray[np.float64] | None = None,
     trajectory_kind: str = "balanced_imitation_seed",
     torque_limit_fraction: float = 1.0,
+    state_trajectory_output_path: Path | None = None,
 ) -> dict[str, Any]:
     """Physics-qualify a balanced seed or its distilled trajectories.
 
@@ -547,6 +548,10 @@ def qualify_balanced_dive_seed_cpu_mujoco(
     limits = np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
     blend_steps = 25
     outcomes: list[dict[str, Any]] = []
+    state_joint_positions: list[NDArray[np.float64]] = []
+    state_pelvis_poses: list[NDArray[np.float64]] = []
+    state_root_velocities: list[NDArray[np.float64]] = []
+    commanded_joint_positions: list[NDArray[np.float64]] = []
     for direction_index, direction in enumerate(
         (GoalkeeperDiveDirection.LEFT, GoalkeeperDiveDirection.RIGHT)
     ):
@@ -566,6 +571,11 @@ def qualify_balanced_dive_seed_cpu_mujoco(
         maximum_root_angular_speed = 0.0
         maximum_torque_fraction = 0.0
         joint_limit_violation = False
+        maximum_lower_limit_violation = np.zeros(29, dtype=np.float64)
+        maximum_upper_limit_violation = np.zeros(29, dtype=np.float64)
+        direction_joint_positions: list[NDArray[np.float64]] = []
+        direction_pelvis_poses: list[NDArray[np.float64]] = []
+        direction_root_velocities: list[NDArray[np.float64]] = []
         for target in targets:
             for _ in range(10):
                 requested_torque = kp * (target - data.qpos[7:36]) - kd * data.qvel[6:35]
@@ -580,6 +590,14 @@ def qualify_balanced_dive_seed_cpu_mujoco(
                 )
                 mujoco.mj_step(model, data)
                 q = np.asarray(data.qpos[joint_qpos], dtype=np.float64)
+                maximum_lower_limit_violation = np.maximum(
+                    maximum_lower_limit_violation,
+                    np.maximum(joint_ranges[:, 0] - q, 0.0),
+                )
+                maximum_upper_limit_violation = np.maximum(
+                    maximum_upper_limit_violation,
+                    np.maximum(q - joint_ranges[:, 1], 0.0),
+                )
                 joint_limit_violation = joint_limit_violation or bool(
                     np.any(q[joint_limited] < joint_ranges[joint_limited, 0] - 1.0e-6)
                     or np.any(q[joint_limited] > joint_ranges[joint_limited, 1] + 1.0e-6)
@@ -590,7 +608,17 @@ def qualify_balanced_dive_seed_cpu_mujoco(
                     maximum_root_angular_speed,
                     float(np.linalg.norm(data.qvel[3:6])),
                 )
+            direction_joint_positions.append(np.asarray(data.qpos[7:36], dtype=np.float64).copy())
+            direction_pelvis_poses.append(np.asarray(data.qpos[:7], dtype=np.float64).copy())
+            direction_root_velocities.append(np.asarray(data.qvel[:6], dtype=np.float64).copy())
         finite = bool(np.all(np.isfinite(data.qpos)) and np.all(np.isfinite(data.qvel)))
+        violation_by_joint = np.maximum(
+            maximum_lower_limit_violation,
+            maximum_upper_limit_violation,
+        )
+        violating_joint_names = [
+            G1_DDS_JOINT_NAMES[index] for index in np.flatnonzero(violation_by_joint > 1.0e-6)
+        ]
         outcomes.append(
             {
                 "direction": direction.value,
@@ -601,6 +629,8 @@ def qualify_balanced_dive_seed_cpu_mujoco(
                 "maximum_root_angular_speed_rad_s": maximum_root_angular_speed,
                 "maximum_requested_torque_fraction": maximum_torque_fraction,
                 "joint_limit_violation": joint_limit_violation,
+                "maximum_joint_limit_violation_rad": float(np.max(violation_by_joint)),
+                "violating_joint_names": violating_joint_names,
                 "passed_training_seed_gate": bool(
                     finite
                     and not joint_limit_violation
@@ -611,6 +641,27 @@ def qualify_balanced_dive_seed_cpu_mujoco(
                 ),
             }
         )
+        state_joint_positions.append(np.asarray(direction_joint_positions, dtype=np.float64))
+        state_pelvis_poses.append(np.asarray(direction_pelvis_poses, dtype=np.float64))
+        state_root_velocities.append(np.asarray(direction_root_velocities, dtype=np.float64))
+        commanded_joint_positions.append(np.asarray(targets, dtype=np.float64))
+    state_trajectory_hash: str | None = None
+    if state_trajectory_output_path is not None:
+        state_path = state_trajectory_output_path.expanduser().resolve()
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_state = state_path.with_suffix(state_path.suffix + ".tmp")
+        with temporary_state.open("wb") as stream:
+            np.savez_compressed(
+                stream,
+                time=np.arange(len(commanded_joint_positions[0]), dtype=np.float64) * 0.02,
+                direction=np.asarray((-1, 1), dtype=np.int64),
+                commanded_joint_position=np.asarray(commanded_joint_positions),
+                achieved_joint_position=np.asarray(state_joint_positions),
+                pelvis_pose=np.asarray(state_pelvis_poses),
+                root_velocity=np.asarray(state_root_velocities),
+            )
+        temporary_state.replace(state_path)
+        state_trajectory_hash = hash_bytes(state_path.read_bytes())
     report: dict[str, Any] = {
         "schema_version": "rosclaw_soccer.goalkeeper_balanced_dive_cpu_exam.v2",
         "physics_backend": "mujoco_cpu",
@@ -629,6 +680,8 @@ def qualify_balanced_dive_seed_cpu_mujoco(
         "hardware_command_sent": False,
         "commercial_use_allowed": False,
     }
+    if state_trajectory_hash is not None:
+        report["state_trajectory_hash"] = state_trajectory_hash
     report["report_hash"] = hash_json(report)
     destination = output_path.expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
