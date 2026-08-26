@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from rosclaw_soccer.media.second_striker_contact_video import (
+    validate_second_striker_contact_video_manifest,
+)
 from rosclaw_soccer.training.second_striker_contact_exam import (
     SecondStrikerContactExamConfig,
     validate_second_striker_contact_exam,
@@ -13,6 +16,11 @@ from rosclaw_soccer.training.second_striker_contact_exam import (
 _EVIDENCE = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
     "s108-fourth-g1-second-ball-contact-v2/evidence.json"
+)
+_VIDEO_MANIFEST = Path(
+    "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
+    "s108-fourth-g1-second-ball-showcase-v1/"
+    "s108-fourth-g1-second-ball-contact.json"
 )
 
 
@@ -38,4 +46,14 @@ def test_external_second_striker_contact_evidence_if_available() -> None:
     payload = validate_second_striker_contact_exam(_EVIDENCE)
     assert payload["passed"] is True
     assert payload["strict_replay"] is True
+    assert payload["complete_second_save_claimed"] is False
+
+
+def test_external_second_striker_contact_video_if_available() -> None:
+    if not _VIDEO_MANIFEST.is_file():
+        pytest.skip("external S108 contact video is not present")
+    payload = validate_second_striker_contact_video_manifest(_VIDEO_MANIFEST)
+    assert payload["visualization_only"] is True
+    assert payload["four_g1_visible"] is True
+    assert payload["two_physical_balls_visible"] is True
     assert payload["complete_second_save_claimed"] is False
