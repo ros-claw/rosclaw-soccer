@@ -434,6 +434,10 @@ def simulate_second_striker_contact(
     second_ball_joint = int(model.joint("second_ball_free").id)
     second_ball_qpos = int(model.jnt_qposadr[second_ball_joint])
     second_ball_qvel = int(model.jnt_dofadr[second_ball_joint])
+    first_ball_body = int(model.body("ball").id)
+    first_ball_joint = int(model.body_jntadr[first_ball_body])
+    first_ball_qpos = int(model.jnt_qposadr[first_ball_joint])
+    first_ball_qvel = int(model.jnt_dofadr[first_ball_joint])
     second_striker_geoms = _robot_geom_ids(model, second_striker.pelvis_body)
     hard_limits = np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
     torque_limits = hard_limits * active.maximum_torque_fraction
@@ -443,6 +447,8 @@ def simulate_second_striker_contact(
 
     trace: dict[str, list[Any]] = {
         "time": [],
+        "first_ball_pose": [],
+        "first_ball_velocity": [],
         "second_ball_pose": [],
         "second_ball_velocity": [],
         "second_striker_pelvis_pose": [],
@@ -453,6 +459,9 @@ def simulate_second_striker_contact(
         "second_striker_foot_contact": [],
         "second_striker_contact_force_n": [],
     }
+    for role in ("source_shooter", "passer", "goalkeeper"):
+        trace[f"{role}_pelvis_pose"] = []
+        trace[f"{role}_joint_position"] = []
     contact_time: float | None = None
     contact_foot: str | None = None
     contact_force_peak = 0.0
@@ -556,6 +565,8 @@ def simulate_second_striker_contact(
             np.all(np.isfinite(value)) for value in (data.qpos, data.qvel, data.ctrl, velocity)
         )
         trace["time"].append(float(data.time))
+        trace["first_ball_pose"].append(data.qpos[first_ball_qpos : first_ball_qpos + 7].copy())
+        trace["first_ball_velocity"].append(data.qvel[first_ball_qvel : first_ball_qvel + 6].copy())
         trace["second_ball_pose"].append(data.qpos[second_ball_qpos : second_ball_qpos + 7].copy())
         trace["second_ball_velocity"].append(
             data.qvel[second_ball_qvel : second_ball_qvel + 6].copy()
@@ -571,6 +582,11 @@ def simulate_second_striker_contact(
         trace["second_striker_policy_frame"].append(policy_frames["second_striker"])
         trace["second_striker_foot_contact"].append(frame_contact)
         trace["second_striker_contact_force_n"].append(frame_force)
+        for robot in robots[:-1]:
+            trace[f"{robot.role}_pelvis_pose"].append(
+                data.qpos[robot.qpos_base : robot.qpos_base + 7].copy()
+            )
+            trace[f"{robot.role}_joint_position"].append(data.qpos[robot.joint_qpos].copy())
         if not finite:
             break
 
