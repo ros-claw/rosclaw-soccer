@@ -224,7 +224,19 @@ def _expand_observation_normalizer(
     # Treat each new, already bounded velocity feature as a unit-variance prior.
     # This preserves the old shared sample count without collapsing the new
     # feature scale to the running-statistics minimum on the first update.
-    variance_fill = jnp.broadcast_to(normalizer.count, (3,))
+    # Brax <=0.13 exposed ``count`` as a scalar JAX array.  Brax 0.14 keeps
+    # the same semantic value in a two-word UInt64 container so statistics do
+    # not overflow when x64 is disabled.  Convert either representation to a
+    # scalar variance seed without changing the count stored in the migrated
+    # normalizer.
+    count = normalizer.count
+    count_value = (
+        jnp.asarray(count.lo, dtype=jnp.float32)
+        + jnp.asarray(count.hi, dtype=jnp.float32) * float(2**32)
+        if hasattr(count, "hi") and hasattr(count, "lo")
+        else jnp.asarray(count, dtype=jnp.float32)
+    )
+    variance_fill = jnp.broadcast_to(count_value, (3,))
     summed_variance = {
         "state": expand_leaf(
             normalizer.summed_variance["state"],
