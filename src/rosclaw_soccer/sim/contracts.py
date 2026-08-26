@@ -121,10 +121,53 @@ def hash_bytes(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
+def sanitize_nonfinite_evidence(
+    value: Any,
+    *,
+    path: str = "",
+) -> tuple[Any, list[str]]:
+    """Replace non-finite diagnostics with null and retain their exact paths.
+
+    Evidence hashes deliberately reject NaN and infinity.  Long-running
+    simulation jobs must still be able to write a fail-closed report when a
+    quarantined world leaves a non-finite diagnostic behind, so callers get a
+    JSON-safe value plus an auditable list of every replacement.
+    """
+
+    if isinstance(value, float) and not math.isfinite(value):
+        return None, [path or "$"]
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        paths: list[str] = []
+        for key, item in value.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            sanitized_item, child_paths = sanitize_nonfinite_evidence(
+                item,
+                path=child_path,
+            )
+            sanitized[str(key)] = sanitized_item
+            paths.extend(child_paths)
+        return sanitized, paths
+    if isinstance(value, (list, tuple)):
+        sanitized_sequence: list[Any] = []
+        paths = []
+        for index, item in enumerate(value):
+            child_path = f"{path}[{index}]" if path else f"[{index}]"
+            sanitized_item, child_paths = sanitize_nonfinite_evidence(
+                item,
+                path=child_path,
+            )
+            sanitized_sequence.append(sanitized_item)
+            paths.extend(child_paths)
+        return sanitized_sequence, paths
+    return value, []
+
+
 __all__ = [
     "G1_DDS_JOINT_NAMES",
     "G1_HARD_TORQUE_LIMITS",
     "ShotParameters",
     "hash_bytes",
     "hash_json",
+    "sanitize_nonfinite_evidence",
 ]

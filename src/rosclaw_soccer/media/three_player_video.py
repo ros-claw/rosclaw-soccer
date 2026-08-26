@@ -91,6 +91,7 @@ def render_three_player_showcase_video(
     source_checkout: Path,
     fps: int = 30,
     resolution: str = "1080p",
+    allow_rejected_candidate: bool = False,
 ) -> ThreePlayerVideoResult:
     """Render one strict shared-world trajectory plus auditable replays."""
 
@@ -114,7 +115,11 @@ def render_three_player_showcase_video(
     if ffmpeg is None or ffprobe is None:
         raise RuntimeError("ffmpeg and ffprobe are required for three-player video export")
 
-    bundle = _validate_evidence(evidence_path, source_checkout=checkout)
+    bundle = _validate_evidence(
+        evidence_path,
+        source_checkout=checkout,
+        allow_development_candidate=allow_rejected_candidate,
+    )
     previous_gl = os.environ.get("MUJOCO_GL")
     os.environ.setdefault("MUJOCO_GL", "egl")
     try:
@@ -153,6 +158,14 @@ def render_three_player_showcase_video(
                         height=height,
                         labels=labels,
                         clips=clips,
+                        source_evidence_passed=bundle.report.get("passed") is True,
+                        candidate_promoted=(
+                            bundle.report.get("promotion_status")
+                            not in {
+                                "REJECTED_DEVELOPMENT",
+                                "PASSED_DEVELOPMENT_GATE_NOT_PROMOTED",
+                            }
+                        ),
                     ),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
@@ -220,6 +233,7 @@ def render_three_player_showcase_video(
         ffprobe_version=_tool_version(ffprobe),
         clips=clips,
         goal_contract=_goal_contract(goal),
+        source_evidence_passed=bundle.report.get("passed") is True,
     )
     manifest.write_text(
         json.dumps(value.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -233,6 +247,12 @@ def _timelines(
     result = bundle.report["result"]
     pass_time = _number(result.get("pass_contact_time_sec"), "pass contact time")
     shot_time = _number(result.get("shot_contact_time_sec"), "shot contact time")
+    goalkeeper_save = result.get("goalkeeper_save_observed") is True
+    outcome_time = (
+        _number(result.get("goalkeeper_ball_contact_time_sec"), "goalkeeper contact time")
+        if goalkeeper_save
+        else shot_time
+    )
     start = float(bundle.trajectory["time"][0])
     end = float(bundle.trajectory["time"][-1])
     intro = tuple(_Frame(start, "wide") for _ in range(round(1.5 * fps)))
@@ -240,11 +260,11 @@ def _timelines(
         *_segment(start, pass_time - 0.75, 1.0, "wide", fps),
         *_segment(pass_time - 0.75, pass_time + 0.35, 1.0, "pass", fps),
         *_segment(pass_time + 0.35, shot_time - 0.45, 1.0, "roll", fps),
-        *_segment(shot_time - 0.45, shot_time + 1.55, 1.0, "goal_field", fps),
-        *_segment(shot_time + 1.55, end, 1.0, "recovery_wide", fps),
+        *_segment(shot_time - 0.45, outcome_time + 1.30, 1.0, "goal_field", fps),
+        *_segment(outcome_time + 1.30, end, 1.0, "recovery_wide", fps),
     )
     pass_replay = _segment(pass_time - 0.80, pass_time + 1.25, 0.45, "pass_close", fps)
-    goal_replay = _segment(shot_time - 0.70, shot_time + 1.60, 0.38, "goal_front", fps)
+    goal_replay = _segment(shot_time - 0.70, outcome_time + 1.20, 0.38, "goal_front", fps)
     recovery_mid = shot_time + 0.5 * (end - shot_time)
     shooter_recovery = _segment(shot_time + 1.25, recovery_mid, 0.72, "recovery_shooter", fps)
     passer_recovery = _segment(recovery_mid, end, 0.72, "recovery_passer", fps)
@@ -260,9 +280,21 @@ def _timelines(
     )
     specs = (
         ("01-intro", "THREE G1 SHARED-WORLD BASELINE", "VERIFIED_POSE_HOLD"),
-        ("02-continuous", "PASS → FINISH → RECOVERY", "STRICT_PHYSICS_REPLAY"),
+        (
+            "02-continuous",
+            "PASS → SHOT → SAVE" if goalkeeper_save else "PASS → FINISH → RECOVERY",
+            "STRICT_PHYSICS_REPLAY",
+        ),
         ("03-pass", "MEASURED ROLLING PASS", "INTERPOLATED_SLOW_MOTION_REPLAY"),
-        ("04-goal", "SHOT AND REACTIVE GOALKEEPER", "INTERPOLATED_SLOW_MOTION_REPLAY"),
+        (
+            "04-goal",
+            (
+                "LEARNED PROPRIOCEPTIVE GOALKEEPER SAVE"
+                if goalkeeper_save
+                else "SHOT AND PROPRIOCEPTIVE GOALKEEPER"
+            ),
+            "INTERPOLATED_SLOW_MOTION_REPLAY",
+        ),
         ("05-shooter-recovery", "SHOOTER RECOVERY", "INTERPOLATED_REVIEW_REPLAY"),
         ("06-passer-recovery", "PASSER RECOVERY", "INTERPOLATED_REVIEW_REPLAY"),
         ("07-scorecard", "STRICT SHARED-WORLD SCORECARD", "VERIFIED_FINAL_POSE_HOLD"),
@@ -311,11 +343,24 @@ def _write_frames(
     camera = mujoco.MjvCamera()
     camera.type = mujoco.mjtCamera.mjCAMERA_FREE
     target = np.asarray(bundle.request["physical_scoring_target_m"], dtype=np.float64)
-    actual = (
-        float(bundle.request["goal_spec"]["plane_x_m"]),
-        float(bundle.report["result"]["goal_crossing_y_m"]),
-        float(bundle.report["result"]["goal_crossing_z_m"]),
-    )
+    result = bundle.report["result"]
+    if result.get("goal_crossing_y_m") is not None:
+        actual = (
+            float(bundle.request["goal_spec"]["plane_x_m"]),
+            float(result["goal_crossing_y_m"]),
+            float(result["goal_crossing_z_m"]),
+        )
+    else:
+        contact_time = _number(
+            result.get("goalkeeper_ball_contact_time_sec"), "goalkeeper contact time"
+        )
+        contact_index = int(np.searchsorted(bundle.trajectory["time"], contact_time, side="left"))
+        contact = bundle.trajectory["ball_pose"][contact_index, :3]
+        actual = (
+            float(contact[0]),
+            float(contact[1]),
+            float(contact[2]),
+        )
     for timeline in timelines:
         for frame in timeline:
             poses = _sample(bundle.trajectory, frame.simulation_time_sec)
@@ -383,7 +428,9 @@ def _set_camera(
         camera.lookat[:] = (3.55, 0.0, 0.72)
         camera.distance, camera.azimuth, camera.elevation = 10.0, 91.0, -11.0
     elif view == "pass":
-        camera.lookat[:] = 0.5 * (passer[:3] + shooter[:3])
+        camera.lookat[:] = 0.5 * (
+            np.asarray(passer[:3], dtype=np.float64) + np.asarray(shooter[:3], dtype=np.float64)
+        )
         camera.lookat[2] = 0.68
         camera.distance, camera.azimuth, camera.elevation = 6.15, 92.0, -8.0
     elif view == "pass_close":
@@ -409,7 +456,9 @@ def _set_camera(
         camera.lookat[2] = 0.72
         camera.distance, camera.azimuth, camera.elevation = 3.7, 82.0, -7.0
     else:
-        camera.lookat[:] = 0.5 * (shooter[:3] + keeper[:3])
+        camera.lookat[:] = 0.5 * (
+            np.asarray(shooter[:3], dtype=np.float64) + np.asarray(keeper[:3], dtype=np.float64)
+        )
         camera.lookat[2] = 0.74
         camera.distance, camera.azimuth, camera.elevation = 7.4, 97.0, -8.0
 
@@ -458,40 +507,129 @@ def _write_labels(
     goal_label = f"{goal.width_m:.2f}×{goal.height_m:.2f} m " + (
         "REGULATION GOAL" if regulation else "TRAINING GOAL · NOT REGULATION GOAL"
     )
+    goalkeeper_save = result.get("goalkeeper_save_observed") is True
+    schema = bundle.report.get("schema_version")
+    imitation = schema in {
+        "rosclaw_soccer.g1_imitation_evidence.v1",
+        "rosclaw_soccer.g1_composite_imitation_evidence.v1",
+        "rosclaw_soccer.g1_agility_evidence.v1",
+        "rosclaw_soccer.g1_follow_through_evidence.v1",
+    }
+    composite_imitation = schema == "rosclaw_soccer.g1_composite_imitation_evidence.v1"
+    agility_growth = schema == "rosclaw_soccer.g1_agility_evidence.v1"
+    follow_through_growth = schema == "rosclaw_soccer.g1_follow_through_evidence.v1"
+    parent_follow = bundle.report.get("parent_follow_through", {})
+    candidate_follow = bundle.report.get("candidate_follow_through", {})
+    arm_excursion_gain = _metric_gain(
+        parent_follow,
+        candidate_follow,
+        "arm_excursion_rms_rad",
+    )
+    motion_energy_gain = _metric_gain(
+        parent_follow,
+        candidate_follow,
+        "upper_body_motion_energy",
+    )
+    imitation_naturalness = bundle.report.get("candidate_naturalness", {})
+    backward_peak = float(imitation_naturalness.get("post_contact_peak_backward_velocity_mps", 0.0))
+    outcome_metric = (
+        (
+            f"SAVE {float(bundle.report['shot_to_block_distance_m']):.2f} m AFTER SHOT · "
+            f"MIN PELVIS {float(result['goalkeeper_min_pelvis_height_m']):.3f} m"
+        )
+        if goalkeeper_save
+        else (
+            f"SHOT {float(bundle.report['shot_distance_m']):.2f} m / "
+            f"{float(result['target_error_m']) * 1000:.1f} mm"
+        )
+    )
+    outcome_replay = (
+        (
+            f"TRUE MUJOCO CONTACT · BALL {float(result['shot_peak_ball_speed_mps']):.2f} m/s · "
+            "NO GOAL · SAFE CROSS-STEP BLOCK"
+        )
+        if goalkeeper_save
+        else (
+            f"SHOT {float(result['shot_peak_ball_speed_mps']):.2f} m/s · "
+            f"ERROR {float(result['target_error_m']):.4f} m / LIMIT 0.10 m · "
+            "PROPRIOCEPTIVE KEEPER"
+        )
+    )
     values = (
         (
             f"PASS {float(bundle.report['pass_distance_m']):.2f} m / "
             f"{float(result['pass_delivery_error_m']) * 100:.1f} cm  ·  "
-            f"SHOT {float(bundle.report['shot_distance_m']):.2f} m / "
-            f"{float(result['target_error_m']) * 1000:.1f} mm  ·  "
+            f"{outcome_metric}  ·  "
             f"KEEPER {float(result['goalkeeper_lateral_displacement_m']):.2f} m"
         ),
-        "PASS → FINISH → RECOVERY · ONE BALL · ONE CPU MUJOCO WORLD",
+        (
+            "PASS → SHOT → SAVE · ONE BALL · ONE CPU MUJOCO WORLD"
+            if goalkeeper_save
+            else "PASS → FINISH → RECOVERY · ONE BALL · ONE CPU MUJOCO WORLD"
+        ),
         (
             f"ROLL {float(bundle.report['pass_speed_start_mps']):.2f}→"
             f"{float(bundle.report['pass_speed_end_mps']):.2f} m/s · "
             f"POSITIVE SPEED JUMPS {int(bundle.report['pass_speed_positive_step_count'])}"
         ),
         (
-            f"SHOT {float(result['shot_peak_ball_speed_mps']):.2f} m/s · "
-            f"ERROR {float(result['target_error_m']):.4f} m / LIMIT 0.10 m · REACTIVE KEEPER"
+            (
+                "VISIBLE FOLLOW-THROUGH · MOSAIC SOCCER TEACHER · 9/9 LOCAL BASIN"
+                if follow_through_growth
+                else "JOINT-GROUP AGILITY · MOTIONDECODE + OMNICONTACT · LOCAL BASIN GATE"
+                if agility_growth
+                else "MOTIONDECODE WHOLE BODY + OMNICONTACT TRAIN CONTACT · BOUNDED PD RESIDUAL"
+                if composite_imitation
+                else "MOTIONDECODE WHOLE-BODY POSITION + VELOCITY TEACHER · BOUNDED PD RESIDUAL"
+            )
+            if imitation
+            else outcome_replay
         ),
         (
-            "SHOOTER RECOVERY · NO FALL · "
-            f"TAIL WOBBLE {float(result['shooter_tail_wobble_index']):.5f} · "
-            f"MIN PELVIS {float(result['shooter_min_pelvis_height_m']):.3f} m"
+            (
+                f"ARM EXCURSION +{100.0 * arm_excursion_gain:.1f}% · "
+                f"FOLLOW-THROUGH ENERGY +{100.0 * motion_energy_gain:.1f}% · "
+                "ENDPOINT-NEUTRAL"
+                if follow_through_growth
+                else "IMITATION RECOVERY · "
+                "BACKWARD PEAK "
+                f"{backward_peak:.3f} m/s · "
+                f"ROLL {float(result['shooter_roll_peak_rad']):.3f} rad"
+            )
+            if imitation
+            else (
+                "SHOOTER RECOVERY · NO FALL · "
+                f"TAIL WOBBLE {float(result['shooter_tail_wobble_index']):.5f} · "
+                f"MIN PELVIS {float(result['shooter_min_pelvis_height_m']):.3f} m"
+            )
         ),
         (
             "PASSER RECOVERY · NO FALL · "
             f"TAIL WOBBLE {float(result['passer_tail_wobble_index']):.5f} · "
             f"MIN PELVIS {float(result['passer_min_pelvis_height_m']):.3f} m"
         ),
-        f"STRICT REPLAY PASS · {goal_label}",
+        (
+            f"STRICT REPLAY · SAFE SAVE DEVELOPMENT GATE · {goal_label}"
+            if goalkeeper_save
+            else f"STRICT REPLAY · IMITATION GROWTH GATE · {goal_label}"
+            if imitation
+            else f"STRICT REPLAY · KEEPER DEVELOPMENT CANDIDATE · {goal_label}"
+            if bundle.report.get("passed") is not True
+            else f"STRICT REPLAY PASS · {goal_label}"
+        ),
     )
     paths = tuple(root / f"label-{index}.txt" for index in range(len(values)))
     for path, value in zip(paths, values, strict=True):
         path.write_text(value, encoding="utf-8")
     return paths
+
+
+def _metric_gain(parent: Any, candidate: Any, name: str) -> float:
+    if not isinstance(parent, dict) or not isinstance(candidate, dict):
+        return 0.0
+    parent_value = float(parent.get(name, 0.0))
+    candidate_value = float(candidate.get(name, 0.0))
+    return (candidate_value - parent_value) / max(parent_value, 1e-9)
 
 
 def _ffmpeg_command(
@@ -503,12 +641,31 @@ def _ffmpeg_command(
     height: int,
     labels: tuple[Path, ...],
     clips: tuple[ThreePlayerVideoClip, ...],
+    source_evidence_passed: bool,
+    candidate_promoted: bool,
 ) -> list[str]:
     font = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
     font_option = f"fontfile={escape_filtergraph_option(str(font))}:" if font.is_file() else ""
-    title = escape_filtergraph_option("ROSClaw Soccer · THREE G1 SHARED-WORLD RELAY")
+    title = escape_filtergraph_option(
+        "ROSClaw Soccer · VISIBLE FOLLOW-THROUGH GROWTH"
+        if "follow" in output.stem.lower()
+        else "ROSClaw Soccer · JOINT-GROUP AGILITY GROWTH"
+        if "agility" in output.stem.lower()
+        else "ROSClaw Soccer · COMPOSITE IMITATION GROWTH"
+        if "composite" in output.stem.lower()
+        else "ROSClaw Soccer · MOTIONDECODE IMITATION GROWTH"
+        if "imitation" in output.stem.lower()
+        else "ROSClaw Soccer · THREE G1 SHARED-WORLD RELAY"
+    )
     footer = escape_filtergraph_option(
-        "PASSING STRICT EVIDENCE · CPU MUJOCO · SIM ONLY · NO PIXEL SCORING"
+        (
+            "PASSING STRICT EVIDENCE"
+            if source_evidence_passed and candidate_promoted
+            else "PASSED DEVELOPMENT GATE · NOT PROMOTED"
+            if source_evidence_passed
+            else "REJECTED DEVELOPMENT CANDIDATE · NOT PROMOTED"
+        )
+        + " · CPU MUJOCO · SIM ONLY · NO PIXEL SCORING"
     )
     scale = height / 720.0
     left = round(30 * scale)

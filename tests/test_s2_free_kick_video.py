@@ -11,6 +11,7 @@ import pytest
 from rosclaw_soccer.media.free_kick_video import (
     _configure_offscreen_framebuffer,
     _qualify_g1_assets_headless,
+    _sample_auxiliary_pose,
     render_g1_free_kick_showcase_video,
 )
 from rosclaw_soccer.media.trajectory_render import (
@@ -145,3 +146,25 @@ def test_render_trajectory_loader_and_interpolation_are_fail_closed(tmp_path: Pa
     )
     with pytest.raises(ValueError, match="non-finite"):
         load_g1_ball_trajectory(bad)
+
+
+def test_front_duel_video_interpolates_each_physical_agent() -> None:
+    trajectory = {
+        "time": np.asarray((0.0, 1.0), dtype=np.float64),
+        "teammate_pelvis_pose": np.asarray(
+            (
+                (1.0, -2.0, 0.8, 1.0, 0.0, 0.0, 0.0),
+                (3.0, -2.0, 0.8, 1.0, 0.0, 0.0, 0.0),
+            ),
+            dtype=np.float64,
+        ),
+        "teammate_joint_position": np.asarray(
+            ((0.0,) * 29, (2.0,) * 29), dtype=np.float64
+        ),
+    }
+
+    pelvis, joints = _sample_auxiliary_pose(trajectory, 0.5, prefix="teammate")
+
+    assert pelvis[0] == pytest.approx(2.0)
+    assert np.allclose(joints, 1.0)
+    assert np.linalg.norm(pelvis[3:]) == pytest.approx(1.0)

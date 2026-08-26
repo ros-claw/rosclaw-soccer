@@ -195,6 +195,8 @@ class G1FootballMotionPrior:
     selected_events: tuple[G1FootballMotionEvent, ...]
     train_files_considered: int
     qualified_event_count: int
+    right_leg_velocity_reference_rad_s: tuple[tuple[float, ...], ...] = ()
+    right_leg_maximum_velocity_correction_rad_s: tuple[float, ...] = ()
     whole_body_reference_rad: tuple[tuple[float, ...], ...] = ()
     whole_body_iqr_rad: tuple[tuple[float, ...], ...] = ()
     whole_body_maximum_target_correction_rad: tuple[float, ...] = ()
@@ -254,7 +256,9 @@ class G1FootballMotionPrior:
             raise ValueError("football motion prior requires selected training events")
         if self.schema_version == "rosclaw.growth.g1_football_motion_prior.v1":
             if (
-                self.whole_body_reference_rad
+                self.right_leg_velocity_reference_rad_s
+                or self.right_leg_maximum_velocity_correction_rad_s
+                or self.whole_body_reference_rad
                 or self.whole_body_iqr_rad
                 or self.whole_body_maximum_target_correction_rad
                 or self.whole_body_velocity_reference_rad_s
@@ -269,6 +273,37 @@ class G1FootballMotionPrior:
                 or self.position_distillation_strategy != "coordinatewise_median"
             ):
                 raise ValueError("football motion prior v1 cannot contain a whole-body style")
+        elif self.schema_version == "rosclaw.growth.g1_football_motion_prior.v7":
+            velocity = np.asarray(self.right_leg_velocity_reference_rad_s, dtype=np.float64)
+            velocity_correction = np.asarray(
+                self.right_leg_maximum_velocity_correction_rad_s,
+                dtype=np.float64,
+            )
+            if velocity.shape != expected or not np.isfinite(velocity).all():
+                raise ValueError("football motion prior v7 right-leg velocity is invalid")
+            if (
+                velocity_correction.shape != (len(self.joint_names),)
+                or not np.isfinite(velocity_correction).all()
+                or np.any(velocity_correction < 0.10)
+                or np.any(velocity_correction > 8.0)
+            ):
+                raise ValueError("football motion prior v7 velocity bounds are invalid")
+            if (
+                self.whole_body_reference_rad
+                or self.whole_body_iqr_rad
+                or self.whole_body_maximum_target_correction_rad
+                or self.whole_body_velocity_reference_rad_s
+                or self.whole_body_maximum_velocity_correction_rad_s
+                or self.motiondecode_source_manifest_hash is not None
+                or self.motiondecode_repair_report_hash is not None
+                or self.parent_trajectory_hash is not None
+                or self.style_events
+                or self.source_dataset != "OmniContact"
+                or self.style_profile != "contact_velocity"
+                or self.velocity_distillation_strategy != "synchronized_representative_event"
+                or self.position_distillation_strategy != "synchronized_representative_event"
+            ):
+                raise ValueError("football motion prior v7 contract is invalid")
         elif self.schema_version in {
             "rosclaw.growth.g1_football_motion_prior.v2",
             "rosclaw.growth.g1_football_motion_prior.v3",
@@ -409,6 +444,8 @@ class G1FootballMotionPrior:
         }
         if self.schema_version == "rosclaw.growth.g1_football_motion_prior.v1":
             for field in (
+                "right_leg_velocity_reference_rad_s",
+                "right_leg_maximum_velocity_correction_rad_s",
                 "whole_body_reference_rad",
                 "whole_body_iqr_rad",
                 "whole_body_maximum_target_correction_rad",
@@ -451,6 +488,9 @@ class G1FootballMotionPrior:
                 "rosclaw.growth.g1_football_motion_prior.v5",
             }:
                 payload.pop("position_distillation_strategy", None)
+            if self.schema_version != "rosclaw.growth.g1_football_motion_prior.v7":
+                payload.pop("right_leg_velocity_reference_rad_s", None)
+                payload.pop("right_leg_maximum_velocity_correction_rad_s", None)
         return payload
 
     def to_dict(self) -> dict[str, Any]:
@@ -469,6 +509,13 @@ def load_g1_football_motion_prior(path: Path) -> G1FootballMotionPrior:
         tuple(row) for row in payload["right_leg_reference_rad"]
     )
     payload["right_leg_iqr_rad"] = tuple(tuple(row) for row in payload["right_leg_iqr_rad"])
+    if "right_leg_velocity_reference_rad_s" in payload:
+        payload["right_leg_velocity_reference_rad_s"] = tuple(
+            tuple(row) for row in payload["right_leg_velocity_reference_rad_s"]
+        )
+        payload["right_leg_maximum_velocity_correction_rad_s"] = tuple(
+            payload["right_leg_maximum_velocity_correction_rad_s"]
+        )
     payload["selected_events"] = tuple(
         G1FootballMotionEvent(**event) for event in payload["selected_events"]
     )
@@ -548,6 +595,57 @@ def blend_g1_football_motion_prior_target(
     return adapted, delta, bool(np.any(np.abs(delta) > 1e-12))
 
 
+def blend_g1_football_motion_prior_displacement(
+    *,
+    target: np.ndarray,
+    prior: G1FootballMotionPrior,
+    policy_frame: int,
+    contact_policy_frame: int,
+    control_dt_sec: float,
+    blend: float,
+) -> tuple[np.ndarray, np.ndarray, bool]:
+    """Transfer the demonstrated right-leg *shape* without its absolute pose.
+
+    OmniContact and the deployed RoboNaldo expert use different pose origins.
+    Pulling the expert toward an absolute dataset angle therefore changes the
+    support geometry.  This variant aligns the first demonstration frame to
+    the current expert and transfers only the contact-centred displacement.
+    It remains envelope-bounded and reaches the motor only through the same
+    audited PD chain as the existing position prior.
+    """
+
+    if target.shape != (29,) or not np.isfinite(target).all():
+        raise ValueError("football motion-prior target must contain 29 finite joints")
+    if not 0.0 <= blend <= 0.50 or not math.isfinite(blend):
+        raise ValueError("football motion-prior blend must be in [0, 0.50]")
+    if control_dt_sec <= 0.0 or not math.isfinite(control_dt_sec):
+        raise ValueError("football motion-prior control clock must be positive")
+    if prior.whole_body_reference_rad:
+        raise ValueError("displacement transfer requires a right-leg contact prior")
+    delta: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+    relative_time = (policy_frame - contact_policy_frame) * control_dt_sec
+    times = np.asarray(prior.reference_times_sec, dtype=np.float64)
+    if blend == 0.0 or relative_time < times[0] or relative_time > times[-1]:
+        return target.copy(), delta, False
+    reference = np.asarray(prior.right_leg_reference_rad, dtype=np.float64)
+    demonstrated = np.asarray(
+        [
+            np.interp(relative_time, times, reference[:, joint])
+            for joint in range(reference.shape[1])
+        ],
+        dtype=np.float64,
+    )
+    progress = (relative_time - times[0]) / max(times[-1] - times[0], 1e-9)
+    envelope = math.sin(math.pi * min(1.0, max(0.0, progress))) ** 2
+    displacement = np.clip(
+        demonstrated - reference[0],
+        -prior.maximum_target_correction_rad,
+        prior.maximum_target_correction_rad,
+    )
+    delta[6:12] = blend * envelope * displacement
+    return target.astype(np.float64, copy=True) + delta, delta, bool(np.any(np.abs(delta) > 1e-12))
+
+
 def blend_g1_football_motion_prior_velocity(
     *,
     target_velocity: np.ndarray,
@@ -595,6 +693,129 @@ def blend_g1_football_motion_prior_velocity(
     delta = blend * envelope * bounded
     adapted = target_velocity.astype(np.float64, copy=True) + delta
     return adapted, delta, bool(np.any(np.abs(delta) > 1e-12))
+
+
+def blend_g1_football_motion_prior_right_leg_velocity(
+    *,
+    target_velocity: np.ndarray,
+    prior: G1FootballMotionPrior,
+    policy_frame: int,
+    contact_policy_frame: int,
+    control_dt_sec: float,
+    blend: float,
+) -> tuple[np.ndarray, np.ndarray, bool]:
+    """Blend a synchronized OmniContact right-leg velocity teacher."""
+
+    if target_velocity.shape != (29,) or not np.isfinite(target_velocity).all():
+        raise ValueError("football contact-prior velocity target must contain 29 finite joints")
+    if not 0.0 <= blend <= 0.25 or not math.isfinite(blend):
+        raise ValueError("football contact-prior velocity blend must be in [0, 0.25]")
+    if control_dt_sec <= 0.0 or not math.isfinite(control_dt_sec):
+        raise ValueError("football contact-prior velocity clock must be positive")
+    delta: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+    if not prior.right_leg_velocity_reference_rad_s:
+        return target_velocity.copy(), delta, False
+    relative_time = (policy_frame - contact_policy_frame) * control_dt_sec
+    times = np.asarray(prior.reference_times_sec, dtype=np.float64)
+    if blend == 0.0 or relative_time < times[0] or relative_time > times[-1]:
+        return target_velocity.copy(), delta, False
+    reference = np.asarray(prior.right_leg_velocity_reference_rad_s, dtype=np.float64)
+    desired = np.asarray(
+        [
+            np.interp(relative_time, times, reference[:, joint])
+            for joint in range(reference.shape[1])
+        ],
+        dtype=np.float64,
+    )
+    progress = (relative_time - times[0]) / max(times[-1] - times[0], 1e-9)
+    envelope = math.sin(math.pi * min(1.0, max(0.0, progress))) ** 2
+    maximum = np.asarray(prior.right_leg_maximum_velocity_correction_rad_s)
+    bounded = np.clip(desired - target_velocity[6:12], -maximum, maximum)
+    delta[6:12] = blend * envelope * bounded
+    return (
+        target_velocity.astype(np.float64, copy=True) + delta,
+        delta,
+        bool(np.any(np.abs(delta) > 1e-12)),
+    )
+
+
+def derive_g1_football_contact_velocity_prior(
+    *,
+    parent_prior_path: Path,
+    omnicontact_root: Path,
+    output_path: Path,
+    source_checkout: Path,
+    representative_event_index: int = 16,
+) -> G1FootballMotionPrior:
+    """Upgrade a train-only v1 contact prior with synchronized joint velocity."""
+
+    parent_path = parent_prior_path.expanduser().resolve()
+    root = omnicontact_root.expanduser().resolve()
+    output = output_path.expanduser().resolve()
+    checkout = source_checkout.expanduser().resolve()
+    if output == checkout or checkout in output.parents:
+        raise ValueError("football contact-velocity prior must be outside the source checkout")
+    if output.exists():
+        raise ValueError("football contact-velocity prior output already exists")
+    parent = load_g1_football_motion_prior(parent_path)
+    if parent.schema_version != "rosclaw.growth.g1_football_motion_prior.v1":
+        raise ValueError("football contact-velocity prior requires a v1 OmniContact parent")
+    if not 0 <= representative_event_index < len(parent.selected_events):
+        raise ValueError("football contact representative event index is invalid")
+    event = parent.selected_events[representative_event_index]
+    source = root / event.relative_path
+    if _hash_file(source) != event.source_hash:
+        raise ValueError("football contact representative event hash mismatch")
+    with np.load(source, allow_pickle=False) as data:
+        if "joint_pos" not in data.files or "joint_vel" not in data.files:
+            raise ValueError("football contact representative event lacks joint kinematics")
+        fps = float(np.asarray(data["fps"]).reshape(-1)[0])
+        position = np.asarray(data["joint_pos"], dtype=np.float64)
+        velocity = np.asarray(data["joint_vel"], dtype=np.float64)
+        indices = np.clip(
+            np.rint(
+                event.reference_contact_frame + np.asarray(parent.reference_times_sec) * fps
+            ).astype(int),
+            0,
+            position.shape[0] - 1,
+        )
+        right_position = position[indices][:, _RIGHT_LEG_ISAAC_INDICES]
+        right_velocity = velocity[indices][:, _RIGHT_LEG_ISAAC_INDICES]
+    if not np.isfinite(right_position).all() or not np.isfinite(right_velocity).all():
+        raise ValueError("football contact representative event is non-finite")
+    prior = G1FootballMotionPrior(
+        body_hash=parent.body_hash,
+        dataset_readme_hash=parent.dataset_readme_hash,
+        split_manifest_hash=parent.split_manifest_hash,
+        joint_order_contract_hash=parent.joint_order_contract_hash,
+        train_partition_hash=parent.train_partition_hash,
+        heldout_partition_commitment=parent.heldout_partition_commitment,
+        joint_names=parent.joint_names,
+        reference_times_sec=parent.reference_times_sec,
+        right_leg_reference_rad=tuple(
+            tuple(float(value) for value in row) for row in right_position
+        ),
+        right_leg_iqr_rad=parent.right_leg_iqr_rad,
+        selected_events=(event,),
+        train_files_considered=parent.train_files_considered,
+        qualified_event_count=parent.qualified_event_count,
+        right_leg_velocity_reference_rad_s=tuple(
+            tuple(float(value) for value in row) for row in right_velocity
+        ),
+        right_leg_maximum_velocity_correction_rad_s=(4.0,) * 6,
+        source_dataset="OmniContact",
+        style_profile="contact_velocity",
+        velocity_distillation_strategy="synchronized_representative_event",
+        position_distillation_strategy="synchronized_representative_event",
+        activation_ceiling="SIM_ONLY",
+        schema_version="rosclaw.growth.g1_football_motion_prior.v7",
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(prior.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return prior
 
 
 def derive_g1_football_motion_prior(
@@ -813,7 +1034,10 @@ __all__ = [
     "G1FootballMotionPrior",
     "G1FootballStyleEvent",
     "blend_g1_football_motion_prior_target",
+    "blend_g1_football_motion_prior_displacement",
+    "blend_g1_football_motion_prior_right_leg_velocity",
     "blend_g1_football_motion_prior_velocity",
     "derive_g1_football_motion_prior",
+    "derive_g1_football_contact_velocity_prior",
     "load_g1_football_motion_prior",
 ]

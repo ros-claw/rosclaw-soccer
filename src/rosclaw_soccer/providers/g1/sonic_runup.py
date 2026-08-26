@@ -1,9 +1,12 @@
 """SIM-only SONIC full-body approach policy for the G1 football loop.
 
-The planner produces a 30 Hz whole-body motion reference.  The low-latency
-SONIC encoder/decoder then closes the loop from ten frames of proprioception
+The planner produces a 30 Hz whole-body motion reference.  A qualified SONIC
+encoder/decoder variant then closes the loop from ten frames of proprioception
 and emits all 29 normalized joint actions at 50 Hz.  A 500 Hz PD loop is the
-only layer that turns those actions into MuJoCo torques.
+only layer that turns those actions into MuJoCo torques.  The low-latency and
+v1.1 checkpoints intentionally remain distinct contracts: v1.1 samples its
+reference at step 5 and normalizes targets by robot heading, while the older
+low-latency policy samples consecutive frames.
 
 This module deliberately keeps qualification, reference generation and the
 closed-loop policy in one auditable boundary.  A pretty kinematic planner
@@ -17,7 +20,7 @@ import hashlib
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -27,9 +30,38 @@ from rosclaw_soccer.sim.contracts import (
 )
 
 _PLANNER = "planner_sonic.onnx"
-_ENCODER = "low_latency/model_encoder.onnx"
-_DECODER = "low_latency/model_decoder.onnx"
-_OBSERVATION_CONFIG = "low_latency/observation_config.yaml"
+
+G1SonicModelVariant = Literal["low_latency", "sonic_v1_1"]
+
+
+@dataclass(frozen=True)
+class _SonicVariantContract:
+    encoder: str
+    decoder: str
+    observation_config: str
+    encoder_input_size: int
+    reference_stride: int
+    heading_normalized: bool
+
+
+_VARIANTS: dict[G1SonicModelVariant, _SonicVariantContract] = {
+    "low_latency": _SonicVariantContract(
+        encoder="low_latency/model_encoder.onnx",
+        decoder="low_latency/model_decoder.onnx",
+        observation_config="low_latency/observation_config.yaml",
+        encoder_input_size=1247,
+        reference_stride=1,
+        heading_normalized=False,
+    ),
+    "sonic_v1_1": _SonicVariantContract(
+        encoder="sonic_v1_1/model_encoder.onnx",
+        decoder="sonic_v1_1/model_decoder.onnx",
+        observation_config="sonic_v1_1/observation_config.yaml",
+        encoder_input_size=1751,
+        reference_stride=5,
+        heading_normalized=True,
+    ),
+}
 
 # The mappings are copied from GEAR-SONIC's pinned policy_parameters.hpp.
 # ``mujoco_to_isaaclab`` indexes MuJoCo-order arrays to produce IsaacLab order;
@@ -117,10 +149,13 @@ class G1SonicQualification:
     encoder_input_size: int
     decoder_input_size: int
     decoder_output_size: int
+    model_variant: G1SonicModelVariant
+    reference_stride: int
+    heading_normalized: bool
     errors: tuple[str, ...]
     source: str = "NVlabs/GR00T-WholeBodyControl:GEAR-SONIC"
     activation_ceiling: str = "SIM_ONLY"
-    schema_version: str = "rosclaw.simforge.g1_sonic_qualification.v1"
+    schema_version: str = "rosclaw.simforge.g1_sonic_qualification.v2"
 
     @property
     def qualification_hash(self) -> str:
@@ -144,7 +179,8 @@ class G1SonicRunupConfig:
     joint_gain_scales: tuple[float, ...] = (1.0,) * 29
     authority_calibration_hash: str | None = None
     planner_seed: int = 0
-    schema_version: str = "rosclaw.simforge.g1_sonic_runup_config.v1"
+    model_variant: G1SonicModelVariant = "low_latency"
+    schema_version: str = "rosclaw.simforge.g1_sonic_runup_config.v2"
 
     def __post_init__(self) -> None:
         values = (
@@ -179,6 +215,8 @@ class G1SonicRunupConfig:
             raise ValueError("SONIC policy dt must be an integer multiple of physics dt")
         if self.planner_seed < 0:
             raise ValueError("SONIC planner seed must be non-negative")
+        if self.model_variant not in _VARIANTS:
+            raise ValueError("SONIC model variant is unsupported")
 
     @property
     def execution_frames(self) -> int:
@@ -189,17 +227,23 @@ class G1SonicRunupConfig:
         return hash_json(asdict(self))
 
 
-def qualify_g1_sonic(model_root: Path) -> G1SonicQualification:
+def qualify_g1_sonic(
+    model_root: Path,
+    model_variant: G1SonicModelVariant = "low_latency",
+) -> G1SonicQualification:
     """Fail closed unless the public models expose the pinned tensor contract."""
 
     import onnxruntime
 
+    if model_variant not in _VARIANTS:
+        raise ValueError("SONIC model variant is unsupported")
+    contract = _VARIANTS[model_variant]
     root = model_root.expanduser().resolve()
     paths = {
         "planner": root / _PLANNER,
-        "encoder": root / _ENCODER,
-        "decoder": root / _DECODER,
-        "observation_config": root / _OBSERVATION_CONFIG,
+        "encoder": root / contract.encoder,
+        "decoder": root / contract.decoder,
+        "observation_config": root / contract.observation_config,
     }
     errors = [f"missing_asset={name}" for name, path in paths.items() if not path.is_file()]
     planner_input_count = 0
@@ -226,9 +270,14 @@ def qualify_g1_sonic(model_root: Path) -> G1SonicQualification:
             )
             encoder_input_size = int(encoder.get_inputs()[0].shape[-1])
             encoder_output_size = int(encoder.get_outputs()[0].shape[-1])
-            if (encoder_input_size, encoder_output_size) != (1247, 64):
+            if (encoder_input_size, encoder_output_size) != (
+                contract.encoder_input_size,
+                64,
+            ):
                 errors.append(
-                    f"encoder_contract={encoder_input_size}->{encoder_output_size},expected=1247->64"
+                    "encoder_contract="
+                    f"{encoder_input_size}->{encoder_output_size},"
+                    f"expected={contract.encoder_input_size}->64"
                 )
         except Exception as exc:  # noqa: BLE001 - qualification records dependency errors
             errors.append(f"encoder_load={type(exc).__name__}:{exc}")
@@ -259,6 +308,9 @@ def qualify_g1_sonic(model_root: Path) -> G1SonicQualification:
         encoder_input_size=encoder_input_size,
         decoder_input_size=decoder_input_size,
         decoder_output_size=decoder_output_size,
+        model_variant=model_variant,
+        reference_stride=contract.reference_stride,
+        heading_normalized=contract.heading_normalized,
         errors=tuple(errors),
     )
 
@@ -305,17 +357,18 @@ class G1SonicRunupController:
         import onnxruntime
 
         self.config = config or G1SonicRunupConfig()
-        self.qualification = qualify_g1_sonic(model_root)
+        self._variant = _VARIANTS[self.config.model_variant]
+        self.qualification = qualify_g1_sonic(model_root, self.config.model_variant)
         self.qualification.require_eligible()
         root = model_root.expanduser().resolve()
         self._planner = onnxruntime.InferenceSession(
             str(root / _PLANNER), providers=["CPUExecutionProvider"]
         )
         self._encoder = onnxruntime.InferenceSession(
-            str(root / _ENCODER), providers=["CPUExecutionProvider"]
+            str(root / self._variant.encoder), providers=["CPUExecutionProvider"]
         )
         self._decoder = onnxruntime.InferenceSession(
-            str(root / _DECODER), providers=["CPUExecutionProvider"]
+            str(root / self._variant.decoder), providers=["CPUExecutionProvider"]
         )
         self._history: collections.deque[tuple[np.ndarray, ...]] = collections.deque(maxlen=10)
         self.reference = np.empty((0, 36), dtype=np.float64)
@@ -338,8 +391,11 @@ class G1SonicRunupController:
     def reset(self, data: Any) -> None:
         initial_qpos = np.asarray(data.qpos[:36], dtype=np.float64).copy()
         self.reference = self._generate_reference(initial_qpos)
-        if len(self.reference) < self.config.execution_frames + 10:
-            raise ValueError("SONIC planner reference is shorter than execution plus lookahead")
+        required_length = self.config.execution_frames + self._reference_lookahead_span
+        padding = required_length - len(self.reference)
+        if padding > 0:
+            terminal = np.repeat(self.reference[-1:, :], padding, axis=0)
+            self.reference = np.concatenate((self.reference, terminal), axis=0)
         digest = hashlib.sha256(np.ascontiguousarray(self.reference).tobytes()).hexdigest()
         self.reference_digest = "sha256:" + digest
         self.action[:] = 0.0
@@ -357,7 +413,18 @@ class G1SonicRunupController:
     def recovery_extension_frames(self) -> int:
         """Number of post-handoff frames with a complete look-ahead window."""
 
-        return max(0, len(self.reference) - 9 - self.config.execution_frames)
+        return max(
+            0,
+            len(self.reference) - self._reference_lookahead_span - self.config.execution_frames,
+        )
+
+    @property
+    def _reference_lookahead_frames(self) -> int:
+        return 9 * self._variant.reference_stride + 1
+
+    @property
+    def _reference_lookahead_span(self) -> int:
+        return 9 * self._variant.reference_stride
 
     def extend_stationary_recovery(self, minimum_extension_frames: int) -> None:
         """Pad the planner's terminal standing pose for neural feedback recovery.
@@ -372,7 +439,9 @@ class G1SonicRunupController:
             raise ValueError("SONIC stationary recovery frames must be non-negative")
         if len(self.reference) < 10:
             raise RuntimeError("SONIC must be reset before extending recovery")
-        required_length = self.config.execution_frames + minimum_extension_frames + 9
+        required_length = (
+            self.config.execution_frames + minimum_extension_frames + self._reference_lookahead_span
+        )
         padding = required_length - len(self.reference)
         if padding > 0:
             terminal = np.repeat(self.reference[-1:, :], padding, axis=0)
@@ -462,14 +531,22 @@ class G1SonicRunupController:
     def _encoder_observation(self, data: Any, frame: int) -> np.ndarray:
         import mujoco
 
-        future = self.reference[frame : frame + 10]
+        future = self.reference[
+            frame : frame + self._reference_lookahead_frames : self._variant.reference_stride
+        ]
+        if future.shape != (10, 36):
+            raise IndexError("SONIC reference has an incomplete encoder look-ahead window")
         positions = future[:, 7:36][:, MUJOCO_TO_ISAACLAB]
-        velocities = np.gradient(positions, self.config.policy_dt_sec, axis=0)
-        observation = np.zeros((1, 1247), dtype=np.float32)
+        reference_dt = self.config.policy_dt_sec * self._variant.reference_stride
+        velocities = np.gradient(positions, reference_dt, axis=0)
+        observation = np.zeros((1, self._variant.encoder_input_size), dtype=np.float32)
         # Offset 0 is encoder_mode_4.  G1 is mode 0, hence four zeros.
         observation[0, 4:294] = positions.reshape(-1)
         observation[0, 294:584] = velocities.reshape(-1)
-        current_inverse = np.asarray(data.qpos[3:7], dtype=np.float64).copy()
+        current_quaternion = np.asarray(data.qpos[3:7], dtype=np.float64).copy()
+        if self._variant.heading_normalized:
+            current_quaternion = _heading_quaternion(current_quaternion)
+        current_inverse = current_quaternion.copy()
         current_inverse[1:] *= -1.0
         orientation: list[float] = []
         for reference_quaternion in future[:, 3:7]:
@@ -611,6 +688,14 @@ def _gravity_in_body(quaternion_wxyz: np.ndarray) -> np.ndarray:
     return value
 
 
+def _heading_quaternion(quaternion_wxyz: np.ndarray) -> np.ndarray:
+    """Return the yaw-only quaternion used by SONIC v1.1 deployment."""
+
+    w, x, y, z = np.asarray(quaternion_wxyz, dtype=np.float64)
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    return np.asarray((math.cos(0.5 * yaw), 0.0, 0.0, math.sin(0.5 * yaw)))
+
+
 def _file_hash(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -621,6 +706,7 @@ def _file_hash(path: Path) -> str:
 
 __all__ = [
     "G1SonicQualification",
+    "G1SonicModelVariant",
     "G1SonicRunupConfig",
     "G1SonicRunupController",
     "qualify_g1_sonic",

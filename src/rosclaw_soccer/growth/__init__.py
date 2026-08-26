@@ -6,6 +6,28 @@ no simulator, runtime, ROS, or hardware side effects.
 """
 
 from rosclaw_soccer.growth.adapter import SOCCER_GROWTH_ADAPTER, SoccerGrowthAdapter
+from rosclaw_soccer.growth.alternating_team_growth import (
+    AlternatingGrowthDecision,
+    AlternatingGrowthGateConfig,
+    AlternatingGrowthRoundDecision,
+    AlternatingTeamEpisode,
+    CurriculumCell,
+    FailureMemoryRecord,
+    GrowthPartition,
+    PhaseScore,
+    RoleGenerationBinding,
+    TeamFailureCode,
+    TeamSkillPhase,
+    build_failure_conditioned_dreams,
+    evaluate_alternating_growth,
+    evaluate_alternating_growth_round,
+    prioritize_team_curriculum,
+)
+from rosclaw_soccer.growth.canonical_champion import (
+    SoccerChampionEvidenceLayout,
+    reconstruct_s33_champion_registry,
+    write_s33_champion_registry,
+)
 from rosclaw_soccer.growth.joint_policy_search import (
     JointPolicySearchConfig,
     JointPolicySearchDecision,
@@ -15,6 +37,34 @@ from rosclaw_soccer.growth.joint_policy_search import (
     RolePolicyVector,
     default_three_role_search_spaces,
     learn_joint_policy_generation,
+)
+from rosclaw_soccer.growth.mjlab_getup import (
+    MJLabGetUpContract,
+    MJLabGetUpTorchController,
+    MJLabRecoveryHandoff,
+    MJLabRecoveryHandoffConfig,
+    MJLabRecoveryHandoffSignals,
+    load_mjlab_getup_torch,
+)
+from rosclaw_soccer.growth.mosaic_getup import (
+    G1MosaicGMTGetUpSkill,
+    build_g1_mosaic_gmt_getup_skill,
+    load_g1_mosaic_gmt_getup_skill,
+)
+from rosclaw_soccer.growth.mosaic_gmt import (
+    G1MosaicGMTOverheadSkill,
+    MosaicGMTContract,
+    MosaicGMTTorchController,
+    build_g1_mosaic_gmt_overhead_skill,
+    load_g1_mosaic_gmt_overhead_skill,
+    load_mosaic_gmt_torch,
+)
+from rosclaw_soccer.growth.paired_champion_gate import (
+    ChampionMetricSpec,
+    ChampionSnapshot,
+    PairedChampionDecision,
+    decision_payload,
+    evaluate_paired_champion,
 )
 from rosclaw_soccer.growth.role_learning import (
     JointGrowthDecision,
@@ -31,25 +81,63 @@ from rosclaw_soccer.growth.role_learning import (
 )
 
 __all__ = [
+    "AlternatingGrowthDecision",
+    "AlternatingGrowthGateConfig",
+    "AlternatingGrowthRoundDecision",
+    "AlternatingTeamEpisode",
+    "CurriculumCell",
+    "FailureMemoryRecord",
+    "GrowthPartition",
     "JointGrowthDecision",
     "JointGrowthGateConfig",
     "JointGrowthRoundDecision",
     "JointPolicySearchConfig",
     "JointPolicySearchDecision",
+    "G1MosaicGMTGetUpSkill",
+    "G1MosaicGMTOverheadSkill",
+    "ChampionMetricSpec",
+    "ChampionSnapshot",
     "MirroredRoleProbe",
+    "MJLabGetUpContract",
+    "MJLabGetUpTorchController",
+    "MJLabRecoveryHandoff",
+    "MJLabRecoveryHandoffConfig",
+    "MJLabRecoveryHandoffSignals",
+    "MosaicGMTContract",
+    "MosaicGMTTorchController",
+    "PairedChampionDecision",
+    "PhaseScore",
     "RoleEpisodeOutcome",
     "RoleGrowthMetrics",
     "RolePolicySearchSpace",
     "RolePolicySearchUpdate",
     "RolePolicyBinding",
     "RolePolicyVector",
+    "RoleGenerationBinding",
     "SOCCER_GROWTH_ADAPTER",
     "SharedWorldTeamEpisode",
     "SoccerGrowthAdapter",
+    "SoccerChampionEvidenceLayout",
     "SoccerRole",
     "SoccerSide",
+    "TeamFailureCode",
+    "TeamSkillPhase",
+    "build_failure_conditioned_dreams",
+    "evaluate_alternating_growth",
+    "evaluate_alternating_growth_round",
     "evaluate_joint_growth",
     "evaluate_joint_growth_round",
+    "evaluate_paired_champion",
+    "decision_payload",
     "default_three_role_search_spaces",
+    "build_g1_mosaic_gmt_overhead_skill",
+    "build_g1_mosaic_gmt_getup_skill",
     "learn_joint_policy_generation",
+    "load_g1_mosaic_gmt_overhead_skill",
+    "load_g1_mosaic_gmt_getup_skill",
+    "load_mjlab_getup_torch",
+    "load_mosaic_gmt_torch",
+    "prioritize_team_curriculum",
+    "reconstruct_s33_champion_registry",
+    "write_s33_champion_registry",
 ]

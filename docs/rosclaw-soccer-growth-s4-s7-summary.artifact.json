@@ -1,0 +1,1247 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "ROSClaw 足球成长闭环：S4–S7 阶段总结",
+    "description": "G1 三智能体、模仿教师、稳定—可塑门与可审计自进化的技术总结。",
+    "generatedAt": "2026-08-13T02:20:00+08:00",
+    "sources": [
+      {
+        "id": "final_evidence",
+        "label": "S7 visible follow-through strict evidence",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "DuckDB 1.x",
+          "language": "sql",
+          "id": "s7_follow_through_metric_extract_v1",
+          "executed_at": "2026-08-13T02:03:00+08:00",
+          "description": "从最终严格证据中展开父技能、保留候选、自然度与随动指标。",
+          "tables_used": [
+            "g1-follow-through-growth.json"
+          ],
+          "filters": [
+            "schema_version = rosclaw_soccer.g1_follow_through_evidence.v1",
+            "passed = true",
+            "strict_replay = true",
+            "activation_ceiling = SIM_ONLY"
+          ],
+          "metric_definitions": [
+            "目标误差：球穿过训练球门平面时的落点与请求目标点之间的欧氏距离，单位米。",
+            "候选归一化得分：越大越好指标为 candidate/parent*100；越小越好指标为 parent/candidate*100；父技能恒为100。",
+            "局部邻域通过率：9个相邻时序与融合权重候选中满足全部精度、稳定、安全和可见动作门的比例。",
+            "随动能量：教师激活窗口内腰臂速度的汇总运动能量指数，不等同于能耗。"
+          ]
+        }
+      },
+      {
+        "id": "phase_reports",
+        "label": "S4–S7 implementation reports",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Reviewed Markdown",
+          "language": "markdown",
+          "id": "s4_s7_phase_report_review_v1",
+          "executed_at": "2026-08-13T02:08:00+08:00",
+          "description": "阶段报告人工核对，覆盖三角色共享世界、门将学习、MotionDecode、OmniContact 与关节组灵活性。",
+          "tables_used": [
+            "three-role-growth-s4c.zh-CN.md",
+            "goalkeeper-growth-s4d.zh-CN.md",
+            "imitation-growth-s5.zh-CN.md",
+            "composite-imitation-growth-s6.zh-CN.md",
+            "joint-group-agility-growth-s7.zh-CN.md"
+          ]
+        }
+      },
+      {
+        "id": "validation_run",
+        "label": "2026-08-13 local validation run",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Local CLI",
+          "language": "shell",
+          "id": "local_validation_20260813",
+          "executed_at": "2026-08-13T02:18:00+08:00",
+          "description": "Python 3.12 项目环境中的证据校验、测试、lint、format 与聚焦 strict mypy 复查。",
+          "tables_used": [
+            "rosclaw_soccer source tree",
+            "rosclaw core source tree"
+          ]
+        }
+      },
+      {
+        "id": "video_manifest",
+        "label": "S7 1080p video manifest",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "ffprobe 7.1.1 and video manifest",
+          "language": "json",
+          "id": "s7_video_manifest_v3",
+          "executed_at": "2026-08-13T02:00:00+08:00",
+          "description": "最终宣传视频的分辨率、时长、帧数、编解码与上游证据绑定。",
+          "tables_used": [
+            "g1-visible-follow-through-growth-1080p.json"
+          ]
+        }
+      }
+    ],
+    "cards": [
+      {
+        "id": "card_target_error",
+        "description": "6.642 m 射门在最终证据中的落点误差。",
+        "dataset": "headline_metrics",
+        "sourceId": "final_evidence",
+        "source": {
+          "id": "final_evidence",
+          "label": "S7 visible follow-through strict evidence",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "DuckDB 1.x",
+            "language": "sql",
+            "id": "s7_follow_through_metric_extract_v1",
+            "executed_at": "2026-08-13T02:03:00+08:00",
+            "description": "从最终严格证据中展开父技能、保留候选、自然度与随动指标。",
+            "tables_used": [
+              "g1-follow-through-growth.json"
+            ],
+            "filters": [
+              "schema_version = rosclaw_soccer.g1_follow_through_evidence.v1",
+              "passed = true",
+              "strict_replay = true",
+              "activation_ceiling = SIM_ONLY"
+            ],
+            "metric_definitions": [
+              "目标误差：球穿过训练球门平面时的落点与请求目标点之间的欧氏距离，单位米。",
+              "候选归一化得分：越大越好指标为 candidate/parent*100；越小越好指标为 parent/candidate*100；父技能恒为100。"
+            ],
+            "sql": "WITH evidence AS (SELECT * FROM read_json_auto('g1-follow-through-growth.json')) SELECT candidate_naturalness.target_error_m AS target_error_m, 0.03 AS target_error_gate_m, candidate_follow_through.arm_excursion_rms_rad/parent_follow_through.arm_excursion_rms_rad-1 AS arm_excursion_gain_rate, candidate_follow_through.upper_body_motion_energy/parent_follow_through.upper_body_motion_energy-1 AS motion_energy_gain_rate, search.neighborhood_eligible_fraction AS neighborhood_eligible_rate FROM evidence"
+          }
+        },
+        "metrics": [
+          {
+            "label": "射门目标误差（m）",
+            "field": "target_error_m",
+            "format": "number"
+          },
+          {
+            "label": "开发门阈值（m）",
+            "field": "target_error_gate_m",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "card_arm_excursion",
+        "description": "MOSAIC 足球语义教师在踢后窗口带来的可见手臂随动。",
+        "dataset": "headline_metrics",
+        "sourceId": "final_evidence",
+        "source": {
+          "id": "final_evidence",
+          "label": "S7 visible follow-through strict evidence",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "DuckDB 1.x",
+            "language": "sql",
+            "id": "s7_follow_through_metric_extract_v1",
+            "executed_at": "2026-08-13T02:03:00+08:00",
+            "description": "从最终严格证据中展开父技能、保留候选、自然度与随动指标。",
+            "tables_used": [
+              "g1-follow-through-growth.json"
+            ],
+            "filters": [
+              "schema_version = rosclaw_soccer.g1_follow_through_evidence.v1",
+              "passed = true",
+              "strict_replay = true",
+              "activation_ceiling = SIM_ONLY"
+            ],
+            "metric_definitions": [
+              "手臂行程提升：候选手臂行程 RMS 除以父技能手臂行程 RMS 再减一。"
+            ],
+            "sql": "WITH evidence AS (SELECT * FROM read_json_auto('g1-follow-through-growth.json')) SELECT candidate_follow_through.arm_excursion_rms_rad/parent_follow_through.arm_excursion_rms_rad-1 AS arm_excursion_gain_rate, 0.08 AS arm_excursion_floor_rate FROM evidence"
+          }
+        },
+        "metrics": [
+          {
+            "label": "手臂行程提升",
+            "field": "arm_excursion_gain_rate",
+            "format": "percent"
+          },
+          {
+            "label": "最低要求",
+            "field": "arm_excursion_floor_rate",
+            "format": "percent"
+          }
+        ]
+      },
+      {
+        "id": "card_energy",
+        "description": "教师激活窗口内的上身随动运动能量提升。",
+        "dataset": "headline_metrics",
+        "sourceId": "final_evidence",
+        "source": {
+          "id": "final_evidence",
+          "label": "S7 visible follow-through strict evidence",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "DuckDB 1.x",
+            "language": "sql",
+            "id": "s7_follow_through_metric_extract_v1",
+            "executed_at": "2026-08-13T02:03:00+08:00",
+            "description": "从最终严格证据中展开父技能、保留候选、自然度与随动指标。",
+            "tables_used": [
+              "g1-follow-through-growth.json"
+            ],
+            "filters": [
+              "schema_version = rosclaw_soccer.g1_follow_through_evidence.v1",
+              "passed = true",
+              "strict_replay = true",
+              "activation_ceiling = SIM_ONLY"
+            ],
+            "metric_definitions": [
+              "随动能量提升：候选上身随动能量除以父技能上身随动能量再减一。"
+            ],
+            "sql": "WITH evidence AS (SELECT * FROM read_json_auto('g1-follow-through-growth.json')) SELECT candidate_follow_through.upper_body_motion_energy/parent_follow_through.upper_body_motion_energy-1 AS motion_energy_gain_rate, 0.10 AS motion_energy_floor_rate FROM evidence"
+          }
+        },
+        "metrics": [
+          {
+            "label": "随动能量提升",
+            "field": "motion_energy_gain_rate",
+            "format": "percent"
+          },
+          {
+            "label": "最低要求",
+            "field": "motion_energy_floor_rate",
+            "format": "percent"
+          }
+        ]
+      },
+      {
+        "id": "card_basin",
+        "description": "候选并非单点偶然成功；其 3×3 局部邻域全部通过。",
+        "dataset": "headline_metrics",
+        "sourceId": "final_evidence",
+        "source": {
+          "id": "final_evidence",
+          "label": "S7 visible follow-through strict evidence",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "DuckDB 1.x",
+            "language": "sql",
+            "id": "s7_follow_through_metric_extract_v1",
+            "executed_at": "2026-08-13T02:03:00+08:00",
+            "description": "从最终严格证据中读取局部邻域通过率与通过候选数。",
+            "tables_used": [
+              "g1-follow-through-growth.json"
+            ],
+            "filters": [
+              "passed = true",
+              "strict_replay = true"
+            ],
+            "metric_definitions": [
+              "局部邻域通过率：全部 eligible 候选数除以 9 个搜索候选。"
+            ],
+            "sql": "WITH evidence AS (SELECT * FROM read_json_auto('g1-follow-through-growth.json')) SELECT search.neighborhood_eligible_fraction AS neighborhood_eligible_rate, list_count(list_filter(search.trials, x -> x.eligible)) AS eligible_candidate_count FROM evidence"
+          }
+        },
+        "metrics": [
+          {
+            "label": "局部邻域通过率",
+            "field": "neighborhood_eligible_rate",
+            "format": "percent"
+          },
+          {
+            "label": "通过候选数",
+            "field": "eligible_candidate_count",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "card_safety",
+        "description": "最终严格复演中的跌倒、关节、扭矩与执行器违规总数。",
+        "dataset": "headline_metrics",
+        "sourceId": "final_evidence",
+        "source": {
+          "id": "final_evidence",
+          "label": "S7 visible follow-through strict evidence",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "DuckDB 1.x",
+            "language": "sql",
+            "id": "s7_follow_through_metric_extract_v1",
+            "executed_at": "2026-08-13T02:03:00+08:00",
+            "description": "从最终严格证据中汇总硬安全违规与严格复演状态。",
+            "tables_used": [
+              "g1-follow-through-growth.json"
+            ],
+            "filters": [
+              "passed = true",
+              "strict_replay = true"
+            ],
+            "metric_definitions": [
+              "硬安全违规数：跌倒、关节越界、扭矩越界和执行器饱和布尔项的总和。"
+            ],
+            "sql": "WITH evidence AS (SELECT * FROM read_json_auto('g1-follow-through-growth.json')) SELECT CAST(result.passer_post_kick_fall AS INT)+CAST(result.shooter_post_kick_fall AS INT)+CAST(result.joint_limit_violation AS INT)+CAST(result.torque_limit_violation AS INT)+CAST(result.actuator_saturation AS INT) AS hard_safety_violation_count, CAST(strict_replay AS INT) AS strict_replay_passed_count FROM evidence"
+          }
+        },
+        "metrics": [
+          {
+            "label": "硬安全违规数",
+            "field": "hard_safety_violation_count",
+            "format": "number"
+          },
+          {
+            "label": "严格复演通过",
+            "field": "strict_replay_passed_count",
+            "format": "number"
+          }
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "chart_parent_candidate",
+        "title": "父技能与随动候选的归一化对比",
+        "subtitle": "父技能=100；越高越好。灵活性显著提高，稳定性大体保持，但后退与尾段晃动仍是下一阶段短板。",
+        "showDescription": true,
+        "intent": "comparison",
+        "question": "增加可见随动后，候选是否保留原有精度与稳定性？",
+        "rationale": "十个离散指标适合用水平分组条形图比较父技能与候选；归一化解决单位不同问题，精确原值另由表格提供。",
+        "type": "bar",
+        "dataset": "normalized_comparison",
+        "sourceId": "final_evidence",
+        "source": {
+          "id": "final_evidence",
+          "label": "S7 visible follow-through strict evidence",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "DuckDB 1.x",
+            "language": "sql",
+            "id": "s7_follow_through_metric_extract_v1",
+            "executed_at": "2026-08-13T02:03:00+08:00",
+            "description": "从最终严格证据展开十个父技能与随动候选指标，并按越高/越低越好归一化。",
+            "tables_used": [
+              "g1-follow-through-growth.json"
+            ],
+            "filters": [
+              "schema_version = rosclaw_soccer.g1_follow_through_evidence.v1",
+              "passed = true",
+              "strict_replay = true",
+              "activation_ceiling = SIM_ONLY"
+            ],
+            "metric_definitions": [
+              "候选归一化得分：越大越好指标为 candidate/parent*100；越小越好指标为 parent/candidate*100；父技能恒为100。"
+            ],
+            "sql": "WITH evidence AS (SELECT * FROM read_json_auto('g1-follow-through-growth.json')), metrics AS (SELECT * FROM evidence, LATERAL (VALUES ('手臂行程','灵活性',parent_follow_through.arm_excursion_rms_rad,candidate_follow_through.arm_excursion_rms_rad,'rad',TRUE,1), ('上身随动能量','灵活性',parent_follow_through.upper_body_motion_energy,candidate_follow_through.upper_body_motion_energy,'index',TRUE,2), ('手臂速度','灵活性',parent_follow_through.arm_velocity_rms_rad_s,candidate_follow_through.arm_velocity_rms_rad_s,'rad/s',TRUE,3), ('射门精度','任务保持',candidate_naturalness.target_error_m,candidate_naturalness.target_error_m,'m',FALSE,4), ('触球平滑度','稳定性',search.parent_naturalness.contact_joint_acceleration_rms_rad_s2,candidate_naturalness.contact_joint_acceleration_rms_rad_s2,'rad/s^2',FALSE,5), ('踢后平滑度','稳定性',search.parent_naturalness.post_contact_joint_acceleration_rms_rad_s2,candidate_naturalness.post_contact_joint_acceleration_rms_rad_s2,'rad/s^2',FALSE,6), ('支撑脚稳定','稳定性',search.parent_naturalness.post_contact_support_slip_m,candidate_naturalness.post_contact_support_slip_m,'m',FALSE,7), ('根部冲击控制','稳定性',search.parent_naturalness.post_contact_root_acceleration_rms_m_s2,candidate_naturalness.post_contact_root_acceleration_rms_m_s2,'m/s^2',FALSE,8), ('尾段抗晃动','稳定性',search.parent_naturalness.tail_wobble_index,candidate_naturalness.tail_wobble_index,'index',FALSE,9), ('抗后退能力','稳定性',search.parent_naturalness.post_contact_peak_backward_velocity_mps,candidate_naturalness.post_contact_peak_backward_velocity_mps,'m/s',FALSE,10)) AS m(metric,family,parent_value,candidate_value,unit,higher_is_better,sort_order)) SELECT metric,family,'父技能' AS series,100.0 AS score,parent_value AS raw_value,unit,sort_order FROM metrics UNION ALL SELECT metric,family,'随动候选' AS series,round(CASE WHEN higher_is_better THEN 100*candidate_value/parent_value ELSE 100*parent_value/candidate_value END,2) AS score,candidate_value AS raw_value,unit,sort_order FROM metrics ORDER BY sort_order,series"
+          }
+        },
+        "encodings": {
+          "x": {
+            "field": "metric",
+            "type": "nominal",
+            "label": "指标"
+          },
+          "y": {
+            "field": "score",
+            "type": "quantitative",
+            "label": "归一化得分"
+          },
+          "color": {
+            "field": "series",
+            "type": "nominal",
+            "label": "方案"
+          },
+          "tooltip": [
+            {
+              "field": "family",
+              "type": "nominal",
+              "label": "指标族"
+            },
+            {
+              "field": "raw_value",
+              "type": "quantitative",
+              "label": "原值"
+            },
+            {
+              "field": "unit",
+              "type": "text",
+              "label": "单位"
+            }
+          ]
+        },
+        "xAxisTitle": "指标",
+        "yAxisTitle": "父技能=100（越高越好）",
+        "valueFormat": "number",
+        "unit": "index",
+        "layout": "full",
+        "maxRows": 20,
+        "referenceLines": [
+          {
+            "axis": "y",
+            "value": 100,
+            "label": "父技能基准"
+          }
+        ],
+        "settings": {
+          "orientation": "horizontal",
+          "groupMode": "grouped",
+          "showValues": false,
+          "sort": "custom"
+        },
+        "legend": {
+          "position": "top"
+        },
+        "palette": {
+          "kind": "categorical",
+          "colors": [
+            "blue",
+            "gold"
+          ]
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "table_exact_metrics",
+        "title": "最终父技能与随动候选的精确指标",
+        "subtitle": "同一严格回放场景、同一目标与同一父技能基线；正变化表示候选数值上升，不自动等于更好。",
+        "showDescription": true,
+        "dataset": "exact_metrics",
+        "density": "spacious",
+        "sourceId": "final_evidence",
+        "source": {
+          "id": "final_evidence",
+          "label": "S7 visible follow-through strict evidence",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "DuckDB 1.x",
+            "language": "sql",
+            "id": "s7_follow_through_metric_extract_v1",
+            "executed_at": "2026-08-13T02:03:00+08:00",
+            "description": "从最终严格证据展开父技能与候选原始指标及相对变化。",
+            "tables_used": [
+              "g1-follow-through-growth.json"
+            ],
+            "filters": [
+              "passed = true",
+              "strict_replay = true"
+            ],
+            "metric_definitions": [
+              "数值变化：100*(candidate-parent)/parent；正值只表示数值上升，方向需结合指标解释。"
+            ],
+            "sql": "WITH evidence AS (SELECT * FROM read_json_auto('g1-follow-through-growth.json')), metrics AS (SELECT * FROM evidence, LATERAL (VALUES ('手臂行程 RMS',parent_follow_through.arm_excursion_rms_rad,candidate_follow_through.arm_excursion_rms_rad,'rad',1), ('上身随动能量',parent_follow_through.upper_body_motion_energy,candidate_follow_through.upper_body_motion_energy,'index',2), ('手臂速度 RMS',parent_follow_through.arm_velocity_rms_rad_s,candidate_follow_through.arm_velocity_rms_rad_s,'rad/s',3), ('射门目标误差',search.parent_naturalness.target_error_m,candidate_naturalness.target_error_m,'m',4), ('触球窗关节加速度 RMS',search.parent_naturalness.contact_joint_acceleration_rms_rad_s2,candidate_naturalness.contact_joint_acceleration_rms_rad_s2,'rad/s^2',5), ('踢后关节加速度 RMS',search.parent_naturalness.post_contact_joint_acceleration_rms_rad_s2,candidate_naturalness.post_contact_joint_acceleration_rms_rad_s2,'rad/s^2',6), ('踢后支撑脚滑移',search.parent_naturalness.post_contact_support_slip_m,candidate_naturalness.post_contact_support_slip_m,'m',7), ('踢后根部加速度 RMS',search.parent_naturalness.post_contact_root_acceleration_rms_m_s2,candidate_naturalness.post_contact_root_acceleration_rms_m_s2,'m/s^2',8), ('尾段晃动指数',search.parent_naturalness.tail_wobble_index,candidate_naturalness.tail_wobble_index,'index',9), ('踢后峰值后退速度',search.parent_naturalness.post_contact_peak_backward_velocity_mps,candidate_naturalness.post_contact_peak_backward_velocity_mps,'m/s',10)) AS m(metric,parent_value,candidate_value,unit,sort_order)) SELECT metric,parent_value,candidate_value,100*(candidate_value-parent_value)/parent_value AS delta_percent,unit,sort_order FROM metrics ORDER BY sort_order"
+          }
+        },
+        "layout": "full",
+        "defaultSort": {
+          "field": "sort_order",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "sort_order",
+            "label": "序号",
+            "type": "number",
+            "align": "right"
+          },
+          {
+            "field": "metric",
+            "label": "指标",
+            "type": "text"
+          },
+          {
+            "field": "parent_value",
+            "label": "父技能",
+            "type": "number",
+            "align": "right"
+          },
+          {
+            "field": "candidate_value",
+            "label": "候选",
+            "type": "number",
+            "align": "right"
+          },
+          {
+            "field": "delta_percent",
+            "label": "数值变化（%）",
+            "type": "number",
+            "movement": true,
+            "role": "movement",
+            "align": "right"
+          },
+          {
+            "field": "unit",
+            "label": "单位",
+            "type": "text"
+          },
+          {
+            "field": "interpretation",
+            "label": "解释",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "table_phase_progression",
+        "title": "S4–S7 能力递进",
+        "subtitle": "按实施顺序列出本阶段新增的角色、教师、门控与主要可验证成果。",
+        "showDescription": true,
+        "dataset": "phase_progression",
+        "density": "spacious",
+        "sourceId": "phase_reports",
+        "source": {
+          "id": "phase_reports",
+          "label": "S4–S7 implementation reports",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Reviewed Markdown",
+            "language": "sql",
+            "id": "s4_s7_phase_report_review_v1",
+            "executed_at": "2026-08-13T02:08:00+08:00",
+            "description": "阶段报告人工核对，覆盖三角色共享世界、门将学习、MotionDecode、OmniContact 与关节组灵活性。",
+            "tables_used": [
+              "three-role-growth-s4c.zh-CN.md",
+              "goalkeeper-growth-s4d.zh-CN.md",
+              "imitation-growth-s5.zh-CN.md",
+              "composite-imitation-growth-s6.zh-CN.md",
+              "joint-group-agility-growth-s7.zh-CN.md"
+            ],
+            "sql": "SELECT phase, capability, evidence, claim_ceiling FROM reviewed_phase_reports WHERE phase IN ('S4c','S4d','S5','S6','S7a','S7b') ORDER BY implementation_order"
+          }
+        },
+        "layout": "full",
+        "defaultSort": {
+          "field": "order",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "order",
+            "label": "序号",
+            "type": "number",
+            "align": "right"
+          },
+          {
+            "field": "phase",
+            "label": "阶段",
+            "type": "text"
+          },
+          {
+            "field": "capability",
+            "label": "新增能力",
+            "type": "text"
+          },
+          {
+            "field": "evidence",
+            "label": "关键证据",
+            "type": "text"
+          },
+          {
+            "field": "claim_ceiling",
+            "label": "结论上限",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "table_validation",
+        "title": "本次报告前复查结果",
+        "subtitle": "2026年8月13日，在 Python 3.12 项目环境与堆叠 ROSClaw Core 源码下执行。",
+        "showDescription": true,
+        "dataset": "validation_results",
+        "density": "spacious",
+        "sourceId": "validation_run",
+        "source": {
+          "id": "validation_run",
+          "label": "2026-08-13 local validation run",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Local validation inventory",
+            "language": "sql",
+            "id": "local_validation_20260813",
+            "executed_at": "2026-08-13T02:18:00+08:00",
+            "description": "Python 3.12 项目环境中的证据校验、测试、lint、format 与聚焦 strict mypy 复查。",
+            "tables_used": [
+              "validation_command_results"
+            ],
+            "sql": "SELECT check_name, result, scope FROM validation_command_results WHERE run_date = DATE '2026-08-13' ORDER BY execution_order"
+          }
+        },
+        "layout": "full",
+        "defaultSort": {
+          "field": "order",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "order",
+            "label": "序号",
+            "type": "number",
+            "align": "right"
+          },
+          {
+            "field": "check",
+            "label": "检查项",
+            "type": "text"
+          },
+          {
+            "field": "result",
+            "label": "结果",
+            "type": "text"
+          },
+          {
+            "field": "scope",
+            "label": "范围与说明",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "# ROSClaw 足球成长闭环：S4–S7 阶段总结"
+      },
+      {
+        "id": "technical_summary",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 技术结论：闭环已经从单个射门补丁成长为可审计的多智能体学习系统\n\n**本阶段的实质突破不是把一个视频修得更漂亮，而是把训练、失败、选择、复演和展示连成了同一条证据链。** 三个 G1 在同一个 CPU MuJoCo 世界和同一颗物理足球上完成传球、射门、门将反应与踢后恢复；MotionDecode、OmniContact、MOSAIC 三类教师都只能提供受限残差，不能直接输出力矩，也不能绕过关节预测保护、PD 和扭矩边界。\n\n**最终结果同时保住了足球任务与可见动作。** 6.642 m 射门的目标误差为 8.59 mm，球速为 9.04 m/s，传球到点误差为 2.33 cm；手臂随动行程提升 24.0%，上身随动能量提升 25.1%，9/9 邻域候选通过，且没有跌倒、关节越界、扭矩越界或执行器饱和。\n\n**但还不能宣称 G1 已经成为自然球员。** 新随动让后退峰值从 2.05 mm/s 增至 3.52 mm/s，尾段晃动指数增加约 5.9%，虽然仍通过 10 mm/s 后退门和其他稳定门。当前结论严格限制为 `SIM_ONLY / PASSED_DEVELOPMENT_GATE_NOT_PROMOTED`；没有真实机器人授权，也没有跨球位、来球速度、摩擦、时延和扰动的独立 holdout 泛化证据。"
+      },
+      {
+        "id": "headline_metrics_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 五个数字概括最终结果\n\n这些指标分别回答：踢得准不准、动作是否真正变得可见、结果是否只是偶然、以及是否触碰硬安全边界。"
+      },
+      {
+        "id": "headline_metrics_strip",
+        "type": "metric-strip",
+        "layout": "full",
+        "cardIds": [
+          "card_target_error",
+          "card_arm_excursion",
+          "card_energy",
+          "card_basin",
+          "card_safety"
+        ]
+      },
+      {
+        "id": "comparison_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 可见灵活性提高了，稳定性只是受控保持而非全面改善\n\n下图把不同单位的指标统一成“父技能=100、越高越好”。手臂行程、随动能量和手臂速度明显高于父技能；射门精度完全保持，触球与踢后关节平滑度略有改善。相反，支撑脚滑移、根部冲击、尾段晃动和峰值后退略有或明显退化，因此本轮正确结论是“在安全门内换取了可见随动”，不是“所有稳定指标都变好”。"
+      },
+      {
+        "id": "comparison_chart",
+        "type": "chart",
+        "layout": "full",
+        "chartId": "chart_parent_candidate"
+      },
+      {
+        "id": "exact_metrics_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 精确数值说明了增长的代价\n\n正负变化是原始数值的增减，不代表自动好坏：手臂幅度和能量上升是目标；加速度、滑移、晃动和后退则越低越好。候选在可见性方面跨过了 8% 与 10% 的硬下限，同时仍低于 3 cm 目标误差、6 cm 支撑脚滑移和 1 cm/s 后退速度门。"
+      },
+      {
+        "id": "exact_metrics_table",
+        "type": "table",
+        "layout": "full",
+        "tableId": "table_exact_metrics"
+      },
+      {
+        "id": "plain_explanation",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 通俗解释：不是给 G1 加一段摆手动画，而是在安全外骨骼里教它一小段肌肉记忆\n\n可以把系统想成五层。**足球专家**决定何时接球、瞄准和触球；**数据教师**提供“人类或高质量动作大概怎样经过”的参考；**Growth 搜索器**尝试一组很小的残差权重和时序；**小脑与安全链**把目标转成受限 PD 力矩并负责踢后恢复；**证据验证器**把父技能、候选、失败项和重放结果锁在一起。\n\n本轮 MOSAIC 教师不是控制腿，也不是直接发电机力矩。它只在踢后约 21 个策略帧里给双臂一个峰值不超过 0.125 rad 的首尾归零姿态残差。所谓“首尾归零”，就是动作结束时回到原技能，不留下新的姿势偏置。这样既能让随动被肉眼看见，又不去破坏原本已经很敏感的支撑腿与触球几何。\n\n这也解释了为什么过去很多看似合理的修改会失败：踢球是碰撞任务，脚面只差几毫米或几毫弧度，球的落点就可能差几十厘米甚至数米；而一个动作在视频里更夸张，并不意味着重心、支撑与恢复更好。现在系统不再让人凭感觉挑视频，而是要求候选在同一物理世界中击败父技能、通过邻域门，再严格复演。"
+      },
+      {
+        "id": "phase_progression_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## S4–S7 把角色、模仿和成长门逐层接入同一闭环\n\n阶段演进不是四个互不相干的 demo。每一阶段都把前一阶段通过的能力当作父技能：先建立三角色共享世界，再让门将拥有自己的成功语义，然后引入全身动作教师、接触教师和按任务语义选择的随动教师。"
+      },
+      {
+        "id": "phase_progression_table",
+        "type": "table",
+        "layout": "full",
+        "tableId": "table_phase_progression"
+      },
+      {
+        "id": "architecture",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## ROSClaw 获得了六类可迁移的自进化能力\n\n**一，父技能与反事实记忆。** 每一轮保留原技能结果，候选必须证明没有遗忘核心任务；门将学习也用关闭封堵动作的匹配反事实证明成功来自新策略。\n\n**二，稳定—可塑分离。** 可塑部分被限制在明确的关节组、时窗和幅值内；稳定部分由精度、支撑、平衡、冲击、尾段晃动和硬安全门保护。\n\n**三，数据血缘与最小权限。** MotionDecode 提供全身姿态/速度，OmniContact 只用 train 分区的右脚接触相对位移，MOSAIC 先按 `SE63 soccer_taps` 语义选择再蒸馏为双臂端点中性残差。数据许可证、关节顺序、内容哈希、Body 哈希和实现哈希均进入证据合同。\n\n**四，局部盆地而非单点冠军。** 最终候选来自 3 个时序中心与 3 个融合权重组成的 9 点邻域，9/9 通过。它降低了“某一次碰撞恰好漂亮”的偶然性。\n\n**五，严格复演与媒体下游。** 请求、实现、运行时、轨迹文件、轨迹内容和视频清单相互绑定；视频只能消费已经验证的轨迹，像素永远不参与晋级评分。\n\n**六，自动拒绝与明确晋级上限。** 失败候选不会被删除或包装成成功；当前候选明确标记未晋级，仿真证据不能自动变成真实机器人能力。\n\n这些模式对 ROSClaw 是通用的：教师可以换成抓取、行走、整理或装配先验，任务指标可以换成抓取成功率、能耗或碰撞余量。**但当前实现仍位于 Soccer 下游仓库，尚未提炼成 ROSClaw Core 的通用 Growth API；报告只主张架构模式可迁移，不主张通用化已经完成。**"
+      },
+      {
+        "id": "negative_results",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 被拒绝的实验比成功候选更清楚地界定了下一步\n\n- **直接提高摆腿速度**会破坏原专家的隐藏相位与来球时序，出现约 2 m 落点误差甚至不触球。\n\n- **在策略前拼接恒定前进速度**会打乱接球与摆腿时钟，因此已经回滚。\n\n- **OmniContact 绝对姿态或速度直接混合**使滑移、侧倾、根部冲击和后退变差；最终只迁移相对接触位移。\n\n- **MOSAIC 多动作中位数**把敏捷梯、拳击、棒球和足球的语义相互抵消；在动作可见前就先伤害支撑。最终改为任务语义预选足球快速点球。\n\n- **只增加目标速度残差**在 PD 阻尼下会产生命令活动，但真实姿态几乎不可见。最终改为首尾归零的位置残差。\n\n- **腰臂一起放大**曾把躯干侧倾推至约 0.38 rad、根部冲击推至约 3.22 m/s²；最终把可塑边界收缩到双臂。\n\n- **触球后的 2–8 帧平滑交接**反而把支撑脚滑移推到约 7–20 cm，说明“更平滑的命令”不等于“更稳定的接触动力学”。\n\n这些反例直接支持下一阶段的策略：不能只调幅度或剪辑，而要学习相位、动量抵消和全身协调，并继续由父技能记忆门约束。"
+      },
+      {
+        "id": "scope_definitions",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 证据范围与指标定义\n\n**对象与场景。** 三个 29 关节 G1、一个共享足球、一个统一渲染与物理场景；最终正式证据是固定场景下的一次候选搜索与严格复演，不是成功率统计。\n\n**父技能基线。** 随动父技能是 S7 MotionDecode 关节组候选：腰速度比例 1.14、双臂速度比例 1.15、腿保持 1.00；候选在此基础上加入 MOSAIC 双臂位置残差。\n\n**稳定指标。** 触球/踢后关节加速度 RMS 衡量抽动；根部加速度衡量身体冲击；支撑脚滑移、峰值后退、躯干侧倾和尾段晃动衡量踢后恢复。它们是工程代理指标，不等同于完整的人类自然度。\n\n**可塑指标。** 手臂行程、手臂速度和上身随动能量只在 21 个教师激活帧内计算；候选至少要使手臂行程提高 8%、随动能量提高 10%。\n\n**物理与晋级。** 最终权威是 CPU MuJoCo 数值轨迹，媒体只是展示。证据域是 SIM，激活上限是 SIM_ONLY，状态为 `PASSED_DEVELOPMENT_GATE_NOT_PROMOTED`。"
+      },
+      {
+        "id": "methodology",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 方法：教师先验经过最小权限残差，再由多目标 Growth 选择\n\n1. 对 MotionDecode、OmniContact 和 MOSAIC 做许可证、形状、时钟、关节顺序、训练分区与内容哈希资格检查。\n\n2. 把数据教师转换成位置或速度目标残差；教师不输出力矩。运行时仍使用 `tau = kp × (q_target - q) + kd × (dq_target - dq)`，之后经过关节预测保护、85% 力矩权限投影与硬力矩上限。\n\n3. 在同一共享世界中运行父技能和候选；提取任务、自然度、可塑度和硬安全指标。\n\n4. 先执行硬安全与任务保持门，再执行可见动作下限和稳定容差门。最终随动搜索使用 3×3 邻域：策略中心帧 288–290、位置融合 0.3–0.5。\n\n5. 对保留候选重新运行严格复演，重算请求、实现、运行时、轨迹内容、教师和 Body 承诺；随后才允许生成视频。\n\n6. 视频清单继续绑定证据 SHA-256、轨迹 SHA-256、轨迹内容摘要和渲染器哈希，避免用重新剪辑的像素替代物理事实。"
+      },
+      {
+        "id": "validation_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 本次复查确认最终证据有效，代码检查在正确堆叠环境中通过\n\n报告生成前重新运行了最终 evidence validator、全量测试、ruff、format 和五个核心新增模块的 strict mypy。最初用系统 Python 3.10 与仅安装 PyPI `rosclaw` 的环境会缺少 `StrEnum` 和 Growth Core 模块；按项目声明改用 Python 3.12，并把当前 ROSClaw Core 源码叠入 `PYTHONPATH` 后，全量测试通过。这是环境契约问题，不是把失败跳过。"
+      },
+      {
+        "id": "validation_table",
+        "type": "table",
+        "layout": "full",
+        "tableId": "table_validation"
+      },
+      {
+        "id": "limitations",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 限制：严格复演证明的是声明环境，不是任意机器上的普适稳定\n\n**没有跨情景成功率。** 最终证据是一条固定任务的严格轨迹，不能回答随机球位、来球速度、摩擦、质量、时延、噪声和外力下的成功率。下一轮必须使用独立 seeds 与 holdout 分布。\n\n**可见动作仍局限于双臂短窗口。** 腰和腿没有获得新的 MOSAIC 残差权限；跑—停—踢仍由多个专家串联，尚不是端到端神经小脑或持续 actor-critic。\n\n**稳定性存在可量化代价。** 峰值后退速度虽仍只有 3.52 mm/s，但相对父技能增加 71.3%；尾段晃动增加约 5.9%。它们没有越门，却说明动量消解仍未解决。\n\n**数值线程是复现风险。** 同一实现把 BLAS/ONNX 线程显式设为 1 时，曾得到约 8.69 cm 支撑脚滑移，而默认未设置环境为约 4.69 cm；各自环境内部可确定，但跨线程设置轨迹不同。最终证据已把 `OMP_NUM_THREADS`、`OPENBLAS_NUM_THREADS`、`MKL_NUM_THREADS` 均为 `UNSET` 写进请求和证据。\n\n**尚未通用化到 Core。** 当前代码属于 `rosclaw-soccer` 下游。要称为 ROSClaw 通用自进化能力，还需把候选合同、指标注册、局部盆地、证据承诺和安全晋级抽成任务无关接口。\n\n**没有真实机器人结论。** 本阶段没有打开 ROS、DDS、串口、CAN 或厂商 SDK，也没有发送硬件命令。仿真开发门通过绝不等于实机安全或授权。"
+      },
+      {
+        "id": "next_steps",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 下一阶段应从短窗动作增强转向动量感知的神经残差小脑\n\n1. **先修复可移植复现合同。** 固定 ONNX Runtime、BLAS 线程与浮点配置，将线程契约加入训练、复演和视频生成入口；对不同线程设置做 label-agreement，而不是只记录差异。\n\n2. **训练相位条件 residual actor。** 输入本体状态、支撑状态、球相位、任务目标与短历史，输出低权限关节目标残差或受限力矩残差；先用 MotionDecode/MOSAIC 行为克隆，再用仿真 actor-critic 优化。\n\n3. **把奖励从“动作更大”改为动量闭环。** 显式奖励触球前后角动量抵消、质心捕获点、支撑多边形余量、落脚质量和恢复步数，同时继续保留射门误差、滑移、后退、抽动和硬安全门。\n\n4. **扩展到多情景局部盆地。** 对球位、来球速度、目标角、足球摩擦/恢复系数、G1 质量、控制时延、传感噪声和外力做分层课程；训练集与私有 holdout 严格隔离。\n\n5. **让三个角色独立成长又原子晋级。** 传球者按传球精度与恢复学习，射手按命中与随动学习，门将按真实触球/扑救学习；用 difference reward 和冻结对手快照防止多人一起变弱。\n\n6. **把闭环抽回 ROSClaw Core。** 提炼通用 `TeacherPrior`、`ResidualAuthority`、`MetricSuite`、`CounterfactualParent`、`LocalBasinGate`、`StrictReplayCommitment` 与 `PromotionCeiling` 接口；足球只保留任务适配器。\n\n7. **维持双轨输出。** 每一阶段同时交付机器证据与可视视频。视频可以更酷，但必须从通过验证的同一物理轨迹生成，并明确展示开发门与晋级上限。"
+      },
+      {
+        "id": "further_questions",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 继续推进前需要用实验回答的四个问题\n\n- 双臂随动增加后，能否通过动量感知 actor 同时把后退和尾段晃动压回父技能以下？\n\n- 在至少 100 个独立球位、速度、目标和摩擦 holdout 中，8.59 mm 单例精度能保留到什么分位数？\n\n- 训练门将时，如何冻结攻击难度并用 difference reward 避免“射手变弱导致门将成功率变高”？\n\n- 哪些 Growth 合同已经足够任务无关，可以进入 ROSClaw Core；哪些仍必须由 Soccer 提供语义适配？"
+      },
+      {
+        "id": "artifact_handoff",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 交付状态\n\n本报告是 2026年8月13日生成的只读本地快照。对应源码工作树包含尚未提交的 S4–S7 累积开发；报告没有执行提交、推送或真实机器人操作。最终视频为 36.73 秒、1920×1080、30 fps、1102 帧 H.264，并由视频清单绑定到通过验证的严格证据。"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-13T02:20:00+08:00",
+    "status": "ready",
+    "datasets": {
+      "headline_metrics": [
+        {
+          "target_error_m": 0.008589879158291716,
+          "target_error_gate_m": 0.03,
+          "arm_excursion_gain_rate": 0.24030155696234745,
+          "arm_excursion_floor_rate": 0.08,
+          "motion_energy_gain_rate": 0.2512530535339628,
+          "motion_energy_floor_rate": 0.1,
+          "neighborhood_eligible_rate": 1.0,
+          "eligible_candidate_count": 9,
+          "hard_safety_violation_count": 0,
+          "strict_replay_passed_count": 1
+        }
+      ],
+      "normalized_comparison": [
+        {
+          "sort_order": 1,
+          "metric": "手臂行程",
+          "family": "灵活性",
+          "series": "父技能",
+          "score": 100.0,
+          "raw_value": 0.11516191055277361,
+          "unit": "rad"
+        },
+        {
+          "sort_order": 1,
+          "metric": "手臂行程",
+          "family": "灵活性",
+          "series": "随动候选",
+          "score": 124.03,
+          "raw_value": 0.1428368098249757,
+          "unit": "rad"
+        },
+        {
+          "sort_order": 2,
+          "metric": "上身随动能量",
+          "family": "灵活性",
+          "series": "父技能",
+          "score": 100.0,
+          "raw_value": 0.14865649208738574,
+          "unit": "index"
+        },
+        {
+          "sort_order": 2,
+          "metric": "上身随动能量",
+          "family": "灵活性",
+          "series": "随动候选",
+          "score": 125.13,
+          "raw_value": 0.1860074951937176,
+          "unit": "index"
+        },
+        {
+          "sort_order": 3,
+          "metric": "手臂速度",
+          "family": "灵活性",
+          "series": "父技能",
+          "score": 100.0,
+          "raw_value": 0.6814130672222309,
+          "unit": "rad/s"
+        },
+        {
+          "sort_order": 3,
+          "metric": "手臂速度",
+          "family": "灵活性",
+          "series": "随动候选",
+          "score": 113.45,
+          "raw_value": 0.7730535945430025,
+          "unit": "rad/s"
+        },
+        {
+          "sort_order": 4,
+          "metric": "射门精度",
+          "family": "任务保持",
+          "series": "父技能",
+          "score": 100.0,
+          "raw_value": 0.008589879158291716,
+          "unit": "m"
+        },
+        {
+          "sort_order": 4,
+          "metric": "射门精度",
+          "family": "任务保持",
+          "series": "随动候选",
+          "score": 100.0,
+          "raw_value": 0.008589879158291716,
+          "unit": "m"
+        },
+        {
+          "sort_order": 5,
+          "metric": "触球平滑度",
+          "family": "稳定性",
+          "series": "父技能",
+          "score": 100.0,
+          "raw_value": 88.86617730929304,
+          "unit": "rad/s²"
+        },
+        {
+          "sort_order": 5,
+          "metric": "触球平滑度",
+          "family": "稳定性",
+          "series": "随动候选",
+          "score": 100.11,
+          "raw_value": 88.768008140659,
+          "unit": "rad/s²"
+        },
+        {
+          "sort_order": 6,
+          "metric": "踢后平滑度",
+          "family": "稳定性",
+          "series": "父技能",
+          "score": 100.0,
+          "raw_value": 47.190003830171314,
+          "unit": "rad/s²"
+        },
+        {
+          "sort_order": 6,
+          "metric": "踢后平滑度",
+          "family": "稳定性",
+          "series": "随动候选",
+          "score": 100.2,
+          "raw_value": 47.09648161418691,
+          "unit": "rad/s²"
+        },
+        {
+          "sort_order": 7,
+          "metric": "支撑脚稳定",
+          "family": "稳定性",
+          "series": "父技能",
+          "score": 100.0,
+          "raw_value": 0.046752336122172215,
+          "unit": "m"
+        },
+        {
+          "sort_order": 7,
+          "metric": "支撑脚稳定",
+          "family": "稳定性",
+          "series": "随动候选",
+          "score": 99.71,
+          "raw_value": 0.04688851509481577,
+          "unit": "m"
+        },
+        {
+          "sort_order": 8,
+          "metric": "根部冲击控制",
+          "family": "稳定性",
+          "series": "父技能",
+          "score": 100.0,
+          "raw_value": 2.7168743015692285,
+          "unit": "m/s²"
+        },
+        {
+          "sort_order": 8,
+          "metric": "根部冲击控制",
+          "family": "稳定性",
+          "series": "随动候选",
+          "score": 99.84,
+          "raw_value": 2.7213522235867713,
+          "unit": "m/s²"
+        },
+        {
+          "sort_order": 9,
+          "metric": "尾段抗晃动",
+          "family": "稳定性",
+          "series": "父技能",
+          "score": 100.0,
+          "raw_value": 0.000052768437179788004,
+          "unit": "index"
+        },
+        {
+          "sort_order": 9,
+          "metric": "尾段抗晃动",
+          "family": "稳定性",
+          "series": "随动候选",
+          "score": 94.42,
+          "raw_value": 0.00005588730497564177,
+          "unit": "index"
+        },
+        {
+          "sort_order": 10,
+          "metric": "抗后退能力",
+          "family": "稳定性",
+          "series": "父技能",
+          "score": 100.0,
+          "raw_value": 0.0020527057421941635,
+          "unit": "m/s"
+        },
+        {
+          "sort_order": 10,
+          "metric": "抗后退能力",
+          "family": "稳定性",
+          "series": "随动候选",
+          "score": 58.38,
+          "raw_value": 0.003516305028582403,
+          "unit": "m/s"
+        }
+      ],
+      "exact_metrics": [
+        {
+          "sort_order": 1,
+          "metric": "手臂行程 RMS",
+          "parent_value": 0.11516191055277361,
+          "candidate_value": 0.1428368098249757,
+          "delta_percent": 24.030155696234745,
+          "unit": "rad",
+          "interpretation": "可见随动提高，越高越好"
+        },
+        {
+          "sort_order": 2,
+          "metric": "上身随动能量",
+          "parent_value": 0.14865649208738574,
+          "candidate_value": 0.1860074951937176,
+          "delta_percent": 25.12530535339628,
+          "unit": "index",
+          "interpretation": "教师窗口内动作更充分，越高越好"
+        },
+        {
+          "sort_order": 3,
+          "metric": "手臂速度 RMS",
+          "parent_value": 0.6814130672222309,
+          "candidate_value": 0.7730535945430025,
+          "delta_percent": 13.448600728696476,
+          "unit": "rad/s",
+          "interpretation": "手臂随动更活跃，越高越好"
+        },
+        {
+          "sort_order": 4,
+          "metric": "射门目标误差",
+          "parent_value": 0.008589879158291716,
+          "candidate_value": 0.008589879158291716,
+          "delta_percent": 0.0,
+          "unit": "m",
+          "interpretation": "精度完全保持，越低越好"
+        },
+        {
+          "sort_order": 5,
+          "metric": "触球窗关节加速度 RMS",
+          "parent_value": 88.86617730929304,
+          "candidate_value": 88.768008140659,
+          "delta_percent": -0.1104651362908186,
+          "unit": "rad/s²",
+          "interpretation": "略微更平滑，越低越好"
+        },
+        {
+          "sort_order": 6,
+          "metric": "踢后关节加速度 RMS",
+          "parent_value": 47.190003830171314,
+          "candidate_value": 47.09648161418691,
+          "delta_percent": -0.19818280849774324,
+          "unit": "rad/s²",
+          "interpretation": "略微更平滑，越低越好"
+        },
+        {
+          "sort_order": 7,
+          "metric": "踢后支撑脚滑移",
+          "parent_value": 0.046752336122172215,
+          "candidate_value": 0.04688851509481577,
+          "delta_percent": 0.2912752443354119,
+          "unit": "m",
+          "interpretation": "略微退化但仍低于 0.06 m 门"
+        },
+        {
+          "sort_order": 8,
+          "metric": "踢后根部加速度 RMS",
+          "parent_value": 2.7168743015692285,
+          "candidate_value": 2.7213522235867713,
+          "delta_percent": 0.1648170498854115,
+          "unit": "m/s²",
+          "interpretation": "略微退化，越低越好"
+        },
+        {
+          "sort_order": 9,
+          "metric": "尾段晃动指数",
+          "parent_value": 0.000052768437179788004,
+          "candidate_value": 0.00005588730497564177,
+          "delta_percent": 5.910473048687878,
+          "unit": "index",
+          "interpretation": "退化但仍在窄容差内"
+        },
+        {
+          "sort_order": 10,
+          "metric": "踢后峰值后退速度",
+          "parent_value": 0.0020527057421941635,
+          "candidate_value": 0.003516305028582403,
+          "delta_percent": 71.30099958802277,
+          "unit": "m/s",
+          "interpretation": "相对退化明显，绝对值仍低于 0.01 m/s 门"
+        }
+      ],
+      "phase_progression": [
+        {
+          "order": 1,
+          "phase": "S4c",
+          "capability": "三 G1、单足球、共享世界；射手本体相位驱动门将预判",
+          "evidence": "攻击目标误差 5.51 cm；预判横移 0.251 m，比纯反应横移提高 84.7%，但门将未触球",
+          "claim_ceiling": "REJECTED_DEVELOPMENT"
+        },
+        {
+          "order": 2,
+          "phase": "S4d",
+          "capability": "门将拥有独立触球/扑救语义和有界封堵搜索",
+          "evidence": "首次真实触球扑救；横移 0.592 m；碰后/碰前球速比 0.685；无安全违规",
+          "claim_ceiling": "开发门通过，未晋级"
+        },
+        {
+          "order": 3,
+          "phase": "S5",
+          "capability": "MotionDecode 全身位置与速度教师经 PD 安全残差进入闭环",
+          "evidence": "射门误差降 67.9%；后退降 94.0%；支撑脚滑移降 22.8%；根部冲击降 4.5%",
+          "claim_ceiling": "开发门通过，未晋级"
+        },
+        {
+          "order": 4,
+          "phase": "S6",
+          "capability": "MotionDecode + OmniContact train-only 接触相对位移组合教师",
+          "evidence": "支撑脚滑移再降 15.5%；侧倾降 2.8%；踢后关节加速度降 3.6%；精度只损失 1.35 mm",
+          "claim_ceiling": "开发门通过，未晋级"
+        },
+        {
+          "order": 5,
+          "phase": "S7a",
+          "capability": "29 关节位置/速度权限解耦与局部盆地门",
+          "evidence": "相对 S6：误差降 54.8%；后退降 64.1%；根部冲击降 3.0%；但上身能量只增 0.066%",
+          "claim_ceiling": "稳定精准改善，灵活性未突破"
+        },
+        {
+          "order": 6,
+          "phase": "S7b",
+          "capability": "MOSAIC 足球语义教师转为仅双臂、首尾归零的位置随动残差",
+          "evidence": "手臂行程 +24.0%；随动能量 +25.1%；9/9 邻域通过；目标误差 8.59 mm",
+          "claim_ceiling": "SIM_ONLY 开发门通过，未晋级"
+        }
+      ],
+      "validation_results": [
+        {
+          "order": 1,
+          "check": "最终 evidence validator",
+          "result": "PASS",
+          "scope": "证据、请求、轨迹文件、轨迹内容摘要、实现、教师和线程合同一致"
+        },
+        {
+          "order": 2,
+          "check": "pytest",
+          "result": "163 passed, 4 skipped",
+          "scope": "Python 3.12 + 当前 ROSClaw Core 源码堆叠；4 个 skip 均有明确能力边界说明"
+        },
+        {
+          "order": 3,
+          "check": "ruff check",
+          "result": "PASS",
+          "scope": "全仓"
+        },
+        {
+          "order": 4,
+          "check": "ruff format --check",
+          "result": "PASS",
+          "scope": "96 个文件格式正确"
+        },
+        {
+          "order": 5,
+          "check": "strict mypy",
+          "result": "PASS",
+          "scope": "5 个 S7 核心新增模块；安装可选 torch 类型环境"
+        },
+        {
+          "order": 6,
+          "check": "视频清单与 ffprobe",
+          "result": "PASS",
+          "scope": "36.73 秒、1920×1080、30 fps、1102 帧 H.264；source_evidence_passed=true"
+        },
+        {
+          "order": 7,
+          "check": "GPU 可用性快照",
+          "result": "4× RTX A6000 available",
+          "scope": "本轮最终物理权威仍为 CPU MuJoCo；GPU 不是该证据的真值来源"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "final_evidence",
+      "label": "S7 visible follow-through strict evidence",
+      "href": "https://github.com/ros-claw/rosclaw-soccer",
+      "query": {
+        "engine": "DuckDB 1.x",
+        "language": "sql",
+        "id": "s7_follow_through_metric_extract_v1",
+        "executed_at": "2026-08-13T02:03:00+08:00",
+        "description": "从最终严格证据中展开父技能、保留候选、自然度与随动指标。",
+        "tables_used": [
+          "g1-follow-through-growth.json"
+        ],
+        "filters": [
+          "schema_version = rosclaw_soccer.g1_follow_through_evidence.v1",
+          "passed = true",
+          "strict_replay = true",
+          "activation_ceiling = SIM_ONLY"
+        ],
+        "metric_definitions": [
+          "目标误差：球穿过训练球门平面时的落点与请求目标点之间的欧氏距离，单位米。",
+          "候选归一化得分：越大越好指标为 candidate/parent*100；越小越好指标为 parent/candidate*100；父技能恒为100。",
+          "局部邻域通过率：9个相邻时序与融合权重候选中满足全部精度、稳定、安全和可见动作门的比例。",
+          "随动能量：教师激活窗口内腰臂速度的汇总运动能量指数，不等同于能耗。"
+        ],
+        "sql": "WITH evidence AS (SELECT * FROM read_json_auto('g1-follow-through-growth.json')), metrics AS (SELECT * FROM evidence, LATERAL (VALUES ('手臂行程','灵活性',parent_follow_through.arm_excursion_rms_rad,candidate_follow_through.arm_excursion_rms_rad,'rad',TRUE,1), ('上身随动能量','灵活性',parent_follow_through.upper_body_motion_energy,candidate_follow_through.upper_body_motion_energy,'index',TRUE,2), ('手臂速度','灵活性',parent_follow_through.arm_velocity_rms_rad_s,candidate_follow_through.arm_velocity_rms_rad_s,'rad/s',TRUE,3), ('射门精度','任务保持',candidate_naturalness.target_error_m,candidate_naturalness.target_error_m,'m',FALSE,4), ('触球平滑度','稳定性',search.parent_naturalness.contact_joint_acceleration_rms_rad_s2,candidate_naturalness.contact_joint_acceleration_rms_rad_s2,'rad/s^2',FALSE,5), ('踢后平滑度','稳定性',search.parent_naturalness.post_contact_joint_acceleration_rms_rad_s2,candidate_naturalness.post_contact_joint_acceleration_rms_rad_s2,'rad/s^2',FALSE,6), ('支撑脚稳定','稳定性',search.parent_naturalness.post_contact_support_slip_m,candidate_naturalness.post_contact_support_slip_m,'m',FALSE,7), ('根部冲击控制','稳定性',search.parent_naturalness.post_contact_root_acceleration_rms_m_s2,candidate_naturalness.post_contact_root_acceleration_rms_m_s2,'m/s^2',FALSE,8), ('尾段抗晃动','稳定性',search.parent_naturalness.tail_wobble_index,candidate_naturalness.tail_wobble_index,'index',FALSE,9), ('抗后退能力','稳定性',search.parent_naturalness.post_contact_peak_backward_velocity_mps,candidate_naturalness.post_contact_peak_backward_velocity_mps,'m/s',FALSE,10)) AS m(metric,family,parent_value,candidate_value,unit,higher_is_better,sort_order)) SELECT metric,family,parent_value,candidate_value,unit,round(CASE WHEN higher_is_better THEN 100*candidate_value/parent_value ELSE 100*parent_value/candidate_value END,2) AS candidate_normalized_score,sort_order FROM metrics ORDER BY sort_order"
+      }
+    },
+    {
+      "id": "phase_reports",
+      "label": "S4–S7 implementation reports",
+      "href": "https://github.com/ros-claw/rosclaw-soccer",
+      "query": {
+        "engine": "Reviewed Markdown",
+        "language": "markdown",
+        "id": "s4_s7_phase_report_review_v1",
+        "executed_at": "2026-08-13T02:08:00+08:00",
+        "description": "阶段报告人工核对，覆盖三角色共享世界、门将学习、MotionDecode、OmniContact 与关节组灵活性。",
+        "tables_used": [
+          "three-role-growth-s4c.zh-CN.md",
+          "goalkeeper-growth-s4d.zh-CN.md",
+          "imitation-growth-s5.zh-CN.md",
+          "composite-imitation-growth-s6.zh-CN.md",
+          "joint-group-agility-growth-s7.zh-CN.md"
+        ],
+        "sql": "SELECT phase, capability, evidence, claim_ceiling FROM reviewed_phase_reports WHERE phase IN ('S4c','S4d','S5','S6','S7a','S7b') ORDER BY implementation_order"
+      }
+    },
+    {
+      "id": "validation_run",
+      "label": "2026-08-13 local validation run",
+      "href": "https://github.com/ros-claw/rosclaw-soccer",
+      "query": {
+        "engine": "Local validation inventory",
+        "language": "sql",
+        "id": "local_validation_20260813",
+        "executed_at": "2026-08-13T02:18:00+08:00",
+        "description": "Python 3.12 项目环境中的证据校验、测试、lint、format 与聚焦 strict mypy 复查。",
+        "tables_used": [
+          "validation_command_results"
+        ],
+        "sql": "SELECT check_name, result, scope FROM validation_command_results WHERE run_date = DATE '2026-08-13' ORDER BY execution_order"
+      }
+    },
+    {
+      "id": "video_manifest",
+      "label": "S7 1080p video manifest",
+      "href": "https://github.com/ros-claw/rosclaw-soccer",
+      "query": {
+        "engine": "ffprobe 7.1.1 and video manifest",
+        "language": "json",
+        "id": "s7_video_manifest_v3",
+        "executed_at": "2026-08-13T02:00:00+08:00",
+        "description": "最终宣传视频的分辨率、时长、帧数、编解码与上游证据绑定。",
+        "tables_used": [
+          "g1-visible-follow-through-growth-1080p.json"
+        ],
+        "sql": "SELECT duration_sec, width, height, fps, frame_count, codec_name, source_evidence_passed, trajectory_digest, video_hash FROM read_json_auto('g1-visible-follow-through-growth-1080p.json')"
+      }
+    }
+  ],
+  "package_info": {
+    "audience": "technical",
+    "snapshot_date": "2026-08-13",
+    "source_commit": "362de9950fb22d5b16335299c31f6c33a1ba9857",
+    "source_branch": "agent/s4-multiagent-roll",
+    "evidence_sha256": "683f5d67217fbcabe12977db6f02a6f75d30bc2ade6f8a90cfe2bd276fbd3150",
+    "trajectory_sha256": "5238333d46902909f8bfe2b3085d9cae078b94f98d57f88a39e213723538081b",
+    "trajectory_content_digest": "138b34fc0d966876b1d0cea160b5b028a212c2f103816adb0cb09de63e229927",
+    "video_sha256": "c542450c3b0d68429b694ffcb2f9fe5bf5d04edf165390af451cfcffe0be8c08",
+    "report_structure": [
+      "Title",
+      "Technical summary",
+      "Key findings with visual evidence",
+      "Scope, data, and metric definitions",
+      "Methodology",
+      "Limitations, uncertainty, and robustness checks",
+      "Recommended next steps",
+      "Further questions"
+    ],
+    "chart_map": [
+      {
+        "segment": "可见灵活性提高了，稳定性只是受控保持而非全面改善",
+        "question": "增加可见随动后，候选是否保留原有精度与稳定性？",
+        "family": "Comparison & Ranking",
+        "type": "grouped horizontal bar",
+        "fields": [
+          "metric",
+          "score",
+          "series"
+        ],
+        "claim": "灵活性显著提高，任务保持，部分稳定代理略有退化",
+        "palette_policy": "hard two-root cap: blue + gold"
+      }
+    ],
+    "omitted_visuals": [
+      "阶段演进只有六个离散里程碑，使用精确表格而非伪时间趋势图。",
+      "验证结果是异质检查项，使用审计表而非把 PASS/计数强行画成一张图。"
+    ],
+    "reproducibility_notes": [
+      "Final evidence validator passed against the current source checkout.",
+      "pytest: 163 passed, 4 skipped under Python 3.12 with current ROSClaw Core source stacked.",
+      "ruff check and ruff format --check passed.",
+      "strict mypy passed for five S7 core modules with optional torch installed.",
+      "The final evidence binds OMP_NUM_THREADS, OPENBLAS_NUM_THREADS and MKL_NUM_THREADS as UNSET."
+    ]
+  }
+}

@@ -7,6 +7,7 @@ from rosclaw_soccer.world.field import (
     build_g1_coupled_stadium_model,
     build_g1_stadium_model,
     build_g1_three_player_stadium_model,
+    g1_ball_inside_goal_mouth,
     g1_goal_net_contact_plane_x,
     g1_stadium_scene_hash,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "build_g1_coupled_stadium_model",
     "build_g1_stadium_model",
     "build_g1_three_player_stadium_model",
+    "g1_ball_inside_goal_mouth",
     "g1_goal_net_contact_plane_x",
     "g1_stadium_scene_hash",
 ]

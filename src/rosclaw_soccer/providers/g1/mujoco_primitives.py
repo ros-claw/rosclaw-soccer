@@ -23,6 +23,46 @@ _MOTION_REL = Path("policy/robonaldo/model/freekick_motion.npz")
 _RECOVERY_REGIME_COMMITMENT = (
     "sha256:c97343bd33b38b0e6dd40cbc1e8871164d209e71c07f7e63b70ec60e07fefc8a"
 )
+_G1_SAGITTAL_MIRROR_ORDER = np.asarray(
+    (
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        12,
+        13,
+        14,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+    ),
+    dtype=np.int64,
+)
+_G1_SAGITTAL_MIRROR_SIGN = np.asarray(
+    (1.0, -1.0, -1.0, 1.0, 1.0, -1.0) * 2
+    + (-1.0, -1.0, 1.0)
+    + (1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0) * 2,
+    dtype=np.float64,
+)
 
 
 @dataclass(frozen=True)
@@ -110,7 +150,10 @@ def load_robonaldo(root: Path) -> tuple[Any, Any, Any, np.ndarray]:
 def fill_policy_state(state: Any, model: Any, data: Any, ids: ModelIds) -> None:
     state.q = data.qpos[7:36].copy()
     state.dq = data.qvel[6:35].copy()
-    state.tau_est = data.ctrl.copy()
+    # The unprefixed striker always owns the first canonical 29 actuators.
+    # Three-player stadiums append independent controller blocks; exposing all
+    # 87 values would silently change the qualified policy observation shape.
+    state.tau_est = data.ctrl[:29].copy()
     state.root_lin_vel_b = data.qvel[0:3].copy()
     state.root_ang_vel_b = data.qvel[3:6].copy()
     state.torso_pos_w = data.xpos[ids.torso].copy()
@@ -158,7 +201,34 @@ def adapt_shot_target(
     if 335 < policy_frame <= 430:
         adapted[6] -= parameters.recovery_step_length * 0.4
         adapted[8] += parameters.recovery_step_yaw
+    if parameters.kick_foot == "left":
+        adapted = mirror_g1_joint_positions(adapted)
     return adapted
+
+
+def mirror_g1_joint_positions(values: np.ndarray) -> np.ndarray:
+    """Reflect canonical G1 joint positions across the sagittal plane.
+
+    The operation swaps both legs and both arms and negates every roll/yaw
+    axis.  It is an exact involution and contains no learned or hardware path.
+    """
+
+    joints = np.asarray(values, dtype=np.float64)
+    if joints.ndim < 1 or joints.shape[-1] != 29 or not np.all(np.isfinite(joints)):
+        raise ValueError("G1 sagittal mirror requires finite [..., 29] joint positions")
+    return np.asarray(
+        joints[..., _G1_SAGITTAL_MIRROR_ORDER] * _G1_SAGITTAL_MIRROR_SIGN,
+        dtype=np.float64,
+    )
+
+
+def mirror_g1_joint_gains(values: np.ndarray) -> np.ndarray:
+    """Swap left/right gain channels without applying coordinate signs."""
+
+    gains = np.asarray(values, dtype=np.float64)
+    if gains.ndim < 1 or gains.shape[-1] != 29 or not np.all(np.isfinite(gains)):
+        raise ValueError("G1 sagittal gain mirror requires finite [..., 29] values")
+    return np.asarray(gains[..., _G1_SAGITTAL_MIRROR_ORDER], dtype=np.float64)
 
 
 def contact_observation(model: Any, data: Any, ids: ModelIds) -> Contacts:
@@ -240,7 +310,14 @@ def roll_pitch(quaternion_wxyz: np.ndarray) -> tuple[float, float]:
     return roll, pitch
 
 
-def build_shared_recovery_controller(qualification: G1AssetQualification) -> Any:
+def build_shared_recovery_controller(
+    qualification: G1AssetQualification,
+    *,
+    regime_commitment: str | None = None,
+    regime_eligible: bool = True,
+    regime_reasons: tuple[str, ...] = (),
+    config: Any | None = None,
+) -> Any:
     """Bind Core's still-generic G1 recovery controller to Soccer assets.
 
     This narrow bridge is the remaining embodiment dependency after S2.  It
@@ -255,27 +332,73 @@ def build_shared_recovery_controller(qualification: G1AssetQualification) -> Any
     _, _, _, mujoco_to_isaac = load_robonaldo(qualification.asset_root)
     with np.load(qualification.asset_root / _MOTION_REL, allow_pickle=False) as motion:
         standing_pose = np.asarray(motion["joint_pos"][0][mujoco_to_isaac], dtype=np.float64)
+    active_config = config or G1CerebellarRecoveryConfig(
+        start_policy_frame=280,
+        blend_frames=80,
+        standing_pose_blend=0.02,
+        roll_posture_bias_rad=0.0,
+        target_smoothing_alpha=0.60,
+        target_smoothing_start_policy_frame=280,
+        target_smoothing_joint_group="upper_body",
+    )
     return G1CerebellarRecoveryController(
         body_hash=qualification.body_hash,
         motion_hash=qualification.motion_hash,
-        regime_commitment=_RECOVERY_REGIME_COMMITMENT,
-        regime_eligible=True,
-        regime_reasons=(),
+        regime_commitment=regime_commitment or _RECOVERY_REGIME_COMMITMENT,
+        regime_eligible=regime_eligible,
+        regime_reasons=regime_reasons,
         standing_pose=standing_pose,
         # Bind the frozen shared post-impact contract explicitly.  Older Core
         # revisions exposed this as ``shared_post_impact_recovery_config``;
         # newer revisions keep only the generic config/controller API.  The
         # explicit values preserve trajectory compatibility across both APIs.
-        config=G1CerebellarRecoveryConfig(
-            start_policy_frame=280,
-            blend_frames=80,
-            standing_pose_blend=0.02,
-            roll_posture_bias_rad=0.0,
-            target_smoothing_alpha=0.60,
-            target_smoothing_start_policy_frame=280,
-            target_smoothing_joint_group="upper_body",
-        ),
+        config=active_config,
     )
+
+
+def shared_post_impact_recovery_config() -> Any:
+    """Return the frozen recovery config shared by passer and shooter roles."""
+
+    from rosclaw.simforge.g1_cerebellar_recovery import G1CerebellarRecoveryConfig
+
+    return G1CerebellarRecoveryConfig(
+        start_policy_frame=280,
+        blend_frames=80,
+        standing_pose_blend=0.02,
+        roll_posture_bias_rad=0.0,
+        target_smoothing_alpha=0.60,
+        target_smoothing_start_policy_frame=280,
+        target_smoothing_joint_group="upper_body",
+    )
+
+
+def quaternion_multiply(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    """Multiply and normalize two finite wxyz quaternions."""
+
+    left_value = np.asarray(left, dtype=np.float64)
+    right_value = np.asarray(right, dtype=np.float64)
+    if (
+        left_value.shape != (4,)
+        or right_value.shape != (4,)
+        or not np.all(np.isfinite(left_value))
+        or not np.all(np.isfinite(right_value))
+    ):
+        raise ValueError("quaternion multiply requires two finite wxyz vectors")
+    left_w, left_x, left_y, left_z = map(float, left_value)
+    right_w, right_x, right_y, right_z = map(float, right_value)
+    value = np.asarray(
+        (
+            left_w * right_w - left_x * right_x - left_y * right_y - left_z * right_z,
+            left_w * right_x + left_x * right_w + left_y * right_z - left_z * right_y,
+            left_w * right_y - left_x * right_z + left_y * right_w + left_z * right_x,
+            left_w * right_z + left_x * right_y - left_y * right_x + left_z * right_w,
+        ),
+        dtype=np.float64,
+    )
+    norm = float(np.linalg.norm(value))
+    if norm <= 1e-12:
+        raise ValueError("quaternion product has zero norm")
+    return value / norm
 
 
 __all__ = [
@@ -286,6 +409,10 @@ __all__ = [
     "contact_observation",
     "fill_policy_state",
     "load_robonaldo",
+    "mirror_g1_joint_gains",
+    "mirror_g1_joint_positions",
     "policy_repeat_count",
+    "quaternion_multiply",
     "roll_pitch",
+    "shared_post_impact_recovery_config",
 ]

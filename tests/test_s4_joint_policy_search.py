@@ -12,6 +12,10 @@ from rosclaw_soccer.growth.joint_policy_search import (
     learn_joint_policy_generation,
 )
 from rosclaw_soccer.growth.role_learning import SoccerRole
+from rosclaw_soccer.skills.team.shared_world import (
+    G1GoalkeeperConfig,
+    trained_three_role_skill_simulation_kwargs,
+)
 
 
 def _hash(value: str) -> str:
@@ -22,7 +26,19 @@ def _parents() -> tuple[RolePolicyVector, ...]:
     values = {
         SoccerRole.PASSER: (-0.04, 0.10, -0.04, 0.75, 0.80, 0.03),
         SoccerRole.SHOOTER: (2.10, 0.085, 0.010, -0.065, 0.90, 0.055),
-        SoccerRole.GOALKEEPER: (0.12, 1.35, 0.25, 0.06, 0.20, 0.05),
+        SoccerRole.GOALKEEPER: (
+            0.12,
+            1.35,
+            0.25,
+            0.06,
+            0.20,
+            0.05,
+            230.0,
+            0.65,
+            0.70,
+            250.0,
+            0.0,
+        ),
     }
     spaces = {item.role: item for item in default_three_role_search_spaces()}
     return tuple(
@@ -38,8 +54,11 @@ def _parents() -> tuple[RolePolicyVector, ...]:
 
 def _probes(parents: tuple[RolePolicyVector, ...]) -> tuple[MirroredRoleProbe, ...]:
     probes = []
-    direction = (1.0, -0.5, 0.25, 0.75, -0.25, 0.5)
     for role_index, parent in enumerate(parents):
+        direction = tuple(
+            (1.0, -0.5, 0.25, 0.75, -0.25, 0.5, 0.4, -0.3, 0.2, -0.4, 0.3)[index]
+            for index in range(len(parent.values))
+        )
         for probe_index, seed in enumerate((11, 17, 23, 29)):
             sign = -1.0 if probe_index % 2 else 1.0
             perturbation = tuple(sign * value for value in direction)
@@ -147,4 +166,22 @@ def test_joint_search_rejects_wrong_parent_binding() -> None:
             parents=parents,
             spaces=default_three_role_search_spaces(),
             probes=tuple(probes),
+        )
+
+
+def test_retained_keeper_uses_bounded_proprioceptive_anticipation() -> None:
+    values = trained_three_role_skill_simulation_kwargs()
+    keeper = values["goalkeeper_config"]
+    assert isinstance(keeper, G1GoalkeeperConfig)
+    assert keeper.anticipation_enabled
+    assert keeper.anticipation_start_policy_frame == 230
+    assert values["unified_stadium_scene"] is True
+    assert values["shooter_joint_guard_config"].prediction_horizon_sec == 0.20
+
+
+def test_keeper_rejects_invalid_anticipation_window() -> None:
+    with pytest.raises(ValueError, match="distance window"):
+        G1GoalkeeperConfig(
+            anticipation_minimum_foot_ball_distance_m=1.0,
+            anticipation_maximum_foot_ball_distance_m=0.5,
         )

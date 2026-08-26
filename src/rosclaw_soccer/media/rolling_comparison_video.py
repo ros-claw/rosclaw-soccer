@@ -286,9 +286,9 @@ def _sample_pose(
 ) -> NDArray[np.float64]:
     upper = int(np.searchsorted(time, simulation_time, side="right"))
     if upper <= 0:
-        return pose[0].copy()
+        return np.asarray(pose[0], dtype=np.float64).copy()
     if upper >= len(time):
-        return pose[-1].copy()
+        return np.asarray(pose[-1], dtype=np.float64).copy()
     lower = upper - 1
     ratio = float((simulation_time - time[lower]) / (time[upper] - time[lower]))
     value: NDArray[np.float64] = np.empty(7, dtype=np.float64)

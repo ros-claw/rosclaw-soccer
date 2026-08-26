@@ -138,6 +138,7 @@ def test_target_conditioned_actor_uses_ball_state_and_fails_outside_envelope(
     monkeypatch,
 ) -> None:
     actor = _target_conditioned_actor()
+    assert actor.target_conditioned
 
     def fake_jac(_model, _data, jacobian, _rotation, _point, _body_id) -> None:
         jacobian[1, 6] = 0.5

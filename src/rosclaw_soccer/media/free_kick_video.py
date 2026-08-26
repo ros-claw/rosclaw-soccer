@@ -32,9 +32,12 @@ from rosclaw_soccer.providers.g1.asset_qualification import (
     qualify_g1_assets,
     trajectory_digest,
 )
+from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.world.field import (
     G1TrainingGoalSpec,
     build_g1_stadium_model,
+    build_g1_three_player_stadium_model,
     g1_stadium_scene_hash,
 )
 
@@ -73,10 +76,11 @@ class G1FreeKickVideoResult:
     clips: tuple[G1FreeKickVideoClip, ...]
     source_evidence_passed: bool
     candidate_only: bool
+    physical_three_g1_shared_world: bool = False
     visualization_only: bool = True
     pixels_used_for_scoring: bool = False
     activation_ceiling: str = "SIM_ONLY"
-    schema_version: str = "rosclaw_soccer.g1_free_kick_video.v2"
+    schema_version: str = "rosclaw_soccer.g1_free_kick_video.v3"
 
     def to_dict(self) -> dict[str, Any]:
         return {**asdict(self), "clips": [asdict(clip) for clip in self.clips]}
@@ -139,6 +143,14 @@ def render_g1_free_kick_showcase_video(
         raise ValueError("free-kick video rejects real-hardware evidence")
     if claims.get("rendered_pixels_used_for_scoring") is not False:
         raise ValueError("free-kick video rejects pixel-scored evidence")
+    front_duel = evidence.get("front_duel_config")
+    if front_duel is not None:
+        if not isinstance(front_duel, dict):
+            raise ValueError("free-kick front-duel configuration is invalid")
+        if claims.get("front_striker_generated_hard_shot") is not True:
+            raise ValueError("front-duel video requires a striker-generated physical shot")
+        if claims.get("physical_three_g1_shared_world") is not True:
+            raise ValueError("front-duel video requires one physical three-G1 world")
     # Asset qualification imports MuJoCo.  Select EGL before that first
     # import; setting MUJOCO_GL only at Renderer construction is too late in a
     # headless process because MuJoCo has already selected its GL backend.
@@ -147,7 +159,15 @@ def render_g1_free_kick_showcase_video(
     if qualification.body_hash != evidence.get("body_hash"):
         raise ValueError("free-kick video Body hash does not match evidence")
     goal = G1TrainingGoalSpec(**dict(evidence["goal_spec"]))
-    if g1_stadium_scene_hash(asset_root, goal) != evidence.get("stadium_scene_hash"):
+    base_scene_hash = g1_stadium_scene_hash(asset_root, goal)
+    expected_scene_hash = (
+        base_scene_hash
+        if front_duel is None
+        else hash_json(
+            {"base_scene_hash": base_scene_hash, "front_duel_config": front_duel}
+        )
+    )
+    if expected_scene_hash != evidence.get("stadium_scene_hash"):
         raise ValueError("free-kick stadium scene hash mismatch")
     trajectory_path = Path(str(evidence["trajectory_path"])).expanduser().resolve()
     if trajectory_path == checkout or checkout in trajectory_path.parents:
@@ -193,7 +213,25 @@ def render_g1_free_kick_showcase_video(
     try:
         import mujoco
 
-        model = build_g1_stadium_model(asset_root, goal)
+        model = (
+            build_g1_stadium_model(asset_root, goal)
+            if front_duel is None
+            else build_g1_three_player_stadium_model(
+                asset_root,
+                passer_origin_m=_xyz(front_duel.get("teammate_origin_m"), "team-mate origin"),
+                passer_yaw_rad=0.0,
+                goalkeeper_origin_m=(
+                    goal.plane_x_m
+                    - _number(
+                        front_duel.get("goalkeeper_depth_from_goal_line_m"),
+                        "goalkeeper depth",
+                    ),
+                    0.0,
+                    0.0,
+                ),
+                spec=goal,
+            )
+        )
         _configure_offscreen_framebuffer(model, width=width, height=height)
         data = mujoco.MjData(model)
         renderer = mujoco.Renderer(model, height=height, width=width)
@@ -228,6 +266,7 @@ def render_g1_free_kick_showcase_video(
                 crossing=crossing,
                 contact_time=contact_time,
                 timelines=timelines,
+                front_duel=front_duel is not None,
                 stream=cast(BinaryIO, process.stdin),
             )
         except BaseException:
@@ -251,7 +290,13 @@ def render_g1_free_kick_showcase_video(
     target_label = (
         str(result.get("declared_target_corner", "precision_target")).replace("_", "-").upper()
     )
-    challenge_label = "REGULATION PRECISION" if goal.regulation_field_enabled else target_label
+    challenge_label = (
+        "THREE-G1 AERIAL PRECISION"
+        if front_duel is not None
+        else "REGULATION PRECISION"
+        if goal.regulation_field_enabled
+        else target_label
+    )
     clip_specs = (
         ("01-intro", f"{challenge_label} CHALLENGE", "VERIFIED_POSE_HOLD"),
         ("02-continuous", "RUN-UP → STRIKE → RECOVERY", "STRICT_PHYSICS_REPLAY"),
@@ -302,6 +347,7 @@ def render_g1_free_kick_showcase_video(
         clips=clips,
         source_evidence_passed=evidence_passed,
         candidate_only=not evidence_passed,
+        physical_three_g1_shared_world=front_duel is not None,
     )
     manifest.write_text(
         json.dumps(value.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -350,10 +396,12 @@ def _write_frames(
     crossing: tuple[float, float, float] | None,
     contact_time: float,
     timelines: tuple[tuple[float, ...], ...],
+    front_duel: bool,
     stream: BinaryIO,
 ) -> None:
     ball_joint = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "ball_free")
     ball_qpos = int(model.jnt_qposadr[ball_joint])
+    auxiliary_qpos = _auxiliary_qpos(mujoco, model) if front_duel else {}
     for clip_index, timeline in enumerate(timelines):
         for simulation_time in timeline:
             frame = _render_pose(
@@ -368,6 +416,7 @@ def _write_frames(
                 simulation_time=simulation_time,
                 contact_time=contact_time,
                 ball_qpos=ball_qpos,
+                auxiliary_qpos=auxiliary_qpos,
                 intro_camera=clip_index == 0,
                 goal_camera=clip_index == 2,
                 final_camera=clip_index == 3,
@@ -388,6 +437,7 @@ def _render_pose(
     simulation_time: float,
     contact_time: float,
     ball_qpos: int,
+    auxiliary_qpos: dict[str, tuple[int, Array]],
     intro_camera: bool,
     goal_camera: bool,
     final_camera: bool,
@@ -397,6 +447,15 @@ def _render_pose(
     data.qpos[:7] = pelvis
     data.qpos[7:36] = joints
     data.qpos[ball_qpos : ball_qpos + 7] = ball
+    for role, (base_qpos, joint_qpos) in auxiliary_qpos.items():
+        prefix = "teammate" if role == "passer" else role
+        role_pelvis, role_joints = _sample_auxiliary_pose(
+            trajectory,
+            simulation_time,
+            prefix=prefix,
+        )
+        data.qpos[base_qpos : base_qpos + 7] = role_pelvis
+        data.qpos[joint_qpos] = role_joints
     mujoco.mj_forward(model, data)
     if intro_camera:
         camera.lookat[:] = ((goal.plane_x_m - 3.4) * 0.5, 0.0, 0.64)
@@ -429,12 +488,16 @@ def _render_pose(
     elif simulation_time < contact_time + 0.15:
         camera.lookat[:] = (1.55, 0.16, 0.70)
         camera.distance = 4.10
-        camera.azimuth = 100.0
+        # Film from the open side of the striker lane.  The attached team-mate
+        # waits at negative y and otherwise masks the measured foot contact.
+        camera.azimuth = 260.0
         camera.elevation = -9.0
     elif simulation_time < contact_time + 1.50:
         camera.lookat[:] = (goal.plane_x_m - 2.75, 0.34, 0.72)
         camera.distance = max(6.25, goal.plane_x_m - 1.2)
-        camera.azimuth = 108.0
+        # Stay on the field side of the near post so the frame cannot occlude
+        # the ball flight in the continuous take.
+        camera.azimuth = 180.0
         camera.elevation = -9.0
     else:
         # Return to the robot for the long recovery tail.  This is the part a
@@ -533,7 +596,15 @@ def _ffmpeg_command(
         dict(evidence.get("goal_spec", {})).get("regulation_field_enabled", False)
     )
     teacher = result.get("loft_teacher_executed") is True
-    if passed:
+    front_duel = evidence.get("front_duel_config") is not None
+    if front_duel:
+        title_text = "ROSClaw Soccer · THREE G1 FRONT-GENERATED HARD SHOT"
+        footer_text = (
+            "CPU MUJOCO · STRICT REPLAY · FRONT FOOT CONTACT · SIM ONLY"
+            if passed
+            else "DEVELOPMENT CANDIDATE · FRONT FOOT CONTACT · STRICT REPLAY · SIM ONLY"
+        )
+    elif passed:
         title_text = "ROSClaw Soccer · G1 LEARNED FREE KICK"
         footer_text = "CPU MUJOCO · STRICT REPLAY · CONTINUOUS PHYSICS · SIM ONLY"
     elif teacher:
@@ -589,9 +660,15 @@ def _ffmpeg_command(
     target_label = (
         str(result.get("declared_target_corner", "precision_target")).replace("_", "-").upper()
     )
+    if front_duel:
+        target_label = "WIDE MID-HEIGHT"
     regulation_label = "REGULATION GOAL · " if regulation_field else ""
     headings = (
-        f"{shot_distance:.2f} m SET PIECE · {regulation_label}{target_label}",
+        (
+            f"FRONT G1 · {shot_distance:.2f} m HARD SHOT · {regulation_label}{target_label}"
+            if front_duel
+            else f"{shot_distance:.2f} m SET PIECE · {regulation_label}{target_label}"
+        ),
         f"{runup:.2f} m APPROACH · {runup_peak:.2f} m/s PEAK · "
         f"HANDOFF-CONTACT {_duration_text(transition_delay)}",
         f"GOAL PLANE {_metric_text(plane_error)} · LIMIT {threshold:.2f} m · SHOT {speed:.2f} m/s",
@@ -687,6 +764,97 @@ def _duration_text(value: float | None) -> str:
     """Format a measured transition duration without inventing zero delay."""
 
     return "N/A" if value is None else f"{value:.2f} s"
+
+
+def _auxiliary_qpos(mujoco: Any, model: Any) -> dict[str, tuple[int, Array]]:
+    value: dict[str, tuple[int, Array]] = {}
+    for role in ("passer", "goalkeeper"):
+        prefix = role + "_"
+        root_joint = int(
+            mujoco.mj_name2id(
+                model,
+                mujoco.mjtObj.mjOBJ_JOINT,
+                prefix + "floating_base_joint",
+            )
+        )
+        if root_joint < 0:
+            raise ValueError(f"front-duel video model is missing {role} root joint")
+        joint_ids = np.asarray(
+            [
+                int(
+                    mujoco.mj_name2id(
+                        model,
+                        mujoco.mjtObj.mjOBJ_JOINT,
+                        prefix + name,
+                    )
+                )
+                for name in G1_DDS_JOINT_NAMES
+            ],
+            dtype=np.int64,
+        )
+        if np.any(joint_ids < 0):
+            raise ValueError(f"front-duel video model is missing {role} joints")
+        value[role] = (
+            int(model.jnt_qposadr[root_joint]),
+            np.asarray(model.jnt_qposadr[joint_ids], dtype=np.int64),
+        )
+    return value
+
+
+def _sample_auxiliary_pose(
+    trajectory: dict[str, Array],
+    simulation_time: float,
+    *,
+    prefix: str,
+) -> tuple[Array, Array]:
+    time = np.asarray(trajectory["time"], dtype=np.float64)
+    upper = int(np.searchsorted(time, simulation_time, side="right"))
+    if upper <= 0:
+        lower = upper = 0
+        ratio = 0.0
+    elif upper >= len(time):
+        lower = upper = len(time) - 1
+        ratio = 0.0
+    else:
+        lower = upper - 1
+        ratio = float((simulation_time - time[lower]) / (time[upper] - time[lower]))
+    pelvis = _interpolate_pose(
+        np.asarray(trajectory[f"{prefix}_pelvis_pose"][lower], dtype=np.float64),
+        np.asarray(trajectory[f"{prefix}_pelvis_pose"][upper], dtype=np.float64),
+        ratio,
+    )
+    left = np.asarray(trajectory[f"{prefix}_joint_position"][lower], dtype=np.float64)
+    right = np.asarray(trajectory[f"{prefix}_joint_position"][upper], dtype=np.float64)
+    return pelvis, left + ratio * (right - left)
+
+
+def _interpolate_pose(left: Array, right: Array, ratio: float) -> Array:
+    left_value = np.asarray(left, dtype=np.float64)
+    right_value = np.asarray(right, dtype=np.float64)
+    value: NDArray[np.float64] = np.empty(7, dtype=np.float64)
+    value[:3] = left_value[:3] + ratio * (right_value[:3] - left_value[:3])
+    start: NDArray[np.float64] = left_value[3:] / np.linalg.norm(left_value[3:])
+    end: NDArray[np.float64] = right_value[3:] / np.linalg.norm(right_value[3:])
+    if float(np.dot(start, end)) < 0.0:
+        end = -end
+    value[3:] = start + ratio * (end - start)
+    value[3:] /= np.linalg.norm(value[3:])
+    return value
+
+
+def _xyz(value: Any, label: str) -> tuple[float, float, float]:
+    if not isinstance(value, list | tuple) or len(value) != 3:
+        raise ValueError(f"free-kick {label} is invalid")
+    return tuple(_number(item, label) for item in value)  # type: ignore[return-value]
+
+
+def _number(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"free-kick {label} is invalid")
+    converted = float(value)
+    if not math.isfinite(converted):
+        raise ValueError(f"free-kick {label} is non-finite")
+    return converted
 
 
 def _file_hash(path: Path) -> str:

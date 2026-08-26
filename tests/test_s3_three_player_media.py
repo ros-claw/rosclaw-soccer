@@ -7,6 +7,12 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.evidence.three_player import (
+    _validate_agility_metrics,
+    _validate_composite_imitation_metrics,
+    _validate_follow_through_metrics,
+    _validate_imitation_metrics,
+    _validate_implementation,
+    _validate_metrics,
     _validate_request,
     load_three_player_trajectory,
 )
@@ -123,6 +129,333 @@ def test_three_player_metrics_reject_non_physical_pass_speed_jump(
     )
     with pytest.raises(ValueError, match="positive jump"):
         validate_bundle(outside / "evidence.json", source_checkout=source)
+
+
+def test_three_player_development_candidate_needs_anticipation() -> None:
+    result = {
+        "passed": True,
+        "finite_state": True,
+        "pass_contact_observed": True,
+        "shot_contact_observed": True,
+        "goal_crossed": True,
+        "goalkeeper_enabled": True,
+        "pass_precision_passed": True,
+        "joint_limit_violation": False,
+        "torque_limit_violation": False,
+        "actuator_saturation": False,
+        "passer_post_kick_fall": False,
+        "shooter_post_kick_fall": False,
+        "goalkeeper_joint_limit_violation": False,
+        "pass_delivery_error_m": 0.03,
+        "target_error_m": 0.06,
+        "goalkeeper_lateral_displacement_m": 0.25,
+        "goalkeeper_min_pelvis_height_m": 0.75,
+        "goalkeeper_ball_contact_observed": False,
+        "goalkeeper_anticipation_active_fraction": 0.032,
+        "pass_contact_time_sec": 5.0,
+        "shot_contact_time_sec": 7.5,
+    }
+    report = {
+        "pass_distance_m": 3.0,
+        "shot_distance_m": 6.5,
+        "pass_speed_max_positive_step_mps": 0.0,
+        "result": result,
+    }
+    _validate_metrics(report, allow_development_candidate=True)
+    with pytest.raises(ValueError, match="did not anticipate"):
+        _validate_metrics(
+            {**report, "result": {**result, "goalkeeper_anticipation_active_fraction": 0.0}},
+            allow_development_candidate=True,
+        )
+
+
+def test_goalkeeper_block_has_its_own_success_semantics() -> None:
+    result = {
+        "passed": False,
+        "finite_state": True,
+        "pass_contact_observed": True,
+        "shot_contact_observed": True,
+        "goal_crossed": False,
+        "goalkeeper_enabled": True,
+        "pass_precision_passed": True,
+        "goalkeeper_ball_contact_observed": True,
+        "goalkeeper_save_observed": True,
+        "joint_limit_violation": False,
+        "torque_limit_violation": False,
+        "actuator_saturation": False,
+        "passer_post_kick_fall": False,
+        "shooter_post_kick_fall": False,
+        "goalkeeper_joint_limit_violation": False,
+        "pass_delivery_error_m": 0.03,
+        "goalkeeper_min_pelvis_height_m": 0.73,
+        "pass_contact_time_sec": 5.0,
+        "shot_contact_time_sec": 7.0,
+        "goalkeeper_ball_contact_time_sec": 8.0,
+    }
+    report = {
+        "schema_version": "rosclaw_soccer.goalkeeper_block_evidence.v1",
+        "passed": True,
+        "promotion_status": "PASSED_DEVELOPMENT_GATE_NOT_PROMOTED",
+        "baseline_goal_crossed": True,
+        "baseline_goalkeeper_contact_observed": False,
+        "pass_distance_m": 3.0,
+        "shot_to_block_distance_m": 5.2,
+        "selected_policy_hash": "sha256:" + "a" * 64,
+        "search": {
+            "selected_trial": {
+                "eligible": True,
+                "safety_cost": 0.0,
+                "post_contact_speed_ratio": 0.68,
+                "policy_hash": "sha256:" + "a" * 64,
+            }
+        },
+        "claims": {
+            "goalkeeper_save_achieved": True,
+            "candidate_promoted": False,
+        },
+        "result": result,
+    }
+
+    _validate_metrics(report)
+    rejected = {
+        **report,
+        "passed": False,
+        "promotion_status": "REJECTED_DEVELOPMENT",
+        "baseline_goal_crossed": False,
+        "baseline_goalkeeper_contact_observed": True,
+    }
+    _validate_metrics(rejected, allow_development_candidate=True)
+    with pytest.raises(ValueError, match="did not pass"):
+        _validate_metrics(rejected)
+    with pytest.raises(ValueError, match="save or safety"):
+        _validate_metrics({**report, "result": {**result, "goal_crossed": True}})
+
+
+def test_composite_imitation_requires_train_only_contact_teacher() -> None:
+    prior = "sha256:" + "a" * 64
+    result = {
+        "passed": True,
+        "finite_state": True,
+        "pass_contact_observed": True,
+        "shot_contact_observed": True,
+        "goal_crossed": True,
+        "goalkeeper_enabled": True,
+        "pass_precision_passed": True,
+        "target_error_m": 0.02,
+        "shooter_motion_prior_hash": prior,
+        "shooter_contact_prior_hash": prior,
+    }
+    tracking = {
+        "teacher_displacement_error_rms_rad": 0.69,
+        "peak_contact_target_delta_rad": 0.001,
+        "active_fraction": 0.02,
+        "schema_version": "rosclaw_soccer.g1_contact_imitation_metrics.v1",
+    }
+    report = {
+        "passed": True,
+        "promotion_status": "PASSED_DEVELOPMENT_GATE_NOT_PROMOTED",
+        "motion_prior_hash": prior,
+        "contact_prior_hash": prior,
+        "selected_candidate_hash": prior,
+        "candidate_contact_tracking": tracking,
+        "search": {
+            "selected_trial": {
+                "eligible": True,
+                "candidate_hash": prior,
+                "omnicontact_tracking": tracking,
+            }
+        },
+        "claims": {
+            "omnicontact_train_only_contact_teacher": True,
+            "omnicontact_heldout_metrics_accessed": False,
+            "teacher_direct_torque_output": False,
+            "candidate_promoted": False,
+        },
+        "result": result,
+    }
+
+    _validate_composite_imitation_metrics(report)
+    with pytest.raises(ValueError, match="held-out"):
+        _validate_composite_imitation_metrics(
+            {
+                **report,
+                "claims": {**report["claims"], "omnicontact_heldout_metrics_accessed": True},
+            }
+        )
+
+
+def test_imitation_evidence_binds_teacher_and_stability_plasticity_gate() -> None:
+    prior_hash = "sha256:" + "b" * 64
+    candidate_hash = "sha256:" + "c" * 64
+    result = {
+        "passed": True,
+        "finite_state": True,
+        "pass_contact_observed": True,
+        "shot_contact_observed": True,
+        "goal_crossed": True,
+        "goalkeeper_enabled": True,
+        "pass_precision_passed": True,
+        "joint_limit_violation": False,
+        "torque_limit_violation": False,
+        "actuator_saturation": False,
+        "passer_post_kick_fall": False,
+        "shooter_post_kick_fall": False,
+        "goalkeeper_joint_limit_violation": False,
+        "target_error_m": 0.02,
+        "shooter_motion_prior_hash": prior_hash,
+    }
+    report = {
+        "passed": True,
+        "promotion_status": "PASSED_DEVELOPMENT_GATE_NOT_PROMOTED",
+        "motion_prior_hash": prior_hash,
+        "selected_candidate_hash": candidate_hash,
+        "pass_speed_max_positive_step_mps": 0.02,
+        "search": {"selected_trial": {"eligible": True, "candidate_hash": candidate_hash}},
+        "claims": {
+            "motiondecode_whole_body_position_teacher": True,
+            "motiondecode_whole_body_velocity_teacher": True,
+            "candidate_promoted": False,
+        },
+        "result": result,
+    }
+
+    _validate_imitation_metrics(report)
+    with pytest.raises(ValueError, match="motion-prior hash"):
+        _validate_imitation_metrics(
+            {**report, "result": {**result, "shooter_motion_prior_hash": "sha256:wrong"}}
+        )
+
+
+def test_agility_evidence_binds_local_basin_and_stability_metrics() -> None:
+    prior_hash = "sha256:" + "b" * 64
+    contact_hash = "sha256:" + "d" * 64
+    candidate_hash = "sha256:" + "c" * 64
+    report = {
+        "passed": True,
+        "promotion_status": "PASSED_DEVELOPMENT_GATE_NOT_PROMOTED",
+        "motion_prior_hash": prior_hash,
+        "contact_prior_hash": contact_hash,
+        "selected_candidate_hash": candidate_hash,
+        "search": {
+            "selected_trial": {"eligible": True, "candidate_hash": candidate_hash},
+            "neighborhood": {"passed": True},
+        },
+        "candidate_naturalness": {
+            "post_contact_support_slip_m": 0.05,
+            "post_contact_peak_backward_velocity_mps": 0.002,
+        },
+        "claims": {
+            "joint_group_position_velocity_authority_separated": True,
+            "counterfactual_parent_retained": True,
+            "local_neighborhood_gate_passed": True,
+            "motiondecode_whole_body_teacher": True,
+            "omnicontact_train_only_contact_teacher": True,
+            "omnicontact_heldout_metrics_accessed": False,
+            "teacher_direct_torque_output": False,
+            "candidate_promoted": False,
+        },
+        "result": {
+            "passed": True,
+            "finite_state": True,
+            "pass_contact_observed": True,
+            "shot_contact_observed": True,
+            "goal_crossed": True,
+            "goalkeeper_enabled": True,
+            "pass_precision_passed": True,
+            "target_error_m": 0.009,
+            "shooter_motion_prior_hash": prior_hash,
+            "shooter_contact_prior_hash": contact_hash,
+        },
+    }
+
+    _validate_agility_metrics(report)
+    with pytest.raises(ValueError, match="local neighborhood"):
+        _validate_agility_metrics(
+            {
+                **report,
+                "search": {**report["search"], "neighborhood": {"passed": False}},
+            }
+        )
+
+
+def test_three_player_development_evidence_binds_current_implementation(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    with pytest.raises(ValueError, match="implementation source is missing"):
+        _validate_implementation(
+            {"schema_version": "rosclaw_soccer.three_role_development_evidence.v1"},
+            source,
+        )
+
+
+def test_follow_through_evidence_requires_visible_plasticity_and_retention() -> None:
+    motion = "sha256:motion"
+    contact = "sha256:contact"
+    mosaic = "sha256:mosaic"
+    report = {
+        "passed": True,
+        "promotion_status": "PASSED_DEVELOPMENT_GATE_NOT_PROMOTED",
+        "motion_prior_hash": motion,
+        "contact_prior_hash": contact,
+        "mosaic_prior_hash": mosaic,
+        "selected_candidate_hash": "sha256:candidate",
+        "search": {
+            "neighborhood_eligible_fraction": 1.0,
+            "selected_trial": {"eligible": True, "candidate_hash": "sha256:candidate"},
+        },
+        "candidate_naturalness": {
+            "post_contact_support_slip_m": 0.047,
+            "post_contact_peak_backward_velocity_mps": 0.003,
+        },
+        "parent_follow_through": {
+            "arm_excursion_rms_rad": 0.10,
+            "upper_body_motion_energy": 0.10,
+        },
+        "candidate_follow_through": {
+            "arm_excursion_rms_rad": 0.12,
+            "upper_body_motion_energy": 0.12,
+        },
+        "result": {
+            "passed": True,
+            "finite_state": True,
+            "pass_contact_observed": True,
+            "shot_contact_observed": True,
+            "goal_crossed": True,
+            "goalkeeper_enabled": True,
+            "pass_precision_passed": True,
+            "joint_limit_violation": False,
+            "torque_limit_violation": False,
+            "actuator_saturation": False,
+            "passer_post_kick_fall": False,
+            "shooter_post_kick_fall": False,
+            "goalkeeper_joint_limit_violation": False,
+            "target_error_m": 0.009,
+            "shooter_motion_prior_hash": motion,
+            "shooter_contact_prior_hash": contact,
+            "shooter_agility_prior_hash": mosaic,
+        },
+        "claims": {
+            "semantic_mosaic_soccer_teacher": True,
+            "endpoint_neutral_pose_residual": True,
+            "arm_only_plasticity_boundary": True,
+            "visible_plasticity_floor_passed": True,
+            "counterfactual_parent_retained": True,
+            "local_neighborhood_gate_passed": True,
+            "teacher_direct_torque_output": False,
+            "candidate_promoted": False,
+        },
+    }
+
+    _validate_follow_through_metrics(report)
+    with pytest.raises(ValueError, match="arm-excursion"):
+        _validate_follow_through_metrics(
+            {
+                **report,
+                "candidate_follow_through": {
+                    "arm_excursion_rms_rad": 0.105,
+                    "upper_body_motion_energy": 0.12,
+                },
+            }
+        )
 
 
 def test_three_player_timeline_keeps_continuous_and_recovery_clips(tmp_path: Path) -> None:

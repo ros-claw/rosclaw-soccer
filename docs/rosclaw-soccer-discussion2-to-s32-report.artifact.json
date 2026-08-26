@@ -1,0 +1,740 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "ROSClaw Soccer 从“讨论2”到 S32：实施复盘与下一阶段决策",
+    "description": "从 Shared Athlete Foundation、Goalkeeper V2 到四卡物理强化学习、手臂专项与精英高速球的证据化复盘。",
+    "generatedAt": "2026-08-14T14:06:39+08:00",
+    "sources": [
+      {
+        "id": "discussion2",
+        "label": "rosclaw_soccer讨论2.md 设计基线",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Reviewed Markdown",
+          "language": "markdown",
+          "id": "discussion2_requirement_review_v1",
+          "executed_at": "2026-08-14T12:40:00+08:00",
+          "description": "逐段提取 S8–S11 目标、验收标准、角色边界与 ROSClaw 通用化要求。",
+          "tables_used": [
+            "rosclaw_soccer讨论2.md"
+          ]
+        }
+      },
+      {
+        "id": "phase_evidence",
+        "label": "S8–S32 阶段报告与考试证据",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Reviewed Markdown and JSON",
+          "language": "json",
+          "id": "s8_s32_evidence_review_v1",
+          "executed_at": "2026-08-14T13:25:00+08:00",
+          "description": "交叉核对阶段报告、四卡训练报告、GPU holdout、CPU MuJoCo 考试、配对冠军门与视频清单。",
+          "tables_used": [
+            "s8-athlete-foundation-goalkeeper-v2-baseline.zh-CN.md",
+            "s9-goalkeeper-v2-online-ppo-closed-loop.zh-CN.md",
+            "s10-causal-hierarchical-goalkeeper-development.zh-CN.md",
+            "s11-large-scale-rl-goalkeeper-root-frame.zh-CN.md",
+            "s12-physics-rl-goalkeeper-growth.zh-CN.md",
+            "s13-agile-goalkeeper-growth.zh-CN.md",
+            "s21-s24-anatomical-goalkeeper-motiondecode-sonic-v11.zh-CN.md",
+            "s25-s28-goalkeeper-arm-specialist-hard-shot.zh-CN.md",
+            "s29-s32-elite-goalkeeper-arm-growth.zh-CN.md",
+            "paired-champion-decision.json",
+            "cpu-final-elite-arm-scale-85-v2-160.json"
+          ],
+          "metric_definitions": [
+            "首球扑救率：第一脚射门被门将阻挡、接触或改变出界结果的 episode 比例。",
+            "手套扑救率：明确由规范手套碰撞体首先完成有效接触的 episode 比例，区别于身体封堵。",
+            "恢复率：第一次扑救后满足姿态与安全条件并进入第二球准备状态的 episode 比例。",
+            "第二球扑救率：连续 episode 内第二脚射门被扑救的比例。",
+            "硬安全失败：非有限状态、跌倒、关节越界或扭矩越界；所有结论上限为 SIM_ONLY。"
+          ]
+        }
+      },
+      {
+        "id": "training_inventory",
+        "label": "S12–S32 非 smoke 四卡物理训练清单",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Node.js read-only inventory",
+          "language": "javascript",
+          "id": "physical_training_inventory_v1",
+          "executed_at": "2026-08-14T13:50:00+08:00",
+          "description": "读取 28 个非 smoke、非 single-debug 的 training-report.json，并以每个分支最后一次累计 physics_world_steps 为准求和。",
+          "tables_used": [
+            "28 durable training-report.json files"
+          ],
+          "filters": [
+            "phase between S12 and S32",
+            "directory name does not contain smoke",
+            "directory name does not contain single-debug",
+            "physics_world_steps > 0"
+          ],
+          "metric_definitions": [
+            "物理世界步：MJWarp/MuJoCo 多步环境推进的累计仿真步数。",
+            "策略样本：训练报告所对应的策略决策样本；当前控制比为每 10 个物理步一个样本。"
+          ]
+        }
+      },
+      {
+        "id": "s31_cpu_exam",
+        "label": "S31 160-episode CPU MuJoCo 最终考试",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "JSON evidence reader",
+          "language": "json",
+          "id": "s31_cpu_exam_extract_v1",
+          "executed_at": "2026-08-14T13:42:00+08:00",
+          "description": "读取 S31 保守手臂专家的父基线、候选、门限、种子与晋级状态。",
+          "tables_used": [
+            "s31-conservative-elite-ppo-4gpu-dev-v1/cpu-final-elite-arm-scale-85-v2-160.json"
+          ],
+          "filters": [
+            "physics_backend = mujoco_cpu",
+            "episode_count = 160",
+            "paired_rollouts = true",
+            "activation_ceiling = SIM_ONLY"
+          ]
+        }
+      },
+      {
+        "id": "validation_run",
+        "label": "2026-08-14 本地源码复查",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Local CLI",
+          "language": "shell",
+          "id": "local_validation_20260814",
+          "executed_at": "2026-08-14T14:02:00+08:00",
+          "description": "在 Python 3.12、当前 Soccer 源码与堆叠 ROSClaw Core 源码环境中执行测试和静态检查。",
+          "tables_used": [
+            "rosclaw-soccer source tree",
+            "ROSClaw Core continual modules"
+          ]
+        }
+      },
+      {
+        "id": "repo_state",
+        "label": "2026-08-14 Git 工作树状态",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "Git read-only inspection",
+          "language": "shell",
+          "id": "git_state_20260814",
+          "executed_at": "2026-08-14T13:35:00+08:00",
+          "description": "记录 Soccer 与 Core 的分支、HEAD 以及修改/未跟踪文件数，限定本报告为工作树快照。",
+          "tables_used": [
+            "soccer git status",
+            "core git status"
+          ]
+        }
+      },
+      {
+        "id": "video_inventory",
+        "label": "S9–S31 代表视频清单",
+        "href": "https://github.com/ros-claw/rosclaw-soccer",
+        "query": {
+          "engine": "ffprobe 7.1.1 and video manifests",
+          "language": "json",
+          "id": "goalkeeper_video_inventory_v1",
+          "executed_at": "2026-08-14T13:55:00+08:00",
+          "description": "核对七个代表视频的时长、分辨率、帧率以及开发/冠军标签。",
+          "tables_used": [
+            "S9, S11, S12, S13, S21, S28 and S31 video manifests"
+          ]
+        }
+      }
+    ],
+    "cards": [
+      {
+        "id": "card_physics_steps",
+        "description": "S12–S32 的 28 条耐久、非 smoke 四卡物理训练分支累计。",
+        "dataset": "headline_metrics",
+        "sourceId": "training_inventory",
+        "source": {
+          "id": "training_inventory",
+          "label": "S12–S32 非 smoke 四卡物理训练清单",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Node.js read-only inventory",
+            "language": "javascript",
+            "id": "physical_training_inventory_v1",
+            "executed_at": "2026-08-14T13:50:00+08:00",
+            "description": "按分支最终累计步数求和。",
+            "tables_used": ["28 durable training-report.json files"],
+            "sql": "SELECT sum(final_physics_world_steps) AS physics_world_steps, count(*) AS durable_branches FROM durable_training_reports WHERE phase BETWEEN 12 AND 32 AND is_smoke = false AND is_single_debug = false"
+          }
+        },
+        "metrics": [
+          {"label": "物理世界步", "field": "physics_world_steps", "format": "number"},
+          {"label": "耐久训练分支", "field": "durable_branches", "format": "number"}
+        ]
+      },
+      {
+        "id": "card_policy_samples",
+        "description": "多步物理训练实际消费的策略决策样本，不含 S9–S11 的早期解析世界样本。",
+        "dataset": "headline_metrics",
+        "sourceId": "training_inventory",
+        "source": {
+          "id": "training_inventory",
+          "label": "S12–S32 非 smoke 四卡物理训练清单",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Node.js read-only inventory",
+            "language": "javascript",
+            "id": "physical_training_inventory_v1",
+            "executed_at": "2026-08-14T13:50:00+08:00",
+            "description": "每 10 个物理步对应一个策略样本。",
+            "tables_used": ["28 durable training-report.json files"],
+            "sql": "SELECT sum(final_physics_world_steps)/10 AS policy_samples, 23920640 AS analytic_samples FROM durable_training_reports WHERE phase BETWEEN 12 AND 32 AND is_smoke = false AND is_single_debug = false"
+          }
+        },
+        "metrics": [
+          {"label": "策略样本", "field": "policy_samples", "format": "number"},
+          {"label": "早期解析样本", "field": "analytic_samples", "format": "number"}
+        ]
+      },
+      {
+        "id": "card_s31_arm",
+        "description": "S31 候选相对同一 160-episode 零残差基线的平均手部位移倍数。",
+        "dataset": "headline_metrics",
+        "sourceId": "s31_cpu_exam",
+        "source": {
+          "id": "s31_cpu_exam",
+          "label": "S31 160-episode CPU MuJoCo 最终考试",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "JSON evidence reader",
+            "language": "json",
+            "id": "s31_cpu_exam_extract_v1",
+            "executed_at": "2026-08-14T13:42:00+08:00",
+            "description": "候选平均最大手部位移除以零残差基线。",
+            "tables_used": ["cpu-final-elite-arm-scale-85-v2-160.json"],
+            "sql": "SELECT candidate.mean_maximum_hand_displacement_m/baseline.mean_maximum_hand_displacement_m AS s31_hand_displacement_ratio, 100*candidate.mean_maximum_hand_displacement_m AS s31_hand_displacement_cm FROM read_json_auto('cpu-final-elite-arm-scale-85-v2-160.json')"
+          }
+        },
+        "metrics": [
+          {"label": "手部位移倍数", "field": "s31_hand_displacement_ratio", "format": "number"},
+          {"label": "候选位移（cm）", "field": "s31_hand_displacement_cm", "format": "number"}
+        ]
+      },
+      {
+        "id": "card_validation",
+        "description": "当前 Soccer 全量测试；跳过项单独列示且不计入通过。",
+        "dataset": "headline_metrics",
+        "sourceId": "validation_run",
+        "source": {
+          "id": "validation_run",
+          "label": "2026-08-14 本地源码复查",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Local CLI",
+            "language": "shell",
+            "id": "local_validation_20260814",
+            "executed_at": "2026-08-14T14:02:00+08:00",
+            "description": "Soccer pytest 与静态检查。",
+            "tables_used": ["rosclaw-soccer source tree"],
+            "sql": "SELECT passed AS soccer_tests_passed, skipped AS soccer_tests_skipped FROM validation_command_results WHERE check_name = 'Soccer pytest' AND run_date = DATE '2026-08-14'"
+          }
+        },
+        "metrics": [
+          {"label": "测试通过", "field": "soccer_tests_passed", "format": "number"},
+          {"label": "测试跳过", "field": "soccer_tests_skipped", "format": "number"}
+        ]
+      },
+      {
+        "id": "card_safety",
+        "description": "S31 最终 CPU 考试中候选的失败、关节与扭矩违规率之和。",
+        "dataset": "headline_metrics",
+        "sourceId": "s31_cpu_exam",
+        "source": {
+          "id": "s31_cpu_exam",
+          "label": "S31 160-episode CPU MuJoCo 最终考试",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "JSON evidence reader",
+            "language": "json",
+            "id": "s31_cpu_exam_extract_v1",
+            "executed_at": "2026-08-14T13:42:00+08:00",
+            "description": "汇总 failed、joint-limit 与 torque-limit 违规率。",
+            "tables_used": ["cpu-final-elite-arm-scale-85-v2-160.json"],
+            "sql": "SELECT candidate.failed_rate+candidate.joint_limit_violation_rate+candidate.torque_limit_violation_rate AS s31_hard_safety_rate_sum, candidate.episodes AS s31_cpu_episodes FROM read_json_auto('cpu-final-elite-arm-scale-85-v2-160.json')"
+          }
+        },
+        "metrics": [
+          {"label": "硬安全违规率和", "field": "s31_hard_safety_rate_sum", "format": "percent"},
+          {"label": "考试 episodes", "field": "s31_cpu_episodes", "format": "number"}
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "chart_training_steps",
+        "title": "S12–S32 各阶段簇的多步物理训练量",
+        "subtitle": "单位：物理世界步；仅计 28 条非 smoke、非 single-debug 四卡训练分支。",
+        "showDescription": true,
+        "intent": "comparison",
+        "question": "四卡多步物理训练投入主要分布在哪些阶段？",
+        "rationale": "六个同口径阶段簇适合用单序列水平条形图比较绝对规模；横向布局为长阶段标签保留空间。",
+        "type": "bar",
+        "dataset": "training_inventory",
+        "sourceId": "training_inventory",
+        "source": {
+          "id": "training_inventory",
+          "label": "S12–S32 非 smoke 四卡物理训练清单",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Node.js read-only inventory",
+            "language": "javascript",
+            "id": "physical_training_inventory_v1",
+            "executed_at": "2026-08-14T13:50:00+08:00",
+            "description": "按阶段簇汇总 durable training-report 的最终累计物理步数。",
+            "tables_used": ["28 durable training-report.json files"],
+            "filters": ["S12–S32", "exclude smoke", "exclude single-debug"],
+            "sql": "SELECT phase_group, focus, count(*) AS branches, sum(final_physics_world_steps) AS physics_world_steps, sum(final_physics_world_steps)/10 AS policy_samples FROM durable_training_reports WHERE phase BETWEEN 12 AND 32 AND is_smoke = false AND is_single_debug = false GROUP BY phase_group, focus ORDER BY phase_group"
+          }
+        },
+        "encodings": {
+          "x": {"field": "phase_group", "type": "nominal", "label": "阶段簇"},
+          "y": {"field": "physics_world_steps", "type": "quantitative", "label": "物理世界步"},
+          "tooltip": [
+            {"field": "branches", "type": "quantitative", "label": "耐久分支数"},
+            {"field": "policy_samples", "type": "quantitative", "label": "策略样本"},
+            {"field": "focus", "type": "text", "label": "训练主题"}
+          ]
+        },
+        "xAxisTitle": "阶段簇",
+        "yAxisTitle": "物理世界步",
+        "valueFormat": "number",
+        "unit": "steps",
+        "layout": "full",
+        "maxRows": 10,
+        "settings": {
+          "orientation": "horizontal",
+          "showValues": true,
+          "sort": "custom"
+        },
+        "palette": {
+          "kind": "categorical",
+          "colors": ["blue"]
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "table_commitment_matrix",
+        "title": "“讨论2”承诺兑现矩阵",
+        "subtitle": "以设计文档中的明确要求为基线；完成表示已有代码与证据，部分完成表示合同或候选存在但缺少完整验收。",
+        "showDescription": true,
+        "dataset": "commitment_matrix",
+        "density": "spacious",
+        "sourceId": "discussion2",
+        "source": {
+          "id": "discussion2",
+          "label": "rosclaw_soccer讨论2.md 设计基线",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Reviewed Markdown",
+            "language": "markdown",
+            "id": "discussion2_requirement_review_v1",
+            "executed_at": "2026-08-14T12:40:00+08:00",
+            "description": "需求逐项映射到代码和证据。",
+            "tables_used": ["rosclaw_soccer讨论2.md", "S8–S32 implementation tree"],
+            "sql": "SELECT implementation_order AS order, requirement, status, evidence, gap FROM reviewed_requirement_matrix ORDER BY implementation_order"
+          }
+        },
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "requirement", "label": "讨论2要求", "type": "text"},
+          {"field": "status", "label": "状态", "type": "text"},
+          {"field": "evidence", "label": "已实现/证据", "type": "text"},
+          {"field": "gap", "label": "剩余缺口", "type": "text"}
+        ]
+      },
+      {
+        "id": "table_phase_progression",
+        "title": "S8–S32 实施与决策时间线",
+        "subtitle": "不同阶段的场景与指标口径发生过变化，因此保留原始考试语义，不把异质指标强行画成单一上升曲线。",
+        "showDescription": true,
+        "dataset": "phase_progression",
+        "density": "spacious",
+        "sourceId": "phase_evidence",
+        "source": {
+          "id": "phase_evidence",
+          "label": "S8–S32 阶段报告与考试证据",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Reviewed Markdown and JSON",
+            "language": "json",
+            "id": "s8_s32_evidence_review_v1",
+            "executed_at": "2026-08-14T13:25:00+08:00",
+            "description": "阶段能力、权威考试与决策复核。",
+            "tables_used": ["S8–S32 reports and evidence JSON"],
+            "sql": "SELECT implementation_order AS order, phase, capability, authoritative_result, decision, lesson FROM reviewed_phase_evidence WHERE phase_start >= 8 AND phase_end <= 32 ORDER BY implementation_order"
+          }
+        },
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "phase", "label": "阶段", "type": "text"},
+          {"field": "capability", "label": "新增能力", "type": "text"},
+          {"field": "authoritative_result", "label": "权威结果", "type": "text"},
+          {"field": "decision", "label": "决策", "type": "text"},
+          {"field": "lesson", "label": "关键认识", "type": "text"}
+        ]
+      },
+      {
+        "id": "table_key_exams",
+        "title": "关键 CPU/GPU 考试的精确对照",
+        "subtitle": "比例均来自各阶段自己的固定 seeds；suite 不同，不支持跨行直接排名。",
+        "showDescription": true,
+        "dataset": "key_exams",
+        "density": "spacious",
+        "sourceId": "phase_evidence",
+        "source": {
+          "id": "phase_evidence",
+          "label": "S8–S32 阶段报告与考试证据",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Reviewed JSON evidence",
+            "language": "json",
+            "id": "key_exam_extract_v1",
+            "executed_at": "2026-08-14T13:30:00+08:00",
+            "description": "抽取会改变阶段结论的关键父代/候选指标。",
+            "tables_used": ["CPU exams", "GPU holdouts", "paired champion decisions"],
+            "sql": "SELECT evidence_order AS order, phase, suite, baseline_summary AS baseline, candidate_summary AS candidate, verdict FROM reviewed_key_exams ORDER BY evidence_order"
+          }
+        },
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "phase", "label": "阶段", "type": "text"},
+          {"field": "suite", "label": "考试", "type": "text"},
+          {"field": "baseline", "label": "基线", "type": "text"},
+          {"field": "candidate", "label": "候选", "type": "text"},
+          {"field": "verdict", "label": "结论", "type": "text"}
+        ]
+      },
+      {
+        "id": "table_training_inventory",
+        "title": "四卡多步物理训练投入",
+        "subtitle": "累计 99,200,000 物理步和 9,920,000 策略样本；不含 smoke、single-debug，也不含 S9–S11 解析世界样本。",
+        "showDescription": true,
+        "dataset": "training_inventory",
+        "density": "spacious",
+        "sourceId": "training_inventory",
+        "source": {
+          "id": "training_inventory",
+          "label": "S12–S32 非 smoke 四卡物理训练清单",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Node.js read-only inventory",
+            "language": "javascript",
+            "id": "physical_training_inventory_v1",
+            "executed_at": "2026-08-14T13:50:00+08:00",
+            "description": "按阶段簇汇总 durable branches。",
+            "tables_used": ["28 durable training-report.json files"],
+            "sql": "SELECT phase_group, focus, count(*) AS branches, sum(final_physics_world_steps) AS physics_world_steps, sum(final_physics_world_steps)/10 AS policy_samples FROM durable_training_reports WHERE phase BETWEEN 12 AND 32 AND is_smoke = false AND is_single_debug = false GROUP BY phase_group, focus ORDER BY phase_group"
+          }
+        },
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "phase_group", "label": "阶段簇", "type": "text"},
+          {"field": "focus", "label": "训练主题", "type": "text"},
+          {"field": "branches", "label": "分支数", "type": "number", "align": "right"},
+          {"field": "physics_world_steps", "label": "物理世界步", "type": "number", "align": "right"},
+          {"field": "policy_samples", "label": "策略样本", "type": "number", "align": "right"}
+        ]
+      },
+      {
+        "id": "table_validation",
+        "title": "报告生成前的本地验证",
+        "subtitle": "Python 3.12；Soccer 使用当前 Core 源码叠加。首次仅用 Soccer 独立 uv 环境因缺少 PyYAML 在收集期失败，随后改用声明依赖完整的 Core 环境重跑。",
+        "showDescription": true,
+        "dataset": "validation_results",
+        "density": "spacious",
+        "sourceId": "validation_run",
+        "source": {
+          "id": "validation_run",
+          "label": "2026-08-14 本地源码复查",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "Local CLI",
+            "language": "shell",
+            "id": "local_validation_20260814",
+            "executed_at": "2026-08-14T14:02:00+08:00",
+            "description": "测试、静态检查、编译和 Git whitespace 检查。",
+            "tables_used": ["validation command results"],
+            "sql": "SELECT execution_order AS order, check_name AS check, result, scope FROM validation_command_results WHERE run_date = DATE '2026-08-14' ORDER BY execution_order"
+          }
+        },
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "check", "label": "检查项", "type": "text"},
+          {"field": "result", "label": "结果", "type": "text"},
+          {"field": "scope", "label": "范围/说明", "type": "text"}
+        ]
+      },
+      {
+        "id": "table_videos",
+        "title": "代表性视频证据索引",
+        "subtitle": "视频只用于观察与传播，不参与策略评分；路径相对于 rosclaw_football/evidence。",
+        "showDescription": true,
+        "dataset": "video_inventory",
+        "density": "spacious",
+        "sourceId": "video_inventory",
+        "source": {
+          "id": "video_inventory",
+          "label": "S9–S31 代表视频清单",
+          "href": "https://github.com/ros-claw/rosclaw-soccer",
+          "query": {
+            "engine": "ffprobe 7.1.1 and video manifests",
+            "language": "json",
+            "id": "goalkeeper_video_inventory_v1",
+            "executed_at": "2026-08-14T13:55:00+08:00",
+            "description": "核对代表视频容器元数据与证据标签。",
+            "tables_used": ["seven video manifests"],
+            "sql": "SELECT video_order AS order, phase, duration_sec, format, truth_label, relative_path FROM reviewed_video_inventory ORDER BY video_order"
+          }
+        },
+        "layout": "full",
+        "defaultSort": {"field": "order", "direction": "asc"},
+        "columns": [
+          {"field": "order", "label": "序号", "type": "number", "align": "right"},
+          {"field": "phase", "label": "阶段", "type": "text"},
+          {"field": "duration_sec", "label": "时长（s）", "type": "number", "align": "right"},
+          {"field": "format", "label": "规格", "type": "text"},
+          {"field": "truth_label", "label": "证据标签", "type": "text"},
+          {"field": "relative_path", "label": "相对路径", "type": "text"}
+        ]
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "# ROSClaw Soccer 从“讨论2”到 S32：实施复盘与下一阶段决策"
+      },
+      {
+        "id": "technical_summary",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 技术结论：已经形成可运行、会拒绝退化的自进化闭环，但离真正的运动员仍有一整层全身能力\n\n**从“讨论2”开始，最大的完成项不是某个扑救动作，而是把共享运动员底座、个体血统、因果观测、四卡训练、CPU 严格考试、父代记忆和 fail-closed 晋级连成了一条工程链。** S8 建立通用 `NumericalRuntimeContract`、`IndividualGrowthScope` 和条件教师合同；S9–S11 证明在线 PPO、匹配 seeds 和 CPU 考试可以连续工作，也通过失败暴露了解析 fast world 与 root frame 的问题；S12 才首次进入 5 秒、多步、双射门的真实 G1+足球+球门物理世界。\n\n**物理学习确实带来了可复验增长。** S12 的 96-episode CPU 考试中，首球扑救从 20.83% 提高到 39.58%，恢复从 20.83% 提高到 36.46%，第二球扑救从 6.25% 提高到 14.58%，成为第一个正式 `PROMOTED_SIM_ONLY` 物理候选。此后 28 条非 smoke 四卡分支累计推进 99.2M 物理世界步、消费 9.92M 策略样本，并逐步加入横移、回中、双臂、规范手套碰撞、MotionDecode 先验、MuJoCo Jacobian 任务空间教师、严格 arm-only 可塑性和 7.41–14.94 m/s 精英球。\n\n**最新 S31 证明“更会伸手且不更抽搐”，没有证明“已成为更强的全能门将”。** 在 160 个 CPU episodes 上，首球与手套扑救率都与零残差基线持平（24.38% 和 7.50%），第二球从 3.75% 降到 3.13%（少 1 次，处于预先声明的 1% 非劣界内）；平均最大手部位移从 5.05 cm 增至 13.36 cm，p95 手速从 3.09 降至 2.79 m/s，p95 根角速度从 1.385 降至 1.289 rad/s，且硬安全违规为零。因此它是**通过专项考试的安全手臂专家**，不是已经击败全局冠军的证据。\n\n**当前最重要的不足是：腿和落地恢复仍被冻结，门将仍主要靠横移与身体封堵，真正的蹬地、飞扑、落地、起身和二次扑救尚未学会。** MotionDecode 的 104,695 条 G1 CSV 中只有 1,203 条足球相关代理动作，没有门将飞扑标签；S32 虽把手臂位移推到约 20 cm，却因 4.99–11.26 rad/s 的尖峰被拒绝且没有输出 checkpoint。正确结论是“ROSClaw 已经会安全地试、考、拒绝和保留”，还不能说“G1 已经像真人门将”。"
+      },
+      {
+        "id": "headline_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 五个数字概括当前闭环\n\n训练投入、最新专项收益、测试状态和硬安全来自不同证据面；它们共同说明系统已经跑通，但不能合并成单一‘成长分数’。"
+      },
+      {
+        "id": "headline_strip",
+        "type": "metric-strip",
+        "layout": "full",
+        "cardIds": ["card_physics_steps", "card_policy_samples", "card_s31_arm", "card_validation", "card_safety"]
+      },
+      {
+        "id": "key_findings",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 关键发现：真正的突破、退化和未完成项可以清楚分开\n\n**架构突破。** ROSClaw Core 获得了数值运行时承诺、个体成长作用域和条件教师先验；Soccer 侧把它们实例化为角色档案/血统、Coverage–Time、Agility Profiler、因果 Goalkeeper Actor、双速训练—考试、配对冠军门、关节预测保护和视频证据下游。这些接口使‘成长’不再等于覆盖旧权重。\n\n**算法突破。** 训练从 S9 的单步解析代理奖励，跨过 S10 的分层 actor、S11 的 root-frame 修复，进入 S12 的多步物理 PPO；随后把稳定—可塑分离落实为 lower-body/core 冻结、arm actor/critic 可塑和在线父代蒸馏。S29–S32 还修复了 arm-only 模式下 core 仍被随机探索的实质性泄漏。\n\n**证据突破。** 每轮同时保留 GPU holdout、CPU MuJoCo exam、matched seeds、checkpoint/hash、场景 hash 和拒绝原因。S9、S10、S11、S13、S15、S16–S30、S32 中的大量候选没有被包装成成功；S32 明确 `REJECTED_NO_SAFE_CANDIDATE` 且不落 checkpoint。\n\n**效果上限。** S12 是迄今证据最清楚的任务能力跃升；S31 是手臂专项的最强安全候选。二者不能直接串成‘S31 是 S12 的全局后继’，因为考试套件、父代和目标不同。报告不绘制跨阶段趋势图，正是为了避免把变化过的定义伪装为连续曲线。"
+      },
+      {
+        "id": "commitment_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 对照“讨论2”：8 项完成，5 项部分完成，6 项尚未完成\n\n另有真实机器人一项按项目安全边界明确不在本阶段范围。最明显的偏航是工作重心长期集中在门将：它推动了通用 Growth 能力，却没有兑现 Finisher、Playmaker、Keeper 三个独立 RL 个体以及后续团队联赛。"
+      },
+      {"id": "commitment_table", "type": "table", "layout": "full", "tableId": "table_commitment_matrix"},
+      {
+        "id": "phase_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 阶段演进：从‘会学习但学不到扑救’到‘会在物理世界安全伸手’\n\nS9–S11 的失败非常关键：它们证明高代理奖励、零毫秒反应或 22.9M 样本都不能替代正确世界模型。S12 的多步碰撞物理才是分水岭；S16 以后又把‘扑到球’拆成身体封堵与真实手套接触，避免通过错误身体部位刷分。"
+      },
+      {"id": "phase_table", "type": "table", "layout": "full", "tableId": "table_phase_progression"},
+      {
+        "id": "exam_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 精确考试结果：晋级与‘看起来更灵活’不是一回事\n\nS13、S15、S28 都出现了专项指标更好、但相对父代仍有退化的情况。配对门把这些候选归档而不替换父代，这是稳定—可塑困境在工程上的正确处理。S31 的 CPU 结论也只是相对零残差基线通过，不是对 S12/S13 全局冠军的配对胜利。"
+      },
+      {"id": "exam_table", "type": "table", "layout": "full", "tableId": "table_key_exams"},
+      {
+        "id": "training_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 训练规模：算力已经不是唯一瓶颈\n\nS9–S11 还累计了 23,920,640 个解析 fast-world 样本；S12–S32 则有 99.2M 多步物理世界步。结果说明仅继续加样本不会自动产生真实飞扑：决定上限的是动作空间权限、教师覆盖、奖励归因、接触语义、场景难度和晋级基线。"
+      },
+      {"id": "training_chart", "type": "chart", "layout": "full", "chartId": "chart_training_steps"},
+      {"id": "training_table", "type": "table", "layout": "full", "tableId": "table_training_inventory"},
+      {
+        "id": "architecture",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 对 ROSClaw 的通用价值：足球是压力测试，不应成为 Core 的语义\n\n当前成果可以拆成两层。\n\n**已经适合进入/保留在 Core 的任务无关能力：**\n\n- `NumericalRuntimeContract`：把线程、设备、数值后端和可复现条件写入证据。\n\n- `IndividualGrowthScope`：把角色、个体、父策略、教师、数据和候选血统隔离。\n\n- `ConditionalTeacherPriorContract`：教师只在声明条件、关节组、时窗和权限内生效。\n\n- 父代—候选 matched-seed 比较、非劣门、fail-closed 拒绝、checkpoint/场景/实现承诺和 SIM_ONLY 晋级上限。\n\n**必须留在 Soccer 的任务适配器：** 球门区域、来球时间、手套碰撞、首球/第二球扑救、射门速度、门将动作教师和足球课程。\n\n这一区分正回应了早先对 Growth/SimForge ‘几乎全是 G1 踢球’的担忧：Core 应描述如何成长、如何证明没有遗忘、如何拒绝不安全候选；Soccer 才描述什么叫扑救。当前三项 Core 合同已经出现，但尚未形成完整、已提交的通用 Growth API 包。"
+      },
+      {
+        "id": "plain_explanation",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 通俗解释：现在的 ROSClaw 像一所会保留学籍和考试录像的足球学校\n\n以前做 demo 更像教练手工摆动作：某次看起来漂亮，就把参数留下。现在每个 G1 有自己的‘学籍档案’，训练前冻结一个父版本；新候选在四张 GPU 上大量练习，再去 CPU MuJoCo 的固定考场，用同一批来球和同一套安全规则与父版本对考。进步才允许进入专项档案；退步就保留训练记录，但不能顶掉父版本。\n\n‘小脑’目前也不是一个直接控制所有电机的万能网络。它是冻结的站立/横移底座，加一个能看本体、球和时序的 residual actor；输出还要经过关节步长限制、预测保护、PD 和扭矩边界。这样安全，但也解释了为什么门将像‘挪过去挡球’而不是蹬地飞扑：腿部可塑性被主动锁住了。\n\nMotionDecode 像动作教材，不是答案册。现有足球子集能告诉模型手臂和身体大概如何协调，却没有足够的门将扑救、落地和起身示范。强化学习只会在被允许的动作和奖励里变强；如果腿不能学、奖励更偏身体挡球，算力越多也只会把‘挪过去挡’练得更熟。"
+      },
+      {
+        "id": "lineage_audit",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 复盘发现的高优先级治理缺口：S15 冠军血统不一致\n\nS15 的 `paired-champion-decision.json` 明确记录：相对 S13 父代，候选首球扑救下降 5.21 个百分点、恢复下降 4.17 个百分点、平均奖励下降 3.17、横移速度也下降，最终 `replace_champion=false / RETAIN_PARENT_ARCHIVE_CANDIDATE`。但 S21、S23、S26、S28 的若干文件名或报告又把 S15 称作 parent/champion。\n\n这不使那些 CPU/GPU 测量失效，因为各文件仍保留基线、候选和 seeds；但它使‘候选是否击败当前全局冠军’无法从命名直接相信。下一阶段必须从决定文件重建 canonical champion registry，并要求每个后继证据绑定 `parent_decision_hash + parent_checkpoint_hash`。在修复前，S21–S31 应称为安全分支或专项候选，不应声称形成无断点的全局冠军链。"
+      },
+      {
+        "id": "scope_methodology",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 范围、方法与口径\n\n**时间范围。** 从“讨论2”提出的 S8 计划开始，到当前 S32 elite-arm 实验结束；更早的 S1–S7 只作为父技能背景，不重复评价。\n\n**运行边界。** 本阶段全部是 `SIM_ONLY`；没有打开 ROS、DDS、串口、CAN、厂商 SDK，也没有真实机器人命令。训练记录确认使用 4× NVIDIA RTX A6000（每卡 49,140 MiB；当前驱动 595.71.05）。\n\n**两速世界。** 早期 S9–S11 用解析/GPU fast world 训练，再用 CPU 严格考试；S12 起训练改为 20 ms 控制、10×2 ms 子步、250 控制步的多步物理 episode，并包含连续两脚射门。GPU holdout 用于筛选，CPU MuJoCo matched-seed exam 决定晋级。\n\n**不确定性。** 例如 S31 的首球 39/160=24.38%，Wilson 95% 区间约为 18.37%–31.58%；手套扑救 12/160=7.50%，区间约 4.34%–12.65%；第二球候选 5/160 与基线 6/160 的区间高度重叠。现有门是工程非劣/安全门，不等同于统计显著性检验。\n\n**可视化选择。** 阶段间先后改变了球速、目标区域、手套语义、父代和考试样本数，因此没有绘制单一成功率趋势图；时间线和精确表格能更诚实地保留每个数字的分母与语义。"
+      },
+      {
+        "id": "validation_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 代码复查：当前实现自洽，但仍是未提交工作树快照\n\n本次重新运行 Soccer 全量测试、ruff、format、mypy、compileall 和 Git whitespace 检查，并单独复查三个新增 Core 通用模块。测试没有因为缺依赖而被跳过：第一次在 Soccer 独立 uv 环境中缺少 PyYAML，收集失败；随后使用 Core 的完整 Python 3.12 环境并叠加两边源码，全量重跑通过。"
+      },
+      {"id": "validation_table", "type": "table", "layout": "full", "tableId": "table_validation"},
+      {
+        "id": "limitations",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 限制与风险\n\n**没有全身飞扑。** lower-body/core 仍冻结；没有学会蹬地、腾空、侧扑、落地缓冲、起身和连续二次扑救。上肢更活跃不等于运动员级门将。\n\n**身体封堵仍占主导。** S31 首球扑救 24.38%，但明确手套扑救只有 7.50%；高球宣传片中的若干成功仍是身体挡球，不是漂亮的手套扑救。\n\n**MotionDecode 覆盖不足。** 数据集总体很大，但足球代理子集只有 1,203 条，且没有门将 dive 标签；SONIC v1.1 只完成 100 控制帧 A/B 审计，尚未成为正式 locomotion 父策略。\n\n**持续恢复不完整。** 两球连续 episode 已实现，但‘从中间失败姿态持续 reset’未完成；真正 30 秒无重置、无 teleport 的多人比赛也没有交付。\n\n**角色成长失衡。** Finisher、Playmaker 的个体档案存在，独立 actor-critic、冻结对手池、social transfer 和 MAPPO/FSP 联赛尚未实现。当前证据几乎都来自 Keeper。\n\n**统计样本仍小。** 96 或 160 episodes 能做工程门控，却不足以稳定区分几个百分点的差异；跨阶段 suite 变化也阻止了长期可比。\n\n**仓库未形成发布态。** Soccer 当前分支为 `agent/s4-multiagent-roll`、HEAD `362de995…`，另有 23 个已修改和 71 个未跟踪项；Core 分支为 `agent/g1-muscle-memory`、HEAD `7d9d08d…`，另有 3 个已修改和 26 个未跟踪项。S8–S32 大量实现尚未 commit-backed，复现依赖当前工作树。\n\n**跳过的集成检查。** 9 个 Soccer skip 包括未堆叠的 Core 扩展合同、仅用于迁移抽取的旧实现，以及当前测试入口未定位到合格 G1/SONIC/MotionDecode 资产。外部训练报告证明相关资产曾被使用，但这次源码复查没有重新执行昂贵训练。"
+      },
+      {
+        "id": "video_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 视频证据：可观察阶段变化，但像素不决定晋级\n\n七个代表视频从 S9 的 12 秒 720p 失败候选，演进到 S21/S31 的 30 秒 1080p。观看时应重点区分：是否明确手套接触、是否存在身体封堵、第一次动作后能否回中、第二球是否还能反应，以及手臂快速移动是否伴随根部旋转尖峰。"
+      },
+      {"id": "video_table", "type": "table", "layout": "full", "tableId": "table_videos"},
+      {
+        "id": "next_steps",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 下一阶段建议：先修血统，再解锁‘蹬—扑—落—起’的全身运动链\n\n1. **P0：重建 canonical champion registry。** 从所有配对决定文件反向生成不可变冠军图；区分 `GLOBAL_CHAMPION`、`ROLE_SPECIALIST_QUALIFIED`、`SAFE_BRANCH_ARCHIVED`，禁止通过目录名把被拒候选重新称为 parent。每个考试绑定父决定 hash、父 checkpoint hash、suite hash 和代码 commit。\n\n2. **P0：把当前实现拆分提交。** 先提交三项 Core 通用合同及独立测试，再提交 Soccer 的 S8–S32 适配器、训练器、证据和文档；不把外部 checkpoint、原始数据和 mp4 放进 Git。完成后在干净 worktree 复跑全量门。\n\n3. **P1：建立 Athlete Foundation V2。** 保留冻结安全底座，但给踝、膝、髋开放分级 residual 权限；动作分为 ready stance、侧向垫步、交叉步、单脚蹬地、腾空、手套接触、落地吸能、起身回中八个可观察 option。先输出关节目标残差，不直接放开全力矩 actor。\n\n4. **P1：补真正的门将模仿数据。** 从可商用/许可清晰的人体门将视频或 mocap 构建 dive、high-corner、low-corner、landing、get-up 标签；MotionDecode 只作为基础姿态正则。用 task-space 手套轨迹、质心/捕获点和接触时序做条件蒸馏。\n\n5. **P1：actor-critic 改成分层、记忆与风险敏感。** 高层选 footwork/dive option，低层 residual actor 使用短历史和本体状态；asymmetric critic 可见完整仿真状态。奖励显式区分手套接触、身体封堵、出界方向、落地峰值、恢复时间和第二球；使用 CVaR/尾部风险压制偶发角速度尖峰。\n\n6. **P1：固定长期考试套件。** 保留 Standard、Advanced、Elite 三套 sealed seeds，每套至少 1,000 episodes；报告 Wilson 区间和 paired bootstrap，要求专项收益与全局非劣同时成立。禁止训练阶段读取 holdout 结果做迭代选择。\n\n7. **P2：恢复三角色独立成长。** Keeper 稳定后，为 Finisher 和 Playmaker 各自建立 actor/critic、父代池和技能考试；对手只从冻结快照采样。先做 role-local promotion，再做 team promotion，最后才引入 MAPPO/FSP 和 social experience transfer。\n\n8. **P2：交付连续演示。** 每阶段同时输出证据 JSON 与不少于 30 秒的 1080p 视频；正式展示要求无 reset、无 teleport、一个共享物理球，并至少包含高低球、左右扑、落地起身和第二次扑救。"
+      },
+      {
+        "id": "further_questions",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 下一轮必须用实验回答的问题\n\n- 解锁哪一组腿部 residual 能以最小安全代价首次获得真实腾空位移，而不是更快的横移身体封堵？\n\n- 规范手套首触率能否在 1,000 个 sealed elite shots 上从 7.5% 提高到至少 15%，同时首球总扑救不退化、p95 根角速度低于父代？\n\n- 落地与起身 option 能否把第二球扑救率提升至少 5 个百分点，并把恢复时间曲线而非单一终值纳入晋级？\n\n- 在修正 S15 血统后，S12、S13、S28、S31 谁分别是全局冠军、横移专家和手臂专家？是否需要多目标 Pareto 档案而不是单一冠军？\n\n- Core 还缺哪些最小接口，才能让抓取、行走或装配任务复用同一套个体作用域、父代记忆、sealed exam 和 fail-closed promotion？"
+      },
+      {
+        "id": "handoff",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 交付说明\n\n这是 2026年8月14日生成的只读本地技术快照，从“讨论2”开始覆盖 S8–S32。报告没有提交、推送、重新训练或触发任何硬件操作。源代码检查使用当前工作树；训练数值来自现存、带 hash/种子/门限的 durable evidence。"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-14T14:06:39+08:00",
+    "status": "ready",
+    "datasets": {
+      "headline_metrics": [
+        {
+          "physics_world_steps": 99200000,
+          "durable_branches": 28,
+          "policy_samples": 9920000,
+          "analytic_samples": 23920640,
+          "s31_hand_displacement_ratio": 2.646,
+          "s31_hand_displacement_cm": 13.36,
+          "soccer_tests_passed": 261,
+          "soccer_tests_skipped": 9,
+          "s31_hard_safety_rate_sum": 0.0,
+          "s31_cpu_episodes": 160
+        }
+      ],
+      "commitment_matrix": [
+        {"order": 1, "requirement": "Numerical Reproducibility Contract", "status": "已完成", "evidence": "Core NumericalRuntimeContract；线程、设备、数值后端进入证据", "gap": "尚未形成 commit-backed 发布"},
+        {"order": 2, "requirement": "IndividualGrowthScope 个体作用域", "status": "已完成", "evidence": "Core 合同 + Soccer PlayerProfile/PlayerPolicyLineage", "gap": "三角色 RL 尚未全部接入"},
+        {"order": 3, "requirement": "Agility Profiler", "status": "已完成", "evidence": "时间响应、横移、恢复与安全画像模块及测试", "gap": "尚未扩展完整人体自然度"},
+        {"order": 4, "requirement": "去除 shooter phase 泄漏", "status": "已完成", "evidence": "因果观测、方向感知反应与相关测试", "gap": "仍需 actor latency 专项审计"},
+        {"order": 5, "requirement": "Coverage–Time 曲线", "status": "部分完成", "evidence": "S8 五 deadline×五区域基线；S9–S11 沿用", "gap": "S12 后主指标迁移，未形成长期统一曲线"},
+        {"order": 6, "requirement": "Conditional Teacher / Motion Prior", "status": "已完成", "evidence": "Core 条件教师合同；MotionDecode/外部教师代理与许可隔离", "gap": "缺真正门将 dive 教师"},
+        {"order": 7, "requirement": "GPU fast world + CPU strict world", "status": "已完成", "evidence": "4×A6000 训练、GPU holdout、matched-seed CPU MuJoCo exam", "gap": "需要固定跨阶段 suite"},
+        {"order": 8, "requirement": "多步连续物理门将", "status": "已完成", "evidence": "S12 起 5 秒、20 ms 控制、10×2 ms 子步、双射门 episode", "gap": "仍是仿真且动作空间受限"},
+        {"order": 9, "requirement": "Position-conditioned AMP / Human Motion Score", "status": "部分完成", "evidence": "MotionDecode 代理先验与动作库已接入", "gap": "没有 canonical AMP/Human Motion Score 与 dive 数据"},
+        {"order": 10, "requirement": "真正 whole-body 门将", "status": "部分完成", "evidence": "横移、腰臂、双手、任务空间 reach 与手套碰撞", "gap": "腿部冻结；无蹬地、飞扑、落地、起身"},
+        {"order": 11, "requirement": "从中间失败姿态 continuous reset", "status": "未完成", "evidence": "已实现同 episode 第二球与恢复状态", "gap": "未从倒地/失衡中间态重采样"},
+        {"order": 12, "requirement": "冻结对手快照与配对晋级", "status": "部分完成", "evidence": "父 checkpoint、matched seeds、paired champion gate", "gap": "完整 opponent pool/FSP 联赛未实现"},
+        {"order": 13, "requirement": "Finisher 独立 RL", "status": "未完成", "evidence": "有角色档案与旧射门父技能", "gap": "没有独立 actor-critic 和专属晋级"},
+        {"order": 14, "requirement": "Playmaker 独立 RL", "status": "未完成", "evidence": "有角色档案与传球场景", "gap": "没有独立 actor-critic 和专属晋级"},
+        {"order": 15, "requirement": "Social experience transfer", "status": "未完成", "evidence": "已在设计中定义非权重共享", "gap": "没有可运行经验蒸馏/迁移"},
+        {"order": 16, "requirement": "MAPPO/FSP 团队联赛", "status": "未完成", "evidence": "只有单角色 Keeper 训练与冻结父代", "gap": "无团队 critic、联赛池与 team promotion"},
+        {"order": 17, "requirement": "sealed holdout 与域随机化", "status": "部分完成", "evidence": "分层 GPU/CPU unseen seeds 与速度/区域课程", "gap": "holdout 仍被开发迭代查看；缺大规模域随机化"},
+        {"order": 18, "requirement": "每阶段真实视频证据", "status": "已完成", "evidence": "S9–S31 多个 720p/1080p 开发、安全分支和候选视频", "gap": "视频可见性仍需手套/身体接触标注"},
+        {"order": 19, "requirement": "30 秒无 reset 多人正式展示", "status": "未完成", "evidence": "有 30 秒单门将阶段视频", "gap": "未同时满足多人、无 teleport、无 reset、连续比赛"},
+        {"order": 20, "requirement": "真实机器人验证", "status": "范围外", "evidence": "所有证据均 SIM_ONLY，hardware_command_sent=false", "gap": "需另行安全评审与明确授权"}
+      ],
+      "phase_progression": [
+        {"order": 1, "phase": "S8", "capability": "共享运动员底座、个体血统、因果 Goalkeeper V2、Coverage–Time、条件教师", "authoritative_result": "25 场 baseline：1.0/0.8 s 覆盖/触球/扑救 20%，≤0.6 s 为 0%", "decision": "BASELINE_ONLY", "lesson": "建立可测量起点，未主张增长"},
+        {"order": 2, "phase": "S9", "capability": "120→30 actor、4GPU PPO、matched CPU promotion", "authoritative_result": "327,680 解析样本；代理奖励 0.396→0.533，但 coverage/contact/save 不变", "decision": "REJECTED", "lesson": "代理奖励与真实任务脱节，fast world 仍非多步物理"},
+        {"order": 3, "phase": "S10", "capability": "分层 actor、冻结 locomotion、DLS 单臂、真实手套碰撞", "authoritative_result": "655,360 样本；父/候选均 2/25 扑救；一侧新增、一侧遗忘", "decision": "REJECTED", "lesson": "稳定—可塑困境首次被配对考试抓住"},
+        {"order": 4, "phase": "S11", "capability": "修复约 180° 的 root-frame/yaw 错位，大规模解析训练", "authoritative_result": "22,937,600 样本；代理奖励 0.378→0.853；父 3/25、候选 2/25", "decision": "REJECTED", "lesson": "坐标修复必要，但样本规模不能弥补世界模型"},
+        {"order": 5, "phase": "S12", "capability": "首个 5 秒多步 G1+球+门物理 PPO；双球恢复；关节保护", "authoritative_result": "CPU96：首球 20.83→39.58%，恢复 20.83→36.46%，第二球 6.25→14.58%", "decision": "PROMOTED_SIM_ONLY", "lesson": "真实物理闭环是第一个任务能力突破"},
+        {"order": 6, "phase": "S13–S15", "capability": "横移/回中/反旋、双臂稳定—可塑与配对冠军门", "authoritative_result": "S13 对零基线通过但未击败 S12；S15 对 S13 首球 -5.21pp、恢复 -4.17pp", "decision": "RETAIN_PARENT_ARCHIVE_CANDIDATE", "lesson": "安全分支不等于新冠军；S15 后续命名出现血统歧义"},
+        {"order": 7, "phase": "S16–S20", "capability": "解剖手套、手触/身体挡分离、ready pocket、继续训练", "authoritative_result": "S18 首手 15.63→18.75%、第二手 4.17→7.29%，但第二总扑救改善不足门限", "decision": "全部未晋级", "lesson": "必须奖励真正手套接触且保住第二球"},
+        {"order": 8, "phase": "S21–S24", "capability": "21×11×7 cm 成人手套、双臂/腕教师、MotionDecode/SONIC 审计", "authoritative_result": "S21 首手 6.25→9.38%、第二 5.21→7.29%，未击败所谓 S15 parent", "decision": "SAFE_BRANCH_ARCHIVED", "lesson": "MotionDecode 只有足球代理，SONIC 仅 A/B 审计"},
+        {"order": 9, "phase": "S25–S28", "capability": "MuJoCo Jacobian task-space reach、advanced shots、严格 arm-only 可塑性", "authoritative_result": "S28 advanced：首球 28.12→30.21%、第二 6.25→7.29%、手位移 4.34→12.15 cm；standard 对父代回退", "decision": "SPECIALIST_ARCHIVED", "lesson": "专项通过不能替代全局配对非劣"},
+        {"order": 10, "phase": "S29–S32", "capability": "独立 core/arm 滤波、显式非劣界、7.41–14.94 m/s elite shots、fail-closed no-checkpoint", "authoritative_result": "S31 CPU160 手位移 5.05→13.36 cm，首球/首手持平；S32 手速尖峰 4.99–11.26 rad/s", "decision": "S31 SPECIALIST_QUALIFIED；S32 REJECTED_NO_SAFE_CANDIDATE", "lesson": "可塑幅度需要风险敏感平滑，而非继续放大"}
+      ],
+      "key_exams": [
+        {"order": 1, "phase": "S12", "suite": "CPU MuJoCo / 96 episodes / 双球", "baseline": "首球20.83%；恢复20.83%；第二球6.25%", "candidate": "首球39.58%；恢复36.46%；第二球14.58%；硬安全0", "verdict": "PROMOTED_SIM_ONLY；首个物理冠军，但当时尚无现代自然度硬门"},
+        {"order": 2, "phase": "S13", "suite": "CPU MuJoCo / 96 / agility", "baseline": "首球29.17%；恢复29.17%；第二球3.13%；横速0.067 m/s", "candidate": "首球38.54%；恢复37.50%；第二球8.33%；横速0.598 m/s", "verdict": "过零基线；对 S12 父代第二球回退，归档"},
+        {"order": 3, "phase": "S15", "suite": "CPU paired / 96 / vs S13", "baseline": "首球41.67%；恢复40.63%；第二球10.42%；奖励175.54", "candidate": "首球36.46%；恢复36.46%；第二球11.46%；奖励172.36", "verdict": "RETAIN_PARENT_ARCHIVE_CANDIDATE"},
+        {"order": 4, "phase": "S18", "suite": "CPU / 96 / ready-pocket glove", "baseline": "首球35.42%；首手15.63%；第二球9.38%；第二手4.17%", "candidate": "首球39.58%；首手18.75%；第二球10.42%；第二手7.29%", "verdict": "第二总扑救仅 +1.04pp，低于预设改善门"},
+        {"order": 5, "phase": "S21", "suite": "CPU / 96 / regulation glove", "baseline": "首球29.17%；首手6.25%；第二球5.21%", "candidate": "首球33.33%；首手9.38%；第二球7.29%", "verdict": "过零基线；未过父代配对门，安全分支"},
+        {"order": 6, "phase": "S28", "suite": "CPU / 96 / advanced shots", "baseline": "首球28.12%；第二球6.25%；手位移4.34 cm；max角速1.376", "candidate": "首球30.21%；第二球7.29%；手位移12.15 cm；max角速1.213", "verdict": "专项通过；standard 对 S15 命名父代首球回退，归档"},
+        {"order": 7, "phase": "S31", "suite": "CPU / 160 / elite shots", "baseline": "首球24.38%；首手7.50%；第二球3.75%；手位移5.05 cm；p95手速3.088", "candidate": "首球24.38%；首手7.50%；第二球3.13%；手位移13.36 cm；p95手速2.789", "verdict": "PROMOTED_SIM_ONLY 相对零残差专项基线；非全局冠军证明"},
+        {"order": 8, "phase": "S32", "suite": "GPU holdouts / strong Jacobian arm", "baseline": "安全基线", "candidate": "手臂位移约19.9–21 cm；手臂速度尖峰4.99–11.26 rad/s", "verdict": "REJECTED_NO_SAFE_CANDIDATE；未写 checkpoint"}
+      ],
+      "training_inventory": [
+        {"order": 1, "phase_group": "S12", "focus": "多步物理闭环、教师与恢复权限分支", "branches": 8, "physics_world_steps": 12160000, "policy_samples": 1216000},
+        {"order": 2, "phase_group": "S13–S15", "focus": "敏捷、解剖与稳定—可塑", "branches": 3, "physics_world_steps": 15360000, "policy_samples": 1536000},
+        {"order": 3, "phase_group": "S16–S20", "focus": "手套接触、ready pocket、连续训练", "branches": 5, "physics_world_steps": 17920000, "policy_samples": 1792000},
+        {"order": 4, "phase_group": "S21–S24", "focus": "规范手套、MotionDecode 与二次手套扑救", "branches": 4, "physics_world_steps": 14080000, "policy_samples": 1408000},
+        {"order": 5, "phase_group": "S25–S28", "focus": "任务空间 reach、advanced shots、严格 arm-only", "branches": 4, "physics_world_steps": 17920000, "policy_samples": 1792000},
+        {"order": 6, "phase_group": "S29–S32", "focus": "elite shots、平滑/非劣门、强 Jacobian 失败分支", "branches": 4, "physics_world_steps": 21760000, "policy_samples": 2176000}
+      ],
+      "validation_results": [
+        {"order": 1, "check": "Soccer pytest", "result": "261 passed, 9 skipped", "scope": "完整 tests；跳过原因在报告限制中单列"},
+        {"order": 2, "check": "Soccer ruff check", "result": "通过", "scope": "src + tests"},
+        {"order": 3, "check": "Soccer ruff format --check", "result": "153 files already formatted", "scope": "src + tests"},
+        {"order": 4, "check": "Soccer strict mypy", "result": "0 issues", "scope": "98 source files"},
+        {"order": 5, "check": "Soccer compileall", "result": "通过", "scope": "src + tests"},
+        {"order": 6, "check": "Soccer git diff --check", "result": "通过", "scope": "当前 tracked diff 无 whitespace error"},
+        {"order": 7, "check": "Core 新增合同 pytest", "result": "9 passed", "scope": "reproducibility、individual_scope、teacher_prior"},
+        {"order": 8, "check": "Core 新增合同 ruff/mypy", "result": "通过 / 0 issues", "scope": "3 source files + 3 tests"},
+        {"order": 9, "check": "代表视频 ffprobe", "result": "7/7 可读", "scope": "S9、S11、S12、S13、S21、S28、S31"}
+      ],
+      "video_inventory": [
+        {"order": 1, "phase": "S9", "duration_sec": 12, "format": "1280×720 / 30 fps", "truth_label": "REJECTED_DEVELOPMENT", "relative_path": "s9-goalkeeper-ppo-4gpu-dev-v7-cpu-exam-v1/goalkeeper-v2-rejected-development.mp4"},
+        {"order": 2, "phase": "S11", "duration_sec": 24, "format": "1920×1080 / 30 fps", "truth_label": "REJECTED_DEVELOPMENT", "relative_path": "s11-goalkeeper-root-frame-cpu-exam-v1/g1-goalkeeper-root-frame-rl-development-final-v2-1080p.mp4"},
+        {"order": 3, "phase": "S12", "duration_sec": 20, "format": "1920×1080 / 30 fps", "truth_label": "PROMOTED_SIM_ONLY", "relative_path": "s12-goalkeeper-corrected-teacher-ppo-4gpu-dev-v1/g1-physics-rl-goalkeeper-champion-v2-1080p.mp4"},
+        {"order": 4, "phase": "S13", "duration_sec": 20, "format": "1920×1080 / 30 fps", "truth_label": "SAFE_BRANCH / parent retained", "relative_path": "s13-goalkeeper-agility-ppo-4gpu-dev-v2/g1-agile-rl-goalkeeper-champion-s13-v2-1080p.mp4"},
+        {"order": 5, "phase": "S21", "duration_sec": 30, "format": "1920×1080 / 30 fps", "truth_label": "SAFE_BRANCH", "relative_path": "s21-regulation-glove-ppo-4gpu-dev-v1/g1-regulation-glove-save-safe-branch-s21-v1-1080p.mp4"},
+        {"order": 6, "phase": "S28", "duration_sec": 20, "format": "1920×1080 / 30 fps", "truth_label": "ARM_SPECIALIST_SAFE_BRANCH", "relative_path": "s28-strict-arm-only-goalkeeper-ppo-4gpu-dev-v1/g1-hard-shot-arm-specialist-safe-branch-s28-final-1080p.mp4"},
+        {"order": 7, "phase": "S31", "duration_sec": 30, "format": "1920×1080 / 30 fps", "truth_label": "SPECIALIST_QUALIFIED / global champion undecided", "relative_path": "s31-conservative-elite-ppo-4gpu-dev-v1/g1-elite-goalkeeper-arm-growth-s31-v2-1080p.mp4"}
+      ]
+    }
+  }
+}

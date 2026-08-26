@@ -18,6 +18,12 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 _SCENE_REL = Path("g1_description/scene_with_ball.xml")
 _MODEL_REL = Path("g1_description/g1_liao.xml")
 
+# Conservative collision envelope for a visible adult goalkeeper glove.  The
+# ellipsoid stays inside the 19 x 10 x 6.5 cm rendered glove instead of using
+# the football radius as a hidden reach multiplier.
+G1_GOALKEEPER_GLOVE_CENTER_M = (0.090, 0.0, 0.0)
+G1_GOALKEEPER_GLOVE_HALF_EXTENTS_M = (0.095, 0.050, 0.0325)
+
 
 @dataclass
 class G1CompliantGoalNetState:
@@ -170,8 +176,16 @@ class G1TrainingGoalSpec:
 def build_g1_stadium_model(asset_root: Path, spec: G1TrainingGoalSpec | None = None) -> Any:
     """Compile a qualified G1 scene with the wall replaced by a native goal."""
 
+    import mujoco
+
     goal = spec or G1TrainingGoalSpec()
     parent = _stadium_spec(asset_root, goal)
+    _add_goalkeeper_hand_envelopes(
+        parent,
+        body_prefix="",
+        geom_prefix="",
+        mujoco=mujoco,
+    )
     model = parent.compile()
     _configure_ball_dof_damping(model, goal)
     _require_stadium_model(model)
@@ -182,6 +196,7 @@ def build_g1_coupled_stadium_model(
     asset_root: Path,
     *,
     passer_origin_m: tuple[float, float, float],
+    passer_yaw_rad: float = math.pi,
     spec: G1TrainingGoalSpec | None = None,
 ) -> Any:
     """Compile the two-G1 replay scene with the same native football goal.
@@ -203,7 +218,7 @@ def build_g1_coupled_stadium_model(
     frame = parent.worldbody.add_frame(
         name="passer_frame",
         pos=passer_origin_m,
-        quat=(0.0, 0.0, 0.0, 1.0),
+        quat=(math.cos(0.5 * passer_yaw_rad), 0.0, 0.0, math.sin(0.5 * passer_yaw_rad)),
     )
     first_body = child.worldbody.first_body()
     if first_body is None:
@@ -221,6 +236,7 @@ def build_g1_three_player_stadium_model(
     asset_root: Path,
     *,
     passer_origin_m: tuple[float, float, float],
+    passer_yaw_rad: float = math.pi,
     goalkeeper_origin_m: tuple[float, float, float],
     spec: G1TrainingGoalSpec | None = None,
 ) -> Any:
@@ -243,7 +259,7 @@ def build_g1_three_player_stadium_model(
         frame_name="passer_frame",
         prefix="passer_",
         origin_m=passer_origin_m,
-        yaw_rad=math.pi,
+        yaw_rad=passer_yaw_rad,
         mujoco=mujoco,
     )
     _attach_g1(
@@ -253,6 +269,12 @@ def build_g1_three_player_stadium_model(
         prefix="goalkeeper_",
         origin_m=goalkeeper_origin_m,
         yaw_rad=math.pi,
+        mujoco=mujoco,
+    )
+    _add_goalkeeper_hand_envelopes(
+        parent,
+        body_prefix="goalkeeper_",
+        geom_prefix="goalkeeper_",
         mujoco=mujoco,
     )
     model = parent.compile()
@@ -288,6 +310,40 @@ def _attach_g1(
     frame.attach_body(first_body, prefix=prefix)
 
 
+def _add_goalkeeper_hand_envelopes(
+    parent: Any,
+    *,
+    body_prefix: str,
+    geom_prefix: str,
+    mujoco: Any,
+) -> None:
+    """Add visible, collision-faithful goalkeeper gloves to both wrists.
+
+    The 0.19 m palm-to-fingertip length, 0.10 m width and 0.065 m thickness
+    conservatively cover the source G1 hand while remaining inside the visible
+    blue glove.  They are attached to the real wrist bodies, so the physics
+    scorer can distinguish a hand save from a torso/leg block without adding
+    an invisible reach advantage.
+    """
+
+    for side in ("left", "right"):
+        body = parent.body(f"{body_prefix}{side}_wrist_yaw_link")
+        if body is None:
+            raise ValueError(f"qualified G1 is missing the goalkeeper {side} wrist")
+        body.add_geom(
+            name=f"{geom_prefix}{side}_goalkeeper_glove",
+            type=mujoco.mjtGeom.mjGEOM_ELLIPSOID,
+            pos=G1_GOALKEEPER_GLOVE_CENTER_M,
+            # ``size`` stores ellipsoid half-extents.  These dimensions are a
+            # collision inset, not a ball-radius-wide reach paddle.
+            size=G1_GOALKEEPER_GLOVE_HALF_EXTENTS_M,
+            rgba=(0.03, 0.22, 0.92, 1.0),
+            friction=(0.8, 0.005, 0.0001),
+            contype=1,
+            conaffinity=1,
+        )
+
+
 def _stadium_spec(asset_root: Path, spec: G1TrainingGoalSpec) -> Any:
     import mujoco
 
@@ -296,7 +352,17 @@ def _stadium_spec(asset_root: Path, spec: G1TrainingGoalSpec) -> Any:
     wall = parent.body("box")
     if wall is None:
         raise ValueError("qualified G1 scene does not contain the replaceable box body")
-    parent.delete(wall)
+    # MuJoCo renamed the MjSpec removal operation: 3.3 exposes
+    # ``detach_body`` while current releases expose generic ``delete``.
+    # Keep the qualified scene valid at both the declared floor and the
+    # modern MJWarp toolchain instead of pinning either side to an obsolete
+    # editor API.
+    if hasattr(parent, "detach_body"):
+        parent.detach_body(wall)
+    elif hasattr(parent, "delete"):
+        parent.delete(wall)
+    else:
+        raise RuntimeError("MuJoCo MjSpec cannot remove the replaceable box body")
     _style_pitch_and_ball(parent, spec)
     _add_goal(parent, spec)
     return parent
@@ -365,6 +431,22 @@ def g1_goal_net_contact_plane_x(
     return spec.plane_x_m + selected_depth - spec.ball_radius_m
 
 
+def g1_ball_inside_goal_mouth(
+    spec: G1TrainingGoalSpec,
+    *,
+    ball_y_m: float,
+    ball_z_m: float,
+) -> bool:
+    """Return whether the complete ball fits through the scoring aperture."""
+
+    if not math.isfinite(ball_y_m) or not math.isfinite(ball_z_m):
+        return False
+    return bool(
+        abs(ball_y_m) <= spec.width_m / 2.0 - spec.ball_radius_m
+        and spec.ball_radius_m <= ball_z_m <= spec.height_m - spec.ball_radius_m
+    )
+
+
 def apply_g1_compliant_goal_net_force(
     data: Any,
     *,
@@ -424,6 +506,8 @@ def apply_g1_compliant_goal_net_force(
             state.peak_anchor_displacement_m,
             math.sqrt(sum(value * value for value in displacement)),
         )
+        return
+    if not g1_ball_inside_goal_mouth(spec, ball_y_m=y, ball_z_m=z):
         return
     if x <= capture_x:
         if x > spec.plane_x_m and vx < 0.0:
@@ -727,7 +811,12 @@ def _style_pitch_and_ball(parent: Any, spec: G1TrainingGoalSpec) -> None:
     # Clear the upstream scalar shortcut.  Linear and angular damping have
     # different units and are assigned to compiled DOFs by
     # ``_configure_ball_dof_damping``.
-    ball_joints[0].damping = (0.0, 0.0, 0.0)
+    try:
+        ball_joints[0].damping = 0.0
+    except TypeError:
+        # MuJoCo >= 3.10 exposes the joint default triple as an ndarray,
+        # whereas the 3.3 API accepts the scalar XML shortcut directly.
+        ball_joints[0].damping = (0.0, 0.0, 0.0)
     radius = spec.ball_radius_m
     inertia = 0.4 * spec.ball_mass_kg * radius * radius
     ball.mass = spec.ball_mass_kg

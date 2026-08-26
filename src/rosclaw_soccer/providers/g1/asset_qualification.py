@@ -140,6 +140,41 @@ def qualify_g1_assets(asset_root: Path) -> G1AssetQualification:
     )
 
 
+def g1_body_hash(asset_root: Path) -> str:
+    """Bind learning artifacts to the G1 body without requiring ONNX runtime.
+
+    A motion prior never executes the free-kick ONNX policy. Requiring that
+    optional inference dependency in a GPU physics worker couples unrelated
+    subsystems. This bounded helper keeps the same model/scene/joint/torque
+    commitment used by :func:`qualify_g1_assets` while validating only assets
+    relevant to a motion prior.
+    """
+
+    root = asset_root.expanduser().resolve()
+    for relative in (_MODEL_REL, _SCENE_REL):
+        path = root / relative
+        if not path.is_file() or path.stat().st_size > _MAX_ARTIFACT_BYTES:
+            raise ValueError(f"G1 Body asset is missing or oversized: {relative}")
+    import mujoco
+
+    model = mujoco.MjModel.from_xml_path(str(root / _SCENE_REL))
+    joint_names = tuple(
+        str(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, index)) for index in range(1, 30)
+    )
+    if model.nu != 29 or joint_names != G1_DDS_JOINT_NAMES:
+        raise ValueError("G1 Body joint/actuator contract mismatch")
+    return str(
+        hash_json(
+            {
+                "model_hash": _bounded_file_hash(root / _MODEL_REL),
+                "scene_hash": _bounded_file_hash(root / _SCENE_REL),
+                "joint_names": joint_names,
+                "hard_torque_limits": G1_HARD_TORQUE_LIMITS,
+            }
+        )
+    )
+
+
 def trajectory_digest(trajectory: dict[str, np.ndarray]) -> str:
     digest = hashlib.sha256()
     for name in sorted(trajectory):
@@ -187,4 +222,9 @@ def _git_commit(root: Path) -> str:
         return "unknown"
 
 
-__all__ = ["G1AssetQualification", "qualify_g1_assets", "trajectory_digest"]
+__all__ = [
+    "G1AssetQualification",
+    "g1_body_hash",
+    "qualify_g1_assets",
+    "trajectory_digest",
+]

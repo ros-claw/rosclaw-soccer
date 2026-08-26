@@ -260,7 +260,7 @@ def audit_pass_rolling_physics(
         f"{name}_{key}": value for name, trace in traces.items() for key, value in trace.items()
     }
     trajectory_path = root / "rolling-audit-trajectory.npz"
-    np.savez_compressed(trajectory_path, **combined)
+    np.savez_compressed(trajectory_path, **combined)  # type: ignore[arg-type]
     passed = bool(strict and not metrics["legacy"].passed and metrics["corrected"].passed)
     unsigned = {
         "schema_version": "rosclaw_soccer.rolling_audit.v1",
