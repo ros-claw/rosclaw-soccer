@@ -374,6 +374,12 @@ def _set_camera(
     elif view == "hero":
         camera.lookat[:] = (goal.plane_x_m - 1.00, 0.55 * lane_y + 0.45 * keeper[1], 0.98)
         camera.distance, camera.azimuth, camera.elevation = 6.2, 142.0, -6.0
+    elif view == "keeper_front":
+        camera.lookat[:] = (goal.plane_x_m - 0.35, float(keeper[1]), 1.02)
+        camera.distance, camera.azimuth, camera.elevation = 4.4, 178.0, -4.0
+    elif view == "keeper_hero":
+        camera.lookat[:] = (float(keeper[0]), float(keeper[1]), 0.92)
+        camera.distance, camera.azimuth, camera.elevation = 4.6, 138.0, -6.0
     else:
         camera.lookat[:] = (goal.plane_x_m - 1.25, float(keeper[1]), 0.85)
         camera.distance, camera.azimuth, camera.elevation = 8.3, 118.0, -8.0
