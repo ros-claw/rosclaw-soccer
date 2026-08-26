@@ -27,6 +27,17 @@ training = ["onnxruntime>=1.18"]
 [project.entry-points."rosclaw.cli_extensions"]
 soccer = "rosclaw_soccer.plugin:register_cli"
 
+[project.entry-points."rosclaw.growth.adapters"]
+soccer = "rosclaw_soccer.growth.adapter:SOCCER_GROWTH_ADAPTER"
+
+[project.entry-points."rosclaw.simforge.tasks"]
+soccer = "rosclaw_soccer.sim.tasks:SOCCER_TASK_PROVIDER"
+
+[project.entry-points."rosclaw.dataset.sources"]
+g1-retargeted-motions = "rosclaw_soccer.data.sources:G1_RETARGETED_MOTIONS_SOURCE"
+motiondecode = "rosclaw_soccer.data.sources:MOTIONDECODE_SOURCE"
+omnicontact = "rosclaw_soccer.data.sources:OMNICONTACT_SOURCE"
+
 [project.urls]
 Repository = "https://github.com/ros-claw/rosclaw-soccer"
 Issues = "https://github.com/ros-claw/rosclaw-soccer/issues"

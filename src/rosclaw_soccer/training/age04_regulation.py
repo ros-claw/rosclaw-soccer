@@ -355,15 +355,6 @@ def run_age04_regulation_training(
 ) -> Age04RegulationTrainingReport:
     """Run eight bounded probes, distil an actor, and replay it teacher-free."""
 
-    from rosclaw.growth.approach_strike_residual import G1ApproachStrikeResidualConfig
-    from rosclaw.growth.ballistic_contact_impulse_actor import (
-        derive_g1_ballistic_contact_impulse_actor,
-    )
-    from rosclaw.growth.football_motion_prior import load_g1_football_motion_prior
-    from rosclaw.growth.phase_conditioned_residual import (
-        G1PhaseConditionedResidualConfig,
-        derive_g1_phase_conditioned_residual_candidate,
-    )
     from rosclaw.simforge.g1_free_kick_showcase import (
         G1FreeKickFlowConfig,
         run_g1_free_kick_showcase,
@@ -371,6 +362,16 @@ def run_age04_regulation_training(
     from rosclaw.simforge.g1_learned_runup import G1LearnedRunupConfig
     from rosclaw.simforge.g1_sonic_runup import G1SonicRunupConfig
     from rosclaw.simforge.g1_stadium_scene import G1TrainingGoalSpec
+
+    from rosclaw_soccer.growth.approach_strike_residual import G1ApproachStrikeResidualConfig
+    from rosclaw_soccer.growth.ballistic_contact_impulse_actor import (
+        derive_g1_ballistic_contact_impulse_actor,
+    )
+    from rosclaw_soccer.growth.football_motion_prior import load_g1_football_motion_prior
+    from rosclaw_soccer.growth.phase_conditioned_residual import (
+        G1PhaseConditionedResidualConfig,
+        derive_g1_phase_conditioned_residual_candidate,
+    )
 
     root = output_dir.expanduser().resolve()
     checkout = source_checkout.expanduser().resolve()

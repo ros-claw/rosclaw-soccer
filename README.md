@@ -74,8 +74,18 @@ rosclaw soccer player show claw7
 rosclaw soccer physics benchmark --output-dir /tmp/rosclaw-soccer-reality-pack
 ```
 
-The adapter contributes only a namespaced command tree. It receives no robot
-runtime, driver, actuator, ROS, or hardware authority.
+The package contributes four minimum-authority entry points:
+
+| Entry point | Contribution | Authority ceiling |
+| --- | --- | --- |
+| `rosclaw.cli_extensions` | namespaced `rosclaw soccer` commands | no runtime/driver handle |
+| `rosclaw.growth.adapters` | football experience normalization and diagnosis | evidence only |
+| `rosclaw.simforge.tasks` | Age-4 and Age-5 task descriptions | discovery does not run physics |
+| `rosclaw.dataset.sources` | relative-path-only motion-data labels | no root/file handle |
+
+Installing the package adds these descriptions; uninstalling it leaves the
+Core CLI, Growth, Dataset Doctor, and SimForge contracts usable. No extension
+receives robot runtime, driver, actuator, ROS, or hardware authority.
 
 ## Evidence before highlights
 
@@ -126,6 +136,12 @@ Practice → Segment → Diagnose → Learn/Dream → Candidate
 Generic Growth, Dream, Memory, Practice, safety, and promotion mechanisms stay
 in [`ros-claw/rosclaw`](https://github.com/ros-claw/rosclaw). Football worlds,
 skills, player cards, teams, leagues, exams, and media live here.
+
+S1 extraction has moved the Age-4 approach/contact contracts, motion prior,
+phase-conditioned residual, contact actor, and no-pickle G1 inference provider
+behind this downstream boundary. Artifact schemas and hashes remain compatible
+with the frozen pre-extraction implementation. See the
+[S1 extraction report](docs/domain-extraction-s1.zh-CN.md).
 
 ## Next milestone
 
