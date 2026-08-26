@@ -2696,8 +2696,18 @@ def _simulate_shared_world(
                 ),
                 dtype=np.float64,
             )
+            # A goal threat must travel from the pitch toward the goal.  A
+            # first save can legitimately deflect the live ball behind the
+            # goal line but outside the posts.  Relaunching that ball back
+            # toward the field would be a physically real force and still be
+            # the wrong football event, so reject it before computing or
+            # applying any impulse.
+            if position[0] + active_goal.ball_radius_m >= target[0]:
+                raise RuntimeError("second-threat live ball is not in a field-side launch pocket")
             target_velocity = (target - position) / duration
             target_velocity[2] += 0.5 * 9.81 * duration
+            if target_velocity[0] <= 0.0:
+                raise RuntimeError("second-threat live ball is not travelling toward goal")
             force = active_goal.ball_mass_kg * (
                 (target_velocity - current_velocity) / second_threat_config.force_duration_sec
                 + np.asarray((0.0, 0.0, 9.81), dtype=np.float64)
