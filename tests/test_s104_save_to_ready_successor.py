@@ -24,11 +24,11 @@ from rosclaw_soccer.world.field import G1TrainingGoalSpec
 
 _EVIDENCE = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
-    "s104-save-to-ready-successor-v2/evidence.json"
+    "s104-save-to-ready-successor-v3/evidence.json"
 )
 _VIDEO_MANIFEST = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
-    "s104-save-to-ready-showcase-v3/s104-save-absorb-reengage-ready.json"
+    "s104-save-to-ready-showcase-v4/s104-save-absorb-reengage-ready.json"
 )
 
 

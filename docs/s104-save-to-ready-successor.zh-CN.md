@@ -69,17 +69,17 @@ yaw，并对非有限、形状错误和退化四元数 fail closed。
 ## 可复现证据
 
 - CPU MuJoCo 证据：
-  `/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s104-save-to-ready-successor-v2/evidence.json`
+  `/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s104-save-to-ready-successor-v3/evidence.json`
 - report hash：
-  `sha256:bbc316bb89f177c4f8d35583ccd9471823bdc348a0d34205652cf0b62ff888d4`
+  `sha256:3565f593aca2271e2ef8fd5198ad63f81d1af496bc783efaae9ff0acdaf251fb`
 - implementation hash：
   `sha256:a89acfeae4053e51c7f61e7defd514cfff74868fc11ffde994e4e9ca7d04d5ff`
 - 41.53 秒、1920×1080、60 fps 可视化：
-  `/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s104-save-to-ready-showcase-v3/s104-save-absorb-reengage-ready.mp4`
+  `/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s104-save-to-ready-showcase-v4/s104-save-absorb-reengage-ready.mp4`
 - video hash：
-  `sha256:de905395a7afb4c8efbb942b43605495d30defbf42a565acccb467319fe02224`
+  `sha256:cfa1c00af055913875b4779f46a0f93372cb6621cc767bfb3b88f70192279f12`
 - manifest hash：
-  `sha256:143ed8af6ddb4976328c5ed2a50e923c7263d57df980c2dc11c825a1064d4c2c`
+  `sha256:0994f632b235b619c27327ba2017dfbacaa29bb8b468dea322e48bafe30fd90c`
 
 视频采用门将本体中心机位展示恢复和二次横移；它是内容绑定的展示材料，不是通过门的证据源。
 
