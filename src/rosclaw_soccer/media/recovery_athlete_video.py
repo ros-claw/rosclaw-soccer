@@ -30,7 +30,7 @@ from rosclaw_soccer.training.recovery_athlete_integration_exam import (
 )
 from rosclaw_soccer.world.field import G1TrainingGoalSpec, build_g1_three_player_stadium_model
 
-_CLAIM = "PAIRED_PHYSICS_SAVE_TO_SMOOTHER_READY_NEURAL_RECOVERY"
+_CLAIM = "CONTEXT_GATED_NEURAL_RECOVERY_WITH_PER_LANE_PEAK_NONREGRESSION"
 
 
 def _implementation_hash() -> str:
@@ -61,7 +61,7 @@ def validate_recovery_athlete_video_manifest(path: Path) -> dict[str, Any]:
         payload.get(name) for name in ("fps", "width", "height", "frame_count", "duration_sec")
     )
     if (
-        payload.get("schema_version") != "rosclaw_soccer.recovery_athlete_video.v1"
+        payload.get("schema_version") != "rosclaw_soccer.recovery_athlete_video.v2"
         or payload.get("claim") != _CLAIM
         or payload.get("evidence_passed") is not True
         or payload.get("strict_replay") is not True
@@ -157,7 +157,8 @@ def render_recovery_athlete_video(
                 raise ValueError("recovery athlete video trajectory is incomplete")
             trajectories[f"{lane_id}:{route}"] = trajectory
             source_files[str(trajectory_path)] = hash_bytes(trajectory_path.read_bytes())
-    clips = _timeline(cases, trajectories, fps)
+    portfolio_metrics = cast(dict[str, Any], evidence["portfolio_metrics"])
+    clips = _timeline(cases, trajectories, portfolio_metrics, fps)
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
     if ffmpeg is None or ffprobe is None:
@@ -240,7 +241,7 @@ def render_recovery_athlete_video(
     ):
         raise RuntimeError("recovery athlete encoded video contract changed")
     manifest: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.recovery_athlete_video.v1",
+        "schema_version": "rosclaw_soccer.recovery_athlete_video.v2",
         "video_path": str(output),
         "video_hash": hash_bytes(output.read_bytes()),
         "source_files": source_files,
@@ -249,7 +250,7 @@ def render_recovery_athlete_video(
         "evidence_passed": True,
         "strict_replay": all(row["strict_replay"] for row in cases.values()),
         "case_count": len(cases),
-        "portfolio_metrics": evidence["portfolio_metrics"],
+        "portfolio_metrics": portfolio_metrics,
         "fps": fps,
         "width": width,
         "height": height,
@@ -276,6 +277,7 @@ def render_recovery_athlete_video(
 def _timeline(
     cases: dict[str, dict[str, Any]],
     trajectories: dict[str, dict[str, np.ndarray]],
+    portfolio_metrics: dict[str, Any],
     fps: int,
 ) -> tuple[_Clip, ...]:
     clips: list[_Clip] = []
@@ -283,7 +285,7 @@ def _timeline(
     start = float(trajectories[first]["time"][0])
     clips.append(
         _Clip(
-            "S105 NEURAL RECOVERY ATHLETE · 4×A6000 DISTILLATION → CPU MUJOCO",
+            "S106 CONTEXT-GATED RECOVERY · NEURAL ACTOR + MONOTONE AUTHORITY ENVELOPE",
             tuple(_Frame(first, start, "wide_goal") for _ in range(round(1.8 * fps))),
         )
     )
@@ -302,7 +304,14 @@ def _timeline(
         end = float(trajectories[f"{lane_id}:candidate"]["time"][-1])
         parent_tv = float(parent_metrics["lateral_command_total_variation_mps"])
         candidate_tv = float(candidate_metrics["lateral_command_total_variation_mps"])
+        parent_peak = float(parent_metrics["lateral_command_peak_step_mps"])
+        candidate_peak = float(candidate_metrics["lateral_command_peak_step_mps"])
         actor_fraction = float(candidate_metrics["recovery_actor_active_fraction"])
+        suppressed_fraction = float(
+            cast(dict[str, Any], candidate["result"])[
+                "goalkeeper_recovery_athlete_suppressed_fraction"
+            ]
+        )
         latency = float(candidate["ready_latency_sec"])
         clips.extend(
             (
@@ -322,8 +331,8 @@ def _timeline(
                     ),
                 ),
                 _Clip(
-                    f"S105 NEURAL RECOVERY · COMMAND TV {candidate_tv:.3f} m/s · "
-                    f"ACTOR {actor_fraction:.1%}",
+                    f"S106 GATED NEURAL RECOVERY · TV {candidate_tv:.3f} · "
+                    f"PEAK {parent_peak:.3f}→{candidate_peak:.3f} m/s",
                     _segment(
                         f"{lane_id}:candidate",
                         save + 0.35,
@@ -334,8 +343,9 @@ def _timeline(
                     ),
                 ),
                 _Clip(
-                    f"SUCCESSOR COMMAND → {float(probe['signed_displacement_m']):+.3f} m · "
-                    f"READY IN {latency:.2f}s",
+                    f"ENVELOPE ADJUSTED {suppressed_fraction:.1%} FRAMES · "
+                    f"ACTOR {actor_fraction:.1%} · SUCCESSOR "
+                    f"{float(probe['signed_displacement_m']):+.3f} m",
                     _segment(
                         f"{lane_id}:candidate",
                         probe_start - 0.25,
@@ -346,16 +356,18 @@ def _timeline(
                     ),
                 ),
                 _Clip(
-                    "READY AGAIN · DOUBLE SUPPORT · NO RESET / NO TELEPORT",
+                    f"READY AGAIN IN {latency:.2f}s · DOUBLE SUPPORT · NO RESET / NO TELEPORT",
                     _segment(f"{lane_id}:candidate", end - 1.0, end, 1.0, "keeper_front", fps),
                 ),
             )
         )
     last = f"{next(reversed(cases))}:candidate"
     end = float(trajectories[last]["time"][-1])
+    reduction = 100.0 * (1.0 - float(portfolio_metrics["candidate_to_parent_variation_ratio"]))
     clips.append(
         _Clip(
-            "4/4 PHYSICS · STRICT REPLAY · 29.5% LESS RECOVERY COMMAND VARIATION",
+            f"4/4 · STRICT REPLAY · {reduction:.1f}% LESS COMMAND VARIATION · "
+            "EVERY LANE PEAK-NONINFERIOR",
             tuple(_Frame(last, end, "wide_goal") for _ in range(round(2.2 * fps))),
         )
     )
