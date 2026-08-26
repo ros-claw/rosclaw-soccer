@@ -20,6 +20,9 @@ from rosclaw_soccer.skills.team.shared_world import (
     G1GoalkeeperConfig,
     simulate_shared_world,
 )
+from rosclaw_soccer.training.dive_athlete_cpu_exam import (
+    validate_dive_athlete_cpu_exam_report,
+)
 from rosclaw_soccer.training.dynamic_aerial_lunge_save import (
     dynamic_aerial_lunge_kwargs,
 )
@@ -126,9 +129,7 @@ def expanded_dynamic_corner_lanes() -> tuple[DynamicCornerSaveLane, ...]:
 class DynamicCornerPortfolioConfig:
     """Promotion contract for diverse physical contact points on both sides."""
 
-    lanes: tuple[DynamicCornerSaveLane, ...] = field(
-        default_factory=expanded_dynamic_corner_lanes
-    )
+    lanes: tuple[DynamicCornerSaveLane, ...] = field(default_factory=expanded_dynamic_corner_lanes)
     minimum_contact_span_m: float = 0.75
     minimum_adjacent_contact_separation_m: float = 0.03
     minimum_left_contact_abs_y_m: float = 0.35
@@ -173,6 +174,9 @@ def dynamic_corner_lane_kwargs(
     gmt_model_path: Path,
     gmt_skill_path: Path,
     dive_source_checkout: Path,
+    dive_athlete_checkpoint_path: Path | None = None,
+    dive_athlete_exam_path: Path | None = None,
+    dive_athlete_blend: float = 1.0,
 ) -> dict[str, Any]:
     """Translate the whole attack chain while keeping its local strike pocket fixed."""
 
@@ -182,6 +186,9 @@ def dynamic_corner_lane_kwargs(
         gmt_model_path=gmt_model_path,
         gmt_skill_path=gmt_skill_path,
         dive_source_checkout=dive_source_checkout,
+        dive_athlete_checkpoint_path=dive_athlete_checkpoint_path,
+        dive_athlete_exam_path=dive_athlete_exam_path,
+        dive_athlete_blend=dive_athlete_blend,
         config=lane.takeoff_config.lunge_config,
     )
     goal = kwargs.get("goal_spec")
@@ -220,6 +227,10 @@ def run_dynamic_corner_evidence(
     output_dir: Path,
     source_checkout: Path,
     config: DynamicCornerPortfolioConfig | None = None,
+    dive_athlete_checkpoint_path: Path | None = None,
+    dive_athlete_exam_path: Path | None = None,
+    dive_athlete_blend: float = 1.0,
+    dive_athlete_lane_blends: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Run every lane twice and freeze only an all-gate, diverse portfolio."""
 
@@ -236,6 +247,49 @@ def run_dynamic_corner_evidence(
         raise ValueError("dynamic corner artifacts must be readable files")
     if not dive_source.is_dir() or not (dive_source / "LICENSE").is_file():
         raise ValueError("dynamic corner dive source is incomplete")
+    if (dive_athlete_checkpoint_path is None) != (dive_athlete_exam_path is None):
+        raise ValueError("dynamic corner dive athlete checkpoint and exam must be paired")
+    if dive_athlete_checkpoint_path is None and dive_athlete_lane_blends is not None:
+        raise ValueError("dynamic corner lane authority requires a dive athlete")
+    athlete_binding: dict[str, Any] | None = None
+    authority_by_lane: dict[str, float] = {}
+    if dive_athlete_checkpoint_path is not None and dive_athlete_exam_path is not None:
+        checkpoint_path = dive_athlete_checkpoint_path.expanduser().resolve()
+        exam_path = dive_athlete_exam_path.expanduser().resolve()
+        if not checkpoint_path.is_file() or not exam_path.is_file():
+            raise ValueError("dynamic corner dive athlete artifacts must be readable files")
+        if not math.isfinite(dive_athlete_blend) or not 0.0 < dive_athlete_blend <= 1.0:
+            raise ValueError("dynamic corner dive athlete blend must be in (0, 1]")
+        lane_ids = {lane.lane_id for lane in active.lanes}
+        if dive_athlete_lane_blends is not None:
+            if set(dive_athlete_lane_blends) != lane_ids:
+                raise ValueError("dynamic corner lane authority must cover every lane exactly")
+            if not all(
+                math.isfinite(value) and 0.0 < value <= 1.0
+                for value in dive_athlete_lane_blends.values()
+            ):
+                raise ValueError("dynamic corner lane authority values must be in (0, 1]")
+            authority_by_lane = {
+                lane_id: float(dive_athlete_lane_blends[lane_id]) for lane_id in sorted(lane_ids)
+            }
+        else:
+            authority_by_lane = {lane_id: float(dive_athlete_blend) for lane_id in sorted(lane_ids)}
+        exam = validate_dive_athlete_cpu_exam_report(exam_path)
+        checkpoint_hash = hash_bytes(checkpoint_path.read_bytes())
+        if exam.get("checkpoint_hash") != checkpoint_hash:
+            raise ValueError("dynamic corner dive athlete checkpoint binding changed")
+        athlete_binding = {
+            "checkpoint_hash": checkpoint_hash,
+            "exam_file_hash": hash_bytes(exam_path.read_bytes()),
+            "exam_report_hash": exam["report_hash"],
+            "authority_by_lane": authority_by_lane,
+            "authority": "BOUNDED_POSITION_RESIDUAL",
+            "selection": (
+                "FAILURE_SELECTED_CONTEXT_TABLE"
+                if dive_athlete_lane_blends is not None
+                else "UNIFORM"
+            ),
+        }
     lane_kwargs = {
         lane.lane_id: dynamic_corner_lane_kwargs(
             lane=lane,
@@ -244,6 +298,9 @@ def run_dynamic_corner_evidence(
             gmt_model_path=gmt_model_path,
             gmt_skill_path=gmt_skill_path,
             dive_source_checkout=dive_source,
+            dive_athlete_checkpoint_path=dive_athlete_checkpoint_path,
+            dive_athlete_exam_path=dive_athlete_exam_path,
+            dive_athlete_blend=authority_by_lane.get(lane.lane_id, dive_athlete_blend),
         )
         for lane in active.lanes
     }
@@ -255,6 +312,10 @@ def run_dynamic_corner_evidence(
         "dive_source_commit": _git_head(dive_source),
         "dive_source_license_hash": hash_bytes((dive_source / "LICENSE").read_bytes()),
     }
+    if athlete_binding is not None:
+        artifacts["dive_athlete_checkpoint_hash"] = athlete_binding["checkpoint_hash"]
+        artifacts["dive_athlete_exam_file_hash"] = athlete_binding["exam_file_hash"]
+        artifacts["dive_athlete_exam_report_hash"] = athlete_binding["exam_report_hash"]
     request = {
         "schema_version": "rosclaw_soccer.dynamic_corner_request.v1",
         "config": asdict(active),
@@ -265,6 +326,7 @@ def run_dynamic_corner_evidence(
         "body_hash": qualification.body_hash,
         "kick_prior_hash": qualification.kick_prior_hash,
         "artifacts": artifacts,
+        "dive_athlete": athlete_binding,
         "source_commit": _git_head(checkout),
         "physics_authority": "CPU_MUJOCO",
         "activation_ceiling": "SIM_ONLY",
@@ -323,17 +385,24 @@ def run_dynamic_corner_evidence(
         "all_contacts_observed": len(contact_positions) == len(active.lanes),
         "contact_span": span >= active.minimum_contact_span_m,
         "contact_separation": bool(
-            separations
-            and min(separations) >= active.minimum_adjacent_contact_separation_m
+            separations and min(separations) >= active.minimum_adjacent_contact_separation_m
         ),
-        "left_outer_contact": bool(
-            ordered and ordered[0] <= -active.minimum_left_contact_abs_y_m
-        ),
-        "right_outer_contact": bool(
-            ordered and ordered[-1] >= active.minimum_right_contact_y_m
-        ),
+        "left_outer_contact": bool(ordered and ordered[0] <= -active.minimum_left_contact_abs_y_m),
+        "right_outer_contact": bool(ordered and ordered[-1] >= active.minimum_right_contact_y_m),
         "both_glove_sides": {"left", "right"} <= set(contact_sides),
     }
+    if athlete_binding is not None:
+        portfolio_gates["dive_athlete_bound_all_lanes"] = all(
+            case["result"].get("goalkeeper_dive_athlete_checkpoint_hash")
+            == athlete_binding["checkpoint_hash"]
+            and math.isclose(
+                float(case["result"].get("goalkeeper_dive_athlete_blend", -1.0)),
+                float(athlete_binding["authority_by_lane"][lane_id]),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            for lane_id, case in cases.items()
+        )
     passed = bool(all(portfolio_gates.values()))
     report = {
         "schema_version": "rosclaw_soccer.dynamic_corner_evidence.v1",
@@ -357,7 +426,9 @@ def run_dynamic_corner_evidence(
         "request_hash": hash_bytes((output / "request.json").read_bytes()),
         "implementation_hash": _implementation_hash(),
         "artifacts": artifacts,
+        "dive_athlete": athlete_binding,
     }
+    report["report_hash"] = hash_json(report)
     _write_json(output / "evidence.json", report)
     return report
 
@@ -369,9 +440,16 @@ def validate_dynamic_corner_evidence(path: Path) -> dict[str, Any]:
     payload = json.loads(source.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("dynamic corner evidence must be an object")
+    report_hash = payload.get("report_hash")
+    if report_hash is not None:
+        unhashed = dict(payload)
+        unhashed.pop("report_hash", None)
+        if not isinstance(report_hash, str) or report_hash != hash_json(unhashed):
+            raise ValueError("dynamic corner evidence report hash changed")
     request = source.parent / "request.json"
     cases = payload.get("cases")
     gates = payload.get("portfolio_gates")
+    request_payload = json.loads(request.read_text(encoding="utf-8")) if request.is_file() else None
     if not (
         payload.get("schema_version") == "rosclaw_soccer.dynamic_corner_evidence.v1"
         and payload.get("passed") is True
@@ -388,6 +466,9 @@ def validate_dynamic_corner_evidence(path: Path) -> dict[str, Any]:
         and all(gates.values())
         and request.is_file()
         and hash_bytes(request.read_bytes()) == payload.get("request_hash")
+        and isinstance(request_payload, dict)
+        and payload.get("artifacts") == request_payload.get("artifacts")
+        and payload.get("dive_athlete") == request_payload.get("dive_athlete")
     ):
         raise ValueError("dynamic corner evidence authority contract is invalid")
     for value in cases.values():
@@ -401,6 +482,41 @@ def validate_dynamic_corner_evidence(path: Path) -> dict[str, Any]:
             "trajectory_hash"
         ):
             raise ValueError("dynamic corner trajectory binding changed")
+    athlete = payload.get("dive_athlete")
+    if athlete is not None:
+        artifacts = payload.get("artifacts")
+        authority_by_lane = athlete.get("authority_by_lane") if isinstance(athlete, dict) else None
+        if not (
+            isinstance(artifacts, dict)
+            and isinstance(authority_by_lane, dict)
+            and set(authority_by_lane) == set(cases)
+            and athlete.get("authority") == "BOUNDED_POSITION_RESIDUAL"
+            and athlete.get("selection") in {"UNIFORM", "FAILURE_SELECTED_CONTEXT_TABLE"}
+            and artifacts.get("dive_athlete_checkpoint_hash") == athlete.get("checkpoint_hash")
+            and artifacts.get("dive_athlete_exam_file_hash") == athlete.get("exam_file_hash")
+            and artifacts.get("dive_athlete_exam_report_hash") == athlete.get("exam_report_hash")
+            and gates.get("dive_athlete_bound_all_lanes") is True
+        ):
+            raise ValueError("dynamic corner dive athlete binding is invalid")
+        for lane_id, value in cases.items():
+            result = value.get("result") if isinstance(value, dict) else None
+            authority = authority_by_lane.get(lane_id)
+            if not (
+                isinstance(result, dict)
+                and isinstance(authority, int | float)
+                and not isinstance(authority, bool)
+                and math.isfinite(float(authority))
+                and 0.0 < float(authority) <= 1.0
+                and result.get("goalkeeper_dive_athlete_checkpoint_hash")
+                == athlete.get("checkpoint_hash")
+                and math.isclose(
+                    float(result.get("goalkeeper_dive_athlete_blend", -1.0)),
+                    float(authority),
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+            ):
+                raise ValueError("dynamic corner lane authority receipt changed")
     return cast(dict[str, Any], payload)
 
 
@@ -415,6 +531,12 @@ def _implementation_hash() -> str:
                 ),
                 "dynamic_lunge": hash_bytes(
                     (package / "training" / "dynamic_aerial_lunge_save.py").read_bytes()
+                ),
+                "dive_athlete_cpu_exam": hash_bytes(
+                    (package / "training" / "dive_athlete_cpu_exam.py").read_bytes()
+                ),
+                "dive_athlete_expert": hash_bytes(
+                    (package / "training" / "dive_athlete_expert.py").read_bytes()
                 ),
                 "shared_world": hash_bytes(
                     (package / "skills" / "team" / "shared_world.py").read_bytes()

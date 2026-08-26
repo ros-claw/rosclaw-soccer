@@ -275,6 +275,9 @@ class G1GoalkeeperConfig:
     balanced_dive_landing_capture_enabled: bool = False
     balanced_dive_landing_capture_sec: float = 0.80
     balanced_dive_landing_damping_scale: float = 1.50
+    dive_athlete_checkpoint_path: Path | None = None
+    dive_athlete_exam_path: Path | None = None
+    dive_athlete_blend: float = 0.0
     anticipation_enabled: bool = False
     anticipation_start_policy_frame: int = 230
     anticipation_minimum_foot_ball_distance_m: float = 0.35
@@ -295,7 +298,7 @@ class G1GoalkeeperConfig:
     block_action_shoulder_pitch_rad: float = 0.0
     block_action_shoulder_roll_rad: float = 0.0
     block_action_elbow_flex_rad: float = 0.0
-    schema_version: str = "rosclaw_soccer.g1_goalkeeper_config.v28"
+    schema_version: str = "rosclaw_soccer.g1_goalkeeper_config.v29"
 
     def __post_init__(self) -> None:
         values = (
@@ -378,6 +381,7 @@ class G1GoalkeeperConfig:
             self.balanced_dive_recovery_tail_sec,
             self.balanced_dive_landing_capture_sec,
             self.balanced_dive_landing_damping_scale,
+            self.dive_athlete_blend,
             self.block_action_waist_yaw_rad,
             self.block_action_waist_roll_rad,
             self.block_action_waist_pitch_rad,
@@ -682,6 +686,24 @@ class G1GoalkeeperConfig:
             and self.balanced_dive_source_checkout is None
         ):
             raise ValueError("goalkeeper landing capture requires a balanced dive source")
+        dive_athlete_paths = (
+            self.dive_athlete_checkpoint_path,
+            self.dive_athlete_exam_path,
+        )
+        if not 0.0 <= self.dive_athlete_blend <= 1.0:
+            raise ValueError("goalkeeper dive athlete blend is invalid")
+        if (any(path is not None for path in dive_athlete_paths)) != (
+            self.dive_athlete_blend > 0.0
+        ) or (
+            self.dive_athlete_blend > 0.0
+            and (
+                not all(path is not None and path.is_file() for path in dive_athlete_paths)
+                or self.balanced_dive_source_checkout is None
+            )
+        ):
+            raise ValueError(
+                "goalkeeper dive athlete requires checkpoint, passing exam and dive source"
+            )
         if not 180 <= self.anticipation_start_policy_frame <= 270:
             raise ValueError("goalkeeper anticipation frame must be in [180, 270]")
         if not (
@@ -901,10 +923,12 @@ class G1SharedWorldResult:
     goalkeeper_balanced_dive_seed_hash: str | None = None
     goalkeeper_balanced_dive_active_fraction: float = 0.0
     goalkeeper_balanced_dive_peak_blend: float = 0.0
+    goalkeeper_dive_athlete_checkpoint_hash: str | None = None
+    goalkeeper_dive_athlete_blend: float = 0.0
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v13"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v14"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1496,9 +1520,7 @@ def _simulate_shared_world(
         active_pass_reception_target.shape != (3,)
         or not np.all(np.isfinite(active_pass_reception_target))
         or not 0.80 <= active_pass_reception_target[0] <= 1.40
-        or not -0.30
-        <= active_pass_reception_target[1] - active_shooter_origin[1]
-        <= 0.30
+        or not -0.30 <= active_pass_reception_target[1] - active_shooter_origin[1] <= 0.30
         or not 0.105 <= active_pass_reception_target[2] <= 0.130
     ):
         raise ValueError(
@@ -1911,6 +1933,10 @@ def _simulate_shared_world(
     goalkeeper_balanced_dive_seed: GoalkeeperBalancedDiveSeed | None = None
     goalkeeper_balanced_dive_kp: NDArray[np.float64] | None = None
     goalkeeper_balanced_dive_kd: NDArray[np.float64] | None = None
+    goalkeeper_dive_athlete_torch: Any | None = None
+    goalkeeper_dive_athlete_model: Any | None = None
+    goalkeeper_dive_athlete_checkpoint: dict[str, Any] | None = None
+    goalkeeper_dive_athlete_checkpoint_hash: str | None = None
     goalkeeper_origin: np.ndarray | None = None
     if goalkeeper_config is not None:
         goalkeeper_origin = np.asarray(
@@ -2055,6 +2081,41 @@ def _simulate_shared_world(
                 goalkeeper_balanced_dive_kp,
                 goalkeeper_balanced_dive_kd,
             ) = balanced_dive_qualified_impedance()
+        if (
+            goalkeeper_config.dive_athlete_checkpoint_path is not None
+            and goalkeeper_config.dive_athlete_exam_path is not None
+        ):
+            import torch
+
+            from rosclaw_soccer.training.dive_athlete_cpu_exam import (
+                validate_dive_athlete_cpu_exam_report,
+            )
+            from rosclaw_soccer.training.dive_athlete_expert import (
+                load_dive_athlete_expert,
+            )
+
+            athlete_checkpoint_path = goalkeeper_config.dive_athlete_checkpoint_path
+            athlete_source_checkout = goalkeeper_config.balanced_dive_source_checkout
+            if athlete_source_checkout is None:
+                raise ValueError("goalkeeper dive athlete source is unavailable")
+            athlete_exam = validate_dive_athlete_cpu_exam_report(
+                goalkeeper_config.dive_athlete_exam_path
+            )
+            goalkeeper_dive_athlete_checkpoint_hash = hash_bytes(
+                athlete_checkpoint_path.read_bytes()
+            )
+            if athlete_exam.get("checkpoint_hash") != goalkeeper_dive_athlete_checkpoint_hash:
+                raise ValueError("goalkeeper dive athlete checkpoint/exam binding changed")
+            (
+                goalkeeper_dive_athlete_model,
+                goalkeeper_dive_athlete_checkpoint,
+            ) = load_dive_athlete_expert(
+                checkpoint_path=athlete_checkpoint_path,
+                asset_root=root,
+                dive_source_checkout=athlete_source_checkout,
+                device=torch.device("cpu"),
+            )
+            goalkeeper_dive_athlete_torch = torch
     robots = (passer, shooter) if goalkeeper is None else (passer, shooter, goalkeeper)
     passer_geoms = _robot_geom_ids(model, passer.pelvis_body)
     shooter_geoms = _robot_geom_ids(model, shooter.pelvis_body)
@@ -2816,17 +2877,11 @@ def _simulate_shared_world(
                         # the ball arrives.
                         phase, blend_gate, dive_owns_joints = _balanced_dive_phase_profile(
                             elapsed_sec=elapsed,
-                            flight_duration_sec=(
-                                goalkeeper_balanced_dive_flight_duration_sec
-                            ),
-                            phase_at_arrival=(
-                                goalkeeper_config.balanced_dive_phase_at_arrival
-                            ),
+                            flight_duration_sec=(goalkeeper_balanced_dive_flight_duration_sec),
+                            phase_at_arrival=(goalkeeper_config.balanced_dive_phase_at_arrival),
                             peak_phase=goalkeeper_config.balanced_dive_peak_phase,
                             blend_in_sec=goalkeeper_config.balanced_dive_blend_in_sec,
-                            recovery_tail_sec=(
-                                goalkeeper_config.balanced_dive_recovery_tail_sec
-                            ),
+                            recovery_tail_sec=(goalkeeper_config.balanced_dive_recovery_tail_sec),
                             initial_phase=goalkeeper_config.balanced_dive_initial_phase,
                         )
                         frame_position = phase * (
@@ -2841,13 +2896,61 @@ def _simulate_shared_world(
                         # The qualified source-left action moves the MuJoCo
                         # root toward world -y; its manufactured mirror moves
                         # toward +y.  Select by the measured world-frame error.
-                        dive_target = (
+                        source_dive_target = (
                             1.0 - frame_alpha
                         ) * goalkeeper_balanced_dive_seed.joint_position_rad[
                             goalkeeper_balanced_dive_direction_index, lower_frame
                         ] + frame_alpha * goalkeeper_balanced_dive_seed.joint_position_rad[
                             goalkeeper_balanced_dive_direction_index, upper_frame
                         ]
+                        dive_target = source_dive_target
+                        if (
+                            goalkeeper_dive_athlete_torch is not None
+                            and goalkeeper_dive_athlete_model is not None
+                            and goalkeeper_dive_athlete_checkpoint is not None
+                        ):
+                            from rosclaw_soccer.training.dive_athlete_expert import (
+                                decode_dive_athlete_target,
+                                dive_athlete_features_numpy,
+                            )
+
+                            athlete_features = dive_athlete_features_numpy(
+                                phase=np.asarray((phase,), dtype=np.float64),
+                                target_lateral_m=np.asarray(
+                                    (abs(lateral_error),), dtype=np.float64
+                                ),
+                                target_height_m=np.asarray((intercept[2],), dtype=np.float64),
+                                duration_sec=np.asarray(
+                                    (goalkeeper_balanced_dive_flight_duration_sec,),
+                                    dtype=np.float64,
+                                ),
+                                contact_phase=np.asarray(
+                                    (goalkeeper_config.balanced_dive_phase_at_arrival,),
+                                    dtype=np.float64,
+                                ),
+                            )
+                            athlete_direction = -1.0 if lateral_error < 0.0 else 1.0
+                            with goalkeeper_dive_athlete_torch.inference_mode():
+                                decoded_target = decode_dive_athlete_target(
+                                    torch=goalkeeper_dive_athlete_torch,
+                                    model=goalkeeper_dive_athlete_model,
+                                    checkpoint=goalkeeper_dive_athlete_checkpoint,
+                                    features=goalkeeper_dive_athlete_torch.as_tensor(
+                                        athlete_features,
+                                        dtype=goalkeeper_dive_athlete_torch.float32,
+                                    ),
+                                    direction=goalkeeper_dive_athlete_torch.as_tensor(
+                                        (athlete_direction,),
+                                        dtype=goalkeeper_dive_athlete_torch.float32,
+                                    ),
+                                )
+                            neural_dive_target = np.asarray(
+                                decoded_target[0].cpu(), dtype=np.float64
+                            )
+                            dive_target = source_dive_target + (
+                                goalkeeper_config.dive_athlete_blend
+                                * (neural_dive_target - source_dive_target)
+                            )
                         # Match the qualification's linear blend-in, retain
                         # full ownership through the recorded trajectory and
                         # then hand back continuously over the recovery tail.
@@ -3000,9 +3103,7 @@ def _simulate_shared_world(
                             gmt_target_tensor[0].detach().cpu(),
                             dtype=np.float64,
                         )
-                        goalkeeper_mosaic_gmt_mirrored = bool(
-                            goalkeeper_mosaic_gmt_mirror_latch
-                        )
+                        goalkeeper_mosaic_gmt_mirrored = bool(goalkeeper_mosaic_gmt_mirror_latch)
                         if goalkeeper_mosaic_gmt_mirrored:
                             gmt_target = _mirror_g1_joint_positions(gmt_target)
                         group_scales = np.asarray(
@@ -3112,9 +3213,7 @@ def _simulate_shared_world(
                                 0.0,
                                 float(data.time) - goalkeeper_landing_capture_start_sec,
                             ),
-                            duration_sec=(
-                                goalkeeper_config.balanced_dive_landing_capture_sec
-                            ),
+                            duration_sec=(goalkeeper_config.balanced_dive_landing_capture_sec),
                         )
                     )
                     if goalkeeper_landing_capture_active:
@@ -3127,15 +3226,14 @@ def _simulate_shared_world(
                         lower_body = slice(0, 15)
                         blend = goalkeeper_landing_capture_blend
                         robot.last_target[lower_body] = (
-                            (1.0 - blend)
-                            * goalkeeper_landing_capture_anchor[lower_body]
-                            + blend * goalkeeper_foundation_target[lower_body]
-                        )
+                            1.0 - blend
+                        ) * goalkeeper_landing_capture_anchor[
+                            lower_body
+                        ] + blend * goalkeeper_foundation_target[lower_body]
                         robot.target_velocity[lower_body] = 0.0
-                        robot.kp[lower_body] = (
-                            (1.0 - blend) * goalkeeper_balanced_dive_kp[lower_body]
-                            + blend * goalkeeper_foundation_kp[lower_body]
-                        )
+                        robot.kp[lower_body] = (1.0 - blend) * goalkeeper_balanced_dive_kp[
+                            lower_body
+                        ] + blend * goalkeeper_foundation_kp[lower_body]
                         robot.kd[lower_body] = (
                             (1.0 - blend)
                             * goalkeeper_balanced_dive_kd[lower_body]
@@ -3460,17 +3558,12 @@ def _simulate_shared_world(
                         if goalkeeper_right_glove_contact_time is None
                         else goalkeeper_right_glove_contact_time
                     )
-                if (
-                    observation["ball_goalkeeper_glove"]
-                    and goalkeeper_glove_contact_time is None
-                ):
+                if observation["ball_goalkeeper_glove"] and goalkeeper_glove_contact_time is None:
                     goalkeeper_glove_contact_time = float(data.time)
                     goalkeeper_glove_contact_position = np.asarray(
                         data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
                     ).copy()
-                    goalkeeper_glove_contact_height = float(
-                        goalkeeper_glove_contact_position[2]
-                    )
+                    goalkeeper_glove_contact_height = float(goalkeeper_glove_contact_position[2])
                     left_active = bool(observation["ball_goalkeeper_left_glove"])
                     right_active = bool(observation["ball_goalkeeper_right_glove"])
                     if left_active and right_active:
@@ -3532,27 +3625,27 @@ def _simulate_shared_world(
                     goalkeeper_contact_trace["goalkeeper_contact_window_time"].append(
                         float(data.time)
                     )
-                    goalkeeper_contact_trace[
-                        "goalkeeper_contact_window_ball_pose"
-                    ].append(data.qpos[ball_qpos : ball_qpos + 7].copy())
-                    goalkeeper_contact_trace[
-                        "goalkeeper_contact_window_ball_velocity"
-                    ].append(data.qvel[ball_qvel : ball_qvel + 6].copy())
-                    goalkeeper_contact_trace[
-                        "goalkeeper_contact_window_pelvis_pose"
-                    ].append(data.qpos[goalkeeper.qpos_base : goalkeeper.qpos_base + 7].copy())
-                    goalkeeper_contact_trace[
-                        "goalkeeper_contact_window_joint_position"
-                    ].append(data.qpos[goalkeeper.joint_qpos].copy())
-                    goalkeeper_contact_trace[
-                        "goalkeeper_contact_window_left_hand_position"
-                    ].append(data.xpos[goalkeeper.left_hand_body].copy())
+                    goalkeeper_contact_trace["goalkeeper_contact_window_ball_pose"].append(
+                        data.qpos[ball_qpos : ball_qpos + 7].copy()
+                    )
+                    goalkeeper_contact_trace["goalkeeper_contact_window_ball_velocity"].append(
+                        data.qvel[ball_qvel : ball_qvel + 6].copy()
+                    )
+                    goalkeeper_contact_trace["goalkeeper_contact_window_pelvis_pose"].append(
+                        data.qpos[goalkeeper.qpos_base : goalkeeper.qpos_base + 7].copy()
+                    )
+                    goalkeeper_contact_trace["goalkeeper_contact_window_joint_position"].append(
+                        data.qpos[goalkeeper.joint_qpos].copy()
+                    )
+                    goalkeeper_contact_trace["goalkeeper_contact_window_left_hand_position"].append(
+                        data.xpos[goalkeeper.left_hand_body].copy()
+                    )
                     goalkeeper_contact_trace[
                         "goalkeeper_contact_window_right_hand_position"
                     ].append(data.xpos[goalkeeper.right_hand_body].copy())
-                    goalkeeper_contact_trace[
-                        "goalkeeper_contact_window_left_glove_contact"
-                    ].append(bool(observation["ball_goalkeeper_left_glove"]))
+                    goalkeeper_contact_trace["goalkeeper_contact_window_left_glove_contact"].append(
+                        bool(observation["ball_goalkeeper_left_glove"])
+                    )
                     goalkeeper_contact_trace[
                         "goalkeeper_contact_window_right_glove_contact"
                     ].append(bool(observation["ball_goalkeeper_right_glove"]))
@@ -3561,18 +3654,14 @@ def _simulate_shared_world(
                     ].append(
                         np.nan
                         if observation["ball_goalkeeper_left_glove_surface_distance_m"] is None
-                        else float(
-                            observation["ball_goalkeeper_left_glove_surface_distance_m"]
-                        )
+                        else float(observation["ball_goalkeeper_left_glove_surface_distance_m"])
                     )
                     goalkeeper_contact_trace[
                         "goalkeeper_contact_window_right_surface_distance_m"
                     ].append(
                         np.nan
                         if observation["ball_goalkeeper_right_glove_surface_distance_m"] is None
-                        else float(
-                            observation["ball_goalkeeper_right_glove_surface_distance_m"]
-                        )
+                        else float(observation["ball_goalkeeper_right_glove_surface_distance_m"])
                     )
         goalkeeper_bimanual_punch_frames += int(frame_goalkeeper_bimanual_punch_active)
         goalkeeper_bimanual_punch_peak_torque = max(
@@ -3587,9 +3676,8 @@ def _simulate_shared_world(
         _update_support_slip(shooter, data, shooter_support)
         if goalkeeper is not None:
             _update_support_slip(goalkeeper, data, goalkeeper_support)
-            if (
-                goalkeeper_balanced_dive_flight_start_sec is not None
-                and not any(goalkeeper_support)
+            if goalkeeper_balanced_dive_flight_start_sec is not None and not any(
+                goalkeeper_support
             ):
                 goalkeeper_balanced_dive_was_airborne = True
             if (
@@ -3760,9 +3848,7 @@ def _simulate_shared_world(
                 goalkeeper_whole_body_reach_target_delta.copy()
             )
             trace["goalkeeper_mosaic_gmt_blend"].append(goalkeeper_mosaic_gmt_blend)
-            trace["goalkeeper_mosaic_gmt_mirrored"].append(
-                goalkeeper_mosaic_gmt_mirrored
-            )
+            trace["goalkeeper_mosaic_gmt_mirrored"].append(goalkeeper_mosaic_gmt_mirrored)
             trace["goalkeeper_mosaic_gmt_target_delta"].append(
                 goalkeeper_mosaic_gmt_target_delta.copy()
             )
@@ -3770,12 +3856,8 @@ def _simulate_shared_world(
             trace["goalkeeper_balanced_dive_target_delta"].append(
                 goalkeeper_balanced_dive_target_delta.copy()
             )
-            trace["goalkeeper_landing_capture_active"].append(
-                goalkeeper_landing_capture_active
-            )
-            trace["goalkeeper_landing_capture_blend"].append(
-                goalkeeper_landing_capture_blend
-            )
+            trace["goalkeeper_landing_capture_active"].append(goalkeeper_landing_capture_active)
+            trace["goalkeeper_landing_capture_blend"].append(goalkeeper_landing_capture_blend)
             trace["goalkeeper_ball_contact"].append(
                 goalkeeper_contact_time is not None
                 and abs(float(data.time) - goalkeeper_contact_time) <= _CONTROL_DT + 1e-9
@@ -3834,10 +3916,7 @@ def _simulate_shared_world(
     trajectory = {name: np.asarray(values) for name, values in trace.items()}
     if goalkeeper is not None:
         trajectory.update(
-            {
-                name: np.asarray(values)
-                for name, values in goalkeeper_contact_trace.items()
-            }
+            {name: np.asarray(values) for name, values in goalkeeper_contact_trace.items()}
         )
     result = G1SharedWorldResult(
         finite_state=finite,
@@ -4013,9 +4092,7 @@ def _simulate_shared_world(
                 float(goalkeeper_glove_contact_position[2]),
             )
         ),
-        goalkeeper_glove_contact_surface_distance_m=(
-            goalkeeper_glove_contact_surface_distance
-        ),
+        goalkeeper_glove_contact_surface_distance_m=(goalkeeper_glove_contact_surface_distance),
         goalkeeper_glove_contact_side=goalkeeper_glove_contact_side,
         goalkeeper_contact_left_hand_height_m=goalkeeper_contact_left_hand_height,
         goalkeeper_contact_right_hand_height_m=goalkeeper_contact_right_hand_height,
@@ -4075,6 +4152,10 @@ def _simulate_shared_world(
             goalkeeper_balanced_dive_frames / max(1, total_frames)
         ),
         goalkeeper_balanced_dive_peak_blend=goalkeeper_balanced_dive_peak_blend,
+        goalkeeper_dive_athlete_checkpoint_hash=(goalkeeper_dive_athlete_checkpoint_hash),
+        goalkeeper_dive_athlete_blend=(
+            0.0 if goalkeeper_config is None else goalkeeper_config.dive_athlete_blend
+        ),
         passer_joint_limit_violation=role_joint_violation["passer"],
         shooter_joint_limit_violation=role_joint_violation["shooter"],
         goalkeeper_joint_limit_violation=role_joint_violation.get("goalkeeper", False),
@@ -5245,8 +5326,8 @@ def _goalkeeper_punch_force_local(
         raise ValueError("goalkeeper punch force state must be finite and non-negative")
     if not 0.0 <= vertical_force_scale <= 1.0 or not 0.0 <= outward_force_scale <= 0.75:
         raise ValueError("goalkeeper punch force scales are invalid")
-    outward_direction = 0.0 if abs(local_intercept_y_m) < 1.0e-9 else math.copysign(
-        1.0, local_intercept_y_m
+    outward_direction = (
+        0.0 if abs(local_intercept_y_m) < 1.0e-9 else math.copysign(1.0, local_intercept_y_m)
     )
     return np.asarray(
         (
