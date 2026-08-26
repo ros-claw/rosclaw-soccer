@@ -725,6 +725,7 @@ def g1_ballistic_contact_impulse_effect(
     goal_plane_x_m: float | None = None,
     target_y_m: float | None = None,
     target_z_m: float | None = None,
+    actuated_dof_indices: NDArray[np.int64] | None = None,
 ) -> G1BallisticContactImpulseEffect:
     """Run the learned proprioceptive actor and decode direct joint torques."""
 
@@ -837,7 +838,21 @@ def g1_ballistic_contact_impulse_effect(
             actor.maximum_vertical_force_n,
         )
     )
-    torque = jacobian[1, 6:35] * lateral + jacobian[2, 6:35] * vertical
+    if actuated_dof_indices is None:
+        # A standalone G1 has one floating base followed by its 29 actuated
+        # DoFs.  Coupled worlds must provide the role-specific indices below;
+        # a fixed global slice would silently decode another robot's Jacobian.
+        decoder_indices = np.arange(6, 35, dtype=np.int64)
+    else:
+        decoder_indices = np.asarray(actuated_dof_indices, dtype=np.int64)
+        if (
+            decoder_indices.shape != (29,)
+            or len(np.unique(decoder_indices)) != 29
+            or np.any(decoder_indices < 0)
+            or np.any(decoder_indices >= int(model.nv))
+        ):
+            raise ValueError("contact impulse actor requires 29 unique actuated DoF indices")
+    torque = jacobian[1, decoder_indices] * lateral + jacobian[2, decoder_indices] * vertical
     if torque.shape != (29,) or not np.all(np.isfinite(torque)):
         raise FloatingPointError("contact impulse actor emitted invalid joint torque")
     return G1BallisticContactImpulseEffect(

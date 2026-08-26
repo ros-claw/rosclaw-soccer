@@ -423,7 +423,7 @@ def simulate_second_striker_contact(
             initial_position=initial_position,
             initial_quaternion=initial_quaternion,
             initial_joints=np.asarray(_STANDBY_TARGET, dtype=np.float64),
-            target=active.target_m,
+            target=active.policy_target_m,
             active=True,
             active_start_sec=active.policy_start_time_sec,
         ),
