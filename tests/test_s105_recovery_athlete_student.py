@@ -30,9 +30,9 @@ from rosclaw_soccer.training.recovery_athlete_student import (
 from rosclaw_soccer.training.save_to_ready_successor import SaveToReadySuccessorConfig
 
 _EXTERNAL_ROOT = Path("/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1")
-_INTEGRATION_EVIDENCE = _EXTERNAL_ROOT / "s105-recovery-athlete-integration-v1/evidence.json"
+_INTEGRATION_EVIDENCE = _EXTERNAL_ROOT / "s106-context-gated-recovery-integration-v1/evidence.json"
 _VIDEO_MANIFEST = (
-    _EXTERNAL_ROOT / "s105-recovery-athlete-showcase-v1/s105-neural-recovery-athlete.json"
+    _EXTERNAL_ROOT / "s106-context-gated-recovery-showcase-v2/s106-context-gated-recovery.json"
 )
 
 
@@ -265,16 +265,17 @@ def test_integration_contract_remains_sim_only() -> None:
 
 def test_current_integration_evidence_is_content_bound_when_available() -> None:
     if not _INTEGRATION_EVIDENCE.is_file():
-        pytest.skip("external S105 physics evidence is not installed")
+        pytest.skip("external S106 physics evidence is not installed")
     report = validate_recovery_athlete_integration_exam(_INTEGRATION_EVIDENCE)
     assert report["passed"] is True
     assert report["portfolio_gates"]["heldout_right_inner_passed"] is True
+    assert report["portfolio_gates"]["every_lane_peak_step_noninferior"] is True
     assert report["portfolio_metrics"]["candidate_to_parent_variation_ratio"] < 1.0
 
 
 def test_current_video_is_content_bound_when_available() -> None:
     if not _VIDEO_MANIFEST.is_file():
-        pytest.skip("external S105 video is not installed")
+        pytest.skip("external S106 video is not installed")
     manifest = validate_recovery_athlete_video_manifest(_VIDEO_MANIFEST)
     assert manifest["evidence_passed"] is True
     assert manifest["duration_sec"] > 50.0
