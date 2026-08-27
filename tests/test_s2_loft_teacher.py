@@ -98,6 +98,33 @@ def test_loft_teacher_projects_a_bounded_vertical_force() -> None:
     assert effect.torque.shape == (29,)
 
 
+def test_loft_teacher_decodes_role_specific_dofs_in_a_coupled_world() -> None:
+    jacobian = np.zeros((3, 128), dtype=np.float64)
+    jacobian[1, 99] = 0.50
+    jacobian[2, 100] = -0.25
+    effect = project_g1_vertical_foot_force(
+        jacobian_position=jacobian,
+        generalized_velocity=np.zeros(128),
+        config=G1LoftTeacherConfig(
+            target_vertical_speed_mps=3.0,
+            maximum_vertical_force_n=20.0,
+            target_lateral_speed_mps=-1.0,
+            maximum_lateral_force_n=10.0,
+        ),
+        actuated_dof_indices=np.arange(99, 128, dtype=np.int64),
+    )
+
+    np.testing.assert_allclose(effect.torque[:2], (-5.0, -5.0))
+    assert np.count_nonzero(effect.torque) == 2
+    with pytest.raises(ValueError, match="29 unique"):
+        project_g1_vertical_foot_force(
+            jacobian_position=jacobian,
+            generalized_velocity=np.zeros(128),
+            config=G1LoftTeacherConfig(target_vertical_speed_mps=3.0),
+            actuated_dof_indices=np.full(29, 99, dtype=np.int64),
+        )
+
+
 def test_loft_teacher_preserves_forward_foot_velocity_in_the_contact_neighborhood() -> None:
     jacobian = np.zeros((3, 35), dtype=np.float64)
     jacobian[0, 6] = 0.25

@@ -9,13 +9,14 @@ import pytest
 from rosclaw_soccer.training.role_isolated_second_striker_probe import (
     RoleIsolatedSecondStrikerProbeConfig,
     _candidate_diagnostics,
+    _candidate_status,
     _derive_probe_gates,
     validate_role_isolated_second_striker_probe,
 )
 
 _EVIDENCE = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
-    "s113-role-isolated-target-actor-control-v3/evidence.json"
+    "s114-failure-updated-control-v1/evidence.json"
 )
 
 
@@ -83,10 +84,35 @@ def test_gate_derivation_does_not_confuse_retention_with_growth() -> None:
     assert plasticity["candidate_selected"] is False
 
 
-def test_external_s113_evidence_if_available() -> None:
+def test_candidate_status_distinguishes_abstention_from_task_failure() -> None:
+    assert (
+        _candidate_status(
+            promoted=False,
+            plasticity_gates={
+                "candidate_envelope_supported": True,
+                "candidate_selected": True,
+                "complete_chain_passed": False,
+            },
+        )
+        == "REJECTED_TASK_FAILURE"
+    )
+    assert (
+        _candidate_status(
+            promoted=False,
+            plasticity_gates={
+                "candidate_envelope_supported": False,
+                "candidate_selected": False,
+                "complete_chain_passed": True,
+            },
+        )
+        == "REJECTED_NO_SUPPORTED_PLASTICITY"
+    )
+
+
+def test_current_role_isolated_evidence_if_available() -> None:
     if not _EVIDENCE.is_file():
-        pytest.skip("external S113 role-isolated evidence is not present")
+        pytest.skip("current role-isolated evidence is not present")
     report = validate_role_isolated_second_striker_probe(_EVIDENCE)
     assert report["evidence_passed"] is True
-    assert report["candidate_promoted"] is False
-    assert report["candidate_status"] == "REJECTED_NO_SUPPORTED_PLASTICITY"
+    assert report["candidate_promoted"] is True
+    assert report["candidate_status"] == "QUALIFIED_DEVELOPMENT_CANDIDATE"

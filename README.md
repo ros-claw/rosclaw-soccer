@@ -73,6 +73,18 @@ misses the second save.  The candidate is therefore explicitly rejected rather
 than credited with the parent's success.  See the
 [S113 stability–plasticity report](docs/s113-role-isolated-stability-plasticity.zh-CN.md).
 
+S114 closes the first real failure-to-growth loop on that role boundary.  A
+role-local teacher now projects forces through the second striker's own 29 DoFs
+and rehearses eight safe/failed contact conditions inside the uninterrupted
+four-G1 world.  The first distilled candidate genuinely selected itself but
+still let the ball cross the goal line.  That bound failure then contracted the
+inverse-model trust region and added proprioceptive foot-speed feedback.  The
+updated candidate—not its frozen parent—passes two exact control replays with a
+1.475 m physical glove save and final ready state.  It still fails the sealed
+0.46 kg/high-grip holdout, so the portfolio gate rejects broad promotion and
+turns that miss into the next curriculum.  See the
+[S114 failure-memory report](docs/s114-failure-memory-contact-growth.zh-CN.md).
+
 ## Regulation football physics
 
 The simulator selects measurements inside the current IFAB ranges: a

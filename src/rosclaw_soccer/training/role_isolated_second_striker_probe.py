@@ -242,6 +242,18 @@ def _derive_probe_gates(
     return evidence_gates, plasticity_gates
 
 
+def _candidate_status(*, promoted: bool, plasticity_gates: dict[str, bool]) -> str:
+    if promoted:
+        return "QUALIFIED_DEVELOPMENT_CANDIDATE"
+    if (
+        plasticity_gates.get("candidate_envelope_supported") is True
+        and plasticity_gates.get("candidate_selected") is True
+        and plasticity_gates.get("complete_chain_passed") is False
+    ):
+        return "REJECTED_TASK_FAILURE"
+    return "REJECTED_NO_SUPPORTED_PLASTICITY"
+
+
 def run_role_isolated_second_striker_probe(
     *,
     asset_root: Path,
@@ -356,10 +368,8 @@ def run_role_isolated_second_striker_probe(
         "claim": _CLAIM,
         "evidence_passed": evidence_passed,
         "candidate_promoted": candidate_promoted,
-        "candidate_status": (
-            "QUALIFIED_DEVELOPMENT_CANDIDATE"
-            if candidate_promoted
-            else "REJECTED_NO_SUPPORTED_PLASTICITY"
+        "candidate_status": _candidate_status(
+            promoted=candidate_promoted, plasticity_gates=plasticity_gates
         ),
         "evidence_gates": evidence_gates,
         "plasticity_gates": plasticity_gates,
@@ -444,10 +454,9 @@ def validate_role_isolated_second_striker_probe(path: Path) -> dict[str, Any]:
             or payload.get("evidence_passed") is not evidence_passed
             or payload.get("candidate_promoted") is not candidate_promoted
             or payload.get("candidate_status")
-            != (
-                "QUALIFIED_DEVELOPMENT_CANDIDATE"
-                if candidate_promoted
-                else "REJECTED_NO_SUPPORTED_PLASTICITY"
+            != _candidate_status(
+                promoted=candidate_promoted,
+                plasticity_gates=derived_plasticity_gates,
             )
             or payload.get("activation_ceiling") != "SIM_ONLY"
             or payload.get("hardware_command_sent") is not False

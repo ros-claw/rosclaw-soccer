@@ -150,6 +150,8 @@ def test_contact_actor_decodes_the_selected_left_ankle_in_canonical_frame(
 def test_bilateral_contracts_fail_closed_on_unknown_foot() -> None:
     with pytest.raises(ValueError, match="kick foot"):
         G1PhysicalSecondStrikerConfig(kick_foot="tail")
+    with pytest.raises(ValueError, match="ballistic target"):
+        G1PhysicalSecondStrikerConfig(ballistic_target_z_m=0.115)
     with pytest.raises(ValueError, match="kick foot"):
         blend_g1_ballistic_contact_target(
             target=np.zeros(29),

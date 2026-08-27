@@ -1,4 +1,4 @@
-"""Evidence-downstream review reel for the rejected S113 contact candidate."""
+"""Evidence-downstream review reel for role-isolated contact candidates."""
 
 from __future__ import annotations
 
@@ -39,7 +39,8 @@ from rosclaw_soccer.training.role_isolated_second_striker_probe import (
 )
 from rosclaw_soccer.world.field import build_g1_four_player_two_ball_stadium_model
 
-_CLAIM = "ROLE_ISOLATED_SECOND_STRIKER_REJECTED_CANDIDATE_REVIEW_VIDEO"
+_REJECTED_CLAIM = "ROLE_ISOLATED_SECOND_STRIKER_REJECTED_CANDIDATE_REVIEW_VIDEO"
+_QUALIFIED_CLAIM = "ROLE_ISOLATED_SECOND_STRIKER_QUALIFIED_CONTROL_CANDIDATE_REVIEW_VIDEO"
 
 
 def _implementation_hash() -> str:
@@ -86,23 +87,34 @@ def validate_role_isolated_second_striker_probe_video(path: Path) -> dict[str, A
         numeric = tuple(
             payload.get(name) for name in ("fps", "width", "height", "frame_count", "duration_sec")
         )
+        promoted = evidence.get("candidate_promoted") is True
+        schema = (
+            "rosclaw_soccer.role_isolated_second_striker_probe_video.v2"
+            if promoted
+            else "rosclaw_soccer.role_isolated_second_striker_probe_video.v1"
+        )
+        status = (
+            "QUALIFIED_DEVELOPMENT_CANDIDATE"
+            if promoted
+            else "REJECTED_NO_SUPPORTED_PLASTICITY"
+        )
+        claim = _QUALIFIED_CLAIM if promoted else _REJECTED_CLAIM
+        selected_count = int(diagnostics["candidate_selected_frame_count"])
         if (
-            payload.get("schema_version")
-            != "rosclaw_soccer.role_isolated_second_striker_probe_video.v1"
-            or payload.get("claim") != _CLAIM
+            payload.get("schema_version") != schema
+            or payload.get("claim") != claim
             or payload.get("evidence_passed") is not True
-            or payload.get("candidate_promoted") is not False
-            or payload.get("candidate_status") != "REJECTED_NO_SUPPORTED_PLASTICITY"
+            or payload.get("candidate_promoted") is not promoted
+            or payload.get("candidate_status") != status
             or payload.get("evidence_report_hash") != evidence["report_hash"]
             or evidence.get("evidence_passed") is not True
-            or evidence.get("candidate_promoted") is not False
             or payload.get("strict_replay") is not True
             or payload.get("strict_replay") is not evidence["evidence_gates"]["strict_replay"]
             or payload.get("complete_chain_retained") is not True
             or payload.get("complete_chain_retained") is not plasticity["complete_chain_passed"]
             or payload.get("candidate_selected_frame_count")
             != diagnostics["candidate_selected_frame_count"]
-            or payload.get("candidate_selected_frame_count") != 0
+            or (selected_count <= 0 if promoted else selected_count != 0)
             or payload.get("four_g1_visible") is not True
             or payload.get("two_physical_balls_visible") is not True
             or payload.get("two_physical_saves") is not True
@@ -138,7 +150,7 @@ def render_role_isolated_second_striker_probe_video(
     width: int = 1920,
     height: int = 1080,
 ) -> dict[str, Any]:
-    """Render the retained parent chain while making the rejected candidate explicit."""
+    """Render a retained or candidate-controlled chain with explicit authority labels."""
 
     evidence_file = evidence_path.expanduser().resolve()
     root = asset_root.expanduser().resolve()
@@ -155,12 +167,10 @@ def render_role_isolated_second_striker_probe_video(
         raise ValueError("role-isolated video output contract is invalid")
     evidence = validate_role_isolated_second_striker_probe(evidence_file)
     plasticity = cast(dict[str, bool], evidence["plasticity_gates"])
-    if (
-        evidence.get("evidence_passed") is not True
-        or evidence.get("candidate_promoted") is not False
-        or plasticity.get("complete_chain_passed") is not True
-    ):
-        raise ValueError("only a safe retained-chain S113 rejection is render eligible")
+    if evidence.get("evidence_passed") is not True or plasticity.get(
+        "complete_chain_passed"
+    ) is not True:
+        raise ValueError("only a safe complete-chain role-isolated probe is render eligible")
     replays = cast(list[dict[str, Any]], evidence["replays"])
     if len(replays) != 2 or evidence["evidence_gates"]["strict_replay"] is not True:
         raise ValueError("role-isolated video requires exact replay reports")
@@ -194,7 +204,8 @@ def render_role_isolated_second_striker_probe_video(
     trajectory["source_shooter_joint_position"] = raw["shooter_joint_position"]
     result = cast(dict[str, Any], replays[0]["result"])
     diagnostics = cast(dict[str, Any], replays[0]["candidate_diagnostics"])
-    clips = _timeline(trajectory, result, diagnostics, fps)
+    promoted = evidence.get("candidate_promoted") is True
+    clips = _timeline(trajectory, result, diagnostics, fps, promoted=promoted)
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
     if ffmpeg is None or ffprobe is None:
@@ -278,6 +289,7 @@ def render_role_isolated_second_striker_probe_video(
                         fps=fps,
                         clips=clips,
                         labels=labels,
+                        promoted=promoted,
                     ),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
@@ -321,7 +333,11 @@ def render_role_isolated_second_striker_probe_video(
     ):
         raise RuntimeError("role-isolated encoded video contract changed")
     manifest: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.role_isolated_second_striker_probe_video.v1",
+        "schema_version": (
+            "rosclaw_soccer.role_isolated_second_striker_probe_video.v2"
+            if promoted
+            else "rosclaw_soccer.role_isolated_second_striker_probe_video.v1"
+        ),
         "video_path": str(output),
         "video_hash": hash_bytes(output.read_bytes()),
         "evidence_path": str(evidence_file),
@@ -330,10 +346,10 @@ def render_role_isolated_second_striker_probe_video(
             str(request_path): hash_bytes(request_path.read_bytes()),
             str(trajectory_path): hash_bytes(trajectory_path.read_bytes()),
         },
-        "claim": _CLAIM,
+        "claim": _QUALIFIED_CLAIM if promoted else _REJECTED_CLAIM,
         "evidence_report_hash": evidence["report_hash"],
         "evidence_passed": True,
-        "candidate_promoted": False,
+        "candidate_promoted": promoted,
         "candidate_status": evidence["candidate_status"],
         "strict_replay": evidence["evidence_gates"]["strict_replay"],
         "complete_chain_retained": plasticity["complete_chain_passed"],
@@ -373,6 +389,8 @@ def _timeline(
     result: dict[str, Any],
     diagnostics: dict[str, Any],
     fps: int,
+    *,
+    promoted: bool,
 ) -> tuple[_Clip, ...]:
     start = float(trajectory["time"][0])
     end = float(trajectory["time"][-1])
@@ -384,10 +402,31 @@ def _timeline(
     first_height = float(result["goalkeeper_glove_contact_height_m"])
     second_height = float(result["goalkeeper_second_glove_contact_height_m"])
     parent_frames = int(diagnostics["frozen_parent_selected_frame_count"])
+    candidate_frames = int(diagnostics["candidate_selected_frame_count"])
     title = tuple(_Frame("left-inner", start, "four") for _ in range(round(1.8 * fps)))
     final = tuple(_Frame("left-inner", end, "goal") for _ in range(round(2.0 * fps)))
+    audit_title = (
+        "S114 · FAILURE MEMORY → CONTROL QUALIFICATION"
+        if promoted
+        else "S113 · STABILITY–PLASTICITY AUDIT · CANDIDATE REJECTED"
+    )
+    approach_label = (
+        f"FAILURE-UPDATED CANDIDATE SELECTED · {candidate_frames} CONTACT FRAMES"
+        if promoted
+        else f"TARGET CANDIDATE ABSTAINS · FROZEN PARENT {parent_frames} FRAMES"
+    )
+    contact_label = (
+        f"LEARNED RIGHT-FOOT CONTACT · {force:.0f} N · NO CANNON"
+        if promoted
+        else f"PARENT RIGHT-FOOT CONTACT · {force:.0f} N · NO CANNON"
+    )
+    decision_label = (
+        "CONTROL PASSED · SEALED HOLDOUT STILL REQUIRED · SIM ONLY"
+        if promoted
+        else "RETENTION PASSED · PLASTICITY FAILED · NO PROMOTION"
+    )
     return (
-        _Clip("S113 · STABILITY–PLASTICITY AUDIT · CANDIDATE REJECTED", title),
+        _Clip(audit_title, title),
         _Clip(
             "FROZEN PREFIX · PASS → HIGH SHOT → AIRBORNE SAVE",
             _segment("left-inner", 4.4, first + 0.45, 1.0, "four", fps),
@@ -401,11 +440,11 @@ def _timeline(
             _segment("left-inner", first + 0.55, rearm + 0.10, 2.35, "goal", fps),
         ),
         _Clip(
-            f"TARGET CANDIDATE ABSTAINS · FROZEN PARENT {parent_frames} FRAMES",
+            approach_label,
             _segment("left-inner", 12.0, strike - 0.28, 1.35, "striker", fps),
         ),
         _Clip(
-            f"PARENT RIGHT-FOOT CONTACT · {force:.0f} N · NO CANNON",
+            contact_label,
             _segment("left-inner", strike - 0.42, second + 0.28, 0.42, "contact", fps),
         ),
         _Clip(
@@ -413,7 +452,7 @@ def _timeline(
             _segment("left-inner", second - 0.42, second + 0.78, 0.31, "goal", fps),
         ),
         _Clip(
-            "RETENTION PASSED · PLASTICITY FAILED · NO PROMOTION",
+            decision_label,
             _segment("left-inner", start, end, 2.1, "four", fps),
         ),
         _Clip("DEVELOPMENT REVIEW · SIM ONLY · PIXELS NEVER SCORE", final),
@@ -429,6 +468,7 @@ def _video_ffmpeg_command(
     fps: int,
     clips: tuple[_Clip, ...],
     labels: tuple[Path, ...],
+    promoted: bool,
 ) -> list[str]:
     command = _ffmpeg_command(
         ffmpeg=ffmpeg,
@@ -442,7 +482,11 @@ def _video_ffmpeg_command(
     filter_index = command.index("-vf") + 1
     command[filter_index] = command[filter_index].replace(
         "ROSClaw Soccer · S109 PHYSICAL SECOND STRIKER",
-        "ROSClaw Soccer · S113 SAFE REJECTION REVIEW",
+        (
+            "ROSClaw Soccer · S114 FAILURE-DRIVEN CONTACT GROWTH"
+            if promoted
+            else "ROSClaw Soccer · S113 SAFE REJECTION REVIEW"
+        ),
     )
     return command
 
