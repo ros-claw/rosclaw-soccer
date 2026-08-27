@@ -9,6 +9,8 @@ import numpy as np
 from numpy.typing import NDArray
 from rosclaw.feedback.contracts import canonical_hash
 
+from rosclaw_soccer.providers.g1.mujoco_primitives import mirror_g1_joint_positions
+
 _RIGHT_LEG_INDICES = np.arange(6, 12)
 _COUNTERBALANCE_INDICES = np.asarray((0, 1, 2, 4, 12, 14), dtype=np.int64)
 
@@ -92,11 +94,14 @@ def g1_ballistic_contact_torque_residual(
     policy_frame: int,
     control_dt_sec: float,
     config: G1BallisticContactTorqueResidualConfig,
+    kick_foot: str = "right",
 ) -> tuple[np.ndarray, bool]:
-    """Evaluate the smooth torque pulse without bypassing runtime projection."""
+    """Evaluate a bilateral torque pulse without bypassing projection."""
 
     if not math.isfinite(control_dt_sec) or control_dt_sec <= 0.0:
         raise ValueError("ballistic contact torque control clock must be positive")
+    if kick_foot not in {"left", "right"}:
+        raise ValueError("ballistic contact torque kick foot must be left or right")
     torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
     if not config.enabled:
         return torque, False
@@ -130,6 +135,8 @@ def g1_ballistic_contact_torque_residual(
             config.counterbalance_residual_nm,
             dtype=np.float64,
         )
+    if kick_foot == "left":
+        torque = mirror_g1_joint_positions(torque)
     return torque, bool(np.any(np.abs(torque) > 1e-12))
 
 

@@ -71,7 +71,7 @@ class ContinuousSecondStrikerSaveExamConfig:
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
     commercial_use_allowed: bool = False
-    schema_version: str = "rosclaw_soccer.continuous_second_striker_save_config.v1"
+    schema_version: str = "rosclaw_soccer.continuous_second_striker_save_config.v2"
 
     def __post_init__(self) -> None:
         values = (
@@ -182,8 +182,6 @@ def _continuous_metrics(
 ) -> dict[str, Any]:
     contact_time = result.second_striker_contact_time_sec
     glove_time = result.goalkeeper_second_glove_contact_time_sec
-    if contact_time is None or glove_time is None:
-        return {"valid": False, "reason": "second contact or glove timestamp is absent"}
     time = np.asarray(trajectory["time"], dtype=np.float64)
     ball_velocity = np.asarray(trajectory["second_ball_velocity"], dtype=np.float64)[:, :3]
     actor_active = np.asarray(trajectory["second_striker_ballistic_actor_active"], dtype=np.bool_)
@@ -208,31 +206,49 @@ def _continuous_metrics(
         or not np.all(np.isfinite(actor_torque))
     ):
         return {"valid": False, "reason": "continuous physical telemetry is invalid"}
+    base: dict[str, Any] = {
+        "valid": True,
+        "save_phase_valid": False,
+        "control_dt_max_error_sec": float(np.max(np.abs(np.diff(time) - 0.02))),
+        "actor_active_frame_count": int(np.count_nonzero(actor_active)),
+        "actor_peak_torque_nm": float(np.max(np.abs(actor_torque))),
+        "contact_target_memory_active_frame_count": int(np.count_nonzero(target_active)),
+        "upper_corner_torque_memory_active_frame_count": int(np.count_nonzero(torque_active)),
+        "new_flight_observed": False,
+        "new_flight_start_time_sec": None,
+        "causal_reaction_observed": False,
+    }
+    if contact_time is None:
+        return base | {
+            "reason": "second contact timestamp is absent",
+            "contact_frame": None,
+            "glove_frame": None,
+        }
     contact = _event_index(time, contact_time)
-    glove = _event_index(time, glove_time)
     precontact = time < contact_time - 1.0e-9
+    base |= {
+        "precontact_peak_ball_speed_mps": float(
+            np.max(np.linalg.norm(ball_velocity[precontact], axis=1))
+        ),
+        "contact_frame": contact,
+        "glove_frame": None,
+    }
+    if glove_time is None:
+        return base | {"reason": "second glove timestamp is absent"}
+    glove = _event_index(time, glove_time)
     causal = (time >= contact_time) & (time <= glove_time + 0.04)
     post_glove = (time >= glove_time) & (time <= glove_time + 0.06)
     starts = flight_start[causal]
     starts = starts[np.isfinite(starts)]
     post_velocity = ball_velocity[post_glove]
-    return {
-        "valid": True,
-        "control_dt_max_error_sec": float(np.max(np.abs(np.diff(time) - 0.02))),
-        "precontact_peak_ball_speed_mps": float(
-            np.max(np.linalg.norm(ball_velocity[precontact], axis=1))
-        ),
-        "actor_active_frame_count": int(np.count_nonzero(actor_active)),
-        "actor_peak_torque_nm": float(np.max(np.abs(actor_torque))),
-        "contact_target_memory_active_frame_count": int(np.count_nonzero(target_active)),
-        "upper_corner_torque_memory_active_frame_count": int(np.count_nonzero(torque_active)),
+    return base | {
+        "save_phase_valid": True,
         "new_flight_observed": bool(np.any(observed_flight[causal])),
         "new_flight_start_time_sec": None if starts.size == 0 else float(np.min(starts)),
         "causal_reaction_observed": bool(np.any(reaction[causal])),
         "pre_glove_forward_speed_mps": float(ball_velocity[max(0, glove - 1), 0]),
         "post_glove_minimum_forward_speed_mps": float(np.min(post_velocity[:, 0])),
         "post_glove_peak_outward_speed_mps": float(np.max(np.abs(post_velocity[:, 1]))),
-        "contact_frame": contact,
         "glove_frame": glove,
     }
 
@@ -303,7 +319,7 @@ def evaluate_continuous_second_striker_save(
         ),
         "anatomical_second_striker_contact": bool(
             result.second_striker_contact_observed
-            and result.second_striker_contact_foot in {"left", "right"}
+            and result.second_striker_contact_foot == config.striker.kick_foot
             and config.striker.minimum_contact_force_n
             <= result.second_striker_contact_force_peak_n
             <= config.striker.maximum_contact_force_n

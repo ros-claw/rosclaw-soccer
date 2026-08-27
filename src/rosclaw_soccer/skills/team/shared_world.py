@@ -900,12 +900,17 @@ class G1PhysicalSecondStrikerConfig:
     # frame.  This is therefore the inverse-calibrated FreeKick target in that
     # same policy frame, not the physical scoring target at the goal plane.
     policy_target_m: tuple[float, float, float] = (7.50, 0.70, 1.20)
+    kick_foot: str = "right"
     swing_amplitude: float = 1.0
     swing_speed_scale: float = 0.90
     foot_yaw_offset: float = 0.01
     foot_pitch_offset: float = 0.10
     loft_synergy: float = 0.10
     contact_phase_offset: float = 0.0
+    # Preserve the S109 role-shared actor envelope as the bilateral control.
+    # Individual frontier cases may tighten or widen it within the validated
+    # [0.15, 0.30] m range.
+    ballistic_actor_proximity_m: float = 0.25
     goalkeeper_punch_force_n: float = 90.0
     goalkeeper_punch_outward_force_scale: float = 0.0
     post_policy_frame: int = 275
@@ -917,7 +922,7 @@ class G1PhysicalSecondStrikerConfig:
     minimum_pelvis_height_m: float = 0.60
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
-    schema_version: str = "rosclaw_soccer.g1_physical_second_striker_config.v1"
+    schema_version: str = "rosclaw_soccer.g1_physical_second_striker_config.v2"
 
     def __post_init__(self) -> None:
         values = (
@@ -932,6 +937,7 @@ class G1PhysicalSecondStrikerConfig:
             self.foot_pitch_offset,
             self.loft_synergy,
             self.contact_phase_offset,
+            self.ballistic_actor_proximity_m,
             self.goalkeeper_punch_force_n,
             self.goalkeeper_punch_outward_force_scale,
             self.minimum_contact_force_n,
@@ -959,7 +965,12 @@ class G1PhysicalSecondStrikerConfig:
             -3.2 <= self.policy_target_m[1] <= 3.2 and 0.115 <= self.policy_target_m[2] <= 1.2
         ):
             raise ValueError("physical second-striker policy target is invalid")
+        if self.kick_foot not in {"left", "right"}:
+            raise ValueError("physical second-striker kick foot must be left or right")
+        if not 0.15 <= self.ballistic_actor_proximity_m <= 0.30:
+            raise ValueError("physical second-striker actor proximity is invalid")
         ShotParameters(
+            kick_foot=self.kick_foot,
             swing_amplitude=self.swing_amplitude,
             swing_speed_scale=self.swing_speed_scale,
             foot_yaw_offset=self.foot_yaw_offset,
@@ -1224,7 +1235,7 @@ class G1SharedWorldResult:
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v18"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v19"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1979,6 +1990,7 @@ def _simulate_shared_world(
         ):
             raise ValueError("contact-prior velocity blend requires a velocity-aware artifact")
     shooter_ballistic_actor: G1BallisticContactImpulseActor | None = None
+    second_striker_ballistic_actor: G1BallisticContactImpulseActor | None = None
     if shooter_ballistic_actor_path is not None:
         shooter_ballistic_actor = load_g1_ballistic_contact_impulse_actor(
             shooter_ballistic_actor_path
@@ -1990,6 +2002,16 @@ def _simulate_shared_world(
             )
         if shooter_ballistic_actor.body_hash != qualification.body_hash:
             raise ValueError("ballistic contact actor Body hash does not match coupled G1")
+        second_striker_ballistic_actor = (
+            replace(
+                shooter_ballistic_actor,
+                maximum_foot_ball_distance_m=(
+                    physical_second_striker_config.ballistic_actor_proximity_m
+                ),
+            )
+            if physical_second_striker_config is not None
+            else shooter_ballistic_actor
+        )
     with np.load(root / _MOTION_REL) as motion:
         initial_position = np.asarray(motion["body_pos_w"][0, 0], dtype=np.float64)
         initial_quaternion = np.asarray(motion["body_quat_w"][0, 0], dtype=np.float64)
@@ -2122,6 +2144,12 @@ def _simulate_shared_world(
     second_striker_parameters = (
         replace(
             shooter_parameters,
+            kick_foot=physical_second_striker_config.kick_foot,
+            stance_offset_y=(
+                -shooter_parameters.stance_offset_y
+                if physical_second_striker_config.kick_foot == "left"
+                else shooter_parameters.stance_offset_y
+            ),
             swing_amplitude=physical_second_striker_config.swing_amplitude,
             swing_speed_scale=physical_second_striker_config.swing_speed_scale,
             foot_yaw_offset=physical_second_striker_config.foot_yaw_offset,
@@ -2747,6 +2775,7 @@ def _simulate_shared_world(
                 "second_striker_ballistic_actor_torque": [],
                 "second_striker_ballistic_actor_force_yz_n": [],
                 "second_striker_ballistic_actor_foot_velocity_yz_mps": [],
+                "second_striker_ballistic_actor_foot_ball_distance_m": [],
                 "second_striker_ballistic_contact_active": [],
                 "second_striker_ballistic_contact_target_delta": [],
                 "second_striker_ballistic_contact_torque_active": [],
@@ -3157,6 +3186,7 @@ def _simulate_shared_world(
                     policy_frame=policy_frames[robot.role],
                     control_dt_sec=_CONTROL_DT,
                     config=role_contact_config,
+                    kick_foot=robot.parameters.kick_foot,
                 )
                 if robot.role == "second_striker":
                     second_striker_ballistic_contact_target_delta = contact_target_delta
@@ -4002,6 +4032,7 @@ def _simulate_shared_world(
         frame_second_striker_ballistic_actor_foot_velocity_yz_mps: NDArray[np.float64] = np.zeros(
             2, dtype=np.float64
         )
+        frame_second_striker_ballistic_actor_foot_ball_distance_m = math.nan
         frame_second_striker_contact = False
         frame_second_striker_contact_force_n = 0.0
         frame_loft_teacher_active = False
@@ -4091,17 +4122,28 @@ def _simulate_shared_world(
                         np.max(np.abs(frame_goalkeeper_bimanual_punch_torque))
                     ):
                         frame_goalkeeper_bimanual_punch_torque = punch_torque.copy()
+                role_ballistic_actor = (
+                    second_striker_ballistic_actor
+                    if robot.role == "second_striker"
+                    else shooter_ballistic_actor
+                )
                 if robot.role in {"shooter", "second_striker"} and (
-                    shooter_ballistic_actor is not None
+                    role_ballistic_actor is not None
                 ):
                     actor_ball_qpos = (
                         cast(int, second_ball_qpos) if robot.role == "second_striker" else ball_qpos
                     )
+                    bilateral_actor_kwargs: dict[str, Any] = {}
+                    if robot.parameters.kick_foot == "left":
+                        bilateral_actor_kwargs = {
+                            "striking_ankle_body_id": robot.left_ankle_body,
+                            "lateral_mirror_sign": -1.0,
+                        }
                     effect = g1_ballistic_contact_impulse_effect(
                         model=model,
                         data=data,
                         right_ankle_body_id=robot.right_ankle_body,
-                        actor=shooter_ballistic_actor,
+                        actor=role_ballistic_actor,
                         policy_frame=policy_frames[robot.role],
                         contact_observed=robot.contact_latched,
                         ball_position=np.asarray(
@@ -4109,9 +4151,14 @@ def _simulate_shared_world(
                             dtype=np.float64,
                         ),
                         actuated_dof_indices=np.asarray(robot.joint_qvel, dtype=np.int64),
+                        **bilateral_actor_kwargs,
                     )
                     raw_torque = raw_torque + effect.torque
                     if robot.role == "second_striker":
+                        if effect.foot_ball_distance_m is not None:
+                            frame_second_striker_ballistic_actor_foot_ball_distance_m = (
+                                effect.foot_ball_distance_m
+                            )
                         frame_second_striker_ballistic_actor_active = (
                             frame_second_striker_ballistic_actor_active or effect.active
                         )
@@ -4176,6 +4223,7 @@ def _simulate_shared_world(
                         policy_frame=policy_frames[robot.role],
                         control_dt_sec=_CONTROL_DT,
                         config=role_contact_torque_config,
+                        kick_foot=robot.parameters.kick_foot,
                     )
                     raw_torque = raw_torque + contact_torque
                     if robot.role == "second_striker":
@@ -4876,6 +4924,9 @@ def _simulate_shared_world(
             )
             trace["second_striker_ballistic_actor_foot_velocity_yz_mps"].append(
                 frame_second_striker_ballistic_actor_foot_velocity_yz_mps
+            )
+            trace["second_striker_ballistic_actor_foot_ball_distance_m"].append(
+                frame_second_striker_ballistic_actor_foot_ball_distance_m
             )
             trace["second_striker_ballistic_contact_active"].append(
                 second_striker_ballistic_contact_active

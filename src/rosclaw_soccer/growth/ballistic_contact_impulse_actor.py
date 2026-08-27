@@ -308,6 +308,7 @@ class G1BallisticContactImpulseEffect:
     desired_vertical_launch_speed_mps: float = 0.0
     target_conditioned: bool = False
     launch_envelope_supported: bool = True
+    foot_ball_distance_m: float | None = None
 
 
 def load_g1_ballistic_contact_impulse_actor(
@@ -726,8 +727,18 @@ def g1_ballistic_contact_impulse_effect(
     target_y_m: float | None = None,
     target_z_m: float | None = None,
     actuated_dof_indices: NDArray[np.int64] | None = None,
+    striking_ankle_body_id: int | None = None,
+    lateral_mirror_sign: float = 1.0,
 ) -> G1BallisticContactImpulseEffect:
-    """Run the learned proprioceptive actor and decode direct joint torques."""
+    """Run the learned proprioceptive actor and decode direct joint torques.
+
+    ``right_ankle_body_id`` remains the backwards-compatible single-G1
+    argument.  Bilateral multi-agent callers provide the anatomical strike
+    ankle explicitly and reflect the learned task-space policy through
+    ``lateral_mirror_sign``.  The actor therefore stays in its canonical
+    right-foot frame while its output is decoded through the selected foot's
+    live Jacobian.
+    """
 
     import mujoco
 
@@ -737,16 +748,29 @@ def g1_ballistic_contact_impulse_effect(
         return G1BallisticContactImpulseEffect(
             zero, 0.0, 0.0, 0.0, 0.0, False, target_conditioned=target_conditioned
         )
-    foot_rotation = np.asarray(data.xmat[right_ankle_body_id], dtype=np.float64).reshape(3, 3)
+    if lateral_mirror_sign not in {-1.0, 1.0}:
+        raise ValueError("contact impulse actor mirror sign must be -1 or +1")
+    ankle_body_id = (
+        right_ankle_body_id if striking_ankle_body_id is None else int(striking_ankle_body_id)
+    )
+    foot_rotation = np.asarray(data.xmat[ankle_body_id], dtype=np.float64).reshape(3, 3)
     foot_point = np.asarray(
-        data.xpos[right_ankle_body_id], dtype=np.float64
+        data.xpos[ankle_body_id], dtype=np.float64
     ) + foot_rotation @ np.asarray(actor.foot_strike_point_offset_m, dtype=np.float64)
     ball = np.asarray(ball_position, dtype=np.float64)
     if ball.shape != (3,) or not np.all(np.isfinite(ball)):
         raise ValueError("contact impulse actor requires a finite ball position")
-    if float(np.linalg.norm(foot_point - ball)) > actor.maximum_foot_ball_distance_m:
+    foot_ball_distance = float(np.linalg.norm(foot_point - ball))
+    if foot_ball_distance > actor.maximum_foot_ball_distance_m:
         return G1BallisticContactImpulseEffect(
-            zero, 0.0, 0.0, 0.0, 0.0, False, target_conditioned=target_conditioned
+            zero,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            False,
+            target_conditioned=target_conditioned,
+            foot_ball_distance_m=foot_ball_distance,
         )
     jacobian: NDArray[np.float64] = np.zeros((3, int(model.nv)), dtype=np.float64)
     rotation_jacobian: NDArray[np.float64] = np.zeros((3, int(model.nv)), dtype=np.float64)
@@ -756,9 +780,12 @@ def g1_ballistic_contact_impulse_effect(
         jacobian,
         rotation_jacobian,
         foot_point,
-        right_ankle_body_id,
+        ankle_body_id,
     )
-    foot_vy = float(jacobian[1] @ data.qvel)
+    physical_foot_vy = float(jacobian[1] @ data.qvel)
+    # Keep the legacy right-foot route free of coordinate transforms; only
+    # the new left-foot route is reflected into the canonical actor frame.
+    foot_vy = -physical_foot_vy if lateral_mirror_sign < 0.0 else physical_foot_vy
     foot_vz = float(jacobian[2] @ data.qvel)
     desired_vy = 0.0
     desired_vz = 0.0
@@ -785,10 +812,20 @@ def g1_ballistic_contact_impulse_effect(
         remaining_x = float(goal_plane_x_m) - float(ball[0])
         if remaining_x <= 0.0:
             return G1BallisticContactImpulseEffect(
-                zero, 0.0, 0.0, foot_vy, foot_vz, False, target_conditioned=True
+                zero,
+                0.0,
+                0.0,
+                physical_foot_vy,
+                foot_vz,
+                False,
+                target_conditioned=True,
+                foot_ball_distance_m=foot_ball_distance,
             )
         flight_time = remaining_x / actor.reference_forward_ball_speed_mps
-        desired_vy = (float(target_y_m) - float(ball[1])) / flight_time - float(velocity[1])
+        physical_desired_vy = (float(target_y_m) - float(ball[1])) / flight_time - float(
+            velocity[1]
+        )
+        desired_vy = -physical_desired_vy if lateral_mirror_sign < 0.0 else physical_desired_vy
         desired_vz = (
             float(target_z_m) - float(ball[2]) + 0.5 * 9.81 * flight_time**2
         ) / flight_time - float(velocity[2])
@@ -804,19 +841,20 @@ def g1_ballistic_contact_impulse_effect(
                 zero,
                 0.0,
                 0.0,
-                foot_vy,
+                physical_foot_vy,
                 foot_vz,
                 False,
-                desired_vy,
+                physical_desired_vy,
                 desired_vz,
                 True,
                 False,
+                foot_ball_distance,
             )
         features = np.asarray((1.0, desired_vy, desired_vz, foot_vy, foot_vz))
     else:
         features = np.asarray((1.0, foot_vy, foot_vz), dtype=np.float64)
     force = np.asarray(actor.task_space_actor_weight_matrix, dtype=np.float64) @ features
-    lateral = float(
+    canonical_lateral = float(
         np.clip(
             force[0],
             (
@@ -827,6 +865,7 @@ def g1_ballistic_contact_impulse_effect(
             actor.maximum_lateral_force_n,
         )
     )
+    lateral = -canonical_lateral if lateral_mirror_sign < 0.0 else canonical_lateral
     vertical = float(
         np.clip(
             force[1],
@@ -859,12 +898,13 @@ def g1_ballistic_contact_impulse_effect(
         torque=torque,
         lateral_force_n=lateral,
         vertical_force_n=vertical,
-        foot_lateral_speed_mps=foot_vy,
+        foot_lateral_speed_mps=physical_foot_vy,
         foot_vertical_speed_mps=foot_vz,
         active=bool(abs(lateral) > 0.0 or abs(vertical) > 0.0),
-        desired_lateral_launch_speed_mps=desired_vy,
+        desired_lateral_launch_speed_mps=(-desired_vy if lateral_mirror_sign < 0.0 else desired_vy),
         desired_vertical_launch_speed_mps=desired_vz,
         target_conditioned=target_conditioned,
+        foot_ball_distance_m=foot_ball_distance,
     )
 
 
