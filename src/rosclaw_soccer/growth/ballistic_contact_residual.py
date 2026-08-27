@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 from rosclaw.feedback.contracts import canonical_hash
 
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+from rosclaw_soccer.providers.g1.mujoco_primitives import mirror_g1_joint_positions
 
 G1_BALLISTIC_CONTACT_JOINT_NAMES = G1_DDS_JOINT_NAMES[6:12]
 _RIGHT_LEG_INDICES = np.arange(6, 12)
@@ -62,14 +63,17 @@ def blend_g1_ballistic_contact_target(
     policy_frame: int,
     control_dt_sec: float,
     config: G1BallisticContactResidualConfig,
+    kick_foot: str = "right",
 ) -> tuple[np.ndarray, np.ndarray, bool]:
-    """Apply a smooth, contact-centred target pulse to the right leg."""
+    """Apply a smooth contact pulse in the selected anatomical leg."""
 
     value = np.asarray(target, dtype=np.float64)
     if value.shape != (29,) or not np.all(np.isfinite(value)):
         raise ValueError("ballistic contact target must contain 29 finite joints")
     if not math.isfinite(control_dt_sec) or control_dt_sec <= 0.0:
         raise ValueError("ballistic contact control clock must be positive")
+    if kick_foot not in {"left", "right"}:
+        raise ValueError("ballistic contact kick foot must be left or right")
     delta: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
     relative_time = (policy_frame - config.contact_policy_frame) * control_dt_sec
     if (
@@ -88,6 +92,8 @@ def blend_g1_ballistic_contact_target(
         config.right_leg_residual_rad,
         dtype=np.float64,
     )
+    if kick_foot == "left":
+        delta = mirror_g1_joint_positions(delta)
     return value + delta, delta, envelope > 1e-12
 
 
