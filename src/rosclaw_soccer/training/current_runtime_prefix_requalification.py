@@ -15,7 +15,6 @@ import inspect
 import json
 import math
 import os
-import platform
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, replace
@@ -25,6 +24,13 @@ from typing import Any, cast
 import numpy as np
 from numpy.typing import NDArray
 from rosclaw.feedback import contracts as growth_core_contracts
+from rosclaw.simforge.reproducibility import (
+    ReproducibilityClosure,
+    RuntimeProcessContract,
+    bind_source_tree,
+    build_reproducibility_closure,
+    evaluate_cross_process_replays,
+)
 
 from rosclaw_soccer.providers.g1.asset_qualification import (
     qualify_g1_assets,
@@ -48,13 +54,18 @@ from rosclaw_soccer.training.dynamic_corner_save import (
 _CLAIM = "TRUE_AIRBORNE_SAVE_WITH_FOOT_CONTACT_GROUNDED_LANDING"
 _REQUALIFICATION_CLAIM = "CROSS_PROCESS_CONTINUOUS_FOUR_G1_CURRENT_RUNTIME_CHAMPION"
 _STATUS = "PROMOTED_SIM_ONLY_CURRENT_RUNTIME_FULL_CHAIN"
-_THREAD_ENVIRONMENT_KEYS = (
-    "PYTHONHASHSEED",
-    "OMP_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "NUMEXPR_NUM_THREADS",
-    "ORT_NUM_THREADS",
+_CORE_CLOSURE_SOURCE_LABELS = (
+    "dive-source",
+    "rosclaw-core-reproducibility",
+    "rosclaw-core-runtime",
+    "soccer",
+)
+_G1_CLOSURE_ARTIFACTS = (
+    ("g1-policy", Path("policy/robonaldo/model/policy-obs-aic.onnx")),
+    ("g1-motion", Path("policy/robonaldo/model/freekick_motion.npz")),
+    ("g1-scene", Path("g1_description/scene_with_ball.xml")),
+    ("g1-model", Path("g1_description/g1_liao.xml")),
+    ("g1-free-kick", Path("policy/robonaldo/FreeKick.py")),
 )
 
 
@@ -191,13 +202,96 @@ def _assemble_rollout(
     return lane, exam, kwargs, goalkeeper, goal
 
 
+def _closure_artifact_sources(
+    *,
+    asset_root: Path,
+    assets: dict[str, Path],
+    predecessor_evidence_path: Path,
+) -> dict[str, Path]:
+    root = asset_root.expanduser().resolve()
+    sources = {
+        key.replace("_", "-"): value for key, value in assets.items() if key != "dive_source"
+    }
+    sources.update({label: root / relative for label, relative in _G1_CLOSURE_ARTIFACTS})
+    sources["predecessor-evidence"] = predecessor_evidence_path.expanduser().resolve()
+    return sources
+
+
+def build_current_runtime_reproducibility_closure(
+    *,
+    asset_root: Path,
+    assets: dict[str, Path],
+    predecessor_evidence_path: Path,
+    expected_replays: int,
+) -> ReproducibilityClosure:
+    """Bind the football exam to the task-neutral ROSClaw Core closure."""
+
+    return build_reproducibility_closure(
+        source_trees={
+            "dive-source": assets["dive_source"],
+            "rosclaw-core-reproducibility": Path(inspect.getfile(ReproducibilityClosure))
+            .resolve()
+            .parent,
+            "rosclaw-core-runtime": Path(inspect.getfile(growth_core_contracts))
+            .resolve()
+            .parents[2],
+            "soccer": Path(__file__).resolve().parents[1],
+        },
+        dependency_packages=("mujoco", "numpy", "onnxruntime"),
+        artifacts=_closure_artifact_sources(
+            asset_root=asset_root,
+            assets=assets,
+            predecessor_evidence_path=predecessor_evidence_path,
+        ),
+        expected_replays=expected_replays,
+    )
+
+
+def _closure_source_manifest(
+    *,
+    asset_root: Path,
+    assets: dict[str, Path],
+    predecessor_evidence_path: Path,
+) -> dict[str, dict[str, str]]:
+    return {
+        "source_trees": {
+            "dive-source": str(assets["dive_source"]),
+            "rosclaw-core-reproducibility": str(
+                Path(inspect.getfile(ReproducibilityClosure)).resolve().parent
+            ),
+            "rosclaw-core-runtime": str(
+                Path(inspect.getfile(growth_core_contracts)).resolve().parents[2]
+            ),
+            "soccer": str(Path(__file__).resolve().parents[1]),
+        },
+        "artifacts": {
+            label: str(path)
+            for label, path in _closure_artifact_sources(
+                asset_root=asset_root,
+                assets=assets,
+                predecessor_evidence_path=predecessor_evidence_path,
+            ).items()
+        },
+    }
+
+
 def _worker_rollout(
     *,
     asset_root: Path,
     assets: dict[str, Path],
+    predecessor_evidence_path: Path,
+    expected_closure: ReproducibilityClosure,
     config: CurrentRuntimePrefixRequalificationConfig,
     output_prefix: Path,
 ) -> dict[str, Any]:
+    closure = build_current_runtime_reproducibility_closure(
+        asset_root=asset_root,
+        assets=assets,
+        predecessor_evidence_path=predecessor_evidence_path,
+        expected_replays=config.cross_process_replays,
+    )
+    if closure != expected_closure:
+        raise ValueError("worker reproducibility closure changed")
     lane, exam, kwargs, goalkeeper, goal = _assemble_rollout(config=config, assets=assets)
     result, trajectory = simulate_shared_world(asset_root, **kwargs)
     evaluation = evaluate_continuous_second_striker_save(
@@ -211,7 +305,7 @@ def _worker_rollout(
     trajectory_path = output_prefix.with_suffix(".npz")
     _atomic_trajectory(trajectory_path, trajectory)
     report: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.current_runtime_process_replay.v1",
+        "schema_version": "rosclaw_soccer.current_runtime_process_replay.v2",
         "process_id": os.getpid(),
         "passed": evaluation.get("passed") is True,
         "evaluation": evaluation,
@@ -219,7 +313,9 @@ def _worker_rollout(
         "trajectory_hash": hash_bytes(trajectory_path.read_bytes()),
         "trajectory_digest": trajectory_digest(trajectory),
         "process_contract": _process_contract(),
+        "closure_hash": closure.closure_hash,
         "activation_ceiling": "SIM_ONLY",
+        "hardware_authorized": False,
         "hardware_command_sent": False,
     }
     report["report_hash"] = hash_json(report)
@@ -275,8 +371,14 @@ def run_current_runtime_prefix_requalification(
     )
     lane, case, exam = _right_control_contract(active)
     _, _, _, _, goal = _assemble_rollout(config=active, assets=assets)
+    closure = build_current_runtime_reproducibility_closure(
+        asset_root=asset_root,
+        assets=assets,
+        predecessor_evidence_path=predecessor_path,
+        expected_replays=active.cross_process_replays,
+    )
     request: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.current_runtime_requalification_request.v2",
+        "schema_version": "rosclaw_soccer.current_runtime_requalification_request.v3",
         "config": asdict(active),
         "config_hash": active.config_hash,
         "continuous_exam": asdict(exam),
@@ -286,16 +388,15 @@ def run_current_runtime_prefix_requalification(
         "body_hash": qualification.body_hash,
         "kick_prior_hash": qualification.kick_prior_hash,
         "source_commit": _git_head(checkout),
-        "soccer_source_tree_hash": _python_tree_hash(Path(__file__).resolve().parents[1]),
-        "growth_core_source_tree_hash": _python_tree_hash(
-            Path(inspect.getfile(growth_core_contracts)).resolve().parents[2]
+        "dive_source_commit": _git_head(assets["dive_source"]),
+        "launcher_process_id": os.getpid(),
+        "reproducibility_closure": closure.to_dict(),
+        "reproducibility_closure_hash": closure.closure_hash,
+        "closure_sources": _closure_source_manifest(
+            asset_root=asset_root,
+            assets=assets,
+            predecessor_evidence_path=predecessor_path,
         ),
-        "runtime_dependencies": _runtime_dependency_contract(),
-        "process_contract": _process_contract(),
-        "artifacts": {
-            key: (_git_head(value) if key == "dive_source" else hash_bytes(value.read_bytes()))
-            for key, value in assets.items()
-        },
         "predecessor_evidence_hash": hash_bytes(predecessor_path.read_bytes()),
         "predecessor_report_hash": predecessor.get("report_hash"),
         "physics_authority": "CPU_MUJOCO",
@@ -313,6 +414,8 @@ def run_current_runtime_prefix_requalification(
         command = _worker_command(
             asset_root=asset_root,
             assets=assets,
+            predecessor_evidence_path=predecessor_path,
+            closure_request_path=request_path,
             config=active,
             output_prefix=prefix,
         )
@@ -321,43 +424,41 @@ def run_current_runtime_prefix_requalification(
         if completed.returncode or not report_path.is_file():
             raise RuntimeError(f"current-runtime worker {index} failed")
         worker_reports.append(
-            _validate_worker_report(report_path, expected_prefix=prefix, require_passed=True)
+            _validate_worker_report(
+                report_path,
+                expected_prefix=prefix,
+                require_passed=True,
+                expected_closure_hash=closure.closure_hash,
+            )
         )
     first = worker_reports[0]
-    reference_payload = {
-        "evaluation": first["evaluation"],
-        "trajectory_digest": first["trajectory_digest"],
-    }
-    process_contracts = [report["process_contract"] for report in worker_reports]
-    process_ids = {int(report["process_id"]) for report in worker_reports}
-    exact_replays = all(
-        {
-            "evaluation": report["evaluation"],
-            "trajectory_digest": report["trajectory_digest"],
-        }
-        == reference_payload
-        for report in worker_reports
+    core_verdict = evaluate_cross_process_replays(
+        closure,
+        worker_reports,
+        exact_fields=("evaluation", "trajectory_digest", "trajectory_hash"),
+        launcher_process_id=os.getpid(),
     )
+    process_ids = set(core_verdict.process_ids)
+    exact_replays = dict(core_verdict.gates)["cross_process_exact_replay"]
     continuous = cast(dict[str, Any], first["evaluation"])
     prefix_exam = cast(dict[str, Any], continuous.get("first_takeoff_exam", {}))
     qualification_gates = {
         "predecessor_rejection_bound": predecessor_rejected,
-        "fresh_process_count": len(process_ids) == active.cross_process_replays,
-        "process_contract_identical": all(
-            value == process_contracts[0] for value in process_contracts
-        ),
-        "cross_process_exact_replay": exact_replays,
+        **{f"core_{name}": value for name, value in core_verdict.gates},
         "all_prefix_physics_gates": prefix_exam.get("passed") is True,
         "all_continuous_team_gates": continuous.get("passed") is True,
-        "all_workers_sim_only_safe": all(report.get("passed") is True for report in worker_reports),
-        "full_source_trees_bound": True,
-        "current_runtime_bound": True,
-        "sim_only_authority": True,
+        "full_source_trees_bound": tuple(item.label for item in closure.source_trees)
+        == _CORE_CLOSURE_SOURCE_LABELS,
+        "current_runtime_bound": all(
+            worker.get("closure_hash") == closure.closure_hash for worker in worker_reports
+        ),
+        "sim_only_authority": closure.activation_ceiling == "SIM_ONLY"
+        and closure.hardware_authorized is False,
     }
     passed = bool(all(qualification_gates.values()))
     first_trajectory = output / str(first["trajectory_file"])
     report: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.current_runtime_requalification_evidence.v2",
+        "schema_version": "rosclaw_soccer.current_runtime_requalification_evidence.v3",
         "claim": _CLAIM,
         "requalification_claim": _REQUALIFICATION_CLAIM,
         "passed": passed,
@@ -366,6 +467,7 @@ def run_current_runtime_prefix_requalification(
         "qualification_gates": qualification_gates,
         "strict_replay": exact_replays,
         "cross_process_replay_count": len(worker_reports),
+        "launcher_process_id": os.getpid(),
         "process_ids": sorted(process_ids),
         "physics_authority": "CPU_MUJOCO",
         "activation_ceiling": "SIM_ONLY",
@@ -375,6 +477,9 @@ def run_current_runtime_prefix_requalification(
         "ball_cannon_used": False,
         "pixels_used_for_scoring": False,
         "request_hash": hash_bytes(request_path.read_bytes()),
+        "reproducibility_closure_hash": closure.closure_hash,
+        "reproducibility_verdict": core_verdict.to_dict(),
+        "reproducibility_verdict_hash": core_verdict.verdict_hash,
         "predecessor": {
             "path": str(predecessor_path),
             "evidence_hash": request["predecessor_evidence_hash"],
@@ -390,6 +495,7 @@ def run_current_runtime_prefix_requalification(
                 "trajectory_hash": worker["trajectory_hash"],
                 "trajectory_digest": worker["trajectory_digest"],
                 "process_id": worker["process_id"],
+                "closure_hash": worker["closure_hash"],
             }
             for index, worker in enumerate(worker_reports)
         ],
@@ -415,6 +521,16 @@ def validate_current_runtime_prefix_requalification(path: Path) -> dict[str, Any
         raise ValueError("current-runtime evidence must be a JSON object")
     expected = payload.pop("report_hash", None)
     try:
+        if (
+            payload.get("schema_version")
+            == "rosclaw_soccer.current_runtime_requalification_evidence.v3"
+        ):
+            _validate_core_closure_evidence(
+                resolved=resolved,
+                payload=payload,
+                expected_report_hash=expected,
+            )
+            return cast(dict[str, Any], payload)
         request_path = resolved.parent / "request.json"
         if not request_path.is_file() or payload.get("request_hash") != hash_bytes(
             request_path.read_bytes()
@@ -552,8 +668,209 @@ def validate_current_runtime_prefix_requalification(path: Path) -> dict[str, Any
     return cast(dict[str, Any], payload)
 
 
+def _validate_core_closure_evidence(
+    *,
+    resolved: Path,
+    payload: dict[str, Any],
+    expected_report_hash: Any,
+) -> None:
+    request_path = resolved.parent / "request.json"
+    if not request_path.is_file() or payload.get("request_hash") != hash_bytes(
+        request_path.read_bytes()
+    ):
+        raise ValueError("current-runtime request binding changed")
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    if not isinstance(request, dict) or request.get("schema_version") != (
+        "rosclaw_soccer.current_runtime_requalification_request.v3"
+    ):
+        raise ValueError("current-runtime Core closure request is invalid")
+    closure_value = request.get("reproducibility_closure")
+    closure_sources = request.get("closure_sources")
+    if not isinstance(closure_value, dict) or not isinstance(closure_sources, dict):
+        raise ValueError("current-runtime Core closure is absent")
+    closure = ReproducibilityClosure.from_dict(closure_value)
+    if request.get("reproducibility_closure_hash") != closure.closure_hash:
+        raise ValueError("current-runtime Core closure hash changed")
+    source_values = closure_sources.get("source_trees")
+    artifact_values = closure_sources.get("artifacts")
+    if not isinstance(source_values, dict) or not isinstance(artifact_values, dict):
+        raise ValueError("current-runtime closure source manifest is invalid")
+    if set(source_values) != set(_CORE_CLOSURE_SOURCE_LABELS):
+        raise ValueError("current-runtime closure source labels changed")
+    source_bindings = {item.label: item for item in closure.source_trees}
+    if any(
+        bind_source_tree(label, Path(value).expanduser().resolve()) != source_bindings[label]
+        for label, value in source_values.items()
+        if isinstance(value, str)
+    ):
+        raise ValueError("current-runtime closure source locator changed")
+    expected_artifact_labels = (
+        {
+            key.replace("_", "-")
+            for key in (
+                "striker_actor",
+                "goalkeeper_actor",
+                "gmt_model",
+                "gmt_skill",
+                "dive_athlete_checkpoint",
+                "dive_athlete_exam",
+                "recovery_athlete_checkpoint",
+                "recovery_athlete_exam",
+            )
+        }
+        | {label for label, _ in _G1_CLOSURE_ARTIFACTS}
+        | {"predecessor-evidence"}
+    )
+    if set(artifact_values) != expected_artifact_labels or any(
+        not isinstance(value, str) for value in (*source_values.values(), *artifact_values.values())
+    ):
+        raise ValueError("current-runtime closure artifact labels changed")
+    dive_source = Path(cast(str, source_values["dive-source"])).expanduser().resolve()
+    assets = {
+        key.replace("-", "_"): Path(cast(str, artifact_values[key])).expanduser().resolve()
+        for key in expected_artifact_labels
+        if key not in {label for label, _ in _G1_CLOSURE_ARTIFACTS} | {"predecessor-evidence"}
+    }
+    assets["dive_source"] = dive_source
+    g1_model = Path(cast(str, artifact_values["g1-model"])).expanduser().resolve()
+    asset_root = g1_model.parents[1]
+    if any(
+        Path(cast(str, artifact_values[label])).expanduser().resolve() != asset_root / relative
+        for label, relative in _G1_CLOSURE_ARTIFACTS
+    ):
+        raise ValueError("current-runtime G1 closure paths changed")
+    predecessor_path = (
+        Path(cast(str, artifact_values["predecessor-evidence"])).expanduser().resolve()
+    )
+    request_config = request.get("config")
+    if not isinstance(request_config, dict):
+        raise ValueError("current-runtime request config is absent")
+    try:
+        active = CurrentRuntimePrefixRequalificationConfig(**request_config)
+    except (TypeError, ValueError) as error:
+        raise ValueError("current-runtime request config is invalid") from error
+    if request.get("config_hash") != active.config_hash:
+        raise ValueError("current-runtime request config hash changed")
+    expected_replays = active.cross_process_replays
+    launcher_process_id = request.get("launcher_process_id")
+    if (
+        not isinstance(launcher_process_id, int)
+        or isinstance(launcher_process_id, bool)
+        or launcher_process_id < 1
+    ):
+        raise ValueError("current-runtime launcher process identity is invalid")
+    rebuilt = build_current_runtime_reproducibility_closure(
+        asset_root=asset_root,
+        assets=assets,
+        predecessor_evidence_path=predecessor_path,
+        expected_replays=expected_replays,
+    )
+    if rebuilt != closure or request.get("dive_source_commit") != _git_head(dive_source):
+        raise ValueError("current-runtime source, artifact or process closure changed")
+    workers = payload.get("worker_reports")
+    if not isinstance(workers, list) or len(workers) != expected_replays:
+        raise ValueError("current-runtime process replay set is incomplete")
+    validated_workers: list[dict[str, Any]] = []
+    for worker in workers:
+        if not isinstance(worker, dict):
+            raise ValueError("current-runtime worker binding is invalid")
+        report_file = (resolved.parent / str(worker.get("report_file", ""))).resolve()
+        trajectory_file = (resolved.parent / str(worker.get("trajectory_file", ""))).resolve()
+        if report_file.parent != resolved.parent or trajectory_file.parent != resolved.parent:
+            raise ValueError("current-runtime worker path escaped evidence directory")
+        validated = _validate_worker_report(
+            report_file,
+            expected_prefix=report_file.with_suffix(""),
+            require_passed=True,
+            expected_closure_hash=closure.closure_hash,
+        )
+        if (
+            validated.get("report_hash") != worker.get("report_hash")
+            or validated.get("trajectory_hash") != worker.get("trajectory_hash")
+            or not trajectory_file.is_file()
+            or hash_bytes(trajectory_file.read_bytes()) != worker.get("trajectory_hash")
+            or validated.get("trajectory_digest") != worker.get("trajectory_digest")
+            or validated.get("process_id") != worker.get("process_id")
+            or validated.get("closure_hash") != worker.get("closure_hash")
+        ):
+            raise ValueError("current-runtime worker trajectory binding changed")
+        validated_workers.append(validated)
+    core_verdict = evaluate_cross_process_replays(
+        closure,
+        validated_workers,
+        exact_fields=("evaluation", "trajectory_digest", "trajectory_hash"),
+        launcher_process_id=launcher_process_id,
+    )
+    predecessor = payload.get("predecessor")
+    if (
+        not isinstance(predecessor, dict)
+        or Path(str(predecessor.get("path", ""))).expanduser().resolve() != predecessor_path
+        or not predecessor_path.is_file()
+        or hash_bytes(predecessor_path.read_bytes()) != predecessor.get("evidence_hash")
+        or request.get("predecessor_evidence_hash") != predecessor.get("evidence_hash")
+    ):
+        raise ValueError("current-runtime predecessor binding changed")
+    continuous = validated_workers[0].get("evaluation")
+    prefix = continuous.get("first_takeoff_exam") if isinstance(continuous, dict) else None
+    derived_gates = {
+        "predecessor_rejection_bound": predecessor.get("passed") is False
+        and predecessor.get("right_control_passed") is False,
+        **{f"core_{name}": value for name, value in core_verdict.gates},
+        "all_prefix_physics_gates": isinstance(prefix, dict) and prefix.get("passed") is True,
+        "all_continuous_team_gates": isinstance(continuous, dict)
+        and continuous.get("passed") is True,
+        "full_source_trees_bound": tuple(item.label for item in closure.source_trees)
+        == _CORE_CLOSURE_SOURCE_LABELS,
+        "current_runtime_bound": all(
+            worker.get("closure_hash") == closure.closure_hash for worker in validated_workers
+        ),
+        "sim_only_authority": closure.activation_ceiling == "SIM_ONLY"
+        and closure.hardware_authorized is False,
+    }
+    passed = all(derived_gates.values())
+    first_worker = workers[0]
+    process_ids = list(core_verdict.process_ids)
+    exact_replay = dict(core_verdict.gates)["cross_process_exact_replay"]
+    if (
+        payload.get("claim") != _CLAIM
+        or payload.get("requalification_claim") != _REQUALIFICATION_CLAIM
+        or payload.get("qualification_gates") != derived_gates
+        or payload.get("passed") is not passed
+        or payload.get("strict_replay") is not exact_replay
+        or payload.get("cross_process_replay_count") != len(workers)
+        or payload.get("launcher_process_id") != launcher_process_id
+        or payload.get("process_ids") != process_ids
+        or payload.get("continuous") != continuous
+        or payload.get("first") != prefix
+        or payload.get("replay") != prefix
+        or payload.get("trajectory_file") != first_worker.get("trajectory_file")
+        or payload.get("trajectory_hash") != first_worker.get("trajectory_hash")
+        or payload.get("implementation_hash") != _implementation_hash()
+        or payload.get("reproducibility_closure_hash") != closure.closure_hash
+        or payload.get("reproducibility_verdict") != core_verdict.to_dict()
+        or payload.get("reproducibility_verdict_hash") != core_verdict.verdict_hash
+        or payload.get("promotion_status")
+        != ("FROZEN_RESEARCH_DEMO" if passed else "REJECTED_DEVELOPMENT")
+        or payload.get("requalification_status")
+        != (_STATUS if passed else "REJECTED_CURRENT_RUNTIME_FULL_CHAIN")
+        or payload.get("physics_authority") != "CPU_MUJOCO"
+        or payload.get("activation_ceiling") != "SIM_ONLY"
+        or payload.get("hardware_command_sent") is not False
+        or payload.get("commercial_use_allowed") is not False
+        or payload.get("reset_or_teleport_used") is not False
+        or payload.get("ball_cannon_used") is not False
+        or payload.get("pixels_used_for_scoring") is not False
+        or expected_report_hash != hash_json(payload)
+    ):
+        raise ValueError("current-runtime authority or integrity contract is invalid")
+
+
 def _validate_worker_report(
-    path: Path, *, expected_prefix: Path, require_passed: bool
+    path: Path,
+    *,
+    expected_prefix: Path,
+    require_passed: bool,
+    expected_closure_hash: str | None = None,
 ) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -570,12 +887,24 @@ def _validate_worker_report(
             except (OSError, ValueError) as error:
                 raise ValueError("current-runtime worker trajectory is unreadable") from error
         evaluation = payload.get("evaluation")
+        schema = (
+            "rosclaw_soccer.current_runtime_process_replay.v2"
+            if expected_closure_hash is not None
+            else "rosclaw_soccer.current_runtime_process_replay.v1"
+        )
         if (
-            payload.get("schema_version") != "rosclaw_soccer.current_runtime_process_replay.v1"
+            payload.get("schema_version") != schema
             or payload.get("passed") is not require_passed
             or not isinstance(evaluation, dict)
             or evaluation.get("passed") is not require_passed
             or payload.get("activation_ceiling") != "SIM_ONLY"
+            or (
+                expected_closure_hash is not None
+                and (
+                    payload.get("closure_hash") != expected_closure_hash
+                    or payload.get("hardware_authorized") is not False
+                )
+            )
             or payload.get("hardware_command_sent") is not False
             or payload.get("trajectory_file") != trajectory.name
             or not trajectory.is_file()
@@ -614,6 +943,8 @@ def _worker_command(
     *,
     asset_root: Path,
     assets: dict[str, Path],
+    predecessor_evidence_path: Path,
+    closure_request_path: Path,
     config: CurrentRuntimePrefixRequalificationConfig,
     output_prefix: Path,
 ) -> tuple[str, ...]:
@@ -643,18 +974,17 @@ def _worker_command(
         str(assets["recovery_athlete_checkpoint"]),
         "--recovery-athlete-exam",
         str(assets["recovery_athlete_exam"]),
+        "--predecessor-evidence",
+        str(predecessor_evidence_path),
+        "--closure-request",
+        str(closure_request_path),
         "--cross-process-replays",
         str(config.cross_process_replays),
     )
 
 
 def _python_tree_hash(root: Path) -> str:
-    files = sorted(path for path in root.rglob("*.py") if "__pycache__" not in path.parts)
-    if not files:
-        raise ValueError("current-runtime source tree is empty")
-    return str(
-        hash_json({str(path.relative_to(root)): hash_bytes(path.read_bytes()) for path in files})
-    )
+    return cast(str, bind_source_tree("source", root).digest)
 
 
 def _runtime_dependency_contract() -> dict[str, str]:
@@ -665,16 +995,7 @@ def _runtime_dependency_contract() -> dict[str, str]:
 
 
 def _process_contract() -> dict[str, Any]:
-    return {
-        "python_version": platform.python_version(),
-        "python_implementation": platform.python_implementation(),
-        "platform": platform.platform(),
-        "machine": platform.machine(),
-        "libc": list(platform.libc_ver()),
-        "cpu_count": os.cpu_count(),
-        "hash_randomization": int(sys.flags.hash_randomization),
-        "thread_environment": {key: os.environ.get(key) for key in _THREAD_ENVIRONMENT_KEYS},
-    }
+    return cast(dict[str, Any], RuntimeProcessContract.capture().to_dict())
 
 
 def _implementation_hash() -> str:
@@ -729,6 +1050,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--recovery-athlete-checkpoint", type=Path, required=True)
     parser.add_argument("--recovery-athlete-exam", type=Path, required=True)
     parser.add_argument("--predecessor-evidence", type=Path)
+    parser.add_argument("--closure-request", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--source-checkout", type=Path)
     parser.add_argument("--worker-output-prefix", type=Path)
@@ -754,9 +1076,19 @@ def main() -> int:
     )
     worker_prefix = cast(Path | None, args.worker_output_prefix)
     if worker_prefix is not None:
+        closure_request_path = cast(Path | None, args.closure_request)
+        predecessor_path = cast(Path | None, args.predecessor_evidence)
+        if closure_request_path is None or predecessor_path is None:
+            raise SystemExit("worker mode requires closure request and predecessor evidence")
+        closure_request = json.loads(closure_request_path.read_text(encoding="utf-8"))
+        closure_value = closure_request.get("reproducibility_closure")
+        if not isinstance(closure_value, dict):
+            raise SystemExit("worker closure request is invalid")
         report = _worker_rollout(
             asset_root=cast(Path, args.asset_root),
             assets=assets,
+            predecessor_evidence_path=predecessor_path,
+            expected_closure=ReproducibilityClosure.from_dict(closure_value),
             config=config,
             output_prefix=worker_prefix,
         )
@@ -789,6 +1121,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "CurrentRuntimePrefixRequalificationConfig",
+    "build_current_runtime_reproducibility_closure",
     "current_runtime_prefix_lane",
     "prefix_gate_contract",
     "run_current_runtime_prefix_requalification",
