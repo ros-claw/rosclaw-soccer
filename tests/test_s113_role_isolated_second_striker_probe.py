@@ -17,7 +17,7 @@ from rosclaw_soccer.training.role_isolated_second_striker_probe import (
 
 _EVIDENCE = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
-    "s115-heavy-pitch-control-v4/evidence.json"
+    "s116-proprioceptive-recovery-holdout-v3/evidence.json"
 )
 
 
@@ -51,6 +51,8 @@ def test_role_isolated_probe_contract_rejects_hardware_and_bad_ball_physics() ->
         replace(config, second_ball_ground_friction=0.01)
     with pytest.raises(ValueError, match="foot pitch"):
         replace(config, second_striker_foot_pitch_offset_rad=0.30)
+    with pytest.raises(ValueError, match="capture duration"):
+        replace(config, goalkeeper_proprioceptive_capture_duration_sec=0.10)
 
 
 def test_candidate_diagnostics_separate_parent_fallback_from_plasticity() -> None:
@@ -71,10 +73,29 @@ def test_role_isolated_exam_applies_the_sealed_whole_body_pitch_context() -> Non
             second_ball_mass_kg=0.46,
             second_ball_ground_friction=0.16,
             second_striker_foot_pitch_offset_rad=0.1261,
+            goalkeeper_post_contact_proprioceptive_capture_enabled=True,
+            goalkeeper_proprioceptive_capture_delay_sec=0.8,
+            goalkeeper_proprioceptive_capture_maximum_root_speed_mps=0.4,
+            goalkeeper_proprioceptive_capture_duration_sec=1.2,
         )
     )
 
     assert exam.striker.foot_pitch_offset == pytest.approx(0.1261)
+    assert exam.goalkeeper_post_contact_proprioceptive_capture_enabled is True
+    assert exam.goalkeeper_proprioceptive_capture_delay_sec == pytest.approx(0.8)
+    assert exam.goalkeeper_proprioceptive_capture_maximum_root_speed_mps == pytest.approx(0.4)
+    assert exam.goalkeeper_proprioceptive_capture_duration_sec == pytest.approx(1.2)
+
+
+def test_candidate_diagnostics_bind_proprioceptive_capture_authority() -> None:
+    trajectory = _diagnostic_trajectory(candidate_selected=True)
+    trajectory["goalkeeper_proprioceptive_capture_active"] = np.asarray(
+        (False, True, True), dtype=np.bool_
+    )
+
+    diagnostics = _candidate_diagnostics(trajectory)
+
+    assert diagnostics["goalkeeper_proprioceptive_capture_frame_count"] == 2
 
 
 def test_gate_derivation_does_not_confuse_retention_with_growth() -> None:

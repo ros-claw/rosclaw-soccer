@@ -55,6 +55,10 @@ class RoleIsolatedSecondStrikerProbeConfig:
     second_ball_mass_kg: float | None = None
     second_ball_ground_friction: float | None = None
     second_striker_foot_pitch_offset_rad: float | None = None
+    goalkeeper_post_contact_proprioceptive_capture_enabled: bool = False
+    goalkeeper_proprioceptive_capture_delay_sec: float = 0.80
+    goalkeeper_proprioceptive_capture_maximum_root_speed_mps: float = 0.40
+    goalkeeper_proprioceptive_capture_duration_sec: float = 0.80
     replay_count: int = 2
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
@@ -82,6 +86,14 @@ class RoleIsolatedSecondStrikerProbeConfig:
             raise ValueError("role-isolated second-striker foot pitch is invalid")
         if self.replay_count != 2:
             raise ValueError("role-isolated development probe requires two exact replays")
+        if not isinstance(self.goalkeeper_post_contact_proprioceptive_capture_enabled, bool):
+            raise ValueError("role-isolated proprioceptive capture flag is invalid")
+        if not 0.0 <= self.goalkeeper_proprioceptive_capture_delay_sec <= 1.20:
+            raise ValueError("role-isolated proprioceptive capture delay is invalid")
+        if not 0.05 <= self.goalkeeper_proprioceptive_capture_maximum_root_speed_mps <= 1.50:
+            raise ValueError("role-isolated proprioceptive capture speed gate is invalid")
+        if not 0.20 <= self.goalkeeper_proprioceptive_capture_duration_sec <= 1.50:
+            raise ValueError("role-isolated proprioceptive capture duration is invalid")
         if self.activation_ceiling != "SIM_ONLY" or self.hardware_authorized:
             raise ValueError("role-isolated probe must remain SIM_ONLY")
 
@@ -166,17 +178,25 @@ def _candidate_diagnostics(trajectory: dict[str, NDArray[Any]]) -> dict[str, Any
         trajectory["second_striker_ballistic_actor_desired_launch_velocity_yz_mps"],
         dtype=np.float64,
     )
+    proprioceptive_capture = np.asarray(
+        trajectory.get(
+            "goalkeeper_proprioceptive_capture_active",
+            np.zeros(conditioned.shape, dtype=np.bool_),
+        ),
+        dtype=np.bool_,
+    )
     if (
         any(value.ndim != 1 for value in (conditioned, supported, selected, parent_or_candidate))
         or desired.shape != (conditioned.size, 2)
         or any(
             value.shape != conditioned.shape for value in (supported, selected, parent_or_candidate)
         )
+        or proprioceptive_capture.shape != conditioned.shape
         or np.any(selected & ~supported)
     ):
         raise ValueError("role-isolated candidate telemetry is invalid")
     observed = desired[conditioned]
-    return {
+    diagnostics: dict[str, Any] = {
         "conditioned_frame_count": int(np.count_nonzero(conditioned)),
         "supported_frame_count": int(np.count_nonzero(conditioned & supported)),
         "candidate_selected_frame_count": int(np.count_nonzero(selected)),
@@ -190,6 +210,11 @@ def _candidate_diagnostics(trajectory: dict[str, NDArray[Any]]) -> dict[str, Any
             None if not observed.size else np.max(observed, axis=0).tolist()
         ),
     }
+    if "goalkeeper_proprioceptive_capture_active" in trajectory:
+        diagnostics["goalkeeper_proprioceptive_capture_frame_count"] = int(
+            np.count_nonzero(proprioceptive_capture)
+        )
+    return diagnostics
 
 
 def _derive_probe_gates(
@@ -276,6 +301,18 @@ def _role_isolated_exam_config(
         lane_ids=(config.lane_id,),
         simulation_duration_sec=config.simulation_duration_sec,
         striker=striker,
+        goalkeeper_post_contact_proprioceptive_capture_enabled=(
+            config.goalkeeper_post_contact_proprioceptive_capture_enabled
+        ),
+        goalkeeper_proprioceptive_capture_delay_sec=(
+            config.goalkeeper_proprioceptive_capture_delay_sec
+        ),
+        goalkeeper_proprioceptive_capture_maximum_root_speed_mps=(
+            config.goalkeeper_proprioceptive_capture_maximum_root_speed_mps
+        ),
+        goalkeeper_proprioceptive_capture_duration_sec=(
+            config.goalkeeper_proprioceptive_capture_duration_sec
+        ),
     )
 
 
@@ -511,6 +548,21 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--second-ball-mass-kg", type=float)
     parser.add_argument("--second-ball-ground-friction", type=float)
     parser.add_argument("--second-striker-foot-pitch-offset-rad", type=float)
+    parser.add_argument(
+        "--goalkeeper-post-contact-proprioceptive-capture-enabled",
+        action="store_true",
+    )
+    parser.add_argument("--goalkeeper-proprioceptive-capture-delay-sec", type=float, default=0.80)
+    parser.add_argument(
+        "--goalkeeper-proprioceptive-capture-maximum-root-speed-mps",
+        type=float,
+        default=0.40,
+    )
+    parser.add_argument(
+        "--goalkeeper-proprioceptive-capture-duration-sec",
+        type=float,
+        default=0.80,
+    )
     return parser
 
 
@@ -533,6 +585,18 @@ def main() -> int:
             second_ball_mass_kg=args.second_ball_mass_kg,
             second_ball_ground_friction=args.second_ball_ground_friction,
             second_striker_foot_pitch_offset_rad=args.second_striker_foot_pitch_offset_rad,
+            goalkeeper_post_contact_proprioceptive_capture_enabled=(
+                args.goalkeeper_post_contact_proprioceptive_capture_enabled
+            ),
+            goalkeeper_proprioceptive_capture_delay_sec=(
+                args.goalkeeper_proprioceptive_capture_delay_sec
+            ),
+            goalkeeper_proprioceptive_capture_maximum_root_speed_mps=(
+                args.goalkeeper_proprioceptive_capture_maximum_root_speed_mps
+            ),
+            goalkeeper_proprioceptive_capture_duration_sec=(
+                args.goalkeeper_proprioceptive_capture_duration_sec
+            ),
         ),
     )
     print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False))

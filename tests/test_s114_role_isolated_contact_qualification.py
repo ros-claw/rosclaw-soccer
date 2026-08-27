@@ -5,13 +5,14 @@ from pathlib import Path
 import pytest
 
 from rosclaw_soccer.training.role_isolated_contact_qualification import (
+    RoleIsolatedContactQualificationConfig,
     _derive_qualification,
     validate_role_isolated_contact_qualification,
 )
 
 _QUALIFICATION = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
-    "s115-heavy-pitch-qualification-v5/evidence.json"
+    "s116-proprioceptive-recovery-qualification-v2/evidence.json"
 )
 
 
@@ -48,12 +49,20 @@ def test_qualification_needs_complete_control_and_holdout_chains() -> None:
     assert status == "QUALIFIED_CONTROL_AND_SEALED_HOLDOUT_SIM_ONLY_CANDIDATE"
 
 
-def test_current_heavy_ball_qualification_rejects_narrow_single_point_success() -> None:
+def test_qualification_rejects_invalid_probe_config_hash() -> None:
+    with pytest.raises(ValueError, match="config hash"):
+        RoleIsolatedContactQualificationConfig(control_probe_config_hash="sha256:bad")
+
+
+def test_current_proprioceptive_recovery_qualification_passes_two_bound_contexts() -> None:
     if not _QUALIFICATION.is_file():
-        pytest.skip("current heavy-ball qualification evidence is not present")
+        pytest.skip("current proprioceptive-recovery qualification evidence is not present")
     report = validate_role_isolated_contact_qualification(_QUALIFICATION)
 
-    assert report["candidate_promoted"] is False
-    assert report["candidate_status"] == "REJECTED_SEALED_HOLDOUT_TASK_FAILURE"
+    assert report["candidate_promoted"] is True
+    assert (
+        report["candidate_status"]
+        == "QUALIFIED_CONTROL_AND_SEALED_HOLDOUT_SIM_ONLY_CANDIDATE"
+    )
     assert report["gates"]["control_complete_chain_passed"] is True
-    assert report["gates"]["holdout_complete_chain_passed"] is False
+    assert report["gates"]["holdout_complete_chain_passed"] is True

@@ -30,6 +30,8 @@ _CLAIM = "ROLE_ISOLATED_CONTACT_CANDIDATE_CONTROL_AND_SEALED_HOLDOUT_QUALIFICATI
 
 @dataclass(frozen=True)
 class RoleIsolatedContactQualificationConfig:
+    control_probe_config_hash: str | None = None
+    holdout_probe_config_hash: str | None = None
     control_second_ball_mass_kg: float | None = None
     control_second_ball_ground_friction: float | None = None
     control_second_striker_foot_pitch_offset_rad: float | None = None
@@ -41,6 +43,13 @@ class RoleIsolatedContactQualificationConfig:
     schema_version: str = "rosclaw_soccer.role_isolated_contact_qualification_config.v1"
 
     def __post_init__(self) -> None:
+        for value in (self.control_probe_config_hash, self.holdout_probe_config_hash):
+            if value is not None and (
+                not value.startswith("sha256:")
+                or len(value) != 71
+                or any(character not in "0123456789abcdef" for character in value[7:])
+            ):
+                raise ValueError("role-isolated qualification probe config hash is invalid")
         optional = (
             self.control_second_ball_mass_kg,
             self.control_second_ball_ground_friction,
@@ -210,6 +219,14 @@ def _verified_inputs(
         != config.holdout_second_ball_ground_friction
         or holdout_config.get("second_striker_foot_pitch_offset_rad")
         != config.holdout_second_striker_foot_pitch_offset_rad
+        or (
+            config.control_probe_config_hash is not None
+            and control_request.get("config_hash") != config.control_probe_config_hash
+        )
+        or (
+            config.holdout_probe_config_hash is not None
+            and holdout_request.get("config_hash") != config.holdout_probe_config_hash
+        )
     ):
         raise ValueError("qualification probes do not share the sealed candidate and split")
     gates, promoted, status = _derive_qualification(control=control, holdout=holdout)
@@ -220,6 +237,8 @@ def _verified_inputs(
         "holdout_report_hash": holdout["report_hash"],
         "control_status": control["candidate_status"],
         "holdout_status": holdout["candidate_status"],
+        "control_probe_config_hash": control_request.get("config_hash"),
+        "holdout_probe_config_hash": holdout_request.get("config_hash"),
     }
     return inputs, gates, promoted, status
 
@@ -360,6 +379,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--control-evidence", type=Path, required=True)
     parser.add_argument("--holdout-evidence", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--control-probe-config-hash")
+    parser.add_argument("--holdout-probe-config-hash")
     parser.add_argument("--control-second-ball-mass-kg", type=float)
     parser.add_argument("--control-second-ball-ground-friction", type=float)
     parser.add_argument("--control-second-striker-foot-pitch-offset-rad", type=float)
@@ -377,6 +398,8 @@ def main() -> int:
         holdout_evidence_path=args.holdout_evidence,
         output_dir=args.output_dir,
         config=RoleIsolatedContactQualificationConfig(
+            control_probe_config_hash=args.control_probe_config_hash,
+            holdout_probe_config_hash=args.holdout_probe_config_hash,
             control_second_ball_mass_kg=args.control_second_ball_mass_kg,
             control_second_ball_ground_friction=args.control_second_ball_ground_friction,
             control_second_striker_foot_pitch_offset_rad=(

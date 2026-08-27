@@ -96,6 +96,17 @@ This exposes a narrow, non-smooth contact/recovery boundary for the next robust
 policy-learning round.  See the
 [S115 heavy-ball curriculum report](docs/s115-heavy-ball-motion-curriculum.zh-CN.md).
 
+S116 converts that neighbour failure into a proprioceptive impact-recovery
+reflex.  After real glove contact, the keeper may enter lower-body landing
+capture only inside a measured time, bilateral-support, and root-speed
+envelope; the existing learned recovery athlete remains responsible outside
+that envelope.  The former `0.12605 rad` failure now repeats the physical save
+and passes all eight final-ready gates, while the `0.1261 rad` control remains
+unchanged.  A harder `0.12615 rad` neighbour still fails, so this is a local
+two-context qualification rather than broad robustness or a new end-to-end
+neural cerebellum.  See the
+[S116 impact-recovery report](docs/s116-proprioceptive-impact-recovery.zh-CN.md).
+
 ## Regulation football physics
 
 The simulator selects measurements inside the current IFAB ranges: a

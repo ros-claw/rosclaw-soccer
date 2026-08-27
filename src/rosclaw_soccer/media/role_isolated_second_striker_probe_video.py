@@ -114,6 +114,11 @@ def validate_role_isolated_second_striker_probe_video(path: Path) -> dict[str, A
             or payload.get("complete_chain_retained") is not plasticity["complete_chain_passed"]
             or payload.get("candidate_selected_frame_count")
             != diagnostics["candidate_selected_frame_count"]
+            or (
+                "goalkeeper_proprioceptive_capture_frame_count" in diagnostics
+                and payload.get("goalkeeper_proprioceptive_capture_frame_count")
+                != diagnostics["goalkeeper_proprioceptive_capture_frame_count"]
+            )
             or (selected_count <= 0 if promoted else selected_count != 0)
             or payload.get("four_g1_visible") is not True
             or payload.get("two_physical_balls_visible") is not True
@@ -208,6 +213,9 @@ def render_role_isolated_second_striker_probe_video(
     raw_config = cast(dict[str, Any], request["config"])
     config = RoleIsolatedSecondStrikerProbeConfig(**raw_config)
     motion_curriculum = config.second_striker_foot_pitch_offset_rad is not None
+    proprioceptive_recovery = (
+        config.goalkeeper_post_contact_proprioceptive_capture_enabled
+    )
     clips = _timeline(
         trajectory,
         result,
@@ -215,6 +223,7 @@ def render_role_isolated_second_striker_probe_video(
         fps,
         promoted=promoted,
         motion_curriculum=motion_curriculum,
+        proprioceptive_recovery=proprioceptive_recovery,
     )
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
@@ -297,6 +306,7 @@ def render_role_isolated_second_striker_probe_video(
                         labels=labels,
                         promoted=promoted,
                         motion_curriculum=motion_curriculum,
+                        proprioceptive_recovery=proprioceptive_recovery,
                     ),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
@@ -366,6 +376,9 @@ def render_role_isolated_second_striker_probe_video(
         "frozen_parent_selected_frame_count": diagnostics[
             "frozen_parent_selected_frame_count"
         ],
+        "goalkeeper_proprioceptive_capture_frame_count": diagnostics.get(
+            "goalkeeper_proprioceptive_capture_frame_count", 0
+        ),
         "four_g1_visible": True,
         "two_physical_balls_visible": True,
         "two_physical_saves": True,
@@ -399,6 +412,7 @@ def _timeline(
     *,
     promoted: bool,
     motion_curriculum: bool = False,
+    proprioceptive_recovery: bool = False,
 ) -> tuple[_Clip, ...]:
     start = float(trajectory["time"][0])
     end = float(trajectory["time"][-1])
@@ -411,24 +425,35 @@ def _timeline(
     second_height = float(result["goalkeeper_second_glove_contact_height_m"])
     parent_frames = int(diagnostics["frozen_parent_selected_frame_count"])
     candidate_frames = int(diagnostics["candidate_selected_frame_count"])
+    capture_frames = int(
+        diagnostics.get("goalkeeper_proprioceptive_capture_frame_count", 0)
+    )
     title = tuple(_Frame("left-inner", start, "four") for _ in range(round(1.8 * fps)))
     final = tuple(_Frame("left-inner", end, "goal") for _ in range(round(2.0 * fps)))
     audit_title = (
-        "S115 · HEAVY-BALL WHOLE-BODY CURRICULUM"
-        if motion_curriculum
+        "S116 · PROPRIOCEPTIVE IMPACT RECOVERY"
+        if proprioceptive_recovery
         else (
-            "S114 · FAILURE MEMORY → CONTROL QUALIFICATION"
-            if promoted
-            else "S113 · STABILITY–PLASTICITY AUDIT · CANDIDATE REJECTED"
+            "S115 · HEAVY-BALL WHOLE-BODY CURRICULUM"
+            if motion_curriculum
+            else (
+                "S114 · FAILURE MEMORY → CONTROL QUALIFICATION"
+                if promoted
+                else "S113 · STABILITY–PLASTICITY AUDIT · CANDIDATE REJECTED"
+            )
         )
     )
     approach_label = (
-        f"CURRICULUM BODY PITCH + LEARNED CONTACT ACTOR · {candidate_frames} CONTACT FRAMES"
-        if motion_curriculum
+        f"STATE-GATED IMPACT CAPTURE · {capture_frames} PHYSICAL CONTROL FRAMES"
+        if proprioceptive_recovery
         else (
-            f"FAILURE-UPDATED CANDIDATE SELECTED · {candidate_frames} CONTACT FRAMES"
-            if promoted
-            else f"TARGET CANDIDATE ABSTAINS · FROZEN PARENT {parent_frames} FRAMES"
+            f"CURRICULUM BODY PITCH + LEARNED CONTACT ACTOR · {candidate_frames} CONTACT FRAMES"
+            if motion_curriculum
+            else (
+                f"FAILURE-UPDATED CANDIDATE SELECTED · {candidate_frames} CONTACT FRAMES"
+                if promoted
+                else f"TARGET CANDIDATE ABSTAINS · FROZEN PARENT {parent_frames} FRAMES"
+            )
         )
     )
     contact_label = (
@@ -437,12 +462,16 @@ def _timeline(
         else f"PARENT RIGHT-FOOT CONTACT · {force:.0f} N · NO CANNON"
     )
     decision_label = (
-        "HEAVY CONTROL PASSED · NEIGHBOR HOLDOUT REQUIRED · SIM ONLY"
-        if motion_curriculum
+        "SEALED NEIGHBOR RECOVERED · FINAL READY · SIM ONLY"
+        if proprioceptive_recovery
         else (
-            "CONTROL PASSED · SEALED HOLDOUT STILL REQUIRED · SIM ONLY"
-            if promoted
-            else "RETENTION PASSED · PLASTICITY FAILED · NO PROMOTION"
+            "HEAVY CONTROL PASSED · NEIGHBOR HOLDOUT REQUIRED · SIM ONLY"
+            if motion_curriculum
+            else (
+                "CONTROL PASSED · SEALED HOLDOUT STILL REQUIRED · SIM ONLY"
+                if promoted
+                else "RETENTION PASSED · PLASTICITY FAILED · NO PROMOTION"
+            )
         )
     )
     return (
@@ -490,6 +519,7 @@ def _video_ffmpeg_command(
     labels: tuple[Path, ...],
     promoted: bool,
     motion_curriculum: bool = False,
+    proprioceptive_recovery: bool = False,
 ) -> list[str]:
     command = _ffmpeg_command(
         ffmpeg=ffmpeg,
@@ -504,12 +534,16 @@ def _video_ffmpeg_command(
     command[filter_index] = command[filter_index].replace(
         "ROSClaw Soccer · S109 PHYSICAL SECOND STRIKER",
         (
-            "ROSClaw Soccer · S115 HEAVY-BALL MOTION CURRICULUM"
-            if motion_curriculum
+            "ROSClaw Soccer · S116 PROPRIOCEPTIVE IMPACT RECOVERY"
+            if proprioceptive_recovery
             else (
-                "ROSClaw Soccer · S114 FAILURE-DRIVEN CONTACT GROWTH"
-                if promoted
-                else "ROSClaw Soccer · S113 SAFE REJECTION REVIEW"
+                "ROSClaw Soccer · S115 HEAVY-BALL MOTION CURRICULUM"
+                if motion_curriculum
+                else (
+                    "ROSClaw Soccer · S114 FAILURE-DRIVEN CONTACT GROWTH"
+                    if promoted
+                    else "ROSClaw Soccer · S113 SAFE REJECTION REVIEW"
+                )
             )
         ),
     )

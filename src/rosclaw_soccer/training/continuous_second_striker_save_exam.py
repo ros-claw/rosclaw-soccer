@@ -15,7 +15,7 @@ import json
 import math
 import os
 import subprocess
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -60,6 +60,10 @@ class ContinuousSecondStrikerSaveExamConfig:
     lane_ids: tuple[str, ...] = ("left-inner",)
     simulation_duration_sec: float = 25.0
     striker: G1PhysicalSecondStrikerConfig = G1PhysicalSecondStrikerConfig()
+    goalkeeper_post_contact_proprioceptive_capture_enabled: bool = False
+    goalkeeper_proprioceptive_capture_delay_sec: float = 0.80
+    goalkeeper_proprioceptive_capture_maximum_root_speed_mps: float = 0.40
+    goalkeeper_proprioceptive_capture_duration_sec: float = 0.80
     ready: SaveToReadySuccessorConfig = SaveToReadySuccessorConfig()
     minimum_second_glove_height_m: float = 1.20
     maximum_glove_surface_penetration_m: float = 0.02
@@ -83,6 +87,9 @@ class ContinuousSecondStrikerSaveExamConfig:
             self.minimum_post_glove_outward_speed_mps,
             self.minimum_post_second_pelvis_height_m,
             self.maximum_control_dt_error_sec,
+            self.goalkeeper_proprioceptive_capture_delay_sec,
+            self.goalkeeper_proprioceptive_capture_maximum_root_speed_mps,
+            self.goalkeeper_proprioceptive_capture_duration_sec,
         )
         if any(not math.isfinite(value) for value in values):
             raise ValueError("continuous second-striker gates must be finite")
@@ -106,6 +113,14 @@ class ContinuousSecondStrikerSaveExamConfig:
             raise ValueError("continuous second-striker recovery-height gate is invalid")
         if not 1.0e-12 <= self.maximum_control_dt_error_sec <= 1.0e-6:
             raise ValueError("continuous second-striker clock gate is invalid")
+        if not isinstance(self.goalkeeper_post_contact_proprioceptive_capture_enabled, bool):
+            raise ValueError("continuous second-striker proprioceptive capture flag is invalid")
+        if not 0.0 <= self.goalkeeper_proprioceptive_capture_delay_sec <= 1.20:
+            raise ValueError("continuous second-striker capture delay is invalid")
+        if not 0.05 <= self.goalkeeper_proprioceptive_capture_maximum_root_speed_mps <= 1.50:
+            raise ValueError("continuous second-striker capture speed gate is invalid")
+        if not 0.20 <= self.goalkeeper_proprioceptive_capture_duration_sec <= 1.50:
+            raise ValueError("continuous second-striker capture duration is invalid")
         if (
             self.activation_ceiling != "SIM_ONLY"
             or self.hardware_authorized
@@ -169,6 +184,21 @@ def physical_second_striker_kwargs(
         physical_second_striker_config=config.striker,
         second_striker_ballistic_contact_torque_config=(UpperCornerStrikePolicy().torque_config()),
     )
+    if config.goalkeeper_post_contact_proprioceptive_capture_enabled:
+        goalkeeper = replace(
+            goalkeeper,
+            post_contact_proprioceptive_capture_enabled=True,
+            post_contact_proprioceptive_capture_delay_sec=(
+                config.goalkeeper_proprioceptive_capture_delay_sec
+            ),
+            post_contact_proprioceptive_capture_maximum_root_speed_mps=(
+                config.goalkeeper_proprioceptive_capture_maximum_root_speed_mps
+            ),
+            post_contact_proprioceptive_capture_duration_sec=(
+                config.goalkeeper_proprioceptive_capture_duration_sec
+            ),
+        )
+        kwargs["goalkeeper_config"] = goalkeeper
     return kwargs, goalkeeper, goal
 
 
