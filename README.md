@@ -85,6 +85,17 @@ updated candidate—not its frozen parent—passes two exact control replays wit
 turns that miss into the next curriculum.  See the
 [S114 failure-memory report](docs/s114-failure-memory-contact-growth.zh-CN.md).
 
+S115 turns the failed heavy-ball holdout into an explicit whole-body motion
+curriculum instead of hiding it behind a larger foot impulse.  The sealed
+failure-updated contact actor now runs with independently bound ball physics and
+second-striker foot-pitch context.  At 0.46 kg, friction 0.16, and 0.1261 rad,
+two strict replays produce a real 1.373 m glove save and a fully ready final
+state.  A tiny sealed neighbour (0.12605 rad) still saves the ball but fails the
+post-save readiness gate, so the portfolio correctly rejects broad promotion.
+This exposes a narrow, non-smooth contact/recovery boundary for the next robust
+policy-learning round.  See the
+[S115 heavy-ball curriculum report](docs/s115-heavy-ball-motion-curriculum.zh-CN.md).
+
 ## Regulation football physics
 
 The simulator selects measurements inside the current IFAB ranges: a

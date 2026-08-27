@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from rosclaw_soccer.training.role_isolated_contact_qualification import (
     _derive_qualification,
+    validate_role_isolated_contact_qualification,
+)
+
+_QUALIFICATION = Path(
+    "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
+    "s115-heavy-pitch-qualification-v5/evidence.json"
 )
 
 
@@ -36,3 +46,14 @@ def test_qualification_needs_complete_control_and_holdout_chains() -> None:
     assert all(gates.values())
     assert promoted is True
     assert status == "QUALIFIED_CONTROL_AND_SEALED_HOLDOUT_SIM_ONLY_CANDIDATE"
+
+
+def test_current_heavy_ball_qualification_rejects_narrow_single_point_success() -> None:
+    if not _QUALIFICATION.is_file():
+        pytest.skip("current heavy-ball qualification evidence is not present")
+    report = validate_role_isolated_contact_qualification(_QUALIFICATION)
+
+    assert report["candidate_promoted"] is False
+    assert report["candidate_status"] == "REJECTED_SEALED_HOLDOUT_TASK_FAILURE"
+    assert report["gates"]["control_complete_chain_passed"] is True
+    assert report["gates"]["holdout_complete_chain_passed"] is False

@@ -13,7 +13,7 @@ import inspect
 import json
 import math
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -27,7 +27,10 @@ from rosclaw.simforge.reproducibility import (
 
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
-from rosclaw_soccer.skills.team.shared_world import simulate_shared_world
+from rosclaw_soccer.skills.team.shared_world import (
+    G1PhysicalSecondStrikerConfig,
+    simulate_shared_world,
+)
 from rosclaw_soccer.training.continuous_second_striker_save_exam import (
     ContinuousSecondStrikerSaveExamConfig,
     evaluate_continuous_second_striker_save,
@@ -51,6 +54,7 @@ class RoleIsolatedSecondStrikerProbeConfig:
     simulation_duration_sec: float = 23.0
     second_ball_mass_kg: float | None = None
     second_ball_ground_friction: float | None = None
+    second_striker_foot_pitch_offset_rad: float | None = None
     replay_count: int = 2
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
@@ -71,6 +75,11 @@ class RoleIsolatedSecondStrikerProbeConfig:
             or not 0.03 <= self.second_ball_ground_friction <= 0.80
         ):
             raise ValueError("role-isolated second-ball friction is invalid")
+        if self.second_striker_foot_pitch_offset_rad is not None and (
+            not math.isfinite(self.second_striker_foot_pitch_offset_rad)
+            or not -0.18 <= self.second_striker_foot_pitch_offset_rad <= 0.18
+        ):
+            raise ValueError("role-isolated second-striker foot pitch is invalid")
         if self.replay_count != 2:
             raise ValueError("role-isolated development probe requires two exact replays")
         if self.activation_ceiling != "SIM_ONLY" or self.hardware_authorized:
@@ -254,6 +263,22 @@ def _candidate_status(*, promoted: bool, plasticity_gates: dict[str, bool]) -> s
     return "REJECTED_NO_SUPPORTED_PLASTICITY"
 
 
+def _role_isolated_exam_config(
+    config: RoleIsolatedSecondStrikerProbeConfig,
+) -> ContinuousSecondStrikerSaveExamConfig:
+    striker = G1PhysicalSecondStrikerConfig()
+    if config.second_striker_foot_pitch_offset_rad is not None:
+        striker = replace(
+            striker,
+            foot_pitch_offset=config.second_striker_foot_pitch_offset_rad,
+        )
+    return ContinuousSecondStrikerSaveExamConfig(
+        lane_ids=(config.lane_id,),
+        simulation_duration_sec=config.simulation_duration_sec,
+        striker=striker,
+    )
+
+
 def run_role_isolated_second_striker_probe(
     *,
     asset_root: Path,
@@ -322,9 +347,7 @@ def run_role_isolated_second_striker_probe(
     request_path = destination / "request.json"
     _atomic_json(request_path, request)
     lane = next(item for item in expanded_dynamic_corner_lanes() if item.lane_id == active.lane_id)
-    exam = ContinuousSecondStrikerSaveExamConfig(
-        lane_ids=(active.lane_id,), simulation_duration_sec=active.simulation_duration_sec
-    )
+    exam = _role_isolated_exam_config(active)
     kwargs, goalkeeper, goal = physical_second_striker_kwargs(
         lane=lane,
         assets=assets,
@@ -487,6 +510,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--second-ball-mass-kg", type=float)
     parser.add_argument("--second-ball-ground-friction", type=float)
+    parser.add_argument("--second-striker-foot-pitch-offset-rad", type=float)
     return parser
 
 
@@ -508,6 +532,7 @@ def main() -> int:
         config=RoleIsolatedSecondStrikerProbeConfig(
             second_ball_mass_kg=args.second_ball_mass_kg,
             second_ball_ground_friction=args.second_ball_ground_friction,
+            second_striker_foot_pitch_offset_rad=args.second_striker_foot_pitch_offset_rad,
         ),
     )
     print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False))

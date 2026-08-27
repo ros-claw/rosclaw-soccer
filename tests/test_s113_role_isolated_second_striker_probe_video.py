@@ -14,8 +14,8 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 _MANIFEST = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
-    "s114-failure-updated-control-video-v1/"
-    "s114-failure-memory-control.json"
+    "s115-heavy-pitch-control-video-v2/"
+    "s115-heavy-ball-control.json"
 )
 
 
@@ -65,7 +65,7 @@ def test_current_role_isolated_video_if_available() -> None:
         pytest.skip("current role-isolated stage video is not present")
     payload = validate_role_isolated_second_striker_probe_video(_MANIFEST)
     assert payload["candidate_promoted"] is True
-    assert payload["candidate_selected_frame_count"] == 2
+    assert payload["candidate_selected_frame_count"] == 1
     assert payload["pixels_used_for_scoring"] is False
 
 
@@ -93,3 +93,30 @@ def test_s114_timeline_labels_actual_candidate_authority() -> None:
     assert "CANDIDATE SELECTED" in labels
     assert "LEARNED RIGHT-FOOT CONTACT" in labels
     assert "SEALED HOLDOUT STILL REQUIRED" in labels
+
+
+def test_s115_timeline_discloses_heavy_ball_motion_curriculum() -> None:
+    clips = _timeline(
+        {"time": np.asarray((0.0, 23.0))},
+        {
+            "goalkeeper_glove_contact_time_sec": 8.0,
+            "second_threat_rearm_time_sec": 12.0,
+            "second_striker_contact_time_sec": 17.0,
+            "goalkeeper_second_glove_contact_time_sec": 17.5,
+            "second_striker_contact_force_peak_n": 832.0,
+            "goalkeeper_glove_contact_height_m": 1.42,
+            "goalkeeper_second_glove_contact_height_m": 1.37,
+        },
+        {
+            "frozen_parent_selected_frame_count": 0,
+            "candidate_selected_frame_count": 1,
+        },
+        30,
+        promoted=True,
+        motion_curriculum=True,
+    )
+
+    labels = " ".join(clip.label for clip in clips)
+    assert "HEAVY-BALL WHOLE-BODY CURRICULUM" in labels
+    assert "CURRICULUM BODY PITCH + LEARNED CONTACT ACTOR" in labels
+    assert "NEIGHBOR HOLDOUT REQUIRED" in labels
