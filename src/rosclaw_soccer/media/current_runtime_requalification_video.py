@@ -1,4 +1,4 @@
-"""Evidence-downstream reel for the S111 cross-process full-chain champion."""
+"""Evidence-downstream reel for the S112 Core-closed full-chain champion."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ from rosclaw_soccer.world.field import (
     build_g1_four_player_two_ball_stadium_model,
 )
 
-_CLAIM = "CROSS_PROCESS_CONTINUOUS_FOUR_G1_CURRENT_RUNTIME_CHAMPION_VIDEO"
+_CLAIM = "CROSS_PROCESS_CONTINUOUS_FOUR_G1_CORE_CLOSURE_CHAMPION_VIDEO"
 
 
 def _implementation_hash() -> str:
@@ -76,7 +76,7 @@ def validate_current_runtime_requalification_video(path: Path) -> dict[str, Any]
         replay_count = payload.get("cross_process_replay_count")
         if (
             payload.get("schema_version")
-            != "rosclaw_soccer.current_runtime_requalification_video.v1"
+            != "rosclaw_soccer.current_runtime_requalification_video.v2"
             or payload.get("claim") != _CLAIM
             or payload.get("evidence_passed") is not True
             or payload.get("strict_cross_process_replay") is not True
@@ -171,7 +171,7 @@ def render_current_runtime_requalification_video(
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
     if ffmpeg is None or ffprobe is None:
-        raise RuntimeError("ffmpeg and ffprobe are required for the S111 video")
+        raise RuntimeError("ffmpeg and ffprobe are required for the S112 video")
     previous_gl = os.environ.get("MUJOCO_GL")
     os.environ.setdefault("MUJOCO_GL", "egl")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -197,7 +197,7 @@ def render_current_runtime_requalification_video(
         data = mujoco.MjData(model)
         renderer = mujoco.Renderer(model, height=height, width=width)
         try:
-            with tempfile.TemporaryDirectory(prefix="rosclaw-s111-video-") as temp:
+            with tempfile.TemporaryDirectory(prefix="rosclaw-s112-video-") as temp:
                 labels = _write_labels(Path(temp), clips)
                 process = subprocess.Popen(
                     _s111_ffmpeg_command(
@@ -214,7 +214,7 @@ def render_current_runtime_requalification_video(
                     stderr=subprocess.PIPE,
                 )
                 if process.stdin is None:
-                    raise RuntimeError("S111 raw-video pipe is unavailable")
+                    raise RuntimeError("S112 raw-video pipe is unavailable")
                 try:
                     _write_frames(
                         mujoco=mujoco,
@@ -233,7 +233,7 @@ def render_current_runtime_requalification_video(
                 process.stdin.close()
                 stderr = process.stderr.read().decode(errors="replace") if process.stderr else ""
                 if process.wait():
-                    raise RuntimeError(f"S111 ffmpeg failed: {stderr[-3000:]}")
+                    raise RuntimeError(f"S112 ffmpeg failed: {stderr[-3000:]}")
         finally:
             renderer.close()
     finally:
@@ -251,7 +251,7 @@ def render_current_runtime_requalification_video(
     ):
         raise RuntimeError("current-runtime encoded video contract changed")
     manifest: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.current_runtime_requalification_video.v1",
+        "schema_version": "rosclaw_soccer.current_runtime_requalification_video.v2",
         "video_path": str(output),
         "video_hash": hash_bytes(output.read_bytes()),
         "source_files": {
@@ -312,7 +312,7 @@ def _timeline(
     title = tuple(_Frame("left-inner", start, "four") for _ in range(round(1.8 * fps)))
     final = tuple(_Frame("left-inner", end, "goal") for _ in range(round(2.0 * fps)))
     return (
-        _Clip(f"S111 · {replays} FRESH PROCESSES · BYTE-IDENTICAL FULL CHAIN", title),
+        _Clip(f"S112 · CORE CLOSURE · {replays} FRESH BYTE-IDENTICAL PROCESSES", title),
         _Clip(
             "PASS → FIRST G1 HIGH SHOT → AIRBORNE SAVE",
             _segment("left-inner", 4.4, first + 0.45, 1.0, "four", fps),
@@ -345,7 +345,7 @@ def _timeline(
             "ONE CLOCK · FOUR G1 · TWO BALLS · ZERO RESET OR TELEPORT",
             _segment("left-inner", start, end, 2.1, "four", fps),
         ),
-        _Clip("CURRENT RUNTIME CHAMPION · SIM ONLY · CROSS-PROCESS VERIFIED", final),
+        _Clip("CORE-CLOSED CHAMPION · SIM ONLY · CROSS-PROCESS VERIFIED", final),
     )
 
 
@@ -371,7 +371,7 @@ def _s111_ffmpeg_command(
     filter_index = command.index("-vf") + 1
     command[filter_index] = command[filter_index].replace(
         "ROSClaw Soccer · S109 PHYSICAL SECOND STRIKER",
-        "ROSClaw Soccer · S111 CROSS-PROCESS CHAMPION",
+        "ROSClaw Soccer · S112 CORE-CLOSED CHAMPION",
     )
     return command
 

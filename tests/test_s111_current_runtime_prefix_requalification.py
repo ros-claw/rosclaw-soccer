@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import inspect
 import json
+import subprocess
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 import pytest
 from rosclaw.feedback import contracts as growth_core_contracts
+from rosclaw.simforge.reproducibility import evaluate_cross_process_replays
 
 from rosclaw_soccer.media.current_runtime_requalification_video import (
     _implementation_hash as video_implementation_hash,
@@ -18,10 +21,13 @@ from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.current_runtime_prefix_requalification import (
     CurrentRuntimePrefixRequalificationConfig,
+    _closure_source_manifest,
+    _git_head,
     _implementation_hash,
     _process_contract,
     _python_tree_hash,
     _runtime_dependency_contract,
+    build_current_runtime_reproducibility_closure,
     current_runtime_prefix_lane,
     prefix_gate_contract,
     validate_current_runtime_prefix_requalification,
@@ -217,11 +223,11 @@ def test_video_manifest_is_source_bound_and_never_promotion_truth(tmp_path: Path
     video.write_bytes(b"video")
     source.write_bytes(b"evidence")
     payload = {
-        "schema_version": "rosclaw_soccer.current_runtime_requalification_video.v1",
+        "schema_version": "rosclaw_soccer.current_runtime_requalification_video.v2",
         "video_path": str(video),
         "video_hash": hash_bytes(video.read_bytes()),
         "source_files": {str(source): hash_bytes(source.read_bytes())},
-        "claim": "CROSS_PROCESS_CONTINUOUS_FOUR_G1_CURRENT_RUNTIME_CHAMPION_VIDEO",
+        "claim": "CROSS_PROCESS_CONTINUOUS_FOUR_G1_CORE_CLOSURE_CHAMPION_VIDEO",
         "evidence_report_hash": "sha256:evidence",
         "evidence_passed": True,
         "strict_cross_process_replay": True,
@@ -260,3 +266,182 @@ def test_video_manifest_is_source_bound_and_never_promotion_truth(tmp_path: Path
     manifest.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="authority or integrity"):
         validate_current_runtime_requalification_video(manifest)
+
+
+def _core_closure_evidence(directory: Path) -> tuple[Path, Path]:
+    dive_source = directory / "dive-source"
+    dive_source.mkdir()
+    (dive_source / "controller.py").write_text("VALUE = 1\n", encoding="utf-8")
+    subprocess.run(("git", "init", "-q"), cwd=dive_source, check=True)
+    subprocess.run(
+        ("git", "config", "user.email", "test@example.invalid"), cwd=dive_source, check=True
+    )
+    subprocess.run(("git", "config", "user.name", "ROSClaw Test"), cwd=dive_source, check=True)
+    subprocess.run(("git", "add", "controller.py"), cwd=dive_source, check=True)
+    subprocess.run(("git", "commit", "-qm", "fixture"), cwd=dive_source, check=True)
+
+    asset_root = directory / "g1-assets"
+    g1_paths = (
+        "policy/robonaldo/model/policy-obs-aic.onnx",
+        "policy/robonaldo/model/freekick_motion.npz",
+        "g1_description/scene_with_ball.xml",
+        "g1_description/g1_liao.xml",
+        "policy/robonaldo/FreeKick.py",
+    )
+    for relative in g1_paths:
+        path = asset_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(relative.encode())
+    assets: dict[str, Path] = {"dive_source": dive_source}
+    for key in (
+        "striker_actor",
+        "goalkeeper_actor",
+        "gmt_model",
+        "gmt_skill",
+        "dive_athlete_checkpoint",
+        "dive_athlete_exam",
+        "recovery_athlete_checkpoint",
+        "recovery_athlete_exam",
+    ):
+        path = directory / "artifacts" / key
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(key.encode())
+        assets[key] = path
+    predecessor = directory / "predecessor.json"
+    predecessor.write_bytes(b"predecessor")
+    closure = build_current_runtime_reproducibility_closure(
+        asset_root=asset_root,
+        assets=assets,
+        predecessor_evidence_path=predecessor,
+        expected_replays=2,
+    )
+    config = CurrentRuntimePrefixRequalificationConfig(cross_process_replays=2)
+    request_payload = {
+        "schema_version": "rosclaw_soccer.current_runtime_requalification_request.v3",
+        "config": asdict(config),
+        "config_hash": config.config_hash,
+        "reproducibility_closure": closure.to_dict(),
+        "reproducibility_closure_hash": closure.closure_hash,
+        "closure_sources": _closure_source_manifest(
+            asset_root=asset_root,
+            assets=assets,
+            predecessor_evidence_path=predecessor,
+        ),
+        "dive_source_commit": _git_head(dive_source),
+        "launcher_process_id": 1999,
+        "predecessor_evidence_hash": hash_bytes(predecessor.read_bytes()),
+    }
+    request = directory / "request.json"
+    request.write_text(json.dumps(request_payload), encoding="utf-8")
+    trajectory_value = {"time": np.asarray([0.0, 0.01], dtype=np.float64)}
+    first_trajectory = directory / "process-replay-0.npz"
+    np.savez_compressed(first_trajectory, **trajectory_value)
+    second_trajectory = directory / "process-replay-1.npz"
+    second_trajectory.write_bytes(first_trajectory.read_bytes())
+    evaluation = {"passed": True, "first_takeoff_exam": {"passed": True}}
+    validated_workers: list[dict[str, object]] = []
+    bindings: list[dict[str, object]] = []
+    for index, trajectory in enumerate((first_trajectory, second_trajectory)):
+        worker: dict[str, object] = {
+            "schema_version": "rosclaw_soccer.current_runtime_process_replay.v2",
+            "process_id": 2000 + index,
+            "passed": True,
+            "evaluation": evaluation,
+            "trajectory_file": trajectory.name,
+            "trajectory_hash": hash_bytes(trajectory.read_bytes()),
+            "trajectory_digest": trajectory_digest(trajectory_value),
+            "process_contract": closure.process_contract.to_dict(),
+            "closure_hash": closure.closure_hash,
+            "activation_ceiling": "SIM_ONLY",
+            "hardware_authorized": False,
+            "hardware_command_sent": False,
+        }
+        worker["report_hash"] = hash_json(worker)
+        worker_path = directory / f"process-replay-{index}.json"
+        worker_path.write_text(json.dumps(worker), encoding="utf-8")
+        validated_workers.append(worker)
+        bindings.append(
+            {
+                "report_file": worker_path.name,
+                "report_hash": worker["report_hash"],
+                "trajectory_file": trajectory.name,
+                "trajectory_hash": worker["trajectory_hash"],
+                "trajectory_digest": worker["trajectory_digest"],
+                "process_id": worker["process_id"],
+                "closure_hash": worker["closure_hash"],
+            }
+        )
+    verdict = evaluate_cross_process_replays(
+        closure,
+        validated_workers,
+        exact_fields=("evaluation", "trajectory_digest", "trajectory_hash"),
+    )
+    gates = {
+        "predecessor_rejection_bound": True,
+        **{f"core_{name}": value for name, value in verdict.gates},
+        "all_prefix_physics_gates": True,
+        "all_continuous_team_gates": True,
+        "full_source_trees_bound": True,
+        "current_runtime_bound": True,
+        "sim_only_authority": True,
+    }
+    payload: dict[str, object] = {
+        "schema_version": "rosclaw_soccer.current_runtime_requalification_evidence.v3",
+        "claim": "TRUE_AIRBORNE_SAVE_WITH_FOOT_CONTACT_GROUNDED_LANDING",
+        "requalification_claim": "CROSS_PROCESS_CONTINUOUS_FOUR_G1_CURRENT_RUNTIME_CHAMPION",
+        "passed": True,
+        "promotion_status": "FROZEN_RESEARCH_DEMO",
+        "requalification_status": "PROMOTED_SIM_ONLY_CURRENT_RUNTIME_FULL_CHAIN",
+        "qualification_gates": gates,
+        "strict_replay": True,
+        "cross_process_replay_count": 2,
+        "launcher_process_id": 1999,
+        "process_ids": [2000, 2001],
+        "physics_authority": "CPU_MUJOCO",
+        "activation_ceiling": "SIM_ONLY",
+        "hardware_command_sent": False,
+        "commercial_use_allowed": False,
+        "reset_or_teleport_used": False,
+        "ball_cannon_used": False,
+        "pixels_used_for_scoring": False,
+        "request_hash": hash_bytes(request.read_bytes()),
+        "reproducibility_closure_hash": closure.closure_hash,
+        "reproducibility_verdict": verdict.to_dict(),
+        "reproducibility_verdict_hash": verdict.verdict_hash,
+        "predecessor": {
+            "path": str(predecessor),
+            "evidence_hash": hash_bytes(predecessor.read_bytes()),
+            "report_hash": "sha256:predecessor",
+            "passed": False,
+            "right_control_passed": False,
+        },
+        "worker_reports": bindings,
+        "trajectory_file": first_trajectory.name,
+        "trajectory_hash": hash_bytes(first_trajectory.read_bytes()),
+        "implementation_hash": _implementation_hash(),
+        "continuous": evaluation,
+        "first": evaluation["first_takeoff_exam"],
+        "replay": evaluation["first_takeoff_exam"],
+    }
+    payload["report_hash"] = hash_json(payload)
+    evidence = directory / "evidence.json"
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+    return evidence, assets["gmt_model"]
+
+
+def test_core_closure_evidence_recomputes_generic_cross_process_gates(tmp_path: Path) -> None:
+    evidence, _ = _core_closure_evidence(tmp_path)
+
+    report = validate_current_runtime_prefix_requalification(evidence)
+
+    assert report["passed"] is True
+    assert report["qualification_gates"]["core_closure_bound"] is True
+    assert report["qualification_gates"]["core_cross_process_exact_replay"] is True
+
+
+def test_core_closure_evidence_rejects_artifact_drift(tmp_path: Path) -> None:
+    evidence, artifact = _core_closure_evidence(tmp_path)
+    artifact.write_bytes(b"changed")
+
+    with pytest.raises(ValueError, match="source, artifact or process closure changed"):
+        validate_current_runtime_prefix_requalification(evidence)

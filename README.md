@@ -49,14 +49,17 @@ retention exams pass. See the [v3 joint-growth report](docs/age04-joint-growth-v
 
 ## Current advanced team track
 
-S111 has requalified one continuous right-control chain with four physical G1s
-and two balls: pass, first high strike, airborne save, measured recovery/rearm,
-second-striker right-foot contact, second high glove save, and final ready. Three
-fresh Python processes produced byte-identical trajectories and passed every
-physics/safety gate. The evidence now binds the complete Soccer and ROSClaw Core
-Python source trees plus the numerical/process environment. This remains a
+S112 has moved the S111 reproducibility rules into task-neutral ROSClaw Core
+SimForge and then requalified the same continuous right-control chain: four
+physical G1s, two balls, pass, first high strike, airborne save, measured
+recovery/rearm, second-striker right-foot contact, second high glove save, and
+final ready. Three fresh Python processes produced byte-identical trajectories;
+Core independently recomputed seven process/content/authority gates while Soccer
+retained only football physics scoring. The closure binds four source trees, 14
+artifacts, numerical dependencies, and the process contract. This remains a
 single-lane `SIM_ONLY` champion, not bilateral or hardware qualification. See the
-[S111 cross-process report](docs/s111-cross-process-current-runtime-requalification.zh-CN.md).
+[S112 Core-closure report](docs/s112-core-closure-adoption.zh-CN.md) and the
+[historical S111 diagnosis](docs/s111-cross-process-current-runtime-requalification.zh-CN.md).
 
 ## Regulation football physics
 
