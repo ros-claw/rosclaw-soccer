@@ -25,10 +25,11 @@ steps. Claw-7 is currently a provisional **Age 4: First Footballer**.
 | Recovery | No falls or joint-limit violations in the certified Age-4 cases |
 | Long-range highlight | 7.5 m upper-corner shot, explicitly `DEVELOPMENT` due to saturation |
 
-The weakness list remains visible: the approach-to-strike transition is not yet
-fully unified, left-foot dynamic approach is immature, the goalkeeper reacts
-but does not save the shot, and broad randomized-physics certification is still
-missing.
+The sealed Age-4 weakness list remains visible: the approach-to-strike
+transition is not yet fully unified, left-foot dynamic approach is immature,
+and broad randomized-physics certification is still missing. Later research
+stages now contain real goalkeeper saves, but do not retroactively rewrite the
+older Age-4 certificate.
 
 **Age-4 homepage reel (certified cases):**
 [watch/download 1080p](https://github.com/ros-claw/rosclaw-soccer/releases/download/age04-showcase-v0.1.0/claw7-academy-age04-hero-1080p.mp4)
@@ -45,6 +46,17 @@ teacher-free contact actor pass all six Age-4 axes at 2.04 cm goal-plane error,
 zero saturation, zero backward displacement, and strict replay. It remains a
 `SIM_ONLY` development result until the harder true-frame-corner and randomized
 retention exams pass. See the [v3 joint-growth report](docs/age04-joint-growth-v3.zh-CN.md).
+
+## Current advanced team track
+
+S111 has requalified one continuous right-control chain with four physical G1s
+and two balls: pass, first high strike, airborne save, measured recovery/rearm,
+second-striker right-foot contact, second high glove save, and final ready. Three
+fresh Python processes produced byte-identical trajectories and passed every
+physics/safety gate. The evidence now binds the complete Soccer and ROSClaw Core
+Python source trees plus the numerical/process environment. This remains a
+single-lane `SIM_ONLY` champion, not bilateral or hardware qualification. See the
+[S111 cross-process report](docs/s111-cross-process-current-runtime-requalification.zh-CN.md).
 
 ## Regulation football physics
 
