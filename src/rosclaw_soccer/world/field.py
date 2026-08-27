@@ -294,6 +294,7 @@ def build_g1_four_player_two_ball_stadium_model(
     second_striker_origin_m: tuple[float, float, float],
     first_ball_origin_m: tuple[float, float, float],
     second_ball_origin_m: tuple[float, float, float],
+    second_ball_mass_kg: float | None = None,
     spec: G1TrainingGoalSpec | None = None,
 ) -> Any:
     """Compile a no-reset four-G1 stadium with a second physical football.
@@ -306,6 +307,9 @@ def build_g1_four_player_two_ball_stadium_model(
     """
 
     goal = spec or G1TrainingGoalSpec()
+    secondary_mass = goal.ball_mass_kg if second_ball_mass_kg is None else second_ball_mass_kg
+    if not math.isfinite(secondary_mass) or not 0.40 <= secondary_mass <= 0.46:
+        raise ValueError("second football mass is outside the regulation interval")
     root = asset_root.expanduser().resolve()
     parent = _stadium_spec(root, goal)
 
@@ -359,6 +363,7 @@ def build_g1_four_player_two_ball_stadium_model(
         parent,
         origin_m=second_ball_origin_m,
         spec=goal,
+        mass_kg=secondary_mass,
         mujoco=mujoco,
     )
     model = parent.compile()
@@ -402,6 +407,7 @@ def _add_secondary_football(
     *,
     origin_m: tuple[float, float, float],
     spec: G1TrainingGoalSpec,
+    mass_kg: float,
     mujoco: Any,
 ) -> None:
     """Add one regulation-mass physical ball at a declared initial pose."""
@@ -419,8 +425,8 @@ def _add_secondary_football(
         joint.damping = 0.0
     except TypeError:
         joint.damping = (0.0, 0.0, 0.0)
-    inertia = 0.4 * spec.ball_mass_kg * spec.ball_radius_m**2
-    body.mass = spec.ball_mass_kg
+    inertia = 0.4 * mass_kg * spec.ball_radius_m**2
+    body.mass = mass_kg
     body.inertia = (inertia, inertia, inertia)
     # MjSpec otherwise infers the explicit inertial position from the body's
     # world spawn coordinates when mass/inertia are assigned programmatically.

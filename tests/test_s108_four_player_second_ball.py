@@ -72,3 +72,42 @@ def test_second_ball_origin_must_be_on_the_declared_pitch() -> None:
             second_ball_origin_m=(1.25, -40.0, 0.115),
             spec=G1TrainingGoalSpec(regulation_field_enabled=True),
         )
+
+
+@pytest.mark.integration
+def test_second_ball_can_vary_mass_without_changing_first_ball() -> None:
+    pytest.importorskip("mujoco")
+    asset_root = Path("/code/rosclaw/phase4_references/RoboNaldo/RoboNaldo_Deploy")
+    if not asset_root.is_dir():
+        pytest.skip("external qualified RoboNaldo assets are unavailable")
+    goal = G1TrainingGoalSpec(regulation_field_enabled=True, ball_mass_kg=0.41)
+    model = build_g1_four_player_two_ball_stadium_model(
+        asset_root,
+        passer_origin_m=(5.10, -0.164, 0.0),
+        goalkeeper_origin_m=(7.02, 0.0, 0.0),
+        second_striker_origin_m=(0.0, -2.40, 0.0),
+        first_ball_origin_m=(3.895, -2.84, goal.ball_radius_m),
+        second_ball_origin_m=(1.25, -2.40, goal.ball_radius_m),
+        second_ball_mass_kg=0.46,
+        spec=goal,
+    )
+
+    assert model.body_mass[int(model.body("ball").id)] == pytest.approx(0.41)
+    assert model.body_mass[int(model.body("second_ball").id)] == pytest.approx(0.46)
+
+
+def test_second_ball_mass_is_fail_closed() -> None:
+    asset_root = Path("/code/rosclaw/phase4_references/RoboNaldo/RoboNaldo_Deploy")
+    if not asset_root.is_dir():
+        pytest.skip("external qualified RoboNaldo assets are unavailable")
+    with pytest.raises(ValueError, match="second football mass"):
+        build_g1_four_player_two_ball_stadium_model(
+            asset_root,
+            passer_origin_m=(5.10, -0.164, 0.0),
+            goalkeeper_origin_m=(7.02, 0.0, 0.0),
+            second_striker_origin_m=(0.0, -2.40, 0.0),
+            first_ball_origin_m=(3.895, -2.84, 0.115),
+            second_ball_origin_m=(1.25, -2.40, 0.115),
+            second_ball_mass_kg=0.8,
+            spec=G1TrainingGoalSpec(regulation_field_enabled=True),
+        )

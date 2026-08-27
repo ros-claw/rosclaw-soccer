@@ -17,10 +17,12 @@ pytest.importorskip(
 
 from rosclaw_soccer.growth.ballistic_contact_impulse_actor import (
     G1BallisticContactImpulseActor,
+    G1BallisticContactImpulseEffect,
     derive_g1_ballistic_contact_impulse_actor,
     g1_ballistic_contact_impulse_context_hash,
     g1_ballistic_contact_impulse_effect,
     load_g1_ballistic_contact_impulse_actor,
+    select_g1_ballistic_contact_effect,
 )
 
 
@@ -30,6 +32,57 @@ def _sha(value: str) -> str:
 
 def _file_hash(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _effect(
+    *,
+    torque_nm: float,
+    target_conditioned: bool,
+    supported: bool = True,
+) -> G1BallisticContactImpulseEffect:
+    torque = np.zeros(29, dtype=np.float64)
+    torque[0] = torque_nm
+    return G1BallisticContactImpulseEffect(
+        torque=torque,
+        lateral_force_n=torque_nm,
+        vertical_force_n=0.0,
+        foot_lateral_speed_mps=0.0,
+        foot_vertical_speed_mps=0.0,
+        active=abs(torque_nm) > 0.0,
+        target_conditioned=target_conditioned,
+        launch_envelope_supported=supported,
+    )
+
+
+def test_plastic_candidate_abstention_preserves_frozen_parent() -> None:
+    parent = _effect(torque_nm=12.0, target_conditioned=False)
+    candidate = _effect(torque_nm=0.0, target_conditioned=True, supported=False)
+
+    selection = select_g1_ballistic_contact_effect(parent=parent, candidate=candidate)
+
+    assert selection.effect is parent
+    assert selection.route == "FROZEN_PARENT_FALLBACK"
+    assert selection.candidate_attempted is True
+    assert selection.candidate_selected is False
+
+
+def test_supported_plastic_candidate_can_replace_parent_for_one_step() -> None:
+    parent = _effect(torque_nm=12.0, target_conditioned=False)
+    candidate = _effect(torque_nm=4.0, target_conditioned=True)
+
+    selection = select_g1_ballistic_contact_effect(parent=parent, candidate=candidate)
+
+    assert selection.effect is candidate
+    assert selection.route == "PLASTIC_CANDIDATE"
+    assert selection.candidate_selected is True
+
+
+def test_candidate_cannot_act_outside_its_learned_envelope() -> None:
+    with pytest.raises(ValueError, match="outside its learned envelope"):
+        select_g1_ballistic_contact_effect(
+            parent=_effect(torque_nm=12.0, target_conditioned=False),
+            candidate=_effect(torque_nm=4.0, target_conditioned=True, supported=False),
+        )
 
 
 def _actor() -> G1BallisticContactImpulseActor:

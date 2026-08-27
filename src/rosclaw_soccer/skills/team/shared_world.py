@@ -25,6 +25,7 @@ from rosclaw_soccer.growth.ballistic_contact_impulse_actor import (
     G1BallisticContactImpulseActor,
     g1_ballistic_contact_impulse_effect,
     load_g1_ballistic_contact_impulse_actor,
+    select_g1_ballistic_contact_effect,
 )
 from rosclaw_soccer.growth.ballistic_contact_residual import (
     G1BallisticContactResidualConfig,
@@ -1670,10 +1671,13 @@ def _simulate_shared_world(
     goalkeeper_config: G1GoalkeeperConfig | None = None,
     second_threat_config: G1SecondThreatConfig | None = None,
     physical_second_striker_config: G1PhysicalSecondStrikerConfig | None = None,
+    second_striker_ballistic_actor_path: Path | None = None,
     second_striker_ballistic_contact_config: G1BallisticContactResidualConfig | None = None,
     second_striker_ballistic_contact_torque_config: (
         G1BallisticContactTorqueResidualConfig | None
     ) = None,
+    second_ball_mass_kg: float | None = None,
+    second_ball_ground_friction: float | None = None,
     unified_stadium_scene: bool = True,
     shooter_ball_initial_position_m: tuple[float, float, float] | None = None,
     ball_launcher_position_m: tuple[float, float, float] | None = None,
@@ -1723,6 +1727,21 @@ def _simulate_shared_world(
             "physical second striker requires a recovered goalkeeper, ballistic contact "
             "actor, continuous first chain, no launcher and enough simulation time"
         )
+    if physical_second_striker_config is None and (
+        second_striker_ballistic_actor_path is not None
+        or second_ball_mass_kg is not None
+        or second_ball_ground_friction is not None
+    ):
+        raise ValueError("second-striker actor and ball physics require a physical second striker")
+    if second_ball_mass_kg is not None and (
+        not math.isfinite(second_ball_mass_kg) or not 0.40 <= second_ball_mass_kg <= 0.46
+    ):
+        raise ValueError("second football mass must be in [0.40, 0.46] kg")
+    if second_ball_ground_friction is not None and (
+        not math.isfinite(second_ball_ground_friction)
+        or not 0.03 <= second_ball_ground_friction <= 0.80
+    ):
+        raise ValueError("second football ground friction must be in [0.03, 0.80]")
     if second_threat_config is not None and goalkeeper_config is not None:
         second_peak_punch_vector = second_threat_config.goalkeeper_punch_force_n * math.sqrt(
             1.0
@@ -1915,6 +1934,7 @@ def _simulate_shared_world(
         goal=active_goal,
         goalkeeper_config=goalkeeper_config,
         physical_second_striker_config=physical_second_striker_config,
+        second_ball_mass_kg=second_ball_mass_kg,
         unified_stadium_scene=unified_stadium_scene,
     )
     data = mujoco.MjData(model)
@@ -1950,6 +1970,14 @@ def _simulate_shared_world(
             model.pair_friction[pair_index] = (
                 ball_ground_friction,
                 ball_ground_friction,
+                active_goal.ball_torsional_friction,
+                active_goal.ball_rolling_friction,
+                active_goal.ball_rolling_friction,
+            )
+        elif pair_name == "second_ball_floor" and second_ball_ground_friction is not None:
+            model.pair_friction[pair_index] = (
+                second_ball_ground_friction,
+                second_ball_ground_friction,
                 active_goal.ball_torsional_friction,
                 active_goal.ball_rolling_friction,
                 active_goal.ball_rolling_friction,
@@ -1991,6 +2019,7 @@ def _simulate_shared_world(
             raise ValueError("contact-prior velocity blend requires a velocity-aware artifact")
     shooter_ballistic_actor: G1BallisticContactImpulseActor | None = None
     second_striker_ballistic_actor: G1BallisticContactImpulseActor | None = None
+    second_striker_candidate_actor: G1BallisticContactImpulseActor | None = None
     if shooter_ballistic_actor_path is not None:
         shooter_ballistic_actor = load_g1_ballistic_contact_impulse_actor(
             shooter_ballistic_actor_path
@@ -2002,16 +2031,27 @@ def _simulate_shared_world(
             )
         if shooter_ballistic_actor.body_hash != qualification.body_hash:
             raise ValueError("ballistic contact actor Body hash does not match coupled G1")
-        second_striker_ballistic_actor = (
-            replace(
-                shooter_ballistic_actor,
-                maximum_foot_ball_distance_m=(
-                    physical_second_striker_config.ballistic_actor_proximity_m
-                ),
-            )
-            if physical_second_striker_config is not None
-            else shooter_ballistic_actor
+        second_striker_ballistic_actor = shooter_ballistic_actor
+    if second_striker_ballistic_actor_path is not None:
+        second_striker_candidate_actor = load_g1_ballistic_contact_impulse_actor(
+            second_striker_ballistic_actor_path
         )
+        if second_striker_candidate_actor.body_hash != qualification.body_hash:
+            raise ValueError("second-striker contact actor Body hash does not match coupled G1")
+        if not second_striker_candidate_actor.target_conditioned:
+            raise ValueError("second-striker plastic candidate must be target-conditioned")
+    if physical_second_striker_config is not None:
+        proximity = physical_second_striker_config.ballistic_actor_proximity_m
+        if second_striker_ballistic_actor is not None:
+            second_striker_ballistic_actor = replace(
+                second_striker_ballistic_actor,
+                maximum_foot_ball_distance_m=proximity,
+            )
+        if second_striker_candidate_actor is not None:
+            second_striker_candidate_actor = replace(
+                second_striker_candidate_actor,
+                maximum_foot_ball_distance_m=proximity,
+            )
     with np.load(root / _MOTION_REL) as motion:
         initial_position = np.asarray(motion["body_pos_w"][0, 0], dtype=np.float64)
         initial_quaternion = np.asarray(motion["body_quat_w"][0, 0], dtype=np.float64)
@@ -2776,6 +2816,10 @@ def _simulate_shared_world(
                 "second_striker_ballistic_actor_force_yz_n": [],
                 "second_striker_ballistic_actor_foot_velocity_yz_mps": [],
                 "second_striker_ballistic_actor_foot_ball_distance_m": [],
+                "second_striker_ballistic_actor_desired_launch_velocity_yz_mps": [],
+                "second_striker_ballistic_actor_target_conditioned": [],
+                "second_striker_ballistic_actor_launch_envelope_supported": [],
+                "second_striker_ballistic_actor_candidate_selected": [],
                 "second_striker_ballistic_contact_active": [],
                 "second_striker_ballistic_contact_target_delta": [],
                 "second_striker_ballistic_contact_torque_active": [],
@@ -4033,6 +4077,12 @@ def _simulate_shared_world(
             2, dtype=np.float64
         )
         frame_second_striker_ballistic_actor_foot_ball_distance_m = math.nan
+        frame_second_actor_desired_launch_yz: NDArray[np.float64] = np.full(
+            2, math.nan, dtype=np.float64
+        )
+        frame_second_striker_ballistic_actor_target_conditioned = False
+        frame_second_striker_ballistic_actor_launch_envelope_supported = False
+        frame_second_striker_ballistic_actor_candidate_selected = False
         frame_second_striker_contact = False
         frame_second_striker_contact_force_n = 0.0
         frame_loft_teacher_active = False
@@ -4133,32 +4183,86 @@ def _simulate_shared_world(
                     actor_ball_qpos = (
                         cast(int, second_ball_qpos) if robot.role == "second_striker" else ball_qpos
                     )
+                    actor_ball_qvel = (
+                        cast(int, second_ball_qvel) if robot.role == "second_striker" else ball_qvel
+                    )
                     bilateral_actor_kwargs: dict[str, Any] = {}
                     if robot.parameters.kick_foot == "left":
                         bilateral_actor_kwargs = {
                             "striking_ankle_body_id": robot.left_ankle_body,
                             "lateral_mirror_sign": -1.0,
                         }
-                    effect = g1_ballistic_contact_impulse_effect(
-                        model=model,
-                        data=data,
-                        right_ankle_body_id=robot.right_ankle_body,
-                        actor=role_ballistic_actor,
-                        policy_frame=policy_frames[robot.role],
-                        contact_observed=robot.contact_latched,
-                        ball_position=np.asarray(
+                    actor_effect_kwargs: dict[str, Any] = {
+                        "model": model,
+                        "data": data,
+                        "right_ankle_body_id": robot.right_ankle_body,
+                        "policy_frame": policy_frames[robot.role],
+                        "contact_observed": robot.contact_latched,
+                        "ball_position": np.asarray(
                             data.qpos[actor_ball_qpos : actor_ball_qpos + 3],
                             dtype=np.float64,
                         ),
-                        actuated_dof_indices=np.asarray(robot.joint_qvel, dtype=np.int64),
+                        "ball_velocity": np.asarray(
+                            data.qvel[actor_ball_qvel : actor_ball_qvel + 3],
+                            dtype=np.float64,
+                        ),
+                        "goal_plane_x_m": active_goal.plane_x_m,
+                        "target_y_m": active_goal.target_y_m,
+                        "target_z_m": active_goal.target_z_m,
+                        "actuated_dof_indices": np.asarray(robot.joint_qvel, dtype=np.int64),
                         **bilateral_actor_kwargs,
+                    }
+                    candidate_effect = (
+                        g1_ballistic_contact_impulse_effect(
+                            actor=second_striker_candidate_actor,
+                            **actor_effect_kwargs,
+                        )
+                        if robot.role == "second_striker"
+                        and second_striker_candidate_actor is not None
+                        else None
                     )
+                    parent_effect = g1_ballistic_contact_impulse_effect(
+                        actor=role_ballistic_actor,
+                        **actor_effect_kwargs,
+                    )
+                    selection = select_g1_ballistic_contact_effect(
+                        parent=parent_effect,
+                        candidate=candidate_effect,
+                    )
+                    effect = selection.effect
+                    if robot.role == "second_striker":
+                        frame_second_striker_ballistic_actor_candidate_selected = (
+                            frame_second_striker_ballistic_actor_candidate_selected
+                            or selection.candidate_selected
+                        )
                     raw_torque = raw_torque + effect.torque
                     if robot.role == "second_striker":
-                        if effect.foot_ball_distance_m is not None:
+                        diagnostic_effect = candidate_effect or effect
+                        if diagnostic_effect.foot_ball_distance_m is not None:
                             frame_second_striker_ballistic_actor_foot_ball_distance_m = (
-                                effect.foot_ball_distance_m
+                                diagnostic_effect.foot_ball_distance_m
                             )
+                            if (
+                                diagnostic_effect.target_conditioned
+                                and diagnostic_effect.foot_ball_distance_m
+                                <= (
+                                    second_striker_candidate_actor.maximum_foot_ball_distance_m
+                                    if second_striker_candidate_actor is not None
+                                    else role_ballistic_actor.maximum_foot_ball_distance_m
+                                )
+                            ):
+                                frame_second_striker_ballistic_actor_target_conditioned = True
+                                frame_second_striker_ballistic_actor_launch_envelope_supported = (
+                                    diagnostic_effect.launch_envelope_supported
+                                )
+                                desired_launch_velocity = np.asarray(
+                                    (
+                                        diagnostic_effect.desired_lateral_launch_speed_mps,
+                                        diagnostic_effect.desired_vertical_launch_speed_mps,
+                                    ),
+                                    dtype=np.float64,
+                                )
+                                frame_second_actor_desired_launch_yz = desired_launch_velocity
                         frame_second_striker_ballistic_actor_active = (
                             frame_second_striker_ballistic_actor_active or effect.active
                         )
@@ -4928,6 +5032,18 @@ def _simulate_shared_world(
             trace["second_striker_ballistic_actor_foot_ball_distance_m"].append(
                 frame_second_striker_ballistic_actor_foot_ball_distance_m
             )
+            trace["second_striker_ballistic_actor_desired_launch_velocity_yz_mps"].append(
+                frame_second_actor_desired_launch_yz
+            )
+            trace["second_striker_ballistic_actor_target_conditioned"].append(
+                frame_second_striker_ballistic_actor_target_conditioned
+            )
+            trace["second_striker_ballistic_actor_launch_envelope_supported"].append(
+                frame_second_striker_ballistic_actor_launch_envelope_supported
+            )
+            trace["second_striker_ballistic_actor_candidate_selected"].append(
+                frame_second_striker_ballistic_actor_candidate_selected
+            )
             trace["second_striker_ballistic_contact_active"].append(
                 second_striker_ballistic_contact_active
             )
@@ -5522,6 +5638,7 @@ def _coupled_model(
     goal: G1TrainingGoalSpec | None = None,
     goalkeeper_config: G1GoalkeeperConfig | None = None,
     physical_second_striker_config: G1PhysicalSecondStrikerConfig | None = None,
+    second_ball_mass_kg: float | None = None,
     unified_stadium_scene: bool = False,
 ) -> Any:
     """Build the one corrected Soccer-owned stadium physics contract."""
@@ -5565,6 +5682,7 @@ def _coupled_model(
             second_striker_origin_m=physical_second_striker_config.origin_m,
             first_ball_origin_m=(1.0, 0.0, active_goal.ball_radius_m),
             second_ball_origin_m=physical_second_striker_config.ball_origin_m,
+            second_ball_mass_kg=second_ball_mass_kg,
             spec=active_goal,
         )
     _configure_goalkeeper_glove_contact(model, goalkeeper_config)
