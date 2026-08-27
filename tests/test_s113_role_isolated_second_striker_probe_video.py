@@ -3,17 +3,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from rosclaw_soccer.media.role_isolated_second_striker_probe_video import (
+    _timeline,
     validate_role_isolated_second_striker_probe_video,
 )
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 _MANIFEST = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
-    "s113-role-isolated-target-actor-control-video-v2/"
-    "s113-safe-rejection-review.json"
+    "s114-failure-updated-control-video-v1/"
+    "s114-failure-memory-control.json"
 )
 
 
@@ -58,10 +60,36 @@ def test_role_isolated_video_validator_fails_closed_on_authority(tmp_path: Path)
         validate_role_isolated_second_striker_probe_video(manifest)
 
 
-def test_external_s113_role_isolated_video_if_available() -> None:
+def test_current_role_isolated_video_if_available() -> None:
     if not _MANIFEST.is_file():
-        pytest.skip("external S113 role-isolated stage video is not present")
+        pytest.skip("current role-isolated stage video is not present")
     payload = validate_role_isolated_second_striker_probe_video(_MANIFEST)
-    assert payload["candidate_promoted"] is False
-    assert payload["candidate_selected_frame_count"] == 0
+    assert payload["candidate_promoted"] is True
+    assert payload["candidate_selected_frame_count"] == 2
     assert payload["pixels_used_for_scoring"] is False
+
+
+def test_s114_timeline_labels_actual_candidate_authority() -> None:
+    clips = _timeline(
+        {"time": np.asarray((0.0, 23.0))},
+        {
+            "goalkeeper_glove_contact_time_sec": 8.0,
+            "second_threat_rearm_time_sec": 12.0,
+            "second_striker_contact_time_sec": 17.0,
+            "goalkeeper_second_glove_contact_time_sec": 17.5,
+            "second_striker_contact_force_peak_n": 790.0,
+            "goalkeeper_glove_contact_height_m": 1.42,
+            "goalkeeper_second_glove_contact_height_m": 1.48,
+        },
+        {
+            "frozen_parent_selected_frame_count": 0,
+            "candidate_selected_frame_count": 2,
+        },
+        30,
+        promoted=True,
+    )
+
+    labels = " ".join(clip.label for clip in clips)
+    assert "CANDIDATE SELECTED" in labels
+    assert "LEARNED RIGHT-FOOT CONTACT" in labels
+    assert "SEALED HOLDOUT STILL REQUIRED" in labels

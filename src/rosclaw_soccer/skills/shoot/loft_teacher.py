@@ -129,6 +129,7 @@ def project_g1_vertical_foot_force(
     jacobian_position: np.ndarray,
     generalized_velocity: np.ndarray,
     config: G1LoftTeacherConfig,
+    actuated_dof_indices: NDArray[np.int64] | None = None,
 ) -> G1LoftTeacherEffect:
     """Project the teacher force through a supplied G1 body Jacobian."""
 
@@ -184,10 +185,21 @@ def project_g1_vertical_foot_force(
             )
         )
     )
+    if actuated_dof_indices is None:
+        decoder_indices = np.arange(6, 35, dtype=np.int64)
+    else:
+        decoder_indices = np.asarray(actuated_dof_indices, dtype=np.int64)
+        if (
+            decoder_indices.shape != (29,)
+            or len(np.unique(decoder_indices)) != 29
+            or np.any(decoder_indices < 0)
+            or np.any(decoder_indices >= jacobian.shape[1])
+        ):
+            raise ValueError("G1 loft teacher requires 29 unique actuated DoF indices")
     torque = (
-        jacobian[2, 6:35] * vertical_force
-        + jacobian[0, 6:35] * forward_force
-        + jacobian[1, 6:35] * lateral_force
+        jacobian[2, decoder_indices] * vertical_force
+        + jacobian[0, decoder_indices] * forward_force
+        + jacobian[1, decoder_indices] * lateral_force
     )
     if torque.shape != (29,) or not np.all(np.isfinite(torque)):
         raise FloatingPointError("G1 loft teacher emitted an invalid joint torque")
@@ -212,6 +224,7 @@ def g1_loft_teacher_effect(
     policy_frame: int,
     contact_observed: bool,
     ball_position: np.ndarray | None = None,
+    actuated_dof_indices: NDArray[np.int64] | None = None,
 ) -> G1LoftTeacherEffect:
     """Project a bounded signed task-space force into the 29 joint torques."""
 
@@ -251,6 +264,7 @@ def g1_loft_teacher_effect(
         jacobian_position=jacobian_position,
         generalized_velocity=data.qvel,
         config=config,
+        actuated_dof_indices=actuated_dof_indices,
     )
 
 
