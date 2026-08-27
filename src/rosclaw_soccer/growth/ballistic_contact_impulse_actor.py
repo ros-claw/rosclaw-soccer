@@ -311,6 +311,52 @@ class G1BallisticContactImpulseEffect:
     foot_ball_distance_m: float | None = None
 
 
+@dataclass(frozen=True)
+class G1BallisticContactSelection:
+    """One-step stability-plasticity decision for a frozen parent and candidate."""
+
+    effect: G1BallisticContactImpulseEffect
+    route: str
+    candidate_attempted: bool
+    candidate_selected: bool
+    candidate_launch_envelope_supported: bool
+
+
+def select_g1_ballistic_contact_effect(
+    *,
+    parent: G1BallisticContactImpulseEffect,
+    candidate: G1BallisticContactImpulseEffect | None,
+) -> G1BallisticContactSelection:
+    """Use a qualified candidate only inside its learned envelope.
+
+    A target-conditioned candidate is plastic authority, not a replacement for
+    the frozen muscle memory.  Abstention therefore routes to the parent.  An
+    internally inconsistent candidate that acts outside its declared support
+    fails closed instead of silently adding torque.
+    """
+
+    if candidate is None:
+        return G1BallisticContactSelection(
+            effect=parent,
+            route="FROZEN_PARENT",
+            candidate_attempted=False,
+            candidate_selected=False,
+            candidate_launch_envelope_supported=False,
+        )
+    if not candidate.target_conditioned:
+        raise ValueError("plastic contact candidate must be target-conditioned")
+    if candidate.active and not candidate.launch_envelope_supported:
+        raise ValueError("plastic contact candidate acted outside its learned envelope")
+    selected = candidate.active and candidate.launch_envelope_supported
+    return G1BallisticContactSelection(
+        effect=candidate if selected else parent,
+        route="PLASTIC_CANDIDATE" if selected else "FROZEN_PARENT_FALLBACK",
+        candidate_attempted=True,
+        candidate_selected=selected,
+        candidate_launch_envelope_supported=candidate.launch_envelope_supported,
+    )
+
+
 def load_g1_ballistic_contact_impulse_actor(
     path: Path,
 ) -> G1BallisticContactImpulseActor:
@@ -911,8 +957,10 @@ def g1_ballistic_contact_impulse_effect(
 __all__ = [
     "G1BallisticContactImpulseActor",
     "G1BallisticContactImpulseEffect",
+    "G1BallisticContactSelection",
     "derive_g1_ballistic_contact_impulse_actor",
     "g1_ballistic_contact_impulse_context_hash",
     "g1_ballistic_contact_impulse_effect",
     "load_g1_ballistic_contact_impulse_actor",
+    "select_g1_ballistic_contact_effect",
 ]

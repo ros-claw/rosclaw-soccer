@@ -61,6 +61,18 @@ single-lane `SIM_ONLY` champion, not bilateral or hardware qualification. See th
 [S112 Core-closure report](docs/s112-core-closure-adoption.zh-CN.md) and the
 [historical S111 diagnosis](docs/s111-cross-process-current-runtime-requalification.zh-CN.md).
 
+S113 starts the next role-isolated growth round without sacrificing that
+champion.  The shared runtime now gives the second football independent
+regulation mass/friction and passes the second striker's measured ball velocity
+and goal target into its target-conditioned contact actor.  A plastic candidate
+may replace the frozen parent only inside its declared launch envelope;
+abstention falls back to the parent and acting outside support fails closed.  In
+the current left-inner trial the parent retains the complete chain, while the
+candidate supports and selects zero frames.  The 0.46 kg/high-grip holdout also
+misses the second save.  The candidate is therefore explicitly rejected rather
+than credited with the parent's success.  See the
+[S113 stability–plasticity report](docs/s113-role-isolated-stability-plasticity.zh-CN.md).
+
 ## Regulation football physics
 
 The simulator selects measurements inside the current IFAB ranges: a
