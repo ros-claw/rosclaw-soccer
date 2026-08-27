@@ -14,8 +14,8 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 _MANIFEST = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
-    "s115-heavy-pitch-control-video-v2/"
-    "s115-heavy-ball-control.json"
+    "s116-proprioceptive-recovery-video-v2/"
+    "s116-impact-recovery.json"
 )
 
 
@@ -66,6 +66,7 @@ def test_current_role_isolated_video_if_available() -> None:
     payload = validate_role_isolated_second_striker_probe_video(_MANIFEST)
     assert payload["candidate_promoted"] is True
     assert payload["candidate_selected_frame_count"] == 1
+    assert payload["goalkeeper_proprioceptive_capture_frame_count"] == 61
     assert payload["pixels_used_for_scoring"] is False
 
 
@@ -120,3 +121,32 @@ def test_s115_timeline_discloses_heavy_ball_motion_curriculum() -> None:
     assert "HEAVY-BALL WHOLE-BODY CURRICULUM" in labels
     assert "CURRICULUM BODY PITCH + LEARNED CONTACT ACTOR" in labels
     assert "NEIGHBOR HOLDOUT REQUIRED" in labels
+
+
+def test_s116_timeline_discloses_proprioceptive_impact_recovery() -> None:
+    clips = _timeline(
+        {"time": np.asarray((0.0, 23.0))},
+        {
+            "goalkeeper_glove_contact_time_sec": 8.0,
+            "second_threat_rearm_time_sec": 12.0,
+            "second_striker_contact_time_sec": 17.0,
+            "goalkeeper_second_glove_contact_time_sec": 17.5,
+            "second_striker_contact_force_peak_n": 829.0,
+            "goalkeeper_glove_contact_height_m": 1.42,
+            "goalkeeper_second_glove_contact_height_m": 1.42,
+        },
+        {
+            "frozen_parent_selected_frame_count": 0,
+            "candidate_selected_frame_count": 1,
+            "goalkeeper_proprioceptive_capture_frame_count": 61,
+        },
+        30,
+        promoted=True,
+        motion_curriculum=True,
+        proprioceptive_recovery=True,
+    )
+
+    labels = " ".join(clip.label for clip in clips)
+    assert "PROPRIOCEPTIVE IMPACT RECOVERY" in labels
+    assert "61 PHYSICAL CONTROL FRAMES" in labels
+    assert "SEALED NEIGHBOR RECOVERED" in labels

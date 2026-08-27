@@ -292,6 +292,11 @@ class G1GoalkeeperConfig:
     balanced_dive_landing_capture_enabled: bool = False
     balanced_dive_landing_capture_sec: float = 0.80
     balanced_dive_landing_damping_scale: float = 1.50
+    post_contact_proprioceptive_capture_enabled: bool = False
+    post_contact_proprioceptive_capture_delay_sec: float = 0.80
+    post_contact_proprioceptive_capture_window_sec: float = 1.50
+    post_contact_proprioceptive_capture_maximum_root_speed_mps: float = 0.40
+    post_contact_proprioceptive_capture_duration_sec: float = 0.80
     dive_athlete_checkpoint_path: Path | None = None
     dive_athlete_exam_path: Path | None = None
     dive_athlete_blend: float = 0.0
@@ -398,6 +403,10 @@ class G1GoalkeeperConfig:
             self.balanced_dive_recovery_tail_sec,
             self.balanced_dive_landing_capture_sec,
             self.balanced_dive_landing_damping_scale,
+            self.post_contact_proprioceptive_capture_delay_sec,
+            self.post_contact_proprioceptive_capture_window_sec,
+            self.post_contact_proprioceptive_capture_maximum_root_speed_mps,
+            self.post_contact_proprioceptive_capture_duration_sec,
             self.dive_athlete_blend,
             self.post_contact_ready_recovery_delay_sec,
             self.post_contact_ready_yaw_gain,
@@ -713,6 +722,28 @@ class G1GoalkeeperConfig:
             and self.balanced_dive_source_checkout is None
         ):
             raise ValueError("goalkeeper landing capture requires a balanced dive source")
+        if not isinstance(self.post_contact_proprioceptive_capture_enabled, bool):
+            raise ValueError("goalkeeper proprioceptive capture flag must be boolean")
+        if not 0.0 <= self.post_contact_proprioceptive_capture_delay_sec <= 1.20:
+            raise ValueError("goalkeeper proprioceptive capture delay is invalid")
+        if not 0.20 <= self.post_contact_proprioceptive_capture_window_sec <= 1.50:
+            raise ValueError("goalkeeper proprioceptive capture window is invalid")
+        if (
+            self.post_contact_proprioceptive_capture_delay_sec
+            >= self.post_contact_proprioceptive_capture_window_sec
+        ):
+            raise ValueError("goalkeeper proprioceptive capture window is empty")
+        if not 0.05 <= self.post_contact_proprioceptive_capture_maximum_root_speed_mps <= 1.50:
+            raise ValueError("goalkeeper proprioceptive capture speed gate is invalid")
+        if not 0.20 <= self.post_contact_proprioceptive_capture_duration_sec <= 1.50:
+            raise ValueError("goalkeeper proprioceptive capture duration is invalid")
+        if self.post_contact_proprioceptive_capture_enabled and not (
+            self.balanced_dive_landing_capture_enabled
+            and self.post_contact_stabilization_enabled
+        ):
+            raise ValueError(
+                "goalkeeper proprioceptive capture requires landing and contact stabilization"
+            )
         dive_athlete_paths = (
             self.dive_athlete_checkpoint_path,
             self.dive_athlete_exam_path,
@@ -2900,6 +2931,7 @@ def _simulate_shared_world(
                 "goalkeeper_balanced_dive_target_delta": [],
                 "goalkeeper_landing_capture_active": [],
                 "goalkeeper_landing_capture_blend": [],
+                "goalkeeper_proprioceptive_capture_active": [],
                 "goalkeeper_recovery_athlete_active": [],
                 "goalkeeper_recovery_athlete_suppressed": [],
                 "goalkeeper_recovery_athlete_raw_world_command": [],
@@ -2999,6 +3031,8 @@ def _simulate_shared_world(
     goalkeeper_balanced_dive_was_airborne = False
     goalkeeper_landing_capture_start_sec: float | None = None
     goalkeeper_landing_capture_anchor: NDArray[np.float64] | None = None
+    goalkeeper_landing_capture_duration_sec: float | None = None
+    goalkeeper_landing_capture_proprioceptive = False
     goalkeeper_initial_y = 0.0 if goalkeeper is None else float(data.qpos[goalkeeper.qpos_base + 1])
     previous_ball_x = float(data.qpos[ball_qpos])
     goal_net_state = G1CompliantGoalNetState()
@@ -3079,6 +3113,8 @@ def _simulate_shared_world(
             goalkeeper_balanced_dive_was_airborne = False
             goalkeeper_landing_capture_start_sec = None
             goalkeeper_landing_capture_anchor = None
+            goalkeeper_landing_capture_duration_sec = None
+            goalkeeper_landing_capture_proprioceptive = False
             second_threat_rearmed = True
             second_threat_rearm_time = float(data.time)
         if (
@@ -3164,6 +3200,7 @@ def _simulate_shared_world(
         goalkeeper_balanced_dive_target_delta: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         goalkeeper_landing_capture_active = False
         goalkeeper_landing_capture_blend = 0.0
+        goalkeeper_proprioceptive_capture_active = False
         goalkeeper_bimanual_reach_active = False
         goalkeeper_actor_observation: GoalkeeperActorObservation | None = None
         goalkeeper_actor_height_routed = False
@@ -3993,6 +4030,7 @@ def _simulate_shared_world(
                     goalkeeper_config.balanced_dive_landing_capture_enabled
                     and goalkeeper_landing_capture_start_sec is not None
                     and goalkeeper_landing_capture_anchor is not None
+                    and goalkeeper_landing_capture_duration_sec is not None
                     and goalkeeper_balanced_dive_kp is not None
                     and goalkeeper_balanced_dive_kd is not None
                     and goalkeeper_foundation_target is not None
@@ -4005,10 +4043,13 @@ def _simulate_shared_world(
                                 0.0,
                                 float(data.time) - goalkeeper_landing_capture_start_sec,
                             ),
-                            duration_sec=(goalkeeper_config.balanced_dive_landing_capture_sec),
+                            duration_sec=goalkeeper_landing_capture_duration_sec,
                         )
                     )
                     if goalkeeper_landing_capture_active:
+                        goalkeeper_proprioceptive_capture_active = (
+                            goalkeeper_landing_capture_proprioceptive
+                        )
                         # A proprioceptive landing reflex owns legs and waist
                         # only.  It captures the measured first-contact pose,
                         # then returns continuously to the feedback locomotion
@@ -4961,19 +5002,49 @@ def _simulate_shared_world(
                 goalkeeper_support
             ):
                 goalkeeper_balanced_dive_was_airborne = True
+            proprioceptive_capture = bool(
+                goalkeeper_config is not None
+                and goalkeeper_config.post_contact_proprioceptive_capture_enabled
+                and goalkeeper.contact_latched
+                and goalkeeper.contact_time is not None
+                and float(data.time) - goalkeeper.contact_time
+                >= goalkeeper_config.post_contact_proprioceptive_capture_delay_sec
+                and float(data.time) - goalkeeper.contact_time
+                <= goalkeeper_config.post_contact_proprioceptive_capture_window_sec
+                and all(goalkeeper_support)
+                and float(
+                    np.linalg.norm(
+                        np.asarray(
+                            data.qvel[goalkeeper.qvel_base : goalkeeper.qvel_base + 3],
+                            dtype=np.float64,
+                        )
+                    )
+                )
+                <= goalkeeper_config.post_contact_proprioceptive_capture_maximum_root_speed_mps
+            )
             if (
                 goalkeeper_config is not None
                 and goalkeeper_config.balanced_dive_landing_capture_enabled
-                and goalkeeper_balanced_dive_was_airborne
                 and goalkeeper.contact_latched
                 and goalkeeper_landing_capture_start_sec is None
-                and any(goalkeeper_support)
+                and (
+                    (goalkeeper_balanced_dive_was_airborne and any(goalkeeper_support))
+                    or proprioceptive_capture
+                )
             ):
                 goalkeeper_landing_capture_start_sec = float(data.time)
                 goalkeeper_landing_capture_anchor = np.asarray(
                     data.qpos[goalkeeper.joint_qpos],
                     dtype=np.float64,
                 ).copy()
+                goalkeeper_landing_capture_duration_sec = (
+                    goalkeeper_config.balanced_dive_landing_capture_sec
+                    if goalkeeper_balanced_dive_was_airborne
+                    else goalkeeper_config.post_contact_proprioceptive_capture_duration_sec
+                )
+                goalkeeper_landing_capture_proprioceptive = bool(
+                    proprioceptive_capture and not goalkeeper_balanced_dive_was_airborne
+                )
         for robot in robots:
             robot.joint_guard_frame_count += int(joint_guard_active[robot.role])
         robot_robot_contact_count += frame_robot_contacts
@@ -5271,6 +5342,9 @@ def _simulate_shared_world(
             )
             trace["goalkeeper_landing_capture_active"].append(goalkeeper_landing_capture_active)
             trace["goalkeeper_landing_capture_blend"].append(goalkeeper_landing_capture_blend)
+            trace["goalkeeper_proprioceptive_capture_active"].append(
+                goalkeeper_proprioceptive_capture_active
+            )
             trace["goalkeeper_recovery_athlete_active"].append(
                 goalkeeper.last_recovery_athlete_active
             )
