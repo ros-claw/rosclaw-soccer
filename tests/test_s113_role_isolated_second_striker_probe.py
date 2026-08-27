@@ -11,12 +11,13 @@ from rosclaw_soccer.training.role_isolated_second_striker_probe import (
     _candidate_diagnostics,
     _candidate_status,
     _derive_probe_gates,
+    _role_isolated_exam_config,
     validate_role_isolated_second_striker_probe,
 )
 
 _EVIDENCE = Path(
     "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
-    "s114-failure-updated-control-v1/evidence.json"
+    "s115-heavy-pitch-control-v4/evidence.json"
 )
 
 
@@ -48,6 +49,8 @@ def test_role_isolated_probe_contract_rejects_hardware_and_bad_ball_physics() ->
         replace(config, second_ball_mass_kg=0.8)
     with pytest.raises(ValueError, match="friction"):
         replace(config, second_ball_ground_friction=0.01)
+    with pytest.raises(ValueError, match="foot pitch"):
+        replace(config, second_striker_foot_pitch_offset_rad=0.30)
 
 
 def test_candidate_diagnostics_separate_parent_fallback_from_plasticity() -> None:
@@ -60,6 +63,18 @@ def test_candidate_diagnostics_separate_parent_fallback_from_plasticity() -> Non
     assert fallback["frozen_parent_selected_frame_count"] == 2
     assert plastic["candidate_selected_frame_count"] == 2
     assert plastic["frozen_parent_selected_frame_count"] == 0
+
+
+def test_role_isolated_exam_applies_the_sealed_whole_body_pitch_context() -> None:
+    exam = _role_isolated_exam_config(
+        RoleIsolatedSecondStrikerProbeConfig(
+            second_ball_mass_kg=0.46,
+            second_ball_ground_friction=0.16,
+            second_striker_foot_pitch_offset_rad=0.1261,
+        )
+    )
+
+    assert exam.striker.foot_pitch_offset == pytest.approx(0.1261)
 
 
 def test_gate_derivation_does_not_confuse_retention_with_growth() -> None:

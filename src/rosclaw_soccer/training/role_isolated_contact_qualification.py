@@ -1,4 +1,4 @@
-"""S114 portfolio gate for a failure-updated second-striker contact actor."""
+"""Portfolio gate for a context-bound, failure-updated contact actor."""
 
 from __future__ import annotations
 
@@ -30,13 +30,41 @@ _CLAIM = "ROLE_ISOLATED_CONTACT_CANDIDATE_CONTROL_AND_SEALED_HOLDOUT_QUALIFICATI
 
 @dataclass(frozen=True)
 class RoleIsolatedContactQualificationConfig:
+    control_second_ball_mass_kg: float | None = None
+    control_second_ball_ground_friction: float | None = None
+    control_second_striker_foot_pitch_offset_rad: float | None = None
     holdout_second_ball_mass_kg: float = 0.46
     holdout_second_ball_ground_friction: float = 0.16
+    holdout_second_striker_foot_pitch_offset_rad: float | None = None
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
     schema_version: str = "rosclaw_soccer.role_isolated_contact_qualification_config.v1"
 
     def __post_init__(self) -> None:
+        optional = (
+            self.control_second_ball_mass_kg,
+            self.control_second_ball_ground_friction,
+            self.control_second_striker_foot_pitch_offset_rad,
+            self.holdout_second_striker_foot_pitch_offset_rad,
+        )
+        if any(value is not None and not math.isfinite(value) for value in optional):
+            raise ValueError("role-isolated qualification split must be finite")
+        if self.control_second_ball_mass_kg is not None and not (
+            0.40 <= self.control_second_ball_mass_kg <= 0.46
+        ):
+            raise ValueError("role-isolated qualification control mass is invalid")
+        if self.control_second_ball_ground_friction is not None and not (
+            0.03 <= self.control_second_ball_ground_friction <= 0.80
+        ):
+            raise ValueError("role-isolated qualification control friction is invalid")
+        if any(
+            value is not None and not -0.18 <= value <= 0.18
+            for value in (
+                self.control_second_striker_foot_pitch_offset_rad,
+                self.holdout_second_striker_foot_pitch_offset_rad,
+            )
+        ):
+            raise ValueError("role-isolated qualification foot pitch is invalid")
         if (
             not math.isfinite(self.holdout_second_ball_mass_kg)
             or not 0.40 <= self.holdout_second_ball_mass_kg <= 0.46
@@ -166,13 +194,22 @@ def _verified_inputs(
     if (
         control_actor is None
         or holdout_actor is None
-        or Path(control_actor).resolve() != actor_path.resolve()
-        or Path(holdout_actor).resolve() != actor_path.resolve()
-        or control_config.get("second_ball_mass_kg") is not None
-        or control_config.get("second_ball_ground_friction") is not None
+        or not actor_path.is_file()
+        or not Path(control_actor).is_file()
+        or not Path(holdout_actor).is_file()
+        or hash_bytes(Path(control_actor).read_bytes()) != update.get("actor_file_hash")
+        or hash_bytes(Path(holdout_actor).read_bytes()) != update.get("actor_file_hash")
+        or control_config.get("second_ball_mass_kg")
+        != config.control_second_ball_mass_kg
+        or control_config.get("second_ball_ground_friction")
+        != config.control_second_ball_ground_friction
+        or control_config.get("second_striker_foot_pitch_offset_rad")
+        != config.control_second_striker_foot_pitch_offset_rad
         or holdout_config.get("second_ball_mass_kg") != config.holdout_second_ball_mass_kg
         or holdout_config.get("second_ball_ground_friction")
         != config.holdout_second_ball_ground_friction
+        or holdout_config.get("second_striker_foot_pitch_offset_rad")
+        != config.holdout_second_striker_foot_pitch_offset_rad
     ):
         raise ValueError("qualification probes do not share the sealed candidate and split")
     gates, promoted, status = _derive_qualification(control=control, holdout=holdout)
@@ -323,6 +360,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--control-evidence", type=Path, required=True)
     parser.add_argument("--holdout-evidence", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--control-second-ball-mass-kg", type=float)
+    parser.add_argument("--control-second-ball-ground-friction", type=float)
+    parser.add_argument("--control-second-striker-foot-pitch-offset-rad", type=float)
+    parser.add_argument("--holdout-second-ball-mass-kg", type=float, default=0.46)
+    parser.add_argument("--holdout-second-ball-ground-friction", type=float, default=0.16)
+    parser.add_argument("--holdout-second-striker-foot-pitch-offset-rad", type=float)
     return parser
 
 
@@ -333,6 +376,18 @@ def main() -> int:
         control_evidence_path=args.control_evidence,
         holdout_evidence_path=args.holdout_evidence,
         output_dir=args.output_dir,
+        config=RoleIsolatedContactQualificationConfig(
+            control_second_ball_mass_kg=args.control_second_ball_mass_kg,
+            control_second_ball_ground_friction=args.control_second_ball_ground_friction,
+            control_second_striker_foot_pitch_offset_rad=(
+                args.control_second_striker_foot_pitch_offset_rad
+            ),
+            holdout_second_ball_mass_kg=args.holdout_second_ball_mass_kg,
+            holdout_second_ball_ground_friction=args.holdout_second_ball_ground_friction,
+            holdout_second_striker_foot_pitch_offset_rad=(
+                args.holdout_second_striker_foot_pitch_offset_rad
+            ),
+        ),
     )
     print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False))
     return 0 if report.get("candidate_promoted") is True else 1

@@ -29,12 +29,12 @@ from rosclaw_soccer.media.three_role_save_portfolio_video import (
 from rosclaw_soccer.providers.g1.asset_qualification import qualify_g1_assets
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.continuous_second_striker_save_exam import (
-    ContinuousSecondStrikerSaveExamConfig,
     physical_second_striker_kwargs,
 )
 from rosclaw_soccer.training.dynamic_corner_save import expanded_dynamic_corner_lanes
 from rosclaw_soccer.training.role_isolated_second_striker_probe import (
     RoleIsolatedSecondStrikerProbeConfig,
+    _role_isolated_exam_config,
     validate_role_isolated_second_striker_probe,
 )
 from rosclaw_soccer.world.field import build_g1_four_player_two_ball_stadium_model
@@ -205,13 +205,21 @@ def render_role_isolated_second_striker_probe_video(
     result = cast(dict[str, Any], replays[0]["result"])
     diagnostics = cast(dict[str, Any], replays[0]["candidate_diagnostics"])
     promoted = evidence.get("candidate_promoted") is True
-    clips = _timeline(trajectory, result, diagnostics, fps, promoted=promoted)
+    raw_config = cast(dict[str, Any], request["config"])
+    config = RoleIsolatedSecondStrikerProbeConfig(**raw_config)
+    motion_curriculum = config.second_striker_foot_pitch_offset_rad is not None
+    clips = _timeline(
+        trajectory,
+        result,
+        diagnostics,
+        fps,
+        promoted=promoted,
+        motion_curriculum=motion_curriculum,
+    )
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
     if ffmpeg is None or ffprobe is None:
         raise RuntimeError("ffmpeg and ffprobe are required for the S113 review video")
-    raw_config = cast(dict[str, Any], request["config"])
-    config = RoleIsolatedSecondStrikerProbeConfig(**raw_config)
     lane = next(
         lane for lane in expanded_dynamic_corner_lanes() if lane.lane_id == config.lane_id
     )
@@ -244,9 +252,7 @@ def render_role_isolated_second_striker_probe_video(
     assets["dive_source"] = Path(
         cast(dict[str, str], request["source_tree_locators"])["dive-source"]
     )
-    exam = ContinuousSecondStrikerSaveExamConfig(
-        lane_ids=(config.lane_id,), simulation_duration_sec=config.simulation_duration_sec
-    )
+    exam = _role_isolated_exam_config(config)
     _, _, goal = physical_second_striker_kwargs(
         lane=lane,
         assets=assets,
@@ -290,6 +296,7 @@ def render_role_isolated_second_striker_probe_video(
                         clips=clips,
                         labels=labels,
                         promoted=promoted,
+                        motion_curriculum=motion_curriculum,
                     ),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
@@ -391,6 +398,7 @@ def _timeline(
     fps: int,
     *,
     promoted: bool,
+    motion_curriculum: bool = False,
 ) -> tuple[_Clip, ...]:
     start = float(trajectory["time"][0])
     end = float(trajectory["time"][-1])
@@ -406,14 +414,22 @@ def _timeline(
     title = tuple(_Frame("left-inner", start, "four") for _ in range(round(1.8 * fps)))
     final = tuple(_Frame("left-inner", end, "goal") for _ in range(round(2.0 * fps)))
     audit_title = (
-        "S114 · FAILURE MEMORY → CONTROL QUALIFICATION"
-        if promoted
-        else "S113 · STABILITY–PLASTICITY AUDIT · CANDIDATE REJECTED"
+        "S115 · HEAVY-BALL WHOLE-BODY CURRICULUM"
+        if motion_curriculum
+        else (
+            "S114 · FAILURE MEMORY → CONTROL QUALIFICATION"
+            if promoted
+            else "S113 · STABILITY–PLASTICITY AUDIT · CANDIDATE REJECTED"
+        )
     )
     approach_label = (
-        f"FAILURE-UPDATED CANDIDATE SELECTED · {candidate_frames} CONTACT FRAMES"
-        if promoted
-        else f"TARGET CANDIDATE ABSTAINS · FROZEN PARENT {parent_frames} FRAMES"
+        f"CURRICULUM BODY PITCH + LEARNED CONTACT ACTOR · {candidate_frames} CONTACT FRAMES"
+        if motion_curriculum
+        else (
+            f"FAILURE-UPDATED CANDIDATE SELECTED · {candidate_frames} CONTACT FRAMES"
+            if promoted
+            else f"TARGET CANDIDATE ABSTAINS · FROZEN PARENT {parent_frames} FRAMES"
+        )
     )
     contact_label = (
         f"LEARNED RIGHT-FOOT CONTACT · {force:.0f} N · NO CANNON"
@@ -421,9 +437,13 @@ def _timeline(
         else f"PARENT RIGHT-FOOT CONTACT · {force:.0f} N · NO CANNON"
     )
     decision_label = (
-        "CONTROL PASSED · SEALED HOLDOUT STILL REQUIRED · SIM ONLY"
-        if promoted
-        else "RETENTION PASSED · PLASTICITY FAILED · NO PROMOTION"
+        "HEAVY CONTROL PASSED · NEIGHBOR HOLDOUT REQUIRED · SIM ONLY"
+        if motion_curriculum
+        else (
+            "CONTROL PASSED · SEALED HOLDOUT STILL REQUIRED · SIM ONLY"
+            if promoted
+            else "RETENTION PASSED · PLASTICITY FAILED · NO PROMOTION"
+        )
     )
     return (
         _Clip(audit_title, title),
@@ -469,6 +489,7 @@ def _video_ffmpeg_command(
     clips: tuple[_Clip, ...],
     labels: tuple[Path, ...],
     promoted: bool,
+    motion_curriculum: bool = False,
 ) -> list[str]:
     command = _ffmpeg_command(
         ffmpeg=ffmpeg,
@@ -483,9 +504,13 @@ def _video_ffmpeg_command(
     command[filter_index] = command[filter_index].replace(
         "ROSClaw Soccer · S109 PHYSICAL SECOND STRIKER",
         (
-            "ROSClaw Soccer · S114 FAILURE-DRIVEN CONTACT GROWTH"
-            if promoted
-            else "ROSClaw Soccer · S113 SAFE REJECTION REVIEW"
+            "ROSClaw Soccer · S115 HEAVY-BALL MOTION CURRICULUM"
+            if motion_curriculum
+            else (
+                "ROSClaw Soccer · S114 FAILURE-DRIVEN CONTACT GROWTH"
+                if promoted
+                else "ROSClaw Soccer · S113 SAFE REJECTION REVIEW"
+            )
         ),
     )
     return command
