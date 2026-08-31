@@ -287,8 +287,8 @@ S117 后半段新增 `robust_variants_per_state` 和 `robust_worst_case_weight`�
 ## 软件验证
 
 - S117 课程、教师、蒸馏、考试、选择与 Champion challenge 定向测试 `34 passed`；
-- Soccer 全量功能回归：`740 passed, 15 skipped, 11 deselected`；
-- 原始全量同样有 `740` 个功能测试通过，另有 11 个历史外部证据节点因共享世界实现哈希变化按设计 fail closed；没有重写旧 JSON 冒充当前证据；
+- Soccer 全量功能回归（显式排除旧外部证据节点）：`747 passed, 15 skipped, 11 deselected`；
+- 不排除时同样有 `747` 个功能测试通过，11 个历史外部证据节点因实现哈希变化按设计 fail closed；没有重写旧 JSON 冒充当前证据；
 - 本轮变更文件 Ruff 通过；10 个全新源码/测试文件通过 format check；8 个相关源码文件通过 mypy；
 - ROSClaw Core 的 continual + Practice + live ROS2 组合回归：`268 passed, 9 skipped`；Python 3.11 下 live ROS2 生命周期测试连续 10 次通过；
 - 新增 Core/Soccer 文件的 Ruff、format、mypy 和 compileall 均通过；Core 分支基线的全 `continual` mypy 仍有 5 个既有错误，本次新增契约文件定向 mypy 为 0 错误；
