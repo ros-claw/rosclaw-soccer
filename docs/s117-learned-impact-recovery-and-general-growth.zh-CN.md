@@ -259,6 +259,29 @@ S117 后半段新增 `robust_variants_per_state` 和 `robust_worst_case_weight`�
 - report hash：`sha256:71aaae8ae91793fcdf538098a96de6db0be163101a7193544d0ff1f323ccdbc8`
 - scenario suite hash：`sha256:d2b3e9ef2f96ecf5150c34da6af70750923d4e77ec372c0dcedf8c9be99a7b9d`
 
+### 教师 warm-start 修复动作塌缩，但状态覆盖仍不足
+
+CPU 复试显示 PPO 的有效 residual RMS 远小于鲁棒教师。新增 `impact_recovery_ppo_warm_start.py`，把 PPO actor 与鲁棒教师的时序反馈连接起来：
+
+- critic、观测归一化器和分布 scale head 冻结；
+- 19 个有合格后继标签的课程状态按整状态切分为 11 个 training、4 个 calibration、4 个 sealed exam；
+- calibration 只用于选择 step，sealed exam 最后只计算一次；
+- 输出仍只是在线 RL 初始化，不具有 physics exam 或晋升权限。
+
+三种可塑性范围的结果：
+
+| actor 可训练范围 | calibration loss 改善 | sealed exam 改善 | exam 动作 RMS | 决策 |
+|---|---:|---:|---:|---|
+| 全 actor | `5.05%` | `4.13%` | `0.1341` | 拒绝 |
+| tail-128 + location | `7.30%` | `4.91%` | `0.1535` | 拒绝 |
+| 仅 location head | `8.17%` | `6.76%` | `0.1150` | 拒绝 |
+
+相比 parent exam 动作 RMS `0.00684`，warm-start 已解决“几乎不出力”的塌缩；但预先设定的 calibration 改善门是 `10%`，三者都没有通过。不能在看到结果后把阈值降到 8%。这把下一瓶颈定位为教师状态覆盖，而不是继续增加优化步数。
+
+- [最佳 location-head warm-start](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-impact-recovery-ppo-warmstart-location-v1/warm-start-report.json)
+- report hash：`sha256:47ca6eaf4386d89a8ba03fde7cf0eb9a9a35474319f0c80be34a55b7ba253ce3`
+- `warm_start_eligible=false`，未启动后续在线 PPO，也未参加 physics qualification。
+
 ### 失败前沿续训仍没有产生神经净增益
 
 系统曾依据旧预选择，从该模型 128 个获取 episode 中提取 43 个失败行，形成内容绑定的 capability frontier；其中触球后 `0—1 s`、`3—4 s` 和 `5 s+` 三个区间成功数都是 0，优先权由难度、近期失败和历史锚点共同决定。frontier 数据本身仍有效，但其“已通过预选”的上游资格已被本次复核撤销。

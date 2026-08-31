@@ -157,6 +157,11 @@ from rosclaw_soccer.training.impact_recovery_mjx import (
     validate_impact_recovery_mjx_evaluation_report,
     validate_impact_recovery_mjx_report,
 )
+from rosclaw_soccer.training.impact_recovery_ppo_warm_start import (
+    ImpactRecoveryPPOWarmStartConfig,
+    build_impact_recovery_ppo_warm_start,
+    validate_impact_recovery_ppo_warm_start,
+)
 from rosclaw_soccer.training.impact_recovery_selection import (
     ImpactRecoveryCandidate,
     ImpactRecoverySelectionConfig,
@@ -376,6 +381,7 @@ __all__ = [
     "ImpactRecoveryMJXConfig",
     "ImpactRecoveryMJXEnv",
     "ImpactRecoveryMJXEvaluationConfig",
+    "ImpactRecoveryPPOWarmStartConfig",
     "ImpactRecoveryCPUExamConfig",
     "ImpactRecoverySelectionConfig",
     "ImpactRecoverySource",
@@ -469,6 +475,7 @@ __all__ = [
     "build_impact_recovery_champion_challenge",
     "build_impact_recovery_distilled_student",
     "build_impact_recovery_frontier",
+    "build_impact_recovery_ppo_warm_start",
     "build_impact_recovery_selection",
     "audit_recovery_reference_catalog",
     "body_gravity_vector",
@@ -548,6 +555,7 @@ __all__ = [
     "validate_impact_recovery_memory_diagnostic",
     "validate_impact_recovery_mjx_evaluation_report",
     "validate_impact_recovery_mjx_report",
+    "validate_impact_recovery_ppo_warm_start",
     "validate_impact_recovery_selection_report",
     "validate_recovery_mjx_probe_report",
     "validate_recovery_mjx_action_distribution_audit",
