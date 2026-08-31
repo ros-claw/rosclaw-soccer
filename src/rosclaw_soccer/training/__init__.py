@@ -124,6 +124,11 @@ from rosclaw_soccer.training.impact_recovery_corrective_teacher import (
     run_impact_recovery_corrective_teacher,
     validate_impact_recovery_corrective_teacher,
 )
+from rosclaw_soccer.training.impact_recovery_cpu_exam import (
+    ImpactRecoveryCPUExamConfig,
+    run_impact_recovery_cpu_exam,
+    validate_impact_recovery_cpu_exam,
+)
 from rosclaw_soccer.training.impact_recovery_curriculum import (
     ImpactRecoveryCurriculumConfig,
     ImpactRecoverySource,
@@ -371,6 +376,7 @@ __all__ = [
     "ImpactRecoveryMJXConfig",
     "ImpactRecoveryMJXEnv",
     "ImpactRecoveryMJXEvaluationConfig",
+    "ImpactRecoveryCPUExamConfig",
     "ImpactRecoverySelectionConfig",
     "ImpactRecoverySource",
     "RecoveryReplayConfig",
@@ -525,6 +531,7 @@ __all__ = [
     "resolve_recovery_mjx_route_group",
     "run_recovery_mjx_probe",
     "run_impact_recovery_corrective_teacher",
+    "run_impact_recovery_cpu_exam",
     "select_recovery_mjx_failure_constrained_generation",
     "select_recovery_mjx_teacher_residual_generation",
     "split_recovery_student_episodes",
@@ -534,6 +541,7 @@ __all__ = [
     "validate_impact_recovery_corrective_teacher",
     "validate_impact_recovery_champion_challenge",
     "validate_impact_recovery_curriculum",
+    "validate_impact_recovery_cpu_exam",
     "validate_impact_recovery_distilled_evaluation",
     "validate_impact_recovery_distilled_student",
     "validate_impact_recovery_frontier",

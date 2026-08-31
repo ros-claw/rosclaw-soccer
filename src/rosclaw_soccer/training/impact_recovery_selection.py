@@ -15,6 +15,8 @@ from rosclaw_soccer.training.impact_recovery_distillation import (
     validate_impact_recovery_distilled_student,
 )
 from rosclaw_soccer.training.impact_recovery_mjx import (
+    ImpactRecoveryMJXConfig,
+    ImpactRecoveryMJXEvaluationConfig,
     validate_impact_recovery_mjx_evaluation_report,
     validate_impact_recovery_mjx_report,
 )
@@ -25,6 +27,33 @@ CandidateKind = Literal["MJX_PPO", "DISTILLED_STUDENT"]
 
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$")
+_CONTROLLER_EXAM_FIELDS = (
+    "episode_length",
+    "learning_stage",
+    "retention_memory_mode",
+    "gain_memory_mode",
+    "memory_blend_steps",
+    "maximum_target_step_rad",
+    "joint_position_noise_rad",
+    "joint_velocity_noise_rad_s",
+    "root_linear_velocity_noise_mps",
+    "root_angular_velocity_noise_rad_s",
+    "ready_pelvis_height_m",
+    "ready_upright_projection",
+    "ready_linear_speed_mps",
+    "ready_angular_speed_rad_s",
+    "ready_heading_error_rad",
+    "ready_foot_height_m",
+    "success_stable_steps",
+)
+
+
+def _controller_exam_contract(config: dict[str, Any]) -> dict[str, Any]:
+    """Extract only dynamics, reset, and success semantics used by both actors."""
+
+    parsed = ImpactRecoveryMJXConfig(**config)
+    values = asdict(parsed)
+    return {name: values[name] for name in _CONTROLLER_EXAM_FIELDS}
 
 
 @dataclass(frozen=True)
@@ -84,10 +113,31 @@ def validate_impact_recovery_memory_diagnostic(path: Path) -> dict[str, Any]:
         seeds = report.get("seeds")
         episode_count = report.get("episode_count")
         success_count = report.get("success_count")
+        schema = report.get("schema_version")
+        evaluation_config_value = report.get("evaluation_config")
+        controller_config_value = report.get("controller_config")
+        strict_contract_valid = True
+        if schema == "rosclaw_soccer.impact_recovery_memory_baseline_diagnostic.v2":
+            if not isinstance(evaluation_config_value, dict) or not isinstance(
+                controller_config_value, dict
+            ):
+                raise ValueError("impact-recovery memory diagnostic exam contract is missing")
+            evaluation_config = ImpactRecoveryMJXEvaluationConfig(**evaluation_config_value)
+            controller_config = ImpactRecoveryMJXConfig(**controller_config_value)
+            strict_contract_valid = bool(
+                seeds == list(evaluation_config.seeds)
+                and report.get("num_envs") == evaluation_config.num_envs
+                and report.get("evaluation_config_hash") == evaluation_config.config_hash
+                and report.get("controller_config_hash") == controller_config.config_hash
+            )
         if (
-            report.get("schema_version")
-            != "rosclaw_soccer.impact_recovery_memory_baseline_diagnostic.v1"
+            schema
+            not in {
+                "rosclaw_soccer.impact_recovery_memory_baseline_diagnostic.v1",
+                "rosclaw_soccer.impact_recovery_memory_baseline_diagnostic.v2",
+            }
             or declared != hash_json(report)
+            or not strict_contract_valid
             or population not in {"ACQUISITION", "RETENTION"}
             or not isinstance(report.get("mode"), str)
             or not str(report["mode"]).strip()
@@ -159,11 +209,27 @@ def build_impact_recovery_selection(
     retention_path = retention_baseline_path.expanduser().resolve()
     acquisition = validate_impact_recovery_memory_diagnostic(acquisition_path)
     retention = validate_impact_recovery_memory_diagnostic(retention_path)
+    if any(
+        not isinstance(report.get(name), dict)
+        for report in (acquisition, retention)
+        for name in ("evaluation_config", "controller_config")
+    ):
+        raise ValueError("impact-recovery baselines lack a comparable exam contract")
+    acquisition_evaluation_config = cast(dict[str, Any], acquisition["evaluation_config"])
+    retention_evaluation_config = cast(dict[str, Any], retention["evaluation_config"])
+    acquisition_controller_contract = _controller_exam_contract(
+        cast(dict[str, Any], acquisition["controller_config"])
+    )
+    retention_controller_contract = _controller_exam_contract(
+        cast(dict[str, Any], retention["controller_config"])
+    )
     if (
         acquisition.get("population") != "ACQUISITION"
         or retention.get("population") != "RETENTION"
         or acquisition.get("curriculum_manifest_hash") != retention.get("curriculum_manifest_hash")
         or acquisition.get("episode_count") != retention.get("episode_count")
+        or acquisition_evaluation_config != retention_evaluation_config
+        or acquisition_controller_contract != retention_controller_contract
         or int(acquisition["episode_count"]) < active.minimum_population_episode_count
     ):
         raise ValueError("impact-recovery baselines are not a matched fixed exam")
@@ -181,11 +247,21 @@ def build_impact_recovery_selection(
             report_link_valid = training.get("student_exam_eligible") is True and evaluation.get(
                 "student_report_hash"
             ) == training.get("report_hash")
+            candidate_controller = ImpactRecoveryMJXConfig(
+                retention_memory_mode="DIRECT_REPLAY",
+                gain_memory_mode="DYNAMIC",
+                residual_gate_mode="TEACHER_NOVELTY",
+                residual_authority_steps=int(training.get("residual_authority_steps", 0)),
+            )
+            candidate_controller_contract = _controller_exam_contract(asdict(candidate_controller))
         else:
             training = validate_impact_recovery_mjx_report(training_path)
             evaluation = validate_impact_recovery_mjx_evaluation_report(evaluation_path)
             report_link_valid = evaluation.get("training_report_hash") == training.get(
                 "report_hash"
+            )
+            candidate_controller_contract = _controller_exam_contract(
+                cast(dict[str, Any], training["config"])
             )
         populations = cast(dict[str, Any], evaluation["populations"])
         acquisition_row = cast(dict[str, Any], populations["acquisition"])
@@ -196,6 +272,8 @@ def build_impact_recovery_selection(
             != acquisition.get("curriculum_manifest_hash")
             or training.get("curriculum_manifest_hash")
             != acquisition.get("curriculum_manifest_hash")
+            or evaluation.get("config") != acquisition_evaluation_config
+            or candidate_controller_contract != acquisition_controller_contract
             or acquisition_row.get("episode_count") != baseline_episode_count
             or retention_row.get("episode_count") != baseline_episode_count
         ):
@@ -216,6 +294,7 @@ def build_impact_recovery_selection(
                 "training_report_file_hash": hash_bytes(training_path.read_bytes()),
                 "evaluation_report_hash": evaluation["report_hash"],
                 "evaluation_report_file_hash": hash_bytes(evaluation_path.read_bytes()),
+                "controller_exam_contract_hash": hash_json(candidate_controller_contract),
                 "acquisition_success_count": candidate_acquisition,
                 "acquisition_gain_count": acquisition_gain,
                 "retention_success_count": candidate_retention,
@@ -231,7 +310,7 @@ def build_impact_recovery_selection(
         if row["decision"] == "QUALIFIED_FOR_CPU_FULL_CHAIN_EXAM"
     ]
     report: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.impact_recovery_selection_report.v1",
+        "schema_version": "rosclaw_soccer.impact_recovery_selection_report.v2",
         "config": asdict(active),
         "config_hash": active.config_hash,
         "curriculum_manifest_hash": acquisition["curriculum_manifest_hash"],
@@ -240,6 +319,10 @@ def build_impact_recovery_selection(
         "retention_baseline_report_hash": retention["report_hash"],
         "retention_baseline_file_hash": hash_bytes(retention_path.read_bytes()),
         "population_episode_count": baseline_episode_count,
+        "evaluation_config": acquisition_evaluation_config,
+        "evaluation_config_hash": hash_json(acquisition_evaluation_config),
+        "controller_exam_contract": acquisition_controller_contract,
+        "controller_exam_contract_hash": hash_json(acquisition_controller_contract),
         "baseline_acquisition_success_count": baseline_acquisition,
         "baseline_retention_success_count": baseline_retention,
         "candidates": rows,
@@ -276,6 +359,29 @@ def validate_impact_recovery_selection_report(path: Path) -> dict[str, Any]:
         if not isinstance(config_value, dict) or not isinstance(rows, list) or not rows:
             raise ValueError("impact-recovery selection report is incomplete")
         config = ImpactRecoverySelectionConfig(**config_value)
+        schema = report.get("schema_version")
+        if schema not in {
+            "rosclaw_soccer.impact_recovery_selection_report.v1",
+            "rosclaw_soccer.impact_recovery_selection_report.v2",
+        }:
+            raise ValueError("impact-recovery selection report schema changed")
+        controller_contract = report.get("controller_exam_contract")
+        evaluation_config_value = report.get("evaluation_config")
+        v2_contract_valid = True
+        if schema == "rosclaw_soccer.impact_recovery_selection_report.v2":
+            if not isinstance(controller_contract, dict) or not isinstance(
+                evaluation_config_value, dict
+            ):
+                raise ValueError("impact-recovery selection exam contract is missing")
+            evaluation_config = ImpactRecoveryMJXEvaluationConfig(**evaluation_config_value)
+            reconstructed_controller = asdict(ImpactRecoveryMJXConfig())
+            reconstructed_controller.update(controller_contract)
+            v2_contract_valid = bool(
+                set(controller_contract) == set(_CONTROLLER_EXAM_FIELDS)
+                and controller_contract == _controller_exam_contract(reconstructed_controller)
+                and report.get("controller_exam_contract_hash") == hash_json(controller_contract)
+                and report.get("evaluation_config_hash") == evaluation_config.config_hash
+            )
         expected_qualified: list[str] = []
         identifiers: set[str] = set()
         for row in rows:
@@ -299,6 +405,11 @@ def validate_impact_recovery_selection_report(path: Path) -> dict[str, Any]:
             if (
                 row.get("decision") != expected_decision
                 or candidate_kind not in {"MJX_PPO", "DISTILLED_STUDENT"}
+                or (
+                    schema == "rosclaw_soccer.impact_recovery_selection_report.v2"
+                    and row.get("controller_exam_contract_hash")
+                    != report.get("controller_exam_contract_hash")
+                )
                 or row.get("promotion_eligible") is not False
                 or any(
                     _SHA256.fullmatch(str(row.get(name, ""))) is None
@@ -322,7 +433,7 @@ def validate_impact_recovery_selection_report(path: Path) -> dict[str, Any]:
                 if expected_qualified
                 else "NO_CANDIDATE_QUALIFIED"
             )
-            or report.get("schema_version") != "rosclaw_soccer.impact_recovery_selection_report.v1"
+            or not v2_contract_valid
             or declared != hash_json(report)
             or report.get("config_hash") != config.config_hash
             or report.get("promotion_eligible") is not False

@@ -4,14 +4,15 @@
 
 S117 没有把 S116 的一个成功反射包装成“端到端神经小脑已经学会”。本轮把真实扑球后的成功与失败轨迹编译成可复现课程，在四张 A6000 上依次验证动态增益肌肉记忆、失败优先 PPO、教师流形门、短时域反事实教师、后继状态目标、平滑低维动作计划、反馈学生蒸馏和失败前沿再训练。固定的获取集与保持集始终独立评分，任何候选只要没有新能力或破坏旧能力就被拒绝。
 
-当前最重要的四项事实是：
+当前最重要的五项事实是：
 
-1. 在早期同版本对照中，动态 `kp/kd` 记忆使零残差保持能力从 `90/128` 提升到 `107/128`，说明“肌肉记忆”必须包含控制器状态，不能只有关节目标。随着环境契约继续加固，v5 当前严格基线重新测得获取 `7/128`、保持 `92/128`，后续选择只使用这组同哈希基线。
+1. 在早期同版本对照中，动态 `kp/kd` 记忆使零残差保持能力从 `90/128` 提升到 `107/128`，说明“肌肉记忆”必须包含控制器状态，不能只有关节目标。v5 默认控制器基线为获取 `7/128`、保持 `92/128`，它只可与使用同一默认控制器考试契约的学生比较。
 2. 32 个失败状态、每状态 2 个扰动的鲁棒后继教师把组成功从 `1/32` 提升到 `12/32`，教师最大连续稳定步数中位数从 `0.5` 提升到 `14.5`；但三个反馈蒸馏学生仍未通过闭环门，最好的当前帧 ridge 也只有获取 `4/128`、保持 `91/128`。
-3. 对历史失败优先 PPO 的内容绑定中点 checkpoint 重新做当前严格考试后，获取达到 `27/128`、保持 `94/128`；相对当前 v5 基线是获取 `+20`、保持 `+2`，首次通过 GPU 预选择，获得进入 CPU MuJoCo 全链路考试的资格。它仍然不是正式 Champion，更不代表真实机器人授权。
-4. 以这份候选为 incumbent 做失败前沿续训后，最佳 challenger 仍为 `27/128`、`94/128`。通用 paired-dominance 门要求获取至少再增加 1 且保持最多下降 1，因此 tie 被正确归档，旧候选保持不变。
+3. 深度复核发现，历史 PPO `179200` checkpoint 的 `27/128、94/128` 曾错误地与默认控制器的 `7/128、92/128` 比较；前者把 ready 线速度阈值从 `0.18` 放宽到 `0.35 m/s`，角速度阈值从 `0.45` 放宽到 `0.90 rad/s`，并改变了目标 slew。这个 GPU 预选是不可比考试造成的假阳性，现已撤销。
+4. 在相同候选控制器契约下重跑零残差 GPU 基线，成绩恰好也是获取 `27/128`、保持 `94/128`；新版选择器因此返回 `NO_CANDIDATE_QUALIFIED`。独立 CPU MuJoCo 使用新的 128 + 128 成对初态再次得到获取 `31→31/128`、保持 `92→92/128`，神经残差净成功数提升为 0。
+5. 失败前沿续训的最佳 challenger 同样是 `27/128、94/128`，没有超过同规则零残差，也没有超过旧 checkpoint。它继续被归档。当前没有任何 S117 神经恢复策略获得进入球队全链路或 SIM Champion 的资格。
 
-这是一轮取得了严格预选突破、同时继续挡住假进步的阶段：现在已有一个数据驱动神经恢复策略可进入下一层考试，但还没有 CPU 整链路 Champion，也没有足够证据宣称完整传球—射门—扑救系统已经变强。
+这是一轮通过跨后端复试识别并修复“假成长”的阶段：数据驱动训练、教师与在线 PPO 都已跑通，但当前神经策略没有在同规则闭环中超过冻结肌肉记忆。工程突破是 Growth 选择门不再奖励阈值漂移；能力层面仍需重新训练，不能宣称传球—射门—扑救系统已经变强。
 
 ## 问题定义
 
@@ -51,10 +52,16 @@ S116 的规则反射能修复一个密封邻点，但更难邻点仍失败。S11
 - `ACQUISITION`：只从历史失败分布重置，测是否学会新恢复；
 - `RETENTION`：只从历史成功分布重置，测是否遗忘旧能力。
 
-预选门要求获取至少比零残差基线多成功 `8/128`，保持最多下降 `4/128`。当前 v5 内容绑定基线为获取 `7/128`、保持 `92/128`。通过也只代表有资格进入 CPU MuJoCo 整链路，不代表晋升。
+预选门要求获取至少比零残差基线多成功 `8/128`，保持最多下降 `4/128`。复核后新增一条更基础的要求：基线与候选的 episode、噪声、目标 slew、记忆模式以及全部 ready/success 阈值必须完全相同。v5 默认控制器基线 `7/128、92/128` 仍可供默认控制器学生使用；PPO `179200` 的匹配基线则为 `27/128、94/128`，两组不可交叉选择。
 
 - [v5 获取基线](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-dynamic-gain-acquisition-baseline-v5-v1/diagnostic.json)，report hash：`sha256:982e738ceb4eef5ebe3517189ea6d544f97465dfb88b41cfaebd9d28cde595f2`
 - [v5 保持基线](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-dynamic-gain-retention-baseline-v5-v1/diagnostic.json)，report hash：`sha256:c553496e72a9287948bbf02fb17c6164ae51866fa5117b72eacdf75ae2af6a90`
+
+PPO 匹配规则复测：
+
+- [匹配获取基线](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-matched-mid179200-acquisition-baseline-v1/diagnostic.json)，`27/128`，report hash：`sha256:9dce9f9bc925da37545c4a46ce375034ce7f71620156fa3a74b68f5a7e1ba344`
+- [匹配保持基线](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-matched-mid179200-retention-baseline-v1/diagnostic.json)，`94/128`，report hash：`sha256:e4887a0fd60691cda4a6ebab2751178b75166961ffefd823124193c7bf5b9f7d`
+- [新版匹配选择](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-impact-recovery-matched-selection-v2/selection-report.json)，决策 `NO_CANDIDATE_QUALIFIED`，report hash：`sha256:225457b8b57135f4e663447b251545965c604edd738ef8ba2b2cbd3301fdf135`
 
 ## 实验复盘
 
@@ -216,26 +223,45 @@ S117 后半段新增 `robust_variants_per_state` 和 `robust_worst_case_weight`�
 - [历史 ridge 蒸馏](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-impact-recovery-robust2-32state-frontier-ridge-history-v1/distillation-report.json)，report hash：`sha256:67fc0943a6cd604908e08fb4afb73bb4bfb70c1944de5365799fdd4065be6d6f`
 - [MLP 蒸馏](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-impact-recovery-robust2-32state-frontier-mlp64-v1/distillation-report.json)，report hash：`sha256:ab2e7a19fca7c43b77236f6aadd33cc65422b1288999955e5f2bd09c925df033`
 
-### 历史失败优先 PPO 首次通过严格预选择
+### 历史 PPO “突破”经独立复核后撤销
 
-监督学生失败后，本轮没有继续只调回归器，而是对先前 novelty-gated PPO 训练中的每个内容绑定 checkpoint 重新做当前严格考试。`179200` 步中点模型得到：
+`179200` 步中点模型曾得到获取 `27/128`、保持 `94/128`，旧选择报告把它与 v5 默认控制器的 `7/128、92/128` 比较并返回 `CANDIDATE_READY_FOR_CPU_FULL_CHAIN_EXAM`。进一步审计训练配置后发现，两边成功定义并不相同：
 
-| 策略 | 获取 | 保持 | 相对 v5 基线 |
+| 考试契约 | v5 默认基线 | PPO `179200` |
+|---|---:|---:|
+| ready 线速度上限 | `0.18 m/s` | `0.35 m/s` |
+| ready 角速度上限 | `0.45 rad/s` | `0.90 rad/s` |
+| 单周期目标 slew 上限 | `0.035 rad` | `0.010 rad` |
+
+按 PPO 的同一控制器契约重跑零残差后，基线与候选完全相同：
+
+| 同规则策略 | 获取 | 保持 | 神经残差净增 |
 |---|---:|---:|---:|
-| v5 零残差 | `7/128` | `92/128` | — |
-| novelty-gated PPO `179200` | `27/128` | `94/128` | 获取 `+20`，保持 `+2` |
+| 零残差动态记忆 | `27/128` | `94/128` | — |
+| novelty-gated PPO `179200` | `27/128` | `94/128` | `0 / 0` |
 
-四个独立 seed 的获取成功分别为 `8/32、7/32、7/32、5/32`，保持分别为 `25/32、24/32、22/32、23/32`。这不是单 seed 偶然，也没有靠牺牲保持集换取获取。选择器因此返回 `CANDIDATE_READY_FOR_CPU_FULL_CHAIN_EXAM`；该词的准确含义只是“可参加下一层考试”，报告仍明确写入 `promotion_eligible=false`。
+因此旧 selection hash `sha256:d07d54630a846228010cb8beeec34294583d0033ec9421314de43a9363bdb0d4` 只保留为历史反例，不能再作为资格依据。新版 v2 选择报告返回 `NO_CANDIDATE_QUALIFIED`。checkpoint 本身仍保持内容绑定，hash 为 `sha256:d5c19f2ad12b0aa355e2658ed984bd0dc58acbd316801ea5c389b88b631727fb`，但内容绑定不等于能力改善。
 
-- [PPO 严格固定考试](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-impact-recovery-novelty-gated-scratch-mid179200-eval-v1/evaluation-report.json)
-- evaluation hash：`sha256:533972df0d9f1fefc970e12345042cd3abef71ccf30c3c19d7ed56080b2ffe06`
-- checkpoint hash：`sha256:d5c19f2ad12b0aa355e2658ed984bd0dc58acbd316801ea5c389b88b631727fb`
-- [PPO 机器选择](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-impact-recovery-novelty-gated-mid179200-selection-v1/selection-report.json)
-- selection hash：`sha256:d07d54630a846228010cb8beeec34294583d0033ec9421314de43a9363bdb0d4`
+### 独立 CPU MuJoCo 成对复试
 
-### 失败前沿续训没有超过 incumbent
+新增 `impact_recovery_cpu_exam.py`，不用 MJX rollout 标签，而是在普通 CPU MuJoCo 中重建同一套 29 关节 PD 控制器。每个初态的完整 `qpos/qvel`、课程行、seed 和 episode index 写入不可覆盖的 `scenario-suite.npz`；零残差 incumbent 与神经 challenger 必须逐样本使用完全相同的初态。
 
-通过预选择后，系统从该模型 128 个获取 episode 中提取 43 个失败行，形成内容绑定的 capability frontier；其中触球后 `0—1 s`、`3—4 s` 和 `5 s+` 三个区间成功数都是 0，优先权由难度、近期失败和历史锚点共同决定。
+全量独立套件结果：
+
+| population | CPU 零残差 | CPU PPO | 成对 rescue / regression |
+|---|---:|---:|---:|
+| acquisition | `31/128` | `31/128` | `0 / 0` |
+| retention | `92/128` | `92/128` | `0 / 0` |
+
+候选确实改变了动力学轨迹，但平均有效 residual RMS 只有 acquisition `0.00743`、retention `0.00325`；它没有让任何失败 episode 跨过连续 25 步 ready 门。CPU 决策为 `CANDIDATE_ARCHIVED_BY_CPU_MUJOCO`。
+
+- [CPU 成对复试](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-impact-recovery-cpu-exam-128-v1/cpu-exam.json)
+- report hash：`sha256:71aaae8ae91793fcdf538098a96de6db0be163101a7193544d0ff1f323ccdbc8`
+- scenario suite hash：`sha256:d2b3e9ef2f96ecf5150c34da6af70750923d4e77ec372c0dcedf8c9be99a7b9d`
+
+### 失败前沿续训仍没有产生神经净增益
+
+系统曾依据旧预选择，从该模型 128 个获取 episode 中提取 43 个失败行，形成内容绑定的 capability frontier；其中触球后 `0—1 s`、`3—4 s` 和 `5 s+` 三个区间成功数都是 0，优先权由难度、近期失败和历史锚点共同决定。frontier 数据本身仍有效，但其“已通过预选”的上游资格已被本次复核撤销。
 
 - [失败前沿](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-impact-recovery-novelty-gated-mid179200-frontier-v1/impact-recovery-frontier.json)
 - manifest hash：`sha256:c2193c17995e7e3159091f804a6751ab491d33816d3d125f287566a5e613f904`
@@ -246,7 +272,7 @@ S117 后半段新增 `robust_variants_per_state` 和 `robust_worst_case_weight`�
 - [续训固定考试](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-impact-recovery-novelty-gated-frontier-consolidation-mid115200-eval-v1/evaluation-report.json)，report hash：`sha256:35065e2db5ae3113558ffb948ee843094dfaa41e4d6ef0abccf2a4ee12a2717b`
 - [Champion 挑战](/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s117-impact-recovery-frontier-consolidation-champion-challenge-v1/champion-challenge.json)，决策：`CHALLENGER_ARCHIVED`；report hash：`sha256:bfe1390b3cf7ee38458a88baee5c4b4198ba5d9008a0e7cb0704cb2a582de63c`
 
-这一步很关键：局部训练曲线变好不能直接覆盖 Champion。只有相同课程、相同种子、相同 episode 数下的获取目标实质改善，并同时满足保持 guardrail，challenger 才能前进。
+这一步很关键：局部训练曲线变好不能直接覆盖 Champion；相同成功数也不能说明神经策略提供了净贡献。只有相同课程、相同种子、相同 episode、相同控制器考试契约下的获取目标实质改善，并同时满足保持 guardrail，challenger 才能前进。
 
 ## ROSClaw Core 通用化
 
@@ -275,6 +301,8 @@ S117 后半段新增 `robust_variants_per_state` 和 `robust_worst_case_weight`�
 - 教师、课程、模型、考试和选择报告逐层哈希绑定；
 - 蒸馏考试独立验证每个 seed 的成功数、总数和成功率，不能手改汇总；
 - MJX checkpoint 考试也重算逐 seed 汇总与 checkpoint 文件树哈希，Champion challenge 进一步要求该文件树真实存在于对应训练报告；
+- baseline diagnostic v2 内容绑定完整 evaluation config 与 controller config；选择器 v2 提取 episode、噪声、目标 slew、记忆模式和 ready/success 阈值形成统一 exam contract，不同阈值直接 fail closed；
+- 独立 CPU MuJoCo 复试保存完整初始 `qpos/qvel` 套件，重算逐 episode 成败、rescue/regression、力矩饱和、漂移和连续稳定步数，GPU 标签不能覆盖 CPU 物理结果；
 - 未通过留出 loss 的学生不能参加固定考试；
 - 后继状态教师除成本改善外还要达到显式组成功率，才能作为蒸馏热启动；
 - successor 标签拒绝模仿短时降成本但快速失败的教师变体；
@@ -286,9 +314,9 @@ S117 后半段新增 `robust_variants_per_state` 和 `robust_worst_case_weight`�
 
 ## 软件验证
 
-- S117 课程、教师、蒸馏、考试、选择与 Champion challenge 定向测试 `34 passed`；
-- Soccer 全量功能回归（显式排除旧外部证据节点）：`747 passed, 15 skipped, 11 deselected`；
-- 不排除时同样有 `747` 个功能测试通过，11 个历史外部证据节点因实现哈希变化按设计 fail closed；没有重写旧 JSON 冒充当前证据；
+- S117 课程、教师、蒸馏、CPU 考试、选择与 Champion challenge 定向测试 `34 passed`；其中新增 CPU 与可比性门测试 `6` 个；
+- Soccer 全量功能回归（显式排除旧外部证据节点）：`753 passed, 15 skipped, 11 deselected`；
+- 不排除时同样有 `753` 个功能测试通过，11 个历史外部证据节点因实现哈希变化按设计 fail closed；没有重写旧 JSON 冒充当前证据；
 - 本轮变更文件 Ruff 通过；10 个全新源码/测试文件通过 format check；8 个相关源码文件通过 mypy；
 - ROSClaw Core 的 continual + Practice + live ROS2 组合回归：`268 passed, 9 skipped`；Python 3.11 下 live ROS2 生命周期测试连续 10 次通过；
 - 新增 Core/Soccer 文件的 Ruff、format、mypy 和 compileall 均通过；Core 分支基线的全 `continual` mypy 仍有 5 个既有错误，本次新增契约文件定向 mypy 为 0 错误；
@@ -298,17 +326,17 @@ Soccer 全仓 format check 仍会报告 main 上 68 个既有文件与当前 Ruf
 
 ## 为什么本阶段没有新宣传视频
 
-当前实验是隔离的触球后恢复子系统。虽然 PPO checkpoint 已通过 GPU 获取/保持预选择，但尚未通过 CPU MuJoCo 传球—射门—真实碰撞—扑救—摔倒/恢复整链路。现在挑一个好看的 seed 做宣传片，会把“子系统候选”伪装成“球队能力突破”。因此本阶段没有制作新宣传视频；整链路通过后再把严格轨迹渲染为阶段视频，像素始终不参与评分。
+当前实验是隔离的触球后恢复子系统。PPO checkpoint 在同规则 GPU 基线和独立 CPU MuJoCo 成对复试中都没有净提升，已经被归档。现在挑一个好看的 seed 做宣传片，会把“轨迹略有变化”伪装成“小脑能力突破”。因此本阶段没有制作新宣传视频；只有重新训练的候选先通过同规则成对门，再进入传球—射门—真实碰撞—扑救—摔倒/恢复整链路并通过后，才渲染阶段视频，像素始终不参与评分。
 
 ## 当前边界与下一步
 
-当前已有数据驱动课程、四卡反事实教师、反馈学生、在线 PPO、稳定性—可塑性门、双集考试和一个通过 GPU 预选的小脑候选；仍没有通过 CPU 整链路与正式 Champion 门。下一步顺序是：
+当前已有数据驱动课程、四卡反事实教师、反馈学生、在线 PPO、稳定性—可塑性门、同规则双集考试和独立 CPU 成对复试；当前没有合格的神经小脑候选。下一步顺序是：
 
-1. 把 PPO `179200` 候选装入 CPU MuJoCo 全链路，只读取其本体感并验证动作权限、动力学和确定性重放；
-2. 在传球—射门—真实碰撞—扑救—摔倒/恢复链中同时检查获取与历史能力保持，失败轨迹继续进入 failure frontier；
-3. 若 CPU 结果不一致，把 mismatch 保留为反例，不用 GPU 标签覆盖 CPU 物理真值；
-4. 若整链路通过，再生成阶段视频并登记 SIM Champion；
-5. 后续训练必须超过当前 `27/94` incumbent；tie、单 seed 变好和内部曲线变好都不能晋升；
+1. 扩大鲁棒后继教师覆盖，并把成功计划的时序反馈蒸馏作为 PPO warm start；当前教师动作 RMS `0.2187`，而失败 PPO 的有效 residual RMS 仅约 `0.0074`，首先要解决动作信号塌缩；
+2. 在线 RL 的奖励改为同初态零残差反事实优势，不能再通过放宽 ready 阈值得分；训练同时混合 retention replay，处理稳定性—可塑性矛盾；
+3. 每个 checkpoint 先参加同规则 GPU 成对门，再参加本轮新增的 CPU MuJoCo 成对门；任一层 tie 或遗忘都归档；
+4. 只有隔离恢复产生真实净增益，才接入传球—射门—碰撞—扑救—摔倒/恢复整链路；失败轨迹继续进入 failure frontier；
+5. 整链路通过后再生成阶段视频并登记 SIM Champion；
 6. 真实机器人仍需独立 body snapshot、permit、verified executor 和人工监督，本阶段不涉及。
 
-S117 的准确结论是：**动态控制器记忆和鲁棒后继教师都取得了可复现提升，监督蒸馏仍未跨过闭环门；一个 novelty-gated PPO checkpoint 已首次通过严格 GPU 获取/保持预选择，但失败前沿续训只追平 incumbent，下一步必须由 CPU MuJoCo 全链路决定它能否成为 SIM Champion。**
+S117 的准确结论是：**动态控制器记忆和鲁棒后继教师取得了可复现提升，监督蒸馏与在线 PPO 尚未跨过同规则闭环门；跨后端复试发现并修复了一个会把阈值放宽误判为成长的选择漏洞。当前神经候选已归档，下一轮必须先在相同物理问题上证明净增益，才有资格进入球队全链路。**

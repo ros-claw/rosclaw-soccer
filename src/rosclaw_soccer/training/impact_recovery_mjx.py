@@ -1438,7 +1438,7 @@ def evaluate_impact_recovery_memory_baseline(
     episode_count = active_evaluation.num_envs * len(active_evaluation.seeds)
     success_count = sum(int(row["success_count"]) for row in repeats)
     report: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.impact_recovery_memory_baseline_diagnostic.v1",
+        "schema_version": "rosclaw_soccer.impact_recovery_memory_baseline_diagnostic.v2",
         "mode": (
             "DIRECT_REPLAY_DYNAMIC_GAINS"
             if population == "RETENTION"

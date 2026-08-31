@@ -39,8 +39,13 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def _diagnostic(path: Path, population: str, successes: int) -> Path:
+    evaluation = ImpactRecoveryMJXEvaluationConfig(num_envs=8, seeds=(1, 2))
+    controller = ImpactRecoveryMJXConfig(
+        retention_memory_mode="DIRECT_REPLAY",
+        gain_memory_mode="DYNAMIC",
+    )
     report: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.impact_recovery_memory_baseline_diagnostic.v1",
+        "schema_version": "rosclaw_soccer.impact_recovery_memory_baseline_diagnostic.v2",
         "curriculum_manifest_hash": _DIGEST,
         "mode": f"{population}_BASELINE",
         "population": population,
@@ -49,6 +54,10 @@ def _diagnostic(path: Path, population: str, successes: int) -> Path:
         "episode_count": 16,
         "success_count": successes,
         "elapsed_bins": {"all": {"attempts": 16, "successes": successes}},
+        "evaluation_config": evaluation.__dict__,
+        "evaluation_config_hash": evaluation.config_hash,
+        "controller_config": controller.__dict__,
+        "controller_config_hash": controller.config_hash,
         "activation_ceiling": "SIM_ONLY",
         "hardware_command_sent": False,
     }
@@ -68,7 +77,13 @@ def _training(path: Path) -> Path:
             "hash": hash_bytes(checkpoint.read_bytes()),
         }
     ]
-    config = ImpactRecoveryMJXConfig(total_timesteps=65_536, num_evals=2)
+    config = ImpactRecoveryMJXConfig(
+        total_timesteps=65_536,
+        num_evals=2,
+        retention_memory_mode="DIRECT_REPLAY",
+        gain_memory_mode="DYNAMIC",
+        residual_gate_mode="TEACHER_NOVELTY",
+    )
     report: dict[str, Any] = {
         "schema_version": "rosclaw_soccer.impact_recovery_mjx_training_report.v2",
         "config": config.__dict__,
@@ -88,8 +103,10 @@ def _training(path: Path) -> Path:
         "parent_checkpoint_hash": None,
         "failed_sources_used_as_teacher_count": 0,
         "actor_observation_dim": config.observation_dim,
-        "actor_observation": "DEPLOYABLE_PROPRIOCEPTION_HISTORY_AND_GOAL_HEADING",
-        "action_semantics": "DIRECT_BOUNDED_29_JOINT_PD_RESIDUAL_AROUND_FROZEN_MEMORY",
+        "actor_observation": "DEPLOYABLE_PROPRIOCEPTION_HISTORY_GOAL_HEADING_AND_DYNAMIC_GAINS",
+        "action_semantics": (
+            "TEACHER_NOVELTY_GATED_BOUNDED_29_JOINT_PD_RESIDUAL_AROUND_FROZEN_MEMORY"
+        ),
         "checkpoint_tree_hash": hash_json(files),
         "checkpoint_files": files,
         "sealed_full_chain_holdouts_loaded": 0,
@@ -264,6 +281,31 @@ def test_selection_rejects_forgetting_and_selects_stable_acquisition(tmp_path: P
     }
     assert report["qualified_candidate_ids"] == ["stable-acquisition"]
     assert report["promotion_eligible"] is False
+
+
+def test_selection_rejects_relaxed_candidate_success_thresholds(tmp_path: Path) -> None:
+    acquisition = _diagnostic(tmp_path / "acquisition.json", "ACQUISITION", 4)
+    retention = _diagnostic(tmp_path / "retention.json", "RETENTION", 14)
+    training = _training(tmp_path / "candidate" / "training-report.json")
+    payload = json.loads(training.read_text(encoding="utf-8"))
+    payload["config"]["ready_linear_speed_mps"] = 0.35
+    payload["config"]["ready_angular_speed_rad_s"] = 0.90
+    payload["config_hash"] = hash_json(payload["config"])
+    payload["report_hash"] = hash_json(
+        {key: value for key, value in payload.items() if key != "report_hash"}
+    )
+    _write_json(training, payload)
+    evaluation = _evaluation(tmp_path / "candidate-eval.json", training, 12, 14)
+
+    with pytest.raises(ValueError, match="matched baseline"):
+        build_impact_recovery_selection(
+            acquisition_baseline_path=acquisition,
+            retention_baseline_path=retention,
+            candidates=(ImpactRecoveryCandidate("relaxed", training, evaluation),),
+            output_dir=tmp_path / "selection",
+            source_checkout_path=tmp_path / "checkout",
+            config=ImpactRecoverySelectionConfig(minimum_population_episode_count=16),
+        )
 
 
 def test_diagnostic_and_selection_fail_closed_on_tamper(tmp_path: Path) -> None:
