@@ -1639,6 +1639,80 @@ def validate_impact_recovery_mjx_evaluation_report(path: Path) -> dict[str, Any]
             raise ValueError("impact-recovery MJX evaluation report is incomplete")
         config = ImpactRecoveryMJXEvaluationConfig(**config_value)
         expected_episodes = config.num_envs * len(config.seeds)
+        selected_checkpoint_files = report.get("selected_checkpoint_files")
+
+        def checkpoint_row_valid(row: Any) -> bool:
+            if (
+                not isinstance(row, dict)
+                or set(row) != {"path", "size_bytes", "hash"}
+                or not isinstance(row.get("path"), str)
+                or not isinstance(row.get("size_bytes"), int)
+                or isinstance(row.get("size_bytes"), bool)
+                or int(row["size_bytes"]) < 0
+                or _SHA256.fullmatch(str(row.get("hash", ""))) is None
+            ):
+                return False
+            relative = Path(str(row["path"]))
+            return bool(
+                not relative.is_absolute()
+                and relative.parts
+                and ".." not in relative.parts
+                and relative.as_posix() == str(row["path"])
+            )
+
+        checkpoint_paths = (
+            [str(row["path"]) for row in selected_checkpoint_files]
+            if isinstance(selected_checkpoint_files, list)
+            and all(isinstance(row, dict) and "path" in row for row in selected_checkpoint_files)
+            else []
+        )
+        checkpoint_manifest_valid = bool(
+            isinstance(selected_checkpoint_files, list)
+            and selected_checkpoint_files
+            and all(checkpoint_row_valid(row) for row in selected_checkpoint_files)
+            and checkpoint_paths == sorted(checkpoint_paths)
+            and len(checkpoint_paths) == len(set(checkpoint_paths))
+            and report.get("selected_checkpoint_hash") == hash_json(selected_checkpoint_files)
+        )
+
+        populations_valid = set(populations) == {"acquisition", "retention"}
+        if populations_valid:
+            for population in populations.values():
+                if not isinstance(population, dict):
+                    populations_valid = False
+                    break
+                repeats = population.get("repeats")
+                success_count = population.get("success_count")
+                if (
+                    population.get("episode_count") != expected_episodes
+                    or not isinstance(success_count, int)
+                    or isinstance(success_count, bool)
+                    or not 0 <= success_count <= expected_episodes
+                    or population.get("success_rate") != success_count / expected_episodes
+                    or not isinstance(repeats, list)
+                    or len(repeats) != len(config.seeds)
+                ):
+                    populations_valid = False
+                    break
+                repeat_success_count = 0
+                for expected_seed, repeat in zip(config.seeds, repeats, strict=True):
+                    if not isinstance(repeat, dict):
+                        populations_valid = False
+                        break
+                    repeat_count = repeat.get("success_count")
+                    if (
+                        repeat.get("seed") != expected_seed
+                        or not isinstance(repeat_count, int)
+                        or isinstance(repeat_count, bool)
+                        or not 0 <= repeat_count <= config.num_envs
+                        or repeat.get("success_rate") != repeat_count / config.num_envs
+                    ):
+                        populations_valid = False
+                        break
+                    repeat_success_count += repeat_count
+                if repeat_success_count != success_count:
+                    populations_valid = False
+                    break
         if (
             report.get("schema_version")
             != "rosclaw_soccer.impact_recovery_mjx_evaluation_report.v1"
@@ -1650,18 +1724,8 @@ def validate_impact_recovery_mjx_evaluation_report(path: Path) -> dict[str, Any]
             or report.get("activation_ceiling") != "SIM_ONLY"
             or report.get("hardware_authorized") is not False
             or report.get("hardware_command_sent") is not False
-            or set(populations) != {"acquisition", "retention"}
-            or any(
-                not isinstance(population, dict)
-                or population.get("episode_count") != expected_episodes
-                or not isinstance(population.get("success_count"), int)
-                or not 0 <= int(population["success_count"]) <= expected_episodes
-                or population.get("success_rate")
-                != int(population["success_count"]) / expected_episodes
-                or not isinstance(population.get("repeats"), list)
-                or len(population["repeats"]) != len(config.seeds)
-                for population in populations.values()
-            )
+            or not populations_valid
+            or not checkpoint_manifest_valid
             or any(
                 _SHA256.fullmatch(str(report.get(name, ""))) is None
                 for name in (

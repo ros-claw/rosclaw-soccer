@@ -113,6 +113,11 @@ from rosclaw_soccer.training.goalkeeper_teacher import (
     goalkeeper_teacher_action,
     pretrain_goalkeeper_actor,
 )
+from rosclaw_soccer.training.impact_recovery_champion import (
+    ImpactRecoveryChampionChallengeConfig,
+    build_impact_recovery_champion_challenge,
+    validate_impact_recovery_champion_challenge,
+)
 from rosclaw_soccer.training.impact_recovery_corrective_teacher import (
     ImpactRecoveryCorrectiveTeacherConfig,
     evaluate_impact_recovery_corrective_plan_bank,
@@ -358,6 +363,7 @@ __all__ = [
     "GoalkeeperReachConfig",
     "OfficialGoalkeeperDiveAtlas",
     "ImpactRecoveryCandidate",
+    "ImpactRecoveryChampionChallengeConfig",
     "ImpactRecoveryCorrectiveTeacherConfig",
     "ImpactRecoveryCurriculumConfig",
     "ImpactRecoveryDistillationConfig",
@@ -454,6 +460,7 @@ __all__ = [
     "aggregate_recovery_physics_reports",
     "audit_recovery_gate_on_snapshot_corpus",
     "build_impact_recovery_curriculum",
+    "build_impact_recovery_champion_challenge",
     "build_impact_recovery_distilled_student",
     "build_impact_recovery_frontier",
     "build_impact_recovery_selection",
@@ -525,6 +532,7 @@ __all__ = [
     "train_stateful_recovery_student",
     "train_impact_recovery_mjx",
     "validate_impact_recovery_corrective_teacher",
+    "validate_impact_recovery_champion_challenge",
     "validate_impact_recovery_curriculum",
     "validate_impact_recovery_distilled_evaluation",
     "validate_impact_recovery_distilled_student",

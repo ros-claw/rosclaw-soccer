@@ -8,8 +8,12 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from rosclaw_soccer.training.impact_recovery_corrective_teacher import (
+    ImpactRecoveryCorrectiveTeacherConfig,
+)
 from rosclaw_soccer.training.impact_recovery_distillation import (
     ImpactRecoveryDistillationConfig,
+    _outcome_label_mask,
     _student_policy,
     _train_student,
     validate_impact_recovery_distilled_evaluation,
@@ -86,6 +90,8 @@ def test_distilled_student_validator_binds_model_and_authority(tmp_path: Path) -
 def test_distillation_config_rejects_hardware_authority() -> None:
     with pytest.raises(ValueError, match="invalid"):
         ImpactRecoveryDistillationConfig(hardware_authorized=True)
+    with pytest.raises(ValueError, match="invalid"):
+        ImpactRecoveryDistillationConfig(ridge_regularization_grid=(1.0, 10.0))
 
 
 def test_ridge_student_uses_current_frame_and_holds_out_whole_states() -> None:
@@ -110,6 +116,118 @@ def test_ridge_student_uses_current_frame_and_holds_out_whole_states() -> None:
 
     assert model["weight"].shape == (189, 29)
     assert metrics["validation_state_count"] == 2
+    assert metrics["ridge_regularization_selection"] == "FIXED"
+    assert metrics["selected_ridge_regularization"] == 1.0
+    assert metrics["ridge_calibration_state_count"] == 0
+    assert metrics["exam_used_for_model_selection"] is False
+
+
+def test_ridge_regularization_grid_uses_inner_whole_state_holdout() -> None:
+    random = np.random.default_rng(118)
+    state_index = np.repeat(np.arange(12, dtype=np.int32), 5)
+    observation = random.normal(size=(60, 756)).astype(np.float32)
+    action = np.tanh(observation[:, -189:-160]).astype(np.float32)
+    config = ImpactRecoveryDistillationConfig(
+        student_model_type="RIDGE_CURRENT_FRAME",
+        ridge_regularization_grid=(1.0, 10.0, 100.0),
+        hidden_width=32,
+        training_steps=100,
+        holdout_state_count=2,
+    )
+
+    _model, metrics = _train_student(
+        observation=observation,
+        action=action,
+        state_index=state_index,
+        config=config,
+    )
+
+    assert metrics["ridge_regularization_selection"] == "INNER_STATE_HOLDOUT"
+    assert metrics["selected_ridge_regularization"] in config.ridge_regularization_grid
+    assert metrics["ridge_calibration_state_count"] == 2
+    assert len(metrics["ridge_calibration_losses"]) == 3
+    assert set(metrics["ridge_calibration_state_indices"]).isdisjoint(
+        metrics["validation_state_indices"]
+    )
+
+
+def test_ridge_history_preserves_all_proprioceptive_frames() -> None:
+    random = np.random.default_rng(120)
+    state_index = np.repeat(np.arange(6, dtype=np.int32), 3)
+    observation = random.normal(size=(18, 756)).astype(np.float32)
+    action = np.tanh(observation[:, :29]).astype(np.float32)
+    config = ImpactRecoveryDistillationConfig(
+        student_model_type="RIDGE_HISTORY",
+        ridge_regularization=1_000.0,
+        hidden_width=32,
+        training_steps=100,
+        holdout_state_count=2,
+    )
+
+    model, metrics = _train_student(
+        observation=observation,
+        action=action,
+        state_index=state_index,
+        config=config,
+    )
+
+    assert model["weight"].shape == (756, 29)
+    assert metrics["validation_state_count"] == 2
+
+
+def test_mlp_checkpoint_uses_inner_state_holdout_and_refits() -> None:
+    random = np.random.default_rng(119)
+    state_index = np.repeat(np.arange(10, dtype=np.int32), 3)
+    observation = random.normal(size=(30, 756)).astype(np.float32)
+    action = np.tanh(observation[:, :29]).astype(np.float32)
+    config = ImpactRecoveryDistillationConfig(
+        hidden_width=32,
+        training_steps=100,
+        batch_size=32,
+        holdout_state_count=2,
+    )
+
+    model, metrics = _train_student(
+        observation=observation,
+        action=action,
+        state_index=state_index,
+        config=config,
+    )
+
+    assert model["w1"].shape == (756, 32)
+    assert metrics["checkpoint_selection"] == "INNER_STATE_HOLDOUT_THEN_REFIT"
+    assert metrics["exam_used_for_model_selection"] is False
+    assert metrics["mlp_calibration_state_count"] == 2
+    assert set(metrics["mlp_calibration_state_indices"]).isdisjoint(
+        metrics["validation_state_indices"]
+    )
+    assert 25 <= metrics["selected_training_steps"] <= 100
+
+
+def test_successor_frontier_does_not_imitate_short_failed_teachers() -> None:
+    teacher = ImpactRecoveryCorrectiveTeacherConfig(objective_mode="SUCCESSOR_STREAK")
+    distillation = ImpactRecoveryDistillationConfig(
+        label_outcome_mode="SUCCESSOR_FRONTIER",
+        minimum_label_stable_streak=15,
+    )
+    mask = _outcome_label_mask(
+        cost_accepted=np.asarray((True, True, True, False)),
+        teacher_success=np.asarray((False, False, True, True)),
+        teacher_streak=np.asarray((14.0, 15.0, 25.0, 25.0)),
+        teacher_config=teacher,
+        distillation_config=distillation,
+    )
+
+    assert mask.tolist() == [False, True, True, False]
+
+    with pytest.raises(ValueError, match="successor teacher"):
+        _outcome_label_mask(
+            cost_accepted=np.ones(4, dtype=np.bool_),
+            teacher_success=np.zeros(4, dtype=np.bool_),
+            teacher_streak=np.full(4, 20.0),
+            teacher_config=ImpactRecoveryCorrectiveTeacherConfig(),
+            distillation_config=distillation,
+        )
 
 
 def test_distilled_evaluation_validator_recomputes_repeat_totals(tmp_path: Path) -> None:

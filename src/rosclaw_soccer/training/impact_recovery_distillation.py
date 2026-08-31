@@ -36,6 +36,7 @@ from rosclaw_soccer.training.recovery_mjx import _atomic_json, compiled_mujoco_m
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _JOINT_COUNT = 29
 _EFFECT_WEIGHTS = np.asarray((3.0, 1.0, 1.0, 2.0, 2.0, 0.5), dtype=np.float64)
+_RIDGE_MODEL_TYPES = frozenset(("RIDGE_CURRENT_FRAME", "RIDGE_HISTORY"))
 
 
 @dataclass(frozen=True)
@@ -43,8 +44,11 @@ class ImpactRecoveryDistillationConfig:
     """Reproducible collection and low-capacity student training contract."""
 
     hidden_width: int = 128
-    student_model_type: Literal["MLP", "RIDGE_CURRENT_FRAME"] = "MLP"
+    student_model_type: Literal["MLP", "RIDGE_CURRENT_FRAME", "RIDGE_HISTORY"] = "MLP"
+    label_outcome_mode: Literal["COST_ACCEPTED", "SUCCESSOR_FRONTIER"] = "COST_ACCEPTED"
+    minimum_label_stable_streak: int = 15
     ridge_regularization: float = 100.0
+    ridge_regularization_grid: tuple[float, ...] = ()
     training_steps: int = 3_000
     batch_size: int = 256
     learning_rate: float = 3.0e-4
@@ -63,13 +67,23 @@ class ImpactRecoveryDistillationConfig:
             self.learning_rate,
             self.weight_decay,
             self.ridge_regularization,
+            *self.ridge_regularization_grid,
             self.gate_division_floor,
             self.required_validation_loss_improvement_fraction,
         )
         if (
             not 32 <= self.hidden_width <= 512
-            or self.student_model_type not in {"MLP", "RIDGE_CURRENT_FRAME"}
+            or self.student_model_type not in {"MLP", *_RIDGE_MODEL_TYPES}
+            or self.label_outcome_mode not in {"COST_ACCEPTED", "SUCCESSOR_FRONTIER"}
+            or not 1 <= self.minimum_label_stable_streak <= 25
             or not 1.0e-3 <= self.ridge_regularization <= 1.0e6
+            or bool(self.ridge_regularization_grid)
+            and self.student_model_type not in _RIDGE_MODEL_TYPES
+            or len(self.ridge_regularization_grid) > 8
+            or any(not 1.0e-3 <= value <= 1.0e6 for value in self.ridge_regularization_grid)
+            or len(set(self.ridge_regularization_grid)) != len(self.ridge_regularization_grid)
+            or tuple(self.ridge_regularization_grid)
+            != tuple(sorted(self.ridge_regularization_grid))
             or not 100 <= self.training_steps <= 100_000
             or not 32 <= self.batch_size <= 8_192
             or not 1.0e-6 <= self.learning_rate <= 1.0e-2
@@ -106,6 +120,28 @@ def _effect(metrics: dict[str, jax.Array]) -> jax.Array:
         ),
         axis=-1,
     )
+
+
+def _outcome_label_mask(
+    *,
+    cost_accepted: np.ndarray[Any, Any],
+    teacher_success: np.ndarray[Any, Any],
+    teacher_streak: np.ndarray[Any, Any],
+    teacher_config: ImpactRecoveryCorrectiveTeacherConfig,
+    distillation_config: ImpactRecoveryDistillationConfig,
+) -> np.ndarray[Any, Any]:
+    """Keep failed teachers as evidence without imitating them as positive labels."""
+
+    accepted = np.asarray(cost_accepted, dtype=np.bool_)
+    success = np.asarray(teacher_success, dtype=np.bool_)
+    streak = np.asarray(teacher_streak, dtype=np.float64)
+    if accepted.shape != success.shape or accepted.shape != streak.shape:
+        raise ValueError("impact-recovery distillation outcome labels changed shape")
+    if distillation_config.label_outcome_mode == "COST_ACCEPTED":
+        return accepted
+    if teacher_config.objective_mode != "SUCCESSOR_STREAK":
+        raise ValueError("impact-recovery successor labels require a successor teacher")
+    return accepted & (success | (streak >= distillation_config.minimum_label_stable_streak))
 
 
 def _make_gated_plan_replay(
@@ -306,6 +342,45 @@ def _flatten_time_state(value: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
     return transposed.reshape((-1,) + value.shape[3:])
 
 
+def _ridge_coefficient(
+    observation: np.ndarray[Any, Any],
+    action: np.ndarray[Any, Any],
+    regularization: float,
+) -> np.ndarray[Any, Any]:
+    design = np.concatenate(
+        (
+            observation.astype(np.float64),
+            np.ones((observation.shape[0], 1), dtype=np.float64),
+        ),
+        axis=1,
+    )
+    regularizer = np.eye(design.shape[1], dtype=np.float64)
+    regularizer[-1, -1] = 0.0
+    return np.linalg.solve(
+        design.T @ design + regularization * regularizer,
+        design.T @ action.astype(np.float64),
+    )
+
+
+def _normalization(
+    observation: np.ndarray[Any, Any],
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    mean = np.asarray(np.mean(observation, axis=0, dtype=np.float64), dtype=np.float32)
+    std = np.asarray(
+        np.maximum(np.std(observation, axis=0, dtype=np.float64), 1.0e-4),
+        dtype=np.float32,
+    )
+    return mean, std
+
+
+def _normalized(
+    observation: np.ndarray[Any, Any],
+    mean: np.ndarray[Any, Any],
+    std: np.ndarray[Any, Any],
+) -> np.ndarray[Any, Any]:
+    return np.asarray(np.clip((observation - mean) / std, -10.0, 10.0), dtype=np.float32)
+
+
 def _train_student(
     *,
     observation: np.ndarray[Any, Any],
@@ -324,14 +399,13 @@ def _train_student(
     selected_observation = (
         observation[:, -189:] if config.student_model_type == "RIDGE_CURRENT_FRAME" else observation
     )
-    train_x = np.asarray(selected_observation[training_mask], dtype=np.float32)
+    raw_train_x = np.asarray(selected_observation[training_mask], dtype=np.float32)
     train_y = np.asarray(action[training_mask], dtype=np.float32)
-    validation_x = np.asarray(selected_observation[validation_mask], dtype=np.float32)
+    raw_validation_x = np.asarray(selected_observation[validation_mask], dtype=np.float32)
     validation_y = np.asarray(action[validation_mask], dtype=np.float32)
-    input_mean = np.mean(train_x, axis=0, dtype=np.float64).astype(np.float32)
-    input_std = np.maximum(np.std(train_x, axis=0, dtype=np.float64), 1.0e-4).astype(np.float32)
-    train_x = np.clip((train_x - input_mean) / input_std, -10.0, 10.0)
-    validation_x = np.clip((validation_x - input_mean) / input_std, -10.0, 10.0)
+    input_mean, input_std = _normalization(raw_train_x)
+    train_x = _normalized(raw_train_x, input_mean, input_std)
+    validation_x = _normalized(raw_validation_x, input_mean, input_std)
     zero_validation_loss = float(np.mean(np.square(validation_y), dtype=np.float64))
     common_metrics = {
         "training_row_count": int(train_x.shape[0]),
@@ -340,17 +414,57 @@ def _train_student(
         "validation_state_count": int(validation_states.size),
         "validation_state_indices": [int(value) for value in validation_states],
         "zero_action_validation_loss": zero_validation_loss,
+        "exam_state_role": "FINAL_EVALUATION_ONLY",
+        "exam_used_for_model_selection": False,
     }
-    if config.student_model_type == "RIDGE_CURRENT_FRAME":
-        design = np.concatenate(
-            (train_x.astype(np.float64), np.ones((train_x.shape[0], 1), dtype=np.float64)),
-            axis=1,
-        )
-        regularizer = np.eye(design.shape[1], dtype=np.float64)
-        regularizer[-1, -1] = 0.0
-        coefficient = np.linalg.solve(
-            design.T @ design + config.ridge_regularization * regularizer,
-            design.T @ train_y.astype(np.float64),
+    if config.student_model_type in _RIDGE_MODEL_TYPES:
+        selected_regularization = config.ridge_regularization
+        calibration_states = np.asarray((), dtype=unique_states.dtype)
+        calibration_losses: list[dict[str, float]] = []
+        if config.ridge_regularization_grid:
+            candidate_training_states = shuffled_states[config.holdout_state_count :]
+            if candidate_training_states.size < 2:
+                raise ValueError(
+                    "impact-recovery ridge selection needs two non-exam teacher states"
+                )
+            calibration_state_count = max(1, min(8, int(candidate_training_states.size) // 4))
+            calibration_states = np.sort(candidate_training_states[:calibration_state_count])
+            training_state_index = state_index[training_mask]
+            calibration_mask = np.isin(training_state_index, calibration_states)
+            inner_training_mask = ~calibration_mask
+            inner_mean, inner_std = _normalization(raw_train_x[inner_training_mask])
+            inner_train_x = _normalized(raw_train_x[inner_training_mask], inner_mean, inner_std)
+            calibration_x = _normalized(raw_train_x[calibration_mask], inner_mean, inner_std)
+            for regularization in config.ridge_regularization_grid:
+                candidate = _ridge_coefficient(
+                    inner_train_x,
+                    train_y[inner_training_mask],
+                    regularization,
+                )
+                prediction = np.clip(
+                    calibration_x.astype(np.float64) @ candidate[:-1] + candidate[-1],
+                    -1.0,
+                    1.0,
+                )
+                calibration_losses.append(
+                    {
+                        "regularization": float(regularization),
+                        "loss": float(
+                            np.mean(
+                                np.square(prediction - train_y[calibration_mask]),
+                                dtype=np.float64,
+                            )
+                        ),
+                    }
+                )
+            selected_regularization = min(
+                calibration_losses,
+                key=lambda row: (row["loss"], row["regularization"]),
+            )["regularization"]
+        coefficient = _ridge_coefficient(
+            train_x,
+            train_y,
+            selected_regularization,
         )
         validation_prediction = np.clip(
             validation_x.astype(np.float64) @ coefficient[:-1] + coefficient[-1],
@@ -373,6 +487,13 @@ def _train_student(
             },
             {
                 **common_metrics,
+                "ridge_regularization_selection": (
+                    "INNER_STATE_HOLDOUT" if config.ridge_regularization_grid else "FIXED"
+                ),
+                "selected_ridge_regularization": selected_regularization,
+                "ridge_calibration_state_count": int(calibration_states.size),
+                "ridge_calibration_state_indices": [int(value) for value in calibration_states],
+                "ridge_calibration_losses": calibration_losses,
                 "final_training_loss": training_loss,
                 "best_validation_loss": validation_loss,
                 "validation_loss_improvement_fraction": (
@@ -389,14 +510,15 @@ def _train_student(
     def initialize(rng: jax.Array, inputs: int, outputs: int) -> jax.Array:
         return jax.random.normal(rng, (inputs, outputs), dtype=jnp.float32) * jnp.sqrt(2.0 / inputs)
 
-    params: tuple[jax.Array, ...] = (
-        initialize(key1, train_x.shape[1], config.hidden_width),
-        jnp.zeros((config.hidden_width,), jnp.float32),
-        initialize(key2, config.hidden_width, config.hidden_width),
-        jnp.zeros((config.hidden_width,), jnp.float32),
-        initialize(key3, config.hidden_width, _JOINT_COUNT),
-        jnp.zeros((_JOINT_COUNT,), jnp.float32),
-    )
+    def initial_params() -> tuple[jax.Array, ...]:
+        return (
+            initialize(key1, train_x.shape[1], config.hidden_width),
+            jnp.zeros((config.hidden_width,), jnp.float32),
+            initialize(key2, config.hidden_width, config.hidden_width),
+            jnp.zeros((config.hidden_width,), jnp.float32),
+            initialize(key3, config.hidden_width, _JOINT_COUNT),
+            jnp.zeros((_JOINT_COUNT,), jnp.float32),
+        )
 
     def forward(active: tuple[jax.Array, ...], values: jax.Array) -> jax.Array:
         w1, b1, w2, b2, w3, b3 = active
@@ -405,7 +527,6 @@ def _train_student(
         return jnp.tanh(hidden2 @ w3 + b3)
 
     optimizer = optax.adamw(config.learning_rate, weight_decay=config.weight_decay)
-    optimizer_state = optimizer.init(params)
 
     @jax.jit  # type: ignore[untyped-decorator]
     def update(
@@ -422,46 +543,95 @@ def _train_student(
         updates, state = optimizer.update(gradients, state, active)
         return cast(tuple[jax.Array, ...], optax.apply_updates(active, updates)), state, loss
 
-    train_x_jax = jnp.asarray(train_x)
-    train_y_jax = jnp.asarray(train_y)
+    def fit_mlp(
+        *,
+        fit_x: np.ndarray[Any, Any],
+        fit_y: np.ndarray[Any, Any],
+        step_count: int,
+        calibration_x: np.ndarray[Any, Any] | None = None,
+        calibration_y: np.ndarray[Any, Any] | None = None,
+    ) -> tuple[tuple[jax.Array, ...], float, int, float]:
+        params = initial_params()
+        optimizer_state = optimizer.init(params)
+        fit_x_jax = jnp.asarray(fit_x)
+        fit_y_jax = jnp.asarray(fit_y)
+        calibration_x_jax = jnp.asarray(calibration_x) if calibration_x is not None else None
+        calibration_y_jax = jnp.asarray(calibration_y) if calibration_y is not None else None
+        batch_rng = np.random.default_rng(config.random_seed + 1)
+        final_loss = math.inf
+        best_step = step_count
+        best_calibration_loss = math.inf
+        for step in range(step_count):
+            indexes = batch_rng.integers(0, fit_x.shape[0], size=config.batch_size)
+            params, optimizer_state, loss = update(
+                params,
+                optimizer_state,
+                fit_x_jax[indexes],
+                fit_y_jax[indexes],
+            )
+            final_loss = float(loss)
+            if (
+                calibration_x_jax is not None
+                and calibration_y_jax is not None
+                and ((step + 1) % 25 == 0 or step + 1 == step_count)
+            ):
+                calibration_loss = float(
+                    jnp.mean(jnp.square(forward(params, calibration_x_jax) - calibration_y_jax))
+                )
+                if calibration_loss < best_calibration_loss:
+                    best_calibration_loss = calibration_loss
+                    best_step = step + 1
+        return params, final_loss, best_step, best_calibration_loss
+
+    candidate_training_states = shuffled_states[config.holdout_state_count :]
+    if candidate_training_states.size < 2:
+        raise ValueError("impact-recovery MLP selection needs two non-exam teacher states")
+    calibration_state_count = max(1, min(8, int(candidate_training_states.size) // 4))
+    calibration_states = np.sort(candidate_training_states[:calibration_state_count])
+    training_state_index = state_index[training_mask]
+    calibration_mask = np.isin(training_state_index, calibration_states)
+    inner_training_mask = ~calibration_mask
+    inner_mean, inner_std = _normalization(raw_train_x[inner_training_mask])
+    inner_train_x = _normalized(raw_train_x[inner_training_mask], inner_mean, inner_std)
+    calibration_x = _normalized(raw_train_x[calibration_mask], inner_mean, inner_std)
+    _, _, selected_training_steps, calibration_loss = fit_mlp(
+        fit_x=inner_train_x,
+        fit_y=train_y[inner_training_mask],
+        step_count=config.training_steps,
+        calibration_x=calibration_x,
+        calibration_y=train_y[calibration_mask],
+    )
+    params, final_training_loss, _, _ = fit_mlp(
+        fit_x=train_x,
+        fit_y=train_y,
+        step_count=selected_training_steps,
+    )
     validation_x_jax = jnp.asarray(validation_x)
     validation_y_jax = jnp.asarray(validation_y)
-    batch_rng = np.random.default_rng(config.random_seed + 1)
-    best_params = params
-    best_validation_loss = math.inf
-    final_training_loss = math.inf
-    for step in range(config.training_steps):
-        indexes = batch_rng.integers(0, train_x.shape[0], size=config.batch_size)
-        params, optimizer_state, loss = update(
-            params,
-            optimizer_state,
-            train_x_jax[indexes],
-            train_y_jax[indexes],
-        )
-        final_training_loss = float(loss)
-        if step % 25 == 0 or step + 1 == config.training_steps:
-            validation_loss = float(
-                jnp.mean(jnp.square(forward(params, validation_x_jax) - validation_y_jax))
-            )
-            if validation_loss < best_validation_loss:
-                best_validation_loss = validation_loss
-                best_params = params
+    final_validation_loss = float(
+        jnp.mean(jnp.square(forward(params, validation_x_jax) - validation_y_jax))
+    )
     model = {
         "input_mean": input_mean,
         "input_std": input_std,
-        "w1": np.asarray(best_params[0], dtype=np.float32),
-        "b1": np.asarray(best_params[1], dtype=np.float32),
-        "w2": np.asarray(best_params[2], dtype=np.float32),
-        "b2": np.asarray(best_params[3], dtype=np.float32),
-        "w3": np.asarray(best_params[4], dtype=np.float32),
-        "b3": np.asarray(best_params[5], dtype=np.float32),
+        "w1": np.asarray(params[0], dtype=np.float32),
+        "b1": np.asarray(params[1], dtype=np.float32),
+        "w2": np.asarray(params[2], dtype=np.float32),
+        "b2": np.asarray(params[3], dtype=np.float32),
+        "w3": np.asarray(params[4], dtype=np.float32),
+        "b3": np.asarray(params[5], dtype=np.float32),
     }
     metrics = {
         **common_metrics,
+        "checkpoint_selection": "INNER_STATE_HOLDOUT_THEN_REFIT",
+        "mlp_calibration_state_count": int(calibration_states.size),
+        "mlp_calibration_state_indices": [int(value) for value in calibration_states],
+        "mlp_calibration_loss": calibration_loss,
+        "selected_training_steps": selected_training_steps,
         "final_training_loss": final_training_loss,
-        "best_validation_loss": best_validation_loss,
+        "best_validation_loss": final_validation_loss,
         "validation_loss_improvement_fraction": (
-            (zero_validation_loss - best_validation_loss) / max(zero_validation_loss, 1.0e-12)
+            (zero_validation_loss - final_validation_loss) / max(zero_validation_loss, 1.0e-12)
         ),
     }
     return model, metrics
@@ -626,6 +796,13 @@ def build_impact_recovery_distilled_student(
     gated_accepted = (
         finite & stability_ok & (improvement >= teacher_config.minimum_cost_improvement_fraction)
     )
+    gated_accepted = _outcome_label_mask(
+        cost_accepted=gated_accepted,
+        teacher_success=teacher_success,
+        teacher_streak=teacher_streak,
+        teacher_config=teacher_config,
+        distillation_config=active,
+    )
     state_instance_rows = np.repeat(
         np.arange(initial_indexes.size, dtype=np.int32), teacher_config.horizon_steps
     )
@@ -691,6 +868,10 @@ def build_impact_recovery_distilled_student(
         / (teacher_config.state_count * teacher_config.robust_variants_per_state),
         "gated_median_cost_improvement_fraction": float(np.median(improvement)),
         "gated_median_novelty_permission": float(np.median(gate)),
+        "successful_teacher_variant_count": int(np.sum(teacher_success)),
+        "successor_frontier_variant_count": int(
+            np.sum(teacher_success | (teacher_streak >= active.minimum_label_stable_streak))
+        ),
         "gated_objective_diagnostics": {
             "baseline_success_count": int(np.sum(baseline_success)),
             "teacher_success_count": int(np.sum(teacher_success)),
@@ -704,7 +885,12 @@ def build_impact_recovery_distilled_student(
         "model_architecture": (
             "NORMALIZED_RIDGE_CURRENT_FRAME_TO_29_JOINT_RESIDUAL"
             if active.student_model_type == "RIDGE_CURRENT_FRAME"
-            else "NORMALIZED_TANH_MLP_128X128_TO_29_JOINT_RESIDUAL"
+            else "NORMALIZED_RIDGE_HISTORY4_TO_29_JOINT_RESIDUAL"
+            if active.student_model_type == "RIDGE_HISTORY"
+            else (
+                f"NORMALIZED_TANH_MLP_{active.hidden_width}X{active.hidden_width}"
+                "_TO_29_JOINT_RESIDUAL"
+            )
         ),
         "action_semantics": "TEACHER_NOVELTY_GATED_BOUNDED_29_JOINT_PD_RESIDUAL",
         "residual_authority_steps": teacher_config.horizon_steps,
@@ -762,7 +948,7 @@ def validate_impact_recovery_distilled_student(path: Path) -> dict[str, Any]:
             set(model) == {"input_mean", "input_std", "weight", "bias"}
             and model["weight"].shape == (model["input_mean"].size, _JOINT_COUNT)
             and model["bias"].shape == (_JOINT_COUNT,)
-            if config.student_model_type == "RIDGE_CURRENT_FRAME"
+            if config.student_model_type in _RIDGE_MODEL_TYPES
             else set(model) == {"input_mean", "input_std", "w1", "b1", "w2", "b2", "w3", "b3"}
             and model["w1"].shape == (model["input_mean"].size, config.hidden_width)
             and model["b1"].shape == (config.hidden_width,)

@@ -8,6 +8,10 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from rosclaw_soccer.training.impact_recovery_champion import (
+    ImpactRecoveryChampionChallengeConfig,
+    build_impact_recovery_champion_challenge,
+)
 from rosclaw_soccer.training.impact_recovery_distillation import (
     ImpactRecoveryDistillationConfig,
 )
@@ -56,7 +60,7 @@ def _diagnostic(path: Path, population: str, successes: int) -> Path:
 def _training(path: Path) -> Path:
     checkpoint = path.parent / "checkpoints" / "65536" / "params"
     checkpoint.parent.mkdir(parents=True)
-    checkpoint.write_bytes(b"safe-checkpoint")
+    checkpoint.write_bytes(f"safe-checkpoint:{path.parent.name}".encode())
     files = [
         {
             "path": "65536/params",
@@ -103,12 +107,28 @@ def _training(path: Path) -> Path:
 def _evaluation(path: Path, training_path: Path, acquisition: int, retention: int) -> Path:
     training = json.loads(training_path.read_text(encoding="utf-8"))
     config = ImpactRecoveryMJXEvaluationConfig(num_envs=8, seeds=(1, 2))
+    selected_checkpoint_files = [
+        {**row, "path": str(row["path"]).removeprefix("65536/")}
+        for row in training["checkpoint_files"]
+        if str(row["path"]).startswith("65536/")
+    ]
     populations = {
         name: {
             "episode_count": 16,
             "success_count": success,
             "success_rate": success / 16,
-            "repeats": [{"seed": seed} for seed in config.seeds],
+            "repeats": [
+                {
+                    "seed": seed,
+                    "success_count": repeat_success,
+                    "success_rate": repeat_success / config.num_envs,
+                }
+                for seed, repeat_success in zip(
+                    config.seeds,
+                    (min(success, config.num_envs), max(0, success - config.num_envs)),
+                    strict=True,
+                )
+            ],
         }
         for name, success in (("acquisition", acquisition), ("retention", retention))
     }
@@ -118,7 +138,8 @@ def _evaluation(path: Path, training_path: Path, acquisition: int, retention: in
         "config_hash": config.config_hash,
         "training_report_hash": training["report_hash"],
         "curriculum_manifest_hash": _DIGEST,
-        "selected_checkpoint_hash": _DIGEST,
+        "selected_checkpoint_hash": hash_json(selected_checkpoint_files),
+        "selected_checkpoint_files": selected_checkpoint_files,
         "populations": populations,
         "physics_backend": "MUJOCO_MJX",
         "promotion_eligible": False,
@@ -287,3 +308,70 @@ def test_selection_accepts_distilled_candidate_schema_but_not_extra_authority(
     assert report["candidates"][0]["candidate_kind"] == "DISTILLED_STUDENT"
     assert report["candidates"][0]["decision"] == "QUALIFIED_FOR_CPU_FULL_CHAIN_EXAM"
     assert report["promotion_eligible"] is False
+
+
+def test_champion_challenge_archives_tie_and_accepts_bounded_growth(tmp_path: Path) -> None:
+    incumbent_training = _training(tmp_path / "incumbent" / "training-report.json")
+    challenger_training = _training(tmp_path / "challenger" / "training-report.json")
+    incumbent = _evaluation(
+        tmp_path / "incumbent-eval.json", incumbent_training, acquisition=12, retention=14
+    )
+    tied = _evaluation(
+        tmp_path / "tied-eval.json", challenger_training, acquisition=12, retention=14
+    )
+    improved = _evaluation(
+        tmp_path / "improved-eval.json", challenger_training, acquisition=13, retention=13
+    )
+    config = ImpactRecoveryChampionChallengeConfig(minimum_population_episode_count=16)
+
+    tied_report = build_impact_recovery_champion_challenge(
+        incumbent_training_report_path=incumbent_training,
+        incumbent_evaluation_report_path=incumbent,
+        challenger_training_report_path=challenger_training,
+        challenger_evaluation_report_path=tied,
+        output_dir=tmp_path / "tied-challenge",
+        source_checkout_path=tmp_path / "checkout",
+        config=config,
+    )
+    improved_report = build_impact_recovery_champion_challenge(
+        incumbent_training_report_path=incumbent_training,
+        incumbent_evaluation_report_path=incumbent,
+        challenger_training_report_path=challenger_training,
+        challenger_evaluation_report_path=improved,
+        output_dir=tmp_path / "improved-challenge",
+        source_checkout_path=tmp_path / "checkout",
+        config=config,
+    )
+
+    assert tied_report["decision"] == "CHALLENGER_ARCHIVED"
+    assert improved_report["decision"] == "CHALLENGER_READY_FOR_CPU_FULL_CHAIN_EXAM"
+    assert improved_report["promotion_eligible"] is False
+
+
+def test_champion_challenge_rejects_checkpoint_not_bound_to_training(tmp_path: Path) -> None:
+    incumbent_training = _training(tmp_path / "incumbent" / "training-report.json")
+    challenger_training = _training(tmp_path / "challenger" / "training-report.json")
+    incumbent = _evaluation(
+        tmp_path / "incumbent-eval.json", incumbent_training, acquisition=12, retention=14
+    )
+    challenger = _evaluation(
+        tmp_path / "challenger-eval.json", challenger_training, acquisition=13, retention=14
+    )
+    payload = json.loads(challenger.read_text(encoding="utf-8"))
+    payload["selected_checkpoint_files"][0]["hash"] = hash_bytes(b"unbound")
+    payload["selected_checkpoint_hash"] = hash_json(payload["selected_checkpoint_files"])
+    payload["report_hash"] = hash_json(
+        {key: value for key, value in payload.items() if key != "report_hash"}
+    )
+    _write_json(challenger, payload)
+
+    with pytest.raises(ValueError, match="suite changed"):
+        build_impact_recovery_champion_challenge(
+            incumbent_training_report_path=incumbent_training,
+            incumbent_evaluation_report_path=incumbent,
+            challenger_training_report_path=challenger_training,
+            challenger_evaluation_report_path=challenger,
+            output_dir=tmp_path / "challenge",
+            source_checkout_path=tmp_path / "checkout",
+            config=ImpactRecoveryChampionChallengeConfig(minimum_population_episode_count=16),
+        )

@@ -422,12 +422,27 @@ def test_mjx_report_rejects_checkpoint_tampering(tmp_path: Path) -> None:
 
 def test_expanded_evaluation_report_is_sim_only(tmp_path: Path) -> None:
     config = ImpactRecoveryMJXEvaluationConfig(num_envs=8, seeds=(1, 2))
+    selected_checkpoint_files = [{"path": "params", "size_bytes": 4, "hash": hash_bytes(b"safe")}]
     populations = {
         name: {
             "episode_count": 16,
             "success_count": success_count,
             "success_rate": success_count / 16,
-            "repeats": [{"seed": seed} for seed in config.seeds],
+            "repeats": [
+                {
+                    "seed": seed,
+                    "success_count": repeat_success,
+                    "success_rate": repeat_success / config.num_envs,
+                }
+                for seed, repeat_success in zip(
+                    config.seeds,
+                    (
+                        min(success_count, config.num_envs),
+                        max(0, success_count - config.num_envs),
+                    ),
+                    strict=True,
+                )
+            ],
         }
         for name, success_count in (("acquisition", 7), ("retention", 15))
     }
@@ -437,7 +452,8 @@ def test_expanded_evaluation_report_is_sim_only(tmp_path: Path) -> None:
         "config_hash": config.config_hash,
         "training_report_hash": _DIGEST,
         "curriculum_manifest_hash": _DIGEST,
-        "selected_checkpoint_hash": _DIGEST,
+        "selected_checkpoint_hash": hash_json(selected_checkpoint_files),
+        "selected_checkpoint_files": selected_checkpoint_files,
         "populations": populations,
         "physics_backend": "MUJOCO_MJX",
         "promotion_eligible": False,
@@ -456,6 +472,55 @@ def test_expanded_evaluation_report_is_sim_only(tmp_path: Path) -> None:
     assert validated["promotion_authority"] == "NONE"
 
 
+def test_expanded_evaluation_rejects_manifest_and_repeat_tampering(tmp_path: Path) -> None:
+    config = ImpactRecoveryMJXEvaluationConfig(num_envs=8, seeds=(1, 2))
+    checkpoint_files = [{"path": "params", "size_bytes": 4, "hash": hash_bytes(b"safe")}]
+    populations = {
+        name: {
+            "episode_count": 16,
+            "success_count": 8,
+            "success_rate": 0.5,
+            "repeats": [
+                {"seed": seed, "success_count": 4, "success_rate": 0.5} for seed in config.seeds
+            ],
+        }
+        for name in ("acquisition", "retention")
+    }
+    report: dict[str, Any] = {
+        "schema_version": "rosclaw_soccer.impact_recovery_mjx_evaluation_report.v1",
+        "config": config.__dict__,
+        "config_hash": config.config_hash,
+        "training_report_hash": _DIGEST,
+        "curriculum_manifest_hash": _DIGEST,
+        "selected_checkpoint_hash": hash_json(checkpoint_files),
+        "selected_checkpoint_files": checkpoint_files,
+        "populations": populations,
+        "physics_backend": "MUJOCO_MJX",
+        "promotion_eligible": False,
+        "promotion_authority": "NONE",
+        "activation_ceiling": "SIM_ONLY",
+        "hardware_authorized": False,
+        "hardware_command_sent": False,
+    }
+    report["report_hash"] = hash_json(report)
+    path = tmp_path / "evaluation-report.json"
+    _write_json(path, report)
+
+    report["selected_checkpoint_hash"] = _DIGEST
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    _write_json(path, report)
+    with pytest.raises(ValueError, match="integrity"):
+        validate_impact_recovery_mjx_evaluation_report(path)
+
+    report["selected_checkpoint_hash"] = hash_json(checkpoint_files)
+    report["populations"]["acquisition"]["repeats"][0]["success_count"] = 3
+    report["populations"]["acquisition"]["repeats"][0]["success_rate"] = 3 / 8
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    _write_json(path, report)
+    with pytest.raises(ValueError, match="integrity"):
+        validate_impact_recovery_mjx_evaluation_report(path)
+
+
 def _frontier_evaluation_report(
     path: Path,
     *,
@@ -463,6 +528,7 @@ def _frontier_evaluation_report(
     acquisition_rows: list[dict[str, Any]],
 ) -> Path:
     config = ImpactRecoveryMJXEvaluationConfig(num_envs=8, seeds=(1, 2))
+    selected_checkpoint_files = [{"path": "params", "size_bytes": 4, "hash": hash_bytes(b"safe")}]
     row_cycle = acquisition_rows * 6
     row_cycle = row_cycle[:16]
     acquisition_repeats: list[dict[str, Any]] = []
@@ -498,7 +564,9 @@ def _frontier_evaluation_report(
             "episode_count": 16,
             "success_count": 16,
             "success_rate": 1.0,
-            "repeats": [{"seed": seed} for seed in config.seeds],
+            "repeats": [
+                {"seed": seed, "success_count": 8, "success_rate": 1.0} for seed in config.seeds
+            ],
         },
     }
     report: dict[str, Any] = {
@@ -507,7 +575,8 @@ def _frontier_evaluation_report(
         "config_hash": config.config_hash,
         "training_report_hash": _DIGEST,
         "curriculum_manifest_hash": curriculum_manifest_hash,
-        "selected_checkpoint_hash": _DIGEST,
+        "selected_checkpoint_hash": hash_json(selected_checkpoint_files),
+        "selected_checkpoint_files": selected_checkpoint_files,
         "populations": populations,
         "physics_backend": "MUJOCO_MJX",
         "promotion_eligible": False,
@@ -545,7 +614,8 @@ def test_builds_content_bound_failure_frontier(
 
     assert frontier["row_count"] == 3
     assert frontier["observed_episode_count"] == 16
-    assert frontier["source_checkpoint_hash"] == _DIGEST
+    evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))
+    assert frontier["source_checkpoint_hash"] == evaluation["selected_checkpoint_hash"]
     assert sum(row["sampling_probability"] for row in frontier["rows"]) == pytest.approx(1.0)
     assert frontier["training_use_only"] is True
     assert frontier["promotion_authority"] == "NONE"
