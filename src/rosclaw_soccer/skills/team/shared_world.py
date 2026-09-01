@@ -1681,6 +1681,7 @@ def _simulate_shared_world(
     shooter_post_policy_frame: int | None = 430,
     shooter_post_policy_blend_frames: int = 0,
     shooter_joint_guard_enabled: bool = False,
+    shooter_precontact_joint_guard_enabled: bool = False,
     shooter_post_policy_neutral_velocity_enabled: bool = False,
     shooter_post_policy_forward_velocity_mps: float = 0.0,
     shooter_joint_guard_config: G1JointGuardConfig | None = None,
@@ -1729,6 +1730,7 @@ def _simulate_shared_world(
     shooter_ball_initial_position_m: tuple[float, float, float] | None = None,
     ball_launcher_position_m: tuple[float, float, float] | None = None,
     ball_launcher_velocity_mps: tuple[float, float, float] | None = None,
+    launcher_receiver_enabled: bool = False,
     simulation_duration_sec: float = _TOTAL_TIME_SEC,
 ) -> tuple[G1SharedWorldResult, dict[str, np.ndarray]]:
     import mujoco
@@ -1746,6 +1748,8 @@ def _simulate_shared_world(
         raise ValueError("ball launcher position and velocity must be configured together")
     if shooter_ball_initial_position_m is not None and ball_launcher_position_m is not None:
         raise ValueError("direct-shot and launcher ball initializations are mutually exclusive")
+    if launcher_receiver_enabled and ball_launcher_position_m is None:
+        raise ValueError("launcher receiver requires a configured moving-ball launcher")
     if second_threat_config is not None and (
         goalkeeper_config is None
         or not goalkeeper_config.post_contact_ready_recovery_enabled
@@ -3170,7 +3174,7 @@ def _simulate_shared_world(
             second_threat_peak_force = force_norm
             first_goal_crossed_before_second_threat = goal_crossed
         if (
-            launcher_position is None
+            (launcher_position is None or launcher_receiver_enabled)
             and not shooter.entered
             and data.time + 1e-12 >= shooter.start_sec
         ):
@@ -4499,6 +4503,7 @@ def _simulate_shared_world(
                     robot.contact_latched
                     or robot.role == "goalkeeper"
                     or (robot.role == "passer" and passer_precontact_joint_guard_enabled)
+                    or (robot.role == "shooter" and shooter_precontact_joint_guard_enabled)
                 ):
                     goalkeeper_impact_imminent = bool(
                         robot.role == "goalkeeper"

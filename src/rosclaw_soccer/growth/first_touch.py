@@ -184,7 +184,7 @@ def evaluate_first_touch(
     failures: list[FirstTouchFailure] = []
     if not measurement.contact_detected:
         failures.append(FirstTouchFailure.TOUCH_TOO_SOFT)
-    if measurement.selected_foot != measurement.required_foot:
+    if measurement.contact_detected and measurement.selected_foot != measurement.required_foot:
         failures.append(FirstTouchFailure.WRONG_FOOT)
     safety_passed = bool(
         measurement.minimum_pelvis_height_m >= gate.minimum_pelvis_height_m
@@ -193,18 +193,19 @@ def evaluate_first_touch(
     )
     if not safety_passed:
         failures.append(FirstTouchFailure.LOST_BALANCE)
-    if measurement.direction_error_deg > gate.maximum_direction_error_deg:
-        failures.append(FirstTouchFailure.TOUCH_WRONG_DIRECTION)
     if (
-        measurement.outgoing_speed_mps > gate.maximum_outgoing_speed_mps
-        or measurement.target_error_m > gate.maximum_target_error_m
-    ):
-        failures.append(FirstTouchFailure.TOUCH_TOO_HARD)
-    elif (
         measurement.contact_detected
-        and measurement.outgoing_speed_mps < gate.minimum_outgoing_speed_mps
+        and measurement.direction_error_deg > gate.maximum_direction_error_deg
     ):
-        failures.append(FirstTouchFailure.TOUCH_TOO_SOFT)
+        failures.append(FirstTouchFailure.TOUCH_WRONG_DIRECTION)
+    if measurement.contact_detected:
+        if (
+            measurement.outgoing_speed_mps > gate.maximum_outgoing_speed_mps
+            or measurement.target_error_m > gate.maximum_target_error_m
+        ):
+            failures.append(FirstTouchFailure.TOUCH_TOO_HARD)
+        elif measurement.outgoing_speed_mps < gate.minimum_outgoing_speed_mps:
+            failures.append(FirstTouchFailure.TOUCH_TOO_SOFT)
     if measurement.next_action_latency_sec > gate.maximum_next_action_latency_sec:
         failures.append(FirstTouchFailure.TOO_SLOW_TO_NEXT_ACTION)
     if (

@@ -185,6 +185,23 @@ def test_first_touch_attributes_all_failures_and_builds_deterministic_dream() ->
     assert dream.hardware_authorized is False
 
 
+def test_missed_touch_does_not_claim_a_contradictory_hard_contact() -> None:
+    result = evaluate_first_touch(
+        _touch(
+            contact_detected=False,
+            outgoing_speed_mps=0.0,
+            target_error_m=1.0,
+            direction_error_deg=180.0,
+            next_action_latency_sec=1.0,
+        )
+    )
+    assert result.primary_failure is FirstTouchFailure.TOUCH_TOO_SOFT
+    assert result.all_failures == (
+        FirstTouchFailure.TOUCH_TOO_SOFT,
+        FirstTouchFailure.TOO_SLOW_TO_NEXT_ACTION,
+    )
+
+
 def _tactical_state() -> TwoVsOneState:
     return TwoVsOneState(
         state_id="state.s118.1",
