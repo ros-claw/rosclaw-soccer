@@ -225,6 +225,28 @@ COM/骨盆姿态并把接球时序推迟 0.20 秒，把球控制在目标口袋�
 后，局部样本恢复到 `8.89 cm` 误差并安全通过。这证明上下文站位有作用，也同时证明
 固定参数不能泛化。该观察只是开发探针，未进入正式配对证据。
 
+### 左脚共享身体加固
+
+左脚镜像探针进一步发现：关节动作已经做了矢状面镜像，但冻结右脚轨迹携带的初始
+骨盆位置、全局四元数和初始关节状态此前没有一起进入左脚解剖坐标系；共享触球后恢复
+也没有交换左右支撑脚语义。结果不是简单漏球，而是在恢复阶段摔倒。
+
+提交 `4bea971` 在共享 G1 身体层修复了这两项：
+
+- 左脚实例同时镜像初始根位置、根四元数和 29 关节姿态；
+- 小脑恢复在 canonical 右脚坐标中运行，左右支撑状态交换，输出再镜像回物理左脚。
+
+当前 CPU MuJoCo 左脚边界样本由 `pelvis≈0.07 m` 的倒地改善为：最低骨盆
+`0.6771 m`、最大躯干倾角 `23.58°`、最大根部速度 `1.5646 m/s`，无关节/力矩
+越界且不摔倒；独立重跑的测量和轨迹哈希完全相同。右脚通过样本的所有数值和轨迹
+哈希保持不变。
+
+左脚目前仍是 `TOUCH_TOO_SOFT`：它稳定地完成动作，但身体先进入来球口袋，要求的
+左脚没有取得第一接触。因此这次只声称“修复双侧初始化与稳定性”，不声称“左脚
+First Touch 通过”。边界证据位于：
+
+`/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s118a-first-touch-left-boundary-v1/`
+
 物理响应还呈现明显非线性：相邻摆腿幅度可能从安全控球跳变为漏球或摔倒。因此下一步
 不能靠手写 if/else 为每个速度打补丁；需要把失败邻域变成数据，由上下文 actor 学习
 站位、触球时序和接触强度，同时让安全 critic 和 retention 门约束更新。
@@ -279,6 +301,7 @@ COM/骨盆姿态并把接球时序推迟 0.20 秒，把球控制在目标口袋�
 - `8ebe239 feat: close first-touch physics acquisition loop`
 - `40b70ff test: require deterministic first-touch replay`
 - `9b29ae9 feat: render evidence-bound first-touch growth`
+- `4bea971 fix: stabilize bilateral kick initialization`
 
 已完成：
 
@@ -286,7 +309,7 @@ COM/骨盆姿态并把接球时序推迟 0.20 秒，把球控制在目标口袋�
 - 新增媒体模块 `ruff`、format、compileall、strict mypy 通过；
 - 无 `MUJOCO_GL` 环境变量的独立 720p CLI 回放通过；
 - 1080p 成片由 manifest 二次验证通过；
-- 全量非 integration 回归在干净 Core main 上为 `729 passed, 14 skipped,
+- 全量非 integration 回归在干净 Core main 上为 `731 passed, 14 skipped,
   5 deselected, 11 failed`。
 
 11 个全量失败与本分支新增代码无关，都是 S78–S116 外部历史证据在当前实现下的
