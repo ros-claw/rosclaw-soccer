@@ -8,8 +8,10 @@ from typing import cast
 import numpy as np
 import pytest
 
+import rosclaw_soccer.skills.team.shared_world as shared_world
 from rosclaw_soccer.growth.first_touch import FirstTouchFailure
 from rosclaw_soccer.providers.g1.asset_qualification import G1AssetQualification
+from rosclaw_soccer.providers.g1.mujoco_primitives import mirror_g1_joint_positions
 from rosclaw_soccer.skills.team.shared_world import G1SharedWorldResult
 from rosclaw_soccer.training.first_touch_physics import (
     FirstTouchCandidate,
@@ -185,3 +187,75 @@ def test_first_touch_scenario_and_candidate_reject_out_of_scope_values() -> None
         FirstTouchCandidate(candidate_id="candidate.bad", swing_amplitude=0.2)
     with pytest.raises(ValueError, match="start delay"):
         FirstTouchCandidate(candidate_id="candidate.bad", receiver_start_delay_sec=1.1)
+
+
+def test_left_foot_recovery_uses_the_canonical_anatomical_frame() -> None:
+    class Recovery:
+        def __init__(self) -> None:
+            self.call: dict[str, object] = {}
+
+        def adapt_target(self, **kwargs: object) -> SimpleNamespace:
+            self.call = kwargs
+            canonical = cast(np.ndarray, kwargs["target"])
+            return SimpleNamespace(
+                target=canonical + np.linspace(-0.1, 0.1, 29),
+                active=True,
+                blend_fraction=0.4,
+            )
+
+    recovery = Recovery()
+    robot = SimpleNamespace(
+        parameters=SimpleNamespace(kick_foot="left"),
+        recovery_controller=recovery,
+        contact_latched=True,
+        latest_left_support=True,
+        latest_right_support=False,
+        last_recovery_active=False,
+        last_recovery_blend_fraction=0.0,
+        recovery_active_frame_count=0,
+        recovery_peak_blend_fraction=0.0,
+    )
+    target = np.linspace(-0.7, 0.7, 29)
+    output, _, _ = shared_world._apply_recovery_controller(
+        robot,
+        target=target,
+        kp=np.ones(29),
+        kd=np.ones(29),
+        policy_frame=280,
+        timestamp_sec=6.0,
+    )
+
+    canonical = mirror_g1_joint_positions(target)
+    np.testing.assert_allclose(recovery.call["target"], canonical)
+    assert recovery.call["left_support"] is False
+    assert recovery.call["right_support"] is True
+    np.testing.assert_allclose(
+        output,
+        mirror_g1_joint_positions(canonical + np.linspace(-0.1, 0.1, 29)),
+    )
+
+
+def test_left_foot_initial_pose_mirrors_the_frozen_right_foot_frame() -> None:
+    position = np.asarray((0.2, -0.3, 0.8))
+    quaternion = np.asarray((0.7, 0.1, 0.2, 0.65))
+    joints = np.linspace(-0.5, 0.5, 29)
+
+    left_position, left_quaternion, left_joints = shared_world._kick_initial_pose(
+        position,
+        quaternion,
+        joints,
+        kick_foot="left",
+    )
+    np.testing.assert_allclose(left_position, (0.2, 0.3, 0.8))
+    np.testing.assert_allclose(left_quaternion, (0.7, -0.1, 0.2, -0.65))
+    np.testing.assert_allclose(left_joints, mirror_g1_joint_positions(joints))
+
+    right_position, right_quaternion, right_joints = shared_world._kick_initial_pose(
+        position,
+        quaternion,
+        joints,
+        kick_foot="right",
+    )
+    np.testing.assert_allclose(right_position, position)
+    np.testing.assert_allclose(right_quaternion, quaternion)
+    np.testing.assert_allclose(right_joints, joints)

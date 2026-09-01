@@ -5935,6 +5935,35 @@ def _goalkeeper_neutral_root_pose(
     )
 
 
+def _kick_initial_pose(
+    source_position: np.ndarray,
+    source_quaternion: np.ndarray,
+    source_joints: np.ndarray,
+    *,
+    kick_foot: str,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Put the frozen right-foot initial state in the selected anatomical frame."""
+
+    position = np.asarray(source_position, dtype=np.float64)
+    quaternion = np.asarray(source_quaternion, dtype=np.float64)
+    joints = np.asarray(source_joints, dtype=np.float64)
+    if (
+        position.shape != (3,)
+        or quaternion.shape != (4,)
+        or joints.shape != (29,)
+        or not all(np.all(np.isfinite(value)) for value in (position, quaternion, joints))
+        or kick_foot not in {"left", "right"}
+    ):
+        raise ValueError("kick initial pose contract is invalid")
+    if kick_foot == "right":
+        return position.copy(), quaternion.copy(), joints.copy()
+    mirrored_position = position.copy()
+    mirrored_position[1] *= -1.0
+    mirrored_quaternion = quaternion.copy()
+    mirrored_quaternion[(1, 3),] *= -1.0
+    return mirrored_position, mirrored_quaternion, _mirror_g1_joint_positions(joints)
+
+
 def _make_robot(
     *,
     model: Any,
@@ -6030,9 +6059,15 @@ def _make_robot(
     posture_quaternion = np.asarray(
         (math.cos(posture_yaw), 0.0, 0.0, math.sin(posture_yaw)), dtype=np.float64
     )
-    local_quaternion = _quaternion_multiply(posture_quaternion, initial_quaternion)
+    anatomical_position, anatomical_quaternion, anatomical_joints = _kick_initial_pose(
+        initial_position,
+        initial_quaternion,
+        initial_joints,
+        kick_foot=parameters.kick_foot,
+    )
+    local_quaternion = _quaternion_multiply(posture_quaternion, anatomical_quaternion)
     data.qpos[qpos_base : qpos_base + 3] = origin + _rotate_z(
-        initial_position
+        anatomical_position
         + np.asarray(
             (
                 parameters.stance_offset_x,
@@ -6050,11 +6085,11 @@ def _make_robot(
     data.qpos[qpos_base + 3 : qpos_base + 7] = _quaternion_multiply(
         frame_quaternion, local_quaternion
     )
-    data.qpos[joint_qpos] = initial_joints
+    data.qpos[joint_qpos] = anatomical_joints
     hold_target = (
         np.asarray(standby_target, dtype=np.float64).copy()
         if standby_target is not None
-        else initial_joints.copy()
+        else anatomical_joints.copy()
     )
     kp = (
         np.asarray(standby_kp, dtype=np.float64).copy()
@@ -7780,13 +7815,21 @@ def _apply_recovery_controller(
 
     if robot.recovery_controller is None:
         return target.copy(), kp.copy(), kd.copy()
+    left_foot_mirror = robot.parameters.kick_foot == "left"
+    canonical_target = _mirror_g1_joint_positions(target) if left_foot_mirror else target
+    canonical_left_support = (
+        robot.latest_right_support if left_foot_mirror else robot.latest_left_support
+    )
+    canonical_right_support = (
+        robot.latest_left_support if left_foot_mirror else robot.latest_right_support
+    )
     recovery = robot.recovery_controller.adapt_target(
-        target=target,
+        target=canonical_target,
         policy_frame=policy_frame,
         timestamp_sec=timestamp_sec,
         ball_contact_detected=robot.contact_latched,
-        left_support=robot.latest_left_support,
-        right_support=robot.latest_right_support,
+        left_support=canonical_left_support,
+        right_support=canonical_right_support,
     )
     output_kp = kp.copy()
     output_kd = kd.copy()
@@ -7809,7 +7852,10 @@ def _apply_recovery_controller(
         robot.recovery_peak_blend_fraction,
         recovery.blend_fraction,
     )
-    return recovery.target, output_kp, output_kd
+    recovery_target = (
+        _mirror_g1_joint_positions(recovery.target) if left_foot_mirror else recovery.target
+    )
+    return recovery_target, output_kp, output_kd
 
 
 def _contacts(
