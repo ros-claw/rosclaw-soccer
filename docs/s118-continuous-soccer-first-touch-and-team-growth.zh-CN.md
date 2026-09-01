@@ -16,9 +16,11 @@
 3. 冻结 Athlete Foundation 和现有传/射/恢复技能，只训练 2v1 的高层传射决策；
 4. 这些层通过后，才扩大到 2v2、历史对手池和球队级 Match Dream。
 
-本轮已经完成前三项的**合同与证据基础**，并跑通官方 `dm_control` 的 60 秒连续
-MuJoCo 环境语义。尚未训练出 G1 First Touch Champion，也尚未宣称 G1 已学会
-2v1；这两项是下一轮真实训练对象。
+S118 基础阶段完成了前三项的**合同与证据基础**，并跑通官方 `dm_control` 的 60 秒
+连续 MuJoCo 环境语义。后续 S118-A 已进一步完成单场景 G1 First Touch 物理获取、
+确定性重放和配对考试，但尚未训练出 First Touch Champion，也尚未宣称 G1 已学会
+2v1。局部结果和泛化失败详见
+`docs/s118a-first-touch-acquisition.zh-CN.md`。
 
 ## 为什么现在不能直接上大球队
 
@@ -292,9 +294,12 @@ Core 的 `CollectiveGrowth`，避免再次把 G1 足球细节伪装成通用 ROS
 - 已实现并测试：连续比赛合同、First Touch 失败/Dream、2v1 反事实 credit、SimForge
   任务面、官方 60 秒 MuJoCo 环境 smoke。
 - 已实测：本地 G1 移动来球参考权重在新分布上只有 55% 触球、5% 进球。
-- 未实现：G1 物理 First Touch 采集器、First Touch 学生训练、2v1 learned tactical
-  actor、历史 opponent pool、G1 60 秒连续比赛、宣传视频。
-- 未宣称：任何真实机器人结果、First Touch Champion、团队战术成长或 2v1 成功率。
+- 已实现：G1 物理 First Touch 采集器、单场景配对获取考试、独立确定性重放和
+  证据下游 1080p 前后对照视频。
+- 未实现：First Touch 上下文学生训练、2v1 learned tactical actor、历史 opponent
+  pool、G1 60 秒连续比赛。
+- 未宣称：任何真实机器人结果、First Touch Champion、团队战术成长或 2v1 成功率；
+  当前 First Touch 只在一个低速中心右脚场景局部通过。
 
 ## 回归验证
 
