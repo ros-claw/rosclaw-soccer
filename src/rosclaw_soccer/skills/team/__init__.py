@@ -34,6 +34,12 @@ from rosclaw_soccer.skills.team.composite_imitation_evidence import (
     G1CompositeImitationEvidence,
     run_g1_composite_imitation_development,
 )
+from rosclaw_soccer.skills.team.continuous_soccer import (
+    ContinuousSoccerConfig,
+    ContinuousSoccerTrace,
+    SoccerEventKind,
+    SoccerMatchEvent,
+)
 from rosclaw_soccer.skills.team.development_evidence import (
     ThreeRoleDevelopmentEvidence,
     run_three_role_development,
@@ -110,6 +116,8 @@ __all__ = [
     "G1CompositeImitationEvidence",
     "G1CompositeImitationSearchResult",
     "G1ContactImitationMetrics",
+    "ContinuousSoccerConfig",
+    "ContinuousSoccerTrace",
     "G1JointGuardConfig",
     "G1PhysicalSecondStrikerConfig",
     "G1SharedWorldResult",
@@ -124,6 +132,8 @@ __all__ = [
     "ThreeRoleDevelopmentEvidence",
     "TemporalAgilityProfile",
     "SoccerPlayerProfile",
+    "SoccerEventKind",
+    "SoccerMatchEvent",
     "SoccerTeamRoster",
     "profile_temporal_agility",
     "run_three_role_development",

@@ -40,6 +40,8 @@ def test_extension_objects_import_without_core_runtime_side_effects() -> None:
     assert SOCCER_TASK_PROVIDER.task_ids == (
         "soccer.age04_regulation",
         "soccer.first_touch",
+        "soccer.continuous_match",
+        "soccer.two_vs_one_decision",
         "soccer.three_role_league",
     )
     with pytest.raises(KeyError, match="unknown soccer task"):
@@ -173,10 +175,16 @@ def test_simforge_provider_registers_descriptions_without_running_physics() -> N
 
     age04 = registry.task_spec("soccer.age04_regulation")
     age05 = registry.task_spec("soccer.first_touch")
+    continuous = registry.task_spec("soccer.continuous_match")
+    two_vs_one = registry.task_spec("soccer.two_vs_one_decision")
     league = registry.task_spec("soccer.three_role_league")
     assert age04.evidence_requirements.minimum_seeds == 8
     assert age05.evidence_requirements.minimum_seeds == 20
     assert age05.scenario_distribution_ref == "soccer://age05/first-touch-v1"
+    assert continuous.success_spec[0] == ("continuous_episode_sec.min", 60.0)
+    assert continuous.success_spec[1] == ("terminate_on_goal", False)
+    assert two_vs_one.evidence_requirements.minimum_seeds == 32
+    assert two_vs_one.candidate_allowed_paths == ("/tactical_policy",)
     assert league.evidence_requirements.minimum_seeds == 8
     assert league.candidate_allowed_paths == (
         "/roles/passer/policy",
