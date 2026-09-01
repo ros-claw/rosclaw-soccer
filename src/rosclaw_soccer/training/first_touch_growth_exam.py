@@ -52,6 +52,7 @@ def compare_first_touch_growth(
     *,
     baseline_report_path: Path,
     candidate_report_path: Path,
+    candidate_replay_report_path: Path,
     output_path: Path,
 ) -> dict[str, Any]:
     """Persist a fail-closed, matched-scenario acquisition comparison."""
@@ -61,6 +62,7 @@ def compare_first_touch_growth(
         raise ValueError("First Touch growth exam output already exists")
     baseline = _load_bound_report(baseline_report_path)
     candidate = _load_bound_report(candidate_report_path)
+    candidate_replay = _load_bound_report(candidate_replay_report_path)
     matched_fields = {
         "scenario_hash": baseline["scenario_hash"] == candidate["scenario_hash"],
         "gate_config_hash": baseline["evaluation"]["gate_config_hash"]
@@ -77,6 +79,19 @@ def compare_first_touch_growth(
         baseline["physics"]["trajectory_digest"] != candidate["physics"]["trajectory_digest"]
     )
     candidates_independent = baseline["candidate_hash"] != candidate["candidate_hash"]
+    deterministic_candidate_replay = bool(
+        candidate_replay["scenario_hash"] == candidate["scenario_hash"]
+        and candidate_replay["candidate_hash"] == candidate["candidate_hash"]
+        and candidate_replay["evaluation"]["gate_config_hash"]
+        == candidate["evaluation"]["gate_config_hash"]
+        and candidate_replay["provenance"] == candidate["provenance"]
+        and candidate_replay["measurement_hash"] == candidate["measurement_hash"]
+        and candidate_replay["evaluation_hash"] == candidate["evaluation_hash"]
+        and candidate_replay["physics"]["trajectory_digest"]
+        == candidate["physics"]["trajectory_digest"]
+        and candidate_replay["physics"]["trajectory_artifact_hash"]
+        == candidate["physics"]["trajectory_artifact_hash"]
+    )
     baseline_passed = bool(baseline["evaluation"]["passed"])
     candidate_passed = bool(candidate["evaluation"]["passed"])
     candidate_safe = bool(
@@ -91,6 +106,7 @@ def compare_first_touch_growth(
         all(matched_fields.values())
         and trajectories_independent
         and candidates_independent
+        and deterministic_candidate_replay
         and not baseline_passed
         and candidate_passed
         and candidate_safe
@@ -102,6 +118,7 @@ def compare_first_touch_growth(
         "matched_fields": matched_fields,
         "trajectories_independent": trajectories_independent,
         "candidates_independent": candidates_independent,
+        "deterministic_candidate_replay": deterministic_candidate_replay,
         "baseline": {
             "report_hash": baseline["report_hash"],
             "file_hash": hash_bytes(baseline_report_path.expanduser().resolve().read_bytes()),
@@ -117,6 +134,15 @@ def compare_first_touch_growth(
             "passed": candidate_passed,
             "safe": candidate_safe,
             "task_loss": candidate_loss,
+        },
+        "candidate_replay": {
+            "report_hash": candidate_replay["report_hash"],
+            "file_hash": hash_bytes(
+                candidate_replay_report_path.expanduser().resolve().read_bytes()
+            ),
+            "trajectory_digest": candidate_replay["physics"]["trajectory_digest"],
+            "measurement_hash": candidate_replay["measurement_hash"],
+            "evaluation_hash": candidate_replay["evaluation_hash"],
         },
         "improvement": {
             "task_loss_reduction": baseline_loss - candidate_loss,
@@ -153,11 +179,13 @@ def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline-report", type=Path, required=True)
     parser.add_argument("--candidate-report", type=Path, required=True)
+    parser.add_argument("--candidate-replay-report", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     report = compare_first_touch_growth(
         baseline_report_path=args.baseline_report,
         candidate_report_path=args.candidate_report,
+        candidate_replay_report_path=args.candidate_replay_report,
         output_path=args.output,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False))

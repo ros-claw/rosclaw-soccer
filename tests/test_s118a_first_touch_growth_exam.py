@@ -14,11 +14,13 @@ def _report(root: Path, name: str, *, passed: bool, scenario_hash: str = _HASH) 
     directory = root / name
     directory.mkdir()
     trajectory = directory / "trajectory.npz"
-    trajectory.write_bytes(name.encode())
+    trajectory.write_bytes(b"passed-trace" if passed else b"baseline-trace")
     report: dict[str, Any] = {
         "schema_version": "rosclaw_soccer.first_touch_physics_evidence.v1",
         "scenario_hash": scenario_hash,
         "candidate_hash": "sha256:" + ("b" if passed else "c") * 64,
+        "measurement_hash": "sha256:" + ("d" if passed else "e") * 64,
+        "evaluation_hash": "sha256:" + ("f" if passed else "0") * 64,
         "gate": {
             "maximum_target_error_m": 0.35,
             "maximum_direction_error_deg": 20.0,
@@ -39,7 +41,9 @@ def _report(root: Path, name: str, *, passed: bool, scenario_hash: str = _HASH) 
         "physics": {
             "trajectory_artifact": trajectory.name,
             "trajectory_artifact_hash": hash_bytes(trajectory.read_bytes()),
-            "trajectory_digest": hash_bytes((name + ".trace").encode()),
+            "trajectory_digest": hash_bytes(
+                b"passed-trajectory" if passed else b"baseline-trajectory"
+            ),
             "finite_state": True,
             "joint_limit_violation": False,
             "torque_limit_violation": False,
@@ -61,10 +65,12 @@ def _report(root: Path, name: str, *, passed: bool, scenario_hash: str = _HASH) 
 def test_paired_exam_accepts_only_a_matched_safe_gain(tmp_path: Path) -> None:
     baseline = _report(tmp_path, "baseline", passed=False)
     candidate = _report(tmp_path, "candidate", passed=True)
+    replay = _report(tmp_path, "candidate-replay", passed=True)
 
     report = compare_first_touch_growth(
         baseline_report_path=baseline,
         candidate_report_path=candidate,
+        candidate_replay_report_path=replay,
         output_path=tmp_path / "exam.json",
     )
 
@@ -81,10 +87,17 @@ def test_paired_exam_rejects_a_scenario_mismatch(tmp_path: Path) -> None:
         passed=True,
         scenario_hash="sha256:" + "d" * 64,
     )
+    replay = _report(
+        tmp_path,
+        "candidate-replay",
+        passed=True,
+        scenario_hash="sha256:" + "d" * 64,
+    )
 
     report = compare_first_touch_growth(
         baseline_report_path=baseline,
         candidate_report_path=candidate,
+        candidate_replay_report_path=replay,
         output_path=tmp_path / "exam.json",
     )
 
