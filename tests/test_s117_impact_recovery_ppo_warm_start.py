@@ -11,6 +11,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.impact_recovery_mjx import _tree_hash
 from rosclaw_soccer.training.impact_recovery_ppo_warm_start import (
     ImpactRecoveryPPOWarmStartConfig,
+    _load_network_config,
     _whole_state_split,
     validate_impact_recovery_ppo_warm_start,
 )
@@ -93,9 +94,7 @@ def test_warm_start_config_rejects_authority_and_unknown_scope() -> None:
     with pytest.raises(ValueError, match="invalid"):
         ImpactRecoveryPPOWarmStartConfig(trainable_scope="UNKNOWN")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="invalid"):
-        ImpactRecoveryPPOWarmStartConfig(
-            required_calibration_improvement_fraction=-0.01
-        )
+        ImpactRecoveryPPOWarmStartConfig(required_calibration_improvement_fraction=-0.01)
     with pytest.raises(ValueError, match="invalid"):
         ImpactRecoveryPPOWarmStartConfig(required_exam_improvement_fraction=-0.01)
 
@@ -132,3 +131,57 @@ def test_warm_start_validator_rejects_checkpoint_tampering(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="integrity"):
         validate_impact_recovery_ppo_warm_start(path)
+
+
+def test_warm_start_v2_binds_portfolio_and_serializer_versions(tmp_path: Path) -> None:
+    path = _report(tmp_path)
+    report = json.loads(path.read_text(encoding="utf-8"))
+    for name in (
+        "distillation_report_hash",
+        "distillation_report_file_hash",
+        "teacher_report_hash",
+        "corpus_hash",
+    ):
+        report.pop(name)
+    report.update(
+        schema_version="rosclaw_soccer.impact_recovery_ppo_warm_start.v2",
+        supervision_type="TEACHER_PORTFOLIO",
+        supervision_report_schema=("rosclaw_soccer.impact_recovery_teacher_portfolio.v1"),
+        supervision_report_hash=_DIGEST,
+        supervision_report_file_hash=_DIGEST,
+        supervision_corpus_hash=_DIGEST,
+        checkpoint_serializer_versions={
+            "brax": "0.12.3",
+            "jax": "0.4.38",
+            "jaxlib": "0.4.38",
+            "orbax-checkpoint": "0.11.5",
+            "flax": "0.10.4",
+        },
+    )
+    report["report_hash"] = hash_json(
+        {key: value for key, value in report.items() if key != "report_hash"}
+    )
+    _write_json(path, report)
+
+    validated = validate_impact_recovery_ppo_warm_start(path)
+
+    assert validated["supervision_type"] == "TEACHER_PORTFOLIO"
+
+
+def test_network_config_loader_is_brax_version_independent(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    _write_json(
+        checkpoint / "ppo_network_config.json",
+        {
+            "network_factory_kwargs": {},
+            "normalize_observations": True,
+            "observation_size": [756],
+            "action_size": 29,
+        },
+    )
+
+    network, config = _load_network_config(checkpoint)
+
+    assert network.policy_network is not None
+    assert config.action_size == 29

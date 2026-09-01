@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import math
 import re
@@ -15,7 +16,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from brax.training.acme import running_statistics
 from brax.training.agents.ppo import checkpoint
+from ml_collections import config_dict
 
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.impact_recovery_distillation import (
@@ -26,6 +29,9 @@ from rosclaw_soccer.training.impact_recovery_mjx import (
     _tree_hash,
     validate_impact_recovery_mjx_report,
 )
+from rosclaw_soccer.training.impact_recovery_teacher_portfolio import (
+    validate_impact_recovery_teacher_portfolio,
+)
 from rosclaw_soccer.training.opentrack_recovery_mjx_ppo import (
     _make_recovery_ppo_networks,
 )
@@ -33,6 +39,25 @@ from rosclaw_soccer.training.recovery_mjx import _atomic_json
 
 _JOINT_COUNT = 29
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+_SERIALIZER_PACKAGES = ("brax", "jax", "jaxlib", "orbax-checkpoint", "flax")
+
+
+def _serializer_versions() -> dict[str, str]:
+    return {name: importlib.metadata.version(name) for name in _SERIALIZER_PACKAGES}
+
+
+def _validate_supervision_report(path: Path) -> tuple[dict[str, Any], str, bool]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("impact-recovery PPO warm-start supervision must be an object")
+    schema = payload.get("schema_version")
+    if schema == "rosclaw_soccer.impact_recovery_distilled_student.v1":
+        report = validate_impact_recovery_distilled_student(path)
+        return report, "DISTILLED_STUDENT", report.get("student_exam_eligible") is True
+    if schema == "rosclaw_soccer.impact_recovery_teacher_portfolio.v1":
+        report = validate_impact_recovery_teacher_portfolio(path)
+        return report, "TEACHER_PORTFOLIO", report.get("portfolio_exam_eligible") is True
+    raise ValueError("impact-recovery PPO warm-start supervision schema is unsupported")
 
 
 @dataclass(frozen=True)
@@ -139,6 +164,38 @@ def _loss_metrics(
     return jnp.mean(jnp.square(action - target)), jnp.sqrt(jnp.mean(jnp.square(action)))
 
 
+def _load_network_config(selected_checkpoint: Path) -> tuple[Any, Any]:
+    payload = json.loads(
+        (selected_checkpoint / "ppo_network_config.json").read_text(encoding="utf-8")
+    )
+    if (
+        not isinstance(payload, dict)
+        or set(payload)
+        != {
+            "network_factory_kwargs",
+            "normalize_observations",
+            "observation_size",
+            "action_size",
+        }
+        or payload.get("network_factory_kwargs") != {}
+        or not isinstance(payload.get("normalize_observations"), bool)
+        or not isinstance(payload.get("action_size"), int)
+        or payload.get("action_size") != _JOINT_COUNT
+    ):
+        raise ValueError("impact-recovery warm-start network config is unsupported")
+    preprocess = (
+        running_statistics.normalize
+        if payload["normalize_observations"]
+        else lambda observation, unused: observation
+    )
+    network = _make_recovery_ppo_networks(
+        payload["observation_size"],
+        payload["action_size"],
+        preprocess,
+    )
+    return network, config_dict.create(**payload)
+
+
 def build_impact_recovery_ppo_warm_start(
     *,
     parent_training_report_path: Path,
@@ -174,7 +231,9 @@ def build_impact_recovery_ppo_warm_start(
     if not devices or any(getattr(device, "platform", "") != "cpu" for device in devices):
         raise RuntimeError("impact-recovery PPO warm-start requires CPU-only JAX visibility")
     training = validate_impact_recovery_mjx_report(training_path)
-    distillation = validate_impact_recovery_distilled_student(distillation_path)
+    supervision, supervision_type, supervision_eligible = _validate_supervision_report(
+        distillation_path
+    )
     parent_hash, parent_files = _checkpoint_bound(
         training=training,
         training_path=training_path,
@@ -184,13 +243,13 @@ def build_impact_recovery_ppo_warm_start(
     if (
         training_config.gain_memory_mode != "DYNAMIC"
         or training_config.residual_gate_mode != "TEACHER_NOVELTY"
-        or training.get("curriculum_manifest_hash") != distillation.get("curriculum_manifest_hash")
-        or training.get("body_hash") != distillation.get("body_hash")
-        or distillation.get("student_exam_eligible") is not True
+        or training.get("curriculum_manifest_hash") != supervision.get("curriculum_manifest_hash")
+        or training.get("body_hash") != supervision.get("body_hash")
+        or not supervision_eligible
     ):
         raise ValueError("impact-recovery PPO warm-start lineage or actor contract changed")
-    corpus_path = distillation_path.parent / str(distillation["corpus"])
-    if not corpus_path.is_file() or hash_bytes(corpus_path.read_bytes()) != distillation.get(
+    corpus_path = distillation_path.parent / str(supervision["corpus"])
+    if not corpus_path.is_file() or hash_bytes(corpus_path.read_bytes()) != supervision.get(
         "corpus_hash"
     ):
         raise ValueError("impact-recovery PPO warm-start corpus bytes changed")
@@ -230,8 +289,7 @@ def build_impact_recovery_ppo_warm_start(
     parent_params = checkpoint.load(selected_checkpoint)
     if not isinstance(parent_params, list) or len(parent_params) != 3:
         raise ValueError("impact-recovery PPO warm-start parent parameter tree changed")
-    network_config = checkpoint.load_config(selected_checkpoint)
-    network = checkpoint._get_ppo_network(network_config, _make_recovery_ppo_networks)
+    network, network_config = _load_network_config(selected_checkpoint)
     normalizer, initial_policy_params, critic_params = parent_params
     optimizer = optax.chain(
         optax.clip_by_global_norm(active.maximum_gradient_norm),
@@ -369,19 +427,20 @@ def build_impact_recovery_ppo_warm_start(
     warm_checkpoint = checkpoint_root / "000000000001"
     warm_hash, warm_files = _tree_hash(warm_checkpoint)
     report: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.impact_recovery_ppo_warm_start.v1",
+        "schema_version": "rosclaw_soccer.impact_recovery_ppo_warm_start.v2",
         "config": asdict(active),
         "config_hash": active.config_hash,
         "parent_training_report_hash": training["report_hash"],
         "parent_training_report_file_hash": hash_bytes(training_path.read_bytes()),
         "parent_checkpoint_hash": parent_hash,
         "parent_checkpoint_files": parent_files,
-        "distillation_report_hash": distillation["report_hash"],
-        "distillation_report_file_hash": hash_bytes(distillation_path.read_bytes()),
-        "teacher_report_hash": distillation["teacher_report_hash"],
-        "corpus_hash": distillation["corpus_hash"],
-        "curriculum_manifest_hash": distillation["curriculum_manifest_hash"],
-        "body_hash": distillation["body_hash"],
+        "supervision_type": supervision_type,
+        "supervision_report_schema": supervision["schema_version"],
+        "supervision_report_hash": supervision["report_hash"],
+        "supervision_report_file_hash": hash_bytes(distillation_path.read_bytes()),
+        "supervision_corpus_hash": supervision["corpus_hash"],
+        "curriculum_manifest_hash": supervision["curriculum_manifest_hash"],
+        "body_hash": supervision["body_hash"],
         "split_semantics": "WHOLE_CURRICULUM_STATE_TRAIN_CALIBRATION_SEALED_EXAM",
         "split_states": {name: values.tolist() for name, values in splits.items()},
         "sample_counts": {name: int(np.sum(mask)) for name, mask in masks.items()},
@@ -410,6 +469,7 @@ def build_impact_recovery_ppo_warm_start(
         "warm_checkpoint": "checkpoints/000000000001",
         "warm_checkpoint_hash": warm_hash,
         "warm_checkpoint_files": warm_files,
+        "checkpoint_serializer_versions": _serializer_versions(),
         "warm_start_eligible": warm_start_eligible,
         "deployment_candidate": False,
         "promotion_eligible": False,
@@ -515,10 +575,50 @@ def validate_impact_recovery_ppo_warm_start(path: Path) -> dict[str, Any]:
             and math.isfinite(float(exam_improvement))
             and float(exam_improvement) >= config.required_exam_improvement_fraction
         )
+        schema = report.get("schema_version")
+        lineage_names: tuple[str, ...]
+        if schema == "rosclaw_soccer.impact_recovery_ppo_warm_start.v1":
+            lineage_names = (
+                "distillation_report_hash",
+                "distillation_report_file_hash",
+                "teacher_report_hash",
+                "corpus_hash",
+            )
+            supervision_valid = True
+        elif schema == "rosclaw_soccer.impact_recovery_ppo_warm_start.v2":
+            lineage_names = (
+                "supervision_report_hash",
+                "supervision_report_file_hash",
+                "supervision_corpus_hash",
+            )
+            supervision_schema = report.get("supervision_report_schema")
+            supervision_valid = bool(
+                (report.get("supervision_type"), supervision_schema)
+                in {
+                    (
+                        "DISTILLED_STUDENT",
+                        "rosclaw_soccer.impact_recovery_distilled_student.v1",
+                    ),
+                    (
+                        "TEACHER_PORTFOLIO",
+                        "rosclaw_soccer.impact_recovery_teacher_portfolio.v1",
+                    ),
+                }
+            )
+            serializer_versions = report.get("checkpoint_serializer_versions")
+            supervision_valid = bool(
+                supervision_valid
+                and isinstance(serializer_versions, dict)
+                and set(serializer_versions) == set(_SERIALIZER_PACKAGES)
+                and all(isinstance(value, str) and value for value in serializer_versions.values())
+            )
+        else:
+            lineage_names = ()
+            supervision_valid = False
         if (
-            report.get("schema_version") != "rosclaw_soccer.impact_recovery_ppo_warm_start.v1"
-            or declared != hash_json(report)
+            declared != hash_json(report)
             or report.get("config_hash") != config.config_hash
+            or not supervision_valid
             or not split_valid
             or not checkpoint_manifest_valid
             or not parent_manifest_valid
@@ -540,10 +640,7 @@ def validate_impact_recovery_ppo_warm_start(path: Path) -> dict[str, Any]:
                     "parent_training_report_hash",
                     "parent_training_report_file_hash",
                     "parent_checkpoint_hash",
-                    "distillation_report_hash",
-                    "distillation_report_file_hash",
-                    "teacher_report_hash",
-                    "corpus_hash",
+                    *lineage_names,
                     "curriculum_manifest_hash",
                     "body_hash",
                     "warm_checkpoint_hash",

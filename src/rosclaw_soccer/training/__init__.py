@@ -169,6 +169,11 @@ from rosclaw_soccer.training.impact_recovery_selection import (
     validate_impact_recovery_memory_diagnostic,
     validate_impact_recovery_selection_report,
 )
+from rosclaw_soccer.training.impact_recovery_teacher_portfolio import (
+    ImpactRecoveryTeacherPortfolioConfig,
+    build_impact_recovery_teacher_portfolio,
+    validate_impact_recovery_teacher_portfolio,
+)
 from rosclaw_soccer.training.recovery_associative_memory import (
     RecoveryAssociativeMemory,
     RecoveryAssociativeMemoryConfig,
@@ -384,6 +389,7 @@ __all__ = [
     "ImpactRecoveryPPOWarmStartConfig",
     "ImpactRecoveryCPUExamConfig",
     "ImpactRecoverySelectionConfig",
+    "ImpactRecoveryTeacherPortfolioConfig",
     "ImpactRecoverySource",
     "RecoveryReplayConfig",
     "RecoveryReplaySampler",
@@ -477,6 +483,7 @@ __all__ = [
     "build_impact_recovery_frontier",
     "build_impact_recovery_ppo_warm_start",
     "build_impact_recovery_selection",
+    "build_impact_recovery_teacher_portfolio",
     "audit_recovery_reference_catalog",
     "body_gravity_vector",
     "blend_recovery_actions",
@@ -557,6 +564,7 @@ __all__ = [
     "validate_impact_recovery_mjx_report",
     "validate_impact_recovery_ppo_warm_start",
     "validate_impact_recovery_selection_report",
+    "validate_impact_recovery_teacher_portfolio",
     "validate_recovery_mjx_probe_report",
     "validate_recovery_mjx_action_distribution_audit",
     "validate_recovery_mjx_directional_curriculum",
