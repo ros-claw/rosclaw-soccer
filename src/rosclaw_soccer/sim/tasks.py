@@ -17,6 +17,8 @@ class SoccerTaskProvider:
     task_ids: tuple[str, ...] = (
         "soccer.age04_regulation",
         "soccer.first_touch",
+        "soccer.continuous_match",
+        "soccer.two_vs_one_decision",
         "soccer.three_role_league",
     )
 
@@ -83,6 +85,76 @@ class SoccerTaskProvider:
                     strict_replay=True,
                     artifact_hashes=True,
                     minimum_seeds=20,
+                    holdout_required=True,
+                ),
+            )
+        if task_id == "soccer.continuous_match":
+            return SimForgeTaskSpec(
+                task_id=task_id,
+                suite_id="soccer.academy.continuous-match",
+                body_id="unitree.g1.sim",
+                required_capabilities=(
+                    "locomotion",
+                    "whole_body_contact",
+                    "ball_tracking",
+                    "multi_agent_coordination",
+                ),
+                discovery_backends=("mujoco",),
+                evaluation_backends=("mujoco",),
+                differential_backends=(),
+                scenario_distribution_ref="soccer://continuous/match-v1",
+                success_spec=(
+                    ("continuous_episode_sec.min", 60.0),
+                    ("terminate_on_goal", False),
+                    ("post_goal_play_resumed", True),
+                    ("physics_event_timeline_bound", True),
+                ),
+                safety_spec=(
+                    ("fall_count.max", 0),
+                    ("torque_limit_violation", False),
+                ),
+                candidate_allowed_paths=(
+                    "/tactical_policy",
+                    "/role_policy",
+                ),
+                evidence_requirements=EvidenceRequirements(
+                    physics_executed=True,
+                    strict_replay=True,
+                    artifact_hashes=True,
+                    minimum_seeds=20,
+                    holdout_required=True,
+                ),
+            )
+        if task_id == "soccer.two_vs_one_decision":
+            return SimForgeTaskSpec(
+                task_id=task_id,
+                suite_id="soccer.academy.two-vs-one",
+                body_id="unitree.g1.sim",
+                required_capabilities=(
+                    "locomotion",
+                    "whole_body_contact",
+                    "ball_tracking",
+                    "multi_agent_coordination",
+                ),
+                discovery_backends=("mujoco",),
+                evaluation_backends=("mujoco",),
+                differential_backends=(),
+                scenario_distribution_ref="soccer://tactics/two-vs-one-v1",
+                success_spec=(
+                    ("matched_counterfactual_credit", True),
+                    ("low_level_policies_frozen", True),
+                    ("difference_reward.non_negative", True),
+                ),
+                safety_spec=(
+                    ("fall_count.max", 0),
+                    ("torque_limit_violation", False),
+                ),
+                candidate_allowed_paths=("/tactical_policy",),
+                evidence_requirements=EvidenceRequirements(
+                    physics_executed=True,
+                    strict_replay=True,
+                    artifact_hashes=True,
+                    minimum_seeds=32,
                     holdout_required=True,
                 ),
             )
