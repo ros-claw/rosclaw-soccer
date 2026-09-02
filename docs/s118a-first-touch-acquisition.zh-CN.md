@@ -325,3 +325,7 @@ First Touch 通过”。边界证据位于：
 - 未实现：端到端神经小脑、在线 actor-critic 持续更新、直接关节力矩策略；
 - 未证明：First Touch Champion、2v1 战术、G1 连续比赛或真实机器人效果；
 - 未发送：任何 ROS、DDS、硬件或电机命令。
+
+后继 S118-B 已把这里提出的上下文 actor、局部接触残差、失败记忆和封存保留集推进为
+可运行实现；结果与新的泛化边界见
+`docs/s118b-contextual-first-touch-growth.zh-CN.md`。

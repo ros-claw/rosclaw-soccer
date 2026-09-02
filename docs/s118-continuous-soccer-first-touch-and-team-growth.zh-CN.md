@@ -19,8 +19,11 @@
 S118 基础阶段完成了前三项的**合同与证据基础**，并跑通官方 `dm_control` 的 60 秒
 连续 MuJoCo 环境语义。后续 S118-A 已进一步完成单场景 G1 First Touch 物理获取、
 确定性重放和配对考试，但尚未训练出 First Touch Champion，也尚未宣称 G1 已学会
-2v1。局部结果和泛化失败详见
-`docs/s118a-first-touch-acquisition.zh-CN.md`。
+2v1。S118-B 又建立了内容绑定 contextual/prototype actor、稠密接触诊断、局部关节
+接触残差和封存保留集：右脚在两个已知来球接触口袋内对未见目标条件达到 `2/2`，但
+横向连续泛化与左脚仍未通过。局部结果和失败边界详见
+`docs/s118a-first-touch-acquisition.zh-CN.md` 与
+`docs/s118b-contextual-first-touch-growth.zh-CN.md`。
 
 ## 为什么现在不能直接上大球队
 
@@ -296,8 +299,10 @@ Core 的 `CollectiveGrowth`，避免再次把 G1 足球细节伪装成通用 ROS
 - 已实测：本地 G1 移动来球参考权重在新分布上只有 55% 触球、5% 进球。
 - 已实现：G1 物理 First Touch 采集器、单场景配对获取考试、独立确定性重放和
   证据下游 1080p 前后对照视频。
-- 未实现：First Touch 上下文学生训练、2v1 learned tactical actor、历史 opponent
-  pool、G1 60 秒连续比赛。
+- 已实现：First Touch 的受限上下文学生、失败感知接触原型和两个新目标条件封存保留
+  集；仅证明两个已知来球接触口袋内的右脚目标迁移，不是 Champion。
+- 未实现：横向连续 First Touch actor、合格左脚 First Touch、2v1 learned tactical
+  actor、历史 opponent pool、G1 60 秒连续比赛。
 - 未宣称：任何真实机器人结果、First Touch Champion、团队战术成长或 2v1 成功率；
   当前 First Touch 只在一个低速中心右脚场景局部通过。
 
