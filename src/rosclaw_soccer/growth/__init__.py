@@ -99,6 +99,13 @@ from rosclaw_soccer.growth.tactical_2v1 import (
     TwoVsOneDecisionEvidence,
     TwoVsOneState,
 )
+from rosclaw_soccer.growth.tactical_2v1_actor import (
+    TwoVsOneTacticalActor,
+    TwoVsOneTacticalDecision,
+    fit_two_vs_one_tactical_actor,
+    load_two_vs_one_tactical_actor,
+    save_two_vs_one_tactical_actor,
+)
 from rosclaw_soccer.growth.upper_corner_strike import (
     UpperCornerLaneAction,
     UpperCornerStrikePolicy,
@@ -159,6 +166,8 @@ __all__ = [
     "UpperCornerStrikePolicy",
     "TwoVsOneDecisionEvidence",
     "TwoVsOneState",
+    "TwoVsOneTacticalActor",
+    "TwoVsOneTacticalDecision",
     "build_first_touch_dream",
     "build_failure_conditioned_dreams",
     "evaluate_alternating_growth",
@@ -168,6 +177,7 @@ __all__ = [
     "evaluate_first_touch",
     "evaluate_paired_champion",
     "fit_dynamic_lead_pass_policy",
+    "fit_two_vs_one_tactical_actor",
     "decision_payload",
     "default_three_role_search_spaces",
     "build_g1_mosaic_gmt_overhead_skill",
@@ -177,7 +187,9 @@ __all__ = [
     "load_g1_mosaic_gmt_getup_skill",
     "load_mjlab_getup_torch",
     "load_mosaic_gmt_torch",
+    "load_two_vs_one_tactical_actor",
     "prioritize_team_curriculum",
     "reconstruct_s33_champion_registry",
+    "save_two_vs_one_tactical_actor",
     "write_s33_champion_registry",
 ]
