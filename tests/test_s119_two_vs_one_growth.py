@@ -16,6 +16,8 @@ from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.training.tactical_2v1_growth import (
     TwoVsOneRetentionManifest,
     collect_two_vs_one_acquisition,
+    run_two_vs_one_growth_round,
+    validate_two_vs_one_growth_stage,
 )
 from rosclaw_soccer.training.tactical_2v1_physics import (
     FrozenTacticalSkillBundle,
@@ -185,3 +187,33 @@ def test_persisted_decision_binds_both_trajectories(tmp_path: Path) -> None:
     assert report["evidence_boundary"]["g1_whole_body_rollout_claimed"] is False
     assert (tmp_path / "evidence/primary-trajectory.npz").is_file()
     assert (tmp_path / "evidence/ablated-trajectory.npz").is_file()
+
+
+def test_complete_growth_stage_is_validated_and_tamper_evident(tmp_path: Path) -> None:
+    retention = TwoVsOneRetentionManifest(
+        scenarios=tuple(
+            _scenario(
+                100 + index,
+                0.2 if index < 8 else 0.9,
+                (1.45 if index % 2 else -1.65),
+            )
+            for index in range(16)
+        )
+    )
+    output = tmp_path / "growth"
+    stage = run_two_vs_one_growth_round(
+        output_dir=output,
+        source_checkout=Path(__file__).parents[1],
+        skill_bundle=_bundle(),
+        retention_manifest=retention,
+    )
+    assert stage["status"] == "PASS_BOUNDED_TACTICAL_RETENTION"
+    validated = validate_two_vs_one_growth_stage(
+        output / "stage-summary.json",
+        source_checkout=Path(__file__).parents[1],
+    )
+    assert validated["retention_metrics"]["task_success_rate"] == 1.0
+    artifact = output / "retention/case-000/selected-primary.npz"
+    artifact.write_bytes(artifact.read_bytes() + b"tamper")
+    with pytest.raises(ValueError, match="artifact changed"):
+        validate_two_vs_one_growth_stage(output / "stage-summary.json")

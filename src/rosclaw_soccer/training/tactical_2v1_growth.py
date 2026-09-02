@@ -18,6 +18,7 @@ from rosclaw_soccer.growth.tactical_2v1 import TacticalAction, TwoVsOneDecisionE
 from rosclaw_soccer.growth.tactical_2v1_actor import (
     TwoVsOneTacticalActor,
     fit_two_vs_one_tactical_actor,
+    load_two_vs_one_tactical_actor,
     save_two_vs_one_tactical_actor,
 )
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
@@ -445,6 +446,153 @@ def run_two_vs_one_growth_round(
     return stage
 
 
+def _load_json_object(path: Path, label: str) -> dict[str, Any]:
+    value = json.loads(path.expanduser().resolve().read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
+def _load_trajectory(path: Path) -> dict[str, NDArray[Any]]:
+    with np.load(path, allow_pickle=False) as archive:
+        trajectory = {name: np.asarray(archive[name]) for name in archive.files}
+    required = {
+        "time",
+        "ball_pose",
+        "ball_velocity",
+        "carrier_position",
+        "finisher_position",
+        "defender_position",
+        "ball_contact_role",
+        "control_force",
+        "focal_agent_present",
+    }
+    if required - trajectory.keys() or trajectory["time"].size < 2:
+        raise ValueError("2v1 trajectory artifact is incomplete")
+    length = len(trajectory["time"])
+    if any(len(value) != length for value in trajectory.values()) or any(
+        not np.all(np.isfinite(value)) for value in trajectory.values()
+    ):
+        raise ValueError("2v1 trajectory artifact is invalid")
+    return trajectory
+
+
+def validate_two_vs_one_retention_report(path: Path) -> dict[str, Any]:
+    """Validate report integrity, authority and every selected replay artifact."""
+
+    source = path.expanduser().resolve()
+    report = _load_json_object(source, "2v1 retention report")
+    claimed = report.pop("report_hash", None)
+    try:
+        rows = report.get("rows")
+        gates = report.get("gates")
+        boundary = report.get("evidence_boundary")
+        if (
+            claimed != hash_json(report)
+            or report.get("schema_version") != "rosclaw_soccer.two_vs_one_retention_exam.v1"
+            or report.get("status") != "PASS_BOUNDED_TACTICAL_RETENTION"
+            or not isinstance(rows, list)
+            or len(rows) < 16
+            or not isinstance(gates, dict)
+            or not gates
+            or not all(gates.values())
+            or not isinstance(boundary, dict)
+            or boundary.get("activation_ceiling") != "SIM_ONLY"
+            or boundary.get("physics_authority") != "CPU_MUJOCO"
+            or boundary.get("tactical_plane_only") is not True
+            or boundary.get("g1_whole_body_rollout_claimed") is not False
+            or boundary.get("team_champion_promoted") is not False
+            or boundary.get("pixels_used_for_scoring") is not False
+            or boundary.get("hardware_command_sent") is not False
+        ):
+            raise ValueError("2v1 retention authority or integrity contract is invalid")
+        for index, row_value in enumerate(rows):
+            if not isinstance(row_value, dict):
+                raise ValueError("2v1 retention row is invalid")
+            case_dir = source.parent / f"case-{index:03d}"
+            digests: list[str] = []
+            for key in ("primary_artifact", "replay_artifact"):
+                artifact = row_value.get(key)
+                if not isinstance(artifact, dict) or not isinstance(artifact.get("file"), str):
+                    raise ValueError("2v1 retention artifact binding is invalid")
+                artifact_path = case_dir / artifact["file"]
+                if not artifact_path.is_file() or artifact.get("file_hash") != hash_bytes(
+                    artifact_path.read_bytes()
+                ):
+                    raise ValueError("2v1 retention artifact changed")
+                digest = trajectory_digest(_load_trajectory(artifact_path))
+                if artifact.get("trajectory_digest") != digest:
+                    raise ValueError("2v1 retention trajectory semantics changed")
+                digests.append(digest)
+            if (
+                row_value.get("exact_replay") is not True
+                or row_value.get("safe") is not True
+                or row_value.get("task_succeeded") is not True
+                or digests[0] != digests[1]
+            ):
+                raise ValueError("2v1 retention row did not strictly replay")
+    finally:
+        report["report_hash"] = claimed
+    return report
+
+
+def validate_two_vs_one_growth_stage(
+    path: Path,
+    *,
+    source_checkout: Path | None = None,
+) -> dict[str, Any]:
+    """Validate the complete seal → train → retention evidence chain."""
+
+    source = path.expanduser().resolve()
+    stage = _load_json_object(source, "2v1 growth stage")
+    claimed = stage.pop("stage_hash", None)
+    try:
+        root = source.parent
+        actor_path = root / "two-vs-one-tactical-actor.json"
+        actor = load_two_vs_one_tactical_actor(actor_path)
+        manifest = _load_json_object(root / "sealed-retention.json", "2v1 retention manifest")
+        manifest_claimed = manifest.pop("manifest_hash", None)
+        manifest_valid = manifest_claimed == hash_json(manifest)
+        manifest["manifest_hash"] = manifest_claimed
+        ledger = _load_json_object(root / "acquisition-ledger.json", "2v1 acquisition ledger")
+        retention = validate_two_vs_one_retention_report(root / "retention/retention-exam.json")
+        implementation_hashes = stage.get("implementation_hashes")
+        if (
+            claimed != hash_json(stage)
+            or stage.get("schema_version") != "rosclaw_soccer.two_vs_one_growth_stage.v1"
+            or stage.get("status") != "PASS_BOUNDED_TACTICAL_RETENTION"
+            or actor.actor_hash != stage.get("actor_hash")
+            or hash_bytes(actor_path.read_bytes()) != stage.get("actor_file_hash")
+            or actor.training_snapshot_hash != stage.get("training_snapshot_hash")
+            or not manifest_valid
+            or manifest_claimed != stage.get("sealed_retention_manifest_hash")
+            or manifest.get("training_access_allowed") is not False
+            or ledger.get("retention_manifest_hash_visible_to_training") is not False
+            or ledger.get("ledger_hash") != hash_json(ledger.get("rows"))
+            or retention.get("report_hash") != stage.get("retention_report_hash")
+            or retention.get("actor_hash") != actor.actor_hash
+            or retention.get("manifest_hash") != manifest_claimed
+            or not isinstance(implementation_hashes, dict)
+            or implementation_hashes.get("growth") != hash_bytes(Path(__file__).read_bytes())
+            or implementation_hashes.get("actor") != actor.implementation_hash
+        ):
+            raise ValueError("2v1 growth stage authority or integrity contract is invalid")
+        if source_checkout is not None:
+            checkout = source_checkout.expanduser().resolve()
+            current = subprocess.run(
+                ("git", "rev-parse", "HEAD"),
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            if current != stage.get("source_commit"):
+                raise ValueError("2v1 growth stage belongs to another source commit")
+    finally:
+        stage["stage_hash"] = claimed
+    return stage
+
+
 def _write_json(path: Path, value: dict[str, Any]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(
@@ -462,4 +610,6 @@ __all__ = [
     "default_two_vs_one_retention_manifest",
     "evaluate_two_vs_one_retention",
     "run_two_vs_one_growth_round",
+    "validate_two_vs_one_growth_stage",
+    "validate_two_vs_one_retention_report",
 ]
