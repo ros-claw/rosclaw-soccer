@@ -1,4 +1,4 @@
-"""Failure-aware routing between bounded pass-to-strike contact modes."""
+"""Failure-aware runtime routing from measured pass arrival state."""
 
 from __future__ import annotations
 
@@ -12,10 +12,61 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.growth.causal_strike_router import (
+    CausalStrikeRouteAction,
+    CausalStrikeRouteDecision,
+)
 from rosclaw_soccer.sim.contracts import hash_json
 
-_SCHEMA = "rosclaw.growth.g1_failure_aware_causal_strike_router.v1"
-_FEATURE_COUNT = 5
+_SCHEMA = "rosclaw.growth.g1_runtime_causal_strike_router.v1"
+_FEATURE_NAMES = (
+    "ball_local_x_m",
+    "ball_local_y_m",
+    "ball_local_vx_mps",
+    "ball_local_vy_mps",
+    "ball_arrival_eta_sec",
+    "pelvis_local_y_m",
+    "joint_velocity_rms_rad_s",
+)
+_FEATURE_COUNT = len(_FEATURE_NAMES)
+
+
+def runtime_causal_strike_features(
+    *,
+    ball_local_position_m: Sequence[float],
+    ball_local_velocity_mps: Sequence[float],
+    ball_arrival_eta_sec: float,
+    pelvis_local_position_m: Sequence[float],
+    joint_velocity_rad_s: Sequence[float],
+) -> tuple[float, ...]:
+    """Build the online-only route observation used by training and runtime."""
+
+    ball_position = np.asarray(ball_local_position_m, dtype=np.float64)
+    ball_velocity = np.asarray(ball_local_velocity_mps, dtype=np.float64)
+    pelvis_position = np.asarray(pelvis_local_position_m, dtype=np.float64)
+    joint_velocity = np.asarray(joint_velocity_rad_s, dtype=np.float64)
+    if (
+        ball_position.shape != (3,)
+        or ball_velocity.shape != (3,)
+        or pelvis_position.shape != (3,)
+        or joint_velocity.shape != (29,)
+        or not all(
+            np.all(np.isfinite(value))
+            for value in (ball_position, ball_velocity, pelvis_position, joint_velocity)
+        )
+        or not math.isfinite(ball_arrival_eta_sec)
+        or ball_arrival_eta_sec < 0.0
+    ):
+        raise ValueError("runtime causal strike features must be finite G1 observations")
+    return (
+        float(ball_position[0]),
+        float(ball_position[1]),
+        float(ball_velocity[0]),
+        float(ball_velocity[1]),
+        float(ball_arrival_eta_sec),
+        float(pelvis_position[1]),
+        float(np.sqrt(np.mean(np.square(joint_velocity)))),
+    )
 
 
 def _commitment(value: str, label: str) -> str:
@@ -25,31 +76,7 @@ def _commitment(value: str, label: str) -> str:
 
 
 @dataclass(frozen=True)
-class CausalStrikeRouteAction:
-    maximum_arrival_advance_frames: int
-    foot_yaw_offset_rad: float = 0.04
-    foot_pitch_offset_rad: float = 0.010
-    upper_corner_muscle_memory: bool = True
-    shooter_precontact_joint_guard: bool = True
-    activation_ceiling: str = "SIM_ONLY"
-
-    def __post_init__(self) -> None:
-        if (
-            isinstance(self.maximum_arrival_advance_frames, bool)
-            or not 0 <= self.maximum_arrival_advance_frames <= 12
-            or not math.isfinite(self.foot_yaw_offset_rad)
-            or not -0.12 <= self.foot_yaw_offset_rad <= 0.12
-            or not math.isfinite(self.foot_pitch_offset_rad)
-            or not -0.08 <= self.foot_pitch_offset_rad <= 0.08
-            or not self.upper_corner_muscle_memory
-            or not self.shooter_precontact_joint_guard
-            or self.activation_ceiling != "SIM_ONLY"
-        ):
-            raise ValueError("causal strike route action exceeds its safe option envelope")
-
-
-@dataclass(frozen=True)
-class CausalStrikeRouteMemory:
+class RuntimeCausalStrikeMemory:
     context_hash: str
     trajectory_hash: str
     features: tuple[float, ...]
@@ -60,47 +87,36 @@ class CausalStrikeRouteMemory:
         _commitment(self.trajectory_hash, "trajectory_hash")
         vector = np.asarray(self.features, dtype=np.float64)
         if vector.shape != (_FEATURE_COUNT,) or not np.all(np.isfinite(vector)):
-            raise ValueError("causal strike route memory features are invalid")
+            raise ValueError("runtime causal strike memory features are invalid")
 
 
 @dataclass(frozen=True)
-class CausalStrikeRouteDecision:
-    accepted: bool
-    route: str
-    confidence: float
-    nearest_success_distance: float
-    nearest_same_action_failure_distance: float | None
-    selected_context_hash: str | None
-    action: CausalStrikeRouteAction | None
-    actor_hash: str
-
-
-@dataclass(frozen=True)
-class G1FailureAwareCausalStrikeRouter:
+class G1RuntimeCausalStrikeRouter:
     body_hash: str
     kick_prior_hash: str
-    source_discovery_hash: str
+    source_discovery_hashes: tuple[str, ...]
     training_snapshot_hash: str
     feature_center: tuple[float, ...]
     feature_scale: tuple[float, ...]
-    successful_memories: tuple[CausalStrikeRouteMemory, ...]
-    failed_memories: tuple[CausalStrikeRouteMemory, ...]
-    maximum_support_distance: float = 2.25
+    successful_memories: tuple[RuntimeCausalStrikeMemory, ...]
+    failed_memories: tuple[RuntimeCausalStrikeMemory, ...]
+    maximum_support_distance: float = 2.50
     failure_exclusion_margin: float = 0.05
     activation_ceiling: str = "SIM_ONLY"
     promotion_authorized: bool = False
     hardware_authorized: bool = False
+    direct_joint_torque_output: bool = False
     online_hot_swap_allowed: bool = False
     schema_version: str = _SCHEMA
 
     def __post_init__(self) -> None:
-        for value, label in (
-            (self.body_hash, "body_hash"),
-            (self.kick_prior_hash, "kick_prior_hash"),
-            (self.source_discovery_hash, "source_discovery_hash"),
-            (self.training_snapshot_hash, "training_snapshot_hash"),
-        ):
-            _commitment(value, label)
+        _commitment(self.body_hash, "body_hash")
+        _commitment(self.kick_prior_hash, "kick_prior_hash")
+        _commitment(self.training_snapshot_hash, "training_snapshot_hash")
+        if not self.source_discovery_hashes:
+            raise ValueError("runtime strike router needs bound discovery sources")
+        for index, value in enumerate(self.source_discovery_hashes):
+            _commitment(value, f"source_discovery_hashes[{index}]")
         center = np.asarray(self.feature_center, dtype=np.float64)
         scale = np.asarray(self.feature_scale, dtype=np.float64)
         if (
@@ -121,9 +137,10 @@ class G1FailureAwareCausalStrikeRouter:
             or self.activation_ceiling != "SIM_ONLY"
             or self.promotion_authorized
             or self.hardware_authorized
+            or self.direct_joint_torque_output
             or self.online_hot_swap_allowed
         ):
-            raise ValueError("causal strike router violates its failure-aware SIM-only contract")
+            raise ValueError("runtime strike router violates its SIM-only contract")
 
     @property
     def actor_hash(self) -> str:
@@ -132,19 +149,12 @@ class G1FailureAwareCausalStrikeRouter:
     def to_dict(self, *, include_hash: bool = True) -> dict[str, Any]:
         value = {
             **asdict(self),
-            "feature_names": [
-                "receiver_lane_m",
-                "reception_target_x_m",
-                "passer_ball_local_x_m",
-                "passer_ball_local_y_m",
-                "ball_ground_friction",
-            ],
-            "algorithm": "failure_aware_nearest_verified_contact_mode",
-            "direct_joint_torque_output": False,
-            "pixels_used_for_training": False,
+            "feature_names": list(_FEATURE_NAMES),
+            "decision_clock": "FIFTH_CONSECUTIVE_MEASURED_INCOMING_BALL_OBSERVATION",
+            "algorithm": "failure_aware_nearest_verified_runtime_contact_mode",
             "stability_plasticity_contract": {
-                "stability": "reject OOD or failure-dominated routes",
-                "plasticity": "append physically verified contact modes and retained failures",
+                "stability": "reject OOD or failure-dominated measured arrivals",
+                "plasticity": "append complete physics trajectories including failures",
             },
         }
         if include_hash:
@@ -154,12 +164,12 @@ class G1FailureAwareCausalStrikeRouter:
     def decide(self, features: Sequence[float]) -> CausalStrikeRouteDecision:
         vector = np.asarray(features, dtype=np.float64)
         if vector.shape != (_FEATURE_COUNT,) or not np.all(np.isfinite(vector)):
-            raise ValueError("causal strike route decision features are invalid")
+            raise ValueError("runtime causal strike decision features are invalid")
         center = np.asarray(self.feature_center, dtype=np.float64)
         scale = np.asarray(self.feature_scale, dtype=np.float64)
         normalized = (vector - center) / scale
 
-        def distance(memory: CausalStrikeRouteMemory) -> float:
+        def distance(memory: RuntimeCausalStrikeMemory) -> float:
             candidate = (np.asarray(memory.features, dtype=np.float64) - center) / scale
             return float(np.linalg.norm(candidate - normalized))
 
@@ -180,13 +190,13 @@ class G1FailureAwareCausalStrikeRouter:
             )
         )
         route = (
-            "VERIFIED_CAUSAL_STRIKE_MODE"
+            "VERIFIED_RUNTIME_CAUSAL_STRIKE_MODE"
             if accepted
             else (
-                "FAILURE_MEMORY_FALLBACK"
+                "RUNTIME_FAILURE_MEMORY_FALLBACK"
                 if failure_distance is not None
                 and success_distance + self.failure_exclusion_margin >= failure_distance
-                else "OUT_OF_SUPPORT_FALLBACK"
+                else "RUNTIME_OUT_OF_SUPPORT_FALLBACK"
             )
         )
         confidence = (
@@ -206,7 +216,7 @@ class G1FailureAwareCausalStrikeRouter:
         )
 
 
-def save_causal_strike_router(actor: G1FailureAwareCausalStrikeRouter, path: Path) -> None:
+def save_runtime_causal_strike_router(actor: G1RuntimeCausalStrikeRouter, path: Path) -> None:
     destination = path.expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")
@@ -217,24 +227,19 @@ def save_causal_strike_router(actor: G1FailureAwareCausalStrikeRouter, path: Pat
     os.replace(temporary, destination)
 
 
-def load_causal_strike_router(path: Path) -> G1FailureAwareCausalStrikeRouter:
+def load_runtime_causal_strike_router(path: Path) -> G1RuntimeCausalStrikeRouter:
     payload = json.loads(path.expanduser().resolve().read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError("causal strike router artifact must be an object")
+        raise ValueError("runtime causal strike router artifact must be an object")
     claimed = payload.pop("actor_hash", None)
-    for key in (
-        "feature_names",
-        "algorithm",
-        "direct_joint_torque_output",
-        "pixels_used_for_training",
-        "stability_plasticity_contract",
-    ):
+    for key in ("feature_names", "decision_clock", "algorithm", "stability_plasticity_contract"):
         payload.pop(key, None)
+    payload["source_discovery_hashes"] = tuple(payload["source_discovery_hashes"])
     payload["feature_center"] = tuple(payload["feature_center"])
     payload["feature_scale"] = tuple(payload["feature_scale"])
     for key in ("successful_memories", "failed_memories"):
         payload[key] = tuple(
-            CausalStrikeRouteMemory(
+            RuntimeCausalStrikeMemory(
                 context_hash=item["context_hash"],
                 trajectory_hash=item["trajectory_hash"],
                 features=tuple(item["features"]),
@@ -242,17 +247,16 @@ def load_causal_strike_router(path: Path) -> G1FailureAwareCausalStrikeRouter:
             )
             for item in payload[key]
         )
-    actor = G1FailureAwareCausalStrikeRouter(**payload)
+    actor = G1RuntimeCausalStrikeRouter(**payload)
     if claimed != actor.actor_hash:
-        raise ValueError("causal strike router hash does not match its payload")
+        raise ValueError("runtime causal strike router hash does not match its payload")
     return actor
 
 
 __all__ = [
-    "CausalStrikeRouteAction",
-    "CausalStrikeRouteDecision",
-    "CausalStrikeRouteMemory",
-    "G1FailureAwareCausalStrikeRouter",
-    "load_causal_strike_router",
-    "save_causal_strike_router",
+    "G1RuntimeCausalStrikeRouter",
+    "RuntimeCausalStrikeMemory",
+    "load_runtime_causal_strike_router",
+    "runtime_causal_strike_features",
+    "save_runtime_causal_strike_router",
 ]

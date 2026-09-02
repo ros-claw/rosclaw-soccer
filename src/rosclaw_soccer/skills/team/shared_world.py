@@ -48,6 +48,7 @@ from rosclaw_soccer.growth.causal_strike_option import (
     G1CausalStrikeOptionConfig,
     G1CausalStrikeOptionController,
 )
+from rosclaw_soccer.growth.causal_strike_router import CausalStrikeRouteDecision
 from rosclaw_soccer.growth.first_touch_interception import (
     FirstTouchInterceptionConfig,
     first_touch_interception_effect,
@@ -83,6 +84,11 @@ from rosclaw_soccer.growth.mosaic_overhead_reach_prior import (
 )
 from rosclaw_soccer.growth.reactive_route_actor import (
     reactive_route_features,
+)
+from rosclaw_soccer.growth.runtime_causal_strike_router import (
+    G1RuntimeCausalStrikeRouter,
+    load_runtime_causal_strike_router,
+    runtime_causal_strike_features,
 )
 from rosclaw_soccer.growth.temporal_route_actor import (
     G1TemporalRouteActor,
@@ -1379,6 +1385,13 @@ class G1SharedWorldResult:
     shooter_causal_strike_selected_phase_start_frame: int | None = None
     shooter_causal_strike_bridge_peak_target_velocity_rms_rad_s: float = 0.0
     shooter_causal_strike_abort_recovery_activated: bool = False
+    shooter_runtime_strike_router_hash: str | None = None
+    shooter_runtime_strike_route_decided: bool = False
+    shooter_runtime_strike_route_accepted: bool = False
+    shooter_runtime_strike_route: str | None = None
+    shooter_runtime_strike_route_time_sec: float | None = None
+    shooter_runtime_strike_route_support_distance: float | None = None
+    shooter_runtime_strike_route_advance_frames: int | None = None
     shooter_aim_expert_route: str = "nominal"
     shooter_early_arrival_expert_fraction: float = 0.0
     shooter_ballistic_actor_active_fraction: float = 0.0
@@ -1492,7 +1505,7 @@ class G1SharedWorldResult:
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v22"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v23"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1638,6 +1651,10 @@ class _Robot:
     causal_strike_selected_phase_start_frame: int | None = None
     causal_strike_bridge_peak_target_velocity_rms_rad_s: float = 0.0
     causal_strike_abort_recovery_activated: bool = False
+    runtime_strike_router: G1RuntimeCausalStrikeRouter | None = None
+    runtime_strike_route_decision: CausalStrikeRouteDecision | None = None
+    runtime_strike_route_time_sec: float | None = None
+    last_runtime_strike_features: np.ndarray | None = None
     latest_left_support: bool = False
     latest_right_support: bool = False
     phase_hold_count: int = 0
@@ -1918,6 +1935,7 @@ def _simulate_shared_world(
     receiver_phase_sync_enabled: bool = True,
     shooter_transition_actor_path: Path | None = None,
     shooter_causal_strike_option_config: G1CausalStrikeOptionConfig | None = None,
+    shooter_runtime_strike_router_path: Path | None = None,
     shooter_recovery_candidate_path: Path | None = None,
     shooter_recovery_residual_config: IQLResidualGuardConfig | None = None,
     shooter_recovery_config: Any | None = None,
@@ -2001,6 +2019,13 @@ def _simulate_shared_world(
     ):
         raise ValueError(
             "causal strike option requires an exclusive clock and disabled legacy phase sync"
+        )
+    if shooter_runtime_strike_router_path is not None and (
+        shooter_causal_strike_option_config is None
+        or shooter_ballistic_contact_torque_config is None
+    ):
+        raise ValueError(
+            "runtime strike routing requires the causal option and bounded contact muscle memory"
         )
     if shooter_ballistic_actor_path is not None and shooter_loft_teacher_config is not None:
         raise ValueError("shooter ballistic actor and loft teacher cannot share torque authority")
@@ -2379,6 +2404,16 @@ def _simulate_shared_world(
         if shooter_transition_actor_path is None
         else load_causal_skill_transition_actor(shooter_transition_actor_path)
     )
+    shooter_runtime_strike_router = (
+        None
+        if shooter_runtime_strike_router_path is None
+        else load_runtime_causal_strike_router(shooter_runtime_strike_router_path)
+    )
+    if shooter_runtime_strike_router is not None and (
+        shooter_runtime_strike_router.body_hash != qualification.body_hash
+        or shooter_runtime_strike_router.kick_prior_hash != qualification.kick_prior_hash
+    ):
+        raise ValueError("runtime strike router asset identity changed")
     shooter_motion_prior: G1FootballMotionPrior | None = None
     if shooter_motion_prior_path is not None:
         shooter_motion_prior = load_g1_football_motion_prior(shooter_motion_prior_path)
@@ -2729,6 +2764,11 @@ def _simulate_shared_world(
         if shooter_causal_strike_option_config is None
         else G1CausalStrikeOptionController(shooter_causal_strike_option_config)
     )
+    shooter.runtime_strike_router = shooter_runtime_strike_router
+    if shooter.runtime_strike_router is not None:
+        if shooter.causal_strike_option is None:
+            raise RuntimeError("runtime strike router initialized without causal option")
+        shooter.causal_strike_option.arm_runtime_route()
     passer = _make_robot(
         model=model,
         data=data,
@@ -3226,6 +3266,14 @@ def _simulate_shared_world(
         "shooter_causal_strike_option_incoming_observation_count": [],
         "shooter_causal_strike_selected_phase_start_frame": [],
         "shooter_causal_strike_bridge_fraction": [],
+        "shooter_ball_local_position": [],
+        "shooter_ball_local_velocity": [],
+        "shooter_pelvis_local_position": [],
+        "shooter_runtime_strike_features": [],
+        "shooter_runtime_strike_route_decided": [],
+        "shooter_runtime_strike_route_accepted": [],
+        "shooter_runtime_strike_route_support_distance": [],
+        "shooter_runtime_strike_route_advance_frames": [],
         "shooter_ballistic_actor_active": [],
         "shooter_ballistic_actor_torque": [],
         "shooter_ballistic_contact_active": [],
@@ -3568,6 +3616,40 @@ def _simulate_shared_world(
             shooter.last_causal_strike_option_decision = shooter.causal_strike_option.step(
                 option_observation
             )
+            if (
+                shooter.runtime_strike_router is not None
+                and shooter.runtime_strike_route_decision is None
+                and shooter.causal_strike_option.stable_incoming_observed
+            ):
+                arrival_eta = shooter.last_causal_strike_option_decision.ball_arrival_eta_sec
+                if arrival_eta is None:
+                    raise RuntimeError("stable incoming route observation has no arrival ETA")
+                runtime_features = runtime_causal_strike_features(
+                    ball_local_position_m=shooter.state.ball_pos_w,
+                    ball_local_velocity_mps=shooter.state.ball_vel_w,
+                    ball_arrival_eta_sec=arrival_eta,
+                    pelvis_local_position_m=shooter.state.pelvis_pos_w,
+                    joint_velocity_rad_s=shooter.state.dq,
+                )
+                shooter.last_runtime_strike_features = np.asarray(
+                    runtime_features, dtype=np.float64
+                )
+                route_decision = shooter.runtime_strike_router.decide(runtime_features)
+                shooter.runtime_strike_route_decision = route_decision
+                shooter.runtime_strike_route_time_sec = float(data.time)
+                route_action = route_decision.action
+                maximum_advance = (
+                    0 if route_action is None else route_action.maximum_arrival_advance_frames
+                )
+                if route_action is None:
+                    shooter.causal_strike_option.reject_runtime_route()
+                else:
+                    shooter.causal_strike_option.select_arrival_route(maximum_advance)
+                    shooter.parameters = replace(
+                        shooter.parameters,
+                        foot_yaw_offset=route_action.foot_yaw_offset_rad,
+                        foot_pitch_offset=route_action.foot_pitch_offset_rad,
+                    )
             if shooter.last_causal_strike_option_decision.begin_bridge:
                 strike_phase_start_frame = (
                     shooter.last_causal_strike_option_decision.strike_phase_start_frame
@@ -3678,10 +3760,10 @@ def _simulate_shared_world(
                 if data.time + 1e-12 >= shooter.start_sec:
                     _enter_policy(shooter)
             else:
-                decision = shooter.transition_decision
-                if decision is None:
+                transition_decision = shooter.transition_decision
+                if transition_decision is None:
                     raise RuntimeError("causal shooter transition decision is unavailable")
-                if predecessor_frame >= decision.trigger_policy_frame:
+                if predecessor_frame >= transition_decision.trigger_policy_frame:
                     _enter_policy(shooter)
                     shooter.transition_triggered = True
                     shooter.transition_trigger_time_sec = float(data.time)
@@ -4657,21 +4739,21 @@ def _simulate_shared_world(
                     baseline_torque = (robot.last_target - q) * robot.kp + (
                         robot.target_velocity - dq
                     ) * robot.kd
-                    decision = robot.recovery_torque_actor.action(
+                    residual_decision = robot.recovery_torque_actor.action(
                         actor_state,
                         baseline_torque,
                     )
                     robot.learned_torque_support_rms_peak = max(
                         robot.learned_torque_support_rms_peak,
-                        decision.standardized_rms,
+                        residual_decision.standardized_rms,
                     )
-                    if decision.accepted:
-                        learned_torque[robot.role] = decision
+                    if residual_decision.accepted:
+                        learned_torque[robot.role] = residual_decision
                         robot.learned_torque_frame_count += 1
-                        robot.learned_torque_confidence_sum += decision.confidence
+                        robot.learned_torque_confidence_sum += residual_decision.confidence
                         robot.learned_torque_peak_residual_nm = max(
                             robot.learned_torque_peak_residual_nm,
-                            decision.peak_residual_nm,
+                            residual_decision.peak_residual_nm,
                         )
                     else:
                         robot.learned_torque_fallback_count += 1
@@ -5036,8 +5118,16 @@ def _simulate_shared_world(
                     and second_striker_ballistic_contact_torque_config is not None
                     else shooter_ballistic_contact_torque_config
                 )
+                runtime_contact_authorized = bool(
+                    robot.role != "shooter"
+                    or robot.runtime_strike_router is None
+                    or (
+                        robot.runtime_strike_route_decision is not None
+                        and robot.runtime_strike_route_decision.accepted
+                    )
+                )
                 if robot.role in {"shooter", "second_striker"} and (
-                    role_contact_torque_config is not None
+                    role_contact_torque_config is not None and runtime_contact_authorized
                 ):
                     contact_torque, contact_torque_active = g1_ballistic_contact_torque_residual(
                         policy_frame=policy_frames[robot.role],
@@ -6353,6 +6443,33 @@ def _simulate_shared_world(
         ),
         shooter_causal_strike_abort_recovery_activated=(
             shooter.causal_strike_abort_recovery_activated
+        ),
+        shooter_runtime_strike_router_hash=(
+            None
+            if shooter.runtime_strike_router is None
+            else shooter.runtime_strike_router.actor_hash
+        ),
+        shooter_runtime_strike_route_decided=(shooter.runtime_strike_route_decision is not None),
+        shooter_runtime_strike_route_accepted=bool(
+            shooter.runtime_strike_route_decision is not None
+            and shooter.runtime_strike_route_decision.accepted
+        ),
+        shooter_runtime_strike_route=(
+            None
+            if shooter.runtime_strike_route_decision is None
+            else shooter.runtime_strike_route_decision.route
+        ),
+        shooter_runtime_strike_route_time_sec=shooter.runtime_strike_route_time_sec,
+        shooter_runtime_strike_route_support_distance=(
+            None
+            if shooter.runtime_strike_route_decision is None
+            else shooter.runtime_strike_route_decision.nearest_success_distance
+        ),
+        shooter_runtime_strike_route_advance_frames=(
+            None
+            if shooter.runtime_strike_route_decision is None
+            or shooter.runtime_strike_route_decision.action is None
+            else (shooter.runtime_strike_route_decision.action.maximum_arrival_advance_frames)
         ),
         shooter_aim_expert_route=(
             "early_arrival" if shooter.early_arrival_expert_frame_count > 0 else "nominal"
@@ -8564,6 +8681,8 @@ def _update_policy(
         return 0
     current_policy_frame = max(0, int(robot.policy.time_step) - int(robot.policy.WARMUP_STEPS))
     robot.last_phase_correction = 0
+    if robot.causal_strike_option is not None:
+        robot.causal_strike_option.observe_policy_progress(current_policy_frame)
     if (
         not robot.post_policy_active
         and robot.causal_strike_option is not None
@@ -9342,6 +9461,33 @@ def _append_trace(
             1.0,
             shooter.causal_strike_bridge_frame / shooter.causal_strike_bridge_frames,
         )
+    )
+    trace["shooter_ball_local_position"].append(
+        np.asarray(shooter.state.ball_pos_w, dtype=np.float64).copy()
+    )
+    trace["shooter_ball_local_velocity"].append(
+        np.asarray(shooter.state.ball_vel_w, dtype=np.float64).copy()
+    )
+    trace["shooter_pelvis_local_position"].append(
+        np.asarray(shooter.state.pelvis_pos_w, dtype=np.float64).copy()
+    )
+    runtime_decision = shooter.runtime_strike_route_decision
+    trace["shooter_runtime_strike_features"].append(
+        np.zeros(7, dtype=np.float64)
+        if shooter.last_runtime_strike_features is None
+        else shooter.last_runtime_strike_features.copy()
+    )
+    trace["shooter_runtime_strike_route_decided"].append(runtime_decision is not None)
+    trace["shooter_runtime_strike_route_accepted"].append(
+        False if runtime_decision is None else runtime_decision.accepted
+    )
+    trace["shooter_runtime_strike_route_support_distance"].append(
+        -1.0 if runtime_decision is None else runtime_decision.nearest_success_distance
+    )
+    trace["shooter_runtime_strike_route_advance_frames"].append(
+        -1
+        if runtime_decision is None or runtime_decision.action is None
+        else runtime_decision.action.maximum_arrival_advance_frames
     )
     trace["shooter_learned_torque_active"].append(learned_torque["shooter"] is not None)
     trace["shooter_ball_contact_foot"].append(shooter_contact_foot)
