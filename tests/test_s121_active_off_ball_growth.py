@@ -9,6 +9,7 @@ from rosclaw_soccer.skills.team.shared_world import (
 )
 from rosclaw_soccer.training.active_off_ball_growth import (
     ActiveRouteCandidate,
+    _balanced_action_coverage,
     build_action_conditioned_movement_plan,
     default_active_acquisition_scenarios,
     default_active_retention_manifest,
@@ -67,3 +68,8 @@ def test_route_portfolio_and_sealed_retention_are_disjoint() -> None:
     assert retention.training_access_allowed is False
     with pytest.raises(ValueError, match="qualified envelope"):
         ActiveRouteCandidate("s121.bad", 2.0, 0.4, 0.7, 0.9)
+
+
+def test_action_coverage_uses_enum_wire_values() -> None:
+    assert _balanced_action_coverage({"pass": 4, "shoot": 4}, 4)
+    assert not _balanced_action_coverage({"PASS": 4, "SHOOT": 4}, 4)

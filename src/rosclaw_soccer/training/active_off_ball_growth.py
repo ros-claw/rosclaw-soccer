@@ -447,6 +447,13 @@ def _candidate_score(results: list[ActiveOffBallResult]) -> float:
     return 1000.0 * qualified + 100.0 * tasks + 10.0 * movement + activity - stagnation
 
 
+def _balanced_action_coverage(action_counts: dict[str, int], expected_per_action: int) -> bool:
+    return action_counts == {
+        TacticalAction.PASS.value: expected_per_action,
+        TacticalAction.SHOOT.value: expected_per_action,
+    }
+
+
 def run_active_off_ball_growth_round(
     *,
     output_dir: Path,
@@ -621,7 +628,7 @@ def run_active_off_ball_growth_round(
         "safe_rate": metrics["safe_rate"] == 1.0,
         "movement_quality_rate": metrics["movement_quality_rate"] == 1.0,
         "exact_replay_rate": metrics["exact_replay_rate"] == 1.0,
-        "both_actions_covered": action_counts == {"PASS": 4, "SHOOT": 4},
+        "both_actions_covered": _balanced_action_coverage(action_counts, 4),
         "teammate_stagnation_reduced": metrics["mean_teammate_stagnant_fraction"] <= 0.12,
         "defender_stagnation_reduced": metrics["mean_defender_stagnant_fraction"] <= 0.20,
     }
