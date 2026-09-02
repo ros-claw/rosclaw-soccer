@@ -188,6 +188,74 @@ class G1JointGuardConfig:
 
 
 @dataclass(frozen=True)
+class G1MovementWaypoint:
+    """One immutable SIM-only world-frame waypoint for learned locomotion."""
+
+    time_sec: float
+    position_m: tuple[float, float, float]
+    schema_version: str = "rosclaw.soccer.g1_movement_waypoint.v1"
+
+    def __post_init__(self) -> None:
+        position = np.asarray(self.position_m, dtype=np.float64)
+        if not math.isfinite(self.time_sec) or not 0.0 <= self.time_sec <= 120.0:
+            raise ValueError("movement waypoint time must be in [0, 120] seconds")
+        if position.shape != (3,) or not np.all(np.isfinite(position)):
+            raise ValueError("movement waypoint position must be a finite xyz vector")
+        if not -2.0 <= position[0] <= 12.0 or abs(float(position[1])) > 4.0:
+            raise ValueError("movement waypoint must remain inside the bounded soccer field")
+        if abs(float(position[2])) > 1.0e-12:
+            raise ValueError("movement waypoint must remain on the ground plane")
+
+
+@dataclass(frozen=True)
+class G1TacticalMovementConfig:
+    """Bounded tactical target stream executed by the frozen locomotion actor.
+
+    This contract never writes body pose or joint state.  It produces a causal
+    velocity command for the already loaded RoboNaldo locomotion policy in the
+    shared MuJoCo world.  It has no REAL/hardware execution authority.
+    """
+
+    waypoints: tuple[G1MovementWaypoint, ...]
+    maximum_speed_mps: float = 0.55
+    maximum_acceleration_mps2: float = 1.20
+    position_gain: float = 1.50
+    arrival_radius_m: float = 0.04
+    execution_mode: str = "SIM_ONLY"
+    hardware_authorized: bool = False
+    schema_version: str = "rosclaw.soccer.g1_tactical_movement_config.v1"
+
+    def __post_init__(self) -> None:
+        if not 2 <= len(self.waypoints) <= 16:
+            raise ValueError("tactical movement requires between 2 and 16 waypoints")
+        times = tuple(waypoint.time_sec for waypoint in self.waypoints)
+        if any(later <= earlier for earlier, later in zip(times, times[1:], strict=False)):
+            raise ValueError("tactical movement waypoint times must be strictly increasing")
+        values = (
+            self.maximum_speed_mps,
+            self.maximum_acceleration_mps2,
+            self.position_gain,
+            self.arrival_radius_m,
+        )
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("tactical movement limits must be finite")
+        if not 0.10 <= self.maximum_speed_mps <= 0.70:
+            raise ValueError("tactical movement speed must be in [0.10, 0.70] m/s")
+        if not 0.20 <= self.maximum_acceleration_mps2 <= 3.0:
+            raise ValueError("tactical movement acceleration must be in [0.20, 3.0] m/s^2")
+        if not 0.20 <= self.position_gain <= 4.0:
+            raise ValueError("tactical movement position gain must be in [0.20, 4.0]")
+        if not 0.02 <= self.arrival_radius_m <= 0.20:
+            raise ValueError("tactical movement arrival radius must be in [0.02, 0.20] m")
+        if self.execution_mode != "SIM_ONLY" or self.hardware_authorized:
+            raise ValueError("tactical movement is permanently SIM_ONLY")
+
+    @property
+    def config_hash(self) -> str:
+        return hash_json(asdict(self))
+
+
+@dataclass(frozen=True)
 class G1GoalkeeperConfig:
     """Causal locomotion/reach adapter for the goalkeeper policy instance."""
 
@@ -1454,6 +1522,9 @@ class _Robot:
     last_recovery_athlete_suppressed: bool = False
     last_recovery_athlete_raw_world_command: np.ndarray | None = None
     last_recovery_athlete_world_command: np.ndarray | None = None
+    last_tactical_world_target: np.ndarray | None = None
+    last_tactical_world_command: np.ndarray | None = None
+    last_tactical_movement_active: bool = False
 
 
 def _base_scenario() -> GoalForgeScenario:
@@ -1720,8 +1791,10 @@ def _simulate_shared_world(
     passer_ball_local_xy: tuple[float, float] = (1.205, -0.16),
     passer_policy_target_m: tuple[float, float, float] = (5.0, 0.0, 0.20),
     pass_reception_target_m: tuple[float, float, float] = (1.00, 0.0, 0.115),
+    passer_tactical_movement_config: G1TacticalMovementConfig | None = None,
     goal_spec: G1TrainingGoalSpec | None = None,
     goalkeeper_config: G1GoalkeeperConfig | None = None,
+    goalkeeper_tactical_movement_config: G1TacticalMovementConfig | None = None,
     goalkeeper_origin_override_m: tuple[float, float, float] | None = None,
     goalkeeper_threat_role: str = "shooter",
     second_threat_config: G1SecondThreatConfig | None = None,
@@ -1812,6 +1885,10 @@ def _simulate_shared_world(
         raise ValueError("passer start time must be in [0, 120] seconds")
     if not isinstance(passer_collision_enabled, bool):
         raise ValueError("passer collision flag must be boolean")
+    if goalkeeper_tactical_movement_config is not None and goalkeeper_config is None:
+        raise ValueError("goalkeeper tactical movement requires a goalkeeper configuration")
+    if passer_tactical_movement_config is not None and passer_start_sec <= 1.0e-12:
+        raise ValueError("passer tactical movement requires a delayed passer policy start")
     if second_ball_mass_kg is not None and (
         not math.isfinite(second_ball_mass_kg) or not 0.40 <= second_ball_mass_kg <= 0.46
     ):
@@ -2926,6 +3003,22 @@ def _simulate_shared_world(
         "second_threat_launcher_force": [],
         "robot_robot_contact_count": [],
     }
+    if passer_tactical_movement_config is not None:
+        trace.update(
+            {
+                "passer_tactical_world_target": [],
+                "passer_tactical_world_command": [],
+                "passer_tactical_movement_active": [],
+            }
+        )
+    if goalkeeper_tactical_movement_config is not None:
+        trace.update(
+            {
+                "goalkeeper_tactical_world_target": [],
+                "goalkeeper_tactical_world_command": [],
+                "goalkeeper_tactical_movement_active": [],
+            }
+        )
     if second_striker is not None:
         trace.update(
             {
@@ -3308,28 +3401,39 @@ def _simulate_shared_world(
             keeper_ball_qvel = (
                 cast(int, second_ball_qvel) if physical_second_tracking else ball_qvel
             )
-            (
-                goalkeeper_command_mps,
-                goalkeeper_target_y_m,
-                goalkeeper_reaction_active,
-                goalkeeper_anticipation_active,
-                goalkeeper_actor_observation,
-            ) = _command_goalkeeper(
-                goalkeeper,
-                shooter=keeper_shooter,
-                data=data,
-                ball_qpos=keeper_ball_qpos,
-                ball_qvel=keeper_ball_qvel,
-                goal=active_goal,
-                config=goalkeeper_config,
-                shot_contact_time=keeper_shooter.contact_time,
-                observer=goalkeeper_observer,
-                learned_actor=goalkeeper_actor,
-                previous_actor_residual=goalkeeper_previous_actor_residual,
-                recovery_athlete_torch=goalkeeper_recovery_athlete_torch,
-                recovery_athlete_model=goalkeeper_recovery_athlete_model,
-                recovery_athlete_checkpoint=goalkeeper_recovery_athlete_checkpoint,
-            )
+            if goalkeeper_tactical_movement_config is not None:
+                tactical_target, tactical_command, tactical_active = _command_tactical_movement(
+                    goalkeeper,
+                    data=data,
+                    config=goalkeeper_tactical_movement_config,
+                    timestamp_sec=float(data.time),
+                )
+                goalkeeper_command_mps = float(tactical_command[1])
+                goalkeeper_target_y_m = float(tactical_target[1])
+                goalkeeper_reaction_active = tactical_active
+            else:
+                (
+                    goalkeeper_command_mps,
+                    goalkeeper_target_y_m,
+                    goalkeeper_reaction_active,
+                    goalkeeper_anticipation_active,
+                    goalkeeper_actor_observation,
+                ) = _command_goalkeeper(
+                    goalkeeper,
+                    shooter=keeper_shooter,
+                    data=data,
+                    ball_qpos=keeper_ball_qpos,
+                    ball_qvel=keeper_ball_qvel,
+                    goal=active_goal,
+                    config=goalkeeper_config,
+                    shot_contact_time=keeper_shooter.contact_time,
+                    observer=goalkeeper_observer,
+                    learned_actor=goalkeeper_actor,
+                    previous_actor_residual=goalkeeper_previous_actor_residual,
+                    recovery_athlete_torch=goalkeeper_recovery_athlete_torch,
+                    recovery_athlete_model=goalkeeper_recovery_athlete_model,
+                    recovery_athlete_checkpoint=goalkeeper_recovery_athlete_checkpoint,
+                )
             goalkeeper.standby_locomotion_mirror_active = bool(
                 goalkeeper_config.canonical_locomotion_mirror_enabled
                 and goalkeeper_command_mps > 1.0e-6
@@ -3359,7 +3463,15 @@ def _simulate_shared_world(
                 and robot.standby_policy is not None
                 and robot.role != "goalkeeper"
             ):
-                robot.state.vel_cmd = _normalized_zero_locomotion_command(robot.standby_policy)
+                if robot is passer and passer_tactical_movement_config is not None:
+                    _command_tactical_movement(
+                        robot,
+                        data=data,
+                        config=passer_tactical_movement_config,
+                        timestamp_sec=float(data.time),
+                    )
+                else:
+                    robot.state.vel_cmd = _normalized_zero_locomotion_command(robot.standby_policy)
             policy_frames[robot.role] = _update_policy(robot, frame, timestamp_sec=float(data.time))
             role_contact_config = (
                 second_striker_ballistic_contact_config
@@ -5519,6 +5631,33 @@ def _simulate_shared_world(
             trace["goalkeeper_bimanual_punch_torque"].append(
                 frame_goalkeeper_bimanual_punch_torque.copy()
             )
+        if passer_tactical_movement_config is not None:
+            trace["passer_tactical_world_target"].append(
+                np.zeros(3, dtype=np.float64)
+                if passer.last_tactical_world_target is None
+                else passer.last_tactical_world_target.copy()
+            )
+            trace["passer_tactical_world_command"].append(
+                np.zeros(3, dtype=np.float64)
+                if passer.last_tactical_world_command is None
+                else passer.last_tactical_world_command.copy()
+            )
+            trace["passer_tactical_movement_active"].append(passer.last_tactical_movement_active)
+        if goalkeeper_tactical_movement_config is not None:
+            assert goalkeeper is not None
+            trace["goalkeeper_tactical_world_target"].append(
+                np.zeros(3, dtype=np.float64)
+                if goalkeeper.last_tactical_world_target is None
+                else goalkeeper.last_tactical_world_target.copy()
+            )
+            trace["goalkeeper_tactical_world_command"].append(
+                np.zeros(3, dtype=np.float64)
+                if goalkeeper.last_tactical_world_command is None
+                else goalkeeper.last_tactical_world_command.copy()
+            )
+            trace["goalkeeper_tactical_movement_active"].append(
+                goalkeeper.last_tactical_movement_active
+            )
         second_launcher_active = bool(
             second_threat_force is not None
             and second_threat_force_stop_sec is not None
@@ -6528,6 +6667,75 @@ def _normalized_locomotion_command(policy: Any, physical_command: np.ndarray) ->
         -1.0 + 2.0 * (command - ranges[:, 0]) / widths, dtype=np.float64
     )
     return result
+
+
+def _command_tactical_movement(
+    robot: _Robot,
+    *,
+    data: Any,
+    config: G1TacticalMovementConfig,
+    timestamp_sec: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], bool]:
+    """Track a causal waypoint stream through the frozen locomotion policy."""
+
+    if robot.standby_policy is None:
+        raise RuntimeError("tactical movement requires a locomotion standby policy")
+    times = np.asarray([waypoint.time_sec for waypoint in config.waypoints], dtype=np.float64)
+    positions = np.asarray([waypoint.position_m for waypoint in config.waypoints], dtype=np.float64)
+    if timestamp_sec <= times[0]:
+        target = positions[0]
+        feedforward = np.zeros(3, dtype=np.float64)
+    elif timestamp_sec >= times[-1]:
+        target = positions[-1]
+        feedforward = np.zeros(3, dtype=np.float64)
+    else:
+        upper = int(np.searchsorted(times, timestamp_sec, side="right"))
+        lower = upper - 1
+        duration = float(times[upper] - times[lower])
+        phase = float((timestamp_sec - times[lower]) / duration)
+        target = positions[lower] + phase * (positions[upper] - positions[lower])
+        feedforward = (positions[upper] - positions[lower]) / duration
+
+    position = np.asarray(data.qpos[robot.qpos_base : robot.qpos_base + 3], dtype=np.float64)
+    error = target - position
+    error[2] = 0.0
+    command = feedforward + config.position_gain * error
+    command[2] = 0.0
+    speed = float(np.linalg.norm(command[:2]))
+    if speed > config.maximum_speed_mps:
+        command[:2] *= config.maximum_speed_mps / speed
+    if timestamp_sec >= times[-1] and float(np.linalg.norm(error[:2])) <= config.arrival_radius_m:
+        command[:2] = 0.0
+
+    previous = (
+        np.zeros(3, dtype=np.float64)
+        if robot.last_tactical_world_command is None
+        else np.asarray(robot.last_tactical_world_command, dtype=np.float64)
+    )
+    maximum_delta = config.maximum_acceleration_mps2 * _CONTROL_DT
+    delta = command - previous
+    delta_norm = float(np.linalg.norm(delta[:2]))
+    if delta_norm > maximum_delta:
+        command[:2] = previous[:2] + delta[:2] * (maximum_delta / delta_norm)
+
+    yaw = _yaw(robot)
+    local_command = _rotate_z(command, -yaw)
+    ranges = np.asarray(
+        (
+            robot.standby_policy.range_velx,
+            robot.standby_policy.range_vely,
+            robot.standby_policy.range_velz,
+        ),
+        dtype=np.float64,
+    )
+    local_command = np.clip(local_command, ranges[:, 0], ranges[:, 1])
+    actual_world_command = _rotate_z(local_command, yaw)
+    robot.state.vel_cmd = _normalized_locomotion_command(robot.standby_policy, local_command)
+    active = bool(float(np.linalg.norm(actual_world_command[:2])) > 1.0e-6)
+    robot.last_tactical_world_target = np.asarray(target, dtype=np.float64).copy()
+    robot.last_tactical_world_command = actual_world_command.copy()
+    robot.last_tactical_movement_active = active
+    return robot.last_tactical_world_target, actual_world_command, active
 
 
 def _goalkeeper_actor_route_active(
