@@ -68,6 +68,11 @@ from rosclaw_soccer.growth.mosaic_overhead_reach_prior import (
     blend_g1_mosaic_overhead_reach_target,
     load_g1_mosaic_overhead_reach_prior,
 )
+from rosclaw_soccer.growth.reactive_route_actor import (
+    G1ReactiveRouteActor,
+    load_reactive_route_actor,
+    reactive_route_features,
+)
 from rosclaw_soccer.providers.g1.asset_qualification import (
     G1AssetQualification,
     qualify_g1_assets,
@@ -249,6 +254,61 @@ class G1TacticalMovementConfig:
             raise ValueError("tactical movement arrival radius must be in [0.02, 0.20] m")
         if self.execution_mode != "SIM_ONLY" or self.hardware_authorized:
             raise ValueError("tactical movement is permanently SIM_ONLY")
+
+    @property
+    def config_hash(self) -> str:
+        return hash_json(asdict(self))
+
+
+@dataclass(frozen=True)
+class G1ReactiveMovementConfig:
+    """Content-bound observation actor routed into frozen locomotion."""
+
+    actor_artifact_path: str
+    actor_hash: str
+    target_position_m: tuple[float, float, float]
+    action: str
+    role: str
+    maximum_speed_mps: float = 0.55
+    maximum_acceleration_mps2: float = 1.20
+    arrival_radius_m: float = 0.04
+    execution_mode: str = "SIM_ONLY"
+    hardware_authorized: bool = False
+    schema_version: str = "rosclaw.soccer.g1_reactive_movement_config.v1"
+
+    def __post_init__(self) -> None:
+        target = np.asarray(self.target_position_m, dtype=np.float64)
+        if not self.actor_hash.startswith("sha256:") or len(self.actor_hash) != 71:
+            raise ValueError("reactive movement actor must be content bound")
+        if not self.actor_artifact_path or not Path(self.actor_artifact_path).is_file():
+            raise ValueError("reactive movement actor artifact does not exist")
+        if (
+            target.shape != (3,)
+            or not np.all(np.isfinite(target))
+            or not -2.0 <= target[0] <= 12.0
+            or abs(float(target[1])) > 4.0
+            or abs(float(target[2])) > 1.0e-12
+        ):
+            raise ValueError("reactive movement target must remain on the bounded field")
+        if self.action not in {"pass", "shoot"} or self.role not in {
+            "teammate",
+            "defender",
+        }:
+            raise ValueError("reactive movement action or role is unsupported")
+        values = (
+            self.maximum_speed_mps,
+            self.maximum_acceleration_mps2,
+            self.arrival_radius_m,
+        )
+        if (
+            not all(math.isfinite(value) for value in values)
+            or not 0.10 <= self.maximum_speed_mps <= 0.70
+            or not 0.20 <= self.maximum_acceleration_mps2 <= 3.0
+            or not 0.02 <= self.arrival_radius_m <= 0.20
+        ):
+            raise ValueError("reactive movement limits violate the locomotion envelope")
+        if self.execution_mode != "SIM_ONLY" or self.hardware_authorized:
+            raise ValueError("reactive movement is permanently SIM_ONLY")
 
     @property
     def config_hash(self) -> str:
@@ -1525,6 +1585,9 @@ class _Robot:
     last_tactical_world_target: np.ndarray | None = None
     last_tactical_world_command: np.ndarray | None = None
     last_tactical_movement_active: bool = False
+    last_reactive_route_features: np.ndarray | None = None
+    last_reactive_route_support_distance: float = 0.0
+    last_reactive_route_accepted: bool = False
 
 
 def _base_scenario() -> GoalForgeScenario:
@@ -1792,9 +1855,11 @@ def _simulate_shared_world(
     passer_policy_target_m: tuple[float, float, float] = (5.0, 0.0, 0.20),
     pass_reception_target_m: tuple[float, float, float] = (1.00, 0.0, 0.115),
     passer_tactical_movement_config: G1TacticalMovementConfig | None = None,
+    passer_reactive_movement_config: G1ReactiveMovementConfig | None = None,
     goal_spec: G1TrainingGoalSpec | None = None,
     goalkeeper_config: G1GoalkeeperConfig | None = None,
     goalkeeper_tactical_movement_config: G1TacticalMovementConfig | None = None,
+    goalkeeper_reactive_movement_config: G1ReactiveMovementConfig | None = None,
     goalkeeper_origin_override_m: tuple[float, float, float] | None = None,
     goalkeeper_threat_role: str = "shooter",
     second_threat_config: G1SecondThreatConfig | None = None,
@@ -1887,8 +1952,27 @@ def _simulate_shared_world(
         raise ValueError("passer collision flag must be boolean")
     if goalkeeper_tactical_movement_config is not None and goalkeeper_config is None:
         raise ValueError("goalkeeper tactical movement requires a goalkeeper configuration")
+    if goalkeeper_reactive_movement_config is not None and goalkeeper_config is None:
+        raise ValueError("goalkeeper reactive movement requires a goalkeeper configuration")
     if passer_tactical_movement_config is not None and passer_start_sec <= 1.0e-12:
         raise ValueError("passer tactical movement requires a delayed passer policy start")
+    if passer_reactive_movement_config is not None and passer_start_sec <= 1.0e-12:
+        raise ValueError("passer reactive movement requires a delayed passer policy start")
+    if (
+        passer_tactical_movement_config is not None and passer_reactive_movement_config is not None
+    ) or (
+        goalkeeper_tactical_movement_config is not None
+        and goalkeeper_reactive_movement_config is not None
+    ):
+        raise ValueError("fixed and reactive movement routes are mutually exclusive")
+    if passer_reactive_movement_config is not None and (
+        passer_reactive_movement_config.role != "teammate"
+    ):
+        raise ValueError("passer reactive movement must use the teammate role")
+    if goalkeeper_reactive_movement_config is not None and (
+        goalkeeper_reactive_movement_config.role != "defender"
+    ):
+        raise ValueError("goalkeeper reactive movement must use the defender role")
     if second_ball_mass_kg is not None and (
         not math.isfinite(second_ball_mass_kg) or not 0.40 <= second_ball_mass_kg <= 0.46
     ):
@@ -2852,6 +2936,20 @@ def _simulate_shared_world(
     robots = tuple(
         robot for robot in (passer, shooter, goalkeeper, second_striker) if robot is not None
     )
+    passer_reactive_actor: G1ReactiveRouteActor | None = None
+    goalkeeper_reactive_actor: G1ReactiveRouteActor | None = None
+    if passer_reactive_movement_config is not None:
+        passer_reactive_actor = load_reactive_route_actor(
+            Path(passer_reactive_movement_config.actor_artifact_path)
+        )
+        if passer_reactive_actor.actor_hash != passer_reactive_movement_config.actor_hash:
+            raise ValueError("passer reactive route actor changed after plan construction")
+    if goalkeeper_reactive_movement_config is not None:
+        goalkeeper_reactive_actor = load_reactive_route_actor(
+            Path(goalkeeper_reactive_movement_config.actor_artifact_path)
+        )
+        if goalkeeper_reactive_actor.actor_hash != goalkeeper_reactive_movement_config.actor_hash:
+            raise ValueError("goalkeeper reactive route actor changed after plan construction")
     passer_geoms = _robot_geom_ids(model, passer.pelvis_body)
     shooter_geoms = _robot_geom_ids(model, shooter.pelvis_body)
     goalkeeper_geoms = (
@@ -3003,7 +3101,7 @@ def _simulate_shared_world(
         "second_threat_launcher_force": [],
         "robot_robot_contact_count": [],
     }
-    if passer_tactical_movement_config is not None:
+    if passer_tactical_movement_config is not None or passer_reactive_movement_config is not None:
         trace.update(
             {
                 "passer_tactical_world_target": [],
@@ -3011,12 +3109,31 @@ def _simulate_shared_world(
                 "passer_tactical_movement_active": [],
             }
         )
-    if goalkeeper_tactical_movement_config is not None:
+    if passer_reactive_movement_config is not None:
+        trace.update(
+            {
+                "passer_reactive_route_features": [],
+                "passer_reactive_route_support_distance": [],
+                "passer_reactive_route_accepted": [],
+            }
+        )
+    if (
+        goalkeeper_tactical_movement_config is not None
+        or goalkeeper_reactive_movement_config is not None
+    ):
         trace.update(
             {
                 "goalkeeper_tactical_world_target": [],
                 "goalkeeper_tactical_world_command": [],
                 "goalkeeper_tactical_movement_active": [],
+            }
+        )
+    if goalkeeper_reactive_movement_config is not None:
+        trace.update(
+            {
+                "goalkeeper_reactive_route_features": [],
+                "goalkeeper_reactive_route_support_distance": [],
+                "goalkeeper_reactive_route_accepted": [],
             }
         )
     if second_striker is not None:
@@ -3401,7 +3518,21 @@ def _simulate_shared_world(
             keeper_ball_qvel = (
                 cast(int, second_ball_qvel) if physical_second_tracking else ball_qvel
             )
-            if goalkeeper_tactical_movement_config is not None:
+            if goalkeeper_reactive_movement_config is not None:
+                assert goalkeeper_reactive_actor is not None
+                tactical_target, tactical_command, tactical_active = _command_reactive_movement(
+                    goalkeeper,
+                    carrier=shooter,
+                    other_role=passer,
+                    data=data,
+                    ball_qpos=ball_qpos,
+                    config=goalkeeper_reactive_movement_config,
+                    actor=goalkeeper_reactive_actor,
+                )
+                goalkeeper_command_mps = float(tactical_command[1])
+                goalkeeper_target_y_m = float(tactical_target[1])
+                goalkeeper_reaction_active = tactical_active
+            elif goalkeeper_tactical_movement_config is not None:
                 tactical_target, tactical_command, tactical_active = _command_tactical_movement(
                     goalkeeper,
                     data=data,
@@ -3463,7 +3594,19 @@ def _simulate_shared_world(
                 and robot.standby_policy is not None
                 and robot.role != "goalkeeper"
             ):
-                if robot is passer and passer_tactical_movement_config is not None:
+                if robot is passer and passer_reactive_movement_config is not None:
+                    if goalkeeper is None or passer_reactive_actor is None:
+                        raise RuntimeError("reactive teammate route requires its defender context")
+                    _command_reactive_movement(
+                        robot,
+                        carrier=shooter,
+                        other_role=goalkeeper,
+                        data=data,
+                        ball_qpos=ball_qpos,
+                        config=passer_reactive_movement_config,
+                        actor=passer_reactive_actor,
+                    )
+                elif robot is passer and passer_tactical_movement_config is not None:
                     _command_tactical_movement(
                         robot,
                         data=data,
@@ -5631,7 +5774,10 @@ def _simulate_shared_world(
             trace["goalkeeper_bimanual_punch_torque"].append(
                 frame_goalkeeper_bimanual_punch_torque.copy()
             )
-        if passer_tactical_movement_config is not None:
+        if (
+            passer_tactical_movement_config is not None
+            or passer_reactive_movement_config is not None
+        ):
             trace["passer_tactical_world_target"].append(
                 np.zeros(3, dtype=np.float64)
                 if passer.last_tactical_world_target is None
@@ -5643,7 +5789,20 @@ def _simulate_shared_world(
                 else passer.last_tactical_world_command.copy()
             )
             trace["passer_tactical_movement_active"].append(passer.last_tactical_movement_active)
-        if goalkeeper_tactical_movement_config is not None:
+        if passer_reactive_movement_config is not None:
+            trace["passer_reactive_route_features"].append(
+                np.zeros(14, dtype=np.float64)
+                if passer.last_reactive_route_features is None
+                else passer.last_reactive_route_features.copy()
+            )
+            trace["passer_reactive_route_support_distance"].append(
+                passer.last_reactive_route_support_distance
+            )
+            trace["passer_reactive_route_accepted"].append(passer.last_reactive_route_accepted)
+        if (
+            goalkeeper_tactical_movement_config is not None
+            or goalkeeper_reactive_movement_config is not None
+        ):
             assert goalkeeper is not None
             trace["goalkeeper_tactical_world_target"].append(
                 np.zeros(3, dtype=np.float64)
@@ -5657,6 +5816,19 @@ def _simulate_shared_world(
             )
             trace["goalkeeper_tactical_movement_active"].append(
                 goalkeeper.last_tactical_movement_active
+            )
+        if goalkeeper_reactive_movement_config is not None:
+            assert goalkeeper is not None
+            trace["goalkeeper_reactive_route_features"].append(
+                np.zeros(14, dtype=np.float64)
+                if goalkeeper.last_reactive_route_features is None
+                else goalkeeper.last_reactive_route_features.copy()
+            )
+            trace["goalkeeper_reactive_route_support_distance"].append(
+                goalkeeper.last_reactive_route_support_distance
+            )
+            trace["goalkeeper_reactive_route_accepted"].append(
+                goalkeeper.last_reactive_route_accepted
             )
         second_launcher_active = bool(
             second_threat_force is not None
@@ -6736,6 +6908,84 @@ def _command_tactical_movement(
     robot.last_tactical_world_command = actual_world_command.copy()
     robot.last_tactical_movement_active = active
     return robot.last_tactical_world_target, actual_world_command, active
+
+
+def _command_reactive_movement(
+    robot: _Robot,
+    *,
+    carrier: _Robot,
+    other_role: _Robot,
+    data: Any,
+    ball_qpos: int,
+    config: G1ReactiveMovementConfig,
+    actor: G1ReactiveRouteActor,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], bool]:
+    """Run one bounded observation update through frozen locomotion authority."""
+
+    if robot.standby_policy is None:
+        raise RuntimeError("reactive movement requires a locomotion standby policy")
+    position = np.asarray(data.qpos[robot.qpos_base : robot.qpos_base + 2], dtype=np.float64)
+    velocity = np.asarray(data.qvel[robot.qvel_base : robot.qvel_base + 2], dtype=np.float64)
+    carrier_position = np.asarray(
+        data.qpos[carrier.qpos_base : carrier.qpos_base + 2], dtype=np.float64
+    )
+    other_position = np.asarray(
+        data.qpos[other_role.qpos_base : other_role.qpos_base + 2], dtype=np.float64
+    )
+    ball_position = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
+    target = np.asarray(config.target_position_m, dtype=np.float64)
+    features = reactive_route_features(
+        target_xy_m=target[:2],
+        self_position_xy_m=position,
+        self_velocity_xy_mps=velocity,
+        ball_position_xy_m=ball_position,
+        carrier_position_xy_m=carrier_position,
+        other_role_position_xy_m=other_position,
+        action=config.action,
+        role=config.role,
+    )
+    decision = actor.decide(features)
+    command = np.zeros(3, dtype=np.float64)
+    if decision.accepted:
+        command[:2] = decision.world_command_xy_mps
+        speed = float(np.linalg.norm(command[:2]))
+        if speed > config.maximum_speed_mps:
+            command[:2] *= config.maximum_speed_mps / speed
+        if float(np.linalg.norm(target[:2] - position)) <= config.arrival_radius_m:
+            command[:2] = 0.0
+
+        previous = (
+            np.zeros(3, dtype=np.float64)
+            if robot.last_tactical_world_command is None
+            else np.asarray(robot.last_tactical_world_command, dtype=np.float64)
+        )
+        maximum_delta = config.maximum_acceleration_mps2 * _CONTROL_DT
+        delta = command - previous
+        delta_norm = float(np.linalg.norm(delta[:2]))
+        if delta_norm > maximum_delta:
+            command[:2] = previous[:2] + delta[:2] * (maximum_delta / delta_norm)
+
+    yaw = _yaw(robot)
+    local_command = _rotate_z(command, -yaw)
+    ranges = np.asarray(
+        (
+            robot.standby_policy.range_velx,
+            robot.standby_policy.range_vely,
+            robot.standby_policy.range_velz,
+        ),
+        dtype=np.float64,
+    )
+    local_command = np.clip(local_command, ranges[:, 0], ranges[:, 1])
+    actual_world_command = _rotate_z(local_command, yaw)
+    robot.state.vel_cmd = _normalized_locomotion_command(robot.standby_policy, local_command)
+    active = bool(float(np.linalg.norm(actual_world_command[:2])) > 1.0e-6)
+    robot.last_tactical_world_target = target.copy()
+    robot.last_tactical_world_command = actual_world_command.copy()
+    robot.last_tactical_movement_active = active
+    robot.last_reactive_route_features = features.copy()
+    robot.last_reactive_route_support_distance = decision.support_distance
+    robot.last_reactive_route_accepted = decision.accepted
+    return target, actual_world_command, active
 
 
 def _goalkeeper_actor_route_active(
