@@ -53,11 +53,12 @@ class G1CausalStrikeOptionConfig:
     maximum_arrival_hold_frames: int = 12
     maximum_arrival_advance_frames: int = 12
     missing_ball_abort_predecessor_policy_frame: int = 270
+    missed_contact_abort_policy_frame: int = 275
     abort_recovery_blend_frames: int = 12
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
     direct_joint_torque_output: bool = False
-    schema_version: str = "rosclaw.growth.g1_causal_strike_option_config.v2"
+    schema_version: str = "rosclaw.growth.g1_causal_strike_option_config.v3"
 
     def __post_init__(self) -> None:
         integer_values = (
@@ -73,6 +74,7 @@ class G1CausalStrikeOptionConfig:
             self.maximum_arrival_hold_frames,
             self.maximum_arrival_advance_frames,
             self.missing_ball_abort_predecessor_policy_frame,
+            self.missed_contact_abort_policy_frame,
             self.abort_recovery_blend_frames,
         )
         real_values = (
@@ -128,11 +130,12 @@ class G1CausalStrikeOptionConfig:
             and self.predecessor_commit_policy_frame
             < self.missing_ball_abort_predecessor_policy_frame
             <= 400
+            and self.ball_contact_policy_frame < self.missed_contact_abort_policy_frame <= 320
             and 5 <= self.abort_recovery_blend_frames <= 30
             and self.activation_ceiling == "SIM_ONLY"
             and not self.hardware_authorized
             and not self.direct_joint_torque_output
-            and self.schema_version == "rosclaw.growth.g1_causal_strike_option_config.v2"
+            and self.schema_version == "rosclaw.growth.g1_causal_strike_option_config.v3"
         ):
             raise ValueError("causal strike option config violates its SIM-only envelope")
 
@@ -201,6 +204,9 @@ class G1CausalStrikeOptionController:
         self._arrival_hold_count = 0
         self._arrival_advance_count = 0
         self._stable_incoming_observed = False
+        self._runtime_route_required = False
+        self._runtime_route_selected = False
+        self._routed_maximum_arrival_advance_frames: int | None = None
 
     def step(self, observation: CausalStrikeOptionObservation) -> CausalStrikeOptionDecision:
         if (
@@ -271,9 +277,68 @@ class G1CausalStrikeOptionController:
             self.phase = CausalStrikeOptionPhase.RECOVER
             self._terminal_reason = "ball_contact_observed"
 
+    def arm_runtime_route(self) -> None:
+        """Require a measured-arrival route before granting phase advance."""
+
+        if self.phase != CausalStrikeOptionPhase.PREPARE or self._runtime_route_required:
+            raise RuntimeError("runtime strike route must be armed once before commitment")
+        self._runtime_route_required = True
+        self._runtime_route_selected = False
+        self._routed_maximum_arrival_advance_frames = 0
+
+    def select_arrival_route(self, maximum_arrival_advance_frames: int) -> None:
+        """Latch one bounded runtime route after a stable incoming observation."""
+
+        if isinstance(maximum_arrival_advance_frames, bool) or not isinstance(
+            maximum_arrival_advance_frames, int
+        ):
+            raise ValueError("runtime strike route advance must be an integer")
+        if (
+            not self._runtime_route_required
+            or self.phase != CausalStrikeOptionPhase.COMMIT
+            or not self._stable_incoming_observed
+            or self._runtime_route_selected
+            or not 0 <= maximum_arrival_advance_frames <= self.config.maximum_arrival_advance_frames
+        ):
+            raise RuntimeError("runtime strike route is outside its causal latch window")
+        self._routed_maximum_arrival_advance_frames = maximum_arrival_advance_frames
+        self._runtime_route_selected = True
+
+    def reject_runtime_route(self) -> None:
+        """Fail closed before the strike when measured arrival is unsupported."""
+
+        if (
+            not self._runtime_route_required
+            or self.phase != CausalStrikeOptionPhase.COMMIT
+            or not self._stable_incoming_observed
+            or self._runtime_route_selected
+        ):
+            raise RuntimeError("runtime strike rejection is outside its causal latch window")
+        self._runtime_route_selected = True
+        self._routed_maximum_arrival_advance_frames = 0
+        self.phase = CausalStrikeOptionPhase.ABORTED
+        self._terminal_reason = "measured_arrival_route_rejected"
+
+    def observe_policy_progress(self, policy_frame: int) -> None:
+        """Abort a committed air swing that missed the measured ball contact."""
+
+        if isinstance(policy_frame, bool) or not isinstance(policy_frame, int) or policy_frame < 0:
+            raise ValueError("causal strike policy frame must be a non-negative integer")
+        if (
+            self.phase == CausalStrikeOptionPhase.COMMIT
+            and self._stable_incoming_observed
+            and policy_frame >= self.config.missed_contact_abort_policy_frame
+        ):
+            self.phase = CausalStrikeOptionPhase.ABORTED
+            self._terminal_reason = "measured_ball_contact_deadline_missed"
+
     @property
     def stable_incoming_observed(self) -> bool:
         return self._stable_incoming_observed
+
+    @property
+    def runtime_route_selected(self) -> bool:
+        return self._runtime_route_selected
 
     def align_repeat_count(self, *, policy_frame: int, nominal_repeat: int) -> tuple[int, int]:
         """Return a bounded causal phase correction and its {-1,0,+1} direction."""
@@ -301,9 +366,12 @@ class G1CausalStrikeOptionController:
         ):
             self._arrival_hold_count += 1
             return 0, -1
+        maximum_advance_frames = self.config.maximum_arrival_advance_frames
+        if self._runtime_route_required:
+            maximum_advance_frames = int(self._routed_maximum_arrival_advance_frames or 0)
         if (
             eta < motion_eta - self.config.arrival_alignment_tolerance_sec
-            and self._arrival_advance_count < self.config.maximum_arrival_advance_frames
+            and self._arrival_advance_count < maximum_advance_frames
         ):
             self._arrival_advance_count += 1
             return max(2, nominal_repeat + 1), 1

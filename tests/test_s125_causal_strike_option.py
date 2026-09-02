@@ -134,6 +134,92 @@ def test_causal_strike_option_aborts_committed_motion_when_pass_never_arrives() 
     assert not controller.stable_incoming_observed
 
 
+def test_causal_strike_option_runtime_route_latches_bounded_advance() -> None:
+    config = G1CausalStrikeOptionConfig()
+    controller = G1CausalStrikeOptionController(config)
+    controller.arm_runtime_route()
+    controller.step(_observation(config.predecessor_commit_policy_frame))
+    for index in range(config.minimum_incoming_observations):
+        controller.step(
+            _observation(
+                config.predecessor_commit_policy_frame + index + 1,
+                timestamp_sec=4.0 + index * config.policy_dt_sec,
+                receiver_ball_local_x_m=1.45,
+                receiver_ball_local_vx_mps=-2.0,
+            )
+        )
+
+    controller.select_arrival_route(12)
+    repeat, correction = controller.align_repeat_count(
+        policy_frame=config.arrival_alignment_start_policy_frame,
+        nominal_repeat=1,
+    )
+
+    assert controller.runtime_route_selected
+    assert repeat == 2
+    assert correction == 1
+    with pytest.raises(RuntimeError, match="causal latch window"):
+        controller.select_arrival_route(0)
+
+
+def test_causal_strike_option_aborts_after_measured_contact_deadline() -> None:
+    config = G1CausalStrikeOptionConfig()
+    controller = G1CausalStrikeOptionController(config)
+    controller.step(_observation(config.predecessor_commit_policy_frame))
+    for index in range(config.minimum_incoming_observations):
+        controller.step(
+            _observation(
+                config.predecessor_commit_policy_frame + index + 1,
+                timestamp_sec=4.0 + index * config.policy_dt_sec,
+                receiver_ball_local_x_m=2.0,
+                receiver_ball_local_vx_mps=-1.0,
+            )
+        )
+
+    controller.observe_policy_progress(config.missed_contact_abort_policy_frame)
+
+    assert controller.phase == CausalStrikeOptionPhase.ABORTED
+    decision = controller.step(
+        _observation(
+            config.missing_ball_abort_predecessor_policy_frame,
+            timestamp_sec=5.0,
+            receiver_ball_local_x_m=1.0,
+            receiver_ball_local_vx_mps=-1.0,
+        )
+    )
+    assert decision.reason == "measured_ball_contact_deadline_missed"
+
+
+def test_causal_strike_option_runtime_rejection_fails_closed_before_contact() -> None:
+    config = G1CausalStrikeOptionConfig()
+    controller = G1CausalStrikeOptionController(config)
+    controller.arm_runtime_route()
+    controller.step(_observation(config.predecessor_commit_policy_frame))
+    for index in range(config.minimum_incoming_observations):
+        controller.step(
+            _observation(
+                config.predecessor_commit_policy_frame + index + 1,
+                timestamp_sec=4.0 + index * config.policy_dt_sec,
+                receiver_ball_local_x_m=2.0,
+                receiver_ball_local_vx_mps=-1.0,
+            )
+        )
+
+    controller.reject_runtime_route()
+
+    assert controller.runtime_route_selected
+    assert controller.phase == CausalStrikeOptionPhase.ABORTED
+    decision = controller.step(
+        _observation(
+            config.predecessor_commit_policy_frame + config.minimum_incoming_observations + 1,
+            timestamp_sec=5.0,
+            receiver_ball_local_x_m=1.9,
+            receiver_ball_local_vx_mps=-1.0,
+        )
+    )
+    assert decision.reason == "measured_arrival_route_rejected"
+
+
 def test_causal_strike_option_rejects_schema_or_time_rewind() -> None:
     config = G1CausalStrikeOptionConfig()
     with pytest.raises(ValueError, match="SIM-only envelope"):
