@@ -1095,6 +1095,11 @@ def _context_kwargs(
     receiver_start_sec: float,
 ) -> dict[str, Any]:
     kwargs = three_role_development_kwargs()
+    nominal_passer_ball_local_xy = (1.205, -0.160)
+    stance_alignment = (
+        context.passer_ball_local_xy_m[0] - nominal_passer_ball_local_xy[0],
+        context.passer_ball_local_xy_m[1] - nominal_passer_ball_local_xy[1],
+    )
     reception_target = (
         context.reception_target_x_m,
         context.receiver_lane_m,
@@ -1107,11 +1112,20 @@ def _context_kwargs(
         passer_ball_local_xy=context.passer_ball_local_xy_m,
         passer_parameter_overrides={
             "swing_speed_scale": context.predecessor_swing_speed_scale,
+            # Keep the immutable football where the context placed it while
+            # expressing the predecessor's stance in the qualified contact
+            # frame.  No qpos or ball state is changed after simulation start.
+            "stance_offset_x": stance_alignment[0],
+            "stance_offset_y": stance_alignment[1],
         },
         pass_reception_target_m=reception_target,
         passer_yaw_rad=lead_policy.passer_world_yaw(target_lateral_m=context.receiver_lane_m),
         ball_ground_friction=context.ball_ground_friction,
         receiver_phase_sync_enabled=False,
+        # Small ball-placement changes shift the pass impact by millimetres.
+        # Guarding only after contact allowed the predecessor waist pitch to
+        # cross its mechanical range during the final pre-impact control tick.
+        passer_precontact_joint_guard_enabled=True,
         simulation_duration_sec=config.simulation_duration_sec,
     )
     return kwargs

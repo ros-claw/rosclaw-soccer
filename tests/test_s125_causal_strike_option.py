@@ -41,6 +41,7 @@ def test_causal_strike_option_commits_once_after_ready_tracking() -> None:
     assert track.phase == CausalStrikeOptionPhase.TRACK
     assert commit.phase == CausalStrikeOptionPhase.COMMIT
     assert commit.begin_bridge
+    assert commit.strike_phase_start_frame == 100
     assert not latched.begin_bridge
     assert controller.phase == CausalStrikeOptionPhase.RECOVER
 
@@ -82,7 +83,55 @@ def test_causal_strike_option_reports_only_causal_ball_eta() -> None:
 
     assert static.ball_arrival_eta_sec is None
     assert incoming.incoming_ball
-    assert incoming.ball_arrival_eta_sec == pytest.approx(2.0)
+    assert incoming.ball_arrival_eta_sec == pytest.approx((3.0 - 1.25) / 1.5)
+    assert incoming.ready
+
+
+def test_causal_strike_option_bounds_arrival_alignment() -> None:
+    config = G1CausalStrikeOptionConfig(maximum_arrival_hold_frames=2)
+    controller = G1CausalStrikeOptionController(config)
+    controller.step(_observation(config.predecessor_track_policy_frame))
+    controller.step(_observation(config.predecessor_commit_policy_frame))
+    for frame in range(
+        config.predecessor_commit_policy_frame + 1,
+        config.predecessor_commit_policy_frame + 1 + config.minimum_incoming_observations,
+    ):
+        controller.step(
+            _observation(
+                frame,
+                receiver_ball_local_x_m=3.9,
+                receiver_ball_local_vx_mps=-1.5,
+            )
+        )
+
+    first = controller.align_repeat_count(
+        policy_frame=config.arrival_alignment_start_policy_frame,
+        nominal_repeat=1,
+    )
+    second = controller.align_repeat_count(
+        policy_frame=config.arrival_alignment_start_policy_frame,
+        nominal_repeat=1,
+    )
+    exhausted = controller.align_repeat_count(
+        policy_frame=config.arrival_alignment_start_policy_frame,
+        nominal_repeat=1,
+    )
+
+    assert first == second == (0, -1)
+    assert exhausted == (1, 0)
+
+
+def test_causal_strike_option_aborts_committed_motion_when_pass_never_arrives() -> None:
+    config = G1CausalStrikeOptionConfig()
+    controller = G1CausalStrikeOptionController(config)
+    controller.step(_observation(config.predecessor_track_policy_frame))
+    commit = controller.step(_observation(config.predecessor_commit_policy_frame))
+    aborted = controller.step(_observation(config.missing_ball_abort_predecessor_policy_frame))
+
+    assert commit.phase == CausalStrikeOptionPhase.COMMIT
+    assert aborted.phase == CausalStrikeOptionPhase.ABORTED
+    assert aborted.reason == "incoming_ball_deadline_missed"
+    assert not controller.stable_incoming_observed
 
 
 def test_causal_strike_option_rejects_schema_or_time_rewind() -> None:
