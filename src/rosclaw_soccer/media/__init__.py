@@ -20,6 +20,10 @@ from rosclaw_soccer.media.free_kick_video import (
     G1FreeKickVideoResult,
     render_g1_free_kick_showcase_video,
 )
+from rosclaw_soccer.media.full_body_tactical_video import (
+    render_full_body_tactical_video,
+    validate_full_body_tactical_video_manifest,
+)
 from rosclaw_soccer.media.goalkeeper_showcase_video import (
     render_collision_faithful_goalkeeper_video,
     render_goalkeeper_showcase_video,
@@ -65,6 +69,7 @@ __all__ = [
     "render_dynamic_aerial_lunge_video",
     "render_dynamic_takeoff_video",
     "render_g1_free_kick_showcase_video",
+    "render_full_body_tactical_video",
     "render_goalkeeper_v2_development_video",
     "render_goalkeeper_showcase_video",
     "render_physics_goalkeeper_champion_video",
@@ -78,6 +83,7 @@ __all__ = [
     "validate_collision_faithful_goalkeeper_manifest",
     "validate_dynamic_aerial_lunge_video_manifest",
     "validate_dynamic_takeoff_video_manifest",
+    "validate_full_body_tactical_video_manifest",
     "validate_goalkeeper_showcase_manifest",
     "validate_regulation_dead_corner_video_manifest",
 ]
