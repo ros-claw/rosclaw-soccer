@@ -45,13 +45,13 @@ class FirstTouchInterceptionConfig:
             raise ValueError("First Touch interception strike offset is invalid")
         if not 0.0 <= self.prediction_horizon_sec <= 0.10:
             raise ValueError("First Touch interception prediction horizon is invalid")
-        if not 5.0 <= self.position_gain_n_per_m <= 200.0:
+        if not 5.0 <= self.position_gain_n_per_m <= 500.0:
             raise ValueError("First Touch interception position gain is invalid")
         if not 0.0 <= self.velocity_damping_n_per_mps <= 20.0:
             raise ValueError("First Touch interception velocity damping is invalid")
-        if not 2.0 <= self.maximum_task_force_n <= 60.0:
+        if not 2.0 <= self.maximum_task_force_n <= 150.0:
             raise ValueError("First Touch interception force limit is invalid")
-        if not 1.0 <= self.maximum_joint_residual_nm <= 10.0:
+        if not 1.0 <= self.maximum_joint_residual_nm <= 40.0:
             raise ValueError("First Touch interception torque limit is invalid")
         if not 0.25 <= self.maximum_foot_ball_distance_m <= 0.80:
             raise ValueError("First Touch interception proximity is invalid")
