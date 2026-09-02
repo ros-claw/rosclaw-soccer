@@ -288,7 +288,10 @@ def fit_first_touch_prototype_actor(
     center = np.mean(features, axis=0)
     scale = np.maximum(
         np.std(features, axis=0),
-        np.asarray((0.05, 0.01, 4.0, 0.10), dtype=np.float64),
+        # Hybrid contact ownership is dominated by the incoming ball pocket.
+        # Target direction/speed select precision within a contact mode; they
+        # must not route a centred ball into a laterally displaced prototype.
+        np.asarray((0.05, 0.01, 20.0, 0.50), dtype=np.float64),
     )
     prototype_reports = tuple(sample.report_hash for sample in successful)
     prototype_scenarios = tuple(sample.scenario_hash for sample in successful)

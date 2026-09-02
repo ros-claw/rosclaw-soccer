@@ -177,3 +177,20 @@ def test_prototype_actor_rejects_retention_leakage_and_distant_context() -> None
     assert not decision.accepted
     assert decision.candidate is None
     assert decision.route == "FROZEN_PARENT_OOD_FALLBACK"
+
+
+def test_prototype_router_prioritizes_incoming_contact_pocket_over_target() -> None:
+    samples = _samples()
+    actor = fit_first_touch_prototype_actor(samples, kick_foot="right")
+    query = FirstTouchPhysicsScenario(
+        scenario_id="s118b.synthetic.contact-pocket-priority",
+        incoming_speed_mps=0.65,
+        incoming_lateral_m=0.0,
+        target_direction_deg=-10.0,
+        target_outgoing_speed_mps=2.4,
+    )
+
+    decision = actor.decide(query, candidate_id="prototype.pocket-priority")
+
+    assert decision.accepted
+    assert decision.selected_prototype_report_hash == samples[1].report_hash
