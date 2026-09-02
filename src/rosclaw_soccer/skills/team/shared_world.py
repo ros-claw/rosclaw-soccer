@@ -35,6 +35,10 @@ from rosclaw_soccer.growth.ballistic_contact_torque_residual import (
     G1BallisticContactTorqueResidualConfig,
     g1_ballistic_contact_torque_residual,
 )
+from rosclaw_soccer.growth.first_touch_interception import (
+    FirstTouchInterceptionConfig,
+    first_touch_interception_effect,
+)
 from rosclaw_soccer.growth.football_motion_prior import (
     G1FootballMotionPrior,
     blend_g1_football_motion_prior_displacement,
@@ -738,8 +742,7 @@ class G1GoalkeeperConfig:
         if not 0.20 <= self.post_contact_proprioceptive_capture_duration_sec <= 1.50:
             raise ValueError("goalkeeper proprioceptive capture duration is invalid")
         if self.post_contact_proprioceptive_capture_enabled and not (
-            self.balanced_dive_landing_capture_enabled
-            and self.post_contact_stabilization_enabled
+            self.balanced_dive_landing_capture_enabled and self.post_contact_stabilization_enabled
         ):
             raise ValueError(
                 "goalkeeper proprioceptive capture requires landing and contact stabilization"
@@ -1008,8 +1011,7 @@ class G1PhysicalSecondStrikerConfig:
         ):
             raise ValueError("physical second-striker policy target is invalid")
         if not 0.30 <= self.ballistic_target_depth_before_goal_m <= 1.20 or not (
-            -3.5 <= self.ballistic_target_y_m <= 3.5
-            and 1.10 <= self.ballistic_target_z_m <= 1.80
+            -3.5 <= self.ballistic_target_y_m <= 3.5 and 1.10 <= self.ballistic_target_z_m <= 1.80
         ):
             raise ValueError("physical second-striker ballistic target is invalid")
         if self.kick_foot not in {"left", "right"}:
@@ -1708,6 +1710,7 @@ def _simulate_shared_world(
     shooter_ballistic_actor_proximity_m: float | None = None,
     shooter_ballistic_contact_config: G1BallisticContactResidualConfig | None = None,
     shooter_ballistic_contact_torque_config: G1BallisticContactTorqueResidualConfig | None = None,
+    shooter_first_touch_interception_config: FirstTouchInterceptionConfig | None = None,
     shooter_loft_teacher_config: G1LoftTeacherConfig | None = None,
     shooter_origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
     passer_origin: tuple[float, float, float] | None = None,
@@ -2841,6 +2844,10 @@ def _simulate_shared_world(
         "shooter_ballistic_contact_target_delta": [],
         "shooter_ballistic_contact_torque_active": [],
         "shooter_ballistic_contact_torque": [],
+        "shooter_first_touch_interception_active": [],
+        "shooter_first_touch_interception_torque": [],
+        "shooter_first_touch_interception_force": [],
+        "shooter_first_touch_interception_error": [],
         "shooter_loft_teacher_active": [],
         "shooter_loft_teacher_torque": [],
         "shooter_loft_teacher_force_xyz_n": [],
@@ -4161,9 +4168,9 @@ def _simulate_shared_world(
         frame_second_striker_loft_teacher_force_yz_n: NDArray[np.float64] = np.zeros(
             2, dtype=np.float64
         )
-        frame_second_striker_loft_teacher_foot_velocity_yz_mps: NDArray[
-            np.float64
-        ] = np.zeros(2, dtype=np.float64)
+        frame_second_striker_loft_teacher_foot_velocity_yz_mps: NDArray[np.float64] = np.zeros(
+            2, dtype=np.float64
+        )
         frame_second_striker_contact = False
         frame_second_striker_contact_force_n = 0.0
         frame_loft_teacher_active = False
@@ -4171,6 +4178,10 @@ def _simulate_shared_world(
         frame_loft_teacher_force_xyz_n: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
         frame_ballistic_contact_torque_active = False
         frame_ballistic_contact_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        frame_first_touch_interception_active = False
+        frame_first_touch_interception_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        frame_first_touch_interception_force: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
+        frame_first_touch_interception_error: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
         frame_second_striker_ballistic_contact_torque_active = False
         frame_second_striker_ballistic_contact_torque: NDArray[np.float64] = np.zeros(
             29, dtype=np.float64
@@ -4371,9 +4382,7 @@ def _simulate_shared_world(
                         )
                         if not teacher_owns_second_contact and float(
                             np.max(np.abs(effect.torque))
-                        ) >= float(
-                            np.max(np.abs(frame_second_striker_ballistic_actor_torque))
-                        ):
+                        ) >= float(np.max(np.abs(frame_second_striker_ballistic_actor_torque))):
                             frame_second_striker_ballistic_actor_torque = effect.torque.copy()
                             frame_second_striker_ballistic_actor_force_yz_n = np.asarray(
                                 (effect.lateral_force_n, effect.vertical_force_n),
@@ -4439,8 +4448,7 @@ def _simulate_shared_world(
                     )
                     raw_torque = raw_torque + second_teacher_effect.torque
                     frame_second_striker_loft_teacher_active = (
-                        frame_second_striker_loft_teacher_active
-                        or second_teacher_effect.active
+                        frame_second_striker_loft_teacher_active or second_teacher_effect.active
                     )
                     if np.linalg.norm(
                         (
@@ -4495,6 +4503,38 @@ def _simulate_shared_world(
                             np.max(np.abs(frame_ballistic_contact_torque))
                         ):
                             frame_ballistic_contact_torque = contact_torque.copy()
+                if robot.role == "shooter" and shooter_first_touch_interception_config is not None:
+                    striking_ankle = (
+                        robot.left_ankle_body
+                        if robot.parameters.kick_foot == "left"
+                        else robot.right_ankle_body
+                    )
+                    interception = first_touch_interception_effect(
+                        model=model,
+                        data=data,
+                        striking_ankle_body_id=striking_ankle,
+                        actuated_dof_indices=np.asarray(robot.joint_qvel, dtype=np.int64),
+                        ball_position_m=np.asarray(
+                            data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
+                        ),
+                        ball_velocity_mps=np.asarray(
+                            data.qvel[ball_qvel : ball_qvel + 3], dtype=np.float64
+                        ),
+                        policy_frame=policy_frames[robot.role],
+                        contact_observed=robot.contact_latched,
+                        kick_foot=robot.parameters.kick_foot,
+                        config=shooter_first_touch_interception_config,
+                    )
+                    raw_torque = raw_torque + interception.torque
+                    frame_first_touch_interception_active = (
+                        frame_first_touch_interception_active or interception.active
+                    )
+                    if float(np.max(np.abs(interception.torque))) >= float(
+                        np.max(np.abs(frame_first_touch_interception_torque))
+                    ):
+                        frame_first_touch_interception_torque = interception.torque.copy()
+                        frame_first_touch_interception_force = interception.task_force_n.copy()
+                        frame_first_touch_interception_error = interception.position_error_m.copy()
                 safety_projected = raw_torque
                 # The candidate is a post-impact recovery module.  Keeping the
                 # guard behind the measured contact latch preserves the frozen
@@ -5156,6 +5196,14 @@ def _simulate_shared_world(
             frame_ballistic_contact_torque_active
         )
         trace["shooter_ballistic_contact_torque"].append(frame_ballistic_contact_torque)
+        trace["shooter_first_touch_interception_active"].append(
+            frame_first_touch_interception_active
+        )
+        trace["shooter_first_touch_interception_torque"].append(
+            frame_first_touch_interception_torque
+        )
+        trace["shooter_first_touch_interception_force"].append(frame_first_touch_interception_force)
+        trace["shooter_first_touch_interception_error"].append(frame_first_touch_interception_error)
         trace["shooter_loft_teacher_active"].append(frame_loft_teacher_active)
         trace["shooter_loft_teacher_torque"].append(frame_loft_teacher_torque)
         trace["shooter_loft_teacher_force_xyz_n"].append(frame_loft_teacher_force_xyz_n)

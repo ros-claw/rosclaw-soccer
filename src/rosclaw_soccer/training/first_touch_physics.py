@@ -29,6 +29,7 @@ from rosclaw_soccer.growth.first_touch import (
     FirstTouchMeasurement,
     evaluate_first_touch,
 )
+from rosclaw_soccer.growth.first_touch_interception import FirstTouchInterceptionConfig
 from rosclaw_soccer.providers.g1.asset_qualification import (
     G1AssetQualification,
     qualify_g1_assets,
@@ -244,6 +245,7 @@ def measure_first_touch_trajectory(
     candidate: FirstTouchCandidate,
     qualification: G1AssetQualification,
     gate: FirstTouchGateConfig | None = None,
+    control_context_hash: str | None = None,
 ) -> tuple[FirstTouchMeasurement, FirstTouchEvaluation]:
     """Convert physics arrays into the task-level causal measurement."""
 
@@ -324,12 +326,15 @@ def measure_first_touch_trajectory(
     maximum_root_speed = float(np.linalg.norm(root_velocity, axis=1).max())
     tilts = [_roll_pitch_deg(row) for row in torso]
     maximum_torso_tilt = max(max(abs(roll), abs(pitch)) for roll, pitch in tilts)
+    if control_context_hash is not None and not control_context_hash.startswith("sha256:"):
+        raise ValueError("First Touch control context hash must be SHA-256")
     snapshot_hash = hash_json(
         {
             "scenario_hash": scenario.scenario_hash,
             "candidate_hash": candidate.candidate_hash,
             "body_hash": qualification.body_hash,
             "kick_prior_hash": qualification.kick_prior_hash,
+            "control_context_hash": control_context_hash,
         }
     )
     measurement = FirstTouchMeasurement(
@@ -479,6 +484,7 @@ def run_first_touch_physics_case(
     scenario: FirstTouchPhysicsScenario,
     candidate: FirstTouchCandidate,
     gate: FirstTouchGateConfig | None = None,
+    interception_config: FirstTouchInterceptionConfig | None = None,
 ) -> dict[str, Any]:
     """Execute one G1 moving-ball case and persist content-bound evidence."""
 
@@ -500,6 +506,7 @@ def run_first_touch_physics_case(
         shooter_policy_target=scenario.frozen_policy_target_m,
         shooter_parameter_overrides=candidate.parameter_overrides(),
         shooter_ballistic_contact_config=candidate.contact_residual_config(),
+        shooter_first_touch_interception_config=interception_config,
         ball_launcher_position_m=scenario.launcher_position_m,
         ball_launcher_velocity_mps=scenario.launcher_velocity_mps,
         launcher_receiver_enabled=True,
@@ -526,6 +533,9 @@ def run_first_touch_physics_case(
         candidate=candidate,
         qualification=qualification,
         gate=gate,
+        control_context_hash=(
+            interception_config.config_hash if interception_config is not None else None
+        ),
     )
     destination.mkdir(parents=True)
     trajectory_path = destination / "trajectory.npz"
@@ -546,6 +556,16 @@ def run_first_touch_physics_case(
         "measurement_hash": measurement.measurement_hash,
         "evaluation": evaluation.to_dict(),
         "evaluation_hash": evaluation.evaluation_hash,
+        "interception_reflex": (
+            {
+                "config": asdict(interception_config),
+                "config_hash": interception_config.config_hash,
+                "authority": "SIM_ONLY",
+                "safety_projection_downstream": True,
+            }
+            if interception_config is not None
+            else None
+        ),
         "contact_diagnostics": first_touch_contact_diagnostics(
             trace=trace,
             candidate=candidate,
@@ -615,6 +635,11 @@ def _main() -> None:
     parser.add_argument("--contact-policy-frame", type=int, default=256)
     parser.add_argument("--contact-lead-duration", type=float, default=0.16)
     parser.add_argument("--contact-trail-duration", type=float, default=0.08)
+    parser.add_argument("--interception-reflex", action="store_true")
+    parser.add_argument("--interception-position-gain", type=float, default=60.0)
+    parser.add_argument("--interception-velocity-damping", type=float, default=3.0)
+    parser.add_argument("--interception-force-limit", type=float, default=24.0)
+    parser.add_argument("--interception-torque-limit", type=float, default=6.0)
     args = parser.parse_args()
     report = run_first_touch_physics_case(
         asset_root=args.asset_root,
@@ -647,6 +672,16 @@ def _main() -> None:
         ),
         gate=FirstTouchGateConfig(
             minimum_incoming_speed_mps=args.minimum_measured_incoming_speed,
+        ),
+        interception_config=(
+            FirstTouchInterceptionConfig(
+                position_gain_n_per_m=args.interception_position_gain,
+                velocity_damping_n_per_mps=args.interception_velocity_damping,
+                maximum_task_force_n=args.interception_force_limit,
+                maximum_joint_residual_nm=args.interception_torque_limit,
+            )
+            if args.interception_reflex
+            else None
         ),
     )
     print(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False))
