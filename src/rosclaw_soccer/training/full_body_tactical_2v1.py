@@ -34,6 +34,7 @@ from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.shared_world import (
     G1GoalkeeperConfig,
+    G1TacticalMovementConfig,
     simulate_shared_world,
     trained_three_role_skill_simulation_kwargs,
 )
@@ -99,6 +100,35 @@ class FullBodyTwoVsOneConfig:
 
     @property
     def config_hash(self) -> str:
+        return str(hash_json(asdict(self)))
+
+
+@dataclass(frozen=True)
+class FullBodyRoleMovementPlan:
+    """Action-conditioned full-body locomotion plan with no pose authority."""
+
+    teammate_origin_m: tuple[float, float, float]
+    teammate_movement: G1TacticalMovementConfig
+    defender_movement: G1TacticalMovementConfig
+    activation_ceiling: str = "SIM_ONLY"
+    hardware_authorized: bool = False
+    schema_version: str = "rosclaw_soccer.full_body_role_movement_plan.v1"
+
+    def __post_init__(self) -> None:
+        origin = np.asarray(self.teammate_origin_m, dtype=np.float64)
+        if (
+            origin.shape != (3,)
+            or not np.all(np.isfinite(origin))
+            or not 3.5 <= origin[0] <= 6.0
+            or abs(float(origin[1])) > 1.5
+            or abs(float(origin[2])) > 1.0e-12
+            or self.activation_ceiling != "SIM_ONLY"
+            or self.hardware_authorized
+        ):
+            raise ValueError("full-body role movement plan violates its SIM-only field envelope")
+
+    @property
+    def plan_hash(self) -> str:
         return str(hash_json(asdict(self)))
 
 
@@ -282,6 +312,7 @@ def simulate_full_body_two_vs_one(
     skill_bundle: FrozenTacticalSkillBundle,
     config: FullBodyTwoVsOneConfig | None = None,
     focal_teammate_present: bool = True,
+    movement_plan: FullBodyRoleMovementPlan | None = None,
 ) -> tuple[FullBodyTwoVsOneResult, dict[str, NDArray[Any]]]:
     """Execute one frozen high-level option with three complete G1 bodies."""
 
@@ -303,12 +334,19 @@ def simulate_full_body_two_vs_one(
             "shooter_start_sec": 0.0,
             "shooter_target": (goal.plane_x_m, goal.target_y_m, goal.target_z_m),
             "shooter_policy_target": policy_target,
-            "passer_origin": scenario.teammate_origin_m,
+            "passer_origin": (
+                scenario.teammate_origin_m
+                if movement_plan is None
+                else movement_plan.teammate_origin_m
+            ),
             "passer_yaw_rad": 0.0,
             "passer_start_sec": 100.0,
             "passer_collision_enabled": focal_teammate_present,
             "passer_policy_target_m": (2.0, 0.0, 0.20),
             "pass_reception_target_m": (1.0, 0.0, goal.ball_radius_m),
+            "passer_tactical_movement_config": (
+                None if movement_plan is None else movement_plan.teammate_movement
+            ),
             "ball_ground_friction": scenario.ball_ground_friction,
             "goal_spec": goal,
             "goalkeeper_config": G1GoalkeeperConfig(
@@ -318,6 +356,9 @@ def simulate_full_body_two_vs_one(
                 maximum_depth_correction_mps=0.05,
             ),
             "goalkeeper_origin_override_m": scenario.defender_origin_m,
+            "goalkeeper_tactical_movement_config": (
+                None if movement_plan is None else movement_plan.defender_movement
+            ),
             "goalkeeper_threat_role": "shooter",
             "simulation_duration_sec": active.simulation_duration_sec,
         }
@@ -392,6 +433,7 @@ def simulate_full_body_two_vs_one(
             "focal_teammate_present": focal_teammate_present,
             "policy_target": policy_target,
             "config_hash": active.config_hash,
+            "movement_plan_hash": None if movement_plan is None else movement_plan.plan_hash,
             "implementation_hash": hash_bytes(Path(__file__).read_bytes()),
         }
     )
@@ -492,6 +534,7 @@ def matched_full_body_two_vs_one_decision(
 
 
 __all__ = [
+    "FullBodyRoleMovementPlan",
     "FullBodyTwoVsOneConfig",
     "FullBodyTwoVsOneResult",
     "FullBodyTwoVsOneScenario",
