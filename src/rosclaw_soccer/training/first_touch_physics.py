@@ -349,6 +349,90 @@ def measure_first_touch_trajectory(
     return measurement, evaluate_first_touch(measurement, active_gate)
 
 
+def first_touch_contact_diagnostics(
+    *,
+    trace: dict[str, NDArray[Any]],
+    candidate: FirstTouchCandidate,
+) -> dict[str, Any]:
+    """Expose dense causal contact diagnostics without changing the task gate.
+
+    A body collision followed by a late foot swing is not a controlled First
+    Touch.  The sparse task label must therefore remain a failure, while the
+    learner still needs to know whether the required foot was early, late, or
+    spatially outside the interception pocket.  These values come from MuJoCo
+    state and contacts; rendered pixels are never involved.
+    """
+
+    required = {
+        "time",
+        "ball_pose",
+        "ball_contact_role",
+        "shooter_ball_contact_foot",
+        "shooter_left_foot_position",
+        "shooter_right_foot_position",
+    }
+    if required - trace.keys():
+        raise ValueError("First Touch contact diagnostics are missing physics arrays")
+    time = np.asarray(trace["time"], dtype=np.float64)
+    ball = np.asarray(trace["ball_pose"], dtype=np.float64)
+    role = np.asarray(trace["ball_contact_role"], dtype=np.int64)
+    foot = np.asarray(trace["shooter_ball_contact_foot"], dtype=np.int64)
+    foot_position = np.asarray(
+        trace[f"shooter_{candidate.kick_foot}_foot_position"],
+        dtype=np.float64,
+    )
+    length = time.size
+    if (
+        length < 2
+        or ball.shape != (length, 7)
+        or role.shape != (length,)
+        or foot.shape != (length,)
+        or foot_position.shape != (length, 3)
+        or not np.all(np.isfinite(time))
+        or not np.all(np.isfinite(ball))
+        or not np.all(np.isfinite(foot_position))
+        or np.any(np.diff(time) <= 0.0)
+    ):
+        raise ValueError("First Touch contact diagnostic arrays are invalid")
+
+    required_code = -1 if candidate.kick_foot == "left" else 1
+    shooter_contact = np.flatnonzero(role == 2)
+    required_contact = np.flatnonzero((role == 2) & (foot == required_code))
+    body_only_contact = np.flatnonzero((role == 2) & (foot == 0))
+    first_shooter_index = int(shooter_contact[0]) if shooter_contact.size else None
+    first_required_index = int(required_contact[0]) if required_contact.size else None
+    first_body_index = int(body_only_contact[0]) if body_only_contact.size else None
+    search_stop = first_shooter_index + 1 if first_shooter_index is not None else length
+    distance = np.linalg.norm(foot_position[:search_stop] - ball[:search_stop, :3], axis=1)
+    nearest_index = int(np.argmin(distance))
+    required_time = float(time[first_required_index]) if first_required_index is not None else None
+    body_time = float(time[first_body_index]) if first_body_index is not None else None
+    contact_lag = (
+        required_time - body_time if required_time is not None and body_time is not None else None
+    )
+    return {
+        "required_foot": candidate.kick_foot,
+        "first_shooter_contact_time_sec": (
+            float(time[first_shooter_index]) if first_shooter_index is not None else None
+        ),
+        "first_required_foot_contact_time_sec": required_time,
+        "first_body_only_contact_time_sec": body_time,
+        "required_foot_contact_lag_after_body_sec": contact_lag,
+        "body_contact_preceded_required_foot": bool(
+            body_time is not None and (required_time is None or body_time < required_time)
+        ),
+        "minimum_required_foot_ball_distance_before_first_contact_m": float(
+            distance[nearest_index]
+        ),
+        "nearest_required_foot_time_sec": float(time[nearest_index]),
+        "nearest_required_foot_delta_xyz_m": (
+            foot_position[nearest_index] - ball[nearest_index, :3]
+        ).tolist(),
+        "physics_derived": True,
+        "pixels_used_for_scoring": False,
+    }
+
+
 def _git_head(checkout: Path) -> str:
     return subprocess.run(
         ("git", "rev-parse", "HEAD"),
@@ -442,6 +526,10 @@ def run_first_touch_physics_case(
         "measurement_hash": measurement.measurement_hash,
         "evaluation": evaluation.to_dict(),
         "evaluation_hash": evaluation.evaluation_hash,
+        "contact_diagnostics": first_touch_contact_diagnostics(
+            trace=trace,
+            candidate=candidate,
+        ),
         "physics": {
             "authority": "CPU_MUJOCO",
             "strict_replay": True,
@@ -543,6 +631,7 @@ if __name__ == "__main__":
 __all__ = [
     "FirstTouchCandidate",
     "FirstTouchPhysicsScenario",
+    "first_touch_contact_diagnostics",
     "measure_first_touch_trajectory",
     "run_first_touch_physics_case",
 ]

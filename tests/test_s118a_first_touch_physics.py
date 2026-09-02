@@ -16,6 +16,7 @@ from rosclaw_soccer.skills.team.shared_world import G1SharedWorldResult
 from rosclaw_soccer.training.first_touch_physics import (
     FirstTouchCandidate,
     FirstTouchPhysicsScenario,
+    first_touch_contact_diagnostics,
     measure_first_touch_trajectory,
 )
 
@@ -74,6 +75,12 @@ def _trace(*, speed: float = 1.2, pelvis_height: float = 0.72) -> dict[str, np.n
     pelvis[:, 3] = 1.0
     torso = np.zeros((time.size, 4), dtype=np.float64)
     torso[:, 0] = 1.0
+    left_foot = np.zeros((time.size, 3), dtype=np.float64)
+    right_foot = np.zeros((time.size, 3), dtype=np.float64)
+    left_foot[:, 0] = ball_pose[:, 0] - 0.20
+    left_foot[:, 2] = 0.04
+    right_foot[:, 0] = ball_pose[:, 0] - 0.30
+    right_foot[:, 2] = 0.04
     return {
         "time": time,
         "ball_pose": ball_pose,
@@ -82,6 +89,8 @@ def _trace(*, speed: float = 1.2, pelvis_height: float = 0.72) -> dict[str, np.n
         "shooter_ball_contact_foot": contact_foot,
         "shooter_pelvis_pose": pelvis,
         "shooter_torso_quaternion": torso,
+        "shooter_left_foot_position": left_foot,
+        "shooter_right_foot_position": right_foot,
     }
 
 
@@ -171,6 +180,23 @@ def test_late_foot_contact_cannot_erase_an_earlier_body_contact() -> None:
 
     assert not measurement.contact_detected
     assert evaluation.primary_failure is FirstTouchFailure.TOUCH_TOO_SOFT
+
+    diagnostics = first_touch_contact_diagnostics(trace=trace, candidate=candidate)
+    assert diagnostics["body_contact_preceded_required_foot"] is True
+    assert diagnostics["first_body_only_contact_time_sec"] == pytest.approx(0.16)
+    assert diagnostics["first_required_foot_contact_time_sec"] == pytest.approx(0.20)
+    assert diagnostics["required_foot_contact_lag_after_body_sec"] == pytest.approx(0.04)
+    assert diagnostics["pixels_used_for_scoring"] is False
+
+
+def test_contact_diagnostics_reject_malformed_dense_physics() -> None:
+    trace = _trace()
+    trace["shooter_left_foot_position"] = trace["shooter_left_foot_position"][:-1]
+    with pytest.raises(ValueError, match="diagnostic arrays"):
+        first_touch_contact_diagnostics(
+            trace=trace,
+            candidate=FirstTouchCandidate(candidate_id="candidate.left", kick_foot="left"),
+        )
 
 
 def test_first_touch_scenario_and_candidate_reject_out_of_scope_values() -> None:
