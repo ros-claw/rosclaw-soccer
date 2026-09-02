@@ -213,6 +213,27 @@ def test_first_touch_scenario_and_candidate_reject_out_of_scope_values() -> None
         FirstTouchCandidate(candidate_id="candidate.bad", swing_amplitude=0.2)
     with pytest.raises(ValueError, match="start delay"):
         FirstTouchCandidate(candidate_id="candidate.bad", receiver_start_delay_sec=1.1)
+    with pytest.raises(ValueError, match="six finite joints"):
+        FirstTouchCandidate(candidate_id="candidate.bad", contact_residual_rad=(0.1,))
+    with pytest.raises(ValueError, match="exceeds its joint limit"):
+        FirstTouchCandidate(
+            candidate_id="candidate.bad",
+            contact_residual_rad=(0.3, 0.0, 0.0, 0.0, 0.0, 0.0),
+        )
+
+
+def test_first_touch_candidate_exposes_only_an_enabled_contact_residual() -> None:
+    frozen = FirstTouchCandidate(candidate_id="candidate.frozen")
+    assert frozen.contact_residual_config() is None
+
+    learned = FirstTouchCandidate(
+        candidate_id="candidate.residual",
+        contact_residual_rad=(-0.02, 0.01, 0.0, -0.04, 0.05, 0.0),
+    )
+    config = learned.contact_residual_config()
+    assert config is not None
+    assert config.activation_ceiling == "SIM_ONLY"
+    assert config.right_leg_residual_rad == learned.contact_residual_rad
 
 
 def test_left_foot_recovery_uses_the_canonical_anatomical_frame() -> None:

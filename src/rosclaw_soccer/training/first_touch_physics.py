@@ -20,6 +20,9 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from rosclaw_soccer.growth.ballistic_contact_residual import (
+    G1BallisticContactResidualConfig,
+)
 from rosclaw_soccer.growth.first_touch import (
     FirstTouchEvaluation,
     FirstTouchGateConfig,
@@ -133,6 +136,10 @@ class FirstTouchCandidate:
     foot_yaw_offset: float = 0.03025
     foot_pitch_offset: float = 0.0
     loft_synergy: float = 0.0
+    contact_residual_rad: tuple[float, ...] = (0.0,) * 6
+    contact_policy_frame: int = 256
+    contact_lead_duration_sec: float = 0.16
+    contact_trail_duration_sec: float = 0.08
     schema_version: str = "rosclaw_soccer.first_touch_candidate.v1"
 
     def __post_init__(self) -> None:
@@ -156,6 +163,7 @@ class FirstTouchCandidate:
             loft_synergy=self.loft_synergy,
             policy_type="parameter",
         )
+        self.contact_residual_config()
 
     @property
     def candidate_hash(self) -> str:
@@ -174,6 +182,17 @@ class FirstTouchCandidate:
             "foot_pitch_offset": self.foot_pitch_offset,
             "loft_synergy": self.loft_synergy,
         }
+
+    def contact_residual_config(self) -> G1BallisticContactResidualConfig | None:
+        """Build the optional smooth SIM-only contact-window residual."""
+
+        config = G1BallisticContactResidualConfig(
+            right_leg_residual_rad=self.contact_residual_rad,
+            contact_policy_frame=self.contact_policy_frame,
+            lead_duration_sec=self.contact_lead_duration_sec,
+            trail_duration_sec=self.contact_trail_duration_sec,
+        )
+        return config if config.enabled else None
 
 
 def _roll_pitch_deg(quaternion_wxyz: NDArray[np.float64]) -> tuple[float, float]:
@@ -480,6 +499,7 @@ def run_first_touch_physics_case(
         shooter_target=(goal.plane_x_m, goal.target_y_m, goal.target_z_m),
         shooter_policy_target=scenario.frozen_policy_target_m,
         shooter_parameter_overrides=candidate.parameter_overrides(),
+        shooter_ballistic_contact_config=candidate.contact_residual_config(),
         ball_launcher_position_m=scenario.launcher_position_m,
         ball_launcher_velocity_mps=scenario.launcher_velocity_mps,
         launcher_receiver_enabled=True,
@@ -591,6 +611,10 @@ def _main() -> None:
     parser.add_argument("--foot-yaw-offset", type=float, default=0.03025)
     parser.add_argument("--foot-pitch-offset", type=float, default=0.0)
     parser.add_argument("--loft-synergy", type=float, default=0.0)
+    parser.add_argument("--contact-residual", type=float, nargs=6, default=(0.0,) * 6)
+    parser.add_argument("--contact-policy-frame", type=int, default=256)
+    parser.add_argument("--contact-lead-duration", type=float, default=0.16)
+    parser.add_argument("--contact-trail-duration", type=float, default=0.08)
     args = parser.parse_args()
     report = run_first_touch_physics_case(
         asset_root=args.asset_root,
@@ -616,6 +640,10 @@ def _main() -> None:
             foot_yaw_offset=args.foot_yaw_offset,
             foot_pitch_offset=args.foot_pitch_offset,
             loft_synergy=args.loft_synergy,
+            contact_residual_rad=tuple(args.contact_residual),
+            contact_policy_frame=args.contact_policy_frame,
+            contact_lead_duration_sec=args.contact_lead_duration,
+            contact_trail_duration_sec=args.contact_trail_duration,
         ),
         gate=FirstTouchGateConfig(
             minimum_incoming_speed_mps=args.minimum_measured_incoming_speed,
