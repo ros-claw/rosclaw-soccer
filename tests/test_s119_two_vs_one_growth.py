@@ -12,7 +12,10 @@ from rosclaw_soccer.growth.tactical_2v1_actor import (
     load_two_vs_one_tactical_actor,
     save_two_vs_one_tactical_actor,
 )
-from rosclaw_soccer.sim.contracts import hash_json
+from rosclaw_soccer.media.tactical_2v1_growth_video import (
+    validate_two_vs_one_growth_video_manifest,
+)
+from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.tactical_2v1_growth import (
     TwoVsOneRetentionManifest,
     collect_two_vs_one_acquisition,
@@ -217,3 +220,39 @@ def test_complete_growth_stage_is_validated_and_tamper_evident(tmp_path: Path) -
     artifact.write_bytes(artifact.read_bytes() + b"tamper")
     with pytest.raises(ValueError, match="artifact changed"):
         validate_two_vs_one_growth_stage(output / "stage-summary.json")
+
+
+def test_two_vs_one_video_manifest_is_content_bound(tmp_path: Path) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"fixture-video")
+    manifest = {
+        "schema_version": "rosclaw_soccer.two_vs_one_growth_video.v1",
+        "claim": "BOUNDED_TWO_VS_ONE_TACTICAL_GROWTH_VISUALIZATION",
+        "source_stage_hash": _hash("stage"),
+        "source_stage_passed": True,
+        "source_files": {str(source): hash_bytes(source.read_bytes())},
+        "video_path": str(video),
+        "video_hash": hash_bytes(video.read_bytes()),
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "frame_count": 420,
+        "duration_sec": 14.0,
+        "visualization_only": True,
+        "tactical_plane_only": True,
+        "g1_bodies_rendered": False,
+        "pixels_used_for_scoring": False,
+        "commercial_use_allowed": False,
+        "promotion_eligible": False,
+        "activation_ceiling": "SIM_ONLY",
+        "hardware_command_sent": False,
+    }
+    manifest["manifest_hash"] = hash_json(manifest)
+    path = tmp_path / "video.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert validate_two_vs_one_growth_video_manifest(path)["video_hash"] == manifest["video_hash"]
+    video.write_bytes(b"changed")
+    with pytest.raises(ValueError, match="video changed"):
+        validate_two_vs_one_growth_video_manifest(path)
