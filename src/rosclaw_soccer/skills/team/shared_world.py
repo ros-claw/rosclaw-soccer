@@ -41,6 +41,12 @@ from rosclaw_soccer.growth.causal_skill_transition import (
     causal_transition_features,
     load_causal_skill_transition_actor,
 )
+from rosclaw_soccer.growth.causal_strike_option import (
+    CausalStrikeOptionDecision,
+    CausalStrikeOptionObservation,
+    G1CausalStrikeOptionConfig,
+    G1CausalStrikeOptionController,
+)
 from rosclaw_soccer.growth.first_touch_interception import (
     FirstTouchInterceptionConfig,
     first_touch_interception_effect,
@@ -117,6 +123,10 @@ from rosclaw_soccer.providers.g1.mujoco_primitives import (
 )
 from rosclaw_soccer.providers.g1.mujoco_primitives import (
     roll_pitch as _roll_pitch,
+)
+from rosclaw_soccer.providers.g1.transition_bridge import (
+    G1TransitionBridgeConfig,
+    G1VelocityMatchedTransitionBridge,
 )
 from rosclaw_soccer.sim.contracts import (
     G1_DDS_JOINT_NAMES,
@@ -1358,6 +1368,14 @@ class G1SharedWorldResult:
     shooter_transition_predicted_chain_probability: float | None = None
     shooter_transition_ensemble_probability_spread: float | None = None
     shooter_transition_used_parent_fallback: bool = False
+    shooter_causal_strike_option_enabled: bool = False
+    shooter_causal_strike_option_config_hash: str | None = None
+    shooter_causal_strike_option_final_phase: str | None = None
+    shooter_causal_strike_option_reason: str | None = None
+    shooter_causal_strike_bridge_started: bool = False
+    shooter_causal_strike_bridge_start_time_sec: float | None = None
+    shooter_causal_strike_bridge_predecessor_policy_frame: int | None = None
+    shooter_causal_strike_bridge_peak_target_velocity_rms_rad_s: float = 0.0
     shooter_aim_expert_route: str = "nominal"
     shooter_early_arrival_expert_fraction: float = 0.0
     shooter_ballistic_actor_active_fraction: float = 0.0
@@ -1471,7 +1489,7 @@ class G1SharedWorldResult:
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v20"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v21"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1602,6 +1620,19 @@ class _Robot:
     transition_triggered: bool = False
     transition_trigger_time_sec: float | None = None
     last_transition_features: np.ndarray | None = None
+    motion_joint_order: np.ndarray | None = None
+    causal_strike_option: G1CausalStrikeOptionController | None = None
+    last_causal_strike_option_decision: CausalStrikeOptionDecision | None = None
+    causal_strike_bridge: G1VelocityMatchedTransitionBridge | None = None
+    causal_strike_bridge_frame: int = 0
+    causal_strike_bridge_frames: int = 0
+    causal_strike_bridge_phase_start: int = 0
+    causal_strike_bridge_kp: np.ndarray | None = None
+    causal_strike_bridge_kd: np.ndarray | None = None
+    causal_strike_bridge_started: bool = False
+    causal_strike_bridge_start_time_sec: float | None = None
+    causal_strike_bridge_predecessor_policy_frame: int | None = None
+    causal_strike_bridge_peak_target_velocity_rms_rad_s: float = 0.0
     latest_left_support: bool = False
     latest_right_support: bool = False
     phase_hold_count: int = 0
@@ -1881,6 +1912,7 @@ def _simulate_shared_world(
     ball_ground_friction: float = 0.10,
     receiver_phase_sync_enabled: bool = True,
     shooter_transition_actor_path: Path | None = None,
+    shooter_causal_strike_option_config: G1CausalStrikeOptionConfig | None = None,
     shooter_recovery_candidate_path: Path | None = None,
     shooter_recovery_residual_config: IQLResidualGuardConfig | None = None,
     shooter_recovery_config: Any | None = None,
@@ -1959,6 +1991,12 @@ def _simulate_shared_world(
         )
     if shooter_transition_actor_path is not None and not receiver_phase_sync_enabled:
         raise ValueError("causal shooter transition requires receiver phase synchronization")
+    if shooter_causal_strike_option_config is not None and (
+        shooter_transition_actor_path is not None or receiver_phase_sync_enabled
+    ):
+        raise ValueError(
+            "causal strike option requires an exclusive clock and disabled legacy phase sync"
+        )
     if shooter_ballistic_actor_path is not None and shooter_loft_teacher_config is not None:
         raise ValueError("shooter ballistic actor and loft teacher cannot share torque authority")
     if shooter_loft_teacher_config is not None and not shooter_loft_teacher_config.enabled:
@@ -2638,6 +2676,7 @@ def _simulate_shared_world(
         state_type=state_type,
         output_type=output_type,
         policy_type=policy_type,
+        motion_joint_order=mujoco_to_isaac,
         parameters=shooter_parameters,
         start_sec=shooter_start_sec,
         initial_position=initial_position,
@@ -2680,6 +2719,11 @@ def _simulate_shared_world(
         contact_prior_joint_scales=shooter_contact_prior_joint_scales,
     )
     shooter.transition_actor = shooter_transition_actor
+    shooter.causal_strike_option = (
+        None
+        if shooter_causal_strike_option_config is None
+        else G1CausalStrikeOptionController(shooter_causal_strike_option_config)
+    )
     passer = _make_robot(
         model=model,
         data=data,
@@ -2690,6 +2734,7 @@ def _simulate_shared_world(
         state_type=state_type,
         output_type=output_type,
         policy_type=policy_type,
+        motion_joint_order=mujoco_to_isaac,
         parameters=passer_parameters,
         start_sec=passer_start_sec,
         initial_position=initial_position,
@@ -2773,6 +2818,7 @@ def _simulate_shared_world(
             state_type=state_type,
             output_type=output_type,
             policy_type=policy_type,
+            motion_joint_order=mujoco_to_isaac,
             parameters=ShotParameters(policy_type="parameter"),
             start_sec=math.inf,
             # The free-kick clip starts with a ~73-degree global yaw because
@@ -2973,6 +3019,7 @@ def _simulate_shared_world(
             state_type=state_type,
             output_type=output_type,
             policy_type=policy_type,
+            motion_joint_order=mujoco_to_isaac,
             parameters=cast(ShotParameters, second_striker_parameters),
             start_sec=physical_second_striker_config.policy_start_time_sec,
             initial_position=initial_position,
@@ -3166,6 +3213,12 @@ def _simulate_shared_world(
         "shooter_transition_ensemble_probability_spread": [],
         "shooter_transition_used_parent_fallback": [],
         "shooter_transition_triggered": [],
+        "shooter_causal_strike_option_phase": [],
+        "shooter_causal_strike_option_ready": [],
+        "shooter_causal_strike_option_begin_bridge": [],
+        "shooter_causal_strike_option_incoming_ball": [],
+        "shooter_causal_strike_option_ball_arrival_eta_sec": [],
+        "shooter_causal_strike_bridge_fraction": [],
         "shooter_ballistic_actor_active": [],
         "shooter_ballistic_actor_torque": [],
         "shooter_ballistic_contact_active": [],
@@ -3485,6 +3538,35 @@ def _simulate_shared_world(
             shooter.transition_decision = shooter.transition_actor.decide(
                 shooter.last_transition_features
             )
+        predecessor_frame = max(
+            0,
+            int(passer.policy.time_step) - int(passer.policy.WARMUP_STEPS),
+        )
+        if shooter.causal_strike_option is not None:
+            pelvis_roll, pelvis_pitch = _roll_pitch(
+                np.asarray(shooter.state.pelvis_quat_w, dtype=np.float64)
+            )
+            option_observation = CausalStrikeOptionObservation(
+                timestamp_sec=float(data.time),
+                predecessor_policy_frame=predecessor_frame,
+                receiver_pelvis_height_m=float(shooter.state.pelvis_pos_w[2]),
+                receiver_roll_rad=pelvis_roll,
+                receiver_pitch_rad=pelvis_pitch,
+                receiver_joint_velocity_rms_rad_s=float(
+                    np.sqrt(np.mean(np.square(shooter.state.dq)))
+                ),
+                receiver_ball_local_x_m=float(shooter.state.ball_pos_w[0]),
+                receiver_ball_local_vx_mps=float(shooter.state.ball_vel_w[0]),
+            )
+            shooter.last_causal_strike_option_decision = shooter.causal_strike_option.step(
+                option_observation
+            )
+            if shooter.last_causal_strike_option_decision.begin_bridge:
+                _begin_causal_strike_bridge(
+                    shooter,
+                    timestamp_sec=float(data.time),
+                    predecessor_policy_frame=predecessor_frame,
+                )
         if (
             (second_threat_config is not None or physical_rearm_earliest is not None)
             and goalkeeper is not None
@@ -3574,7 +3656,11 @@ def _simulate_shared_world(
             )
             second_threat_peak_force = force_norm
             first_goal_crossed_before_second_threat = goal_crossed
-        if (launcher_position is None or launcher_receiver_enabled) and not shooter.entered:
+        if (
+            (launcher_position is None or launcher_receiver_enabled)
+            and not shooter.entered
+            and shooter.causal_strike_option is None
+        ):
             if shooter.transition_actor is None:
                 if data.time + 1e-12 >= shooter.start_sec:
                     _enter_policy(shooter)
@@ -3582,10 +3668,6 @@ def _simulate_shared_world(
                 decision = shooter.transition_decision
                 if decision is None:
                     raise RuntimeError("causal shooter transition decision is unavailable")
-                predecessor_frame = max(
-                    0,
-                    int(passer.policy.time_step) - int(passer.policy.WARMUP_STEPS),
-                )
                 if predecessor_frame >= decision.trigger_policy_frame:
                     _enter_policy(shooter)
                     shooter.transition_triggered = True
@@ -5207,6 +5289,8 @@ def _simulate_shared_world(
                     ).copy()
                     shooter.contact_latched = True
                     shooter.contact_time = float(data.time)
+                    if shooter.causal_strike_option is not None:
+                        shooter.causal_strike_option.observe_contact()
                     _reset_post_contact_support_anchors(shooter)
             if (
                 goalkeeper is not None
@@ -6227,6 +6311,30 @@ def _simulate_shared_world(
             shooter.transition_decision is not None
             and shooter.transition_decision.used_parent_fallback
         ),
+        shooter_causal_strike_option_enabled=shooter.causal_strike_option is not None,
+        shooter_causal_strike_option_config_hash=(
+            None
+            if shooter.causal_strike_option is None
+            else shooter.causal_strike_option.config.config_hash
+        ),
+        shooter_causal_strike_option_final_phase=(
+            None
+            if shooter.causal_strike_option is None
+            else shooter.causal_strike_option.phase.name
+        ),
+        shooter_causal_strike_option_reason=(
+            None
+            if shooter.last_causal_strike_option_decision is None
+            else shooter.last_causal_strike_option_decision.reason
+        ),
+        shooter_causal_strike_bridge_started=shooter.causal_strike_bridge_started,
+        shooter_causal_strike_bridge_start_time_sec=(shooter.causal_strike_bridge_start_time_sec),
+        shooter_causal_strike_bridge_predecessor_policy_frame=(
+            shooter.causal_strike_bridge_predecessor_policy_frame
+        ),
+        shooter_causal_strike_bridge_peak_target_velocity_rms_rad_s=(
+            shooter.causal_strike_bridge_peak_target_velocity_rms_rad_s
+        ),
         shooter_aim_expert_route=(
             "early_arrival" if shooter.early_arrival_expert_frame_count > 0 else "nominal"
         ),
@@ -6672,6 +6780,7 @@ def _make_robot(
     state_type: Any,
     output_type: Any,
     policy_type: Any,
+    motion_joint_order: np.ndarray,
     parameters: ShotParameters,
     start_sec: float,
     initial_position: np.ndarray,
@@ -6717,6 +6826,9 @@ def _make_robot(
 
     if not 0 <= post_policy_blend_frames <= 200:
         raise ValueError("post-policy blend frames must be in [0, 200]")
+    order = np.asarray(motion_joint_order, dtype=np.int64)
+    if order.shape != (29,) or set(order.tolist()) != set(range(29)):
+        raise ValueError("G1 motion joint order must be a 29-DoF permutation")
 
     free_joint = _id(model, mujoco.mjtObj.mjOBJ_JOINT, prefix + "floating_base_joint")
     qpos_base = int(model.jnt_qposadr[free_joint])
@@ -6818,6 +6930,7 @@ def _make_robot(
         state=state,
         output=output,
         policy=policy,
+        motion_joint_order=order.copy(),
         standby_output=standby_output,
         standby_policy=standby_policy,
         parameters=parameters,
@@ -6900,6 +7013,71 @@ def _fill_local_state(robot: _Robot, data: Any, ball_body: int, ball_qvel: int) 
         dtype=np.float64,
     )
     robot.state.ang_vel = robot.state.root_ang_vel_b.copy()
+
+
+def _begin_causal_strike_bridge(
+    robot: _Robot,
+    *,
+    timestamp_sec: float,
+    predecessor_policy_frame: int,
+) -> None:
+    controller = robot.causal_strike_option
+    order = robot.motion_joint_order
+    if (
+        controller is None
+        or order is None
+        or robot.causal_strike_bridge is not None
+        or robot.entered
+    ):
+        raise RuntimeError("causal strike bridge lost its exclusive entry contract")
+    config = controller.config
+    with _canonical_kick_policy_state(robot), contextlib.redirect_stdout(io.StringIO()):
+        robot.policy.enter()
+        robot.policy._ref_anchor_world_origin = robot.policy._init_to_world @ (
+            robot.policy.motion_body_pos[config.strike_phase_start_frame, 9].astype(np.float64)
+        )
+    phase_target = np.asarray(
+        robot.policy.motion_joint_pos[config.strike_phase_start_frame][order],
+        dtype=np.float64,
+    )
+    phase_velocity = np.asarray(
+        robot.policy.motion_joint_vel[config.strike_phase_start_frame][order],
+        dtype=np.float64,
+    )
+    policy_kp = np.asarray(robot.policy.kps, dtype=np.float64)
+    policy_kd = np.asarray(robot.policy.kds, dtype=np.float64)
+    if robot.parameters.kick_foot == "left":
+        phase_target = _mirror_g1_joint_positions(phase_target)
+        phase_velocity = _mirror_g1_joint_positions(phase_velocity)
+        policy_kp = _mirror_g1_joint_gains(policy_kp)
+        policy_kd = _mirror_g1_joint_gains(policy_kd)
+    entry_position = np.asarray(robot.state.q, dtype=np.float64)
+    entry_velocity = np.asarray(robot.state.dq, dtype=np.float64)
+    delta = phase_target - entry_position
+    robot.causal_strike_bridge = G1VelocityMatchedTransitionBridge(
+        entry_position=entry_position,
+        entry_velocity=entry_velocity,
+        exit_position=phase_target,
+        exit_velocity=phase_velocity,
+        config=G1TransitionBridgeConfig(
+            duration_sec=config.bridge_duration_sec,
+            entry_velocity_scale=config.bridge_entry_velocity_scale,
+            exit_velocity_scale=config.bridge_exit_velocity_scale,
+            maximum_boundary_velocity_rad_s=config.bridge_boundary_velocity_limit_rad_s,
+        ),
+    )
+    robot.causal_strike_bridge_frames = int(round(config.bridge_duration_sec / _CONTROL_DT))
+    robot.causal_strike_bridge_phase_start = config.strike_phase_start_frame
+    robot.causal_strike_bridge_kp = np.minimum(
+        policy_kp,
+        np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
+        * 0.58
+        / np.maximum(np.abs(delta), 0.05),
+    )
+    robot.causal_strike_bridge_kd = policy_kd * 0.72
+    robot.causal_strike_bridge_started = True
+    robot.causal_strike_bridge_start_time_sec = timestamp_sec
+    robot.causal_strike_bridge_predecessor_policy_frame = predecessor_policy_frame
 
 
 def _enter_policy(robot: _Robot) -> None:
@@ -8309,6 +8487,39 @@ def _update_policy(
 ) -> int:
     robot.last_recovery_active = False
     robot.last_recovery_blend_fraction = 0.0
+    if robot.causal_strike_bridge is not None and not robot.entered:
+        controller = robot.causal_strike_option
+        bridge_kp = robot.causal_strike_bridge_kp
+        bridge_kd = robot.causal_strike_bridge_kd
+        if controller is None or bridge_kp is None or bridge_kd is None:
+            raise RuntimeError("causal strike bridge state is incomplete")
+        _reset_inactive_imitation_channels(robot)
+        bridge_frame = robot.causal_strike_bridge_frame
+        bridge_frames = robot.causal_strike_bridge_frames
+        if not 0 <= bridge_frame < bridge_frames:
+            raise RuntimeError("causal strike bridge frame is outside its contract")
+        sample = robot.causal_strike_bridge.sample((bridge_frame + 1) * _CONTROL_DT)
+        robot.last_target = np.asarray(sample.position, dtype=np.float64).copy()
+        robot.target_velocity = np.asarray(sample.velocity, dtype=np.float64).copy()
+        robot.kp = bridge_kp.copy()
+        robot.kd = bridge_kd.copy()
+        velocity_rms = float(np.sqrt(np.mean(np.square(robot.target_velocity))))
+        robot.causal_strike_bridge_peak_target_velocity_rms_rad_s = max(
+            robot.causal_strike_bridge_peak_target_velocity_rms_rad_s,
+            velocity_rms,
+        )
+        phase_start = robot.causal_strike_bridge_phase_start
+        if bridge_frame >= bridge_frames - controller.config.history_prime_frames:
+            robot.policy.time_step = (
+                robot.policy.WARMUP_STEPS + phase_start - (bridge_frames - 1 - bridge_frame)
+            )
+            with _canonical_kick_policy_state(robot), contextlib.redirect_stdout(io.StringIO()):
+                robot.policy._build_obs()
+        robot.causal_strike_bridge_frame += 1
+        if robot.causal_strike_bridge_frame == bridge_frames:
+            robot.policy.time_step = robot.policy.WARMUP_STEPS + phase_start
+            robot.entered = True
+        return phase_start
     if not robot.entered:
         robot.target_velocity.fill(0.0)
         robot.last_motion_prior_position_active = False
@@ -9046,6 +9257,32 @@ def _append_trace(
         False if transition_decision is None else transition_decision.used_parent_fallback
     )
     trace["shooter_transition_triggered"].append(shooter.transition_triggered)
+    option_decision = shooter.last_causal_strike_option_decision
+    trace["shooter_causal_strike_option_phase"].append(
+        -1 if option_decision is None else int(option_decision.phase)
+    )
+    trace["shooter_causal_strike_option_ready"].append(
+        False if option_decision is None else option_decision.ready
+    )
+    trace["shooter_causal_strike_option_begin_bridge"].append(
+        False if option_decision is None else option_decision.begin_bridge
+    )
+    trace["shooter_causal_strike_option_incoming_ball"].append(
+        False if option_decision is None else option_decision.incoming_ball
+    )
+    trace["shooter_causal_strike_option_ball_arrival_eta_sec"].append(
+        -1.0
+        if option_decision is None or option_decision.ball_arrival_eta_sec is None
+        else option_decision.ball_arrival_eta_sec
+    )
+    trace["shooter_causal_strike_bridge_fraction"].append(
+        0.0
+        if not shooter.causal_strike_bridge_frames
+        else min(
+            1.0,
+            shooter.causal_strike_bridge_frame / shooter.causal_strike_bridge_frames,
+        )
+    )
     trace["shooter_learned_torque_active"].append(learned_torque["shooter"] is not None)
     trace["shooter_ball_contact_foot"].append(shooter_contact_foot)
     trace["ball_contact_role"].append(contact_role)
