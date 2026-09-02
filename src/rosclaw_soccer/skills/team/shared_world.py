@@ -35,6 +35,12 @@ from rosclaw_soccer.growth.ballistic_contact_torque_residual import (
     G1BallisticContactTorqueResidualConfig,
     g1_ballistic_contact_torque_residual,
 )
+from rosclaw_soccer.growth.causal_skill_transition import (
+    CausalSkillTransitionActor,
+    CausalTransitionDecision,
+    causal_transition_features,
+    load_causal_skill_transition_actor,
+)
 from rosclaw_soccer.growth.first_touch_interception import (
     FirstTouchInterceptionConfig,
     first_touch_interception_effect,
@@ -1341,6 +1347,17 @@ class G1SharedWorldResult:
     shooter_recovery_active_fraction: float = 0.0
     passer_recovery_peak_blend_fraction: float = 0.0
     shooter_recovery_peak_blend_fraction: float = 0.0
+    shooter_transition_actor_hash: str | None = None
+    shooter_transition_actor_accepted: bool = False
+    shooter_transition_triggered: bool = False
+    shooter_transition_trigger_time_sec: float | None = None
+    shooter_transition_trigger_policy_frame: int | None = None
+    shooter_transition_residual_frames: int = 0
+    shooter_transition_support_distance: float | None = None
+    shooter_transition_predicted_safe_probability: float | None = None
+    shooter_transition_predicted_chain_probability: float | None = None
+    shooter_transition_ensemble_probability_spread: float | None = None
+    shooter_transition_used_parent_fallback: bool = False
     shooter_aim_expert_route: str = "nominal"
     shooter_early_arrival_expert_fraction: float = 0.0
     shooter_ballistic_actor_active_fraction: float = 0.0
@@ -1454,7 +1471,7 @@ class G1SharedWorldResult:
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v19"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v20"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1580,6 +1597,11 @@ class _Robot:
     entered: bool = False
     contact_latched: bool = False
     contact_time: float | None = None
+    transition_actor: CausalSkillTransitionActor | None = None
+    transition_decision: CausalTransitionDecision | None = None
+    transition_triggered: bool = False
+    transition_trigger_time_sec: float | None = None
+    last_transition_features: np.ndarray | None = None
     latest_left_support: bool = False
     latest_right_support: bool = False
     phase_hold_count: int = 0
@@ -1858,6 +1880,7 @@ def _simulate_shared_world(
     passer_post_policy_recovery_enabled: bool = False,
     ball_ground_friction: float = 0.10,
     receiver_phase_sync_enabled: bool = True,
+    shooter_transition_actor_path: Path | None = None,
     shooter_recovery_candidate_path: Path | None = None,
     shooter_recovery_residual_config: IQLResidualGuardConfig | None = None,
     shooter_recovery_config: Any | None = None,
@@ -1934,6 +1957,8 @@ def _simulate_shared_world(
             "shared-world recovery actors must use the Soccer 110-D approach/strike "
             "contract; legacy 74-D recovery artifacts are not accepted"
         )
+    if shooter_transition_actor_path is not None and not receiver_phase_sync_enabled:
+        raise ValueError("causal shooter transition requires receiver phase synchronization")
     if shooter_ballistic_actor_path is not None and shooter_loft_teacher_config is not None:
         raise ValueError("shooter ballistic actor and loft teacher cannot share torque authority")
     if shooter_loft_teacher_config is not None and not shooter_loft_teacher_config.enabled:
@@ -2174,7 +2199,7 @@ def _simulate_shared_world(
     if (
         active_passer_ball_xy.shape != (2,)
         or not np.all(np.isfinite(active_passer_ball_xy))
-        or not 1.05 <= active_passer_ball_xy[0] <= 1.35
+        or not 1.05 <= active_passer_ball_xy[0] <= 1.25
         or not -0.30 <= active_passer_ball_xy[1] <= -0.08
     ):
         raise ValueError("passer ball pocket must be finite and inside the qualified envelope")
@@ -2306,6 +2331,11 @@ def _simulate_shared_world(
             )
 
     state_type, output_type, policy_type, mujoco_to_isaac = _load_robonaldo(root)
+    shooter_transition_actor = (
+        None
+        if shooter_transition_actor_path is None
+        else load_causal_skill_transition_actor(shooter_transition_actor_path)
+    )
     shooter_motion_prior: G1FootballMotionPrior | None = None
     if shooter_motion_prior_path is not None:
         shooter_motion_prior = load_g1_football_motion_prior(shooter_motion_prior_path)
@@ -2622,7 +2652,7 @@ def _simulate_shared_world(
         recovery_controller=shooter_recovery,
         post_policy_frame=shooter_post_policy_frame,
         post_policy_blend_frames=shooter_post_policy_blend_frames,
-        phase_sync_enabled=receiver_phase_sync_enabled,
+        phase_sync_enabled=(receiver_phase_sync_enabled and shooter_transition_actor is None),
         recovery_torque_actor=shooter_recovery_actor,
         joint_guard_enabled=shooter_joint_guard_enabled,
         post_policy_neutral_velocity_enabled=shooter_post_policy_neutral_velocity_enabled,
@@ -2649,6 +2679,7 @@ def _simulate_shared_world(
         contact_prior_contact_policy_frame=shooter_contact_prior_contact_policy_frame,
         contact_prior_joint_scales=shooter_contact_prior_joint_scales,
     )
+    shooter.transition_actor = shooter_transition_actor
     passer = _make_robot(
         model=model,
         data=data,
@@ -3125,6 +3156,16 @@ def _simulate_shared_world(
         "passer_policy_frame": [],
         "shooter_policy_frame": [],
         "shooter_phase_correction": [],
+        "shooter_transition_features": [],
+        "shooter_transition_actor_accepted": [],
+        "shooter_transition_support_distance": [],
+        "shooter_transition_trigger_policy_frame": [],
+        "shooter_transition_residual_frames": [],
+        "shooter_transition_predicted_safe_probability": [],
+        "shooter_transition_predicted_chain_probability": [],
+        "shooter_transition_ensemble_probability_spread": [],
+        "shooter_transition_used_parent_fallback": [],
+        "shooter_transition_triggered": [],
         "shooter_ballistic_actor_active": [],
         "shooter_ballistic_actor_torque": [],
         "shooter_ballistic_contact_active": [],
@@ -3423,6 +3464,27 @@ def _simulate_shared_world(
                 _fill_local_state(robot, data, second_ball_body, second_ball_qvel)
             else:
                 _fill_local_state(robot, data, ball_body, ball_qvel)
+        shooter.last_transition_features = causal_transition_features(
+            receiver_pelvis_world_m=np.asarray(
+                data.qpos[shooter.qpos_base : shooter.qpos_base + 3], dtype=np.float64
+            ),
+            predecessor_pelvis_world_m=np.asarray(
+                data.qpos[passer.qpos_base : passer.qpos_base + 3], dtype=np.float64
+            ),
+            receiver_ball_local_m=np.asarray(shooter.state.ball_pos_w, dtype=np.float64),
+            receiver_reception_target_local_m=np.asarray(
+                local_pass_reception_target, dtype=np.float64
+            ),
+            receiver_shot_target_local_m=np.asarray(active_policy_target, dtype=np.float64),
+            predecessor_swing_speed_scale=passer.parameters.swing_speed_scale,
+            ball_ground_friction=ball_ground_friction,
+            predecessor_yaw_rad=passer_yaw_rad,
+            receiver_kick_foot=shooter.parameters.kick_foot,
+        )
+        if shooter.transition_actor is not None and shooter.transition_decision is None:
+            shooter.transition_decision = shooter.transition_actor.decide(
+                shooter.last_transition_features
+            )
         if (
             (second_threat_config is not None or physical_rearm_earliest is not None)
             and goalkeeper is not None
@@ -3512,12 +3574,22 @@ def _simulate_shared_world(
             )
             second_threat_peak_force = force_norm
             first_goal_crossed_before_second_threat = goal_crossed
-        if (
-            (launcher_position is None or launcher_receiver_enabled)
-            and not shooter.entered
-            and data.time + 1e-12 >= shooter.start_sec
-        ):
-            _enter_policy(shooter)
+        if (launcher_position is None or launcher_receiver_enabled) and not shooter.entered:
+            if shooter.transition_actor is None:
+                if data.time + 1e-12 >= shooter.start_sec:
+                    _enter_policy(shooter)
+            else:
+                decision = shooter.transition_decision
+                if decision is None:
+                    raise RuntimeError("causal shooter transition decision is unavailable")
+                predecessor_frame = max(
+                    0,
+                    int(passer.policy.time_step) - int(passer.policy.WARMUP_STEPS),
+                )
+                if predecessor_frame >= decision.trigger_policy_frame:
+                    _enter_policy(shooter)
+                    shooter.transition_triggered = True
+                    shooter.transition_trigger_time_sec = float(data.time)
         if not passer.entered and data.time + 1e-12 >= passer.start_sec:
             _enter_policy(passer)
         if (
@@ -6113,6 +6185,48 @@ def _simulate_shared_world(
         shooter_recovery_active_fraction=shooter.recovery_active_frame_count / max(1, total_frames),
         passer_recovery_peak_blend_fraction=passer.recovery_peak_blend_fraction,
         shooter_recovery_peak_blend_fraction=shooter.recovery_peak_blend_fraction,
+        shooter_transition_actor_hash=(
+            None if shooter.transition_actor is None else shooter.transition_actor.actor_hash
+        ),
+        shooter_transition_actor_accepted=bool(
+            shooter.transition_decision is not None and shooter.transition_decision.accepted
+        ),
+        shooter_transition_triggered=shooter.transition_triggered,
+        shooter_transition_trigger_time_sec=shooter.transition_trigger_time_sec,
+        shooter_transition_trigger_policy_frame=(
+            None
+            if shooter.transition_decision is None
+            else shooter.transition_decision.trigger_policy_frame
+        ),
+        shooter_transition_residual_frames=(
+            0
+            if shooter.transition_decision is None
+            else shooter.transition_decision.residual_frames
+        ),
+        shooter_transition_support_distance=(
+            None
+            if shooter.transition_decision is None
+            else shooter.transition_decision.support_distance
+        ),
+        shooter_transition_predicted_safe_probability=(
+            None
+            if shooter.transition_decision is None
+            else shooter.transition_decision.predicted_safe_probability
+        ),
+        shooter_transition_predicted_chain_probability=(
+            None
+            if shooter.transition_decision is None
+            else shooter.transition_decision.predicted_chain_probability
+        ),
+        shooter_transition_ensemble_probability_spread=(
+            None
+            if shooter.transition_decision is None
+            else shooter.transition_decision.ensemble_probability_spread
+        ),
+        shooter_transition_used_parent_fallback=bool(
+            shooter.transition_decision is not None
+            and shooter.transition_decision.used_parent_fallback
+        ),
         shooter_aim_expert_route=(
             "early_arrival" if shooter.early_arrival_expert_frame_count > 0 else "nominal"
         ),
@@ -8896,6 +9010,42 @@ def _append_trace(
     trace["passer_foot_contact"].append(support[0])
     trace["shooter_foot_contact"].append(support[1])
     trace["shooter_phase_correction"].append(shooter.last_phase_correction)
+    transition_features = shooter.last_transition_features
+    if transition_features is None:
+        raise RuntimeError("shooter transition features were not recorded")
+    transition_decision = shooter.transition_decision
+    trace["shooter_transition_features"].append(transition_features.copy())
+    trace["shooter_transition_actor_accepted"].append(
+        False if transition_decision is None else transition_decision.accepted
+    )
+    trace["shooter_transition_support_distance"].append(
+        -1.0 if transition_decision is None else transition_decision.support_distance
+    )
+    trace["shooter_transition_trigger_policy_frame"].append(
+        -1 if transition_decision is None else transition_decision.trigger_policy_frame
+    )
+    trace["shooter_transition_residual_frames"].append(
+        0 if transition_decision is None else transition_decision.residual_frames
+    )
+    trace["shooter_transition_predicted_safe_probability"].append(
+        -1.0
+        if transition_decision is None or transition_decision.predicted_safe_probability is None
+        else transition_decision.predicted_safe_probability
+    )
+    trace["shooter_transition_predicted_chain_probability"].append(
+        -1.0
+        if transition_decision is None or transition_decision.predicted_chain_probability is None
+        else transition_decision.predicted_chain_probability
+    )
+    trace["shooter_transition_ensemble_probability_spread"].append(
+        -1.0
+        if transition_decision is None or transition_decision.ensemble_probability_spread is None
+        else transition_decision.ensemble_probability_spread
+    )
+    trace["shooter_transition_used_parent_fallback"].append(
+        False if transition_decision is None else transition_decision.used_parent_fallback
+    )
+    trace["shooter_transition_triggered"].append(shooter.transition_triggered)
     trace["shooter_learned_torque_active"].append(learned_torque["shooter"] is not None)
     trace["shooter_ball_contact_foot"].append(shooter_contact_foot)
     trace["ball_contact_role"].append(contact_role)
