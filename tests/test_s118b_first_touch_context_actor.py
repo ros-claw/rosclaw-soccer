@@ -9,9 +9,14 @@ from rosclaw_soccer.growth.first_touch_context_actor import (
     load_first_touch_context_actor,
     save_first_touch_context_actor,
 )
+from rosclaw_soccer.growth.first_touch_prototype_actor import (
+    load_first_touch_prototype_actor,
+    save_first_touch_prototype_actor,
+)
 from rosclaw_soccer.training.first_touch_context_actor_train import (
     FirstTouchTeacherSample,
     fit_first_touch_context_actor,
+    fit_first_touch_prototype_actor,
 )
 from rosclaw_soccer.training.first_touch_physics import (
     FirstTouchCandidate,
@@ -120,3 +125,55 @@ def test_context_actor_artifact_detects_weight_tampering(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="hash does not match"):
         load_first_touch_context_actor(artifact)
+
+
+def test_prototype_actor_routes_one_intact_contact_mode_and_round_trips(tmp_path) -> None:
+    samples = _samples()
+    actor = fit_first_touch_prototype_actor(samples, kick_foot="right")
+    query = replace(
+        samples[1].scenario,
+        scenario_id="s118b.synthetic.prototype-query",
+        incoming_lateral_m=0.005,
+    )
+
+    decision = actor.decide(query, candidate_id="prototype.query")
+
+    assert decision.accepted
+    assert decision.candidate is not None
+    assert decision.route == "VERIFIED_CONTACT_MODE_PROTOTYPE"
+    assert decision.selected_prototype_report_hash in actor.prototype_report_hashes
+    selected = actor.prototype_report_hashes.index(decision.selected_prototype_report_hash)
+    assert decision.candidate.stance_offset_y == actor.prototype_candidate_vectors[selected][2]
+    assert actor.to_dict()["stability_plasticity_contract"]["stability"].startswith("never")
+
+    artifact = tmp_path / "prototype.json"
+    save_first_touch_prototype_actor(actor, artifact)
+    loaded = load_first_touch_prototype_actor(artifact)
+    assert loaded.actor_hash == actor.actor_hash
+    assert loaded.decide(query, candidate_id="prototype.query") == decision
+
+
+def test_prototype_actor_rejects_retention_leakage_and_distant_context() -> None:
+    samples = _samples()
+    with pytest.raises(ValueError, match="retention scenario leaked"):
+        fit_first_touch_prototype_actor(
+            samples,
+            kick_foot="right",
+            sealed_retention_scenario_hashes=(samples[2].scenario_hash,),
+        )
+    actor = fit_first_touch_prototype_actor(
+        samples,
+        kick_foot="right",
+        maximum_support_distance=0.25,
+    )
+    distant = FirstTouchPhysicsScenario(
+        scenario_id="s118b.synthetic.prototype-ood",
+        incoming_speed_mps=1.5,
+        incoming_lateral_m=0.18,
+        target_direction_deg=40.0,
+        target_outgoing_speed_mps=0.5,
+    )
+    decision = actor.decide(distant, candidate_id="prototype.ood")
+    assert not decision.accepted
+    assert decision.candidate is None
+    assert decision.route == "FROZEN_PARENT_OOD_FALLBACK"

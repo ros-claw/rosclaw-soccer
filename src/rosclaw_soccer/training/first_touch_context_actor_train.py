@@ -15,6 +15,11 @@ from rosclaw_soccer.growth.first_touch_context_actor import (
     FirstTouchContextResidualActor,
     save_first_touch_context_actor,
 )
+from rosclaw_soccer.growth.first_touch_prototype_actor import (
+    FirstTouchFailureAwarePrototypeActor,
+    first_touch_candidate_vector,
+    save_first_touch_prototype_actor,
+)
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.first_touch_physics import (
     FirstTouchCandidate,
@@ -251,6 +256,107 @@ def train_first_touch_context_actor(
     return actor
 
 
+def fit_first_touch_prototype_actor(
+    samples: tuple[FirstTouchTeacherSample, ...],
+    *,
+    kick_foot: str,
+    sealed_retention_scenario_hashes: tuple[str, ...] = (),
+    maximum_support_distance: float = 2.50,
+) -> FirstTouchFailureAwarePrototypeActor:
+    """Fit a failure-aware router without averaging contact-mode actions."""
+
+    local = tuple(sample for sample in samples if sample.candidate.kick_foot == kick_foot)
+    if kick_foot not in {"left", "right"} or len(local) < 6:
+        raise ValueError("First Touch prototype learner has insufficient foot-local support")
+    body_hashes = {sample.body_hash for sample in local}
+    prior_hashes = {sample.kick_prior_hash for sample in local}
+    implementation_hashes = {sample.source_implementation_hash for sample in local}
+    if len(body_hashes) != 1 or len(prior_hashes) != 1 or len(implementation_hashes) != 1:
+        raise ValueError("First Touch prototype learner provenance is heterogeneous")
+    retention = set(sealed_retention_scenario_hashes)
+    if {sample.scenario_hash for sample in local} & retention:
+        raise ValueError("First Touch retention scenario leaked into prototype training")
+    successful = tuple(sample for sample in local if sample.passed and sample.safety_passed)
+    failed = tuple(sample for sample in local if not sample.passed)
+    if (
+        len(successful) < 4
+        or len({sample.scenario_hash for sample in successful}) != len(successful)
+        or len(failed) < 2
+    ):
+        raise ValueError("First Touch prototype learner lacks distinct success/failure support")
+    features = np.stack([sample.features for sample in successful])
+    center = np.mean(features, axis=0)
+    scale = np.maximum(
+        np.std(features, axis=0),
+        np.asarray((0.05, 0.01, 4.0, 0.10), dtype=np.float64),
+    )
+    prototype_reports = tuple(sample.report_hash for sample in successful)
+    prototype_scenarios = tuple(sample.scenario_hash for sample in successful)
+    failed_reports = tuple(sample.report_hash for sample in failed)
+    failed_scenarios = tuple(sample.scenario_hash for sample in failed)
+    snapshot = hash_json(
+        {
+            "prototype_report_hashes": prototype_reports,
+            "failed_report_hashes": failed_reports,
+            "sealed_retention_scenario_hashes": sorted(retention),
+            "kick_foot": kick_foot,
+            "maximum_support_distance": maximum_support_distance,
+        }
+    )
+    implementation_hash = hash_json(
+        {
+            "actor_module": hash_bytes(
+                Path(__file__)
+                .resolve()
+                .parents[1]
+                .joinpath("growth", "first_touch_prototype_actor.py")
+                .read_bytes()
+            ),
+            "trainer_module": hash_bytes(Path(__file__).read_bytes()),
+            "source_physics_implementation_hash": next(iter(implementation_hashes)),
+        }
+    )
+    return FirstTouchFailureAwarePrototypeActor(
+        body_hash=next(iter(body_hashes)),
+        kick_prior_hash=next(iter(prior_hashes)),
+        implementation_hash=implementation_hash,
+        training_snapshot_hash=str(snapshot),
+        kick_foot=kick_foot,
+        feature_center=tuple(float(value) for value in center),
+        feature_scale=tuple(float(value) for value in scale),
+        prototype_features=tuple(
+            tuple(float(value) for value in sample.features) for sample in successful
+        ),
+        prototype_candidate_vectors=tuple(
+            first_touch_candidate_vector(sample.candidate) for sample in successful
+        ),
+        prototype_report_hashes=prototype_reports,
+        prototype_scenario_hashes=prototype_scenarios,
+        failed_report_hashes=failed_reports,
+        failed_scenario_hashes=failed_scenarios,
+        maximum_support_distance=maximum_support_distance,
+    )
+
+
+def train_first_touch_prototype_actor(
+    *,
+    report_paths: tuple[Path, ...],
+    output_path: Path,
+    kick_foot: str,
+    sealed_retention_scenario_hashes: tuple[str, ...] = (),
+    maximum_support_distance: float = 2.50,
+) -> FirstTouchFailureAwarePrototypeActor:
+    samples = tuple(load_first_touch_teacher_sample(path) for path in report_paths)
+    actor = fit_first_touch_prototype_actor(
+        samples,
+        kick_foot=kick_foot,
+        sealed_retention_scenario_hashes=sealed_retention_scenario_hashes,
+        maximum_support_distance=maximum_support_distance,
+    )
+    save_first_touch_prototype_actor(actor, output_path)
+    return actor
+
+
 def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", action="append", type=Path, required=True)
@@ -278,6 +384,8 @@ if __name__ == "__main__":
 __all__ = [
     "FirstTouchTeacherSample",
     "fit_first_touch_context_actor",
+    "fit_first_touch_prototype_actor",
     "load_first_touch_teacher_sample",
     "train_first_touch_context_actor",
+    "train_first_touch_prototype_actor",
 ]
