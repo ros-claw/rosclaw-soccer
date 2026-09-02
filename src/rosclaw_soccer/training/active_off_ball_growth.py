@@ -193,7 +193,11 @@ def default_active_retention_manifest() -> ActiveOffBallRetentionManifest:
         ((5.44, -0.40, 0.0), (2.02, 0.42, 0.0)),
         ((5.48, -0.40, 0.0), (2.07, 0.47, 0.0)),
         ((5.52, -0.40, 0.0), (2.12, 0.52, 0.0)),
-        ((5.56, -0.40, 0.0), (2.17, 0.57, 0.0)),
+        # Keep the unseen receiving geometry inside the frozen actor's
+        # explicitly qualified PASS support.  The first attempted point at
+        # (2.17, 0.57) correctly routed to HOLD and failed closed before any
+        # retention physics was consumed.
+        ((5.56, -0.40, 0.0), (2.00, 0.40, 0.0)),
         ((5.35, 0.35, 0.0), (4.15, 0.35, 0.0)),
         ((5.45, 0.45, 0.0), (4.35, 0.45, 0.0)),
         ((5.55, 0.55, 0.0), (4.55, 0.55, 0.0)),
