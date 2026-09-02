@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from rosclaw_soccer.growth.first_touch_interception import FirstTouchInterceptionConfig
 from rosclaw_soccer.growth.tactical_2v1 import (
     MatchedTacticalRollout,
     TacticalAction,
@@ -395,6 +396,20 @@ def simulate_full_body_two_vs_one(
             "passer_reactive_movement_config": (
                 None if reactive_movement_plan is None else reactive_movement_plan.teammate_movement
             ),
+            "passer_reception_interception_config": (
+                FirstTouchInterceptionConfig(
+                    strike_ankle_offset_m=(-0.06, 0.08, -0.07),
+                    prediction_horizon_sec=0.10,
+                    position_gain_n_per_m=300.0,
+                    velocity_damping_n_per_mps=4.0,
+                    maximum_task_force_n=90.0,
+                    maximum_joint_residual_nm=20.0,
+                    maximum_foot_ball_distance_m=1.20,
+                )
+                if action == TacticalAction.PASS and reactive_movement_plan is not None
+                else None
+            ),
+            "passer_precontact_joint_guard_enabled": reactive_movement_plan is not None,
             "ball_ground_friction": scenario.ball_ground_friction,
             "goal_spec": goal,
             "goalkeeper_config": G1GoalkeeperConfig(

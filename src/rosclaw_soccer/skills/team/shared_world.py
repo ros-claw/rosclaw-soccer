@@ -69,9 +69,13 @@ from rosclaw_soccer.growth.mosaic_overhead_reach_prior import (
     load_g1_mosaic_overhead_reach_prior,
 )
 from rosclaw_soccer.growth.reactive_route_actor import (
-    G1ReactiveRouteActor,
-    load_reactive_route_actor,
     reactive_route_features,
+)
+from rosclaw_soccer.growth.temporal_route_actor import (
+    G1TemporalRouteActor,
+    RouteActor,
+    TemporalRouteMemory,
+    load_route_actor,
 )
 from rosclaw_soccer.providers.g1.asset_qualification import (
     G1AssetQualification,
@@ -272,6 +276,18 @@ class G1ReactiveMovementConfig:
     maximum_speed_mps: float = 0.55
     maximum_acceleration_mps2: float = 1.20
     arrival_radius_m: float = 0.04
+    minimum_role_separation_m: float = 0.90
+    collision_avoidance_gain: float = 1.50
+    maximum_collision_correction_mps: float = 0.25
+    post_reception_follow_through_m: float = 0.35
+    far_target_activation_distance_m: float = 0.55
+    far_target_speed_gain: float = 1.20
+    velocity_braking_gain: float = 0.45
+    maximum_velocity_braking_correction_mps: float = 0.18
+    diagonal_braking_target_dx_start_m: float = 0.40
+    diagonal_braking_target_dx_full_m: float = 0.60
+    diagonal_braking_target_dy_start_m: float = 0.35
+    diagonal_braking_target_dy_full_m: float = 0.50
     execution_mode: str = "SIM_ONLY"
     hardware_authorized: bool = False
     schema_version: str = "rosclaw.soccer.g1_reactive_movement_config.v1"
@@ -299,12 +315,38 @@ class G1ReactiveMovementConfig:
             self.maximum_speed_mps,
             self.maximum_acceleration_mps2,
             self.arrival_radius_m,
+            self.minimum_role_separation_m,
+            self.collision_avoidance_gain,
+            self.maximum_collision_correction_mps,
+            self.post_reception_follow_through_m,
+            self.far_target_activation_distance_m,
+            self.far_target_speed_gain,
+            self.velocity_braking_gain,
+            self.maximum_velocity_braking_correction_mps,
+            self.diagonal_braking_target_dx_start_m,
+            self.diagonal_braking_target_dx_full_m,
+            self.diagonal_braking_target_dy_start_m,
+            self.diagonal_braking_target_dy_full_m,
         )
         if (
             not all(math.isfinite(value) for value in values)
             or not 0.10 <= self.maximum_speed_mps <= 0.70
             or not 0.20 <= self.maximum_acceleration_mps2 <= 3.0
             or not 0.02 <= self.arrival_radius_m <= 0.20
+            or not 0.50 <= self.minimum_role_separation_m <= 1.20
+            or not 0.20 <= self.collision_avoidance_gain <= 3.0
+            or not 0.05 <= self.maximum_collision_correction_mps <= 0.30
+            or not 0.0 <= self.post_reception_follow_through_m <= 0.60
+            or not 0.30 <= self.far_target_activation_distance_m <= 1.00
+            or not 1.0 <= self.far_target_speed_gain <= 1.40
+            or not 0.0 <= self.velocity_braking_gain <= 1.0
+            or not 0.0 <= self.maximum_velocity_braking_correction_mps <= 0.25
+            or not 0.20 <= self.diagonal_braking_target_dx_start_m <= 0.60
+            or not 0.40 <= self.diagonal_braking_target_dx_full_m <= 0.80
+            or self.diagonal_braking_target_dx_start_m >= self.diagonal_braking_target_dx_full_m
+            or not 0.20 <= self.diagonal_braking_target_dy_start_m <= 0.60
+            or not 0.40 <= self.diagonal_braking_target_dy_full_m <= 0.80
+            or self.diagonal_braking_target_dy_start_m >= self.diagonal_braking_target_dy_full_m
         ):
             raise ValueError("reactive movement limits violate the locomotion envelope")
         if self.execution_mode != "SIM_ONLY" or self.hardware_authorized:
@@ -1588,6 +1630,11 @@ class _Robot:
     last_reactive_route_features: np.ndarray | None = None
     last_reactive_route_support_distance: float = 0.0
     last_reactive_route_accepted: bool = False
+    last_temporal_route_memory: TemporalRouteMemory | None = None
+    last_reactive_role_separation_m: float = math.inf
+    last_reactive_collision_shield_active: bool = False
+    last_reactive_velocity_braking_correction: np.ndarray | None = None
+    reactive_diagonal_braking_confidence: float | None = None
 
 
 def _base_scenario() -> GoalForgeScenario:
@@ -1845,6 +1892,7 @@ def _simulate_shared_world(
     shooter_ballistic_contact_config: G1BallisticContactResidualConfig | None = None,
     shooter_ballistic_contact_torque_config: G1BallisticContactTorqueResidualConfig | None = None,
     shooter_first_touch_interception_config: FirstTouchInterceptionConfig | None = None,
+    passer_reception_interception_config: FirstTouchInterceptionConfig | None = None,
     shooter_loft_teacher_config: G1LoftTeacherConfig | None = None,
     shooter_origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
     passer_start_sec: float = 0.0,
@@ -2936,16 +2984,16 @@ def _simulate_shared_world(
     robots = tuple(
         robot for robot in (passer, shooter, goalkeeper, second_striker) if robot is not None
     )
-    passer_reactive_actor: G1ReactiveRouteActor | None = None
-    goalkeeper_reactive_actor: G1ReactiveRouteActor | None = None
+    passer_reactive_actor: RouteActor | None = None
+    goalkeeper_reactive_actor: RouteActor | None = None
     if passer_reactive_movement_config is not None:
-        passer_reactive_actor = load_reactive_route_actor(
+        passer_reactive_actor = load_route_actor(
             Path(passer_reactive_movement_config.actor_artifact_path)
         )
         if passer_reactive_actor.actor_hash != passer_reactive_movement_config.actor_hash:
             raise ValueError("passer reactive route actor changed after plan construction")
     if goalkeeper_reactive_movement_config is not None:
-        goalkeeper_reactive_actor = load_reactive_route_actor(
+        goalkeeper_reactive_actor = load_route_actor(
             Path(goalkeeper_reactive_movement_config.actor_artifact_path)
         )
         if goalkeeper_reactive_actor.actor_hash != goalkeeper_reactive_movement_config.actor_hash:
@@ -3087,6 +3135,10 @@ def _simulate_shared_world(
         "shooter_first_touch_interception_torque": [],
         "shooter_first_touch_interception_force": [],
         "shooter_first_touch_interception_error": [],
+        "passer_reception_interception_active": [],
+        "passer_reception_interception_torque": [],
+        "passer_reception_interception_force": [],
+        "passer_reception_interception_error": [],
         "shooter_loft_teacher_active": [],
         "shooter_loft_teacher_torque": [],
         "shooter_loft_teacher_force_xyz_n": [],
@@ -3115,6 +3167,9 @@ def _simulate_shared_world(
                 "passer_reactive_route_features": [],
                 "passer_reactive_route_support_distance": [],
                 "passer_reactive_route_accepted": [],
+                "passer_reactive_role_separation_m": [],
+                "passer_reactive_collision_shield_active": [],
+                "passer_reactive_velocity_braking_correction": [],
             }
         )
     if (
@@ -3134,6 +3189,9 @@ def _simulate_shared_world(
                 "goalkeeper_reactive_route_features": [],
                 "goalkeeper_reactive_route_support_distance": [],
                 "goalkeeper_reactive_route_accepted": [],
+                "goalkeeper_reactive_role_separation_m": [],
+                "goalkeeper_reactive_collision_shield_active": [],
+                "goalkeeper_reactive_velocity_braking_correction": [],
             }
         )
     if second_striker is not None:
@@ -4507,6 +4565,16 @@ def _simulate_shared_world(
         frame_first_touch_interception_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         frame_first_touch_interception_force: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
         frame_first_touch_interception_error: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
+        frame_passer_reception_interception_active = False
+        frame_passer_reception_interception_torque: NDArray[np.float64] = np.zeros(
+            29, dtype=np.float64
+        )
+        frame_passer_reception_interception_force: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_passer_reception_interception_error: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
         frame_second_striker_ballistic_contact_torque_active = False
         frame_second_striker_ballistic_contact_torque: NDArray[np.float64] = np.zeros(
             29, dtype=np.float64
@@ -4860,6 +4928,53 @@ def _simulate_shared_world(
                         frame_first_touch_interception_torque = interception.torque.copy()
                         frame_first_touch_interception_force = interception.task_force_n.copy()
                         frame_first_touch_interception_error = interception.position_error_m.copy()
+                if robot.role == "passer" and passer_reception_interception_config is not None:
+                    left_distance = float(
+                        np.linalg.norm(
+                            np.asarray(data.xpos[robot.left_ankle_body], dtype=np.float64)
+                            - np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64)
+                        )
+                    )
+                    right_distance = float(
+                        np.linalg.norm(
+                            np.asarray(data.xpos[robot.right_ankle_body], dtype=np.float64)
+                            - np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64)
+                        )
+                    )
+                    reception_foot = "left" if left_distance <= right_distance else "right"
+                    reception_ankle = (
+                        robot.left_ankle_body
+                        if reception_foot == "left"
+                        else robot.right_ankle_body
+                    )
+                    reception = first_touch_interception_effect(
+                        model=model,
+                        data=data,
+                        striking_ankle_body_id=reception_ankle,
+                        actuated_dof_indices=np.asarray(robot.joint_qvel, dtype=np.int64),
+                        ball_position_m=np.asarray(
+                            data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
+                        ),
+                        ball_velocity_mps=np.asarray(
+                            data.qvel[ball_qvel : ball_qvel + 3], dtype=np.float64
+                        ),
+                        policy_frame=(passer_reception_interception_config.start_policy_frame),
+                        contact_observed=robot.contact_latched,
+                        kick_foot=reception_foot,
+                        config=passer_reception_interception_config,
+                    )
+                    raw_torque = raw_torque + reception.torque
+                    frame_passer_reception_interception_active = (
+                        frame_passer_reception_interception_active or reception.active
+                    )
+                    if float(np.max(np.abs(reception.torque))) >= float(
+                        np.max(np.abs(frame_passer_reception_interception_torque))
+                    ):
+                        frame_passer_reception_interception_torque = reception.torque.copy()
+                        frame_passer_reception_interception_force = reception.task_force_n.copy()
+                        frame_passer_reception_interception_error = (
+                            reception.position_error_m.copy()
+                        )
                 safety_projected = raw_torque
                 # The candidate is a post-impact recovery module.  Keeping the
                 # guard behind the measured contact latch preserves the frozen
@@ -5529,6 +5644,18 @@ def _simulate_shared_world(
         )
         trace["shooter_first_touch_interception_force"].append(frame_first_touch_interception_force)
         trace["shooter_first_touch_interception_error"].append(frame_first_touch_interception_error)
+        trace["passer_reception_interception_active"].append(
+            frame_passer_reception_interception_active
+        )
+        trace["passer_reception_interception_torque"].append(
+            frame_passer_reception_interception_torque
+        )
+        trace["passer_reception_interception_force"].append(
+            frame_passer_reception_interception_force
+        )
+        trace["passer_reception_interception_error"].append(
+            frame_passer_reception_interception_error
+        )
         trace["shooter_loft_teacher_active"].append(frame_loft_teacher_active)
         trace["shooter_loft_teacher_torque"].append(frame_loft_teacher_torque)
         trace["shooter_loft_teacher_force_xyz_n"].append(frame_loft_teacher_force_xyz_n)
@@ -5799,6 +5926,17 @@ def _simulate_shared_world(
                 passer.last_reactive_route_support_distance
             )
             trace["passer_reactive_route_accepted"].append(passer.last_reactive_route_accepted)
+            trace["passer_reactive_role_separation_m"].append(
+                passer.last_reactive_role_separation_m
+            )
+            trace["passer_reactive_collision_shield_active"].append(
+                passer.last_reactive_collision_shield_active
+            )
+            trace["passer_reactive_velocity_braking_correction"].append(
+                np.zeros(2, dtype=np.float64)
+                if passer.last_reactive_velocity_braking_correction is None
+                else passer.last_reactive_velocity_braking_correction.copy()
+            )
         if (
             goalkeeper_tactical_movement_config is not None
             or goalkeeper_reactive_movement_config is not None
@@ -5829,6 +5967,17 @@ def _simulate_shared_world(
             )
             trace["goalkeeper_reactive_route_accepted"].append(
                 goalkeeper.last_reactive_route_accepted
+            )
+            trace["goalkeeper_reactive_role_separation_m"].append(
+                goalkeeper.last_reactive_role_separation_m
+            )
+            trace["goalkeeper_reactive_collision_shield_active"].append(
+                goalkeeper.last_reactive_collision_shield_active
+            )
+            trace["goalkeeper_reactive_velocity_braking_correction"].append(
+                np.zeros(2, dtype=np.float64)
+                if goalkeeper.last_reactive_velocity_braking_correction is None
+                else goalkeeper.last_reactive_velocity_braking_correction.copy()
             )
         second_launcher_active = bool(
             second_threat_force is not None
@@ -6902,6 +7051,12 @@ def _command_tactical_movement(
     )
     local_command = np.clip(local_command, ranges[:, 0], ranges[:, 1])
     actual_world_command = _rotate_z(local_command, yaw)
+    if robot.role != "goalkeeper":
+        # RoboNaldo's released locomotion actor is materially stronger in its
+        # canonical local +y half-space.  Reuse the already qualified mirrored
+        # proprioception/action path for a team-mate's local -y route instead
+        # of asking the weak half-space to learn around a runtime mismatch.
+        robot.standby_locomotion_mirror_active = bool(local_command[1] < -1.0e-6)
     robot.state.vel_cmd = _normalized_locomotion_command(robot.standby_policy, local_command)
     active = bool(float(np.linalg.norm(actual_world_command[:2])) > 1.0e-6)
     robot.last_tactical_world_target = np.asarray(target, dtype=np.float64).copy()
@@ -6918,7 +7073,7 @@ def _command_reactive_movement(
     data: Any,
     ball_qpos: int,
     config: G1ReactiveMovementConfig,
-    actor: G1ReactiveRouteActor,
+    actor: RouteActor,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], bool]:
     """Run one bounded observation update through frozen locomotion authority."""
 
@@ -6934,6 +7089,9 @@ def _command_reactive_movement(
     )
     ball_position = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
     target = np.asarray(config.target_position_m, dtype=np.float64)
+    if config.role == "teammate" and config.action == "pass" and robot.contact_latched:
+        target = target.copy()
+        target[0] = min(12.0, target[0] + config.post_reception_follow_through_m)
     features = reactive_route_features(
         target_xy_m=target[:2],
         self_position_xy_m=position,
@@ -6944,15 +7102,87 @@ def _command_reactive_movement(
         action=config.action,
         role=config.role,
     )
-    decision = actor.decide(features)
+    decision: Any
+    if isinstance(actor, G1TemporalRouteActor):
+        decision = actor.decide(features, robot.last_temporal_route_memory)
+        robot.last_temporal_route_memory = decision.next_memory
+    else:
+        decision = actor.decide(features)
+    if robot.reactive_diagonal_braking_confidence is None:
+        if config.role == "teammate" and config.action == "pass":
+            dx_confidence = float(
+                np.clip(
+                    (features[0] - config.diagonal_braking_target_dx_start_m)
+                    / (
+                        config.diagonal_braking_target_dx_full_m
+                        - config.diagonal_braking_target_dx_start_m
+                    ),
+                    0.0,
+                    1.0,
+                )
+            )
+            dy_confidence = float(
+                np.clip(
+                    (features[1] - config.diagonal_braking_target_dy_start_m)
+                    / (
+                        config.diagonal_braking_target_dy_full_m
+                        - config.diagonal_braking_target_dy_start_m
+                    ),
+                    0.0,
+                    1.0,
+                )
+            )
+            robot.reactive_diagonal_braking_confidence = dx_confidence * dy_confidence
+        else:
+            robot.reactive_diagonal_braking_confidence = 0.0
     command = np.zeros(3, dtype=np.float64)
+    robot.last_reactive_role_separation_m = float(np.linalg.norm(position - other_position))
+    robot.last_reactive_collision_shield_active = False
+    robot.last_reactive_velocity_braking_correction = np.zeros(2, dtype=np.float64)
     if decision.accepted:
         command[:2] = decision.world_command_xy_mps
+        if robot.reactive_diagonal_braking_confidence > 0.0:
+            braking_correction = -config.velocity_braking_gain * velocity
+            braking_norm = float(np.linalg.norm(braking_correction))
+            if braking_norm > config.maximum_velocity_braking_correction_mps:
+                braking_correction *= config.maximum_velocity_braking_correction_mps / braking_norm
+            braking_correction *= robot.reactive_diagonal_braking_confidence
+            command[:2] += braking_correction
+            robot.last_reactive_velocity_braking_correction = braking_correction.copy()
+        target_error_distance = float(np.linalg.norm(target[:2] - position))
+        far_fraction = float(
+            np.clip(
+                (target_error_distance - config.far_target_activation_distance_m) / 0.45,
+                0.0,
+                1.0,
+            )
+        )
+        command[:2] *= 1.0 + far_fraction * (config.far_target_speed_gain - 1.0)
         speed = float(np.linalg.norm(command[:2]))
         if speed > config.maximum_speed_mps:
             command[:2] *= config.maximum_speed_mps / speed
         if float(np.linalg.norm(target[:2] - position)) <= config.arrival_radius_m:
             command[:2] = 0.0
+
+        relative_role_position = position - other_position
+        role_separation = float(np.linalg.norm(relative_role_position))
+        shield_active = role_separation < config.minimum_role_separation_m
+        if shield_active:
+            if role_separation <= 1.0e-9:
+                relative_role_position = target[:2] - other_position
+                role_separation = float(np.linalg.norm(relative_role_position))
+            if role_separation > 1.0e-9:
+                correction_speed = min(
+                    config.maximum_collision_correction_mps,
+                    config.collision_avoidance_gain
+                    * (config.minimum_role_separation_m - role_separation),
+                )
+                command[:2] += correction_speed * relative_role_position / role_separation
+                speed = float(np.linalg.norm(command[:2]))
+                if speed > config.maximum_speed_mps:
+                    command[:2] *= config.maximum_speed_mps / speed
+        robot.last_reactive_role_separation_m = role_separation
+        robot.last_reactive_collision_shield_active = shield_active
 
         previous = (
             np.zeros(3, dtype=np.float64)
@@ -6977,6 +7207,8 @@ def _command_reactive_movement(
     )
     local_command = np.clip(local_command, ranges[:, 0], ranges[:, 1])
     actual_world_command = _rotate_z(local_command, yaw)
+    if robot.role != "goalkeeper":
+        robot.standby_locomotion_mirror_active = bool(local_command[1] < -1.0e-6)
     robot.state.vel_cmd = _normalized_locomotion_command(robot.standby_policy, local_command)
     active = bool(float(np.linalg.norm(actual_world_command[:2])) > 1.0e-6)
     robot.last_tactical_world_target = target.copy()
