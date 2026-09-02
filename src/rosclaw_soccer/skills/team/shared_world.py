@@ -2917,6 +2917,8 @@ def _simulate_shared_world(
                 "goalkeeper_executed_torque": [],
                 "goalkeeper_policy_action": [],
                 "goalkeeper_target_velocity": [],
+                "goalkeeper_kp": [],
+                "goalkeeper_kd": [],
                 "goalkeeper_policy_frame": [],
                 "goalkeeper_command_mps": [],
                 "goalkeeper_predicted_target_y_m": [],
@@ -5324,6 +5326,8 @@ def _simulate_shared_world(
             trace["goalkeeper_executed_torque"].append(executed_torque["goalkeeper"].copy())
             trace["goalkeeper_policy_action"].append(goalkeeper.last_target.copy())
             trace["goalkeeper_target_velocity"].append(goalkeeper.target_velocity.copy())
+            trace["goalkeeper_kp"].append(goalkeeper.kp.copy())
+            trace["goalkeeper_kd"].append(goalkeeper.kd.copy())
             trace["goalkeeper_policy_frame"].append(policy_frames["goalkeeper"])
             trace["goalkeeper_command_mps"].append(goalkeeper_command_mps)
             trace["goalkeeper_predicted_target_y_m"].append(goalkeeper_target_y_m)
