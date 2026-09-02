@@ -1713,12 +1713,17 @@ def _simulate_shared_world(
     shooter_first_touch_interception_config: FirstTouchInterceptionConfig | None = None,
     shooter_loft_teacher_config: G1LoftTeacherConfig | None = None,
     shooter_origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    passer_start_sec: float = 0.0,
+    passer_collision_enabled: bool = True,
     passer_origin: tuple[float, float, float] | None = None,
     passer_yaw_rad: float = _PASSER_YAW,
     passer_ball_local_xy: tuple[float, float] = (1.205, -0.16),
+    passer_policy_target_m: tuple[float, float, float] = (5.0, 0.0, 0.20),
     pass_reception_target_m: tuple[float, float, float] = (1.00, 0.0, 0.115),
     goal_spec: G1TrainingGoalSpec | None = None,
     goalkeeper_config: G1GoalkeeperConfig | None = None,
+    goalkeeper_origin_override_m: tuple[float, float, float] | None = None,
+    goalkeeper_threat_role: str = "shooter",
     second_threat_config: G1SecondThreatConfig | None = None,
     physical_second_striker_config: G1PhysicalSecondStrikerConfig | None = None,
     second_striker_ballistic_actor_path: Path | None = None,
@@ -1797,6 +1802,16 @@ def _simulate_shared_world(
         raise ValueError(
             "second-striker loft teacher must be enabled and cannot share plastic authority"
         )
+    if goalkeeper_threat_role not in {"shooter", "passer"}:
+        raise ValueError("goalkeeper threat role must be shooter or passer")
+    if goalkeeper_threat_role != "shooter" and (
+        second_threat_config is not None or physical_second_striker_config is not None
+    ):
+        raise ValueError("alternate goalkeeper threat roles cannot own a second-threat chain")
+    if not math.isfinite(passer_start_sec) or not 0.0 <= passer_start_sec <= 120.0:
+        raise ValueError("passer start time must be in [0, 120] seconds")
+    if not isinstance(passer_collision_enabled, bool):
+        raise ValueError("passer collision flag must be boolean")
     if second_ball_mass_kg is not None and (
         not math.isfinite(second_ball_mass_kg) or not 0.40 <= second_ball_mass_kg <= 0.46
     ):
@@ -1932,11 +1947,12 @@ def _simulate_shared_world(
     active_shooter_origin = np.asarray(shooter_origin, dtype=np.float64)
     if active_shooter_origin.shape != (3,) or not np.all(np.isfinite(active_shooter_origin)):
         raise ValueError("shooter origin must be a finite xyz vector")
-    if abs(float(active_shooter_origin[1])) > 4.00 or not np.allclose(
-        active_shooter_origin[(0, 2),],
-        0.0,
+    if (
+        not -2.0 <= float(active_shooter_origin[0]) <= 6.0
+        or abs(float(active_shooter_origin[1])) > 4.00
+        or not math.isclose(float(active_shooter_origin[2]), 0.0, abs_tol=1e-12)
     ):
-        raise ValueError("shared-world shooter origin only permits a +/-4.00 m lateral lane")
+        raise ValueError("shared-world shooter origin exceeds the qualified pitch envelope")
     active_passer_origin = np.asarray(
         _PASSER_ORIGIN if passer_origin is None else passer_origin,
         dtype=np.float64,
@@ -1953,17 +1969,27 @@ def _simulate_shared_world(
         or not -0.30 <= active_passer_ball_xy[1] <= -0.08
     ):
         raise ValueError("passer ball pocket must be finite and inside the qualified envelope")
-    active_pass_reception_target = np.asarray(pass_reception_target_m, dtype=np.float64)
+    active_passer_policy_target = np.asarray(passer_policy_target_m, dtype=np.float64)
     if (
-        active_pass_reception_target.shape != (3,)
-        or not np.all(np.isfinite(active_pass_reception_target))
-        or not 0.80 <= active_pass_reception_target[0] <= 1.40
-        or not -0.30 <= active_pass_reception_target[1] - active_shooter_origin[1] <= 0.30
+        active_passer_policy_target.shape != (3,)
+        or not np.all(np.isfinite(active_passer_policy_target))
+        or not 1.0 <= active_passer_policy_target[0] <= 12.0
+        or abs(float(active_passer_policy_target[1])) > 4.0
+        or not 0.105 <= active_passer_policy_target[2] <= 1.20
+    ):
+        raise ValueError("passer policy target exceeds the qualified tactical envelope")
+    active_pass_reception_target = np.asarray(pass_reception_target_m, dtype=np.float64)
+    if active_pass_reception_target.shape != (3,) or not np.all(
+        np.isfinite(active_pass_reception_target)
+    ):
+        raise ValueError("pass reception target must be a finite xyz vector")
+    local_pass_reception_target = active_pass_reception_target - active_shooter_origin
+    if (
+        not 0.80 <= local_pass_reception_target[0] <= 1.40
+        or not -0.30 <= local_pass_reception_target[1] <= 0.30
         or not 0.105 <= active_pass_reception_target[2] <= 0.130
     ):
-        raise ValueError(
-            "pass reception target must be a finite shooter-local qualified strike pocket"
-        )
+        raise ValueError("pass reception target exceeds the shooter-local strike pocket")
     active_goal = goal_spec or G1TrainingGoalSpec(
         plane_x_m=shooter_target[0],
         target_y_m=shooter_target[1],
@@ -1987,6 +2013,20 @@ def _simulate_shared_world(
         raise ValueError("shooter policy target must be a finite xyz vector")
     if goalkeeper_config is not None and not unified_stadium_scene:
         raise ValueError("goalkeeper requires the unified stadium physics scene")
+    active_goalkeeper_origin_override: np.ndarray | None = None
+    if goalkeeper_origin_override_m is not None:
+        active_goalkeeper_origin_override = np.asarray(
+            goalkeeper_origin_override_m, dtype=np.float64
+        )
+        if (
+            goalkeeper_config is None
+            or active_goalkeeper_origin_override.shape != (3,)
+            or not np.all(np.isfinite(active_goalkeeper_origin_override))
+            or not -2.0 <= active_goalkeeper_origin_override[0] <= active_goal.plane_x_m
+            or abs(float(active_goalkeeper_origin_override[1])) > 4.0
+            or not math.isclose(float(active_goalkeeper_origin_override[2]), 0.0, abs_tol=1e-12)
+        ):
+            raise ValueError("goalkeeper origin override exceeds the shared pitch envelope")
     if passer_waist_pitch_target_margin_rad != 0.0 and not (
         0.005 <= passer_waist_pitch_target_margin_rad <= 0.05
     ):
@@ -1997,6 +2037,15 @@ def _simulate_shared_world(
         passer_yaw_rad=passer_yaw_rad,
         goal=active_goal,
         goalkeeper_config=goalkeeper_config,
+        goalkeeper_origin_override=(
+            None
+            if active_goalkeeper_origin_override is None
+            else (
+                float(active_goalkeeper_origin_override[0]),
+                float(active_goalkeeper_origin_override[1]),
+                float(active_goalkeeper_origin_override[2]),
+            )
+        ),
         physical_second_striker_config=physical_second_striker_config,
         second_ball_mass_kg=second_ball_mass_kg,
         unified_stadium_scene=unified_stadium_scene,
@@ -2402,11 +2451,11 @@ def _simulate_shared_world(
         output_type=output_type,
         policy_type=policy_type,
         parameters=passer_parameters,
-        start_sec=0.0,
+        start_sec=passer_start_sec,
         initial_position=initial_position,
         initial_quaternion=initial_quaternion,
         initial_joints=initial_joints,
-        target_local=np.asarray((5.0, 0.0, 0.20), dtype=np.float32),
+        target_local=np.asarray(active_passer_policy_target, dtype=np.float32),
         phase_hold_frames=0,
         standby_target=None,
         standby_kp=None,
@@ -2461,9 +2510,13 @@ def _simulate_shared_world(
     if goalkeeper_config is not None:
         goalkeeper_origin = np.asarray(
             (
-                active_goal.plane_x_m - goalkeeper_config.depth_from_goal_line_m,
-                goalkeeper_config.initial_lateral_position_m,
-                0.0,
+                (
+                    active_goal.plane_x_m - goalkeeper_config.depth_from_goal_line_m,
+                    goalkeeper_config.initial_lateral_position_m,
+                    0.0,
+                )
+                if active_goalkeeper_origin_override is None
+                else active_goalkeeper_origin_override
             ),
             dtype=np.float64,
         )
@@ -2734,6 +2787,17 @@ def _simulate_shared_world(
         if second_striker is None
         else _robot_geom_ids(model, second_striker.pelvis_body)
     )
+    if not passer_collision_enabled:
+        passer_geom_indices = np.asarray(sorted(passer_geoms), dtype=np.int64)
+        # Counterfactual removal keeps the focal body numerically supported by
+        # the floor but removes its coupling to the ball and other players.
+        # Let category 2 mean "ablated focal body" and add that category only
+        # to the floor.  Zeroing all masks would make the body free-fall and
+        # turn a bounded causal replay into a poorly conditioned simulation.
+        model.geom_contype[passer_geom_indices] = 2
+        model.geom_conaffinity[passer_geom_indices] = 2
+        model.geom_contype[floor_geom] = int(model.geom_contype[floor_geom]) | 2
+        model.geom_conaffinity[floor_geom] = int(model.geom_conaffinity[floor_geom]) | 2
     if goalkeeper is not None and goalkeeper_config is not None:
         goalkeeper_gloves = _goalkeeper_glove_geoms(
             model=model,
@@ -2777,7 +2841,7 @@ def _simulate_shared_world(
             _fill_local_state(robot, data, second_ball_body, second_ball_qvel)
         else:
             _fill_local_state(robot, data, ball_body, ball_qvel)
-    if launcher_position is None and direct_shot_position is None:
+    if launcher_position is None and direct_shot_position is None and passer_start_sec <= 1.0e-12:
         _enter_policy(passer)
 
     hard_limits = np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
@@ -3186,6 +3250,8 @@ def _simulate_shared_world(
             and data.time + 1e-12 >= shooter.start_sec
         ):
             _enter_policy(shooter)
+        if not passer.entered and data.time + 1e-12 >= passer.start_sec:
+            _enter_policy(passer)
         if (
             second_striker is not None
             and not second_striker.entered
@@ -3230,7 +3296,11 @@ def _simulate_shared_world(
         if goalkeeper is not None and goalkeeper_config is not None:
             physical_second_tracking = bool(second_striker is not None and second_threat_rearmed)
             keeper_shooter: _Robot = (
-                cast(_Robot, second_striker) if physical_second_tracking else shooter
+                cast(_Robot, second_striker)
+                if physical_second_tracking
+                else passer
+                if goalkeeper_threat_role == "passer"
+                else shooter
             )
             keeper_ball_qpos = (
                 cast(int, second_ball_qpos) if physical_second_tracking else ball_qpos
@@ -5876,6 +5946,7 @@ def _coupled_model(
     passer_yaw_rad: float = _PASSER_YAW,
     goal: G1TrainingGoalSpec | None = None,
     goalkeeper_config: G1GoalkeeperConfig | None = None,
+    goalkeeper_origin_override: tuple[float, float, float] | None = None,
     physical_second_striker_config: G1PhysicalSecondStrikerConfig | None = None,
     second_ball_mass_kg: float | None = None,
     unified_stadium_scene: bool = False,
@@ -5900,9 +5971,13 @@ def _coupled_model(
         )
     active_goal = goal or G1TrainingGoalSpec()
     goalkeeper_origin = (
-        active_goal.plane_x_m - goalkeeper_config.depth_from_goal_line_m,
-        goalkeeper_config.initial_lateral_position_m,
-        0.0,
+        (
+            active_goal.plane_x_m - goalkeeper_config.depth_from_goal_line_m,
+            goalkeeper_config.initial_lateral_position_m,
+            0.0,
+        )
+        if goalkeeper_origin_override is None
+        else goalkeeper_origin_override
     )
     if physical_second_striker_config is None:
         model = build_g1_three_player_stadium_model(
