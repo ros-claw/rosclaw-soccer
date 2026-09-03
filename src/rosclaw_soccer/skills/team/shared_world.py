@@ -82,6 +82,12 @@ from rosclaw_soccer.growth.mosaic_overhead_reach_prior import (
     blend_g1_mosaic_overhead_reach_target,
     load_g1_mosaic_overhead_reach_prior,
 )
+from rosclaw_soccer.growth.neural_contact_actor import (
+    G1NeuralContactActor,
+    evaluate_neural_contact_actor,
+    load_g1_neural_contact_actor,
+    neural_contact_features,
+)
 from rosclaw_soccer.growth.reactive_route_actor import (
     reactive_route_features,
 )
@@ -90,11 +96,27 @@ from rosclaw_soccer.growth.runtime_causal_strike_router import (
     load_runtime_causal_strike_router,
     runtime_causal_strike_features,
 )
+from rosclaw_soccer.growth.runtime_contact_mode_actor import (
+    G1RuntimeContactModeActor,
+    RuntimeContactModeAction,
+    RuntimeContactModeDecision,
+    load_runtime_contact_mode_actor,
+)
+from rosclaw_soccer.growth.target_velocity_contact_actor import (
+    G1TargetVelocityContactActor,
+    g1_target_velocity_contact_effect,
+    load_g1_target_velocity_contact_actor,
+)
 from rosclaw_soccer.growth.temporal_route_actor import (
     G1TemporalRouteActor,
     RouteActor,
     TemporalRouteMemory,
     load_route_actor,
+)
+from rosclaw_soccer.growth.three_axis_contact_actor import (
+    G1ThreeAxisContactActor,
+    g1_three_axis_contact_effect,
+    load_g1_three_axis_contact_actor,
 )
 from rosclaw_soccer.providers.g1.asset_qualification import (
     G1AssetQualification,
@@ -1651,8 +1673,10 @@ class _Robot:
     causal_strike_selected_phase_start_frame: int | None = None
     causal_strike_bridge_peak_target_velocity_rms_rad_s: float = 0.0
     causal_strike_abort_recovery_activated: bool = False
-    runtime_strike_router: G1RuntimeCausalStrikeRouter | None = None
-    runtime_strike_route_decision: CausalStrikeRouteDecision | None = None
+    runtime_strike_router: G1RuntimeCausalStrikeRouter | G1RuntimeContactModeActor | None = None
+    runtime_strike_route_decision: CausalStrikeRouteDecision | RuntimeContactModeDecision | None = (
+        None
+    )
     runtime_strike_route_time_sec: float | None = None
     last_runtime_strike_features: np.ndarray | None = None
     latest_left_support: bool = False
@@ -1936,6 +1960,7 @@ def _simulate_shared_world(
     shooter_transition_actor_path: Path | None = None,
     shooter_causal_strike_option_config: G1CausalStrikeOptionConfig | None = None,
     shooter_runtime_strike_router_path: Path | None = None,
+    shooter_runtime_contact_mode_actor_path: Path | None = None,
     shooter_recovery_candidate_path: Path | None = None,
     shooter_recovery_residual_config: IQLResidualGuardConfig | None = None,
     shooter_recovery_config: Any | None = None,
@@ -1967,6 +1992,12 @@ def _simulate_shared_world(
     shooter_contact_prior_joint_scales: tuple[float, ...] = (1.0,) * 6,
     shooter_ballistic_actor_path: Path | None = None,
     shooter_ballistic_actor_proximity_m: float | None = None,
+    shooter_three_axis_contact_actor_path: Path | None = None,
+    shooter_target_velocity_contact_actor_path: Path | None = None,
+    shooter_target_foot_velocity_xyz_mps: tuple[float, float, float] | None = None,
+    shooter_neural_contact_actor_path: Path | None = None,
+    shooter_neural_contact_policy_frame: int | None = None,
+    shooter_neural_contact_target_velocity_xyz_mps: tuple[float, float, float] | None = None,
     shooter_ballistic_contact_config: G1BallisticContactResidualConfig | None = None,
     shooter_ballistic_contact_torque_config: G1BallisticContactTorqueResidualConfig | None = None,
     shooter_first_touch_interception_config: FirstTouchInterceptionConfig | None = None,
@@ -2020,15 +2051,65 @@ def _simulate_shared_world(
         raise ValueError(
             "causal strike option requires an exclusive clock and disabled legacy phase sync"
         )
-    if shooter_runtime_strike_router_path is not None and (
+    if (
+        shooter_runtime_strike_router_path is not None
+        and shooter_runtime_contact_mode_actor_path is not None
+    ):
+        raise ValueError("runtime strike and body-contact routers are mutually exclusive")
+    runtime_router_requested = (
+        shooter_runtime_strike_router_path is not None
+        or shooter_runtime_contact_mode_actor_path is not None
+    )
+    if runtime_router_requested and (
         shooter_causal_strike_option_config is None
         or shooter_ballistic_contact_torque_config is None
     ):
         raise ValueError(
             "runtime strike routing requires the causal option and bounded contact muscle memory"
         )
+    if shooter_runtime_contact_mode_actor_path is not None and (
+        shooter_three_axis_contact_actor_path is None
+        and shooter_target_velocity_contact_actor_path is None
+    ):
+        raise ValueError("runtime body-contact routing requires a task-space contact actor")
     if shooter_ballistic_actor_path is not None and shooter_loft_teacher_config is not None:
         raise ValueError("shooter ballistic actor and loft teacher cannot share torque authority")
+    if shooter_three_axis_contact_actor_path is not None and (
+        shooter_ballistic_actor_path is not None
+        or shooter_loft_teacher_config is not None
+        or shooter_target_velocity_contact_actor_path is not None
+    ):
+        raise ValueError(
+            "three-axis contact actor requires exclusive learned/teacher torque authority"
+        )
+    if (shooter_target_velocity_contact_actor_path is None) != (
+        shooter_target_foot_velocity_xyz_mps is None
+    ):
+        raise ValueError("target-velocity actor and committed target must be configured together")
+    if shooter_target_velocity_contact_actor_path is not None and (
+        shooter_ballistic_actor_path is not None or shooter_loft_teacher_config is not None
+    ):
+        raise ValueError("target-velocity actor requires exclusive learned torque authority")
+    neural_contact_values = (
+        shooter_neural_contact_actor_path,
+        shooter_neural_contact_policy_frame,
+        shooter_neural_contact_target_velocity_xyz_mps,
+    )
+    if any(value is None for value in neural_contact_values) != all(
+        value is None for value in neural_contact_values
+    ):
+        raise ValueError("neural contact actor, contact frame and target are one commitment")
+    if shooter_neural_contact_actor_path is not None and any(
+        value is not None
+        for value in (
+            shooter_ballistic_actor_path,
+            shooter_three_axis_contact_actor_path,
+            shooter_target_velocity_contact_actor_path,
+            shooter_loft_teacher_config,
+            shooter_ballistic_contact_torque_config,
+        )
+    ):
+        raise ValueError("neural contact actor requires exclusive contact-torque authority")
     if shooter_loft_teacher_config is not None and not shooter_loft_teacher_config.enabled:
         raise ValueError("shooter loft teacher must contain a non-zero task-space target")
     if (ball_launcher_position_m is None) != (ball_launcher_velocity_mps is None):
@@ -2409,9 +2490,17 @@ def _simulate_shared_world(
         if shooter_runtime_strike_router_path is None
         else load_runtime_causal_strike_router(shooter_runtime_strike_router_path)
     )
-    if shooter_runtime_strike_router is not None and (
-        shooter_runtime_strike_router.body_hash != qualification.body_hash
-        or shooter_runtime_strike_router.kick_prior_hash != qualification.kick_prior_hash
+    shooter_runtime_contact_mode_actor = (
+        None
+        if shooter_runtime_contact_mode_actor_path is None
+        else load_runtime_contact_mode_actor(shooter_runtime_contact_mode_actor_path)
+    )
+    active_runtime_strike_router = (
+        shooter_runtime_contact_mode_actor or shooter_runtime_strike_router
+    )
+    if active_runtime_strike_router is not None and (
+        active_runtime_strike_router.body_hash != qualification.body_hash
+        or active_runtime_strike_router.kick_prior_hash != qualification.kick_prior_hash
     ):
         raise ValueError("runtime strike router asset identity changed")
     shooter_motion_prior: G1FootballMotionPrior | None = None
@@ -2448,6 +2537,9 @@ def _simulate_shared_world(
         ):
             raise ValueError("contact-prior velocity blend requires a velocity-aware artifact")
     shooter_ballistic_actor: G1BallisticContactImpulseActor | None = None
+    shooter_three_axis_contact_actor: G1ThreeAxisContactActor | None = None
+    shooter_target_velocity_contact_actor: G1TargetVelocityContactActor | None = None
+    shooter_neural_contact_actor: G1NeuralContactActor | None = None
     second_striker_ballistic_actor: G1BallisticContactImpulseActor | None = None
     second_striker_candidate_actor: G1BallisticContactImpulseActor | None = None
     if shooter_ballistic_actor_path is not None:
@@ -2462,6 +2554,34 @@ def _simulate_shared_world(
         if shooter_ballistic_actor.body_hash != qualification.body_hash:
             raise ValueError("ballistic contact actor Body hash does not match coupled G1")
         second_striker_ballistic_actor = shooter_ballistic_actor
+    if shooter_three_axis_contact_actor_path is not None:
+        shooter_three_axis_contact_actor = load_g1_three_axis_contact_actor(
+            shooter_three_axis_contact_actor_path
+        )
+        if shooter_three_axis_contact_actor.body_hash != qualification.body_hash:
+            raise ValueError("three-axis contact actor Body hash does not match coupled G1")
+    if shooter_target_velocity_contact_actor_path is not None:
+        shooter_target_velocity_contact_actor = load_g1_target_velocity_contact_actor(
+            shooter_target_velocity_contact_actor_path
+        )
+        if shooter_target_velocity_contact_actor.body_hash != qualification.body_hash:
+            raise ValueError("target-velocity contact actor Body hash does not match coupled G1")
+        assert shooter_target_foot_velocity_xyz_mps is not None
+        if not shooter_target_velocity_contact_actor.target_supported(
+            shooter_target_foot_velocity_xyz_mps
+        ):
+            raise ValueError("committed target foot velocity is outside learned support")
+    if shooter_neural_contact_actor_path is not None:
+        shooter_neural_contact_actor = load_g1_neural_contact_actor(
+            shooter_neural_contact_actor_path
+        )
+        if shooter_neural_contact_actor.body_hash != qualification.body_hash:
+            raise ValueError("neural contact actor Body hash does not match coupled G1")
+        assert shooter_neural_contact_target_velocity_xyz_mps is not None
+        if not shooter_neural_contact_actor.target_supported(
+            shooter_neural_contact_target_velocity_xyz_mps
+        ):
+            raise ValueError("neural contact target velocity is outside learned support")
     if second_striker_ballistic_actor_path is not None:
         second_striker_candidate_actor = load_g1_ballistic_contact_impulse_actor(
             second_striker_ballistic_actor_path
@@ -2764,7 +2884,7 @@ def _simulate_shared_world(
         if shooter_causal_strike_option_config is None
         else G1CausalStrikeOptionController(shooter_causal_strike_option_config)
     )
-    shooter.runtime_strike_router = shooter_runtime_strike_router
+    shooter.runtime_strike_router = active_runtime_strike_router
     if shooter.runtime_strike_router is not None:
         if shooter.causal_strike_option is None:
             raise RuntimeError("runtime strike router initialized without causal option")
@@ -3276,6 +3396,20 @@ def _simulate_shared_world(
         "shooter_runtime_strike_route_advance_frames": [],
         "shooter_ballistic_actor_active": [],
         "shooter_ballistic_actor_torque": [],
+        "shooter_three_axis_contact_actor_active": [],
+        "shooter_three_axis_contact_actor_torque": [],
+        "shooter_three_axis_contact_actor_force_xyz_n": [],
+        "shooter_three_axis_contact_actor_foot_velocity_xyz_mps": [],
+        "shooter_target_velocity_contact_actor_active": [],
+        "shooter_target_velocity_contact_actor_torque": [],
+        "shooter_target_velocity_contact_actor_force_xyz_n": [],
+        "shooter_target_velocity_contact_actor_foot_velocity_xyz_mps": [],
+        "shooter_target_velocity_contact_actor_target_xyz_mps": [],
+        "shooter_target_velocity_contact_actor_target_supported": [],
+        "shooter_neural_contact_actor_active": [],
+        "shooter_neural_contact_actor_torque": [],
+        "shooter_neural_contact_actor_supported": [],
+        "shooter_neural_contact_actor_ood_distance": [],
         "shooter_ballistic_contact_active": [],
         "shooter_ballistic_contact_target_delta": [],
         "shooter_ballistic_contact_torque_active": [],
@@ -3291,6 +3425,7 @@ def _simulate_shared_world(
         "shooter_loft_teacher_active": [],
         "shooter_loft_teacher_torque": [],
         "shooter_loft_teacher_force_xyz_n": [],
+        "shooter_loft_teacher_foot_velocity_xyz_mps": [],
         "passer_foot_contact": [],
         "shooter_foot_contact": [],
         # -1 = anatomical left foot, +1 = anatomical right foot, 0 = no
@@ -3650,6 +3785,17 @@ def _simulate_shared_world(
                         foot_yaw_offset=route_action.foot_yaw_offset_rad,
                         foot_pitch_offset=route_action.foot_pitch_offset_rad,
                     )
+                    if isinstance(route_action, RuntimeContactModeAction):
+                        shooter.parameters = replace(
+                            shooter.parameters,
+                            stance_offset_x=route_action.stance_offset_x_m,
+                            stance_offset_y=route_action.stance_offset_y_m,
+                        )
+                        assert shooter_ballistic_contact_torque_config is not None
+                        shooter_ballistic_contact_torque_config = replace(
+                            shooter_ballistic_contact_torque_config,
+                            contact_policy_frame=route_action.contact_policy_frame,
+                        )
             if shooter.last_causal_strike_option_decision.begin_bridge:
                 strike_phase_start_frame = (
                     shooter.last_causal_strike_option_decision.strike_phase_start_frame
@@ -4779,6 +4925,32 @@ def _simulate_shared_world(
         goalkeeper_support = (False, False)
         frame_ballistic_actor_active = False
         frame_ballistic_actor_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        frame_three_axis_contact_actor_active = False
+        frame_three_axis_contact_actor_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        frame_three_axis_contact_actor_force_xyz_n: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_three_axis_contact_actor_foot_velocity_xyz_mps: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_target_velocity_contact_actor_active = False
+        frame_target_velocity_contact_actor_target_supported = False
+        frame_target_velocity_contact_actor_torque: NDArray[np.float64] = np.zeros(
+            29, dtype=np.float64
+        )
+        frame_target_velocity_contact_actor_force_xyz_n: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_target_velocity_contact_actor_foot_velocity_xyz_mps: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_target_velocity_contact_actor_target_xyz_mps: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_neural_contact_actor_active = False
+        frame_neural_contact_actor_supported = False
+        frame_neural_contact_actor_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        frame_neural_contact_actor_ood_distance = math.inf
         frame_second_striker_ballistic_actor_active = False
         frame_second_striker_ballistic_actor_torque: NDArray[np.float64] = np.zeros(
             29, dtype=np.float64
@@ -4808,6 +4980,9 @@ def _simulate_shared_world(
         frame_loft_teacher_active = False
         frame_loft_teacher_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         frame_loft_teacher_force_xyz_n: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
+        frame_loft_teacher_foot_velocity_xyz_mps: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
         frame_ballistic_contact_torque_active = False
         frame_ballistic_contact_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         frame_first_touch_interception_active = False
@@ -4830,7 +5005,7 @@ def _simulate_shared_world(
         )
         frame_goalkeeper_bimanual_punch_active = False
         frame_goalkeeper_bimanual_punch_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
-        for _ in range(_SUBSTEPS):
+        for substep_index in range(_SUBSTEPS):
             data.xfrc_applied[ball_body, :3] = 0.0
             if second_ball_body is not None:
                 data.xfrc_applied[second_ball_body, :3] = 0.0
@@ -5043,6 +5218,134 @@ def _simulate_shared_world(
                             np.max(np.abs(frame_ballistic_actor_torque))
                         ):
                             frame_ballistic_actor_torque = effect.torque.copy()
+                three_axis_contact_authorized = bool(
+                    robot.runtime_strike_router is None
+                    or (
+                        robot.runtime_strike_route_decision is not None
+                        and robot.runtime_strike_route_decision.accepted
+                    )
+                )
+                if (
+                    robot.role == "shooter"
+                    and shooter_three_axis_contact_actor is not None
+                    and three_axis_contact_authorized
+                ):
+                    bilateral_actor_kwargs = {}
+                    if robot.parameters.kick_foot == "left":
+                        bilateral_actor_kwargs = {
+                            "striking_ankle_body_id": robot.left_ankle_body,
+                            "lateral_mirror_sign": -1.0,
+                        }
+                    three_axis_effect = g1_three_axis_contact_effect(
+                        model=model,
+                        data=data,
+                        right_ankle_body_id=robot.right_ankle_body,
+                        actor=shooter_three_axis_contact_actor,
+                        policy_frame=policy_frames[robot.role],
+                        contact_observed=robot.contact_latched,
+                        ball_position=np.asarray(
+                            data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
+                        ),
+                        actuated_dof_indices=np.asarray(robot.joint_qvel, dtype=np.int64),
+                        **bilateral_actor_kwargs,
+                    )
+                    raw_torque = raw_torque + three_axis_effect.torque
+                    frame_three_axis_contact_actor_active = bool(
+                        frame_three_axis_contact_actor_active or three_axis_effect.active
+                    )
+                    if float(np.max(np.abs(three_axis_effect.torque))) >= float(
+                        np.max(np.abs(frame_three_axis_contact_actor_torque))
+                    ):
+                        frame_three_axis_contact_actor_torque = three_axis_effect.torque.copy()
+                        frame_three_axis_contact_actor_force_xyz_n = (
+                            three_axis_effect.force_xyz_n.copy()
+                        )
+                        frame_three_axis_contact_actor_foot_velocity_xyz_mps = (
+                            three_axis_effect.foot_velocity_xyz_mps.copy()
+                        )
+                if (
+                    robot.role == "shooter"
+                    and shooter_target_velocity_contact_actor is not None
+                    and three_axis_contact_authorized
+                ):
+                    assert shooter_target_foot_velocity_xyz_mps is not None
+                    target_actor_kwargs: dict[str, Any] = {}
+                    if robot.parameters.kick_foot == "left":
+                        target_actor_kwargs = {
+                            "striking_ankle_body_id": robot.left_ankle_body,
+                            "lateral_mirror_sign": -1.0,
+                        }
+                    target_effect = g1_target_velocity_contact_effect(
+                        model=model,
+                        data=data,
+                        right_ankle_body_id=robot.right_ankle_body,
+                        actor=shooter_target_velocity_contact_actor,
+                        target_velocity_xyz_mps=np.asarray(
+                            shooter_target_foot_velocity_xyz_mps, dtype=np.float64
+                        ),
+                        policy_frame=policy_frames[robot.role],
+                        contact_observed=robot.contact_latched,
+                        ball_position=np.asarray(
+                            data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
+                        ),
+                        actuated_dof_indices=np.asarray(robot.joint_qvel, dtype=np.int64),
+                        **target_actor_kwargs,
+                    )
+                    raw_torque = raw_torque + target_effect.torque
+                    frame_target_velocity_contact_actor_active = bool(
+                        frame_target_velocity_contact_actor_active or target_effect.active
+                    )
+                    frame_target_velocity_contact_actor_target_supported = bool(
+                        frame_target_velocity_contact_actor_target_supported
+                        or target_effect.target_supported
+                    )
+                    if float(np.max(np.abs(target_effect.torque))) >= float(
+                        np.max(np.abs(frame_target_velocity_contact_actor_torque))
+                    ):
+                        frame_target_velocity_contact_actor_torque = target_effect.torque.copy()
+                        frame_target_velocity_contact_actor_force_xyz_n = (
+                            target_effect.force_xyz_n.copy()
+                        )
+                        frame_target_velocity_contact_actor_foot_velocity_xyz_mps = (
+                            target_effect.foot_velocity_xyz_mps.copy()
+                        )
+                        frame_target_velocity_contact_actor_target_xyz_mps = (
+                            target_effect.target_velocity_xyz_mps.copy()
+                        )
+                if (
+                    robot.role == "shooter"
+                    and shooter_neural_contact_actor is not None
+                    and three_axis_contact_authorized
+                ):
+                    assert shooter_neural_contact_policy_frame is not None
+                    assert shooter_neural_contact_target_velocity_xyz_mps is not None
+                    # Source labels are control-rate residuals.  Evaluate once
+                    # and hold across physics substeps, as a real low-level
+                    # command buffer would.
+                    if substep_index == 0:
+                        neural_features = neural_contact_features(
+                            phase_offset_frames=float(
+                                policy_frames[robot.role] - shooter_neural_contact_policy_frame
+                            ),
+                            target_velocity_xyz_mps=(
+                                shooter_neural_contact_target_velocity_xyz_mps
+                            ),
+                            ball_local_position_m=robot.state.ball_pos_w,
+                            ball_local_velocity_mps=robot.state.ball_vel_w,
+                            joint_position_rad=q,
+                            joint_velocity_rad_s=dq,
+                        )
+                        neural_effect = evaluate_neural_contact_actor(
+                            actor=shooter_neural_contact_actor,
+                            features=neural_features,
+                        )
+                        frame_neural_contact_actor_torque = neural_effect.torque.copy()
+                        frame_neural_contact_actor_active = neural_effect.active
+                        frame_neural_contact_actor_supported = neural_effect.supported
+                        frame_neural_contact_actor_ood_distance = (
+                            neural_effect.normalized_ood_distance
+                        )
+                    raw_torque = raw_torque + frame_neural_contact_actor_torque
                 if robot.role == "shooter" and shooter_loft_teacher_config is not None:
                     teacher_effect = g1_loft_teacher_effect(
                         model=model,
@@ -5067,6 +5370,14 @@ def _simulate_shared_world(
                                 teacher_effect.forward_force_n,
                                 teacher_effect.lateral_force_n,
                                 teacher_effect.vertical_force_n,
+                            ),
+                            dtype=np.float64,
+                        )
+                        frame_loft_teacher_foot_velocity_xyz_mps = np.asarray(
+                            (
+                                teacher_effect.foot_forward_speed_mps,
+                                teacher_effect.foot_lateral_speed_mps,
+                                teacher_effect.foot_vertical_speed_mps,
                             ),
                             dtype=np.float64,
                         )
@@ -5887,6 +6198,42 @@ def _simulate_shared_world(
         )
         trace["shooter_ballistic_actor_active"].append(frame_ballistic_actor_active)
         trace["shooter_ballistic_actor_torque"].append(frame_ballistic_actor_torque)
+        trace["shooter_three_axis_contact_actor_active"].append(
+            frame_three_axis_contact_actor_active
+        )
+        trace["shooter_three_axis_contact_actor_torque"].append(
+            frame_three_axis_contact_actor_torque
+        )
+        trace["shooter_three_axis_contact_actor_force_xyz_n"].append(
+            frame_three_axis_contact_actor_force_xyz_n
+        )
+        trace["shooter_three_axis_contact_actor_foot_velocity_xyz_mps"].append(
+            frame_three_axis_contact_actor_foot_velocity_xyz_mps
+        )
+        trace["shooter_target_velocity_contact_actor_active"].append(
+            frame_target_velocity_contact_actor_active
+        )
+        trace["shooter_target_velocity_contact_actor_torque"].append(
+            frame_target_velocity_contact_actor_torque
+        )
+        trace["shooter_target_velocity_contact_actor_force_xyz_n"].append(
+            frame_target_velocity_contact_actor_force_xyz_n
+        )
+        trace["shooter_target_velocity_contact_actor_foot_velocity_xyz_mps"].append(
+            frame_target_velocity_contact_actor_foot_velocity_xyz_mps
+        )
+        trace["shooter_target_velocity_contact_actor_target_xyz_mps"].append(
+            frame_target_velocity_contact_actor_target_xyz_mps
+        )
+        trace["shooter_target_velocity_contact_actor_target_supported"].append(
+            frame_target_velocity_contact_actor_target_supported
+        )
+        trace["shooter_neural_contact_actor_active"].append(frame_neural_contact_actor_active)
+        trace["shooter_neural_contact_actor_torque"].append(frame_neural_contact_actor_torque)
+        trace["shooter_neural_contact_actor_supported"].append(frame_neural_contact_actor_supported)
+        trace["shooter_neural_contact_actor_ood_distance"].append(
+            frame_neural_contact_actor_ood_distance
+        )
         trace["shooter_ballistic_contact_active"].append(shooter_ballistic_contact_active)
         trace["shooter_ballistic_contact_target_delta"].append(
             shooter_ballistic_contact_target_delta
@@ -5918,6 +6265,9 @@ def _simulate_shared_world(
         trace["shooter_loft_teacher_active"].append(frame_loft_teacher_active)
         trace["shooter_loft_teacher_torque"].append(frame_loft_teacher_torque)
         trace["shooter_loft_teacher_force_xyz_n"].append(frame_loft_teacher_force_xyz_n)
+        trace["shooter_loft_teacher_foot_velocity_xyz_mps"].append(
+            frame_loft_teacher_foot_velocity_xyz_mps
+        )
         if (
             second_striker is not None
             and second_ball_qpos is not None
