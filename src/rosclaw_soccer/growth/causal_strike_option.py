@@ -207,6 +207,7 @@ class G1CausalStrikeOptionController:
         self._runtime_route_required = False
         self._runtime_route_selected = False
         self._routed_maximum_arrival_advance_frames: int | None = None
+        self._routed_arrival_alignment_tolerance_sec: float | None = None
 
     def step(self, observation: CausalStrikeOptionObservation) -> CausalStrikeOptionDecision:
         if (
@@ -285,14 +286,25 @@ class G1CausalStrikeOptionController:
         self._runtime_route_required = True
         self._runtime_route_selected = False
         self._routed_maximum_arrival_advance_frames = 0
+        self._routed_arrival_alignment_tolerance_sec = None
 
-    def select_arrival_route(self, maximum_arrival_advance_frames: int) -> None:
+    def select_arrival_route(
+        self,
+        maximum_arrival_advance_frames: int,
+        *,
+        arrival_alignment_tolerance_sec: float | None = None,
+    ) -> None:
         """Latch one bounded runtime route after a stable incoming observation."""
 
         if isinstance(maximum_arrival_advance_frames, bool) or not isinstance(
             maximum_arrival_advance_frames, int
         ):
             raise ValueError("runtime strike route advance must be an integer")
+        if arrival_alignment_tolerance_sec is not None and (
+            not math.isfinite(arrival_alignment_tolerance_sec)
+            or not 0.02 <= arrival_alignment_tolerance_sec <= 0.30
+        ):
+            raise ValueError("runtime arrival-alignment tolerance is outside its envelope")
         if (
             not self._runtime_route_required
             or self.phase != CausalStrikeOptionPhase.COMMIT
@@ -302,6 +314,7 @@ class G1CausalStrikeOptionController:
         ):
             raise RuntimeError("runtime strike route is outside its causal latch window")
         self._routed_maximum_arrival_advance_frames = maximum_arrival_advance_frames
+        self._routed_arrival_alignment_tolerance_sec = arrival_alignment_tolerance_sec
         self._runtime_route_selected = True
 
     def reject_runtime_route(self) -> None:
@@ -316,6 +329,7 @@ class G1CausalStrikeOptionController:
             raise RuntimeError("runtime strike rejection is outside its causal latch window")
         self._runtime_route_selected = True
         self._routed_maximum_arrival_advance_frames = 0
+        self._routed_arrival_alignment_tolerance_sec = None
         self.phase = CausalStrikeOptionPhase.ABORTED
         self._terminal_reason = "measured_arrival_route_rejected"
 
@@ -360,8 +374,14 @@ class G1CausalStrikeOptionController:
         motion_eta = (
             self.config.ball_contact_policy_frame - policy_frame
         ) * self.config.policy_dt_sec
+        tolerance_sec = self.config.arrival_alignment_tolerance_sec
         if (
-            eta > motion_eta + self.config.arrival_alignment_tolerance_sec
+            self._runtime_route_required
+            and self._routed_arrival_alignment_tolerance_sec is not None
+        ):
+            tolerance_sec = self._routed_arrival_alignment_tolerance_sec
+        if (
+            eta > motion_eta + tolerance_sec
             and self._arrival_hold_count < self.config.maximum_arrival_hold_frames
         ):
             self._arrival_hold_count += 1
@@ -370,7 +390,7 @@ class G1CausalStrikeOptionController:
         if self._runtime_route_required:
             maximum_advance_frames = int(self._routed_maximum_arrival_advance_frames or 0)
         if (
-            eta < motion_eta - self.config.arrival_alignment_tolerance_sec
+            eta < motion_eta - tolerance_sec
             and self._arrival_advance_count < maximum_advance_frames
         ):
             self._arrival_advance_count += 1
