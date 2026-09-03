@@ -102,6 +102,13 @@ from rosclaw_soccer.growth.runtime_contact_mode_actor import (
     RuntimeContactModeDecision,
     load_runtime_contact_mode_actor,
 )
+from rosclaw_soccer.growth.runtime_receive_actor import (
+    G1RuntimeReceiveActor,
+    RuntimeReceiveAction,
+    RuntimeReceiveDecision,
+    load_runtime_receive_actor,
+    runtime_receive_features,
+)
 from rosclaw_soccer.growth.target_velocity_contact_actor import (
     G1TargetVelocityContactActor,
     g1_target_velocity_contact_effect,
@@ -1414,6 +1421,15 @@ class G1SharedWorldResult:
     shooter_runtime_strike_route_time_sec: float | None = None
     shooter_runtime_strike_route_support_distance: float | None = None
     shooter_runtime_strike_route_advance_frames: int | None = None
+    shooter_runtime_receive_actor_hash: str | None = None
+    shooter_runtime_receive_decided: bool = False
+    shooter_runtime_receive_accepted: bool = False
+    shooter_runtime_receive_route: str | None = None
+    shooter_runtime_receive_time_sec: float | None = None
+    shooter_runtime_receive_support_distance: float | None = None
+    shooter_runtime_receive_alignment_tolerance_sec: float | None = None
+    shooter_runtime_receive_stance_offset_y_m: float | None = None
+    shooter_runtime_receive_foot_yaw_offset_rad: float | None = None
     shooter_aim_expert_route: str = "nominal"
     shooter_early_arrival_expert_fraction: float = 0.0
     shooter_ballistic_actor_active_fraction: float = 0.0
@@ -1527,7 +1543,7 @@ class G1SharedWorldResult:
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v23"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v24"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1679,6 +1695,11 @@ class _Robot:
     )
     runtime_strike_route_time_sec: float | None = None
     last_runtime_strike_features: np.ndarray | None = None
+    runtime_receive_actor: G1RuntimeReceiveActor | None = None
+    runtime_receive_probe_action: RuntimeReceiveAction | None = None
+    runtime_receive_decision: RuntimeReceiveDecision | None = None
+    runtime_receive_time_sec: float | None = None
+    last_runtime_receive_features: np.ndarray | None = None
     latest_left_support: bool = False
     latest_right_support: bool = False
     phase_hold_count: int = 0
@@ -1961,6 +1982,8 @@ def _simulate_shared_world(
     shooter_causal_strike_option_config: G1CausalStrikeOptionConfig | None = None,
     shooter_runtime_strike_router_path: Path | None = None,
     shooter_runtime_contact_mode_actor_path: Path | None = None,
+    shooter_runtime_receive_actor_path: Path | None = None,
+    shooter_runtime_receive_probe_action: RuntimeReceiveAction | None = None,
     shooter_recovery_candidate_path: Path | None = None,
     shooter_recovery_residual_config: IQLResidualGuardConfig | None = None,
     shooter_recovery_config: Any | None = None,
@@ -2051,11 +2074,18 @@ def _simulate_shared_world(
         raise ValueError(
             "causal strike option requires an exclusive clock and disabled legacy phase sync"
         )
+    runtime_route_paths = (
+        shooter_runtime_strike_router_path,
+        shooter_runtime_contact_mode_actor_path,
+        shooter_runtime_receive_actor_path,
+    )
+    if sum(path is not None for path in runtime_route_paths) > 1:
+        raise ValueError("runtime strike, body-contact and RECEIVE actors are mutually exclusive")
     if (
-        shooter_runtime_strike_router_path is not None
-        and shooter_runtime_contact_mode_actor_path is not None
+        shooter_runtime_receive_actor_path is not None
+        and shooter_runtime_receive_probe_action is not None
     ):
-        raise ValueError("runtime strike and body-contact routers are mutually exclusive")
+        raise ValueError("runtime RECEIVE actor and training intervention are mutually exclusive")
     runtime_router_requested = (
         shooter_runtime_strike_router_path is not None
         or shooter_runtime_contact_mode_actor_path is not None
@@ -2066,6 +2096,16 @@ def _simulate_shared_world(
     ):
         raise ValueError(
             "runtime strike routing requires the causal option and bounded contact muscle memory"
+        )
+    runtime_receive_requested = (
+        shooter_runtime_receive_actor_path is not None
+        or shooter_runtime_receive_probe_action is not None
+    )
+    if runtime_receive_requested and (
+        shooter_causal_strike_option_config is None or shooter_neural_contact_actor_path is None
+    ):
+        raise ValueError(
+            "runtime RECEIVE control requires the causal option and neural contact muscle memory"
         )
     if shooter_runtime_contact_mode_actor_path is not None and (
         shooter_three_axis_contact_actor_path is None
@@ -2503,6 +2543,16 @@ def _simulate_shared_world(
         or active_runtime_strike_router.kick_prior_hash != qualification.kick_prior_hash
     ):
         raise ValueError("runtime strike router asset identity changed")
+    shooter_runtime_receive_actor = (
+        None
+        if shooter_runtime_receive_actor_path is None
+        else load_runtime_receive_actor(shooter_runtime_receive_actor_path)
+    )
+    if shooter_runtime_receive_actor is not None and (
+        shooter_runtime_receive_actor.body_hash != qualification.body_hash
+        or shooter_runtime_receive_actor.kick_prior_hash != qualification.kick_prior_hash
+    ):
+        raise ValueError("runtime RECEIVE actor asset identity changed")
     shooter_motion_prior: G1FootballMotionPrior | None = None
     if shooter_motion_prior_path is not None:
         shooter_motion_prior = load_g1_football_motion_prior(shooter_motion_prior_path)
@@ -2885,9 +2935,15 @@ def _simulate_shared_world(
         else G1CausalStrikeOptionController(shooter_causal_strike_option_config)
     )
     shooter.runtime_strike_router = active_runtime_strike_router
-    if shooter.runtime_strike_router is not None:
+    shooter.runtime_receive_actor = shooter_runtime_receive_actor
+    shooter.runtime_receive_probe_action = shooter_runtime_receive_probe_action
+    if (
+        shooter.runtime_strike_router is not None
+        or shooter.runtime_receive_actor is not None
+        or shooter.runtime_receive_probe_action is not None
+    ):
         if shooter.causal_strike_option is None:
-            raise RuntimeError("runtime strike router initialized without causal option")
+            raise RuntimeError("runtime receive/strike actor initialized without causal option")
         shooter.causal_strike_option.arm_runtime_route()
     passer = _make_robot(
         model=model,
@@ -3394,6 +3450,13 @@ def _simulate_shared_world(
         "shooter_runtime_strike_route_accepted": [],
         "shooter_runtime_strike_route_support_distance": [],
         "shooter_runtime_strike_route_advance_frames": [],
+        "shooter_runtime_receive_features": [],
+        "shooter_runtime_receive_decided": [],
+        "shooter_runtime_receive_accepted": [],
+        "shooter_runtime_receive_support_distance": [],
+        "shooter_runtime_receive_alignment_tolerance_sec": [],
+        "shooter_runtime_receive_stance_offset_y_m": [],
+        "shooter_runtime_receive_foot_yaw_offset_rad": [],
         "shooter_ballistic_actor_active": [],
         "shooter_ballistic_actor_torque": [],
         "shooter_three_axis_contact_actor_active": [],
@@ -3751,6 +3814,68 @@ def _simulate_shared_world(
             shooter.last_causal_strike_option_decision = shooter.causal_strike_option.step(
                 option_observation
             )
+            if (
+                (
+                    shooter.runtime_receive_actor is not None
+                    or shooter.runtime_receive_probe_action is not None
+                )
+                and shooter.runtime_receive_decision is None
+                and shooter.causal_strike_option.stable_incoming_observed
+            ):
+                arrival_eta = shooter.last_causal_strike_option_decision.ball_arrival_eta_sec
+                if arrival_eta is None:
+                    raise RuntimeError("stable incoming RECEIVE observation has no arrival ETA")
+                shooter_policy_frame = max(
+                    0,
+                    int(shooter.policy.time_step) - int(shooter.policy.WARMUP_STEPS),
+                )
+                receive_features = runtime_receive_features(
+                    ball_local_position_m=shooter.state.ball_pos_w,
+                    ball_local_velocity_mps=shooter.state.ball_vel_w,
+                    ball_arrival_eta_sec=arrival_eta,
+                    pelvis_local_position_m=shooter.state.pelvis_pos_w,
+                    joint_velocity_rad_s=shooter.state.dq,
+                    policy_frame=shooter_policy_frame,
+                )
+                shooter.last_runtime_receive_features = np.asarray(
+                    receive_features, dtype=np.float64
+                )
+                receive_decision = (
+                    shooter.runtime_receive_actor.decide(receive_features)
+                    if shooter.runtime_receive_actor is not None
+                    else RuntimeReceiveDecision(
+                        accepted=True,
+                        route="TRAINING_RUNTIME_RECEIVE_INTERVENTION",
+                        confidence=1.0,
+                        nearest_success_distance=0.0,
+                        nearest_same_action_failure_distance=None,
+                        selected_context_hash=None,
+                        action=shooter.runtime_receive_probe_action,
+                        actor_hash=cast(
+                            RuntimeReceiveAction, shooter.runtime_receive_probe_action
+                        ).action_hash,
+                    )
+                )
+                shooter.runtime_receive_decision = receive_decision
+                shooter.runtime_receive_time_sec = float(data.time)
+                receive_action = receive_decision.action
+                if receive_action is None:
+                    shooter.causal_strike_option.reject_runtime_route()
+                else:
+                    shooter.causal_strike_option.select_arrival_route(
+                        receive_action.maximum_arrival_advance_frames,
+                        arrival_alignment_tolerance_sec=(
+                            receive_action.arrival_alignment_tolerance_sec
+                        ),
+                    )
+                    shooter.parameters = replace(
+                        shooter.parameters,
+                        stance_offset_x=receive_action.stance_offset_x_m,
+                        stance_offset_y=receive_action.stance_offset_y_m,
+                        foot_yaw_offset=receive_action.foot_yaw_offset_rad,
+                        foot_pitch_offset=receive_action.foot_pitch_offset_rad,
+                    )
+                    shooter_neural_contact_policy_frame = receive_action.contact_policy_frame
             if (
                 shooter.runtime_strike_router is not None
                 and shooter.runtime_strike_route_decision is None
@@ -6821,6 +6946,45 @@ def _simulate_shared_world(
             or shooter.runtime_strike_route_decision.action is None
             else (shooter.runtime_strike_route_decision.action.maximum_arrival_advance_frames)
         ),
+        shooter_runtime_receive_actor_hash=(
+            None
+            if shooter.runtime_receive_actor is None
+            else shooter.runtime_receive_actor.actor_hash
+        ),
+        shooter_runtime_receive_decided=(shooter.runtime_receive_decision is not None),
+        shooter_runtime_receive_accepted=bool(
+            shooter.runtime_receive_decision is not None
+            and shooter.runtime_receive_decision.accepted
+        ),
+        shooter_runtime_receive_route=(
+            None
+            if shooter.runtime_receive_decision is None
+            else shooter.runtime_receive_decision.route
+        ),
+        shooter_runtime_receive_time_sec=shooter.runtime_receive_time_sec,
+        shooter_runtime_receive_support_distance=(
+            None
+            if shooter.runtime_receive_decision is None
+            else shooter.runtime_receive_decision.nearest_success_distance
+        ),
+        shooter_runtime_receive_alignment_tolerance_sec=(
+            None
+            if shooter.runtime_receive_decision is None
+            or shooter.runtime_receive_decision.action is None
+            else shooter.runtime_receive_decision.action.arrival_alignment_tolerance_sec
+        ),
+        shooter_runtime_receive_stance_offset_y_m=(
+            None
+            if shooter.runtime_receive_decision is None
+            or shooter.runtime_receive_decision.action is None
+            else shooter.runtime_receive_decision.action.stance_offset_y_m
+        ),
+        shooter_runtime_receive_foot_yaw_offset_rad=(
+            None
+            if shooter.runtime_receive_decision is None
+            or shooter.runtime_receive_decision.action is None
+            else shooter.runtime_receive_decision.action.foot_yaw_offset_rad
+        ),
         shooter_aim_expert_route=(
             "early_arrival" if shooter.early_arrival_expert_frame_count > 0 else "nominal"
         ),
@@ -9838,6 +10002,29 @@ def _append_trace(
         -1
         if runtime_decision is None or runtime_decision.action is None
         else runtime_decision.action.maximum_arrival_advance_frames
+    )
+    receive_decision = shooter.runtime_receive_decision
+    receive_action = None if receive_decision is None else receive_decision.action
+    trace["shooter_runtime_receive_features"].append(
+        np.zeros(9, dtype=np.float64)
+        if shooter.last_runtime_receive_features is None
+        else shooter.last_runtime_receive_features.copy()
+    )
+    trace["shooter_runtime_receive_decided"].append(receive_decision is not None)
+    trace["shooter_runtime_receive_accepted"].append(
+        False if receive_decision is None else receive_decision.accepted
+    )
+    trace["shooter_runtime_receive_support_distance"].append(
+        -1.0 if receive_decision is None else receive_decision.nearest_success_distance
+    )
+    trace["shooter_runtime_receive_alignment_tolerance_sec"].append(
+        -1.0 if receive_action is None else receive_action.arrival_alignment_tolerance_sec
+    )
+    trace["shooter_runtime_receive_stance_offset_y_m"].append(
+        0.0 if receive_action is None else receive_action.stance_offset_y_m
+    )
+    trace["shooter_runtime_receive_foot_yaw_offset_rad"].append(
+        0.0 if receive_action is None else receive_action.foot_yaw_offset_rad
     )
     trace["shooter_learned_torque_active"].append(learned_torque["shooter"] is not None)
     trace["shooter_ball_contact_foot"].append(shooter_contact_foot)

@@ -21,7 +21,11 @@ def train_neural_contact_actor(
     *,
     source_teacher_report_path: Path,
     output_dir: Path,
-    specialist_target_velocity_xyz_mps: tuple[float, float, float] = (9.0, -3.0, -1.0),
+    specialist_target_velocity_xyz_mps: tuple[float, float, float] | None = (
+        9.0,
+        -3.0,
+        -1.0,
+    ),
 ) -> dict[str, Any]:
     source_path = source_teacher_report_path.expanduser().resolve()
     source = _bound_teacher_report(source_path)
@@ -32,8 +36,14 @@ def train_neural_contact_actor(
     safe_count = 0
     success_count = 0
     failure_count = 0
-    specialist_target = np.asarray(specialist_target_velocity_xyz_mps, dtype=np.float64)
-    if specialist_target.shape != (3,) or not np.all(np.isfinite(specialist_target)):
+    specialist_target = (
+        None
+        if specialist_target_velocity_xyz_mps is None
+        else np.asarray(specialist_target_velocity_xyz_mps, dtype=np.float64)
+    )
+    if specialist_target is not None and (
+        specialist_target.shape != (3,) or not np.all(np.isfinite(specialist_target))
+    ):
         raise ValueError("neural contact specialist target must be three finite values")
     for row in source["rows"]:
         artifact = row["trajectory"]
@@ -45,7 +55,7 @@ def train_neural_contact_actor(
             continue
         action = row["action"]
         target = np.asarray(action["target_foot_velocity_xyz_mps"], dtype=np.float64)
-        if not np.array_equal(target, specialist_target):
+        if specialist_target is not None and not np.array_equal(target, specialist_target):
             continue
         safe_count += 1
         chain_passed = bool(row["quality"]["chain_passed"])
@@ -107,7 +117,9 @@ def train_neural_contact_actor(
             "training_sample_count": actor.training_sample_count,
             "training_rmse_nm": actor.training_rmse_nm,
             "hidden_width": len(actor.hidden_one_bias),
-            "specialist_target_velocity_xyz_mps": specialist_target.tolist(),
+            "specialist_target_velocity_xyz_mps": (
+                None if specialist_target is None else specialist_target.tolist()
+            ),
         },
         "output_authority": "BOUNDED_29_DOF_CONTACT_RESIDUAL_TORQUE",
         "replaces_scripted_contact_torque": True,
@@ -124,10 +136,22 @@ def train_neural_contact_actor(
 def _bound_teacher_report(path: Path) -> dict[str, Any]:
     payload = cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
     claimed = payload.pop("report_hash", None)
+    adaptive = bool(
+        payload.get("schema_version") == "rosclaw.growth.adaptive_target_teacher_discovery.v1"
+        and payload.get("status") == "REJECTED_ADAPTIVE_TARGET_TEACHER_DISCOVERY"
+        and len(payload.get("rows", ())) >= 24
+    )
+    runtime_receive = bool(
+        payload.get("schema_version") == "rosclaw_soccer.runtime_receive_contact_teacher.v1"
+        and payload.get("status") == "PASS_RUNTIME_RECEIVE_CONTACT_TEACHER"
+        and payload.get("teacher_role") == "SIM_ONLY_LOW_LEVEL_CONTACT_DATA_GENERATOR"
+        and len(payload.get("rows", ())) >= 16
+    )
     if (
         claimed != hash_json(payload)
-        or payload.get("status") != "REJECTED_ADAPTIVE_TARGET_TEACHER_DISCOVERY"
-        or len(payload.get("rows", ())) < 24
+        or not (adaptive or runtime_receive)
+        or payload.get("activation_ceiling") != "SIM_ONLY"
+        or payload.get("hardware_command_sent") is not False
     ):
         raise ValueError("neural contact training requires intact teacher responses")
     payload["report_hash"] = claimed
