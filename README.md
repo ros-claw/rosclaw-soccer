@@ -60,6 +60,18 @@ and deterministic), so this is a passing causal canary, not broad promotion or
 hardware readiness.  See the
 [S128–S131 neural-contact report](docs/s128-s131-neural-contact-growth.zh-CN.md).
 
+S142–S167 now close the next failure-driven layer above that frozen neural
+contact muscle memory. A prepared-finisher actor selects coupled stance,
+contact phase, foot orientation, and task-space target from pre-rollout shared
+team intent; it never owns joint torque. After three zero-recovery searches,
+foot-normal and stance experiments recovered all four consumed failures. The
+updated actor retains all 72 old memories, adds 48 new physical trajectories,
+passes the consumed replay 6/6 versus 2/6 for the frozen baseline, and then
+passes a disjoint sealed set 3/6 versus 1/6 (`+2`), with 6/6 safety and exact
+replay. This is a real SIM_ONLY promotion, but still only 50% strict fresh
+success and not an 80% or real-robot claim. See the
+[S142–S167 prepared-finish Growth report](docs/s142-s167-prepared-finish-growth.zh-CN.md).
+
 S112 has moved the S111 reproducibility rules into task-neutral ROSClaw Core
 SimForge and then requalified the same continuous right-control chain: four
 physical G1s, two balls, pass, first high strike, airborne save, measured

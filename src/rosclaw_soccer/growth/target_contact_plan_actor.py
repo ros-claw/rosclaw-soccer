@@ -51,8 +51,8 @@ class TargetContactPlanAction:
             values.shape != (7,)
             or not np.all(np.isfinite(values))
             or self.maximum_arrival_advance_frames not in {0, 6, 12, 18}
-            or not -0.16 <= self.stance_offset_x_m <= 0.16
-            or not -0.16 <= self.stance_offset_y_m <= 0.16
+            or not -0.12 <= self.stance_offset_x_m <= 0.12
+            or not -0.12 <= self.stance_offset_y_m <= 0.12
             or not 238 <= self.contact_policy_frame <= 258
             or not -0.12 <= self.foot_yaw_offset_rad <= 0.12
             or not -0.08 <= self.foot_pitch_offset_rad <= 0.08

@@ -24,10 +24,12 @@ from rosclaw_soccer.skills.team.shared_world import simulate_shared_world
 from rosclaw_soccer.training.causal_transition_growth import (
     CausalTransitionContext,
     CausalTransitionGrowthConfig,
-    _chain_quality,
     _context_kwargs,
     _load_lead_policy,
     _save_trajectory,
+)
+from rosclaw_soccer.training.intended_foot_alignment_discovery import (
+    strict_intended_contact_quality,
 )
 from rosclaw_soccer.training.playmaker_pass_discovery import PlaymakerPassProbeAction
 
@@ -166,7 +168,25 @@ def run_runtime_receive_contact_teacher(
             context.context_hash,
             (context, PlaymakerPassProbeAction(**row["playmaker_action"])),
         )
-    cases = tuple(cases_by_hash.values())
+    if rejected["schema_version"] == "rosclaw_soccer.prepared_finish_plan_repair.v1":
+        rows_by_hash: dict[str, list[dict[str, Any]]] = {}
+        for row in rejected["rows"]:
+            rows_by_hash.setdefault(str(row["context_hash"]), []).append(row)
+        unresolved_direction_hashes = {
+            context_hash
+            for context_hash, rows in rows_by_hash.items()
+            if not any(row["quality"]["strict_chain_passed"] for row in rows)
+            and any(row.get("failure_route") == "SHOT_DIRECTION" for row in rows)
+        }
+        cases = tuple(
+            value
+            for context_hash, value in cases_by_hash.items()
+            if context_hash in unresolved_direction_hashes
+        )
+    else:
+        cases = tuple(cases_by_hash.values())
+    if len(cases) != 2:
+        raise ValueError("runtime RECEIVE contact teacher needs two direction failures")
     active_probes = probes or default_runtime_receive_contact_probes(cases)
     if (
         len(active_probes) != 16
@@ -186,7 +206,12 @@ def run_runtime_receive_contact_teacher(
     _, lead_source = _load_lead_policy(source_s95_dir)
     request: dict[str, Any] = {
         "schema_version": "rosclaw_soccer.runtime_receive_contact_teacher_request.v1",
-        "partition": "CONSUMED_REJECTED_RUNTIME_RECEIVE_DIRECTION_FRONTIER",
+        "partition": (
+            "CONSUMED_REJECTED_PREPARED_FINISH_DIRECTION_FRONTIER"
+            if rejected["schema_version"] == "rosclaw_soccer.prepared_finish_plan_repair.v1"
+            else "CONSUMED_REJECTED_RUNTIME_RECEIVE_DIRECTION_FRONTIER"
+        ),
+        "source_schema_version": rejected["schema_version"],
         "probe_hashes": [probe.probe_hash for probe in active_probes],
         "context_hashes": [context.context_hash for context, _ in cases],
         "rejected_direction_report_hash": rejected["report_hash"],
@@ -223,11 +248,13 @@ def run_runtime_receive_contact_teacher(
     else:
         with ProcessPoolExecutor(max_workers=workers) as executor:
             rows = list(executor.map(_run_probe, jobs))
-    recovered = {row["context_hash"] for row in rows if row["quality"]["chain_passed"]}
+    recovered = {row["context_hash"] for row in rows if row["quality"]["strict_chain_passed"]}
     selected = [_select(rows, context.context_hash) for context, _ in cases]
     gates = {
         "both_failed_contexts_recovered": len(recovered) == 2,
-        "minimum_four_strict_outcomes": sum(bool(row["quality"]["chain_passed"]) for row in rows)
+        "minimum_four_strict_outcomes": sum(
+            bool(row["quality"]["strict_chain_passed"]) for row in rows
+        )
         >= 4,
         "minimum_twelve_safe": sum(bool(row["quality"]["safe"]) for row in rows) >= 12,
         "selected_safe": all(row["quality"]["safe"] for row in selected),
@@ -254,6 +281,9 @@ def run_runtime_receive_contact_teacher(
             "probe_count": len(rows),
             "safe_count": sum(bool(row["quality"]["safe"]) for row in rows),
             "chain_success_count": sum(bool(row["quality"]["chain_passed"]) for row in rows),
+            "strict_success_count": sum(
+                bool(row["quality"]["strict_chain_passed"]) for row in rows
+            ),
             "recovered_context_count": len(recovered),
             "goal_count": sum(bool(row["result"]["goal_crossed"]) for row in rows),
             "save_count": sum(bool(row["result"]["goalkeeper_save_observed"]) for row in rows),
@@ -341,7 +371,12 @@ def _run_probe(
         "action": asdict(action),
         "teacher_config_hash": probe.teacher_config().config_hash,
         "result": result.to_dict(),
-        "quality": _chain_quality(result, trajectory, quality),
+        "quality": strict_intended_contact_quality(
+            result=result,
+            trajectory=trajectory,
+            quality_config=quality,
+            intended_contact_foot=1,
+        ),
         "teacher_active": bool(np.any(teacher_active)),
         "teacher_active_frame_count": int(np.count_nonzero(teacher_active)),
         "trajectory": artifact,
@@ -353,7 +388,7 @@ def _select(rows: list[dict[str, Any]], context_hash: str) -> dict[str, Any]:
     return min(
         candidates,
         key=lambda row: (
-            not row["quality"]["chain_passed"],
+            not row["quality"]["strict_chain_passed"],
             not row["quality"]["safe"],
             -float(row["result"]["shot_peak_ball_speed_mps"]),
             row["probe_hash"],
@@ -364,14 +399,24 @@ def _select(rows: list[dict[str, Any]], context_hash: str) -> dict[str, Any]:
 def _bound_rejected_direction(path: Path) -> dict[str, Any]:
     report = _read_object(path)
     claimed = report.pop("report_hash", None)
-    if (
-        claimed != hash_json(report)
-        or report.get("schema_version") != "rosclaw_soccer.runtime_receive_discovery.v1"
-        or report.get("status") != "REJECTED_RUNTIME_RECEIVE_DISCOVERY"
-        or report.get("promotion_eligible") is not False
-        or report.get("gates", {}).get("runtime_intervention_observed_all") is not True
-        or len(report.get("rows", ())) != 16
-    ):
+    runtime_receive = bool(
+        report.get("schema_version") == "rosclaw_soccer.runtime_receive_discovery.v1"
+        and report.get("status") == "REJECTED_RUNTIME_RECEIVE_DISCOVERY"
+        and report.get("promotion_eligible") is False
+        and report.get("gates", {}).get("runtime_intervention_observed_all") is True
+        and len(report.get("rows", ())) == 16
+    )
+    prepared_finish = bool(
+        report.get("schema_version") == "rosclaw_soccer.prepared_finish_plan_repair.v1"
+        and report.get("status") == "REJECTED_PREPARED_FINISH_PLAN_REPAIR_DATA"
+        and report.get("promotion_eligible") is False
+        and report.get("partition") == "CONSUMED_S155_FAILURES"
+        and report.get("activation_ceiling") == "SIM_ONLY"
+        and report.get("hardware_command_sent") is False
+        and len(report.get("rows", ())) >= 32
+        and report.get("metrics", {}).get("failure_route_counts", {}).get("SHOT_DIRECTION", 0) >= 2
+    )
+    if claimed != hash_json(report) or not (runtime_receive or prepared_finish):
         raise ValueError("runtime RECEIVE direction frontier is invalid")
     report["report_hash"] = claimed
     request = path.parent / "request.json"

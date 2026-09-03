@@ -102,6 +102,17 @@ from rosclaw_soccer.growth.runtime_contact_mode_actor import (
     RuntimeContactModeDecision,
     load_runtime_contact_mode_actor,
 )
+from rosclaw_soccer.growth.runtime_contact_target_actor import (
+    G1RuntimeContactTargetActor,
+    RuntimeContactTargetDecision,
+    load_runtime_contact_target_actor,
+)
+from rosclaw_soccer.growth.runtime_finish_plan_actor import (
+    G1RuntimeFinishPlanActor,
+    RuntimeFinishPlanDecision,
+    load_runtime_finish_plan_actor,
+    prepared_finish_plan_features,
+)
 from rosclaw_soccer.growth.runtime_receive_actor import (
     G1RuntimeReceiveActor,
     RuntimeReceiveAction,
@@ -1430,6 +1441,19 @@ class G1SharedWorldResult:
     shooter_runtime_receive_alignment_tolerance_sec: float | None = None
     shooter_runtime_receive_stance_offset_y_m: float | None = None
     shooter_runtime_receive_foot_yaw_offset_rad: float | None = None
+    shooter_runtime_contact_target_actor_hash: str | None = None
+    shooter_runtime_contact_target_decided: bool = False
+    shooter_runtime_contact_target_accepted: bool = False
+    shooter_runtime_contact_target_route: str | None = None
+    shooter_runtime_contact_target_time_sec: float | None = None
+    shooter_runtime_contact_target_support_distance: float | None = None
+    shooter_runtime_contact_target_velocity_xyz_mps: tuple[float, float, float] | None = None
+    shooter_runtime_finish_plan_actor_hash: str | None = None
+    shooter_runtime_finish_plan_decided: bool = False
+    shooter_runtime_finish_plan_accepted: bool = False
+    shooter_runtime_finish_plan_route: str | None = None
+    shooter_runtime_finish_plan_time_sec: float | None = None
+    shooter_runtime_finish_plan_support_distance: float | None = None
     shooter_aim_expert_route: str = "nominal"
     shooter_early_arrival_expert_fraction: float = 0.0
     shooter_ballistic_actor_active_fraction: float = 0.0
@@ -1543,7 +1567,7 @@ class G1SharedWorldResult:
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v24"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v26"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1700,6 +1724,12 @@ class _Robot:
     runtime_receive_decision: RuntimeReceiveDecision | None = None
     runtime_receive_time_sec: float | None = None
     last_runtime_receive_features: np.ndarray | None = None
+    runtime_contact_target_actor: G1RuntimeContactTargetActor | None = None
+    runtime_contact_target_decision: RuntimeContactTargetDecision | None = None
+    runtime_contact_target_time_sec: float | None = None
+    runtime_finish_plan_actor: G1RuntimeFinishPlanActor | None = None
+    runtime_finish_plan_decision: RuntimeFinishPlanDecision | None = None
+    runtime_finish_plan_time_sec: float | None = None
     latest_left_support: bool = False
     latest_right_support: bool = False
     phase_hold_count: int = 0
@@ -1984,6 +2014,8 @@ def _simulate_shared_world(
     shooter_runtime_contact_mode_actor_path: Path | None = None,
     shooter_runtime_receive_actor_path: Path | None = None,
     shooter_runtime_receive_probe_action: RuntimeReceiveAction | None = None,
+    shooter_runtime_contact_target_actor_path: Path | None = None,
+    shooter_runtime_finish_plan_actor_path: Path | None = None,
     shooter_recovery_candidate_path: Path | None = None,
     shooter_recovery_residual_config: IQLResidualGuardConfig | None = None,
     shooter_recovery_config: Any | None = None,
@@ -2078,6 +2110,8 @@ def _simulate_shared_world(
         shooter_runtime_strike_router_path,
         shooter_runtime_contact_mode_actor_path,
         shooter_runtime_receive_actor_path,
+        shooter_runtime_contact_target_actor_path,
+        shooter_runtime_finish_plan_actor_path,
     )
     if sum(path is not None for path in runtime_route_paths) > 1:
         raise ValueError("runtime strike, body-contact and RECEIVE actors are mutually exclusive")
@@ -2100,6 +2134,8 @@ def _simulate_shared_world(
     runtime_receive_requested = (
         shooter_runtime_receive_actor_path is not None
         or shooter_runtime_receive_probe_action is not None
+        or shooter_runtime_contact_target_actor_path is not None
+        or shooter_runtime_finish_plan_actor_path is not None
     )
     if runtime_receive_requested and (
         shooter_causal_strike_option_config is None or shooter_neural_contact_actor_path is None
@@ -2130,15 +2166,33 @@ def _simulate_shared_world(
         shooter_ballistic_actor_path is not None or shooter_loft_teacher_config is not None
     ):
         raise ValueError("target-velocity actor requires exclusive learned torque authority")
-    neural_contact_values = (
-        shooter_neural_contact_actor_path,
-        shooter_neural_contact_policy_frame,
-        shooter_neural_contact_target_velocity_xyz_mps,
-    )
-    if any(value is None for value in neural_contact_values) != all(
-        value is None for value in neural_contact_values
+    if shooter_neural_contact_actor_path is None:
+        if (
+            shooter_neural_contact_policy_frame is not None
+            or shooter_neural_contact_target_velocity_xyz_mps is not None
+        ):
+            raise ValueError("neural contact settings require a neural contact actor")
+    elif (
+        shooter_runtime_contact_target_actor_path is None
+        and shooter_runtime_finish_plan_actor_path is None
     ):
-        raise ValueError("neural contact actor, contact frame and target are one commitment")
+        if (
+            shooter_neural_contact_policy_frame is None
+            or shooter_neural_contact_target_velocity_xyz_mps is None
+        ):
+            raise ValueError("neural contact actor, contact frame and target are one commitment")
+    elif shooter_runtime_contact_target_actor_path is not None and (
+        shooter_neural_contact_policy_frame is None
+        or shooter_neural_contact_target_velocity_xyz_mps is not None
+    ):
+        raise ValueError(
+            "runtime contact target actor requires a fixed contact frame and owns the target"
+        )
+    elif shooter_runtime_finish_plan_actor_path is not None and (
+        shooter_neural_contact_policy_frame is not None
+        or shooter_neural_contact_target_velocity_xyz_mps is not None
+    ):
+        raise ValueError("runtime finish plan actor owns the contact frame and target")
     if shooter_neural_contact_actor_path is not None and any(
         value is not None
         for value in (
@@ -2553,6 +2607,26 @@ def _simulate_shared_world(
         or shooter_runtime_receive_actor.kick_prior_hash != qualification.kick_prior_hash
     ):
         raise ValueError("runtime RECEIVE actor asset identity changed")
+    shooter_runtime_contact_target_actor = (
+        None
+        if shooter_runtime_contact_target_actor_path is None
+        else load_runtime_contact_target_actor(shooter_runtime_contact_target_actor_path)
+    )
+    if shooter_runtime_contact_target_actor is not None and (
+        shooter_runtime_contact_target_actor.body_hash != qualification.body_hash
+        or shooter_runtime_contact_target_actor.kick_prior_hash != qualification.kick_prior_hash
+    ):
+        raise ValueError("runtime contact target actor asset identity changed")
+    shooter_runtime_finish_plan_actor = (
+        None
+        if shooter_runtime_finish_plan_actor_path is None
+        else load_runtime_finish_plan_actor(shooter_runtime_finish_plan_actor_path)
+    )
+    if shooter_runtime_finish_plan_actor is not None and (
+        shooter_runtime_finish_plan_actor.body_hash != qualification.body_hash
+        or shooter_runtime_finish_plan_actor.kick_prior_hash != qualification.kick_prior_hash
+    ):
+        raise ValueError("runtime finish plan actor asset identity changed")
     shooter_motion_prior: G1FootballMotionPrior | None = None
     if shooter_motion_prior_path is not None:
         shooter_motion_prior = load_g1_football_motion_prior(shooter_motion_prior_path)
@@ -2627,11 +2701,43 @@ def _simulate_shared_world(
         )
         if shooter_neural_contact_actor.body_hash != qualification.body_hash:
             raise ValueError("neural contact actor Body hash does not match coupled G1")
-        assert shooter_neural_contact_target_velocity_xyz_mps is not None
-        if not shooter_neural_contact_actor.target_supported(
-            shooter_neural_contact_target_velocity_xyz_mps
+        if (
+            shooter_runtime_contact_target_actor is None
+            and shooter_runtime_finish_plan_actor is None
         ):
-            raise ValueError("neural contact target velocity is outside learned support")
+            assert shooter_neural_contact_target_velocity_xyz_mps is not None
+            if not shooter_neural_contact_actor.target_supported(
+                shooter_neural_contact_target_velocity_xyz_mps
+            ):
+                raise ValueError("neural contact target velocity is outside learned support")
+        elif shooter_runtime_contact_target_actor is not None and (
+            shooter_runtime_contact_target_actor.neural_contact_actor_hash
+            != shooter_neural_contact_actor.actor_hash
+            or any(
+                not shooter_neural_contact_actor.target_supported(
+                    memory.action.target_foot_velocity_xyz_mps
+                )
+                for memory in (
+                    *shooter_runtime_contact_target_actor.successful_memories,
+                    *shooter_runtime_contact_target_actor.failed_memories,
+                )
+            )
+        ):
+            raise ValueError("runtime contact target actor neural lineage changed")
+        if shooter_runtime_finish_plan_actor is not None and (
+            shooter_runtime_finish_plan_actor.neural_contact_actor_hash
+            != shooter_neural_contact_actor.actor_hash
+            or any(
+                not shooter_neural_contact_actor.target_supported(
+                    memory.action.target.target_foot_velocity_xyz_mps
+                )
+                for memory in (
+                    *shooter_runtime_finish_plan_actor.successful_memories,
+                    *shooter_runtime_finish_plan_actor.failed_memories,
+                )
+            )
+        ):
+            raise ValueError("runtime finish plan actor neural lineage changed")
     if second_striker_ballistic_actor_path is not None:
         second_striker_candidate_actor = load_g1_ballistic_contact_impulse_actor(
             second_striker_ballistic_actor_path
@@ -2814,6 +2920,60 @@ def _simulate_shared_world(
             passer_parameters,
             **cast(Any, passer_parameter_overrides),
         )
+    prepared_finish_plan_decision: RuntimeFinishPlanDecision | None = None
+    if shooter_runtime_finish_plan_actor is not None:
+        prepared_finish_plan_decision = shooter_runtime_finish_plan_actor.decide(
+            prepared_finish_plan_features(
+                receiver_lane_m=float(active_shooter_origin[1]),
+                reception_target_x_m=float(local_pass_reception_target[0]),
+                passer_ball_local_xy_m=(
+                    float(active_passer_ball_xy[0]),
+                    float(active_passer_ball_xy[1]),
+                ),
+                ball_ground_friction=ball_ground_friction,
+                passer_yaw_rad=passer_yaw_rad,
+                passer_stance_offset_xy_m=(
+                    passer_parameters.stance_offset_x,
+                    passer_parameters.stance_offset_y,
+                ),
+                passer_swing_speed_scale=passer_parameters.swing_speed_scale,
+            )
+        )
+        prepared_action = prepared_finish_plan_decision.action
+        if prepared_action is not None:
+            shooter_parameters = replace(
+                shooter_parameters,
+                stance_offset_x=prepared_action.receive.stance_offset_x_m,
+                stance_offset_y=prepared_action.receive.stance_offset_y_m,
+                foot_yaw_offset=prepared_action.receive.foot_yaw_offset_rad,
+                foot_pitch_offset=prepared_action.receive.foot_pitch_offset_rad,
+            )
+            if shooter_early_arrival_parameters is not None:
+                shooter_early_arrival_parameters = replace(
+                    shooter_early_arrival_parameters,
+                    stance_offset_x=prepared_action.receive.stance_offset_x_m,
+                    stance_offset_y=prepared_action.receive.stance_offset_y_m,
+                    foot_yaw_offset=prepared_action.receive.foot_yaw_offset_rad,
+                    foot_pitch_offset=prepared_action.receive.foot_pitch_offset_rad,
+                )
+            shooter_neural_contact_policy_frame = prepared_action.receive.contact_policy_frame
+            shooter_neural_contact_target_velocity_xyz_mps = (
+                prepared_action.target.target_foot_velocity_xyz_mps
+            )
+            shooter_post_policy_frame = (
+                prepared_action.receive.contact_policy_frame
+                + shooter_runtime_finish_plan_actor.contact_handoff_offset_frames
+            )
+            assert shooter_causal_strike_option_config is not None
+            shooter_causal_strike_option_config = replace(
+                shooter_causal_strike_option_config,
+                maximum_arrival_advance_frames=(
+                    prepared_action.receive.maximum_arrival_advance_frames
+                ),
+                arrival_alignment_tolerance_sec=(
+                    prepared_action.receive.arrival_alignment_tolerance_sec
+                ),
+            )
     passer_scenario = replace(
         scenario,
         scenario_id="goalforge-coupled-g1-a-soft-back-pass",
@@ -2937,10 +3097,77 @@ def _simulate_shared_world(
     shooter.runtime_strike_router = active_runtime_strike_router
     shooter.runtime_receive_actor = shooter_runtime_receive_actor
     shooter.runtime_receive_probe_action = shooter_runtime_receive_probe_action
+    shooter.runtime_contact_target_actor = shooter_runtime_contact_target_actor
+    shooter.runtime_finish_plan_actor = shooter_runtime_finish_plan_actor
+    shooter.runtime_finish_plan_decision = prepared_finish_plan_decision
+    if prepared_finish_plan_decision is not None:
+        shooter.runtime_finish_plan_time_sec = 0.0
+        prepared_action = prepared_finish_plan_decision.action
+        shooter.runtime_receive_decision = RuntimeReceiveDecision(
+            accepted=prepared_finish_plan_decision.accepted,
+            route=prepared_finish_plan_decision.route,
+            confidence=prepared_finish_plan_decision.confidence,
+            nearest_success_distance=(prepared_finish_plan_decision.nearest_success_distance),
+            nearest_same_action_failure_distance=(
+                prepared_finish_plan_decision.nearest_same_action_failure_distance
+            ),
+            selected_context_hash=prepared_finish_plan_decision.selected_context_hash,
+            action=None if prepared_action is None else prepared_action.receive,
+            actor_hash=prepared_finish_plan_decision.actor_hash,
+        )
+        shooter.runtime_receive_time_sec = 0.0
+        shooter.runtime_contact_target_decision = RuntimeContactTargetDecision(
+            accepted=prepared_finish_plan_decision.accepted,
+            route=prepared_finish_plan_decision.route,
+            confidence=prepared_finish_plan_decision.confidence,
+            nearest_success_distance=(prepared_finish_plan_decision.nearest_success_distance),
+            nearest_same_action_failure_distance=(
+                prepared_finish_plan_decision.nearest_same_action_failure_distance
+            ),
+            selected_context_hash=prepared_finish_plan_decision.selected_context_hash,
+            action=None if prepared_action is None else prepared_action.target,
+            actor_hash=prepared_finish_plan_decision.actor_hash,
+        )
+        shooter.runtime_contact_target_time_sec = 0.0
+    if shooter.runtime_contact_target_actor is not None:
+        required = shooter.runtime_contact_target_actor.required_receive_action
+        configured = shooter_causal_strike_option_config
+        if (
+            configured is None
+            or shooter_neural_contact_policy_frame != required.contact_policy_frame
+            or configured.maximum_arrival_advance_frames != required.maximum_arrival_advance_frames
+            or not math.isclose(
+                configured.arrival_alignment_tolerance_sec,
+                required.arrival_alignment_tolerance_sec,
+                abs_tol=1.0e-12,
+            )
+            or not math.isclose(
+                shooter.parameters.stance_offset_x,
+                required.stance_offset_x_m,
+                abs_tol=1.0e-12,
+            )
+            or not math.isclose(
+                shooter.parameters.stance_offset_y,
+                required.stance_offset_y_m,
+                abs_tol=1.0e-12,
+            )
+            or not math.isclose(
+                shooter.parameters.foot_yaw_offset,
+                required.foot_yaw_offset_rad,
+                abs_tol=1.0e-12,
+            )
+            or not math.isclose(
+                shooter.parameters.foot_pitch_offset,
+                required.foot_pitch_offset_rad,
+                abs_tol=1.0e-12,
+            )
+        ):
+            raise ValueError("runtime contact target actor RECEIVE-law commitment changed")
     if (
         shooter.runtime_strike_router is not None
         or shooter.runtime_receive_actor is not None
         or shooter.runtime_receive_probe_action is not None
+        or shooter.runtime_contact_target_actor is not None
     ):
         if shooter.causal_strike_option is None:
             raise RuntimeError("runtime receive/strike actor initialized without causal option")
@@ -3457,6 +3684,10 @@ def _simulate_shared_world(
         "shooter_runtime_receive_alignment_tolerance_sec": [],
         "shooter_runtime_receive_stance_offset_y_m": [],
         "shooter_runtime_receive_foot_yaw_offset_rad": [],
+        "shooter_runtime_contact_target_decided": [],
+        "shooter_runtime_contact_target_accepted": [],
+        "shooter_runtime_contact_target_support_distance": [],
+        "shooter_runtime_contact_target_velocity_xyz_mps": [],
         "shooter_ballistic_actor_active": [],
         "shooter_ballistic_actor_torque": [],
         "shooter_three_axis_contact_actor_active": [],
@@ -3818,8 +4049,10 @@ def _simulate_shared_world(
                 (
                     shooter.runtime_receive_actor is not None
                     or shooter.runtime_receive_probe_action is not None
+                    or shooter.runtime_contact_target_actor is not None
                 )
                 and shooter.runtime_receive_decision is None
+                and shooter.runtime_contact_target_decision is None
                 and shooter.causal_strike_option.stable_incoming_observed
             ):
                 arrival_eta = shooter.last_causal_strike_option_decision.ball_arrival_eta_sec
@@ -3840,42 +4073,87 @@ def _simulate_shared_world(
                 shooter.last_runtime_receive_features = np.asarray(
                     receive_features, dtype=np.float64
                 )
-                receive_decision = (
-                    shooter.runtime_receive_actor.decide(receive_features)
-                    if shooter.runtime_receive_actor is not None
-                    else RuntimeReceiveDecision(
-                        accepted=True,
-                        route="TRAINING_RUNTIME_RECEIVE_INTERVENTION",
-                        confidence=1.0,
-                        nearest_success_distance=0.0,
-                        nearest_same_action_failure_distance=None,
-                        selected_context_hash=None,
-                        action=shooter.runtime_receive_probe_action,
-                        actor_hash=cast(
-                            RuntimeReceiveAction, shooter.runtime_receive_probe_action
-                        ).action_hash,
-                    )
-                )
-                shooter.runtime_receive_decision = receive_decision
-                shooter.runtime_receive_time_sec = float(data.time)
-                receive_action = receive_decision.action
-                if receive_action is None:
-                    shooter.causal_strike_option.reject_runtime_route()
+                if shooter.runtime_contact_target_actor is not None:
+                    target_decision = shooter.runtime_contact_target_actor.decide(receive_features)
+                    route_latch_open = shooter.causal_strike_option.runtime_route_latch_open
+                    if not route_latch_open:
+                        target_decision = replace(
+                            target_decision,
+                            accepted=False,
+                            route="CONTACT_TARGET_CAUSAL_WINDOW_CLOSED_FALLBACK",
+                            confidence=0.0,
+                            selected_context_hash=None,
+                            action=None,
+                        )
+                    shooter.runtime_contact_target_decision = target_decision
+                    shooter.runtime_contact_target_time_sec = float(data.time)
+                    target_action = target_decision.action
+                    if target_action is None:
+                        if route_latch_open:
+                            shooter.causal_strike_option.reject_runtime_route()
+                        else:
+                            shooter.causal_strike_option.expire_runtime_route()
+                    else:
+                        required = shooter.runtime_contact_target_actor.required_receive_action
+                        shooter.causal_strike_option.select_arrival_route(
+                            required.maximum_arrival_advance_frames,
+                            arrival_alignment_tolerance_sec=(
+                                required.arrival_alignment_tolerance_sec
+                            ),
+                        )
+                        shooter_neural_contact_target_velocity_xyz_mps = (
+                            target_action.target_foot_velocity_xyz_mps
+                        )
                 else:
-                    shooter.causal_strike_option.select_arrival_route(
-                        receive_action.maximum_arrival_advance_frames,
-                        arrival_alignment_tolerance_sec=(
-                            receive_action.arrival_alignment_tolerance_sec
-                        ),
+                    receive_decision = (
+                        shooter.runtime_receive_actor.decide(receive_features)
+                        if shooter.runtime_receive_actor is not None
+                        else RuntimeReceiveDecision(
+                            accepted=True,
+                            route="TRAINING_RUNTIME_RECEIVE_INTERVENTION",
+                            confidence=1.0,
+                            nearest_success_distance=0.0,
+                            nearest_same_action_failure_distance=None,
+                            selected_context_hash=None,
+                            action=shooter.runtime_receive_probe_action,
+                            actor_hash=cast(
+                                RuntimeReceiveAction, shooter.runtime_receive_probe_action
+                            ).action_hash,
+                        )
                     )
-                    shooter.parameters = replace(
-                        shooter.parameters,
-                        stance_offset_x=receive_action.stance_offset_x_m,
-                        stance_offset_y=receive_action.stance_offset_y_m,
-                        foot_yaw_offset=receive_action.foot_yaw_offset_rad,
-                        foot_pitch_offset=receive_action.foot_pitch_offset_rad,
-                    )
-                    shooter_neural_contact_policy_frame = receive_action.contact_policy_frame
+                    route_latch_open = shooter.causal_strike_option.runtime_route_latch_open
+                    if not route_latch_open:
+                        receive_decision = replace(
+                            receive_decision,
+                            accepted=False,
+                            route="RUNTIME_RECEIVE_CAUSAL_WINDOW_CLOSED_FALLBACK",
+                            confidence=0.0,
+                            selected_context_hash=None,
+                            action=None,
+                        )
+                    shooter.runtime_receive_decision = receive_decision
+                    shooter.runtime_receive_time_sec = float(data.time)
+                    receive_action = receive_decision.action
+                    if receive_action is None:
+                        if route_latch_open:
+                            shooter.causal_strike_option.reject_runtime_route()
+                        else:
+                            shooter.causal_strike_option.expire_runtime_route()
+                    else:
+                        shooter.causal_strike_option.select_arrival_route(
+                            receive_action.maximum_arrival_advance_frames,
+                            arrival_alignment_tolerance_sec=(
+                                receive_action.arrival_alignment_tolerance_sec
+                            ),
+                        )
+                        shooter.parameters = replace(
+                            shooter.parameters,
+                            stance_offset_x=receive_action.stance_offset_x_m,
+                            stance_offset_y=receive_action.stance_offset_y_m,
+                            foot_yaw_offset=receive_action.foot_yaw_offset_rad,
+                            foot_pitch_offset=receive_action.foot_pitch_offset_rad,
+                        )
+                        shooter_neural_contact_policy_frame = receive_action.contact_policy_frame
             if (
                 shooter.runtime_strike_router is not None
                 and shooter.runtime_strike_route_decision is None
@@ -3895,6 +4173,16 @@ def _simulate_shared_world(
                     runtime_features, dtype=np.float64
                 )
                 route_decision = shooter.runtime_strike_router.decide(runtime_features)
+                route_latch_open = shooter.causal_strike_option.runtime_route_latch_open
+                if not route_latch_open:
+                    route_decision = replace(
+                        route_decision,
+                        accepted=False,
+                        route="RUNTIME_STRIKE_CAUSAL_WINDOW_CLOSED_FALLBACK",
+                        confidence=0.0,
+                        selected_context_hash=None,
+                        action=None,
+                    )
                 shooter.runtime_strike_route_decision = route_decision
                 shooter.runtime_strike_route_time_sec = float(data.time)
                 route_action = route_decision.action
@@ -3902,7 +4190,10 @@ def _simulate_shared_world(
                     0 if route_action is None else route_action.maximum_arrival_advance_frames
                 )
                 if route_action is None:
-                    shooter.causal_strike_option.reject_runtime_route()
+                    if route_latch_open:
+                        shooter.causal_strike_option.reject_runtime_route()
+                    else:
+                        shooter.causal_strike_option.expire_runtime_route()
                 else:
                     shooter.causal_strike_option.select_arrival_route(maximum_advance)
                     shooter.parameters = replace(
@@ -5343,12 +5634,42 @@ def _simulate_shared_world(
                             np.max(np.abs(frame_ballistic_actor_torque))
                         ):
                             frame_ballistic_actor_torque = effect.torque.copy()
-                three_axis_contact_authorized = bool(
+                strike_route_authorized = bool(
                     robot.runtime_strike_router is None
                     or (
                         robot.runtime_strike_route_decision is not None
                         and robot.runtime_strike_route_decision.accepted
                     )
+                )
+                receive_route_authorized = bool(
+                    (
+                        robot.runtime_receive_actor is None
+                        and robot.runtime_receive_probe_action is None
+                    )
+                    or (
+                        robot.runtime_receive_decision is not None
+                        and robot.runtime_receive_decision.accepted
+                    )
+                )
+                target_route_authorized = bool(
+                    robot.runtime_contact_target_actor is None
+                    or (
+                        robot.runtime_contact_target_decision is not None
+                        and robot.runtime_contact_target_decision.accepted
+                    )
+                )
+                finish_plan_authorized = bool(
+                    robot.runtime_finish_plan_actor is None
+                    or (
+                        robot.runtime_finish_plan_decision is not None
+                        and robot.runtime_finish_plan_decision.accepted
+                    )
+                )
+                three_axis_contact_authorized = bool(
+                    strike_route_authorized
+                    and receive_route_authorized
+                    and target_route_authorized
+                    and finish_plan_authorized
                 )
                 if (
                     robot.role == "shooter"
@@ -6947,9 +7268,13 @@ def _simulate_shared_world(
             else (shooter.runtime_strike_route_decision.action.maximum_arrival_advance_frames)
         ),
         shooter_runtime_receive_actor_hash=(
-            None
-            if shooter.runtime_receive_actor is None
-            else shooter.runtime_receive_actor.actor_hash
+            shooter.runtime_receive_actor.actor_hash
+            if shooter.runtime_receive_actor is not None
+            else (
+                None
+                if shooter.runtime_finish_plan_actor is None
+                else shooter.runtime_finish_plan_actor.actor_hash
+            )
         ),
         shooter_runtime_receive_decided=(shooter.runtime_receive_decision is not None),
         shooter_runtime_receive_accepted=bool(
@@ -6984,6 +7309,60 @@ def _simulate_shared_world(
             if shooter.runtime_receive_decision is None
             or shooter.runtime_receive_decision.action is None
             else shooter.runtime_receive_decision.action.foot_yaw_offset_rad
+        ),
+        shooter_runtime_contact_target_actor_hash=(
+            shooter.runtime_contact_target_actor.actor_hash
+            if shooter.runtime_contact_target_actor is not None
+            else (
+                None
+                if shooter.runtime_finish_plan_actor is None
+                else shooter.runtime_finish_plan_actor.actor_hash
+            )
+        ),
+        shooter_runtime_contact_target_decided=(
+            shooter.runtime_contact_target_decision is not None
+        ),
+        shooter_runtime_contact_target_accepted=bool(
+            shooter.runtime_contact_target_decision is not None
+            and shooter.runtime_contact_target_decision.accepted
+        ),
+        shooter_runtime_contact_target_route=(
+            None
+            if shooter.runtime_contact_target_decision is None
+            else shooter.runtime_contact_target_decision.route
+        ),
+        shooter_runtime_contact_target_time_sec=shooter.runtime_contact_target_time_sec,
+        shooter_runtime_contact_target_support_distance=(
+            None
+            if shooter.runtime_contact_target_decision is None
+            else shooter.runtime_contact_target_decision.nearest_success_distance
+        ),
+        shooter_runtime_contact_target_velocity_xyz_mps=(
+            None
+            if shooter.runtime_contact_target_decision is None
+            or shooter.runtime_contact_target_decision.action is None
+            else (shooter.runtime_contact_target_decision.action.target_foot_velocity_xyz_mps)
+        ),
+        shooter_runtime_finish_plan_actor_hash=(
+            None
+            if shooter.runtime_finish_plan_actor is None
+            else shooter.runtime_finish_plan_actor.actor_hash
+        ),
+        shooter_runtime_finish_plan_decided=(shooter.runtime_finish_plan_decision is not None),
+        shooter_runtime_finish_plan_accepted=bool(
+            shooter.runtime_finish_plan_decision is not None
+            and shooter.runtime_finish_plan_decision.accepted
+        ),
+        shooter_runtime_finish_plan_route=(
+            None
+            if shooter.runtime_finish_plan_decision is None
+            else shooter.runtime_finish_plan_decision.route
+        ),
+        shooter_runtime_finish_plan_time_sec=shooter.runtime_finish_plan_time_sec,
+        shooter_runtime_finish_plan_support_distance=(
+            None
+            if shooter.runtime_finish_plan_decision is None
+            else shooter.runtime_finish_plan_decision.nearest_success_distance
         ),
         shooter_aim_expert_route=(
             "early_arrival" if shooter.early_arrival_expert_frame_count > 0 else "nominal"
@@ -10025,6 +10404,20 @@ def _append_trace(
     )
     trace["shooter_runtime_receive_foot_yaw_offset_rad"].append(
         0.0 if receive_action is None else receive_action.foot_yaw_offset_rad
+    )
+    target_decision = shooter.runtime_contact_target_decision
+    target_action = None if target_decision is None else target_decision.action
+    trace["shooter_runtime_contact_target_decided"].append(target_decision is not None)
+    trace["shooter_runtime_contact_target_accepted"].append(
+        False if target_decision is None else target_decision.accepted
+    )
+    trace["shooter_runtime_contact_target_support_distance"].append(
+        -1.0 if target_decision is None else target_decision.nearest_success_distance
+    )
+    trace["shooter_runtime_contact_target_velocity_xyz_mps"].append(
+        np.zeros(3, dtype=np.float64)
+        if target_action is None
+        else np.asarray(target_action.target_foot_velocity_xyz_mps, dtype=np.float64)
     )
     trace["shooter_learned_torque_active"].append(learned_torque["shooter"] is not None)
     trace["shooter_ball_contact_foot"].append(shooter_contact_foot)

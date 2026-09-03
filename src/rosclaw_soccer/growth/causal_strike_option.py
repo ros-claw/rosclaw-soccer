@@ -333,6 +333,28 @@ class G1CausalStrikeOptionController:
         self.phase = CausalStrikeOptionPhase.ABORTED
         self._terminal_reason = "measured_arrival_route_rejected"
 
+    def expire_runtime_route(self) -> None:
+        """Consume a route decision that arrived after the causal latch closed.
+
+        A very fast physical pass can contact the receiver, or a committed
+        swing can reach its safety deadline, before the minimum observation
+        history needed by a runtime actor is available.  That late actor
+        decision must never reopen the motion window.  Preserve the physical
+        terminal state and merely latch a zero-authority route so callers can
+        record the failed episode instead of crashing a batch run.
+        """
+
+        if (
+            not self._runtime_route_required
+            or not self._stable_incoming_observed
+            or self._runtime_route_selected
+            or self.phase not in {CausalStrikeOptionPhase.RECOVER, CausalStrikeOptionPhase.ABORTED}
+        ):
+            raise RuntimeError("runtime strike expiry is outside a closed causal window")
+        self._runtime_route_selected = True
+        self._routed_maximum_arrival_advance_frames = 0
+        self._routed_arrival_alignment_tolerance_sec = None
+
     def observe_policy_progress(self, policy_frame: int) -> None:
         """Abort a committed air swing that missed the measured ball contact."""
 
@@ -353,6 +375,15 @@ class G1CausalStrikeOptionController:
     @property
     def runtime_route_selected(self) -> bool:
         return self._runtime_route_selected
+
+    @property
+    def runtime_route_latch_open(self) -> bool:
+        return bool(
+            self._runtime_route_required
+            and self.phase == CausalStrikeOptionPhase.COMMIT
+            and self._stable_incoming_observed
+            and not self._runtime_route_selected
+        )
 
     def align_repeat_count(self, *, policy_frame: int, nominal_repeat: int) -> tuple[int, int]:
         """Return a bounded causal phase correction and its {-1,0,+1} direction."""

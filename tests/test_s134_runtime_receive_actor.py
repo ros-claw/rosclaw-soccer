@@ -115,6 +115,8 @@ def test_runtime_receive_action_cannot_claim_torque_or_hardware_authority() -> N
         RuntimeReceiveAction(direct_joint_torque_output=True)
     with pytest.raises(ValueError, match="SIM-only envelope"):
         RuntimeReceiveAction(arrival_alignment_tolerance_sec=0.01)
+    with pytest.raises(ValueError, match="SIM-only envelope"):
+        RuntimeReceiveAction(stance_offset_y_m=0.13)
 
 
 def test_latched_receive_law_tightens_continuous_phase_feedback() -> None:

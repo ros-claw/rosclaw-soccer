@@ -21,15 +21,20 @@ from rosclaw_soccer.growth.runtime_receive_actor import (
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
-def extract_runtime_receive_features(trajectory_path: Path) -> tuple[float, ...]:
-    """Read the first stable incoming-ball observation from a bound trajectory."""
+def extract_runtime_receive_features(
+    trajectory_path: Path, *, minimum_incoming_observations: int = 5
+) -> tuple[float, ...]:
+    """Read the first requested consecutive incoming-ball observation."""
+
+    if not 2 <= minimum_incoming_observations <= 10:
+        raise ValueError("runtime RECEIVE observation count is outside its causal envelope")
 
     with np.load(trajectory_path.expanduser().resolve(), allow_pickle=False) as trajectory:
         count = np.asarray(
             trajectory["shooter_causal_strike_option_incoming_observation_count"],
             dtype=np.int64,
         )
-        indices = np.flatnonzero(count >= 5)
+        indices = np.flatnonzero(count >= minimum_incoming_observations)
         if indices.size == 0:
             raise ValueError("runtime RECEIVE trajectory lacks a stable incoming observation")
         index = int(indices[0])
