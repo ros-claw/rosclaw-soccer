@@ -421,6 +421,57 @@ class G1ReactiveMovementConfig:
 
 
 @dataclass(frozen=True)
+class G1RoleAutonomyConfig:
+    """Causal high-level intent routing above a frozen locomotion actor.
+
+    The policy chooses a bounded tactical target from current physical state;
+    it cannot write a body pose, joint target, torque, football state, or any
+    hardware command.  ``teammate`` and ``defender`` intentionally share the
+    contract so future red/blue line-ups can instantiate one copy per player.
+    """
+
+    role: str
+    team_id: str
+    decision_period_sec: float = 0.10
+    intent_hysteresis_sec: float = 0.20
+    moving_ball_threshold_mps: float = 0.24
+    maximum_target_shift_m: float = 0.22
+    ball_prediction_horizon_sec: float = 0.18
+    lane_width_m: float = 0.24
+    execution_mode: str = "SIM_ONLY"
+    hardware_authorized: bool = False
+    schema_version: str = "rosclaw.soccer.g1_role_autonomy_config.v1"
+
+    def __post_init__(self) -> None:
+        values = (
+            self.decision_period_sec,
+            self.intent_hysteresis_sec,
+            self.moving_ball_threshold_mps,
+            self.maximum_target_shift_m,
+            self.ball_prediction_horizon_sec,
+            self.lane_width_m,
+        )
+        if (
+            self.role not in {"teammate", "defender"}
+            or self.team_id not in {"red", "blue"}
+            or not all(math.isfinite(value) for value in values)
+            or not 0.08 <= self.decision_period_sec <= 0.20
+            or not 0.10 <= self.intent_hysteresis_sec <= 0.60
+            or not 0.10 <= self.moving_ball_threshold_mps <= 1.00
+            or not 0.05 <= self.maximum_target_shift_m <= 0.35
+            or not 0.05 <= self.ball_prediction_horizon_sec <= 0.40
+            or not 0.10 <= self.lane_width_m <= 0.50
+            or self.execution_mode != "SIM_ONLY"
+            or self.hardware_authorized
+        ):
+            raise ValueError("role autonomy violates its bounded SIM-only contract")
+
+    @property
+    def config_hash(self) -> str:
+        return hash_json(asdict(self))
+
+
+@dataclass(frozen=True)
 class G1GoalkeeperConfig:
     """Causal locomotion/reach adapter for the goalkeeper policy instance."""
 
@@ -1785,6 +1836,12 @@ class _Robot:
     last_reactive_collision_shield_active: bool = False
     last_reactive_velocity_braking_correction: np.ndarray | None = None
     reactive_diagonal_braking_confidence: float | None = None
+    last_role_intent: str = "hold"
+    last_role_intent_change_sec: float = -math.inf
+    last_role_intent_decision_sec: float = -math.inf
+    last_role_intent_code: int = 0
+    last_role_intent_target_shift: np.ndarray | None = None
+    role_intent_switch_count: int = 0
 
 
 def _base_scenario() -> GoalForgeScenario:
@@ -2068,10 +2125,12 @@ def _simulate_shared_world(
     pass_reception_target_m: tuple[float, float, float] = (1.00, 0.0, 0.115),
     passer_tactical_movement_config: G1TacticalMovementConfig | None = None,
     passer_reactive_movement_config: G1ReactiveMovementConfig | None = None,
+    passer_role_autonomy_config: G1RoleAutonomyConfig | None = None,
     goal_spec: G1TrainingGoalSpec | None = None,
     goalkeeper_config: G1GoalkeeperConfig | None = None,
     goalkeeper_tactical_movement_config: G1TacticalMovementConfig | None = None,
     goalkeeper_reactive_movement_config: G1ReactiveMovementConfig | None = None,
+    goalkeeper_role_autonomy_config: G1RoleAutonomyConfig | None = None,
     goalkeeper_origin_override_m: tuple[float, float, float] | None = None,
     goalkeeper_threat_role: str = "shooter",
     second_threat_config: G1SecondThreatConfig | None = None,
@@ -2289,6 +2348,18 @@ def _simulate_shared_world(
         goalkeeper_reactive_movement_config.role != "defender"
     ):
         raise ValueError("goalkeeper reactive movement must use the defender role")
+    if passer_role_autonomy_config is not None and (
+        passer_reactive_movement_config is None
+        or passer_role_autonomy_config.role != "teammate"
+        or passer_role_autonomy_config.team_id != "red"
+    ):
+        raise ValueError("passer role autonomy requires a red teammate reactive route")
+    if goalkeeper_role_autonomy_config is not None and (
+        goalkeeper_reactive_movement_config is None
+        or goalkeeper_role_autonomy_config.role != "defender"
+        or goalkeeper_role_autonomy_config.team_id != "blue"
+    ):
+        raise ValueError("goalkeeper role autonomy requires a blue defender reactive route")
     if second_ball_mass_kg is not None and (
         not math.isfinite(second_ball_mass_kg) or not 0.40 <= second_ball_mass_kg <= 0.46
     ):
@@ -3750,6 +3821,14 @@ def _simulate_shared_world(
                 "passer_reactive_velocity_braking_correction": [],
             }
         )
+    if passer_role_autonomy_config is not None:
+        trace.update(
+            {
+                "passer_role_intent_code": [],
+                "passer_role_intent_target_shift": [],
+                "passer_role_intent_switch_count": [],
+            }
+        )
     if (
         goalkeeper_tactical_movement_config is not None
         or goalkeeper_reactive_movement_config is not None
@@ -3770,6 +3849,14 @@ def _simulate_shared_world(
                 "goalkeeper_reactive_role_separation_m": [],
                 "goalkeeper_reactive_collision_shield_active": [],
                 "goalkeeper_reactive_velocity_braking_correction": [],
+            }
+        )
+    if goalkeeper_role_autonomy_config is not None:
+        trace.update(
+            {
+                "goalkeeper_role_intent_code": [],
+                "goalkeeper_role_intent_target_shift": [],
+                "goalkeeper_role_intent_switch_count": [],
             }
         )
     if second_striker is not None:
@@ -4395,8 +4482,10 @@ def _simulate_shared_world(
                     other_role=passer,
                     data=data,
                     ball_qpos=ball_qpos,
+                    ball_qvel=ball_qvel,
                     config=goalkeeper_reactive_movement_config,
                     actor=goalkeeper_reactive_actor,
+                    autonomy_config=goalkeeper_role_autonomy_config,
                 )
                 goalkeeper_command_mps = float(tactical_command[1])
                 goalkeeper_target_y_m = float(tactical_target[1])
@@ -4472,8 +4561,10 @@ def _simulate_shared_world(
                         other_role=goalkeeper,
                         data=data,
                         ball_qpos=ball_qpos,
+                        ball_qvel=ball_qvel,
                         config=passer_reactive_movement_config,
                         actor=passer_reactive_actor,
+                        autonomy_config=passer_role_autonomy_config,
                     )
                 elif robot is passer and passer_tactical_movement_config is not None:
                     _command_tactical_movement(
@@ -6992,6 +7083,14 @@ def _simulate_shared_world(
                 if passer.last_reactive_velocity_braking_correction is None
                 else passer.last_reactive_velocity_braking_correction.copy()
             )
+        if passer_role_autonomy_config is not None:
+            trace["passer_role_intent_code"].append(passer.last_role_intent_code)
+            trace["passer_role_intent_target_shift"].append(
+                np.zeros(2, dtype=np.float64)
+                if passer.last_role_intent_target_shift is None
+                else passer.last_role_intent_target_shift.copy()
+            )
+            trace["passer_role_intent_switch_count"].append(passer.role_intent_switch_count)
         if (
             goalkeeper_tactical_movement_config is not None
             or goalkeeper_reactive_movement_config is not None
@@ -7034,6 +7133,15 @@ def _simulate_shared_world(
                 if goalkeeper.last_reactive_velocity_braking_correction is None
                 else goalkeeper.last_reactive_velocity_braking_correction.copy()
             )
+        if goalkeeper_role_autonomy_config is not None:
+            assert goalkeeper is not None
+            trace["goalkeeper_role_intent_code"].append(goalkeeper.last_role_intent_code)
+            trace["goalkeeper_role_intent_target_shift"].append(
+                np.zeros(2, dtype=np.float64)
+                if goalkeeper.last_role_intent_target_shift is None
+                else goalkeeper.last_role_intent_target_shift.copy()
+            )
+            trace["goalkeeper_role_intent_switch_count"].append(goalkeeper.role_intent_switch_count)
         second_launcher_active = bool(
             second_threat_force is not None
             and second_threat_force_stop_sec is not None
@@ -8394,6 +8502,125 @@ def _command_tactical_movement(
     return robot.last_tactical_world_target, actual_world_command, active
 
 
+_ROLE_INTENT_CODES = {
+    "hold": 0,
+    "support": 1,
+    "receive": 2,
+    "overlap": 3,
+    "rebound": 4,
+    "press": 5,
+    "cover": 6,
+}
+
+
+def _bounded_role_target(
+    base_target: NDArray[np.float64],
+    requested_xy: NDArray[np.float64],
+    *,
+    maximum_shift_m: float,
+) -> NDArray[np.float64]:
+    target = np.asarray(base_target, dtype=np.float64).copy()
+    delta = np.asarray(requested_xy, dtype=np.float64) - target[:2]
+    norm = float(np.linalg.norm(delta))
+    if norm > maximum_shift_m:
+        delta *= maximum_shift_m / norm
+    target[:2] += delta
+    target[0] = float(np.clip(target[0], -2.0, 12.0))
+    target[1] = float(np.clip(target[1], -4.0, 4.0))
+    target[2] = 0.0
+    return target
+
+
+def _role_autonomy_target(
+    robot: _Robot,
+    *,
+    carrier: _Robot,
+    other_role: _Robot,
+    data: Any,
+    ball_qpos: int,
+    ball_qvel: int,
+    base_target: NDArray[np.float64],
+    movement: G1ReactiveMovementConfig,
+    autonomy: G1RoleAutonomyConfig,
+) -> NDArray[np.float64]:
+    """Choose one causal role intent and convert it to a bounded target.
+
+    The discrete layer runs at 5--10 Hz and owns only a small correction to
+    the already qualified route target.  The 50 Hz learned route actor and
+    frozen whole-body locomotion policy remain the sole movement executors.
+    """
+
+    if autonomy.role != movement.role:
+        raise ValueError("role autonomy and reactive movement roles differ")
+    now = float(data.time)
+    carrier_position = np.asarray(
+        data.qpos[carrier.qpos_base : carrier.qpos_base + 2], dtype=np.float64
+    )
+    other_position = np.asarray(
+        data.qpos[other_role.qpos_base : other_role.qpos_base + 2], dtype=np.float64
+    )
+    ball_position = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
+    ball_velocity = np.asarray(data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64)
+    ball_speed = float(np.linalg.norm(ball_velocity))
+    ball_advancing = bool(ball_speed >= autonomy.moving_ball_threshold_mps)
+
+    if now + 1.0e-12 >= robot.last_role_intent_decision_sec + autonomy.decision_period_sec:
+        if movement.role == "teammate":
+            if robot.contact_latched:
+                desired = "rebound"
+            elif movement.action == "pass":
+                desired = "receive" if ball_advancing else "support"
+            else:
+                desired = "rebound" if ball_advancing else "overlap"
+        else:
+            desired = "cover" if ball_advancing else "press"
+        can_switch = bool(
+            robot.last_role_intent == "hold"
+            or desired == robot.last_role_intent
+            or now + 1.0e-12 >= robot.last_role_intent_change_sec + autonomy.intent_hysteresis_sec
+        )
+        if can_switch and desired != robot.last_role_intent:
+            robot.last_role_intent = desired
+            robot.last_role_intent_code = _ROLE_INTENT_CODES[desired]
+            robot.last_role_intent_change_sec = now
+            robot.role_intent_switch_count += 1
+        robot.last_role_intent_decision_sec = now
+
+    predicted_ball = ball_position + autonomy.ball_prediction_horizon_sec * ball_velocity
+    side = -1.0 if float(base_target[1] - carrier_position[1]) < 0.0 else 1.0
+    intent = robot.last_role_intent
+    if intent == "support":
+        requested = 0.65 * np.asarray(base_target[:2]) + 0.35 * (
+            carrier_position + np.asarray((0.55, side * autonomy.lane_width_m))
+        )
+    elif intent == "receive":
+        requested = predicted_ball + np.asarray((0.12, side * 0.08), dtype=np.float64)
+    elif intent == "overlap":
+        requested = np.asarray(base_target[:2]) + np.asarray(
+            (autonomy.maximum_target_shift_m, side * 0.55 * autonomy.lane_width_m),
+            dtype=np.float64,
+        )
+    elif intent == "rebound":
+        requested = 0.55 * np.asarray(base_target[:2]) + 0.45 * (
+            predicted_ball + np.asarray((0.40, side * 0.30 * autonomy.lane_width_m))
+        )
+    elif intent == "press":
+        requested = 0.70 * ball_position + 0.30 * carrier_position
+    elif intent == "cover":
+        # Stay goal-side of the moving ball and shade the runner's lane.
+        requested = predicted_ball + np.asarray((0.48, 0.0), dtype=np.float64)
+        requested[1] = 0.72 * requested[1] + 0.28 * other_position[1]
+    else:
+        requested = np.asarray(base_target[:2], dtype=np.float64)
+    target = _bounded_role_target(
+        np.asarray(base_target, dtype=np.float64),
+        np.asarray(requested, dtype=np.float64),
+        maximum_shift_m=autonomy.maximum_target_shift_m,
+    )
+    robot.last_role_intent_target_shift = target[:2] - np.asarray(base_target[:2])
+    return target
+
+
 def _command_reactive_movement(
     robot: _Robot,
     *,
@@ -8401,8 +8628,10 @@ def _command_reactive_movement(
     other_role: _Robot,
     data: Any,
     ball_qpos: int,
+    ball_qvel: int,
     config: G1ReactiveMovementConfig,
     actor: RouteActor,
+    autonomy_config: G1RoleAutonomyConfig | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], bool]:
     """Run one bounded observation update through frozen locomotion authority."""
 
@@ -8418,6 +8647,18 @@ def _command_reactive_movement(
     )
     ball_position = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
     target = np.asarray(config.target_position_m, dtype=np.float64)
+    if autonomy_config is not None:
+        target = _role_autonomy_target(
+            robot,
+            carrier=carrier,
+            other_role=other_role,
+            data=data,
+            ball_qpos=ball_qpos,
+            ball_qvel=ball_qvel,
+            base_target=target,
+            movement=config,
+            autonomy=autonomy_config,
+        )
     if config.role == "teammate" and config.action == "pass" and robot.contact_latched:
         target = target.copy()
         target[0] = min(12.0, target[0] + config.post_reception_follow_through_m)
