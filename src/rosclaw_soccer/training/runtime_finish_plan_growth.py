@@ -170,14 +170,20 @@ def train_runtime_finish_plan_actor(
                 and math.isfinite(float(target_error))
                 and float(target_error) <= 0.10
             )
-            score = float(
-                4.0 * strict
-                + bool(quality["safe"])
-                + bool(quality["clear_outcome"])
-                + bool(quality["intended_foot_contact"])
-                + 3.0 * min(float(result["shot_peak_ball_speed_mps"]) / 10.0, 1.0)
-                + bool(result["goal_crossed"])
-                + precise_goal
+            score = _memory_quality_score(
+                strict=strict,
+                safe=bool(quality["safe"]),
+                clear_outcome=bool(quality["clear_outcome"]),
+                intended_foot_contact=bool(quality["intended_foot_contact"]),
+                goal_crossed=bool(result["goal_crossed"]),
+                shot_peak_ball_speed_mps=float(result["shot_peak_ball_speed_mps"]),
+                target_error_m=(
+                    float(target_error)
+                    if isinstance(target_error, int | float)
+                    and not isinstance(target_error, bool)
+                    and math.isfinite(float(target_error))
+                    else None
+                ),
             )
             memories.append(
                 RuntimeFinishPlanMemory(
@@ -313,6 +319,43 @@ def train_runtime_finish_plan_actor(
     training_report["report_hash"] = hash_json(training_report)
     _write_json(output / "training-report.json", training_report)
     return actor, training_report
+
+
+def _memory_quality_score(
+    *,
+    strict: bool,
+    safe: bool,
+    clear_outcome: bool,
+    intended_foot_contact: bool,
+    goal_crossed: bool,
+    shot_peak_ball_speed_mps: float,
+    target_error_m: float | None,
+) -> float:
+    """Rank outcomes without letting tiny speed gains outrank shot precision.
+
+    The 0--12 envelope is part of the actor contract.  Safety and complete-chain
+    success retain their original priority.  Within successful goals, two points
+    are now continuous precision credit over the 0.50 m goal-target envelope;
+    speed keeps two points.  This makes a materially more accurate shot win over
+    an otherwise equivalent shot that is only millimetres per second faster.
+    """
+
+    if not math.isfinite(shot_peak_ball_speed_mps) or shot_peak_ball_speed_mps < 0.0:
+        raise ValueError("finish plan shot speed must be finite and non-negative")
+    precision_credit = 0.0
+    if goal_crossed and target_error_m is not None:
+        if not math.isfinite(target_error_m) or target_error_m < 0.0:
+            raise ValueError("finish plan target error must be finite and non-negative")
+        precision_credit = 2.0 * max(0.0, 1.0 - min(target_error_m, 0.50) / 0.50)
+    return float(
+        4.0 * strict
+        + safe
+        + clear_outcome
+        + intended_foot_contact
+        + 2.0 * min(shot_peak_ball_speed_mps / 10.0, 1.0)
+        + goal_crossed
+        + precision_credit
+    )
 
 
 def _row_action(

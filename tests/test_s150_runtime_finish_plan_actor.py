@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from pathlib import Path
 
 import pytest
@@ -26,11 +27,15 @@ from rosclaw_soccer.training.prepared_finish_precision_repair import (
     _select as _select_precision_repair,
 )
 from rosclaw_soccer.training.runtime_finish_plan_exam import (
+    _derive_metrics_and_gates as _derive_finish_plan_metrics_and_gates,
+)
+from rosclaw_soccer.training.runtime_finish_plan_exam import (
     fresh_runtime_finish_plan_holdouts,
     fresh_runtime_finish_plan_holdouts_v2,
     validate_runtime_finish_plan_exam,
 )
 from rosclaw_soccer.training.runtime_finish_plan_growth import (
+    _memory_quality_score,
     _row_action,
     train_runtime_finish_plan_actor,
 )
@@ -43,14 +48,6 @@ from rosclaw_soccer.training.runtime_finish_plan_precision_exam import (
 )
 from rosclaw_soccer.training.runtime_finish_plan_precision_exam import (
     _feature_partition as _precision_feature_partition,
-)
-
-_CURRENT_EVIDENCE = Path(
-    "/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/"
-    "s167-prepared-finish-plan-sealed-fresh-holdout-v2/exam-report.json"
-)
-_CURRENT_VIDEO = Path(
-    "/code/rosclaw/rosclaw_football/videos/s167-prepared-finish-plan-growth-v2.json"
 )
 
 
@@ -120,6 +117,102 @@ def test_runtime_finish_plan_selects_coupled_geometry_phase_and_target() -> None
     assert decision.action.target.target_foot_velocity_xyz_mps == (9.0, 5.0, -1.0)
     assert not decision.action.direct_joint_torque_output
     assert actor.owned_skill == "receive_and_strike_plan"
+
+
+def test_finish_plan_quality_prefers_material_precision_over_tiny_speed_gain() -> None:
+    precise = _memory_quality_score(
+        strict=True,
+        safe=True,
+        clear_outcome=True,
+        intended_foot_contact=True,
+        goal_crossed=True,
+        shot_peak_ball_speed_mps=9.312795,
+        target_error_m=0.004383,
+    )
+    faster_but_less_precise = _memory_quality_score(
+        strict=True,
+        safe=True,
+        clear_outcome=True,
+        intended_foot_contact=True,
+        goal_crossed=True,
+        shot_peak_ball_speed_mps=9.316076,
+        target_error_m=0.074727,
+    )
+
+    assert 0.0 <= faster_but_less_precise < precise <= 12.0
+
+
+def test_finish_plan_quality_rejects_non_finite_or_negative_physics_metrics() -> None:
+    kwargs = {
+        "strict": True,
+        "safe": True,
+        "clear_outcome": True,
+        "intended_foot_contact": True,
+        "goal_crossed": True,
+        "shot_peak_ball_speed_mps": 9.0,
+        "target_error_m": 0.05,
+    }
+    with pytest.raises(ValueError, match="shot speed"):
+        _memory_quality_score(**(kwargs | {"shot_peak_ball_speed_mps": float("nan")}))
+    with pytest.raises(ValueError, match="target error"):
+        _memory_quality_score(**(kwargs | {"target_error_m": -0.01}))
+
+
+def test_continuous_child_cannot_pass_after_regressing_direct_parent() -> None:
+    rows = []
+    for index in range(6):
+        candidate_strict = index != 0
+        candidate_goal = index in {1, 2, 3, 5}
+        candidate_save = index == 4
+        parent_goal = index != 4
+        rows.append(
+            {
+                "candidate": {
+                    "quality": {"strict_chain_passed": candidate_strict, "safe": True},
+                    "result": {
+                        "shooter_runtime_finish_plan_accepted": True,
+                        "shooter_runtime_receive_stance_offset_y_m": index / 100.0,
+                        "shooter_runtime_contact_target_velocity_xyz_mps": [
+                            9.0,
+                            float(index),
+                            -1.0,
+                        ],
+                        "goal_crossed": candidate_goal,
+                        "goalkeeper_save_observed": candidate_save,
+                        "target_error_m": (
+                            0.05 if index in {1, 2, 3} else 0.41 if index == 5 else 0.40
+                        ),
+                    },
+                },
+                "base": {"quality": {"strict_chain_passed": index == 0, "safe": True}},
+                "parent": {
+                    "quality": {"strict_chain_passed": True, "safe": True},
+                    "result": {
+                        "goal_crossed": parent_goal,
+                        "goalkeeper_save_observed": index == 4,
+                        "target_error_m": 0.05 if index in {0, 1, 2} else 0.40,
+                    },
+                },
+                "decision_observed": True,
+                "decision_precedes_contact": True,
+                "exact_replay": True,
+                "neural_actor_active": True,
+                "teacher_active": False,
+                "scripted_contact_active": False,
+            }
+        )
+
+    metrics, gates = _derive_finish_plan_metrics_and_gates(rows)
+
+    assert metrics["candidate_strict_success_count"] == 5
+    assert metrics["parent_strict_success_count"] == 6
+    assert metrics["strict_success_gain_vs_parent"] == -1
+    assert gates["candidate_precise_goals_at_least_three"]
+    assert not gates["no_strict_regression_vs_parent"]
+    assert not gates["no_goal_regression_vs_parent"]
+    assert not gates["no_per_case_goal_target_error_regression_vs_parent"]
+    assert metrics["worst_goal_target_error_regression_m"] == pytest.approx(0.01)
+    assert not all(gates.values())
 
 
 def test_runtime_finish_plan_rejects_ood_without_motor_authority() -> None:
@@ -221,10 +314,14 @@ def test_prepared_repair_row_restores_the_complete_joint_action() -> None:
 
 
 def test_current_sealed_finish_plan_evidence_is_fully_bound_when_available() -> None:
-    if not _CURRENT_EVIDENCE.is_file():
+    evidence_value = os.environ.get("ROSCLAW_SOCCER_FINISH_PLAN_EVIDENCE")
+    if evidence_value is None:
+        pytest.skip("external finish-plan evidence is not configured")
+    current_evidence = Path(evidence_value).expanduser().resolve()
+    if not current_evidence.is_file():
         pytest.skip("current S167 prepared-finish evidence is unavailable")
 
-    report = validate_runtime_finish_plan_exam(_CURRENT_EVIDENCE)
+    report = validate_runtime_finish_plan_exam(current_evidence)
 
     assert report["status"] == "PASS_RUNTIME_FINISH_PLAN_FRESH_HOLDOUT"
     assert report["metrics"]["candidate_strict_success_count"] >= 3
@@ -234,14 +331,20 @@ def test_current_sealed_finish_plan_evidence_is_fully_bound_when_available() -> 
 
 
 def test_current_finish_plan_video_is_evidence_downstream_when_available() -> None:
-    if not _CURRENT_VIDEO.is_file():
+    evidence_value = os.environ.get("ROSCLAW_SOCCER_FINISH_PLAN_EVIDENCE")
+    video_value = os.environ.get("ROSCLAW_SOCCER_FINISH_PLAN_VIDEO")
+    if evidence_value is None or video_value is None:
+        pytest.skip("external finish-plan evidence and video are not configured")
+    current_evidence = Path(evidence_value).expanduser().resolve()
+    current_video = Path(video_value).expanduser().resolve()
+    if not current_video.is_file():
         pytest.skip("current S167 prepared-finish video is unavailable")
 
-    manifest = validate_runtime_finish_plan_video_manifest(_CURRENT_VIDEO)
+    manifest = validate_runtime_finish_plan_video_manifest(current_video)
 
     assert (
         manifest["source_exam_hash"]
-        == validate_runtime_finish_plan_exam(_CURRENT_EVIDENCE)["report_hash"]
+        == validate_runtime_finish_plan_exam(current_evidence)["report_hash"]
     )
     assert manifest["pixels_used_for_scoring"] is False
     assert manifest["commercial_use_allowed"] is False

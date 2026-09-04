@@ -164,10 +164,16 @@ class RuntimeFinishPlanCriticHead:
     training_context_hashes: tuple[str, ...]
     normalized_inputs: tuple[tuple[float, ...], ...]
     coefficients: tuple[tuple[float, ...], ...]
+    input_indices: tuple[int, ...] = ()
+    normalization_weights: tuple[tuple[float, ...], ...] = ()
+    binary_class_priors: tuple[float, ...] = ()
 
     def __post_init__(self) -> None:
         inputs = np.asarray(self.normalized_inputs, dtype=np.float64)
         coefficients = np.asarray(self.coefficients, dtype=np.float64)
+        weights = np.asarray(self.normalization_weights, dtype=np.float64)
+        priors = np.asarray(self.binary_class_priors, dtype=np.float64)
+        input_count = len(self.input_indices) or _CRITIC_INPUT_COUNT
         if (
             len(self.training_context_hashes) < 4
             or len(set(self.training_context_hashes)) != len(self.training_context_hashes)
@@ -177,10 +183,35 @@ class RuntimeFinishPlanCriticHead:
             )
             or inputs.ndim != 2
             or inputs.shape[0] < 32
-            or inputs.shape[1] != _CRITIC_INPUT_COUNT
+            or inputs.shape[1] != input_count
             or coefficients.shape != (inputs.shape[0], _CRITIC_COUNT)
             or not np.all(np.isfinite(inputs))
             or not np.all(np.isfinite(coefficients))
+            or (
+                bool(self.input_indices)
+                and (
+                    len(set(self.input_indices)) != len(self.input_indices)
+                    or any(not 0 <= index < _CRITIC_INPUT_COUNT for index in self.input_indices)
+                )
+            )
+            or (
+                bool(self.normalization_weights)
+                and (
+                    weights.shape != coefficients.shape
+                    or not np.all(np.isfinite(weights))
+                    or np.any(weights <= 0.0)
+                )
+            )
+            or (
+                bool(self.binary_class_priors)
+                and (
+                    priors.shape != (4,)
+                    or not np.all(np.isfinite(priors))
+                    or np.any(priors <= 0.0)
+                    or np.any(priors >= 1.0)
+                    or not self.normalization_weights
+                )
+            )
         ):
             raise ValueError("runtime finish plan critic head is invalid")
 
@@ -210,7 +241,9 @@ class RuntimeFinishPlanContinuousPolicy:
     direct_joint_torque_output: bool = False
     feedback_evidence_hashes: tuple[str, ...] = ()
     failed_continuous_inputs: tuple[tuple[float, ...], ...] = ()
+    blocked_continuous_context_features: tuple[tuple[float, ...], ...] = ()
     failure_exclusion_distance: float = 0.25
+    critic_model: str = "KERNEL_RIDGE"
 
     def __post_init__(self) -> None:
         for value, label in (
@@ -223,6 +256,7 @@ class RuntimeFinishPlanContinuousPolicy:
         scale = np.asarray(self.input_scale, dtype=np.float64)
         alphas = np.asarray(self.interpolation_alphas, dtype=np.float64)
         failures = np.asarray(self.failed_continuous_inputs, dtype=np.float64)
+        blocked_contexts = np.asarray(self.blocked_continuous_context_features, dtype=np.float64)
         if (
             center.shape != (_CRITIC_INPUT_COUNT,)
             or scale.shape != (_CRITIC_INPUT_COUNT,)
@@ -264,7 +298,25 @@ class RuntimeFinishPlanContinuousPolicy:
                     or not self.feedback_evidence_hashes
                 )
             )
+            or (
+                bool(self.blocked_continuous_context_features)
+                and (
+                    blocked_contexts.ndim != 2
+                    or blocked_contexts.shape[1] != _FEATURE_COUNT
+                    or not np.all(np.isfinite(blocked_contexts))
+                    or not self.feedback_evidence_hashes
+                )
+            )
             or not 0.05 <= self.failure_exclusion_distance <= 1.0
+            or self.critic_model not in {"KERNEL_RIDGE", "CONTEXT_BALANCED_NORMALIZED_RBF"}
+            or (
+                self.critic_model == "KERNEL_RIDGE"
+                and any(head.normalization_weights for head in self.critic_heads)
+            )
+            or (
+                self.critic_model == "CONTEXT_BALANCED_NORMALIZED_RBF"
+                and any(not head.normalization_weights for head in self.critic_heads)
+            )
         ):
             raise ValueError("runtime finish plan continuous policy is invalid")
 
@@ -279,9 +331,26 @@ class RuntimeFinishPlanContinuousPolicy:
         predictions: list[np.ndarray] = []
         for head in self.critic_heads:
             inputs = np.asarray(head.normalized_inputs, dtype=np.float64)
-            distances = np.sum(np.square(inputs - normalized), axis=1)
+            query = (
+                normalized[np.asarray(head.input_indices, dtype=np.int64)]
+                if head.input_indices
+                else normalized
+            )
+            distances = np.sum(np.square(inputs - query), axis=1)
             kernel = np.exp(-distances / (2.0 * self.kernel_bandwidth**2))
-            predictions.append(kernel @ np.asarray(head.coefficients, dtype=np.float64))
+            values = kernel @ np.asarray(head.coefficients, dtype=np.float64)
+            if head.normalization_weights:
+                denominator = kernel @ np.asarray(head.normalization_weights, dtype=np.float64)
+                values = values / np.maximum(denominator, 1.0e-12)
+            values = np.clip(values, 0.0, 1.0)
+            if head.binary_class_priors:
+                priors = np.asarray(head.binary_class_priors, dtype=np.float64)
+                balanced = values[:4]
+                values[:4] = (balanced * priors) / np.maximum(
+                    balanced * priors + (1.0 - balanced) * (1.0 - priors),
+                    1.0e-12,
+                )
+            predictions.append(values)
         return np.clip(np.asarray(predictions, dtype=np.float64), 0.0, 1.0)
 
 
@@ -395,7 +464,25 @@ class G1RuntimeFinishPlanActor:
             assert isinstance(continuous, dict)
             continuous.pop("feedback_evidence_hashes")
             continuous.pop("failed_continuous_inputs")
+            continuous.pop("blocked_continuous_context_features")
             continuous.pop("failure_exclusion_distance")
+        if self.continuous_policy is not None:
+            continuous = serialized["continuous_policy"]
+            assert isinstance(continuous, dict)
+            if not self.continuous_policy.blocked_continuous_context_features:
+                continuous.pop("blocked_continuous_context_features", None)
+            if self.continuous_policy.critic_model == "KERNEL_RIDGE":
+                continuous.pop("critic_model")
+            heads = continuous["critic_heads"]
+            assert isinstance(heads, list | tuple)
+            for head in heads:
+                assert isinstance(head, dict)
+                if not head["input_indices"]:
+                    head.pop("input_indices")
+                if not head["normalization_weights"]:
+                    head.pop("normalization_weights")
+                if not head["binary_class_priors"]:
+                    head.pop("binary_class_priors")
         value: dict[str, Any] = {
             **serialized,
             "feature_names": list(PREPARED_FINISH_PLAN_FEATURE_NAMES),
@@ -404,7 +491,14 @@ class G1RuntimeFinishPlanActor:
             "algorithm": (
                 "failure_aware_nearest_verified_joint_finish_plan"
                 if self.continuous_policy is None
-                else "parent_anchored_continuous_joint_plan_with_four_head_kernel_critic"
+                else (
+                    "parent_anchored_continuous_joint_plan_with_four_head_kernel_critic"
+                    if self.continuous_policy.critic_model == "KERNEL_RIDGE"
+                    else (
+                        "parent_anchored_continuous_joint_plan_with_"
+                        "context_balanced_normalized_rbf_critic"
+                    )
+                )
             ),
             "decision_clock": "PRE_ROLLOUT_SHARED_TEAM_INTENT",
             "authority": "RECEIVE_GEOMETRY_PHASE_AND_TASK_SPACE_TARGET_ONLY",
@@ -490,6 +584,19 @@ class G1RuntimeFinishPlanActor:
     ) -> RuntimeFinishPlanDecision:
         policy = self.continuous_policy
         assert policy is not None
+        if policy.blocked_continuous_context_features:
+            feature_center = np.asarray(policy.input_center[:_FEATURE_COUNT])
+            feature_scale = np.asarray(policy.input_scale[:_FEATURE_COUNT])
+            normalized_features = (features - feature_center) / feature_scale
+            blocked = np.asarray(policy.blocked_continuous_context_features, dtype=np.float64)
+            if (
+                float(np.min(np.linalg.norm(blocked - normalized_features, axis=1)))
+                <= policy.failure_exclusion_distance
+            ):
+                return replace(
+                    parent_decision,
+                    parent_action_hash=parent_memory.action.action_hash,
+                )
         scale = np.asarray(self.feature_scale, dtype=np.float64)
         ranked = sorted(
             (
@@ -691,11 +798,19 @@ def _continuous_policy_from_dict(value: dict[str, Any]) -> RuntimeFinishPlanCont
     payload["failed_continuous_inputs"] = tuple(
         tuple(row) for row in payload.get("failed_continuous_inputs", ())
     )
+    payload["blocked_continuous_context_features"] = tuple(
+        tuple(row) for row in payload.get("blocked_continuous_context_features", ())
+    )
     payload["critic_heads"] = tuple(
         RuntimeFinishPlanCriticHead(
             training_context_hashes=tuple(head["training_context_hashes"]),
             normalized_inputs=tuple(tuple(row) for row in head["normalized_inputs"]),
             coefficients=tuple(tuple(row) for row in head["coefficients"]),
+            input_indices=tuple(head.get("input_indices", ())),
+            normalization_weights=tuple(
+                tuple(row) for row in head.get("normalization_weights", ())
+            ),
+            binary_class_priors=tuple(head.get("binary_class_priors", ())),
         )
         for head in payload["critic_heads"]
     )

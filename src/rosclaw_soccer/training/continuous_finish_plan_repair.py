@@ -39,6 +39,10 @@ class ContinuousFinishPlanRepairConfig:
     precision_radius_m: float = 0.10
     expected_failed_contexts: int = 4
     minimum_actions_per_context: int = 8
+    target_context_hashes: tuple[str, ...] = ()
+    search_strategy: str = "LOCAL_OR_MICRO"
+    target_velocity_center_mps: float | None = None
+    target_velocity_step_mps: float = 0.0025
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
 
@@ -48,6 +52,35 @@ class ContinuousFinishPlanRepairConfig:
             or not 0.05 <= self.precision_radius_m <= 0.20
             or not 1 <= self.expected_failed_contexts <= 6
             or not 6 <= self.minimum_actions_per_context <= 16
+            or len(set(self.target_context_hashes)) != len(self.target_context_hashes)
+            or any(
+                not isinstance(value, str) or not value.startswith("sha256:") or len(value) != 71
+                for value in self.target_context_hashes
+            )
+            or self.search_strategy
+            not in {
+                "LOCAL_OR_MICRO",
+                "STANCE_COVERAGE",
+                "STANCE_EDGE_REFINE",
+                "CONTACT_EDGE_REFINE",
+                "TARGET_VELOCITY_COVERAGE",
+                "TARGET_VELOCITY_EDGE_REFINE",
+                "TARGET_VELOCITY_BRACKET_REFINE",
+            }
+            or (
+                self.search_strategy == "TARGET_VELOCITY_BRACKET_REFINE"
+                and (
+                    self.target_velocity_center_mps is None
+                    or not math.isfinite(self.target_velocity_center_mps)
+                    or not 0.02 <= self.target_velocity_center_mps <= 5.98
+                )
+            )
+            or (
+                self.search_strategy != "TARGET_VELOCITY_BRACKET_REFINE"
+                and self.target_velocity_center_mps is not None
+            )
+            or not math.isfinite(self.target_velocity_step_mps)
+            or not 0.00025 <= self.target_velocity_step_mps <= 0.05
             or self.activation_ceiling != "SIM_ONLY"
             or self.hardware_authorized
         ):
@@ -97,7 +130,15 @@ def run_continuous_finish_plan_repair(
         row
         for row in cast(list[dict[str, Any]], rows)
         if not row["candidate"]["quality"]["strict_chain_passed"]
+        and (
+            not active.target_context_hashes
+            or row.get("context_hash") in active.target_context_hashes
+        )
     ]
+    if active.target_context_hashes and active.target_context_hashes != tuple(
+        row.get("context_hash") for row in failed_rows
+    ):
+        raise ValueError("continuous finish plan repair target contexts changed")
     if len(failed_rows) != active.expected_failed_contexts:
         raise ValueError("continuous finish plan repair failure count changed")
     seed_repair: dict[str, Any] | None = None
@@ -156,14 +197,35 @@ def run_continuous_finish_plan_repair(
         decision = actor.decide(features)
         if not decision.accepted or decision.action is None:
             raise ValueError("continuous finish plan repair parent decision is unavailable")
-        proposed_actions = (
-            _local_refinement_actions(decision.action)
+        seeds = (
+            (decision.action,)
             if seed_repair is None
-            else _micro_refinement_actions(
-                _seed_actions(
-                    cast(list[dict[str, Any]], seed_repair["rows"]),
-                    str(row["context_hash"]),
-                )
+            else _seed_actions(
+                cast(list[dict[str, Any]], seed_repair["rows"]),
+                str(row["context_hash"]),
+            )
+        )
+        proposed_actions = (
+            _stance_coverage_actions(seeds)
+            if active.search_strategy == "STANCE_COVERAGE"
+            else _stance_edge_refinement_actions(seeds)
+            if active.search_strategy == "STANCE_EDGE_REFINE"
+            else _contact_edge_refinement_actions(seeds)
+            if active.search_strategy == "CONTACT_EDGE_REFINE"
+            else _target_velocity_coverage_actions(seeds)
+            if active.search_strategy == "TARGET_VELOCITY_COVERAGE"
+            else _target_velocity_edge_refinement_actions(seeds)
+            if active.search_strategy == "TARGET_VELOCITY_EDGE_REFINE"
+            else _target_velocity_bracket_actions(
+                seeds,
+                center=active.target_velocity_center_mps,
+                step=active.target_velocity_step_mps,
+            )
+            if active.search_strategy == "TARGET_VELOCITY_BRACKET_REFINE"
+            else (
+                _local_refinement_actions(decision.action)
+                if seed_repair is None
+                else _micro_refinement_actions(seeds)
             )
         )
         actions = tuple(
@@ -391,27 +453,48 @@ def _micro_refinement_actions(
     seeds: tuple[RuntimeFinishPlanAction, ...],
 ) -> tuple[RuntimeFinishPlanAction, ...]:
     deltas = (
-        (-0.005, 0.000, 0, 0.000, 0.00),
-        (0.005, 0.000, 0, 0.000, 0.00),
-        (0.000, -0.005, 0, 0.000, 0.00),
-        (0.000, 0.005, 0, 0.000, 0.00),
-        (0.000, 0.000, -1, 0.000, 0.00),
-        (0.000, 0.000, 1, 0.000, 0.00),
-        (0.000, 0.000, 0, -0.005, 0.00),
-        (0.000, 0.000, 0, 0.005, 0.00),
-        (0.000, 0.000, 0, 0.000, -0.25),
-        (0.000, 0.000, 0, 0.000, 0.25),
-        (-0.005, -0.005, -1, -0.005, 0.25),
-        (0.005, 0.005, 1, 0.005, -0.25),
+        # arrival frames, tolerance, stance x/y, policy frame, yaw, pitch,
+        # target x/y. Timing comes first because adjacent contexts showed a
+        # four-frame arrival bifurcation despite nearly identical geometry.
+        (6, 0.00, 0.000, 0.000, 0, 0.000, 0.000, 0.00, 0.00),
+        (12, 0.00, 0.000, 0.000, 0, 0.000, 0.000, 0.00, 0.00),
+        (-6, 0.00, 0.000, 0.000, 0, 0.000, 0.000, 0.00, 0.00),
+        (6, 0.02, 0.000, 0.000, 0, 0.000, 0.000, 0.00, 0.00),
+        (12, 0.02, 0.000, 0.000, 0, 0.000, 0.000, 0.00, 0.00),
+        (0, 0.02, 0.000, 0.000, 0, 0.000, 0.000, 0.00, 0.00),
+        (0, 0.00, 0.000, 0.000, -3, 0.000, 0.000, 0.00, 0.00),
+        (0, 0.00, 0.000, 0.000, 3, 0.000, 0.000, 0.00, 0.00),
+        (6, 0.00, 0.000, 0.005, 0, 0.000, 0.000, 0.00, 0.00),
+        (6, 0.00, -0.010, 0.000, 0, 0.000, 0.000, 0.00, 0.00),
+        (6, 0.00, 0.000, 0.000, 0, -0.006, 0.000, 0.00, 0.00),
+        (6, 0.00, 0.000, 0.000, 0, 0.000, 0.000, 0.00, -0.50),
+        (12, 0.00, 0.000, 0.000, 0, 0.000, 0.000, 0.00, -0.50),
+        (6, 0.00, 0.000, 0.000, 0, 0.000, 0.000, 0.50, 0.00),
+        (12, 0.00, 0.000, 0.000, 0, 0.000, 0.000, 0.50, 0.00),
+        (6, 0.00, 0.000, 0.000, 0, 0.000, -0.005, 0.00, 0.00),
     )
     actions: dict[str, RuntimeFinishPlanAction] = {}
-    for seed in seeds:
-        receive = seed.receive
-        target = seed.target.target_foot_velocity_xyz_mps
-        for stance_x, stance_y, frame, yaw, target_y in deltas:
+    # Interleave seeds so the 16-action budget cannot silently collapse onto
+    # whichever strict/precision seed happened to be listed first.
+    allowed_advances = (0, 6, 12, 18, 24, 30)
+    for advance, tolerance, stance_x, stance_y, frame, yaw, pitch, target_x, target_y in deltas:
+        for seed in seeds:
+            receive = seed.receive
+            target = seed.target.target_foot_velocity_xyz_mps
+            desired_advance = receive.maximum_arrival_advance_frames + advance
             candidate = RuntimeFinishPlanAction(
                 receive=replace(
                     receive,
+                    maximum_arrival_advance_frames=min(
+                        allowed_advances,
+                        key=lambda value: abs(value - desired_advance),
+                    ),
+                    arrival_alignment_tolerance_sec=float(
+                        max(
+                            0.02,
+                            min(0.12, receive.arrival_alignment_tolerance_sec + tolerance),
+                        )
+                    ),
                     stance_offset_x_m=float(
                         max(-0.12, min(0.12, receive.stance_offset_x_m + stance_x))
                     ),
@@ -422,10 +505,13 @@ def _micro_refinement_actions(
                     foot_yaw_offset_rad=float(
                         max(-0.12, min(0.12, receive.foot_yaw_offset_rad + yaw))
                     ),
+                    foot_pitch_offset_rad=float(
+                        max(-0.08, min(0.08, receive.foot_pitch_offset_rad + pitch))
+                    ),
                 ),
                 target=RuntimeContactTargetAction(
                     (
-                        target[0],
+                        float(max(5.0, min(12.0, target[0] + target_x))),
                         float(max(-6.0, min(6.0, target[1] + target_y))),
                         target[2],
                     )
@@ -433,7 +519,226 @@ def _micro_refinement_actions(
             )
             if candidate not in seeds:
                 actions.setdefault(candidate.action_hash, candidate)
-    return tuple(actions.values())[:12]
+    return tuple(actions.values())[:16]
+
+
+def _stance_coverage_actions(
+    seeds: tuple[RuntimeFinishPlanAction, ...],
+) -> tuple[RuntimeFinishPlanAction, ...]:
+    """Cover the stance envelope when millimetre-local search is non-causal."""
+
+    stance_values = (-0.12, -0.09, -0.06, -0.03, 0.0, 0.03, 0.06, 0.09, 0.12)
+    actions: dict[str, RuntimeFinishPlanAction] = {}
+    for seed in seeds:
+        for stance_y in stance_values:
+            candidate = RuntimeFinishPlanAction(
+                receive=replace(seed.receive, stance_offset_y_m=stance_y),
+                target=seed.target,
+            )
+            if candidate not in seeds:
+                actions.setdefault(candidate.action_hash, candidate)
+        for stance_x in (-0.12, -0.08, 0.0, 0.04, 0.08, 0.12):
+            candidate = RuntimeFinishPlanAction(
+                receive=replace(seed.receive, stance_offset_x_m=stance_x),
+                target=seed.target,
+            )
+            if candidate not in seeds:
+                actions.setdefault(candidate.action_hash, candidate)
+        candidate = RuntimeFinishPlanAction(
+            receive=replace(seed.receive, contact_policy_frame=258),
+            target=seed.target,
+        )
+        if candidate not in seeds:
+            actions.setdefault(candidate.action_hash, candidate)
+    return tuple(actions.values())[:16]
+
+
+def _stance_edge_refinement_actions(
+    seeds: tuple[RuntimeFinishPlanAction, ...],
+) -> tuple[RuntimeFinishPlanAction, ...]:
+    """Resolve a narrow contact bifurcation around a safe stance seed."""
+
+    actions: dict[str, RuntimeFinishPlanAction] = {}
+    for seed in seeds:
+        for delta_y in (-0.010, -0.005, 0.005, 0.010, 0.015, 0.020, 0.025):
+            candidate = RuntimeFinishPlanAction(
+                receive=replace(
+                    seed.receive,
+                    stance_offset_y_m=float(
+                        max(-0.12, min(0.12, seed.receive.stance_offset_y_m + delta_y))
+                    ),
+                ),
+                target=seed.target,
+            )
+            if candidate not in seeds:
+                actions.setdefault(candidate.action_hash, candidate)
+        for delta_x in (-0.020, -0.010):
+            candidate = RuntimeFinishPlanAction(
+                receive=replace(
+                    seed.receive, stance_offset_x_m=seed.receive.stance_offset_x_m + delta_x
+                ),
+                target=seed.target,
+            )
+            actions.setdefault(candidate.action_hash, candidate)
+        for frame in (253, 254, 256, 257, 258):
+            candidate = RuntimeFinishPlanAction(
+                receive=replace(seed.receive, contact_policy_frame=frame),
+                target=seed.target,
+            )
+            if candidate not in seeds:
+                actions.setdefault(candidate.action_hash, candidate)
+        for yaw in (-0.12, -0.11):
+            candidate = RuntimeFinishPlanAction(
+                receive=replace(seed.receive, foot_yaw_offset_rad=yaw),
+                target=seed.target,
+            )
+            if candidate not in seeds:
+                actions.setdefault(candidate.action_hash, candidate)
+    return tuple(actions.values())[:16]
+
+
+def _contact_edge_refinement_actions(
+    seeds: tuple[RuntimeFinishPlanAction, ...],
+) -> tuple[RuntimeFinishPlanAction, ...]:
+    """Cross a measured post/ball contact boundary without broad exploration."""
+
+    actions: dict[str, RuntimeFinishPlanAction] = {}
+    for seed in seeds:
+        for delta_y in (-0.003, -0.002, -0.001, -0.0005, 0.0005, 0.001, 0.002, 0.003):
+            candidate = RuntimeFinishPlanAction(
+                receive=replace(
+                    seed.receive,
+                    stance_offset_y_m=float(
+                        max(-0.12, min(0.12, seed.receive.stance_offset_y_m + delta_y))
+                    ),
+                ),
+                target=seed.target,
+            )
+            actions.setdefault(candidate.action_hash, candidate)
+        for delta_yaw in (-0.003, -0.002, -0.001, 0.001, 0.002, 0.003):
+            candidate = RuntimeFinishPlanAction(
+                receive=replace(
+                    seed.receive,
+                    foot_yaw_offset_rad=float(
+                        max(-0.12, min(0.12, seed.receive.foot_yaw_offset_rad + delta_yaw))
+                    ),
+                ),
+                target=seed.target,
+            )
+            actions.setdefault(candidate.action_hash, candidate)
+        for delta_pitch in (-0.002, 0.002):
+            candidate = RuntimeFinishPlanAction(
+                receive=replace(
+                    seed.receive,
+                    foot_pitch_offset_rad=float(
+                        max(
+                            -0.08,
+                            min(0.08, seed.receive.foot_pitch_offset_rad + delta_pitch),
+                        )
+                    ),
+                ),
+                target=seed.target,
+            )
+            actions.setdefault(candidate.action_hash, candidate)
+    return tuple(actions.values())[:16]
+
+
+def _target_velocity_coverage_actions(
+    seeds: tuple[RuntimeFinishPlanAction, ...],
+) -> tuple[RuntimeFinishPlanAction, ...]:
+    """Sweep the learned lateral target support around a proven contact pose."""
+
+    lateral_targets = (
+        0.0,
+        0.25,
+        0.50,
+        0.75,
+        1.00,
+        1.25,
+        1.50,
+        1.75,
+        2.00,
+        2.50,
+        3.00,
+        3.50,
+        4.00,
+        4.50,
+        5.00,
+        6.00,
+    )
+    actions: dict[str, RuntimeFinishPlanAction] = {}
+    for seed in seeds:
+        target = seed.target.target_foot_velocity_xyz_mps
+        for lateral in lateral_targets:
+            candidate = RuntimeFinishPlanAction(
+                receive=seed.receive,
+                target=RuntimeContactTargetAction((target[0], lateral, target[2])),
+            )
+            if candidate not in seeds:
+                actions.setdefault(candidate.action_hash, candidate)
+    return tuple(actions.values())[:16]
+
+
+def _target_velocity_edge_refinement_actions(
+    seeds: tuple[RuntimeFinishPlanAction, ...],
+) -> tuple[RuntimeFinishPlanAction, ...]:
+    """Resolve a narrow target-velocity interval around a strict seed."""
+
+    deltas = (
+        -0.04,
+        -0.03,
+        -0.02,
+        -0.01,
+        0.01,
+        0.02,
+        0.03,
+        0.04,
+        0.05,
+        0.06,
+        0.08,
+        0.10,
+        0.12,
+        0.15,
+        0.18,
+        0.20,
+    )
+    actions: dict[str, RuntimeFinishPlanAction] = {}
+    for seed in seeds:
+        target = seed.target.target_foot_velocity_xyz_mps
+        for delta in deltas:
+            candidate = RuntimeFinishPlanAction(
+                receive=seed.receive,
+                target=RuntimeContactTargetAction(
+                    (target[0], float(max(-6.0, min(6.0, target[1] + delta))), target[2])
+                ),
+            )
+            actions.setdefault(candidate.action_hash, candidate)
+    return tuple(actions.values())[:16]
+
+
+def _target_velocity_bracket_actions(
+    seeds: tuple[RuntimeFinishPlanAction, ...],
+    *,
+    center: float | None,
+    step: float,
+) -> tuple[RuntimeFinishPlanAction, ...]:
+    """Densely resolve a measured target-velocity response bracket."""
+
+    if center is None or not math.isfinite(center) or not math.isfinite(step) or step <= 0.0:
+        raise ValueError("target velocity bracket center is missing")
+    offsets = tuple(step * (index - 7) for index in range(16))
+    actions: dict[str, RuntimeFinishPlanAction] = {}
+    for seed in seeds:
+        target = seed.target.target_foot_velocity_xyz_mps
+        for offset in offsets:
+            candidate = RuntimeFinishPlanAction(
+                receive=seed.receive,
+                target=RuntimeContactTargetAction(
+                    (target[0], float(max(-6.0, min(6.0, center + offset))), target[2])
+                ),
+            )
+            actions.setdefault(candidate.action_hash, candidate)
+    return tuple(actions.values())[:16]
 
 
 def _features_from_row(lead: Any, row: dict[str, Any]) -> tuple[float, ...]:

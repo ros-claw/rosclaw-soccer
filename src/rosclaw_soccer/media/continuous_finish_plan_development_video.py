@@ -71,12 +71,20 @@ def render_continuous_finish_plan_development_video(
     report_path = exam_path.expanduser().resolve()
     report, request, cases, source_files = _load_development_sources(report_path)
     clips = list(_timeline(cases, fps))
+    metrics = cast(dict[str, Any], report["metrics"])
     clips[0] = replace(
         clips[0],
-        label="S175 CONSUMED DEVELOPMENT · 4/6 STRICT · BASELINE 1/6",
+        label=(
+            f"CONTINUAL GROWTH · {metrics['candidate_strict_success_count']}/6 STRICT · "
+            f"{metrics['candidate_precise_goal_count']} PRECISE ≤ 0.10 m"
+        ),
     )
     clips[-1] = _Clip(
-        "TRAINING RECOVERY ONLY · 6/6 SAFE · 6/6 EXACT REPLAY · FRESH EXAM PENDING",
+        (
+            f"PARENT-SAFE DEVELOPMENT · {metrics['candidate_goal_count']} GOALS + "
+            f"{metrics['candidate_save_count']} SAVE · BEST "
+            f"{metrics['candidate_best_goal_target_error_m']:.3f} m · FRESH EXAM PENDING"
+        ),
         tuple(
             _Frame(len(cases) - 1, float(cases[-1].trajectory["time"][-1]), "wide")
             for _ in range(round(1.8 * fps))
@@ -190,6 +198,14 @@ def render_continuous_finish_plan_development_video(
             "candidate_strict_success_count"
         ],
         "source_candidate_precise_goal_count": precise_count,
+        "source_candidate_goal_count": metrics["candidate_goal_count"],
+        "source_candidate_save_count": metrics["candidate_save_count"],
+        "source_candidate_best_goal_target_error_m": metrics["candidate_best_goal_target_error_m"],
+        "source_candidate_median_goal_target_error_m": metrics[
+            "candidate_median_goal_target_error_m"
+        ],
+        "source_parent_strict_success_count": metrics.get("parent_strict_success_count"),
+        "source_strict_success_gain_vs_parent": metrics.get("strict_success_gain_vs_parent"),
         "rendered_case_ids": [case.case_id for case in cases],
         "rendered_trajectory_digests": [case.trajectory_digest for case in cases],
         "renderer_hash": _renderer_hash(),
@@ -235,6 +251,7 @@ def validate_continuous_finish_plan_development_video(path: Path) -> dict[str, A
         ):
             raise ValueError("continuous finish development video sources changed")
         report = validate_runtime_finish_plan_exam(exam_path)
+        metrics = cast(dict[str, Any], report["metrics"])
         probe = _probe(shutil.which("ffprobe") or "", video)
         if (
             payload.get("schema_version")
@@ -242,8 +259,20 @@ def validate_continuous_finish_plan_development_video(path: Path) -> dict[str, A
             or payload.get("claim") != _CLAIM
             or payload.get("source_exam_hash") != report.get("report_hash")
             or payload.get("source_exam_status") != "PASS_RUNTIME_FINISH_PLAN_DEVELOPMENT"
-            or payload.get("source_candidate_strict_success_count") != 4
-            or payload.get("source_candidate_precise_goal_count") != 1
+            or payload.get("source_candidate_strict_success_count")
+            != metrics.get("candidate_strict_success_count")
+            or payload.get("source_candidate_precise_goal_count")
+            != metrics.get("candidate_precise_goal_count")
+            or payload.get("source_candidate_goal_count") != metrics.get("candidate_goal_count")
+            or payload.get("source_candidate_save_count") != metrics.get("candidate_save_count")
+            or payload.get("source_candidate_best_goal_target_error_m")
+            != metrics.get("candidate_best_goal_target_error_m")
+            or payload.get("source_candidate_median_goal_target_error_m")
+            != metrics.get("candidate_median_goal_target_error_m")
+            or payload.get("source_parent_strict_success_count")
+            != metrics.get("parent_strict_success_count")
+            or payload.get("source_strict_success_gain_vs_parent")
+            != metrics.get("strict_success_gain_vs_parent")
             or probe.get("width") != payload.get("width")
             or probe.get("height") != payload.get("height")
             or probe.get("fps") != payload.get("fps")
@@ -311,8 +340,12 @@ def _load_development_sources(
                 trajectory_digest=digest,
             )
         )
-    if len(cases) != 4 or not any(case.result["goalkeeper_save_observed"] for case in cases):
-        raise ValueError("continuous finish development video needs four strict outcomes")
+    if (
+        len(cases) < 3
+        or len(cases) != int(report["metrics"]["candidate_strict_success_count"])
+        or not any(case.result["goalkeeper_save_observed"] for case in cases)
+    ):
+        raise ValueError("continuous finish development video needs bound strict outcomes")
     return report, request, tuple(cases), source_files
 
 

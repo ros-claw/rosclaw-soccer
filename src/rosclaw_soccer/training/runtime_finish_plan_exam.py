@@ -108,6 +108,7 @@ def run_runtime_finish_plan_exam(
     neural_actor_path: Path,
     handoff_actor_path: Path,
     output_dir: Path,
+    parent_finish_plan_actor_path: Path | None = None,
     cases: tuple[tuple[CausalTransitionContext, PlaymakerPassProbeAction], ...] | None = None,
     quality_config: CausalTransitionGrowthConfig | None = None,
     sealed: bool = True,
@@ -120,6 +121,21 @@ def run_runtime_finish_plan_exam(
         raise ValueError("runtime finish plan exam workers must be in [1, 4]")
     actor_path = finish_plan_actor_path.expanduser().resolve()
     actor = load_runtime_finish_plan_actor(actor_path)
+    parent_path = (
+        None
+        if parent_finish_plan_actor_path is None
+        else parent_finish_plan_actor_path.expanduser().resolve()
+    )
+    parent = None if parent_path is None else load_runtime_finish_plan_actor(parent_path)
+    if actor.continuous_policy is not None:
+        if (
+            parent is None
+            or parent.continuous_policy is not None
+            or parent.actor_hash != actor.continuous_policy.parent_actor_hash
+        ):
+            raise ValueError("continuous finish plan exam requires its discrete parent actor")
+    elif parent is not None:
+        raise ValueError("discrete finish plan exam must not provide a parent comparator")
     training_path = finish_plan_training_report_path.expanduser().resolve()
     training = _bound_json(training_path)
     base_path = base_target_actor_path.expanduser().resolve()
@@ -154,6 +170,16 @@ def run_runtime_finish_plan_exam(
         or neural.body_hash != qualification.body_hash
         or actor.roster_hash != base.roster_hash
         or actor.finisher_self_model_hash != base.finisher_self_model_hash
+        or (
+            parent_path is not None
+            and (
+                training.get("parent_actor_file_hash") != hash_bytes(parent_path.read_bytes())
+                or parent is None
+                or parent.body_hash != actor.body_hash
+                or parent.neural_contact_actor_hash != actor.neural_contact_actor_hash
+                or parent.contact_handoff_actor_hash != actor.contact_handoff_actor_hash
+            )
+        )
     ):
         raise ValueError("runtime finish plan exam identity changed")
     base_handoff = handoff.decide(
@@ -176,6 +202,10 @@ def run_runtime_finish_plan_exam(
         "finish_plan_actor_hash": actor.actor_hash,
         "finish_plan_actor_file_hash": hash_bytes(actor_path.read_bytes()),
         "finish_plan_training_report_hash": training["report_hash"],
+        "parent_finish_plan_actor_hash": None if parent is None else parent.actor_hash,
+        "parent_finish_plan_actor_file_hash": (
+            None if parent_path is None else hash_bytes(parent_path.read_bytes())
+        ),
         "base_target_actor_hash": base.actor_hash,
         "base_target_actor_file_hash": hash_bytes(base_path.read_bytes()),
         "neural_actor_hash": neural.actor_hash,
@@ -198,6 +228,7 @@ def run_runtime_finish_plan_exam(
             asset_root.expanduser().resolve(),
             source_s95_dir.expanduser().resolve(),
             actor_path,
+            parent_path,
             base_path,
             neural_path,
             output,
@@ -230,6 +261,7 @@ def run_runtime_finish_plan_exam(
         "partition": request["partition"],
         "request_hash": hash_bytes((output / "request.json").read_bytes()),
         "finish_plan_actor_hash": actor.actor_hash,
+        "parent_finish_plan_actor_hash": None if parent is None else parent.actor_hash,
         "base_target_actor_hash": base.actor_hash,
         "neural_actor_hash": neural.actor_hash,
         "metrics": metrics,
@@ -241,6 +273,7 @@ def run_runtime_finish_plan_exam(
             "one_shared_solver_and_ball": True,
             "plan_uses_only_pre_rollout_shared_team_intent": True,
             "joint_torque_owned_only_by_frozen_neural_actor": True,
+            "continuous_child_compared_with_direct_parent": parent is not None,
             "pose_or_ball_teleport_after_start": False,
             "physics_authority": "CPU_MUJOCO",
             "activation_ceiling": "SIM_ONLY",
@@ -301,6 +334,8 @@ def validate_runtime_finish_plan_exam(path: Path) -> dict[str, Any]:
         or report.get("status") != expected_status
         or report.get("promotion_eligible") != bool(sealed and passed)
         or report.get("finish_plan_actor_hash") != request.get("finish_plan_actor_hash")
+        or report.get("parent_finish_plan_actor_hash")
+        != request.get("parent_finish_plan_actor_hash")
         or report.get("base_target_actor_hash") != request.get("base_target_actor_hash")
         or report.get("neural_actor_hash") != request.get("neural_actor_hash")
         or request.get("physics_authority") != "CPU_MUJOCO"
@@ -311,6 +346,8 @@ def validate_runtime_finish_plan_exam(path: Path) -> dict[str, Any]:
         or boundary.get("one_shared_solver_and_ball") is not True
         or boundary.get("plan_uses_only_pre_rollout_shared_team_intent") is not True
         or boundary.get("joint_torque_owned_only_by_frozen_neural_actor") is not True
+        or boundary.get("continuous_child_compared_with_direct_parent")
+        is not (request.get("parent_finish_plan_actor_hash") is not None)
         or boundary.get("pose_or_ball_teleport_after_start") is not False
         or boundary.get("physics_authority") != "CPU_MUJOCO"
         or boundary.get("activation_ceiling") != "SIM_ONLY"
@@ -338,6 +375,10 @@ def validate_runtime_finish_plan_exam(path: Path) -> dict[str, Any]:
             key: _validate_trajectory_artifact(case_dir, row.get(key))
             for key in ("candidate_artifact", "replay_artifact", "base_artifact")
         }
+        if request.get("parent_finish_plan_actor_hash") is not None:
+            artifacts["parent_artifact"] = _validate_trajectory_artifact(
+                case_dir, row.get("parent_artifact")
+            )
         exact_replay = artifacts["candidate_artifact"] == artifacts["replay_artifact"]
         if row.get("exact_replay") is not exact_replay:
             raise ValueError("runtime finish plan replay semantics changed")
@@ -365,6 +406,7 @@ def _run_case(
         Path,
         Path,
         Path,
+        Path | None,
         Path,
         Path,
         Path,
@@ -379,6 +421,7 @@ def _run_case(
         asset_root,
         source_dir,
         actor_path,
+        parent_actor_path,
         base_path,
         neural_path,
         output,
@@ -414,11 +457,30 @@ def _run_case(
     candidate_result, candidate_trajectory = simulate_shared_world(asset_root, **candidate)
     replay_result, replay_trajectory = simulate_shared_world(asset_root, **candidate)
     base_result, base_trajectory = simulate_shared_world(asset_root, **common)
+    parent_result = None
+    parent_trajectory = None
+    if parent_actor_path is not None:
+        parent_candidate = dict(common)
+        parent_candidate.pop("shooter_runtime_contact_target_actor_path")
+        parent_candidate.update(
+            shooter_runtime_finish_plan_actor_path=parent_actor_path,
+            shooter_neural_contact_policy_frame=None,
+            shooter_causal_strike_option_config=replace(
+                common["shooter_causal_strike_option_config"],
+                maximum_arrival_advance_frames=30,
+            ),
+        )
+        parent_result, parent_trajectory = simulate_shared_world(asset_root, **parent_candidate)
     case_dir = output / f"case-{index:03d}"
     case_dir.mkdir(parents=True)
     candidate_artifact = _save_trajectory(case_dir / "candidate-primary.npz", candidate_trajectory)
     replay_artifact = _save_trajectory(case_dir / "candidate-replay.npz", replay_trajectory)
     base_artifact = _save_trajectory(case_dir / "base-target-actor.npz", base_trajectory)
+    parent_artifact = (
+        None
+        if parent_trajectory is None
+        else _save_trajectory(case_dir / "parent-finish-plan-actor.npz", parent_trajectory)
+    )
     candidate_quality = strict_intended_contact_quality(
         result=candidate_result,
         trajectory=candidate_trajectory,
@@ -431,9 +493,19 @@ def _run_case(
         quality_config=quality,
         intended_contact_foot=1,
     )
+    parent_quality = (
+        None
+        if parent_result is None or parent_trajectory is None
+        else strict_intended_contact_quality(
+            result=parent_result,
+            trajectory=parent_trajectory,
+            quality_config=quality,
+            intended_contact_foot=1,
+        )
+    )
     decision_time = candidate_result.shooter_runtime_finish_plan_time_sec
     contact_time = candidate_result.shot_contact_time_sec
-    return {
+    row = {
         "case_id": context.case_id,
         "context": asdict(context),
         "context_hash": context.context_hash,
@@ -462,6 +534,10 @@ def _run_case(
         "replay_artifact": replay_artifact,
         "base_artifact": base_artifact,
     }
+    if parent_result is not None and parent_quality is not None and parent_artifact is not None:
+        row["parent"] = {"result": parent_result.to_dict(), "quality": parent_quality}
+        row["parent_artifact"] = parent_artifact
+    return row
 
 
 def _derive_metrics_and_gates(
@@ -481,33 +557,43 @@ def _derive_metrics_and_gates(
         )
         for row in accepted_rows
     }
+    goal_target_errors = _goal_target_errors(rows, outcome="candidate")
+    precise_goal_count = sum(error <= 0.10 for error in goal_target_errors)
+    candidate_safe = sum(bool(row["candidate"]["quality"]["safe"]) for row in rows)
+    candidate_goal = sum(bool(row["candidate"]["result"]["goal_crossed"]) for row in rows)
+    candidate_save = sum(
+        bool(row["candidate"]["result"]["goalkeeper_save_observed"]) for row in rows
+    )
+    exact_replay = sum(bool(row["exact_replay"]) for row in rows)
     metrics = {
         "case_count": len(rows),
         "accepted_count": len(accepted_rows),
         "candidate_strict_success_count": candidate_success,
         "base_strict_success_count": base_success,
         "strict_success_gain": candidate_success - base_success,
-        "candidate_safe_count": sum(bool(row["candidate"]["quality"]["safe"]) for row in rows),
+        "candidate_safe_count": candidate_safe,
         "base_safe_count": sum(bool(row["base"]["quality"]["safe"]) for row in rows),
-        "candidate_goal_count": sum(
-            bool(row["candidate"]["result"]["goal_crossed"]) for row in rows
+        "candidate_goal_count": candidate_goal,
+        "candidate_precise_goal_count": precise_goal_count,
+        "candidate_best_goal_target_error_m": (
+            min(goal_target_errors) if goal_target_errors else None
         ),
-        "candidate_save_count": sum(
-            bool(row["candidate"]["result"]["goalkeeper_save_observed"]) for row in rows
+        "candidate_median_goal_target_error_m": (
+            float(np.median(goal_target_errors)) if goal_target_errors else None
         ),
+        "candidate_save_count": candidate_save,
         "selected_plan_count": len(selected_plans),
-        "exact_replay_count": sum(bool(row["exact_replay"]) for row in rows),
+        "exact_replay_count": exact_replay,
     }
     gates = {
         "decision_observed_all": all(row["decision_observed"] for row in rows),
         "decision_precedes_any_contact_all": all(row["decision_precedes_contact"] for row in rows),
-        "candidate_safe_six_of_six": metrics["candidate_safe_count"] == 6,
-        "exact_replay_six_of_six": metrics["exact_replay_count"] == 6,
+        "candidate_safe_six_of_six": candidate_safe == 6,
+        "exact_replay_six_of_six": exact_replay == 6,
         "candidate_strict_at_least_three": candidate_success >= 3,
+        "candidate_precise_goals_at_least_three": precise_goal_count >= 3,
         "strict_gain_at_least_two": candidate_success - base_success >= 2,
-        "both_goal_and_save": (
-            metrics["candidate_goal_count"] >= 1 and metrics["candidate_save_count"] >= 1
-        ),
+        "both_goal_and_save": candidate_goal >= 1 and candidate_save >= 1,
         "at_least_two_plans_selected": len(selected_plans) >= 2,
         "neural_actor_realized": all(
             row["neural_actor_active"]
@@ -518,7 +604,84 @@ def _derive_metrics_and_gates(
             not row["teacher_active"] and not row["scripted_contact_active"] for row in rows
         ),
     }
+    parent_presence = [isinstance(row.get("parent"), dict) for row in rows]
+    if any(parent_presence) and not all(parent_presence):
+        raise ValueError("runtime finish plan parent comparator rows are incomplete")
+    if all(parent_presence):
+        parent_success = sum(bool(row["parent"]["quality"]["strict_chain_passed"]) for row in rows)
+        parent_safe = sum(bool(row["parent"]["quality"]["safe"]) for row in rows)
+        parent_goal = sum(bool(row["parent"]["result"]["goal_crossed"]) for row in rows)
+        parent_save = sum(bool(row["parent"]["result"]["goalkeeper_save_observed"]) for row in rows)
+        parent_goal_errors = _goal_target_errors(rows, outcome="parent")
+        parent_precise = sum(error <= 0.10 for error in parent_goal_errors)
+        per_case_goal_regressions = _parent_goal_target_error_regressions(rows)
+        metrics.update(
+            {
+                "parent_strict_success_count": parent_success,
+                "parent_safe_count": parent_safe,
+                "parent_goal_count": parent_goal,
+                "parent_save_count": parent_save,
+                "parent_precise_goal_count": parent_precise,
+                "strict_success_gain_vs_parent": candidate_success - parent_success,
+                "precise_goal_gain_vs_parent": precise_goal_count - parent_precise,
+                "worst_goal_target_error_regression_m": (
+                    max(per_case_goal_regressions) if per_case_goal_regressions else 0.0
+                ),
+            }
+        )
+        gates.update(
+            {
+                "no_strict_regression_vs_parent": candidate_success >= parent_success,
+                "no_safe_regression_vs_parent": candidate_safe >= parent_safe,
+                "no_precision_regression_vs_parent": precise_goal_count >= parent_precise,
+                "no_goal_regression_vs_parent": candidate_goal >= parent_goal,
+                "no_save_regression_vs_parent": candidate_save >= parent_save,
+                "no_per_case_goal_target_error_regression_vs_parent": all(
+                    regression <= 1.0e-9 for regression in per_case_goal_regressions
+                ),
+            }
+        )
     return metrics, gates
+
+
+def _goal_target_errors(rows: list[dict[str, Any]], *, outcome: str) -> list[float]:
+    errors: list[float] = []
+    for row in rows:
+        result = row[outcome]["result"]
+        error = result.get("target_error_m")
+        if (
+            bool(result["goal_crossed"])
+            and isinstance(error, int | float)
+            and not isinstance(error, bool)
+            and np.isfinite(float(error))
+            and float(error) >= 0.0
+        ):
+            errors.append(float(error))
+    return errors
+
+
+def _parent_goal_target_error_regressions(rows: list[dict[str, Any]]) -> list[float]:
+    regressions: list[float] = []
+    for row in rows:
+        candidate = row["candidate"]["result"]
+        parent = row["parent"]["result"]
+        if not bool(parent["goal_crossed"]) or not bool(candidate["goal_crossed"]):
+            continue
+        candidate_error = candidate.get("target_error_m")
+        parent_error = parent.get("target_error_m")
+        if (
+            not isinstance(candidate_error, int | float)
+            or isinstance(candidate_error, bool)
+            or not np.isfinite(float(candidate_error))
+            or not isinstance(parent_error, int | float)
+            or isinstance(parent_error, bool)
+            or not np.isfinite(float(parent_error))
+        ):
+            # Finite sentinel keeps the report valid JSON while failing closed.
+            regressions.append(1.0e9)
+        else:
+            regressions.append(float(candidate_error) - float(parent_error))
+    return regressions
 
 
 def _implementation_hash() -> str:
