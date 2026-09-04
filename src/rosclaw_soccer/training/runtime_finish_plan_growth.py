@@ -37,6 +37,7 @@ _SOURCE_SCHEMAS = {
     "rosclaw_soccer.team_compatible_pass_discovery.v1",
     "rosclaw_soccer.prepared_finish_plan_repair.v1",
     "rosclaw_soccer.prepared_finish_precision_repair.v1",
+    "rosclaw_soccer.continuous_finish_plan_repair.v1",
 }
 
 
@@ -106,7 +107,13 @@ def train_runtime_finish_plan_actor(
             or report.get("hardware_command_sent") is not False
             or (
                 precision_repair
-                and (parent is None or report.get("finish_plan_actor_hash") != parent.actor_hash)
+                and (
+                    parent is None
+                    or (
+                        report.get("finish_plan_actor_hash") != parent.actor_hash
+                        and report.get("report_hash") not in parent.source_evidence_hashes
+                    )
+                )
             )
             or not request_path.is_file()
             or hash_bytes(request_path.read_bytes()) != report.get("request_hash")
@@ -343,6 +350,7 @@ def _row_action(
     elif schema in {
         "rosclaw_soccer.prepared_finish_plan_repair.v1",
         "rosclaw_soccer.prepared_finish_precision_repair.v1",
+        "rosclaw_soccer.continuous_finish_plan_repair.v1",
     }:
         action = cast(dict[str, Any], row["action"])
         receive = RuntimeReceiveAction(**cast(dict[str, Any], action["receive"]))

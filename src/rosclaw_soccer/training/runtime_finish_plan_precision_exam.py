@@ -128,8 +128,21 @@ def run_runtime_finish_plan_precision_exam(
     training_context_hashes = {
         memory.context_hash for memory in (*actor.successful_memories, *actor.failed_memories)
     }
+    training_contract_valid = bool(
+        (
+            training.get("status") == "PASS_RUNTIME_FINISH_PLAN_TRAINING"
+            and actor.continuous_policy is None
+        )
+        or (
+            training.get("status") == "PASS_CONTINUOUS_RUNTIME_FINISH_PLAN_CALIBRATION"
+            and actor.continuous_policy is not None
+            and training.get("parent_actor_hash") == actor.continuous_policy.parent_actor_hash
+            and training.get("critic_training_snapshot_hash")
+            == actor.continuous_policy.critic_training_snapshot_hash
+        )
+    )
     if (
-        training.get("status") != "PASS_RUNTIME_FINISH_PLAN_TRAINING"
+        not training_contract_valid
         or training.get("actor_hash") != actor.actor_hash
         or training.get("actor_file_hash") != hash_bytes(actor_path.read_bytes())
         or training_context_hashes.intersection(context_hashes)
@@ -279,6 +292,19 @@ def validate_runtime_finish_plan_precision_exam(path: Path) -> dict[str, Any]:
     feature_partition = _feature_partition(actor, _holdout_feature_vectors(cases, lead))
     metrics, gates = _derive_metrics_and_gates(matched, config)
     passed = all(gates.values())
+    training_contract_valid = bool(
+        (
+            training.get("status") == "PASS_RUNTIME_FINISH_PLAN_TRAINING"
+            and actor.continuous_policy is None
+        )
+        or (
+            training.get("status") == "PASS_CONTINUOUS_RUNTIME_FINISH_PLAN_CALIBRATION"
+            and actor.continuous_policy is not None
+            and training.get("parent_actor_hash") == actor.continuous_policy.parent_actor_hash
+            and training.get("critic_training_snapshot_hash")
+            == actor.continuous_policy.critic_training_snapshot_hash
+        )
+    )
     expected_status = (
         "PASS_RUNTIME_FINISH_PLAN_PRECISION_FRESH_HOLDOUT"
         if passed
@@ -307,7 +333,7 @@ def validate_runtime_finish_plan_precision_exam(path: Path) -> dict[str, Any]:
         or request.get("finish_plan_training_report_file_hash")
         != hash_bytes(training_path.read_bytes())
         or training.get("actor_hash") != actor.actor_hash
-        or training.get("status") != "PASS_RUNTIME_FINISH_PLAN_TRAINING"
+        or not training_contract_valid
         or training.get("actor_file_hash") != hash_bytes(actor_path.read_bytes())
         or request.get("source_s95_evidence_hash") != lead_evidence.get("evidence_hash")
         or request.get("source_s95_evidence_file_hash")

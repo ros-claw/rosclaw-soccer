@@ -130,8 +130,21 @@ def run_runtime_finish_plan_exam(
     handoff = load_contact_handoff_actor(handoff_path)
     qualification = qualify_g1_assets(asset_root)
     qualification.require_eligible()
+    training_contract_valid = bool(
+        (
+            training.get("status") == "PASS_RUNTIME_FINISH_PLAN_TRAINING"
+            and actor.continuous_policy is None
+        )
+        or (
+            training.get("status") == "PASS_CONTINUOUS_RUNTIME_FINISH_PLAN_CALIBRATION"
+            and actor.continuous_policy is not None
+            and training.get("parent_actor_hash") == actor.continuous_policy.parent_actor_hash
+            and training.get("critic_training_snapshot_hash")
+            == actor.continuous_policy.critic_training_snapshot_hash
+        )
+    )
     if (
-        training.get("status") != "PASS_RUNTIME_FINISH_PLAN_TRAINING"
+        not training_contract_valid
         or training.get("actor_hash") != actor.actor_hash
         or training.get("actor_file_hash") != hash_bytes(actor_path.read_bytes())
         or actor.neural_contact_actor_hash != neural.actor_hash
