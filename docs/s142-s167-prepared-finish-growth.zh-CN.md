@@ -206,3 +206,6 @@ S161-v1 暴露的契约错位已修复：
 4. 对 S167 三个失败案例启动新的失败路由搜索，但它们从此属于已消费开发集；下一次晋升必须再换新的 sealed 分区；
 5. 在 rosclaw 核心提炼与领域无关的 `CompositeActionCommitment`、`FailureExclusionMemory`、`CausalDecisionDeadline` 和 matched promotion adapter，足球侧只实现领域适配器；
 6. 后续再做跑动接球、左右脚切换、多人协作和更自然模仿学习，不能用本轮静态准备式射门替代这些尚未完成的能力。
+
+S168–S170 对上述第 1–4 项的后续实施、10 cm 精度门及未通过的新鲜泛化结果，见
+[`s168-s170-precision-stability-growth.zh-CN.md`](s168-s170-precision-stability-growth.zh-CN.md)。

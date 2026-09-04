@@ -21,6 +21,7 @@ from rosclaw_soccer.growth.runtime_finish_plan_actor import (
     G1RuntimeFinishPlanActor,
     RuntimeFinishPlanAction,
     RuntimeFinishPlanMemory,
+    load_runtime_finish_plan_actor,
     prepared_finish_plan_features,
     save_runtime_finish_plan_actor,
 )
@@ -35,6 +36,7 @@ _SOURCE_SCHEMAS = {
     "rosclaw_soccer.runtime_ready_stance_repair.v1",
     "rosclaw_soccer.team_compatible_pass_discovery.v1",
     "rosclaw_soccer.prepared_finish_plan_repair.v1",
+    "rosclaw_soccer.prepared_finish_precision_repair.v1",
 }
 
 
@@ -46,6 +48,7 @@ def train_runtime_finish_plan_actor(
     source_s95_dir: Path,
     source_report_paths: tuple[Path, ...],
     output_dir: Path,
+    parent_finish_plan_actor_path: Path | None = None,
 ) -> tuple[G1RuntimeFinishPlanActor, dict[str, Any]]:
     """Train only from bound physical outcomes; rejected reports are valid data."""
 
@@ -63,6 +66,20 @@ def train_runtime_finish_plan_actor(
         raise ValueError("runtime finish plan neural lineage changed")
     if len(source_report_paths) < 4:
         raise ValueError("runtime finish plan needs heterogeneous failure sources")
+    parent = (
+        None
+        if parent_finish_plan_actor_path is None
+        else load_runtime_finish_plan_actor(parent_finish_plan_actor_path.expanduser().resolve())
+    )
+    if parent is not None and (
+        parent.body_hash != base.body_hash
+        or parent.kick_prior_hash != base.kick_prior_hash
+        or parent.roster_hash != base.roster_hash
+        or parent.finisher_self_model_hash != base.finisher_self_model_hash
+        or parent.neural_contact_actor_hash != neural.actor_hash
+        or parent.contact_handoff_actor_hash != handoff.actor_hash
+    ):
+        raise ValueError("runtime finish plan parent lineage changed")
     lead, lead_source = _load_lead_policy(source_s95_dir)
 
     sources: list[tuple[Path, dict[str, Any]]] = []
@@ -71,6 +88,9 @@ def train_runtime_finish_plan_actor(
         report = _bound_json(report_path)
         request_path = report_path.parent / "request.json"
         rows = report.get("rows")
+        precision_repair = bool(
+            report.get("schema_version") == "rosclaw_soccer.prepared_finish_precision_repair.v1"
+        )
         if (
             report.get("schema_version") not in _SOURCE_SCHEMAS
             or report.get("promotion_eligible") is not False
@@ -84,6 +104,10 @@ def train_runtime_finish_plan_actor(
             or report.get("scripted_contact_torque_enabled") is not False
             or report.get("physics_authority") != "CPU_MUJOCO"
             or report.get("hardware_command_sent") is not False
+            or (
+                precision_repair
+                and (parent is None or report.get("finish_plan_actor_hash") != parent.actor_hash)
+            )
             or not request_path.is_file()
             or hash_bytes(request_path.read_bytes()) != report.get("request_hash")
             or not isinstance(rows, list)
@@ -93,6 +117,7 @@ def train_runtime_finish_plan_actor(
 
     memories: list[RuntimeFinishPlanMemory] = []
     labels: list[bool] = []
+    precise_labels: list[bool] = []
     source_counts: dict[str, int] = {}
     for report_path, report in sources:
         schema = str(report["schema_version"])
@@ -130,6 +155,14 @@ def train_runtime_finish_plan_actor(
             quality = cast(dict[str, Any], row["quality"])
             result = cast(dict[str, Any], row["result"])
             strict = bool(quality["strict_chain_passed"])
+            target_error = result.get("target_error_m")
+            precise_goal = bool(
+                strict
+                and result["goal_crossed"]
+                and isinstance(target_error, int | float)
+                and math.isfinite(float(target_error))
+                and float(target_error) <= 0.10
+            )
             score = float(
                 4.0 * strict
                 + bool(quality["safe"])
@@ -137,6 +170,7 @@ def train_runtime_finish_plan_actor(
                 + bool(quality["intended_foot_contact"])
                 + 3.0 * min(float(result["shot_peak_ball_speed_mps"]) / 10.0, 1.0)
                 + bool(result["goal_crossed"])
+                + precise_goal
             )
             memories.append(
                 RuntimeFinishPlanMemory(
@@ -148,20 +182,57 @@ def train_runtime_finish_plan_actor(
                 )
             )
             labels.append(strict)
+            precise_labels.append(precise_goal)
             source_counts[schema] = source_counts.get(schema, 0) + 1
     if len({memory.trajectory_hash for memory in memories}) != len(memories):
         raise ValueError("runtime finish plan sources contain duplicate trajectories")
+    parent_memory_count = 0
+    if parent is not None:
+        parent_by_trajectory = {
+            memory.trajectory_hash: (memory, passed)
+            for passed, collection in (
+                (True, parent.successful_memories),
+                (False, parent.failed_memories),
+            )
+            for memory in collection
+        }
+        if len(parent_by_trajectory) != len(parent.successful_memories) + len(
+            parent.failed_memories
+        ):
+            raise ValueError("runtime finish plan parent trajectories are duplicated")
+        for index, reconstructed in enumerate(memories):
+            prior = parent_by_trajectory.get(reconstructed.trajectory_hash)
+            if prior is None:
+                continue
+            prior_memory, prior_label = prior
+            if (
+                reconstructed.context_hash != prior_memory.context_hash
+                or reconstructed.features != prior_memory.features
+                or reconstructed.action != prior_memory.action
+                or labels[index] != prior_label
+            ):
+                raise ValueError("runtime finish plan parent memory binding changed")
+            # Stability: preserve the immutable prior memory, including its old
+            # quality score. Revised scoring applies only to new trajectories.
+            memories[index] = prior_memory
+            parent_memory_count += 1
+        if parent_memory_count != len(parent_by_trajectory):
+            raise ValueError("runtime finish plan parent memory set is incomplete")
     successful = tuple(memory for memory, passed in zip(memories, labels, strict=True) if passed)
     failed = tuple(memory for memory, passed in zip(memories, labels, strict=True) if not passed)
     matrix = np.asarray([memory.features for memory in memories], dtype=np.float64)
-    center = np.mean(matrix, axis=0)
-    scale = np.maximum(
-        np.std(matrix, axis=0),
-        np.asarray(
-            (0.02, 0.02, 0.001, 0.001, 0.0005, 0.01, 0.005, 0.005, 0.01),
-            dtype=np.float64,
-        ),
-    )
+    if parent is None:
+        center = np.mean(matrix, axis=0)
+        scale = np.maximum(
+            np.std(matrix, axis=0),
+            np.asarray(
+                (0.02, 0.02, 0.001, 0.001, 0.0005, 0.01, 0.005, 0.005, 0.01),
+                dtype=np.float64,
+            ),
+        )
+    else:
+        center = np.asarray(parent.feature_center, dtype=np.float64)
+        scale = np.asarray(parent.feature_scale, dtype=np.float64)
     snapshot = {
         "base_target_actor_hash": base.actor_hash,
         "neural_actor_hash": neural.actor_hash,
@@ -169,11 +240,13 @@ def train_runtime_finish_plan_actor(
         "contact_handoff_offset_frames": handoff.selected_offset_frames,
         "source_s95_evidence_hash": lead_source["evidence_hash"],
         "source_report_hashes": [report["report_hash"] for _, report in sources],
+        "parent_finish_plan_actor_hash": None if parent is None else parent.actor_hash,
         "trajectory_hashes": [memory.trajectory_hash for memory in memories],
         "features": [list(memory.features) for memory in memories],
         "actions": [asdict(memory.action) for memory in memories],
         "strict_success_labels": labels,
         "joint_plan_uses_only_pre_rollout_shared_team_intent": True,
+        "feature_normalization_frozen_from_parent": parent is not None,
     }
     actor = G1RuntimeFinishPlanActor(
         body_hash=base.body_hash,
@@ -203,6 +276,7 @@ def train_runtime_finish_plan_actor(
         "base_target_actor_hash": base.actor_hash,
         "neural_actor_hash": neural.actor_hash,
         "contact_handoff_actor_hash": handoff.actor_hash,
+        "parent_finish_plan_actor_hash": None if parent is None else parent.actor_hash,
         "source_report_hashes": list(actor.source_evidence_hashes),
         "training_snapshot_hash": actor.training_snapshot_hash,
         "metrics": {
@@ -211,6 +285,9 @@ def train_runtime_finish_plan_actor(
             "failed_memory_count": len(failed),
             "unique_context_count": len({memory.context_hash for memory in memories}),
             "unique_plan_count": len({memory.action.action_hash for memory in memories}),
+            "precise_goal_memory_count": sum(precise_labels),
+            "exact_parent_memory_count": parent_memory_count,
+            "new_memory_count": len(memories) - parent_memory_count,
             "source_row_counts": source_counts,
         },
         "causal_contract": {
@@ -218,6 +295,8 @@ def train_runtime_finish_plan_actor(
             "action_authority": "RECEIVE_GEOMETRY_PHASE_AND_TASK_SPACE_TARGET_ONLY",
             "joint_torque_actor_hash": neural.actor_hash,
             "same_actor_selects_coupled_contact_variables": True,
+            "parent_memory_retained_exactly": parent is not None,
+            "feature_normalization_frozen_from_parent": parent is not None,
         },
         "activation_ceiling": "SIM_ONLY",
         "physics_authority": "CPU_MUJOCO",
@@ -261,7 +340,10 @@ def _row_action(
             "direct_joint_torque_output": False,
         }
         receive = base_receive
-    elif schema == "rosclaw_soccer.prepared_finish_plan_repair.v1":
+    elif schema in {
+        "rosclaw_soccer.prepared_finish_plan_repair.v1",
+        "rosclaw_soccer.prepared_finish_precision_repair.v1",
+    }:
         action = cast(dict[str, Any], row["action"])
         receive = RuntimeReceiveAction(**cast(dict[str, Any], action["receive"]))
         target_payload = cast(dict[str, Any], action["target"])

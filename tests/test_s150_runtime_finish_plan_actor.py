@@ -18,6 +18,13 @@ from rosclaw_soccer.media.runtime_finish_plan_video import (
     validate_runtime_finish_plan_video_manifest,
 )
 from rosclaw_soccer.skills.team.shared_world import _simulate_shared_world
+from rosclaw_soccer.training.prepared_finish_precision_repair import (
+    PreparedFinishPrecisionRepairConfig,
+    default_prepared_finish_precision_actions,
+)
+from rosclaw_soccer.training.prepared_finish_precision_repair import (
+    _select as _select_precision_repair,
+)
 from rosclaw_soccer.training.runtime_finish_plan_exam import (
     fresh_runtime_finish_plan_holdouts,
     fresh_runtime_finish_plan_holdouts_v2,
@@ -26,6 +33,16 @@ from rosclaw_soccer.training.runtime_finish_plan_exam import (
 from rosclaw_soccer.training.runtime_finish_plan_growth import (
     _row_action,
     train_runtime_finish_plan_actor,
+)
+from rosclaw_soccer.training.runtime_finish_plan_precision_exam import (
+    RuntimeFinishPlanPrecisionExamConfig,
+    fresh_runtime_finish_plan_precision_holdouts,
+)
+from rosclaw_soccer.training.runtime_finish_plan_precision_exam import (
+    _derive_metrics_and_gates as _derive_precision_metrics_and_gates,
+)
+from rosclaw_soccer.training.runtime_finish_plan_precision_exam import (
+    _feature_partition as _precision_feature_partition,
 )
 
 _CURRENT_EVIDENCE = Path(
@@ -150,6 +167,7 @@ def test_shared_world_exposes_only_actor_path_for_runtime_finish_plan() -> None:
         "source_s95_dir",
         "source_report_paths",
         "output_dir",
+        "parent_finish_plan_actor_path",
     )
 
 
@@ -227,3 +245,136 @@ def test_current_finish_plan_video_is_evidence_downstream_when_available() -> No
     )
     assert manifest["pixels_used_for_scoring"] is False
     assert manifest["commercial_use_allowed"] is False
+
+
+def test_precision_repair_actions_are_bounded_joint_plans() -> None:
+    actions = default_prepared_finish_precision_actions()
+
+    assert len(actions) == 15
+    assert len({action.action_hash for action in actions}) == 15
+    assert {action.receive.contact_policy_frame for action in actions} == {248, 250, 252}
+    assert {action.receive.stance_offset_y_m for action in actions} == {0.06, 0.12}
+    assert {action.target.target_foot_velocity_xyz_mps[1] for action in actions} == {
+        4.0,
+        5.0,
+        6.0,
+    }
+    assert all(not action.direct_joint_torque_output for action in actions)
+    assert PreparedFinishPrecisionRepairConfig().precision_radius_m == 0.10
+
+
+def test_precision_holdouts_are_preregistered_fresh_and_strict() -> None:
+    holdouts = fresh_runtime_finish_plan_precision_holdouts()
+    earlier = fresh_runtime_finish_plan_holdouts() + fresh_runtime_finish_plan_holdouts_v2()
+
+    assert len(holdouts) == 6
+    assert len({context.context_hash for context, _ in holdouts}) == 6
+    assert all(context.case_id.startswith("s170.precision.v2.") for context, _ in holdouts)
+    assert {context.context_hash for context, _ in holdouts}.isdisjoint(
+        context.context_hash for context, _ in earlier
+    )
+    config = RuntimeFinishPlanPrecisionExamConfig()
+    assert config.minimum_strict_successes == 5
+    assert config.minimum_precise_goals == 3
+    assert config.precision_radius_m == 0.10
+    assert config.minimum_normalized_training_distance == 0.02
+    with pytest.raises(ValueError, match="config is invalid"):
+        RuntimeFinishPlanPrecisionExamConfig(minimum_precise_goals=2)
+    with pytest.raises(ValueError, match="config is invalid"):
+        RuntimeFinishPlanPrecisionExamConfig(minimum_strict_gain=1)
+    with pytest.raises(ValueError, match="config is invalid"):
+        RuntimeFinishPlanPrecisionExamConfig(minimum_normalized_training_distance=0.019)
+
+
+def test_precision_partition_detects_renamed_exact_feature_memory() -> None:
+    actor = _actor()
+    duplicate = actor.successful_memories[0].features
+    changed = (*duplicate[:1], duplicate[1] + 0.021, *duplicate[2:])
+
+    partition = _precision_feature_partition(actor, (duplicate, changed))
+
+    assert partition["minimum_normalized_training_distances"][0] == 0.0
+    assert partition["minimum_normalized_training_distances"][1] > 0.02
+    assert partition["minimum_normalized_training_distance"] == 0.0
+    assert partition["training_feature_count"] == 12
+
+
+def test_precision_exam_requires_five_strict_and_all_goal_errors_bounded() -> None:
+    rows = []
+    for index in range(6):
+        strict = index < 5
+        goal = index < 4
+        rows.append(
+            {
+                "candidate": {
+                    "quality": {"strict_chain_passed": strict},
+                    "result": {
+                        "goal_crossed": goal,
+                        "goalkeeper_save_observed": index == 4,
+                        "target_error_m": 0.09 if goal else None,
+                    },
+                }
+            }
+        )
+    matched = {
+        "status": "PASS_RUNTIME_FINISH_PLAN_FRESH_HOLDOUT",
+        "metrics": {
+            "base_strict_success_count": 1,
+            "candidate_safe_count": 6,
+            "exact_replay_count": 6,
+        },
+        "gates": {"teacher_and_scripted_contact_absent": True},
+        "rows": rows,
+    }
+
+    metrics, gates = _derive_precision_metrics_and_gates(
+        matched, RuntimeFinishPlanPrecisionExamConfig()
+    )
+
+    assert metrics["candidate_strict_success_count"] == 5
+    assert metrics["precise_goal_count"] == 4
+    assert all(gates.values())
+    rows[0]["candidate"]["result"]["target_error_m"] = 0.10001
+    _, regressed = _derive_precision_metrics_and_gates(
+        matched, RuntimeFinishPlanPrecisionExamConfig()
+    )
+    assert not regressed["every_strict_goal_within_precision_radius"]
+
+
+def test_precision_repair_selection_never_prefers_unsafe_accuracy() -> None:
+    rows = [
+        {
+            "context_hash": "context",
+            "action_hash": "unsafe",
+            "quality": {
+                "strict_chain_passed": False,
+                "safe": False,
+                "intended_foot_contact": True,
+                "clear_outcome": True,
+            },
+            "result": {
+                "goal_crossed": True,
+                "target_error_m": 0.01,
+                "shot_peak_ball_speed_mps": 10.0,
+            },
+        },
+        {
+            "context_hash": "context",
+            "action_hash": "safe",
+            "quality": {
+                "strict_chain_passed": False,
+                "safe": True,
+                "intended_foot_contact": True,
+                "clear_outcome": False,
+            },
+            "result": {
+                "goal_crossed": False,
+                "target_error_m": 1.0,
+                "shot_peak_ball_speed_mps": 7.0,
+            },
+        },
+    ]
+
+    selected = _select_precision_repair(rows, "context", PreparedFinishPrecisionRepairConfig())
+
+    assert selected["action_hash"] == "safe"
