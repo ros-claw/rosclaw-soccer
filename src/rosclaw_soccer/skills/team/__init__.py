@@ -80,6 +80,20 @@ from rosclaw_soccer.skills.team.imitation_learning import (
     G1MotionNaturalnessMetrics,
     search_g1_imitation_candidate,
 )
+from rosclaw_soccer.skills.team.independent_option_world import (
+    IndependentOptionScenario,
+    IndependentOptionWorldConfig,
+    IndependentOptionWorldResult,
+    physical_option_policy_hash,
+    simulate_independent_physical_option,
+)
+from rosclaw_soccer.skills.team.independent_team_world import (
+    AgentWorldQuality,
+    IndependentTeamWorldConfig,
+    IndependentTeamWorldResult,
+    IndependentTeamWorldScenario,
+    simulate_independent_team_world,
+)
 from rosclaw_soccer.skills.team.player_lineage import (
     SoccerPlayerProfile,
     SoccerTeamRoster,
@@ -129,6 +143,13 @@ __all__ = [
     "G1ImitationEvidence",
     "G1ImitationSearchResult",
     "G1MotionNaturalnessMetrics",
+    "AgentWorldQuality",
+    "IndependentTeamWorldConfig",
+    "IndependentTeamWorldResult",
+    "IndependentTeamWorldScenario",
+    "IndependentOptionScenario",
+    "IndependentOptionWorldConfig",
+    "IndependentOptionWorldResult",
     "ThreeRoleDevelopmentEvidence",
     "TemporalAgilityProfile",
     "SoccerPlayerProfile",
@@ -156,6 +177,9 @@ __all__ = [
     "search_g1_imitation_candidate",
     "shared_post_impact_simulation_kwargs",
     "simulate_shared_world",
+    "simulate_independent_team_world",
+    "physical_option_policy_hash",
+    "simulate_independent_physical_option",
     "trained_coupled_skill_simulation_kwargs",
     "trained_three_role_skill_simulation_kwargs",
 ]

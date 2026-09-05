@@ -35,6 +35,20 @@ from rosclaw_soccer.growth.ballistic_contact_torque_residual import (
     G1BallisticContactTorqueResidualConfig,
     g1_ballistic_contact_torque_residual,
 )
+from rosclaw_soccer.growth.causal_skill_transition import (
+    CausalSkillTransitionActor,
+    CausalTransitionDecision,
+    causal_transition_features,
+    load_causal_skill_transition_actor,
+)
+from rosclaw_soccer.growth.causal_strike_option import (
+    CausalStrikeOptionDecision,
+    CausalStrikeOptionObservation,
+    CausalStrikeOptionPhase,
+    G1CausalStrikeOptionConfig,
+    G1CausalStrikeOptionController,
+)
+from rosclaw_soccer.growth.causal_strike_router import CausalStrikeRouteDecision
 from rosclaw_soccer.growth.first_touch_interception import (
     FirstTouchInterceptionConfig,
     first_touch_interception_effect,
@@ -68,10 +82,59 @@ from rosclaw_soccer.growth.mosaic_overhead_reach_prior import (
     blend_g1_mosaic_overhead_reach_target,
     load_g1_mosaic_overhead_reach_prior,
 )
+from rosclaw_soccer.growth.neural_contact_actor import (
+    G1NeuralContactActor,
+    evaluate_neural_contact_actor,
+    load_g1_neural_contact_actor,
+    neural_contact_features,
+)
 from rosclaw_soccer.growth.reactive_route_actor import (
-    G1ReactiveRouteActor,
-    load_reactive_route_actor,
     reactive_route_features,
+)
+from rosclaw_soccer.growth.runtime_causal_strike_router import (
+    G1RuntimeCausalStrikeRouter,
+    load_runtime_causal_strike_router,
+    runtime_causal_strike_features,
+)
+from rosclaw_soccer.growth.runtime_contact_mode_actor import (
+    G1RuntimeContactModeActor,
+    RuntimeContactModeAction,
+    RuntimeContactModeDecision,
+    load_runtime_contact_mode_actor,
+)
+from rosclaw_soccer.growth.runtime_contact_target_actor import (
+    G1RuntimeContactTargetActor,
+    RuntimeContactTargetDecision,
+    load_runtime_contact_target_actor,
+)
+from rosclaw_soccer.growth.runtime_finish_plan_actor import (
+    G1RuntimeFinishPlanActor,
+    RuntimeFinishPlanDecision,
+    load_runtime_finish_plan_actor,
+    prepared_finish_plan_features,
+)
+from rosclaw_soccer.growth.runtime_receive_actor import (
+    G1RuntimeReceiveActor,
+    RuntimeReceiveAction,
+    RuntimeReceiveDecision,
+    load_runtime_receive_actor,
+    runtime_receive_features,
+)
+from rosclaw_soccer.growth.target_velocity_contact_actor import (
+    G1TargetVelocityContactActor,
+    g1_target_velocity_contact_effect,
+    load_g1_target_velocity_contact_actor,
+)
+from rosclaw_soccer.growth.temporal_route_actor import (
+    G1TemporalRouteActor,
+    RouteActor,
+    TemporalRouteMemory,
+    load_route_actor,
+)
+from rosclaw_soccer.growth.three_axis_contact_actor import (
+    G1ThreeAxisContactActor,
+    g1_three_axis_contact_effect,
+    load_g1_three_axis_contact_actor,
 )
 from rosclaw_soccer.providers.g1.asset_qualification import (
     G1AssetQualification,
@@ -107,6 +170,10 @@ from rosclaw_soccer.providers.g1.mujoco_primitives import (
 )
 from rosclaw_soccer.providers.g1.mujoco_primitives import (
     roll_pitch as _roll_pitch,
+)
+from rosclaw_soccer.providers.g1.transition_bridge import (
+    G1TransitionBridgeConfig,
+    G1VelocityMatchedTransitionBridge,
 )
 from rosclaw_soccer.sim.contracts import (
     G1_DDS_JOINT_NAMES,
@@ -272,6 +339,18 @@ class G1ReactiveMovementConfig:
     maximum_speed_mps: float = 0.55
     maximum_acceleration_mps2: float = 1.20
     arrival_radius_m: float = 0.04
+    minimum_role_separation_m: float = 0.90
+    collision_avoidance_gain: float = 1.50
+    maximum_collision_correction_mps: float = 0.25
+    post_reception_follow_through_m: float = 0.35
+    far_target_activation_distance_m: float = 0.55
+    far_target_speed_gain: float = 1.20
+    velocity_braking_gain: float = 0.45
+    maximum_velocity_braking_correction_mps: float = 0.18
+    diagonal_braking_target_dx_start_m: float = 0.40
+    diagonal_braking_target_dx_full_m: float = 0.60
+    diagonal_braking_target_dy_start_m: float = 0.35
+    diagonal_braking_target_dy_full_m: float = 0.50
     execution_mode: str = "SIM_ONLY"
     hardware_authorized: bool = False
     schema_version: str = "rosclaw.soccer.g1_reactive_movement_config.v1"
@@ -299,16 +378,93 @@ class G1ReactiveMovementConfig:
             self.maximum_speed_mps,
             self.maximum_acceleration_mps2,
             self.arrival_radius_m,
+            self.minimum_role_separation_m,
+            self.collision_avoidance_gain,
+            self.maximum_collision_correction_mps,
+            self.post_reception_follow_through_m,
+            self.far_target_activation_distance_m,
+            self.far_target_speed_gain,
+            self.velocity_braking_gain,
+            self.maximum_velocity_braking_correction_mps,
+            self.diagonal_braking_target_dx_start_m,
+            self.diagonal_braking_target_dx_full_m,
+            self.diagonal_braking_target_dy_start_m,
+            self.diagonal_braking_target_dy_full_m,
         )
         if (
             not all(math.isfinite(value) for value in values)
             or not 0.10 <= self.maximum_speed_mps <= 0.70
             or not 0.20 <= self.maximum_acceleration_mps2 <= 3.0
             or not 0.02 <= self.arrival_radius_m <= 0.20
+            or not 0.50 <= self.minimum_role_separation_m <= 1.20
+            or not 0.20 <= self.collision_avoidance_gain <= 3.0
+            or not 0.05 <= self.maximum_collision_correction_mps <= 0.30
+            or not 0.0 <= self.post_reception_follow_through_m <= 0.60
+            or not 0.30 <= self.far_target_activation_distance_m <= 1.00
+            or not 1.0 <= self.far_target_speed_gain <= 1.40
+            or not 0.0 <= self.velocity_braking_gain <= 1.0
+            or not 0.0 <= self.maximum_velocity_braking_correction_mps <= 0.25
+            or not 0.20 <= self.diagonal_braking_target_dx_start_m <= 0.60
+            or not 0.40 <= self.diagonal_braking_target_dx_full_m <= 0.80
+            or self.diagonal_braking_target_dx_start_m >= self.diagonal_braking_target_dx_full_m
+            or not 0.20 <= self.diagonal_braking_target_dy_start_m <= 0.60
+            or not 0.40 <= self.diagonal_braking_target_dy_full_m <= 0.80
+            or self.diagonal_braking_target_dy_start_m >= self.diagonal_braking_target_dy_full_m
         ):
             raise ValueError("reactive movement limits violate the locomotion envelope")
         if self.execution_mode != "SIM_ONLY" or self.hardware_authorized:
             raise ValueError("reactive movement is permanently SIM_ONLY")
+
+    @property
+    def config_hash(self) -> str:
+        return hash_json(asdict(self))
+
+
+@dataclass(frozen=True)
+class G1RoleAutonomyConfig:
+    """Causal high-level intent routing above a frozen locomotion actor.
+
+    The policy chooses a bounded tactical target from current physical state;
+    it cannot write a body pose, joint target, torque, football state, or any
+    hardware command.  ``teammate`` and ``defender`` intentionally share the
+    contract so future red/blue line-ups can instantiate one copy per player.
+    """
+
+    role: str
+    team_id: str
+    decision_period_sec: float = 0.10
+    intent_hysteresis_sec: float = 0.20
+    moving_ball_threshold_mps: float = 0.24
+    maximum_target_shift_m: float = 0.22
+    ball_prediction_horizon_sec: float = 0.18
+    lane_width_m: float = 0.24
+    execution_mode: str = "SIM_ONLY"
+    hardware_authorized: bool = False
+    schema_version: str = "rosclaw.soccer.g1_role_autonomy_config.v1"
+
+    def __post_init__(self) -> None:
+        values = (
+            self.decision_period_sec,
+            self.intent_hysteresis_sec,
+            self.moving_ball_threshold_mps,
+            self.maximum_target_shift_m,
+            self.ball_prediction_horizon_sec,
+            self.lane_width_m,
+        )
+        if (
+            self.role not in {"teammate", "defender"}
+            or self.team_id not in {"red", "blue"}
+            or not all(math.isfinite(value) for value in values)
+            or not 0.08 <= self.decision_period_sec <= 0.20
+            or not 0.10 <= self.intent_hysteresis_sec <= 0.60
+            or not 0.10 <= self.moving_ball_threshold_mps <= 1.00
+            or not 0.05 <= self.maximum_target_shift_m <= 0.35
+            or not 0.05 <= self.ball_prediction_horizon_sec <= 0.40
+            or not 0.10 <= self.lane_width_m <= 0.50
+            or self.execution_mode != "SIM_ONLY"
+            or self.hardware_authorized
+        ):
+            raise ValueError("role autonomy violates its bounded SIM-only contract")
 
     @property
     def config_hash(self) -> str:
@@ -1299,6 +1455,56 @@ class G1SharedWorldResult:
     shooter_recovery_active_fraction: float = 0.0
     passer_recovery_peak_blend_fraction: float = 0.0
     shooter_recovery_peak_blend_fraction: float = 0.0
+    shooter_transition_actor_hash: str | None = None
+    shooter_transition_actor_accepted: bool = False
+    shooter_transition_triggered: bool = False
+    shooter_transition_trigger_time_sec: float | None = None
+    shooter_transition_trigger_policy_frame: int | None = None
+    shooter_transition_residual_frames: int = 0
+    shooter_transition_support_distance: float | None = None
+    shooter_transition_predicted_safe_probability: float | None = None
+    shooter_transition_predicted_chain_probability: float | None = None
+    shooter_transition_ensemble_probability_spread: float | None = None
+    shooter_transition_used_parent_fallback: bool = False
+    shooter_causal_strike_option_enabled: bool = False
+    shooter_causal_strike_option_config_hash: str | None = None
+    shooter_causal_strike_option_final_phase: str | None = None
+    shooter_causal_strike_option_reason: str | None = None
+    shooter_causal_strike_bridge_started: bool = False
+    shooter_causal_strike_bridge_start_time_sec: float | None = None
+    shooter_causal_strike_bridge_predecessor_policy_frame: int | None = None
+    shooter_causal_strike_selected_phase_start_frame: int | None = None
+    shooter_causal_strike_bridge_peak_target_velocity_rms_rad_s: float = 0.0
+    shooter_causal_strike_abort_recovery_activated: bool = False
+    shooter_runtime_strike_router_hash: str | None = None
+    shooter_runtime_strike_route_decided: bool = False
+    shooter_runtime_strike_route_accepted: bool = False
+    shooter_runtime_strike_route: str | None = None
+    shooter_runtime_strike_route_time_sec: float | None = None
+    shooter_runtime_strike_route_support_distance: float | None = None
+    shooter_runtime_strike_route_advance_frames: int | None = None
+    shooter_runtime_receive_actor_hash: str | None = None
+    shooter_runtime_receive_decided: bool = False
+    shooter_runtime_receive_accepted: bool = False
+    shooter_runtime_receive_route: str | None = None
+    shooter_runtime_receive_time_sec: float | None = None
+    shooter_runtime_receive_support_distance: float | None = None
+    shooter_runtime_receive_alignment_tolerance_sec: float | None = None
+    shooter_runtime_receive_stance_offset_y_m: float | None = None
+    shooter_runtime_receive_foot_yaw_offset_rad: float | None = None
+    shooter_runtime_contact_target_actor_hash: str | None = None
+    shooter_runtime_contact_target_decided: bool = False
+    shooter_runtime_contact_target_accepted: bool = False
+    shooter_runtime_contact_target_route: str | None = None
+    shooter_runtime_contact_target_time_sec: float | None = None
+    shooter_runtime_contact_target_support_distance: float | None = None
+    shooter_runtime_contact_target_velocity_xyz_mps: tuple[float, float, float] | None = None
+    shooter_runtime_finish_plan_actor_hash: str | None = None
+    shooter_runtime_finish_plan_decided: bool = False
+    shooter_runtime_finish_plan_accepted: bool = False
+    shooter_runtime_finish_plan_route: str | None = None
+    shooter_runtime_finish_plan_time_sec: float | None = None
+    shooter_runtime_finish_plan_support_distance: float | None = None
     shooter_aim_expert_route: str = "nominal"
     shooter_early_arrival_expert_fraction: float = 0.0
     shooter_ballistic_actor_active_fraction: float = 0.0
@@ -1412,7 +1618,7 @@ class G1SharedWorldResult:
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v19"
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v26"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -1538,6 +1744,43 @@ class _Robot:
     entered: bool = False
     contact_latched: bool = False
     contact_time: float | None = None
+    transition_actor: CausalSkillTransitionActor | None = None
+    transition_decision: CausalTransitionDecision | None = None
+    transition_triggered: bool = False
+    transition_trigger_time_sec: float | None = None
+    last_transition_features: np.ndarray | None = None
+    motion_joint_order: np.ndarray | None = None
+    causal_strike_option: G1CausalStrikeOptionController | None = None
+    last_causal_strike_option_decision: CausalStrikeOptionDecision | None = None
+    causal_strike_bridge: G1VelocityMatchedTransitionBridge | None = None
+    causal_strike_bridge_frame: int = 0
+    causal_strike_bridge_frames: int = 0
+    causal_strike_bridge_phase_start: int = 0
+    causal_strike_bridge_kp: np.ndarray | None = None
+    causal_strike_bridge_kd: np.ndarray | None = None
+    causal_strike_bridge_started: bool = False
+    causal_strike_bridge_start_time_sec: float | None = None
+    causal_strike_bridge_predecessor_policy_frame: int | None = None
+    causal_strike_selected_phase_start_frame: int | None = None
+    causal_strike_bridge_peak_target_velocity_rms_rad_s: float = 0.0
+    causal_strike_abort_recovery_activated: bool = False
+    runtime_strike_router: G1RuntimeCausalStrikeRouter | G1RuntimeContactModeActor | None = None
+    runtime_strike_route_decision: CausalStrikeRouteDecision | RuntimeContactModeDecision | None = (
+        None
+    )
+    runtime_strike_route_time_sec: float | None = None
+    last_runtime_strike_features: np.ndarray | None = None
+    runtime_receive_actor: G1RuntimeReceiveActor | None = None
+    runtime_receive_probe_action: RuntimeReceiveAction | None = None
+    runtime_receive_decision: RuntimeReceiveDecision | None = None
+    runtime_receive_time_sec: float | None = None
+    last_runtime_receive_features: np.ndarray | None = None
+    runtime_contact_target_actor: G1RuntimeContactTargetActor | None = None
+    runtime_contact_target_decision: RuntimeContactTargetDecision | None = None
+    runtime_contact_target_time_sec: float | None = None
+    runtime_finish_plan_actor: G1RuntimeFinishPlanActor | None = None
+    runtime_finish_plan_decision: RuntimeFinishPlanDecision | None = None
+    runtime_finish_plan_time_sec: float | None = None
     latest_left_support: bool = False
     latest_right_support: bool = False
     phase_hold_count: int = 0
@@ -1588,6 +1831,17 @@ class _Robot:
     last_reactive_route_features: np.ndarray | None = None
     last_reactive_route_support_distance: float = 0.0
     last_reactive_route_accepted: bool = False
+    last_temporal_route_memory: TemporalRouteMemory | None = None
+    last_reactive_role_separation_m: float = math.inf
+    last_reactive_collision_shield_active: bool = False
+    last_reactive_velocity_braking_correction: np.ndarray | None = None
+    reactive_diagonal_braking_confidence: float | None = None
+    last_role_intent: str = "hold"
+    last_role_intent_change_sec: float = -math.inf
+    last_role_intent_decision_sec: float = -math.inf
+    last_role_intent_code: int = 0
+    last_role_intent_target_shift: np.ndarray | None = None
+    role_intent_switch_count: int = 0
 
 
 def _base_scenario() -> GoalForgeScenario:
@@ -1811,6 +2065,14 @@ def _simulate_shared_world(
     passer_post_policy_recovery_enabled: bool = False,
     ball_ground_friction: float = 0.10,
     receiver_phase_sync_enabled: bool = True,
+    shooter_transition_actor_path: Path | None = None,
+    shooter_causal_strike_option_config: G1CausalStrikeOptionConfig | None = None,
+    shooter_runtime_strike_router_path: Path | None = None,
+    shooter_runtime_contact_mode_actor_path: Path | None = None,
+    shooter_runtime_receive_actor_path: Path | None = None,
+    shooter_runtime_receive_probe_action: RuntimeReceiveAction | None = None,
+    shooter_runtime_contact_target_actor_path: Path | None = None,
+    shooter_runtime_finish_plan_actor_path: Path | None = None,
     shooter_recovery_candidate_path: Path | None = None,
     shooter_recovery_residual_config: IQLResidualGuardConfig | None = None,
     shooter_recovery_config: Any | None = None,
@@ -1842,9 +2104,16 @@ def _simulate_shared_world(
     shooter_contact_prior_joint_scales: tuple[float, ...] = (1.0,) * 6,
     shooter_ballistic_actor_path: Path | None = None,
     shooter_ballistic_actor_proximity_m: float | None = None,
+    shooter_three_axis_contact_actor_path: Path | None = None,
+    shooter_target_velocity_contact_actor_path: Path | None = None,
+    shooter_target_foot_velocity_xyz_mps: tuple[float, float, float] | None = None,
+    shooter_neural_contact_actor_path: Path | None = None,
+    shooter_neural_contact_policy_frame: int | None = None,
+    shooter_neural_contact_target_velocity_xyz_mps: tuple[float, float, float] | None = None,
     shooter_ballistic_contact_config: G1BallisticContactResidualConfig | None = None,
     shooter_ballistic_contact_torque_config: G1BallisticContactTorqueResidualConfig | None = None,
     shooter_first_touch_interception_config: FirstTouchInterceptionConfig | None = None,
+    passer_reception_interception_config: FirstTouchInterceptionConfig | None = None,
     shooter_loft_teacher_config: G1LoftTeacherConfig | None = None,
     shooter_origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
     passer_start_sec: float = 0.0,
@@ -1856,10 +2125,12 @@ def _simulate_shared_world(
     pass_reception_target_m: tuple[float, float, float] = (1.00, 0.0, 0.115),
     passer_tactical_movement_config: G1TacticalMovementConfig | None = None,
     passer_reactive_movement_config: G1ReactiveMovementConfig | None = None,
+    passer_role_autonomy_config: G1RoleAutonomyConfig | None = None,
     goal_spec: G1TrainingGoalSpec | None = None,
     goalkeeper_config: G1GoalkeeperConfig | None = None,
     goalkeeper_tactical_movement_config: G1TacticalMovementConfig | None = None,
     goalkeeper_reactive_movement_config: G1ReactiveMovementConfig | None = None,
+    goalkeeper_role_autonomy_config: G1RoleAutonomyConfig | None = None,
     goalkeeper_origin_override_m: tuple[float, float, float] | None = None,
     goalkeeper_threat_role: str = "shooter",
     second_threat_config: G1SecondThreatConfig | None = None,
@@ -1886,8 +2157,112 @@ def _simulate_shared_world(
             "shared-world recovery actors must use the Soccer 110-D approach/strike "
             "contract; legacy 74-D recovery artifacts are not accepted"
         )
+    if shooter_transition_actor_path is not None and not receiver_phase_sync_enabled:
+        raise ValueError("causal shooter transition requires receiver phase synchronization")
+    if shooter_causal_strike_option_config is not None and (
+        shooter_transition_actor_path is not None or receiver_phase_sync_enabled
+    ):
+        raise ValueError(
+            "causal strike option requires an exclusive clock and disabled legacy phase sync"
+        )
+    runtime_route_paths = (
+        shooter_runtime_strike_router_path,
+        shooter_runtime_contact_mode_actor_path,
+        shooter_runtime_receive_actor_path,
+        shooter_runtime_contact_target_actor_path,
+        shooter_runtime_finish_plan_actor_path,
+    )
+    if sum(path is not None for path in runtime_route_paths) > 1:
+        raise ValueError("runtime strike, body-contact and RECEIVE actors are mutually exclusive")
+    if (
+        shooter_runtime_receive_actor_path is not None
+        and shooter_runtime_receive_probe_action is not None
+    ):
+        raise ValueError("runtime RECEIVE actor and training intervention are mutually exclusive")
+    runtime_router_requested = (
+        shooter_runtime_strike_router_path is not None
+        or shooter_runtime_contact_mode_actor_path is not None
+    )
+    if runtime_router_requested and (
+        shooter_causal_strike_option_config is None
+        or shooter_ballistic_contact_torque_config is None
+    ):
+        raise ValueError(
+            "runtime strike routing requires the causal option and bounded contact muscle memory"
+        )
+    runtime_receive_requested = (
+        shooter_runtime_receive_actor_path is not None
+        or shooter_runtime_receive_probe_action is not None
+        or shooter_runtime_contact_target_actor_path is not None
+        or shooter_runtime_finish_plan_actor_path is not None
+    )
+    if runtime_receive_requested and (
+        shooter_causal_strike_option_config is None or shooter_neural_contact_actor_path is None
+    ):
+        raise ValueError(
+            "runtime RECEIVE control requires the causal option and neural contact muscle memory"
+        )
+    if shooter_runtime_contact_mode_actor_path is not None and (
+        shooter_three_axis_contact_actor_path is None
+        and shooter_target_velocity_contact_actor_path is None
+    ):
+        raise ValueError("runtime body-contact routing requires a task-space contact actor")
     if shooter_ballistic_actor_path is not None and shooter_loft_teacher_config is not None:
         raise ValueError("shooter ballistic actor and loft teacher cannot share torque authority")
+    if shooter_three_axis_contact_actor_path is not None and (
+        shooter_ballistic_actor_path is not None
+        or shooter_loft_teacher_config is not None
+        or shooter_target_velocity_contact_actor_path is not None
+    ):
+        raise ValueError(
+            "three-axis contact actor requires exclusive learned/teacher torque authority"
+        )
+    if (shooter_target_velocity_contact_actor_path is None) != (
+        shooter_target_foot_velocity_xyz_mps is None
+    ):
+        raise ValueError("target-velocity actor and committed target must be configured together")
+    if shooter_target_velocity_contact_actor_path is not None and (
+        shooter_ballistic_actor_path is not None or shooter_loft_teacher_config is not None
+    ):
+        raise ValueError("target-velocity actor requires exclusive learned torque authority")
+    if shooter_neural_contact_actor_path is None:
+        if (
+            shooter_neural_contact_policy_frame is not None
+            or shooter_neural_contact_target_velocity_xyz_mps is not None
+        ):
+            raise ValueError("neural contact settings require a neural contact actor")
+    elif (
+        shooter_runtime_contact_target_actor_path is None
+        and shooter_runtime_finish_plan_actor_path is None
+    ):
+        if (
+            shooter_neural_contact_policy_frame is None
+            or shooter_neural_contact_target_velocity_xyz_mps is None
+        ):
+            raise ValueError("neural contact actor, contact frame and target are one commitment")
+    elif shooter_runtime_contact_target_actor_path is not None and (
+        shooter_neural_contact_policy_frame is None
+        or shooter_neural_contact_target_velocity_xyz_mps is not None
+    ):
+        raise ValueError(
+            "runtime contact target actor requires a fixed contact frame and owns the target"
+        )
+    elif shooter_runtime_finish_plan_actor_path is not None and (
+        shooter_neural_contact_policy_frame is not None
+        or shooter_neural_contact_target_velocity_xyz_mps is not None
+    ):
+        raise ValueError("runtime finish plan actor owns the contact frame and target")
+    if shooter_neural_contact_actor_path is not None and any(
+        value is not None
+        for value in (
+            shooter_ballistic_actor_path,
+            shooter_three_axis_contact_actor_path,
+            shooter_target_velocity_contact_actor_path,
+            shooter_loft_teacher_config,
+            shooter_ballistic_contact_torque_config,
+        )
+    ):
+        raise ValueError("neural contact actor requires exclusive contact-torque authority")
     if shooter_loft_teacher_config is not None and not shooter_loft_teacher_config.enabled:
         raise ValueError("shooter loft teacher must contain a non-zero task-space target")
     if (ball_launcher_position_m is None) != (ball_launcher_velocity_mps is None):
@@ -1973,6 +2348,18 @@ def _simulate_shared_world(
         goalkeeper_reactive_movement_config.role != "defender"
     ):
         raise ValueError("goalkeeper reactive movement must use the defender role")
+    if passer_role_autonomy_config is not None and (
+        passer_reactive_movement_config is None
+        or passer_role_autonomy_config.role != "teammate"
+        or passer_role_autonomy_config.team_id != "red"
+    ):
+        raise ValueError("passer role autonomy requires a red teammate reactive route")
+    if goalkeeper_role_autonomy_config is not None and (
+        goalkeeper_reactive_movement_config is None
+        or goalkeeper_role_autonomy_config.role != "defender"
+        or goalkeeper_role_autonomy_config.team_id != "blue"
+    ):
+        raise ValueError("goalkeeper role autonomy requires a blue defender reactive route")
     if second_ball_mass_kg is not None and (
         not math.isfinite(second_ball_mass_kg) or not 0.40 <= second_ball_mass_kg <= 0.46
     ):
@@ -2126,7 +2513,7 @@ def _simulate_shared_world(
     if (
         active_passer_ball_xy.shape != (2,)
         or not np.all(np.isfinite(active_passer_ball_xy))
-        or not 1.05 <= active_passer_ball_xy[0] <= 1.35
+        or not 1.05 <= active_passer_ball_xy[0] <= 1.25
         or not -0.30 <= active_passer_ball_xy[1] <= -0.08
     ):
         raise ValueError("passer ball pocket must be finite and inside the qualified envelope")
@@ -2258,6 +2645,59 @@ def _simulate_shared_world(
             )
 
     state_type, output_type, policy_type, mujoco_to_isaac = _load_robonaldo(root)
+    shooter_transition_actor = (
+        None
+        if shooter_transition_actor_path is None
+        else load_causal_skill_transition_actor(shooter_transition_actor_path)
+    )
+    shooter_runtime_strike_router = (
+        None
+        if shooter_runtime_strike_router_path is None
+        else load_runtime_causal_strike_router(shooter_runtime_strike_router_path)
+    )
+    shooter_runtime_contact_mode_actor = (
+        None
+        if shooter_runtime_contact_mode_actor_path is None
+        else load_runtime_contact_mode_actor(shooter_runtime_contact_mode_actor_path)
+    )
+    active_runtime_strike_router = (
+        shooter_runtime_contact_mode_actor or shooter_runtime_strike_router
+    )
+    if active_runtime_strike_router is not None and (
+        active_runtime_strike_router.body_hash != qualification.body_hash
+        or active_runtime_strike_router.kick_prior_hash != qualification.kick_prior_hash
+    ):
+        raise ValueError("runtime strike router asset identity changed")
+    shooter_runtime_receive_actor = (
+        None
+        if shooter_runtime_receive_actor_path is None
+        else load_runtime_receive_actor(shooter_runtime_receive_actor_path)
+    )
+    if shooter_runtime_receive_actor is not None and (
+        shooter_runtime_receive_actor.body_hash != qualification.body_hash
+        or shooter_runtime_receive_actor.kick_prior_hash != qualification.kick_prior_hash
+    ):
+        raise ValueError("runtime RECEIVE actor asset identity changed")
+    shooter_runtime_contact_target_actor = (
+        None
+        if shooter_runtime_contact_target_actor_path is None
+        else load_runtime_contact_target_actor(shooter_runtime_contact_target_actor_path)
+    )
+    if shooter_runtime_contact_target_actor is not None and (
+        shooter_runtime_contact_target_actor.body_hash != qualification.body_hash
+        or shooter_runtime_contact_target_actor.kick_prior_hash != qualification.kick_prior_hash
+    ):
+        raise ValueError("runtime contact target actor asset identity changed")
+    shooter_runtime_finish_plan_actor = (
+        None
+        if shooter_runtime_finish_plan_actor_path is None
+        else load_runtime_finish_plan_actor(shooter_runtime_finish_plan_actor_path)
+    )
+    if shooter_runtime_finish_plan_actor is not None and (
+        shooter_runtime_finish_plan_actor.body_hash != qualification.body_hash
+        or shooter_runtime_finish_plan_actor.kick_prior_hash != qualification.kick_prior_hash
+    ):
+        raise ValueError("runtime finish plan actor asset identity changed")
     shooter_motion_prior: G1FootballMotionPrior | None = None
     if shooter_motion_prior_path is not None:
         shooter_motion_prior = load_g1_football_motion_prior(shooter_motion_prior_path)
@@ -2292,6 +2732,9 @@ def _simulate_shared_world(
         ):
             raise ValueError("contact-prior velocity blend requires a velocity-aware artifact")
     shooter_ballistic_actor: G1BallisticContactImpulseActor | None = None
+    shooter_three_axis_contact_actor: G1ThreeAxisContactActor | None = None
+    shooter_target_velocity_contact_actor: G1TargetVelocityContactActor | None = None
+    shooter_neural_contact_actor: G1NeuralContactActor | None = None
     second_striker_ballistic_actor: G1BallisticContactImpulseActor | None = None
     second_striker_candidate_actor: G1BallisticContactImpulseActor | None = None
     if shooter_ballistic_actor_path is not None:
@@ -2306,6 +2749,66 @@ def _simulate_shared_world(
         if shooter_ballistic_actor.body_hash != qualification.body_hash:
             raise ValueError("ballistic contact actor Body hash does not match coupled G1")
         second_striker_ballistic_actor = shooter_ballistic_actor
+    if shooter_three_axis_contact_actor_path is not None:
+        shooter_three_axis_contact_actor = load_g1_three_axis_contact_actor(
+            shooter_three_axis_contact_actor_path
+        )
+        if shooter_three_axis_contact_actor.body_hash != qualification.body_hash:
+            raise ValueError("three-axis contact actor Body hash does not match coupled G1")
+    if shooter_target_velocity_contact_actor_path is not None:
+        shooter_target_velocity_contact_actor = load_g1_target_velocity_contact_actor(
+            shooter_target_velocity_contact_actor_path
+        )
+        if shooter_target_velocity_contact_actor.body_hash != qualification.body_hash:
+            raise ValueError("target-velocity contact actor Body hash does not match coupled G1")
+        assert shooter_target_foot_velocity_xyz_mps is not None
+        if not shooter_target_velocity_contact_actor.target_supported(
+            shooter_target_foot_velocity_xyz_mps
+        ):
+            raise ValueError("committed target foot velocity is outside learned support")
+    if shooter_neural_contact_actor_path is not None:
+        shooter_neural_contact_actor = load_g1_neural_contact_actor(
+            shooter_neural_contact_actor_path
+        )
+        if shooter_neural_contact_actor.body_hash != qualification.body_hash:
+            raise ValueError("neural contact actor Body hash does not match coupled G1")
+        if (
+            shooter_runtime_contact_target_actor is None
+            and shooter_runtime_finish_plan_actor is None
+        ):
+            assert shooter_neural_contact_target_velocity_xyz_mps is not None
+            if not shooter_neural_contact_actor.target_supported(
+                shooter_neural_contact_target_velocity_xyz_mps
+            ):
+                raise ValueError("neural contact target velocity is outside learned support")
+        elif shooter_runtime_contact_target_actor is not None and (
+            shooter_runtime_contact_target_actor.neural_contact_actor_hash
+            != shooter_neural_contact_actor.actor_hash
+            or any(
+                not shooter_neural_contact_actor.target_supported(
+                    memory.action.target_foot_velocity_xyz_mps
+                )
+                for memory in (
+                    *shooter_runtime_contact_target_actor.successful_memories,
+                    *shooter_runtime_contact_target_actor.failed_memories,
+                )
+            )
+        ):
+            raise ValueError("runtime contact target actor neural lineage changed")
+        if shooter_runtime_finish_plan_actor is not None and (
+            shooter_runtime_finish_plan_actor.neural_contact_actor_hash
+            != shooter_neural_contact_actor.actor_hash
+            or any(
+                not shooter_neural_contact_actor.target_supported(
+                    memory.action.target.target_foot_velocity_xyz_mps
+                )
+                for memory in (
+                    *shooter_runtime_finish_plan_actor.successful_memories,
+                    *shooter_runtime_finish_plan_actor.failed_memories,
+                )
+            )
+        ):
+            raise ValueError("runtime finish plan actor neural lineage changed")
     if second_striker_ballistic_actor_path is not None:
         second_striker_candidate_actor = load_g1_ballistic_contact_impulse_actor(
             second_striker_ballistic_actor_path
@@ -2488,6 +2991,60 @@ def _simulate_shared_world(
             passer_parameters,
             **cast(Any, passer_parameter_overrides),
         )
+    prepared_finish_plan_decision: RuntimeFinishPlanDecision | None = None
+    if shooter_runtime_finish_plan_actor is not None:
+        prepared_finish_plan_decision = shooter_runtime_finish_plan_actor.decide(
+            prepared_finish_plan_features(
+                receiver_lane_m=float(active_shooter_origin[1]),
+                reception_target_x_m=float(local_pass_reception_target[0]),
+                passer_ball_local_xy_m=(
+                    float(active_passer_ball_xy[0]),
+                    float(active_passer_ball_xy[1]),
+                ),
+                ball_ground_friction=ball_ground_friction,
+                passer_yaw_rad=passer_yaw_rad,
+                passer_stance_offset_xy_m=(
+                    passer_parameters.stance_offset_x,
+                    passer_parameters.stance_offset_y,
+                ),
+                passer_swing_speed_scale=passer_parameters.swing_speed_scale,
+            )
+        )
+        prepared_action = prepared_finish_plan_decision.action
+        if prepared_action is not None:
+            shooter_parameters = replace(
+                shooter_parameters,
+                stance_offset_x=prepared_action.receive.stance_offset_x_m,
+                stance_offset_y=prepared_action.receive.stance_offset_y_m,
+                foot_yaw_offset=prepared_action.receive.foot_yaw_offset_rad,
+                foot_pitch_offset=prepared_action.receive.foot_pitch_offset_rad,
+            )
+            if shooter_early_arrival_parameters is not None:
+                shooter_early_arrival_parameters = replace(
+                    shooter_early_arrival_parameters,
+                    stance_offset_x=prepared_action.receive.stance_offset_x_m,
+                    stance_offset_y=prepared_action.receive.stance_offset_y_m,
+                    foot_yaw_offset=prepared_action.receive.foot_yaw_offset_rad,
+                    foot_pitch_offset=prepared_action.receive.foot_pitch_offset_rad,
+                )
+            shooter_neural_contact_policy_frame = prepared_action.receive.contact_policy_frame
+            shooter_neural_contact_target_velocity_xyz_mps = (
+                prepared_action.target.target_foot_velocity_xyz_mps
+            )
+            shooter_post_policy_frame = (
+                prepared_action.receive.contact_policy_frame
+                + shooter_runtime_finish_plan_actor.contact_handoff_offset_frames
+            )
+            assert shooter_causal_strike_option_config is not None
+            shooter_causal_strike_option_config = replace(
+                shooter_causal_strike_option_config,
+                maximum_arrival_advance_frames=(
+                    prepared_action.receive.maximum_arrival_advance_frames
+                ),
+                arrival_alignment_tolerance_sec=(
+                    prepared_action.receive.arrival_alignment_tolerance_sec
+                ),
+            )
     passer_scenario = replace(
         scenario,
         scenario_id="goalforge-coupled-g1-a-soft-back-pass",
@@ -2560,6 +3117,7 @@ def _simulate_shared_world(
         state_type=state_type,
         output_type=output_type,
         policy_type=policy_type,
+        motion_joint_order=mujoco_to_isaac,
         parameters=shooter_parameters,
         start_sec=shooter_start_sec,
         initial_position=initial_position,
@@ -2574,7 +3132,7 @@ def _simulate_shared_world(
         recovery_controller=shooter_recovery,
         post_policy_frame=shooter_post_policy_frame,
         post_policy_blend_frames=shooter_post_policy_blend_frames,
-        phase_sync_enabled=receiver_phase_sync_enabled,
+        phase_sync_enabled=(receiver_phase_sync_enabled and shooter_transition_actor is None),
         recovery_torque_actor=shooter_recovery_actor,
         joint_guard_enabled=shooter_joint_guard_enabled,
         post_policy_neutral_velocity_enabled=shooter_post_policy_neutral_velocity_enabled,
@@ -2601,6 +3159,90 @@ def _simulate_shared_world(
         contact_prior_contact_policy_frame=shooter_contact_prior_contact_policy_frame,
         contact_prior_joint_scales=shooter_contact_prior_joint_scales,
     )
+    shooter.transition_actor = shooter_transition_actor
+    shooter.causal_strike_option = (
+        None
+        if shooter_causal_strike_option_config is None
+        else G1CausalStrikeOptionController(shooter_causal_strike_option_config)
+    )
+    shooter.runtime_strike_router = active_runtime_strike_router
+    shooter.runtime_receive_actor = shooter_runtime_receive_actor
+    shooter.runtime_receive_probe_action = shooter_runtime_receive_probe_action
+    shooter.runtime_contact_target_actor = shooter_runtime_contact_target_actor
+    shooter.runtime_finish_plan_actor = shooter_runtime_finish_plan_actor
+    shooter.runtime_finish_plan_decision = prepared_finish_plan_decision
+    if prepared_finish_plan_decision is not None:
+        shooter.runtime_finish_plan_time_sec = 0.0
+        prepared_action = prepared_finish_plan_decision.action
+        shooter.runtime_receive_decision = RuntimeReceiveDecision(
+            accepted=prepared_finish_plan_decision.accepted,
+            route=prepared_finish_plan_decision.route,
+            confidence=prepared_finish_plan_decision.confidence,
+            nearest_success_distance=(prepared_finish_plan_decision.nearest_success_distance),
+            nearest_same_action_failure_distance=(
+                prepared_finish_plan_decision.nearest_same_action_failure_distance
+            ),
+            selected_context_hash=prepared_finish_plan_decision.selected_context_hash,
+            action=None if prepared_action is None else prepared_action.receive,
+            actor_hash=prepared_finish_plan_decision.actor_hash,
+        )
+        shooter.runtime_receive_time_sec = 0.0
+        shooter.runtime_contact_target_decision = RuntimeContactTargetDecision(
+            accepted=prepared_finish_plan_decision.accepted,
+            route=prepared_finish_plan_decision.route,
+            confidence=prepared_finish_plan_decision.confidence,
+            nearest_success_distance=(prepared_finish_plan_decision.nearest_success_distance),
+            nearest_same_action_failure_distance=(
+                prepared_finish_plan_decision.nearest_same_action_failure_distance
+            ),
+            selected_context_hash=prepared_finish_plan_decision.selected_context_hash,
+            action=None if prepared_action is None else prepared_action.target,
+            actor_hash=prepared_finish_plan_decision.actor_hash,
+        )
+        shooter.runtime_contact_target_time_sec = 0.0
+    if shooter.runtime_contact_target_actor is not None:
+        required = shooter.runtime_contact_target_actor.required_receive_action
+        configured = shooter_causal_strike_option_config
+        if (
+            configured is None
+            or shooter_neural_contact_policy_frame != required.contact_policy_frame
+            or configured.maximum_arrival_advance_frames != required.maximum_arrival_advance_frames
+            or not math.isclose(
+                configured.arrival_alignment_tolerance_sec,
+                required.arrival_alignment_tolerance_sec,
+                abs_tol=1.0e-12,
+            )
+            or not math.isclose(
+                shooter.parameters.stance_offset_x,
+                required.stance_offset_x_m,
+                abs_tol=1.0e-12,
+            )
+            or not math.isclose(
+                shooter.parameters.stance_offset_y,
+                required.stance_offset_y_m,
+                abs_tol=1.0e-12,
+            )
+            or not math.isclose(
+                shooter.parameters.foot_yaw_offset,
+                required.foot_yaw_offset_rad,
+                abs_tol=1.0e-12,
+            )
+            or not math.isclose(
+                shooter.parameters.foot_pitch_offset,
+                required.foot_pitch_offset_rad,
+                abs_tol=1.0e-12,
+            )
+        ):
+            raise ValueError("runtime contact target actor RECEIVE-law commitment changed")
+    if (
+        shooter.runtime_strike_router is not None
+        or shooter.runtime_receive_actor is not None
+        or shooter.runtime_receive_probe_action is not None
+        or shooter.runtime_contact_target_actor is not None
+    ):
+        if shooter.causal_strike_option is None:
+            raise RuntimeError("runtime receive/strike actor initialized without causal option")
+        shooter.causal_strike_option.arm_runtime_route()
     passer = _make_robot(
         model=model,
         data=data,
@@ -2611,6 +3253,7 @@ def _simulate_shared_world(
         state_type=state_type,
         output_type=output_type,
         policy_type=policy_type,
+        motion_joint_order=mujoco_to_isaac,
         parameters=passer_parameters,
         start_sec=passer_start_sec,
         initial_position=initial_position,
@@ -2694,6 +3337,7 @@ def _simulate_shared_world(
             state_type=state_type,
             output_type=output_type,
             policy_type=policy_type,
+            motion_joint_order=mujoco_to_isaac,
             parameters=ShotParameters(policy_type="parameter"),
             start_sec=math.inf,
             # The free-kick clip starts with a ~73-degree global yaw because
@@ -2894,6 +3538,7 @@ def _simulate_shared_world(
             state_type=state_type,
             output_type=output_type,
             policy_type=policy_type,
+            motion_joint_order=mujoco_to_isaac,
             parameters=cast(ShotParameters, second_striker_parameters),
             start_sec=physical_second_striker_config.policy_start_time_sec,
             initial_position=initial_position,
@@ -2936,16 +3581,16 @@ def _simulate_shared_world(
     robots = tuple(
         robot for robot in (passer, shooter, goalkeeper, second_striker) if robot is not None
     )
-    passer_reactive_actor: G1ReactiveRouteActor | None = None
-    goalkeeper_reactive_actor: G1ReactiveRouteActor | None = None
+    passer_reactive_actor: RouteActor | None = None
+    goalkeeper_reactive_actor: RouteActor | None = None
     if passer_reactive_movement_config is not None:
-        passer_reactive_actor = load_reactive_route_actor(
+        passer_reactive_actor = load_route_actor(
             Path(passer_reactive_movement_config.actor_artifact_path)
         )
         if passer_reactive_actor.actor_hash != passer_reactive_movement_config.actor_hash:
             raise ValueError("passer reactive route actor changed after plan construction")
     if goalkeeper_reactive_movement_config is not None:
-        goalkeeper_reactive_actor = load_reactive_route_actor(
+        goalkeeper_reactive_actor = load_route_actor(
             Path(goalkeeper_reactive_movement_config.actor_artifact_path)
         )
         if goalkeeper_reactive_actor.actor_hash != goalkeeper_reactive_movement_config.actor_hash:
@@ -3077,8 +3722,59 @@ def _simulate_shared_world(
         "passer_policy_frame": [],
         "shooter_policy_frame": [],
         "shooter_phase_correction": [],
+        "shooter_transition_features": [],
+        "shooter_transition_actor_accepted": [],
+        "shooter_transition_support_distance": [],
+        "shooter_transition_trigger_policy_frame": [],
+        "shooter_transition_residual_frames": [],
+        "shooter_transition_predicted_safe_probability": [],
+        "shooter_transition_predicted_chain_probability": [],
+        "shooter_transition_ensemble_probability_spread": [],
+        "shooter_transition_used_parent_fallback": [],
+        "shooter_transition_triggered": [],
+        "shooter_causal_strike_option_phase": [],
+        "shooter_causal_strike_option_ready": [],
+        "shooter_causal_strike_option_begin_bridge": [],
+        "shooter_causal_strike_option_incoming_ball": [],
+        "shooter_causal_strike_option_ball_arrival_eta_sec": [],
+        "shooter_causal_strike_option_incoming_observation_count": [],
+        "shooter_causal_strike_selected_phase_start_frame": [],
+        "shooter_causal_strike_bridge_fraction": [],
+        "shooter_ball_local_position": [],
+        "shooter_ball_local_velocity": [],
+        "shooter_pelvis_local_position": [],
+        "shooter_runtime_strike_features": [],
+        "shooter_runtime_strike_route_decided": [],
+        "shooter_runtime_strike_route_accepted": [],
+        "shooter_runtime_strike_route_support_distance": [],
+        "shooter_runtime_strike_route_advance_frames": [],
+        "shooter_runtime_receive_features": [],
+        "shooter_runtime_receive_decided": [],
+        "shooter_runtime_receive_accepted": [],
+        "shooter_runtime_receive_support_distance": [],
+        "shooter_runtime_receive_alignment_tolerance_sec": [],
+        "shooter_runtime_receive_stance_offset_y_m": [],
+        "shooter_runtime_receive_foot_yaw_offset_rad": [],
+        "shooter_runtime_contact_target_decided": [],
+        "shooter_runtime_contact_target_accepted": [],
+        "shooter_runtime_contact_target_support_distance": [],
+        "shooter_runtime_contact_target_velocity_xyz_mps": [],
         "shooter_ballistic_actor_active": [],
         "shooter_ballistic_actor_torque": [],
+        "shooter_three_axis_contact_actor_active": [],
+        "shooter_three_axis_contact_actor_torque": [],
+        "shooter_three_axis_contact_actor_force_xyz_n": [],
+        "shooter_three_axis_contact_actor_foot_velocity_xyz_mps": [],
+        "shooter_target_velocity_contact_actor_active": [],
+        "shooter_target_velocity_contact_actor_torque": [],
+        "shooter_target_velocity_contact_actor_force_xyz_n": [],
+        "shooter_target_velocity_contact_actor_foot_velocity_xyz_mps": [],
+        "shooter_target_velocity_contact_actor_target_xyz_mps": [],
+        "shooter_target_velocity_contact_actor_target_supported": [],
+        "shooter_neural_contact_actor_active": [],
+        "shooter_neural_contact_actor_torque": [],
+        "shooter_neural_contact_actor_supported": [],
+        "shooter_neural_contact_actor_ood_distance": [],
         "shooter_ballistic_contact_active": [],
         "shooter_ballistic_contact_target_delta": [],
         "shooter_ballistic_contact_torque_active": [],
@@ -3087,9 +3783,14 @@ def _simulate_shared_world(
         "shooter_first_touch_interception_torque": [],
         "shooter_first_touch_interception_force": [],
         "shooter_first_touch_interception_error": [],
+        "passer_reception_interception_active": [],
+        "passer_reception_interception_torque": [],
+        "passer_reception_interception_force": [],
+        "passer_reception_interception_error": [],
         "shooter_loft_teacher_active": [],
         "shooter_loft_teacher_torque": [],
         "shooter_loft_teacher_force_xyz_n": [],
+        "shooter_loft_teacher_foot_velocity_xyz_mps": [],
         "passer_foot_contact": [],
         "shooter_foot_contact": [],
         # -1 = anatomical left foot, +1 = anatomical right foot, 0 = no
@@ -3115,6 +3816,17 @@ def _simulate_shared_world(
                 "passer_reactive_route_features": [],
                 "passer_reactive_route_support_distance": [],
                 "passer_reactive_route_accepted": [],
+                "passer_reactive_role_separation_m": [],
+                "passer_reactive_collision_shield_active": [],
+                "passer_reactive_velocity_braking_correction": [],
+            }
+        )
+    if passer_role_autonomy_config is not None:
+        trace.update(
+            {
+                "passer_role_intent_code": [],
+                "passer_role_intent_target_shift": [],
+                "passer_role_intent_switch_count": [],
             }
         )
     if (
@@ -3134,6 +3846,17 @@ def _simulate_shared_world(
                 "goalkeeper_reactive_route_features": [],
                 "goalkeeper_reactive_route_support_distance": [],
                 "goalkeeper_reactive_route_accepted": [],
+                "goalkeeper_reactive_role_separation_m": [],
+                "goalkeeper_reactive_collision_shield_active": [],
+                "goalkeeper_reactive_velocity_braking_correction": [],
+            }
+        )
+    if goalkeeper_role_autonomy_config is not None:
+        trace.update(
+            {
+                "goalkeeper_role_intent_code": [],
+                "goalkeeper_role_intent_target_shift": [],
+                "goalkeeper_role_intent_switch_count": [],
             }
         )
     if second_striker is not None:
@@ -3365,6 +4088,229 @@ def _simulate_shared_world(
                 _fill_local_state(robot, data, second_ball_body, second_ball_qvel)
             else:
                 _fill_local_state(robot, data, ball_body, ball_qvel)
+        shooter.last_transition_features = causal_transition_features(
+            receiver_pelvis_world_m=np.asarray(
+                data.qpos[shooter.qpos_base : shooter.qpos_base + 3], dtype=np.float64
+            ),
+            predecessor_pelvis_world_m=np.asarray(
+                data.qpos[passer.qpos_base : passer.qpos_base + 3], dtype=np.float64
+            ),
+            receiver_ball_local_m=np.asarray(shooter.state.ball_pos_w, dtype=np.float64),
+            receiver_reception_target_local_m=np.asarray(
+                local_pass_reception_target, dtype=np.float64
+            ),
+            receiver_shot_target_local_m=np.asarray(active_policy_target, dtype=np.float64),
+            predecessor_swing_speed_scale=passer.parameters.swing_speed_scale,
+            ball_ground_friction=ball_ground_friction,
+            predecessor_yaw_rad=passer_yaw_rad,
+            receiver_kick_foot=shooter.parameters.kick_foot,
+        )
+        if shooter.transition_actor is not None and shooter.transition_decision is None:
+            shooter.transition_decision = shooter.transition_actor.decide(
+                shooter.last_transition_features
+            )
+        predecessor_frame = max(
+            0,
+            int(passer.policy.time_step) - int(passer.policy.WARMUP_STEPS),
+        )
+        if shooter.causal_strike_option is not None:
+            pelvis_roll, pelvis_pitch = _roll_pitch(
+                np.asarray(shooter.state.pelvis_quat_w, dtype=np.float64)
+            )
+            option_observation = CausalStrikeOptionObservation(
+                timestamp_sec=float(data.time),
+                predecessor_policy_frame=predecessor_frame,
+                receiver_pelvis_height_m=float(shooter.state.pelvis_pos_w[2]),
+                receiver_roll_rad=pelvis_roll,
+                receiver_pitch_rad=pelvis_pitch,
+                receiver_joint_velocity_rms_rad_s=float(
+                    np.sqrt(np.mean(np.square(shooter.state.dq)))
+                ),
+                receiver_ball_local_x_m=float(shooter.state.ball_pos_w[0]),
+                receiver_ball_local_vx_mps=float(shooter.state.ball_vel_w[0]),
+            )
+            shooter.last_causal_strike_option_decision = shooter.causal_strike_option.step(
+                option_observation
+            )
+            if (
+                (
+                    shooter.runtime_receive_actor is not None
+                    or shooter.runtime_receive_probe_action is not None
+                    or shooter.runtime_contact_target_actor is not None
+                )
+                and shooter.runtime_receive_decision is None
+                and shooter.runtime_contact_target_decision is None
+                and shooter.causal_strike_option.stable_incoming_observed
+            ):
+                arrival_eta = shooter.last_causal_strike_option_decision.ball_arrival_eta_sec
+                if arrival_eta is None:
+                    raise RuntimeError("stable incoming RECEIVE observation has no arrival ETA")
+                shooter_policy_frame = max(
+                    0,
+                    int(shooter.policy.time_step) - int(shooter.policy.WARMUP_STEPS),
+                )
+                receive_features = runtime_receive_features(
+                    ball_local_position_m=shooter.state.ball_pos_w,
+                    ball_local_velocity_mps=shooter.state.ball_vel_w,
+                    ball_arrival_eta_sec=arrival_eta,
+                    pelvis_local_position_m=shooter.state.pelvis_pos_w,
+                    joint_velocity_rad_s=shooter.state.dq,
+                    policy_frame=shooter_policy_frame,
+                )
+                shooter.last_runtime_receive_features = np.asarray(
+                    receive_features, dtype=np.float64
+                )
+                if shooter.runtime_contact_target_actor is not None:
+                    target_decision = shooter.runtime_contact_target_actor.decide(receive_features)
+                    route_latch_open = shooter.causal_strike_option.runtime_route_latch_open
+                    if not route_latch_open:
+                        target_decision = replace(
+                            target_decision,
+                            accepted=False,
+                            route="CONTACT_TARGET_CAUSAL_WINDOW_CLOSED_FALLBACK",
+                            confidence=0.0,
+                            selected_context_hash=None,
+                            action=None,
+                        )
+                    shooter.runtime_contact_target_decision = target_decision
+                    shooter.runtime_contact_target_time_sec = float(data.time)
+                    target_action = target_decision.action
+                    if target_action is None:
+                        if route_latch_open:
+                            shooter.causal_strike_option.reject_runtime_route()
+                        else:
+                            shooter.causal_strike_option.expire_runtime_route()
+                    else:
+                        required = shooter.runtime_contact_target_actor.required_receive_action
+                        shooter.causal_strike_option.select_arrival_route(
+                            required.maximum_arrival_advance_frames,
+                            arrival_alignment_tolerance_sec=(
+                                required.arrival_alignment_tolerance_sec
+                            ),
+                        )
+                        shooter_neural_contact_target_velocity_xyz_mps = (
+                            target_action.target_foot_velocity_xyz_mps
+                        )
+                else:
+                    receive_decision = (
+                        shooter.runtime_receive_actor.decide(receive_features)
+                        if shooter.runtime_receive_actor is not None
+                        else RuntimeReceiveDecision(
+                            accepted=True,
+                            route="TRAINING_RUNTIME_RECEIVE_INTERVENTION",
+                            confidence=1.0,
+                            nearest_success_distance=0.0,
+                            nearest_same_action_failure_distance=None,
+                            selected_context_hash=None,
+                            action=shooter.runtime_receive_probe_action,
+                            actor_hash=cast(
+                                RuntimeReceiveAction, shooter.runtime_receive_probe_action
+                            ).action_hash,
+                        )
+                    )
+                    route_latch_open = shooter.causal_strike_option.runtime_route_latch_open
+                    if not route_latch_open:
+                        receive_decision = replace(
+                            receive_decision,
+                            accepted=False,
+                            route="RUNTIME_RECEIVE_CAUSAL_WINDOW_CLOSED_FALLBACK",
+                            confidence=0.0,
+                            selected_context_hash=None,
+                            action=None,
+                        )
+                    shooter.runtime_receive_decision = receive_decision
+                    shooter.runtime_receive_time_sec = float(data.time)
+                    receive_action = receive_decision.action
+                    if receive_action is None:
+                        if route_latch_open:
+                            shooter.causal_strike_option.reject_runtime_route()
+                        else:
+                            shooter.causal_strike_option.expire_runtime_route()
+                    else:
+                        shooter.causal_strike_option.select_arrival_route(
+                            receive_action.maximum_arrival_advance_frames,
+                            arrival_alignment_tolerance_sec=(
+                                receive_action.arrival_alignment_tolerance_sec
+                            ),
+                        )
+                        shooter.parameters = replace(
+                            shooter.parameters,
+                            stance_offset_x=receive_action.stance_offset_x_m,
+                            stance_offset_y=receive_action.stance_offset_y_m,
+                            foot_yaw_offset=receive_action.foot_yaw_offset_rad,
+                            foot_pitch_offset=receive_action.foot_pitch_offset_rad,
+                        )
+                        shooter_neural_contact_policy_frame = receive_action.contact_policy_frame
+            if (
+                shooter.runtime_strike_router is not None
+                and shooter.runtime_strike_route_decision is None
+                and shooter.causal_strike_option.stable_incoming_observed
+            ):
+                arrival_eta = shooter.last_causal_strike_option_decision.ball_arrival_eta_sec
+                if arrival_eta is None:
+                    raise RuntimeError("stable incoming route observation has no arrival ETA")
+                runtime_features = runtime_causal_strike_features(
+                    ball_local_position_m=shooter.state.ball_pos_w,
+                    ball_local_velocity_mps=shooter.state.ball_vel_w,
+                    ball_arrival_eta_sec=arrival_eta,
+                    pelvis_local_position_m=shooter.state.pelvis_pos_w,
+                    joint_velocity_rad_s=shooter.state.dq,
+                )
+                shooter.last_runtime_strike_features = np.asarray(
+                    runtime_features, dtype=np.float64
+                )
+                route_decision = shooter.runtime_strike_router.decide(runtime_features)
+                route_latch_open = shooter.causal_strike_option.runtime_route_latch_open
+                if not route_latch_open:
+                    route_decision = replace(
+                        route_decision,
+                        accepted=False,
+                        route="RUNTIME_STRIKE_CAUSAL_WINDOW_CLOSED_FALLBACK",
+                        confidence=0.0,
+                        selected_context_hash=None,
+                        action=None,
+                    )
+                shooter.runtime_strike_route_decision = route_decision
+                shooter.runtime_strike_route_time_sec = float(data.time)
+                route_action = route_decision.action
+                maximum_advance = (
+                    0 if route_action is None else route_action.maximum_arrival_advance_frames
+                )
+                if route_action is None:
+                    if route_latch_open:
+                        shooter.causal_strike_option.reject_runtime_route()
+                    else:
+                        shooter.causal_strike_option.expire_runtime_route()
+                else:
+                    shooter.causal_strike_option.select_arrival_route(maximum_advance)
+                    shooter.parameters = replace(
+                        shooter.parameters,
+                        foot_yaw_offset=route_action.foot_yaw_offset_rad,
+                        foot_pitch_offset=route_action.foot_pitch_offset_rad,
+                    )
+                    if isinstance(route_action, RuntimeContactModeAction):
+                        shooter.parameters = replace(
+                            shooter.parameters,
+                            stance_offset_x=route_action.stance_offset_x_m,
+                            stance_offset_y=route_action.stance_offset_y_m,
+                        )
+                        assert shooter_ballistic_contact_torque_config is not None
+                        shooter_ballistic_contact_torque_config = replace(
+                            shooter_ballistic_contact_torque_config,
+                            contact_policy_frame=route_action.contact_policy_frame,
+                        )
+            if shooter.last_causal_strike_option_decision.begin_bridge:
+                strike_phase_start_frame = (
+                    shooter.last_causal_strike_option_decision.strike_phase_start_frame
+                )
+                if strike_phase_start_frame is None:
+                    raise RuntimeError("causal strike option committed without a strike phase")
+                _begin_causal_strike_bridge(
+                    shooter,
+                    timestamp_sec=float(data.time),
+                    predecessor_policy_frame=predecessor_frame,
+                    strike_phase_start_frame=strike_phase_start_frame,
+                )
         if (
             (second_threat_config is not None or physical_rearm_earliest is not None)
             and goalkeeper is not None
@@ -3457,9 +4403,19 @@ def _simulate_shared_world(
         if (
             (launcher_position is None or launcher_receiver_enabled)
             and not shooter.entered
-            and data.time + 1e-12 >= shooter.start_sec
+            and shooter.causal_strike_option is None
         ):
-            _enter_policy(shooter)
+            if shooter.transition_actor is None:
+                if data.time + 1e-12 >= shooter.start_sec:
+                    _enter_policy(shooter)
+            else:
+                transition_decision = shooter.transition_decision
+                if transition_decision is None:
+                    raise RuntimeError("causal shooter transition decision is unavailable")
+                if predecessor_frame >= transition_decision.trigger_policy_frame:
+                    _enter_policy(shooter)
+                    shooter.transition_triggered = True
+                    shooter.transition_trigger_time_sec = float(data.time)
         if not passer.entered and data.time + 1e-12 >= passer.start_sec:
             _enter_policy(passer)
         if (
@@ -3526,8 +4482,10 @@ def _simulate_shared_world(
                     other_role=passer,
                     data=data,
                     ball_qpos=ball_qpos,
+                    ball_qvel=ball_qvel,
                     config=goalkeeper_reactive_movement_config,
                     actor=goalkeeper_reactive_actor,
+                    autonomy_config=goalkeeper_role_autonomy_config,
                 )
                 goalkeeper_command_mps = float(tactical_command[1])
                 goalkeeper_target_y_m = float(tactical_target[1])
@@ -3603,8 +4561,10 @@ def _simulate_shared_world(
                         other_role=goalkeeper,
                         data=data,
                         ball_qpos=ball_qpos,
+                        ball_qvel=ball_qvel,
                         config=passer_reactive_movement_config,
                         actor=passer_reactive_actor,
+                        autonomy_config=passer_role_autonomy_config,
                     )
                 elif robot is passer and passer_tactical_movement_config is not None:
                     _command_tactical_movement(
@@ -4432,21 +5392,21 @@ def _simulate_shared_world(
                     baseline_torque = (robot.last_target - q) * robot.kp + (
                         robot.target_velocity - dq
                     ) * robot.kd
-                    decision = robot.recovery_torque_actor.action(
+                    residual_decision = robot.recovery_torque_actor.action(
                         actor_state,
                         baseline_torque,
                     )
                     robot.learned_torque_support_rms_peak = max(
                         robot.learned_torque_support_rms_peak,
-                        decision.standardized_rms,
+                        residual_decision.standardized_rms,
                     )
-                    if decision.accepted:
-                        learned_torque[robot.role] = decision
+                    if residual_decision.accepted:
+                        learned_torque[robot.role] = residual_decision
                         robot.learned_torque_frame_count += 1
-                        robot.learned_torque_confidence_sum += decision.confidence
+                        robot.learned_torque_confidence_sum += residual_decision.confidence
                         robot.learned_torque_peak_residual_nm = max(
                             robot.learned_torque_peak_residual_nm,
-                            decision.peak_residual_nm,
+                            residual_decision.peak_residual_nm,
                         )
                     else:
                         robot.learned_torque_fallback_count += 1
@@ -4472,6 +5432,32 @@ def _simulate_shared_world(
         goalkeeper_support = (False, False)
         frame_ballistic_actor_active = False
         frame_ballistic_actor_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        frame_three_axis_contact_actor_active = False
+        frame_three_axis_contact_actor_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        frame_three_axis_contact_actor_force_xyz_n: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_three_axis_contact_actor_foot_velocity_xyz_mps: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_target_velocity_contact_actor_active = False
+        frame_target_velocity_contact_actor_target_supported = False
+        frame_target_velocity_contact_actor_torque: NDArray[np.float64] = np.zeros(
+            29, dtype=np.float64
+        )
+        frame_target_velocity_contact_actor_force_xyz_n: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_target_velocity_contact_actor_foot_velocity_xyz_mps: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_target_velocity_contact_actor_target_xyz_mps: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_neural_contact_actor_active = False
+        frame_neural_contact_actor_supported = False
+        frame_neural_contact_actor_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
+        frame_neural_contact_actor_ood_distance = math.inf
         frame_second_striker_ballistic_actor_active = False
         frame_second_striker_ballistic_actor_torque: NDArray[np.float64] = np.zeros(
             29, dtype=np.float64
@@ -4501,19 +5487,32 @@ def _simulate_shared_world(
         frame_loft_teacher_active = False
         frame_loft_teacher_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         frame_loft_teacher_force_xyz_n: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
+        frame_loft_teacher_foot_velocity_xyz_mps: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
         frame_ballistic_contact_torque_active = False
         frame_ballistic_contact_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         frame_first_touch_interception_active = False
         frame_first_touch_interception_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
         frame_first_touch_interception_force: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
         frame_first_touch_interception_error: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
+        frame_passer_reception_interception_active = False
+        frame_passer_reception_interception_torque: NDArray[np.float64] = np.zeros(
+            29, dtype=np.float64
+        )
+        frame_passer_reception_interception_force: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
+        frame_passer_reception_interception_error: NDArray[np.float64] = np.zeros(
+            3, dtype=np.float64
+        )
         frame_second_striker_ballistic_contact_torque_active = False
         frame_second_striker_ballistic_contact_torque: NDArray[np.float64] = np.zeros(
             29, dtype=np.float64
         )
         frame_goalkeeper_bimanual_punch_active = False
         frame_goalkeeper_bimanual_punch_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
-        for _ in range(_SUBSTEPS):
+        for substep_index in range(_SUBSTEPS):
             data.xfrc_applied[ball_body, :3] = 0.0
             if second_ball_body is not None:
                 data.xfrc_applied[second_ball_body, :3] = 0.0
@@ -4726,6 +5725,164 @@ def _simulate_shared_world(
                             np.max(np.abs(frame_ballistic_actor_torque))
                         ):
                             frame_ballistic_actor_torque = effect.torque.copy()
+                strike_route_authorized = bool(
+                    robot.runtime_strike_router is None
+                    or (
+                        robot.runtime_strike_route_decision is not None
+                        and robot.runtime_strike_route_decision.accepted
+                    )
+                )
+                receive_route_authorized = bool(
+                    (
+                        robot.runtime_receive_actor is None
+                        and robot.runtime_receive_probe_action is None
+                    )
+                    or (
+                        robot.runtime_receive_decision is not None
+                        and robot.runtime_receive_decision.accepted
+                    )
+                )
+                target_route_authorized = bool(
+                    robot.runtime_contact_target_actor is None
+                    or (
+                        robot.runtime_contact_target_decision is not None
+                        and robot.runtime_contact_target_decision.accepted
+                    )
+                )
+                finish_plan_authorized = bool(
+                    robot.runtime_finish_plan_actor is None
+                    or (
+                        robot.runtime_finish_plan_decision is not None
+                        and robot.runtime_finish_plan_decision.accepted
+                    )
+                )
+                three_axis_contact_authorized = bool(
+                    strike_route_authorized
+                    and receive_route_authorized
+                    and target_route_authorized
+                    and finish_plan_authorized
+                )
+                if (
+                    robot.role == "shooter"
+                    and shooter_three_axis_contact_actor is not None
+                    and three_axis_contact_authorized
+                ):
+                    bilateral_actor_kwargs = {}
+                    if robot.parameters.kick_foot == "left":
+                        bilateral_actor_kwargs = {
+                            "striking_ankle_body_id": robot.left_ankle_body,
+                            "lateral_mirror_sign": -1.0,
+                        }
+                    three_axis_effect = g1_three_axis_contact_effect(
+                        model=model,
+                        data=data,
+                        right_ankle_body_id=robot.right_ankle_body,
+                        actor=shooter_three_axis_contact_actor,
+                        policy_frame=policy_frames[robot.role],
+                        contact_observed=robot.contact_latched,
+                        ball_position=np.asarray(
+                            data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
+                        ),
+                        actuated_dof_indices=np.asarray(robot.joint_qvel, dtype=np.int64),
+                        **bilateral_actor_kwargs,
+                    )
+                    raw_torque = raw_torque + three_axis_effect.torque
+                    frame_three_axis_contact_actor_active = bool(
+                        frame_three_axis_contact_actor_active or three_axis_effect.active
+                    )
+                    if float(np.max(np.abs(three_axis_effect.torque))) >= float(
+                        np.max(np.abs(frame_three_axis_contact_actor_torque))
+                    ):
+                        frame_three_axis_contact_actor_torque = three_axis_effect.torque.copy()
+                        frame_three_axis_contact_actor_force_xyz_n = (
+                            three_axis_effect.force_xyz_n.copy()
+                        )
+                        frame_three_axis_contact_actor_foot_velocity_xyz_mps = (
+                            three_axis_effect.foot_velocity_xyz_mps.copy()
+                        )
+                if (
+                    robot.role == "shooter"
+                    and shooter_target_velocity_contact_actor is not None
+                    and three_axis_contact_authorized
+                ):
+                    assert shooter_target_foot_velocity_xyz_mps is not None
+                    target_actor_kwargs: dict[str, Any] = {}
+                    if robot.parameters.kick_foot == "left":
+                        target_actor_kwargs = {
+                            "striking_ankle_body_id": robot.left_ankle_body,
+                            "lateral_mirror_sign": -1.0,
+                        }
+                    target_effect = g1_target_velocity_contact_effect(
+                        model=model,
+                        data=data,
+                        right_ankle_body_id=robot.right_ankle_body,
+                        actor=shooter_target_velocity_contact_actor,
+                        target_velocity_xyz_mps=np.asarray(
+                            shooter_target_foot_velocity_xyz_mps, dtype=np.float64
+                        ),
+                        policy_frame=policy_frames[robot.role],
+                        contact_observed=robot.contact_latched,
+                        ball_position=np.asarray(
+                            data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
+                        ),
+                        actuated_dof_indices=np.asarray(robot.joint_qvel, dtype=np.int64),
+                        **target_actor_kwargs,
+                    )
+                    raw_torque = raw_torque + target_effect.torque
+                    frame_target_velocity_contact_actor_active = bool(
+                        frame_target_velocity_contact_actor_active or target_effect.active
+                    )
+                    frame_target_velocity_contact_actor_target_supported = bool(
+                        frame_target_velocity_contact_actor_target_supported
+                        or target_effect.target_supported
+                    )
+                    if float(np.max(np.abs(target_effect.torque))) >= float(
+                        np.max(np.abs(frame_target_velocity_contact_actor_torque))
+                    ):
+                        frame_target_velocity_contact_actor_torque = target_effect.torque.copy()
+                        frame_target_velocity_contact_actor_force_xyz_n = (
+                            target_effect.force_xyz_n.copy()
+                        )
+                        frame_target_velocity_contact_actor_foot_velocity_xyz_mps = (
+                            target_effect.foot_velocity_xyz_mps.copy()
+                        )
+                        frame_target_velocity_contact_actor_target_xyz_mps = (
+                            target_effect.target_velocity_xyz_mps.copy()
+                        )
+                if (
+                    robot.role == "shooter"
+                    and shooter_neural_contact_actor is not None
+                    and three_axis_contact_authorized
+                ):
+                    assert shooter_neural_contact_policy_frame is not None
+                    assert shooter_neural_contact_target_velocity_xyz_mps is not None
+                    # Source labels are control-rate residuals.  Evaluate once
+                    # and hold across physics substeps, as a real low-level
+                    # command buffer would.
+                    if substep_index == 0:
+                        neural_features = neural_contact_features(
+                            phase_offset_frames=float(
+                                policy_frames[robot.role] - shooter_neural_contact_policy_frame
+                            ),
+                            target_velocity_xyz_mps=(
+                                shooter_neural_contact_target_velocity_xyz_mps
+                            ),
+                            ball_local_position_m=robot.state.ball_pos_w,
+                            ball_local_velocity_mps=robot.state.ball_vel_w,
+                            joint_position_rad=q,
+                            joint_velocity_rad_s=dq,
+                        )
+                        neural_effect = evaluate_neural_contact_actor(
+                            actor=shooter_neural_contact_actor,
+                            features=neural_features,
+                        )
+                        frame_neural_contact_actor_torque = neural_effect.torque.copy()
+                        frame_neural_contact_actor_active = neural_effect.active
+                        frame_neural_contact_actor_supported = neural_effect.supported
+                        frame_neural_contact_actor_ood_distance = (
+                            neural_effect.normalized_ood_distance
+                        )
+                    raw_torque = raw_torque + frame_neural_contact_actor_torque
                 if robot.role == "shooter" and shooter_loft_teacher_config is not None:
                     teacher_effect = g1_loft_teacher_effect(
                         model=model,
@@ -4750,6 +5907,14 @@ def _simulate_shared_world(
                                 teacher_effect.forward_force_n,
                                 teacher_effect.lateral_force_n,
                                 teacher_effect.vertical_force_n,
+                            ),
+                            dtype=np.float64,
+                        )
+                        frame_loft_teacher_foot_velocity_xyz_mps = np.asarray(
+                            (
+                                teacher_effect.foot_forward_speed_mps,
+                                teacher_effect.foot_lateral_speed_mps,
+                                teacher_effect.foot_vertical_speed_mps,
                             ),
                             dtype=np.float64,
                         )
@@ -4801,8 +5966,16 @@ def _simulate_shared_world(
                     and second_striker_ballistic_contact_torque_config is not None
                     else shooter_ballistic_contact_torque_config
                 )
+                runtime_contact_authorized = bool(
+                    robot.role != "shooter"
+                    or robot.runtime_strike_router is None
+                    or (
+                        robot.runtime_strike_route_decision is not None
+                        and robot.runtime_strike_route_decision.accepted
+                    )
+                )
                 if robot.role in {"shooter", "second_striker"} and (
-                    role_contact_torque_config is not None
+                    role_contact_torque_config is not None and runtime_contact_authorized
                 ):
                     contact_torque, contact_torque_active = g1_ballistic_contact_torque_residual(
                         policy_frame=policy_frames[robot.role],
@@ -4860,6 +6033,53 @@ def _simulate_shared_world(
                         frame_first_touch_interception_torque = interception.torque.copy()
                         frame_first_touch_interception_force = interception.task_force_n.copy()
                         frame_first_touch_interception_error = interception.position_error_m.copy()
+                if robot.role == "passer" and passer_reception_interception_config is not None:
+                    left_distance = float(
+                        np.linalg.norm(
+                            np.asarray(data.xpos[robot.left_ankle_body], dtype=np.float64)
+                            - np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64)
+                        )
+                    )
+                    right_distance = float(
+                        np.linalg.norm(
+                            np.asarray(data.xpos[robot.right_ankle_body], dtype=np.float64)
+                            - np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64)
+                        )
+                    )
+                    reception_foot = "left" if left_distance <= right_distance else "right"
+                    reception_ankle = (
+                        robot.left_ankle_body
+                        if reception_foot == "left"
+                        else robot.right_ankle_body
+                    )
+                    reception = first_touch_interception_effect(
+                        model=model,
+                        data=data,
+                        striking_ankle_body_id=reception_ankle,
+                        actuated_dof_indices=np.asarray(robot.joint_qvel, dtype=np.int64),
+                        ball_position_m=np.asarray(
+                            data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
+                        ),
+                        ball_velocity_mps=np.asarray(
+                            data.qvel[ball_qvel : ball_qvel + 3], dtype=np.float64
+                        ),
+                        policy_frame=(passer_reception_interception_config.start_policy_frame),
+                        contact_observed=robot.contact_latched,
+                        kick_foot=reception_foot,
+                        config=passer_reception_interception_config,
+                    )
+                    raw_torque = raw_torque + reception.torque
+                    frame_passer_reception_interception_active = (
+                        frame_passer_reception_interception_active or reception.active
+                    )
+                    if float(np.max(np.abs(reception.torque))) >= float(
+                        np.max(np.abs(frame_passer_reception_interception_torque))
+                    ):
+                        frame_passer_reception_interception_torque = reception.torque.copy()
+                        frame_passer_reception_interception_force = reception.task_force_n.copy()
+                        frame_passer_reception_interception_error = (
+                            reception.position_error_m.copy()
+                        )
                 safety_projected = raw_torque
                 # The candidate is a post-impact recovery module.  Keeping the
                 # guard behind the measured contact latch preserves the frozen
@@ -5020,6 +6240,8 @@ def _simulate_shared_world(
                     ).copy()
                     shooter.contact_latched = True
                     shooter.contact_time = float(data.time)
+                    if shooter.causal_strike_option is not None:
+                        shooter.causal_strike_option.observe_contact()
                     _reset_post_contact_support_anchors(shooter)
             if (
                 goalkeeper is not None
@@ -5513,6 +6735,42 @@ def _simulate_shared_world(
         )
         trace["shooter_ballistic_actor_active"].append(frame_ballistic_actor_active)
         trace["shooter_ballistic_actor_torque"].append(frame_ballistic_actor_torque)
+        trace["shooter_three_axis_contact_actor_active"].append(
+            frame_three_axis_contact_actor_active
+        )
+        trace["shooter_three_axis_contact_actor_torque"].append(
+            frame_three_axis_contact_actor_torque
+        )
+        trace["shooter_three_axis_contact_actor_force_xyz_n"].append(
+            frame_three_axis_contact_actor_force_xyz_n
+        )
+        trace["shooter_three_axis_contact_actor_foot_velocity_xyz_mps"].append(
+            frame_three_axis_contact_actor_foot_velocity_xyz_mps
+        )
+        trace["shooter_target_velocity_contact_actor_active"].append(
+            frame_target_velocity_contact_actor_active
+        )
+        trace["shooter_target_velocity_contact_actor_torque"].append(
+            frame_target_velocity_contact_actor_torque
+        )
+        trace["shooter_target_velocity_contact_actor_force_xyz_n"].append(
+            frame_target_velocity_contact_actor_force_xyz_n
+        )
+        trace["shooter_target_velocity_contact_actor_foot_velocity_xyz_mps"].append(
+            frame_target_velocity_contact_actor_foot_velocity_xyz_mps
+        )
+        trace["shooter_target_velocity_contact_actor_target_xyz_mps"].append(
+            frame_target_velocity_contact_actor_target_xyz_mps
+        )
+        trace["shooter_target_velocity_contact_actor_target_supported"].append(
+            frame_target_velocity_contact_actor_target_supported
+        )
+        trace["shooter_neural_contact_actor_active"].append(frame_neural_contact_actor_active)
+        trace["shooter_neural_contact_actor_torque"].append(frame_neural_contact_actor_torque)
+        trace["shooter_neural_contact_actor_supported"].append(frame_neural_contact_actor_supported)
+        trace["shooter_neural_contact_actor_ood_distance"].append(
+            frame_neural_contact_actor_ood_distance
+        )
         trace["shooter_ballistic_contact_active"].append(shooter_ballistic_contact_active)
         trace["shooter_ballistic_contact_target_delta"].append(
             shooter_ballistic_contact_target_delta
@@ -5529,9 +6787,24 @@ def _simulate_shared_world(
         )
         trace["shooter_first_touch_interception_force"].append(frame_first_touch_interception_force)
         trace["shooter_first_touch_interception_error"].append(frame_first_touch_interception_error)
+        trace["passer_reception_interception_active"].append(
+            frame_passer_reception_interception_active
+        )
+        trace["passer_reception_interception_torque"].append(
+            frame_passer_reception_interception_torque
+        )
+        trace["passer_reception_interception_force"].append(
+            frame_passer_reception_interception_force
+        )
+        trace["passer_reception_interception_error"].append(
+            frame_passer_reception_interception_error
+        )
         trace["shooter_loft_teacher_active"].append(frame_loft_teacher_active)
         trace["shooter_loft_teacher_torque"].append(frame_loft_teacher_torque)
         trace["shooter_loft_teacher_force_xyz_n"].append(frame_loft_teacher_force_xyz_n)
+        trace["shooter_loft_teacher_foot_velocity_xyz_mps"].append(
+            frame_loft_teacher_foot_velocity_xyz_mps
+        )
         if (
             second_striker is not None
             and second_ball_qpos is not None
@@ -5799,6 +7072,25 @@ def _simulate_shared_world(
                 passer.last_reactive_route_support_distance
             )
             trace["passer_reactive_route_accepted"].append(passer.last_reactive_route_accepted)
+            trace["passer_reactive_role_separation_m"].append(
+                passer.last_reactive_role_separation_m
+            )
+            trace["passer_reactive_collision_shield_active"].append(
+                passer.last_reactive_collision_shield_active
+            )
+            trace["passer_reactive_velocity_braking_correction"].append(
+                np.zeros(2, dtype=np.float64)
+                if passer.last_reactive_velocity_braking_correction is None
+                else passer.last_reactive_velocity_braking_correction.copy()
+            )
+        if passer_role_autonomy_config is not None:
+            trace["passer_role_intent_code"].append(passer.last_role_intent_code)
+            trace["passer_role_intent_target_shift"].append(
+                np.zeros(2, dtype=np.float64)
+                if passer.last_role_intent_target_shift is None
+                else passer.last_role_intent_target_shift.copy()
+            )
+            trace["passer_role_intent_switch_count"].append(passer.role_intent_switch_count)
         if (
             goalkeeper_tactical_movement_config is not None
             or goalkeeper_reactive_movement_config is not None
@@ -5830,6 +7122,26 @@ def _simulate_shared_world(
             trace["goalkeeper_reactive_route_accepted"].append(
                 goalkeeper.last_reactive_route_accepted
             )
+            trace["goalkeeper_reactive_role_separation_m"].append(
+                goalkeeper.last_reactive_role_separation_m
+            )
+            trace["goalkeeper_reactive_collision_shield_active"].append(
+                goalkeeper.last_reactive_collision_shield_active
+            )
+            trace["goalkeeper_reactive_velocity_braking_correction"].append(
+                np.zeros(2, dtype=np.float64)
+                if goalkeeper.last_reactive_velocity_braking_correction is None
+                else goalkeeper.last_reactive_velocity_braking_correction.copy()
+            )
+        if goalkeeper_role_autonomy_config is not None:
+            assert goalkeeper is not None
+            trace["goalkeeper_role_intent_code"].append(goalkeeper.last_role_intent_code)
+            trace["goalkeeper_role_intent_target_shift"].append(
+                np.zeros(2, dtype=np.float64)
+                if goalkeeper.last_role_intent_target_shift is None
+                else goalkeeper.last_role_intent_target_shift.copy()
+            )
+            trace["goalkeeper_role_intent_switch_count"].append(goalkeeper.role_intent_switch_count)
         second_launcher_active = bool(
             second_threat_force is not None
             and second_threat_force_stop_sec is not None
@@ -5964,6 +7276,202 @@ def _simulate_shared_world(
         shooter_recovery_active_fraction=shooter.recovery_active_frame_count / max(1, total_frames),
         passer_recovery_peak_blend_fraction=passer.recovery_peak_blend_fraction,
         shooter_recovery_peak_blend_fraction=shooter.recovery_peak_blend_fraction,
+        shooter_transition_actor_hash=(
+            None if shooter.transition_actor is None else shooter.transition_actor.actor_hash
+        ),
+        shooter_transition_actor_accepted=bool(
+            shooter.transition_decision is not None and shooter.transition_decision.accepted
+        ),
+        shooter_transition_triggered=shooter.transition_triggered,
+        shooter_transition_trigger_time_sec=shooter.transition_trigger_time_sec,
+        shooter_transition_trigger_policy_frame=(
+            None
+            if shooter.transition_decision is None
+            else shooter.transition_decision.trigger_policy_frame
+        ),
+        shooter_transition_residual_frames=(
+            0
+            if shooter.transition_decision is None
+            else shooter.transition_decision.residual_frames
+        ),
+        shooter_transition_support_distance=(
+            None
+            if shooter.transition_decision is None
+            else shooter.transition_decision.support_distance
+        ),
+        shooter_transition_predicted_safe_probability=(
+            None
+            if shooter.transition_decision is None
+            else shooter.transition_decision.predicted_safe_probability
+        ),
+        shooter_transition_predicted_chain_probability=(
+            None
+            if shooter.transition_decision is None
+            else shooter.transition_decision.predicted_chain_probability
+        ),
+        shooter_transition_ensemble_probability_spread=(
+            None
+            if shooter.transition_decision is None
+            else shooter.transition_decision.ensemble_probability_spread
+        ),
+        shooter_transition_used_parent_fallback=bool(
+            shooter.transition_decision is not None
+            and shooter.transition_decision.used_parent_fallback
+        ),
+        shooter_causal_strike_option_enabled=shooter.causal_strike_option is not None,
+        shooter_causal_strike_option_config_hash=(
+            None
+            if shooter.causal_strike_option is None
+            else shooter.causal_strike_option.config.config_hash
+        ),
+        shooter_causal_strike_option_final_phase=(
+            None
+            if shooter.causal_strike_option is None
+            else shooter.causal_strike_option.phase.name
+        ),
+        shooter_causal_strike_option_reason=(
+            None
+            if shooter.last_causal_strike_option_decision is None
+            else shooter.last_causal_strike_option_decision.reason
+        ),
+        shooter_causal_strike_bridge_started=shooter.causal_strike_bridge_started,
+        shooter_causal_strike_bridge_start_time_sec=(shooter.causal_strike_bridge_start_time_sec),
+        shooter_causal_strike_bridge_predecessor_policy_frame=(
+            shooter.causal_strike_bridge_predecessor_policy_frame
+        ),
+        shooter_causal_strike_selected_phase_start_frame=(
+            shooter.causal_strike_selected_phase_start_frame
+        ),
+        shooter_causal_strike_bridge_peak_target_velocity_rms_rad_s=(
+            shooter.causal_strike_bridge_peak_target_velocity_rms_rad_s
+        ),
+        shooter_causal_strike_abort_recovery_activated=(
+            shooter.causal_strike_abort_recovery_activated
+        ),
+        shooter_runtime_strike_router_hash=(
+            None
+            if shooter.runtime_strike_router is None
+            else shooter.runtime_strike_router.actor_hash
+        ),
+        shooter_runtime_strike_route_decided=(shooter.runtime_strike_route_decision is not None),
+        shooter_runtime_strike_route_accepted=bool(
+            shooter.runtime_strike_route_decision is not None
+            and shooter.runtime_strike_route_decision.accepted
+        ),
+        shooter_runtime_strike_route=(
+            None
+            if shooter.runtime_strike_route_decision is None
+            else shooter.runtime_strike_route_decision.route
+        ),
+        shooter_runtime_strike_route_time_sec=shooter.runtime_strike_route_time_sec,
+        shooter_runtime_strike_route_support_distance=(
+            None
+            if shooter.runtime_strike_route_decision is None
+            else shooter.runtime_strike_route_decision.nearest_success_distance
+        ),
+        shooter_runtime_strike_route_advance_frames=(
+            None
+            if shooter.runtime_strike_route_decision is None
+            or shooter.runtime_strike_route_decision.action is None
+            else (shooter.runtime_strike_route_decision.action.maximum_arrival_advance_frames)
+        ),
+        shooter_runtime_receive_actor_hash=(
+            shooter.runtime_receive_actor.actor_hash
+            if shooter.runtime_receive_actor is not None
+            else (
+                None
+                if shooter.runtime_finish_plan_actor is None
+                else shooter.runtime_finish_plan_actor.actor_hash
+            )
+        ),
+        shooter_runtime_receive_decided=(shooter.runtime_receive_decision is not None),
+        shooter_runtime_receive_accepted=bool(
+            shooter.runtime_receive_decision is not None
+            and shooter.runtime_receive_decision.accepted
+        ),
+        shooter_runtime_receive_route=(
+            None
+            if shooter.runtime_receive_decision is None
+            else shooter.runtime_receive_decision.route
+        ),
+        shooter_runtime_receive_time_sec=shooter.runtime_receive_time_sec,
+        shooter_runtime_receive_support_distance=(
+            None
+            if shooter.runtime_receive_decision is None
+            else shooter.runtime_receive_decision.nearest_success_distance
+        ),
+        shooter_runtime_receive_alignment_tolerance_sec=(
+            None
+            if shooter.runtime_receive_decision is None
+            or shooter.runtime_receive_decision.action is None
+            else shooter.runtime_receive_decision.action.arrival_alignment_tolerance_sec
+        ),
+        shooter_runtime_receive_stance_offset_y_m=(
+            None
+            if shooter.runtime_receive_decision is None
+            or shooter.runtime_receive_decision.action is None
+            else shooter.runtime_receive_decision.action.stance_offset_y_m
+        ),
+        shooter_runtime_receive_foot_yaw_offset_rad=(
+            None
+            if shooter.runtime_receive_decision is None
+            or shooter.runtime_receive_decision.action is None
+            else shooter.runtime_receive_decision.action.foot_yaw_offset_rad
+        ),
+        shooter_runtime_contact_target_actor_hash=(
+            shooter.runtime_contact_target_actor.actor_hash
+            if shooter.runtime_contact_target_actor is not None
+            else (
+                None
+                if shooter.runtime_finish_plan_actor is None
+                else shooter.runtime_finish_plan_actor.actor_hash
+            )
+        ),
+        shooter_runtime_contact_target_decided=(
+            shooter.runtime_contact_target_decision is not None
+        ),
+        shooter_runtime_contact_target_accepted=bool(
+            shooter.runtime_contact_target_decision is not None
+            and shooter.runtime_contact_target_decision.accepted
+        ),
+        shooter_runtime_contact_target_route=(
+            None
+            if shooter.runtime_contact_target_decision is None
+            else shooter.runtime_contact_target_decision.route
+        ),
+        shooter_runtime_contact_target_time_sec=shooter.runtime_contact_target_time_sec,
+        shooter_runtime_contact_target_support_distance=(
+            None
+            if shooter.runtime_contact_target_decision is None
+            else shooter.runtime_contact_target_decision.nearest_success_distance
+        ),
+        shooter_runtime_contact_target_velocity_xyz_mps=(
+            None
+            if shooter.runtime_contact_target_decision is None
+            or shooter.runtime_contact_target_decision.action is None
+            else (shooter.runtime_contact_target_decision.action.target_foot_velocity_xyz_mps)
+        ),
+        shooter_runtime_finish_plan_actor_hash=(
+            None
+            if shooter.runtime_finish_plan_actor is None
+            else shooter.runtime_finish_plan_actor.actor_hash
+        ),
+        shooter_runtime_finish_plan_decided=(shooter.runtime_finish_plan_decision is not None),
+        shooter_runtime_finish_plan_accepted=bool(
+            shooter.runtime_finish_plan_decision is not None
+            and shooter.runtime_finish_plan_decision.accepted
+        ),
+        shooter_runtime_finish_plan_route=(
+            None
+            if shooter.runtime_finish_plan_decision is None
+            else shooter.runtime_finish_plan_decision.route
+        ),
+        shooter_runtime_finish_plan_time_sec=shooter.runtime_finish_plan_time_sec,
+        shooter_runtime_finish_plan_support_distance=(
+            None
+            if shooter.runtime_finish_plan_decision is None
+            else shooter.runtime_finish_plan_decision.nearest_success_distance
+        ),
         shooter_aim_expert_route=(
             "early_arrival" if shooter.early_arrival_expert_frame_count > 0 else "nominal"
         ),
@@ -6409,6 +7917,7 @@ def _make_robot(
     state_type: Any,
     output_type: Any,
     policy_type: Any,
+    motion_joint_order: np.ndarray,
     parameters: ShotParameters,
     start_sec: float,
     initial_position: np.ndarray,
@@ -6454,6 +7963,9 @@ def _make_robot(
 
     if not 0 <= post_policy_blend_frames <= 200:
         raise ValueError("post-policy blend frames must be in [0, 200]")
+    order = np.asarray(motion_joint_order, dtype=np.int64)
+    if order.shape != (29,) or set(order.tolist()) != set(range(29)):
+        raise ValueError("G1 motion joint order must be a 29-DoF permutation")
 
     free_joint = _id(model, mujoco.mjtObj.mjOBJ_JOINT, prefix + "floating_base_joint")
     qpos_base = int(model.jnt_qposadr[free_joint])
@@ -6555,6 +8067,7 @@ def _make_robot(
         state=state,
         output=output,
         policy=policy,
+        motion_joint_order=order.copy(),
         standby_output=standby_output,
         standby_policy=standby_policy,
         parameters=parameters,
@@ -6637,6 +8150,79 @@ def _fill_local_state(robot: _Robot, data: Any, ball_body: int, ball_qvel: int) 
         dtype=np.float64,
     )
     robot.state.ang_vel = robot.state.root_ang_vel_b.copy()
+
+
+def _begin_causal_strike_bridge(
+    robot: _Robot,
+    *,
+    timestamp_sec: float,
+    predecessor_policy_frame: int,
+    strike_phase_start_frame: int,
+) -> None:
+    controller = robot.causal_strike_option
+    order = robot.motion_joint_order
+    if (
+        controller is None
+        or order is None
+        or robot.causal_strike_bridge is not None
+        or robot.entered
+    ):
+        raise RuntimeError("causal strike bridge lost its exclusive entry contract")
+    config = controller.config
+    if not (
+        config.minimum_strike_phase_start_frame
+        <= strike_phase_start_frame
+        <= config.maximum_strike_phase_start_frame
+    ):
+        raise RuntimeError("causal strike option selected an invalid motion phase")
+    with _canonical_kick_policy_state(robot), contextlib.redirect_stdout(io.StringIO()):
+        robot.policy.enter()
+        robot.policy._ref_anchor_world_origin = robot.policy._init_to_world @ (
+            robot.policy.motion_body_pos[strike_phase_start_frame, 9].astype(np.float64)
+        )
+    phase_target = np.asarray(
+        robot.policy.motion_joint_pos[strike_phase_start_frame][order],
+        dtype=np.float64,
+    )
+    phase_velocity = np.asarray(
+        robot.policy.motion_joint_vel[strike_phase_start_frame][order],
+        dtype=np.float64,
+    )
+    policy_kp = np.asarray(robot.policy.kps, dtype=np.float64)
+    policy_kd = np.asarray(robot.policy.kds, dtype=np.float64)
+    if robot.parameters.kick_foot == "left":
+        phase_target = _mirror_g1_joint_positions(phase_target)
+        phase_velocity = _mirror_g1_joint_positions(phase_velocity)
+        policy_kp = _mirror_g1_joint_gains(policy_kp)
+        policy_kd = _mirror_g1_joint_gains(policy_kd)
+    entry_position = np.asarray(robot.state.q, dtype=np.float64)
+    entry_velocity = np.asarray(robot.state.dq, dtype=np.float64)
+    delta = phase_target - entry_position
+    robot.causal_strike_bridge = G1VelocityMatchedTransitionBridge(
+        entry_position=entry_position,
+        entry_velocity=entry_velocity,
+        exit_position=phase_target,
+        exit_velocity=phase_velocity,
+        config=G1TransitionBridgeConfig(
+            duration_sec=config.bridge_duration_sec,
+            entry_velocity_scale=config.bridge_entry_velocity_scale,
+            exit_velocity_scale=config.bridge_exit_velocity_scale,
+            maximum_boundary_velocity_rad_s=config.bridge_boundary_velocity_limit_rad_s,
+        ),
+    )
+    robot.causal_strike_bridge_frames = int(round(config.bridge_duration_sec / _CONTROL_DT))
+    robot.causal_strike_bridge_phase_start = strike_phase_start_frame
+    robot.causal_strike_bridge_kp = np.minimum(
+        policy_kp,
+        np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
+        * 0.58
+        / np.maximum(np.abs(delta), 0.05),
+    )
+    robot.causal_strike_bridge_kd = policy_kd * 0.72
+    robot.causal_strike_bridge_started = True
+    robot.causal_strike_bridge_start_time_sec = timestamp_sec
+    robot.causal_strike_bridge_predecessor_policy_frame = predecessor_policy_frame
+    robot.causal_strike_selected_phase_start_frame = strike_phase_start_frame
 
 
 def _enter_policy(robot: _Robot) -> None:
@@ -6902,12 +8488,137 @@ def _command_tactical_movement(
     )
     local_command = np.clip(local_command, ranges[:, 0], ranges[:, 1])
     actual_world_command = _rotate_z(local_command, yaw)
+    if robot.role != "goalkeeper":
+        # RoboNaldo's released locomotion actor is materially stronger in its
+        # canonical local +y half-space.  Reuse the already qualified mirrored
+        # proprioception/action path for a team-mate's local -y route instead
+        # of asking the weak half-space to learn around a runtime mismatch.
+        robot.standby_locomotion_mirror_active = bool(local_command[1] < -1.0e-6)
     robot.state.vel_cmd = _normalized_locomotion_command(robot.standby_policy, local_command)
     active = bool(float(np.linalg.norm(actual_world_command[:2])) > 1.0e-6)
     robot.last_tactical_world_target = np.asarray(target, dtype=np.float64).copy()
     robot.last_tactical_world_command = actual_world_command.copy()
     robot.last_tactical_movement_active = active
     return robot.last_tactical_world_target, actual_world_command, active
+
+
+_ROLE_INTENT_CODES = {
+    "hold": 0,
+    "support": 1,
+    "receive": 2,
+    "overlap": 3,
+    "rebound": 4,
+    "press": 5,
+    "cover": 6,
+}
+
+
+def _bounded_role_target(
+    base_target: NDArray[np.float64],
+    requested_xy: NDArray[np.float64],
+    *,
+    maximum_shift_m: float,
+) -> NDArray[np.float64]:
+    target = np.asarray(base_target, dtype=np.float64).copy()
+    delta = np.asarray(requested_xy, dtype=np.float64) - target[:2]
+    norm = float(np.linalg.norm(delta))
+    if norm > maximum_shift_m:
+        delta *= maximum_shift_m / norm
+    target[:2] += delta
+    target[0] = float(np.clip(target[0], -2.0, 12.0))
+    target[1] = float(np.clip(target[1], -4.0, 4.0))
+    target[2] = 0.0
+    return target
+
+
+def _role_autonomy_target(
+    robot: _Robot,
+    *,
+    carrier: _Robot,
+    other_role: _Robot,
+    data: Any,
+    ball_qpos: int,
+    ball_qvel: int,
+    base_target: NDArray[np.float64],
+    movement: G1ReactiveMovementConfig,
+    autonomy: G1RoleAutonomyConfig,
+) -> NDArray[np.float64]:
+    """Choose one causal role intent and convert it to a bounded target.
+
+    The discrete layer runs at 5--10 Hz and owns only a small correction to
+    the already qualified route target.  The 50 Hz learned route actor and
+    frozen whole-body locomotion policy remain the sole movement executors.
+    """
+
+    if autonomy.role != movement.role:
+        raise ValueError("role autonomy and reactive movement roles differ")
+    now = float(data.time)
+    carrier_position = np.asarray(
+        data.qpos[carrier.qpos_base : carrier.qpos_base + 2], dtype=np.float64
+    )
+    other_position = np.asarray(
+        data.qpos[other_role.qpos_base : other_role.qpos_base + 2], dtype=np.float64
+    )
+    ball_position = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
+    ball_velocity = np.asarray(data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64)
+    ball_speed = float(np.linalg.norm(ball_velocity))
+    ball_advancing = bool(ball_speed >= autonomy.moving_ball_threshold_mps)
+
+    if now + 1.0e-12 >= robot.last_role_intent_decision_sec + autonomy.decision_period_sec:
+        if movement.role == "teammate":
+            if robot.contact_latched:
+                desired = "rebound"
+            elif movement.action == "pass":
+                desired = "receive" if ball_advancing else "support"
+            else:
+                desired = "rebound" if ball_advancing else "overlap"
+        else:
+            desired = "cover" if ball_advancing else "press"
+        can_switch = bool(
+            robot.last_role_intent == "hold"
+            or desired == robot.last_role_intent
+            or now + 1.0e-12 >= robot.last_role_intent_change_sec + autonomy.intent_hysteresis_sec
+        )
+        if can_switch and desired != robot.last_role_intent:
+            robot.last_role_intent = desired
+            robot.last_role_intent_code = _ROLE_INTENT_CODES[desired]
+            robot.last_role_intent_change_sec = now
+            robot.role_intent_switch_count += 1
+        robot.last_role_intent_decision_sec = now
+
+    predicted_ball = ball_position + autonomy.ball_prediction_horizon_sec * ball_velocity
+    side = -1.0 if float(base_target[1] - carrier_position[1]) < 0.0 else 1.0
+    intent = robot.last_role_intent
+    if intent == "support":
+        requested = 0.65 * np.asarray(base_target[:2]) + 0.35 * (
+            carrier_position + np.asarray((0.55, side * autonomy.lane_width_m))
+        )
+    elif intent == "receive":
+        requested = predicted_ball + np.asarray((0.12, side * 0.08), dtype=np.float64)
+    elif intent == "overlap":
+        requested = np.asarray(base_target[:2]) + np.asarray(
+            (autonomy.maximum_target_shift_m, side * 0.55 * autonomy.lane_width_m),
+            dtype=np.float64,
+        )
+    elif intent == "rebound":
+        requested = 0.55 * np.asarray(base_target[:2]) + 0.45 * (
+            predicted_ball + np.asarray((0.40, side * 0.30 * autonomy.lane_width_m))
+        )
+    elif intent == "press":
+        requested = 0.70 * ball_position + 0.30 * carrier_position
+    elif intent == "cover":
+        # Stay goal-side of the moving ball and shade the runner's lane.
+        requested = predicted_ball + np.asarray((0.48, 0.0), dtype=np.float64)
+        requested[1] = 0.72 * requested[1] + 0.28 * other_position[1]
+    else:
+        requested = np.asarray(base_target[:2], dtype=np.float64)
+    target = _bounded_role_target(
+        np.asarray(base_target, dtype=np.float64),
+        np.asarray(requested, dtype=np.float64),
+        maximum_shift_m=autonomy.maximum_target_shift_m,
+    )
+    robot.last_role_intent_target_shift = target[:2] - np.asarray(base_target[:2])
+    return target
 
 
 def _command_reactive_movement(
@@ -6917,8 +8628,10 @@ def _command_reactive_movement(
     other_role: _Robot,
     data: Any,
     ball_qpos: int,
+    ball_qvel: int,
     config: G1ReactiveMovementConfig,
-    actor: G1ReactiveRouteActor,
+    actor: RouteActor,
+    autonomy_config: G1RoleAutonomyConfig | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], bool]:
     """Run one bounded observation update through frozen locomotion authority."""
 
@@ -6934,6 +8647,21 @@ def _command_reactive_movement(
     )
     ball_position = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
     target = np.asarray(config.target_position_m, dtype=np.float64)
+    if autonomy_config is not None:
+        target = _role_autonomy_target(
+            robot,
+            carrier=carrier,
+            other_role=other_role,
+            data=data,
+            ball_qpos=ball_qpos,
+            ball_qvel=ball_qvel,
+            base_target=target,
+            movement=config,
+            autonomy=autonomy_config,
+        )
+    if config.role == "teammate" and config.action == "pass" and robot.contact_latched:
+        target = target.copy()
+        target[0] = min(12.0, target[0] + config.post_reception_follow_through_m)
     features = reactive_route_features(
         target_xy_m=target[:2],
         self_position_xy_m=position,
@@ -6944,15 +8672,87 @@ def _command_reactive_movement(
         action=config.action,
         role=config.role,
     )
-    decision = actor.decide(features)
+    decision: Any
+    if isinstance(actor, G1TemporalRouteActor):
+        decision = actor.decide(features, robot.last_temporal_route_memory)
+        robot.last_temporal_route_memory = decision.next_memory
+    else:
+        decision = actor.decide(features)
+    if robot.reactive_diagonal_braking_confidence is None:
+        if config.role == "teammate" and config.action == "pass":
+            dx_confidence = float(
+                np.clip(
+                    (features[0] - config.diagonal_braking_target_dx_start_m)
+                    / (
+                        config.diagonal_braking_target_dx_full_m
+                        - config.diagonal_braking_target_dx_start_m
+                    ),
+                    0.0,
+                    1.0,
+                )
+            )
+            dy_confidence = float(
+                np.clip(
+                    (features[1] - config.diagonal_braking_target_dy_start_m)
+                    / (
+                        config.diagonal_braking_target_dy_full_m
+                        - config.diagonal_braking_target_dy_start_m
+                    ),
+                    0.0,
+                    1.0,
+                )
+            )
+            robot.reactive_diagonal_braking_confidence = dx_confidence * dy_confidence
+        else:
+            robot.reactive_diagonal_braking_confidence = 0.0
     command = np.zeros(3, dtype=np.float64)
+    robot.last_reactive_role_separation_m = float(np.linalg.norm(position - other_position))
+    robot.last_reactive_collision_shield_active = False
+    robot.last_reactive_velocity_braking_correction = np.zeros(2, dtype=np.float64)
     if decision.accepted:
         command[:2] = decision.world_command_xy_mps
+        if robot.reactive_diagonal_braking_confidence > 0.0:
+            braking_correction = -config.velocity_braking_gain * velocity
+            braking_norm = float(np.linalg.norm(braking_correction))
+            if braking_norm > config.maximum_velocity_braking_correction_mps:
+                braking_correction *= config.maximum_velocity_braking_correction_mps / braking_norm
+            braking_correction *= robot.reactive_diagonal_braking_confidence
+            command[:2] += braking_correction
+            robot.last_reactive_velocity_braking_correction = braking_correction.copy()
+        target_error_distance = float(np.linalg.norm(target[:2] - position))
+        far_fraction = float(
+            np.clip(
+                (target_error_distance - config.far_target_activation_distance_m) / 0.45,
+                0.0,
+                1.0,
+            )
+        )
+        command[:2] *= 1.0 + far_fraction * (config.far_target_speed_gain - 1.0)
         speed = float(np.linalg.norm(command[:2]))
         if speed > config.maximum_speed_mps:
             command[:2] *= config.maximum_speed_mps / speed
         if float(np.linalg.norm(target[:2] - position)) <= config.arrival_radius_m:
             command[:2] = 0.0
+
+        relative_role_position = position - other_position
+        role_separation = float(np.linalg.norm(relative_role_position))
+        shield_active = role_separation < config.minimum_role_separation_m
+        if shield_active:
+            if role_separation <= 1.0e-9:
+                relative_role_position = target[:2] - other_position
+                role_separation = float(np.linalg.norm(relative_role_position))
+            if role_separation > 1.0e-9:
+                correction_speed = min(
+                    config.maximum_collision_correction_mps,
+                    config.collision_avoidance_gain
+                    * (config.minimum_role_separation_m - role_separation),
+                )
+                command[:2] += correction_speed * relative_role_position / role_separation
+                speed = float(np.linalg.norm(command[:2]))
+                if speed > config.maximum_speed_mps:
+                    command[:2] *= config.maximum_speed_mps / speed
+        robot.last_reactive_role_separation_m = role_separation
+        robot.last_reactive_collision_shield_active = shield_active
 
         previous = (
             np.zeros(3, dtype=np.float64)
@@ -6977,6 +8777,8 @@ def _command_reactive_movement(
     )
     local_command = np.clip(local_command, ranges[:, 0], ranges[:, 1])
     actual_world_command = _rotate_z(local_command, yaw)
+    if robot.role != "goalkeeper":
+        robot.standby_locomotion_mirror_active = bool(local_command[1] < -1.0e-6)
     robot.state.vel_cmd = _normalized_locomotion_command(robot.standby_policy, local_command)
     active = bool(float(np.linalg.norm(actual_world_command[:2])) > 1.0e-6)
     robot.last_tactical_world_target = target.copy()
@@ -7963,6 +9765,39 @@ def _update_policy(
 ) -> int:
     robot.last_recovery_active = False
     robot.last_recovery_blend_fraction = 0.0
+    if robot.causal_strike_bridge is not None and not robot.entered:
+        controller = robot.causal_strike_option
+        bridge_kp = robot.causal_strike_bridge_kp
+        bridge_kd = robot.causal_strike_bridge_kd
+        if controller is None or bridge_kp is None or bridge_kd is None:
+            raise RuntimeError("causal strike bridge state is incomplete")
+        _reset_inactive_imitation_channels(robot)
+        bridge_frame = robot.causal_strike_bridge_frame
+        bridge_frames = robot.causal_strike_bridge_frames
+        if not 0 <= bridge_frame < bridge_frames:
+            raise RuntimeError("causal strike bridge frame is outside its contract")
+        sample = robot.causal_strike_bridge.sample((bridge_frame + 1) * _CONTROL_DT)
+        robot.last_target = np.asarray(sample.position, dtype=np.float64).copy()
+        robot.target_velocity = np.asarray(sample.velocity, dtype=np.float64).copy()
+        robot.kp = bridge_kp.copy()
+        robot.kd = bridge_kd.copy()
+        velocity_rms = float(np.sqrt(np.mean(np.square(robot.target_velocity))))
+        robot.causal_strike_bridge_peak_target_velocity_rms_rad_s = max(
+            robot.causal_strike_bridge_peak_target_velocity_rms_rad_s,
+            velocity_rms,
+        )
+        phase_start = robot.causal_strike_bridge_phase_start
+        if bridge_frame >= bridge_frames - controller.config.history_prime_frames:
+            robot.policy.time_step = (
+                robot.policy.WARMUP_STEPS + phase_start - (bridge_frames - 1 - bridge_frame)
+            )
+            with _canonical_kick_policy_state(robot), contextlib.redirect_stdout(io.StringIO()):
+                robot.policy._build_obs()
+        robot.causal_strike_bridge_frame += 1
+        if robot.causal_strike_bridge_frame == bridge_frames:
+            robot.policy.time_step = robot.policy.WARMUP_STEPS + phase_start
+            robot.entered = True
+        return phase_start
     if not robot.entered:
         robot.target_velocity.fill(0.0)
         robot.last_motion_prior_position_active = False
@@ -7980,6 +9815,23 @@ def _update_policy(
         return 0
     current_policy_frame = max(0, int(robot.policy.time_step) - int(robot.policy.WARMUP_STEPS))
     robot.last_phase_correction = 0
+    if robot.causal_strike_option is not None:
+        robot.causal_strike_option.observe_policy_progress(current_policy_frame)
+    if (
+        not robot.post_policy_active
+        and robot.causal_strike_option is not None
+        and robot.causal_strike_option.phase == CausalStrikeOptionPhase.ABORTED
+    ):
+        robot.post_policy_active = True
+        robot.post_policy_origin_target = robot.last_target.copy()
+        robot.post_policy_origin_kp = robot.kp.copy()
+        robot.post_policy_origin_kd = robot.kd.copy()
+        robot.post_policy_activation_simulation_frame = simulation_frame
+        robot.post_policy_blend_frames = max(
+            robot.post_policy_blend_frames,
+            robot.causal_strike_option.config.abort_recovery_blend_frames,
+        )
+        robot.causal_strike_abort_recovery_activated = True
     if (
         not robot.post_policy_active
         and robot.post_policy_frame is not None
@@ -8075,7 +9927,17 @@ def _update_policy(
         current_policy_frame,
         simulation_frame,
     )
-    if (
+    if robot.causal_strike_option is not None:
+        repeat, correction = robot.causal_strike_option.align_repeat_count(
+            policy_frame=current_policy_frame,
+            nominal_repeat=repeat,
+        )
+        if correction < 0:
+            robot.phase_hold_count += 1
+        elif correction > 0:
+            robot.phase_advance_count += 1
+        robot.last_phase_correction = correction
+    elif (
         robot.phase_sync_enabled
         and robot.role == "shooter"
         and 184 <= current_policy_frame <= 252
@@ -8664,6 +10526,140 @@ def _append_trace(
     trace["passer_foot_contact"].append(support[0])
     trace["shooter_foot_contact"].append(support[1])
     trace["shooter_phase_correction"].append(shooter.last_phase_correction)
+    transition_features = shooter.last_transition_features
+    if transition_features is None:
+        raise RuntimeError("shooter transition features were not recorded")
+    transition_decision = shooter.transition_decision
+    trace["shooter_transition_features"].append(transition_features.copy())
+    trace["shooter_transition_actor_accepted"].append(
+        False if transition_decision is None else transition_decision.accepted
+    )
+    trace["shooter_transition_support_distance"].append(
+        -1.0 if transition_decision is None else transition_decision.support_distance
+    )
+    trace["shooter_transition_trigger_policy_frame"].append(
+        -1 if transition_decision is None else transition_decision.trigger_policy_frame
+    )
+    trace["shooter_transition_residual_frames"].append(
+        0 if transition_decision is None else transition_decision.residual_frames
+    )
+    trace["shooter_transition_predicted_safe_probability"].append(
+        -1.0
+        if transition_decision is None or transition_decision.predicted_safe_probability is None
+        else transition_decision.predicted_safe_probability
+    )
+    trace["shooter_transition_predicted_chain_probability"].append(
+        -1.0
+        if transition_decision is None or transition_decision.predicted_chain_probability is None
+        else transition_decision.predicted_chain_probability
+    )
+    trace["shooter_transition_ensemble_probability_spread"].append(
+        -1.0
+        if transition_decision is None or transition_decision.ensemble_probability_spread is None
+        else transition_decision.ensemble_probability_spread
+    )
+    trace["shooter_transition_used_parent_fallback"].append(
+        False if transition_decision is None else transition_decision.used_parent_fallback
+    )
+    trace["shooter_transition_triggered"].append(shooter.transition_triggered)
+    option_decision = shooter.last_causal_strike_option_decision
+    trace["shooter_causal_strike_option_phase"].append(
+        -1 if option_decision is None else int(option_decision.phase)
+    )
+    trace["shooter_causal_strike_option_ready"].append(
+        False if option_decision is None else option_decision.ready
+    )
+    trace["shooter_causal_strike_option_begin_bridge"].append(
+        False if option_decision is None else option_decision.begin_bridge
+    )
+    trace["shooter_causal_strike_option_incoming_ball"].append(
+        False if option_decision is None else option_decision.incoming_ball
+    )
+    trace["shooter_causal_strike_option_ball_arrival_eta_sec"].append(
+        -1.0
+        if option_decision is None or option_decision.ball_arrival_eta_sec is None
+        else option_decision.ball_arrival_eta_sec
+    )
+    trace["shooter_causal_strike_option_incoming_observation_count"].append(
+        0 if option_decision is None else option_decision.incoming_observation_count
+    )
+    trace["shooter_causal_strike_selected_phase_start_frame"].append(
+        -1
+        if shooter.causal_strike_selected_phase_start_frame is None
+        else shooter.causal_strike_selected_phase_start_frame
+    )
+    trace["shooter_causal_strike_bridge_fraction"].append(
+        0.0
+        if not shooter.causal_strike_bridge_frames
+        else min(
+            1.0,
+            shooter.causal_strike_bridge_frame / shooter.causal_strike_bridge_frames,
+        )
+    )
+    trace["shooter_ball_local_position"].append(
+        np.asarray(shooter.state.ball_pos_w, dtype=np.float64).copy()
+    )
+    trace["shooter_ball_local_velocity"].append(
+        np.asarray(shooter.state.ball_vel_w, dtype=np.float64).copy()
+    )
+    trace["shooter_pelvis_local_position"].append(
+        np.asarray(shooter.state.pelvis_pos_w, dtype=np.float64).copy()
+    )
+    runtime_decision = shooter.runtime_strike_route_decision
+    trace["shooter_runtime_strike_features"].append(
+        np.zeros(7, dtype=np.float64)
+        if shooter.last_runtime_strike_features is None
+        else shooter.last_runtime_strike_features.copy()
+    )
+    trace["shooter_runtime_strike_route_decided"].append(runtime_decision is not None)
+    trace["shooter_runtime_strike_route_accepted"].append(
+        False if runtime_decision is None else runtime_decision.accepted
+    )
+    trace["shooter_runtime_strike_route_support_distance"].append(
+        -1.0 if runtime_decision is None else runtime_decision.nearest_success_distance
+    )
+    trace["shooter_runtime_strike_route_advance_frames"].append(
+        -1
+        if runtime_decision is None or runtime_decision.action is None
+        else runtime_decision.action.maximum_arrival_advance_frames
+    )
+    receive_decision = shooter.runtime_receive_decision
+    receive_action = None if receive_decision is None else receive_decision.action
+    trace["shooter_runtime_receive_features"].append(
+        np.zeros(9, dtype=np.float64)
+        if shooter.last_runtime_receive_features is None
+        else shooter.last_runtime_receive_features.copy()
+    )
+    trace["shooter_runtime_receive_decided"].append(receive_decision is not None)
+    trace["shooter_runtime_receive_accepted"].append(
+        False if receive_decision is None else receive_decision.accepted
+    )
+    trace["shooter_runtime_receive_support_distance"].append(
+        -1.0 if receive_decision is None else receive_decision.nearest_success_distance
+    )
+    trace["shooter_runtime_receive_alignment_tolerance_sec"].append(
+        -1.0 if receive_action is None else receive_action.arrival_alignment_tolerance_sec
+    )
+    trace["shooter_runtime_receive_stance_offset_y_m"].append(
+        0.0 if receive_action is None else receive_action.stance_offset_y_m
+    )
+    trace["shooter_runtime_receive_foot_yaw_offset_rad"].append(
+        0.0 if receive_action is None else receive_action.foot_yaw_offset_rad
+    )
+    target_decision = shooter.runtime_contact_target_decision
+    target_action = None if target_decision is None else target_decision.action
+    trace["shooter_runtime_contact_target_decided"].append(target_decision is not None)
+    trace["shooter_runtime_contact_target_accepted"].append(
+        False if target_decision is None else target_decision.accepted
+    )
+    trace["shooter_runtime_contact_target_support_distance"].append(
+        -1.0 if target_decision is None else target_decision.nearest_success_distance
+    )
+    trace["shooter_runtime_contact_target_velocity_xyz_mps"].append(
+        np.zeros(3, dtype=np.float64)
+        if target_action is None
+        else np.asarray(target_action.target_foot_velocity_xyz_mps, dtype=np.float64)
+    )
     trace["shooter_learned_torque_active"].append(learned_torque["shooter"] is not None)
     trace["shooter_ball_contact_foot"].append(shooter_contact_foot)
     trace["ball_contact_role"].append(contact_role)

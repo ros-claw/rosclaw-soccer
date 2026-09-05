@@ -41,6 +41,16 @@ from rosclaw_soccer.growth.first_touch import (
     build_first_touch_dream,
     evaluate_first_touch,
 )
+from rosclaw_soccer.growth.independent_agent_cell import (
+    AgentCellDecision,
+    AgentCellObservation,
+    AgentPhysicalState,
+    AgentTacticalProfile,
+    RosclawSoccerAgentCell,
+    build_agent_plasticity_lease,
+    build_independent_agent_cell,
+    build_team_coordination_frame,
+)
 from rosclaw_soccer.growth.joint_policy_search import (
     JointPolicySearchConfig,
     JointPolicySearchDecision,
@@ -79,6 +89,13 @@ from rosclaw_soccer.growth.paired_champion_gate import (
     decision_payload,
     evaluate_paired_champion,
 )
+from rosclaw_soccer.growth.physical_option_router import (
+    PhysicalOptionOutcome,
+    PhysicalOptionRequest,
+    PhysicalOptionTerminal,
+    PhysicalSoccerOption,
+    build_physical_option_request,
+)
 from rosclaw_soccer.growth.role_learning import (
     JointGrowthDecision,
     JointGrowthGateConfig,
@@ -116,6 +133,10 @@ __all__ = [
     "AlternatingGrowthGateConfig",
     "AlternatingGrowthRoundDecision",
     "AlternatingTeamEpisode",
+    "AgentCellDecision",
+    "AgentCellObservation",
+    "AgentPhysicalState",
+    "AgentTacticalProfile",
     "CurriculumCell",
     "DynamicLeadPassPolicy",
     "FailureMemoryRecord",
@@ -145,6 +166,10 @@ __all__ = [
     "MosaicGMTTorchController",
     "PairedChampionDecision",
     "PhaseScore",
+    "PhysicalOptionOutcome",
+    "PhysicalOptionRequest",
+    "PhysicalOptionTerminal",
+    "PhysicalSoccerOption",
     "RoleEpisodeOutcome",
     "RoleGrowthMetrics",
     "RolePolicySearchSpace",
@@ -152,6 +177,7 @@ __all__ = [
     "RolePolicyBinding",
     "RolePolicyVector",
     "RoleGenerationBinding",
+    "RosclawSoccerAgentCell",
     "SOCCER_GROWTH_ADAPTER",
     "SharedWorldTeamEpisode",
     "SoccerGrowthAdapter",
@@ -169,6 +195,10 @@ __all__ = [
     "TwoVsOneTacticalActor",
     "TwoVsOneTacticalDecision",
     "build_first_touch_dream",
+    "build_agent_plasticity_lease",
+    "build_independent_agent_cell",
+    "build_physical_option_request",
+    "build_team_coordination_frame",
     "build_failure_conditioned_dreams",
     "evaluate_alternating_growth",
     "evaluate_alternating_growth_round",
