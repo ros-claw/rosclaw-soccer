@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import math
 import os
 from pathlib import Path
 
@@ -117,6 +118,20 @@ def test_runtime_finish_plan_selects_coupled_geometry_phase_and_target() -> None
     assert decision.action.target.target_foot_velocity_xyz_mps == (9.0, 5.0, -1.0)
     assert not decision.action.direct_joint_torque_output
     assert actor.owned_skill == "receive_and_strike_plan"
+
+
+def test_runtime_finish_plan_treats_wrapped_yaw_as_the_same_body_heading() -> None:
+    actor = _actor()
+    features = (3.7, -0.02, -1.8, -0.05, 1.3, -0.05, -0.3, 0.08, 176.0)
+    wrapped = (*features[:5], features[5] + 2.0 * math.pi, *features[6:])
+
+    canonical = actor.decide(features)
+    equivalent = actor.decide(wrapped)
+
+    assert canonical.accepted
+    assert equivalent.accepted
+    assert equivalent.action == canonical.action
+    assert equivalent.nearest_success_distance == pytest.approx(canonical.nearest_success_distance)
 
 
 def test_finish_plan_quality_prefers_material_precision_over_tiny_speed_gain() -> None:

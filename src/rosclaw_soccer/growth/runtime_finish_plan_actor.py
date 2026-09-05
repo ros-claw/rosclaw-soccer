@@ -34,6 +34,7 @@ PREPARED_FINISH_PLAN_FEATURE_NAMES = (
     "passer_swing_speed_scale",
 )
 _FEATURE_COUNT = len(PREPARED_FINISH_PLAN_FEATURE_NAMES)
+_PASSER_YAW_FEATURE_INDEX = PREPARED_FINISH_PLAN_FEATURE_NAMES.index("passer_yaw_rad")
 RUNTIME_FINISH_PLAN_ACTION_NAMES = (
     "maximum_arrival_advance_frames",
     "arrival_alignment_tolerance_sec",
@@ -522,10 +523,15 @@ class G1RuntimeFinishPlanActor:
             raise ValueError("runtime finish plan features are invalid")
         center = np.asarray(self.feature_center, dtype=np.float64)
         scale = np.asarray(self.feature_scale, dtype=np.float64)
+        vector = _unwrap_yaw_near(vector, center[_PASSER_YAW_FEATURE_INDEX])
         normalized = (vector - center) / scale
 
         def distance(memory: RuntimeFinishPlanMemory) -> float:
-            candidate = (np.asarray(memory.features, dtype=np.float64) - center) / scale
+            memory_features = _unwrap_yaw_near(
+                np.asarray(memory.features, dtype=np.float64),
+                center[_PASSER_YAW_FEATURE_INDEX],
+            )
+            candidate = (memory_features - center) / scale
             return float(np.linalg.norm(candidate - normalized))
 
         successes = sorted(
@@ -603,7 +609,14 @@ class G1RuntimeFinishPlanActor:
                 (
                     float(
                         np.linalg.norm(
-                            (np.asarray(memory.features, dtype=np.float64) - features) / scale
+                            (
+                                _unwrap_yaw_near(
+                                    np.asarray(memory.features, dtype=np.float64),
+                                    features[_PASSER_YAW_FEATURE_INDEX],
+                                )
+                                - features
+                            )
+                            / scale
                         )
                     ),
                     memory,
@@ -699,6 +712,16 @@ class G1RuntimeFinishPlanActor:
             critic_stability_floor=float(floors[5]),
             critic_maximum_spread=float(np.max(np.ptp(prediction, axis=0))),
         )
+
+
+def _unwrap_yaw_near(features: np.ndarray, reference_yaw: float) -> np.ndarray:
+    """Map the yaw feature to the nearest equivalent angle around a reference."""
+
+    value = np.asarray(features, dtype=np.float64).copy()
+    yaw = float(value[_PASSER_YAW_FEATURE_INDEX])
+    delta = math.atan2(math.sin(yaw - reference_yaw), math.cos(yaw - reference_yaw))
+    value[_PASSER_YAW_FEATURE_INDEX] = reference_yaw + delta
+    return value
 
 
 def save_runtime_finish_plan_actor(actor: G1RuntimeFinishPlanActor, path: Path) -> None:
