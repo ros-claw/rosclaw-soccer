@@ -89,6 +89,13 @@ from rosclaw_soccer.growth.paired_champion_gate import (
     decision_payload,
     evaluate_paired_champion,
 )
+from rosclaw_soccer.growth.physical_option_router import (
+    PhysicalOptionOutcome,
+    PhysicalOptionRequest,
+    PhysicalOptionTerminal,
+    PhysicalSoccerOption,
+    build_physical_option_request,
+)
 from rosclaw_soccer.growth.role_learning import (
     JointGrowthDecision,
     JointGrowthGateConfig,
@@ -159,6 +166,10 @@ __all__ = [
     "MosaicGMTTorchController",
     "PairedChampionDecision",
     "PhaseScore",
+    "PhysicalOptionOutcome",
+    "PhysicalOptionRequest",
+    "PhysicalOptionTerminal",
+    "PhysicalSoccerOption",
     "RoleEpisodeOutcome",
     "RoleGrowthMetrics",
     "RolePolicySearchSpace",
@@ -186,6 +197,7 @@ __all__ = [
     "build_first_touch_dream",
     "build_agent_plasticity_lease",
     "build_independent_agent_cell",
+    "build_physical_option_request",
     "build_team_coordination_frame",
     "build_failure_conditioned_dreams",
     "evaluate_alternating_growth",
