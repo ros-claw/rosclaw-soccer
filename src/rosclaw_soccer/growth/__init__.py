@@ -28,6 +28,14 @@ from rosclaw_soccer.growth.canonical_champion import (
     reconstruct_s33_champion_registry,
     write_s33_champion_registry,
 )
+from rosclaw_soccer.growth.contextual_finish_target import (
+    ContextualFinishTargetDecision,
+    FinishTargetCalibrationSample,
+    G1ContextualFinishTargetActor,
+    fit_contextual_finish_target_actor,
+    load_contextual_finish_target_actor,
+    save_contextual_finish_target_actor,
+)
 from rosclaw_soccer.growth.dynamic_lead_pass import (
     DynamicLeadPassPolicy,
     LeadPassCalibrationSample,
@@ -138,8 +146,10 @@ __all__ = [
     "AgentPhysicalState",
     "AgentTacticalProfile",
     "CurriculumCell",
+    "ContextualFinishTargetDecision",
     "DynamicLeadPassPolicy",
     "FailureMemoryRecord",
+    "FinishTargetCalibrationSample",
     "FirstTouchEvaluation",
     "FirstTouchFailure",
     "FirstTouchGateConfig",
@@ -153,6 +163,7 @@ __all__ = [
     "LeadPassCalibrationSample",
     "G1MosaicGMTGetUpSkill",
     "G1MosaicGMTOverheadSkill",
+    "G1ContextualFinishTargetActor",
     "ChampionMetricSpec",
     "ChampionSnapshot",
     "MirroredRoleProbe",
@@ -207,6 +218,7 @@ __all__ = [
     "evaluate_first_touch",
     "evaluate_paired_champion",
     "fit_dynamic_lead_pass_policy",
+    "fit_contextual_finish_target_actor",
     "fit_two_vs_one_tactical_actor",
     "decision_payload",
     "default_three_role_search_spaces",
@@ -214,6 +226,7 @@ __all__ = [
     "build_g1_mosaic_gmt_getup_skill",
     "learn_joint_policy_generation",
     "load_g1_mosaic_gmt_overhead_skill",
+    "load_contextual_finish_target_actor",
     "load_g1_mosaic_gmt_getup_skill",
     "load_mjlab_getup_torch",
     "load_mosaic_gmt_torch",
@@ -221,5 +234,6 @@ __all__ = [
     "prioritize_team_curriculum",
     "reconstruct_s33_champion_registry",
     "save_two_vs_one_tactical_actor",
+    "save_contextual_finish_target_actor",
     "write_s33_champion_registry",
 ]

@@ -647,7 +647,9 @@ def _ffmpeg_command(
     font = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
     font_option = f"fontfile={escape_filtergraph_option(str(font))}:" if font.is_file() else ""
     title = escape_filtergraph_option(
-        "ROSClaw Soccer · VISIBLE FOLLOW-THROUGH GROWTH"
+        "ROSClaw Soccer · CONTEXTUAL FINISH GROWTH"
+        if "contextual" in output.stem.lower()
+        else "ROSClaw Soccer · VISIBLE FOLLOW-THROUGH GROWTH"
         if "follow" in output.stem.lower()
         else "ROSClaw Soccer · JOINT-GROUP AGILITY GROWTH"
         if "agility" in output.stem.lower()

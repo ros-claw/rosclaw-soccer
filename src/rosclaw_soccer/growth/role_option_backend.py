@@ -26,6 +26,7 @@ class RoleOptionBackend(StrEnum):
     PASS_AIM_RESIDUAL = "pass_aim_residual"
     DYNAMIC_LEAD_PASS = "dynamic_lead_pass"
     RUNTIME_FINISH_PLAN = "runtime_finish_plan"
+    CONTEXTUAL_FINISH_TARGET = "contextual_finish_target"
     VISIBLE_BALL_GOALKEEPER = "visible_ball_goalkeeper"
 
 
@@ -41,7 +42,10 @@ _BACKENDS = {
         RoleOptionBackend.PASS_AIM_RESIDUAL,
         RoleOptionBackend.DYNAMIC_LEAD_PASS,
     },
-    PhysicalSoccerOption.SHOOT: {RoleOptionBackend.RUNTIME_FINISH_PLAN},
+    PhysicalSoccerOption.SHOOT: {
+        RoleOptionBackend.RUNTIME_FINISH_PLAN,
+        RoleOptionBackend.CONTEXTUAL_FINISH_TARGET,
+    },
     PhysicalSoccerOption.SAVE: {RoleOptionBackend.VISIBLE_BALL_GOALKEEPER},
     PhysicalSoccerOption.DISTRIBUTE: {RoleOptionBackend.DYNAMIC_LEAD_PASS},
 }
@@ -169,6 +173,7 @@ def select_role_option_backend(
     preference = {
         RoleOptionBackend.DYNAMIC_LEAD_PASS: 5,
         RoleOptionBackend.RUNTIME_FINISH_PLAN: 5,
+        RoleOptionBackend.CONTEXTUAL_FINISH_TARGET: 5,
         RoleOptionBackend.VISIBLE_BALL_GOALKEEPER: 5,
         RoleOptionBackend.PASS_AIM_RESIDUAL: 4,
         RoleOptionBackend.GENERIC_FREEKICK: 0,
