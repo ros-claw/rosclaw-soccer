@@ -15,7 +15,7 @@ import importlib
 import io
 import math
 import re
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,11 @@ from rosclaw_soccer.growth.role_self_model import (
     MatchRole,
     TacticalIntent,
     TeamRoleRoster,
+)
+from rosclaw_soccer.growth.strike_phase_controller import (
+    StrikePhase,
+    StrikePhaseConfig,
+    StrikePhaseState,
 )
 from rosclaw_soccer.providers.g1.asset_qualification import (
     qualify_g1_assets,
@@ -505,6 +510,7 @@ class _PlayerController:
     option_completed: bool = False
     last_ball_contact_foot: str | None = None
     post_receive_joint_target: NDArray[np.float64] | None = None
+    strike_phase: StrikePhaseState = field(default_factory=StrikePhaseState)
 
     def __post_init__(self) -> None:
         if self.seen_intents is None:
@@ -522,6 +528,7 @@ def simulate_independent_team_world(
     config: IndependentTeamWorldConfig | None = None,
     contact_teacher_config: G1LocomotionContactTeacherConfig | None = None,
     option_bridge_config: G1RollingOptionBridgeConfig | None = None,
+    strike_phase_config: StrikePhaseConfig | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all six neural locomotion bodies in one clock."""
 
@@ -619,6 +626,15 @@ def simulate_independent_team_world(
         "contact_teacher_target_m": [],
         "option_agent_code": [],
         "option_policy_frame": [],
+        "strike_phase_agent_code": [],
+        "strike_phase_code": [],
+        "strike_phase_elapsed_sec": [],
+        "strike_phase_transition_count": [],
+        "strike_phase_abort_code": [],
+        "strike_phase_approach_yaw_error_rad": [],
+        "strike_phase_predicted_stance_depth_m": [],
+        "strike_phase_predicted_stance_lateral_error_m": [],
+        "strike_phase_predicted_stance_yaw_error_rad": [],
     }
     for controller in controllers:
         key = _agent_key(controller.cell.agent_id)
@@ -864,14 +880,84 @@ def simulate_independent_team_world(
         frame_teacher_peak_torque_nm = 0.0
         frame_teacher_mode_code = 0
         frame_teacher_foot_code = 0
-        frame_teacher_target_m = np.zeros(3, dtype=np.float64)
+        frame_teacher_target_m: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
         if (
             option_bridge_config is not None
             and strike_lease_agent_id is not None
             and float(data.time) - strike_lease_start_sec
             > option_bridge_config.strike_lease_duration_sec
+            and not (
+                strike_phase_config is not None
+                and any(
+                    controller.cell.agent_id == strike_lease_agent_id
+                    and controller.strike_phase.active
+                    for controller in controllers
+                )
+            )
         ):
             strike_lease_agent_id = None
+        phase_controller = next(
+            (
+                controller
+                for controller in controllers
+                if controller.strike_phase.phase
+                not in {StrikePhase.IDLE, StrikePhase.COMPLETE, StrikePhase.ABORTED}
+            ),
+            None,
+        )
+        frame_phase_approach_yaw_error = 0.0
+        phase_metrics = (0.0, 0.0, 0.0)
+        if phase_controller is not None and strike_phase_config is not None:
+            phase_metrics = _controller_strike_stance_metrics(
+                controller=phase_controller,
+                data=data,
+                ball_qpos=ball_qpos,
+                goal=goal,
+                ball_qvel=ball_qvel,
+                prediction_horizon_sec=strike_phase_config.strike_contact_horizon_sec,
+            )
+            approach_yaw_error = _strike_tracking_yaw_error(
+                controller=phase_controller,
+                data=data,
+                ball_qpos=ball_qpos,
+                ball_qvel=ball_qvel,
+                goal=goal,
+                config=strike_phase_config,
+            )
+            frame_phase_approach_yaw_error = approach_yaw_error
+            ball_position = np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64)
+            ball_distance = min(
+                float(np.linalg.norm(data.xpos[phase_controller.left_ankle_body] - ball_position)),
+                float(np.linalg.norm(data.xpos[phase_controller.right_ankle_body] - ball_position)),
+            )
+            phase_controller.strike_phase.advance(
+                time_sec=float(data.time),
+                stable=bool(
+                    data.qpos[phase_controller.qpos_base + 2] >= active.minimum_pelvis_height_m
+                    and max(
+                        abs(value)
+                        for value in _roll_pitch(
+                            np.asarray(
+                                data.qpos[
+                                    phase_controller.qpos_base + 3 : phase_controller.qpos_base + 7
+                                ],
+                                dtype=np.float64,
+                            )
+                        )
+                    )
+                    <= active.maximum_tilt_rad
+                ),
+                stance_depth_m=phase_metrics[0],
+                stance_lateral_error_m=phase_metrics[1],
+                stance_yaw_error_rad=phase_metrics[2],
+                approach_yaw_error_rad=approach_yaw_error,
+                ball_speed_mps=float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 3])),
+                ball_distance_m=ball_distance,
+                option_active=phase_controller.option_active,
+                option_contact_observed=phase_controller.option_contact_observed,
+                option_completed=phase_controller.option_completed,
+                config=strike_phase_config,
+            )
         _activate_rolling_option(
             controllers=controllers,
             current_possession_agent_id=current_possession_agent_id,
@@ -882,6 +968,7 @@ def simulate_independent_team_world(
             ball_qpos=ball_qpos,
             goal=goal,
             config=option_bridge_config,
+            phase_config=strike_phase_config,
         )
         option_controller = next(
             (controller for controller in controllers if controller.option_active),
@@ -932,6 +1019,16 @@ def simulate_independent_team_world(
                         goal.target_y_m,
                     )
                 ),
+                strike_phase=(
+                    controller.strike_phase.phase
+                    if strike_phase_config is not None
+                    and controller.strike_phase.phase is not StrikePhase.IDLE
+                    else None
+                ),
+                strike_phase_config=strike_phase_config,
+                strike_phase_owner_agent_id=(
+                    None if phase_controller is None else phase_controller.cell.agent_id
+                ),
                 config=active,
             )
             current_yaw = _pelvis_yaw(
@@ -944,7 +1041,13 @@ def simulate_independent_team_world(
             controller.state.vel_cmd = _normalized_locomotion_command(
                 controller.policy, local_command
             )
-            _run_locomotion(controller, mirror=bool(local_command[1] < -1.0e-6))
+            _run_locomotion(
+                controller,
+                mirror=bool(local_command[1] < -1.0e-6),
+                correct_mirrored_yaw=bool(
+                    strike_phase_config is not None and controller.strike_phase.active
+                ),
+            )
             controller.last_world_command = command.copy()
             controller.active_frames += int(float(np.linalg.norm(command[:2])) >= 0.04)
             if controller is option_controller:
@@ -1020,6 +1123,11 @@ def simulate_independent_team_world(
                     controller is teacher_controller
                     and controller is not option_controller
                     and not post_receive_stabilizing
+                    and (
+                        strike_phase_config is None
+                        or not controller.strike_phase.active
+                        or controller.strike_phase.phase is StrikePhase.STRIKE
+                    )
                     and (
                         controller.cell.agent_id != strike_lease_agent_id
                         or _strike_teacher_stance_ready(
@@ -1250,6 +1358,11 @@ def simulate_independent_team_world(
                         controller.post_receive_joint_target = np.asarray(
                             data.qpos[controller.joint_qpos], dtype=np.float64
                         ).copy()
+                        if (
+                            strike_phase_config is not None
+                            and controller.cell.self_model.primary_role is MatchRole.FINISHER
+                        ):
+                            controller.strike_phase.begin_capture(float(data.time))
                         receive_lease_agent_id = None
                         receive_lease_source_agent_id = None
                         receive_lease_origin_m = None
@@ -1377,6 +1490,46 @@ def simulate_independent_team_world(
             0 if option_controller is None else agent_codes[option_controller.cell.agent_id]
         )
         trace["option_policy_frame"].append(option_policy_frame)
+        recorded_phase_controller = next(
+            (
+                controller
+                for controller in controllers
+                if controller.strike_phase.phase is not StrikePhase.IDLE
+            ),
+            None,
+        )
+        trace["strike_phase_agent_code"].append(
+            0
+            if recorded_phase_controller is None
+            else agent_codes[recorded_phase_controller.cell.agent_id]
+        )
+        trace["strike_phase_code"].append(
+            0 if recorded_phase_controller is None else recorded_phase_controller.strike_phase.code
+        )
+        trace["strike_phase_elapsed_sec"].append(
+            0.0
+            if recorded_phase_controller is None
+            else max(
+                0.0,
+                float(data.time) - recorded_phase_controller.strike_phase.phase_enter_time_sec,
+            )
+        )
+        trace["strike_phase_transition_count"].append(
+            0
+            if recorded_phase_controller is None
+            else recorded_phase_controller.strike_phase.transition_count
+        )
+        trace["strike_phase_abort_code"].append(
+            _strike_phase_abort_code(
+                None
+                if recorded_phase_controller is None
+                else recorded_phase_controller.strike_phase.abort_reason
+            )
+        )
+        trace["strike_phase_approach_yaw_error_rad"].append(frame_phase_approach_yaw_error)
+        trace["strike_phase_predicted_stance_depth_m"].append(phase_metrics[0])
+        trace["strike_phase_predicted_stance_lateral_error_m"].append(phase_metrics[1])
+        trace["strike_phase_predicted_stance_yaw_error_rad"].append(phase_metrics[2])
         if not finite:
             break
 
@@ -1644,10 +1797,15 @@ def _movement_command(
     receive_foot_lateral_offset_m: float,
     strike_target_position_m: tuple[float, float] | None,
     config: IndependentTeamWorldConfig,
+    strike_phase: StrikePhase | None = None,
+    strike_phase_config: StrikePhaseConfig | None = None,
+    strike_phase_owner_agent_id: str | None = None,
 ) -> NDArray[np.float64]:
     current = positions[controller.cell.agent_id]
     target = np.asarray(decision.target_position_m[:2], dtype=np.float64)
     ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
+    phase_stance_target: NDArray[np.float64] | None = None
+    phase_approach_direction: NDArray[np.float64] | None = None
     if committed_receiver and not active_receiver and decision.intent is not TacticalIntent.RECEIVE:
         # A negotiated receiver must stop its generic run-in-behind before the
         # ball is launched.  It may still move laterally to put its nearest
@@ -1750,7 +1908,50 @@ def _movement_command(
             )
             if foot_distance <= config.receive_braking_distance_m:
                 target = current.copy()
-    if strike_target_position_m is not None:
+    if strike_target_position_m is not None and strike_phase_config is not None:
+        destination = np.asarray(strike_target_position_m, dtype=np.float64)
+        ball_velocity = np.asarray(data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64)
+        phase_ball = ball + strike_phase_config.strike_contact_horizon_sec * ball_velocity
+        direction = destination - phase_ball
+        direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
+        lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
+        phase_stance_target = (
+            phase_ball
+            - strike_phase_config.target_stance_depth_m * direction
+            - strike_phase_config.target_stance_lateral_m * lateral
+        )
+        ball_speed = float(np.linalg.norm(ball_velocity))
+        signed_lateral_error = float(np.dot(phase_ball - current, lateral))
+        phase_approach_velocity = (
+            ball_velocity
+            - strike_phase_config.orient_goalward_lag_mps * direction
+            + strike_phase_config.orient_lateral_gain_per_sec
+            * (signed_lateral_error - strike_phase_config.target_stance_lateral_m)
+            * lateral
+            if ball_speed > 0.10
+            else direction * min(0.12, strike_phase_config.orient_goalward_lag_mps)
+        )
+        approach_speed = float(np.linalg.norm(phase_approach_velocity))
+        phase_approach_direction = (
+            phase_approach_velocity / approach_speed
+            if approach_speed > 1.0e-9
+            else direction.copy()
+        )
+        if strike_phase in {StrikePhase.CAPTURE, StrikePhase.STRIKE}:
+            # Capture and orient without the old discontinuous lateral hop.
+            # During STRIKE the locomotion base yields to the frozen whole-body
+            # option rather than walking through its planted support foot.
+            target = current.copy()
+        elif strike_phase is StrikePhase.ORIENT:
+            # Pace behind the received ball instead of stopping and making a
+            # 180-degree turn.  The slower pursuit lets a usable stance depth
+            # open while preserving the receiver's contact-side relationship.
+            target = current + phase_approach_velocity / config.position_gain
+        elif strike_phase is StrikePhase.PLANT:
+            target = phase_stance_target
+        elif strike_phase in {StrikePhase.RECOVER, StrikePhase.COMPLETE, StrikePhase.ABORTED}:
+            target = current.copy()
+    elif strike_target_position_m is not None:
         destination = np.asarray(strike_target_position_m, dtype=np.float64)
         direction = destination - ball
         direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
@@ -1792,9 +1993,18 @@ def _movement_command(
     if float(np.linalg.norm(error)) <= config.arrival_radius_m:
         command[:2] = 0.0
     desired_yaw: float | None = None
-    if strike_target_position_m is not None and not post_receive_hold:
+    if (
+        phase_approach_direction is not None
+        and strike_phase is StrikePhase.ORIENT
+        and not post_receive_hold
+    ):
+        desired_yaw = math.atan2(
+            float(phase_approach_direction[1]),
+            float(phase_approach_direction[0]),
+        )
+    elif strike_target_position_m is not None and not post_receive_hold:
         destination = np.asarray(strike_target_position_m, dtype=np.float64)
-        desired_yaw = math.atan2(destination[1] - current[1], destination[0] - current[0])
+        desired_yaw = math.atan2(destination[1] - ball[1], destination[0] - ball[0])
     elif (
         committed_receiver
         and not post_receive_hold
@@ -1815,11 +2025,18 @@ def _movement_command(
         yaw_error = math.atan2(
             math.sin(desired_yaw - current_yaw), math.cos(desired_yaw - current_yaw)
         )
+        yaw_rate_limit = (
+            strike_phase_config.maximum_yaw_rate_radps
+            if strike_phase_config is not None
+            and strike_phase is not None
+            and strike_phase not in {StrikePhase.IDLE, StrikePhase.COMPLETE, StrikePhase.ABORTED}
+            else config.maximum_yaw_rate_radps
+        )
         command[2] = float(
             np.clip(
                 config.yaw_gain * yaw_error,
-                -config.maximum_yaw_rate_radps,
-                config.maximum_yaw_rate_radps,
+                -yaw_rate_limit,
+                yaw_rate_limit,
             )
         )
     for other_id, other in positions.items():
@@ -1831,6 +2048,22 @@ def _movement_command(
             correction = min(
                 config.maximum_collision_correction_mps,
                 config.collision_avoidance_gain * (config.minimum_player_separation_m - separation),
+            )
+            command[:2] += correction * delta / separation
+    if (
+        strike_phase_config is not None
+        and strike_phase_owner_agent_id is not None
+        and controller.cell.agent_id != strike_phase_owner_agent_id
+        and strike_phase_owner_agent_id in controller.cell.self_model.teammate_ids
+    ):
+        owner = positions[strike_phase_owner_agent_id]
+        delta = current - owner
+        separation = float(np.linalg.norm(delta))
+        if 1.0e-9 < separation < strike_phase_config.support_lane_clearance_m:
+            correction = min(
+                config.maximum_collision_correction_mps,
+                config.collision_avoidance_gain
+                * (strike_phase_config.support_lane_clearance_m - separation),
             )
             command[:2] += correction * delta / separation
     previous = (
@@ -1999,6 +2232,7 @@ def _activate_rolling_option(
     ball_qpos: int,
     goal: G1TrainingGoalSpec,
     config: G1RollingOptionBridgeConfig | None,
+    phase_config: StrikePhaseConfig | None = None,
 ) -> None:
     """Warm-start one owned PASS/SHOOT option after contact-derived possession."""
 
@@ -2029,6 +2263,9 @@ def _activate_rolling_option(
     )
     if candidate is None:
         return
+    phase_required = phase_config is not None
+    if phase_required and candidate.strike_phase.phase is not StrikePhase.STRIKE:
+        return
     if abs(candidate.spec.yaw_rad) > 1.0e-9:
         # This first bridge only certifies the canonical red attacking frame.
         # Mirrored/bilateral strike entry needs its own matched retention set.
@@ -2056,7 +2293,7 @@ def _activate_rolling_option(
     lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
     stance_depth = float(np.dot(ball - pelvis, direction))
     lateral_error = abs(float(np.dot(ball - pelvis, lateral)))
-    if (
+    if not phase_required and (
         not config.minimum_strike_stance_depth_m
         <= stance_depth
         <= config.maximum_strike_stance_depth_m
@@ -2070,7 +2307,12 @@ def _activate_rolling_option(
     preferred_target = (
         candidate.decision.target_position_m
         if is_pass
-        else (goal.plane_x_m, goal.target_y_m, goal.target_z_m)
+        else (
+            goal.plane_x_m,
+            goal.target_y_m
+            + (0.0 if phase_config is None else phase_config.strike_aim_lateral_bias_m),
+            goal.target_z_m,
+        )
     )
     candidate.kick_policy.target_pos_w = np.asarray(preferred_target, dtype=np.float32)
     candidate.kick_policy.time_step = (
@@ -2119,7 +2361,28 @@ def _strike_stance_metrics(
     controller = next(
         value for value in controllers if value.cell.agent_id == strike_lease_agent_id
     )
+    return _controller_strike_stance_metrics(
+        controller=controller,
+        data=data,
+        ball_qpos=ball_qpos,
+        goal=goal,
+    )
+
+
+def _controller_strike_stance_metrics(
+    *,
+    controller: _PlayerController,
+    data: Any,
+    ball_qpos: int,
+    goal: G1TrainingGoalSpec,
+    ball_qvel: int | None = None,
+    prediction_horizon_sec: float = 0.0,
+) -> tuple[float, float, float]:
     ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
+    if ball_qvel is not None and prediction_horizon_sec > 0.0:
+        ball = ball + prediction_horizon_sec * np.asarray(
+            data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64
+        )
     pelvis = np.asarray(
         data.qpos[controller.qpos_base : controller.qpos_base + 2], dtype=np.float64
     )
@@ -2138,6 +2401,63 @@ def _strike_stance_metrics(
         abs(float(np.dot(ball - pelvis, lateral))),
         yaw_error,
     )
+
+
+def _strike_tracking_yaw_error(
+    *,
+    controller: _PlayerController,
+    data: Any,
+    ball_qpos: int,
+    ball_qvel: int,
+    goal: G1TrainingGoalSpec,
+    config: StrikePhaseConfig,
+) -> float:
+    ball_velocity = np.asarray(data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64)
+    # ``data.qpos[...]`` is a MuJoCo-backed view.  Use an out-of-place sum so
+    # prediction can never mutate authoritative football state.
+    phase_ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64).copy()
+    phase_ball = phase_ball + config.strike_contact_horizon_sec * ball_velocity
+    direction = np.asarray((goal.plane_x_m, goal.target_y_m), dtype=np.float64) - phase_ball
+    direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
+    pelvis = np.asarray(
+        data.qpos[controller.qpos_base : controller.qpos_base + 2], dtype=np.float64
+    )
+    lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
+    signed_lateral_error = float(np.dot(phase_ball - pelvis, lateral))
+    velocity = (
+        ball_velocity
+        - config.orient_goalward_lag_mps * direction
+        + config.orient_lateral_gain_per_sec
+        * (signed_lateral_error - config.target_stance_lateral_m)
+        * lateral
+    )
+    if float(np.linalg.norm(velocity)) <= 1.0e-9:
+        velocity = direction
+    target_yaw = math.atan2(float(velocity[1]), float(velocity[0]))
+    current_yaw = _pelvis_yaw(
+        np.asarray(data.qpos[controller.qpos_base + 3 : controller.qpos_base + 7], dtype=np.float64)
+    )
+    return abs(
+        math.atan2(
+            math.sin(target_yaw - current_yaw),
+            math.cos(target_yaw - current_yaw),
+        )
+    )
+
+
+def _strike_phase_abort_code(reason: str | None) -> int:
+    return {
+        None: 0,
+        "NONFINITE_STATE": 1,
+        "BODY_UNSTABLE": 2,
+        "BALL_ESCAPED": 3,
+        "ORIENT_TIMEOUT": 4,
+        "PLANT_TIMEOUT": 5,
+        "STRIKE_TIMEOUT": 6,
+        "OPTION_ENDED_WITHOUT_CONTACT": 7,
+        "RECOVERY_TIMEOUT": 8,
+        "CLOCK_ROLLBACK": 9,
+    }.get(reason, 255)
 
 
 def _rolling_option_target(
@@ -2261,7 +2581,12 @@ def _normalized_locomotion_command(policy: Any, physical: NDArray[Any]) -> NDArr
     return np.asarray(-1.0 + 2.0 * (command - ranges[:, 0]) / widths, dtype=np.float64)
 
 
-def _run_locomotion(controller: _PlayerController, *, mirror: bool) -> None:
+def _run_locomotion(
+    controller: _PlayerController,
+    *,
+    mirror: bool,
+    correct_mirrored_yaw: bool = False,
+) -> None:
     """Reuse the qualified sagittal mirror for the actor's weak -y half-space."""
 
     if not mirror:
@@ -2284,6 +2609,12 @@ def _run_locomotion(controller: _PlayerController, *, mirror: bool) -> None:
         state.ang_vel = angular
         command = original["vel_cmd"].copy()
         command[1] *= -1.0
+        # A sagittal reflection reverses both lateral translation and yaw.
+        # Gate the correction to the new phase controller so frozen receiving
+        # behavior retains its qualified distribution while the new transition
+        # no longer turns opposite its world command.
+        if correct_mirrored_yaw:
+            command[2] *= -1.0
         state.vel_cmd = command
         with contextlib.redirect_stdout(io.StringIO()):
             controller.policy.run()
