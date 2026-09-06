@@ -1,7 +1,8 @@
 # S176–S197：上下文平衡连续 Growth 与父代安全闭环实施报告
 
-日期：2026-09-04  
-分支：`codex/s142-perceptive-target-routing`  
+日期：2026-09-04
+
+分支：`codex/s142-perceptive-target-routing`
 边界：`SIM_ONLY`、CPU MuJoCo 物理真值、无真实机器人/ROS topic/DDS/串口/CAN/厂商 SDK 指令
 
 ## 1. 结论先行
