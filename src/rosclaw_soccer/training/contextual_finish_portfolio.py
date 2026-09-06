@@ -1068,7 +1068,7 @@ def validate_contextual_finish_portfolio(path: Path) -> dict[str, Any]:
             if (
                 case.get("context") != asdict(context)
                 or case.get("context_hash") != context_record["context_hash"]
-                or case.get("decision") != asdict(decision)
+                or hash_json(case.get("decision")) != hash_json(asdict(decision))
                 or case.get("expected")
                 != ("PRECISE_EXECUTION" if expected_success else "FAILURE_VETO")
                 or case.get("executed_policy_target_m")
