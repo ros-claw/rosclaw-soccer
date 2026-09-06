@@ -23,6 +23,11 @@ from rosclaw_soccer.growth.alternating_team_growth import (
     evaluate_alternating_growth_round,
     prioritize_team_curriculum,
 )
+from rosclaw_soccer.growth.bounded_active_search import (
+    BoundedActiveSearchPlan,
+    BoundedSearchCandidate,
+    BoundedSearchDimension,
+)
 from rosclaw_soccer.growth.canonical_champion import (
     SoccerChampionEvidenceLayout,
     reconstruct_s33_champion_registry,
@@ -31,6 +36,7 @@ from rosclaw_soccer.growth.canonical_champion import (
 from rosclaw_soccer.growth.contextual_finish_target import (
     ContextualFinishTargetDecision,
     FinishTargetCalibrationSample,
+    FinishTargetFailureMemory,
     G1ContextualFinishTargetActor,
     fit_contextual_finish_target_actor,
     load_contextual_finish_target_actor,
@@ -145,11 +151,15 @@ __all__ = [
     "AgentCellObservation",
     "AgentPhysicalState",
     "AgentTacticalProfile",
+    "BoundedActiveSearchPlan",
+    "BoundedSearchCandidate",
+    "BoundedSearchDimension",
     "CurriculumCell",
     "ContextualFinishTargetDecision",
     "DynamicLeadPassPolicy",
     "FailureMemoryRecord",
     "FinishTargetCalibrationSample",
+    "FinishTargetFailureMemory",
     "FirstTouchEvaluation",
     "FirstTouchFailure",
     "FirstTouchGateConfig",

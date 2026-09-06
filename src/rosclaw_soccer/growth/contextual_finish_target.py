@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from rosclaw_soccer.growth.runtime_finish_plan_actor import (
     PREPARED_FINISH_PLAN_FEATURE_NAMES,
@@ -37,7 +38,7 @@ def _commitment(value: str, label: str) -> str:
     return value
 
 
-def _finite_xyz(value: tuple[float, ...], label: str) -> np.ndarray:
+def _finite_xyz(value: tuple[float, ...], label: str) -> NDArray[np.float64]:
     vector = np.asarray(value, dtype=np.float64)
     if vector.shape != (3,) or not np.all(np.isfinite(vector)):
         raise ValueError(f"{label} must be finite xyz")
@@ -111,12 +112,59 @@ class FinishTargetCalibrationSample:
 
 
 @dataclass(frozen=True)
+class FinishTargetFailureMemory:
+    """One bounded-search failure basin that the actor must not interpolate across."""
+
+    context_hash: str
+    search_hash: str
+    control_envelope_hash: str
+    features: tuple[float, ...]
+    failure_code: str
+    candidate_count: int
+    safe_candidate_count: int
+    best_safe_target_error_m: float | None
+    exact_replay: bool
+    source_partition: str = "DEVELOPMENT_DISCOVERY"
+    physics_authority: str = "CPU_MUJOCO"
+    activation_ceiling: str = "SIM_ONLY"
+    hardware_command_sent: bool = False
+
+    def __post_init__(self) -> None:
+        _commitment(self.context_hash, "context_hash")
+        _commitment(self.search_hash, "search_hash")
+        _commitment(self.control_envelope_hash, "control_envelope_hash")
+        features = np.asarray(self.features, dtype=np.float64)
+        error = self.best_safe_target_error_m
+        if (
+            features.shape != (_FEATURE_COUNT,)
+            or not np.all(np.isfinite(features))
+            or self.failure_code != "NO_PRECISE_SAFE_ACTION_IN_BOUNDED_SEARCH"
+            or isinstance(self.candidate_count, bool)
+            or isinstance(self.safe_candidate_count, bool)
+            or not 4 <= self.candidate_count <= 64
+            or not 0 <= self.safe_candidate_count <= self.candidate_count
+            or (error is not None and (not math.isfinite(error) or error <= 0.10))
+            or not self.exact_replay
+            or self.source_partition != "DEVELOPMENT_DISCOVERY"
+            or self.physics_authority != "CPU_MUJOCO"
+            or self.activation_ceiling != "SIM_ONLY"
+            or self.hardware_command_sent
+        ):
+            raise ValueError("finish target failure memory is invalid")
+
+    @property
+    def failure_hash(self) -> str:
+        return str(hash_json(asdict(self)))
+
+
+@dataclass(frozen=True)
 class ContextualFinishTargetDecision:
     accepted: bool
     route: str
     policy_target_m: tuple[float, float, float] | None
     foot_yaw_offset_rad: float | None
     nearest_support_distance: float | None
+    nearest_failure_distance: float | None
     supporting_context_hashes: tuple[str, ...]
     actor_hash: str
     activation_ceiling: str = "SIM_ONLY"
@@ -136,8 +184,10 @@ class G1ContextualFinishTargetActor:
     feature_center: tuple[float, ...]
     feature_scale: tuple[float, ...]
     samples: tuple[FinishTargetCalibrationSample, ...]
+    failure_memories: tuple[FinishTargetFailureMemory, ...] = ()
     nearest_sample_count: int = 3
     maximum_support_distance: float = 3.0
+    failure_exclusion_distance: float = 0.40
     minimum_distinct_contexts: int = 4
     minimum_distinct_trajectories: int = 4
     agent_id: str = "red.finisher"
@@ -147,7 +197,7 @@ class G1ContextualFinishTargetActor:
     hardware_authorized: bool = False
     direct_joint_torque_output: bool = False
     online_hot_swap_allowed: bool = False
-    schema_version: str = "rosclaw_soccer.contextual_finish_target_actor.v1"
+    schema_version: str = "rosclaw_soccer.contextual_finish_target_actor.v2"
 
     def __post_init__(self) -> None:
         for value, label in (
@@ -177,12 +227,23 @@ class G1ContextualFinishTargetActor:
                 sample.control_envelope_hash != self.control_envelope_hash
                 for sample in self.samples
             )
+            or any(
+                memory.control_envelope_hash != self.control_envelope_hash
+                for memory in self.failure_memories
+            )
+            or len({memory.context_hash for memory in self.failure_memories})
+            != len(self.failure_memories)
+            or {memory.context_hash for memory in self.failure_memories}.intersection(
+                sample.context_hash for sample in self.samples
+            )
             or context_count != len(self.samples)
             or trajectory_count != len(self.samples)
             or not 1 <= self.nearest_sample_count <= 8
             or not 0.25 <= self.maximum_support_distance <= 4.0
+            or not 0.10 <= self.failure_exclusion_distance <= 2.0
             or not 4 <= self.minimum_distinct_contexts <= 32
             or not 4 <= self.minimum_distinct_trajectories <= 32
+            or self.schema_version != "rosclaw_soccer.contextual_finish_target_actor.v2"
             or (self.agent_id, self.owned_skill) != ("red.finisher", "contextual_finish_target")
             or self.activation_ceiling != "SIM_ONLY"
             or self.promotion_authorized
@@ -215,7 +276,11 @@ class G1ContextualFinishTargetActor:
         value = {
             **asdict(self),
             "feature_names": list(PREPARED_FINISH_PLAN_FEATURE_NAMES),
-            "algorithm": "local_weighted_median_finish_intent_residual",
+            "algorithm": (
+                "nearest_verified_finish_expert_with_failure_veto"
+                if self.nearest_sample_count == 1
+                else "local_weighted_median_finish_intent_residual_with_failure_veto"
+            ),
             "authority": "HIGH_LEVEL_FINISH_TARGET_AND_CONTACT_NORMAL_ONLY",
             "evidence_ready": self.evidence_ready,
         }
@@ -239,15 +304,39 @@ class G1ContextualFinishTargetActor:
                 policy_target_m=None,
                 foot_yaw_offset_rad=None,
                 nearest_support_distance=None,
+                nearest_failure_distance=None,
                 supporting_context_hashes=(),
                 actor_hash=self.actor_hash,
             )
         scale = np.asarray(self.feature_scale, dtype=np.float64)
+        failure_ranked = sorted(
+            [
+                (
+                    self._feature_distance(vector, memory.features, scale),
+                    memory,
+                )
+                for memory in self.failure_memories
+            ],
+            key=lambda item: (item[0], item[1].failure_hash),
+        )
+        nearest_failure_distance = failure_ranked[0][0] if failure_ranked else None
+        if (
+            nearest_failure_distance is not None
+            and nearest_failure_distance <= self.failure_exclusion_distance
+        ):
+            return ContextualFinishTargetDecision(
+                accepted=False,
+                route="KNOWN_FINISH_FAILURE_BASIN_FALLBACK",
+                policy_target_m=None,
+                foot_yaw_offset_rad=None,
+                nearest_support_distance=None,
+                nearest_failure_distance=nearest_failure_distance,
+                supporting_context_hashes=(failure_ranked[0][1].context_hash,),
+                actor_hash=self.actor_hash,
+            )
         ranked: list[tuple[float, FinishTargetCalibrationSample]] = []
         for sample in self.samples:
-            delta = np.asarray(sample.features, dtype=np.float64) - vector
-            delta[_YAW_INDEX] = math.atan2(math.sin(delta[_YAW_INDEX]), math.cos(delta[_YAW_INDEX]))
-            ranked.append((float(np.linalg.norm(delta / scale)), sample))
+            ranked.append((self._feature_distance(vector, sample.features, scale), sample))
         ranked.sort(key=lambda item: (item[0], item[1].sample_hash))
         nearest_distance = ranked[0][0]
         selected = ranked[: min(self.nearest_sample_count, len(ranked))]
@@ -258,6 +347,7 @@ class G1ContextualFinishTargetActor:
                 policy_target_m=None,
                 foot_yaw_offset_rad=None,
                 nearest_support_distance=nearest_distance,
+                nearest_failure_distance=nearest_failure_distance,
                 supporting_context_hashes=(),
                 actor_hash=self.actor_hash,
             )
@@ -286,6 +376,7 @@ class G1ContextualFinishTargetActor:
                 policy_target_m=None,
                 foot_yaw_offset_rad=None,
                 nearest_support_distance=nearest_distance,
+                nearest_failure_distance=nearest_failure_distance,
                 supporting_context_hashes=tuple(sample.context_hash for _, sample in selected),
                 actor_hash=self.actor_hash,
             )
@@ -299,9 +390,16 @@ class G1ContextualFinishTargetActor:
             ),
             foot_yaw_offset_rad=foot_yaw,
             nearest_support_distance=nearest_distance,
+            nearest_failure_distance=nearest_failure_distance,
             supporting_context_hashes=tuple(sample.context_hash for _, sample in selected),
             actor_hash=self.actor_hash,
         )
+
+    @staticmethod
+    def _feature_distance(query: np.ndarray, sample: tuple[float, ...], scale: np.ndarray) -> float:
+        delta = np.asarray(sample, dtype=np.float64) - query
+        delta[_YAW_INDEX] = math.atan2(math.sin(delta[_YAW_INDEX]), math.cos(delta[_YAW_INDEX]))
+        return float(np.linalg.norm(delta / scale))
 
 
 def fit_contextual_finish_target_actor(
@@ -313,6 +411,7 @@ def fit_contextual_finish_target_actor(
     control_envelope_hash: str,
     source_evidence_hashes: tuple[str, ...],
     samples: tuple[FinishTargetCalibrationSample, ...],
+    failure_memories: tuple[FinishTargetFailureMemory, ...] = (),
 ) -> G1ContextualFinishTargetActor:
     """Fit a bounded actor; a small seed remains non-deployable by design."""
 
@@ -337,6 +436,7 @@ def fit_contextual_finish_target_actor(
         feature_center=tuple(float(value) for value in center),
         feature_scale=tuple(float(value) for value in scale),
         samples=samples,
+        failure_memories=failure_memories,
     )
 
 
@@ -381,6 +481,21 @@ def load_contextual_finish_target_actor(path: Path) -> G1ContextualFinishTargetA
     )
     if len(value["samples"]) != len(raw_samples):
         raise ValueError("contextual finish target actor sample entry is invalid")
+    raw_failures = value.get("failure_memories", [])
+    if not isinstance(raw_failures, list):
+        raise ValueError("contextual finish target actor failure memories are invalid")
+    value["failure_memories"] = tuple(
+        FinishTargetFailureMemory(
+            **{
+                **memory,
+                "features": tuple(memory["features"]),
+            }
+        )
+        for memory in raw_failures
+        if isinstance(memory, dict)
+    )
+    if len(value["failure_memories"]) != len(raw_failures):
+        raise ValueError("contextual finish target actor failure memory entry is invalid")
     actor = G1ContextualFinishTargetActor(**value)
     if claimed_hash != actor.actor_hash:
         raise ValueError("contextual finish target actor integrity mismatch")
@@ -399,6 +514,7 @@ def _weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
 __all__ = [
     "ContextualFinishTargetDecision",
     "FinishTargetCalibrationSample",
+    "FinishTargetFailureMemory",
     "G1ContextualFinishTargetActor",
     "fit_contextual_finish_target_actor",
     "load_contextual_finish_target_actor",

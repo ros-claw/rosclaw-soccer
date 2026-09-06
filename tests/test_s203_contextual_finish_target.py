@@ -6,6 +6,7 @@ import pytest
 
 from rosclaw_soccer.growth.contextual_finish_target import (
     FinishTargetCalibrationSample,
+    FinishTargetFailureMemory,
     fit_contextual_finish_target_actor,
     load_contextual_finish_target_actor,
     save_contextual_finish_target_actor,
@@ -65,6 +66,20 @@ def _actor(sample_count: int = 4):
     )
 
 
+def _failure(index: int = 0) -> FinishTargetFailureMemory:
+    return FinishTargetFailureMemory(
+        context_hash=_hash(f"failed-context-{index}"),
+        search_hash=_hash(f"failed-search-{index}"),
+        control_envelope_hash=_hash("control-envelope"),
+        features=_sample(index).features,
+        failure_code="NO_PRECISE_SAFE_ACTION_IN_BOUNDED_SEARCH",
+        candidate_count=30,
+        safe_candidate_count=29,
+        best_safe_target_error_m=0.228,
+        exact_replay=True,
+    )
+
+
 def test_seed_with_one_context_is_explicitly_non_deployable() -> None:
     actor = _actor(1)
 
@@ -105,6 +120,22 @@ def test_out_of_distribution_target_context_fails_closed() -> None:
     assert decision.route == "CONTEXTUAL_FINISH_TARGET_OOD_FALLBACK"
     assert decision.policy_target_m is None
     assert decision.foot_yaw_offset_rad is None
+
+
+def test_known_failure_basin_vetoes_smooth_interpolation() -> None:
+    actor = replace(_actor(), failure_memories=(_failure(),))
+
+    decision = actor.decide(_sample(0).features, (7.5, 0.89, 0.115))
+
+    assert not decision.accepted
+    assert decision.route == "KNOWN_FINISH_FAILURE_BASIN_FALLBACK"
+    assert decision.nearest_failure_distance == pytest.approx(0.0)
+    assert decision.supporting_context_hashes == (_failure().context_hash,)
+
+
+def test_failure_memory_cannot_hide_a_precise_action() -> None:
+    with pytest.raises(ValueError, match="failure memory is invalid"):
+        replace(_failure(), best_safe_target_error_m=0.10)
 
 
 def test_inconsistent_physical_error_is_rejected() -> None:
@@ -166,7 +197,7 @@ def test_single_context_cannot_fake_contextual_backend_coverage() -> None:
 
 def test_actor_artifact_round_trip_and_tamper_detection(tmp_path) -> None:
     path = tmp_path / "actor.json"
-    actor = _actor()
+    actor = replace(_actor(), failure_memories=(_failure(),))
     save_contextual_finish_target_actor(actor, path)
 
     assert load_contextual_finish_target_actor(path) == actor
