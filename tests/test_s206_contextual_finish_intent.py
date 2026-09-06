@@ -23,6 +23,9 @@ from rosclaw_soccer.growth.role_option_backend import (
 from rosclaw_soccer.growth.runtime_finish_plan_actor import (
     prepared_finish_plan_features,
 )
+from rosclaw_soccer.media.contextual_finish_intent_video import (
+    validate_contextual_finish_intent_video_manifest,
+)
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.training.contextual_finish_intent_portfolio import (
     ContextualFinishIntentPortfolioConfig,
@@ -197,3 +200,9 @@ def test_current_s206_evidence_reconstructs_when_mounted() -> None:
     assert report["status"] == "PASS_CONTEXTUAL_FINISH_INTENT_PORTFOLIO"
     assert report["gates"]["fresh_success_holdouts_passed"]
     assert report["gates"]["fresh_ood_holdouts_rejected"]
+
+    video_manifest = path.parent / "s206-contextual-finish-growth.json"
+    if video_manifest.is_file():
+        video = validate_contextual_finish_intent_video_manifest(video_manifest)
+        assert video["source_report_hash"] == report["report_hash"]
+        assert video["pixels_used_for_scoring"] is False
