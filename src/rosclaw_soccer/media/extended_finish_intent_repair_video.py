@@ -20,6 +20,7 @@ from rosclaw_soccer.media.three_player_video import (
     _configure_offscreen_framebuffer,
     _ffmpeg_command,
     _probe_video,
+    _segment,
     _timelines,
     _write_frames,
 )
@@ -107,13 +108,21 @@ def render_extended_finish_intent_repair_video(
     )
     baseline_timelines, _ = _timelines(baseline_bundle, fps)
     selected_timelines, _ = _timelines(selected_bundle, fps)
+    selected_result = cast(dict[str, Any], report["selected_replay"]["result"])
+    recovery_timeline = _segment(
+        float(selected_result["shot_contact_time_sec"]) + 0.75,
+        float(selected_trajectory["time"][-1]),
+        0.65,
+        "recovery_shooter",
+        fps,
+    )
     timelines = (
         baseline_timelines[0],
         baseline_timelines[1],
         baseline_timelines[3],
         selected_timelines[1],
         selected_timelines[3],
-        selected_timelines[4],
+        recovery_timeline,
         selected_timelines[6],
     )
     titles = (
