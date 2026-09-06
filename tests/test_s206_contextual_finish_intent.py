@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.training.contextual_finish_intent_portfolio import (
     ContextualFinishIntentPortfolioConfig,
     _config_from_dict,
+    validate_contextual_finish_intent_portfolio,
 )
 
 
@@ -176,3 +178,22 @@ def test_s206_config_round_trip_and_authority_are_fail_closed() -> None:
         replace(config, hardware_authorized=True)
     with pytest.raises(ValueError, match="portfolio config is invalid"):
         replace(config, coarse_candidate_count=128)
+
+
+def test_current_s206_evidence_reconstructs_when_mounted() -> None:
+    root = os.environ.get("ROSCLAW_SOCCER_EVIDENCE")
+    if root is None:
+        pytest.skip("external soccer evidence is not mounted")
+    path = (
+        Path(root)
+        / "s206-contextual-finish-intent-portfolio-v1"
+        / "contextual-finish-intent-portfolio.json"
+    )
+    if not path.is_file():
+        pytest.skip("S206 evidence is not mounted")
+
+    report = validate_contextual_finish_intent_portfolio(path)
+
+    assert report["status"] == "PASS_CONTEXTUAL_FINISH_INTENT_PORTFOLIO"
+    assert report["gates"]["fresh_success_holdouts_passed"]
+    assert report["gates"]["fresh_ood_holdouts_rejected"]
