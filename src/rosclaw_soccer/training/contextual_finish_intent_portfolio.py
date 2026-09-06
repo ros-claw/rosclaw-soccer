@@ -46,7 +46,6 @@ from rosclaw_soccer.training.contextual_finish_portfolio import (
     ContextualFinishPortfolioConfig,
     FinishPortfolioContext,
     _control_config_from_dict,
-    _load_lead_pass,
     _resolve_context,
     _run_jobs,
     _safe_result_dict,
@@ -58,6 +57,7 @@ from rosclaw_soccer.training.contextual_finish_portfolio import (
 )
 from rosclaw_soccer.training.contextual_finish_target_growth import (
     ContextualFinishTargetGrowthConfig,
+    _load_lead_pass,
     _save_trajectory,
     _validate_trajectory,
 )
@@ -618,13 +618,11 @@ def _evaluate_candidates(
 
 
 def _sample_features(context: dict[str, Any]) -> tuple[float, ...]:
-    return cast(
-        tuple[float, ...],
-        contextual_finish_intent_features(
-            receiver_phase_start_sec=float(context["receiver_phase_start_sec"]),
-            prepared_features=cast(tuple[float, ...], tuple(context["features"])),
-        ),
+    features: tuple[float, ...] = contextual_finish_intent_features(
+        receiver_phase_start_sec=float(context["receiver_phase_start_sec"]),
+        prepared_features=cast(tuple[float, ...], tuple(context["features"])),
     )
+    return features
 
 
 def _sample(
@@ -954,11 +952,11 @@ def validate_contextual_finish_intent_portfolio(path: Path) -> dict[str, Any]:
         criteria = ExtendedFinishIntentRepairConfig()
         if len(coarse_rows) != len(coarse_planned):
             raise ValueError("S206 coarse candidate count changed")
-        for row, candidate in zip(coarse_rows, coarse_planned, strict=True):
+        for row, planned_candidate in zip(coarse_rows, coarse_planned, strict=True):
             _validate_candidate_row(
                 report_path.parent,
                 row,
-                candidate,
+                planned_candidate,
                 "COARSE",
                 criteria,
                 parent_result,
@@ -974,11 +972,11 @@ def validate_contextual_finish_intent_portfolio(path: Path) -> dict[str, Any]:
             or len(refinement_rows) != len(refinement_planned)
         ):
             raise ValueError("S206 refinement derivation changed")
-        for row, candidate in zip(refinement_rows, refinement_planned, strict=True):
+        for row, planned_candidate in zip(refinement_rows, refinement_planned, strict=True):
             _validate_candidate_row(
                 report_path.parent,
                 row,
-                candidate,
+                planned_candidate,
                 "REFINEMENT",
                 criteria,
                 parent_result,
@@ -1115,7 +1113,7 @@ def validate_contextual_finish_intent_portfolio(path: Path) -> dict[str, Any]:
             str(source205["report_hash"]),
             repair_discovery_hash,
         )
-        candidate = RoleOptionBackendCandidate(
+        backend_candidate = RoleOptionBackendCandidate(
             backend=RoleOptionBackend.CONTEXTUAL_FINISH_TARGET,
             option=PhysicalSoccerOption.SHOOT,
             artifact_hash=actor.actor_hash,
@@ -1129,10 +1127,10 @@ def validate_contextual_finish_intent_portfolio(path: Path) -> dict[str, Any]:
             parent_retention_passed=selected["stability_retained"]
             and all(row["stability_retained"] for row in holdouts.values()),
         )
-        route = _route_for_candidate(candidate, str(request["finisher_cell_hash"]))
+        route = _route_for_candidate(backend_candidate, str(request["finisher_cell_hash"]))
         if (
-            payload.get("backend_candidate") != candidate.to_dict()
-            or payload.get("backend_candidate_hash") != candidate.candidate_hash
+            payload.get("backend_candidate") != backend_candidate.to_dict()
+            or payload.get("backend_candidate_hash") != backend_candidate.candidate_hash
             or payload.get("route") != route.to_dict()
             or payload.get("route_hash") != route.route_hash
         ):
@@ -1153,9 +1151,9 @@ def validate_contextual_finish_intent_portfolio(path: Path) -> dict[str, Any]:
             "fresh_ood_holdouts_rejected": all(
                 holdouts[case_id]["passed"] for case_id in rejection_ids
             ),
-            "strict_replay_complete": candidate.strict_replay,
-            "parent_stability_retained": candidate.parent_retention_passed,
-            "role_backend_evidence_ready": candidate.evidence_ready,
+            "strict_replay_complete": backend_candidate.strict_replay,
+            "parent_stability_retained": backend_candidate.parent_retention_passed,
+            "role_backend_evidence_ready": backend_candidate.evidence_ready,
             "role_backend_route_accepted": route.accepted
             and route.selected_backend is RoleOptionBackend.CONTEXTUAL_FINISH_TARGET,
             "sim_only_no_torque_authority": True,
