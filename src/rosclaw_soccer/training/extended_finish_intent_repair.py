@@ -67,6 +67,8 @@ class ExtendedFinishIntentRepairConfig:
     local_candidate_count: int = 32
     sequence_skip: int = 96
     local_radius_fraction: float = 0.25
+    refinement_sequence_skip: int = 192
+    refinement_radius_fraction: float = 0.125
     maximum_target_error_m: float = 0.10
     maximum_pass_error_m: float = 0.05
     minimum_error_improvement_m: float = 0.20
@@ -99,6 +101,8 @@ class ExtendedFinishIntentRepairConfig:
             or self.local_candidate_count != 32
             or self.sequence_skip != 96
             or self.local_radius_fraction != 0.25
+            or self.refinement_sequence_skip != 192
+            or self.refinement_radius_fraction != 0.125
             or not 0.05 <= self.maximum_target_error_m <= 0.10
             or not 0.01 <= self.maximum_pass_error_m <= 0.05
             or not 0.10 <= self.minimum_error_improvement_m <= 0.50
@@ -111,6 +115,19 @@ class ExtendedFinishIntentRepairConfig:
 
     @property
     def plan(self) -> BoundedActiveSearchPlan:
+        return self._plan(
+            sequence_skip=self.sequence_skip,
+            radius_fraction=self.local_radius_fraction,
+        )
+
+    @property
+    def refinement_plan(self) -> BoundedActiveSearchPlan:
+        return self._plan(
+            sequence_skip=self.refinement_sequence_skip,
+            radius_fraction=self.refinement_radius_fraction,
+        )
+
+    def _plan(self, *, sequence_skip: int, radius_fraction: float) -> BoundedActiveSearchPlan:
         names = (
             "policy_target_y_m",
             "foot_yaw_offset_rad",
@@ -130,8 +147,8 @@ class ExtendedFinishIntentRepairConfig:
             ),
             global_candidate_count=64,
             local_candidate_count=self.local_candidate_count,
-            sequence_skip=self.sequence_skip,
-            local_radius_fraction=self.local_radius_fraction,
+            sequence_skip=sequence_skip,
+            local_radius_fraction=radius_fraction,
         )
 
     @property
@@ -200,7 +217,10 @@ def run_extended_finish_intent_repair(
         "config_hash": active.config_hash,
         "search_plan": asdict(plan),
         "search_plan_hash": plan.plan_hash,
-        "candidate_hashes": [candidate.candidate_hash for candidate in planned],
+        "coarse_candidate_hashes": [candidate.candidate_hash for candidate in planned],
+        "refinement_plan": asdict(active.refinement_plan),
+        "refinement_plan_hash": active.refinement_plan.plan_hash,
+        "refinement_seed_rule": "BEST_SAFE_STABLE_GOAL_THEN_ERROR",
         "implementation_hash": _implementation_hash(),
         "runtime": _runtime_manifest(),
         "physics_authority": "CPU_MUJOCO",
@@ -213,12 +233,12 @@ def run_extended_finish_intent_repair(
 
     baseline_target = cast(tuple[float, float, float], tuple(holdout["executed_policy_target_m"]))
     baseline_yaw = float(holdout["executed_foot_yaw_offset_rad"])
-    baseline_kwargs = _candidate_kwargs(
-        context=context,
+    baseline_kwargs = _context_kwargs(
+        context_record=context,
+        target=baseline_target,
+        foot_yaw=baseline_yaw,
         controller=controller,
         duration=active.simulation_duration_sec,
-        physical_target=physical_target,
-        values=(baseline_target[1], baseline_yaw, 0.0, 0.01),
     )
     baseline_result, baseline_trajectory = simulate_shared_world(asset_root, **baseline_kwargs)
     baseline_record = _save_trajectory(output / "source-failure-replay.npz", baseline_trajectory)
@@ -241,9 +261,10 @@ def run_extended_finish_intent_repair(
         for candidate in planned
     ]
     outcomes = _run_jobs(jobs, workers)
-    rows = [
+    coarse_rows = [
         _candidate_row(
             output=output,
+            search_stage="COARSE",
             candidate=candidate,
             result=result,
             trajectory=trajectory,
@@ -253,6 +274,40 @@ def run_extended_finish_intent_repair(
         )
         for candidate, (result, trajectory) in zip(planned, outcomes, strict=True)
     ]
+    refinement_seed = min(coarse_rows, key=_refinement_seed_key)
+    refinement_center = cast(tuple[float, ...], tuple(refinement_seed["action_values"]))
+    refinement_planned = active.refinement_plan.local_candidates(refinement_center)
+    refinement_jobs = [
+        (
+            asset_root.expanduser().resolve(),
+            _candidate_kwargs(
+                context=context,
+                controller=controller,
+                duration=active.simulation_duration_sec,
+                physical_target=physical_target,
+                values=candidate.values,
+            ),
+        )
+        for candidate in refinement_planned
+    ]
+    refinement_outcomes = _run_jobs(refinement_jobs, workers)
+    refinement_rows = [
+        _candidate_row(
+            output=output,
+            search_stage="REFINEMENT",
+            candidate=candidate,
+            result=result,
+            trajectory=trajectory,
+            config=active,
+            parent_result=cast(dict[str, Any], holdout["parent"]["result"]),
+            portfolio_config=portfolio_config,
+        )
+        for candidate, (result, trajectory) in zip(
+            refinement_planned, refinement_outcomes, strict=True
+        )
+    ]
+    rows = [*coarse_rows, *refinement_rows]
+    all_planned = (*planned, *refinement_planned)
     selected = min(rows, key=_selection_key)
     selected_values = cast(tuple[float, ...], tuple(selected["action_values"]))
     replay_result, replay_trajectory = simulate_shared_world(
@@ -279,7 +334,7 @@ def run_extended_finish_intent_repair(
         "source_s204_hash": source["report_hash"],
         "source_failure_context_hash": holdout["context_hash"],
         "source_failure_trajectory_hash": holdout["trajectory"]["trajectory_digest"],
-        "search_plan_hash": plan.plan_hash,
+        "search_plan_hashes": [plan.plan_hash, active.refinement_plan.plan_hash],
         "selected_candidate_hash": selected["candidate_hash"],
         "selected_trajectory_hash": selected["trajectory"]["trajectory_digest"],
         "action_names": [dimension.name for dimension in plan.dimensions],
@@ -304,9 +359,9 @@ def run_extended_finish_intent_repair(
         "source_failure_exactly_replayed": baseline_exact,
         "bounded_plan_content_bound": all(
             row["candidate_hash"] == candidate.candidate_hash
-            for row, candidate in zip(rows, planned, strict=True)
+            for row, candidate in zip(rows, all_planned, strict=True)
         ),
-        "all_candidates_physically_scored": len(rows) == len(planned)
+        "all_candidates_physically_scored": len(rows) == len(all_planned)
         and all(
             isinstance(row["trajectory"].get("trajectory_digest"), str)
             and isinstance(row.get("safe"), bool)
@@ -341,6 +396,12 @@ def run_extended_finish_intent_repair(
             "result": baseline_result.to_dict(),
             "trajectory": baseline_record,
             "matches_source_failure": baseline_exact,
+        },
+        "refinement": {
+            "seed_candidate_hash": refinement_seed["candidate_hash"],
+            "center": list(refinement_center),
+            "plan_hash": active.refinement_plan.plan_hash,
+            "candidate_hashes": [candidate.candidate_hash for candidate in refinement_planned],
         },
         "candidates": rows,
         "selected": selected,
@@ -403,6 +464,9 @@ def validate_extended_finish_intent_repair(path: Path) -> dict[str, Any]:
             or request.get("config_hash") != active.config_hash
             or request.get("search_plan_hash") != active.plan.plan_hash
             or hash_json(request.get("search_plan")) != active.plan.plan_hash
+            or request.get("refinement_plan_hash") != active.refinement_plan.plan_hash
+            or hash_json(request.get("refinement_plan")) != active.refinement_plan.plan_hash
+            or request.get("refinement_seed_rule") != "BEST_SAFE_STABLE_GOAL_THEN_ERROR"
             or request.get("physics_authority") != "CPU_MUJOCO"
             or request.get("activation_ceiling") != "SIM_ONLY"
             or request.get("hardware_command_sent") is not False
@@ -443,20 +507,47 @@ def validate_extended_finish_intent_repair(path: Path) -> dict[str, Any]:
         if baseline.get("matches_source_failure") is not baseline_exact:
             raise ValueError("S205 source replay derivation changed")
         planned = active.plan.local_candidates(active.warm_start)
-        if request.get("candidate_hashes") != [candidate.candidate_hash for candidate in planned]:
+        if request.get("coarse_candidate_hashes") != [
+            candidate.candidate_hash for candidate in planned
+        ]:
             raise ValueError("S205 planned candidate commitment changed")
         rows = cast(list[dict[str, Any]], payload["candidates"])
-        if len(rows) != len(planned):
+        if len(rows) != 2 * len(planned):
             raise ValueError("S205 candidate count changed")
-        for row, candidate in zip(rows, planned, strict=True):
+        coarse_rows = rows[: len(planned)]
+        for row, candidate in zip(coarse_rows, planned, strict=True):
             _validate_candidate_row(
                 report_path.parent,
                 row,
                 candidate,
+                "COARSE",
                 active,
                 cast(dict[str, Any], holdout["parent"]["result"]),
                 _portfolio_config_from_dict(cast(dict[str, Any], source_request["config"])),
             )
+        refinement_seed = min(coarse_rows, key=_refinement_seed_key)
+        refinement_center = cast(tuple[float, ...], tuple(refinement_seed["action_values"]))
+        refinement_planned = active.refinement_plan.local_candidates(refinement_center)
+        refinement = cast(dict[str, Any], payload["refinement"])
+        if refinement != {
+            "seed_candidate_hash": refinement_seed["candidate_hash"],
+            "center": list(refinement_center),
+            "plan_hash": active.refinement_plan.plan_hash,
+            "candidate_hashes": [candidate.candidate_hash for candidate in refinement_planned],
+        }:
+            raise ValueError("S205 refinement derivation changed")
+        refinement_rows = rows[len(planned) :]
+        for row, candidate in zip(refinement_rows, refinement_planned, strict=True):
+            _validate_candidate_row(
+                report_path.parent,
+                row,
+                candidate,
+                "REFINEMENT",
+                active,
+                cast(dict[str, Any], holdout["parent"]["result"]),
+                _portfolio_config_from_dict(cast(dict[str, Any], source_request["config"])),
+            )
+        all_planned = (*planned, *refinement_planned)
         selected = min(rows, key=_selection_key)
         if payload.get("selected") != selected:
             raise ValueError("S205 selected candidate changed")
@@ -487,7 +578,10 @@ def validate_extended_finish_intent_repair(path: Path) -> dict[str, Any]:
             "source_s204_hash": source["report_hash"],
             "source_failure_context_hash": holdout["context_hash"],
             "source_failure_trajectory_hash": holdout["trajectory"]["trajectory_digest"],
-            "search_plan_hash": active.plan.plan_hash,
+            "search_plan_hashes": [
+                active.plan.plan_hash,
+                active.refinement_plan.plan_hash,
+            ],
             "selected_candidate_hash": selected["candidate_hash"],
             "selected_trajectory_hash": selected["trajectory"]["trajectory_digest"],
             "action_names": [dimension.name for dimension in active.plan.dimensions],
@@ -517,9 +611,9 @@ def validate_extended_finish_intent_repair(path: Path) -> dict[str, Any]:
             "source_failure_exactly_replayed": baseline_exact,
             "bounded_plan_content_bound": all(
                 row["candidate_hash"] == candidate.candidate_hash
-                for row, candidate in zip(rows, planned, strict=True)
+                for row, candidate in zip(rows, all_planned, strict=True)
             ),
-            "all_candidates_physically_scored": len(rows) == len(planned)
+            "all_candidates_physically_scored": len(rows) == len(all_planned)
             and all(
                 isinstance(row["trajectory"].get("trajectory_digest"), str)
                 and isinstance(row.get("safe"), bool)
@@ -608,6 +702,7 @@ def _candidate_kwargs(
 def _candidate_row(
     *,
     output: Path,
+    search_stage: str,
     candidate: BoundedSearchCandidate,
     result: G1SharedWorldResult,
     trajectory: dict[str, np.ndarray],
@@ -615,6 +710,8 @@ def _candidate_row(
     parent_result: dict[str, Any],
     portfolio_config: ContextualFinishPortfolioConfig,
 ) -> dict[str, Any]:
+    if search_stage not in {"COARSE", "REFINEMENT"}:
+        raise ValueError("S205 search stage is invalid")
     result_dict = result.to_dict()
     stability = _stability_retained(result_dict, parent_result, portfolio_config)
     pass_retained = bool(
@@ -624,6 +721,7 @@ def _candidate_row(
     )
     precise = _precise_result(result_dict, config)
     return {
+        "search_stage": search_stage,
         "candidate": asdict(candidate),
         "candidate_hash": candidate.candidate_hash,
         "action_values": list(candidate.values),
@@ -634,7 +732,8 @@ def _candidate_row(
         "stability_retained": stability,
         "eligible": precise and pass_retained and stability,
         "trajectory": _save_trajectory(
-            output / f"candidate-{candidate.candidate_index:03d}.npz", trajectory
+            output / f"{search_stage.lower()}-candidate-{candidate.candidate_index:03d}.npz",
+            trajectory,
         ),
     }
 
@@ -643,6 +742,7 @@ def _validate_candidate_row(
     root: Path,
     row: dict[str, Any],
     candidate: BoundedSearchCandidate,
+    search_stage: str,
     config: ExtendedFinishIntentRepairConfig,
     parent_result: dict[str, Any],
     portfolio_config: ContextualFinishPortfolioConfig,
@@ -650,7 +750,8 @@ def _validate_candidate_row(
     _validate_trajectory(root, row["trajectory"])
     result = cast(dict[str, Any], row["result"])
     if (
-        row.get("candidate_hash") != candidate.candidate_hash
+        row.get("search_stage") != search_stage
+        or row.get("candidate_hash") != candidate.candidate_hash
         or hash_json(row.get("candidate")) != candidate.candidate_hash
         or row.get("action_values") != list(candidate.values)
         or row.get("safe") is not _safe_result_dict(result)
@@ -705,6 +806,27 @@ def _selection_key(row: dict[str, Any]) -> tuple[float, ...]:
         ),
         float(result.get("shooter_post_contact_support_foot_slip_m", math.inf)),
         -float(result.get("shooter_min_pelvis_height_m", -math.inf)),
+        float(row["candidate"]["candidate_index"]),
+    )
+
+
+def _refinement_seed_key(row: dict[str, Any]) -> tuple[float, ...]:
+    result = cast(dict[str, Any], row["result"])
+    error = result.get("target_error_m")
+    return (
+        0.0
+        if row.get("safe") is True
+        and row.get("stability_retained") is True
+        and result.get("goal_crossed") is True
+        else 1.0,
+        0.0 if row.get("safe") is True else 1.0,
+        0.0 if row.get("stability_retained") is True else 1.0,
+        0.0 if result.get("goal_crossed") is True else 1.0,
+        (
+            float(error)
+            if isinstance(error, int | float) and not isinstance(error, bool)
+            else math.inf
+        ),
         float(row["candidate"]["candidate_index"]),
     )
 

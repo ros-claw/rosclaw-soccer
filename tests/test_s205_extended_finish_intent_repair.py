@@ -7,6 +7,7 @@ import pytest
 from rosclaw_soccer.training.extended_finish_intent_repair import (
     ExtendedFinishIntentRepairConfig,
     _config_from_dict,
+    _refinement_seed_key,
     _selection_key,
 )
 
@@ -25,6 +26,8 @@ def test_default_repair_plan_is_deterministic_content_bound_and_sim_only() -> No
     assert all(candidate.activation_ceiling == "SIM_ONLY" for candidate in first)
     assert all(not candidate.hardware_authorized for candidate in first)
     assert all(not candidate.direct_joint_torque_output for candidate in first)
+    assert config.refinement_plan.plan_hash != config.plan.plan_hash
+    assert len(config.refinement_plan.local_candidates(config.warm_start)) == 33
 
 
 def test_repair_config_round_trip_preserves_hash() -> None:
@@ -72,3 +75,20 @@ def test_selection_prefers_safe_goal_crossing_before_low_untrusted_error() -> No
     }
 
     assert min((unsafe, safe), key=_selection_key) is safe
+
+
+def test_refinement_seed_prefers_stable_goal_over_unstable_low_error() -> None:
+    unstable = {
+        "safe": True,
+        "stability_retained": False,
+        "candidate": {"candidate_index": 0},
+        "result": {"goal_crossed": True, "target_error_m": 0.01},
+    }
+    stable = {
+        "safe": True,
+        "stability_retained": True,
+        "candidate": {"candidate_index": 1},
+        "result": {"goal_crossed": True, "target_error_m": 0.11},
+    }
+
+    assert min((unstable, stable), key=_refinement_seed_key) is stable
