@@ -449,7 +449,7 @@ def run_contextual_finish_intent_portfolio(
     )
     evidence_hash = str(hash_json({"sources": source_hashes}))
     candidate = RoleOptionBackendCandidate(
-        backend=RoleOptionBackend.CONTEXTUAL_FINISH_INTENT,
+        backend=RoleOptionBackend.CONTEXTUAL_FINISH_TARGET,
         option=PhysicalSoccerOption.SHOOT,
         artifact_hash=actor.actor_hash,
         evidence_hash=evidence_hash,
@@ -482,7 +482,7 @@ def run_contextual_finish_intent_portfolio(
         "parent_stability_retained": parent_retention,
         "role_backend_evidence_ready": candidate.evidence_ready,
         "role_backend_route_accepted": route.accepted
-        and route.selected_backend is RoleOptionBackend.CONTEXTUAL_FINISH_INTENT,
+        and route.selected_backend is RoleOptionBackend.CONTEXTUAL_FINISH_TARGET,
         "sim_only_no_torque_authority": True,
     }
     passed = all(gates.values())
@@ -618,9 +618,12 @@ def _evaluate_candidates(
 
 
 def _sample_features(context: dict[str, Any]) -> tuple[float, ...]:
-    return contextual_finish_intent_features(
-        receiver_phase_start_sec=float(context["receiver_phase_start_sec"]),
-        prepared_features=cast(tuple[float, ...], tuple(context["features"])),
+    return cast(
+        tuple[float, ...],
+        contextual_finish_intent_features(
+            receiver_phase_start_sec=float(context["receiver_phase_start_sec"]),
+            prepared_features=cast(tuple[float, ...], tuple(context["features"])),
+        ),
     )
 
 
@@ -1113,7 +1116,7 @@ def validate_contextual_finish_intent_portfolio(path: Path) -> dict[str, Any]:
             repair_discovery_hash,
         )
         candidate = RoleOptionBackendCandidate(
-            backend=RoleOptionBackend.CONTEXTUAL_FINISH_INTENT,
+            backend=RoleOptionBackend.CONTEXTUAL_FINISH_TARGET,
             option=PhysicalSoccerOption.SHOOT,
             artifact_hash=actor.actor_hash,
             evidence_hash=str(hash_json({"sources": source_hashes})),
@@ -1154,7 +1157,7 @@ def validate_contextual_finish_intent_portfolio(path: Path) -> dict[str, Any]:
             "parent_stability_retained": candidate.parent_retention_passed,
             "role_backend_evidence_ready": candidate.evidence_ready,
             "role_backend_route_accepted": route.accepted
-            and route.selected_backend is RoleOptionBackend.CONTEXTUAL_FINISH_INTENT,
+            and route.selected_backend is RoleOptionBackend.CONTEXTUAL_FINISH_TARGET,
             "sim_only_no_torque_authority": True,
         }
         metrics = {

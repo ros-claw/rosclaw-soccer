@@ -131,9 +131,9 @@ def test_actor_cannot_expand_support_scale_or_gain_torque_authority() -> None:
         replace(actor, direct_joint_torque_output=True)
 
 
-def test_role_backend_recognizes_ready_contextual_finish_intent() -> None:
+def test_existing_finish_backend_accepts_ready_extended_intent_actor() -> None:
     candidate = RoleOptionBackendCandidate(
-        backend=RoleOptionBackend.CONTEXTUAL_FINISH_INTENT,
+        backend=RoleOptionBackend.CONTEXTUAL_FINISH_TARGET,
         option=PhysicalSoccerOption.SHOOT,
         artifact_hash=_hash("actor"),
         evidence_hash=_hash("evidence"),
