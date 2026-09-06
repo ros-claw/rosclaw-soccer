@@ -198,7 +198,7 @@ def collect_full_body_acquisition(
 def _save_trajectory(path: Path, trajectory: dict[str, NDArray[Any]]) -> dict[str, str]:
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("wb") as stream:
-        np.savez_compressed(stream, **trajectory)
+        np.savez_compressed(stream, **trajectory)  # type: ignore[arg-type]
     os.replace(temporary, path)
     return {
         "file": path.name,

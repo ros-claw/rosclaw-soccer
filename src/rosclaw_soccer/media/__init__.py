@@ -8,6 +8,10 @@ from rosclaw_soccer.media.alternating_growth_video import (
     render_alternating_growth_video,
     validate_alternating_growth_video_manifest,
 )
+from rosclaw_soccer.media.continuous_finish_plan_development_video import (
+    render_continuous_finish_plan_development_video,
+    validate_continuous_finish_plan_development_video,
+)
 from rosclaw_soccer.media.dynamic_aerial_lunge_video import (
     render_dynamic_aerial_lunge_video,
     validate_dynamic_aerial_lunge_video_manifest,
@@ -66,6 +70,7 @@ __all__ = [
     "render_alternating_growth_video",
     "render_aerial_curriculum_video",
     "render_collision_faithful_goalkeeper_video",
+    "render_continuous_finish_plan_development_video",
     "render_dynamic_aerial_lunge_video",
     "render_dynamic_takeoff_video",
     "render_g1_free_kick_showcase_video",
@@ -81,6 +86,7 @@ __all__ = [
     "validate_alternating_growth_video_manifest",
     "validate_aerial_curriculum_video_manifest",
     "validate_collision_faithful_goalkeeper_manifest",
+    "validate_continuous_finish_plan_development_video",
     "validate_dynamic_aerial_lunge_video_manifest",
     "validate_dynamic_takeoff_video_manifest",
     "validate_full_body_tactical_video_manifest",

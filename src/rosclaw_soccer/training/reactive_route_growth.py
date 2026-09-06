@@ -21,6 +21,12 @@ from rosclaw_soccer.growth.reactive_route_actor import (
 )
 from rosclaw_soccer.growth.tactical_2v1 import TacticalAction
 from rosclaw_soccer.growth.tactical_2v1_actor import load_two_vs_one_tactical_actor
+from rosclaw_soccer.growth.temporal_route_actor import (
+    RouteActor,
+)
+from rosclaw_soccer.growth.temporal_route_actor import (
+    load_route_actor as load_route_actor_artifact,
+)
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.shared_world import G1ReactiveMovementConfig
@@ -326,7 +332,7 @@ def build_reactive_movement_plan(
     scenario: FullBodyTwoVsOneScenario,
     action: TacticalAction,
     actor_path: Path,
-    actor: G1ReactiveRouteActor,
+    actor: RouteActor,
     teammate_origin_offset_m: tuple[float, float] = (0.0, 0.0),
     defender_origin_offset_m: tuple[float, float] = (0.0, 0.0),
     candidate: ActiveRouteCandidate | None = None,
@@ -336,43 +342,39 @@ def build_reactive_movement_plan(
     teacher = build_action_conditioned_movement_plan(
         scenario, action, selected, simulation_duration_sec=simulation_duration_sec
     )
-    teammate_origin = tuple(
-        float(value)
-        for value in (
-            teacher.teammate_origin_m[0] + teammate_origin_offset_m[0],
-            teacher.teammate_origin_m[1] + teammate_origin_offset_m[1],
-            0.0,
-        )
+    teammate_origin: tuple[float, float, float] = (
+        float(teacher.teammate_origin_m[0] + teammate_origin_offset_m[0]),
+        float(teacher.teammate_origin_m[1] + teammate_origin_offset_m[1]),
+        0.0,
     )
-    defender_origin = tuple(
-        float(value)
-        for value in (
-            scenario.defender_origin_m[0] + defender_origin_offset_m[0],
-            scenario.defender_origin_m[1] + defender_origin_offset_m[1],
-            0.0,
-        )
+    defender_origin: tuple[float, float, float] = (
+        float(scenario.defender_origin_m[0] + defender_origin_offset_m[0]),
+        float(scenario.defender_origin_m[1] + defender_origin_offset_m[1]),
+        0.0,
     )
-    common = {
-        "actor_artifact_path": str(actor_path.expanduser().resolve()),
-        "actor_hash": actor.actor_hash,
-        "action": action.value,
-    }
+    actor_artifact_path = str(actor_path.expanduser().resolve())
     return FullBodyReactiveRoleMovementPlan(
         teammate_origin_m=teammate_origin,
         defender_origin_m=defender_origin,
         teammate_movement=G1ReactiveMovementConfig(
-            **common,
+            actor_artifact_path=actor_artifact_path,
+            actor_hash=actor.actor_hash,
+            action=action.value,
             role="teammate",
             target_position_m=teacher.teammate_movement.waypoints[-1].position_m,
             maximum_speed_mps=selected.maximum_speed_mps,
             maximum_acceleration_mps2=selected.maximum_acceleration_mps2,
+            arrival_radius_m=0.02,
         ),
         defender_movement=G1ReactiveMovementConfig(
-            **common,
+            actor_artifact_path=actor_artifact_path,
+            actor_hash=actor.actor_hash,
+            action=action.value,
             role="defender",
             target_position_m=teacher.defender_movement.waypoints[-1].position_m,
             maximum_speed_mps=min(0.40, selected.maximum_speed_mps - 0.05),
             maximum_acceleration_mps2=max(0.40, selected.maximum_acceleration_mps2 - 0.05),
+            arrival_radius_m=0.02,
         ),
     )
 
@@ -383,7 +385,7 @@ def simulate_reactive_route_episode(
     case: ReactiveRouteCase,
     action: TacticalAction,
     actor_path: Path,
-    actor: G1ReactiveRouteActor,
+    actor: RouteActor,
     skill_bundle: FrozenTacticalSkillBundle,
     config: FullBodyTwoVsOneConfig | None = None,
 ) -> tuple[ActiveOffBallResult, dict[str, NDArray[Any]]]:
@@ -670,18 +672,16 @@ def run_reactive_route_retention_exam(
     return report
 
 
-def load_route_actor(path: Path) -> G1ReactiveRouteActor:
+def load_route_actor(path: Path) -> RouteActor:
     """Late import seam kept explicit for retention-runner test doubles."""
 
-    from rosclaw_soccer.growth.reactive_route_actor import load_reactive_route_actor
-
-    return load_reactive_route_actor(path)
+    return load_route_actor_artifact(path)
 
 
 def _save_trajectory(path: Path, trajectory: dict[str, NDArray[Any]]) -> dict[str, str]:
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("wb") as stream:
-        np.savez_compressed(stream, **trajectory)
+        np.savez_compressed(stream, **trajectory)  # type: ignore[arg-type]
     os.replace(temporary, path)
     return {
         "file": path.name,

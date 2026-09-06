@@ -53,7 +53,7 @@ class FirstTouchInterceptionConfig:
             raise ValueError("First Touch interception force limit is invalid")
         if not 1.0 <= self.maximum_joint_residual_nm <= 40.0:
             raise ValueError("First Touch interception torque limit is invalid")
-        if not 0.25 <= self.maximum_foot_ball_distance_m <= 0.80:
+        if not 0.25 <= self.maximum_foot_ball_distance_m <= 1.50:
             raise ValueError("First Touch interception proximity is invalid")
         if not 210 <= self.start_policy_frame < self.end_policy_frame <= 275:
             raise ValueError("First Touch interception policy window is invalid")

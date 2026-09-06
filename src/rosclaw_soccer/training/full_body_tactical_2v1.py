@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from rosclaw_soccer.growth.first_touch_interception import FirstTouchInterceptionConfig
 from rosclaw_soccer.growth.tactical_2v1 import (
     MatchedTacticalRollout,
     TacticalAction,
@@ -35,6 +36,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.shared_world import (
     G1GoalkeeperConfig,
     G1ReactiveMovementConfig,
+    G1RoleAutonomyConfig,
     G1TacticalMovementConfig,
     simulate_shared_world,
     trained_three_role_skill_simulation_kwargs,
@@ -166,6 +168,51 @@ class FullBodyReactiveRoleMovementPlan:
             or self.hardware_authorized
         ):
             raise ValueError("full-body reactive role plan violates its SIM-only field envelope")
+
+    @property
+    def plan_hash(self) -> str:
+        return str(hash_json(asdict(self)))
+
+
+@dataclass(frozen=True)
+class FullBodyAutonomousRoleMovementPlan:
+    """Per-role causal intent policies routed through learned locomotion."""
+
+    teammate_origin_m: tuple[float, float, float]
+    defender_origin_m: tuple[float, float, float]
+    teammate_movement: G1ReactiveMovementConfig
+    defender_movement: G1ReactiveMovementConfig
+    teammate_autonomy: G1RoleAutonomyConfig
+    defender_autonomy: G1RoleAutonomyConfig
+    activation_ceiling: str = "SIM_ONLY"
+    hardware_authorized: bool = False
+    schema_version: str = "rosclaw_soccer.full_body_autonomous_role_movement_plan.v1"
+
+    def __post_init__(self) -> None:
+        teammate = np.asarray(self.teammate_origin_m, dtype=np.float64)
+        defender = np.asarray(self.defender_origin_m, dtype=np.float64)
+        if (
+            teammate.shape != (3,)
+            or defender.shape != (3,)
+            or not np.all(np.isfinite(teammate))
+            or not np.all(np.isfinite(defender))
+            or not 3.5 <= teammate[0] <= 6.0
+            or abs(float(teammate[1])) > 1.5
+            or not 0.5 <= defender[0] <= 5.5
+            or abs(float(defender[1])) > 1.5
+            or abs(float(teammate[2])) > 1.0e-12
+            or abs(float(defender[2])) > 1.0e-12
+            or self.teammate_movement.action != self.defender_movement.action
+            or self.teammate_movement.role != "teammate"
+            or self.defender_movement.role != "defender"
+            or self.teammate_autonomy.role != "teammate"
+            or self.defender_autonomy.role != "defender"
+            or self.teammate_autonomy.team_id != "red"
+            or self.defender_autonomy.team_id != "blue"
+            or self.activation_ceiling != "SIM_ONLY"
+            or self.hardware_authorized
+        ):
+            raise ValueError("autonomous role plan violates its SIM-only field envelope")
 
     @property
     def plan_hash(self) -> str:
@@ -354,13 +401,21 @@ def simulate_full_body_two_vs_one(
     focal_teammate_present: bool = True,
     movement_plan: FullBodyRoleMovementPlan | None = None,
     reactive_movement_plan: FullBodyReactiveRoleMovementPlan | None = None,
+    autonomous_movement_plan: FullBodyAutonomousRoleMovementPlan | None = None,
 ) -> tuple[FullBodyTwoVsOneResult, dict[str, NDArray[Any]]]:
     """Execute one frozen high-level option with three complete G1 bodies."""
 
     if action not in _ACTIONS:
         raise ValueError("full-body bridge supports only PASS or SHOOT")
-    if movement_plan is not None and reactive_movement_plan is not None:
-        raise ValueError("fixed and reactive full-body role plans are mutually exclusive")
+    plans = tuple(
+        item
+        for item in (movement_plan, reactive_movement_plan, autonomous_movement_plan)
+        if item is not None
+    )
+    if len(plans) > 1:
+        raise ValueError("full-body role movement plans are mutually exclusive")
+    reactive_plan: FullBodyReactiveRoleMovementPlan | FullBodyAutonomousRoleMovementPlan | None
+    reactive_plan = autonomous_movement_plan or reactive_movement_plan
     active = config or FullBodyTwoVsOneConfig()
     goal = _goal()
     teammate_y = float(scenario.teammate_origin_m[1])
@@ -378,8 +433,8 @@ def simulate_full_body_two_vs_one(
             "shooter_target": (goal.plane_x_m, goal.target_y_m, goal.target_z_m),
             "shooter_policy_target": policy_target,
             "passer_origin": (
-                reactive_movement_plan.teammate_origin_m
-                if reactive_movement_plan is not None
+                reactive_plan.teammate_origin_m
+                if reactive_plan is not None
                 else scenario.teammate_origin_m
                 if movement_plan is None
                 else movement_plan.teammate_origin_m
@@ -393,7 +448,29 @@ def simulate_full_body_two_vs_one(
                 None if movement_plan is None else movement_plan.teammate_movement
             ),
             "passer_reactive_movement_config": (
-                None if reactive_movement_plan is None else reactive_movement_plan.teammate_movement
+                None if reactive_plan is None else reactive_plan.teammate_movement
+            ),
+            "passer_role_autonomy_config": (
+                None
+                if autonomous_movement_plan is None
+                else autonomous_movement_plan.teammate_autonomy
+            ),
+            "passer_reception_interception_config": (
+                FirstTouchInterceptionConfig(
+                    strike_ankle_offset_m=(-0.06, 0.08, -0.07),
+                    prediction_horizon_sec=0.10,
+                    position_gain_n_per_m=300.0,
+                    velocity_damping_n_per_mps=4.0,
+                    maximum_task_force_n=90.0,
+                    maximum_joint_residual_nm=20.0,
+                    maximum_foot_ball_distance_m=1.20,
+                )
+                if action == TacticalAction.PASS
+                and (reactive_movement_plan is not None or autonomous_movement_plan is not None)
+                else None
+            ),
+            "passer_precontact_joint_guard_enabled": (
+                reactive_movement_plan is not None or autonomous_movement_plan is not None
             ),
             "ball_ground_friction": scenario.ball_ground_friction,
             "goal_spec": goal,
@@ -405,14 +482,19 @@ def simulate_full_body_two_vs_one(
             ),
             "goalkeeper_origin_override_m": (
                 scenario.defender_origin_m
-                if reactive_movement_plan is None
-                else reactive_movement_plan.defender_origin_m
+                if reactive_plan is None
+                else reactive_plan.defender_origin_m
             ),
             "goalkeeper_tactical_movement_config": (
                 None if movement_plan is None else movement_plan.defender_movement
             ),
             "goalkeeper_reactive_movement_config": (
-                None if reactive_movement_plan is None else reactive_movement_plan.defender_movement
+                None if reactive_plan is None else reactive_plan.defender_movement
+            ),
+            "goalkeeper_role_autonomy_config": (
+                None
+                if autonomous_movement_plan is None
+                else autonomous_movement_plan.defender_autonomy
             ),
             "goalkeeper_threat_role": "shooter",
             "simulation_duration_sec": active.simulation_duration_sec,
@@ -489,6 +571,12 @@ def simulate_full_body_two_vs_one(
             "policy_target": policy_target,
             "config_hash": active.config_hash,
             "movement_plan_hash": None if movement_plan is None else movement_plan.plan_hash,
+            "reactive_movement_plan_hash": (
+                None if reactive_movement_plan is None else reactive_movement_plan.plan_hash
+            ),
+            "autonomous_movement_plan_hash": (
+                None if autonomous_movement_plan is None else autonomous_movement_plan.plan_hash
+            ),
             "implementation_hash": hash_bytes(Path(__file__).read_bytes()),
         }
     )

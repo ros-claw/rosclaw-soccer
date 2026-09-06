@@ -262,6 +262,7 @@ def _make_probe_robot(
     state_type: Any,
     output_type: Any,
     policy_type: Any,
+    motion_joint_order: NDArray[np.int64],
     initial_position: NDArray[np.float64],
     initial_quaternion: NDArray[np.float64],
     initial_joints: NDArray[np.float64],
@@ -279,6 +280,7 @@ def _make_probe_robot(
         state_type=state_type,
         output_type=output_type,
         policy_type=policy_type,
+        motion_joint_order=motion_joint_order,
         parameters=ShotParameters(
             stance_offset_y=-0.06,
             pelvis_yaw_offset=0.175,
@@ -356,7 +358,7 @@ def simulate_second_striker_contact(
     )
     data = mujoco.MjData(model)
     model.opt.timestep = 0.002
-    state_type, output_type, policy_type, _ = load_robonaldo(asset_root)
+    state_type, output_type, policy_type, motion_joint_order = load_robonaldo(asset_root)
     motion_path = asset_root / "policy" / "robonaldo" / "model" / "freekick_motion.npz"
     with np.load(motion_path, allow_pickle=False) as motion:
         initial_position = np.asarray(motion["body_pos_w"][0, 0], dtype=np.float64)
@@ -372,6 +374,7 @@ def simulate_second_striker_contact(
             state_type=state_type,
             output_type=output_type,
             policy_type=policy_type,
+            motion_joint_order=motion_joint_order,
             initial_position=initial_position,
             initial_quaternion=initial_quaternion,
             initial_joints=np.asarray(_STANDBY_TARGET, dtype=np.float64),
@@ -388,6 +391,7 @@ def simulate_second_striker_contact(
             state_type=state_type,
             output_type=output_type,
             policy_type=policy_type,
+            motion_joint_order=motion_joint_order,
             initial_position=initial_position,
             initial_quaternion=initial_quaternion,
             initial_joints=np.asarray(_STANDBY_TARGET, dtype=np.float64),
@@ -404,6 +408,7 @@ def simulate_second_striker_contact(
             state_type=state_type,
             output_type=output_type,
             policy_type=policy_type,
+            motion_joint_order=motion_joint_order,
             initial_position=initial_position,
             initial_quaternion=initial_quaternion,
             initial_joints=np.asarray(_STANDBY_TARGET, dtype=np.float64),
@@ -420,6 +425,7 @@ def simulate_second_striker_contact(
             state_type=state_type,
             output_type=output_type,
             policy_type=policy_type,
+            motion_joint_order=motion_joint_order,
             initial_position=initial_position,
             initial_quaternion=initial_quaternion,
             initial_joints=np.asarray(_STANDBY_TARGET, dtype=np.float64),
