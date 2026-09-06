@@ -416,6 +416,7 @@ def simulate_independent_physical_option(
                     goal=goal,
                     left_goal_plane_x_m=active.locomotion.left_goal_plane_x_m,
                     possession_agent_id=possession,
+                    ball_chaser_agent_id=None,
                 )
                 for controller in controllers
             )
@@ -480,6 +481,13 @@ def simulate_independent_physical_option(
                 positions=positions,
                 data=data,
                 ball_qpos=ball_qpos,
+                ball_qvel=ball_qvel,
+                possession_agent_id=None,
+                committed_receiver=False,
+                active_receiver=False,
+                post_receive_hold=False,
+                receive_foot_lateral_offset_m=0.18,
+                strike_target_position_m=None,
                 config=active.locomotion,
             )
             if controller is prepared:
@@ -567,7 +575,9 @@ def simulate_independent_physical_option(
                 state=net_state,
             )
             mujoco.mj_step(model, data)
-            robot_contact_count += team_world._robot_robot_contacts(model, data, controllers)
+            robot_contact_count += team_world._robot_robot_contact_observation(
+                model, data, controllers
+            )[0]
             for index in range(int(data.ncon)):
                 contact = data.contact[index]
                 pair = {int(contact.geom1), int(contact.geom2)}

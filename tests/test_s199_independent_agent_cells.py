@@ -67,7 +67,7 @@ def _states() -> dict[str, AgentPhysicalState]:
 def _observations(
     cells: tuple[RosclawSoccerAgentCell, ...],
     *,
-    possession_agent_id: str = "red.playmaker",
+    possession_agent_id: str | None = "red.playmaker",
 ) -> tuple[AgentCellObservation, ...]:
     states = _states()
     return tuple(
@@ -184,6 +184,71 @@ def test_blue_goalkeeper_distributes_toward_the_opponent_goal() -> None:
 
     assert decision.intent is TacticalIntent.DISTRIBUTE
     assert decision.target_agent_id == "blue.finisher"
+
+
+def test_loose_ball_elects_one_global_outfield_chaser() -> None:
+    cells = _cells()
+    observations = _observations(cells, possession_agent_id=None)
+    decisions = {
+        cell.agent_id: cell.decide(
+            next(value for value in observations if value.observer_agent_id == cell.agent_id)
+        )
+        for cell in cells
+    }
+
+    red_chasers = [
+        decision
+        for agent_id, decision in decisions.items()
+        if agent_id.startswith("red.") and decision.intent is TacticalIntent.RECEIVE
+    ]
+    blue_chasers = [
+        decision
+        for agent_id, decision in decisions.items()
+        if agent_id.startswith("blue.") and decision.intent is TacticalIntent.RECEIVE
+    ]
+
+    assert [decision.agent_id for decision in red_chasers] == ["red.playmaker"]
+    assert blue_chasers == []
+    assert decisions["red.finisher"].intent is TacticalIntent.RUN_IN_BEHIND
+    assert decisions["blue.playmaker"].intent is TacticalIntent.SUPPORT
+    assert decisions["blue.finisher"].intent is TacticalIntent.SUPPORT
+
+
+def test_opponent_possession_elects_one_pressing_outfielder_per_team() -> None:
+    cells = _cells()
+    observations = _observations(cells, possession_agent_id="red.playmaker")
+    decisions = {
+        cell.agent_id: cell.decide(
+            next(value for value in observations if value.observer_agent_id == cell.agent_id)
+        )
+        for cell in cells
+    }
+
+    blue_pressers = [
+        decision.agent_id
+        for agent_id, decision in decisions.items()
+        if agent_id.startswith("blue.") and decision.intent is TacticalIntent.RECEIVE
+    ]
+    assert blue_pressers == ["blue.finisher"]
+    assert decisions["blue.playmaker"].intent is TacticalIntent.SUPPORT
+
+
+def test_contact_bound_chaser_lease_overrides_nearest_player_switching() -> None:
+    cells = _cells()
+    observations = tuple(
+        replace(value, ball_chaser_agent_id="red.finisher")
+        for value in _observations(cells, possession_agent_id=None)
+    )
+    decisions = {
+        cell.agent_id: cell.decide(
+            next(value for value in observations if value.observer_agent_id == cell.agent_id)
+        )
+        for cell in cells
+    }
+
+    assert decisions["red.finisher"].intent is TacticalIntent.RECEIVE
+    assert decisions["red.playmaker"].intent is TacticalIntent.SUPPORT
+    assert decisions["blue.playmaker"].intent is TacticalIntent.SUPPORT
 
 
 def test_plasticity_lease_freezes_the_other_five_rosclaw_cells() -> None:

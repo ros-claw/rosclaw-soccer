@@ -15,7 +15,7 @@ import importlib
 import io
 import math
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,11 @@ from rosclaw_soccer.growth.independent_agent_cell import (
     RosclawSoccerAgentCell,
     build_team_coordination_frame,
 )
+from rosclaw_soccer.growth.locomotion_contact_teacher import (
+    G1LocomotionContactTeacherConfig,
+    G1RollingOptionBridgeConfig,
+    locomotion_contact_teacher_effect,
+)
 from rosclaw_soccer.growth.role_self_model import (
     MatchRole,
     TacticalIntent,
@@ -39,11 +44,17 @@ from rosclaw_soccer.providers.g1.asset_qualification import (
     trajectory_digest,
 )
 from rosclaw_soccer.providers.g1.mujoco_primitives import (
+    adapt_shot_target,
     load_robonaldo,
     mirror_g1_joint_gains,
     mirror_g1_joint_positions,
 )
-from rosclaw_soccer.sim.contracts import G1_DDS_JOINT_NAMES, G1_HARD_TORQUE_LIMITS, hash_json
+from rosclaw_soccer.sim.contracts import (
+    G1_DDS_JOINT_NAMES,
+    G1_HARD_TORQUE_LIMITS,
+    ShotParameters,
+    hash_json,
+)
 from rosclaw_soccer.world.field import (
     G1CompliantGoalNetState,
     G1TrainingGoalSpec,
@@ -70,12 +81,30 @@ class IndependentTeamWorldConfig:
     maximum_speed_mps: float = 0.38
     goalkeeper_maximum_speed_mps: float = 0.30
     maximum_acceleration_mps2: float = 0.60
+    maximum_yaw_rate_radps: float = 0.80
+    yaw_gain: float = 1.20
+    receive_open_body_angle_rad: float = math.pi / 2.0
     position_gain: float = 0.85
     arrival_radius_m: float = 0.14
     minimum_player_separation_m: float = 0.95
     collision_avoidance_gain: float = 1.20
     maximum_collision_correction_mps: float = 0.28
     possession_radius_m: float = 1.25
+    contact_possession_hold_sec: float = 0.20
+    receive_intercept_horizon_sec: float = 0.45
+    receive_pocket_depth_m: float = 0.28
+    duel_lateral_offset_m: float = 0.32
+    receive_run_onto_horizon_sec: float = 2.5
+    receive_run_onto_lane_radius_m: float = 0.65
+    receive_runthrough_distance_m: float = 0.80
+    receive_pacing_ratio: float = 0.45
+    receive_braking_distance_m: float = 0.55
+    post_receive_hold_sec: float = 0.20
+    strike_bypass_lateral_m: float = 0.55
+    minimum_ball_chaser_lease_sec: float = 2.5
+    ball_chaser_handoff_margin_m: float = 0.40
+    minimum_receive_lease_progress_m: float = 0.50
+    minimum_receive_lease_ball_speed_mps: float = 0.50
     left_goal_plane_x_m: float = -1.50
     minimum_pelvis_height_m: float = 0.55
     maximum_tilt_rad: float = 0.80
@@ -90,12 +119,30 @@ class IndependentTeamWorldConfig:
             self.maximum_speed_mps,
             self.goalkeeper_maximum_speed_mps,
             self.maximum_acceleration_mps2,
+            self.maximum_yaw_rate_radps,
+            self.yaw_gain,
+            self.receive_open_body_angle_rad,
             self.position_gain,
             self.arrival_radius_m,
             self.minimum_player_separation_m,
             self.collision_avoidance_gain,
             self.maximum_collision_correction_mps,
             self.possession_radius_m,
+            self.contact_possession_hold_sec,
+            self.receive_intercept_horizon_sec,
+            self.receive_pocket_depth_m,
+            self.duel_lateral_offset_m,
+            self.receive_run_onto_horizon_sec,
+            self.receive_run_onto_lane_radius_m,
+            self.receive_runthrough_distance_m,
+            self.receive_pacing_ratio,
+            self.receive_braking_distance_m,
+            self.post_receive_hold_sec,
+            self.strike_bypass_lateral_m,
+            self.minimum_ball_chaser_lease_sec,
+            self.ball_chaser_handoff_margin_m,
+            self.minimum_receive_lease_progress_m,
+            self.minimum_receive_lease_ball_speed_mps,
             self.left_goal_plane_x_m,
             self.minimum_pelvis_height_m,
             self.maximum_tilt_rad,
@@ -107,12 +154,35 @@ class IndependentTeamWorldConfig:
             or not 0.20 <= self.maximum_speed_mps <= 0.70
             or not 0.20 <= self.goalkeeper_maximum_speed_mps <= 0.60
             or not 0.30 <= self.maximum_acceleration_mps2 <= 3.0
+            or not 0.30 <= self.maximum_yaw_rate_radps <= 1.50
+            or not 0.20 <= self.yaw_gain <= 3.0
+            or not 0.50 <= self.receive_open_body_angle_rad <= 1.70
             or not 0.50 <= self.position_gain <= 3.0
             or not 0.05 <= self.arrival_radius_m <= 0.25
             or not 0.55 <= self.minimum_player_separation_m <= 1.20
             or not 0.20 <= self.collision_avoidance_gain <= 3.0
             or not 0.05 <= self.maximum_collision_correction_mps <= 0.30
-            or not 0.50 <= self.possession_radius_m <= 1.50
+            # Possession is measured from the ball centre to an ankle body.
+            # The previous 0.50 m floor let an agent claim the ball before a
+            # foot could possibly touch it, turning PASS/SHOOT into gestures
+            # behind a stationary ball.  Keep the legacy default for frozen
+            # S199 evidence while allowing contact-scale match profiles.
+            or not 0.15 <= self.possession_radius_m <= 1.50
+            or not 0.0 <= self.contact_possession_hold_sec <= 1.50
+            or not 0.15 <= self.receive_intercept_horizon_sec <= 0.80
+            or not 0.18 <= self.receive_pocket_depth_m <= 0.45
+            or not 0.20 <= self.duel_lateral_offset_m <= 0.45
+            or not 1.0 <= self.receive_run_onto_horizon_sec <= 3.0
+            or not 0.30 <= self.receive_run_onto_lane_radius_m <= 0.80
+            or not 0.30 <= self.receive_runthrough_distance_m <= 1.20
+            or not 0.20 <= self.receive_pacing_ratio <= 0.80
+            or not 0.30 <= self.receive_braking_distance_m <= 0.80
+            or not 0.20 <= self.post_receive_hold_sec <= 1.00
+            or not 0.35 <= self.strike_bypass_lateral_m <= 0.80
+            or not 0.50 <= self.minimum_ball_chaser_lease_sec <= 5.0
+            or not 0.10 <= self.ball_chaser_handoff_margin_m <= 0.80
+            or not 0.20 <= self.minimum_receive_lease_progress_m <= 1.50
+            or not 0.20 <= self.minimum_receive_lease_ball_speed_mps <= 1.50
             or not -5.0 <= self.left_goal_plane_x_m <= 0.0
             or not 0.45 <= self.minimum_pelvis_height_m <= 0.70
             or not 0.45 <= self.maximum_tilt_rad <= 1.00
@@ -401,6 +471,10 @@ class _PlayerController:
     left_ankle_body: int
     right_ankle_body: int
     robot_geoms: frozenset[int]
+    left_foot_geoms: frozenset[int]
+    right_foot_geoms: frozenset[int]
+    left_glove_geoms: frozenset[int]
+    right_glove_geoms: frozenset[int]
     state: Any
     output: Any
     policy: Any
@@ -419,6 +493,18 @@ class _PlayerController:
     maximum_tilt_rad: float = 0.0
     joint_limit_violation: bool = False
     torque_limit_violation: bool = False
+    kick_output: Any | None = None
+    kick_policy: Any | None = None
+    option_active: bool = False
+    option_activation_frame: int | None = None
+    option_origin_target: NDArray[np.float64] | None = None
+    option_origin_kp: NDArray[np.float64] | None = None
+    option_origin_kd: NDArray[np.float64] | None = None
+    option_parameters: ShotParameters | None = None
+    option_contact_observed: bool = False
+    option_completed: bool = False
+    last_ball_contact_foot: str | None = None
+    post_receive_joint_target: NDArray[np.float64] | None = None
 
     def __post_init__(self) -> None:
         if self.seen_intents is None:
@@ -434,6 +520,8 @@ def simulate_independent_team_world(
     scenario: IndependentTeamWorldScenario,
     goal: G1TrainingGoalSpec,
     config: IndependentTeamWorldConfig | None = None,
+    contact_teacher_config: G1LocomotionContactTeacherConfig | None = None,
+    option_bridge_config: G1RollingOptionBridgeConfig | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all six neural locomotion bodies in one clock."""
 
@@ -462,7 +550,7 @@ def simulate_independent_team_world(
     model = build_g1_multi_player_stadium_model(asset_root, players=players, spec=goal)
     model.opt.timestep = _PHYSICS_DT
     data = mujoco.MjData(model)
-    state_type, output_type, _, _ = load_robonaldo(qualification.asset_root)
+    state_type, output_type, kick_type, _ = load_robonaldo(qualification.asset_root)
     loco_type = importlib.import_module("policy.loco_mode.LocoMode").LocoMode
     with np.load(qualification.asset_root / _MOTION_REL) as motion:
         pelvis_height = float(np.asarray(motion["body_pos_w"])[0, 0, 2])
@@ -476,10 +564,12 @@ def simulate_independent_team_world(
             state_type=state_type,
             output_type=output_type,
             loco_type=loco_type,
+            kick_type=kick_type if option_bridge_config is not None else None,
         )
         for agent in sorted(roster.agents, key=lambda item: item.agent_id)
     )
     ball_body = _id(model, mujoco.mjtObj.mjOBJ_BODY, "ball")
+    ball_geom = _id(model, mujoco.mjtObj.mjOBJ_GEOM, "ball_geom")
     ball_joint = _id(model, mujoco.mjtObj.mjOBJ_JOINT, "ball_free")
     ball_qpos = int(model.jnt_qposadr[ball_joint])
     ball_qvel = int(model.jnt_dofadr[ball_joint])
@@ -498,6 +588,37 @@ def simulate_independent_team_world(
         "ball_pose": [],
         "ball_velocity": [],
         "coordination_frame_index": [],
+        "possession_agent_code": [],
+        "ball_chaser_agent_code": [],
+        "receive_lease_agent_code": [],
+        "receive_lease_active": [],
+        "post_receive_hold_active": [],
+        "pass_source_agent_code": [],
+        "pass_target_agent_code": [],
+        "strike_lease_agent_code": [],
+        "first_touch_strike_agent_code": [],
+        "strike_stance_depth_m": [],
+        "strike_stance_lateral_error_m": [],
+        "strike_stance_yaw_error_rad": [],
+        "ball_contact_agent_code": [],
+        "ball_contact_effector_code": [],
+        "ball_contact_foot_code": [],
+        "ball_contact_force_n": [],
+        "ball_nonfoot_contact_agent_code": [],
+        "ball_nonfoot_contact_geom_id": [],
+        "ball_nonfoot_contact_force_n": [],
+        "robot_robot_contact_count": [],
+        "robot_robot_contact_first_code": [],
+        "robot_robot_contact_second_code": [],
+        "robot_robot_contact_force_n": [],
+        "contact_teacher_agent_code": [],
+        "contact_teacher_active": [],
+        "contact_teacher_peak_torque_nm": [],
+        "contact_teacher_mode_code": [],
+        "contact_teacher_foot_code": [],
+        "contact_teacher_target_m": [],
+        "option_agent_code": [],
+        "option_policy_frame": [],
     }
     for controller in controllers:
         key = _agent_key(controller.cell.agent_id)
@@ -530,6 +651,25 @@ def simulate_independent_team_world(
     peak_ball_speed = float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 3]))
     initial_ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64).copy()
     net_state = G1CompliantGoalNetState()
+    agent_codes = {
+        controller.cell.agent_id: index + 1 for index, controller in enumerate(controllers)
+    }
+    last_ball_contact_agent_id: str | None = None
+    last_ball_contact_time_sec = -math.inf
+    current_possession_agent_id: str | None = None
+    loose_ball_chaser_agent_id: str | None = None
+    ball_chaser_lease_start_sec = -math.inf
+    receive_lease_agent_id: str | None = None
+    receive_lease_source_agent_id: str | None = None
+    receive_lease_origin_m: NDArray[np.float64] | None = None
+    receive_lease_active = False
+    last_receive_contact_agent_id: str | None = None
+    last_receive_contact_time_sec = -math.inf
+    pass_source_agent_id: str | None = None
+    pass_target_agent_id: str | None = None
+    strike_lease_agent_id: str | None = None
+    strike_lease_start_sec = -math.inf
+    assigned_ball_chaser_agent_id: str | None = None
 
     for frame in range(total_frames):
         for controller in controllers:
@@ -537,12 +677,81 @@ def simulate_independent_team_world(
         if frame % decision_stride == 0:
             physical_states = tuple(_physical_state(controller, data) for controller in controllers)
             state_by_id = {state.agent_id: state for state in physical_states}
-            possession = _infer_possession(
+            proximity_possession = _infer_possession(
                 controllers=controllers,
                 data=data,
                 ball_position=np.asarray(data.qpos[ball_qpos : ball_qpos + 3]),
                 maximum_distance_m=active.possession_radius_m,
             )
+            current_possession_agent_id = (
+                last_ball_contact_agent_id
+                if last_ball_contact_agent_id is not None
+                and float(data.time) - last_ball_contact_time_sec
+                <= active.contact_possession_hold_sec
+                # Training with a physical contact teacher uses a strict
+                # contact-derived owner.  Proximity may still elect a chaser,
+                # but it cannot launch a PASS/SHOOT option by itself.
+                else proximity_possession
+                if contact_teacher_config is None
+                else None
+            )
+            assigned_ball_chaser_agent_id = None
+            if contact_teacher_config is not None:
+                if current_possession_agent_id is None:
+                    if (
+                        receive_lease_agent_id is not None
+                        and receive_lease_origin_m is not None
+                        and state_by_id[receive_lease_agent_id].stable
+                        and (
+                            receive_lease_active
+                            or float(
+                                np.linalg.norm(
+                                    np.asarray(
+                                        data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64
+                                    )
+                                    - receive_lease_origin_m
+                                )
+                            )
+                            >= active.minimum_receive_lease_progress_m
+                            or float(
+                                np.linalg.norm(
+                                    np.asarray(
+                                        data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64
+                                    )
+                                )
+                            )
+                            >= active.minimum_receive_lease_ball_speed_mps
+                        )
+                    ):
+                        receive_lease_active = True
+                        if loose_ball_chaser_agent_id != receive_lease_agent_id:
+                            loose_ball_chaser_agent_id = receive_lease_agent_id
+                            ball_chaser_lease_start_sec = float(data.time)
+                    else:
+                        (
+                            loose_ball_chaser_agent_id,
+                            ball_chaser_lease_start_sec,
+                        ) = _select_loose_ball_chaser(
+                            controllers=controllers,
+                            states=state_by_id,
+                            ball_position=np.asarray(
+                                data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64
+                            ),
+                            current_agent_id=loose_ball_chaser_agent_id,
+                            lease_start_sec=ball_chaser_lease_start_sec,
+                            time_sec=float(data.time),
+                            config=active,
+                        )
+                    assigned_ball_chaser_agent_id = loose_ball_chaser_agent_id
+                else:
+                    assigned_ball_chaser_agent_id = _select_pressing_chaser(
+                        controllers=controllers,
+                        states=state_by_id,
+                        possession_agent_id=current_possession_agent_id,
+                        ball_position=np.asarray(
+                            data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64
+                        ),
+                    )
             observations = tuple(
                 _agent_observation(
                     controller=controller,
@@ -553,7 +762,8 @@ def simulate_independent_team_world(
                     ball_qvel=ball_qvel,
                     goal=goal,
                     left_goal_plane_x_m=active.left_goal_plane_x_m,
-                    possession_agent_id=possession,
+                    possession_agent_id=current_possession_agent_id,
+                    ball_chaser_agent_id=assigned_ball_chaser_agent_id,
                 )
                 for controller in controllers
             )
@@ -570,8 +780,40 @@ def simulate_independent_team_world(
             )
             coordination_hashes.append(coordination.frame_hash)
             pass_handshake_count += len(coordination.pass_receive_handshakes)
+            pass_source_agent_id = None
+            pass_target_agent_id = None
+            if current_possession_agent_id is not None:
+                current_handshake = next(
+                    (
+                        handshake
+                        for handshake in coordination.pass_receive_handshakes
+                        if handshake.passer_agent_id == current_possession_agent_id
+                    ),
+                    None,
+                )
+                if current_handshake is not None and (
+                    receive_lease_source_agent_id != current_handshake.passer_agent_id
+                    or receive_lease_agent_id != current_handshake.receiver_agent_id
+                    or receive_lease_origin_m is None
+                ):
+                    receive_lease_source_agent_id = current_handshake.passer_agent_id
+                    receive_lease_agent_id = current_handshake.receiver_agent_id
+                    receive_lease_origin_m = np.asarray(
+                        data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64
+                    ).copy()
+                    receive_lease_active = False
+                if current_handshake is not None:
+                    pass_source_agent_id = current_handshake.passer_agent_id
+                    pass_target_agent_id = current_handshake.receiver_agent_id
             for decision in decisions:
                 intent_counts[decision.intent] += 1
+                if (
+                    decision.intent is TacticalIntent.SHOOT
+                    and decision.agent_id == current_possession_agent_id
+                    and strike_lease_agent_id != decision.agent_id
+                ):
+                    strike_lease_agent_id = decision.agent_id
+                    strike_lease_start_sec = float(data.time)
             current_coordination_index += 1
             for decision in decisions:
                 controller = next(
@@ -599,6 +841,56 @@ def simulate_independent_team_world(
             ).copy()
             for controller in controllers
         }
+        teacher_controller = _select_contact_teacher_controller(
+            controllers=controllers,
+            data=data,
+            ball_position=np.asarray(data.qpos[ball_qpos : ball_qpos + 3]),
+            current_possession_agent_id=current_possession_agent_id,
+            preferred_agent_id=assigned_ball_chaser_agent_id,
+            config=contact_teacher_config,
+        )
+        teacher_direction = (
+            np.zeros(2, dtype=np.float64)
+            if teacher_controller is None
+            else _contact_teacher_direction(
+                teacher_controller,
+                data=data,
+                ball_qpos=ball_qpos,
+                goal=goal,
+                left_goal_plane_x_m=active.left_goal_plane_x_m,
+            )
+        )
+        frame_teacher_active = False
+        frame_teacher_peak_torque_nm = 0.0
+        frame_teacher_mode_code = 0
+        frame_teacher_foot_code = 0
+        frame_teacher_target_m = np.zeros(3, dtype=np.float64)
+        if (
+            option_bridge_config is not None
+            and strike_lease_agent_id is not None
+            and float(data.time) - strike_lease_start_sec
+            > option_bridge_config.strike_lease_duration_sec
+        ):
+            strike_lease_agent_id = None
+        _activate_rolling_option(
+            controllers=controllers,
+            current_possession_agent_id=current_possession_agent_id,
+            last_ball_contact_agent_id=last_ball_contact_agent_id,
+            strike_lease_agent_id=strike_lease_agent_id,
+            frame=frame,
+            data=data,
+            ball_qpos=ball_qpos,
+            goal=goal,
+            config=option_bridge_config,
+        )
+        option_controller = next(
+            (controller for controller in controllers if controller.option_active),
+            None,
+        )
+        option_policy_frame = 0
+        option_override: (
+            tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]] | None
+        ) = None
         for controller in controllers:
             current_decision = controller.decision
             if current_decision is None:
@@ -609,15 +901,79 @@ def simulate_independent_team_world(
                 positions=positions,
                 data=data,
                 ball_qpos=ball_qpos,
+                ball_qvel=ball_qvel,
+                possession_agent_id=current_possession_agent_id,
+                committed_receiver=bool(receive_lease_agent_id == controller.cell.agent_id),
+                active_receiver=bool(
+                    receive_lease_active and receive_lease_agent_id == controller.cell.agent_id
+                ),
+                post_receive_hold=bool(
+                    last_receive_contact_agent_id == controller.cell.agent_id
+                    and float(data.time) - last_receive_contact_time_sec
+                    <= active.post_receive_hold_sec
+                    and not (
+                        contact_teacher_config is not None
+                        and contact_teacher_config.one_touch_finish_enabled
+                        and controller.cell.self_model.primary_role is MatchRole.FINISHER
+                    )
+                ),
+                receive_foot_lateral_offset_m=(
+                    0.18
+                    if contact_teacher_config is None
+                    else contact_teacher_config.committed_receive_ankle_lateral_offset_m
+                ),
+                strike_target_position_m=(
+                    None
+                    if strike_lease_agent_id != controller.cell.agent_id
+                    else (
+                        goal.plane_x_m
+                        if controller.cell.self_model.team_id == "red"
+                        else active.left_goal_plane_x_m,
+                        goal.target_y_m,
+                    )
+                ),
                 config=active,
             )
-            local_command = _rotate_z(command, -controller.spec.yaw_rad)
+            current_yaw = _pelvis_yaw(
+                np.asarray(
+                    data.qpos[controller.qpos_base + 3 : controller.qpos_base + 7],
+                    dtype=np.float64,
+                )
+            )
+            local_command = _rotate_z(command, -current_yaw)
             controller.state.vel_cmd = _normalized_locomotion_command(
                 controller.policy, local_command
             )
             _run_locomotion(controller, mirror=bool(local_command[1] < -1.0e-6))
             controller.last_world_command = command.copy()
             controller.active_frames += int(float(np.linalg.norm(command[:2])) >= 0.04)
+            if controller is option_controller:
+                option_override, option_policy_frame = _rolling_option_target(
+                    controller,
+                    frame=frame,
+                    config=option_bridge_config,
+                )
+        frame_contact_agent_code = 0
+        frame_contact_effector_code = 0
+        frame_contact_foot_code = 0
+        frame_contact_force_n = 0.0
+        frame_nonfoot_contact_agent_code = 0
+        frame_nonfoot_contact_geom_id = -1
+        frame_nonfoot_contact_force_n = 0.0
+        frame_robot_contact_count = 0
+        frame_robot_contact_first_code = 0
+        frame_robot_contact_second_code = 0
+        frame_robot_contact_force_n = 0.0
+        frame_first_touch_strike_agent_id = next(
+            (
+                controller.cell.agent_id
+                for controller in controllers
+                if receive_lease_active
+                and receive_lease_agent_id == controller.cell.agent_id
+                and controller.cell.self_model.primary_role is MatchRole.FINISHER
+            ),
+            None,
+        )
         for _ in range(_SUBSTEPS):
             # The learned actor updates targets at 50 Hz, while its high-gain
             # PD loop must close at the 500 Hz physics rate.  Holding one
@@ -625,12 +981,190 @@ def simulate_independent_team_world(
             # G1 even at zero command; this is the same two-rate contract used
             # by the already-qualified shared-world runner.
             for controller in controllers:
-                target = np.asarray(controller.output.actions, dtype=np.float64)
-                kp = np.asarray(controller.output.kps, dtype=np.float64)
-                kd = np.asarray(controller.output.kds, dtype=np.float64)
+                post_receive_stabilizing = bool(
+                    last_receive_contact_agent_id == controller.cell.agent_id
+                    and float(data.time) - last_receive_contact_time_sec
+                    <= active.post_receive_hold_sec
+                    and not (
+                        contact_teacher_config is not None
+                        and contact_teacher_config.one_touch_finish_enabled
+                        and controller.cell.self_model.primary_role is MatchRole.FINISHER
+                    )
+                )
+                one_touch_finishing = bool(
+                    contact_teacher_config is not None
+                    and contact_teacher_config.one_touch_finish_enabled
+                    and controller.cell.self_model.primary_role is MatchRole.FINISHER
+                    and last_receive_contact_agent_id == controller.cell.agent_id
+                    and float(data.time) - last_receive_contact_time_sec
+                    <= contact_teacher_config.contact_memory_sec
+                )
+                if controller is option_controller and option_override is not None:
+                    target, kp, kd = option_override
+                elif (
+                    post_receive_stabilizing or one_touch_finishing
+                ) and controller.post_receive_joint_target is not None:
+                    target = controller.post_receive_joint_target
+                    kp = np.asarray(controller.output.kps, dtype=np.float64)
+                    kd = np.asarray(controller.output.kds, dtype=np.float64)
+                    if one_touch_finishing and contact_teacher_config is not None:
+                        kd = kd * contact_teacher_config.one_touch_support_damping_scale
+                else:
+                    target = np.asarray(controller.output.actions, dtype=np.float64)
+                    kp = np.asarray(controller.output.kps, dtype=np.float64)
+                    kd = np.asarray(controller.output.kds, dtype=np.float64)
                 q = np.asarray(data.qpos[controller.joint_qpos], dtype=np.float64)
                 dq = np.asarray(data.qvel[controller.joint_qvel], dtype=np.float64)
                 raw_torque = kp * (target - q) - kd * dq
+                if (
+                    controller is teacher_controller
+                    and controller is not option_controller
+                    and not post_receive_stabilizing
+                    and (
+                        controller.cell.agent_id != strike_lease_agent_id
+                        or _strike_teacher_stance_ready(
+                            controller=controller,
+                            data=data,
+                            ball_qpos=ball_qpos,
+                            goal=goal,
+                            minimum_depth_m=0.30,
+                        )
+                    )
+                    and contact_teacher_config is not None
+                ):
+                    ball_position = np.asarray(
+                        data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
+                    )
+                    left_distance = float(
+                        np.linalg.norm(data.xpos[controller.left_ankle_body] - ball_position)
+                    )
+                    right_distance = float(
+                        np.linalg.norm(data.xpos[controller.right_ankle_body] - ball_position)
+                    )
+                    use_left = (
+                        controller.last_ball_contact_foot == "left"
+                        if (post_receive_stabilizing or one_touch_finishing)
+                        and controller.last_ball_contact_foot is not None
+                        else contact_teacher_config.preferred_foot == "left"
+                        or contact_teacher_config.preferred_foot == "nearest"
+                        and left_distance < right_distance
+                    )
+                    contact_recent = bool(
+                        last_ball_contact_agent_id == controller.cell.agent_id
+                        and float(data.time) - last_ball_contact_time_sec
+                        <= contact_teacher_config.contact_memory_sec
+                    )
+                    ball_linear_velocity = np.asarray(
+                        data.qvel[ball_qvel : ball_qvel + 3], dtype=np.float64
+                    )
+                    receive_intent = bool(
+                        controller.decision is not None
+                        and controller.decision.intent
+                        in {TacticalIntent.RECEIVE, TacticalIntent.INTERCEPT}
+                    )
+                    is_committed_receiver = bool(
+                        receive_lease_active and receive_lease_agent_id == controller.cell.agent_id
+                    )
+                    contact_mode = (
+                        "strike"
+                        if one_touch_finishing
+                        else "receive"
+                        if post_receive_stabilizing
+                        or (
+                            receive_intent
+                            and (
+                                is_committed_receiver
+                                or float(np.linalg.norm(ball_linear_velocity[:2]))
+                                >= contact_teacher_config.minimum_receive_ball_speed_mps
+                            )
+                        )
+                        else "strike"
+                    )
+                    effect_config = contact_teacher_config
+                    if one_touch_finishing:
+                        effect_config = replace(
+                            effect_config,
+                            strike_foot_speed_mps=(
+                                contact_teacher_config.shot_strike_foot_speed_mps
+                            ),
+                            aim_yaw_bias_rad=(
+                                contact_teacher_config.one_touch_finish_aim_yaw_bias_rad
+                            ),
+                        )
+                    elif (
+                        is_committed_receiver or post_receive_stabilizing
+                    ) and contact_mode == "receive":
+                        effect_config = replace(
+                            effect_config,
+                            receive_follow_through_speed_mps=(
+                                contact_teacher_config.committed_receive_follow_through_speed_mps
+                            ),
+                            receive_ankle_lateral_offset_m=(
+                                contact_teacher_config.committed_receive_ankle_lateral_offset_m
+                            ),
+                            velocity_damping_n_per_mps=(
+                                contact_teacher_config.committed_receive_velocity_damping_n_per_mps
+                            ),
+                            maximum_task_force_n=(
+                                contact_teacher_config.committed_receive_maximum_task_force_n
+                            ),
+                            maximum_joint_residual_nm=(
+                                contact_teacher_config.committed_receive_maximum_joint_residual_nm
+                            ),
+                            aim_yaw_bias_rad=(
+                                contact_teacher_config.committed_receive_aim_yaw_bias_rad
+                            ),
+                        )
+                    if controller.cell.agent_id == strike_lease_agent_id:
+                        effect_config = replace(
+                            effect_config,
+                            strike_foot_speed_mps=(
+                                contact_teacher_config.shot_strike_foot_speed_mps
+                            ),
+                        )
+                    elif (
+                        controller.decision is not None
+                        and controller.decision.intent is TacticalIntent.PASS
+                    ):
+                        effect_config = replace(
+                            effect_config,
+                            strike_foot_speed_mps=(
+                                contact_teacher_config.pass_strike_foot_speed_mps
+                            ),
+                        )
+                    effect = locomotion_contact_teacher_effect(
+                        model=model,
+                        data=data,
+                        ankle_body_id=(
+                            controller.left_ankle_body if use_left else controller.right_ankle_body
+                        ),
+                        actuated_dof_indices=controller.joint_qvel,
+                        ball_position_m=ball_position,
+                        ball_velocity_mps=ball_linear_velocity,
+                        desired_ball_direction_xy=teacher_direction,
+                        contact_mode=contact_mode,
+                        # Recompute anatomical left after every yaw change.
+                        # A fixed sign is only valid in the birth frame and
+                        # crosses the selected ankle through the support leg
+                        # after a receiver turns to face an incoming pass.
+                        local_lateral_sign=_contact_foot_lateral_sign(
+                            controller=controller,
+                            data=data,
+                            desired_direction_xy=teacher_direction,
+                            use_left=use_left,
+                        ),
+                        contact_recent=contact_recent,
+                        config=effect_config,
+                    )
+                    frame_teacher_mode_code = 1 if contact_mode == "receive" else 2
+                    frame_teacher_foot_code = 1 if use_left else 2
+                    frame_teacher_target_m = effect.ankle_target_m.copy()
+                    raw_torque += effect.torque_nm
+                    frame_teacher_active = frame_teacher_active or effect.active
+                    frame_teacher_peak_torque_nm = max(
+                        frame_teacher_peak_torque_nm,
+                        float(np.max(np.abs(effect.torque_nm))),
+                    )
                 projected_torque = _project_joint_safe_torque(
                     joint_position=q,
                     joint_velocity=dq,
@@ -655,7 +1189,83 @@ def simulate_independent_team_world(
                 state=net_state,
             )
             mujoco.mj_step(model, data)
-            robot_contact_count += _robot_robot_contacts(model, data, controllers)
+            (
+                substep_robot_contacts,
+                substep_first_agent,
+                substep_second_agent,
+                substep_robot_contact_force_n,
+            ) = _robot_robot_contact_observation(model, data, controllers)
+            robot_contact_count += substep_robot_contacts
+            frame_robot_contact_count += substep_robot_contacts
+            if substep_robot_contact_force_n >= frame_robot_contact_force_n:
+                frame_robot_contact_first_code = (
+                    0 if substep_first_agent is None else agent_codes[substep_first_agent]
+                )
+                frame_robot_contact_second_code = (
+                    0 if substep_second_agent is None else agent_codes[substep_second_agent]
+                )
+                frame_robot_contact_force_n = substep_robot_contact_force_n
+            for contact_index in range(int(data.ncon)):
+                contact = data.contact[contact_index]
+                pair = {int(contact.geom1), int(contact.geom2)}
+                if ball_geom not in pair:
+                    continue
+                other = next(value for value in pair if value != ball_geom)
+                for controller in controllers:
+                    if other not in controller.robot_geoms:
+                        continue
+                    effector_code = (
+                        1
+                        if other in controller.left_foot_geoms
+                        else 2
+                        if other in controller.right_foot_geoms
+                        else 3
+                        if other in controller.left_glove_geoms
+                        else 4
+                        if other in controller.right_glove_geoms
+                        else 0
+                    )
+                    wrench: NDArray[np.float64] = np.zeros(6, dtype=np.float64)
+                    mujoco.mj_contactForce(model, data, contact_index, wrench)
+                    force = float(np.linalg.norm(wrench[:3]))
+                    if not effector_code:
+                        if force >= frame_nonfoot_contact_force_n:
+                            frame_nonfoot_contact_agent_code = agent_codes[controller.cell.agent_id]
+                            frame_nonfoot_contact_geom_id = other
+                            frame_nonfoot_contact_force_n = force
+                        break
+                    if force >= frame_contact_force_n:
+                        frame_contact_agent_code = agent_codes[controller.cell.agent_id]
+                        frame_contact_effector_code = effector_code
+                        frame_contact_foot_code = effector_code if effector_code <= 2 else 0
+                        frame_contact_force_n = force
+                    last_ball_contact_agent_id = controller.cell.agent_id
+                    last_ball_contact_time_sec = float(data.time)
+                    if loose_ball_chaser_agent_id != controller.cell.agent_id:
+                        loose_ball_chaser_agent_id = controller.cell.agent_id
+                        ball_chaser_lease_start_sec = float(data.time)
+                    if receive_lease_agent_id == controller.cell.agent_id:
+                        last_receive_contact_agent_id = controller.cell.agent_id
+                        last_receive_contact_time_sec = float(data.time)
+                        controller.post_receive_joint_target = np.asarray(
+                            data.qpos[controller.joint_qpos], dtype=np.float64
+                        ).copy()
+                        receive_lease_agent_id = None
+                        receive_lease_source_agent_id = None
+                        receive_lease_origin_m = None
+                        receive_lease_active = False
+                    if (
+                        strike_lease_agent_id is not None
+                        and strike_lease_agent_id != controller.cell.agent_id
+                    ):
+                        strike_lease_agent_id = None
+                    current_possession_agent_id = controller.cell.agent_id
+                    controller.last_ball_contact_foot = (
+                        "left" if effector_code == 1 else "right" if effector_code == 2 else None
+                    )
+                    if controller is option_controller:
+                        controller.option_contact_observed = True
+                    break
         peak_ball_speed = max(
             peak_ball_speed,
             float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 3])),
@@ -687,6 +1297,86 @@ def simulate_independent_team_world(
         trace["ball_pose"].append(data.qpos[ball_qpos : ball_qpos + 7].copy())
         trace["ball_velocity"].append(data.qvel[ball_qvel : ball_qvel + 6].copy())
         trace["coordination_frame_index"].append(current_coordination_index)
+        trace["possession_agent_code"].append(
+            0 if current_possession_agent_id is None else agent_codes[current_possession_agent_id]
+        )
+        trace["ball_chaser_agent_code"].append(
+            0 if loose_ball_chaser_agent_id is None else agent_codes[loose_ball_chaser_agent_id]
+        )
+        trace["receive_lease_agent_code"].append(
+            0 if receive_lease_agent_id is None else agent_codes[receive_lease_agent_id]
+        )
+        trace["receive_lease_active"].append(receive_lease_active)
+        last_receiver = next(
+            (
+                controller
+                for controller in controllers
+                if controller.cell.agent_id == last_receive_contact_agent_id
+            ),
+            None,
+        )
+        trace["post_receive_hold_active"].append(
+            bool(
+                last_receiver is not None
+                and float(data.time) - last_receive_contact_time_sec <= active.post_receive_hold_sec
+                and not (
+                    contact_teacher_config is not None
+                    and contact_teacher_config.one_touch_finish_enabled
+                    and last_receiver.cell.self_model.primary_role is MatchRole.FINISHER
+                )
+            )
+        )
+        trace["pass_source_agent_code"].append(
+            0 if pass_source_agent_id is None else agent_codes[pass_source_agent_id]
+        )
+        trace["pass_target_agent_code"].append(
+            0 if pass_target_agent_id is None else agent_codes[pass_target_agent_id]
+        )
+        trace["strike_lease_agent_code"].append(
+            agent_codes[frame_first_touch_strike_agent_id]
+            if frame_first_touch_strike_agent_id is not None
+            else 0
+            if strike_lease_agent_id is None
+            else agent_codes[strike_lease_agent_id]
+        )
+        trace["first_touch_strike_agent_code"].append(
+            0
+            if frame_first_touch_strike_agent_id is None
+            else agent_codes[frame_first_touch_strike_agent_id]
+        )
+        strike_metrics = _strike_stance_metrics(
+            controllers=controllers,
+            strike_lease_agent_id=strike_lease_agent_id,
+            data=data,
+            ball_qpos=ball_qpos,
+            goal=goal,
+        )
+        trace["strike_stance_depth_m"].append(strike_metrics[0])
+        trace["strike_stance_lateral_error_m"].append(strike_metrics[1])
+        trace["strike_stance_yaw_error_rad"].append(strike_metrics[2])
+        trace["ball_contact_agent_code"].append(frame_contact_agent_code)
+        trace["ball_contact_effector_code"].append(frame_contact_effector_code)
+        trace["ball_contact_foot_code"].append(frame_contact_foot_code)
+        trace["ball_contact_force_n"].append(frame_contact_force_n)
+        trace["ball_nonfoot_contact_agent_code"].append(frame_nonfoot_contact_agent_code)
+        trace["ball_nonfoot_contact_geom_id"].append(frame_nonfoot_contact_geom_id)
+        trace["ball_nonfoot_contact_force_n"].append(frame_nonfoot_contact_force_n)
+        trace["robot_robot_contact_count"].append(frame_robot_contact_count)
+        trace["robot_robot_contact_first_code"].append(frame_robot_contact_first_code)
+        trace["robot_robot_contact_second_code"].append(frame_robot_contact_second_code)
+        trace["robot_robot_contact_force_n"].append(frame_robot_contact_force_n)
+        trace["contact_teacher_agent_code"].append(
+            0 if teacher_controller is None else agent_codes[teacher_controller.cell.agent_id]
+        )
+        trace["contact_teacher_active"].append(frame_teacher_active)
+        trace["contact_teacher_peak_torque_nm"].append(frame_teacher_peak_torque_nm)
+        trace["contact_teacher_mode_code"].append(frame_teacher_mode_code)
+        trace["contact_teacher_foot_code"].append(frame_teacher_foot_code)
+        trace["contact_teacher_target_m"].append(frame_teacher_target_m)
+        trace["option_agent_code"].append(
+            0 if option_controller is None else agent_codes[option_controller.cell.agent_id]
+        )
+        trace["option_policy_frame"].append(option_policy_frame)
         if not finite:
             break
 
@@ -760,6 +1450,7 @@ def _make_player_controller(
     state_type: Any,
     output_type: Any,
     loco_type: Any,
+    kick_type: Any | None = None,
 ) -> _PlayerController:
     import mujoco
 
@@ -782,6 +1473,12 @@ def _make_player_controller(
     with contextlib.redirect_stdout(io.StringIO()):
         policy = loco_type(state, output)
         policy.enter()
+    kick_output = None
+    kick_policy = None
+    if kick_type is not None:
+        kick_output = output_type(29)
+        with contextlib.redirect_stdout(io.StringIO()):
+            kick_policy = kick_type(state, kick_output)
     data.qpos[qpos_base : qpos_base + 3] = (
         spec.origin_m[0],
         spec.origin_m[1],
@@ -796,6 +1493,8 @@ def _make_player_controller(
     )
     data.qpos[joint_qpos] = np.asarray(policy.default_angles_reorder, dtype=np.float64)
     pelvis_body = _id(model, mujoco.mjtObj.mjOBJ_BODY, prefix + "pelvis")
+    left_ankle_body = _id(model, mujoco.mjtObj.mjOBJ_BODY, prefix + "left_ankle_roll_link")
+    right_ankle_body = _id(model, mujoco.mjtObj.mjOBJ_BODY, prefix + "right_ankle_roll_link")
     return _PlayerController(
         spec=spec,
         cell=cell,
@@ -807,12 +1506,28 @@ def _make_player_controller(
         actuators=actuators,
         pelvis_body=pelvis_body,
         torso_body=_id(model, mujoco.mjtObj.mjOBJ_BODY, prefix + "torso_link"),
-        left_ankle_body=_id(model, mujoco.mjtObj.mjOBJ_BODY, prefix + "left_ankle_roll_link"),
-        right_ankle_body=_id(model, mujoco.mjtObj.mjOBJ_BODY, prefix + "right_ankle_roll_link"),
+        left_ankle_body=left_ankle_body,
+        right_ankle_body=right_ankle_body,
         robot_geoms=_robot_geom_ids(model, pelvis_body),
+        left_foot_geoms=_robot_geom_ids(model, left_ankle_body),
+        right_foot_geoms=_robot_geom_ids(model, right_ankle_body),
+        left_glove_geoms=_goalkeeper_glove_geoms(
+            model,
+            prefix=prefix,
+            side="left",
+            enabled=spec.goalkeeper_gloves,
+        ),
+        right_glove_geoms=_goalkeeper_glove_geoms(
+            model,
+            prefix=prefix,
+            side="right",
+            enabled=spec.goalkeeper_gloves,
+        ),
         state=state,
         output=output,
         policy=policy,
+        kick_output=kick_output,
+        kick_policy=kick_policy,
     )
 
 
@@ -865,6 +1580,7 @@ def _agent_observation(
     goal: G1TrainingGoalSpec,
     left_goal_plane_x_m: float,
     possession_agent_id: str | None,
+    ball_chaser_agent_id: str | None,
 ) -> AgentCellObservation:
     model = roster.agent(controller.cell.agent_id)
     own_goal_x = goal.plane_x_m if model.team_id == "blue" else left_goal_plane_x_m
@@ -890,6 +1606,7 @@ def _agent_observation(
         self_state=state_by_id[model.agent_id],
         teammate_states=tuple(state_by_id[agent_id] for agent_id in model.teammate_ids),
         opponent_states=tuple(state_by_id[agent_id] for agent_id in model.opponent_ids),
+        ball_chaser_agent_id=ball_chaser_agent_id,
     )
 
 
@@ -919,12 +1636,138 @@ def _movement_command(
     positions: dict[str, NDArray[np.float64]],
     data: Any,
     ball_qpos: int,
+    ball_qvel: int,
+    possession_agent_id: str | None,
+    committed_receiver: bool,
+    active_receiver: bool,
+    post_receive_hold: bool,
+    receive_foot_lateral_offset_m: float,
+    strike_target_position_m: tuple[float, float] | None,
     config: IndependentTeamWorldConfig,
 ) -> NDArray[np.float64]:
     current = positions[controller.cell.agent_id]
     target = np.asarray(decision.target_position_m[:2], dtype=np.float64)
     ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
-    if decision.intent in {
+    if committed_receiver and not active_receiver and decision.intent is not TacticalIntent.RECEIVE:
+        # A negotiated receiver must stop its generic run-in-behind before the
+        # ball is launched.  It may still move laterally to put its nearest
+        # foot into the pass corridor; freezing both axes lets the ball pass
+        # alongside a receiver that began off the lane.
+        attack_direction = np.asarray(
+            (1.0, 0.0) if controller.cell.self_model.team_id == "red" else (-1.0, 0.0),
+            dtype=np.float64,
+        )
+        lateral = np.asarray((-attack_direction[1], attack_direction[0]), dtype=np.float64)
+        pending_feet = (
+            np.asarray(data.xpos[controller.left_ankle_body, :2], dtype=np.float64),
+            np.asarray(data.xpos[controller.right_ankle_body, :2], dtype=np.float64),
+        )
+        receiving_foot = min(pending_feet, key=lambda foot: float(np.linalg.norm(foot - ball)))
+        lateral_error = float(np.dot(ball - receiving_foot, lateral))
+        target = (
+            current.copy()
+            if abs(float(np.dot(ball - current, lateral))) <= 0.25
+            else current + lateral_error * lateral
+        )
+    if decision.intent is TacticalIntent.RECEIVE:
+        ball_velocity = np.asarray(data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64)
+        speed = float(np.linalg.norm(ball_velocity))
+        travel_direction = (
+            ball_velocity / speed
+            if speed > 0.10
+            else np.asarray(
+                (1.0, 0.0) if controller.cell.self_model.team_id == "red" else (-1.0, 0.0),
+                dtype=np.float64,
+            )
+        )
+        time_to_player = (
+            float(np.dot(current - ball, ball_velocity)) / (speed * speed)
+            if speed > 0.10
+            else math.inf
+        )
+        opponent_has_ball = possession_agent_id in controller.cell.self_model.opponent_ids
+        can_run_onto_pass = bool(
+            not opponent_has_ball
+            and 0.0 <= time_to_player <= config.receive_run_onto_horizon_sec
+            and float(np.linalg.norm(ball + max(0.0, time_to_player) * ball_velocity - current))
+            <= config.receive_run_onto_lane_radius_m
+        )
+        if can_run_onto_pass:
+            predicted_ball = ball + max(0.0, time_to_player) * ball_velocity
+            lateral = np.asarray((-travel_direction[1], travel_direction[0]), dtype=np.float64)
+            feet = (
+                (
+                    np.asarray(data.xpos[controller.left_ankle_body, :2], dtype=np.float64),
+                    1.0,
+                ),
+                (
+                    np.asarray(data.xpos[controller.right_ankle_body, :2], dtype=np.float64),
+                    -1.0,
+                ),
+            )
+            receiving_foot, lateral_sign = min(
+                feet,
+                key=lambda item: float(np.linalg.norm(item[0] - predicted_ball)),
+            )
+            desired_foot = predicted_ball + lateral_sign * receive_foot_lateral_offset_m * lateral
+            lateral_error = float(np.dot(desired_foot - receiving_foot, lateral))
+            if committed_receiver:
+                # A committed receiver owns a moving capture point, not a
+                # velocity chase.  Keeping the pelvis behind the predicted
+                # ball arrival prevents the locomotion feet from overrunning
+                # the ball and reflecting it backwards during the transition
+                # into a strike stance.
+                target = (
+                    predicted_ball
+                    - config.receive_pocket_depth_m * travel_direction
+                    + lateral_error * lateral
+                )
+            else:
+                # Stay ahead of an incoming ball but deliberately run slower
+                # than it until the handshake becomes a physical receive
+                # lease.  Driving at the same velocity kept the receiver a
+                # constant 0.8--1.0 m in front of the ball.
+                pacing_distance = min(
+                    config.receive_runthrough_distance_m,
+                    config.receive_pacing_ratio * speed / config.position_gain,
+                )
+                target = current + pacing_distance * travel_direction + lateral_error * lateral
+        else:
+            target = (
+                ball
+                + config.receive_intercept_horizon_sec * ball_velocity
+                - config.receive_pocket_depth_m * travel_direction
+            )
+        if opponent_has_ball:
+            lateral = np.asarray((-travel_direction[1], travel_direction[0]), dtype=np.float64)
+            duel_side = -1.0 if controller.cell.self_model.team_id == "red" else 1.0
+            target += duel_side * config.duel_lateral_offset_m * lateral
+        if committed_receiver:
+            ball_xyz = np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64)
+            foot_distance = min(
+                float(np.linalg.norm(data.xpos[controller.left_ankle_body] - ball_xyz)),
+                float(np.linalg.norm(data.xpos[controller.right_ankle_body] - ball_xyz)),
+            )
+            if foot_distance <= config.receive_braking_distance_m:
+                target = current.copy()
+    if strike_target_position_m is not None:
+        destination = np.asarray(strike_target_position_m, dtype=np.float64)
+        direction = destination - ball
+        direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
+        lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
+        ball_from_player = ball - current
+        stance_depth = float(np.dot(ball_from_player, direction))
+        signed_lateral_error = float(np.dot(ball_from_player, lateral))
+        if stance_depth < 0.30 and abs(signed_lateral_error) < config.strike_bypass_lateral_m:
+            bypass_sign = -1.0 if signed_lateral_error >= 0.0 else 1.0
+            target = current + bypass_sign * config.strike_bypass_lateral_m * lateral
+        elif stance_depth < 0.30:
+            # Back up in a lane parallel to the shot line while preserving
+            # the already-safe lateral separation from the football.
+            target = ball - 0.72 * direction - signed_lateral_error * lateral
+        else:
+            target = ball - 0.72 * direction
+    elif decision.intent in {
         TacticalIntent.PASS,
         TacticalIntent.SHOOT,
         TacticalIntent.DISTRIBUTE,
@@ -933,8 +1776,10 @@ def _movement_command(
         direction = destination - ball
         direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
         target = ball - 0.72 * direction
+    if post_receive_hold:
+        target = current.copy()
     error = target - current
-    command = np.zeros(3, dtype=np.float64)
+    command: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
     command[:2] = config.position_gain * error
     speed_limit = (
         config.goalkeeper_maximum_speed_mps
@@ -946,6 +1791,37 @@ def _movement_command(
         command[:2] *= speed_limit / speed
     if float(np.linalg.norm(error)) <= config.arrival_radius_m:
         command[:2] = 0.0
+    desired_yaw: float | None = None
+    if strike_target_position_m is not None and not post_receive_hold:
+        destination = np.asarray(strike_target_position_m, dtype=np.float64)
+        desired_yaw = math.atan2(destination[1] - current[1], destination[0] - current[0])
+    elif (
+        committed_receiver
+        and not post_receive_hold
+        and float(np.linalg.norm(ball - current)) > 1.0e-6
+    ):
+        ball_bearing = math.atan2(ball[1] - current[1], ball[0] - current[0])
+        desired_yaw = ball_bearing + (
+            -config.receive_open_body_angle_rad
+            if controller.cell.self_model.team_id == "red"
+            else config.receive_open_body_angle_rad
+        )
+    if desired_yaw is not None:
+        current_yaw = _pelvis_yaw(
+            np.asarray(
+                data.qpos[controller.qpos_base + 3 : controller.qpos_base + 7], dtype=np.float64
+            )
+        )
+        yaw_error = math.atan2(
+            math.sin(desired_yaw - current_yaw), math.cos(desired_yaw - current_yaw)
+        )
+        command[2] = float(
+            np.clip(
+                config.yaw_gain * yaw_error,
+                -config.maximum_yaw_rate_radps,
+                config.maximum_yaw_rate_radps,
+            )
+        )
     for other_id, other in positions.items():
         if other_id == controller.cell.agent_id:
             continue
@@ -971,6 +1847,408 @@ def _movement_command(
     if speed > speed_limit:
         command[:2] *= speed_limit / speed
     return command
+
+
+def _select_loose_ball_chaser(
+    *,
+    controllers: tuple[_PlayerController, ...],
+    states: dict[str, AgentPhysicalState],
+    ball_position: NDArray[np.float64],
+    current_agent_id: str | None,
+    lease_start_sec: float,
+    time_sec: float,
+    config: IndependentTeamWorldConfig,
+) -> tuple[str | None, float]:
+    """Keep one outfielder on the ball until a materially better handoff exists."""
+
+    candidates: tuple[str, ...] = tuple(
+        controller.cell.agent_id
+        for controller in controllers
+        if controller.cell.self_model.primary_role is not MatchRole.GOALKEEPER
+        and states[controller.cell.agent_id].stable
+    )
+    if not candidates:
+        return None, time_sec
+
+    def distance(agent_id: str) -> float:
+        return float(
+            np.linalg.norm(
+                np.asarray(states[agent_id].position_m[:2], dtype=np.float64) - ball_position
+            )
+        )
+
+    candidate = min(candidates, key=lambda agent_id: (distance(agent_id), agent_id))
+    if current_agent_id not in candidates:
+        return candidate, time_sec
+    assert current_agent_id is not None
+    if time_sec - lease_start_sec < config.minimum_ball_chaser_lease_sec:
+        return current_agent_id, lease_start_sec
+    if distance(candidate) + config.ball_chaser_handoff_margin_m < distance(current_agent_id):
+        return candidate, time_sec
+    return current_agent_id, lease_start_sec
+
+
+def _select_pressing_chaser(
+    *,
+    controllers: tuple[_PlayerController, ...],
+    states: dict[str, AgentPhysicalState],
+    possession_agent_id: str,
+    ball_position: NDArray[np.float64],
+) -> str | None:
+    """Assign exactly one stable opposing outfielder to a contact owner."""
+
+    owner = next(
+        controller for controller in controllers if controller.cell.agent_id == possession_agent_id
+    )
+    opponent_ids = set(owner.cell.self_model.opponent_ids)
+    candidates: tuple[str, ...] = tuple(
+        controller.cell.agent_id
+        for controller in controllers
+        if controller.cell.agent_id in opponent_ids
+        and controller.cell.self_model.primary_role is not MatchRole.GOALKEEPER
+        and states[controller.cell.agent_id].stable
+    )
+    if not candidates:
+        return None
+    return str(
+        min(
+            candidates,
+            key=lambda agent_id: (
+                float(
+                    np.linalg.norm(
+                        np.asarray(states[agent_id].position_m[:2], dtype=np.float64)
+                        - ball_position
+                    )
+                ),
+                agent_id,
+            ),
+        )
+    )
+
+
+def _select_contact_teacher_controller(
+    *,
+    controllers: tuple[_PlayerController, ...],
+    data: Any,
+    ball_position: NDArray[np.float64],
+    current_possession_agent_id: str | None,
+    preferred_agent_id: str | None,
+    config: G1LocomotionContactTeacherConfig | None,
+) -> _PlayerController | None:
+    """Grant one training-only foot-contact lease on the current frame."""
+
+    if config is None:
+        return None
+    contact_intents = {
+        TacticalIntent.RECEIVE,
+        TacticalIntent.CARRY,
+        TacticalIntent.PASS,
+        TacticalIntent.SHOOT,
+        TacticalIntent.INTERCEPT,
+        TacticalIntent.SAVE,
+        TacticalIntent.DISTRIBUTE,
+    }
+    candidates = tuple(
+        controller
+        for controller in controllers
+        if controller.decision is not None and controller.decision.intent in contact_intents
+    )
+    if not candidates:
+        return None
+    preferred = next(
+        (controller for controller in candidates if controller.cell.agent_id == preferred_agent_id),
+        None,
+    )
+    if (
+        preferred is not None
+        and min(
+            float(np.linalg.norm(data.xpos[preferred.left_ankle_body] - ball_position)),
+            float(np.linalg.norm(data.xpos[preferred.right_ankle_body] - ball_position)),
+        )
+        <= config.maximum_foot_ball_distance_m
+    ):
+        return preferred
+    if current_possession_agent_id is not None:
+        owner = next(
+            (
+                controller
+                for controller in candidates
+                if controller.cell.agent_id == current_possession_agent_id
+            ),
+            None,
+        )
+        if owner is not None:
+            return owner
+    return min(
+        candidates,
+        key=lambda controller: min(
+            float(np.linalg.norm(data.xpos[controller.left_ankle_body] - ball_position)),
+            float(np.linalg.norm(data.xpos[controller.right_ankle_body] - ball_position)),
+        ),
+    )
+
+
+def _activate_rolling_option(
+    *,
+    controllers: tuple[_PlayerController, ...],
+    current_possession_agent_id: str | None,
+    last_ball_contact_agent_id: str | None,
+    strike_lease_agent_id: str | None,
+    frame: int,
+    data: Any,
+    ball_qpos: int,
+    goal: G1TrainingGoalSpec,
+    config: G1RollingOptionBridgeConfig | None,
+) -> None:
+    """Warm-start one owned PASS/SHOOT option after contact-derived possession."""
+
+    if config is None or any(controller.option_active for controller in controllers):
+        return
+    leased_shot = bool(
+        strike_lease_agent_id is not None and strike_lease_agent_id == last_ball_contact_agent_id
+    )
+    owned_option = current_possession_agent_id == last_ball_contact_agent_id
+    if not leased_shot and not owned_option:
+        return
+    candidate = next(
+        (
+            controller
+            for controller in controllers
+            if controller.cell.agent_id
+            == (strike_lease_agent_id if leased_shot else current_possession_agent_id)
+            and controller.decision is not None
+            and (
+                leased_shot
+                or controller.decision.intent is TacticalIntent.SHOOT
+                or config.pass_enabled
+                and controller.decision.intent is TacticalIntent.PASS
+            )
+            and not controller.option_completed
+        ),
+        None,
+    )
+    if candidate is None:
+        return
+    if abs(candidate.spec.yaw_rad) > 1.0e-9:
+        # This first bridge only certifies the canonical red attacking frame.
+        # Mirrored/bilateral strike entry needs its own matched retention set.
+        return
+    if candidate.kick_policy is None or candidate.kick_output is None:
+        raise RuntimeError("rolling option bridge was requested without a kick policy")
+    assert candidate.decision is not None
+    ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
+    pelvis = np.asarray(data.qpos[candidate.qpos_base : candidate.qpos_base + 2], dtype=np.float64)
+    target = np.asarray(
+        (goal.plane_x_m, goal.target_y_m)
+        if leased_shot
+        else candidate.decision.target_position_m[:2],
+        dtype=np.float64,
+    )
+    direction = target - ball
+    direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
+    target_yaw = math.atan2(float(direction[1]), float(direction[0]))
+    current_yaw = _pelvis_yaw(
+        np.asarray(data.qpos[candidate.qpos_base + 3 : candidate.qpos_base + 7], dtype=np.float64)
+    )
+    yaw_error = abs(
+        math.atan2(math.sin(target_yaw - current_yaw), math.cos(target_yaw - current_yaw))
+    )
+    lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
+    stance_depth = float(np.dot(ball - pelvis, direction))
+    lateral_error = abs(float(np.dot(ball - pelvis, lateral)))
+    if (
+        not config.minimum_strike_stance_depth_m
+        <= stance_depth
+        <= config.maximum_strike_stance_depth_m
+        or lateral_error > config.maximum_strike_lateral_error_m
+        or yaw_error > config.maximum_strike_yaw_error_rad
+    ):
+        return
+    with contextlib.redirect_stdout(io.StringIO()):
+        candidate.kick_policy.enter()
+    is_pass = not leased_shot and candidate.decision.intent is TacticalIntent.PASS
+    preferred_target = (
+        candidate.decision.target_position_m
+        if is_pass
+        else (goal.plane_x_m, goal.target_y_m, goal.target_z_m)
+    )
+    candidate.kick_policy.target_pos_w = np.asarray(preferred_target, dtype=np.float32)
+    candidate.kick_policy.time_step = (
+        int(candidate.kick_policy.WARMUP_STEPS) + config.entry_policy_frame
+    )
+    parameters = config.pass_parameters if is_pass else config.shoot_parameters
+    candidate.option_active = True
+    candidate.option_activation_frame = frame
+    candidate.option_origin_target = None
+    candidate.option_origin_kp = None
+    candidate.option_origin_kd = None
+    candidate.option_parameters = parameters
+    candidate.option_contact_observed = False
+
+
+def _strike_teacher_stance_ready(
+    *,
+    controller: _PlayerController,
+    data: Any,
+    ball_qpos: int,
+    goal: G1TrainingGoalSpec,
+    minimum_depth_m: float,
+) -> bool:
+    """Only let the strike residual act once the pelvis is behind the ball."""
+
+    ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
+    pelvis = np.asarray(
+        data.qpos[controller.qpos_base : controller.qpos_base + 2], dtype=np.float64
+    )
+    destination = np.asarray((goal.plane_x_m, goal.target_y_m), dtype=np.float64)
+    direction = destination - ball
+    direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
+    return bool(float(np.dot(ball - pelvis, direction)) >= minimum_depth_m)
+
+
+def _strike_stance_metrics(
+    *,
+    controllers: tuple[_PlayerController, ...],
+    strike_lease_agent_id: str | None,
+    data: Any,
+    ball_qpos: int,
+    goal: G1TrainingGoalSpec,
+) -> tuple[float, float, float]:
+    if strike_lease_agent_id is None:
+        return (0.0, 0.0, 0.0)
+    controller = next(
+        value for value in controllers if value.cell.agent_id == strike_lease_agent_id
+    )
+    ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
+    pelvis = np.asarray(
+        data.qpos[controller.qpos_base : controller.qpos_base + 2], dtype=np.float64
+    )
+    direction = np.asarray((goal.plane_x_m, goal.target_y_m), dtype=np.float64) - ball
+    direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
+    lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
+    target_yaw = math.atan2(float(direction[1]), float(direction[0]))
+    current_yaw = _pelvis_yaw(
+        np.asarray(data.qpos[controller.qpos_base + 3 : controller.qpos_base + 7], dtype=np.float64)
+    )
+    yaw_error = abs(
+        math.atan2(math.sin(target_yaw - current_yaw), math.cos(target_yaw - current_yaw))
+    )
+    return (
+        float(np.dot(ball - pelvis, direction)),
+        abs(float(np.dot(ball - pelvis, lateral))),
+        yaw_error,
+    )
+
+
+def _rolling_option_target(
+    controller: _PlayerController,
+    *,
+    frame: int,
+    config: G1RollingOptionBridgeConfig | None,
+) -> tuple[
+    tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]],
+    int,
+]:
+    if (
+        config is None
+        or controller.kick_policy is None
+        or controller.kick_output is None
+        or controller.option_activation_frame is None
+        or controller.option_parameters is None
+    ):
+        raise RuntimeError("rolling option state is incomplete")
+    if controller.option_origin_target is None:
+        controller.option_origin_target = np.asarray(
+            controller.output.actions, dtype=np.float64
+        ).copy()
+        controller.option_origin_kp = np.asarray(controller.output.kps, dtype=np.float64).copy()
+        controller.option_origin_kd = np.asarray(controller.output.kds, dtype=np.float64).copy()
+    with contextlib.redirect_stdout(io.StringIO()):
+        controller.kick_policy.run()
+    policy_frame = max(
+        0,
+        int(controller.kick_policy.time_step) - int(controller.kick_policy.WARMUP_STEPS),
+    )
+    target = adapt_shot_target(
+        target=np.asarray(controller.kick_output.actions, dtype=np.float64),
+        default=np.asarray(controller.kick_policy.default_q_mj, dtype=np.float64),
+        parameters=controller.option_parameters,
+        policy_frame=policy_frame,
+    )
+    kp = np.asarray(controller.kick_output.kps, dtype=np.float64)
+    kd = np.asarray(controller.kick_output.kds, dtype=np.float64)
+    blend = min(
+        1.0,
+        (frame - controller.option_activation_frame + 1) / config.blend_frames,
+    )
+    origin_target = controller.option_origin_target
+    origin_kp = controller.option_origin_kp
+    origin_kd = controller.option_origin_kd
+    if origin_target is None or origin_kp is None or origin_kd is None:
+        raise RuntimeError("rolling strike transition origin is incomplete")
+    blended = (
+        (1.0 - blend) * origin_target + blend * target,
+        (1.0 - blend) * origin_kp + blend * kp,
+        (1.0 - blend) * origin_kd + blend * kd,
+    )
+    if policy_frame >= config.exit_policy_frame and (
+        controller.option_contact_observed or policy_frame >= config.exit_policy_frame + 30
+    ):
+        controller.option_active = False
+        controller.option_completed = True
+    return blended, policy_frame
+
+
+def _contact_teacher_direction(
+    controller: _PlayerController,
+    *,
+    data: Any,
+    ball_qpos: int,
+    goal: G1TrainingGoalSpec,
+    left_goal_plane_x_m: float,
+) -> NDArray[np.float64]:
+    decision = controller.decision
+    if decision is None:
+        raise RuntimeError("contact teacher has no current agent decision")
+    ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
+    target = np.asarray(decision.target_position_m[:2], dtype=np.float64)
+    if decision.intent in {TacticalIntent.RECEIVE, TacticalIntent.INTERCEPT}:
+        target = np.asarray(
+            (
+                goal.plane_x_m
+                if controller.cell.self_model.team_id == "red"
+                else left_goal_plane_x_m,
+                0.0,
+            ),
+            dtype=np.float64,
+        )
+    elif decision.intent is TacticalIntent.SAVE:
+        target = ball + np.asarray(
+            (-1.0, 0.0) if controller.cell.self_model.team_id == "blue" else (1.0, 0.0),
+            dtype=np.float64,
+        )
+    direction = target - ball
+    if float(np.linalg.norm(direction)) <= 1.0e-9:
+        direction[0] = 1.0 if controller.cell.self_model.team_id == "red" else -1.0
+    return direction
+
+
+def _contact_foot_lateral_sign(
+    *,
+    controller: _PlayerController,
+    data: Any,
+    desired_direction_xy: NDArray[Any],
+    use_left: bool,
+) -> float:
+    direction = np.asarray(desired_direction_xy, dtype=np.float64)
+    direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
+    desired_lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
+    yaw = _pelvis_yaw(
+        np.asarray(data.qpos[controller.qpos_base + 3 : controller.qpos_base + 7], dtype=np.float64)
+    )
+    anatomical_left = np.asarray((-math.sin(yaw), math.cos(yaw)), dtype=np.float64)
+    left_sign = 1.0 if float(np.dot(anatomical_left, desired_lateral)) >= 0.0 else -1.0
+    return left_sign if use_left else -left_sign
 
 
 def _normalized_locomotion_command(policy: Any, physical: NDArray[Any]) -> NDArray[np.float64]:
@@ -1045,18 +2323,36 @@ def _append_player_trace(
     trace[f"{key}_movement_active"].append(float(np.linalg.norm(command[:2])) >= 0.04)
 
 
-def _robot_robot_contacts(model: Any, data: Any, controllers: tuple[_PlayerController, ...]) -> int:
+def _robot_robot_contact_observation(
+    model: Any,
+    data: Any,
+    controllers: tuple[_PlayerController, ...],
+) -> tuple[int, str | None, str | None, float]:
     owner: dict[int, str] = {}
     for controller in controllers:
         for geom in controller.robot_geoms:
             owner[geom] = controller.cell.agent_id
     count = 0
+    peak_first: str | None = None
+    peak_second: str | None = None
+    peak_force_n = 0.0
+    wrench: NDArray[np.float64] = np.zeros(6, dtype=np.float64)
+    import mujoco
+
     for index in range(int(data.ncon)):
         contact = data.contact[index]
         first = owner.get(int(contact.geom1))
         second = owner.get(int(contact.geom2))
-        count += int(first is not None and second is not None and first != second)
-    return count
+        if first is None or second is None or first == second:
+            continue
+        count += 1
+        mujoco.mj_contactForce(model, data, index, wrench)
+        force_n = float(np.linalg.norm(wrench[:3]))
+        if force_n >= peak_force_n:
+            peak_first = first
+            peak_second = second
+            peak_force_n = force_n
+    return count, peak_first, peak_second, peak_force_n
 
 
 def _robot_geom_ids(model: Any, root_body: int) -> frozenset[int]:
@@ -1068,6 +2364,29 @@ def _robot_geom_ids(model: Any, root_body: int) -> frozenset[int]:
         if body == root_body:
             values.add(geom)
     return frozenset(values)
+
+
+def _goalkeeper_glove_geoms(
+    model: Any,
+    *,
+    prefix: str,
+    side: str,
+    enabled: bool,
+) -> frozenset[int]:
+    """Resolve the explicit regulation glove geom without broad hand aliases."""
+
+    if not enabled:
+        return frozenset()
+    if side not in {"left", "right"}:
+        raise ValueError("goalkeeper glove side is invalid")
+    import mujoco
+
+    geom = _id(
+        model,
+        mujoco.mjtObj.mjOBJ_GEOM,
+        f"{prefix}{side}_goalkeeper_glove",
+    )
+    return frozenset((geom,))
 
 
 def _gravity_orientation(quaternion: NDArray[Any]) -> NDArray[np.float64]:
@@ -1133,6 +2452,13 @@ def _roll_pitch(quaternion: NDArray[Any]) -> tuple[float, float]:
     roll = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
     pitch = math.asin(float(np.clip(2.0 * (w * y - z * x), -1.0, 1.0)))
     return roll, pitch
+
+
+def _pelvis_yaw(quaternion: NDArray[Any]) -> float:
+    value = np.asarray(quaternion, dtype=np.float64)
+    value /= max(float(np.linalg.norm(value)), 1.0e-12)
+    w, x, y, z = map(float, value)
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 def _rotate_z(vector: NDArray[Any], yaw: float) -> NDArray[np.float64]:

@@ -81,6 +81,7 @@ class AgentCellObservation:
     self_state: AgentPhysicalState
     teammate_states: tuple[AgentPhysicalState, ...]
     opponent_states: tuple[AgentPhysicalState, ...]
+    ball_chaser_agent_id: str | None = None
     pixels_used: bool = False
     privileged_labels_used: bool = False
     schema_version: str = "rosclaw_soccer.agent_cell_observation.v1"
@@ -115,6 +116,10 @@ class AgentCellObservation:
                 self.possession_agent_id is not None
                 and self.possession_agent_id not in identities | {self.observer_agent_id}
             )
+            or (
+                self.ball_chaser_agent_id is not None
+                and self.ball_chaser_agent_id not in identities | {self.observer_agent_id}
+            )
             or self.pixels_used
             or self.privileged_labels_used
         ):
@@ -134,6 +139,7 @@ class AgentCellObservation:
             "own_goal_m": list(self.own_goal_m),
             "opponent_goal_m": list(self.opponent_goal_m),
             "possession_agent_id": self.possession_agent_id,
+            "ball_chaser_agent_id": self.ball_chaser_agent_id,
             "self_state": asdict(self.self_state),
             "teammate_states": [asdict(value) for value in self.teammate_states],
             "opponent_states": [asdict(value) for value in self.opponent_states],
@@ -245,7 +251,7 @@ class RosclawSoccerAgentCell:
 
     @property
     def agent_id(self) -> str:
-        return self.self_model.agent_id
+        return str(self.self_model.agent_id)
 
     @property
     def cell_hash(self) -> str:
@@ -426,6 +432,25 @@ class RosclawSoccerAgentCell:
                 value.possession_agent_id,
                 0.88,
             )
+        if (
+            value.possession_agent_id is None
+            or value.possession_agent_id in self.self_model.opponent_ids
+        ) and not self._should_chase_ball(value):
+            chaser = (
+                self._global_ball_chaser(value)
+                if value.possession_agent_id is None
+                else self._team_ball_chaser(value)
+            )
+            return self._decision(
+                value,
+                TacticalIntent.SUPPORT,
+                SoccerSkill.OFF_BALL_RUN,
+                self.tactical_profile.home_position_m
+                if chaser.agent_id in self.self_model.opponent_ids
+                else self._support_target(value, depth_m=-0.65),
+                chaser.agent_id,
+                0.86,
+            )
         return self._decision(
             value,
             TacticalIntent.RECEIVE,
@@ -453,6 +478,27 @@ class RosclawSoccerAgentCell:
                 self._support_target(value, depth_m=0.95),
                 value.possession_agent_id,
                 0.91,
+            )
+        if (
+            value.possession_agent_id is None
+            or value.possession_agent_id in self.self_model.opponent_ids
+        ) and not self._should_chase_ball(value):
+            chaser = (
+                self._global_ball_chaser(value)
+                if value.possession_agent_id is None
+                else self._team_ball_chaser(value)
+            )
+            return self._decision(
+                value,
+                TacticalIntent.SUPPORT
+                if chaser.agent_id in self.self_model.opponent_ids
+                else TacticalIntent.RUN_IN_BEHIND,
+                SoccerSkill.OFF_BALL_RUN,
+                self.tactical_profile.home_position_m
+                if chaser.agent_id in self.self_model.opponent_ids
+                else self._support_target(value, depth_m=0.95),
+                chaser.agent_id,
+                0.89,
             )
         return self._decision(
             value,
@@ -514,6 +560,82 @@ class RosclawSoccerAgentCell:
             ),
         )
 
+    def _team_ball_chaser(self, value: AgentCellObservation) -> AgentPhysicalState:
+        """Select one stable outfield chaser instead of collapsing the whole team.
+
+        Loose-ball ownership used to make both the playmaker and finisher run to
+        the same point.  In a bilateral rollout that produced a four-body pile-up
+        around the ball.  The choice is made independently from the current
+        egocentric observation and has a stable identity tie-break, so every cell
+        on a team reaches the same decision without a privileged coordinator.
+        Goalkeepers are excluded unless they are the only stable team member.
+        """
+
+        candidates = tuple(
+            state
+            for state in (value.self_state, *value.teammate_states)
+            if state.stable and self._role_for_agent(state.agent_id) is not MatchRole.GOALKEEPER
+        )
+        if not candidates:
+            candidates = tuple(
+                state for state in (value.self_state, *value.teammate_states) if state.stable
+            )
+        if not candidates:
+            return value.self_state
+        ball = np.asarray(value.ball_position_m[:2], dtype=np.float64)
+        return min(
+            candidates,
+            key=lambda state: (
+                float(np.linalg.norm(np.asarray(state.position_m[:2]) - ball)),
+                state.agent_id,
+            ),
+        )
+
+    def _is_team_ball_chaser(self, value: AgentCellObservation) -> bool:
+        return self._team_ball_chaser(value).agent_id == self.agent_id
+
+    def _global_ball_chaser(self, value: AgentCellObservation) -> AgentPhysicalState:
+        candidates = tuple(
+            state
+            for state in (value.self_state, *value.teammate_states, *value.opponent_states)
+            if state.stable and self._role_for_agent(state.agent_id) is not MatchRole.GOALKEEPER
+        )
+        if not candidates:
+            return value.self_state
+        ball = np.asarray(value.ball_position_m[:2], dtype=np.float64)
+        return min(
+            candidates,
+            key=lambda state: (
+                float(np.linalg.norm(np.asarray(state.position_m[:2]) - ball)),
+                state.agent_id,
+            ),
+        )
+
+    def _should_chase_ball(self, value: AgentCellObservation) -> bool:
+        """Avoid two-team pile-ups while retaining one causal pressing agent."""
+
+        if value.ball_chaser_agent_id is not None:
+            return value.ball_chaser_agent_id == self.agent_id
+        if value.possession_agent_id is None:
+            return self._global_ball_chaser(value).agent_id == self.agent_id
+        if value.possession_agent_id in self.self_model.opponent_ids:
+            return self._is_team_ball_chaser(value)
+        return False
+
+    def _role_for_agent(self, agent_id: str) -> MatchRole:
+        if agent_id == self.agent_id:
+            return self.self_model.primary_role
+        # Agent ids are content-bound by the roster.  Goalkeeper identity is
+        # deliberately structural here because an observation carries physical
+        # state, not another cell's private role model.
+        if agent_id.endswith(".goalkeeper"):
+            return MatchRole.GOALKEEPER
+        if agent_id.endswith(".defender"):
+            return MatchRole.DEFENDER
+        if agent_id.endswith(".playmaker"):
+            return MatchRole.PLAYMAKER
+        return MatchRole.FINISHER
+
     def _lane_clear(self, value: AgentCellObservation, receiver: AgentPhysicalState) -> bool:
         start = np.asarray(value.self_state.position_m[:2], dtype=np.float64)
         end = np.asarray(receiver.position_m[:2], dtype=np.float64)
@@ -549,7 +671,33 @@ class RosclawSoccerAgentCell:
         direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
         lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
         home_side = float(np.sign(self.tactical_profile.home_position_m[1]) or 1.0)
-        target = ball + depth_m * direction + 0.65 * home_side * lateral
+        # Treat the formation side as a preference, not a rail.  Mirrored
+        # attackers can otherwise converge on the same physical lane even
+        # while their independently selected ball chaser is unique.  Compare
+        # both support pockets using only this cell's observed opponents and
+        # switch sides when the nominal lane is occupied.
+        candidates = tuple(
+            (
+                side,
+                ball + depth_m * direction + 0.65 * side * lateral,
+            )
+            for side in (home_side, -home_side)
+        )
+        opponents = tuple(
+            np.asarray(state.position_m[:2], dtype=np.float64)
+            for state in value.opponent_states
+            if state.stable
+        )
+        target = max(
+            candidates,
+            key=lambda item: (
+                min(
+                    (float(np.linalg.norm(item[1] - opponent)) for opponent in opponents),
+                    default=math.inf,
+                ),
+                item[0] == home_side,
+            ),
+        )[1]
         return (float(target[0]), float(target[1]), 0.0)
 
 
