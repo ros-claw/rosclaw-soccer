@@ -144,14 +144,17 @@ foot_pitch_offset_rad  = 0.02073719284
    增加随机次数即可解决，而是横向目标搜索范围不覆盖真实补偿区；
 2. 最初为四维 Actor 新增后端枚举，导致 S204 的实现依赖哈希变化，源证据被正确拒绝。
    实现没有绕过验证，而是恢复原后端契约字节，把四维能力作为内容绑定的新 Actor，随后
-   S204、S205 均重新通过独立验证。
+   S204、S205 均重新通过独立验证；
+3. S206 v1 通过后，严格 mypy 复查发现验证器存在循环变量类型遮蔽。修复会改变实现哈希，
+   因此没有继续使用旧报告，而是完整重跑 v2。v2 与 v1 的指标、选中结果、轨迹摘要和四个
+   留出结果完全一致，并绑定修复后的源码提交。
 
 第二个失败尤其重要：功能升级不能以破坏历史证据可验证性为代价。
 
 ## 证据与视频
 
 - 证据目录：
-  `/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s206-contextual-finish-intent-portfolio-v1`
+  `/code/rosclaw/rosclaw_football/evidence/athlete-foundation-v1/s206-contextual-finish-intent-portfolio-v2`
 - 主报告：`contextual-finish-intent-portfolio.json`
 - Actor：`contextual-finish-intent-actor.json`
 - 1080p 视频：`s206-contextual-finish-growth.mp4`
@@ -160,10 +163,10 @@ foot_pitch_offset_rad  = 0.02073719284
 关键哈希：
 
 ```text
-S206 report  sha256:34805e752929a90ddc1751838332abe00c5e0843071eda19fe8f7855451e0be5
+S206 report  sha256:73a5163c174adc19a61b292e447f8008b0781793dd4a2f6548ea75dcf8250480
 Actor         sha256:b91f95b5f265e63b179d48df87d664a1a9c2700edaa2d59e52302d50db1cdfe8
-Video         sha256:f3e11977b56659db9f2ac6a7e9ad0da350535c4d3468fe3e651365fbd03594e2
-Manifest      sha256:04945b1037549ca7ad445855dbbf31c256400ac7f4816fe02734c7d592ffde8c
+Video         sha256:0bebd99c08e16fd67d4f8128156a664f129175d36b91e84d6f6111f9e234ff91
+Manifest      sha256:628c40f0595001f49de5110711f1d7975a4ebc2b6cf605bfb3a290546a95fc8d
 ```
 
 视频为 1920×1080、30 fps、63.3 秒、1899 帧，包含修复前、修复后、A 新留出、B 新留出、

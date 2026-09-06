@@ -189,7 +189,7 @@ def test_current_s206_evidence_reconstructs_when_mounted() -> None:
         pytest.skip("external soccer evidence is not mounted")
     path = (
         Path(root)
-        / "s206-contextual-finish-intent-portfolio-v1"
+        / "s206-contextual-finish-intent-portfolio-v2"
         / "contextual-finish-intent-portfolio.json"
     )
     if not path.is_file():
