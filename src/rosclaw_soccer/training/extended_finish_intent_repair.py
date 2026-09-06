@@ -243,7 +243,7 @@ def run_extended_finish_intent_repair(
     baseline_result, baseline_trajectory = simulate_shared_world(asset_root, **baseline_kwargs)
     baseline_record = _save_trajectory(output / "source-failure-replay.npz", baseline_trajectory)
     baseline_exact = bool(
-        baseline_result.to_dict() == source_result
+        hash_json(baseline_result.to_dict()) == hash_json(source_result)
         and baseline_record["trajectory_digest"] == holdout["trajectory"]["trajectory_digest"]
     )
 
@@ -500,7 +500,7 @@ def validate_extended_finish_intent_repair(path: Path) -> dict[str, Any]:
         baseline = cast(dict[str, Any], payload["baseline"])
         _validate_trajectory(report_path.parent, baseline["trajectory"])
         baseline_exact = bool(
-            baseline["result"] == holdout["result"]
+            hash_json(baseline["result"]) == hash_json(holdout["result"])
             and baseline["trajectory"]["trajectory_digest"]
             == holdout["trajectory"]["trajectory_digest"]
         )
