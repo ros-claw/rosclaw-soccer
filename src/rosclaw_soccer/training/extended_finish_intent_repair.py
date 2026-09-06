@@ -30,9 +30,7 @@ from rosclaw_soccer.growth.bounded_active_search import (
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.shared_world import G1SharedWorldResult, simulate_shared_world
 from rosclaw_soccer.training.contextual_finish_portfolio import (
-    _config_from_dict as _portfolio_config_from_dict,
-)
-from rosclaw_soccer.training.contextual_finish_portfolio import (
+    ContextualFinishPortfolioConfig,
     _context_kwargs,
     _control_config_from_dict,
     _run_jobs,
@@ -40,7 +38,11 @@ from rosclaw_soccer.training.contextual_finish_portfolio import (
     _stability_retained,
     validate_contextual_finish_portfolio,
 )
+from rosclaw_soccer.training.contextual_finish_portfolio import (
+    _config_from_dict as _portfolio_config_from_dict,
+)
 from rosclaw_soccer.training.contextual_finish_target_growth import (
+    ContextualFinishTargetGrowthConfig,
     _safe,
     _save_trajectory,
     _validate_trajectory,
@@ -246,6 +248,8 @@ def run_extended_finish_intent_repair(
             result=result,
             trajectory=trajectory,
             config=active,
+            parent_result=cast(dict[str, Any], holdout["parent"]["result"]),
+            portfolio_config=portfolio_config,
         )
         for candidate, (result, trajectory) in zip(planned, outcomes, strict=True)
     ]
@@ -284,6 +288,7 @@ def run_extended_finish_intent_repair(
         "error_improvement_m": improvement,
         "safe": selected["safe"],
         "precise": selected["precise"],
+        "stability_retained": selected["stability_retained"],
         "exact_replay": exact_replay,
         "physics_authority": "CPU_MUJOCO",
         "activation_ceiling": "SIM_ONLY",
@@ -352,6 +357,7 @@ def run_extended_finish_intent_repair(
             "candidate_count": len(rows),
             "safe_candidate_count": sum(bool(row["safe"]) for row in rows),
             "precise_safe_candidate_count": sum(bool(row["precise"]) for row in rows),
+            "eligible_candidate_count": sum(bool(row["eligible"]) for row in rows),
             "source_failed_target_error_m": source_error,
             "selected_target_error_m": selected_result["target_error_m"],
             "error_improvement_m": improvement,
@@ -443,7 +449,14 @@ def validate_extended_finish_intent_repair(path: Path) -> dict[str, Any]:
         if len(rows) != len(planned):
             raise ValueError("S205 candidate count changed")
         for row, candidate in zip(rows, planned, strict=True):
-            _validate_candidate_row(report_path.parent, row, candidate, active)
+            _validate_candidate_row(
+                report_path.parent,
+                row,
+                candidate,
+                active,
+                cast(dict[str, Any], holdout["parent"]["result"]),
+                _portfolio_config_from_dict(cast(dict[str, Any], source_request["config"])),
+            )
         selected = min(rows, key=_selection_key)
         if payload.get("selected") != selected:
             raise ValueError("S205 selected candidate changed")
@@ -483,6 +496,7 @@ def validate_extended_finish_intent_repair(path: Path) -> dict[str, Any]:
             "error_improvement_m": improvement,
             "safe": selected["safe"],
             "precise": selected["precise"],
+            "stability_retained": selected["stability_retained"],
             "exact_replay": exact_replay,
             "physics_authority": "CPU_MUJOCO",
             "activation_ceiling": "SIM_ONLY",
@@ -528,6 +542,7 @@ def validate_extended_finish_intent_repair(path: Path) -> dict[str, Any]:
             "candidate_count": len(rows),
             "safe_candidate_count": sum(bool(row["safe"]) for row in rows),
             "precise_safe_candidate_count": sum(bool(row["precise"]) for row in rows),
+            "eligible_candidate_count": sum(bool(row["eligible"]) for row in rows),
             "source_failed_target_error_m": source_error,
             "selected_target_error_m": selected_result["target_error_m"],
             "error_improvement_m": improvement,
@@ -566,7 +581,7 @@ def validate_extended_finish_intent_repair(path: Path) -> dict[str, Any]:
 def _candidate_kwargs(
     *,
     context: dict[str, Any],
-    controller: Any,
+    controller: ContextualFinishTargetGrowthConfig,
     duration: float,
     physical_target: tuple[float, float, float],
     values: tuple[float, ...],
@@ -574,12 +589,15 @@ def _candidate_kwargs(
     if len(values) != 4:
         raise ValueError("S205 candidate must contain four high-level values")
     target_y, foot_yaw, stance_y, foot_pitch = values
-    kwargs = _context_kwargs(
-        context_record=context,
-        target=(physical_target[0], target_y, physical_target[2]),
-        foot_yaw=foot_yaw,
-        controller=controller,
-        duration=duration,
+    kwargs = cast(
+        dict[str, Any],
+        _context_kwargs(
+            context_record=context,
+            target=(physical_target[0], target_y, float(controller.policy_target_z_m)),
+            foot_yaw=foot_yaw,
+            controller=controller,
+            duration=duration,
+        ),
     )
     parameters = dict(kwargs["shooter_parameter_overrides"])
     parameters.update(stance_offset_y=stance_y, foot_pitch_offset=foot_pitch)
@@ -594,15 +612,27 @@ def _candidate_row(
     result: G1SharedWorldResult,
     trajectory: dict[str, np.ndarray],
     config: ExtendedFinishIntentRepairConfig,
+    parent_result: dict[str, Any],
+    portfolio_config: ContextualFinishPortfolioConfig,
 ) -> dict[str, Any]:
     result_dict = result.to_dict()
+    stability = _stability_retained(result_dict, parent_result, portfolio_config)
+    pass_retained = bool(
+        isinstance(result_dict.get("pass_delivery_error_m"), int | float)
+        and not isinstance(result_dict.get("pass_delivery_error_m"), bool)
+        and float(result_dict["pass_delivery_error_m"]) <= config.maximum_pass_error_m
+    )
+    precise = _precise_result(result_dict, config)
     return {
         "candidate": asdict(candidate),
         "candidate_hash": candidate.candidate_hash,
         "action_values": list(candidate.values),
         "result": result_dict,
         "safe": _safe(result),
-        "precise": _precise_result(result_dict, config),
+        "precise": precise,
+        "pass_delivery_retained": pass_retained,
+        "stability_retained": stability,
+        "eligible": precise and pass_retained and stability,
         "trajectory": _save_trajectory(
             output / f"candidate-{candidate.candidate_index:03d}.npz", trajectory
         ),
@@ -614,6 +644,8 @@ def _validate_candidate_row(
     row: dict[str, Any],
     candidate: BoundedSearchCandidate,
     config: ExtendedFinishIntentRepairConfig,
+    parent_result: dict[str, Any],
+    portfolio_config: ContextualFinishPortfolioConfig,
 ) -> None:
     _validate_trajectory(root, row["trajectory"])
     result = cast(dict[str, Any], row["result"])
@@ -623,6 +655,20 @@ def _validate_candidate_row(
         or row.get("action_values") != list(candidate.values)
         or row.get("safe") is not _safe_result_dict(result)
         or row.get("precise") is not _precise_result(result, config)
+        or row.get("pass_delivery_retained")
+        is not bool(
+            isinstance(result.get("pass_delivery_error_m"), int | float)
+            and not isinstance(result.get("pass_delivery_error_m"), bool)
+            and float(result["pass_delivery_error_m"]) <= config.maximum_pass_error_m
+        )
+        or row.get("stability_retained")
+        is not _stability_retained(result, parent_result, portfolio_config)
+        or row.get("eligible")
+        is not bool(
+            row.get("precise")
+            and row.get("pass_delivery_retained")
+            and row.get("stability_retained")
+        )
     ):
         raise ValueError("S205 candidate derivation changed")
 
@@ -644,6 +690,7 @@ def _selection_key(row: dict[str, Any]) -> tuple[float, ...]:
     error = result.get("target_error_m")
     pass_error = result.get("pass_delivery_error_m")
     return (
+        0.0 if row.get("eligible") is True else 1.0,
         0.0 if row["safe"] else 1.0,
         0.0 if result.get("goal_crossed") is True else 1.0,
         (
