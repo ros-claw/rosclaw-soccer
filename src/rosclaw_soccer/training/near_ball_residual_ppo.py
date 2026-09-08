@@ -334,7 +334,7 @@ def train(
         or not 1 <= iterations <= 100
         or not 5 <= duration <= 25
         or type(workers) is not int
-        or not 1 <= workers <= 2
+        or not 1 <= workers <= (8 if role_curriculum else 2)
         or type(prospective_curriculum) is not bool
         or type(long_credit) is not bool
         or type(all_role_clearance) is not bool
