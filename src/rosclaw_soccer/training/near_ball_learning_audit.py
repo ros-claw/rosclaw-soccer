@@ -13,8 +13,34 @@ import numpy as np
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import validate_probe
-from rosclaw_soccer.training.near_ball_curriculum import examination_courses
+from rosclaw_soccer.training.near_ball_curriculum import (
+    RoleCourse,
+    examination_courses,
+    training_batch,
+)
 from rosclaw_soccer.training.near_ball_plasticity import private_weight_hashes, verify_update_record
+
+
+def _verify_training_course(report: dict[str, Any], course: RoleCourse, seed: int) -> None:
+    """Bind batch membership to physical initial conditions, not directory names."""
+    blue = report["scenario"]["scenario_id"].endswith("blue")
+    if (
+        not report.get("basic_ball_play")
+        or report.get("kickoff_role") != course.role
+        or blue != course.blue
+        or report["near_ball_residual"]["seed"] != seed
+        or report.get("forward_receiver_lane", False) != (course.role == "playmaker")
+    ):
+        raise ValueError("training course role, side, seed or formation differs")
+    ball_y = report["scenario"]["ball_initial_position_m"][1]
+    if course.role == "playmaker":
+        offset = 1.22 - ball_y if blue else ball_y + 1.22
+    else:
+        actor = f"{'blue' if blue else 'red'}.{course.role}"
+        player = next(p for p in report["players"] if p["agent_id"] == actor)
+        offset = (ball_y - player["origin_m"][1]) * (-1.0 if blue else 1.0) + 0.12
+    if abs(offset - course.offset) > 1e-9:
+        raise ValueError("training course physical ball position differs")
 
 
 def audit(root: Path) -> dict[str, Any]:
@@ -23,6 +49,13 @@ def audit(root: Path) -> dict[str, Any]:
     if hash_json(manifest) != commitment:
         raise ValueError("training manifest commitment differs")
     initial_generation = manifest.get("initial_generation", 0)
+    batch_rounds = manifest.get("role_batch_rounds", 1)
+    if (
+        type(batch_rounds) is not int
+        or not 1 <= batch_rounds <= 5
+        or (batch_rounds != 1 and not manifest.get("role_curriculum", False))
+    ):
+        raise ValueError("training course batch contract is invalid")
     if type(initial_generation) is not int or not 0 <= initial_generation <= 1000000:
         raise ValueError("initial generation is invalid")
     initial_policy = NearBallResidualPolicy.load(root / f"generation-{initial_generation:03d}.npz")
@@ -39,7 +72,12 @@ def audit(root: Path) -> dict[str, Any]:
     paths = {validate_probe(path)["report_hash"]: path for path in root.glob("*/probe.json")}
     verified = 0
     core_verified = 0
-    for iteration in manifest["iterations"]:
+    for iteration_index, iteration in enumerate(manifest["iterations"]):
+        if (
+            manifest.get("role_curriculum", False)
+            and len(iteration["rollout_report_hashes"]) != 8 * batch_rounds
+        ):
+            raise ValueError("frozen-parent role batch is incomplete")
         child = NearBallResidualPolicy.load(root / f"generation-{iteration['generation']:03d}.npz")
         if (
             child.parent_hash != parent.policy_hash
@@ -53,9 +91,14 @@ def audit(root: Path) -> dict[str, Any]:
             iteration["rollout_report_hashes"]
         ):
             raise ValueError("private roster or training episode identities are incomplete")
-        for digest in iteration["rollout_report_hashes"]:
+        for sample_index, digest in enumerate(iteration["rollout_report_hashes"]):
             source = paths[digest]
             report = validate_probe(source)
+            if manifest.get("role_curriculum", False):
+                course = training_batch(iteration_index, rounds=batch_rounds)[sample_index]
+                _verify_training_course(
+                    report, course, 22100 + iteration_index * batch_rounds * 8 + sample_index
+                )
             if report["world_config"].get("strict_receive_handoff", False) != manifest.get(
                 "strict_receive_handoff", False
             ) or (

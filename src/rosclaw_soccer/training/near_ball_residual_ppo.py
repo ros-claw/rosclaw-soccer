@@ -30,7 +30,7 @@ from rosclaw_soccer.training.near_ball_curriculum import (
     RoleRolloutJob,
     collect_role_course,
     examination_courses,
-    training_courses,
+    training_batch,
 )
 from rosclaw_soccer.training.near_ball_plasticity import (
     begin_update,
@@ -326,6 +326,7 @@ def train(
     initial_checkpoint: Path | None = None,
     role_curriculum: bool = False,
     strict_receive_handoff: bool = False,
+    role_batch_rounds: int = 1,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -341,6 +342,9 @@ def train(
         or type(diverse_ball_positions) is not bool
         or type(role_curriculum) is not bool
         or type(strict_receive_handoff) is not bool
+        or type(role_batch_rounds) is not int
+        or not 1 <= role_batch_rounds <= 5
+        or (role_batch_rounds != 1 and not role_curriculum)
         or (strict_receive_handoff and not role_curriculum)
         or (role_curriculum and not (prospective_curriculum and all_role_clearance))
     ):
@@ -384,6 +388,7 @@ def train(
         else hash_bytes(initial_checkpoint.read_bytes()),
         "all_role_clearance": all_role_clearance,
         "role_curriculum": role_curriculum,
+        "role_batch_rounds": role_batch_rounds,
         "strict_receive_handoff": strict_receive_handoff,
         "evaluation_courses": [
             asdict(c) for c in examination_courses(strict_handoff=strict_receive_handoff)
@@ -422,11 +427,11 @@ def train(
                     output / f"generation-{policy.generation:03d}.npz",
                     duration,
                     course,
-                    22100 + iteration * 8 + index,
+                    22100 + iteration * role_batch_rounds * 8 + index,
                     True,
                     strict_receive_handoff,
                 )
-                for index, course in enumerate(training_courses(iteration))
+                for index, course in enumerate(training_batch(iteration, rounds=role_batch_rounds))
             ]
             if workers == 1:
                 collected = [collect_role_course(job) for job in role_jobs]
@@ -551,6 +556,7 @@ def main() -> None:
     parser.add_argument("--initial-checkpoint", type=Path)
     parser.add_argument("--role-curriculum", action="store_true")
     parser.add_argument("--strict-receive-handoff", action="store_true")
+    parser.add_argument("--role-batch-rounds", type=int, default=1)
     args = parser.parse_args()
     train(
         assets=args.asset_root,
@@ -565,6 +571,7 @@ def main() -> None:
         initial_checkpoint=args.initial_checkpoint,
         role_curriculum=args.role_curriculum,
         strict_receive_handoff=args.strict_receive_handoff,
+        role_batch_rounds=args.role_batch_rounds,
     )
 
 

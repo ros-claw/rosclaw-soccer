@@ -60,6 +60,22 @@ def examination_courses(*, strict_handoff: bool = False) -> tuple[RoleCourse, ..
     )
 
 
+def training_batch(iteration: int, *, rounds: int = 1) -> tuple[RoleCourse, ...]:
+    """Cover bounded course rounds under one frozen parent, never exam rows."""
+    if (
+        type(iteration) is not int
+        or iteration < 0
+        or type(rounds) is not int
+        or not 1 <= rounds <= 5
+    ):
+        raise ValueError("bounded integer course batch required")
+    return tuple(
+        course
+        for index in range(iteration * rounds, (iteration + 1) * rounds)
+        for course in training_courses(index)
+    )
+
+
 @dataclass(frozen=True)
 class RoleRolloutJob:
     assets: Path

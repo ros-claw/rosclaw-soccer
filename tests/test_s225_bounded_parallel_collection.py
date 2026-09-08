@@ -5,7 +5,8 @@ import pytest
 from rosclaw_soccer.training import near_ball_residual_ppo as module
 
 
-def test_eight_role_workers_preserve_fixed_job_identity_and_budget(monkeypatch, tmp_path):
+@pytest.mark.parametrize("rounds", [1, 5])
+def test_eight_role_workers_preserve_fixed_job_identity_and_budget(monkeypatch, tmp_path, rounds):
     body = "sha256:" + "a" * 64
     ids = tuple(f"agent.{i}" for i in range(8))
     monkeypatch.setattr(
@@ -31,8 +32,8 @@ def test_eight_role_workers_preserve_fixed_job_identity_and_budget(monkeypatch, 
 
         def map(self, function, jobs):
             assert function is module.collect_role_course
-            assert len(jobs) == len({j.destination for j in jobs}) == 8
-            assert len({j.seed for j in jobs}) == 8
+            assert len(jobs) == len({j.destination for j in jobs}) == 8 * rounds
+            assert {j.seed for j in jobs} == set(range(22100, 22100 + 8 * rounds))
             assert all(j.strict_handoff and j.explore for j in jobs)
             assert len({j.checkpoint for j in jobs}) == 1
             raise RuntimeError("collection boundary reached")
@@ -49,6 +50,7 @@ def test_eight_role_workers_preserve_fixed_job_identity_and_budget(monkeypatch, 
             all_role_clearance=True,
             role_curriculum=True,
             strict_receive_handoff=True,
+            role_batch_rounds=rounds,
         )
 
 
