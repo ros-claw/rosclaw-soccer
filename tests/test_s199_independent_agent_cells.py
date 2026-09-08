@@ -30,6 +30,51 @@ def _hash(label: str) -> str:
     return str(hash_json({"fixture": label}))
 
 
+def test_active_competition_assigns_one_loose_ball_challenger_per_team() -> None:
+    cells = tuple(
+        replace(c, tactical_profile=replace(c.tactical_profile, active_competition=True))
+        for c in _cells()
+    )
+    observations = _observations(cells, possession_agent_id=None)
+    decisions = [c.decide(o) for c, o in zip(cells, observations, strict=True)]
+    for team in ("red", "blue"):
+        challengers = [
+            d
+            for d in decisions
+            if d.agent_id.startswith(team + ".") and d.intent is TacticalIntent.RECEIVE
+        ]
+        assert len(challengers) == 1
+
+
+def test_active_opponents_contest_even_when_other_team_has_receive_lease() -> None:
+    cells = tuple(
+        replace(c, tactical_profile=replace(c.tactical_profile, active_competition=True))
+        for c in _cells()
+    )
+    observations = tuple(
+        replace(o, ball_chaser_agent_id="red.finisher")
+        for o in _observations(cells, possession_agent_id=None)
+    )
+    decisions = [c.decide(o) for c, o in zip(cells, observations, strict=True)]
+    assert (
+        next(d for d in decisions if d.agent_id == "red.finisher").intent is TacticalIntent.RECEIVE
+    )
+    assert (
+        sum(
+            d.agent_id.startswith("blue.") and d.intent is TacticalIntent.RECEIVE for d in decisions
+        )
+        == 1
+    )
+
+
+def test_active_unstable_player_still_recovers() -> None:
+    cell = _cells()[1]
+    cell = replace(cell, tactical_profile=replace(cell.tactical_profile, active_competition=True))
+    observation = _observations(_cells(), possession_agent_id=None)[1]
+    observation = replace(observation, self_state=replace(observation.self_state, stable=False))
+    assert cell.decide(observation).intent is TacticalIntent.RECOVER
+
+
 def _cells() -> tuple[RosclawSoccerAgentCell, ...]:
     team_ids = {
         team: tuple(agent_id for agent_id, value, _, _ in _LAYOUT if value == team)

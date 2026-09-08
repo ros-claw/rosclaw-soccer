@@ -151,6 +151,7 @@ class AgentCellObservation:
 @dataclass(frozen=True)
 class AgentTacticalProfile:
     home_position_m: tuple[float, float, float]
+    active_competition: bool = False
     maximum_target_shift_m: float = 2.0
     decision_period_sec: float = 0.10
     intent_hysteresis_sec: float = 0.20
@@ -169,6 +170,7 @@ class AgentTacticalProfile:
         )
         if (
             len(self.home_position_m) != 3
+            or not isinstance(self.active_competition, bool)
             or any(not math.isfinite(value) for value in values)
             or abs(self.home_position_m[2]) > 1.0e-12
             or not 0.25 <= self.maximum_target_shift_m <= 4.0
@@ -280,11 +282,44 @@ class RosclawSoccerAgentCell:
             )
         if role is MatchRole.GOALKEEPER:
             return self._goalkeeper_decision(observation)
+        if self.tactical_profile.active_competition:
+            active = self._competition_decision(observation)
+            if active is not None:
+                return active
         if role is MatchRole.DEFENDER:
             return self._defender_decision(observation)
         if role is MatchRole.PLAYMAKER:
             return self._playmaker_decision(observation)
         return self._finisher_decision(observation)
+
+    def _competition_decision(self, value: AgentCellObservation) -> AgentCellDecision | None:
+        """Give each team a challenger and ball-relative supporting objectives."""
+        if self.self_model.primary_role is MatchRole.DEFENDER:
+            return None
+        if value.possession_agent_id == self.agent_id:
+            return None
+        if value.possession_agent_id in self.self_model.teammate_ids:
+            return None
+        chaser_id = value.ball_chaser_agent_id
+        if chaser_id not in (self.agent_id, *self.self_model.teammate_ids):
+            chaser_id = self._team_ball_chaser(value).agent_id
+        if chaser_id == self.agent_id:
+            return self._decision(
+                value,
+                TacticalIntent.RECEIVE,
+                SoccerSkill.FIRST_TOUCH,
+                value.ball_position_m,
+                value.possession_agent_id,
+                0.92,
+            )
+        return self._decision(
+            value,
+            TacticalIntent.SUPPORT,
+            SoccerSkill.OFF_BALL_RUN,
+            self._support_target(value, depth_m=-0.85),
+            chaser_id,
+            0.90,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -345,6 +380,12 @@ class RosclawSoccerAgentCell:
             float(np.clip(predicted_y, own_goal[1] - 1.25, own_goal[1] + 1.25)),
             0.0,
         )
+        if self.tactical_profile.active_competition:
+            attack_sign = math.copysign(1.0, value.opponent_goal_m[0] - own_goal[0])
+            depth = self.tactical_profile.goalkeeper_depth_m
+            if not toward_goal:
+                depth += min(0.65, max(0.0, abs(float(ball[0] - own_goal[0])) - 2.0) * 0.12)
+            target = (float(own_goal[0] + attack_sign * depth), target[1], 0.0)
         return self._decision(
             value,
             TacticalIntent.SAVE if toward_goal and danger else TacticalIntent.COVER,
@@ -522,6 +563,12 @@ class RosclawSoccerAgentCell:
             raise ValueError(f"{self.agent_id} attempted an unauthorized tactical option")
         home = np.asarray(self.tactical_profile.home_position_m, dtype=np.float64)
         requested = np.asarray(target, dtype=np.float64)
+        if self.tactical_profile.active_competition:
+            # Formation anchors are preferences, not an invisible two-metre leash.
+            low, high = sorted((observation.own_goal_m[0], observation.opponent_goal_m[0]))
+            requested[0] = np.clip(requested[0], low + 0.25, high - 0.25)
+            requested[1] = np.clip(requested[1], -2.8, 2.8)
+            home = requested.copy()
         delta = requested[:2] - home[:2]
         distance = float(np.linalg.norm(delta))
         if distance > self.tactical_profile.maximum_target_shift_m:
@@ -679,7 +726,9 @@ class RosclawSoccerAgentCell:
         candidates = tuple(
             (
                 side,
-                ball + depth_m * direction + 0.65 * side * lateral,
+                ball
+                + depth_m * direction
+                + (1.25 if self.tactical_profile.active_competition else 0.65) * side * lateral,
             )
             for side in (home_side, -home_side)
         )
