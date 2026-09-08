@@ -49,12 +49,14 @@ def training_courses(iteration: int) -> tuple[RoleCourse, ...]:
     )
 
 
-def examination_courses() -> tuple[RoleCourse, ...]:
+def examination_courses(*, strict_handoff: bool = False) -> tuple[RoleCourse, ...]:
+    if type(strict_handoff) is not bool:
+        raise ValueError("explicit handoff examination contract required")
     return tuple(
         RoleCourse(role, blue, offset)
         for role in ROLES
         for blue in (False, True)
-        for offset in EXAM_OFFSETS
+        for offset in ((-0.10, 0.10) if strict_handoff else EXAM_OFFSETS)
     )
 
 
@@ -67,6 +69,7 @@ class RoleRolloutJob:
     course: RoleCourse
     seed: int
     explore: bool
+    strict_handoff: bool = False
 
 
 def collect_role_course(job: RoleRolloutJob) -> str:
@@ -87,5 +90,6 @@ def collect_role_course(job: RoleRolloutJob) -> str:
         near_ball_policy=NearBallResidualPolicy.load(job.checkpoint),
         near_ball_seed=job.seed,
         near_ball_explore=job.explore,
+        strict_receive_handoff=job.strict_handoff,
     )
     return str(job.destination / "probe.json")

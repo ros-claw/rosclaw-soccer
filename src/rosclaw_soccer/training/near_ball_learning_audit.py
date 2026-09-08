@@ -56,6 +56,13 @@ def audit(root: Path) -> dict[str, Any]:
         for digest in iteration["rollout_report_hashes"]:
             source = paths[digest]
             report = validate_probe(source)
+            if report["world_config"].get("strict_receive_handoff", False) != manifest.get(
+                "strict_receive_handoff", False
+            ) or (
+                manifest.get("strict_receive_handoff", False)
+                and report.get("pass_feedback_contract") != "launch_relative_foot_only_v1"
+            ):
+                raise ValueError("training rollout and reward handoff contracts differ")
             if (
                 not report["exact_replay"]
                 or not report["near_ball_residual"]["explore"]
@@ -128,7 +135,12 @@ def audit(root: Path) -> dict[str, Any]:
         raise ValueError("unknown comparison baseline")
     role_curriculum = manifest.get("role_curriculum", False)
     expected_courses = (
-        [asdict(c) for c in examination_courses()]
+        [
+            asdict(c)
+            for c in examination_courses(
+                strict_handoff=manifest.get("strict_receive_handoff", False)
+            )
+        ]
         if role_curriculum
         else [
             {"role": "playmaker", "blue": blue, "offset": offset}
@@ -157,6 +169,10 @@ def audit(root: Path) -> dict[str, Any]:
             if role_curriculum:
                 if not report.get("basic_ball_play") or report.get("kickoff_role") != role:
                     raise ValueError("role examination did not use its declared skill course")
+                if report["world_config"].get("strict_receive_handoff", False) != manifest.get(
+                    "strict_receive_handoff", False
+                ):
+                    raise ValueError("examination handoff contract differs from training")
                 if role != "playmaker":
                     actor = f"{'blue' if blue else 'red'}.{role}"
                     player = next(p for p in report["players"] if p["agent_id"] == actor)

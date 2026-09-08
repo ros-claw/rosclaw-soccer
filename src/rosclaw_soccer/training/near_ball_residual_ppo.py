@@ -325,6 +325,7 @@ def train(
     diverse_ball_positions: bool = False,
     initial_checkpoint: Path | None = None,
     role_curriculum: bool = False,
+    strict_receive_handoff: bool = False,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -339,6 +340,8 @@ def train(
         or type(all_role_clearance) is not bool
         or type(diverse_ball_positions) is not bool
         or type(role_curriculum) is not bool
+        or type(strict_receive_handoff) is not bool
+        or (strict_receive_handoff and not role_curriculum)
         or (role_curriculum and not (prospective_curriculum and all_role_clearance))
     ):
         raise ValueError("bounded online training budget required")
@@ -381,7 +384,10 @@ def train(
         else hash_bytes(initial_checkpoint.read_bytes()),
         "all_role_clearance": all_role_clearance,
         "role_curriculum": role_curriculum,
-        "evaluation_courses": [asdict(c) for c in examination_courses()]
+        "strict_receive_handoff": strict_receive_handoff,
+        "evaluation_courses": [
+            asdict(c) for c in examination_courses(strict_handoff=strict_receive_handoff)
+        ]
         if role_curriculum
         else None,
         "training_offsets_m": offsets,
@@ -418,6 +424,7 @@ def train(
                     course,
                     22100 + iteration * 8 + index,
                     True,
+                    strict_receive_handoff,
                 )
                 for index, course in enumerate(training_courses(iteration))
             ]
@@ -471,8 +478,9 @@ def train(
                     course,
                     0,
                     False,
+                    strict_receive_handoff,
                 )
-                for course in examination_courses()
+                for course in examination_courses(strict_handoff=strict_receive_handoff)
             ]
             if workers == 1:
                 sources = [collect_role_course(job) for job in exam_jobs]
@@ -542,6 +550,7 @@ def main() -> None:
     parser.add_argument("--diverse-ball-positions", action="store_true")
     parser.add_argument("--initial-checkpoint", type=Path)
     parser.add_argument("--role-curriculum", action="store_true")
+    parser.add_argument("--strict-receive-handoff", action="store_true")
     args = parser.parse_args()
     train(
         assets=args.asset_root,
@@ -555,6 +564,7 @@ def main() -> None:
         diverse_ball_positions=args.diverse_ball_positions,
         initial_checkpoint=args.initial_checkpoint,
         role_curriculum=args.role_curriculum,
+        strict_receive_handoff=args.strict_receive_handoff,
     )
 
 

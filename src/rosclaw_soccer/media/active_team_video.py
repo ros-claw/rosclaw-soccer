@@ -97,7 +97,23 @@ def render(
                     if report["world_config"].get("owned_contact_policy")
                     else "BASELINE"
                 )
-        state = "SAFE" if report["results"][0]["safe"] else "SAFETY GATE FAILED"
+        state = "WORLD SAFE" if report["results"][0]["safe"] else "SAFETY GATE FAILED"
+        if four_vs_four:
+            # A stable world may still contain shin contacts and bad football.
+            # Do not present the physical safety gate as a skill qualification.
+            foot_gate = report.get("assessment", {}).get("gates", {}).get("foot_only_ball_control")
+            state += (
+                " / FOOT CONTROL OK"
+                if foot_gate is True
+                else " / NONFOOT CONTACT"
+                if foot_gate is False
+                else " / CONTACT STATUS UNKNOWN"
+            )
+            if report.get("near_ball_residual") is not None:
+                mode = "BLUE" if report["scenario"]["scenario_id"].endswith("blue") else "RED"
+                mode += " | " + report.get("kickoff_role", "playmaker").upper() + " COURSE"
+                mode += f" | GEN {residual.generation}"
+                mode += " EXPLORE" if report["near_ball_residual"]["explore"] else " MEAN"
         clips.append(
             _Clip(
                 f"{mode} | {state} | FULL RALLY 1x | "

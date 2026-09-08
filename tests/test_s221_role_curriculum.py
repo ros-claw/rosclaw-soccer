@@ -46,3 +46,12 @@ def test_collection_uses_shared_physics_and_private_parent(monkeypatch, tmp_path
         replace(job, explore=False, course=module.RoleCourse("playmaker", False, 0.06))
     )
     assert not calls[-1]["near_ball_explore"] and calls[-1]["forward_receiver_lane"]
+    module.collect_role_course(replace(job, strict_handoff=True))
+    assert calls[-1]["strict_receive_handoff"]
+
+
+def test_strict_handoff_exam_keeps_distinct_positions_and_complete_roster():
+    courses = module.examination_courses(strict_handoff=True)
+    assert len(courses) == len({c.key for c in courses}) == 16
+    assert {c.offset for c in courses} == {-0.10, 0.10}
+    assert not {c.offset for c in courses} & set(module.TRAIN_OFFSETS)
