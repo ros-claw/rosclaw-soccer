@@ -12,6 +12,7 @@ import json
 import math
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,13 @@ from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import run_probe, validate_probe
 from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
+from rosclaw_soccer.training.near_ball_curriculum import (
+    TRAIN_OFFSETS,
+    RoleRolloutJob,
+    collect_role_course,
+    examination_courses,
+    training_courses,
+)
 from rosclaw_soccer.training.near_ball_plasticity import (
     begin_update,
     finish_update,
@@ -311,6 +319,7 @@ def train(
     all_role_clearance: bool = False,
     diverse_ball_positions: bool = False,
     initial_checkpoint: Path | None = None,
+    role_curriculum: bool = False,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -324,6 +333,8 @@ def train(
         or type(long_credit) is not bool
         or type(all_role_clearance) is not bool
         or type(diverse_ball_positions) is not bool
+        or type(role_curriculum) is not bool
+        or (role_curriculum and not (prospective_curriculum and all_role_clearance))
     ):
         raise ValueError("bounded online training budget required")
     fixture = build_four_vs_four_fixture(assets)
@@ -341,9 +352,11 @@ def train(
     ):
         raise ValueError("initial candidate does not match the training body/roster/budget")
     initial_policy = policy
-    offsets = (
+    offsets: tuple[float, ...] = (
         (-0.16, -0.12, -0.04, 0.0, 0.04, 0.12, 0.16) if diverse_ball_positions else (-0.04, 0.04)
     )
+    if role_curriculum:
+        offsets = TRAIN_OFFSETS
     output.mkdir(parents=True)
     policy.save(output / f"generation-{policy.generation:03d}.npz")
     manifest: dict[str, Any] = {
@@ -362,6 +375,10 @@ def train(
         if initial_checkpoint is None
         else hash_bytes(initial_checkpoint.read_bytes()),
         "all_role_clearance": all_role_clearance,
+        "role_curriculum": role_curriculum,
+        "evaluation_courses": [asdict(c) for c in examination_courses()]
+        if role_curriculum
+        else None,
         "training_offsets_m": offsets,
         "credit": {
             "gamma": 0.997 if long_credit else 0.99,
@@ -386,7 +403,27 @@ def train(
             )
             for blue in (False, True)
         ]
-        if workers == 1:
+        if role_curriculum:
+            role_jobs = [
+                RoleRolloutJob(
+                    assets,
+                    output / f"train-{iteration:03d}-{course.key}",
+                    output / f"generation-{policy.generation:03d}.npz",
+                    duration,
+                    course,
+                    22100 + iteration * 8 + index,
+                    True,
+                )
+                for index, course in enumerate(training_courses(iteration))
+            ]
+            if workers == 1:
+                collected = [collect_role_course(job) for job in role_jobs]
+            else:
+                with ProcessPoolExecutor(
+                    max_workers=workers, mp_context=multiprocessing.get_context("spawn")
+                ) as pool:
+                    collected = list(pool.map(collect_role_course, role_jobs))
+        elif workers == 1:
             collected = [_collect(job) for job in jobs]
         else:
             with ProcessPoolExecutor(
@@ -419,6 +456,40 @@ def train(
         (output / "training.json").write_text(json.dumps(manifest, indent=2) + "\n")
         print(json.dumps(manifest["iterations"][-1]), flush=True)
     for label, candidate in ((manifest["baseline_label"], initial_policy), ("candidate", policy)):
+        if role_curriculum:
+            exam_jobs = [
+                RoleRolloutJob(
+                    assets,
+                    output / f"eval-{label}-{course.key}",
+                    output / f"generation-{candidate.generation:03d}.npz",
+                    duration,
+                    course,
+                    0,
+                    False,
+                )
+                for course in examination_courses()
+            ]
+            if workers == 1:
+                sources = [collect_role_course(job) for job in exam_jobs]
+            else:
+                with ProcessPoolExecutor(
+                    max_workers=workers, mp_context=multiprocessing.get_context("spawn")
+                ) as pool:
+                    sources = list(pool.map(collect_role_course, exam_jobs))
+            for job, source in zip(exam_jobs, sources, strict=True):
+                report = validate_probe(Path(source))
+                manifest["evaluation"].append(
+                    {
+                        "label": label,
+                        **asdict(job.course),
+                        "report_hash": report["report_hash"],
+                        "safe": report["results"][0]["safe"],
+                        "assessment": report["assessment"],
+                        "passes": report["causal_pass_feedback"],
+                    }
+                )
+            (output / "training.json").write_text(json.dumps(manifest, indent=2) + "\n")
+            continue
         for blue in (False, True):
             for offset in (-0.08, 0.08):
                 destination = output / f"eval-{label}-{'blue' if blue else 'red'}-{offset:+.2f}"
@@ -465,6 +536,7 @@ def main() -> None:
     parser.add_argument("--all-role-clearance", action="store_true")
     parser.add_argument("--diverse-ball-positions", action="store_true")
     parser.add_argument("--initial-checkpoint", type=Path)
+    parser.add_argument("--role-curriculum", action="store_true")
     args = parser.parse_args()
     train(
         assets=args.asset_root,
@@ -477,6 +549,7 @@ def main() -> None:
         all_role_clearance=args.all_role_clearance,
         diverse_ball_positions=args.diverse_ball_positions,
         initial_checkpoint=args.initial_checkpoint,
+        role_curriculum=args.role_curriculum,
     )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ import numpy as np
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import validate_probe
+from rosclaw_soccer.training.near_ball_curriculum import examination_courses
 from rosclaw_soccer.training.near_ball_plasticity import private_weight_hashes, verify_update_record
 
 
@@ -124,6 +126,19 @@ def audit(root: Path) -> dict[str, Any]:
     baseline_label = manifest.get("baseline_label", "zero")
     if baseline_label not in {"zero", "parent"}:
         raise ValueError("unknown comparison baseline")
+    role_curriculum = manifest.get("role_curriculum", False)
+    expected_courses = (
+        [asdict(c) for c in examination_courses()]
+        if role_curriculum
+        else [
+            {"role": "playmaker", "blue": blue, "offset": offset}
+            for blue in (False, True)
+            for offset in (-0.08, 0.08)
+        ]
+    )
+    if role_curriculum and manifest.get("evaluation_courses") != expected_courses:
+        raise ValueError("role examination contract differs")
+    contexts: dict[tuple[str, bool, float], str] = {}
     for label in (baseline_label, "candidate"):
         rows = []
         for item in manifest["evaluation"]:
@@ -138,20 +153,74 @@ def audit(root: Path) -> dict[str, Any]:
             ball_y = report["scenario"]["ball_initial_position_m"][1]
             origin_y = 1.22 if report.get("forward_receiver_lane") else 1.20
             measured_offset = origin_y - ball_y if blue else ball_y + origin_y
+            role = item.get("role", "playmaker")
+            if role_curriculum:
+                if not report.get("basic_ball_play") or report.get("kickoff_role") != role:
+                    raise ValueError("role examination did not use its declared skill course")
+                if role != "playmaker":
+                    actor = f"{'blue' if blue else 'red'}.{role}"
+                    player = next(p for p in report["players"] if p["agent_id"] == actor)
+                    measured_offset = (ball_y - player["origin_m"][1]) * (
+                        -1.0 if blue else 1.0
+                    ) + 0.12
             if blue != item["blue"] or abs(measured_offset - item["offset"]) > 1e-9:
                 raise ValueError("evaluation context differs from its physical scenario")
+            course_key = (role, blue, item["offset"])
+            context = str(
+                hash_json(
+                    {
+                        name: report[name]
+                        for name in (
+                            "fixture_hash",
+                            "world_config",
+                            "contact_teacher_config",
+                            "scenario",
+                            "option_config",
+                            "strike_phase_config",
+                        )
+                    }
+                )
+            )
+            if label == baseline_label:
+                contexts[course_key] = context
+            elif contexts.get(course_key) != context:
+                raise ValueError("parent and candidate examination worlds differ")
             events = report["assessment"]["events"]
+            pass_events = sum(e["skill"] == "pass" for e in events)
+            receives = sum(
+                e["physical_receive_confirmed"] for e in report.get("causal_pass_feedback", [])
+            )
+            clean_control = report["assessment"]["gates"]["foot_only_ball_control"]
+            jointly_confirmed = sum(
+                any(
+                    d["physical_receive_confirmed"]
+                    and d["sender"] == e["agent_id"]
+                    and d["receiver"] == e["target_agent_id"]
+                    and abs(d["foot_contact_time_sec"] - e["time_sec"]) < 1e-9
+                    for d in report.get("causal_pass_feedback", [])
+                )
+                for e in events
+                if e["skill"] == "pass"
+            )
             rows.append(
                 {
                     "blue": item["blue"],
                     "offset": item["offset"],
+                    "role": role,
                     "safe": report["results"][0]["safe"],
-                    "qualified_passes": sum(e["skill"] == "pass" for e in events),
+                    "assessment_pass_events": pass_events,
+                    "physical_receive_diagnostics": receives,
+                    "foot_only_ball_control": clean_control,
+                    "qualified_passes": jointly_confirmed
+                    if clean_control and report["results"][0]["safe"]
+                    else 0,
                     "full_match_passed": report["assessment"]["passed"],
                     "exact_replay": report["exact_replay"],
                 }
             )
-        if len(rows) != 4 or len({(r["blue"], r["offset"]) for r in rows}) != 4:
+        if len(rows) != len(expected_courses) or {
+            (r["role"], r["blue"], r["offset"]) for r in rows
+        } != {(r["role"], r["blue"], r["offset"]) for r in expected_courses}:
             raise ValueError("bilateral held-out evaluation is incomplete")
         outcomes[label] = rows
     result = {
