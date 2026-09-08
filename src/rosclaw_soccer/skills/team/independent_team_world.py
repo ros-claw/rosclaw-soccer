@@ -81,6 +81,7 @@ from rosclaw_soccer.world.multi_player import (
     G1PitchPlayerSpec,
     build_g1_multi_player_stadium_model,
 )
+from rosclaw_soccer.world.player_clearance import propose_clearance_velocity
 
 _CONTROL_DT = 0.02
 _PHYSICS_DT = 0.002
@@ -126,6 +127,7 @@ class IndependentTeamWorldConfig:
     bilateral_goals: bool = False
     stationary_ball_acquisition: bool = False
     predictive_separation: bool = False
+    all_role_clearance: bool = False
     stop_on_ball_exit: bool = False
     owned_contact_policy: OwnedBallContactPolicy | None = None
     minimum_pelvis_height_m: float = 0.55
@@ -177,6 +179,7 @@ class IndependentTeamWorldConfig:
             )
             or not isinstance(self.stationary_ball_acquisition, bool)
             or not isinstance(self.predictive_separation, bool)
+            or not isinstance(self.all_role_clearance, bool)
             or not isinstance(self.stop_on_ball_exit, bool)
             or any(not math.isfinite(value) for value in values)
             or not 5.0 <= self.simulation_duration_sec <= 25.0
@@ -510,6 +513,8 @@ class _PlayerController:
     policy: Any
     decision: AgentCellDecision | None = None
     last_world_command: NDArray[np.float64] | None = None
+    clearance_feasible: bool = True
+    clearance_constrained: bool = False
     current_intent: TacticalIntent | None = None
     intent_switch_count: int = 0
     seen_intents: set[TacticalIntent] | None = None
@@ -710,6 +715,11 @@ def simulate_independent_team_world(
                 f"{key}_movement_active": [],
             }
         )
+    if active.all_role_clearance:
+        for controller in controllers:
+            key = _agent_key(controller.cell.agent_id)
+            trace[f"{key}_clearance_feasible"] = []
+            trace[f"{key}_clearance_constrained"] = []
     initial_positions = {
         controller.cell.agent_id: np.asarray(
             data.qpos[controller.qpos_base : controller.qpos_base + 3], dtype=np.float64
@@ -2523,6 +2533,21 @@ def _movement_command(
     speed = float(np.linalg.norm(command[:2]))
     if speed > speed_limit:
         command[:2] *= speed_limit / speed
+    if config.all_role_clearance:
+        proposal = propose_clearance_velocity(
+            command[:2],
+            np.asarray(
+                [
+                    other - current
+                    for agent, other in sorted(positions.items())
+                    if agent != controller.cell.agent_id
+                ]
+            ).reshape((-1, 2)),
+            maximum_speed_mps=speed_limit,
+        )
+        command[:2] = proposal.velocity_mps
+        controller.clearance_feasible = proposal.feasible
+        controller.clearance_constrained = proposal.constrained
     return command
 
 
@@ -3143,6 +3168,9 @@ def _append_player_trace(
     trace[f"{key}_target_position"].append(decision.target_position_m)
     trace[f"{key}_world_command"].append(command.copy())
     trace[f"{key}_movement_active"].append(float(np.linalg.norm(command[:2])) >= 0.04)
+    if f"{key}_clearance_feasible" in trace:
+        trace[f"{key}_clearance_feasible"].append(controller.clearance_feasible)
+        trace[f"{key}_clearance_constrained"].append(controller.clearance_constrained)
 
 
 def _robot_robot_contact_observation(

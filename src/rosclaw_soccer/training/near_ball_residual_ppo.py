@@ -20,9 +20,15 @@ import numpy as np
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.growth.pass_failure_feedback import diagnose_passes
+from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import run_probe, validate_probe
 from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
+from rosclaw_soccer.training.near_ball_plasticity import (
+    begin_update,
+    finish_update,
+    private_weight_hashes,
+)
 
 
 def physical_rewards(trace: dict[str, Any], ids: tuple[str, ...]) -> np.ndarray:
@@ -145,6 +151,17 @@ def update_private_actors(
     logps = np.concatenate([t["residual_log_probability"] for t in rollouts])
     active = np.concatenate([t["residual_active"] for t in rollouts])
     advantage, target_value = np.concatenate(advantages), np.concatenate(returns)
+    dataset_hash = str(hash_json({"rollouts": [trajectory_digest(t) for t in rollouts]}))
+    context_hash = str(
+        hash_json(
+            {
+                "body": parent.body_hash,
+                "parent": parent.policy_hash,
+                "roster": parent.agent_ids,
+                "dataset": dataset_hash,
+            }
+        )
+    )
     rows = []
     for i, agent in enumerate(parent.agent_ids):
         mask = active[:, i].astype(bool)
@@ -153,6 +170,16 @@ def update_private_actors(
         if n < 32:
             rows.append(row)
             continue
+        before_hashes = private_weight_hashes(weights, parent.agent_ids, parent.body_hash)
+        lease = begin_update(
+            before=before_hashes,
+            focal=agent,
+            generation=parent.generation + 1,
+            dataset_hash=dataset_hash,
+            context_hash=context_hash,
+            maximum_steps=epochs,
+        )
+        optimizer_steps = 0
         parameters = {
             k: torch.nn.Parameter(torch.tensor(v[i], dtype=torch.float64))
             for k, v in weights.items()
@@ -195,10 +222,17 @@ def update_private_actors(
             if not torch.isfinite(norm):
                 raise ValueError("nonfinite PPO gradient rejected")
             optimizer.step()
+            optimizer_steps += 1
             with torch.no_grad():
                 parameters["log_std"].clamp_(-4, -0.2)
         for k, parameter in parameters.items():
             weights[k][i] = parameter.detach().numpy()
+        row["core_plasticity"] = finish_update(
+            lease=lease,
+            before=before_hashes,
+            after=private_weight_hashes(weights, parent.agent_ids, parent.body_hash),
+            steps=optimizer_steps,
+        )
         delta = float(sum(np.square(weights[k][i] - parent.weights[k][i]).sum() for k in weights))
         row.update(
             updated=delta > 0,

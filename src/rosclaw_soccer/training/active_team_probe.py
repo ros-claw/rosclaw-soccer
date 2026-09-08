@@ -56,6 +56,7 @@ def run_probe(
     near_ball_policy: NearBallResidualPolicy | None = None,
     near_ball_seed: int = 0,
     near_ball_explore: bool = False,
+    all_role_clearance: bool = False,
 ) -> dict[str, Any]:
     if near_ball_policy is not None and not four_vs_four:
         raise ValueError("private residual actors require the symmetric 4v4 fixture")
@@ -108,6 +109,7 @@ def run_probe(
             "world/multi_player.py",
             "world/bilateral_net.py",
             "world/match_boundary.py",
+            "world/player_clearance.py",
         )
         for p in (source_root / relative,)
     }
@@ -128,6 +130,7 @@ def run_probe(
         for cell in fixture.cells
     )
     config = replace(default_continuous_match_config(), simulation_duration_sec=duration)
+    config = replace(config, all_role_clearance=all_role_clearance)
     if arrival_radius_m is not None:
         config = replace(config, arrival_radius_m=arrival_radius_m)
     if active:
@@ -426,6 +429,10 @@ def main() -> None:
     parser.add_argument("--pass-swing-amplitude", type=float)
     parser.add_argument("--forward-receiver-lane", action="store_true")
     parser.add_argument("--pass-reference-distance", type=float, default=0.0)
+    parser.add_argument("--near-ball-policy", type=Path)
+    parser.add_argument("--near-ball-seed", type=int, default=0)
+    parser.add_argument("--near-ball-explore", action="store_true")
+    parser.add_argument("--all-role-clearance", action="store_true")
     args = parser.parse_args()
     report = run_probe(
         asset_root=args.asset_root,
@@ -447,6 +454,12 @@ def main() -> None:
         pass_swing_amplitude=args.pass_swing_amplitude,
         forward_receiver_lane=args.forward_receiver_lane,
         pass_reference_distance_m=args.pass_reference_distance,
+        near_ball_policy=NearBallResidualPolicy.load(args.near_ball_policy)
+        if args.near_ball_policy is not None
+        else None,
+        near_ball_seed=args.near_ball_seed,
+        near_ball_explore=args.near_ball_explore,
+        all_role_clearance=args.all_role_clearance,
     )
     print(
         json.dumps(
