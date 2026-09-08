@@ -301,7 +301,10 @@ class RosclawSoccerAgentCell:
         if value.possession_agent_id in self.self_model.teammate_ids:
             return None
         chaser_id = value.ball_chaser_agent_id
-        if chaser_id not in (self.agent_id, *self.self_model.teammate_ids):
+        if (
+            chaser_id not in (self.agent_id, *self.self_model.teammate_ids)
+            or self._role_for_agent(chaser_id) is MatchRole.DEFENDER
+        ):
             chaser_id = self._team_ball_chaser(value).agent_id
         if chaser_id == self.agent_id:
             return self._decision(
@@ -316,7 +319,10 @@ class RosclawSoccerAgentCell:
             value,
             TacticalIntent.SUPPORT,
             SoccerSkill.OFF_BALL_RUN,
-            self._support_target(value, depth_m=-0.85),
+            self._support_target(
+                value,
+                depth_m=0.95 if self.self_model.primary_role is MatchRole.FINISHER else -0.85,
+            ),
             chaser_id,
             0.90,
         )
@@ -596,6 +602,14 @@ class RosclawSoccerAgentCell:
             for state in value.teammate_states
             if state.stable
             and attack_direction * (state.position_m[0] - value.self_state.position_m[0]) > -0.20
+            and (
+                not self.tactical_profile.active_competition
+                or (
+                    self._role_for_agent(state.agent_id)
+                    in {MatchRole.PLAYMAKER, MatchRole.FINISHER}
+                    and self._lane_clear(value, state)
+                )
+            )
         ]
         if not candidates:
             return None
@@ -621,7 +635,12 @@ class RosclawSoccerAgentCell:
         candidates = tuple(
             state
             for state in (value.self_state, *value.teammate_states)
-            if state.stable and self._role_for_agent(state.agent_id) is not MatchRole.GOALKEEPER
+            if state.stable
+            and self._role_for_agent(state.agent_id) is not MatchRole.GOALKEEPER
+            and not (
+                self.tactical_profile.active_competition
+                and self._role_for_agent(state.agent_id) is MatchRole.DEFENDER
+            )
         )
         if not candidates:
             candidates = tuple(
@@ -718,6 +737,8 @@ class RosclawSoccerAgentCell:
         direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
         lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
         home_side = float(np.sign(self.tactical_profile.home_position_m[1]) or 1.0)
+        if self.tactical_profile.active_competition:
+            home_side *= math.copysign(1.0, value.opponent_goal_m[0] - value.own_goal_m[0])
         # Treat the formation side as a preference, not a rail.  Mirrored
         # attackers can otherwise converge on the same physical lane even
         # while their independently selected ball chaser is unique.  Compare

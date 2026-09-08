@@ -707,7 +707,7 @@ def apply_g1_compliant_goal_net_force(
     )
 
 
-def _add_goal(parent: Any, spec: G1TrainingGoalSpec) -> None:
+def _add_goal(parent: Any, spec: G1TrainingGoalSpec, *, mirror_sum_x: float | None = None) -> None:
     import mujoco
 
     world = parent.worldbody
@@ -726,6 +726,10 @@ def _add_goal(parent: Any, spec: G1TrainingGoalSpec) -> None:
         strand: bool = False,
         custom_radius: float | None = None,
     ) -> None:
+        if mirror_sum_x is not None:
+            name = "opposite_" + name
+            start = (mirror_sum_x - start[0], -start[1], start[2])
+            end = (mirror_sum_x - end[0], -end[1], end[2])
         world.add_geom(
             name=name,
             type=mujoco.mjtGeom.mjGEOM_CAPSULE,

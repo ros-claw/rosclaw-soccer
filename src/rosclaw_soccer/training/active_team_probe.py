@@ -10,6 +10,10 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.growth.competitive_match_assessment import assess_competitive_match_trajectory
+from rosclaw_soccer.growth.locomotion_contact_teacher import G1RollingOptionBridgeConfig
+from rosclaw_soccer.growth.role_self_model import MatchRole
+from rosclaw_soccer.growth.strike_phase_controller import StrikePhaseConfig
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.independent_team_world import simulate_independent_team_world
@@ -18,17 +22,53 @@ from rosclaw_soccer.training.continuous_competitive_match_growth import (
     default_continuous_match_config,
     default_continuous_match_scenario,
 )
+from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
 from rosclaw_soccer.training.phase_conditioned_strike_growth import (
     default_phase_strike_controller,
     default_phase_strike_option,
     default_phase_strike_teacher,
 )
+from rosclaw_soccer.world.match_boundary import ball_exit_reason
 
 
-def run_probe(*, asset_root: Path, output: Path, active: bool, duration: float) -> dict[str, Any]:
+def run_probe(
+    *,
+    asset_root: Path,
+    output: Path,
+    active: bool,
+    duration: float,
+    four_vs_four: bool = False,
+    blue_kickoff: bool = False,
+) -> dict[str, Any]:
+    if four_vs_four and not active:
+        raise ValueError("4v4 requires active role objectives")
+    if blue_kickoff and not four_vs_four:
+        raise ValueError("mirrored kickoff requires the symmetric 4v4 fixture")
     if output.exists():
         raise FileExistsError(output)
-    fixture = build_continuous_competitive_fixture(asset_root)
+    source_root = Path(__file__).parents[1]
+    implementation = {
+        str(p.relative_to(source_root)): hash_bytes(p.read_bytes())
+        for relative in (
+            "training/active_team_probe.py",
+            "training/four_vs_four_match.py",
+            "training/independent_team_growth.py",
+            "growth/independent_agent_cell.py",
+            "growth/competitive_match_assessment.py",
+            "growth/locomotion_contact_teacher.py",
+            "skills/team/independent_team_world.py",
+            "world/field.py",
+            "world/multi_player.py",
+            "world/bilateral_net.py",
+            "world/match_boundary.py",
+        )
+        for p in (source_root / relative,)
+    }
+    fixture = (
+        build_four_vs_four_fixture(asset_root)
+        if four_vs_four
+        else build_continuous_competitive_fixture(asset_root)
+    )
     cells = tuple(
         replace(cell, tactical_profile=replace(cell.tactical_profile, active_competition=active))
         for cell in fixture.cells
@@ -42,6 +82,37 @@ def run_probe(*, asset_root: Path, output: Path, active: bool, duration: float) 
             duel_lateral_offset_m=0.45,
         )
     scenario = default_continuous_match_scenario()
+    teacher = default_phase_strike_teacher()
+    option: G1RollingOptionBridgeConfig | None = default_phase_strike_option()
+    phase: StrikePhaseConfig | None = default_phase_strike_controller()
+    if four_vs_four:
+        config = replace(
+            config,
+            bilateral_goals=True,
+            stationary_ball_acquisition=True,
+            receive_pocket_depth_m=0.18,
+            predictive_separation=True,
+            stop_on_ball_exit=True,
+            contact_possession_hold_sec=0.60,
+        )
+        # The historical warm-start kick option only supports yaw zero.
+        # Use the same world-frame foot-contact teacher on BOTH teams instead.
+        option = None
+        phase = None
+        teacher = replace(
+            teacher,
+            receive_ankle_lateral_offset_m=0.12,
+            receive_follow_through_speed_mps=0.35,
+            pass_strike_foot_speed_mps=1.50,
+            shot_strike_foot_speed_mps=2.50,
+            one_touch_finish_aim_yaw_bias_rad=0.0,
+            committed_receive_aim_yaw_bias_rad=0.0,
+        )
+        scenario = replace(
+            scenario,
+            scenario_id="s199.s212.4v4.blue" if blue_kickoff else "s199.s212.4v4.red",
+            ball_initial_position_m=(4.0, 1.20, 0.115) if blue_kickoff else (2.0, -1.20, 0.115),
+        )
     results, trajectories = [], []
     for _ in range(2):
         result, trajectory = simulate_independent_team_world(
@@ -52,9 +123,9 @@ def run_probe(*, asset_root: Path, output: Path, active: bool, duration: float) 
             scenario=scenario,
             goal=fixture.goal,
             config=config,
-            contact_teacher_config=default_phase_strike_teacher(),
-            option_bridge_config=default_phase_strike_option(),
-            strike_phase_config=default_phase_strike_controller(),
+            contact_teacher_config=teacher,
+            option_bridge_config=option,
+            strike_phase_config=phase,
         )
         results.append(result.to_dict())
         trajectories.append(trajectory)
@@ -67,9 +138,16 @@ def run_probe(*, asset_root: Path, output: Path, active: bool, duration: float) 
         "schema_version": "rosclaw_soccer.active_team_probe.v1",
         "active_competition": active,
         "world_config": asdict(config),
+        "contact_teacher_config": asdict(teacher),
+        "option_config": None if option is None else asdict(option),
+        "strike_phase_config": None if phase is None else asdict(phase),
         "scenario": asdict(scenario),
         "goal": asdict(fixture.goal),
         "cells": [c.to_dict() for c in cells],
+        "players": [asdict(p) for p in fixture.players],
+        "four_vs_four": four_vs_four,
+        "fixture_hash": fixture.fixture_hash,
+        "implementation": implementation,
         "results": results,
         "engagement": rows,
         "exact_replay": exact,
@@ -81,6 +159,32 @@ def run_probe(*, asset_root: Path, output: Path, active: bool, duration: float) 
         "promotion_eligible": False,
         "hardware_command_sent": False,
     }
+    report["termination"] = {
+        "requested_duration_sec": duration,
+        "actual_duration_sec": float(trajectories[0]["time"][-1]),
+        "reason": (
+            ball_exit_reason(
+                tuple(float(v) for v in trajectories[0]["ball_pose"][-1, :3]),
+                left_x=config.left_goal_plane_x_m,
+                right_x=fixture.goal.plane_x_m,
+                radius=fixture.goal.ball_radius_m,
+                goal_width=fixture.goal.width_m,
+                goal_height=fixture.goal.height_m,
+            )
+            if config.stop_on_ball_exit
+            else None
+        )
+        or "TIME_LIMIT",
+        "automatic_restart_implemented": False,
+    }
+    report["assessment"] = assess_competitive_match_trajectory(
+        trajectory=trajectories[0],
+        trajectory_hash=trajectory_digest(trajectories[0]),
+        agent_ids=tuple(sorted(c.agent_id for c in cells)),
+        roles={c.agent_id: c.self_model.primary_role for c in cells},
+        strict_replay=exact,
+        world_safe=results[0]["safe"],
+    ).to_dict()
     report["report_hash"] = hash_json(report)
     (output / "probe.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
@@ -130,6 +234,41 @@ def validate_probe(path: Path) -> dict[str, Any]:
             traces.append({k: archive[k] for k in archive.files})
     digests = [trajectory_digest(t) for t in traces]
     ids = tuple(sorted(c["self_model"]["agent_id"] for c in report["cells"]))
+    if "assessment" in report:
+        assessment = assess_competitive_match_trajectory(
+            trajectory=traces[0],
+            trajectory_hash=digests[0],
+            agent_ids=ids,
+            roles={
+                c["self_model"]["agent_id"]: MatchRole(c["self_model"]["primary_role"])
+                for c in report["cells"]
+            },
+            strict_replay=digests[0] == digests[1],
+            world_safe=report["results"][0]["safe"],
+        ).to_dict()
+        if json.loads(json.dumps(assessment)) != report["assessment"]:
+            raise ValueError("physical match assessment changed")
+    if "termination" in report:
+        config, goal = report["world_config"], report["goal"]
+        reason = (
+            ball_exit_reason(
+                traces[0]["ball_pose"][-1, :3],
+                left_x=config["left_goal_plane_x_m"],
+                right_x=goal["plane_x_m"],
+                radius=goal["ball_radius_m"],
+                goal_width=goal["width_m"],
+                goal_height=goal["height_m"],
+            )
+            if config.get("stop_on_ball_exit", False)
+            else None
+        ) or "TIME_LIMIT"
+        if report["termination"] != {
+            "requested_duration_sec": config["simulation_duration_sec"],
+            "actual_duration_sec": float(traces[0]["time"][-1]),
+            "reason": reason,
+            "automatic_restart_implemented": False,
+        }:
+            raise ValueError("match termination differs from physics")
     if (
         report["schema_version"] != "rosclaw_soccer.active_team_probe.v1"
         or report["trajectory_digests"] != digests
@@ -152,12 +291,29 @@ def main() -> None:
     parser.add_argument("--asset-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--active", action="store_true")
+    parser.add_argument("--four-vs-four", action="store_true")
+    parser.add_argument("--blue-kickoff", action="store_true")
     parser.add_argument("--duration", type=float, default=12.0)
     args = parser.parse_args()
     report = run_probe(
-        asset_root=args.asset_root, output=args.output, active=args.active, duration=args.duration
+        asset_root=args.asset_root,
+        output=args.output,
+        active=args.active,
+        duration=args.duration,
+        four_vs_four=args.four_vs_four,
+        blue_kickoff=args.blue_kickoff,
     )
-    print(json.dumps({k: report[k] for k in ("engagement", "exact_replay", "results")}))
+    print(
+        json.dumps(
+            {
+                "engagement": report["engagement"],
+                "exact_replay": report["exact_replay"],
+                "safe": report["results"][0]["safe"],
+                "peak_ball_speed_mps": report["results"][0]["peak_ball_speed_mps"],
+                "assessment": report["assessment"],
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from rosclaw_soccer.training.active_team_probe import validate_probe
 from rosclaw_soccer.training.continuous_competitive_match_growth import (
     build_continuous_competitive_fixture,
 )
+from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
 from rosclaw_soccer.world.multi_player import build_g1_multi_player_stadium_model
 
 
@@ -34,9 +35,23 @@ def render(*, sources: tuple[Path, ...], asset_root: Path, output: Path) -> dict
     os.environ["MUJOCO_GL"] = "egl"
     import mujoco
 
-    fixture = build_continuous_competitive_fixture(asset_root)
+    four_vs_four = reports[0].get("four_vs_four", False)
+    if any(r.get("four_vs_four", False) != four_vs_four for r in reports):
+        raise ValueError("video sources must share the same roster")
+    fixture = (
+        build_four_vs_four_fixture(asset_root)
+        if four_vs_four
+        else build_continuous_competitive_fixture(asset_root)
+    )
+    if any("players" in r and r["fixture_hash"] != fixture.fixture_hash for r in reports):
+        raise ValueError("render fixture differs from simulated fixture")
     model = build_g1_multi_player_stadium_model(
-        asset_root, players=fixture.players, spec=fixture.goal
+        asset_root,
+        players=fixture.players,
+        spec=fixture.goal,
+        left_goal_plane_x_m=reports[0]["world_config"]["left_goal_plane_x_m"]
+        if four_vs_four
+        else None,
     )
     for player in fixture.players:
         _color_player(
@@ -53,10 +68,15 @@ def render(*, sources: tuple[Path, ...], asset_root: Path, output: Path) -> dict
         with np.load(source.parent / "primary.npz", allow_pickle=False) as archive:
             trajectory = {k: archive[k] for k in archive.files}
         mode = "ACTIVE TEAM" if report["active_competition"] else "BASELINE"
+        if four_vs_four:
+            mode = "4v4 | " + (
+                "BLUE START" if report["scenario"]["scenario_id"].endswith("blue") else "RED START"
+            )
         state = "SAFE" if report["results"][0]["safe"] else "SAFETY GATE FAILED"
         clips.append(
             _Clip(
-                f"{mode} | {state} | FULL EPISODE - REAL TIME",
+                f"{mode} | {state} | FULL RALLY 1x | "
+                + report.get("termination", {}).get("reason", "TIME LIMIT"),
                 _play(
                     float(trajectory["time"][0]),
                     float(trajectory["time"][-1]),
@@ -80,11 +100,17 @@ def render(*, sources: tuple[Path, ...], asset_root: Path, output: Path) -> dict
         )
         # Reuse encoding/camera primitives with this experiment's factual titles.
         command = [
-            item.replace("S209 LEARNED QUICK STRIKE", "S211 ACTIVE TEAM")
+            item.replace(
+                "S209 LEARNED QUICK STRIKE",
+                "S212 SYMMETRIC 4v4" if four_vs_four else "S211 ACTIVE TEAM",
+            )
             .replace("DATA-BOUND ACTOR", "ROLE OBJECTIVES")
+            .replace("6 G1", "8 G1" if four_vs_four else "6 G1")
             .replace(
                 "PASS  |  RECEIVE  |  QUICK STRIKE  |  PHYSICAL SHIN BLOCK  |  RECOVERY",
-                "COMPLETE EPISODES | PHYSICAL MOTION | DEVELOPMENT ONLY",
+                "ROLE OBJECTIVES | CONTEST + SUPPORT | MATCH SKILLS NOT YET QUALIFIED"
+                if four_vs_four
+                else "COMPLETE EPISODES | PHYSICAL MOTION | DEVELOPMENT ONLY",
             )
             for item in command
         ]
@@ -103,6 +129,7 @@ def render(*, sources: tuple[Path, ...], asset_root: Path, output: Path) -> dict
                             trajectory=trajectory,
                             clips=(clip,),
                             stream=cast(BinaryIO, process.stdin),
+                            role_labels=four_vs_four,
                         )
                 finally:
                     process.stdin.close()

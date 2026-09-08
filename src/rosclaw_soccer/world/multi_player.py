@@ -11,6 +11,7 @@ from typing import Any
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.world.field import (
     G1TrainingGoalSpec,
+    _add_goal,
     _add_goalkeeper_hand_envelopes,
     _attach_g1,
     _configure_ball_dof_damping,
@@ -66,6 +67,7 @@ def build_g1_multi_player_stadium_model(
     *,
     players: tuple[G1PitchPlayerSpec, ...],
     spec: G1TrainingGoalSpec | None = None,
+    left_goal_plane_x_m: float | None = None,
 ) -> Any:
     """Compile one pitch with two to ten separately actuated 29-DoF G1s."""
 
@@ -83,6 +85,31 @@ def build_g1_multi_player_stadium_model(
     goal = spec or G1TrainingGoalSpec()
     root = asset_root.expanduser().resolve()
     parent = _stadium_spec(root, goal)
+    if left_goal_plane_x_m is not None:
+        if not math.isfinite(left_goal_plane_x_m) or left_goal_plane_x_m >= goal.plane_x_m:
+            raise ValueError("opposite goal plane must precede the right goal")
+        _add_goal(parent, goal, mirror_sum_x=left_goal_plane_x_m + goal.plane_x_m)
+        # Explicit 9x6 m small-sided match markings, not an 11-a-side pitch.
+        import mujoco
+
+        center = (left_goal_plane_x_m + goal.plane_x_m) / 2.0
+        half_length = (goal.plane_x_m - left_goal_plane_x_m) / 2.0
+        for name, pos, size in (
+            ("north", (center, 3.0, 0.009), (half_length, 0.025, 0.002)),
+            ("south", (center, -3.0, 0.009), (half_length, 0.025, 0.002)),
+            ("left", (left_goal_plane_x_m, 0.0, 0.009), (0.025, 3.0, 0.002)),
+            ("right", (goal.plane_x_m, 0.0, 0.009), (0.025, 3.0, 0.002)),
+            ("halfway", (center, 0.0, 0.009), (0.025, 3.0, 0.002)),
+        ):
+            parent.worldbody.add_geom(
+                name="match_line_" + name,
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                pos=pos,
+                size=size,
+                rgba=(0.95, 0.95, 0.9, 1.0),
+                contype=0,
+                conaffinity=0,
+            )
 
     import mujoco
 

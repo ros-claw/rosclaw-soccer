@@ -120,6 +120,10 @@ class IndependentTeamWorldConfig:
     minimum_receive_lease_progress_m: float = 0.50
     minimum_receive_lease_ball_speed_mps: float = 0.50
     left_goal_plane_x_m: float = -1.50
+    bilateral_goals: bool = False
+    stationary_ball_acquisition: bool = False
+    predictive_separation: bool = False
+    stop_on_ball_exit: bool = False
     minimum_pelvis_height_m: float = 0.55
     maximum_tilt_rad: float = 0.80
     activation_ceiling: str = "SIM_ONLY"
@@ -162,7 +166,11 @@ class IndependentTeamWorldConfig:
             self.maximum_tilt_rad,
         )
         if (
-            any(not math.isfinite(value) for value in values)
+            not isinstance(self.bilateral_goals, bool)
+            or not isinstance(self.stationary_ball_acquisition, bool)
+            or not isinstance(self.predictive_separation, bool)
+            or not isinstance(self.stop_on_ball_exit, bool)
+            or any(not math.isfinite(value) for value in values)
             or not 5.0 <= self.simulation_duration_sec <= 25.0
             or not 0.08 <= self.decision_period_sec <= 0.20
             or not 0.20 <= self.maximum_speed_mps <= 0.70
@@ -568,7 +576,12 @@ def simulate_independent_team_world(
 
     import mujoco
 
-    model = build_g1_multi_player_stadium_model(asset_root, players=players, spec=goal)
+    model = build_g1_multi_player_stadium_model(
+        asset_root,
+        players=players,
+        spec=goal,
+        left_goal_plane_x_m=active.left_goal_plane_x_m if active.bilateral_goals else None,
+    )
     model.opt.timestep = _PHYSICS_DT
     data = mujoco.MjData(model)
     state_type, output_type, kick_type, _ = load_robonaldo(qualification.asset_root)
@@ -691,6 +704,7 @@ def simulate_independent_team_world(
     peak_ball_speed = float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 3]))
     initial_ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64).copy()
     net_state = G1CompliantGoalNetState()
+    opposite_net_state = G1CompliantGoalNetState()
     agent_codes = {
         controller.cell.agent_id: index + 1 for index, controller in enumerate(controllers)
     }
@@ -720,7 +734,10 @@ def simulate_independent_team_world(
         for controller in controllers:
             _fill_locomotion_state(controller, data, ball_body, ball_qvel)
         if frame % decision_stride == 0:
-            physical_states = tuple(_physical_state(controller, data) for controller in controllers)
+            physical_states = tuple(
+                _physical_state(controller, data, world_velocity=active.bilateral_goals)
+                for controller in controllers
+            )
             state_by_id = {state.agent_id: state for state in physical_states}
             proximity_possession = _infer_possession(
                 controllers=controllers,
@@ -893,6 +910,7 @@ def simulate_independent_team_world(
             current_possession_agent_id=current_possession_agent_id,
             preferred_agent_id=assigned_ball_chaser_agent_id,
             config=contact_teacher_config,
+            nearest_contact_first=active.stationary_ball_acquisition,
         )
         teacher_direction = (
             np.zeros(2, dtype=np.float64)
@@ -1130,7 +1148,7 @@ def simulate_independent_team_world(
                         goal.plane_x_m
                         if controller.cell.self_model.team_id == "red"
                         else active.left_goal_plane_x_m,
-                        goal.target_y_m,
+                        0.0 if active.bilateral_goals else goal.target_y_m,
                     )
                 ),
                 strike_phase=(
@@ -1255,6 +1273,16 @@ def simulate_independent_team_world(
                             ball_qpos=ball_qpos,
                             goal=goal,
                             minimum_depth_m=0.30,
+                            target_xy=(
+                                (
+                                    goal.plane_x_m
+                                    if controller.cell.self_model.team_id == "red"
+                                    else active.left_goal_plane_x_m
+                                ),
+                                0.0,
+                            )
+                            if active.bilateral_goals
+                            else None,
                         )
                     )
                     and contact_teacher_config is not None
@@ -1301,6 +1329,7 @@ def simulate_independent_team_world(
                             receive_intent
                             and (
                                 is_committed_receiver
+                                or active.stationary_ball_acquisition
                                 or float(np.linalg.norm(ball_linear_velocity[:2]))
                                 >= contact_teacher_config.minimum_receive_ball_speed_mps
                             )
@@ -1415,6 +1444,18 @@ def simulate_independent_team_world(
                 damping_n_s_m=10.0,
                 state=net_state,
             )
+            if active.bilateral_goals:
+                from rosclaw_soccer.world.bilateral_net import apply_opposite_goal_net_force
+
+                apply_opposite_goal_net_force(
+                    data,
+                    ball_body_id=ball_body,
+                    ball_qpos=ball_qpos,
+                    ball_qvel=ball_qvel,
+                    spec=goal,
+                    left_goal_plane_x_m=active.left_goal_plane_x_m,
+                    state=opposite_net_state,
+                )
             mujoco.mj_step(model, data)
             (
                 substep_robot_contacts,
@@ -1661,6 +1702,21 @@ def simulate_independent_team_world(
         trace["strike_context_abstained"].append(frame_context_abstained)
         if not finite:
             break
+        if active.stop_on_ball_exit:
+            from rosclaw_soccer.world.match_boundary import ball_exit_reason
+
+            if (
+                ball_exit_reason(
+                    tuple(float(v) for v in data.qpos[ball_qpos : ball_qpos + 3]),
+                    left_x=active.left_goal_plane_x_m,
+                    right_x=goal.plane_x_m,
+                    radius=goal.ball_radius_m,
+                    goal_width=goal.width_m,
+                    goal_height=goal.height_m,
+                )
+                is not None
+            ):
+                break
 
     trajectory = {name: np.asarray(values) for name, values in trace.items()}
     qualities = tuple(
@@ -1833,11 +1889,13 @@ def _fill_locomotion_state(
     state.ang_vel = state.root_ang_vel_b.copy()
 
 
-def _physical_state(controller: _PlayerController, data: Any) -> AgentPhysicalState:
+def _physical_state(
+    controller: _PlayerController, data: Any, *, world_velocity: bool = False
+) -> AgentPhysicalState:
     pose = np.asarray(data.qpos[controller.qpos_base : controller.qpos_base + 7], dtype=np.float64)
     velocity = _rotate_z(
         np.asarray(data.qvel[controller.qvel_base : controller.qvel_base + 3]),
-        controller.spec.yaw_rad,
+        0.0 if world_velocity else controller.spec.yaw_rad,
     )
     roll, pitch = _roll_pitch(pose[3:7])
     tilt = max(abs(roll), abs(pitch))
@@ -2211,6 +2269,24 @@ def _movement_command(
                 * (strike_phase_config.support_lane_clearance_m - separation),
             )
             command[:2] += correction * delta / separation
+    if config.predictive_separation and decision.intent in {
+        TacticalIntent.SUPPORT,
+        TacticalIntent.RUN_IN_BEHIND,
+        TacticalIntent.COVER,
+    }:
+        # Project approach speed instead of adding a repulsion weaker than the
+        # 0.70 m/s approach command. Tangential motion remains available.
+        for other_id, other in sorted(positions.items()):
+            if other_id == controller.cell.agent_id:
+                continue
+            away = current - other
+            separation = float(np.linalg.norm(away))
+            if 1.0e-9 < separation < config.minimum_player_separation_m:
+                away /= separation
+                approach = float(np.dot(command[:2], away))
+                lower_bound = -max(0.0, 0.60 * (separation - 0.80))
+                if approach < lower_bound:
+                    command[:2] += (lower_bound - approach) * away
     previous = (
         np.zeros(3, dtype=np.float64)
         if controller.last_world_command is None
@@ -2312,6 +2388,7 @@ def _select_contact_teacher_controller(
     current_possession_agent_id: str | None,
     preferred_agent_id: str | None,
     config: G1LocomotionContactTeacherConfig | None,
+    nearest_contact_first: bool = False,
 ) -> _PlayerController | None:
     """Grant one training-only foot-contact lease on the current frame."""
 
@@ -2338,7 +2415,8 @@ def _select_contact_teacher_controller(
         None,
     )
     if (
-        preferred is not None
+        not nearest_contact_first
+        and preferred is not None
         and min(
             float(np.linalg.norm(data.xpos[preferred.left_ankle_body] - ball_position)),
             float(np.linalg.norm(data.xpos[preferred.right_ankle_body] - ball_position)),
@@ -2480,6 +2558,7 @@ def _strike_teacher_stance_ready(
     ball_qpos: int,
     goal: G1TrainingGoalSpec,
     minimum_depth_m: float,
+    target_xy: tuple[float, float] | None = None,
 ) -> bool:
     """Only let the strike residual act once the pelvis is behind the ball."""
 
@@ -2487,7 +2566,10 @@ def _strike_teacher_stance_ready(
     pelvis = np.asarray(
         data.qpos[controller.qpos_base : controller.qpos_base + 2], dtype=np.float64
     )
-    destination = np.asarray((goal.plane_x_m, goal.target_y_m), dtype=np.float64)
+    destination = np.asarray(
+        (goal.plane_x_m, goal.target_y_m) if target_xy is None else target_xy,
+        dtype=np.float64,
+    )
     direction = destination - ball
     direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
     return bool(float(np.dot(ball - pelvis, direction)) >= minimum_depth_m)

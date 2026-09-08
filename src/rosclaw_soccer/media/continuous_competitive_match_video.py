@@ -379,6 +379,7 @@ def _write_frames(
     trajectory: dict[str, NDArray[Any]],
     clips: tuple[_Clip, ...],
     stream: BinaryIO,
+    role_labels: bool = False,
 ) -> None:
     addresses: tuple[_PlayerAddresses, ...] = tuple(
         _addresses(mujoco, model, player.agent_id, player.body_prefix) for player in players
@@ -406,7 +407,35 @@ def _write_frames(
             progress = global_frame / total
             ball = np.asarray(sample["ball_pose"][:3], dtype=np.float64)
             _set_camera(camera, frame.camera, ball=ball, progress=progress)
+            if role_labels:
+                camera.lookat[:] = (3.0, 0.0, 0.5)
+                camera.distance = 12.5
+                camera.elevation = -25.0
             renderer.update_scene(data, camera=camera)
+            if role_labels:
+                labels = {
+                    "goalkeeper": "GK",
+                    "defender": "DEF",
+                    "playmaker": "MID",
+                    "finisher": "ST",
+                }
+                for address in addresses:
+                    if renderer.scene.ngeom >= renderer.scene.maxgeom:
+                        raise ValueError("role label scene capacity exceeded")
+                    team, role = address.agent_id.split(".")
+                    geom = renderer.scene.geoms[renderer.scene.ngeom]
+                    position = data.qpos[address.free_qpos : address.free_qpos + 3].copy()
+                    position[2] += 0.8
+                    mujoco.mjv_initGeom(
+                        geom,
+                        mujoco.mjtGeom.mjGEOM_LABEL,
+                        np.zeros(3),
+                        position,
+                        np.eye(3).flatten(),
+                        np.array([1.0, 1.0, 1.0, 1.0]),
+                    )
+                    geom.label = ("R-" if team == "red" else "B-") + labels[role]
+                    renderer.scene.ngeom += 1
             trail_end = int(np.searchsorted(time, frame.simulation_time_sec, side="right"))
             for trail_frame in range(max(0, trail_end - 36), trail_end, 6):
                 age = (trail_end - trail_frame) / 36.0

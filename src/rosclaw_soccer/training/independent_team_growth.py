@@ -54,20 +54,27 @@ class IndependentTeamFixture:
     def __post_init__(self) -> None:
         roster_ids = {agent.agent_id for agent in self.roster.agents}
         if (
-            len(roster_ids) != 6
+            len(roster_ids) not in (6, 8)
             or {cell.agent_id for cell in self.cells} != roster_ids
             or {player.agent_id for player in self.players} != roster_ids
-            or len({cell.cell_hash for cell in self.cells}) != 6
+            or len(self.cells) != len(roster_ids)
+            or len(self.players) != len(roster_ids)
+            or len({cell.cell_hash for cell in self.cells}) != len(roster_ids)
         ):
-            raise ValueError("independent 3v3 fixture identities are incomplete")
+            raise ValueError("independent match fixture identities are incomplete")
+        expected_roles = {MatchRole.GOALKEEPER, MatchRole.PLAYMAKER, MatchRole.FINISHER}
+        if len(roster_ids) == 8:
+            expected_roles.add(MatchRole.DEFENDER)
         for team_id in ("red", "blue"):
             roles = {
                 cell.self_model.primary_role
                 for cell in self.cells
                 if cell.self_model.team_id == team_id
             }
-            if roles != {MatchRole.GOALKEEPER, MatchRole.PLAYMAKER, MatchRole.FINISHER}:
-                raise ValueError("each 3v3 side requires goalkeeper, playmaker, and finisher")
+            if roles != expected_roles or sum(
+                c.self_model.team_id == team_id for c in self.cells
+            ) != len(expected_roles):
+                raise ValueError("each side requires exactly one player per match role")
 
     @property
     def fixture_hash(self) -> str:
