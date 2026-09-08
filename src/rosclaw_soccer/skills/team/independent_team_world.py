@@ -22,6 +22,10 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from rosclaw_soccer.growth.contextual_strike_experts import (
+    ContextualStrikeExpertMemory,
+    build_strike_task_context,
+)
 from rosclaw_soccer.growth.dynamic_strike_coordination import (
     DynamicStrikeCoordinationActor,
     StrikeCoordinationAction,
@@ -535,6 +539,7 @@ def simulate_independent_team_world(
     option_bridge_config: G1RollingOptionBridgeConfig | None = None,
     strike_phase_config: StrikePhaseConfig | None = None,
     strike_coordination_actor: DynamicStrikeCoordinationActor | None = None,
+    contextual_strike_memory: ContextualStrikeExpertMemory | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all six neural locomotion bodies in one clock."""
 
@@ -549,6 +554,8 @@ def simulate_independent_team_world(
         or len(cell_by_id) != len(cells)
         or len(player_by_id) != len(players)
         or (strike_coordination_actor is not None and strike_phase_config is None)
+        or (contextual_strike_memory is not None and strike_phase_config is None)
+        or (strike_coordination_actor is not None and contextual_strike_memory is not None)
     ):
         raise ValueError("independent team world roster/cell/body identities differ")
     for cell in cells:
@@ -646,6 +653,12 @@ def simulate_independent_team_world(
         "strike_coordination_observation": [],
         "strike_coordination_stance_blend": [],
         "strike_coordination_goal_yaw_blend": [],
+        "strike_context_memory_consulted": [],
+        "strike_context_observation": [],
+        "strike_context_expert_index": [],
+        "strike_context_normalized_distance": [],
+        "strike_context_selection_code": [],
+        "strike_context_abstained": [],
     }
     for controller in controllers:
         key = _agent_key(controller.cell.agent_id)
@@ -697,6 +710,11 @@ def simulate_independent_team_world(
     strike_lease_agent_id: str | None = None
     strike_lease_start_sec = -math.inf
     assigned_ball_chaser_agent_id: str | None = None
+    contextual_strike_key: tuple[str, float] | None = None
+    contextual_strike_expert_index = -1
+    contextual_strike_distance = 0.0
+    contextual_strike_selection_code = 0
+    contextual_strike_context = np.zeros(5, dtype=np.float64)
 
     for frame in range(total_frames):
         for controller in controllers:
@@ -921,6 +939,12 @@ def simulate_independent_team_world(
         frame_coordination_observation = np.zeros(6, dtype=np.float64)
         frame_coordination_action = StrikeCoordinationAction(0.0, 0.0)
         frame_coordination_actor_active = False
+        frame_context_observation = np.zeros(5, dtype=np.float64)
+        frame_context_memory_consulted = False
+        frame_context_expert_index = -1
+        frame_context_normalized_distance = 0.0
+        frame_context_selection_code = 0
+        frame_context_abstained = False
         if phase_controller is not None and strike_phase_config is not None:
             phase_metrics = _controller_strike_stance_metrics(
                 controller=phase_controller,
@@ -932,9 +956,8 @@ def simulate_independent_team_world(
             )
             ball_speed = float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 3]))
             if (
-                strike_coordination_actor is not None
-                and phase_controller.strike_phase.phase is StrikePhase.ORIENT
-            ):
+                strike_coordination_actor is not None or contextual_strike_memory is not None
+            ) and phase_controller.strike_phase.phase is StrikePhase.ORIENT:
                 base_approach_yaw_error = _strike_tracking_yaw_error(
                     controller=phase_controller,
                     data=data,
@@ -959,8 +982,53 @@ def simulate_independent_team_world(
                     ball_speed_mps=ball_speed,
                 )
                 frame_coordination_observation = observation.vector()
-                frame_coordination_action = strike_coordination_actor.act(observation)
-                frame_coordination_actor_active = True
+                if strike_coordination_actor is not None:
+                    frame_coordination_action = strike_coordination_actor.act(observation)
+                    frame_coordination_actor_active = True
+                else:
+                    assert contextual_strike_memory is not None
+                    selection_key = (
+                        phase_controller.cell.agent_id,
+                        phase_controller.strike_phase.phase_enter_time_sec,
+                    )
+                    if contextual_strike_key != selection_key:
+                        task_context = build_strike_task_context(
+                            goal_target_m=(goal.plane_x_m, goal.target_y_m),
+                            ball_position_m=np.asarray(
+                                data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64
+                            ),
+                            opponent_positions_m=np.asarray(
+                                [
+                                    positions[agent_id]
+                                    for agent_id in phase_controller.cell.self_model.opponent_ids
+                                ],
+                                dtype=np.float64,
+                            ),
+                        )
+                        selection = contextual_strike_memory.select(
+                            context=task_context,
+                            observation=observation,
+                        )
+                        contextual_strike_key = selection_key
+                        contextual_strike_expert_index = selection.expert_index
+                        contextual_strike_distance = selection.normalized_distance
+                        contextual_strike_selection_code = {
+                            "verified-expert": 1,
+                            "negative-memory": 2,
+                            "out-of-support": 3,
+                        }[selection.reason]
+                        contextual_strike_context = task_context.vector()
+                        frame_context_memory_consulted = True
+                    frame_context_observation = contextual_strike_context
+                    frame_context_expert_index = contextual_strike_expert_index
+                    frame_context_normalized_distance = contextual_strike_distance
+                    frame_context_selection_code = contextual_strike_selection_code
+                    frame_context_abstained = contextual_strike_expert_index < 0
+                    if contextual_strike_expert_index >= 0:
+                        frame_coordination_action = contextual_strike_memory.experts[
+                            contextual_strike_expert_index
+                        ].actor.act(observation)
+                        frame_coordination_actor_active = True
             approach_yaw_error = _strike_tracking_yaw_error(
                 controller=phase_controller,
                 data=data,
@@ -1585,6 +1653,12 @@ def simulate_independent_team_world(
         trace["strike_coordination_observation"].append(frame_coordination_observation)
         trace["strike_coordination_stance_blend"].append(frame_coordination_action.stance_blend)
         trace["strike_coordination_goal_yaw_blend"].append(frame_coordination_action.goal_yaw_blend)
+        trace["strike_context_memory_consulted"].append(frame_context_memory_consulted)
+        trace["strike_context_observation"].append(frame_context_observation)
+        trace["strike_context_expert_index"].append(frame_context_expert_index)
+        trace["strike_context_normalized_distance"].append(frame_context_normalized_distance)
+        trace["strike_context_selection_code"].append(frame_context_selection_code)
+        trace["strike_context_abstained"].append(frame_context_abstained)
         if not finite:
             break
 
