@@ -44,6 +44,7 @@ from rosclaw_soccer.growth.locomotion_contact_teacher import (
     G1RollingOptionBridgeConfig,
     locomotion_contact_teacher_effect,
 )
+from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy, bounded_residual
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.growth.role_self_model import (
     MatchRole,
@@ -556,6 +557,9 @@ def simulate_independent_team_world(
     strike_phase_config: StrikePhaseConfig | None = None,
     strike_coordination_actor: DynamicStrikeCoordinationActor | None = None,
     contextual_strike_memory: ContextualStrikeExpertMemory | None = None,
+    near_ball_policy: NearBallResidualPolicy | None = None,
+    near_ball_seed: int = 0,
+    near_ball_explore: bool = False,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all six neural locomotion bodies in one clock."""
 
@@ -581,6 +585,14 @@ def simulate_independent_team_world(
             raise ValueError("agent and world decision clocks differ")
     qualification = qualify_g1_assets(asset_root)
     qualification.require_eligible()
+    residual_ids = tuple(sorted(cell_by_id))
+    if near_ball_policy is not None and (
+        near_ball_policy.agent_ids != residual_ids
+        or near_ball_policy.body_hash != qualification.body_hash
+    ):
+        raise ValueError("residual policy differs from the qualified body/roster")
+    residual_rng = np.random.default_rng(near_ball_seed)
+    residual_previous = np.zeros((len(residual_ids), 12), dtype=np.float64)
 
     import mujoco
 
@@ -739,6 +751,16 @@ def simulate_independent_team_world(
     contextual_strike_selection_code = 0
     contextual_strike_context = np.zeros(5, dtype=np.float64)
 
+    if near_ball_policy is not None:
+        for name in (
+            "residual_observations",
+            "residual_latent",
+            "residual_log_probability",
+            "residual_value",
+            "residual_active",
+            "residual_applied",
+        ):
+            trace[name] = []
     for frame in range(total_frames):
         for controller in controllers:
             _fill_locomotion_state(controller, data, ball_body, ball_qvel)
@@ -1226,6 +1248,73 @@ def simulate_independent_team_world(
                     frame=frame,
                     config=option_bridge_config,
                 )
+        residual_by_id: dict[str, NDArray[np.float64]] = {}
+        if near_ball_policy is not None:
+            ordered = tuple(
+                next(c for c in controllers if c.cell.agent_id == agent_id)
+                for agent_id in residual_ids
+            )
+            observations_np = np.stack(
+                [
+                    _near_ball_observation(
+                        c,
+                        data=data,
+                        ball_qpos=ball_qpos,
+                        ball_qvel=ball_qvel,
+                        previous=residual_previous[i],
+                    )
+                    for i, c in enumerate(ordered)
+                ]
+            )
+            residual_active = np.asarray(
+                [
+                    c is teacher_controller
+                    and c is not option_controller
+                    and not (
+                        last_receive_contact_agent_id == c.cell.agent_id
+                        and float(data.time) - last_receive_contact_time_sec
+                        <= active.post_receive_hold_sec
+                    )
+                    and c.decision is not None
+                    and c.decision.intent
+                    in {
+                        TacticalIntent.RECEIVE,
+                        TacticalIntent.INTERCEPT,
+                        TacticalIntent.PASS,
+                        TacticalIntent.CARRY,
+                    }
+                    and data.qpos[c.qpos_base + 2] >= active.minimum_pelvis_height_m
+                    and min(
+                        np.linalg.norm(
+                            data.xpos[c.left_ankle_body] - data.qpos[ball_qpos : ball_qpos + 3]
+                        ),
+                        np.linalg.norm(
+                            data.xpos[c.right_ankle_body] - data.qpos[ball_qpos : ball_qpos + 3]
+                        ),
+                    )
+                    <= 0.75
+                    for c in ordered
+                ],
+                dtype=bool,
+            )
+            latent, log_probability, values = near_ball_policy.act(
+                observations_np, residual_rng, explore=near_ball_explore
+            )
+            residual_previous = bounded_residual(latent, residual_previous, residual_active)
+            for i, c in enumerate(ordered):
+                if c is option_controller or (
+                    last_receive_contact_agent_id == c.cell.agent_id
+                    and float(data.time) - last_receive_contact_time_sec
+                    <= active.post_receive_hold_sec
+                ):
+                    residual_previous[i] = 0
+                residual_by_id[c.cell.agent_id] = residual_previous[i].copy()
+            trace["residual_observations"].append(observations_np)
+            trace["residual_latent"].append(latent)
+            trace["residual_log_probability"].append(log_probability)
+            trace["residual_value"].append(values)
+            trace["residual_active"].append(residual_active)
+            trace["residual_applied"].append(residual_previous.copy())
         frame_contact_agent_code = 0
         frame_contact_effector_code = 0
         frame_contact_foot_code = 0
@@ -1287,6 +1376,10 @@ def simulate_independent_team_world(
                     kp = np.asarray(controller.output.kps, dtype=np.float64)
                     kd = np.asarray(controller.output.kds, dtype=np.float64)
                 q = np.asarray(data.qpos[controller.joint_qpos], dtype=np.float64)
+                residual = residual_by_id.get(controller.cell.agent_id)
+                if residual is not None and np.any(residual) and not post_receive_stabilizing:
+                    target = target.copy()
+                    target[:12] += residual
                 dq = np.asarray(data.qvel[controller.joint_qvel], dtype=np.float64)
                 raw_torque = kp * (target - q) - kd * dq
                 if (
@@ -1950,6 +2043,42 @@ def _fill_locomotion_state(
     state.ball_valid = True
     state.gravity_ori = _gravity_orientation(state.pelvis_quat_w)
     state.ang_vel = state.root_ang_vel_b.copy()
+
+
+def _near_ball_observation(
+    controller: _PlayerController,
+    *,
+    data: Any,
+    ball_qpos: int,
+    ball_qvel: int,
+    previous: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Measured proprioception and local task context; no future trajectory input."""
+    state = controller.state
+    ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 3])
+    yaw = _pelvis_yaw(state.pelvis_quat_w)
+    target = (
+        ball[:2]
+        if controller.decision is None
+        else np.asarray(controller.decision.target_position_m)[:2]
+    )
+    direction = target - ball[:2]
+    direction = direction / max(float(np.linalg.norm(direction)), 1e-6)
+    observation = np.concatenate(
+        (
+            state.gravity_ori,
+            state.ang_vel,
+            state.q[:12] - np.asarray(controller.policy.default_angles_reorder)[:12],
+            state.dq[:12] * 0.05,
+            _rotate_z(ball - state.pelvis_pos_w, -yaw),
+            _rotate_z(data.qvel[ball_qvel : ball_qvel + 3], -yaw),
+            _rotate_z(np.r_[direction, 0.0], -yaw)[:2],
+            _rotate_z(data.xpos[controller.left_ankle_body] - ball, -yaw),
+            _rotate_z(data.xpos[controller.right_ankle_body] - ball, -yaw),
+            previous,
+        )
+    )
+    return np.asarray(np.clip(observation, -5, 5), dtype=np.float64)
 
 
 def _physical_state(

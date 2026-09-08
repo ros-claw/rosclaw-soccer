@@ -1,0 +1,310 @@
+"""On-policy private leg residual PPO in CPU MuJoCo; never a promotion service.
+
+Each collection freezes eight private actors. Updates happen between episodes,
+not inside the physics loop. A finite rollout is an episodic training task; its
+terminal value is zero. Dense shaping is diagnostic, not a completed-pass claim.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
+from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from rosclaw_soccer.training.active_team_probe import run_probe, validate_probe
+from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
+
+
+def physical_rewards(trace: dict[str, Any], ids: tuple[str, ...]) -> np.ndarray:
+    """Foot approach + directed contact, minus tilt, impacts and residual effort.
+
+    No reward for a planner merely declaring PASS. Ball motion is rewarded only
+    on this player's measured foot-contact frames. Dense contact is capped by
+    the control period, so resting on the ball cannot earn an event bonus.
+    """
+    obs = np.asarray(trace["residual_observations"], dtype=float)
+    count = len(trace["time"])
+    if obs.shape != (count, 8, 56) or not np.all(np.isfinite(obs)):
+        raise ValueError("PPO observations are not finite physical samples")
+    rewards = np.zeros((count, 8))
+    ball = np.asarray(trace["ball_pose"])[:, :3]
+    contact = np.asarray(trace["ball_contact_agent_code"])
+    foot = np.isin(trace["ball_contact_effector_code"], [1, 2])
+    nonfoot = np.asarray(trace["ball_nonfoot_contact_agent_code"])
+    for i, agent in enumerate(ids):
+        key = agent.replace(".", "_")
+        feet = [
+            np.asarray(trace[key + suffix])
+            for suffix in ("_left_foot_position", "_right_foot_position")
+        ]
+        before = np.minimum(
+            np.linalg.norm(obs[:, i, 38:41], axis=1), np.linalg.norm(obs[:, i, 41:44], axis=1)
+        )
+        after = np.minimum(*(np.linalg.norm(f - ball, axis=1) for f in feet))
+        # Approach gain cannot be maximized merely by dwelling beside the ball.
+        rewards[:, i] = 2.0 * (np.exp(-4 * after) - np.exp(-4 * before))
+        target = np.asarray(trace[key + "_target_position"])[:, :2]
+        direction = target - ball[:, :2]
+        direction /= np.maximum(np.linalg.norm(direction, axis=1, keepdims=True), 1e-6)
+        toward = (np.asarray(trace["ball_velocity"])[:, :2] * direction).sum(axis=1)
+        touching = (contact == i + 1) & foot
+        rewards[:, i] += touching * 0.04 * np.clip(toward, -2, 2)
+        rewards[:, i] -= 0.02 * (nonfoot == i + 1)
+        gravity = obs[:, i, :3]
+        rewards[:, i] -= 0.015 * np.square(gravity[:, :2]).sum(axis=1)
+        height = np.asarray(trace[key + "_pelvis_pose"])[:, 2]
+        rewards[:, i] -= 0.2 * (height < 0.65)
+        rewards[:, i] -= 0.01 * np.square(trace["residual_applied"][:, i]).sum(axis=1)
+        impact = (np.asarray(trace["robot_robot_contact_first_code"]) == i + 1) | (
+            np.asarray(trace["robot_robot_contact_second_code"]) == i + 1
+        )
+        rewards[:, i] -= 0.03 * impact
+    if not np.all(np.isfinite(rewards)):
+        raise ValueError("nonfinite physical reward")
+    return rewards
+
+
+def episodic_gae(rewards: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if rewards.shape != values.shape or not np.all(np.isfinite(rewards + values)):
+        raise ValueError("invalid episodic GAE input")
+    advantages = np.zeros_like(rewards)
+    carry = np.zeros(8)
+    for t in range(len(rewards) - 1, -1, -1):
+        following = values[t + 1] if t + 1 < len(rewards) else np.zeros(8)
+        carry = rewards[t] + 0.99 * following - values[t] + 0.99 * 0.95 * carry
+        advantages[t] = carry
+    return advantages, advantages + values
+
+
+def update_private_actors(
+    parent: NearBallResidualPolicy,
+    rollouts: list[dict[str, Any]],
+    *,
+    epochs: int = 4,
+) -> tuple[NearBallResidualPolicy, list[dict[str, Any]]]:
+    # Optional training dependency: readers and the simulator use only NumPy.
+    import torch
+
+    torch.set_num_threads(1)
+    if not rollouts or not 1 <= epochs <= 16:
+        raise ValueError("PPO needs rollouts and bounded update epochs")
+    weights = {k: v.copy() for k, v in parent.weights.items()}
+    advantages, returns = [], []
+    for trace in rollouts:
+        _validate_on_policy(parent, trace)
+        a, r = episodic_gae(physical_rewards(trace, parent.agent_ids), trace["residual_value"])
+        advantages.append(a)
+        returns.append(r)
+    observations = np.concatenate([t["residual_observations"] for t in rollouts])
+    actions = np.concatenate([t["residual_latent"] for t in rollouts])
+    logps = np.concatenate([t["residual_log_probability"] for t in rollouts])
+    active = np.concatenate([t["residual_active"] for t in rollouts])
+    advantage, target_value = np.concatenate(advantages), np.concatenate(returns)
+    rows = []
+    for i, agent in enumerate(parent.agent_ids):
+        mask = active[:, i].astype(bool)
+        n = int(mask.sum())
+        row: dict[str, Any] = {"agent_id": agent, "active_samples": n, "updated": False}
+        if n < 32:
+            rows.append(row)
+            continue
+        parameters = {
+            k: torch.nn.Parameter(torch.tensor(v[i], dtype=torch.float64))
+            for k, v in weights.items()
+        }
+        optimizer = torch.optim.Adam(list(parameters.values()), lr=1e-4)
+        x = torch.tensor(observations[mask, i], dtype=torch.float64)
+        action = torch.tensor(actions[mask, i], dtype=torch.float64)
+        old_logp = torch.tensor(logps[mask, i], dtype=torch.float64)
+        adv = torch.tensor(advantage[mask, i], dtype=torch.float64)
+        adv = (adv - adv.mean()) / (adv.std(unbiased=False) + 1e-8)
+        value_target = torch.tensor(target_value[mask, i], dtype=torch.float64)
+        initial_mean = None
+        for _ in range(epochs):
+            hidden = torch.tanh(x @ parameters["w1"] + parameters["b1"])
+            mean = hidden @ parameters["w2"] + parameters["b2"]
+            if initial_mean is None:
+                initial_mean = mean.detach().clone()
+            logp = (
+                -0.5 * ((action - mean) / parameters["log_std"].exp()).square()
+                - parameters["log_std"]
+                - 0.5 * math.log(2 * math.pi)
+            ).sum(dim=1)
+            ratio = torch.exp(logp - old_logp)
+            approx_kl = ((ratio - 1) - (logp - old_logp)).mean()
+            if float(approx_kl.detach()) > 0.015:
+                break
+            surrogate = torch.minimum(ratio * adv, ratio.clamp(0.8, 1.2) * adv)
+            value = hidden @ parameters["wv"] + parameters["bv"]
+            loss = (
+                -surrogate.mean()
+                + 0.5 * (value - value_target).square().mean()
+                + 0.1 * (mean - initial_mean).square().mean()
+                - 0.0001 * parameters["log_std"].sum()
+            )
+            if not torch.isfinite(loss):
+                raise ValueError("nonfinite PPO update rejected")
+            optimizer.zero_grad()
+            loss.backward()  # type: ignore[no-untyped-call]
+            norm = torch.nn.utils.clip_grad_norm_(list(parameters.values()), 0.5)
+            if not torch.isfinite(norm):
+                raise ValueError("nonfinite PPO gradient rejected")
+            optimizer.step()
+            with torch.no_grad():
+                parameters["log_std"].clamp_(-4, -0.2)
+        for k, parameter in parameters.items():
+            weights[k][i] = parameter.detach().numpy()
+        delta = float(sum(np.square(weights[k][i] - parent.weights[k][i]).sum() for k in weights))
+        row.update(
+            updated=delta > 0,
+            squared_parameter_delta=delta,
+            shaping_return=float(
+                sum(physical_rewards(t, parent.agent_ids)[:, i].sum() for t in rollouts)
+            ),
+        )
+        rows.append(row)
+    return NearBallResidualPolicy(
+        parent.agent_ids, parent.body_hash, parent.generation + 1, parent.policy_hash, weights
+    ), rows
+
+
+def _validate_on_policy(policy: NearBallResidualPolicy, trace: dict[str, Any]) -> None:
+    obs = np.asarray(trace["residual_observations"])
+    n = len(trace["time"])
+    shapes = {
+        "residual_observations": (n, 8, 56),
+        "residual_latent": (n, 8, 12),
+        "residual_value": (n, 8),
+        "residual_log_probability": (n, 8),
+        "residual_active": (n, 8),
+        "residual_applied": (n, 8, 12),
+    }
+    for k, shape in shapes.items():
+        if np.shape(trace[k]) != shape or not np.all(np.isfinite(trace[k])):
+            raise ValueError("invalid on-policy rollout tensors")
+    if np.asarray(trace["residual_active"]).dtype != np.bool_:
+        raise ValueError("PPO activation mask must be boolean")
+    w = policy.weights
+    hidden = np.tanh(np.einsum("tni,nij->tnj", obs, w["w1"]) + w["b1"])
+    mean = np.einsum("tni,nij->tnj", hidden, w["w2"]) + w["b2"]
+    logp = (
+        -0.5 * ((trace["residual_latent"] - mean) / np.exp(w["log_std"])) ** 2
+        - w["log_std"]
+        - 0.5 * math.log(2 * math.pi)
+    ).sum(axis=2)
+    values = (hidden * w["wv"]).sum(axis=2) + w["bv"]
+    if not np.allclose(
+        logp, trace["residual_log_probability"], rtol=0, atol=1e-10
+    ) or not np.allclose(values, trace["residual_value"], rtol=0, atol=1e-10):
+        raise ValueError("rollout was not sampled from this frozen parent policy")
+
+
+def train(*, assets: Path, output: Path, iterations: int, duration: float) -> dict[str, Any]:
+    if output.exists():
+        raise FileExistsError(output)
+    if not 1 <= iterations <= 100 or not 5 <= duration <= 25:
+        raise ValueError("bounded online training budget required")
+    fixture = build_four_vs_four_fixture(assets)
+    policy = NearBallResidualPolicy.initialize(
+        tuple(sorted(c.agent_id for c in fixture.cells)), fixture.cells[0].growth_scope.body_hash
+    )
+    output.mkdir(parents=True)
+    policy.save(output / "generation-000.npz")
+    manifest: dict[str, Any] = {
+        "schema": "rosclaw_soccer.private_near_ball_ppo.v1",
+        "activation_ceiling": "SIM_ONLY",
+        "promotion_eligible": False,
+        "iterations": [],
+        "evaluation": [],
+        "training_source_hash": hash_bytes(Path(__file__).read_bytes()),
+        "note": "Residual PPO, frozen locomotion; not an end-to-end torque policy.",
+    }
+    for iteration in range(iterations):
+        traces, proofs = [], []
+        for blue in (False, True):
+            destination = output / f"train-{iteration:03d}-{'blue' if blue else 'red'}"
+            run_probe(
+                asset_root=assets,
+                output=destination,
+                active=True,
+                four_vs_four=True,
+                duration=duration,
+                blue_kickoff=blue,
+                near_ball_policy=policy,
+                near_ball_explore=True,
+                near_ball_seed=21500 + iteration * 2 + int(blue),
+                kickoff_offset_m=(-0.04, 0.04)[iteration % 2],
+            )
+            report = validate_probe(destination / "probe.json")
+            if not report["exact_replay"]:
+                raise ValueError("nonreproducible rollout rejected")
+            with np.load(destination / "primary.npz", allow_pickle=False) as archive:
+                traces.append({k: archive[k] for k in archive.files})
+            proofs.append(report["report_hash"])
+        policy, rows = update_private_actors(policy, traces)
+        policy.save(output / f"generation-{policy.generation:03d}.npz")
+        manifest["iterations"].append(
+            {
+                "generation": policy.generation,
+                "policy_hash": policy.policy_hash,
+                "rollout_report_hashes": proofs,
+                "players": rows,
+            }
+        )
+        (output / "training.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        print(json.dumps(manifest["iterations"][-1]), flush=True)
+    zero = NearBallResidualPolicy.load(output / "generation-000.npz")
+    for label, candidate in (("zero", zero), ("candidate", policy)):
+        for blue in (False, True):
+            for offset in (-0.08, 0.08):
+                destination = output / f"eval-{label}-{'blue' if blue else 'red'}-{offset:+.2f}"
+                report = run_probe(
+                    asset_root=assets,
+                    output=destination,
+                    active=True,
+                    four_vs_four=True,
+                    duration=duration,
+                    blue_kickoff=blue,
+                    near_ball_policy=candidate,
+                    kickoff_offset_m=offset,
+                )
+                validate_probe(destination / "probe.json")
+                manifest["evaluation"].append(
+                    {
+                        "label": label,
+                        "blue": blue,
+                        "offset": offset,
+                        "report_hash": report["report_hash"],
+                        "safe": report["results"][0]["safe"],
+                        "assessment": report["assessment"],
+                        "passes": report["causal_pass_feedback"],
+                    }
+                )
+    manifest["manifest_hash"] = hash_json(manifest)
+    (output / "training.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    return manifest
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--asset-root", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--iterations", type=int, default=4)
+    parser.add_argument("--duration", type=float, default=12)
+    args = parser.parse_args()
+    train(
+        assets=args.asset_root,
+        output=args.output,
+        iterations=args.iterations,
+        duration=args.duration,
+    )
+
+
+if __name__ == "__main__":
+    main()

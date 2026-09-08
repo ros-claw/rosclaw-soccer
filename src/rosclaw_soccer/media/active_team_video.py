@@ -81,6 +81,12 @@ def render(
             )
             if report.get("forward_receiver_lane", False):
                 mode += " | FORWARD-LANE CURRICULUM"
+            if report.get("near_ball_residual") is not None:
+                from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
+
+                residual = NearBallResidualPolicy.load(source.parent / "residual-policy.npz")
+                mode += f" | RESIDUAL GEN {residual.generation}"
+                mode += " EXPLORATION" if report["near_ball_residual"]["explore"] else " MEAN ACTOR"
             if stage == "S213":
                 mode += " | " + (
                     "CANDIDATE"

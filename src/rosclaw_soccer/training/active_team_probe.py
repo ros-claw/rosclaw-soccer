@@ -12,6 +12,7 @@ import numpy as np
 
 from rosclaw_soccer.growth.competitive_match_assessment import assess_competitive_match_trajectory
 from rosclaw_soccer.growth.locomotion_contact_teacher import G1RollingOptionBridgeConfig
+from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.growth.pass_failure_feedback import diagnose_passes
 from rosclaw_soccer.growth.role_self_model import MatchRole
@@ -52,7 +53,12 @@ def run_probe(
     pass_swing_amplitude: float | None = None,
     forward_receiver_lane: bool = False,
     pass_reference_distance_m: float = 0.0,
+    near_ball_policy: NearBallResidualPolicy | None = None,
+    near_ball_seed: int = 0,
+    near_ball_explore: bool = False,
 ) -> dict[str, Any]:
+    if near_ball_policy is not None and not four_vs_four:
+        raise ValueError("private residual actors require the symmetric 4v4 fixture")
     if four_vs_four and not active:
         raise ValueError("4v4 requires active role objectives")
     if pass_reference_distance_m != 0.0 and not bilateral_kick_options:
@@ -95,6 +101,7 @@ def run_probe(
             "growth/competitive_match_assessment.py",
             "growth/locomotion_contact_teacher.py",
             "growth/contact_stroke.py",
+            "growth/near_ball_residual.py",
             "providers/g1/kick_warmstart.py",
             "growth/owned_ball_contact.py",
             "growth/pass_failure_feedback.py",
@@ -209,12 +216,17 @@ def run_probe(
             contact_teacher_config=teacher,
             option_bridge_config=option,
             strike_phase_config=phase,
+            near_ball_policy=near_ball_policy,
+            near_ball_seed=near_ball_seed,
+            near_ball_explore=near_ball_explore,
         )
         results.append(result.to_dict())
         trajectories.append(trajectory)
     rows = engagement_rows(trajectories[0], tuple(sorted(c.agent_id for c in cells)))
     exact = trajectory_digest(trajectories[0]) == trajectory_digest(trajectories[1])
     output.mkdir(parents=True)
+    if near_ball_policy is not None:
+        near_ball_policy.save(output / "residual-policy.npz")
     for name, trajectory in zip(("primary", "replay"), trajectories, strict=True):
         np.savez_compressed(output / f"{name}.npz", **trajectory)  # type: ignore[arg-type]
     report = {
@@ -230,6 +242,15 @@ def run_probe(
         "players": [asdict(p) for p in fixture.players],
         "four_vs_four": four_vs_four,
         "forward_receiver_lane": forward_receiver_lane,
+        "near_ball_residual": None
+        if near_ball_policy is None
+        else {
+            "policy_hash": near_ball_policy.policy_hash,
+            "artifact_hash": hash_bytes((output / "residual-policy.npz").read_bytes()),
+            "seed": near_ball_seed,
+            "explore": near_ball_explore,
+            "agent_ids": list(near_ball_policy.agent_ids),
+        },
         "fixture_hash": fixture.fixture_hash,
         "implementation": implementation,
         "results": results,
@@ -313,6 +334,16 @@ def validate_probe(path: Path) -> dict[str, Any]:
     digest = report.pop("report_hash")
     if digest != hash_json(report):
         raise ValueError("active team report hash changed")
+    if report.get("near_ball_residual") is not None:
+        residual = report["near_ball_residual"]
+        artifact = path.parent / "residual-policy.npz"
+        policy = NearBallResidualPolicy.load(artifact)
+        if (
+            hash_bytes(artifact.read_bytes()) != residual["artifact_hash"]
+            or policy.policy_hash != residual["policy_hash"]
+            or list(policy.agent_ids) != residual["agent_ids"]
+        ):
+            raise ValueError("private residual policy identity changed")
     traces = []
     for name in ("primary.npz", "replay.npz"):
         source = path.parent / name
