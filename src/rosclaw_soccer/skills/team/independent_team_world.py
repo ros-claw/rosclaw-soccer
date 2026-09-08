@@ -22,6 +22,11 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from rosclaw_soccer.growth.dynamic_strike_coordination import (
+    DynamicStrikeCoordinationActor,
+    StrikeCoordinationAction,
+    StrikeCoordinationObservation,
+)
 from rosclaw_soccer.growth.independent_agent_cell import (
     AgentCellDecision,
     AgentCellObservation,
@@ -529,6 +534,7 @@ def simulate_independent_team_world(
     contact_teacher_config: G1LocomotionContactTeacherConfig | None = None,
     option_bridge_config: G1RollingOptionBridgeConfig | None = None,
     strike_phase_config: StrikePhaseConfig | None = None,
+    strike_coordination_actor: DynamicStrikeCoordinationActor | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all six neural locomotion bodies in one clock."""
 
@@ -542,6 +548,7 @@ def simulate_independent_team_world(
         or set(player_by_id) != roster_ids
         or len(cell_by_id) != len(cells)
         or len(player_by_id) != len(players)
+        or (strike_coordination_actor is not None and strike_phase_config is None)
     ):
         raise ValueError("independent team world roster/cell/body identities differ")
     for cell in cells:
@@ -635,6 +642,10 @@ def simulate_independent_team_world(
         "strike_phase_predicted_stance_depth_m": [],
         "strike_phase_predicted_stance_lateral_error_m": [],
         "strike_phase_predicted_stance_yaw_error_rad": [],
+        "strike_coordination_actor_active": [],
+        "strike_coordination_observation": [],
+        "strike_coordination_stance_blend": [],
+        "strike_coordination_goal_yaw_blend": [],
     }
     for controller in controllers:
         key = _agent_key(controller.cell.agent_id)
@@ -907,6 +918,9 @@ def simulate_independent_team_world(
         )
         frame_phase_approach_yaw_error = 0.0
         phase_metrics = (0.0, 0.0, 0.0)
+        frame_coordination_observation = np.zeros(6, dtype=np.float64)
+        frame_coordination_action = StrikeCoordinationAction(0.0, 0.0)
+        frame_coordination_actor_active = False
         if phase_controller is not None and strike_phase_config is not None:
             phase_metrics = _controller_strike_stance_metrics(
                 controller=phase_controller,
@@ -916,6 +930,37 @@ def simulate_independent_team_world(
                 ball_qvel=ball_qvel,
                 prediction_horizon_sec=strike_phase_config.strike_contact_horizon_sec,
             )
+            ball_speed = float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 3]))
+            if (
+                strike_coordination_actor is not None
+                and phase_controller.strike_phase.phase is StrikePhase.ORIENT
+            ):
+                base_approach_yaw_error = _strike_tracking_yaw_error(
+                    controller=phase_controller,
+                    data=data,
+                    ball_qpos=ball_qpos,
+                    ball_qvel=ball_qvel,
+                    goal=goal,
+                    config=strike_phase_config,
+                )
+                observation = StrikeCoordinationObservation(
+                    phase_progress=min(
+                        2.0,
+                        max(
+                            0.0,
+                            (float(data.time) - phase_controller.strike_phase.phase_enter_time_sec)
+                            / strike_phase_config.orient_timeout_sec,
+                        ),
+                    ),
+                    stance_depth_m=phase_metrics[0],
+                    stance_lateral_error_m=phase_metrics[1],
+                    stance_yaw_error_rad=phase_metrics[2],
+                    approach_yaw_error_rad=base_approach_yaw_error,
+                    ball_speed_mps=ball_speed,
+                )
+                frame_coordination_observation = observation.vector()
+                frame_coordination_action = strike_coordination_actor.act(observation)
+                frame_coordination_actor_active = True
             approach_yaw_error = _strike_tracking_yaw_error(
                 controller=phase_controller,
                 data=data,
@@ -923,6 +968,7 @@ def simulate_independent_team_world(
                 ball_qvel=ball_qvel,
                 goal=goal,
                 config=strike_phase_config,
+                goal_yaw_blend=frame_coordination_action.goal_yaw_blend,
             )
             frame_phase_approach_yaw_error = approach_yaw_error
             ball_position = np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64)
@@ -951,7 +997,7 @@ def simulate_independent_team_world(
                 stance_lateral_error_m=phase_metrics[1],
                 stance_yaw_error_rad=phase_metrics[2],
                 approach_yaw_error_rad=approach_yaw_error,
-                ball_speed_mps=float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 3])),
+                ball_speed_mps=ball_speed,
                 ball_distance_m=ball_distance,
                 option_active=phase_controller.option_active,
                 option_contact_observed=phase_controller.option_contact_observed,
@@ -1028,6 +1074,11 @@ def simulate_independent_team_world(
                 strike_phase_config=strike_phase_config,
                 strike_phase_owner_agent_id=(
                     None if phase_controller is None else phase_controller.cell.agent_id
+                ),
+                strike_coordination_action=(
+                    frame_coordination_action
+                    if phase_controller is controller and frame_coordination_actor_active
+                    else None
                 ),
                 config=active,
             )
@@ -1530,6 +1581,10 @@ def simulate_independent_team_world(
         trace["strike_phase_predicted_stance_depth_m"].append(phase_metrics[0])
         trace["strike_phase_predicted_stance_lateral_error_m"].append(phase_metrics[1])
         trace["strike_phase_predicted_stance_yaw_error_rad"].append(phase_metrics[2])
+        trace["strike_coordination_actor_active"].append(frame_coordination_actor_active)
+        trace["strike_coordination_observation"].append(frame_coordination_observation)
+        trace["strike_coordination_stance_blend"].append(frame_coordination_action.stance_blend)
+        trace["strike_coordination_goal_yaw_blend"].append(frame_coordination_action.goal_yaw_blend)
         if not finite:
             break
 
@@ -1800,6 +1855,7 @@ def _movement_command(
     strike_phase: StrikePhase | None = None,
     strike_phase_config: StrikePhaseConfig | None = None,
     strike_phase_owner_agent_id: str | None = None,
+    strike_coordination_action: StrikeCoordinationAction | None = None,
 ) -> NDArray[np.float64]:
     current = positions[controller.cell.agent_id]
     target = np.asarray(decision.target_position_m[:2], dtype=np.float64)
@@ -1946,7 +2002,15 @@ def _movement_command(
             # Pace behind the received ball instead of stopping and making a
             # 180-degree turn.  The slower pursuit lets a usable stance depth
             # open while preserving the receiver's contact-side relationship.
-            target = current + phase_approach_velocity / config.position_gain
+            pacing_target = current + phase_approach_velocity / config.position_gain
+            if strike_coordination_action is None:
+                # Preserve the frozen parent path without even a zero-weight
+                # floating-point blend; long MuJoCo rollouts are sensitive to
+                # last-bit changes.
+                target = pacing_target
+            else:
+                blend = strike_coordination_action.stance_blend
+                target = (1.0 - blend) * pacing_target + blend * phase_stance_target
         elif strike_phase is StrikePhase.PLANT:
             target = phase_stance_target
         elif strike_phase in {StrikePhase.RECOVER, StrikePhase.COMPLETE, StrikePhase.ABORTED}:
@@ -1998,6 +2062,13 @@ def _movement_command(
         and strike_phase is StrikePhase.ORIENT
         and not post_receive_hold
     ):
+        if strike_coordination_action is not None:
+            yaw_blend = strike_coordination_action.goal_yaw_blend
+            strike_direction = direction
+            phase_approach_direction = (
+                1.0 - yaw_blend
+            ) * phase_approach_direction + yaw_blend * strike_direction
+            phase_approach_direction /= max(float(np.linalg.norm(phase_approach_direction)), 1.0e-9)
         desired_yaw = math.atan2(
             float(phase_approach_direction[1]),
             float(phase_approach_direction[0]),
@@ -2411,8 +2482,11 @@ def _strike_tracking_yaw_error(
     ball_qvel: int,
     goal: G1TrainingGoalSpec,
     config: StrikePhaseConfig,
+    goal_yaw_blend: float = 0.0,
 ) -> float:
-    ball_velocity = np.asarray(data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64)
+    # MuJoCo slices are writable views into ``data.qvel``.  This function is an
+    # observation-only error calculation, so own the buffer before normalizing.
+    ball_velocity = np.array(data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64, copy=True)
     # ``data.qpos[...]`` is a MuJoCo-backed view.  Use an out-of-place sum so
     # prediction can never mutate authoritative football state.
     phase_ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64).copy()
@@ -2433,7 +2507,14 @@ def _strike_tracking_yaw_error(
     )
     if float(np.linalg.norm(velocity)) <= 1.0e-9:
         velocity = direction
-    target_yaw = math.atan2(float(velocity[1]), float(velocity[0]))
+    if goal_yaw_blend <= 0.0:
+        # Preserve the frozen S208 path bit-for-bit when no actor has authority.
+        target_yaw = math.atan2(float(velocity[1]), float(velocity[0]))
+    else:
+        velocity /= max(float(np.linalg.norm(velocity)), 1.0e-9)
+        blended_direction = (1.0 - goal_yaw_blend) * velocity + goal_yaw_blend * direction
+        blended_direction /= max(float(np.linalg.norm(blended_direction)), 1.0e-9)
+        target_yaw = math.atan2(float(blended_direction[1]), float(blended_direction[0]))
     current_yaw = _pelvis_yaw(
         np.asarray(data.qpos[controller.qpos_base + 3 : controller.qpos_base + 7], dtype=np.float64)
     )

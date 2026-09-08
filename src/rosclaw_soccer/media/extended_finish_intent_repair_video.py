@@ -360,16 +360,13 @@ def _source_s204_path(request: dict[str, Any], report_path: Path) -> Path:
 
 
 def _renderer_hash() -> str:
-    return cast(
-        str,
-        hash_json(
-            {
-                "module": hash_bytes(Path(__file__).read_bytes()),
-                "shared_renderer": hash_bytes(
-                    (Path(__file__).parent / "three_player_video.py").read_bytes()
-                ),
-            }
-        ),
+    return hash_json(
+        {
+            "module": hash_bytes(Path(__file__).read_bytes()),
+            "shared_renderer": hash_bytes(
+                (Path(__file__).parent / "three_player_video.py").read_bytes()
+            ),
+        }
     )
 
 

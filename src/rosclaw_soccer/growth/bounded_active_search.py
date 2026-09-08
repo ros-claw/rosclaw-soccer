@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import asdict, dataclass
-from typing import cast
 
 from rosclaw_soccer.sim.contracts import hash_json
 
@@ -60,7 +59,7 @@ class BoundedSearchCandidate:
 
     @property
     def candidate_hash(self) -> str:
-        return cast(str, hash_json(asdict(self)))
+        return hash_json(asdict(self))
 
 
 @dataclass(frozen=True)
@@ -96,7 +95,7 @@ class BoundedActiveSearchPlan:
 
     @property
     def plan_hash(self) -> str:
-        return cast(str, hash_json(asdict(self)))
+        return hash_json(asdict(self))
 
     def global_candidates(self) -> tuple[BoundedSearchCandidate, ...]:
         return self._candidates(

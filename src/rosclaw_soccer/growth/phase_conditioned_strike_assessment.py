@@ -96,7 +96,7 @@ class PhaseConditionedStrikeAssessment:
     goalkeeper_agent_id: str | None
     phase_sequence: tuple[int, ...]
     events: Mapping[str, Any]
-    metrics: Mapping[str, float | int | bool]
+    metrics: Mapping[str, float | int | bool | None]
     gates: Mapping[str, bool]
     strict_replay: bool
     world_safe: bool
@@ -370,16 +370,18 @@ def assess_phase_conditioned_strike(
         "save_time_sec": None if save_frame < 0 else float(time[save_frame]),
         "complete_time_sec": None if completed_frame < 0 else float(time[completed_frame]),
     }
-    metrics: dict[str, float | int | bool] = {
+    metrics: dict[str, float | int | bool | None] = {
         "peak_shot_speed_mps": peak_speed,
         "sustained_shot_speed_mps": sustained_speed,
         "save_velocity_change_mps": save_delta,
         "glove_contact_force_n": glove_force,
         "same_frame_nonfoot_contact_force_n": competing_body_force,
-        "projected_goal_y_m": projected_y,
-        "projected_goal_z_m": projected_z,
-        "receive_to_strike_sec": receive_strike_gap,
-        "strike_to_recovery_complete_sec": recovery_gap,
+        "projected_goal_y_m": projected_y if math.isfinite(projected_y) else None,
+        "projected_goal_z_m": projected_z if math.isfinite(projected_z) else None,
+        "receive_to_strike_sec": (
+            receive_strike_gap if math.isfinite(receive_strike_gap) else None
+        ),
+        "strike_to_recovery_complete_sec": (recovery_gap if math.isfinite(recovery_gap) else None),
         "robot_robot_contact_count": int(np.sum(robot_contacts)),
         "legal_nonfoot_defence_only": legal_nonfoot,
     }

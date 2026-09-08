@@ -315,6 +315,39 @@ def test_phase_assessment_rejects_fractional_codes() -> None:
         )
 
 
+def test_failed_phase_assessment_remains_hashable_for_failure_memory() -> None:
+    trajectory, agent_ids = _qualifying_trajectory()
+    trajectory["strike_phase_code"][100:] = 7
+    trajectory["strike_phase_abort_code"][100:] = 5
+    trajectory["ball_contact_agent_code"][110:] = 0
+    trajectory["ball_contact_effector_code"][110:] = 0
+    trajectory["ball_contact_force_n"][110:] = 0.0
+    trajectory["ball_nonfoot_contact_agent_code"][110:] = 0
+    roles = {
+        agent_id: MatchRole.GOALKEEPER
+        if "goalkeeper" in agent_id
+        else MatchRole.FINISHER
+        if "finisher" in agent_id
+        else MatchRole.PLAYMAKER
+        for agent_id in agent_ids
+    }
+
+    value = assess_phase_conditioned_strike(
+        trajectory=trajectory,
+        trajectory_hash="sha256:" + "e" * 64,
+        agent_ids=agent_ids,
+        roles=roles,
+        goal=G1TrainingGoalSpec(plane_x_m=7.5, width_m=3.0, height_m=2.0),
+        strict_replay=False,
+        world_safe=True,
+    ).to_dict()
+
+    assert value["passed"] is False
+    assert value["metrics"]["receive_to_strike_sec"] is None
+    assert value["metrics"]["strike_to_recovery_complete_sec"] is None
+    assert str(value["assessment_hash"]).startswith("sha256:")
+
+
 def test_phase_growth_defaults_bind_the_selected_physical_candidate() -> None:
     phase = default_phase_strike_controller()
     option = default_phase_strike_option()

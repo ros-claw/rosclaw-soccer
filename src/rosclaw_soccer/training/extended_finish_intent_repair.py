@@ -153,7 +153,7 @@ class ExtendedFinishIntentRepairConfig:
 
     @property
     def config_hash(self) -> str:
-        return cast(str, hash_json(asdict(self)))
+        return hash_json(asdict(self))
 
 
 def run_extended_finish_intent_repair(
@@ -683,15 +683,12 @@ def _candidate_kwargs(
     if len(values) != 4:
         raise ValueError("S205 candidate must contain four high-level values")
     target_y, foot_yaw, stance_y, foot_pitch = values
-    kwargs = cast(
-        dict[str, Any],
-        _context_kwargs(
-            context_record=context,
-            target=(physical_target[0], target_y, float(controller.policy_target_z_m)),
-            foot_yaw=foot_yaw,
-            controller=controller,
-            duration=duration,
-        ),
+    kwargs = _context_kwargs(
+        context_record=context,
+        target=(physical_target[0], target_y, float(controller.policy_target_z_m)),
+        foot_yaw=foot_yaw,
+        controller=controller,
+        duration=duration,
     )
     parameters = dict(kwargs["shooter_parameter_overrides"])
     parameters.update(stance_offset_y=stance_y, foot_pitch_offset=foot_pitch)

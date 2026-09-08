@@ -719,15 +719,12 @@ def _context_kwargs(
         "pass_reception_target_m": context_record["pass_reception_target_m"],
         "passer_yaw_rad": context_record["passer_yaw_rad"],
     }
-    return cast(
-        dict[str, Any],
-        _simulation_kwargs(
-            request=request,
-            policy_target=target,
-            foot_yaw_offset_rad=foot_yaw,
-            duration=duration,
-            config=controller,
-        ),
+    return _simulation_kwargs(
+        request=request,
+        policy_target=target,
+        foot_yaw_offset_rad=foot_yaw,
+        duration=duration,
+        config=controller,
     )
 
 
