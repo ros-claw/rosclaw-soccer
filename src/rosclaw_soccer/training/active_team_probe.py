@@ -12,6 +12,8 @@ import numpy as np
 
 from rosclaw_soccer.growth.competitive_match_assessment import assess_competitive_match_trajectory
 from rosclaw_soccer.growth.locomotion_contact_teacher import G1RollingOptionBridgeConfig
+from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
+from rosclaw_soccer.growth.pass_failure_feedback import diagnose_passes
 from rosclaw_soccer.growth.role_self_model import MatchRole
 from rosclaw_soccer.growth.strike_phase_controller import StrikePhaseConfig
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
@@ -39,11 +41,15 @@ def run_probe(
     duration: float,
     four_vs_four: bool = False,
     blue_kickoff: bool = False,
+    contact_policy: OwnedBallContactPolicy | None = None,
+    kickoff_offset_m: float = 0.0,
 ) -> dict[str, Any]:
     if four_vs_four and not active:
         raise ValueError("4v4 requires active role objectives")
     if blue_kickoff and not four_vs_four:
         raise ValueError("mirrored kickoff requires the symmetric 4v4 fixture")
+    if not -0.20 <= kickoff_offset_m <= 0.20 or (contact_policy is not None and not four_vs_four):
+        raise ValueError("contact learning needs bounded 4v4 scenarios")
     if output.exists():
         raise FileExistsError(output)
     source_root = Path(__file__).parents[1]
@@ -56,6 +62,8 @@ def run_probe(
             "growth/independent_agent_cell.py",
             "growth/competitive_match_assessment.py",
             "growth/locomotion_contact_teacher.py",
+            "growth/owned_ball_contact.py",
+            "growth/pass_failure_feedback.py",
             "skills/team/independent_team_world.py",
             "world/field.py",
             "world/multi_player.py",
@@ -94,6 +102,7 @@ def run_probe(
             predictive_separation=True,
             stop_on_ball_exit=True,
             contact_possession_hold_sec=0.60,
+            owned_contact_policy=contact_policy,
         )
         # The historical warm-start kick option only supports yaw zero.
         # Use the same world-frame foot-contact teacher on BOTH teams instead.
@@ -113,6 +122,17 @@ def run_probe(
             scenario_id="s199.s212.4v4.blue" if blue_kickoff else "s199.s212.4v4.red",
             ball_initial_position_m=(4.0, 1.20, 0.115) if blue_kickoff else (2.0, -1.20, 0.115),
         )
+        x, y, z = scenario.ball_initial_position_m
+        scenario = replace(
+            scenario,
+            ball_initial_position_m=(
+                x,
+                y + (-kickoff_offset_m if blue_kickoff else kickoff_offset_m),
+                z,
+            ),
+        )
+        if contact_policy is not None:
+            teacher = replace(teacher, pass_strike_foot_speed_mps=contact_policy.pass_speed_mps)
     results, trajectories = [], []
     for _ in range(2):
         result, trajectory = simulate_independent_team_world(
@@ -185,6 +205,10 @@ def run_probe(
         strict_replay=exact,
         world_safe=results[0]["safe"],
     ).to_dict()
+    report["causal_pass_feedback"] = diagnose_passes(
+        trajectories[0],
+        tuple(sorted(c.agent_id for c in cells)),
+    )
     report["report_hash"] = hash_json(report)
     (output / "probe.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
@@ -234,6 +258,10 @@ def validate_probe(path: Path) -> dict[str, Any]:
             traces.append({k: archive[k] for k in archive.files})
     digests = [trajectory_digest(t) for t in traces]
     ids = tuple(sorted(c["self_model"]["agent_id"] for c in report["cells"]))
+    if "causal_pass_feedback" in report and report["causal_pass_feedback"] != diagnose_passes(
+        traces[0], ids
+    ):
+        raise ValueError("causal pass evidence changed")
     if "assessment" in report:
         assessment = assess_competitive_match_trajectory(
             trajectory=traces[0],
@@ -293,6 +321,8 @@ def main() -> None:
     parser.add_argument("--active", action="store_true")
     parser.add_argument("--four-vs-four", action="store_true")
     parser.add_argument("--blue-kickoff", action="store_true")
+    parser.add_argument("--contact-policy", type=Path)
+    parser.add_argument("--kickoff-offset", type=float, default=0.0)
     parser.add_argument("--duration", type=float, default=12.0)
     args = parser.parse_args()
     report = run_probe(
@@ -302,6 +332,10 @@ def main() -> None:
         duration=args.duration,
         four_vs_four=args.four_vs_four,
         blue_kickoff=args.blue_kickoff,
+        contact_policy=None
+        if args.contact_policy is None
+        else OwnedBallContactPolicy(**json.loads(args.contact_policy.read_text())),
+        kickoff_offset_m=args.kickoff_offset,
     )
     print(
         json.dumps(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -28,7 +29,11 @@ from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixtur
 from rosclaw_soccer.world.multi_player import build_g1_multi_player_stadium_model
 
 
-def render(*, sources: tuple[Path, ...], asset_root: Path, output: Path) -> dict[str, Any]:
+def render(
+    *, sources: tuple[Path, ...], asset_root: Path, output: Path, stage: str = "S212"
+) -> dict[str, Any]:
+    if re.fullmatch(r"S[0-9]{3}", stage) is None:
+        raise ValueError("video stage must be an S-number")
     if output.exists():
         raise FileExistsError(output)
     reports = [validate_probe(p) for p in sources]
@@ -72,6 +77,12 @@ def render(*, sources: tuple[Path, ...], asset_root: Path, output: Path) -> dict
             mode = "4v4 | " + (
                 "BLUE START" if report["scenario"]["scenario_id"].endswith("blue") else "RED START"
             )
+            if stage == "S213":
+                mode += " | " + (
+                    "CANDIDATE"
+                    if report["world_config"].get("owned_contact_policy")
+                    else "BASELINE"
+                )
         state = "SAFE" if report["results"][0]["safe"] else "SAFETY GATE FAILED"
         clips.append(
             _Clip(
@@ -102,7 +113,7 @@ def render(*, sources: tuple[Path, ...], asset_root: Path, output: Path) -> dict
         command = [
             item.replace(
                 "S209 LEARNED QUICK STRIKE",
-                "S212 SYMMETRIC 4v4" if four_vs_four else "S211 ACTIVE TEAM",
+                f"{stage} SYMMETRIC 4v4" if four_vs_four else "S211 ACTIVE TEAM",
             )
             .replace("DATA-BOUND ACTOR", "ROLE OBJECTIVES")
             .replace("6 G1", "8 G1" if four_vs_four else "6 G1")
@@ -137,6 +148,7 @@ def render(*, sources: tuple[Path, ...], asset_root: Path, output: Path) -> dict
                     raise RuntimeError("video encoding failed")
     manifest = {
         "sources": {str(p): hash_bytes(p.read_bytes()) for p in sources},
+        "stage": stage,
         "video_hash": hash_bytes(output.read_bytes()),
         "fps": 30,
         "width": 1920,
@@ -157,8 +169,16 @@ def main() -> None:
     parser.add_argument("--source", type=Path, action="append", required=True)
     parser.add_argument("--asset-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--stage", default="S212")
     args = parser.parse_args()
-    print(render(sources=tuple(args.source), asset_root=args.asset_root, output=args.output))
+    print(
+        render(
+            sources=tuple(args.source),
+            asset_root=args.asset_root,
+            output=args.output,
+            stage=args.stage,
+        )
+    )
 
 
 if __name__ == "__main__":

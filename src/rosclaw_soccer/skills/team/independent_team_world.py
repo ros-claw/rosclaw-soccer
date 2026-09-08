@@ -43,6 +43,7 @@ from rosclaw_soccer.growth.locomotion_contact_teacher import (
     G1RollingOptionBridgeConfig,
     locomotion_contact_teacher_effect,
 )
+from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.growth.role_self_model import (
     MatchRole,
     TacticalIntent,
@@ -124,6 +125,7 @@ class IndependentTeamWorldConfig:
     stationary_ball_acquisition: bool = False
     predictive_separation: bool = False
     stop_on_ball_exit: bool = False
+    owned_contact_policy: OwnedBallContactPolicy | None = None
     minimum_pelvis_height_m: float = 0.55
     maximum_tilt_rad: float = 0.80
     activation_ceiling: str = "SIM_ONLY"
@@ -167,6 +169,10 @@ class IndependentTeamWorldConfig:
         )
         if (
             not isinstance(self.bilateral_goals, bool)
+            or (
+                self.owned_contact_policy is not None
+                and not isinstance(self.owned_contact_policy, OwnedBallContactPolicy)
+            )
             or not isinstance(self.stationary_ball_acquisition, bool)
             or not isinstance(self.predictive_separation, bool)
             or not isinstance(self.stop_on_ball_exit, bool)
@@ -2189,6 +2195,24 @@ def _movement_command(
     if float(np.linalg.norm(error)) <= config.arrival_radius_m:
         command[:2] = 0.0
     desired_yaw: float | None = None
+    if (
+        config.owned_contact_policy is not None
+        and not post_receive_hold
+        and strike_phase_config is None
+        and possession_agent_id == controller.cell.agent_id
+        and decision.intent
+        in {TacticalIntent.PASS, TacticalIntent.SHOOT, TacticalIntent.DISTRIBUTE}
+        and float(np.linalg.norm(np.asarray(decision.target_position_m[:2]) - ball)) > 1.0e-6
+    ):
+        stance, desired_yaw = config.owned_contact_policy.stance(
+            (float(ball[0]), float(ball[1])),
+            (decision.target_position_m[0], decision.target_position_m[1]),
+        )
+        # The destination belongs to the ball, not to the player's pelvis.
+        error = np.asarray(stance, dtype=np.float64) - current
+        command[:2] = config.position_gain * error
+        if float(np.linalg.norm(error)) <= config.arrival_radius_m:
+            command[:2] = 0.0
     if (
         phase_approach_direction is not None
         and strike_phase is StrikePhase.ORIENT

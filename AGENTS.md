@@ -1,5 +1,13 @@
 # ROSClaw Soccer agent instructions
 
+## Maintainer workflow
+
+The maintainer requested direct main-branch integration on 2026-09-08.
+For rosclaw-soccer, review and test changes, commit, and push main without
+creating new PRs. Prefer fast-forward integration; do not force-push or
+overwrite unrelated worktrees. Code integration never promotes an experimental
+policy: retain SIM_ONLY boundaries and failed candidate evidence.
+
 ROSClaw Soccer Academy is a downstream, simulation-first application of
 ROSClaw Core. Keep generic Practice, Growth, Dream, Memory, promotion, safety,
 and evidence contracts in `ros-claw/rosclaw`; keep football worlds, skills,
