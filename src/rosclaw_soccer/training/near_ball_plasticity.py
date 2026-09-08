@@ -124,15 +124,35 @@ def replay_recorded_update(root: Path, output: Path) -> dict[str, Any]:
     digest = manifest.pop("manifest_hash")
     if hash_json(manifest) != digest:
         raise ValueError("recorded training manifest differs")
-    traces, proofs = [], []
-    for side in ("red", "blue"):
-        source = root / f"train-000-{side}" / "probe.json"
+    expected_proofs = manifest["iterations"][0]["rollout_report_hashes"]
+    rounds = manifest.get("role_batch_rounds", 1)
+    role = manifest.get("role_curriculum", False)
+    if (
+        type(role) is not bool
+        or type(rounds) is not int
+        or not 1 <= rounds <= 5
+        or (not role and rounds != 1)
+        or len(expected_proofs) != (8 * rounds if role else 2)
+        or len(set(expected_proofs)) != len(expected_proofs)
+    ):
+        raise ValueError("first-generation rollout batch is incomplete or ambiguous")
+    sources = {}
+    for source in root.glob("*/probe.json"):
         report = validate_probe(source)
-        proofs.append(report["report_hash"])
+        proof = report["report_hash"]
+        if proof in expected_proofs:
+            if proof in sources:
+                raise ValueError("duplicate first-generation rollout evidence")
+            sources[proof] = source
+    if set(sources) != set(expected_proofs):
+        raise ValueError("first-generation rollout binding differs")
+    traces, proofs = [], []
+    # Replay the committed collection order, not filesystem/worker completion order.
+    for proof in expected_proofs:
+        source = sources[proof]
+        proofs.append(proof)
         with np.load(source.parent / "primary.npz", allow_pickle=False) as archive:
             traces.append({k: archive[k] for k in archive.files})
-    if proofs != manifest["iterations"][0]["rollout_report_hashes"]:
-        raise ValueError("first-generation rollout binding differs")
     initial_generation = manifest.get("initial_generation", 0)
     if type(initial_generation) is not int or not 0 <= initial_generation <= 1000000:
         raise ValueError("initial generation is invalid")
@@ -140,7 +160,11 @@ def replay_recorded_update(root: Path, output: Path) -> dict[str, Any]:
     expected = NearBallResidualPolicy.load(root / f"generation-{initial_generation + 1:03d}.npz")
     credit = manifest.get("credit", {"gamma": 0.99, "trace_decay": 0.95})
     child, rows = update_private_actors(
-        parent, traces, gamma=credit["gamma"], trace_decay=credit["trace_decay"]
+        parent,
+        traces,
+        gamma=credit["gamma"],
+        trace_decay=credit["trace_decay"],
+        reward_shaping=manifest.get("reward_shaping", "legacy"),
     )
     if child.policy_hash != expected.policy_hash:
         raise ValueError("Core lease integration changed the recorded optimizer result")

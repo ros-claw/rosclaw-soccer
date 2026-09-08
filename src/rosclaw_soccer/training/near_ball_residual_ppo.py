@@ -24,6 +24,10 @@ from rosclaw_soccer.growth.pass_failure_feedback import diagnose_passes
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import run_probe, validate_probe
+from rosclaw_soccer.training.football_reward_shaping import (
+    REWARD_SHAPING_MODES,
+    terminal_approach_shaping,
+)
 from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
 from rosclaw_soccer.training.near_ball_curriculum import (
     TRAIN_OFFSETS,
@@ -39,7 +43,13 @@ from rosclaw_soccer.training.near_ball_plasticity import (
 )
 
 
-def physical_rewards(trace: dict[str, Any], ids: tuple[str, ...]) -> np.ndarray:
+def physical_rewards(
+    trace: dict[str, Any],
+    ids: tuple[str, ...],
+    *,
+    reward_shaping: str = "legacy",
+    gamma: float = 0.99,
+) -> np.ndarray:
     """Foot approach + directed contact, minus tilt, impacts and residual effort.
 
     No reward for a planner merely declaring PASS. Ball motion is rewarded only
@@ -47,6 +57,8 @@ def physical_rewards(trace: dict[str, Any], ids: tuple[str, ...]) -> np.ndarray:
     the control period, so resting on the ball cannot earn an event bonus.
     """
     obs = np.asarray(trace["residual_observations"], dtype=float)
+    if reward_shaping not in REWARD_SHAPING_MODES:
+        raise ValueError("unknown reward shaping contract")
     count = len(trace["time"])
     if obs.shape != (count, 8, 56) or not np.all(np.isfinite(obs)):
         raise ValueError("PPO observations are not finite physical samples")
@@ -114,6 +126,22 @@ def physical_rewards(trace: dict[str, Any], ids: tuple[str, ...]) -> np.ndarray:
             credited.add(event)
     if not np.all(np.isfinite(rewards)):
         raise ValueError("nonfinite physical reward")
+    if reward_shaping == "terminal_potential_v1":
+        distance = np.minimum(
+            np.linalg.norm(obs[:, :, 38:41], axis=2),
+            np.linalg.norm(obs[:, :, 41:44], axis=2),
+        )
+        # Replace only the approach term; event rewards and penalties are unchanged.
+        for i, agent in enumerate(ids):
+            key = agent.replace(".", "_")
+            after = np.minimum(
+                *(
+                    np.linalg.norm(np.asarray(trace[key + suffix]) - ball, axis=1)
+                    for suffix in ("_left_foot_position", "_right_foot_position")
+                )
+            )
+            rewards[:, i] -= 2.0 * (np.exp(-4 * after) - np.exp(-4 * distance[:, i]))
+        rewards += terminal_approach_shaping(distance, gamma=gamma)
     return rewards
 
 
@@ -140,6 +168,7 @@ def update_private_actors(
     epochs: int = 4,
     gamma: float = 0.99,
     trace_decay: float = 0.95,
+    reward_shaping: str = "legacy",
 ) -> tuple[NearBallResidualPolicy, list[dict[str, Any]]]:
     # Optional training dependency: readers and the simulator use only NumPy.
     import torch
@@ -152,7 +181,7 @@ def update_private_actors(
     for trace in rollouts:
         _validate_on_policy(parent, trace)
         a, r = episodic_gae(
-            physical_rewards(trace, parent.agent_ids),
+            physical_rewards(trace, parent.agent_ids, reward_shaping=reward_shaping, gamma=gamma),
             trace["residual_value"],
             gamma=gamma,
             trace_decay=trace_decay,
@@ -172,6 +201,11 @@ def update_private_actors(
                 "parent": parent.policy_hash,
                 "roster": parent.agent_ids,
                 "dataset": dataset_hash,
+                **(
+                    {"reward_shaping": reward_shaping, "gamma": gamma}
+                    if reward_shaping != "legacy"
+                    else {}
+                ),
             }
         )
     )
@@ -251,7 +285,12 @@ def update_private_actors(
             updated=delta > 0,
             squared_parameter_delta=delta,
             shaping_return=float(
-                sum(physical_rewards(t, parent.agent_ids)[:, i].sum() for t in rollouts)
+                sum(
+                    physical_rewards(
+                        t, parent.agent_ids, reward_shaping=reward_shaping, gamma=gamma
+                    )[:, i].sum()
+                    for t in rollouts
+                )
             ),
         )
         rows.append(row)
@@ -327,6 +366,7 @@ def train(
     role_curriculum: bool = False,
     strict_receive_handoff: bool = False,
     role_batch_rounds: int = 1,
+    reward_shaping: str = "legacy",
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -345,6 +385,7 @@ def train(
         or type(role_batch_rounds) is not int
         or not 1 <= role_batch_rounds <= 5
         or (role_batch_rounds != 1 and not role_curriculum)
+        or reward_shaping not in REWARD_SHAPING_MODES
         or (strict_receive_handoff and not role_curriculum)
         or (role_curriculum and not (prospective_curriculum and all_role_clearance))
     ):
@@ -389,6 +430,7 @@ def train(
         "all_role_clearance": all_role_clearance,
         "role_curriculum": role_curriculum,
         "role_batch_rounds": role_batch_rounds,
+        "reward_shaping": reward_shaping,
         "strict_receive_handoff": strict_receive_handoff,
         "evaluation_courses": [
             asdict(c) for c in examination_courses(strict_handoff=strict_receive_handoff)
@@ -460,6 +502,7 @@ def train(
             traces,
             gamma=manifest["credit"]["gamma"],
             trace_decay=manifest["credit"]["trace_decay"],
+            reward_shaping=reward_shaping,
         )
         policy.save(output / f"generation-{policy.generation:03d}.npz")
         manifest["iterations"].append(
@@ -557,6 +600,7 @@ def main() -> None:
     parser.add_argument("--role-curriculum", action="store_true")
     parser.add_argument("--strict-receive-handoff", action="store_true")
     parser.add_argument("--role-batch-rounds", type=int, default=1)
+    parser.add_argument("--reward-shaping", choices=REWARD_SHAPING_MODES, default="legacy")
     args = parser.parse_args()
     train(
         assets=args.asset_root,
@@ -572,6 +616,7 @@ def main() -> None:
         role_curriculum=args.role_curriculum,
         strict_receive_handoff=args.strict_receive_handoff,
         role_batch_rounds=args.role_batch_rounds,
+        reward_shaping=args.reward_shaping,
     )
 
 

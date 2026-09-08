@@ -42,23 +42,27 @@ def delayed_pass_trace():
     return ids, trace
 
 
-def test_launch_credit_reaches_exactly_both_participants_after_setup_delay():
+@pytest.mark.parametrize("shaping", ["legacy", "terminal_potential_v1"])
+def test_launch_credit_reaches_exactly_both_participants_after_setup_delay(shaping):
     ids, trace = delayed_pass_trace()
-    legacy = physical_rewards(trace, ids)
+    legacy = physical_rewards(trace, ids, reward_shaping=shaping, gamma=0.997)
     trace["pass_feedback_launch_relative"] = np.ones(len(trace["time"]), dtype=bool)
-    difference = physical_rewards(trace, ids) - legacy
+    difference = physical_rewards(trace, ids, reward_shaping=shaping, gamma=0.997) - legacy
     expected = np.zeros((61, 8))
     expected[45, [5, 7]] = 1
     np.testing.assert_allclose(difference, expected, atol=1e-12)
 
 
-def test_nonfoot_interruption_and_invalid_contract_cannot_earn_completion():
+@pytest.mark.parametrize("shaping", ["legacy", "terminal_potential_v1"])
+def test_nonfoot_interruption_and_invalid_contract_cannot_earn_completion(shaping):
     ids, trace = delayed_pass_trace()
     trace["ball_nonfoot_contact_agent_code"][30] = 8
     trace["ball_nonfoot_contact_force_n"][30] = 5
-    legacy = physical_rewards(trace, ids)
+    legacy = physical_rewards(trace, ids, reward_shaping=shaping, gamma=0.997)
     trace["pass_feedback_launch_relative"] = np.ones(61, dtype=bool)
-    np.testing.assert_array_equal(physical_rewards(trace, ids), legacy)
+    np.testing.assert_array_equal(
+        physical_rewards(trace, ids, reward_shaping=shaping, gamma=0.997), legacy
+    )
     trace["pass_feedback_launch_relative"] = np.ones(61, dtype=float)
     with pytest.raises(ValueError, match="contract"):
-        physical_rewards(trace, ids)
+        physical_rewards(trace, ids, reward_shaping=shaping, gamma=0.997)

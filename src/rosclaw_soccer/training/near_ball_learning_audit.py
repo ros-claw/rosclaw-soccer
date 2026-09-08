@@ -13,6 +13,7 @@ import numpy as np
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import validate_probe
+from rosclaw_soccer.training.football_reward_shaping import REWARD_SHAPING_MODES
 from rosclaw_soccer.training.near_ball_curriculum import (
     RoleCourse,
     examination_courses,
@@ -50,6 +51,9 @@ def audit(root: Path) -> dict[str, Any]:
         raise ValueError("training manifest commitment differs")
     initial_generation = manifest.get("initial_generation", 0)
     batch_rounds = manifest.get("role_batch_rounds", 1)
+    reward_shaping = manifest.get("reward_shaping", "legacy")
+    if reward_shaping not in REWARD_SHAPING_MODES:
+        raise ValueError("unknown reward shaping contract")
     if (
         type(batch_rounds) is not int
         or not 1 <= batch_rounds <= 5
@@ -135,6 +139,11 @@ def audit(root: Path) -> dict[str, Any]:
                     "parent": parent.policy_hash,
                     "roster": parent.agent_ids,
                     "dataset": dataset_hash,
+                    **(
+                        {"reward_shaping": reward_shaping, "gamma": manifest["credit"]["gamma"]}
+                        if reward_shaping != "legacy"
+                        else {}
+                    ),
                 }
             )
         )
