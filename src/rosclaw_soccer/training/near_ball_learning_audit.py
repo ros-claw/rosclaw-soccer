@@ -95,7 +95,8 @@ def audit(root: Path) -> dict[str, Any]:
                 raise ValueError("evaluation used exploration or the wrong checkpoint")
             blue = report["scenario"]["scenario_id"].endswith("blue")
             ball_y = report["scenario"]["ball_initial_position_m"][1]
-            measured_offset = 1.20 - ball_y if blue else ball_y + 1.20
+            origin_y = 1.22 if report.get("forward_receiver_lane") else 1.20
+            measured_offset = origin_y - ball_y if blue else ball_y + origin_y
             if blue != item["blue"] or abs(measured_offset - item["offset"]) > 1e-9:
                 raise ValueError("evaluation context differs from its physical scenario")
             events = report["assessment"]["events"]

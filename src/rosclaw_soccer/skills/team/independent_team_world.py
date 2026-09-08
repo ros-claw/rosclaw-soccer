@@ -593,6 +593,7 @@ def simulate_independent_team_world(
         raise ValueError("residual policy differs from the qualified body/roster")
     residual_rng = np.random.default_rng(near_ball_seed)
     residual_previous = np.zeros((len(residual_ids), 12), dtype=np.float64)
+    prospective_team_contact = any(cell.tactical_profile.anticipatory_contact for cell in cells)
 
     import mujoco
 
@@ -875,9 +876,7 @@ def simulate_independent_team_world(
             pass_handshake_count += len(coordination.pass_receive_handshakes)
             pass_source_agent_id = None
             pass_target_agent_id = None
-            if current_possession_agent_id is not None or (
-                option_bridge_config is not None and option_bridge_config.prospective_enabled
-            ):
+            if current_possession_agent_id is not None or prospective_team_contact:
                 current_handshake = next(
                     (
                         handshake
@@ -1211,13 +1210,10 @@ def simulate_independent_team_world(
                     else None
                 ),
                 config=active,
-                prospective_contact=bool(
-                    option_bridge_config is not None and option_bridge_config.prospective_enabled
-                ),
+                prospective_contact=prospective_team_contact,
                 pending_receive_target_m=(
                     receive_lease_target_m
-                    if option_bridge_config is not None
-                    and option_bridge_config.prospective_enabled
+                    if prospective_team_contact
                     and receive_lease_agent_id == controller.cell.agent_id
                     else None
                 ),
@@ -2391,7 +2387,10 @@ def _movement_command(
         config.owned_contact_policy is not None
         and not post_receive_hold
         and strike_phase_config is None
-        and possession_agent_id == controller.cell.agent_id
+        and (
+            possession_agent_id == controller.cell.agent_id
+            or (prospective_contact and possession_agent_id is None)
+        )
         and decision.intent
         in {TacticalIntent.PASS, TacticalIntent.SHOOT, TacticalIntent.DISTRIBUTE}
         and float(np.linalg.norm(np.asarray(decision.target_position_m[:2]) - ball)) > 1.0e-6

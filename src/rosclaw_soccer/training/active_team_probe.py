@@ -72,10 +72,8 @@ def run_probe(
         raise ValueError("kick parameters require bilateral neural options")
     if pass_stroke_duration_sec != 0.0 and not four_vs_four:
         raise ValueError("contact strokes require the 4v4 fixture")
-    if not isinstance(anticipatory_contact, bool) or (
-        anticipatory_contact and not bilateral_kick_options
-    ):
-        raise ValueError("anticipatory contact requires bilateral neural options")
+    if not isinstance(anticipatory_contact, bool) or (anticipatory_contact and not four_vs_four):
+        raise ValueError("anticipatory contact requires the bilateral 4v4 fixture")
     if not isinstance(bilateral_kick_options, bool) or (
         bilateral_kick_options and not four_vs_four
     ):

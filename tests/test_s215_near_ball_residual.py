@@ -76,6 +76,9 @@ def samples(p: NearBallResidualPolicy) -> dict[str, np.ndarray]:
         "ball_nonfoot_contact_agent_code",
         "robot_robot_contact_first_code",
         "robot_robot_contact_second_code",
+        "pass_source_agent_code",
+        "pass_target_agent_code",
+        "ball_contact_force_n",
     ):
         t[key] = np.zeros(n)
     t["residual_active"][:, 0] = True

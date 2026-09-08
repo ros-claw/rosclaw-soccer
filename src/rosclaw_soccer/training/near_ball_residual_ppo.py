@@ -10,12 +10,16 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
+from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
+from rosclaw_soccer.growth.pass_failure_feedback import diagnose_passes
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import run_probe, validate_probe
 from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
@@ -65,6 +69,30 @@ def physical_rewards(trace: dict[str, Any], ids: tuple[str, ...]) -> np.ndarray:
             np.asarray(trace["robot_robot_contact_second_code"]) == i + 1
         )
         rewards[:, i] -= 0.03 * impact
+    # Delayed credit goes to both participants only after a physical reception.
+    # Never use the planner's pass handshake alone as a success reward.
+    credited = set()
+    time = np.asarray(trace["time"])
+    for outcome in diagnose_passes(trace, ids):
+        if not outcome["physical_receive_confirmed"]:
+            continue
+        sender, receiver = ids.index(outcome["sender"]), ids.index(outcome["receiver"])
+        first = int(np.searchsorted(time, outcome["foot_contact_time_sec"]))
+        received = np.flatnonzero(
+            (contact == receiver + 1)
+            & foot
+            & (np.asarray(trace["ball_contact_force_n"]) > 0)
+            & (time > time[first])
+            & (time <= outcome["commitment_time_sec"] + 3.0)
+        )
+        if not len(received):
+            continue
+        end = int(received[0])
+        event = (sender, receiver, end)
+        if np.linalg.norm(ball[end, :2] - ball[first, :2]) >= 0.5 and event not in credited:
+            rewards[end, sender] += 1.0
+            rewards[end, receiver] += 1.0
+            credited.add(event)
     if not np.all(np.isfinite(rewards)):
         raise ValueError("nonfinite physical reward")
     return rewards
@@ -205,10 +233,44 @@ def _validate_on_policy(policy: NearBallResidualPolicy, trace: dict[str, Any]) -
         raise ValueError("rollout was not sampled from this frozen parent policy")
 
 
-def train(*, assets: Path, output: Path, iterations: int, duration: float) -> dict[str, Any]:
+def _collect(job: tuple[str, str, str, float, bool, int, float, bool]) -> str:
+    assets, destination, checkpoint, duration, blue, seed, offset, prospective = job
+    run_probe(
+        asset_root=Path(assets),
+        output=Path(destination),
+        active=True,
+        four_vs_four=True,
+        duration=duration,
+        blue_kickoff=blue,
+        near_ball_policy=NearBallResidualPolicy.load(Path(checkpoint)),
+        near_ball_explore=True,
+        near_ball_seed=seed,
+        kickoff_offset_m=offset,
+        anticipatory_contact=prospective,
+        forward_receiver_lane=prospective,
+        contact_policy=OwnedBallContactPolicy() if prospective else None,
+    )
+    return str(Path(destination) / "probe.json")
+
+
+def train(
+    *,
+    assets: Path,
+    output: Path,
+    iterations: int,
+    duration: float,
+    prospective_curriculum: bool = False,
+    workers: int = 1,
+) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
-    if not 1 <= iterations <= 100 or not 5 <= duration <= 25:
+    if (
+        not 1 <= iterations <= 100
+        or not 5 <= duration <= 25
+        or type(workers) is not int
+        or not 1 <= workers <= 2
+        or type(prospective_curriculum) is not bool
+    ):
         raise ValueError("bounded online training budget required")
     fixture = build_four_vs_four_fixture(assets)
     policy = NearBallResidualPolicy.initialize(
@@ -223,25 +285,35 @@ def train(*, assets: Path, output: Path, iterations: int, duration: float) -> di
         "iterations": [],
         "evaluation": [],
         "training_source_hash": hash_bytes(Path(__file__).read_bytes()),
+        "prospective_curriculum": prospective_curriculum,
+        "workers": workers,
         "note": "Residual PPO, frozen locomotion; not an end-to-end torque policy.",
     }
     for iteration in range(iterations):
         traces, proofs = [], []
-        for blue in (False, True):
-            destination = output / f"train-{iteration:03d}-{'blue' if blue else 'red'}"
-            run_probe(
-                asset_root=assets,
-                output=destination,
-                active=True,
-                four_vs_four=True,
-                duration=duration,
-                blue_kickoff=blue,
-                near_ball_policy=policy,
-                near_ball_explore=True,
-                near_ball_seed=21500 + iteration * 2 + int(blue),
-                kickoff_offset_m=(-0.04, 0.04)[iteration % 2],
+        jobs = [
+            (
+                str(assets),
+                str(output / f"train-{iteration:03d}-{'blue' if blue else 'red'}"),
+                str(output / f"generation-{policy.generation:03d}.npz"),
+                duration,
+                blue,
+                21500 + iteration * 2 + int(blue),
+                (-0.04, 0.04)[iteration % 2],
+                prospective_curriculum,
             )
-            report = validate_probe(destination / "probe.json")
+            for blue in (False, True)
+        ]
+        if workers == 1:
+            collected = [_collect(job) for job in jobs]
+        else:
+            with ProcessPoolExecutor(
+                max_workers=workers, mp_context=multiprocessing.get_context("spawn")
+            ) as pool:
+                collected = list(pool.map(_collect, jobs))
+        for source in collected:
+            destination = Path(source).parent
+            report = validate_probe(Path(source))
             if not report["exact_replay"]:
                 raise ValueError("nonreproducible rollout rejected")
             with np.load(destination / "primary.npz", allow_pickle=False) as archive:
@@ -273,6 +345,9 @@ def train(*, assets: Path, output: Path, iterations: int, duration: float) -> di
                     blue_kickoff=blue,
                     near_ball_policy=candidate,
                     kickoff_offset_m=offset,
+                    anticipatory_contact=prospective_curriculum,
+                    forward_receiver_lane=prospective_curriculum,
+                    contact_policy=OwnedBallContactPolicy() if prospective_curriculum else None,
                 )
                 validate_probe(destination / "probe.json")
                 manifest["evaluation"].append(
@@ -297,12 +372,16 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--iterations", type=int, default=4)
     parser.add_argument("--duration", type=float, default=12)
+    parser.add_argument("--prospective-curriculum", action="store_true")
+    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args()
     train(
         assets=args.asset_root,
         output=args.output,
         iterations=args.iterations,
         duration=args.duration,
+        prospective_curriculum=args.prospective_curriculum,
+        workers=args.workers,
     )
 
 
