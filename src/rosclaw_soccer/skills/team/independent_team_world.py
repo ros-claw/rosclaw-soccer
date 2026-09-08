@@ -46,6 +46,7 @@ from rosclaw_soccer.growth.locomotion_contact_teacher import (
 )
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy, bounded_residual
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
+from rosclaw_soccer.growth.pass_handoff import PassHandoff
 from rosclaw_soccer.growth.role_self_model import (
     MatchRole,
     TacticalIntent,
@@ -128,6 +129,7 @@ class IndependentTeamWorldConfig:
     stationary_ball_acquisition: bool = False
     predictive_separation: bool = False
     all_role_clearance: bool = False
+    strict_receive_handoff: bool = False
     stop_on_ball_exit: bool = False
     owned_contact_policy: OwnedBallContactPolicy | None = None
     minimum_pelvis_height_m: float = 0.55
@@ -180,6 +182,7 @@ class IndependentTeamWorldConfig:
             or not isinstance(self.stationary_ball_acquisition, bool)
             or not isinstance(self.predictive_separation, bool)
             or not isinstance(self.all_role_clearance, bool)
+            or not isinstance(self.strict_receive_handoff, bool)
             or not isinstance(self.stop_on_ball_exit, bool)
             or any(not math.isfinite(value) for value in values)
             or not 5.0 <= self.simulation_duration_sec <= 25.0
@@ -749,6 +752,8 @@ def simulate_independent_team_world(
     receive_lease_origin_m: NDArray[np.float64] | None = None
     receive_lease_target_m: tuple[float, float] | None = None
     receive_lease_active = False
+    receive_handoff: PassHandoff | None = None
+    handoff_cancellations = 0
     last_receive_contact_agent_id: str | None = None
     last_receive_contact_time_sec = -math.inf
     pass_source_agent_id: str | None = None
@@ -761,6 +766,12 @@ def simulate_independent_team_world(
     contextual_strike_distance = 0.0
     contextual_strike_selection_code = 0
     contextual_strike_context = np.zeros(5, dtype=np.float64)
+
+    if active.strict_receive_handoff:
+        trace["pass_handoff_source_contact_sec"] = []
+        trace["pass_handoff_active"] = []
+        trace["pass_handoff_cancellations"] = []
+        trace["pass_feedback_launch_relative"] = []
 
     if near_ball_policy is not None:
         for name in (
@@ -781,6 +792,16 @@ def simulate_independent_team_world(
                 for controller in controllers
             )
             state_by_id = {state.agent_id: state for state in physical_states}
+            if receive_handoff is not None and receive_handoff.expired(
+                float(data.time), receiver_stable=state_by_id[receive_handoff.receiver].stable
+            ):
+                receive_lease_agent_id = None
+                receive_lease_source_agent_id = None
+                receive_lease_origin_m = None
+                receive_lease_target_m = None
+                receive_lease_active = False
+                receive_handoff = None
+                handoff_cancellations += 1
             proximity_possession = _infer_possession(
                 controllers=controllers,
                 data=data,
@@ -807,7 +828,19 @@ def simulate_independent_team_world(
                         and receive_lease_origin_m is not None
                         and state_by_id[receive_lease_agent_id].stable
                         and (
+                            not active.strict_receive_handoff
+                            or (
+                                receive_handoff is not None
+                                and receive_handoff.can_activate(float(data.time), progressed=True)
+                            )
+                        )
+                        and (
                             receive_lease_active
+                            or (
+                                active.strict_receive_handoff
+                                and float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 2]))
+                                >= 0.10
+                            )
                             or float(
                                 np.linalg.norm(
                                     np.asarray(
@@ -908,6 +941,12 @@ def simulate_independent_team_world(
                     ).copy()
                     receive_lease_active = False
                     receive_lease_target_m = current_handshake.pass_target_m[:2]
+                    if active.strict_receive_handoff:
+                        receive_handoff = PassHandoff(
+                            current_handshake.passer_agent_id,
+                            current_handshake.receiver_agent_id,
+                            float(data.time),
+                        )
                 if current_handshake is not None:
                     pass_source_agent_id = current_handshake.passer_agent_id
                     pass_target_agent_id = current_handshake.receiver_agent_id
@@ -1657,6 +1696,26 @@ def simulate_independent_team_world(
                     wrench: NDArray[np.float64] = np.zeros(6, dtype=np.float64)
                     mujoco.mj_contactForce(model, data, contact_index, wrench)
                     force = float(np.linalg.norm(wrench[:3]))
+                    if active.strict_receive_handoff:
+                        # A geometrically listed contact with zero force is
+                        # not a possession, launch, or reception observation.
+                        if force <= 1e-6:
+                            break
+                        if receive_handoff is not None:
+                            receive_handoff = receive_handoff.observe_contact(
+                                agent_id=controller.cell.agent_id,
+                                foot=effector_code in (1, 2),
+                                force_n=force,
+                                time_sec=float(data.time),
+                            )
+                            if receive_handoff.interrupted:
+                                receive_lease_agent_id = None
+                                receive_lease_source_agent_id = None
+                                receive_lease_origin_m = None
+                                receive_lease_target_m = None
+                                receive_lease_active = False
+                                receive_handoff = None
+                                handoff_cancellations += 1
                     if not effector_code:
                         if force >= frame_nonfoot_contact_force_n:
                             frame_nonfoot_contact_agent_code = agent_codes[controller.cell.agent_id]
@@ -1673,7 +1732,9 @@ def simulate_independent_team_world(
                     if loose_ball_chaser_agent_id != controller.cell.agent_id:
                         loose_ball_chaser_agent_id = controller.cell.agent_id
                         ball_chaser_lease_start_sec = float(data.time)
-                    if receive_lease_agent_id == controller.cell.agent_id:
+                    if receive_lease_agent_id == controller.cell.agent_id and (
+                        not active.strict_receive_handoff or effector_code in (1, 2)
+                    ):
                         last_receive_contact_agent_id = controller.cell.agent_id
                         last_receive_contact_time_sec = float(data.time)
                         controller.post_receive_joint_target = np.asarray(
@@ -1689,6 +1750,7 @@ def simulate_independent_team_world(
                         receive_lease_origin_m = None
                         receive_lease_target_m = None
                         receive_lease_active = False
+                        receive_handoff = None
                     if (
                         strike_lease_agent_id is not None
                         and strike_lease_agent_id != controller.cell.agent_id
@@ -1767,6 +1829,15 @@ def simulate_independent_team_world(
         trace["pass_target_agent_code"].append(
             0 if pass_target_agent_id is None else agent_codes[pass_target_agent_id]
         )
+        if active.strict_receive_handoff:
+            trace["pass_feedback_launch_relative"].append(True)
+            trace["pass_handoff_source_contact_sec"].append(
+                -1.0
+                if receive_handoff is None or receive_handoff.source_foot_contact_sec is None
+                else receive_handoff.source_foot_contact_sec
+            )
+            trace["pass_handoff_active"].append(receive_lease_active)
+            trace["pass_handoff_cancellations"].append(handoff_cancellations)
         trace["strike_lease_agent_code"].append(
             agent_codes[frame_first_touch_strike_agent_id]
             if frame_first_touch_strike_agent_id is not None

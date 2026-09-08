@@ -62,7 +62,10 @@ def run_probe(
     contact_preferred_foot: str = "nearest",
     strike_ankle_lateral_m: float | None = None,
     receive_ankle_lateral_m: float | None = None,
+    strict_receive_handoff: bool = False,
 ) -> dict[str, Any]:
+    if type(strict_receive_handoff) is not bool or (strict_receive_handoff and not four_vs_four):
+        raise ValueError("strict receive handoff requires the bilateral 4v4 world")
     if receive_ankle_lateral_m is not None and (
         not four_vs_four or not 0.10 <= receive_ankle_lateral_m <= 0.24
     ):
@@ -122,6 +125,7 @@ def run_probe(
             "training/independent_team_growth.py",
             "growth/independent_agent_cell.py",
             "growth/role_self_model.py",
+            "growth/pass_handoff.py",
             "growth/competitive_match_assessment.py",
             "growth/locomotion_contact_teacher.py",
             "growth/contact_stroke.py",
@@ -157,7 +161,11 @@ def run_probe(
         for cell in fixture.cells
     )
     config = replace(default_continuous_match_config(), simulation_duration_sec=duration)
-    config = replace(config, all_role_clearance=all_role_clearance)
+    config = replace(
+        config,
+        all_role_clearance=all_role_clearance,
+        strict_receive_handoff=strict_receive_handoff,
+    )
     if arrival_radius_m is not None:
         config = replace(config, arrival_radius_m=arrival_radius_m)
     if active:
@@ -337,6 +345,10 @@ def run_probe(
     report["causal_pass_feedback"] = diagnose_passes(
         trajectories[0],
         tuple(sorted(c.agent_id for c in cells)),
+        launch_relative=strict_receive_handoff,
+    )
+    report["pass_feedback_contract"] = (
+        "launch_relative_foot_only_v1" if strict_receive_handoff else "intent_relative_v1"
     )
     report["report_hash"] = hash_json(report)
     (output / "probe.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -397,8 +409,23 @@ def validate_probe(path: Path) -> dict[str, Any]:
             traces.append({k: archive[k] for k in archive.files})
     digests = [trajectory_digest(t) for t in traces]
     ids = tuple(sorted(c["self_model"]["agent_id"] for c in report["cells"]))
+    feedback_contract = report.get("pass_feedback_contract", "intent_relative_v1")
+    if feedback_contract not in {"intent_relative_v1", "launch_relative_foot_only_v1"}:
+        raise ValueError("unknown pass feedback contract")
+    launch_relative = feedback_contract == "launch_relative_foot_only_v1"
+    if launch_relative and (
+        not report["world_config"].get("strict_receive_handoff")
+        or not all(
+            "pass_feedback_launch_relative" in t
+            and np.shape(t["pass_feedback_launch_relative"]) == np.shape(t["time"])
+            and np.asarray(t["pass_feedback_launch_relative"]).dtype == np.bool_
+            and np.all(t["pass_feedback_launch_relative"])
+            for t in traces
+        )
+    ):
+        raise ValueError("pass feedback is not bound to its physical handoff contract")
     if "causal_pass_feedback" in report and report["causal_pass_feedback"] != diagnose_passes(
-        traces[0], ids
+        traces[0], ids, launch_relative=launch_relative
     ):
         raise ValueError("causal pass evidence changed")
     if "assessment" in report:
@@ -477,6 +504,7 @@ def main() -> None:
     parser.add_argument("--near-ball-explore", action="store_true")
     parser.add_argument("--all-role-clearance", action="store_true")
     parser.add_argument("--basic-ball-play", action="store_true")
+    parser.add_argument("--strict-receive-handoff", action="store_true")
     parser.add_argument("--strike-ankle-lateral", type=float)
     parser.add_argument("--receive-ankle-lateral", type=float)
     parser.add_argument(
@@ -519,6 +547,7 @@ def main() -> None:
         contact_preferred_foot=args.contact_preferred_foot,
         strike_ankle_lateral_m=args.strike_ankle_lateral,
         receive_ankle_lateral_m=args.receive_ankle_lateral,
+        strict_receive_handoff=args.strict_receive_handoff,
     )
     print(
         json.dumps(

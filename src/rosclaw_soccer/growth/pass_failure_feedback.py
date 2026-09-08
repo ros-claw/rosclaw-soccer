@@ -7,7 +7,11 @@ from typing import Any
 import numpy as np
 
 
-def diagnose_passes(trace: dict[str, Any], agent_ids: tuple[str, ...]) -> list[dict[str, Any]]:
+def diagnose_passes(
+    trace: dict[str, Any], agent_ids: tuple[str, ...], *, launch_relative: bool = False
+) -> list[dict[str, Any]]:
+    if type(launch_relative) is not bool:
+        raise ValueError("pass feedback contract must be explicit")
     time = np.asarray(trace["time"], dtype=float)
     if len(time) < 2 or not np.all(np.isfinite(time)) or np.any(np.diff(time) <= 0):
         raise ValueError("pass feedback requires finite monotonic physical time")
@@ -69,10 +73,30 @@ def diagnose_passes(trace: dict[str, Any], agent_ids: tuple[str, ...]) -> list[d
             rows.append(row)
             continue
         first = start + int(attempts[0])
+        if launch_relative:
+            end = int(np.searchsorted(time, time[first] + 3.0, side="right"))
         opponent_codes = [
             i + 1 for i, name in enumerate(agent_ids) if name.split(".")[0] != sender.split(".")[0]
         ]
         intervening = np.flatnonzero(np.isin(contact[first + 1 : end], opponent_codes))
+        nonfoot_interruption = False
+        if launch_relative:
+            nonfoot = codes("ball_nonfoot_contact_agent_code")
+            nonfoot_force = np.asarray(trace["ball_nonfoot_contact_force_n"], dtype=float)
+            if nonfoot_force.shape != time.shape or not np.all(np.isfinite(nonfoot_force)):
+                raise ValueError("pass feedback requires finite nonfoot contact forces")
+            if nonfoot[first] > 0 and nonfoot_force[first] > 1e-6:
+                row.update(foot_contact_time_sec=float(time[first]), failure="NONFOOT_INTERRUPTION")
+                rows.append(row)
+                continue
+            nonfoot_events = np.flatnonzero(
+                (nonfoot[first + 1 : end] > 0) & (nonfoot_force[first + 1 : end] > 1e-6)
+            )
+            if len(nonfoot_events) and (
+                not len(intervening) or nonfoot_events[0] <= intervening[0]
+            ):
+                intervening = nonfoot_events
+                nonfoot_interruption = True
         if len(intervening):
             end = first + 1 + int(intervening[0])
         key = receiver.replace(".", "_")
@@ -104,6 +128,8 @@ def diagnose_passes(trace: dict[str, Any], agent_ids: tuple[str, ...]) -> list[d
                 "physical_receive_confirmed": received,
                 "failure": None
                 if received
+                else "NONFOOT_INTERRUPTION"
+                if nonfoot_interruption
                 else "OPPONENT_TOUCH"
                 if len(intervening)
                 else "WRONG_DIRECTION"

@@ -87,7 +87,12 @@ def physical_rewards(trace: dict[str, Any], ids: tuple[str, ...]) -> np.ndarray:
     # Never use the planner's pass handshake alone as a success reward.
     credited = set()
     time = np.asarray(trace["time"])
-    for outcome in diagnose_passes(trace, ids):
+    launch_relative = "pass_feedback_launch_relative" in trace
+    if launch_relative:
+        contract = np.asarray(trace["pass_feedback_launch_relative"])
+        if contract.shape != time.shape or contract.dtype != np.bool_ or not np.all(contract):
+            raise ValueError("physical reward handoff contract is invalid")
+    for outcome in diagnose_passes(trace, ids, launch_relative=launch_relative):
         if not outcome["physical_receive_confirmed"]:
             continue
         sender, receiver = ids.index(outcome["sender"]), ids.index(outcome["receiver"])
@@ -97,7 +102,7 @@ def physical_rewards(trace: dict[str, Any], ids: tuple[str, ...]) -> np.ndarray:
             & foot
             & (np.asarray(trace["ball_contact_force_n"]) > 0)
             & (time > time[first])
-            & (time <= outcome["commitment_time_sec"] + 3.0)
+            & (time <= (time[first] if launch_relative else outcome["commitment_time_sec"]) + 3.0)
         )
         if not len(received):
             continue
