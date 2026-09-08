@@ -72,6 +72,8 @@ def finish_update(
     after: dict[str, str],
     steps: int,
 ) -> dict[str, Any]:
+    if type(steps) is not int or steps < 0:
+        raise ValueError("optimizer steps must be a nonnegative integer")
     # Bind the actual starting weights, not merely an equal roster of labels.
     if before != {binding.agent_id: binding.policy_hash for binding in lease.bindings}:
         raise ValueError("optimizer starting weights differ from its training lease")
@@ -83,6 +85,32 @@ def finish_update(
             "private optimizer violated Core plasticity lease: " + ";".join(result.reasons)
         )
     return {"lease": lease.to_dict(), "audit": result.to_dict()}
+
+
+def verify_update_record(
+    record: dict[str, Any],
+    *,
+    before: dict[str, str],
+    after: dict[str, str],
+    focal: str,
+    generation: int,
+    dataset_hash: str,
+    context_hash: str,
+    maximum_steps: int = 4,
+) -> None:
+    lease = begin_update(
+        before=before,
+        focal=focal,
+        generation=generation,
+        dataset_hash=dataset_hash,
+        context_hash=context_hash,
+        maximum_steps=maximum_steps,
+    )
+    expected = finish_update(
+        lease=lease, before=before, after=after, steps=record["audit"]["optimizer_steps"]
+    )
+    if record != expected:
+        raise ValueError("recorded Core plasticity proof differs from actual private weights")
 
 
 def replay_recorded_update(root: Path, output: Path) -> dict[str, Any]:
@@ -105,8 +133,11 @@ def replay_recorded_update(root: Path, output: Path) -> dict[str, Any]:
             traces.append({k: archive[k] for k in archive.files})
     if proofs != manifest["iterations"][0]["rollout_report_hashes"]:
         raise ValueError("first-generation rollout binding differs")
-    parent = NearBallResidualPolicy.load(root / "generation-000.npz")
-    expected = NearBallResidualPolicy.load(root / "generation-001.npz")
+    initial_generation = manifest.get("initial_generation", 0)
+    if type(initial_generation) is not int or not 0 <= initial_generation <= 1000000:
+        raise ValueError("initial generation is invalid")
+    parent = NearBallResidualPolicy.load(root / f"generation-{initial_generation:03d}.npz")
+    expected = NearBallResidualPolicy.load(root / f"generation-{initial_generation + 1:03d}.npz")
     credit = manifest.get("credit", {"gamma": 0.99, "trace_decay": 0.95})
     child, rows = update_private_actors(
         parent, traces, gamma=credit["gamma"], trace_decay=credit["trace_decay"]

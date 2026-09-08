@@ -12,6 +12,7 @@ import numpy as np
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import validate_probe
+from rosclaw_soccer.training.near_ball_plasticity import private_weight_hashes, verify_update_record
 
 
 def audit(root: Path) -> dict[str, Any]:
@@ -19,13 +20,23 @@ def audit(root: Path) -> dict[str, Any]:
     commitment = manifest.pop("manifest_hash")
     if hash_json(manifest) != commitment:
         raise ValueError("training manifest commitment differs")
-    parent = NearBallResidualPolicy.load(root / "generation-000.npz")
+    initial_generation = manifest.get("initial_generation", 0)
+    if type(initial_generation) is not int or not 0 <= initial_generation <= 1000000:
+        raise ValueError("initial generation is invalid")
+    initial_policy = NearBallResidualPolicy.load(root / f"generation-{initial_generation:03d}.npz")
+    if (
+        manifest.get("initial_policy_hash", initial_policy.policy_hash)
+        != initial_policy.policy_hash
+    ):
+        raise ValueError("initial checkpoint commitment differs")
+    parent = initial_policy
     players = {
         agent: {"active_samples": 0, "actor_squared_delta": 0.0, "critic_squared_delta": 0.0}
         for agent in parent.agent_ids
     }
     paths = {validate_probe(path)["report_hash"]: path for path in root.glob("*/probe.json")}
     verified = 0
+    core_verified = 0
     for iteration in manifest["iterations"]:
         child = NearBallResidualPolicy.load(root / f"generation-{iteration['generation']:03d}.npz")
         if (
@@ -35,6 +46,7 @@ def audit(root: Path) -> dict[str, Any]:
         ):
             raise ValueError("private policy lineage is broken")
         counts = np.zeros(8, dtype=np.int64)
+        rollout_digests = []
         if len(iteration["players"]) != 8 or len(set(iteration["rollout_report_hashes"])) != len(
             iteration["rollout_report_hashes"]
         ):
@@ -61,7 +73,21 @@ def audit(root: Path) -> dict[str, Any]:
                     if not np.array_equal(expected, trace[key][t]):
                         raise ValueError("saved policy does not reproduce actor collection")
             counts += trace["residual_active"].sum(axis=0)
+            rollout_digests.append(report["trajectory_digests"][0])
             verified += 1
+        dataset_hash = str(hash_json({"rollouts": rollout_digests}))
+        context_hash = str(
+            hash_json(
+                {
+                    "body": parent.body_hash,
+                    "parent": parent.policy_hash,
+                    "roster": parent.agent_ids,
+                    "dataset": dataset_hash,
+                }
+            )
+        )
+        progressive = {k: v.copy() for k, v in parent.weights.items()}
+        requires_core = any("core_plasticity" in row for row in iteration["players"])
         for i, row in enumerate(iteration["players"]):
             agent = parent.agent_ids[i]
             if row["agent_id"] != agent or row["active_samples"] != int(counts[i]):
@@ -72,6 +98,22 @@ def audit(root: Path) -> dict[str, Any]:
             }
             if counts[i] < 32 and any(deltas.values()):
                 raise ValueError("unsampled private actor was modified")
+            before_hashes = private_weight_hashes(progressive, parent.agent_ids, parent.body_hash)
+            for key in progressive:
+                progressive[key][i] = child.weights[key][i]
+            if "core_plasticity" in row:
+                verify_update_record(
+                    row["core_plasticity"],
+                    before=before_hashes,
+                    after=private_weight_hashes(progressive, parent.agent_ids, parent.body_hash),
+                    focal=agent,
+                    generation=child.generation,
+                    dataset_hash=dataset_hash,
+                    context_hash=context_hash,
+                )
+                core_verified += 1
+            elif requires_core and counts[i] >= 32:
+                raise ValueError("trainable private actor lacks its Core plasticity proof")
             players[agent]["active_samples"] += int(counts[i])
             players[agent]["actor_squared_delta"] += sum(
                 deltas[k] for k in ("w1", "b1", "w2", "b2", "log_std")
@@ -79,18 +121,17 @@ def audit(root: Path) -> dict[str, Any]:
             players[agent]["critic_squared_delta"] += deltas["wv"] + deltas["bv"]
         parent = child
     outcomes: dict[str, Any] = {}
-    for label in ("zero", "candidate"):
+    baseline_label = manifest.get("baseline_label", "zero")
+    if baseline_label not in {"zero", "parent"}:
+        raise ValueError("unknown comparison baseline")
+    for label in (baseline_label, "candidate"):
         rows = []
         for item in manifest["evaluation"]:
             if item["label"] != label:
                 continue
             report = validate_probe(paths[item["report_hash"]])
             residual = report["near_ball_residual"]
-            expected_policy = (
-                parent
-                if label == "candidate"
-                else NearBallResidualPolicy.load(root / "generation-000.npz")
-            )
+            expected_policy = parent if label == "candidate" else initial_policy
             if residual["explore"] or residual["policy_hash"] != expected_policy.policy_hash:
                 raise ValueError("evaluation used exploration or the wrong checkpoint")
             blue = report["scenario"]["scenario_id"].endswith("blue")
@@ -116,6 +157,7 @@ def audit(root: Path) -> dict[str, Any]:
     result = {
         "training_manifest_hash": commitment,
         "verified_training_pairs": verified,
+        "verified_core_updates": core_verified,
         "players": players,
         "evaluation": outcomes,
         "whole_match_breakthrough": all(

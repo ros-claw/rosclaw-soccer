@@ -278,8 +278,8 @@ def _validate_on_policy(policy: NearBallResidualPolicy, trace: dict[str, Any]) -
         raise ValueError("rollout was not sampled from this frozen parent policy")
 
 
-def _collect(job: tuple[str, str, str, float, bool, int, float, bool]) -> str:
-    assets, destination, checkpoint, duration, blue, seed, offset, prospective = job
+def _collect(job: tuple[str, str, str, float, bool, int, float, bool, bool]) -> str:
+    assets, destination, checkpoint, duration, blue, seed, offset, prospective, clearance = job
     run_probe(
         asset_root=Path(assets),
         output=Path(destination),
@@ -294,6 +294,7 @@ def _collect(job: tuple[str, str, str, float, bool, int, float, bool]) -> str:
         anticipatory_contact=prospective,
         forward_receiver_lane=prospective,
         contact_policy=OwnedBallContactPolicy() if prospective else None,
+        all_role_clearance=clearance,
     )
     return str(Path(destination) / "probe.json")
 
@@ -307,24 +308,44 @@ def train(
     prospective_curriculum: bool = False,
     workers: int = 1,
     long_credit: bool = False,
+    all_role_clearance: bool = False,
+    diverse_ball_positions: bool = False,
+    initial_checkpoint: Path | None = None,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     if (
-        not 1 <= iterations <= 100
+        type(iterations) is not int
+        or not 1 <= iterations <= 100
         or not 5 <= duration <= 25
         or type(workers) is not int
         or not 1 <= workers <= 2
         or type(prospective_curriculum) is not bool
         or type(long_credit) is not bool
+        or type(all_role_clearance) is not bool
+        or type(diverse_ball_positions) is not bool
     ):
         raise ValueError("bounded online training budget required")
     fixture = build_four_vs_four_fixture(assets)
-    policy = NearBallResidualPolicy.initialize(
-        tuple(sorted(c.agent_id for c in fixture.cells)), fixture.cells[0].growth_scope.body_hash
+    ids = tuple(sorted(c.agent_id for c in fixture.cells))
+    body = fixture.cells[0].growth_scope.body_hash
+    policy = (
+        NearBallResidualPolicy.initialize(ids, body)
+        if initial_checkpoint is None
+        else NearBallResidualPolicy.load(initial_checkpoint)
+    )
+    if (
+        policy.agent_ids != ids
+        or policy.body_hash != body
+        or policy.generation + iterations > 1000000
+    ):
+        raise ValueError("initial candidate does not match the training body/roster/budget")
+    initial_policy = policy
+    offsets = (
+        (-0.16, -0.12, -0.04, 0.0, 0.04, 0.12, 0.16) if diverse_ball_positions else (-0.04, 0.04)
     )
     output.mkdir(parents=True)
-    policy.save(output / "generation-000.npz")
+    policy.save(output / f"generation-{policy.generation:03d}.npz")
     manifest: dict[str, Any] = {
         "schema": "rosclaw_soccer.private_near_ball_ppo.v1",
         "activation_ceiling": "SIM_ONLY",
@@ -334,6 +355,14 @@ def train(
         "training_source_hash": hash_bytes(Path(__file__).read_bytes()),
         "prospective_curriculum": prospective_curriculum,
         "workers": workers,
+        "initial_generation": policy.generation,
+        "initial_policy_hash": policy.policy_hash,
+        "baseline_label": "parent" if initial_checkpoint is not None else "zero",
+        "initial_checkpoint_hash": None
+        if initial_checkpoint is None
+        else hash_bytes(initial_checkpoint.read_bytes()),
+        "all_role_clearance": all_role_clearance,
+        "training_offsets_m": offsets,
         "credit": {
             "gamma": 0.997 if long_credit else 0.99,
             "trace_decay": 0.997 if long_credit else 0.95,
@@ -351,8 +380,9 @@ def train(
                 duration,
                 blue,
                 21500 + iteration * 2 + int(blue),
-                (-0.04, 0.04)[iteration % 2],
+                offsets[iteration % len(offsets)],
                 prospective_curriculum,
+                all_role_clearance,
             )
             for blue in (False, True)
         ]
@@ -388,8 +418,7 @@ def train(
         )
         (output / "training.json").write_text(json.dumps(manifest, indent=2) + "\n")
         print(json.dumps(manifest["iterations"][-1]), flush=True)
-    zero = NearBallResidualPolicy.load(output / "generation-000.npz")
-    for label, candidate in (("zero", zero), ("candidate", policy)):
+    for label, candidate in ((manifest["baseline_label"], initial_policy), ("candidate", policy)):
         for blue in (False, True):
             for offset in (-0.08, 0.08):
                 destination = output / f"eval-{label}-{'blue' if blue else 'red'}-{offset:+.2f}"
@@ -405,6 +434,7 @@ def train(
                     anticipatory_contact=prospective_curriculum,
                     forward_receiver_lane=prospective_curriculum,
                     contact_policy=OwnedBallContactPolicy() if prospective_curriculum else None,
+                    all_role_clearance=all_role_clearance,
                 )
                 validate_probe(destination / "probe.json")
                 manifest["evaluation"].append(
@@ -432,6 +462,9 @@ def main() -> None:
     parser.add_argument("--prospective-curriculum", action="store_true")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--long-credit", action="store_true")
+    parser.add_argument("--all-role-clearance", action="store_true")
+    parser.add_argument("--diverse-ball-positions", action="store_true")
+    parser.add_argument("--initial-checkpoint", type=Path)
     args = parser.parse_args()
     train(
         assets=args.asset_root,
@@ -441,6 +474,9 @@ def main() -> None:
         prospective_curriculum=args.prospective_curriculum,
         workers=args.workers,
         long_credit=args.long_credit,
+        all_role_clearance=args.all_role_clearance,
+        diverse_ball_positions=args.diverse_ball_positions,
+        initial_checkpoint=args.initial_checkpoint,
     )
 
 
