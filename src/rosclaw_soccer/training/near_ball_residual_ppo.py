@@ -98,14 +98,18 @@ def physical_rewards(trace: dict[str, Any], ids: tuple[str, ...]) -> np.ndarray:
     return rewards
 
 
-def episodic_gae(rewards: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def episodic_gae(
+    rewards: np.ndarray, values: np.ndarray, *, gamma: float = 0.99, trace_decay: float = 0.95
+) -> tuple[np.ndarray, np.ndarray]:
+    if not 0.9 <= gamma < 1 or not 0.9 <= trace_decay < 1:
+        raise ValueError("bounded control-rate credit parameters required")
     if rewards.shape != values.shape or not np.all(np.isfinite(rewards + values)):
         raise ValueError("invalid episodic GAE input")
     advantages = np.zeros_like(rewards)
     carry = np.zeros(8)
     for t in range(len(rewards) - 1, -1, -1):
         following = values[t + 1] if t + 1 < len(rewards) else np.zeros(8)
-        carry = rewards[t] + 0.99 * following - values[t] + 0.99 * 0.95 * carry
+        carry = rewards[t] + gamma * following - values[t] + gamma * trace_decay * carry
         advantages[t] = carry
     return advantages, advantages + values
 
@@ -115,6 +119,8 @@ def update_private_actors(
     rollouts: list[dict[str, Any]],
     *,
     epochs: int = 4,
+    gamma: float = 0.99,
+    trace_decay: float = 0.95,
 ) -> tuple[NearBallResidualPolicy, list[dict[str, Any]]]:
     # Optional training dependency: readers and the simulator use only NumPy.
     import torch
@@ -126,7 +132,12 @@ def update_private_actors(
     advantages, returns = [], []
     for trace in rollouts:
         _validate_on_policy(parent, trace)
-        a, r = episodic_gae(physical_rewards(trace, parent.agent_ids), trace["residual_value"])
+        a, r = episodic_gae(
+            physical_rewards(trace, parent.agent_ids),
+            trace["residual_value"],
+            gamma=gamma,
+            trace_decay=trace_decay,
+        )
         advantages.append(a)
         returns.append(r)
     observations = np.concatenate([t["residual_observations"] for t in rollouts])
@@ -261,6 +272,7 @@ def train(
     duration: float,
     prospective_curriculum: bool = False,
     workers: int = 1,
+    long_credit: bool = False,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -270,6 +282,7 @@ def train(
         or type(workers) is not int
         or not 1 <= workers <= 2
         or type(prospective_curriculum) is not bool
+        or type(long_credit) is not bool
     ):
         raise ValueError("bounded online training budget required")
     fixture = build_four_vs_four_fixture(assets)
@@ -287,6 +300,11 @@ def train(
         "training_source_hash": hash_bytes(Path(__file__).read_bytes()),
         "prospective_curriculum": prospective_curriculum,
         "workers": workers,
+        "credit": {
+            "gamma": 0.997 if long_credit else 0.99,
+            "trace_decay": 0.997 if long_credit else 0.95,
+            "control_dt_sec": 0.02,
+        },
         "note": "Residual PPO, frozen locomotion; not an end-to-end torque policy.",
     }
     for iteration in range(iterations):
@@ -319,7 +337,12 @@ def train(
             with np.load(destination / "primary.npz", allow_pickle=False) as archive:
                 traces.append({k: archive[k] for k in archive.files})
             proofs.append(report["report_hash"])
-        policy, rows = update_private_actors(policy, traces)
+        policy, rows = update_private_actors(
+            policy,
+            traces,
+            gamma=manifest["credit"]["gamma"],
+            trace_decay=manifest["credit"]["trace_decay"],
+        )
         policy.save(output / f"generation-{policy.generation:03d}.npz")
         manifest["iterations"].append(
             {
@@ -374,6 +397,7 @@ def main() -> None:
     parser.add_argument("--duration", type=float, default=12)
     parser.add_argument("--prospective-curriculum", action="store_true")
     parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--long-credit", action="store_true")
     args = parser.parse_args()
     train(
         assets=args.asset_root,
@@ -382,6 +406,7 @@ def main() -> None:
         duration=args.duration,
         prospective_curriculum=args.prospective_curriculum,
         workers=args.workers,
+        long_credit=args.long_credit,
     )
 
 
