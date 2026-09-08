@@ -59,7 +59,22 @@ def run_probe(
     all_role_clearance: bool = False,
     basic_ball_play: bool = False,
     kickoff_role: str = "playmaker",
+    contact_preferred_foot: str = "nearest",
+    strike_ankle_lateral_m: float | None = None,
+    receive_ankle_lateral_m: float | None = None,
 ) -> dict[str, Any]:
+    if receive_ankle_lateral_m is not None and (
+        not four_vs_four or not 0.10 <= receive_ankle_lateral_m <= 0.24
+    ):
+        raise ValueError("receive ankle ablation must remain in the bounded 4v4 course")
+    if strike_ankle_lateral_m is not None and (
+        not four_vs_four or not 0.08 <= strike_ankle_lateral_m <= 0.24
+    ):
+        raise ValueError("strike ankle ablation must remain in the bounded 4v4 course")
+    if contact_preferred_foot not in {"nearest", "left", "right"} or (
+        contact_preferred_foot != "nearest" and not four_vs_four
+    ):
+        raise ValueError("contact foot must be an explicit bilateral 4v4 ablation")
     if (
         type(basic_ball_play) is not bool
         or (basic_ball_play and not four_vs_four)
@@ -180,12 +195,19 @@ def run_probe(
             one_touch_finish_aim_yaw_bias_rad=0.0,
             committed_receive_aim_yaw_bias_rad=0.0,
             pass_stroke_duration_sec=pass_stroke_duration_sec,
+            preferred_foot=contact_preferred_foot,
         )
         scenario = replace(
             scenario,
             scenario_id="s199.s212.4v4.blue" if blue_kickoff else "s199.s212.4v4.red",
             ball_initial_position_m=(4.0, 1.20, 0.115) if blue_kickoff else (2.0, -1.20, 0.115),
         )
+        if strike_ankle_lateral_m is not None:
+            teacher = replace(teacher, ankle_lateral_offset_m=strike_ankle_lateral_m)
+        if receive_ankle_lateral_m is not None:
+            teacher = replace(
+                teacher, committed_receive_ankle_lateral_offset_m=receive_ankle_lateral_m
+            )
         x, y, z = scenario.ball_initial_position_m
         if forward_receiver_lane:
             x, y = (3.70, 1.22) if blue_kickoff else (2.30, -1.22)
@@ -455,6 +477,11 @@ def main() -> None:
     parser.add_argument("--near-ball-explore", action="store_true")
     parser.add_argument("--all-role-clearance", action="store_true")
     parser.add_argument("--basic-ball-play", action="store_true")
+    parser.add_argument("--strike-ankle-lateral", type=float)
+    parser.add_argument("--receive-ankle-lateral", type=float)
+    parser.add_argument(
+        "--contact-preferred-foot", choices=("nearest", "left", "right"), default="nearest"
+    )
     parser.add_argument(
         "--kickoff-role",
         choices=("playmaker", "finisher", "defender", "goalkeeper"),
@@ -489,6 +516,9 @@ def main() -> None:
         all_role_clearance=args.all_role_clearance,
         basic_ball_play=args.basic_ball_play,
         kickoff_role=args.kickoff_role,
+        contact_preferred_foot=args.contact_preferred_foot,
+        strike_ankle_lateral_m=args.strike_ankle_lateral,
+        receive_ankle_lateral_m=args.receive_ankle_lateral,
     )
     print(
         json.dumps(
