@@ -45,7 +45,9 @@ def render(
         raise ValueError("video sources must share the same roster")
     fixture = (
         build_four_vs_four_fixture(
-            asset_root, forward_receiver_lane=reports[0].get("forward_receiver_lane", False)
+            asset_root,
+            forward_receiver_lane=reports[0].get("forward_receiver_lane", False),
+            basic_ball_play=reports[0].get("basic_ball_play", False),
         )
         if four_vs_four
         else build_continuous_competitive_fixture(asset_root)
@@ -81,6 +83,8 @@ def render(
             )
             if report.get("forward_receiver_lane", False):
                 mode += " | FORWARD-LANE CURRICULUM"
+            if report.get("basic_ball_play", False):
+                mode += " | ROLE COURSE " + report.get("kickoff_role", "playmaker").upper()
             if report.get("near_ball_residual") is not None:
                 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 

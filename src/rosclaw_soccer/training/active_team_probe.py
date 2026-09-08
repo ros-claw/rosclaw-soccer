@@ -57,7 +57,16 @@ def run_probe(
     near_ball_seed: int = 0,
     near_ball_explore: bool = False,
     all_role_clearance: bool = False,
+    basic_ball_play: bool = False,
+    kickoff_role: str = "playmaker",
 ) -> dict[str, Any]:
+    if (
+        type(basic_ball_play) is not bool
+        or (basic_ball_play and not four_vs_four)
+        or kickoff_role not in {"playmaker", "finisher", "defender", "goalkeeper"}
+        or (kickoff_role != "playmaker" and not basic_ball_play)
+    ):
+        raise ValueError("role kickoff requires an explicit basic-ball-play 4v4 curriculum")
     if near_ball_policy is not None and not four_vs_four:
         raise ValueError("private residual actors require the symmetric 4v4 fixture")
     if four_vs_four and not active:
@@ -97,6 +106,7 @@ def run_probe(
             "training/four_vs_four_match.py",
             "training/independent_team_growth.py",
             "growth/independent_agent_cell.py",
+            "growth/role_self_model.py",
             "growth/competitive_match_assessment.py",
             "growth/locomotion_contact_teacher.py",
             "growth/contact_stroke.py",
@@ -114,7 +124,9 @@ def run_probe(
         for p in (source_root / relative,)
     }
     fixture = (
-        build_four_vs_four_fixture(asset_root, forward_receiver_lane=forward_receiver_lane)
+        build_four_vs_four_fixture(
+            asset_root, forward_receiver_lane=forward_receiver_lane, basic_ball_play=basic_ball_play
+        )
         if four_vs_four
         else build_continuous_competitive_fixture(asset_root)
     )
@@ -177,6 +189,13 @@ def run_probe(
         x, y, z = scenario.ball_initial_position_m
         if forward_receiver_lane:
             x, y = (3.70, 1.22) if blue_kickoff else (2.30, -1.22)
+        if kickoff_role != "playmaker":
+            team = "blue" if blue_kickoff else "red"
+            owner = next(
+                player for player in fixture.players if player.agent_id == f"{team}.{kickoff_role}"
+            )
+            sign = -1.0 if blue_kickoff else 1.0
+            x, y = owner.origin_m[0] + 0.55 * sign, owner.origin_m[1] - 0.12 * sign
         scenario = replace(
             scenario,
             ball_initial_position_m=(
@@ -243,6 +262,8 @@ def run_probe(
         "players": [asdict(p) for p in fixture.players],
         "four_vs_four": four_vs_four,
         "forward_receiver_lane": forward_receiver_lane,
+        "basic_ball_play": basic_ball_play,
+        "kickoff_role": kickoff_role,
         "near_ball_residual": None
         if near_ball_policy is None
         else {
@@ -433,6 +454,12 @@ def main() -> None:
     parser.add_argument("--near-ball-seed", type=int, default=0)
     parser.add_argument("--near-ball-explore", action="store_true")
     parser.add_argument("--all-role-clearance", action="store_true")
+    parser.add_argument("--basic-ball-play", action="store_true")
+    parser.add_argument(
+        "--kickoff-role",
+        choices=("playmaker", "finisher", "defender", "goalkeeper"),
+        default="playmaker",
+    )
     args = parser.parse_args()
     report = run_probe(
         asset_root=args.asset_root,
@@ -460,6 +487,8 @@ def main() -> None:
         near_ball_seed=args.near_ball_seed,
         near_ball_explore=args.near_ball_explore,
         all_role_clearance=args.all_role_clearance,
+        basic_ball_play=args.basic_ball_play,
+        kickoff_role=args.kickoff_role,
     )
     print(
         json.dumps(

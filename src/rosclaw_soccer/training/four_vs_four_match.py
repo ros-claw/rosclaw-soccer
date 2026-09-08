@@ -7,7 +7,13 @@ from dataclasses import replace
 from pathlib import Path
 
 from rosclaw_soccer.growth.independent_agent_cell import build_independent_agent_cell
-from rosclaw_soccer.growth.role_self_model import MatchRole, TeamRoleRoster
+from rosclaw_soccer.growth.role_self_model import (
+    MatchRole,
+    RoleSkillBinding,
+    SoccerSkill,
+    TeamRoleRoster,
+)
+from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.training.independent_team_growth import (
     IndependentTeamFixture,
     build_independent_three_vs_three_fixture,
@@ -24,9 +30,9 @@ FORMATION = (
 
 
 def build_four_vs_four_fixture(
-    asset_root: Path, *, forward_receiver_lane: bool = False
+    asset_root: Path, *, forward_receiver_lane: bool = False, basic_ball_play: bool = False
 ) -> IndependentTeamFixture:
-    if not isinstance(forward_receiver_lane, bool):
+    if not isinstance(forward_receiver_lane, bool) or not isinstance(basic_ball_play, bool):
         raise ValueError("formation selector must be boolean")
     foundation = build_independent_three_vs_three_fixture(asset_root)
     ids = {t: tuple(f"{t}.{role.value}" for role, _ in FORMATION) for t in ("red", "blue")}
@@ -47,6 +53,41 @@ def build_four_vs_four_fixture(
                 foundation_policy_hash=foundation.foundation_policy_hash,
                 home_position_m=origin,
             )
+            if basic_ball_play:
+                bindings = list(cell.self_model.skills)
+                owned = {binding.skill for binding in bindings}
+                additions: tuple[SoccerSkill, ...] = (
+                    SoccerSkill.LEAD_PASS,
+                    SoccerSkill.FIRST_TOUCH,
+                )
+                if role is MatchRole.DEFENDER:
+                    additions += (SoccerSkill.OFF_BALL_RUN,)
+                for skill in additions:
+                    if skill not in owned:
+                        bindings.append(
+                            RoleSkillBinding(
+                                skill=skill,
+                                champion_artifact_hash=foundation.foundation_policy_hash,
+                                evidence_hash=str(
+                                    hash_json(
+                                        {
+                                            "agent": agent_id,
+                                            "skill": skill.value,
+                                            "status": "UNTRAINED_SIM_CURRICULUM",
+                                        }
+                                    )
+                                ),
+                                generation=0,
+                                proficiency=0.0,
+                                training_priority=1.0,
+                            )
+                        )
+                cell = replace(
+                    cell,
+                    self_model=replace(
+                        cell.self_model, skills=tuple(bindings), basic_ball_play=True
+                    ),
+                )
             cells.append(
                 replace(
                     cell,

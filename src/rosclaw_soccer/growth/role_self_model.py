@@ -192,6 +192,7 @@ class RoleSelfModel:
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
     direct_joint_torque_output: bool = False
+    basic_ball_play: bool = False
     schema_version: str = "rosclaw_soccer.role_self_model.v1"
 
     def __post_init__(self) -> None:
@@ -220,6 +221,16 @@ class RoleSelfModel:
         if (
             len(skill_names) != len(bindings)
             or not _REQUIRED_SKILLS[self.primary_role] <= skill_names
+            or not isinstance(self.basic_ball_play, bool)
+            or (
+                self.basic_ball_play
+                and not {SoccerSkill.LEAD_PASS, SoccerSkill.FIRST_TOUCH} <= skill_names
+            )
+            or (
+                self.basic_ball_play
+                and self.primary_role is MatchRole.DEFENDER
+                and SoccerSkill.OFF_BALL_RUN not in skill_names
+            )
         ):
             raise ValueError("role self model lacks distinct mandatory skills")
         for label in (
@@ -246,7 +257,12 @@ class RoleSelfModel:
 
     @property
     def allowed_intents(self) -> tuple[TacticalIntent, ...]:
-        return tuple(sorted(_ROLE_INTENTS[self.primary_role], key=lambda value: value.value))
+        intents = _ROLE_INTENTS[self.primary_role]
+        if self.basic_ball_play:
+            intents = intents | {TacticalIntent.PASS, TacticalIntent.RECEIVE}
+            if self.primary_role is MatchRole.DEFENDER:
+                intents = intents | {TacticalIntent.SUPPORT}
+        return tuple(sorted(intents, key=lambda value: value.value))
 
     def skill(self, skill: SoccerSkill) -> RoleSkillBinding:
         try:
@@ -256,13 +272,13 @@ class RoleSelfModel:
 
     def authorizes(self, intent: TacticalIntent, skill: SoccerSkill) -> bool:
         return bool(
-            intent in _ROLE_INTENTS[self.primary_role]
+            intent in self.allowed_intents
             and skill in _INTENT_SKILLS[intent]
             and any(binding.skill is skill for binding in self.skills)
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "schema_version": self.schema_version,
             "agent_id": self.agent_id,
             "team_id": self.team_id,
@@ -280,6 +296,10 @@ class RoleSelfModel:
             "hardware_authorized": self.hardware_authorized,
             "direct_joint_torque_output": self.direct_joint_torque_output,
         }
+        # Preserve the canonical hashes of historical, non-opt-in fixtures.
+        if self.basic_ball_play:
+            result["basic_ball_play"] = True
+        return result
 
 
 @dataclass(frozen=True)

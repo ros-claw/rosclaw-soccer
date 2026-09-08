@@ -2566,7 +2566,20 @@ def _select_loose_ball_chaser(
     candidates: tuple[str, ...] = tuple(
         controller.cell.agent_id
         for controller in controllers
-        if controller.cell.self_model.primary_role is not MatchRole.GOALKEEPER
+        if (
+            controller.cell.self_model.primary_role is not MatchRole.GOALKEEPER
+            or (
+                controller.cell.self_model.basic_ball_play
+                and np.linalg.norm(
+                    np.asarray(states[controller.cell.agent_id].position_m[:2]) - ball_position
+                )
+                <= 0.8
+                and np.linalg.norm(
+                    np.asarray(controller.cell.tactical_profile.home_position_m[:2]) - ball_position
+                )
+                <= 1.3
+            )
+        )
         and states[controller.cell.agent_id].stable
     )
     if not candidates:

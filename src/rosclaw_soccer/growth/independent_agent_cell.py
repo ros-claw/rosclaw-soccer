@@ -296,7 +296,9 @@ class RosclawSoccerAgentCell:
             and np.linalg.norm(observation.ball_velocity_mps[:2]) <= 0.50
         ):
             # An intention to make first contact is not a claim of possession.
-            if role is MatchRole.PLAYMAKER:
+            if role is MatchRole.PLAYMAKER or (
+                role is MatchRole.DEFENDER and self.self_model.basic_ball_play
+            ):
                 receiver = self._best_receiver(observation)
                 if receiver is not None and self._lane_clear(observation, receiver):
                     return self._decision(
@@ -329,15 +331,28 @@ class RosclawSoccerAgentCell:
     def _competition_decision(self, value: AgentCellObservation) -> AgentCellDecision | None:
         """Give each team a challenger and ball-relative supporting objectives."""
         if self.self_model.primary_role is MatchRole.DEFENDER:
+            if (
+                self.self_model.basic_ball_play
+                and value.possession_agent_id is None
+                and value.ball_chaser_agent_id == self.agent_id
+            ):
+                return self._decision(
+                    value,
+                    TacticalIntent.RECEIVE,
+                    SoccerSkill.FIRST_TOUCH,
+                    value.ball_position_m,
+                    None,
+                    0.90,
+                )
             return None
         if value.possession_agent_id == self.agent_id:
             return None
         if value.possession_agent_id in self.self_model.teammate_ids:
             return None
         chaser_id = value.ball_chaser_agent_id
-        if (
-            chaser_id not in (self.agent_id, *self.self_model.teammate_ids)
-            or self._role_for_agent(chaser_id) is MatchRole.DEFENDER
+        if chaser_id not in (self.agent_id, *self.self_model.teammate_ids) or (
+            self._role_for_agent(chaser_id) is MatchRole.DEFENDER
+            and not self.self_model.basic_ball_play
         ):
             chaser_id = self._team_ball_chaser(value).agent_id
         if chaser_id == self.agent_id:
@@ -380,6 +395,17 @@ class RosclawSoccerAgentCell:
         velocity = np.asarray(value.ball_velocity_mps, dtype=np.float64)
         own_goal = np.asarray(value.own_goal_m, dtype=np.float64)
         if value.possession_agent_id == self.agent_id:
+            if self.self_model.basic_ball_play:
+                receiver = self._best_receiver(value)
+                if receiver is not None:
+                    return self._decision(
+                        value,
+                        TacticalIntent.PASS,
+                        SoccerSkill.LEAD_PASS,
+                        receiver.position_m,
+                        receiver.agent_id,
+                        0.90,
+                    )
             available = tuple(state for state in value.teammate_states if state.stable)
             if not available:
                 return self._decision(
@@ -408,6 +434,22 @@ class RosclawSoccerAgentCell:
                 0.90,
             )
         toward_goal = float(np.dot(velocity[:2], own_goal[:2] - ball[:2])) > 0.10
+        if (
+            self.self_model.basic_ball_play
+            and value.possession_agent_id is None
+            and value.ball_chaser_agent_id in {None, self.agent_id}
+            and np.linalg.norm(ball[:2] - np.asarray(value.self_state.position_m[:2])) < 0.8
+            and np.linalg.norm(ball[:2] - own_goal[:2]) < 2.0
+            and np.linalg.norm(velocity[:2]) <= 0.5
+        ):
+            return self._decision(
+                value,
+                TacticalIntent.RECEIVE,
+                SoccerSkill.FIRST_TOUCH,
+                value.ball_position_m,
+                None,
+                0.90,
+            )
         danger = float(np.linalg.norm(own_goal[:2] - ball[:2])) < 3.5
         predicted_y = float(ball[1])
         if abs(float(velocity[0])) > 0.10:
@@ -436,6 +478,31 @@ class RosclawSoccerAgentCell:
         )
 
     def _defender_decision(self, value: AgentCellObservation) -> AgentCellDecision:
+        handler = value.possession_agent_id or value.ball_chaser_agent_id
+        if (
+            self.self_model.basic_ball_play
+            and handler in self.self_model.teammate_ids
+            and self._role_for_agent(handler) is MatchRole.GOALKEEPER
+        ):
+            return self._decision(
+                value,
+                TacticalIntent.SUPPORT,
+                SoccerSkill.OFF_BALL_RUN,
+                self.tactical_profile.home_position_m,
+                handler,
+                0.90,
+            )
+        if self.self_model.basic_ball_play and value.possession_agent_id == self.agent_id:
+            receiver = self._best_receiver(value)
+            if receiver is not None:
+                return self._decision(
+                    value,
+                    TacticalIntent.PASS,
+                    SoccerSkill.LEAD_PASS,
+                    receiver.position_m,
+                    receiver.agent_id,
+                    0.90,
+                )
         ball = np.asarray(value.ball_position_m, dtype=np.float64)
         self_xy = np.asarray(value.self_state.position_m[:2], dtype=np.float64)
         defenders = (
@@ -543,6 +610,21 @@ class RosclawSoccerAgentCell:
 
     def _finisher_decision(self, value: AgentCellObservation) -> AgentCellDecision:
         if value.possession_agent_id == self.agent_id:
+            if self.self_model.basic_ball_play:
+                receiver = self._best_receiver(value)
+                sign = math.copysign(1.0, value.opponent_goal_m[0] - value.own_goal_m[0])
+                if (
+                    receiver is not None
+                    and sign * (receiver.position_m[0] - value.self_state.position_m[0]) > 0.6
+                ):
+                    return self._decision(
+                        value,
+                        TacticalIntent.PASS,
+                        SoccerSkill.LEAD_PASS,
+                        receiver.position_m,
+                        receiver.agent_id,
+                        0.90,
+                    )
             return self._decision(
                 value,
                 TacticalIntent.SHOOT,
@@ -639,8 +721,15 @@ class RosclawSoccerAgentCell:
             and (
                 not self.tactical_profile.active_competition
                 or (
-                    self._role_for_agent(state.agent_id)
-                    in {MatchRole.PLAYMAKER, MatchRole.FINISHER}
+                    (
+                        self._role_for_agent(state.agent_id)
+                        in {MatchRole.PLAYMAKER, MatchRole.FINISHER}
+                        or (
+                            self.self_model.basic_ball_play
+                            and self.self_model.primary_role is MatchRole.GOALKEEPER
+                            and self._role_for_agent(state.agent_id) is MatchRole.DEFENDER
+                        )
+                    )
                     and self._lane_clear(value, state)
                 )
             )
@@ -650,8 +739,17 @@ class RosclawSoccerAgentCell:
         goal = np.asarray(value.opponent_goal_m[:2], dtype=np.float64)
         return min(
             candidates,
-            key=lambda state: float(
-                np.linalg.norm(np.asarray(state.position_m[:2], dtype=np.float64) - goal)
+            key=lambda state: (
+                float(
+                    np.linalg.norm(
+                        np.asarray(state.position_m[:2])
+                        - np.asarray(value.self_state.position_m[:2])
+                    )
+                )
+                if self.self_model.basic_ball_play
+                else float(
+                    np.linalg.norm(np.asarray(state.position_m[:2], dtype=np.float64) - goal)
+                )
             ),
         )
 
@@ -674,6 +772,7 @@ class RosclawSoccerAgentCell:
             and not (
                 self.tactical_profile.active_competition
                 and self._role_for_agent(state.agent_id) is MatchRole.DEFENDER
+                and not self.self_model.basic_ball_play
             )
         )
         if not candidates:
