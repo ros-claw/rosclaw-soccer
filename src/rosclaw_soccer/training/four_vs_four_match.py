@@ -23,12 +23,18 @@ FORMATION = (
 )
 
 
-def build_four_vs_four_fixture(asset_root: Path) -> IndependentTeamFixture:
+def build_four_vs_four_fixture(
+    asset_root: Path, *, forward_receiver_lane: bool = False
+) -> IndependentTeamFixture:
+    if not isinstance(forward_receiver_lane, bool):
+        raise ValueError("formation selector must be boolean")
     foundation = build_independent_three_vs_three_fixture(asset_root)
     ids = {t: tuple(f"{t}.{role.value}" for role, _ in FORMATION) for t in ("red", "blue")}
     cells, players = [], []
     for team in ("red", "blue"):
         for role, home in FORMATION:
+            if forward_receiver_lane and role is MatchRole.FINISHER:
+                home = (3.50, -1.10, 0.0)
             origin = home if team == "red" else (6.0 - home[0], -home[1], home[2])
             agent_id = f"{team}.{role.value}"
             cell = build_independent_agent_cell(

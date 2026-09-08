@@ -59,6 +59,15 @@ def test_role_complete_mirrored_roster_and_private_memories(fixture):
         replace(fixture, players=(*fixture.players, fixture.players[0]))
 
 
+def test_forward_lane_curriculum_is_mirrored_and_distinct_from_baseline(fixture):
+    curriculum = build_four_vs_four_fixture(Path("unused"), forward_receiver_lane=True)
+    assert curriculum.fixture_hash != fixture.fixture_hash
+    red = next(p for p in curriculum.players if p.agent_id == "red.finisher")
+    blue = next(p for p in curriculum.players if p.agent_id == "blue.finisher")
+    assert red.origin_m == (3.5, -1.1, 0.0)
+    assert blue.origin_m == (2.5, 1.1, 0.0)
+
+
 def _observation(fixture, agent_id, *, blue=False):
     def state(p):
         return AgentPhysicalState(

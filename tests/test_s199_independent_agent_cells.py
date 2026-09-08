@@ -46,6 +46,53 @@ def test_active_competition_assigns_one_loose_ball_challenger_per_team() -> None
         assert len(challengers) == 1
 
 
+def test_anticipatory_pass_preserves_loose_possession_and_receiver_handshake() -> None:
+    cells = tuple(
+        replace(
+            c,
+            tactical_profile=replace(
+                c.tactical_profile, active_competition=True, anticipatory_contact=True
+            ),
+        )
+        for c in _cells()
+    )
+    observations = tuple(
+        replace(o, ball_chaser_agent_id="red.playmaker")
+        for o in _observations(cells, possession_agent_id=None)
+    )
+    decisions = tuple(c.decide(o) for c, o in zip(cells, observations, strict=True))
+    assert next(d for d in decisions if d.agent_id == "red.playmaker").intent is TacticalIntent.PASS
+    assert all(o.possession_agent_id is None for o in observations)
+    frame = build_team_coordination_frame(
+        roster=TeamRoleRoster("s214.anticipatory", tuple(c.self_model for c in cells)),
+        cells=cells,
+        observations=observations,
+        decisions=decisions,
+        frame_index=0,
+    )
+    assert frame.pass_receive_handshakes[0].passer_agent_id == "red.playmaker"
+    assert all(o.possession_agent_id is None for o in frame.observations)
+
+
+def test_anticipatory_action_cannot_override_opponent_possession() -> None:
+    cells = tuple(
+        replace(
+            c,
+            tactical_profile=replace(
+                c.tactical_profile, active_competition=True, anticipatory_contact=True
+            ),
+        )
+        for c in _cells()
+    )
+    observations = tuple(
+        replace(o, ball_chaser_agent_id="red.playmaker")
+        for o in _observations(cells, possession_agent_id="blue.playmaker")
+    )
+    decision = cells[1].decide(observations[1])
+    assert decision.agent_id == "red.playmaker"
+    assert decision.intent is not TacticalIntent.PASS
+
+
 def test_active_opponents_contest_even_when_other_team_has_receive_lease() -> None:
     cells = tuple(
         replace(c, tactical_profile=replace(c.tactical_profile, active_competition=True))

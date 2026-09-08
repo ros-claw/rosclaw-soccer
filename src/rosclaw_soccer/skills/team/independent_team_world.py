@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from rosclaw_soccer.growth.contact_stroke import ContactStroke
 from rosclaw_soccer.growth.contextual_strike_experts import (
     ContextualStrikeExpertMemory,
     build_strike_task_context,
@@ -534,6 +535,7 @@ class _PlayerController:
     last_ball_contact_foot: str | None = None
     post_receive_joint_target: NDArray[np.float64] | None = None
     strike_phase: StrikePhaseState = field(default_factory=StrikePhaseState)
+    pass_stroke: ContactStroke = field(default_factory=ContactStroke)
 
     def __post_init__(self) -> None:
         if self.seen_intents is None:
@@ -722,6 +724,7 @@ def simulate_independent_team_world(
     receive_lease_agent_id: str | None = None
     receive_lease_source_agent_id: str | None = None
     receive_lease_origin_m: NDArray[np.float64] | None = None
+    receive_lease_target_m: tuple[float, float] | None = None
     receive_lease_active = False
     last_receive_contact_agent_id: str | None = None
     last_receive_contact_time_sec = -math.inf
@@ -850,12 +853,15 @@ def simulate_independent_team_world(
             pass_handshake_count += len(coordination.pass_receive_handshakes)
             pass_source_agent_id = None
             pass_target_agent_id = None
-            if current_possession_agent_id is not None:
+            if current_possession_agent_id is not None or (
+                option_bridge_config is not None and option_bridge_config.prospective_enabled
+            ):
                 current_handshake = next(
                     (
                         handshake
                         for handshake in coordination.pass_receive_handshakes
-                        if handshake.passer_agent_id == current_possession_agent_id
+                        if handshake.passer_agent_id
+                        == (current_possession_agent_id or assigned_ball_chaser_agent_id)
                     ),
                     None,
                 )
@@ -870,6 +876,7 @@ def simulate_independent_team_world(
                         data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64
                     ).copy()
                     receive_lease_active = False
+                    receive_lease_target_m = current_handshake.pass_target_m[:2]
                 if current_handshake is not None:
                     pass_source_agent_id = current_handshake.passer_agent_id
                     pass_target_agent_id = current_handshake.receiver_agent_id
@@ -892,6 +899,11 @@ def simulate_independent_team_world(
                 ):
                     controller.intent_switch_count += 1
                 controller.current_intent = decision.intent
+                if controller.decision is None or (
+                    controller.decision.intent != decision.intent
+                    or controller.decision.target_agent_id != decision.target_agent_id
+                ):
+                    controller.pass_stroke.reset()
                 assert controller.seen_intents is not None
                 controller.seen_intents.add(decision.intent)
                 controller.decision = decision
@@ -1107,6 +1119,10 @@ def simulate_independent_team_world(
             goal=goal,
             config=option_bridge_config,
             phase_config=strike_phase_config,
+            left_goal_plane_x_m=active.left_goal_plane_x_m if active.bilateral_goals else None,
+            prospective_agent_id=(
+                assigned_ball_chaser_agent_id if current_possession_agent_id is None else None
+            ),
         )
         option_controller = next(
             (controller for controller in controllers if controller.option_active),
@@ -1173,6 +1189,16 @@ def simulate_independent_team_world(
                     else None
                 ),
                 config=active,
+                prospective_contact=bool(
+                    option_bridge_config is not None and option_bridge_config.prospective_enabled
+                ),
+                pending_receive_target_m=(
+                    receive_lease_target_m
+                    if option_bridge_config is not None
+                    and option_bridge_config.prospective_enabled
+                    and receive_lease_agent_id == controller.cell.agent_id
+                    else None
+                ),
             )
             current_yaw = _pelvis_yaw(
                 np.asarray(
@@ -1188,7 +1214,8 @@ def simulate_independent_team_world(
                 controller,
                 mirror=bool(local_command[1] < -1.0e-6),
                 correct_mirrored_yaw=bool(
-                    strike_phase_config is not None and controller.strike_phase.active
+                    active.bilateral_goals
+                    or (strike_phase_config is not None and controller.strike_phase.active)
                 ),
             )
             controller.last_world_command = command.copy()
@@ -1266,6 +1293,13 @@ def simulate_independent_team_world(
                     controller is teacher_controller
                     and controller is not option_controller
                     and not post_receive_stabilizing
+                    and not (
+                        option_bridge_config is not None
+                        and option_bridge_config.prospective_enabled
+                        and controller.decision is not None
+                        and controller.decision.intent
+                        in {TacticalIntent.PASS, TacticalIntent.SHOOT}
+                    )
                     and (
                         strike_phase_config is None
                         or not controller.strike_phase.active
@@ -1394,6 +1428,32 @@ def simulate_independent_team_world(
                                 contact_teacher_config.pass_strike_foot_speed_mps
                             ),
                         )
+                    stroke_progress = None
+                    effect_direction = teacher_direction.copy()
+                    lateral_sign = _contact_foot_lateral_sign(
+                        controller=controller,
+                        data=data,
+                        desired_direction_xy=effect_direction,
+                        use_left=use_left,
+                    )
+                    if (
+                        effect_config.pass_stroke_duration_sec > 0
+                        and contact_mode == "strike"
+                        and controller.decision is not None
+                        and controller.decision.intent is TacticalIntent.PASS
+                        and min(left_distance, right_distance)
+                        <= effect_config.maximum_foot_ball_distance_m
+                    ):
+                        stroke_progress = controller.pass_stroke.step(
+                            time_sec=float(data.time),
+                            duration_sec=effect_config.pass_stroke_duration_sec,
+                            use_left=use_left,
+                            direction_xy=(float(effect_direction[0]), float(effect_direction[1])),
+                            lateral_sign=lateral_sign,
+                        )
+                        use_left = controller.pass_stroke.use_left
+                        effect_direction = np.asarray(controller.pass_stroke.direction_xy)
+                        lateral_sign = controller.pass_stroke.lateral_sign
                     effect = locomotion_contact_teacher_effect(
                         model=model,
                         data=data,
@@ -1403,20 +1463,16 @@ def simulate_independent_team_world(
                         actuated_dof_indices=controller.joint_qvel,
                         ball_position_m=ball_position,
                         ball_velocity_mps=ball_linear_velocity,
-                        desired_ball_direction_xy=teacher_direction,
+                        desired_ball_direction_xy=effect_direction,
                         contact_mode=contact_mode,
                         # Recompute anatomical left after every yaw change.
                         # A fixed sign is only valid in the birth frame and
                         # crosses the selected ankle through the support leg
                         # after a receiver turns to face an incoming pass.
-                        local_lateral_sign=_contact_foot_lateral_sign(
-                            controller=controller,
-                            data=data,
-                            desired_direction_xy=teacher_direction,
-                            use_left=use_left,
-                        ),
+                        local_lateral_sign=lateral_sign,
                         contact_recent=contact_recent,
                         config=effect_config,
+                        strike_progress=stroke_progress,
                     )
                     frame_teacher_mode_code = 1 if contact_mode == "receive" else 2
                     frame_teacher_foot_code = 1 if use_left else 2
@@ -1532,6 +1588,7 @@ def simulate_independent_team_world(
                         receive_lease_agent_id = None
                         receive_lease_source_agent_id = None
                         receive_lease_origin_m = None
+                        receive_lease_target_m = None
                         receive_lease_active = False
                     if (
                         strike_lease_agent_id is not None
@@ -1994,6 +2051,8 @@ def _movement_command(
     strike_phase_config: StrikePhaseConfig | None = None,
     strike_phase_owner_agent_id: str | None = None,
     strike_coordination_action: StrikeCoordinationAction | None = None,
+    prospective_contact: bool = False,
+    pending_receive_target_m: tuple[float, float] | None = None,
 ) -> NDArray[np.float64]:
     current = positions[controller.cell.agent_id]
     target = np.asarray(decision.target_position_m[:2], dtype=np.float64)
@@ -2021,6 +2080,10 @@ def _movement_command(
             if abs(float(np.dot(ball - current, lateral))) <= 0.25
             else current + lateral_error * lateral
         )
+    if committed_receiver and not active_receiver and pending_receive_target_m is not None:
+        # A diagonal pass is aimed at the negotiated receiver point. Do not
+        # drag that receiver onto the passer's current horizontal ball lane.
+        target = np.asarray(pending_receive_target_m, dtype=np.float64)
     if decision.intent is TacticalIntent.RECEIVE:
         ball_velocity = np.asarray(data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64)
         speed = float(np.linalg.norm(ball_velocity))
@@ -2229,8 +2292,16 @@ def _movement_command(
             float(phase_approach_direction[1]),
             float(phase_approach_direction[0]),
         )
-    elif strike_target_position_m is not None and not post_receive_hold:
-        destination = np.asarray(strike_target_position_m, dtype=np.float64)
+    elif not post_receive_hold and (
+        strike_target_position_m is not None
+        or (prospective_contact and decision.intent in {TacticalIntent.PASS, TacticalIntent.SHOOT})
+    ):
+        destination = np.asarray(
+            strike_target_position_m
+            if strike_target_position_m is not None
+            else decision.target_position_m[:2],
+            dtype=np.float64,
+        )
         desired_yaw = math.atan2(destination[1] - ball[1], destination[0] - ball[0])
     elif (
         committed_receiver
@@ -2480,6 +2551,8 @@ def _activate_rolling_option(
     goal: G1TrainingGoalSpec,
     config: G1RollingOptionBridgeConfig | None,
     phase_config: StrikePhaseConfig | None = None,
+    left_goal_plane_x_m: float | None = None,
+    prospective_agent_id: str | None = None,
 ) -> None:
     """Warm-start one owned PASS/SHOOT option after contact-derived possession."""
 
@@ -2489,14 +2562,25 @@ def _activate_rolling_option(
         strike_lease_agent_id is not None and strike_lease_agent_id == last_ball_contact_agent_id
     )
     owned_option = current_possession_agent_id == last_ball_contact_agent_id
-    if not leased_shot and not owned_option:
+    prospective = bool(
+        config.prospective_enabled
+        and current_possession_agent_id is None
+        and prospective_agent_id is not None
+    )
+    if not leased_shot and not owned_option and not prospective:
         return
     candidate = next(
         (
             controller
             for controller in controllers
             if controller.cell.agent_id
-            == (strike_lease_agent_id if leased_shot else current_possession_agent_id)
+            == (
+                strike_lease_agent_id
+                if leased_shot
+                else prospective_agent_id
+                if prospective
+                else current_possession_agent_id
+            )
             and controller.decision is not None
             and (
                 leased_shot
@@ -2513,19 +2597,26 @@ def _activate_rolling_option(
     phase_required = phase_config is not None
     if phase_required and candidate.strike_phase.phase is not StrikePhase.STRIKE:
         return
-    if abs(candidate.spec.yaw_rad) > 1.0e-9:
+    if abs(candidate.spec.yaw_rad) > 1.0e-9 and not (
+        config.bilateral_enabled and left_goal_plane_x_m is not None
+    ):
         # This first bridge only certifies the canonical red attacking frame.
         # Mirrored/bilateral strike entry needs its own matched retention set.
         return
     if candidate.kick_policy is None or candidate.kick_output is None:
         raise RuntimeError("rolling option bridge was requested without a kick policy")
     assert candidate.decision is not None
+    attacking_goal = (
+        (left_goal_plane_x_m, -goal.target_y_m, goal.target_z_m)
+        if config.bilateral_enabled
+        and left_goal_plane_x_m is not None
+        and candidate.cell.self_model.team_id == "blue"
+        else (goal.plane_x_m, goal.target_y_m, goal.target_z_m)
+    )
     ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
     pelvis = np.asarray(data.qpos[candidate.qpos_base : candidate.qpos_base + 2], dtype=np.float64)
     target = np.asarray(
-        (goal.plane_x_m, goal.target_y_m)
-        if leased_shot
-        else candidate.decision.target_position_m[:2],
+        attacking_goal[:2] if leased_shot else candidate.decision.target_position_m[:2],
         dtype=np.float64,
     )
     direction = target - ball
@@ -2555,16 +2646,27 @@ def _activate_rolling_option(
         candidate.decision.target_position_m
         if is_pass
         else (
-            goal.plane_x_m,
-            goal.target_y_m
+            attacking_goal[0],
+            attacking_goal[1]
             + (0.0 if phase_config is None else phase_config.strike_aim_lateral_bias_m),
-            goal.target_z_m,
+            attacking_goal[2],
         )
     )
     candidate.kick_policy.target_pos_w = np.asarray(preferred_target, dtype=np.float32)
+    if is_pass and config.pass_reference_distance_m > 0:
+        # Calibrated motor reference is distinct from the tactical receiver.
+        # The receiver remains the physical scoring target; no ball state changes.
+        waypoint_xy = pelvis + config.pass_reference_distance_m * direction
+        candidate.kick_policy.target_pos_w = np.asarray(
+            (waypoint_xy[0], waypoint_xy[1], 0.20), dtype=np.float32
+        )
     candidate.kick_policy.time_step = (
         int(candidate.kick_policy.WARMUP_STEPS) + config.entry_policy_frame
     )
+    if config.observation_warmstart:
+        from rosclaw_soccer.providers.g1.kick_warmstart import prepare_kick_handoff
+
+        prepare_kick_handoff(candidate.kick_policy, entry_frame=config.entry_policy_frame)
     parameters = config.pass_parameters if is_pass else config.shoot_parameters
     candidate.option_active = True
     candidate.option_activation_frame = frame

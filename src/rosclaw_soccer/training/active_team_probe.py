@@ -43,9 +43,41 @@ def run_probe(
     blue_kickoff: bool = False,
     contact_policy: OwnedBallContactPolicy | None = None,
     kickoff_offset_m: float = 0.0,
+    pass_stroke_duration_sec: float = 0.0,
+    bilateral_kick_options: bool = False,
+    kick_observation_warmstart: bool = False,
+    arrival_radius_m: float | None = None,
+    anticipatory_contact: bool = False,
+    kick_entry_frame: int | None = None,
+    pass_swing_amplitude: float | None = None,
+    forward_receiver_lane: bool = False,
+    pass_reference_distance_m: float = 0.0,
 ) -> dict[str, Any]:
     if four_vs_four and not active:
         raise ValueError("4v4 requires active role objectives")
+    if pass_reference_distance_m != 0.0 and not bilateral_kick_options:
+        raise ValueError("pass motor reference requires bilateral neural options")
+    if not isinstance(forward_receiver_lane, bool) or (forward_receiver_lane and not four_vs_four):
+        raise ValueError("forward receiver curriculum requires 4v4")
+    if (
+        any(v is not None for v in (kick_entry_frame, pass_swing_amplitude))
+        and not bilateral_kick_options
+    ):
+        raise ValueError("kick parameters require bilateral neural options")
+    if pass_stroke_duration_sec != 0.0 and not four_vs_four:
+        raise ValueError("contact strokes require the 4v4 fixture")
+    if not isinstance(anticipatory_contact, bool) or (
+        anticipatory_contact and not bilateral_kick_options
+    ):
+        raise ValueError("anticipatory contact requires bilateral neural options")
+    if not isinstance(bilateral_kick_options, bool) or (
+        bilateral_kick_options and not four_vs_four
+    ):
+        raise ValueError("bilateral kick options require the 4v4 fixture")
+    if not isinstance(kick_observation_warmstart, bool) or (
+        kick_observation_warmstart and not bilateral_kick_options
+    ):
+        raise ValueError("kick warmstart requires bilateral kick options")
     if blue_kickoff and not four_vs_four:
         raise ValueError("mirrored kickoff requires the symmetric 4v4 fixture")
     if not -0.20 <= kickoff_offset_m <= 0.20 or (contact_policy is not None and not four_vs_four):
@@ -62,6 +94,8 @@ def run_probe(
             "growth/independent_agent_cell.py",
             "growth/competitive_match_assessment.py",
             "growth/locomotion_contact_teacher.py",
+            "growth/contact_stroke.py",
+            "providers/g1/kick_warmstart.py",
             "growth/owned_ball_contact.py",
             "growth/pass_failure_feedback.py",
             "skills/team/independent_team_world.py",
@@ -73,15 +107,24 @@ def run_probe(
         for p in (source_root / relative,)
     }
     fixture = (
-        build_four_vs_four_fixture(asset_root)
+        build_four_vs_four_fixture(asset_root, forward_receiver_lane=forward_receiver_lane)
         if four_vs_four
         else build_continuous_competitive_fixture(asset_root)
     )
     cells = tuple(
-        replace(cell, tactical_profile=replace(cell.tactical_profile, active_competition=active))
+        replace(
+            cell,
+            tactical_profile=replace(
+                cell.tactical_profile,
+                active_competition=active,
+                anticipatory_contact=anticipatory_contact,
+            ),
+        )
         for cell in fixture.cells
     )
     config = replace(default_continuous_match_config(), simulation_duration_sec=duration)
+    if arrival_radius_m is not None:
+        config = replace(config, arrival_radius_m=arrival_radius_m)
     if active:
         config = replace(
             config,
@@ -116,6 +159,7 @@ def run_probe(
             shot_strike_foot_speed_mps=2.50,
             one_touch_finish_aim_yaw_bias_rad=0.0,
             committed_receive_aim_yaw_bias_rad=0.0,
+            pass_stroke_duration_sec=pass_stroke_duration_sec,
         )
         scenario = replace(
             scenario,
@@ -123,6 +167,8 @@ def run_probe(
             ball_initial_position_m=(4.0, 1.20, 0.115) if blue_kickoff else (2.0, -1.20, 0.115),
         )
         x, y, z = scenario.ball_initial_position_m
+        if forward_receiver_lane:
+            x, y = (3.70, 1.22) if blue_kickoff else (2.30, -1.22)
         scenario = replace(
             scenario,
             ball_initial_position_m=(
@@ -133,6 +179,23 @@ def run_probe(
         )
         if contact_policy is not None:
             teacher = replace(teacher, pass_strike_foot_speed_mps=contact_policy.pass_speed_mps)
+        if bilateral_kick_options:
+            option = replace(
+                default_phase_strike_option(), pass_enabled=True, bilateral_enabled=True
+            )
+            option = replace(option, observation_warmstart=kick_observation_warmstart)
+            option = replace(option, prospective_enabled=anticipatory_contact)
+            option = replace(option, pass_reference_distance_m=pass_reference_distance_m)
+            if kick_entry_frame is not None:
+                option = replace(option, entry_policy_frame=kick_entry_frame)
+            if pass_swing_amplitude is not None:
+                option = replace(
+                    option,
+                    pass_parameters=replace(
+                        option.pass_parameters, swing_amplitude=pass_swing_amplitude
+                    ),
+                )
+            config = replace(config, contact_possession_hold_sec=1.50)
     results, trajectories = [], []
     for _ in range(2):
         result, trajectory = simulate_independent_team_world(
@@ -166,6 +229,7 @@ def run_probe(
         "cells": [c.to_dict() for c in cells],
         "players": [asdict(p) for p in fixture.players],
         "four_vs_four": four_vs_four,
+        "forward_receiver_lane": forward_receiver_lane,
         "fixture_hash": fixture.fixture_hash,
         "implementation": implementation,
         "results": results,
@@ -324,6 +388,15 @@ def main() -> None:
     parser.add_argument("--contact-policy", type=Path)
     parser.add_argument("--kickoff-offset", type=float, default=0.0)
     parser.add_argument("--duration", type=float, default=12.0)
+    parser.add_argument("--pass-stroke-duration", type=float, default=0.0)
+    parser.add_argument("--bilateral-kick-options", action="store_true")
+    parser.add_argument("--kick-observation-warmstart", action="store_true")
+    parser.add_argument("--anticipatory-contact", action="store_true")
+    parser.add_argument("--arrival-radius", type=float)
+    parser.add_argument("--kick-entry-frame", type=int)
+    parser.add_argument("--pass-swing-amplitude", type=float)
+    parser.add_argument("--forward-receiver-lane", action="store_true")
+    parser.add_argument("--pass-reference-distance", type=float, default=0.0)
     args = parser.parse_args()
     report = run_probe(
         asset_root=args.asset_root,
@@ -336,6 +409,15 @@ def main() -> None:
         if args.contact_policy is None
         else OwnedBallContactPolicy(**json.loads(args.contact_policy.read_text())),
         kickoff_offset_m=args.kickoff_offset,
+        pass_stroke_duration_sec=args.pass_stroke_duration,
+        bilateral_kick_options=args.bilateral_kick_options,
+        kick_observation_warmstart=args.kick_observation_warmstart,
+        anticipatory_contact=args.anticipatory_contact,
+        arrival_radius_m=args.arrival_radius,
+        kick_entry_frame=args.kick_entry_frame,
+        pass_swing_amplitude=args.pass_swing_amplitude,
+        forward_receiver_lane=args.forward_receiver_lane,
+        pass_reference_distance_m=args.pass_reference_distance,
     )
     print(
         json.dumps(

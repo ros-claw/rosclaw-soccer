@@ -152,6 +152,7 @@ class AgentCellObservation:
 class AgentTacticalProfile:
     home_position_m: tuple[float, float, float]
     active_competition: bool = False
+    anticipatory_contact: bool = False
     maximum_target_shift_m: float = 2.0
     decision_period_sec: float = 0.10
     intent_hysteresis_sec: float = 0.20
@@ -171,6 +172,7 @@ class AgentTacticalProfile:
         if (
             len(self.home_position_m) != 3
             or not isinstance(self.active_competition, bool)
+            or not isinstance(self.anticipatory_contact, bool)
             or any(not math.isfinite(value) for value in values)
             or abs(self.home_position_m[2]) > 1.0e-12
             or not 0.25 <= self.maximum_target_shift_m <= 4.0
@@ -282,6 +284,38 @@ class RosclawSoccerAgentCell:
             )
         if role is MatchRole.GOALKEEPER:
             return self._goalkeeper_decision(observation)
+        if (
+            self.tactical_profile.anticipatory_contact
+            and observation.possession_agent_id is None
+            and observation.ball_chaser_agent_id == self.agent_id
+            and np.linalg.norm(
+                np.asarray(observation.ball_position_m[:2])
+                - np.asarray(observation.self_state.position_m[:2])
+            )
+            <= 1.0
+            and np.linalg.norm(observation.ball_velocity_mps[:2]) <= 0.50
+        ):
+            # An intention to make first contact is not a claim of possession.
+            if role is MatchRole.PLAYMAKER:
+                receiver = self._best_receiver(observation)
+                if receiver is not None and self._lane_clear(observation, receiver):
+                    return self._decision(
+                        observation,
+                        TacticalIntent.PASS,
+                        SoccerSkill.LEAD_PASS,
+                        receiver.position_m,
+                        receiver.agent_id,
+                        0.80,
+                    )
+            elif role is MatchRole.FINISHER:
+                return self._decision(
+                    observation,
+                    TacticalIntent.SHOOT,
+                    SoccerSkill.FINISHING,
+                    observation.opponent_goal_m,
+                    None,
+                    0.80,
+                )
         if self.tactical_profile.active_competition:
             active = self._competition_decision(observation)
             if active is not None:

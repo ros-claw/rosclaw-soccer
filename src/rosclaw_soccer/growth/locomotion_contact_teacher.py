@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from rosclaw_soccer.growth.contact_stroke import stroke_blend
 from rosclaw_soccer.sim.contracts import ShotParameters, hash_json
 
 
@@ -51,6 +52,7 @@ class G1LocomotionContactTeacherConfig:
     maximum_forward_foot_offset_m: float = 0.02
     aim_yaw_bias_rad: float = 0.0
     preferred_foot: str = "nearest"
+    pass_stroke_duration_sec: float = 0.0
     activation_ceiling: str = "SIM_ONLY"
     training_only: bool = True
     hardware_authorized: bool = False
@@ -86,6 +88,7 @@ class G1LocomotionContactTeacherConfig:
             self.maximum_joint_residual_nm,
             self.maximum_forward_foot_offset_m,
             self.aim_yaw_bias_rad,
+            self.pass_stroke_duration_sec,
         )
         if (
             any(not math.isfinite(value) for value in values)
@@ -119,6 +122,10 @@ class G1LocomotionContactTeacherConfig:
             or not -0.20 <= self.maximum_forward_foot_offset_m <= 0.08
             or not -1.0 <= self.aim_yaw_bias_rad <= 1.0
             or self.preferred_foot not in {"nearest", "left", "right"}
+            or not (
+                self.pass_stroke_duration_sec == 0.0
+                or 0.12 <= self.pass_stroke_duration_sec <= 0.60
+            )
             or self.activation_ceiling != "SIM_ONLY"
             or not self.training_only
             or self.hardware_authorized
@@ -153,6 +160,10 @@ class G1RollingOptionBridgeConfig:
     maximum_strike_yaw_error_rad: float = 0.35
     strike_lease_duration_sec: float = 5.0
     pass_enabled: bool = False
+    bilateral_enabled: bool = False
+    observation_warmstart: bool = False
+    prospective_enabled: bool = False
+    pass_reference_distance_m: float = 0.0
     pass_parameters: ShotParameters = ShotParameters(
         swing_amplitude=0.72,
         foot_yaw_offset=0.04,
@@ -182,6 +193,13 @@ class G1RollingOptionBridgeConfig:
             or not 0.15 <= self.maximum_strike_yaw_error_rad <= 0.60
             or not 0.8 <= self.strike_lease_duration_sec <= 6.0
             or not isinstance(self.pass_enabled, bool)
+            or not isinstance(self.bilateral_enabled, bool)
+            or not isinstance(self.observation_warmstart, bool)
+            or not isinstance(self.prospective_enabled, bool)
+            or not (
+                self.pass_reference_distance_m == 0.0
+                or 4.0 <= self.pass_reference_distance_m <= 8.0
+            )
             or self.activation_ceiling != "SIM_ONLY"
             or not self.training_only
             or self.hardware_authorized
@@ -206,6 +224,7 @@ def locomotion_contact_teacher_effect(
     local_lateral_sign: float,
     contact_recent: bool,
     config: G1LocomotionContactTeacherConfig,
+    strike_progress: float | None = None,
 ) -> G1LocomotionContactTeacherEffect:
     """Return a bounded J^T residual that can only succeed through contact."""
 
@@ -261,6 +280,16 @@ def locomotion_contact_teacher_effect(
         if contact_mode == "receive"
         else -config.precontact_depth_m
     )
+    stroke_velocity: float | None = None
+    if strike_progress is not None:
+        if contact_mode != "strike" or config.pass_stroke_duration_sec == 0.0:
+            raise ValueError("stroke requires a configured strike action")
+        blend, derivative = stroke_blend(strike_progress)
+        travel = config.precontact_depth_m + config.follow_through_depth_m
+        depth = -config.precontact_depth_m + travel * blend
+        stroke_velocity = min(
+            config.strike_foot_speed_mps, travel * derivative / config.pass_stroke_duration_sec
+        )
     target = ball.copy()
     target[:2] += depth * direction_xy
     lateral_offset = (
@@ -274,10 +303,14 @@ def locomotion_contact_teacher_effect(
         forward_target = float(np.dot(target[:2] - foot[:2], direction_xy))
         if forward_target < config.receive_minimum_forward_target_m:
             target[:2] += (config.receive_minimum_forward_target_m - forward_target) * direction_xy
-    if distance > config.maximum_foot_ball_distance_m or (
-        contact_mode == "strike"
-        and not contact_recent
-        and longitudinal_offset > config.maximum_forward_foot_offset_m
+    if (
+        strike_progress == 1.0
+        or distance > config.maximum_foot_ball_distance_m
+        or (
+            contact_mode == "strike"
+            and not contact_recent
+            and longitudinal_offset > config.maximum_forward_foot_offset_m
+        )
     ):
         return G1LocomotionContactTeacherEffect(
             zero_torque,
@@ -308,8 +341,10 @@ def locomotion_contact_teacher_effect(
         if contact_mode == "receive"
         else np.asarray(
             (
-                config.strike_foot_speed_mps * direction_xy[0],
-                config.strike_foot_speed_mps * direction_xy[1],
+                (config.strike_foot_speed_mps if stroke_velocity is None else stroke_velocity)
+                * direction_xy[0],
+                (config.strike_foot_speed_mps if stroke_velocity is None else stroke_velocity)
+                * direction_xy[1],
                 0.0,
             ),
             dtype=np.float64,

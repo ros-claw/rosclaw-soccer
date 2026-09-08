@@ -44,7 +44,9 @@ def render(
     if any(r.get("four_vs_four", False) != four_vs_four for r in reports):
         raise ValueError("video sources must share the same roster")
     fixture = (
-        build_four_vs_four_fixture(asset_root)
+        build_four_vs_four_fixture(
+            asset_root, forward_receiver_lane=reports[0].get("forward_receiver_lane", False)
+        )
         if four_vs_four
         else build_continuous_competitive_fixture(asset_root)
     )
@@ -77,6 +79,8 @@ def render(
             mode = "4v4 | " + (
                 "BLUE START" if report["scenario"]["scenario_id"].endswith("blue") else "RED START"
             )
+            if report.get("forward_receiver_lane", False):
+                mode += " | FORWARD-LANE CURRICULUM"
             if stage == "S213":
                 mode += " | " + (
                     "CANDIDATE"
