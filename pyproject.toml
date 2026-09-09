@@ -60,7 +60,7 @@ packages = ["rosclaw_soccer"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["mujoco.*", "onnxruntime.*", "rosclaw.*"]
+module = ["mujoco.*", "mujoco_warp.*", "warp.*", "onnxruntime.*", "rosclaw.*"]
 ignore_missing_imports = true
 
 # Optional JAX/Brax training hosts currently publish no complete typing
