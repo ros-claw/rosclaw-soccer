@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from rosclaw_soccer.growth.contact_possession import ContactPossession
 from rosclaw_soccer.growth.contact_stroke import ContactStroke
 from rosclaw_soccer.growth.contextual_strike_experts import (
     ContextualStrikeExpertMemory,
@@ -87,7 +88,9 @@ from rosclaw_soccer.skills.team.motor_option import (
     TeamMotorOption,
     TeamMotorPhysicsObservation,
     TeamMotorPhysicsObserver,
+    TeamMotorReadinessProvider,
     TeamMotorTarget,
+    motor_ball_action_ready,
     motor_blocks_residual,
 )
 from rosclaw_soccer.world.field import (
@@ -148,6 +151,7 @@ class IndependentTeamWorldConfig:
     predictive_separation: bool = False
     all_role_clearance: bool = False
     strict_receive_handoff: bool = False
+    controlled_possession_retention: bool = False
     receiver_commitment_priority: bool = False
     strike_residual_enabled: bool = False
     strike_stance_lateral_m: float | None = None
@@ -175,6 +179,10 @@ class IndependentTeamWorldConfig:
             raise ValueError("post-receive contact control requires strict physical handoff")
         if type(self.locomotion_action_frame_sync) is not bool:
             raise ValueError("locomotion action-frame synchronization must be explicit")
+        if type(self.controlled_possession_retention) is not bool or (
+            self.controlled_possession_retention and not self.strict_receive_handoff
+        ):
+            raise ValueError("controlled possession requires strict physical handoff")
         if type(self.receive_lateral_braking) is not bool or (
             self.receive_lateral_braking and not self.strict_receive_handoff
         ):
@@ -326,6 +334,8 @@ class IndependentTeamWorldConfig:
             value.pop("locomotion_action_frame_sync")
         if not self.post_receive_contact_control:
             value.pop("post_receive_contact_control")
+        if not self.controlled_possession_retention:
+            value.pop("controlled_possession_retention")
         return str(hash_json(value))
 
 
@@ -738,6 +748,8 @@ def simulate_independent_team_world(
         raise ValueError("per-player motor identity, binding or override ownership differs")
     motor_hashes = tuple(sorted((key, motor.contract_hash) for key, motor in motors.items()))
     motor_faults: set[str] = set()
+    readiness_enabled = any(isinstance(m, TeamMotorReadinessProvider) for m in motors.values())
+    motor_commitment_ready = {agent_id: True for agent_id in roster_ids}
     if (
         len(roster.agents) < 6
         or set(cell_by_id) != roster_ids
@@ -942,6 +954,7 @@ def simulate_independent_team_world(
     last_ball_contact_agent_id: str | None = None
     last_ball_contact_time_sec = -math.inf
     current_possession_agent_id: str | None = None
+    controlled_possession = ContactPossession() if active.controlled_possession_retention else None
     loose_ball_chaser_agent_id: str | None = None
     ball_chaser_lease_start_sec = -math.inf
     receive_lease_agent_id: str | None = None
@@ -985,6 +998,21 @@ def simulate_independent_team_world(
         for controller in controllers:
             _fill_locomotion_state(controller, data, ball_body, ball_qvel)
         if frame % decision_stride == 0:
+            if readiness_enabled:
+                for agent_id, motor in motors.items():
+                    if agent_id in motor_faults:
+                        motor_commitment_ready[agent_id] = False
+                    elif isinstance(motor, TeamMotorReadinessProvider):
+                        try:
+                            motor_commitment_ready[agent_id] = motor_ball_action_ready(
+                                motor,
+                                agent_id=agent_id,
+                                frame=frame,
+                                time_sec=float(data.time),
+                            )
+                        except (ValueError, TypeError, FloatingPointError, RuntimeError):
+                            motor_commitment_ready[agent_id] = False
+                            motor_faults.add(agent_id)
             physical_states = tuple(
                 _physical_state(controller, data, world_velocity=active.bilateral_goals)
                 for controller in controllers
@@ -1018,6 +1046,10 @@ def simulate_independent_team_world(
                 if contact_teacher_config is None
                 else None
             )
+            if controlled_possession is not None:
+                controlled_owner = controlled_possession.owner_at(float(data.time))
+                if controlled_owner is not None:
+                    current_possession_agent_id = controlled_owner
             assigned_ball_chaser_agent_id = None
             if contact_teacher_config is not None:
                 if current_possession_agent_id is None:
@@ -1148,6 +1180,7 @@ def simulate_independent_team_world(
                         for handshake in coordination.pass_receive_handshakes
                         if handshake.passer_agent_id
                         == (current_possession_agent_id or assigned_ball_chaser_agent_id)
+                        and motor_commitment_ready[handshake.passer_agent_id]
                     ),
                     None,
                 )
@@ -1179,6 +1212,7 @@ def simulate_independent_team_world(
                     decision.intent is TacticalIntent.SHOOT
                     and decision.agent_id == current_possession_agent_id
                     and strike_lease_agent_id != decision.agent_id
+                    and motor_commitment_ready[decision.agent_id]
                 ):
                     strike_lease_agent_id = decision.agent_id
                     strike_lease_start_sec = float(data.time)
@@ -1616,6 +1650,10 @@ def simulate_independent_team_world(
                 # motor is latched off for the match; no silent candidate retry.
                 motor_faults.add(agent_id)
         if motors:
+            if readiness_enabled:
+                trace.setdefault("motor_ball_commitment_ready", []).append(
+                    [motor_commitment_ready[c.cell.agent_id] for c in controllers]
+                )
             trace.setdefault("full_body_motor_active", []).append(
                 [c.cell.agent_id in motor_targets for c in controllers]
             )
@@ -2115,6 +2153,8 @@ def simulate_independent_team_world(
                     0 if substep_second_agent is None else agent_codes[substep_second_agent]
                 )
                 frame_robot_contact_force_n = substep_robot_contact_force_n
+            control_foot_agents: set[str] = set()
+            control_interrupted = substep_robot_contacts > 0
             for contact_index in range(int(data.ncon)):
                 contact = data.contact[contact_index]
                 pair = {int(contact.geom1), int(contact.geom2)}
@@ -2138,6 +2178,11 @@ def simulate_independent_team_world(
                     wrench: NDArray[np.float64] = np.zeros(6, dtype=np.float64)
                     mujoco.mj_contactForce(model, data, contact_index, wrench)
                     force = float(np.linalg.norm(wrench[:3]))
+                    if controlled_possession is not None and force > 1.0:
+                        if effector_code in (1, 2):
+                            control_foot_agents.add(controller.cell.agent_id)
+                        else:
+                            control_interrupted = True
                     if (
                         controller.keeper_reach is not None
                         and effector_code in (3, 4)
@@ -2219,6 +2264,42 @@ def simulate_independent_team_world(
                     if controller is option_controller:
                         controller.option_contact_observed = True
                     break
+            if controlled_possession is not None:
+                tracking_id = (
+                    next(iter(control_foot_agents))
+                    if len(control_foot_agents) == 1
+                    else controlled_possession.tracking_agent_id
+                )
+                tracking = next((c for c in controllers if c.cell.agent_id == tracking_id), None)
+                distance = 1.0
+                owner_safe = False
+                if tracking is not None:
+                    ball_position = data.qpos[ball_qpos : ball_qpos + 3]
+                    distance = min(
+                        float(np.linalg.norm(data.xpos[b] - ball_position))
+                        for b in (tracking.left_ankle_body, tracking.right_ankle_body)
+                    )
+                    pose = data.qpos[tracking.qpos_base : tracking.qpos_base + 7]
+                    roll, pitch = _roll_pitch(pose[3:7])
+                    q = data.qpos[tracking.joint_qpos]
+                    limited = model.jnt_limited[tracking.joint_ids].astype(bool)
+                    ranges = model.jnt_range[tracking.joint_ids]
+                    owner_safe = bool(
+                        np.all(np.isfinite(data.qpos))
+                        and np.all(np.isfinite(data.qvel))
+                        and pose[2] >= active.minimum_pelvis_height_m
+                        and max(abs(roll), abs(pitch)) <= active.maximum_tilt_rad
+                        and np.all(q[limited] >= ranges[limited, 0] - 1e-5)
+                        and np.all(q[limited] <= ranges[limited, 1] + 1e-5)
+                    )
+                controlled_possession.observe(
+                    time_sec=float(data.time),
+                    foot_agents=frozenset(control_foot_agents),
+                    interrupted=bool(control_interrupted),
+                    ball_speed_mps=float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 3])),
+                    nearest_foot_m=distance,
+                    body_safe=owner_safe,
+                )
         peak_ball_speed = max(
             peak_ball_speed,
             float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 3])),

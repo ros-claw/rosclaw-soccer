@@ -148,6 +148,54 @@ class TeamMotorOption(Protocol):
 
 
 @dataclass(frozen=True)
+class TeamMotorReadiness:
+    """Deny new ball commitments while a local motor skill still owns control.
+
+    Ready is not permission to act: possession, handshake and physical guards
+    remain mandatory. The snapshot neither chooses a teammate nor an action.
+    """
+
+    agent_id: str
+    frame: int
+    time_sec: float
+    ball_action_ready: bool
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.agent_id, str)
+            or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", self.agent_id) is None
+            or type(self.frame) is not int
+            or self.frame < 0
+            or type(self.time_sec) not in (int, float)
+            or not math.isfinite(self.time_sec)
+            or self.time_sec < 0
+            or type(self.ball_action_ready) is not bool
+        ):
+            raise ValueError("finite player-bound motor readiness required")
+
+
+@runtime_checkable
+class TeamMotorReadinessProvider(Protocol):
+    def readiness(self, *, frame: int, time_sec: float) -> TeamMotorReadiness: ...
+
+
+def motor_ball_action_ready(
+    motor: TeamMotorReadinessProvider, *, agent_id: str, frame: int, time_sec: float
+) -> bool:
+    """Read current readiness; a stale/foreign/malformed reply must fail closed."""
+    expected = TeamMotorReadiness(agent_id, frame, time_sec, False)
+    reply = motor.readiness(frame=frame, time_sec=time_sec)
+    if (
+        not isinstance(reply, TeamMotorReadiness)
+        or reply.agent_id != expected.agent_id
+        or reply.frame != expected.frame
+        or abs(reply.time_sec - expected.time_sec) > 1e-9
+    ):
+        raise ValueError("motor readiness belongs to another player, frame or clock")
+    return reply.ball_action_ready
+
+
+@dataclass(frozen=True)
 class TeamMotorPhysicsObservation:
     """One measured physics step, with this player's feet as contact source.
 
