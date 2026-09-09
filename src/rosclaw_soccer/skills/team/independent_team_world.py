@@ -1463,6 +1463,8 @@ def simulate_independent_team_world(
                 data.qvel[ball_qvel : ball_qvel + 6],
             ]
             try:
+                if controller.last_world_command is None:
+                    raise ValueError("shared navigation command is unavailable")
                 proposal = motors[agent_id].propose(
                     TeamMotorObservation(
                         agent_id=agent_id,
@@ -1477,6 +1479,11 @@ def simulate_independent_team_world(
                             controller.decision.target_position_m[0],
                             controller.decision.target_position_m[1],
                             controller.decision.target_position_m[2],
+                        ),
+                        navigation_command=(
+                            float(controller.last_world_command[0]),
+                            float(controller.last_world_command[1]),
+                            float(controller.last_world_command[2]),
                         ),
                     )
                 )

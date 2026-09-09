@@ -37,6 +37,8 @@ class TeamMotorObservation:
     qpos: tuple[float, ...]
     qvel: tuple[float, ...]
     target_position_m: tuple[float, float, float]
+    # Post-clearance world vx, vy and yaw rate, not an unguarded goal vector.
+    navigation_command: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -58,6 +60,16 @@ class TeamMotorObservation:
             or self.time_sec < 0
         ):
             raise ValueError("finite immutable shared motor observation required")
+        if self.navigation_command is not None:
+            command = self.navigation_command
+            if (
+                type(command) is not tuple
+                or len(command) != 3
+                or any(type(v) not in (int, float) or not math.isfinite(v) for v in command)
+                or math.hypot(*command[:2]) > 0.700000001
+                or abs(command[2]) > 1.500000001
+            ):
+                raise ValueError("bounded post-clearance navigation command required")
 
 
 @dataclass(frozen=True)
