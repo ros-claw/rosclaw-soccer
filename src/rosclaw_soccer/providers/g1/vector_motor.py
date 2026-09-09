@@ -11,12 +11,15 @@ import math
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_json
+
+if TYPE_CHECKING:
+    from rosclaw_soccer.world.field import G1TrainingGoalSpec
 
 
 @dataclass(frozen=True)
@@ -49,25 +52,41 @@ class G1VectorMotorConfig:
 class G1VectorMotorBatch:
     """One process/device; explicit episode reset and 2 ms guarded motor steps."""
 
-    def __init__(self, asset_root: Path, config: G1VectorMotorConfig | None = None) -> None:
+    def __init__(
+        self,
+        asset_root: Path,
+        config: G1VectorMotorConfig | None = None,
+        *,
+        goal_spec: G1TrainingGoalSpec | None = None,
+    ) -> None:
         import mujoco
         import mujoco_warp as mjw
         import torch
         import warp as wp
 
         from rosclaw_soccer.providers.g1.asset_qualification import qualify_g1_assets
-        from rosclaw_soccer.world.field import build_g1_stadium_model
+        from rosclaw_soccer.world.field import G1TrainingGoalSpec, build_g1_stadium_model
 
         self.config = config or G1VectorMotorConfig()
         self.qualification = qualify_g1_assets(asset_root)
         self.qualification.require_eligible()
+        if goal_spec is not None and not isinstance(goal_spec, G1TrainingGoalSpec):
+            raise ValueError("explicit typed simulation world specification required")
+        goal = goal_spec or G1TrainingGoalSpec()
+        self.world_contract = {
+            "goal": asdict(goal),
+            "body_hash": self.qualification.body_hash,
+            "physics_dt_sec": 0.002,
+            "activation_ceiling": "SIM_ONLY",
+        }
+        self.world_hash = hash_json(self.world_contract)
         self._torch, self._mjw = torch, mjw
         self.device = torch.device(self.config.device)
         wp.init()
         wp.set_device(self.config.device)
         if str(wp.get_device()) != self.config.device:
             raise RuntimeError("Warp physics device binding differs")
-        self.cpu_model = build_g1_stadium_model(asset_root)
+        self.cpu_model = build_g1_stadium_model(asset_root, spec=goal)
         self.cpu_model.opt.timestep = 0.002
         self.joint_ids = np.asarray([self.cpu_model.joint(n).id for n in G1_DDS_JOINT_NAMES])
         self.actuator_ids = np.asarray([self.cpu_model.actuator(n).id for n in G1_DDS_JOINT_NAMES])
