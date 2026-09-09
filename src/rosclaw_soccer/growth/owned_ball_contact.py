@@ -44,3 +44,44 @@ class OwnedBallContactPolicy:
             ),
             math.atan2(dy, dx),
         )
+
+    def approach_waypoint(
+        self,
+        current: tuple[float, float],
+        ball: tuple[float, float],
+        destination: tuple[float, float],
+        *,
+        lateral_clearance_m: float,
+    ) -> tuple[float, float]:
+        """Stage a wrong-side approach around the ball, not through it.
+
+        This is a position objective, not collision-free physical evidence.
+        The world still applies velocity, player-clearance and actuator guards.
+        No waypoint changes the ball or grants a contact/possession lease.
+        """
+        if (
+            any(len(v) != 2 for v in (current, ball, destination))
+            or not all(math.isfinite(v) for v in (*current, *ball, *destination))
+            or type(lateral_clearance_m) not in (int, float)
+            or not math.isfinite(lateral_clearance_m)
+            or not 0.35 <= lateral_clearance_m <= 0.90
+        ):
+            raise ValueError("finite planar contact approach and bounded clearance required")
+        stance, yaw = self.stance(ball, destination)
+        dx, dy = math.cos(yaw), math.sin(yaw)
+        lx, ly = -dy, dx
+        bx, by = ball[0] - current[0], ball[1] - current[1]
+        depth = bx * dx + by * dy
+        lateral = bx * lx + by * ly
+        if depth < self.depth_m * 0.5:
+            if abs(lateral) < lateral_clearance_m:
+                side = -1.0 if lateral >= -1e-10 else 1.0
+                return (
+                    current[0] + side * lateral_clearance_m * lx,
+                    current[1] + side * lateral_clearance_m * ly,
+                )
+            return (
+                ball[0] - (self.depth_m + 0.2) * dx - lateral * lx,
+                ball[1] - (self.depth_m + 0.2) * dy - lateral * ly,
+            )
+        return stance

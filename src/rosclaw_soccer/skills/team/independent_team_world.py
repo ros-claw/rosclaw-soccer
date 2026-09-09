@@ -160,8 +160,13 @@ class IndependentTeamWorldConfig:
     schema_version: str = "rosclaw_soccer.independent_team_world_config.v1"
     motor_approach_standoff_m: float | None = None
     motor_idle_residual_fallback: bool = False
+    pass_stance_bypass: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.pass_stance_bypass) is not bool or (
+            self.pass_stance_bypass and self.owned_contact_policy is None
+        ):
+            raise ValueError("pass bypass requires explicit owned-contact stance policy")
         if self.motor_approach_standoff_m is not None and (
             type(self.motor_approach_standoff_m) not in (int, float)
             or not math.isfinite(self.motor_approach_standoff_m)
@@ -297,6 +302,8 @@ class IndependentTeamWorldConfig:
             value.pop("motor_idle_residual_fallback")
         if not self.receiver_commitment_priority:
             value.pop("receiver_commitment_priority")
+        if not self.pass_stance_bypass:
+            value.pop("pass_stance_bypass")
         return str(hash_json(value))
 
 
@@ -2948,6 +2955,13 @@ def _movement_command(
             (float(ball[0]), float(ball[1])),
             (decision.target_position_m[0], decision.target_position_m[1]),
         )
+        if config.pass_stance_bypass and decision.intent is TacticalIntent.PASS:
+            stance = _owned_stance_policy(config, decision.intent).approach_waypoint(
+                (float(current[0]), float(current[1])),
+                (float(ball[0]), float(ball[1])),
+                (decision.target_position_m[0], decision.target_position_m[1]),
+                lateral_clearance_m=config.strike_bypass_lateral_m,
+            )
         # The destination belongs to the ball, not to the player's pelvis.
         error = np.asarray(stance, dtype=np.float64) - current
         command[:2] = config.position_gain * error
