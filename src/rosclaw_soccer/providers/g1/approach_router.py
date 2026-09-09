@@ -17,6 +17,59 @@ import numpy as np
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
+def load_bounded_reference_parameters(
+    weights: Path, expected_hash: object, shapes: dict[str, tuple[int, ...]]
+) -> tuple[dict[str, np.ndarray], str]:
+    """Read numeric reference-selector weights after bounded ZIP/NPY checks."""
+    if (
+        not isinstance(expected_hash, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", expected_hash) is None
+    ):
+        raise ValueError("explicit reference checkpoint hash required")
+    if weights.stat().st_size > 1_000_000:
+        raise ValueError("approach checkpoint exceeds size bound")
+    raw = weights.read_bytes()
+    policy_hash = str(hash_bytes(raw))
+    if policy_hash != expected_hash:
+        raise ValueError("approach checkpoint hash differs")
+    import io
+
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        names = archive.namelist()
+        if (
+            set(names) != {name + ".npy" for name in shapes}
+            or len(names) != len(shapes)
+            or sum(item.file_size for item in archive.infolist()) > 1_000_000
+        ):
+            raise ValueError("unexpected or oversized approach tensors")
+        # A small ZIP member can still declare a huge array in its NPY
+        # header. Validate the header before np.load can allocate it.
+        for key, shape in shapes.items():
+            entry = archive.getinfo(key + ".npy")
+            with archive.open(entry) as stream:
+                # NumPy's public NPY header helpers lack type stubs.
+                version = np.lib.format.read_magic(stream)  # type: ignore[no-untyped-call]
+                if version == (1, 0):
+                    declared, _, dtype = np.lib.format.read_array_header_1_0(stream)  # type: ignore[no-untyped-call]
+                elif version == (2, 0):
+                    declared, _, dtype = np.lib.format.read_array_header_2_0(stream)  # type: ignore[no-untyped-call]
+                else:
+                    raise ValueError("unsupported approach array header")
+                if (
+                    declared != shape
+                    or dtype != np.dtype(np.float32)
+                    or entry.file_size != stream.tell() + int(np.prod(shape)) * 4
+                ):
+                    raise ValueError("approach array header differs from bounded shape")
+    with np.load(io.BytesIO(raw), allow_pickle=False) as archive:
+        parameters = {key: archive[key].copy() for key in shapes}
+    for key, value in parameters.items():
+        if value.shape != shapes[key] or value.dtype != np.float32 or not np.isfinite(value).all():
+            raise ValueError("finite float32 approach tensor shape required")
+        value.setflags(write=False)
+    return parameters, policy_hash
+
+
 @dataclass(frozen=True)
 class ApproachReferenceProposal:
     reference_index: int
@@ -69,13 +122,6 @@ class G1ApproachRouter:
         self._upper = self._vector(metadata.get("feature_upper"))
         if np.any(self._scales <= 0) or np.any(self._lower >= self._upper):
             raise ValueError("positive feature scales and ordered admitted domain required")
-        weights = manifest.with_suffix(".npz")
-        if weights.stat().st_size > 1_000_000:
-            raise ValueError("approach checkpoint exceeds size bound")
-        raw = weights.read_bytes()
-        self.policy_hash = str(hash_bytes(raw))
-        if self.policy_hash != metadata.get("weights_hash"):
-            raise ValueError("approach checkpoint hash differs")
         shapes = {
             "0.weight": (64, 4),
             "0.bias": (64,),
@@ -84,45 +130,9 @@ class G1ApproachRouter:
             "4.weight": (len(choices), 64),
             "4.bias": (len(choices),),
         }
-        import io
-
-        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-            names = archive.namelist()
-            if (
-                set(names) != {name + ".npy" for name in shapes}
-                or len(names) != len(shapes)
-                or sum(item.file_size for item in archive.infolist()) > 1_000_000
-            ):
-                raise ValueError("unexpected or oversized approach tensors")
-            # A small ZIP member can still declare a huge array in its NPY
-            # header. Validate the header before np.load can allocate it.
-            for key, shape in shapes.items():
-                entry = archive.getinfo(key + ".npy")
-                with archive.open(entry) as stream:
-                    # NumPy's public NPY header helpers lack type stubs.
-                    version = np.lib.format.read_magic(stream)  # type: ignore[no-untyped-call]
-                    if version == (1, 0):
-                        declared, _, dtype = np.lib.format.read_array_header_1_0(stream)  # type: ignore[no-untyped-call]
-                    elif version == (2, 0):
-                        declared, _, dtype = np.lib.format.read_array_header_2_0(stream)  # type: ignore[no-untyped-call]
-                    else:
-                        raise ValueError("unsupported approach array header")
-                    if (
-                        declared != shape
-                        or dtype != np.dtype(np.float32)
-                        or entry.file_size != stream.tell() + int(np.prod(shape)) * 4
-                    ):
-                        raise ValueError("approach array header differs from bounded shape")
-        with np.load(io.BytesIO(raw), allow_pickle=False) as archive:
-            parameters = {key: archive[key].copy() for key in shapes}
-        for key, value in parameters.items():
-            if (
-                value.shape != shapes[key]
-                or value.dtype != np.float32
-                or not np.isfinite(value).all()
-            ):
-                raise ValueError("finite float32 approach tensor shape required")
-            value.setflags(write=False)
+        parameters, self.policy_hash = load_bounded_reference_parameters(
+            manifest.with_suffix(".npz"), metadata.get("weights_hash"), shapes
+        )
         self._parameters = parameters
         self.contract_hash = str(hash_json(metadata))
 
