@@ -85,6 +85,8 @@ class AgentCellObservation:
     pixels_used: bool = False
     privileged_labels_used: bool = False
     schema_version: str = "rosclaw_soccer.agent_cell_observation.v1"
+    # A live, physically launched teammate pass. This is not possession.
+    active_receive_source_agent_id: str | None = None
 
     def __post_init__(self) -> None:
         vectors = (
@@ -122,6 +124,14 @@ class AgentCellObservation:
             )
             or self.pixels_used
             or self.privileged_labels_used
+            or (
+                self.active_receive_source_agent_id is not None
+                and (
+                    not isinstance(self.active_receive_source_agent_id, str)
+                    or self.active_receive_source_agent_id
+                    not in {state.agent_id for state in self.teammate_states}
+                )
+            )
         ):
             raise ValueError("agent-cell observation is invalid")
 
@@ -132,6 +142,11 @@ class AgentCellObservation:
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
+            **(
+                {"active_receive_source_agent_id": self.active_receive_source_agent_id}
+                if self.active_receive_source_agent_id is not None
+                else {}
+            ),
             "observer_agent_id": self.observer_agent_id,
             "time_sec": self.time_sec,
             "ball_position_m": list(self.ball_position_m),
@@ -284,6 +299,21 @@ class RosclawSoccerAgentCell:
             )
         if role is MatchRole.GOALKEEPER:
             return self._goalkeeper_decision(observation)
+        if (
+            observation.active_receive_source_agent_id is not None
+            and observation.possession_agent_id is None
+            and self.self_model.authorizes(TacticalIntent.RECEIVE, SoccerSkill.FIRST_TOUCH)
+        ):
+            # Fulfil the accepted incoming pass before anticipating a shot.
+            # The physical world alone decides launch, interruption and expiry.
+            return self._decision(
+                observation,
+                TacticalIntent.RECEIVE,
+                SoccerSkill.FIRST_TOUCH,
+                observation.ball_position_m,
+                None,
+                0.95,
+            )
         if (
             self.tactical_profile.anticipatory_contact
             and observation.possession_agent_id is None

@@ -141,6 +141,57 @@ def test_existing_anticipatory_shooting_is_opt_in_and_requires_a_near_loose_ball
     )
 
 
+@pytest.mark.parametrize("team", ["red", "blue"])
+def test_active_receive_context_precedes_anticipatory_shooting(fixture, team):
+    cell = next(c for c in fixture.cells if c.agent_id == team + ".finisher")
+    cell = replace(cell, tactical_profile=replace(cell.tactical_profile, anticipatory_contact=True))
+    value = _observation(fixture, cell.agent_id, blue=team == "blue")
+    value = replace(
+        value,
+        ball_position_m=(3.4, 0.0, 0.115),
+        ball_velocity_mps=(-0.25, 0.0, 0.0),
+        ball_chaser_agent_id=cell.agent_id,
+        self_state=replace(value.self_state, position_m=(3.0, 0.0, 0.78)),
+    )
+    assert cell.decide(value).intent is TacticalIntent.SHOOT
+    assert "active_receive_source_agent_id" not in value.to_dict()
+    incoming = replace(value, active_receive_source_agent_id=team + ".playmaker")
+    assert incoming.observation_hash != value.observation_hash
+    assert incoming.to_dict()["active_receive_source_agent_id"] == team + ".playmaker"
+    decision = cell.decide(incoming)
+    assert decision.intent is TacticalIntent.RECEIVE
+    assert decision.target_position_m == (*incoming.ball_position_m[:2], 0.0)
+    assert incoming.possession_agent_id is None
+    assert (
+        cell.decide(replace(incoming, active_receive_source_agent_id=None)).intent
+        is TacticalIntent.SHOOT
+    )
+    unstable = replace(incoming, self_state=replace(incoming.self_state, stable=False))
+    assert cell.decide(unstable).intent is TacticalIntent.RECOVER
+    held = replace(incoming, possession_agent_id=cell.agent_id)
+    assert cell.decide(held).intent is TacticalIntent.SHOOT
+
+
+@pytest.mark.parametrize("sender", ["blue.playmaker", "red.finisher", "unknown", True])
+def test_active_receive_context_rejects_non_teammates(fixture, sender):
+    value = _observation(fixture, "red.finisher")
+    with pytest.raises(ValueError, match="observation"):
+        replace(value, active_receive_source_agent_id=sender)
+
+
+def test_receive_priority_requires_explicit_strict_handoff():
+    from rosclaw_soccer.skills.team.independent_team_world import IndependentTeamWorldConfig
+
+    legacy = IndependentTeamWorldConfig()
+    assert legacy.config_hash == replace(legacy, receiver_commitment_priority=False).config_hash
+    with pytest.raises(ValueError):
+        replace(legacy, receiver_commitment_priority=True)
+    with pytest.raises(ValueError):
+        replace(legacy, receiver_commitment_priority=1, strict_receive_handoff=True)
+    enabled = replace(legacy, receiver_commitment_priority=True, strict_receive_handoff=True)
+    assert enabled.config_hash != replace(enabled, receiver_commitment_priority=False).config_hash
+
+
 def test_opposite_net_is_identical_under_rotation_without_pose_writes():
     spec = G1TrainingGoalSpec(plane_x_m=7.5, width_m=3.0, height_m=2.0)
     right = SimpleNamespace(
