@@ -20,11 +20,20 @@ from rosclaw_soccer.sim.contracts import hash_bytes
 from rosclaw_soccer.skills.team.independent_team_world import _gravity_orientation
 
 
-def train(source: Path, output: Path, *, epochs: int = 1500, seed: int = 230) -> dict[str, Any]:
+def train(
+    source: Path,
+    output: Path,
+    *,
+    epochs: int = 1500,
+    seed: int = 230,
+    task_reference_only: bool = False,
+) -> dict[str, Any]:
     import torch
 
     if not 1 <= epochs <= 10000:
         raise ValueError("invalid distillation epoch budget")
+    if type(task_reference_only) is not bool:
+        raise ValueError("reference ablation must be explicit boolean")
     paths = sorted(source.glob("*-trajectory.npz"))
     if len(paths) != 4:
         raise ValueError("distillation requires the four declared S88 teacher lanes")
@@ -79,8 +88,9 @@ def train(source: Path, output: Path, *, epochs: int = 1500, seed: int = 230) ->
     if len(x) < 100:
         raise ValueError("not enough finite demonstration frames")
     torch.manual_seed(seed)
+    first_layer = torch.nn.Linear(65, 64)
     model = torch.nn.Sequential(
-        torch.nn.Linear(65, 64),
+        first_layer,
         torch.nn.Tanh(),
         torch.nn.Linear(64, 64),
         torch.nn.Tanh(),
@@ -88,6 +98,9 @@ def train(source: Path, output: Path, *, epochs: int = 1500, seed: int = 230) ->
         torch.nn.Tanh(),
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+    if task_reference_only:
+        with torch.no_grad():
+            first_layer.weight[:, 4:] = 0
     tx, ty = torch.from_numpy(x), torch.from_numpy(y)
     for _ in range(epochs):
         # Small proprioceptive augmentation; do not jitter the causal target.
@@ -98,6 +111,11 @@ def train(source: Path, output: Path, *, epochs: int = 1500, seed: int = 230) ->
         loss.backward()  # type: ignore[no-untyped-call]
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
+        if task_reference_only:
+            # This actor is a task-conditioned reference prior, not a body
+            # stabilizer. PD/Loco still use measured body state downstream.
+            with torch.no_grad():
+                first_layer.weight[:, 4:] = 0
     model.eval()
     with torch.inference_mode():
         fitted = model(tx).numpy() * 3
@@ -121,6 +139,7 @@ def train(source: Path, output: Path, *, epochs: int = 1500, seed: int = 230) ->
         seed=seed,
         epochs=epochs,
         method="supervised_behavioral_cloning_with_sagittal_augmentation",
+        task_reference_only=task_reference_only,
         parent="S88_CPU_MUJOCO_EXECUTED_TEACHER_TARGETS",
         heldout_physics_passed=False,
     )
@@ -143,6 +162,7 @@ def train(source: Path, output: Path, *, epochs: int = 1500, seed: int = 230) ->
         # These are fit metrics, NOT a held-out success rate.
         heldout_physics_passed=False,
         epochs=epochs,
+        task_reference_only=task_reference_only,
         source_hashes=hashes,
         teacher_evidence_hash=str(hash_bytes(evidence_bytes)),
         source_code_hash=str(hash_bytes(Path(__file__).read_bytes())),
@@ -157,8 +177,19 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=1500)
+    parser.add_argument("--task-reference-only", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(train(args.source, args.output, epochs=args.epochs), indent=2))
+    print(
+        json.dumps(
+            train(
+                args.source,
+                args.output,
+                epochs=args.epochs,
+                task_reference_only=args.task_reference_only,
+            ),
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

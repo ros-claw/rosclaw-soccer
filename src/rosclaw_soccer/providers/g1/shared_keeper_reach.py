@@ -47,6 +47,8 @@ class SharedKeeperReachConfig:
     support_arm_blend: float = 1.0
     support_overhead_bias_rad: float = 0.0
     muscle_actor_path: str | None = None
+    muscle_reach_correction: bool = False
+    muscle_gate_path: str | None = None
 
     def __post_init__(self) -> None:
         bounds = (
@@ -74,6 +76,10 @@ class SharedKeeperReachConfig:
             raise ValueError("shared keeper reach configuration outside SIM_ONLY envelope")
         if (self.gmt_model_path is None) != (self.gmt_skill_path is None):
             raise ValueError("GMT model and bound imitation skill must be supplied together")
+        if self.muscle_gate_path is not None and (
+            self.muscle_actor_path is None or self.muscle_reach_correction
+        ):
+            raise ValueError("learned gate requires a muscle parent and no forced reach override")
         if self.ready_reference_time_sec is not None and (
             not np.isfinite(self.ready_reference_time_sec)
             or not -0.50 <= self.ready_reference_time_sec <= -0.30
@@ -86,6 +92,7 @@ class SharedKeeperReachConfig:
             type(self.reference_tracking) is not bool
             or type(self.neutralize_foundation_arm_observation) is not bool
             or type(self.ballistic_airborne_velocity) is not bool
+            or type(self.muscle_reach_correction) is not bool
         ):
             raise ValueError("reference tracking selector must be boolean")
 
@@ -144,6 +151,9 @@ class SharedKeeperReach:
         self.last_output: np.ndarray | None = None
         self.last_intercept = (0.0, 0.0, 1.3)
         self.last_muscle_observation: np.ndarray | None = None
+        self.context_height_m: float | None = None
+        self.gate_choice: bool | None = None
+        self.gate: Any = None
 
         self.gmt: Any = None
         self.mirror_latch: bool | None = None
@@ -153,6 +163,17 @@ class SharedKeeperReach:
             from rosclaw_soccer.providers.g1.keeper_muscle_actor import KeeperMuscleActor
 
             self.muscle = KeeperMuscleActor(Path(self.config.muscle_actor_path))
+        if self.config.muscle_gate_path is not None:
+            from rosclaw_soccer.providers.g1.keeper_context_gate import (
+                KeeperContextGate,
+                gate_config_hash,
+            )
+
+            self.gate = KeeperContextGate(
+                Path(self.config.muscle_gate_path),
+                parent_policy_hash=self.muscle.policy_hash,
+                config_hash=gate_config_hash(asdict(self.config)),
+            )
         if self.config.gmt_model_path is not None and self.config.gmt_skill_path is not None:
             import torch
 
@@ -188,6 +209,7 @@ class SharedKeeperReach:
                     else self.gmt_contract.checkpoint_hash,
                     "imitation": None if self.gmt is None else self.gmt.skill.skill_hash,
                     "muscle": None if self.muscle is None else self.muscle.policy_hash,
+                    "gate": None if self.gate is None else self.gate.policy_hash,
                     "activation_ceiling": "SIM_ONLY",
                 }
             )
@@ -233,6 +255,26 @@ class SharedKeeperReach:
             previous_action_rad=self.previous,
         )
         horizon, lateral, height = observation.estimated_intercept
+        self.context_height_m = None
+        flight_start = observation.observed_flight_start_sec
+        if (
+            flight_start is not None
+            and snapshot.time - flight_start >= 0.04
+            and observation.intercept_confidence >= 0.25
+            and 0 < horizon <= 1.2
+        ):
+            span = min(
+                snapshot.time - flight_start, (self.observer.spec.ball_history_steps - 1) * 0.02
+            )
+            context = height - (
+                0 if self.config.ballistic_airborne_velocity else 4.905 * span * horizon
+            )
+            if 0.5 <= context <= 2:
+                self.context_height_m = context
+                if self.gate is not None and self.gate_choice is None:
+                    self.gate_choice = self.gate.select_reach(context)
+        if horizon <= 0 and self.contact_time is None:
+            self.gate_choice = None
         gravity = _gravity_orientation(snapshot.qpos[3:7])
         active = bool(
             observation.intercept_confidence >= self.config.minimum_intercept_confidence
@@ -261,6 +303,7 @@ class SharedKeeperReach:
             observation = replace(observation, estimated_intercept=(0.0, *self.last_intercept[1:]))
         elif self.contact_time is not None and snapshot.time - self.contact_time > 0.5:
             self.contact_time = None
+            self.gate_choice = None
         self.robot.last_target = target.copy()
         ready_active = False
         if self.gmt is not None:
@@ -336,7 +379,10 @@ class SharedKeeperReach:
         if following_contact and active and self.contact_target is not None:
             self.robot.last_target = self.contact_target.copy()
         posture_delta = self.robot.last_target - target
-        if active and not following_contact and self.muscle is None:
+        use_reach = (
+            self.muscle is None or self.config.muscle_reach_correction or self.gate_choice is True
+        )
+        if active and not following_contact and use_reach:
             if self.started is None:
                 self.started = snapshot.time
             _apply_goalkeeper_bimanual_operational_space_reach(
@@ -363,7 +409,7 @@ class SharedKeeperReach:
             posture_delta
             if following_contact and active
             else (
-                posture_delta + (self.robot.goalkeeper_reach_memory if self.muscle is None else 0)
+                posture_delta + (self.robot.goalkeeper_reach_memory if use_reach else 0)
                 if active
                 else (posture_delta if ready_active else np.zeros(29))
             )

@@ -73,6 +73,11 @@ class KeeperMuscleActor:
             if np.max(np.abs(w)) > 20 or np.max(np.abs(b)) > 20:
                 raise ValueError("keeper muscle weights outside bounded numeric envelope")
             self.layers.append((w, b))
+        reference_only = payload.get("task_reference_only", False)
+        if type(reference_only) is not bool or (
+            reference_only and np.any(self.layers[0][0][:, 4:] != 0)
+        ):
+            raise ValueError("task reference artifact must exclude body feedback weights")
         self.policy_hash = str(hash_bytes(raw))
         self.metadata = payload
 

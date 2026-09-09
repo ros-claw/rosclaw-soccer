@@ -161,3 +161,65 @@ def test_retention_null_direction_preserves_anchor_outputs(tmp_path):
     assert max(np.max(abs(changed.target(v) - actor.target(v))) for v in novel) > 0.01
     with pytest.raises(ValueError):
         retention_null_direction(actor, np.full((10, 65), np.nan), novel)
+
+
+def test_signed_clearance_feedback_recognizes_braking_without_claiming_parry():
+    from rosclaw_soccer.training.keeper_muscle_evolution import physical_reward
+
+    result = dict(
+        physical_safe=True,
+        minimum_pelvis_m=0.75,
+        peak_tilt_rad=0.2,
+        closest_incoming_glove_surface_m=0.006,
+        outward_speed_mps=0.0,
+        first_robot_contact_glove=True,
+        completed_hand_save=True,
+        stable_save=False,
+        goal_crossed=False,
+        signed_early_clearance_speed_mps=-3.6,
+    )
+    before = physical_reward(result, signed_clearance_feedback=True)
+    legacy = physical_reward(result)
+    result["signed_early_clearance_speed_mps"] = -3.3
+    assert physical_reward(result, signed_clearance_feedback=True) > before
+    assert physical_reward(result) == legacy
+    assert result["stable_save"] is False
+    result["signed_early_clearance_speed_mps"] = None
+    assert physical_reward(result, signed_clearance_feedback=True) < before
+    result["signed_early_clearance_speed_mps"] = float("nan")
+    with pytest.raises(ValueError):
+        physical_reward(result, signed_clearance_feedback=True)
+
+
+def test_crossbar_rebound_cannot_be_credited_to_glove():
+    from rosclaw_soccer.training.shared_keeper_reach_exam import CausalClearanceWindow
+
+    window = CausalClearanceWindow()
+    window.contact(1.396, hand=True)
+    window.sample(1.44, -4.9)
+    window.sample(1.57, -4.84)
+    window.contact(1.578, hand=False)
+    window.sample(1.59, 1.93)
+    assert window.outward_speed == 0
+    assert window.signed_speed == -4.84
+    assert window.obstacle_time == 1.578
+    clean = CausalClearanceWindow()
+    clean.contact(0.2, hand=False)  # ground before the hand is not a later impulse
+    clean.contact(1.0, hand=True)
+    clean.sample(1.05, 1.5)
+    clean.contact(1.1, hand=False)
+    clean.sample(1.15, 4.0)
+    assert clean.outward_speed == 1.5
+
+
+def test_reference_prior_cannot_smuggle_body_feedback_weights(tmp_path):
+    payload = artifact()
+    payload["task_reference_only"] = True
+    path = tmp_path / "actor.json"
+    path.write_text(json.dumps(payload))
+    actor = KeeperMuscleActor(path)
+    np.testing.assert_array_equal(actor.target(np.zeros(65)), actor.target(np.ones(65)))
+    payload["layers"][0]["weight"][0][4] = 1.0
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="exclude body feedback"):
+        KeeperMuscleActor(path)

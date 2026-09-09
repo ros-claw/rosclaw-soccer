@@ -55,6 +55,39 @@ _LOADED_SOURCE_HASH = _source_hash()
 _MODEL_CACHE: dict[str, tuple[Any, str, Path, str]] = {}
 
 
+class CausalClearanceWindow:
+    """Credit hand deflection only before any subsequent non-hand impulse."""
+
+    def __init__(self) -> None:
+        self.hand_time: float | None = None
+        self.obstacle_time: float | None = None
+        self.signed_speed: float | None = None
+
+    def contact(self, timestamp: float, *, hand: bool) -> None:
+        if not np.isfinite(timestamp) or timestamp < 0 or type(hand) is not bool:
+            raise ValueError("invalid physical contact evidence")
+        if hand and self.hand_time is None:
+            self.hand_time = timestamp
+        elif not hand and self.hand_time is not None and self.obstacle_time is None:
+            self.obstacle_time = timestamp
+
+    def sample(self, timestamp: float, signed_speed: float) -> None:
+        if not np.isfinite((timestamp, signed_speed)).all():
+            raise ValueError("invalid clearance sample")
+        if (
+            self.hand_time is not None
+            and self.obstacle_time is None
+            and 0.03 <= timestamp - self.hand_time <= 0.20
+        ):
+            self.signed_speed = (
+                signed_speed if self.signed_speed is None else max(self.signed_speed, signed_speed)
+            )
+
+    @property
+    def outward_speed(self) -> float:
+        return max(0.0, self.signed_speed or 0.0)
+
+
 def run_case(
     root: Path,
     output: Path,
@@ -148,12 +181,12 @@ def run_case(
     poses, velocities, controls, times, contacts, activations = [], [], [], [], [], []
     ball_contacts = []
     muscle_observations = []
+    context_heights, context_ready = [], []
     minimum_pelvis = math.inf
     peak_tilt = 0.0
     goal_crossed = False
     hand_contact = False
     first_contact_velocity = None
-    first_hand_time = None
     first_robot_contact_glove = None
     first_robot_contact_time = None
     first_robot_geoms: set[int] = set()
@@ -163,6 +196,7 @@ def run_case(
         for side in ("left", "right")
     }
     outward_speed = 0.0
+    clearance = CausalClearanceWindow()
     closest_incoming_glove_surface_m = 2.0
     finite_state = True
     maximum_joint_limit_excess_rad = 0.0
@@ -202,6 +236,8 @@ def run_case(
                 keeper.output.kps, keeper.output.kds
             )
         activations.append((int(reach.active), reach.peak_residual_rad))
+        context_ready.append(reach.context_height_m is not None)
+        context_heights.append(reach.context_height_m or 0.0)
         if reach.last_muscle_observation is not None:
             muscle_observations.append(reach.last_muscle_observation.copy())
         for _ in range(10):
@@ -250,6 +286,8 @@ def run_case(
                 mujoco.mj_contactForce(model, data, i, force)
                 if float(force[0]) <= 1e-6:
                     continue
+                if other not in hands:
+                    clearance.contact(float(data.time), hand=False)
                 if tick >= 50 and other in robot_geoms:
                     if first_robot_contact_time is None:
                         first_robot_contact_time = float(data.time)
@@ -264,12 +302,10 @@ def run_case(
                     contacts.append((float(data.time), int(other), float(contact.dist), *force))
                     if not hand_contact:
                         first_contact_velocity = before_ball_velocity.tolist()
-                        first_hand_time = float(data.time)
                     hand_contact = True
-            if first_hand_time is not None and 0.03 <= data.time - first_hand_time <= 0.20:
-                outward_speed = max(
-                    outward_speed, -float((frame.rotation @ data.qvel[bv : bv + 3])[0])
-                )
+                    clearance.contact(float(data.time), hand=True)
+            clearance.sample(float(data.time), -float((frame.rotation @ data.qvel[bv : bv + 3])[0]))
+            outward_speed = clearance.outward_speed
             if tick >= 50:
                 p = frame.point(data.qpos[bq : bq + 3])
                 if 3.9 <= p[0] <= 4.75 and first_robot_contact_time is None:
@@ -309,6 +345,8 @@ def run_case(
         activation=activations,
         ball_contacts=ball_contacts,
         muscle_observations=np.asarray(muscle_observations).reshape(-1, 65),
+        context_height_m=context_heights,
+        context_ready=context_ready,
     )
     physical_safe = bool(
         finite_state
@@ -318,7 +356,7 @@ def run_case(
         and peak_tilt < 0.8
     )
     result = dict(
-        schema_version="s229.shared_keeper_reach_exam.v2",
+        schema_version="s229.shared_keeper_reach_exam.v3",
         activation_ceiling="SIM_ONLY",
         autonomous_match=False,
         test_launcher=True,
@@ -355,6 +393,8 @@ def run_case(
         first_robot_contact_glove=first_robot_contact_glove,
         first_robot_contact_geoms=sorted(first_robot_geoms),
         outward_speed_mps=outward_speed,
+        signed_early_clearance_speed_mps=clearance.signed_speed,
+        clearance_obstacle_time=clearance.obstacle_time,
         closest_incoming_glove_surface_m=closest_incoming_glove_surface_m,
         active_frames=sum(a[0] for a in activations),
         peak_residual_rad=reach.peak_residual_rad,
@@ -362,6 +402,7 @@ def run_case(
         model_hash=None if reach.gmt_contract is None else reach.gmt_contract.checkpoint_hash,
         imitation_hash=None if reach.gmt is None else reach.gmt.skill.skill_hash,
         muscle_policy_hash=None if reach.muscle is None else reach.muscle.policy_hash,
+        gate_policy_hash=None if reach.gate is None else reach.gate.policy_hash,
         keeper_policy_hash=reach.policy_hash,
         simulation_model_hash=model_hash,
         mujoco_version=mujoco.__version__,

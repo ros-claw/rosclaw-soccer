@@ -62,7 +62,7 @@ def retention_null_direction(
     )
 
 
-def physical_reward(result: dict[str, Any]) -> float:
+def physical_reward(result: dict[str, Any], *, signed_clearance_feedback: bool = False) -> float:
     """Dense reach signal cannot compensate for a fall or replace save gates."""
     keys = (
         "minimum_pelvis_m",
@@ -79,8 +79,15 @@ def physical_reward(result: dict[str, Any]) -> float:
     ):
         return -10.0
     distance = float(np.clip(result["closest_incoming_glove_surface_m"], 0, 2))
+    clearance_reward = 0.0
+    if signed_clearance_feedback and result["first_robot_contact_glove"] is True:
+        signed = result.get("signed_early_clearance_speed_mps")
+        if signed is not None and not np.isfinite(signed):
+            raise ValueError("nonfinite signed physical clearance feedback")
+        clearance_reward = 0.5 * float(np.clip(-6 if signed is None else signed, -6, 3))
     return float(
-        -3 * distance
+        clearance_reward
+        - 3 * distance
         + 1.0 * (result["first_robot_contact_glove"] is True)
         + 3 * bool(result["completed_hand_save"])
         + 2 * bool(result["stable_save"])
@@ -99,15 +106,26 @@ def train(
     population: int = 6,
     seed: int = 230,
     protect_rehearsal: bool = False,
+    initial_sigma: float = 0.10,
+    sigma_floor: float = 0.025,
+    signed_clearance_feedback: bool = False,
+    bootstrap: bool = False,
 ) -> dict[str, Any]:
     if not 1 <= generations <= 20 or not 4 <= population <= 32:
         raise ValueError("invalid bounded simulation search budget")
+    if bootstrap and protect_rehearsal:
+        raise ValueError("bootstrap cannot claim protection of a qualified acquired skill")
+    if not (
+        np.isfinite((initial_sigma, sigma_floor)).all()
+        and 0.0005 <= sigma_floor <= initial_sigma <= 0.2
+    ):
+        raise ValueError("invalid bounded exploration scale")
     actor = KeeperMuscleActor(parent)
     output.mkdir(parents=True, exist_ok=False)
     payload = actor.metadata
     original = np.asarray(payload["layers"][-1]["bias"], dtype=float)
     rng = np.random.default_rng(seed)
-    mean, sigma = np.zeros(14), np.full(14, 0.10)
+    mean, sigma = np.zeros(14), np.full(14, initial_sigma)
     incumbent = np.zeros(14)
     best_score = -float("inf")
     records = []
@@ -130,6 +148,8 @@ def train(
             )
             if height == 1.3 and not result["stable_save"]:
                 raise ValueError("parent failed the skill claimed for retention")
+            if result["muscle_policy_hash"] != actor.policy_hash:
+                raise ValueError("rehearsal parent changed after its identity was bound")
             with np.load(directory / "trajectory.npz", allow_pickle=False) as trace:
                 traces.append(trace["muscle_observations"])
         direction, projection = retention_null_direction(actor, *traces)
@@ -183,11 +203,26 @@ def train(
             # Acquired skill is a hard retention constraint, not an average
             # reward that can hide catastrophic forgetting on the easier shot.
             retained = bool(results[0]["stable_save"])
-            score = physical_reward(results[1]) if retained else -20.0
+            score = (
+                physical_reward(results[1], signed_clearance_feedback=signed_clearance_feedback)
+                if retained
+                else -20.0
+            )
+            safe_bootstrap = bootstrap and all(r["physical_safe"] is True for r in results)
+            if safe_bootstrap:
+                score = float(
+                    np.mean(
+                        [
+                            physical_reward(r, signed_clearance_feedback=signed_clearance_feedback)
+                            for r in results
+                        ]
+                    )
+                )
             record = dict(
                 generation=generation,
                 candidate=index,
                 retained=retained,
+                bootstrap=bootstrap,
                 score=score,
                 delta=delta.tolist(),
                 policy_hash=loaded.policy_hash,
@@ -201,6 +236,7 @@ def train(
                             "outward_speed_mps",
                             "closest_incoming_glove_surface_m",
                             "trajectory_hash",
+                            "signed_early_clearance_speed_mps",
                         )
                     }
                     for r in results
@@ -209,17 +245,26 @@ def train(
             records.append(record)
             (directory / "feedback.json").write_text(json.dumps(record, indent=2) + "\n")
             print(json.dumps(record), flush=True)
-            if retained:
-                evaluated.append((score, delta))
+            if retained or safe_bootstrap:
+                evaluated.append((score, delta, all(r["completed_hand_save"] for r in results)))
             if score > best_score:
                 best_score, incumbent = score, delta.copy()
+        if not evaluated:
+            raise ValueError("no candidate passed the declared safety/retention requirement")
         elite = sorted(evaluated, key=lambda item: item[0], reverse=True)[:2]
+        # Once a completed save exists, do not average its parameters with
+        # missed shots. Keep exploring locally around successful candidates.
+        successful = [item for item in evaluated if item[2]]
+        if successful and not bootstrap:
+            elite = sorted(successful, key=lambda item: item[0], reverse=True)[:2]
         mean = np.mean([item[1] for item in elite], axis=0)
-        sigma = np.maximum(np.std([item[1] for item in elite], axis=0), 0.025)
+        sigma = np.maximum(np.std([item[1] for item in elite], axis=0), sigma_floor)
         report = dict(
             schema="keeper-muscle-evolution.v1",
             activation_ceiling="SIM_ONLY",
             candidate_promoted=False,
+            bootstrap=bootstrap,
+            qualified_retention_required=not bootstrap,
             heldout_physics_passed=False,
             parent_policy_hash=actor.policy_hash,
             seed=seed,
@@ -229,6 +274,11 @@ def train(
             records=records,
             source_hash=str(hash_bytes(Path(__file__).read_bytes())),
             rehearsal_projection=projection,
+            initial_sigma=initial_sigma,
+            sigma_floor=sigma_floor,
+            reward_contract="signed_pre_obstacle_clearance.v1"
+            if signed_clearance_feedback
+            else "legacy.v1",
         )
         (output / "training-report.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
@@ -243,6 +293,14 @@ def main() -> None:
     parser.add_argument("--generations", type=int, default=3)
     parser.add_argument("--population", type=int, default=6)
     parser.add_argument("--protect-rehearsal", action="store_true")
+    parser.add_argument("--initial-sigma", type=float, default=0.10)
+    parser.add_argument("--sigma-floor", type=float, default=0.025)
+    parser.add_argument("--signed-clearance-feedback", action="store_true")
+    parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Learn from unqualified warm start; no acquired-skill claim",
+    )
     args = parser.parse_args()
     config = SharedKeeperReachConfig(**json.loads(args.config_result.read_text())["config"])
     train(
@@ -253,6 +311,10 @@ def main() -> None:
         generations=args.generations,
         population=args.population,
         protect_rehearsal=args.protect_rehearsal,
+        initial_sigma=args.initial_sigma,
+        sigma_floor=args.sigma_floor,
+        signed_clearance_feedback=args.signed_clearance_feedback,
+        bootstrap=args.bootstrap,
     )
 
 

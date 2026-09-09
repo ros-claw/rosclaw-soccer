@@ -3476,7 +3476,7 @@ def _project_joint_safe_torque(
 
 
 def _roll_pitch(quaternion: NDArray[Any]) -> tuple[float, float]:
-    value = np.asarray(quaternion, dtype=np.float64)
+    value = np.array(quaternion, dtype=np.float64, copy=True)
     value /= max(float(np.linalg.norm(value)), 1.0e-12)
     w, x, y, z = map(float, value)
     roll = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
@@ -3485,7 +3485,7 @@ def _roll_pitch(quaternion: NDArray[Any]) -> tuple[float, float]:
 
 
 def _pelvis_yaw(quaternion: NDArray[Any]) -> float:
-    value = np.asarray(quaternion, dtype=np.float64)
+    value = np.array(quaternion, dtype=np.float64, copy=True)
     value /= max(float(np.linalg.norm(value)), 1.0e-12)
     w, x, y, z = map(float, value)
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
