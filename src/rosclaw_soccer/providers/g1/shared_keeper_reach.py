@@ -46,6 +46,7 @@ class SharedKeeperReachConfig:
     hand_half_span_m: float = 0.08
     support_arm_blend: float = 1.0
     support_overhead_bias_rad: float = 0.0
+    muscle_actor_path: str | None = None
 
     def __post_init__(self) -> None:
         bounds = (
@@ -142,10 +143,16 @@ class SharedKeeperReach:
         self.contact_target: np.ndarray | None = None
         self.last_output: np.ndarray | None = None
         self.last_intercept = (0.0, 0.0, 1.3)
+        self.last_muscle_observation: np.ndarray | None = None
 
         self.gmt: Any = None
         self.mirror_latch: bool | None = None
         self.gmt_contract: Any = None
+        self.muscle: Any = None
+        if self.config.muscle_actor_path is not None:
+            from rosclaw_soccer.providers.g1.keeper_muscle_actor import KeeperMuscleActor
+
+            self.muscle = KeeperMuscleActor(Path(self.config.muscle_actor_path))
         if self.config.gmt_model_path is not None and self.config.gmt_skill_path is not None:
             import torch
 
@@ -180,6 +187,7 @@ class SharedKeeperReach:
                     if self.gmt_contract is None
                     else self.gmt_contract.checkpoint_hash,
                     "imitation": None if self.gmt is None else self.gmt.skill.skill_hash,
+                    "muscle": None if self.muscle is None else self.muscle.policy_hash,
                     "activation_ceiling": "SIM_ONLY",
                 }
             )
@@ -198,6 +206,7 @@ class SharedKeeperReach:
         )
 
         target = np.asarray(foundation_target, dtype=np.float64)
+        self.last_muscle_observation = None
         if target.shape != (29,) or not np.isfinite(target).all():
             raise ValueError("keeper foundation target must contain 29 finite values")
         snapshot = self.frame.project(model, data, prefix=self.prefix)
@@ -313,10 +322,21 @@ class SharedKeeperReach:
                     )
                     self.robot.last_target[15:] = ready_target[0, 15:].numpy()
                     ready_active = True
-        if following_contact and self.contact_target is not None:
+        if self.muscle is not None and active and not following_contact:
+            from rosclaw_soccer.providers.g1.keeper_muscle_actor import muscle_observation
+
+            self.last_muscle_observation = muscle_observation(
+                np.asarray(observation.estimated_intercept),
+                float(snapshot.qpos[2]),
+                gravity,
+                snapshot.qpos[7:36],
+                snapshot.qvel[6:35],
+            )
+            self.robot.last_target[15:] = self.muscle.target(self.last_muscle_observation)
+        if following_contact and active and self.contact_target is not None:
             self.robot.last_target = self.contact_target.copy()
         posture_delta = self.robot.last_target - target
-        if active and not following_contact:
+        if active and not following_contact and self.muscle is None:
             if self.started is None:
                 self.started = snapshot.time
             _apply_goalkeeper_bimanual_operational_space_reach(
@@ -341,9 +361,9 @@ class SharedKeeperReach:
         # well as release. Legs and waist are exclusively foundation-owned.
         desired = (
             posture_delta
-            if following_contact
+            if following_contact and active
             else (
-                posture_delta + self.robot.goalkeeper_reach_memory
+                posture_delta + (self.robot.goalkeeper_reach_memory if self.muscle is None else 0)
                 if active
                 else (posture_delta if ready_active else np.zeros(29))
             )

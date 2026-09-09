@@ -147,6 +147,7 @@ def run_case(
     limits = np.asarray(G1_HARD_TORQUE_LIMITS) * 0.85
     poses, velocities, controls, times, contacts, activations = [], [], [], [], [], []
     ball_contacts = []
+    muscle_observations = []
     minimum_pelvis = math.inf
     peak_tilt = 0.0
     goal_crossed = False
@@ -162,6 +163,10 @@ def run_case(
         for side in ("left", "right")
     }
     outward_speed = 0.0
+    closest_incoming_glove_surface_m = 2.0
+    finite_state = True
+    maximum_joint_limit_excess_rad = 0.0
+    maximum_actuator_limit_excess_nm = 0.0
     robot_geoms = set().union(*(c.robot_geoms for c in controllers))
     for tick in range(250):
         if tick == 50:
@@ -197,6 +202,8 @@ def run_case(
                 keeper.output.kps, keeper.output.kds
             )
         activations.append((int(reach.active), reach.peak_residual_rad))
+        if reach.last_muscle_observation is not None:
+            muscle_observations.append(reach.last_muscle_observation.copy())
         for _ in range(10):
             before_ball_velocity = data.qvel[bv : bv + 3].copy()
             for c in controllers:
@@ -213,12 +220,36 @@ def run_case(
                 )
                 data.ctrl[c.actuators] = np.clip(torque, -limits, limits)
             mujoco.mj_step(model, data)
+            finite_state = finite_state and all(
+                np.isfinite(v).all() for v in (data.qpos, data.qvel, data.ctrl)
+            )
+            if not finite_state:
+                break
+            q = data.qpos[keeper.joint_qpos]
+            ranges = model.jnt_range[keeper.joint_ids]
+            limited = model.jnt_limited[keeper.joint_ids].astype(bool)
+            maximum_joint_limit_excess_rad = max(
+                maximum_joint_limit_excess_rad,
+                float(
+                    np.max(
+                        np.maximum(ranges[limited, 0] - q[limited], q[limited] - ranges[limited, 1])
+                    )
+                ),
+            )
+            maximum_actuator_limit_excess_nm = max(
+                maximum_actuator_limit_excess_nm,
+                float(np.max(abs(data.ctrl[keeper.actuators]) - np.asarray(G1_HARD_TORQUE_LIMITS))),
+            )
             for i in range(data.ncon):
                 contact = data.contact[i]
                 if ball_geom not in (contact.geom1, contact.geom2):
                     continue
                 other = contact.geom2 if contact.geom1 == ball_geom else contact.geom1
                 ball_contacts.append((float(data.time), int(other), float(contact.dist)))
+                force = np.zeros(6)
+                mujoco.mj_contactForce(model, data, i, force)
+                if float(force[0]) <= 1e-6:
+                    continue
                 if tick >= 50 and other in robot_geoms:
                     if first_robot_contact_time is None:
                         first_robot_contact_time = float(data.time)
@@ -228,8 +259,6 @@ def run_case(
                             first_robot_geoms & gloves
                         )
                 if other in keeper.left_glove_geoms | keeper.right_glove_geoms:
-                    force = np.zeros(6)
-                    mujoco.mj_contactForce(model, data, i, force)
                     if enabled and np.linalg.norm(force[:3]) > 1e-6:
                         reach.notify_glove_contact(float(data.time))
                     contacts.append((float(data.time), int(other), float(contact.dist), *force))
@@ -243,6 +272,14 @@ def run_case(
                 )
             if tick >= 50:
                 p = frame.point(data.qpos[bq : bq + 3])
+                if 3.9 <= p[0] <= 4.75 and first_robot_contact_time is None:
+                    closest_incoming_glove_surface_m = min(
+                        closest_incoming_glove_surface_m,
+                        *(
+                            float(mujoco.mj_geomDistance(model, data, ball_geom, g, 2.0, None))
+                            for g in gloves
+                        ),
+                    )
                 if (
                     p[0] > 5.07
                     and abs(p[1]) < fixture.goal.width_m / 2
@@ -260,6 +297,8 @@ def run_case(
         velocities.append(data.qvel.copy())
         controls.append(data.ctrl.copy())
         times.append(data.time)
+        if not finite_state:
+            break
     np.savez_compressed(
         output / "trajectory.npz",
         qpos=poses,
@@ -269,6 +308,14 @@ def run_case(
         glove_contacts=contacts,
         activation=activations,
         ball_contacts=ball_contacts,
+        muscle_observations=np.asarray(muscle_observations).reshape(-1, 65),
+    )
+    physical_safe = bool(
+        finite_state
+        and maximum_joint_limit_excess_rad <= 1e-5
+        and maximum_actuator_limit_excess_nm <= 1e-5
+        and minimum_pelvis > 0.55
+        and peak_tilt < 0.8
     )
     result = dict(
         schema_version="s229.shared_keeper_reach_exam.v2",
@@ -285,8 +332,13 @@ def run_case(
         goal_crossed=goal_crossed,
         minimum_pelvis_m=minimum_pelvis,
         peak_tilt_rad=peak_tilt,
+        finite_state=finite_state,
+        maximum_joint_limit_excess_rad=maximum_joint_limit_excess_rad,
+        maximum_actuator_limit_excess_nm=maximum_actuator_limit_excess_nm,
+        physical_safe=physical_safe,
         first_contact_velocity=first_contact_velocity,
         completed_hand_save=hand_contact
+        and physical_safe
         and first_robot_contact_glove is True
         and not goal_crossed
         and minimum_pelvis > 0.55
@@ -294,6 +346,7 @@ def run_case(
         lateral_tracking=lateral_tracking,
         glove_material=None if glove_material is None else asdict(glove_material),
         stable_save=hand_contact
+        and physical_safe
         and first_robot_contact_glove is True
         and outward_speed > 1.0
         and not goal_crossed
@@ -302,11 +355,14 @@ def run_case(
         first_robot_contact_glove=first_robot_contact_glove,
         first_robot_contact_geoms=sorted(first_robot_geoms),
         outward_speed_mps=outward_speed,
+        closest_incoming_glove_surface_m=closest_incoming_glove_surface_m,
         active_frames=sum(a[0] for a in activations),
         peak_residual_rad=reach.peak_residual_rad,
         fixture_hash=fixture.fixture_hash,
         model_hash=None if reach.gmt_contract is None else reach.gmt_contract.checkpoint_hash,
         imitation_hash=None if reach.gmt is None else reach.gmt.skill.skill_hash,
+        muscle_policy_hash=None if reach.muscle is None else reach.muscle.policy_hash,
+        keeper_policy_hash=reach.policy_hash,
         simulation_model_hash=model_hash,
         mujoco_version=mujoco.__version__,
         source_integrity_verified=_source_hash() == _LOADED_SOURCE_HASH,
