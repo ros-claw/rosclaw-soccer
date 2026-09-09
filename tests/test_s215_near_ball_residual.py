@@ -100,6 +100,28 @@ def test_actual_ppo_updates_only_sampled_private_actor() -> None:
         np.testing.assert_array_equal(child.weights[k][1:], p.weights[k][1:])
 
 
+def test_private_ppo_binds_frozen_whole_body_components_without_changing_update():
+    pytest.importorskip("torch")
+    p = policy()
+    trace = samples(p)
+    plain, _ = update_private_actors(p, [trace])
+    frozen = {"motor.red.finisher": "sha256:" + "b" * 64, "foundation.sonic": "sha256:" + "c" * 64}
+    bound, rows = update_private_actors(p, [trace], frozen_policy_hashes=frozen)
+    for key in p.weights:
+        np.testing.assert_array_equal(bound.weights[key], plain.weights[key])
+    bindings = {b["agent_id"]: b for b in rows[0]["core_plasticity"]["lease"]["bindings"]}
+    for key, digest in frozen.items():
+        assert bindings[key]["mode"] == "FROZEN"
+        assert bindings[key]["policy_hash"] == digest
+    for invalid in (
+        {p.agent_ids[0]: "sha256:" + "b" * 64},
+        {"motor": "unbound"},
+        {1: "sha256:" + "b" * 64},
+    ):
+        with pytest.raises(ValueError):
+            update_private_actors(p, [trace], frozen_policy_hashes=invalid)
+
+
 def test_wrong_parent_rollout_rejected() -> None:
     pytest.importorskip("torch")
     p = policy()

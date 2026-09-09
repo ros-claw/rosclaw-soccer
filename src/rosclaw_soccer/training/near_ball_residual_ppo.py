@@ -11,6 +11,8 @@ import argparse
 import json
 import math
 import multiprocessing
+import re
+from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
@@ -179,6 +181,7 @@ def update_private_actors(
     gamma: float = 0.99,
     trace_decay: float = 0.95,
     reward_shaping: str = "legacy",
+    frozen_policy_hashes: Mapping[str, str] | None = None,
 ) -> tuple[NearBallResidualPolicy, list[dict[str, Any]]]:
     # Optional training dependency: readers and the simulator use only NumPy.
     import torch
@@ -186,6 +189,21 @@ def update_private_actors(
     torch.set_num_threads(1)
     if not rollouts or type(epochs) is not int or not 1 <= epochs <= 16:
         raise ValueError("PPO needs rollouts and bounded update epochs")
+    if frozen_policy_hashes is not None and not isinstance(frozen_policy_hashes, Mapping):
+        raise ValueError("frozen component bindings must be a mapping")
+    frozen = dict(frozen_policy_hashes or {})
+    if (
+        len(frozen) > 32
+        or set(frozen).intersection(parent.agent_ids)
+        or any(
+            not isinstance(key, str)
+            or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", key) is None
+            or not isinstance(value, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None
+            for key, value in frozen.items()
+        )
+    ):
+        raise ValueError("distinct content-bound frozen components required")
     weights = {k: v.copy() for k, v in parent.weights.items()}
     advantages, returns = [], []
     for trace in rollouts:
@@ -211,6 +229,7 @@ def update_private_actors(
                 "parent": parent.policy_hash,
                 "roster": parent.agent_ids,
                 "dataset": dataset_hash,
+                **({"frozen_policy_hashes": frozen} if frozen else {}),
                 **(
                     {"reward_shaping": reward_shaping, "gamma": gamma}
                     if reward_shaping != "legacy"
@@ -228,6 +247,7 @@ def update_private_actors(
             rows.append(row)
             continue
         before_hashes = private_weight_hashes(weights, parent.agent_ids, parent.body_hash)
+        before_hashes.update(frozen)
         lease = begin_update(
             before=before_hashes,
             focal=agent,
@@ -287,7 +307,7 @@ def update_private_actors(
         row["core_plasticity"] = finish_update(
             lease=lease,
             before=before_hashes,
-            after=private_weight_hashes(weights, parent.agent_ids, parent.body_hash),
+            after={**private_weight_hashes(weights, parent.agent_ids, parent.body_hash), **frozen},
             steps=optimizer_steps,
         )
         delta = float(sum(np.square(weights[k][i] - parent.weights[k][i]).sum() for k in weights))

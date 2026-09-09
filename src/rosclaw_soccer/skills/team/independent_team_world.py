@@ -665,7 +665,7 @@ def simulate_independent_team_world(
         or len({id(motor) for motor in motors.values()}) != len(motors)
         or any(not _HASH.fullmatch(motor.contract_hash) for motor in motors.values())
         or motors
-        and (option_bridge_config is not None or near_ball_policy is not None)
+        and option_bridge_config is not None
         or active.keeper_reach is not None
         and any(
             agent.agent_id in motors and agent.primary_role is MatchRole.GOALKEEPER
@@ -1512,6 +1512,7 @@ def simulate_independent_team_world(
                 [
                     c is teacher_controller
                     and c is not option_controller
+                    and c.cell.agent_id not in motors
                     and not (
                         last_receive_contact_agent_id == c.cell.agent_id
                         and float(data.time) - last_receive_contact_time_sec
@@ -1628,7 +1629,12 @@ def simulate_independent_team_world(
                     kd = np.asarray(controller.output.kds, dtype=np.float64)
                 q = np.asarray(data.qpos[controller.joint_qpos], dtype=np.float64)
                 residual = residual_by_id.get(controller.cell.agent_id)
-                if residual is not None and np.any(residual) and not post_receive_stabilizing:
+                if (
+                    controller.cell.agent_id not in motors
+                    and residual is not None
+                    and np.any(residual)
+                    and not post_receive_stabilizing
+                ):
                     target = target.copy()
                     target[:12] += residual
                 dq = np.asarray(data.qvel[controller.joint_qvel], dtype=np.float64)
