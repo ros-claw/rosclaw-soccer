@@ -62,6 +62,73 @@ def test_rolling_metric_rejects_insufficient_ground_samples() -> None:
         )
 
 
+def test_rotated_ball_uses_body_angular_velocity_in_raw_mujoco_traces() -> None:
+    time, pose, velocity = _trace(rolling=True)
+    pose[:, 3:7] = (2**-0.5, 0, 0, 2**-0.5)
+    velocity[:, 3:6] = (1 / 0.11, 0, 0)
+    saved_pose, saved_velocity = pose.copy(), velocity.copy()
+    rolling, _ = measure_rolling_authenticity(
+        time=time, ball_pose=pose, ball_velocity=velocity, ball_radius_m=0.11
+    )
+    assert rolling.passed and rolling.median_slip_ratio == pytest.approx(0, abs=1e-12)
+    assert rolling.angular_velocity_frame == "mujoco_free_joint"
+    np.testing.assert_array_equal(velocity, saved_velocity)
+    wrong_frame, _ = measure_rolling_authenticity(
+        time=time,
+        ball_pose=pose,
+        ball_velocity=velocity,
+        ball_radius_m=0.11,
+        angular_velocity_frame="world",
+    )
+    assert not wrong_frame.passed
+    velocity[:, 3:6] = (0, 1 / 0.11, 0)
+    world, _ = measure_rolling_authenticity(
+        time=time,
+        ball_pose=pose,
+        ball_velocity=velocity,
+        ball_radius_m=0.11,
+        angular_velocity_frame="world",
+    )
+    assert world.passed
+    np.testing.assert_array_equal(pose, saved_pose)
+
+
+@pytest.mark.parametrize(
+    "change", ["zero_quaternion", "scaled_quaternion", "unknown_frame", "nan_exclusion"]
+)
+def test_rolling_frame_and_orientation_are_fail_closed(change) -> None:
+    time, pose, velocity = _trace(rolling=True)
+    kwargs = {}
+    if change == "zero_quaternion":
+        pose[:, 3:7] = 0
+    elif change == "scaled_quaternion":
+        pose[:, 3] = 2
+    elif change == "unknown_frame":
+        kwargs["angular_velocity_frame"] = "guess"
+    else:
+        kwargs["ignore_initial_sec"] = float("nan")
+    with pytest.raises(ValueError):
+        measure_rolling_authenticity(
+            time=time, ball_pose=pose, ball_velocity=velocity, ball_radius_m=0.11, **kwargs
+        )
+
+
+def test_mujoco_object_velocity_confirms_freejoint_angular_frame() -> None:
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_string(
+        '<mujoco><worldbody><body name="ball"><freejoint/>'
+        '<geom type="sphere" size=".11" mass=".43"/></body></worldbody></mujoco>'
+    )
+    data = mujoco.MjData(model)
+    data.qpos[3:7] = (2**-0.5, 0, 0, 2**-0.5)
+    data.qvel[:] = (1, 0, 0, 1 / 0.11, 0, 0)
+    mujoco.mj_forward(model, data)
+    world = np.zeros(6)
+    mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, model.body("ball").id, world, 0)
+    np.testing.assert_allclose(world[:3], (0, 1 / 0.11, 0), atol=1e-12)
+    np.testing.assert_allclose(world[3:], (1, 0, 0), atol=1e-12)
+
+
 def test_rolling_thresholds_fail_closed() -> None:
     with pytest.raises(ValueError, match="p95"):
         RollingAuthenticityThresholds(

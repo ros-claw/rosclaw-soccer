@@ -7,7 +7,7 @@ import json
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -67,7 +67,8 @@ class RollingAuthenticityMetrics:
     p95_slip_ratio: float
     rolling_fraction: float
     rotation_observed: bool
-    schema_version: str = "rosclaw_soccer.rolling_authenticity_metrics.v1"
+    angular_velocity_frame: str = "mujoco_free_joint"
+    schema_version: str = "rosclaw_soccer.rolling_authenticity_metrics.v2"
 
 
 @dataclass(frozen=True)
@@ -103,8 +104,15 @@ def measure_rolling_authenticity(
     ball_radius_m: float,
     thresholds: RollingAuthenticityThresholds | None = None,
     ignore_initial_sec: float = 0.20,
+    angular_velocity_frame: Literal["mujoco_free_joint", "world"] = "mujoco_free_joint",
 ) -> tuple[RollingAuthenticityMetrics, NDArray[np.float64]]:
-    """Measure no-slip consistency from physical linear and angular velocity."""
+    """Measure no-slip consistency in one world frame.
+
+    Soccer traces store raw free-joint qvel: world linear velocity, but body
+    angular velocity. Rotate the latter using the recorded wxyz quaternion.
+    Already-world angular measurements require the explicit ``world`` option.
+    No measured motion or threshold is altered by this frame conversion.
+    """
 
     gate = thresholds or RollingAuthenticityThresholds()
     timestamps = np.asarray(time, dtype=np.float64)
@@ -119,12 +127,26 @@ def measure_rolling_authenticity(
         raise ValueError("rolling trace shapes are invalid")
     if not all(np.all(np.isfinite(value)) for value in (timestamps, pose, velocity)):
         raise ValueError("rolling trace contains non-finite values")
+    if (
+        angular_velocity_frame not in {"mujoco_free_joint", "world"}
+        or not math.isfinite(ignore_initial_sec)
+        or ignore_initial_sec < 0
+    ):
+        raise ValueError("explicit angular velocity frame and finite initial exclusion required")
+    quaternion = pose[:, 3:7]
+    if np.any(np.abs(np.linalg.norm(quaternion, axis=1) - 1.0) > 1e-4):
+        raise ValueError("rolling trace requires unit wxyz orientation quaternions")
     if not np.all(np.diff(timestamps) > 0.0):
         raise ValueError("rolling trace time must be strictly increasing")
     if not math.isfinite(ball_radius_m) or not 0.105 <= ball_radius_m <= 0.115:
         raise ValueError("rolling audit ball radius is outside the football range")
     linear_xy = velocity[:, :2]
     angular = velocity[:, 3:6]
+    if angular_velocity_frame == "mujoco_free_joint":
+        vector = quaternion[:, 1:]
+        angular = angular + 2 * np.cross(
+            vector, np.cross(vector, angular) + quaternion[:, :1] * angular
+        )
     surface_xy = np.column_stack((ball_radius_m * angular[:, 1], -ball_radius_m * angular[:, 0]))
     linear_speed = np.linalg.norm(linear_xy, axis=1)
     surface_speed = np.linalg.norm(surface_xy, axis=1)
@@ -162,6 +184,7 @@ def measure_rolling_authenticity(
         p95_slip_ratio=p95_ratio,
         rolling_fraction=rolling_fraction,
         rotation_observed=rotation_observed,
+        angular_velocity_frame=angular_velocity_frame,
     )
     return metrics, np.asarray(slip_ratio, dtype=np.float64)
 
