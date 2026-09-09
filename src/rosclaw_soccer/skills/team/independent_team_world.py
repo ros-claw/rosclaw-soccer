@@ -661,6 +661,7 @@ def simulate_independent_team_world(
     near_ball_policy: NearBallResidualPolicy | None = None,
     near_ball_seed: int = 0,
     near_ball_explore: bool = False,
+    near_ball_exploration_agent_ids: tuple[str, ...] | None = None,
     motor_options: Mapping[str, TeamMotorOption] | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all neural locomotion bodies in one clock."""
@@ -669,6 +670,22 @@ def simulate_independent_team_world(
     cell_by_id = {cell.agent_id: cell for cell in cells}
     player_by_id = {player.agent_id: player for player in players}
     roster_ids = {agent.agent_id for agent in roster.agents}
+    exploration_mask: NDArray[np.bool_] | None = None
+    if near_ball_exploration_agent_ids is not None:
+        scope = near_ball_exploration_agent_ids
+        if (
+            near_ball_explore is not True
+            or near_ball_policy is None
+            or type(scope) is not tuple
+            or not scope
+            or any(type(agent) is not str for agent in scope)
+            or tuple(sorted(set(scope))) != scope
+            or not set(scope).issubset(roster_ids)
+        ):
+            raise ValueError("scoped exploration requires a policy and explicit roster subset")
+        exploration_mask = np.asarray(
+            [agent in scope for agent in near_ball_policy.agent_ids], dtype=bool
+        )
     motors = dict(motor_options or {})
     if (
         not set(motors).issubset(roster_ids)
@@ -1576,8 +1593,13 @@ def simulate_independent_team_world(
                 dtype=bool,
             )
             latent, log_probability, values = near_ball_policy.act(
-                observations_np, residual_rng, explore=near_ball_explore
+                observations_np,
+                residual_rng,
+                explore=near_ball_explore,
+                **({"exploration_mask": exploration_mask} if exploration_mask is not None else {}),
             )
+            if exploration_mask is not None:
+                trace.setdefault("residual_exploration_mask", []).append(exploration_mask.copy())
             residual_previous = bounded_residual(latent, residual_previous, residual_active)
             for i, c in enumerate(ordered):
                 if (

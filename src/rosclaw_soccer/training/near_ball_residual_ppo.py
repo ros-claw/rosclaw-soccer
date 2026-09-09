@@ -240,6 +240,13 @@ def update_private_actors(
     actions = np.concatenate([t["residual_latent"] for t in rollouts])
     logps = np.concatenate([t["residual_log_probability"] for t in rollouts])
     active = np.concatenate([t["residual_active"] for t in rollouts])
+    scoped_exploration = any("residual_exploration_mask" in t for t in rollouts)
+    exploration = np.concatenate(
+        [
+            t.get("residual_exploration_mask", np.ones_like(t["residual_active"], dtype=bool))
+            for t in rollouts
+        ]
+    )
     advantage, target_value = np.concatenate(advantages), np.concatenate(returns)
     dataset_hash = str(hash_json({"rollouts": [trajectory_digest(t) for t in rollouts]}))
     context_hash = str(
@@ -269,6 +276,10 @@ def update_private_actors(
         mask = active[:, i].astype(bool)
         n = int(mask.sum())
         row: dict[str, Any] = {"agent_id": agent, "active_samples": n, "updated": False}
+        if scoped_exploration:
+            mask &= exploration[:, i]
+            n = int(mask.sum())
+            row["learning_samples"] = n
         if trainable_agent_ids is not None and agent not in trainable_agent_ids:
             # Keep the measured active mask truthful. Learning eligibility is
             # separate from which actor actually controlled the simulation.
@@ -390,9 +401,17 @@ def _validate_on_policy(policy: NearBallResidualPolicy, trace: dict[str, Any]) -
             raise ValueError("invalid on-policy rollout tensors")
     if np.asarray(trace["residual_active"]).dtype != np.bool_:
         raise ValueError("PPO activation mask must be boolean")
+    if "residual_exploration_mask" in trace:
+        mask = np.asarray(trace["residual_exploration_mask"])
+        if mask.shape != (n, 8) or mask.dtype != np.bool_:
+            raise ValueError("PPO exploration mask must be an explicit boolean frame/role array")
     w = policy.weights
     hidden = np.tanh(np.einsum("tni,nij->tnj", obs, w["w1"]) + w["b1"])
     mean = np.einsum("tni,nij->tnj", hidden, w["w2"]) + w["b2"]
+    if "residual_exploration_mask" in trace and not np.allclose(
+        np.asarray(trace["residual_latent"])[~mask], mean[~mask], rtol=0, atol=1e-10
+    ):
+        raise ValueError("nonexploring roles must use the recorded parent's deterministic action")
     logp = (
         -0.5 * ((trace["residual_latent"] - mean) / np.exp(w["log_std"])) ** 2
         - w["log_std"]

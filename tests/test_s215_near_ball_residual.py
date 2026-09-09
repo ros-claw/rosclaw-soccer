@@ -48,6 +48,72 @@ def test_filter_and_seed_replay() -> None:
         bounded_residual(a * np.nan, previous, np.ones(8, dtype=bool))
 
 
+def test_exploration_is_private_and_preserves_other_role_actions():
+    p = policy()
+    x = np.ones((8, 56))
+    full = p.act(x, np.random.default_rng(7), explore=True)
+    deterministic = p.act(x, np.random.default_rng(7), explore=False)
+    mask = np.zeros(8, dtype=bool)
+    mask[2] = True
+    selected = p.act(x, np.random.default_rng(7), explore=True, exploration_mask=mask)
+    for a, b, c in zip(full, deterministic, selected, strict=True):
+        np.testing.assert_array_equal(c[2], a[2])
+        np.testing.assert_array_equal(c[~mask], b[~mask])
+    for invalid in (np.ones(8), np.ones(7, dtype=bool), np.zeros(8, dtype=bool), [True] * 8):
+        with pytest.raises(ValueError, match="exploration"):
+            p.act(x, np.random.default_rng(7), explore=True, exploration_mask=invalid)
+    with pytest.raises(ValueError, match="exploration"):
+        p.act(x, np.random.default_rng(7), explore=False, exploration_mask=mask)
+
+
+@pytest.mark.parametrize("bad", [np.iinfo(np.int64).min, complex(1, 1), True])
+def test_weight_bounds_reject_integer_overflow_and_non_real_arrays(bad):
+    from dataclasses import replace
+
+    p = policy()
+    weights = dict(p.weights)
+    weights["w1"] = np.full(weights["w1"].shape, bad)
+    with pytest.raises(ValueError, match="weights"):
+        replace(p, weights=weights)
+
+
+@pytest.mark.parametrize(
+    ("scope", "explore", "has_policy"),
+    [
+        ((), True, True),
+        (["agent.0"], True, True),
+        (("agent.0", "agent.0"), True, True),
+        (("agent.1", "agent.0"), True, True),
+        (("unknown",), True, True),
+        ((True,), True, True),
+        (("agent.0",), False, True),
+        (("agent.0",), 1, True),
+        (("agent.0",), True, False),
+    ],
+)
+def test_world_rejects_invalid_exploration_scope_before_asset_access(
+    tmp_path, scope, explore, has_policy
+):
+    from types import SimpleNamespace
+
+    from rosclaw_soccer.skills.team.independent_team_world import simulate_independent_team_world
+
+    p = policy()
+    roster = SimpleNamespace(agents=[SimpleNamespace(agent_id=i) for i in p.agent_ids])
+    with pytest.raises(ValueError, match="scoped exploration"):
+        simulate_independent_team_world(
+            asset_root=tmp_path / "nonexistent",
+            roster=roster,
+            cells=(),
+            players=(),
+            scenario=None,
+            goal=None,
+            near_ball_policy=p if has_policy else None,
+            near_ball_explore=explore,
+            near_ball_exploration_agent_ids=scope,
+        )
+
+
 def test_gae_has_terminal_zero() -> None:
     adv, returns = episodic_gae(np.ones((2, 8)), np.zeros((2, 8)))
     np.testing.assert_allclose(adv[-1], 1)
@@ -120,6 +186,40 @@ def test_training_scope_freezes_sampled_roles_without_relabeling_rollouts():
     default, _ = update_private_actors(p, [trace])
     assert all_roles.policy_hash == default.policy_hash and all_rows[1]["updated"]
     assert rows[0]["core_plasticity"] != all_rows[0]["core_plasticity"]
+
+
+def test_ppo_learns_only_physically_active_and_exploring_roles():
+    pytest.importorskip("torch")
+    p = policy()
+    trace = samples(p)
+    trace["residual_active"][:, 1] = True
+    mask = np.zeros(8, dtype=bool)
+    mask[0] = True
+    rng = np.random.default_rng(327)
+    actions, logps, values = zip(
+        *(
+            p.act(x, rng, explore=True, exploration_mask=mask)
+            for x in trace["residual_observations"]
+        ),
+        strict=True,
+    )
+    trace.update(
+        residual_latent=np.asarray(actions),
+        residual_log_probability=np.asarray(logps),
+        residual_value=np.asarray(values),
+        residual_exploration_mask=np.repeat(mask[None], len(actions), axis=0),
+    )
+    child, rows = update_private_actors(p, [trace])
+    assert rows[0]["updated"] and rows[0]["learning_samples"] == 40
+    assert rows[1]["active_samples"] == 40 and rows[1]["learning_samples"] == 0
+    for k in p.weights:
+        np.testing.assert_array_equal(child.weights[k][1:], p.weights[k][1:])
+    false_mask = trace["residual_exploration_mask"].copy()
+    false_mask[:, 0] = False
+    with pytest.raises(ValueError, match="nonexploring roles"):
+        update_private_actors(p, [{**trace, "residual_exploration_mask": false_mask}])
+    with pytest.raises(ValueError, match="exploration mask"):
+        update_private_actors(p, [{**trace, "residual_exploration_mask": false_mask.astype(int)}])
 
 
 @pytest.mark.parametrize(

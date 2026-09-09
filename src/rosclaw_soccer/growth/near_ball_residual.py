@@ -55,9 +55,11 @@ class NearBallResidualPolicy:
         for name, shape in _SHAPES.items():
             value = self.weights[name]
             if (
-                value.shape != (8, *shape)
+                not isinstance(value, np.ndarray)
+                or value.shape != (8, *shape)
+                or value.dtype.kind not in "fiu"
                 or not np.all(np.isfinite(value))
-                or np.max(np.abs(value)) > 20
+                or np.max(np.abs(value.astype(np.float64))) > 20
             ):
                 raise ValueError("invalid finite residual policy weights")
         if np.any(self.weights["log_std"] < -4) or np.any(self.weights["log_std"] > -0.2):
@@ -98,15 +100,35 @@ class NearBallResidualPolicy:
         )
 
     def act(
-        self, observations: np.ndarray, rng: np.random.Generator, *, explore: bool
+        self,
+        observations: np.ndarray,
+        rng: np.random.Generator,
+        *,
+        explore: bool,
+        exploration_mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         if observations.shape != (8, 56) or not np.all(np.isfinite(observations)):
             raise ValueError("residual observation must be finite 8x56 proprioception")
+        if type(explore) is not bool or (
+            exploration_mask is not None
+            and (
+                not explore
+                or not isinstance(exploration_mask, np.ndarray)
+                or exploration_mask.shape != (8,)
+                or exploration_mask.dtype != np.bool_
+                or not np.any(exploration_mask)
+            )
+        ):
+            raise ValueError("explicit exploration and a nonempty boolean role mask required")
         w = self.weights
         hidden = np.tanh(np.einsum("ni,nij->nj", observations, w["w1"]) + w["b1"])
         mean = np.einsum("ni,nij->nj", hidden, w["w2"]) + w["b2"]
         sigma = np.exp(w["log_std"])
         latent = mean + sigma * rng.standard_normal(mean.shape) if explore else mean
+        if exploration_mask is not None:
+            # Keep the legacy random draw order for selected players. Others
+            # act deterministically without changing their physical activity.
+            latent = np.where(exploration_mask[:, None], latent, mean)
         log_probability = (
             -0.5 * ((latent - mean) / sigma) ** 2 - w["log_std"] - 0.5 * math.log(2 * math.pi)
         ).sum(axis=1)
