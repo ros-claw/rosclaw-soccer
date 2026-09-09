@@ -13,6 +13,7 @@ from rosclaw_soccer.skills.team.motor_option import (
     TeamMotorObservation,
     TeamMotorPhysicsObservation,
     TeamMotorTarget,
+    motor_blocks_residual,
 )
 
 
@@ -20,6 +21,43 @@ def observation():
     return TeamMotorObservation(
         "red.finisher", 0, 0.0, "shoot", True, (0.0,) * 43, (0.0,) * 41, (7.5, 0.0, 0.0)
     )
+
+
+@pytest.mark.parametrize("allow", [False, True])
+@pytest.mark.parametrize(
+    "proposed,faulted", [(False, False), (True, False), (False, True), (True, True)]
+)
+def test_motor_residual_ownership_is_phase_exclusive_and_fault_latched(allow, proposed, faulted):
+    assert motor_blocks_residual(
+        registered=True, proposed=proposed, faulted=faulted, allow_idle_fallback=allow
+    ) is (not allow or proposed or faulted)
+    assert not motor_blocks_residual(
+        registered=False, proposed=False, faulted=False, allow_idle_fallback=allow
+    )
+
+
+def test_motor_residual_fallback_is_explicit_content_bound_and_requires_both_backends():
+    default = IndependentTeamWorldConfig()
+    enabled = replace(default, motor_idle_residual_fallback=True)
+    assert default.config_hash != enabled.config_hash
+    with pytest.raises(ValueError):
+        replace(default, motor_idle_residual_fallback=1)
+    with pytest.raises(ValueError, match="per-player motor"):
+        simulate_independent_team_world(
+            asset_root=Path("must-not-be-opened"),
+            roster=SimpleNamespace(agents=[]),
+            cells=(),
+            players=(),
+            scenario=None,
+            goal=None,
+            config=enabled,
+        )
+    with pytest.raises(ValueError):
+        motor_blocks_residual(
+            registered=False, proposed=True, faulted=False, allow_idle_fallback=True
+        )
+    with pytest.raises(ValueError):
+        motor_blocks_residual(registered=True, proposed=False, faulted=False, allow_idle_fallback=1)
 
 
 @pytest.mark.parametrize(

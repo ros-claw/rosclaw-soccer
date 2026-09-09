@@ -12,6 +12,21 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 
+def motor_blocks_residual(
+    *, registered: bool, proposed: bool, faulted: bool, allow_idle_fallback: bool
+) -> bool:
+    """Exclusive control ownership; a failed motor never grants learning fallback.
+
+    Idle fallback is an explicit simulation experiment, not a safety recovery.
+    The caller must also clear residual filter history whenever this blocks.
+    """
+    if any(type(v) is not bool for v in (registered, proposed, faulted, allow_idle_fallback)):
+        raise ValueError("explicit boolean motor ownership required")
+    if not registered and (proposed or faulted):
+        raise ValueError("unregistered motor cannot propose or fault")
+    return registered and (proposed or faulted or not allow_idle_fallback)
+
+
 @dataclass(frozen=True)
 class TeamMotorObservation:
     agent_id: str

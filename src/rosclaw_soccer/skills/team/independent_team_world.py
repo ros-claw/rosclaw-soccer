@@ -85,6 +85,7 @@ from rosclaw_soccer.skills.team.motor_option import (
     TeamMotorPhysicsObservation,
     TeamMotorPhysicsObserver,
     TeamMotorTarget,
+    motor_blocks_residual,
 )
 from rosclaw_soccer.world.field import (
     G1CompliantGoalNetState,
@@ -157,6 +158,7 @@ class IndependentTeamWorldConfig:
     hardware_authorized: bool = False
     schema_version: str = "rosclaw_soccer.independent_team_world_config.v1"
     motor_approach_standoff_m: float | None = None
+    motor_idle_residual_fallback: bool = False
 
     def __post_init__(self) -> None:
         if self.motor_approach_standoff_m is not None and (
@@ -211,6 +213,7 @@ class IndependentTeamWorldConfig:
             or not isinstance(self.all_role_clearance, bool)
             or not isinstance(self.strict_receive_handoff, bool)
             or type(self.strike_residual_enabled) is not bool
+            or type(self.motor_idle_residual_fallback) is not bool
             or (
                 self.strike_stance_lateral_m is not None
                 and (
@@ -287,6 +290,8 @@ class IndependentTeamWorldConfig:
             value.pop("strike_stance_lateral_m")
         if self.motor_approach_standoff_m is None:
             value.pop("motor_approach_standoff_m")
+        if not self.motor_idle_residual_fallback:
+            value.pop("motor_idle_residual_fallback")
         return str(hash_json(value))
 
 
@@ -666,6 +671,8 @@ def simulate_independent_team_world(
         or any(not _HASH.fullmatch(motor.contract_hash) for motor in motors.values())
         or motors
         and option_bridge_config is not None
+        or active.motor_idle_residual_fallback
+        and (not motors or near_ball_policy is None)
         or active.keeper_reach is not None
         and any(
             agent.agent_id in motors and agent.primary_role is MatchRole.GOALKEEPER
@@ -1491,6 +1498,16 @@ def simulate_independent_team_world(
                 [c.cell.agent_id in motor_faults for c in controllers]
             )
         residual_by_id: dict[str, NDArray[np.float64]] = {}
+        residual_blocked = {
+            agent_id
+            for agent_id in motors
+            if motor_blocks_residual(
+                registered=True,
+                proposed=agent_id in motor_targets,
+                faulted=agent_id in motor_faults,
+                allow_idle_fallback=active.motor_idle_residual_fallback,
+            )
+        }
         if near_ball_policy is not None:
             ordered = tuple(
                 next(c for c in controllers if c.cell.agent_id == agent_id)
@@ -1512,7 +1529,7 @@ def simulate_independent_team_world(
                 [
                     c is teacher_controller
                     and c is not option_controller
-                    and c.cell.agent_id not in motors
+                    and c.cell.agent_id not in residual_blocked
                     and not (
                         last_receive_contact_agent_id == c.cell.agent_id
                         and float(data.time) - last_receive_contact_time_sec
@@ -1541,10 +1558,14 @@ def simulate_independent_team_world(
             )
             residual_previous = bounded_residual(latent, residual_previous, residual_active)
             for i, c in enumerate(ordered):
-                if c is option_controller or (
-                    last_receive_contact_agent_id == c.cell.agent_id
-                    and float(data.time) - last_receive_contact_time_sec
-                    <= active.post_receive_hold_sec
+                if (
+                    c.cell.agent_id in residual_blocked
+                    or c is option_controller
+                    or (
+                        last_receive_contact_agent_id == c.cell.agent_id
+                        and float(data.time) - last_receive_contact_time_sec
+                        <= active.post_receive_hold_sec
+                    )
                 ):
                     residual_previous[i] = 0
                 residual_by_id[c.cell.agent_id] = residual_previous[i].copy()
@@ -1630,7 +1651,8 @@ def simulate_independent_team_world(
                 q = np.asarray(data.qpos[controller.joint_qpos], dtype=np.float64)
                 residual = residual_by_id.get(controller.cell.agent_id)
                 if (
-                    controller.cell.agent_id not in motors
+                    controller.cell.agent_id not in residual_blocked
+                    and controller.cell.agent_id not in motor_faults
                     and residual is not None
                     and np.any(residual)
                     and not post_receive_stabilizing
