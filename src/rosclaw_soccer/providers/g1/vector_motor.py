@@ -88,6 +88,15 @@ class G1VectorMotorBatch:
             raise RuntimeError("Warp physics device binding differs")
         self.cpu_model = build_g1_stadium_model(asset_root, spec=goal)
         self.cpu_model.opt.timestep = 0.002
+        from rosclaw_soccer.sim.mjwarp_contract import qualify_mjwarp_damping
+
+        self.damping_qualification = qualify_mjwarp_damping(
+            self.cpu_model, device=self.config.device
+        )
+        self.world_contract["passive_damping_contract"] = self.damping_qualification[
+            "contract_hash"
+        ]
+        self.world_hash = hash_json(self.world_contract)
         self.joint_ids = np.asarray([self.cpu_model.joint(n).id for n in G1_DDS_JOINT_NAMES])
         self.actuator_ids = np.asarray([self.cpu_model.actuator(n).id for n in G1_DDS_JOINT_NAMES])
         self.joint_qpos = self.cpu_model.jnt_qposadr[self.joint_ids].copy()
