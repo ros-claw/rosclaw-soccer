@@ -164,3 +164,35 @@ def test_no_samples_means_no_weight_updates() -> None:
     assert not any(row["updated"] for row in rows)
     for key in p.weights:
         np.testing.assert_array_equal(child.weights[key], p.weights[key])
+
+
+def test_behavior_rehearsal_reduces_distribution_drift_and_binds_immutable_reference():
+    torch = pytest.importorskip("torch")
+    from rosclaw_soccer.training.role_behavior_anchor import RoleBehaviorAnchor
+
+    p = policy()
+    trace = samples(p)
+    anchor = RoleBehaviorAnchor(
+        p, trace["residual_observations"], trace["residual_active"], "sha256:" + "e" * 64, 1000.0
+    )
+    plain, _ = update_private_actors(p, [trace], epochs=16)
+    child, rows = update_private_actors(p, [trace], epochs=16, behavior_anchor=anchor)
+    replay, replay_rows = update_private_actors(p, [trace], epochs=16, behavior_anchor=anchor)
+    assert child.policy_hash == replay.policy_hash and rows == replay_rows
+
+    def kl(model):
+        params = {k: torch.tensor(v[0].copy()) for k, v in model.weights.items()}
+        return float(anchor.kl_loss(params, 0))
+
+    assert kl(child) < kl(plain)
+    assert rows[0]["behavior_anchor"]["anchor_hash"] == anchor.anchor_hash
+    assert rows[0]["behavior_anchor"]["kl_after"] == pytest.approx(kl(child))
+    for key in p.weights:
+        np.testing.assert_array_equal(child.weights[key][1:], p.weights[key][1:])
+    with pytest.raises(ValueError, match="anchor"):
+        update_private_actors(
+            p,
+            [trace],
+            behavior_anchor=anchor,
+            frozen_policy_hashes={"retention.anchor": "sha256:" + "f" * 64},
+        )

@@ -45,6 +45,7 @@ from rosclaw_soccer.training.near_ball_plasticity import (
     finish_update,
     private_weight_hashes,
 )
+from rosclaw_soccer.training.role_behavior_anchor import RoleBehaviorAnchor
 
 
 def physical_rewards(
@@ -182,6 +183,7 @@ def update_private_actors(
     trace_decay: float = 0.95,
     reward_shaping: str = "legacy",
     frozen_policy_hashes: Mapping[str, str] | None = None,
+    behavior_anchor: RoleBehaviorAnchor | None = None,
 ) -> tuple[NearBallResidualPolicy, list[dict[str, Any]]]:
     # Optional training dependency: readers and the simulator use only NumPy.
     import torch
@@ -192,6 +194,15 @@ def update_private_actors(
     if frozen_policy_hashes is not None and not isinstance(frozen_policy_hashes, Mapping):
         raise ValueError("frozen component bindings must be a mapping")
     frozen = dict(frozen_policy_hashes or {})
+    if behavior_anchor is not None:
+        if (
+            not isinstance(behavior_anchor, RoleBehaviorAnchor)
+            or behavior_anchor.policy.agent_ids != parent.agent_ids
+            or behavior_anchor.policy.body_hash != parent.body_hash
+            or "retention.anchor" in frozen
+        ):
+            raise ValueError("behavior anchor must match body/roster without binding aliases")
+        frozen["retention.anchor"] = behavior_anchor.policy.policy_hash
     if (
         len(frozen) > 32
         or set(frozen).intersection(parent.agent_ids)
@@ -230,6 +241,7 @@ def update_private_actors(
                 "roster": parent.agent_ids,
                 "dataset": dataset_hash,
                 **({"frozen_policy_hashes": frozen} if frozen else {}),
+                **({"behavior_anchor": behavior_anchor.anchor_hash} if behavior_anchor else {}),
                 **(
                     {"reward_shaping": reward_shaping, "gamma": gamma}
                     if reward_shaping != "legacy"
@@ -268,6 +280,13 @@ def update_private_actors(
         adv = torch.tensor(advantage[mask, i], dtype=torch.float64)
         adv = (adv - adv.mean()) / (adv.std(unbiased=False) + 1e-8)
         value_target = torch.tensor(target_value[mask, i], dtype=torch.float64)
+        if behavior_anchor is not None:
+            row["behavior_anchor"] = {
+                "anchor_hash": behavior_anchor.anchor_hash,
+                "samples": int(behavior_anchor.active[:, i].sum()),
+                "coefficient": behavior_anchor.coefficient,
+                "kl_before": float(behavior_anchor.kl_loss(parameters, i).detach()),
+            }
         initial_mean = None
         for _ in range(epochs):
             hidden = torch.tanh(x @ parameters["w1"] + parameters["b1"])
@@ -291,6 +310,8 @@ def update_private_actors(
                 + 0.1 * (mean - initial_mean).square().mean()
                 - 0.0001 * parameters["log_std"].sum()
             )
+            if behavior_anchor is not None:
+                loss = loss + behavior_anchor.coefficient * behavior_anchor.kl_loss(parameters, i)
             if not torch.isfinite(loss):
                 raise ValueError("nonfinite PPO update rejected")
             optimizer.zero_grad()
@@ -304,6 +325,10 @@ def update_private_actors(
                 parameters["log_std"].clamp_(-4, -0.2)
         for k, parameter in parameters.items():
             weights[k][i] = parameter.detach().numpy()
+        if behavior_anchor is not None:
+            row["behavior_anchor"]["kl_after"] = float(
+                behavior_anchor.kl_loss(parameters, i).detach()
+            )
         row["core_plasticity"] = finish_update(
             lease=lease,
             before=before_hashes,
