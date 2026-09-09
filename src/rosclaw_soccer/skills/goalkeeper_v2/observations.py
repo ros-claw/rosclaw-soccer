@@ -150,6 +150,7 @@ class GoalkeeperActorObserver:
         *,
         control_dt_sec: float = 0.02,
         flight_velocity_threshold_mps: float = 0.10,
+        ballistic_airborne_velocity: bool = False,
     ) -> None:
         self.spec = spec or GoalkeeperObservationSpec()
         if not math.isfinite(control_dt_sec) or control_dt_sec <= 0.0:
@@ -158,6 +159,9 @@ class GoalkeeperActorObserver:
             raise ValueError("goalkeeper flight threshold must be finite and positive")
         self.control_dt_sec = control_dt_sec
         self.flight_velocity_threshold_mps = flight_velocity_threshold_mps
+        if type(ballistic_airborne_velocity) is not bool:
+            raise ValueError("ballistic velocity selector must be boolean")
+        self.ballistic_airborne_velocity = ballistic_airborne_velocity
         self._ball_history: deque[NDArray[np.float64]] = deque(maxlen=self.spec.ball_history_steps)
         self._flight_start_sec: float | None = None
 
@@ -235,7 +239,7 @@ class GoalkeeperActorObserver:
         )
         observation = GoalkeeperActorObservation(
             values=tuple(float(value) for value in values),
-            actor_contract_hash=self.spec.actor_contract_hash,
+            actor_contract_hash=self.actor_contract_hash,
             ball_history_ready=len(self._ball_history) == self.spec.ball_history_steps,
             estimated_ball_velocity_mps=velocity_values,
             estimated_intercept=intercept_values,
@@ -254,11 +258,35 @@ class GoalkeeperActorObserver:
         return observation
 
     @property
+    def actor_contract_hash(self) -> str:
+        if not self.ballistic_airborne_velocity:
+            return self.spec.actor_contract_hash
+        return str(
+            hash_json(
+                {
+                    "base": self.spec.actor_contract_hash,
+                    "velocity_estimator": "airborne-gravity-corrected-secant.v1",
+                    "gravity_mps2": 9.81,
+                    "minimum_history_height_m": 0.18,
+                }
+            )
+        )
+
+    @property
     def estimated_relative_ball_velocity_mps(self) -> NDArray[np.float64]:
         if len(self._ball_history) < 2:
             return np.zeros(3, dtype=np.float64)
         span = (len(self._ball_history) - 1) * self.control_dt_sec
-        return np.asarray((self._ball_history[-1] - self._ball_history[0]) / span, dtype=np.float64)
+        velocity = np.asarray(
+            (self._ball_history[-1] - self._ball_history[0]) / span, dtype=np.float64
+        )
+        if self.ballistic_airborne_velocity and all(float(p[2]) > 0.18 for p in self._ball_history):
+            # A secant estimates midpoint velocity. For airborne motion the
+            # velocity at the latest sample is lower by g * span / 2.
+            # Apply only to an entirely airborne history; ground rolling is
+            # not ballistic. No privileged velocity or future target is read.
+            velocity[2] -= 4.905 * span
+        return velocity
 
 
 def _vector(value: np.ndarray, size: int, label: str) -> NDArray[np.float64]:

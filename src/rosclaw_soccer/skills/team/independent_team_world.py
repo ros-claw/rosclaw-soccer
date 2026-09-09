@@ -61,11 +61,16 @@ from rosclaw_soccer.providers.g1.asset_qualification import (
     qualify_g1_assets,
     trajectory_digest,
 )
+from rosclaw_soccer.providers.g1.keeper_frame import KeeperFrame
 from rosclaw_soccer.providers.g1.mujoco_primitives import (
     adapt_shot_target,
     load_robonaldo,
     mirror_g1_joint_gains,
     mirror_g1_joint_positions,
+)
+from rosclaw_soccer.providers.g1.shared_keeper_reach import (
+    SharedKeeperReach,
+    SharedKeeperReachConfig,
 )
 from rosclaw_soccer.sim.contracts import (
     G1_DDS_JOINT_NAMES,
@@ -78,6 +83,7 @@ from rosclaw_soccer.world.field import (
     G1TrainingGoalSpec,
     apply_g1_compliant_goal_net_force,
 )
+from rosclaw_soccer.world.goalkeeper_glove_material import GoalkeeperGloveMaterial
 from rosclaw_soccer.world.multi_player import (
     G1PitchPlayerSpec,
     build_g1_multi_player_stadium_model,
@@ -130,6 +136,8 @@ class IndependentTeamWorldConfig:
     predictive_separation: bool = False
     all_role_clearance: bool = False
     strict_receive_handoff: bool = False
+    keeper_reach: SharedKeeperReachConfig | None = None
+    glove_material: GoalkeeperGloveMaterial | None = None
     stop_on_ball_exit: bool = False
     owned_contact_policy: OwnedBallContactPolicy | None = None
     minimum_pelvis_height_m: float = 0.55
@@ -183,6 +191,14 @@ class IndependentTeamWorldConfig:
             or not isinstance(self.predictive_separation, bool)
             or not isinstance(self.all_role_clearance, bool)
             or not isinstance(self.strict_receive_handoff, bool)
+            or (
+                self.keeper_reach is not None
+                and not isinstance(self.keeper_reach, SharedKeeperReachConfig)
+            )
+            or (
+                self.glove_material is not None
+                and not isinstance(self.glove_material, GoalkeeperGloveMaterial)
+            )
             or not isinstance(self.stop_on_ball_exit, bool)
             or any(not math.isfinite(value) for value in values)
             or not 5.0 <= self.simulation_duration_sec <= 25.0
@@ -229,7 +245,12 @@ class IndependentTeamWorldConfig:
 
     @property
     def config_hash(self) -> str:
-        return str(hash_json(asdict(self)))
+        value = asdict(self)
+        if self.keeper_reach is None:
+            value.pop("keeper_reach")  # Preserve historical disabled configuration identities.
+        if self.glove_material is None:
+            value.pop("glove_material")
+        return str(hash_json(value))
 
 
 @dataclass(frozen=True)
@@ -350,6 +371,7 @@ class IndependentTeamWorldResult:
     robot_robot_contact_count: int
     rolling_distance_m: float
     peak_ball_speed_mps: float
+    keeper_policy_hashes: tuple[tuple[str, str], ...] = ()
     activation_ceiling: str = "SIM_ONLY"
     physics_authority: str = "CPU_MUJOCO"
     hardware_command_sent: bool = False
@@ -372,6 +394,10 @@ class IndependentTeamWorldResult:
         quality_ids = tuple(value.agent_id for value in self.qualities)
         if (
             any(
+                agent not in quality_ids or not _HASH.fullmatch(value)
+                for agent, value in self.keeper_policy_hashes
+            )
+            or any(
                 not _HASH.fullmatch(value)
                 for value in (
                     self.scenario_hash,
@@ -461,6 +487,11 @@ class IndependentTeamWorldResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            **(
+                {"keeper_policy_hashes": dict(self.keeper_policy_hashes)}
+                if self.keeper_policy_hashes
+                else {}
+            ),
             "schema_version": self.schema_version,
             "scenario_hash": self.scenario_hash,
             "roster_hash": self.roster_hash,
@@ -545,6 +576,7 @@ class _PlayerController:
     post_receive_joint_target: NDArray[np.float64] | None = None
     strike_phase: StrikePhaseState = field(default_factory=StrikePhaseState)
     pass_stroke: ContactStroke = field(default_factory=ContactStroke)
+    keeper_reach: SharedKeeperReach | None = None
 
     def __post_init__(self) -> None:
         if self.seen_intents is None:
@@ -612,6 +644,10 @@ def simulate_independent_team_world(
         left_goal_plane_x_m=active.left_goal_plane_x_m if active.bilateral_goals else None,
     )
     model.opt.timestep = _PHYSICS_DT
+    if active.glove_material is not None:
+        for player in players:
+            if player.goalkeeper_gloves:
+                active.glove_material.apply(model, prefix=player.body_prefix)
     data = mujoco.MjData(model)
     state_type, output_type, kick_type, _ = load_robonaldo(qualification.asset_root)
     loco_type = importlib.import_module("policy.loco_mode.LocoMode").LocoMode
@@ -632,6 +668,18 @@ def simulate_independent_team_world(
         for agent in sorted(roster.agents, key=lambda item: item.agent_id)
     )
     ball_body = _id(model, mujoco.mjtObj.mjOBJ_BODY, "ball")
+    if active.keeper_reach is not None:
+        for controller in controllers:
+            if controller.cell.self_model.primary_role is MatchRole.GOALKEEPER:
+                if not controller.spec.goalkeeper_gloves:
+                    raise ValueError("keeper reach requires standard goalkeeper glove geometry")
+                controller.keeper_reach = SharedKeeperReach(
+                    asset_root=asset_root,
+                    goal=goal,
+                    frame=KeeperFrame(controller.spec.origin_m[:2], controller.spec.yaw_rad),
+                    prefix=controller.spec.body_prefix,
+                    config=active.keeper_reach,
+                )
     ball_geom = _id(model, mujoco.mjtObj.mjOBJ_GEOM, "ball_geom")
     ball_joint = _id(model, mujoco.mjtObj.mjOBJ_JOINT, "ball_free")
     ball_qpos = int(model.jnt_qposadr[ball_joint])
@@ -704,6 +752,9 @@ def simulate_independent_team_world(
     }
     for controller in controllers:
         key = _agent_key(controller.cell.agent_id)
+        if controller.keeper_reach is not None:
+            for suffix in ("keeper_active", "keeper_residual", "keeper_punch_torque"):
+                trace[f"{key}_{suffix}"] = []
         trace.update(
             {
                 f"{key}_pelvis_pose": [],
@@ -1286,6 +1337,13 @@ def simulate_independent_team_world(
                 ),
             )
             controller.last_world_command = command.copy()
+            if controller.keeper_reach is not None:
+                controller.output.actions = controller.keeper_reach.step(
+                    model, data, np.asarray(controller.output.actions, dtype=np.float64)
+                )
+                controller.output.kps, controller.output.kds = controller.keeper_reach.impedance(
+                    controller.output.kps, controller.output.kds
+                )
             controller.active_frames += int(float(np.linalg.norm(command[:2])) >= 0.04)
             if controller is option_controller:
                 option_override, option_policy_frame = _rolling_option_target(
@@ -1427,6 +1485,8 @@ def simulate_independent_team_world(
                     target[:12] += residual
                 dq = np.asarray(data.qvel[controller.joint_qvel], dtype=np.float64)
                 raw_torque = kp * (target - q) - kd * dq
+                if controller.keeper_reach is not None:
+                    raw_torque += controller.keeper_reach.torque_nm
                 if (
                     controller is teacher_controller
                     and controller is not option_controller
@@ -1696,6 +1756,12 @@ def simulate_independent_team_world(
                     wrench: NDArray[np.float64] = np.zeros(6, dtype=np.float64)
                     mujoco.mj_contactForce(model, data, contact_index, wrench)
                     force = float(np.linalg.norm(wrench[:3]))
+                    if (
+                        controller.keeper_reach is not None
+                        and effector_code in (3, 4)
+                        and force > 1e-6
+                    ):
+                        controller.keeper_reach.notify_glove_contact(float(data.time))
                     if active.strict_receive_handoff:
                         # A geometrically listed contact with zero force is
                         # not a possession, launch, or reception observation.
@@ -2007,6 +2073,11 @@ def simulate_independent_team_world(
             )
         ),
         peak_ball_speed_mps=peak_ball_speed,
+        keeper_policy_hashes=tuple(
+            (c.cell.agent_id, c.keeper_reach.policy_hash)
+            for c in controllers
+            if c.keeper_reach is not None
+        ),
     )
     return result, trajectory
 
@@ -3189,6 +3260,27 @@ def _run_locomotion(
 ) -> None:
     """Reuse the qualified sagittal mirror for the actor's weak -y half-space."""
 
+    keeper_reach = getattr(controller, "keeper_reach", None)
+    if keeper_reach is not None and keeper_reach.config.neutralize_foundation_arm_observation:
+        q, dq = controller.state.q.copy(), controller.state.dq.copy()
+        try:
+            # Explicit policy-input ablation, never a change to measured state
+            # or physics. Gravity, angular velocity and leg proprioception remain real.
+            controller.state.q[15:] = controller.policy.default_angles_reorder[15:]
+            controller.state.dq[15:] = 0
+            _run_locomotion_unmasked(
+                controller, mirror=mirror, correct_mirrored_yaw=correct_mirrored_yaw
+            )
+        finally:
+            controller.state.q, controller.state.dq = q, dq
+        return
+    _run_locomotion_unmasked(controller, mirror=mirror, correct_mirrored_yaw=correct_mirrored_yaw)
+
+
+def _run_locomotion_unmasked(
+    controller: _PlayerController, *, mirror: bool, correct_mirrored_yaw: bool
+) -> None:
+
     if not mirror:
         with contextlib.redirect_stdout(io.StringIO()):
             controller.policy.run()
@@ -3252,6 +3344,10 @@ def _append_player_trace(
     trace[f"{key}_target_position"].append(decision.target_position_m)
     trace[f"{key}_world_command"].append(command.copy())
     trace[f"{key}_movement_active"].append(float(np.linalg.norm(command[:2])) >= 0.04)
+    if controller.keeper_reach is not None:
+        trace[f"{key}_keeper_active"].append(controller.keeper_reach.active)
+        trace[f"{key}_keeper_residual"].append(controller.keeper_reach.previous.copy())
+        trace[f"{key}_keeper_punch_torque"].append(controller.keeper_reach.torque_nm.copy())
     if f"{key}_clearance_feasible" in trace:
         trace[f"{key}_clearance_feasible"].append(controller.clearance_feasible)
         trace[f"{key}_clearance_constrained"].append(controller.clearance_constrained)
