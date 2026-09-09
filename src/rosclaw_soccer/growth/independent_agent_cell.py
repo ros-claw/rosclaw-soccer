@@ -174,6 +174,7 @@ class AgentTacticalProfile:
     pass_lane_clearance_m: float = 0.55
     goalkeeper_depth_m: float = 0.48
     schema_version: str = "rosclaw_soccer.agent_tactical_profile.v1"
+    blocked_shot_layoff: bool = False
 
     def __post_init__(self) -> None:
         values = (
@@ -188,6 +189,7 @@ class AgentTacticalProfile:
             len(self.home_position_m) != 3
             or not isinstance(self.active_competition, bool)
             or not isinstance(self.anticipatory_contact, bool)
+            or type(self.blocked_shot_layoff) is not bool
             or any(not math.isfinite(value) for value in values)
             or abs(self.home_position_m[2]) > 1.0e-12
             or not 0.25 <= self.maximum_target_shift_m <= 4.0
@@ -200,7 +202,13 @@ class AgentTacticalProfile:
 
     @property
     def profile_hash(self) -> str:
-        return str(hash_json(asdict(self)))
+        return str(hash_json(self.to_dict()))
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        if not self.blocked_shot_layoff:
+            value.pop("blocked_shot_layoff")
+        return value
 
 
 @dataclass(frozen=True)
@@ -340,6 +348,9 @@ class RosclawSoccerAgentCell:
                         0.80,
                     )
             elif role is MatchRole.FINISHER:
+                layoff = self._blocked_shot_layoff(observation)
+                if layoff is not None:
+                    return layoff
                 return self._decision(
                     observation,
                     TacticalIntent.SHOOT,
@@ -413,7 +424,7 @@ class RosclawSoccerAgentCell:
             "self_model_hash": self.self_model.self_model_hash,
             "growth_scope": self.growth_scope.to_dict(),
             "growth_scope_hash": self.growth_scope.scope_hash,
-            "tactical_profile": asdict(self.tactical_profile),
+            "tactical_profile": self.tactical_profile.to_dict(),
             "tactical_profile_hash": self.tactical_profile.profile_hash,
             "activation_ceiling": self.activation_ceiling,
             "hardware_authorized": self.hardware_authorized,
@@ -645,6 +656,9 @@ class RosclawSoccerAgentCell:
 
     def _finisher_decision(self, value: AgentCellObservation) -> AgentCellDecision:
         if value.possession_agent_id == self.agent_id:
+            layoff = self._blocked_shot_layoff(value)
+            if layoff is not None:
+                return layoff
             if self.self_model.basic_ball_play:
                 receiver = self._best_receiver(value)
                 sign = math.copysign(1.0, value.opponent_goal_m[0] - value.own_goal_m[0])
@@ -744,7 +758,66 @@ class RosclawSoccerAgentCell:
             policy_artifact_hash=self.self_model.policy_artifact_hash,
         )
 
-    def _best_receiver(self, value: AgentCellObservation) -> AgentPhysicalState | None:
+    def _blocked_shot_layoff(self, value: AgentCellObservation) -> AgentCellDecision | None:
+        """Experimental observed-geometry option, not a learned shot predictor.
+
+        The goalkeeper alone does not block a shot opportunity. An outfield
+        body on the ball-to-goal segment can justify a safe backward outlet,
+        but never grants possession or an unbound passing capability.
+        """
+        if not self.tactical_profile.blocked_shot_layoff or not self.self_model.authorizes(
+            TacticalIntent.PASS, SoccerSkill.LEAD_PASS
+        ):
+            return None
+        start = np.asarray(value.ball_position_m[:2])
+        ray = np.asarray(value.opponent_goal_m[:2]) - start
+        length_squared = float(ray @ ray)
+        if length_squared < 1e-8:
+            return None
+        blocked = False
+        for opponent in value.opponent_states:
+            if self._role_for_agent(opponent.agent_id) is MatchRole.GOALKEEPER:
+                continue
+            relative = np.asarray(opponent.position_m[:2]) - start
+            fraction = float(relative @ ray) / length_squared
+            if (
+                0.0 < fraction < 1.0
+                and np.linalg.norm(relative - fraction * ray)
+                < self.tactical_profile.pass_lane_clearance_m
+            ):
+                blocked = True
+                break
+        if not blocked:
+            return None
+        receiver = self._best_receiver(value, allow_backward=True)
+        if receiver is None or not self._lane_clear(value, receiver):
+            return None
+        # Existing pass-lane check starts at the pelvis. Also check the actual
+        # ball-to-receiver segment: the two differ during a moving approach.
+        pass_ray = np.asarray(receiver.position_m[:2]) - start
+        pass_length = float(pass_ray @ pass_ray)
+        if pass_length < 1e-8:
+            return None
+        for opponent in value.opponent_states:
+            relative = np.asarray(opponent.position_m[:2]) - start
+            fraction = float(np.clip(float(relative @ pass_ray) / pass_length, 0.0, 1.0))
+            if (
+                np.linalg.norm(relative - fraction * pass_ray)
+                < self.tactical_profile.pass_lane_clearance_m
+            ):
+                return None
+        return self._decision(
+            value,
+            TacticalIntent.PASS,
+            SoccerSkill.LEAD_PASS,
+            receiver.position_m,
+            receiver.agent_id,
+            0.80,
+        )
+
+    def _best_receiver(
+        self, value: AgentCellObservation, *, allow_backward: bool = False
+    ) -> AgentPhysicalState | None:
         attack_direction = float(
             np.sign(value.opponent_goal_m[0] - value.self_state.position_m[0]) or 1.0
         )
@@ -752,7 +825,10 @@ class RosclawSoccerAgentCell:
             state
             for state in value.teammate_states
             if state.stable
-            and attack_direction * (state.position_m[0] - value.self_state.position_m[0]) > -0.20
+            and (
+                allow_backward
+                or attack_direction * (state.position_m[0] - value.self_state.position_m[0]) > -0.20
+            )
             and (
                 not self.tactical_profile.active_competition
                 or (
