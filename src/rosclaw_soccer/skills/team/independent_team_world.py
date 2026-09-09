@@ -137,6 +137,7 @@ class IndependentTeamWorldConfig:
     all_role_clearance: bool = False
     strict_receive_handoff: bool = False
     strike_residual_enabled: bool = False
+    strike_stance_lateral_m: float | None = None
     keeper_reach: SharedKeeperReachConfig | None = None
     glove_material: GoalkeeperGloveMaterial | None = None
     stop_on_ball_exit: bool = False
@@ -195,6 +196,14 @@ class IndependentTeamWorldConfig:
             or not isinstance(self.all_role_clearance, bool)
             or not isinstance(self.strict_receive_handoff, bool)
             or type(self.strike_residual_enabled) is not bool
+            or (
+                self.strike_stance_lateral_m is not None
+                and (
+                    type(self.strike_stance_lateral_m) not in {int, float}
+                    or not math.isfinite(self.strike_stance_lateral_m)
+                    or not -0.18 <= self.strike_stance_lateral_m <= 0.18
+                )
+            )
             or (
                 self.keeper_reach is not None
                 and not isinstance(self.keeper_reach, SharedKeeperReachConfig)
@@ -259,6 +268,8 @@ class IndependentTeamWorldConfig:
             value.pop("joint_guard_margin_rad")
         if not self.strike_residual_enabled:
             value.pop("strike_residual_enabled")
+        if self.strike_stance_lateral_m is None:
+            value.pop("strike_stance_lateral_m")
         return str(hash_json(value))
 
 
@@ -2269,6 +2280,17 @@ def _residual_intent_enabled(intent: TacticalIntent, *, strike_enabled: bool) ->
     } or (strike_enabled and intent in {TacticalIntent.SHOOT, TacticalIntent.DISTRIBUTE})
 
 
+def _owned_stance_policy(
+    config: IndependentTeamWorldConfig, intent: TacticalIntent
+) -> OwnedBallContactPolicy:
+    policy = config.owned_contact_policy
+    if policy is None:
+        raise ValueError("owned stance requires a contact policy")
+    if intent is TacticalIntent.SHOOT and config.strike_stance_lateral_m is not None:
+        return replace(policy, lateral_m=config.strike_stance_lateral_m)
+    return policy
+
+
 def _near_ball_observation(
     controller: _PlayerController,
     *,
@@ -2623,7 +2645,7 @@ def _movement_command(
         in {TacticalIntent.PASS, TacticalIntent.SHOOT, TacticalIntent.DISTRIBUTE}
         and float(np.linalg.norm(np.asarray(decision.target_position_m[:2]) - ball)) > 1.0e-6
     ):
-        stance, desired_yaw = config.owned_contact_policy.stance(
+        stance, desired_yaw = _owned_stance_policy(config, decision.intent).stance(
             (float(ball[0]), float(ball[1])),
             (decision.target_position_m[0], decision.target_position_m[1]),
         )

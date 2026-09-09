@@ -54,6 +54,7 @@ def _verify_contact_profile(report: dict[str, Any], profile: ContactControlProfi
         or world.get("joint_guard_margin_rad", 0.04) != profile.guard_margin_rad
         or teacher.get("contact_leg_stiffness_scale", 1) != profile.stiffness_scale
         or world.get("strike_residual_enabled", False) != profile.strike_residual_enabled
+        or world.get("strike_stance_lateral_m") != profile.strike_stance_lateral_m
     ):
         raise ValueError("physical rollout differs from committed contact control profile")
 

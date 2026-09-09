@@ -65,6 +65,7 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
         "keeper_reach",
         "glove_material",
         "strike_residual_enabled",
+        "strike_stance_lateral_m",
     ):
         legacy.pop(field)
     assert default.config_hash == str(hash_json(legacy))
