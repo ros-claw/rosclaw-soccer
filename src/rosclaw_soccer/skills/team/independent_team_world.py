@@ -1,4 +1,4 @@
-"""Six-G1 role-autonomy arena backed by independent ROSClaw agent cells.
+"""Shared G1 role-autonomy arena backed by independent ROSClaw agent cells.
 
 The arena is a locomotion and coordination bridge, not a complete learned
 match.  Every G1 receives its own egocentric observation, private policy
@@ -15,6 +15,7 @@ import importlib
 import io
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -77,6 +78,13 @@ from rosclaw_soccer.sim.contracts import (
     G1_HARD_TORQUE_LIMITS,
     ShotParameters,
     hash_json,
+)
+from rosclaw_soccer.skills.team.motor_option import (
+    TeamMotorObservation,
+    TeamMotorOption,
+    TeamMotorPhysicsObservation,
+    TeamMotorPhysicsObserver,
+    TeamMotorTarget,
 )
 from rosclaw_soccer.world.field import (
     G1CompliantGoalNetState,
@@ -148,8 +156,15 @@ class IndependentTeamWorldConfig:
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
     schema_version: str = "rosclaw_soccer.independent_team_world_config.v1"
+    motor_approach_standoff_m: float | None = None
 
     def __post_init__(self) -> None:
+        if self.motor_approach_standoff_m is not None and (
+            type(self.motor_approach_standoff_m) not in (int, float)
+            or not math.isfinite(self.motor_approach_standoff_m)
+            or not 0.20 <= self.motor_approach_standoff_m <= 0.50
+        ):
+            raise ValueError("bounded optional learned-motor approach standoff required")
         values = (
             self.simulation_duration_sec,
             self.decision_period_sec,
@@ -270,6 +285,8 @@ class IndependentTeamWorldConfig:
             value.pop("strike_residual_enabled")
         if self.strike_stance_lateral_m is None:
             value.pop("strike_stance_lateral_m")
+        if self.motor_approach_standoff_m is None:
+            value.pop("motor_approach_standoff_m")
         return str(hash_json(value))
 
 
@@ -397,6 +414,8 @@ class IndependentTeamWorldResult:
     hardware_command_sent: bool = False
     pixels_used_for_scoring: bool = False
     schema_version: str = "rosclaw_soccer.independent_team_world_result.v1"
+    motor_policy_hashes: tuple[tuple[str, str], ...] = ()
+    motor_fault_agents: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         counts = (
@@ -413,9 +432,12 @@ class IndependentTeamWorldResult:
         )
         quality_ids = tuple(value.agent_id for value in self.qualities)
         if (
-            any(
+            len({agent for agent, _ in self.motor_policy_hashes}) != len(self.motor_policy_hashes)
+            or not set(self.motor_fault_agents).issubset(dict(self.motor_policy_hashes))
+            or len(set(self.motor_fault_agents)) != len(self.motor_fault_agents)
+            or any(
                 agent not in quality_ids or not _HASH.fullmatch(value)
-                for agent, value in self.keeper_policy_hashes
+                for agent, value in (*self.keeper_policy_hashes, *self.motor_policy_hashes)
             )
             or any(
                 not _HASH.fullmatch(value)
@@ -499,6 +521,7 @@ class IndependentTeamWorldResult:
             and self.all_roles_autonomous
             and self.role_complete_both_teams
             and self.safe
+            and not self.motor_fault_agents
         )
 
     @property
@@ -510,6 +533,14 @@ class IndependentTeamWorldResult:
             **(
                 {"keeper_policy_hashes": dict(self.keeper_policy_hashes)}
                 if self.keeper_policy_hashes
+                else {}
+            ),
+            **(
+                {
+                    "motor_policy_hashes": dict(self.motor_policy_hashes),
+                    "motor_fault_agents": list(self.motor_fault_agents),
+                }
+                if self.motor_policy_hashes
                 else {}
             ),
             "schema_version": self.schema_version,
@@ -620,13 +651,30 @@ def simulate_independent_team_world(
     near_ball_policy: NearBallResidualPolicy | None = None,
     near_ball_seed: int = 0,
     near_ball_explore: bool = False,
+    motor_options: Mapping[str, TeamMotorOption] | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
-    """Run all agent cells and all six neural locomotion bodies in one clock."""
+    """Run all agent cells and all neural locomotion bodies in one clock."""
 
     active = config or IndependentTeamWorldConfig()
     cell_by_id = {cell.agent_id: cell for cell in cells}
     player_by_id = {player.agent_id: player for player in players}
     roster_ids = {agent.agent_id for agent in roster.agents}
+    motors = dict(motor_options or {})
+    if (
+        not set(motors).issubset(roster_ids)
+        or len({id(motor) for motor in motors.values()}) != len(motors)
+        or any(not _HASH.fullmatch(motor.contract_hash) for motor in motors.values())
+        or motors
+        and (option_bridge_config is not None or near_ball_policy is not None)
+        or active.keeper_reach is not None
+        and any(
+            agent.agent_id in motors and agent.primary_role is MatchRole.GOALKEEPER
+            for agent in roster.agents
+        )
+    ):
+        raise ValueError("per-player motor identity, binding or override ownership differs")
+    motor_hashes = tuple(sorted((key, motor.contract_hash) for key, motor in motors.items()))
+    motor_faults: set[str] = set()
     if (
         len(roster.agents) < 6
         or set(cell_by_id) != roster_ids
@@ -1346,6 +1394,10 @@ def simulate_independent_team_world(
                 ),
                 config=active,
                 prospective_contact=prospective_team_contact,
+                continuous_motor_approach=bool(
+                    controller.cell.agent_id in motors
+                    and controller.cell.agent_id not in motor_faults
+                ),
                 pending_receive_target_m=(
                     receive_lease_target_m
                     if prospective_team_contact
@@ -1386,6 +1438,58 @@ def simulate_independent_team_world(
                     frame=frame,
                     config=option_bridge_config,
                 )
+        motor_targets: dict[str, TeamMotorTarget] = {}
+        for controller in controllers:
+            agent_id = controller.cell.agent_id
+            if agent_id not in motors or agent_id in motor_faults:
+                continue
+            assert controller.decision is not None
+            intent = controller.decision.intent.value
+            q = np.r_[
+                data.qpos[controller.qpos_base : controller.qpos_base + 7],
+                data.qpos[controller.joint_qpos],
+                data.qpos[ball_qpos : ball_qpos + 7],
+            ]
+            v = np.r_[
+                data.qvel[controller.qvel_base : controller.qvel_base + 6],
+                data.qvel[controller.joint_qvel],
+                data.qvel[ball_qvel : ball_qvel + 6],
+            ]
+            try:
+                proposal = motors[agent_id].propose(
+                    TeamMotorObservation(
+                        agent_id=agent_id,
+                        frame=frame,
+                        time_sec=float(data.time),
+                        intent=intent if intent in {"shoot", "pass", "carry"} else "other",
+                        prospective_owner=agent_id
+                        in {current_possession_agent_id, assigned_ball_chaser_agent_id},
+                        qpos=tuple(float(x) for x in q),
+                        qvel=tuple(float(x) for x in v),
+                        target_position_m=(
+                            controller.decision.target_position_m[0],
+                            controller.decision.target_position_m[1],
+                            controller.decision.target_position_m[2],
+                        ),
+                    )
+                )
+                if proposal is not None:
+                    if not isinstance(proposal, TeamMotorTarget):
+                        raise ValueError("motor returned a non-contract proposal")
+                    motor_targets[agent_id] = TeamMotorTarget(
+                        proposal.target_rad, proposal.kp, proposal.kd
+                    )
+            except (ValueError, TypeError, FloatingPointError):
+                # The frozen locomotion controller remains the fallback. This
+                # motor is latched off for the match; no silent candidate retry.
+                motor_faults.add(agent_id)
+        if motors:
+            trace.setdefault("full_body_motor_active", []).append(
+                [c.cell.agent_id in motor_targets for c in controllers]
+            )
+            trace.setdefault("full_body_motor_fault", []).append(
+                [c.cell.agent_id in motor_faults for c in controllers]
+            )
         residual_by_id: dict[str, NDArray[np.float64]] = {}
         if near_ball_policy is not None:
             ordered = tuple(
@@ -1502,7 +1606,13 @@ def simulate_independent_team_world(
                     and float(data.time) - last_receive_contact_time_sec
                     <= contact_teacher_config.contact_memory_sec
                 )
-                if controller is option_controller and option_override is not None:
+                if controller.cell.agent_id in motor_targets:
+                    motor_target = motor_targets[controller.cell.agent_id]
+                    target, kp, kd = (
+                        np.asarray(values, dtype=np.float64)
+                        for values in (motor_target.target_rad, motor_target.kp, motor_target.kd)
+                    )
+                elif controller is option_controller and option_override is not None:
                     target, kp, kd = option_override
                 elif (
                     post_receive_stabilizing or one_touch_finishing
@@ -1528,6 +1638,7 @@ def simulate_independent_team_world(
                     raw_torque += controller.keeper_reach.torque_nm
                 if (
                     controller is teacher_controller
+                    and controller.cell.agent_id not in motor_targets
                     and controller is not option_controller
                     and not post_receive_stabilizing
                     and not (
@@ -1781,6 +1892,18 @@ def simulate_independent_team_world(
                     state=opposite_net_state,
                 )
             mujoco.mj_step(model, data)
+            if motor_targets:
+                _observe_team_motor_physics(
+                    model,
+                    data,
+                    controllers,
+                    motors,
+                    motor_targets,
+                    motor_faults,
+                    ball_geom,
+                    ball_qpos,
+                    ball_qvel,
+                )
             (
                 substep_robot_contacts,
                 substep_first_agent,
@@ -2119,6 +2242,8 @@ def simulate_independent_team_world(
         )
         for controller in controllers
     )
+    if tuple(sorted((key, motor.contract_hash) for key, motor in motors.items())) != motor_hashes:
+        raise ValueError("motor contract changed during the shared match")
     result = IndependentTeamWorldResult(
         scenario_hash=scenario.scenario_hash,
         roster_hash=roster.roster_hash,
@@ -2149,8 +2274,89 @@ def simulate_independent_team_world(
             for c in controllers
             if c.keeper_reach is not None
         ),
+        motor_policy_hashes=motor_hashes,
+        motor_fault_agents=tuple(sorted(motor_faults)),
     )
     return result, trajectory
+
+
+def _observe_team_motor_physics(
+    model: Any,
+    data: Any,
+    controllers: tuple[_PlayerController, ...],
+    motors: dict[str, TeamMotorOption],
+    targets: dict[str, TeamMotorTarget],
+    faults: set[str],
+    ball_geom: int,
+    ball_qpos: int,
+    ball_qvel: int,
+) -> None:
+    import mujoco
+
+    safe = bool(np.isfinite(data.qpos).all() and np.isfinite(data.qvel).all())
+    for controller in controllers:
+        pose = data.qpos[controller.qpos_base : controller.qpos_base + 7]
+        joints = data.qpos[controller.joint_qpos]
+        ranges = model.jnt_range[controller.joint_ids]
+        limited = model.jnt_limited[controller.joint_ids].astype(bool)
+        excess = np.maximum(ranges[:, 0] - joints, joints - ranges[:, 1])
+        safe = bool(
+            safe
+            and pose[2] > 0.58
+            and 1 - 2 * (pose[4] ** 2 + pose[5] ** 2) > 0.8
+            and np.all(excess[limited] < 0.025)
+        )
+    measured: list[tuple[int, float]] = []
+    for index in range(data.ncon):
+        contact = data.contact[index]
+        pair = (int(contact.geom1), int(contact.geom2))
+        if ball_geom not in pair:
+            continue
+        other = pair[1] if pair[0] == ball_geom else pair[0]
+        if model.geom(other).name in {"floor", "ground", "pitch"}:
+            continue
+        wrench = np.zeros(6)
+        mujoco.mj_contactForce(model, data, index, wrench)
+        if not np.isfinite(wrench).all():
+            faults.update(targets)
+            targets.clear()
+            return
+        measured.append((other, max(0.0, float(wrench[0]))))
+    for controller in controllers:
+        agent = controller.cell.agent_id
+        if agent not in targets or not isinstance(motors[agent], TeamMotorPhysicsObserver):
+            continue
+        feet = controller.left_foot_geoms | controller.right_foot_geoms
+        q = np.r_[
+            data.qpos[controller.qpos_base : controller.qpos_base + 7],
+            data.qpos[controller.joint_qpos],
+            data.qpos[ball_qpos : ball_qpos + 7],
+        ]
+        v = np.r_[
+            data.qvel[controller.qvel_base : controller.qvel_base + 6],
+            data.qvel[controller.joint_qvel],
+            data.qvel[ball_qvel : ball_qvel + 6],
+        ]
+        observer = motors[agent]
+        assert isinstance(observer, TeamMotorPhysicsObserver)
+        try:
+            observer.observe_physics(
+                TeamMotorPhysicsObservation(
+                    time_sec=float(data.time),
+                    qpos=tuple(float(x) for x in q),
+                    qvel=tuple(float(x) for x in v),
+                    world_bodies_safe=safe,
+                    foot_normal_force_n=max(
+                        (force for geom, force in measured if geom in feet), default=0.0
+                    ),
+                    other_non_ground_normal_force_n=max(
+                        (force for geom, force in measured if geom not in feet), default=0.0
+                    ),
+                )
+            )
+        except (ValueError, TypeError, FloatingPointError):
+            faults.add(agent)
+            targets.pop(agent)  # Remove this override before the next 2 ms step.
 
 
 def _make_player_controller(
@@ -2427,6 +2633,7 @@ def _movement_command(
     strike_phase_owner_agent_id: str | None = None,
     strike_coordination_action: StrikeCoordinationAction | None = None,
     prospective_contact: bool = False,
+    continuous_motor_approach: bool = False,
     pending_receive_target_m: tuple[float, float] | None = None,
 ) -> NDArray[np.float64]:
     current = positions[controller.cell.agent_id]
@@ -2617,6 +2824,23 @@ def _movement_command(
         direction = destination - ball
         direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
         target = ball - 0.72 * direction
+    motor_approach = bool(
+        continuous_motor_approach
+        and config.motor_approach_standoff_m is not None
+        and prospective_contact
+        and possession_agent_id is None
+        and decision.intent is TacticalIntent.SHOOT
+        and not post_receive_hold
+    )
+    if motor_approach:
+        # An admitted moving-handoff motor cannot be reached by the legacy
+        # standing-shot target 0.72 m behind the ball. This is an explicit
+        # locomotion objective, not a root/ball pose write or success label.
+        destination = np.asarray(decision.target_position_m[:2], dtype=np.float64)
+        direction = destination - ball
+        direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
+        assert config.motor_approach_standoff_m is not None
+        target = ball - config.motor_approach_standoff_m * direction
     if post_receive_hold:
         target = current.copy()
     error = target - current
@@ -2635,6 +2859,7 @@ def _movement_command(
     desired_yaw: float | None = None
     if (
         config.owned_contact_policy is not None
+        and not motor_approach
         and not post_receive_hold
         and strike_phase_config is None
         and (

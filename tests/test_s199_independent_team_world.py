@@ -82,6 +82,14 @@ def test_independent_world_result_requires_all_six_current_decisions() -> None:
     )
 
     assert result.passed
+    with_motor = replace(result, motor_policy_hashes=(("red.finisher", _hash("motor")),))
+    faulted_motor = replace(with_motor, motor_fault_agents=("red.finisher",))
+    assert with_motor.passed and faulted_motor.safe and not faulted_motor.passed
+    assert faulted_motor.to_dict()["motor_fault_agents"] == ["red.finisher"]
+    assert faulted_motor.to_dict()["motor_policy_hashes"] == {"red.finisher": _hash("motor")}
+    assert faulted_motor.result_hash != with_motor.result_hash
+    with pytest.raises(ValueError):
+        replace(result, motor_fault_agents=("red.finisher",))
     assert result.role_complete_both_teams
     stale = replace(qualities[0], decision_count=9)
     assert not replace(result, qualities=(stale, *qualities[1:])).passed

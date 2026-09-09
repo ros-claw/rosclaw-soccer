@@ -112,6 +112,35 @@ def test_defender_protects_and_each_team_has_a_challenger(fixture):
         )
 
 
+@pytest.mark.parametrize("team,sign", [("red", 1), ("blue", -1)])
+def test_existing_anticipatory_shooting_is_opt_in_and_requires_a_near_loose_ball_chaser(
+    fixture, team, sign
+):
+    cell = next(c for c in fixture.cells if c.agent_id == team + ".finisher")
+    value = _observation(fixture, cell.agent_id, blue=team == "blue")
+    value = replace(
+        value,
+        ball_position_m=(3 + sign * 0.6, 0.0, 0.115),
+        ball_chaser_agent_id=cell.agent_id,
+        self_state=replace(
+            value.self_state, position_m=(3.0, 0.0, 0.78), velocity_mps=(sign * 0.7, 0.0, 0.0)
+        ),
+    )
+    assert cell.decide(value).intent is TacticalIntent.RECEIVE
+    enabled = replace(
+        cell, tactical_profile=replace(cell.tactical_profile, anticipatory_contact=True)
+    )
+    assert enabled.decide(value).intent is TacticalIntent.SHOOT
+    assert (
+        enabled.decide(replace(value, ball_velocity_mps=(1.0, 0.0, 0.0))).intent
+        is TacticalIntent.RECEIVE
+    )
+    assert (
+        enabled.decide(replace(value, ball_position_m=(3 + sign * 0.6, 1.0, 0.115))).intent
+        is TacticalIntent.RECEIVE
+    )
+
+
 def test_opposite_net_is_identical_under_rotation_without_pose_writes():
     spec = G1TrainingGoalSpec(plane_x_m=7.5, width_m=3.0, height_m=2.0)
     right = SimpleNamespace(
