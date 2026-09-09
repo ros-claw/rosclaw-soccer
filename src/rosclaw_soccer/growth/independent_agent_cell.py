@@ -309,10 +309,13 @@ class RosclawSoccerAgentCell:
             return self._goalkeeper_decision(observation)
         if (
             observation.active_receive_source_agent_id is not None
-            and observation.possession_agent_id is None
+            and observation.possession_agent_id
+            in {None, observation.active_receive_source_agent_id}
             and self.self_model.authorizes(TacticalIntent.RECEIVE, SoccerSkill.FIRST_TOUCH)
         ):
             # Fulfil the accepted incoming pass before anticipating a shot.
+            # A source's remembered contact label need not delay tracking a
+            # physically launched ball. This never claims receiver possession.
             # The physical world alone decides launch, interruption and expiry.
             return self._decision(
                 observation,

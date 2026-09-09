@@ -81,3 +81,36 @@ class PassHandoff:
             and time_sec >= self.source_foot_contact_sec
             and progressed
         )
+
+    def can_track_incoming_ball(
+        self,
+        time_sec: float,
+        *,
+        ball_xy: tuple[float, float],
+        ball_velocity_xy: tuple[float, float],
+        receiver_xy: tuple[float, float],
+    ) -> bool:
+        """Causal anticipation only: source foot contact and measured approach.
+
+        This does not activate a lease, transfer possession or confirm reception.
+        It can precede expiry of the source's remembered contact-owner label.
+        """
+        vectors = (ball_xy, ball_velocity_xy, receiver_xy)
+        if any(
+            type(v) is not tuple
+            or len(v) != 2
+            or any(type(x) not in (int, float) or not math.isfinite(x) for x in v)
+            for v in vectors
+        ):
+            raise ValueError("finite planar flight observations required")
+        if (
+            self.expired(time_sec)
+            or self.source_foot_contact_sec is None
+            or time_sec < self.source_foot_contact_sec
+        ):
+            return False
+        dx, dy = receiver_xy[0] - ball_xy[0], receiver_xy[1] - ball_xy[1]
+        distance = math.hypot(dx, dy)
+        return distance > 1e-6 and (
+            (ball_velocity_xy[0] * dx + ball_velocity_xy[1] * dy) / distance > 0.10
+        )

@@ -161,8 +161,13 @@ class IndependentTeamWorldConfig:
     motor_approach_standoff_m: float | None = None
     motor_idle_residual_fallback: bool = False
     pass_stance_bypass: bool = False
+    receive_lateral_braking: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.receive_lateral_braking) is not bool or (
+            self.receive_lateral_braking and not self.strict_receive_handoff
+        ):
+            raise ValueError("lateral receive braking requires strict physical handoff")
         if type(self.pass_stance_bypass) is not bool or (
             self.pass_stance_bypass and self.owned_contact_policy is None
         ):
@@ -304,6 +309,8 @@ class IndependentTeamWorldConfig:
             value.pop("receiver_commitment_priority")
         if not self.pass_stance_bypass:
             value.pop("pass_stance_bypass")
+        if not self.receive_lateral_braking:
+            value.pop("receive_lateral_braking")
         return str(hash_json(value))
 
 
@@ -915,6 +922,7 @@ def simulate_independent_team_world(
     receive_lease_origin_m: NDArray[np.float64] | None = None
     receive_lease_target_m: tuple[float, float] | None = None
     receive_lease_active = False
+    flight_tracking_agent_id: str | None = None
     receive_handoff: PassHandoff | None = None
     handoff_cancellations = 0
     last_receive_contact_agent_id: str | None = None
@@ -1052,6 +1060,20 @@ def simulate_independent_team_world(
                             data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64
                         ),
                     )
+            flight_tracking_agent_id = None
+            if (
+                active.receiver_commitment_priority
+                and receive_handoff is not None
+                and receive_lease_agent_id == receive_handoff.receiver
+                and current_possession_agent_id in {None, receive_handoff.source}
+                and receive_handoff.can_track_incoming_ball(
+                    float(data.time),
+                    ball_xy=(float(data.qpos[ball_qpos]), float(data.qpos[ball_qpos + 1])),
+                    ball_velocity_xy=(float(data.qvel[ball_qvel]), float(data.qvel[ball_qvel + 1])),
+                    receiver_xy=state_by_id[receive_handoff.receiver].position_m[:2],
+                )
+            ):
+                flight_tracking_agent_id = receive_handoff.receiver
             observations = tuple(
                 _agent_observation(
                     controller=controller,
@@ -1067,7 +1089,10 @@ def simulate_independent_team_world(
                     active_receive_source_agent_id=(
                         receive_lease_source_agent_id
                         if active.receiver_commitment_priority
-                        and receive_lease_active
+                        and (
+                            receive_lease_active
+                            or flight_tracking_agent_id == controller.cell.agent_id
+                        )
                         and receive_lease_agent_id == controller.cell.agent_id
                         else None
                     ),
@@ -1110,6 +1135,7 @@ def simulate_independent_team_world(
                         data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64
                     ).copy()
                     receive_lease_active = False
+                    flight_tracking_agent_id = None
                     receive_lease_target_m = current_handshake.pass_target_m[:2]
                     if active.strict_receive_handoff:
                         receive_handoff = PassHandoff(
@@ -1393,7 +1419,8 @@ def simulate_independent_team_world(
                 possession_agent_id=current_possession_agent_id,
                 committed_receiver=bool(receive_lease_agent_id == controller.cell.agent_id),
                 active_receiver=bool(
-                    receive_lease_active and receive_lease_agent_id == controller.cell.agent_id
+                    (receive_lease_active or flight_tracking_agent_id == controller.cell.agent_id)
+                    and receive_lease_agent_id == controller.cell.agent_id
                 ),
                 post_receive_hold=bool(
                     last_receive_contact_agent_id == controller.cell.agent_id
@@ -2136,6 +2163,13 @@ def simulate_independent_team_world(
             0 if receive_lease_agent_id is None else agent_codes[receive_lease_agent_id]
         )
         trace["receive_lease_active"].append(receive_lease_active)
+        if active.receiver_commitment_priority:
+            trace.setdefault("receive_flight_tracking_agent_code", []).append(
+                agent_codes[flight_tracking_agent_id]
+                if flight_tracking_agent_id is not None
+                and flight_tracking_agent_id == receive_lease_agent_id
+                else 0
+            )
         last_receiver = next(
             (
                 controller
@@ -2828,6 +2862,19 @@ def _movement_command(
             )
             if foot_distance <= config.receive_braking_distance_m:
                 target = current.copy()
+                if config.receive_lateral_braking and active_receiver and speed > 0.10:
+                    # Stop longitudinal pursuit, not the last lateral capture
+                    # correction. Align a real foot with the measured ball ray.
+                    lateral_axis = np.asarray((-travel_direction[1], travel_direction[0]))
+                    capture_foot = min(
+                        (
+                            data.xpos[controller.left_ankle_body],
+                            data.xpos[controller.right_ankle_body],
+                        ),
+                        key=lambda foot: abs(float(np.dot(ball - foot[:2], lateral_axis))),
+                    )
+                    lateral_error = float(np.dot(ball - capture_foot[:2], lateral_axis))
+                    target += np.clip(lateral_error, -0.30, 0.30) * lateral_axis
     if strike_target_position_m is not None and strike_phase_config is not None:
         destination = np.asarray(strike_target_position_m, dtype=np.float64)
         ball_velocity = np.asarray(data.qvel[ball_qvel : ball_qvel + 2], dtype=np.float64)
