@@ -388,6 +388,7 @@ class G1SonicRunupController:
         self.reference_digest = ""
         self.action = np.zeros(29, dtype=np.float32)
         self.target = self.default_angles.copy()
+        self._history_handoff_binding: str | None = None
         self._kp, self._kd, self._action_scale = _sonic_control_parameters(
             self.config.gain_scale,
             self.config.joint_gain_scales,
@@ -416,6 +417,7 @@ class G1SonicRunupController:
         self._history.clear()
         entry = self._history_entry(data, self.action)
         self._history.extend(tuple(value.copy() for value in entry) for _ in range(10))
+        self._history_handoff_binding = None
 
     def update(self, data: Any, frame: int) -> np.ndarray:
         if not 0 <= frame < self.config.execution_frames:
