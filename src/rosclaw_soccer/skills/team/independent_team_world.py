@@ -63,6 +63,7 @@ from rosclaw_soccer.providers.g1.asset_qualification import (
     trajectory_digest,
 )
 from rosclaw_soccer.providers.g1.keeper_frame import KeeperFrame
+from rosclaw_soccer.providers.g1.locomotion_action_frame import remap_previous_locomotion_action
 from rosclaw_soccer.providers.g1.mujoco_primitives import (
     adapt_shot_target,
     load_robonaldo,
@@ -162,8 +163,11 @@ class IndependentTeamWorldConfig:
     motor_idle_residual_fallback: bool = False
     pass_stance_bypass: bool = False
     receive_lateral_braking: bool = False
+    locomotion_action_frame_sync: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.locomotion_action_frame_sync) is not bool:
+            raise ValueError("locomotion action-frame synchronization must be explicit")
         if type(self.receive_lateral_braking) is not bool or (
             self.receive_lateral_braking and not self.strict_receive_handoff
         ):
@@ -311,6 +315,8 @@ class IndependentTeamWorldConfig:
             value.pop("pass_stance_bypass")
         if not self.receive_lateral_braking:
             value.pop("receive_lateral_braking")
+        if not self.locomotion_action_frame_sync:
+            value.pop("locomotion_action_frame_sync")
         return str(hash_json(value))
 
 
@@ -622,6 +628,8 @@ class _PlayerController:
     policy: Any
     decision: AgentCellDecision | None = None
     last_world_command: NDArray[np.float64] | None = None
+    locomotion_reflection_frame: bool | None = None
+    locomotion_frame_switch_count: int = 0
     clearance_feasible: bool = True
     clearance_constrained: bool = False
     current_intent: TacticalIntent | None = None
@@ -1487,6 +1495,7 @@ def simulate_independent_team_world(
             )
             _run_locomotion(
                 controller,
+                synchronize_action_frame=active.locomotion_action_frame_sync,
                 mirror=bool(local_command[1] < -1.0e-6),
                 correct_mirrored_yaw=bool(
                     active.bilateral_goals
@@ -1508,6 +1517,13 @@ def simulate_independent_team_world(
                     frame=frame,
                     config=option_bridge_config,
                 )
+        if active.locomotion_action_frame_sync:
+            trace.setdefault("locomotion_reflection_frame", []).append(
+                [c.locomotion_reflection_frame is True for c in controllers]
+            )
+            trace.setdefault("locomotion_frame_switch_count", []).append(
+                [c.locomotion_frame_switch_count for c in controllers]
+            )
         motor_targets: dict[str, TeamMotorTarget] = {}
         for controller in controllers:
             agent_id = controller.cell.agent_id
@@ -3722,6 +3738,47 @@ def _normalized_locomotion_command(policy: Any, physical: NDArray[Any]) -> NDArr
 
 
 def _run_locomotion(
+    controller: _PlayerController,
+    *,
+    mirror: bool,
+    correct_mirrored_yaw: bool = False,
+    synchronize_action_frame: bool = False,
+) -> None:
+    """Keep the previous private action in the same frame as current inputs.
+
+    This fixes changes between ordinary and sagittally reflected inference.
+    It does not import another controller's unexecuted history or claim that
+    this shadow locomotion proposal was physically applied while SONIC owned
+    the body. Sensor restoration remains in the existing inference adapter.
+    """
+    if not synchronize_action_frame:
+        _run_locomotion_in_frame(
+            controller, mirror=mirror, correct_mirrored_yaw=correct_mirrored_yaw
+        )
+        return
+    previous = np.asarray(controller.policy.action).copy()
+    previous_frame = controller.locomotion_reflection_frame
+    controller.policy.action = remap_previous_locomotion_action(
+        previous,
+        default_angles=np.asarray(controller.policy.default_angles),
+        action_scale=controller.policy.action_scale,
+        joint_to_motor=np.asarray(controller.policy.joint2motor_idx),
+        previous_reflected=mirror if previous_frame is None else previous_frame,
+        next_reflected=mirror,
+    )
+    try:
+        _run_locomotion_in_frame(
+            controller, mirror=mirror, correct_mirrored_yaw=correct_mirrored_yaw
+        )
+    except Exception:
+        controller.policy.action = previous
+        raise
+    controller.locomotion_reflection_frame = mirror
+    if previous_frame is not None and previous_frame != mirror:
+        controller.locomotion_frame_switch_count += 1
+
+
+def _run_locomotion_in_frame(
     controller: _PlayerController,
     *,
     mirror: bool,
