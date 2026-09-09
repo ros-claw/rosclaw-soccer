@@ -231,6 +231,25 @@ def test_blue_strike_stance_uses_blue_attacking_direction():
     )
 
 
+@pytest.mark.parametrize("team", ["red", "blue"])
+def test_active_defender_intercepts_released_ball_not_remembered_carrier(fixture, team):
+    cell = next(c for c in fixture.cells if c.agent_id == f"{team}.defender")
+    observation = _observation(fixture, cell.agent_id, blue=team == "blue")
+    x, y = observation.self_state.position_m[:2]
+    sign = 1.0 if team == "red" else -1.0
+    opponent = "blue" if team == "red" else "red"
+    observation = replace(
+        observation,
+        possession_agent_id=f"{opponent}.finisher",
+        ball_position_m=(x + sign * 0.4, y, 0.115),
+        ball_velocity_mps=(-sign * 3.0, 0.0, 0.0),
+    )
+    decision = cell.decide(observation)
+    assert decision.intent is TacticalIntent.INTERCEPT
+    assert decision.target_position_m[:2] == pytest.approx(observation.ball_position_m[:2])
+    assert decision.target_agent_id == observation.possession_agent_id
+
+
 def test_nearest_contact_lease_is_not_monopolized_by_distant_chaser():
     from rosclaw_soccer.growth.locomotion_contact_teacher import G1LocomotionContactTeacherConfig
     from rosclaw_soccer.skills.team.independent_team_world import _select_contact_teacher_controller
@@ -257,6 +276,39 @@ def test_nearest_contact_lease_is_not_monopolized_by_distant_chaser():
         nearest_contact_first=True,
     )
     assert selected.cell.agent_id == "blue.playmaker"
+
+
+@pytest.mark.parametrize("nearest", [False, True])
+@pytest.mark.parametrize("owner_distance", [0.2, 2.0])
+def test_contact_memory_owner_must_be_reachable_in_physical_acquisition(nearest, owner_distance):
+    from rosclaw_soccer.growth.locomotion_contact_teacher import G1LocomotionContactTeacherConfig
+    from rosclaw_soccer.skills.team.independent_team_world import _select_contact_teacher_controller
+
+    controllers = tuple(
+        SimpleNamespace(
+            cell=SimpleNamespace(agent_id=agent),
+            decision=SimpleNamespace(intent=TacticalIntent.RECEIVE),
+            left_ankle_body=2 * i,
+            right_ankle_body=2 * i + 1,
+        )
+        for i, agent in enumerate(("red.finisher", "blue.defender"))
+    )
+    data = SimpleNamespace(
+        xpos=np.array(
+            [[owner_distance, 0, 0], [owner_distance, 0.1, 0], [0.1, 0, 0], [0.1, 0.1, 0]]
+        )
+    )
+    selected = _select_contact_teacher_controller(
+        controllers=controllers,
+        data=data,
+        ball_position=np.zeros(3),
+        current_possession_agent_id="red.finisher",
+        preferred_agent_id=None,
+        config=G1LocomotionContactTeacherConfig(),
+        nearest_contact_first=nearest,
+    )
+    expected = "blue.defender" if nearest and owner_distance > 0.52 else "red.finisher"
+    assert selected.cell.agent_id == expected
 
 
 @pytest.mark.integration

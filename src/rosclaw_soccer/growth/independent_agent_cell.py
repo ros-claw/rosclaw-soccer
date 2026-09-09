@@ -531,7 +531,12 @@ class RosclawSoccerAgentCell:
                 value,
                 intent,
                 SoccerSkill.INTERCEPTION,
-                carrier.position_m,
+                # Intercept the observed ball, not the former carrier. A
+                # contact-derived possession label can outlive a released
+                # shot/pass; chasing that label walks away from the ball.
+                value.ball_position_m
+                if self.tactical_profile.active_competition and intent is TacticalIntent.INTERCEPT
+                else carrier.position_m,
                 carrier.agent_id,
                 0.91,
             )

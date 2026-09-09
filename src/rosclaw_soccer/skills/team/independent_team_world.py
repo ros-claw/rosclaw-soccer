@@ -3165,7 +3165,18 @@ def _select_contact_teacher_controller(
             ),
             None,
         )
-        if owner is not None:
+        # A remembered contact owner can already be metres from the moving
+        # ball. In physical acquisition mode it must not starve a reachable
+        # opponent/receiver of the contact teacher during the possession hold.
+        # Keep the legacy owner-first experiment contract otherwise unchanged.
+        if owner is not None and (
+            not nearest_contact_first
+            or min(
+                float(np.linalg.norm(data.xpos[owner.left_ankle_body] - ball_position)),
+                float(np.linalg.norm(data.xpos[owner.right_ankle_body] - ball_position)),
+            )
+            <= config.maximum_foot_ball_distance_m
+        ):
             return owner
     return min(
         candidates,
