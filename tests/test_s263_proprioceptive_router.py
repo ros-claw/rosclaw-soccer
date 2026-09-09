@@ -124,3 +124,11 @@ def test_checkpoint_change_is_not_silently_loaded(tmp_path):
     path.with_suffix(".npz").write_bytes(b"changed")
     with pytest.raises(ValueError, match="hash"):
         load(path)
+
+
+def test_integer_coordinates_do_not_wrap_before_feature_domain_check():
+    q = np.zeros(43, dtype=np.int64)
+    q[3], q[39] = 1, 1
+    q[0], q[36] = -(2**62), 2**62
+    features = g1_approach_proprioception(q, np.zeros(41))
+    assert features[67] == pytest.approx(float(2**63))

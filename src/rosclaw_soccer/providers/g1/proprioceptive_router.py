@@ -36,6 +36,8 @@ def g1_approach_proprioception(qpos: np.ndarray, qvel: np.ndarray) -> np.ndarray
         or not np.isfinite(v).all()
     ):
         raise ValueError("finite numeric G1 course qpos[43]/qvel[41] required")
+    # Subtracting two admitted integer coordinates must not wrap in int64.
+    q, v = q.astype(np.float64), v.astype(np.float64)
     if abs(float(np.linalg.norm(q[3:7])) - 1.0) > 1e-3:
         raise ValueError("normalized root quaternion required")
     w, x, y, z = q[3:7]
