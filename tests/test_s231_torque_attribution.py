@@ -60,7 +60,12 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
 
     default = IndependentTeamWorldConfig()
     legacy = asdict(default)
-    for field in ("joint_guard_margin_rad", "keeper_reach", "glove_material"):
+    for field in (
+        "joint_guard_margin_rad",
+        "keeper_reach",
+        "glove_material",
+        "strike_residual_enabled",
+    ):
         legacy.pop(field)
     assert default.config_hash == str(hash_json(legacy))
     assert (

@@ -629,9 +629,12 @@ def main() -> None:
     parser.add_argument("--strict-receive-handoff", action="store_true")
     parser.add_argument("--role-batch-rounds", type=int, default=1)
     parser.add_argument("--contact-control-profile", action="store_true")
+    parser.add_argument("--strike-residual", action="store_true")
     parser.add_argument("--optimizer-epochs", type=int, default=4)
     parser.add_argument("--reward-shaping", choices=REWARD_SHAPING_MODES, default="legacy")
     args = parser.parse_args()
+    if args.strike_residual and not args.contact_control_profile:
+        parser.error("--strike-residual requires --contact-control-profile")
     train(
         assets=args.asset_root,
         output=args.output,
@@ -647,7 +650,9 @@ def main() -> None:
         strict_receive_handoff=args.strict_receive_handoff,
         role_batch_rounds=args.role_batch_rounds,
         reward_shaping=args.reward_shaping,
-        contact_control_profile=ContactControlProfile() if args.contact_control_profile else None,
+        contact_control_profile=ContactControlProfile(strike_residual_enabled=args.strike_residual)
+        if args.contact_control_profile
+        else None,
         optimizer_epochs=args.optimizer_epochs,
     )
 

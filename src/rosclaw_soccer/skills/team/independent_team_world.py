@@ -136,6 +136,7 @@ class IndependentTeamWorldConfig:
     predictive_separation: bool = False
     all_role_clearance: bool = False
     strict_receive_handoff: bool = False
+    strike_residual_enabled: bool = False
     keeper_reach: SharedKeeperReachConfig | None = None
     glove_material: GoalkeeperGloveMaterial | None = None
     stop_on_ball_exit: bool = False
@@ -193,6 +194,7 @@ class IndependentTeamWorldConfig:
             or not isinstance(self.predictive_separation, bool)
             or not isinstance(self.all_role_clearance, bool)
             or not isinstance(self.strict_receive_handoff, bool)
+            or type(self.strike_residual_enabled) is not bool
             or (
                 self.keeper_reach is not None
                 and not isinstance(self.keeper_reach, SharedKeeperReachConfig)
@@ -255,6 +257,8 @@ class IndependentTeamWorldConfig:
             value.pop("glove_material")
         if self.joint_guard_margin_rad == 0.04:
             value.pop("joint_guard_margin_rad")
+        if not self.strike_residual_enabled:
+            value.pop("strike_residual_enabled")
         return str(hash_json(value))
 
 
@@ -1399,13 +1403,9 @@ def simulate_independent_team_world(
                         <= active.post_receive_hold_sec
                     )
                     and c.decision is not None
-                    and c.decision.intent
-                    in {
-                        TacticalIntent.RECEIVE,
-                        TacticalIntent.INTERCEPT,
-                        TacticalIntent.PASS,
-                        TacticalIntent.CARRY,
-                    }
+                    and _residual_intent_enabled(
+                        c.decision.intent, strike_enabled=active.strike_residual_enabled
+                    )
                     and data.qpos[c.qpos_base + 2] >= active.minimum_pelvis_height_m
                     and min(
                         np.linalg.norm(
@@ -2251,6 +2251,22 @@ def _fill_locomotion_state(
     state.ball_valid = True
     state.gravity_ori = _gravity_orientation(state.pelvis_quat_w)
     state.ang_vel = state.root_ang_vel_b.copy()
+
+
+def _residual_intent_enabled(intent: TacticalIntent, *, strike_enabled: bool) -> bool:
+    """Opt-in leg learning coverage; never override option/body/contact guards.
+
+    SAVE is deliberately not enabled: a twelve-leg residual is not a learned
+    arm interception policy. DISTRIBUTE covers the keeper's foot distribution.
+    """
+    if type(strike_enabled) is not bool:
+        raise ValueError("explicit residual strike coverage required")
+    return intent in {
+        TacticalIntent.RECEIVE,
+        TacticalIntent.INTERCEPT,
+        TacticalIntent.PASS,
+        TacticalIntent.CARRY,
+    } or (strike_enabled and intent in {TacticalIntent.SHOOT, TacticalIntent.DISTRIBUTE})
 
 
 def _near_ball_observation(

@@ -24,6 +24,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous.pop("keeper_reach")
     previous.pop("glove_material")
     previous.pop("joint_guard_margin_rad")
+    previous.pop("strike_residual_enabled")
     assert config.config_hash == hash_json(previous)
     assert (
         config.config_hash
