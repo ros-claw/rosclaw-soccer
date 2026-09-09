@@ -29,6 +29,7 @@ class G1VectorMotorConfig:
     physics_substeps: int = 10
     guard_margin_rad: float = 0.08
     activation_ceiling: str = "SIM_ONLY"
+    torque_limit_scale: float = 1.0
 
     def __post_init__(self) -> None:
         if (
@@ -41,12 +42,23 @@ class G1VectorMotorConfig:
             or not math.isfinite(self.guard_margin_rad)
             or not 0.04 <= self.guard_margin_rad <= 0.10
             or self.activation_ceiling != "SIM_ONLY"
+            or type(self.torque_limit_scale) not in (int, float)
+            or not math.isfinite(self.torque_limit_scale)
+            or not 0.5 <= self.torque_limit_scale <= 1.0
         ):
             raise ValueError("bounded simulation-only vector motor configuration required")
 
     @property
     def config_hash(self) -> str:
-        return str(hash_json(asdict(self)))
+        value = asdict(self)
+        if self.torque_limit_scale == 1.0:
+            value.pop("torque_limit_scale")
+        return str(hash_json(value))
+
+    @property
+    def torque_limits_nm(self) -> tuple[float, ...]:
+        """Only lower the hard envelope; bind the training motor authority."""
+        return tuple(float(v * self.torque_limit_scale) for v in G1_HARD_TORQUE_LIMITS)
 
 
 class G1VectorMotorBatch:
@@ -79,6 +91,8 @@ class G1VectorMotorBatch:
             "physics_dt_sec": 0.002,
             "activation_ceiling": "SIM_ONLY",
         }
+        if self.config.torque_limit_scale != 1.0:
+            self.world_contract["torque_limit_scale"] = self.config.torque_limit_scale
         self.world_hash = hash_json(self.world_contract)
         self._torch, self._mjw = torch, mjw
         self.device = torch.device(self.config.device)
@@ -121,7 +135,7 @@ class G1VectorMotorBatch:
             self.cpu_model.jnt_limited[self.joint_ids].astype(bool), device=self.device
         )
         self._limits = torch.as_tensor(
-            G1_HARD_TORQUE_LIMITS, device=self.device, dtype=torch.float32
+            self.config.torque_limits_nm, device=self.device, dtype=torch.float32
         )
         self._qids = torch.as_tensor(self.joint_qpos, device=self.device, dtype=torch.long)
         self._vids = torch.as_tensor(self.joint_qvel, device=self.device, dtype=torch.long)

@@ -21,6 +21,10 @@ from rosclaw_soccer.providers.g1.vector_motor import G1VectorMotorBatch, G1Vecto
         {"guard_margin_rad": 0.03},
         {"guard_margin_rad": float("nan")},
         {"activation_ceiling": "REAL"},
+        {"torque_limit_scale": True},
+        {"torque_limit_scale": 1.01},
+        {"torque_limit_scale": 0.49},
+        {"torque_limit_scale": float("nan")},
     ],
 )
 def test_vector_motor_configuration_is_bounded(kwargs):
@@ -89,3 +93,20 @@ def test_graph_warmup_cannot_be_inserted_into_an_episode():
     batch._physics_graph = None
     with pytest.raises(RuntimeError, match="first episode"):
         batch.prepare_physics_graph()
+
+
+def test_reduced_training_torque_is_bound_and_preserves_default_contract():
+    from dataclasses import asdict, replace
+
+    from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_json
+
+    old = G1VectorMotorConfig()
+    original = asdict(old)
+    original.pop("torque_limit_scale")
+    assert old.config_hash == hash_json(original)
+    np.testing.assert_array_equal(old.torque_limits_nm, G1_HARD_TORQUE_LIMITS)
+    reduced = replace(old, torque_limit_scale=0.85)
+    assert reduced.config_hash != old.config_hash
+    np.testing.assert_array_equal(
+        reduced.torque_limits_nm, np.asarray(G1_HARD_TORQUE_LIMITS) * 0.85
+    )
