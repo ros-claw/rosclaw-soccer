@@ -20,12 +20,14 @@ class FullBodyPPOUpdateConfig:
     trace_decay: float = 0.98
     target_kl: float = 0.02
     observation_size: int = 133
+    action_size: int = 29
 
     def __post_init__(self) -> None:
         if (
             type(self.epochs) is not int
             or type(self.observation_size) is not int
-            or self.observation_size not in (133, 136)
+            or type(self.action_size) is not int
+            or (self.observation_size, self.action_size) not in ((133, 29), (136, 29), (139, 32))
             or not 1 <= self.epochs <= 16
             or type(self.minibatch_size) is not int
             or not 1 <= self.minibatch_size <= 4096
@@ -62,7 +64,11 @@ def update_full_body_ppo(
     if not 1 <= horizon <= 4096 or not 1 <= worlds <= 4096 or horizon * worlds > 65536:
         raise ValueError("bounded rollout dimensions required")
     for name, value in data.items():
-        shape: tuple[int, ...] = (horizon, worlds, active.observation_size if name == "obs" else 29)
+        shape: tuple[int, ...] = (
+            horizon,
+            worlds,
+            active.observation_size if name == "obs" else active.action_size,
+        )
         if name not in {"obs", "raw"}:
             shape = (horizon, worlds)
         if value.shape != shape or value.requires_grad or not bool(torch.isfinite(value).all()):
@@ -82,7 +88,7 @@ def update_full_body_ppo(
     if int(keep.sum()) < 2:
         raise ValueError("at least two active learning samples required")
     obs = data["obs"].reshape(-1, active.observation_size)[keep]
-    raw = data["raw"].reshape(-1, 29)[keep]
+    raw = data["raw"].reshape(-1, active.action_size)[keep]
     old = data["logp"].reshape(-1)[keep]
     with torch.no_grad():
         mean, value = agent(obs)
