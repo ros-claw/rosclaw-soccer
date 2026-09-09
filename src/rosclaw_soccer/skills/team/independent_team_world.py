@@ -1485,6 +1485,9 @@ def simulate_independent_team_world(
                             float(controller.last_world_command[1]),
                             float(controller.last_world_command[2]),
                         ),
+                        # Preparation starts at the accepted pass handshake,
+                        # not only after the source has physically launched it.
+                        committed_receiver=receive_lease_agent_id == agent_id,
                     )
                 )
                 if proposal is not None:

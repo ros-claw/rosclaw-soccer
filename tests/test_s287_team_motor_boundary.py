@@ -68,6 +68,7 @@ def test_motor_residual_fallback_is_explicit_content_bound_and_requires_both_bac
         ("frame", True),
         ("time_sec", float("nan")),
         ("prospective_owner", 1),
+        ("committed_receiver", 1),
         ("intent", "real"),
     ],
 )

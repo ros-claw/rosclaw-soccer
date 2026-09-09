@@ -39,6 +39,8 @@ class TeamMotorObservation:
     target_position_m: tuple[float, float, float]
     # Post-clearance world vx, vy and yaw rate, not an unguarded goal vector.
     navigation_command: tuple[float, float, float] | None = None
+    # Team handshake context, never a claim that reception already happened.
+    committed_receiver: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -46,6 +48,7 @@ class TeamMotorObservation:
             or type(self.frame) is not int
             or self.frame < 0
             or type(self.prospective_owner) is not bool
+            or type(self.committed_receiver) is not bool
             or self.intent not in {"shoot", "pass", "carry", "other"}
             or type(self.qpos) is not tuple
             or type(self.qvel) is not tuple
