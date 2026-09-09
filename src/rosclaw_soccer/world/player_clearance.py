@@ -29,6 +29,7 @@ def propose_clearance_velocity(
     clearance_m: float = 0.8,
     influence_m: float = 1.2,
     approach_gain: float = 0.6,
+    additional_halfplanes: np.ndarray | None = None,
 ) -> ClearanceProposal:
     if (
         nominal.shape != (2,)
@@ -43,7 +44,22 @@ def propose_clearance_velocity(
         or not 0.1 <= approach_gain <= 2.0
     ):
         raise ValueError("invalid bounded football clearance proposal")
-    normals, bounds = [], []
+    normals: list[np.ndarray] = []
+    bounds: list[float] = []
+    if additional_halfplanes is not None:
+        planes = np.asarray(additional_halfplanes)
+        if (
+            planes.ndim != 2
+            or planes.shape[1] != 3
+            or not 1 <= len(planes) <= 8
+            or not np.issubdtype(planes.dtype, np.floating)
+            or not np.all(np.isfinite(planes))
+            or np.any(np.abs(planes[:, 2]) > 1000)
+            or np.any(np.abs(np.linalg.norm(planes[:, :2], axis=1) - 1) > 1e-9)
+        ):
+            raise ValueError("finite unit-normal velocity halfplanes required")
+        normals.extend(planes[:, :2])
+        bounds.extend(planes[:, 2])
     for offset in neighbor_offsets:
         distance = float(np.linalg.norm(offset))
         if distance < 1e-9:
