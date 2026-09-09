@@ -67,3 +67,45 @@ def reception_terminal_reward(**physical_outcomes: Any) -> Any:
     controlled = controlled_reception_mask(**physical_outcomes)
     seen = physical_outcomes["seen_foot_contact"]
     return torch.where(controlled, 10.0, torch.where(seen, -1.0, -2.0))
+
+
+def rolling_reception_contact_reward(
+    *, velocity_before: Any, velocity_after: Any, foot_contact: Any
+) -> Any:
+    """Shape a rolling-ball trap: brake without popping the ball into the body.
+
+    Velocities are measured in the fixed world frame, Z up, at adjacent
+    physics steps. This is a training hint during contact, not proof that the
+    foot caused every velocity change, and never a successful-reception gate.
+    Aerial receptions and deliberate lofted passes require different tasks.
+    """
+    import torch
+
+    velocities = (velocity_before, velocity_after)
+    if (
+        any(
+            not isinstance(v, torch.Tensor)
+            or v.ndim != 2
+            or v.shape[1] != 3
+            or not 1 <= len(v) <= 4096
+            or v.dtype not in (torch.float32, torch.float64)
+            or v.requires_grad
+            or not bool(torch.isfinite(v).all())
+            or bool((v.abs() > 100).any())
+            for v in velocities
+        )
+        or velocity_before.shape != velocity_after.shape
+        or velocity_before.device != velocity_after.device
+        or velocity_before.dtype != velocity_after.dtype
+        or not isinstance(foot_contact, torch.Tensor)
+        or foot_contact.dtype != torch.bool
+        or foot_contact.shape != (len(velocity_before),)
+        or foot_contact.device != velocity_before.device
+    ):
+        raise ValueError("detached aligned physical ball velocities and foot mask required")
+    braking = (
+        torch.linalg.vector_norm(velocity_before, dim=1)
+        - torch.linalg.vector_norm(velocity_after, dim=1)
+    ).clamp(-0.2, 0.2)
+    upward_change = (velocity_after[:, 2] - velocity_before[:, 2]).clamp(0, 0.2)
+    return torch.where(foot_contact, 2 * braking - 2 * upward_change, 0.0)
