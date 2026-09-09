@@ -142,6 +142,7 @@ class IndependentTeamWorldConfig:
     owned_contact_policy: OwnedBallContactPolicy | None = None
     minimum_pelvis_height_m: float = 0.55
     maximum_tilt_rad: float = 0.80
+    joint_guard_margin_rad: float = 0.04
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
     schema_version: str = "rosclaw_soccer.independent_team_world_config.v1"
@@ -180,6 +181,7 @@ class IndependentTeamWorldConfig:
             self.left_goal_plane_x_m,
             self.minimum_pelvis_height_m,
             self.maximum_tilt_rad,
+            self.joint_guard_margin_rad,
         )
         if (
             not isinstance(self.bilateral_goals, bool)
@@ -238,6 +240,7 @@ class IndependentTeamWorldConfig:
             or not -5.0 <= self.left_goal_plane_x_m <= 0.0
             or not 0.45 <= self.minimum_pelvis_height_m <= 0.70
             or not 0.45 <= self.maximum_tilt_rad <= 1.00
+            or not 0.04 <= self.joint_guard_margin_rad <= 0.10
             or self.activation_ceiling != "SIM_ONLY"
             or self.hardware_authorized
         ):
@@ -250,6 +253,8 @@ class IndependentTeamWorldConfig:
             value.pop("keeper_reach")  # Preserve historical disabled configuration identities.
         if self.glove_material is None:
             value.pop("glove_material")
+        if self.joint_guard_margin_rad == 0.04:
+            value.pop("joint_guard_margin_rad")
         return str(hash_json(value))
 
 
@@ -725,6 +730,13 @@ def simulate_independent_team_world(
         "contact_teacher_agent_code": [],
         "contact_teacher_active": [],
         "contact_teacher_peak_torque_nm": [],
+        "contact_teacher_last_substep_valid": [],
+        "contact_teacher_baseline_torque_nm": [],
+        "contact_teacher_residual_torque_nm": [],
+        "contact_teacher_tracking_adjustment_nm": [],
+        "contact_teacher_guarded_torque_nm": [],
+        "contact_teacher_task_force_n": [],
+        "contact_teacher_ankle_position_m": [],
         "contact_teacher_mode_code": [],
         "contact_teacher_foot_code": [],
         "contact_teacher_target_m": [],
@@ -761,6 +773,7 @@ def simulate_independent_team_world(
                 f"{key}_joint_position": [],
                 f"{key}_joint_velocity": [],
                 f"{key}_joint_torque": [],
+                f"{key}_joint_safety_margin_rad": [],
                 f"{key}_left_foot_position": [],
                 f"{key}_right_foot_position": [],
                 f"{key}_intent_code": [],
@@ -1064,6 +1077,13 @@ def simulate_independent_team_world(
         )
         frame_teacher_active = False
         frame_teacher_peak_torque_nm = 0.0
+        frame_teacher_last_substep_valid = False
+        frame_teacher_baseline = np.zeros(29, dtype=np.float64)
+        frame_teacher_residual = np.zeros(29, dtype=np.float64)
+        frame_teacher_adjustment = np.zeros(29, dtype=np.float64)
+        frame_teacher_guarded = np.zeros(29, dtype=np.float64)
+        frame_teacher_force = np.zeros(3, dtype=np.float64)
+        frame_teacher_ankle = np.zeros(3, dtype=np.float64)
         frame_teacher_mode_code = 0
         frame_teacher_foot_code = 0
         frame_teacher_target_m: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
@@ -1440,6 +1460,13 @@ def simulate_independent_team_world(
             None,
         )
         for _ in range(_SUBSTEPS):
+            frame_teacher_last_substep_valid = False
+            frame_teacher_baseline = np.zeros(29, dtype=np.float64)
+            frame_teacher_residual = np.zeros(29, dtype=np.float64)
+            frame_teacher_adjustment = np.zeros(29, dtype=np.float64)
+            frame_teacher_guarded = np.zeros(29, dtype=np.float64)
+            frame_teacher_force = np.zeros(3, dtype=np.float64)
+            frame_teacher_ankle = np.zeros(3, dtype=np.float64)
             # The learned actor updates targets at 50 Hz, while its high-gain
             # PD loop must close at the 500 Hz physics rate.  Holding one
             # torque sample for the full 20 ms control frame destabilizes the
@@ -1485,6 +1512,7 @@ def simulate_independent_team_world(
                     target[:12] += residual
                 dq = np.asarray(data.qvel[controller.joint_qvel], dtype=np.float64)
                 raw_torque = kp * (target - q) - kd * dq
+                teacher_effect_observed = False
                 if controller.keeper_reach is not None:
                     raw_torque += controller.keeper_reach.torque_nm
                 if (
@@ -1675,6 +1703,28 @@ def simulate_independent_team_world(
                     frame_teacher_mode_code = 1 if contact_mode == "receive" else 2
                     frame_teacher_foot_code = 1 if use_left else 2
                     frame_teacher_target_m = effect.ankle_target_m.copy()
+                    # Read-only decomposition at the final 2 ms substep of
+                    # this 50 Hz frame. Never count opposing torques as
+                    # successful contact merely because a teacher is active.
+                    teacher_effect_observed = True
+                    frame_teacher_last_substep_valid = True
+                    frame_teacher_baseline = raw_torque.copy()
+                    if effect.active and effect_config.contact_leg_stiffness_scale < 1:
+                        from rosclaw_soccer.growth.locomotion_contact_teacher import (
+                            contact_tracking_adjustment,
+                        )
+
+                        frame_teacher_adjustment = contact_tracking_adjustment(
+                            kp * (target - q),
+                            use_left=bool(use_left),
+                            scale=effect_config.contact_leg_stiffness_scale,
+                        )
+                        raw_torque += frame_teacher_adjustment
+                    frame_teacher_residual = effect.torque_nm.copy()
+                    frame_teacher_force = effect.task_force_n.copy()
+                    frame_teacher_ankle = data.xpos[
+                        controller.left_ankle_body if use_left else controller.right_ankle_body
+                    ].copy()
                     raw_torque += effect.torque_nm
                     frame_teacher_active = frame_teacher_active or effect.active
                     frame_teacher_peak_torque_nm = max(
@@ -1687,8 +1737,11 @@ def simulate_independent_team_world(
                     commanded_torque=raw_torque,
                     joint_ranges=np.asarray(model.jnt_range[controller.joint_ids]),
                     limited=model.jnt_limited[controller.joint_ids].astype(bool),
+                    margin_rad=active.joint_guard_margin_rad,
                 )
                 torque = np.clip(projected_torque, -guarded_limits, guarded_limits)
+                if teacher_effect_observed:
+                    frame_teacher_guarded = torque.copy()
                 data.ctrl[controller.actuators] = torque
                 controller.torque_limit_violation = bool(
                     controller.torque_limit_violation or np.any(np.abs(torque) > hard_limits)
@@ -1855,7 +1908,7 @@ def simulate_independent_team_world(
                 controller.minimum_pelvis_height_m, float(pelvis[2])
             )
             controller.maximum_tilt_rad = max(controller.maximum_tilt_rad, abs(roll), abs(pitch))
-            _append_player_trace(trace, controller=controller, data=data)
+            _append_player_trace(trace, controller=controller, data=data, model=model)
         trace["time"].append(float(data.time))
         trace["ball_pose"].append(data.qpos[ball_qpos : ball_qpos + 7].copy())
         trace["ball_velocity"].append(data.qvel[ball_qvel : ball_qvel + 6].copy())
@@ -1942,6 +1995,13 @@ def simulate_independent_team_world(
         )
         trace["contact_teacher_active"].append(frame_teacher_active)
         trace["contact_teacher_peak_torque_nm"].append(frame_teacher_peak_torque_nm)
+        trace["contact_teacher_last_substep_valid"].append(frame_teacher_last_substep_valid)
+        trace["contact_teacher_baseline_torque_nm"].append(frame_teacher_baseline)
+        trace["contact_teacher_residual_torque_nm"].append(frame_teacher_residual)
+        trace["contact_teacher_tracking_adjustment_nm"].append(frame_teacher_adjustment)
+        trace["contact_teacher_guarded_torque_nm"].append(frame_teacher_guarded)
+        trace["contact_teacher_task_force_n"].append(frame_teacher_force)
+        trace["contact_teacher_ankle_position_m"].append(frame_teacher_ankle)
         trace["contact_teacher_mode_code"].append(frame_teacher_mode_code)
         trace["contact_teacher_foot_code"].append(frame_teacher_foot_code)
         trace["contact_teacher_target_m"].append(frame_teacher_target_m)
@@ -3325,7 +3385,7 @@ def _run_locomotion_unmasked(
 
 
 def _append_player_trace(
-    trace: dict[str, list[Any]], *, controller: _PlayerController, data: Any
+    trace: dict[str, list[Any]], *, controller: _PlayerController, data: Any, model: Any = None
 ) -> None:
     decision = controller.decision
     command = controller.last_world_command
@@ -3338,6 +3398,14 @@ def _append_player_trace(
     trace[f"{key}_joint_position"].append(data.qpos[controller.joint_qpos].copy())
     trace[f"{key}_joint_velocity"].append(data.qvel[controller.joint_qvel].copy())
     trace[f"{key}_joint_torque"].append(data.ctrl[controller.actuators].copy())
+    if f"{key}_joint_safety_margin_rad" in trace:
+        if model is None:
+            raise ValueError("joint margin tracing requires the physical model")
+        q = np.asarray(data.qpos[controller.joint_qpos], dtype=np.float64)
+        ranges = np.asarray(model.jnt_range[controller.joint_ids])
+        margin = np.minimum(q - ranges[:, 0], ranges[:, 1] - q)
+        margin[~model.jnt_limited[controller.joint_ids].astype(bool)] = 1.0
+        trace[f"{key}_joint_safety_margin_rad"].append(margin)
     trace[f"{key}_left_foot_position"].append(data.xpos[controller.left_ankle_body].copy())
     trace[f"{key}_right_foot_position"].append(data.xpos[controller.right_ankle_body].copy())
     trace[f"{key}_intent_code"].append(_INTENT_CODES[decision.intent])

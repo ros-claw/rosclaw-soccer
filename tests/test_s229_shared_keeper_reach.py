@@ -23,7 +23,12 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous = asdict(config)
     previous.pop("keeper_reach")
     previous.pop("glove_material")
+    previous.pop("joint_guard_margin_rad")
     assert config.config_hash == hash_json(previous)
+    assert (
+        config.config_hash
+        == "sha256:fd442bce83f737c64e2ee59ecc09dc204376100f9476a21361b41b538d8c41d1"
+    )
     with pytest.raises(ValueError):
         SharedKeeperReachConfig(gain_scale=float("nan"))
     with pytest.raises(ValueError):

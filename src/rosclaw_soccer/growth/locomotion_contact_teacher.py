@@ -53,6 +53,7 @@ class G1LocomotionContactTeacherConfig:
     aim_yaw_bias_rad: float = 0.0
     preferred_foot: str = "nearest"
     pass_stroke_duration_sec: float = 0.0
+    contact_leg_stiffness_scale: float = 1.0
     activation_ceiling: str = "SIM_ONLY"
     training_only: bool = True
     hardware_authorized: bool = False
@@ -89,6 +90,7 @@ class G1LocomotionContactTeacherConfig:
             self.maximum_forward_foot_offset_m,
             self.aim_yaw_bias_rad,
             self.pass_stroke_duration_sec,
+            self.contact_leg_stiffness_scale,
         )
         if (
             any(not math.isfinite(value) for value in values)
@@ -122,6 +124,7 @@ class G1LocomotionContactTeacherConfig:
             or not -0.20 <= self.maximum_forward_foot_offset_m <= 0.08
             or not -1.0 <= self.aim_yaw_bias_rad <= 1.0
             or self.preferred_foot not in {"nearest", "left", "right"}
+            or not 0.4 <= self.contact_leg_stiffness_scale <= 1.0
             or not (
                 self.pass_stroke_duration_sec == 0.0
                 or 0.12 <= self.pass_stroke_duration_sec <= 0.60
@@ -145,6 +148,29 @@ class G1LocomotionContactTeacherEffect:
     foot_ball_distance_m: float
     longitudinal_foot_offset_m: float
     active: bool
+
+
+def contact_tracking_adjustment(
+    proportional_torque: NDArray[np.float64], *, use_left: bool, scale: float
+) -> NDArray[np.float64]:
+    """Reduce only the selected leg's proportional tracking, never its damping.
+
+    This is an opt-in simulated control ablation, not a stability certificate.
+    Support joints and all downstream joint/actuator guards remain unchanged.
+    """
+    torque = np.asarray(proportional_torque, dtype=np.float64)
+    if (
+        torque.shape != (29,)
+        or not np.isfinite(torque).all()
+        or type(use_left) is not bool
+        or not math.isfinite(scale)
+        or not 0.4 <= scale <= 1
+    ):
+        raise ValueError("invalid bounded contact tracking adjustment")
+    result = np.zeros(29, dtype=np.float64)
+    selected = slice(0, 6) if use_left else slice(6, 12)
+    result[selected] = (scale - 1) * torque[selected]
+    return result
 
 
 @dataclass(frozen=True)

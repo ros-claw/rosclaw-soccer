@@ -20,6 +20,7 @@ from rosclaw_soccer.growth.strike_phase_controller import StrikePhaseConfig
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.independent_team_world import simulate_independent_team_world
+from rosclaw_soccer.training.contact_control_profile import ContactControlProfile
 from rosclaw_soccer.training.continuous_competitive_match_growth import (
     build_continuous_competitive_fixture,
     default_continuous_match_config,
@@ -63,7 +64,12 @@ def run_probe(
     strike_ankle_lateral_m: float | None = None,
     receive_ankle_lateral_m: float | None = None,
     strict_receive_handoff: bool = False,
+    contact_control_profile: ContactControlProfile | None = None,
 ) -> dict[str, Any]:
+    if contact_control_profile is not None and (
+        not isinstance(contact_control_profile, ContactControlProfile) or not four_vs_four
+    ):
+        raise ValueError("contact control profile requires the bounded 4v4 course")
     if type(strict_receive_handoff) is not bool or (strict_receive_handoff and not four_vs_four):
         raise ValueError("strict receive handoff requires the bilateral 4v4 world")
     if receive_ankle_lateral_m is not None and (
@@ -121,6 +127,7 @@ def run_probe(
         str(p.relative_to(source_root)): hash_bytes(p.read_bytes())
         for relative in (
             "training/active_team_probe.py",
+            "training/contact_control_profile.py",
             "training/four_vs_four_match.py",
             "training/independent_team_growth.py",
             "growth/independent_agent_cell.py",
@@ -253,6 +260,8 @@ def run_probe(
                     ),
                 )
             config = replace(config, contact_possession_hold_sec=1.50)
+    if contact_control_profile is not None:
+        config, teacher = contact_control_profile.apply(config, teacher)
     results, trajectories = [], []
     for _ in range(2):
         result, trajectory = simulate_independent_team_world(

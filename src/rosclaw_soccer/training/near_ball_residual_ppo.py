@@ -24,8 +24,10 @@ from rosclaw_soccer.growth.pass_failure_feedback import diagnose_passes
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import run_probe, validate_probe
+from rosclaw_soccer.training.contact_control_profile import ContactControlProfile
 from rosclaw_soccer.training.football_reward_shaping import (
     REWARD_SHAPING_MODES,
+    joint_safety_penalty,
     terminal_approach_shaping,
 )
 from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
@@ -126,7 +128,7 @@ def physical_rewards(
             credited.add(event)
     if not np.all(np.isfinite(rewards)):
         raise ValueError("nonfinite physical reward")
-    if reward_shaping == "terminal_potential_v1":
+    if reward_shaping in {"terminal_potential_v1", "contact_safety_v1"}:
         distance = np.minimum(
             np.linalg.norm(obs[:, :, 38:41], axis=2),
             np.linalg.norm(obs[:, :, 41:44], axis=2),
@@ -142,6 +144,14 @@ def physical_rewards(
             )
             rewards[:, i] -= 2.0 * (np.exp(-4 * after) - np.exp(-4 * distance[:, i]))
         rewards += terminal_approach_shaping(distance, gamma=gamma)
+    if reward_shaping == "contact_safety_v1":
+        margins = np.stack(
+            [np.asarray(trace[a.replace(".", "_") + "_joint_safety_margin_rad"]) for a in ids],
+            axis=1,
+        )
+        if margins.shape != (count, 8, 29):
+            raise ValueError("joint margin trace does not match reward observations")
+        rewards += joint_safety_penalty(margins)
     return rewards
 
 
@@ -367,6 +377,7 @@ def train(
     strict_receive_handoff: bool = False,
     role_batch_rounds: int = 1,
     reward_shaping: str = "legacy",
+    contact_control_profile: ContactControlProfile | None = None,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -388,6 +399,13 @@ def train(
         or reward_shaping not in REWARD_SHAPING_MODES
         or (strict_receive_handoff and not role_curriculum)
         or (role_curriculum and not (prospective_curriculum and all_role_clearance))
+        or (
+            contact_control_profile is not None
+            and (
+                not isinstance(contact_control_profile, ContactControlProfile)
+                or not role_curriculum
+            )
+        )
     ):
         raise ValueError("bounded online training budget required")
     fixture = build_four_vs_four_fixture(assets)
@@ -430,6 +448,9 @@ def train(
         "all_role_clearance": all_role_clearance,
         "role_curriculum": role_curriculum,
         "role_batch_rounds": role_batch_rounds,
+        "contact_control_profile": None
+        if contact_control_profile is None
+        else asdict(contact_control_profile),
         "reward_shaping": reward_shaping,
         "strict_receive_handoff": strict_receive_handoff,
         "evaluation_courses": [
@@ -472,6 +493,7 @@ def train(
                     22100 + iteration * role_batch_rounds * 8 + index,
                     True,
                     strict_receive_handoff,
+                    contact_control_profile,
                 )
                 for index, course in enumerate(training_batch(iteration, rounds=role_batch_rounds))
             ]
@@ -527,6 +549,7 @@ def train(
                     0,
                     False,
                     strict_receive_handoff,
+                    contact_control_profile,
                 )
                 for course in examination_courses(strict_handoff=strict_receive_handoff)
             ]
@@ -600,6 +623,7 @@ def main() -> None:
     parser.add_argument("--role-curriculum", action="store_true")
     parser.add_argument("--strict-receive-handoff", action="store_true")
     parser.add_argument("--role-batch-rounds", type=int, default=1)
+    parser.add_argument("--contact-control-profile", action="store_true")
     parser.add_argument("--reward-shaping", choices=REWARD_SHAPING_MODES, default="legacy")
     args = parser.parse_args()
     train(
@@ -617,6 +641,7 @@ def main() -> None:
         strict_receive_handoff=args.strict_receive_handoff,
         role_batch_rounds=args.role_batch_rounds,
         reward_shaping=args.reward_shaping,
+        contact_control_profile=ContactControlProfile() if args.contact_control_profile else None,
     )
 
 

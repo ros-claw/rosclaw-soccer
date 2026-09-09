@@ -13,6 +13,7 @@ from pathlib import Path
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.training.active_team_probe import run_probe
+from rosclaw_soccer.training.contact_control_profile import ContactControlProfile
 
 ROLES = ("goalkeeper", "defender", "playmaker", "finisher")
 TRAIN_OFFSETS = (-0.12, 0.0, 0.12, 0.04, -0.04)
@@ -86,6 +87,7 @@ class RoleRolloutJob:
     seed: int
     explore: bool
     strict_handoff: bool = False
+    contact_control_profile: ContactControlProfile | None = None
 
 
 def collect_role_course(job: RoleRolloutJob) -> str:
@@ -107,5 +109,6 @@ def collect_role_course(job: RoleRolloutJob) -> str:
         near_ball_seed=job.seed,
         near_ball_explore=job.explore,
         strict_receive_handoff=job.strict_handoff,
+        contact_control_profile=job.contact_control_profile,
     )
     return str(job.destination / "probe.json")
