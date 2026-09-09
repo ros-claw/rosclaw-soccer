@@ -184,7 +184,7 @@ def update_private_actors(
     import torch
 
     torch.set_num_threads(1)
-    if not rollouts or not 1 <= epochs <= 16:
+    if not rollouts or type(epochs) is not int or not 1 <= epochs <= 16:
         raise ValueError("PPO needs rollouts and bounded update epochs")
     weights = {k: v.copy() for k, v in parent.weights.items()}
     advantages, returns = [], []
@@ -378,11 +378,14 @@ def train(
     role_batch_rounds: int = 1,
     reward_shaping: str = "legacy",
     contact_control_profile: ContactControlProfile | None = None,
+    optimizer_epochs: int = 4,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     if (
         type(iterations) is not int
+        or type(optimizer_epochs) is not int
+        or not 1 <= optimizer_epochs <= 16
         or not 1 <= iterations <= 100
         or not 5 <= duration <= 25
         or type(workers) is not int
@@ -439,6 +442,7 @@ def train(
         "training_source_hash": hash_bytes(Path(__file__).read_bytes()),
         "prospective_curriculum": prospective_curriculum,
         "workers": workers,
+        "optimizer_epochs": optimizer_epochs,
         "initial_generation": policy.generation,
         "initial_policy_hash": policy.policy_hash,
         "baseline_label": "parent" if initial_checkpoint is not None else "zero",
@@ -522,6 +526,7 @@ def train(
         policy, rows = update_private_actors(
             policy,
             traces,
+            epochs=optimizer_epochs,
             gamma=manifest["credit"]["gamma"],
             trace_decay=manifest["credit"]["trace_decay"],
             reward_shaping=reward_shaping,
@@ -624,6 +629,7 @@ def main() -> None:
     parser.add_argument("--strict-receive-handoff", action="store_true")
     parser.add_argument("--role-batch-rounds", type=int, default=1)
     parser.add_argument("--contact-control-profile", action="store_true")
+    parser.add_argument("--optimizer-epochs", type=int, default=4)
     parser.add_argument("--reward-shaping", choices=REWARD_SHAPING_MODES, default="legacy")
     args = parser.parse_args()
     train(
@@ -642,6 +648,7 @@ def main() -> None:
         role_batch_rounds=args.role_batch_rounds,
         reward_shaping=args.reward_shaping,
         contact_control_profile=ContactControlProfile() if args.contact_control_profile else None,
+        optimizer_epochs=args.optimizer_epochs,
     )
 
 

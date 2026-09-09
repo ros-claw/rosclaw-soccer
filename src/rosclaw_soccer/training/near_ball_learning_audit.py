@@ -13,6 +13,7 @@ import numpy as np
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import validate_probe
+from rosclaw_soccer.training.contact_control_profile import ContactControlProfile
 from rosclaw_soccer.training.football_reward_shaping import REWARD_SHAPING_MODES
 from rosclaw_soccer.training.near_ball_curriculum import (
     RoleCourse,
@@ -44,6 +45,18 @@ def _verify_training_course(report: dict[str, Any], course: RoleCourse, seed: in
         raise ValueError("training course physical ball position differs")
 
 
+def _verify_contact_profile(report: dict[str, Any], profile: ContactControlProfile | None) -> None:
+    if profile is None:
+        return
+    world, teacher = report["world_config"], report["contact_teacher_config"]
+    if (
+        world.get("minimum_player_separation_m") != profile.separation_m
+        or world.get("joint_guard_margin_rad", 0.04) != profile.guard_margin_rad
+        or teacher.get("contact_leg_stiffness_scale", 1) != profile.stiffness_scale
+    ):
+        raise ValueError("physical rollout differs from committed contact control profile")
+
+
 def audit(root: Path) -> dict[str, Any]:
     manifest = json.loads((root / "training.json").read_text())
     commitment = manifest.pop("manifest_hash")
@@ -52,6 +65,11 @@ def audit(root: Path) -> dict[str, Any]:
     initial_generation = manifest.get("initial_generation", 0)
     batch_rounds = manifest.get("role_batch_rounds", 1)
     reward_shaping = manifest.get("reward_shaping", "legacy")
+    optimizer_epochs = manifest.get("optimizer_epochs", 4)
+    if type(optimizer_epochs) is not int or not 1 <= optimizer_epochs <= 16:
+        raise ValueError("invalid bounded optimizer epochs")
+    profile_payload = manifest.get("contact_control_profile")
+    profile = None if profile_payload is None else ContactControlProfile(**profile_payload)
     if reward_shaping not in REWARD_SHAPING_MODES:
         raise ValueError("unknown reward shaping contract")
     if (
@@ -98,6 +116,7 @@ def audit(root: Path) -> dict[str, Any]:
         for sample_index, digest in enumerate(iteration["rollout_report_hashes"]):
             source = paths[digest]
             report = validate_probe(source)
+            _verify_contact_profile(report, profile)
             if manifest.get("role_curriculum", False):
                 course = training_batch(iteration_index, rounds=batch_rounds)[sample_index]
                 _verify_training_course(
@@ -171,6 +190,7 @@ def audit(root: Path) -> dict[str, Any]:
                     generation=child.generation,
                     dataset_hash=dataset_hash,
                     context_hash=context_hash,
+                    maximum_steps=optimizer_epochs,
                 )
                 core_verified += 1
             elif requires_core and counts[i] >= 32:
@@ -209,6 +229,7 @@ def audit(root: Path) -> dict[str, Any]:
             if item["label"] != label:
                 continue
             report = validate_probe(paths[item["report_hash"]])
+            _verify_contact_profile(report, profile)
             residual = report["near_ball_residual"]
             expected_policy = parent if label == "candidate" else initial_policy
             if residual["explore"] or residual["policy_hash"] != expected_policy.policy_hash:

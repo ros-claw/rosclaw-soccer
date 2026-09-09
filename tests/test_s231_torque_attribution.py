@@ -128,3 +128,31 @@ def test_joint_safety_reward_is_agent_local_and_rejects_missing_evidence():
     for invalid in (margins[:, :, :28], np.full((3, 8, 29), np.nan)):
         with pytest.raises(ValueError):
             joint_safety_penalty(invalid)
+
+
+def test_audit_binds_declared_control_profile_to_physical_parameters():
+    from rosclaw_soccer.training.contact_control_profile import ContactControlProfile
+    from rosclaw_soccer.training.near_ball_learning_audit import _verify_contact_profile
+
+    report = dict(
+        world_config=dict(minimum_player_separation_m=0.85, joint_guard_margin_rad=0.08),
+        contact_teacher_config=dict(contact_leg_stiffness_scale=0.8),
+    )
+    _verify_contact_profile(report, ContactControlProfile())
+    report["world_config"]["joint_guard_margin_rad"] = 0.04
+    with pytest.raises(ValueError, match="committed contact"):
+        _verify_contact_profile(report, ContactControlProfile())
+
+
+@pytest.mark.parametrize("epochs", [0, 17, True, 4.0])
+def test_training_rejects_unbounded_or_noninteger_epochs_before_collection(tmp_path, epochs):
+    from rosclaw_soccer.training.near_ball_residual_ppo import train
+
+    with pytest.raises(ValueError, match="bounded online"):
+        train(
+            assets=tmp_path,
+            output=tmp_path / "out",
+            iterations=1,
+            duration=5,
+            optimizer_epochs=epochs,
+        )

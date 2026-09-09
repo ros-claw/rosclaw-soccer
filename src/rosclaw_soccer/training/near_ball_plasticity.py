@@ -162,6 +162,7 @@ def replay_recorded_update(root: Path, output: Path) -> dict[str, Any]:
     child, rows = update_private_actors(
         parent,
         traces,
+        epochs=manifest.get("optimizer_epochs", 4),
         gamma=credit["gamma"],
         trace_decay=credit["trace_decay"],
         reward_shaping=manifest.get("reward_shaping", "legacy"),
