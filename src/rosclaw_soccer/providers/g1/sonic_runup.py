@@ -181,6 +181,8 @@ class G1SonicRunupConfig:
     planner_seed: int = 0
     model_variant: G1SonicModelVariant = "low_latency"
     schema_version: str = "rosclaw.simforge.g1_sonic_runup_config.v2"
+    movement_heading_rad: float = 0.0
+    facing_heading_rad: float = 0.0
 
     def __post_init__(self) -> None:
         values = (
@@ -217,6 +219,11 @@ class G1SonicRunupConfig:
             raise ValueError("SONIC planner seed must be non-negative")
         if self.model_variant not in _VARIANTS:
             raise ValueError("SONIC model variant is unsupported")
+        if any(
+            isinstance(value, bool) or not math.isfinite(value) or abs(value) > math.pi
+            for value in (self.movement_heading_rad, self.facing_heading_rad)
+        ):
+            raise ValueError("SONIC movement and facing headings must be finite in [-pi, pi]")
 
     @property
     def execution_frames(self) -> int:
@@ -224,7 +231,13 @@ class G1SonicRunupConfig:
 
     @property
     def config_hash(self) -> str:
-        return hash_json(asdict(self))
+        value = asdict(self)
+        # Preserve the historical straight-ahead contract; non-default
+        # headings must participate in candidate/evidence identity.
+        for key in ("movement_heading_rad", "facing_heading_rad"):
+            if value[key] == 0.0:
+                value.pop(key)
+        return hash_json(value)
 
 
 def qualify_g1_sonic(
@@ -507,8 +520,26 @@ class G1SonicRunupController:
                 "context_mujoco_qpos": context[None, :].astype(np.float32),
                 "target_vel": np.asarray((velocity,), dtype=np.float32),
                 "mode": np.asarray((mode,), dtype=np.int64),
-                "movement_direction": np.asarray(((1.0, 0.0, 0.0),), dtype=np.float32),
-                "facing_direction": np.asarray(((1.0, 0.0, 0.0),), dtype=np.float32),
+                "movement_direction": np.asarray(
+                    (
+                        (
+                            math.cos(self.config.movement_heading_rad),
+                            math.sin(self.config.movement_heading_rad),
+                            0.0,
+                        ),
+                    ),
+                    dtype=np.float32,
+                ),
+                "facing_direction": np.asarray(
+                    (
+                        (
+                            math.cos(self.config.facing_heading_rad),
+                            math.sin(self.config.facing_heading_rad),
+                            0.0,
+                        ),
+                    ),
+                    dtype=np.float32,
+                ),
                 "random_seed": np.asarray((self.config.planner_seed + index,), dtype=np.int64),
                 "has_specific_target": np.zeros((1, 1), dtype=np.int64),
                 "specific_target_positions": np.zeros((1, 4, 3), dtype=np.float32),
