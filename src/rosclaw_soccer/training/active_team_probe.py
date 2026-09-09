@@ -73,7 +73,7 @@ def run_probe(
     if type(strict_receive_handoff) is not bool or (strict_receive_handoff and not four_vs_four):
         raise ValueError("strict receive handoff requires the bilateral 4v4 world")
     if receive_ankle_lateral_m is not None and (
-        not four_vs_four or not 0.10 <= receive_ankle_lateral_m <= 0.24
+        not four_vs_four or not 0.12 <= receive_ankle_lateral_m <= 0.24
     ):
         raise ValueError("receive ankle ablation must remain in the bounded 4v4 course")
     if strike_ankle_lateral_m is not None and (

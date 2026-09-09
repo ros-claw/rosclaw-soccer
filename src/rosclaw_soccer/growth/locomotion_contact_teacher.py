@@ -97,7 +97,9 @@ class G1LocomotionContactTeacherConfig:
             or not 0.25 <= self.maximum_foot_ball_distance_m <= 0.80
             or not 0.08 <= self.ankle_lateral_offset_m <= 0.24
             or not 0.12 <= self.receive_ankle_lateral_offset_m <= 0.24
-            or not 0.10 <= self.committed_receive_ankle_lateral_offset_m <= 0.24
+            # This value is copied into receive_ankle_lateral_offset_m at
+            # runtime; accept only the intersection of the two envelopes.
+            or not 0.12 <= self.committed_receive_ankle_lateral_offset_m <= 0.24
             or not -0.10 <= self.ankle_height_offset_m <= 0.02
             or not 0.04 <= self.precontact_depth_m <= 0.16
             or not 0.08 <= self.follow_through_depth_m <= 0.24
@@ -251,6 +253,7 @@ def locomotion_contact_teacher_effect(
     contact_recent: bool,
     config: G1LocomotionContactTeacherConfig,
     strike_progress: float | None = None,
+    receive_capture_progress: float | None = None,
 ) -> G1LocomotionContactTeacherEffect:
     """Return a bounded J^T residual that can only succeed through contact."""
 
@@ -260,6 +263,15 @@ def locomotion_contact_teacher_effect(
     direction_xy = np.asarray(desired_ball_direction_xy, dtype=np.float64)
     zero_torque: NDArray[np.float64] = np.zeros(29, dtype=np.float64)
     zero_xyz: NDArray[np.float64] = np.zeros(3, dtype=np.float64)
+    if receive_capture_progress is not None and (
+        type(receive_capture_progress) not in (int, float)
+        or not math.isfinite(receive_capture_progress)
+        or not 0.0 <= receive_capture_progress <= 1.0
+        or contact_mode != "receive"
+        or contact_recent is not True
+        or strike_progress is not None
+    ):
+        raise ValueError("capture progress requires a measured recent receive contact")
     if (
         dofs.shape != (29,)
         or len(set(int(value) for value in dofs)) != 29
@@ -300,7 +312,9 @@ def locomotion_contact_teacher_effect(
     distance = float(np.linalg.norm(foot - ball))
     longitudinal_offset = float(np.dot(foot[:2] - ball[:2], direction_xy))
     depth = (
-        config.follow_through_depth_m
+        config.receive_cushion_depth_m
+        if receive_capture_progress is not None
+        else config.follow_through_depth_m
         if contact_recent
         else config.receive_cushion_depth_m
         if contact_mode == "receive"
@@ -376,6 +390,10 @@ def locomotion_contact_teacher_effect(
             dtype=np.float64,
         )
     )
+    if receive_capture_progress is not None:
+        # Withdraw with the incoming ball, then slow the foot. This changes
+        # only a bounded joint-force proposal, never the ball's state/force.
+        desired_foot_velocity = (1.0 - receive_capture_progress) * ball_velocity
     force -= config.velocity_damping_n_per_mps * (foot_velocity - desired_foot_velocity)
     force_norm = float(np.linalg.norm(force))
     if force_norm > config.maximum_task_force_n:

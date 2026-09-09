@@ -164,8 +164,13 @@ class IndependentTeamWorldConfig:
     pass_stance_bypass: bool = False
     receive_lateral_braking: bool = False
     locomotion_action_frame_sync: bool = False
+    post_receive_contact_control: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.post_receive_contact_control) is not bool or (
+            self.post_receive_contact_control and not self.strict_receive_handoff
+        ):
+            raise ValueError("post-receive contact control requires strict physical handoff")
         if type(self.locomotion_action_frame_sync) is not bool:
             raise ValueError("locomotion action-frame synchronization must be explicit")
         if type(self.receive_lateral_braking) is not bool or (
@@ -317,6 +322,8 @@ class IndependentTeamWorldConfig:
             value.pop("receive_lateral_braking")
         if not self.locomotion_action_frame_sync:
             value.pop("locomotion_action_frame_sync")
+        if not self.post_receive_contact_control:
+            value.pop("post_receive_contact_control")
         return str(hash_json(value))
 
 
@@ -657,6 +664,7 @@ class _PlayerController:
     option_completed: bool = False
     last_ball_contact_foot: str | None = None
     post_receive_joint_target: NDArray[np.float64] | None = None
+    post_receive_direction_xy: NDArray[np.float64] | None = None
     strike_phase: StrikePhaseState = field(default_factory=StrikePhaseState)
     pass_stroke: ContactStroke = field(default_factory=ContactStroke)
     keeper_reach: SharedKeeperReach | None = None
@@ -689,6 +697,8 @@ def simulate_independent_team_world(
     """Run all agent cells and all neural locomotion bodies in one clock."""
 
     active = config or IndependentTeamWorldConfig()
+    if active.post_receive_contact_control and contact_teacher_config is None:
+        raise ValueError("post-receive contact control requires a bounded contact teacher")
     cell_by_id = {cell.agent_id: cell for cell in cells}
     player_by_id = {player.agent_id: player for player in players}
     roster_ids = {agent.agent_id for agent in roster.agents}
@@ -1586,6 +1596,24 @@ def simulate_independent_team_world(
             trace.setdefault("full_body_motor_fault", []).append(
                 [c.cell.agent_id in motor_faults for c in controllers]
             )
+        capture_context_agent_ids = {
+            c.cell.agent_id
+            for c in controllers
+            if active.post_receive_contact_control
+            and last_receive_contact_agent_id == c.cell.agent_id
+            and 0
+            <= float(data.time) - last_receive_contact_time_sec
+            <= active.post_receive_hold_sec
+            and not (
+                contact_teacher_config is not None
+                and contact_teacher_config.one_touch_finish_enabled
+                and c.cell.self_model.primary_role is MatchRole.FINISHER
+            )
+        }
+        if active.post_receive_contact_control:
+            trace.setdefault("post_receive_capture_context", []).append(
+                [c.cell.agent_id in capture_context_agent_ids for c in controllers]
+            )
         residual_by_id: dict[str, NDArray[np.float64]] = {}
         residual_blocked = {
             agent_id
@@ -1620,7 +1648,8 @@ def simulate_independent_team_world(
                     and c is not option_controller
                     and c.cell.agent_id not in residual_blocked
                     and not (
-                        last_receive_contact_agent_id == c.cell.agent_id
+                        c.cell.agent_id not in capture_context_agent_ids
+                        and last_receive_contact_agent_id == c.cell.agent_id
                         and float(data.time) - last_receive_contact_time_sec
                         <= active.post_receive_hold_sec
                     )
@@ -1656,7 +1685,8 @@ def simulate_independent_team_world(
                     c.cell.agent_id in residual_blocked
                     or c is option_controller
                     or (
-                        last_receive_contact_agent_id == c.cell.agent_id
+                        c.cell.agent_id not in capture_context_agent_ids
+                        and last_receive_contact_agent_id == c.cell.agent_id
                         and float(data.time) - last_receive_contact_time_sec
                         <= active.post_receive_hold_sec
                     )
@@ -1749,7 +1779,7 @@ def simulate_independent_team_world(
                     and controller.cell.agent_id not in motor_faults
                     and residual is not None
                     and np.any(residual)
-                    and not post_receive_stabilizing
+                    and (not post_receive_stabilizing or active.post_receive_contact_control)
                 ):
                     target = target.copy()
                     target[:12] += residual
@@ -1762,7 +1792,7 @@ def simulate_independent_team_world(
                     controller is teacher_controller
                     and controller.cell.agent_id not in motor_targets
                     and controller is not option_controller
-                    and not post_receive_stabilizing
+                    and (not post_receive_stabilizing or active.post_receive_contact_control)
                     and not (
                         option_bridge_config is not None
                         and option_bridge_config.prospective_enabled
@@ -1900,6 +1930,22 @@ def simulate_independent_team_world(
                         )
                     stroke_progress = None
                     effect_direction = teacher_direction.copy()
+                    capture_progress = None
+                    if active.post_receive_contact_control and post_receive_stabilizing:
+                        if controller.post_receive_direction_xy is None:
+                            raise ValueError("post-receive controller lost its contact direction")
+                        effect_direction = controller.post_receive_direction_xy.copy()
+                        capture_progress = float(
+                            np.clip(
+                                (float(data.time) - last_receive_contact_time_sec)
+                                / active.post_receive_hold_sec,
+                                0.0,
+                                1.0,
+                            )
+                        )
+                        # The capture option retains the original measured
+                        # reception event, not a caller-supplied success label.
+                        contact_recent = True
                     lateral_sign = _contact_foot_lateral_sign(
                         controller=controller,
                         data=data,
@@ -1925,6 +1971,7 @@ def simulate_independent_team_world(
                         effect_direction = np.asarray(controller.pass_stroke.direction_xy)
                         lateral_sign = controller.pass_stroke.lateral_sign
                     effect = locomotion_contact_teacher_effect(
+                        receive_capture_progress=capture_progress,
                         model=model,
                         data=data,
                         ankle_body_id=(
@@ -2115,6 +2162,14 @@ def simulate_independent_team_world(
                         controller.post_receive_joint_target = np.asarray(
                             data.qpos[controller.joint_qpos], dtype=np.float64
                         ).copy()
+                        if active.post_receive_contact_control:
+                            controller.post_receive_direction_xy = _contact_teacher_direction(
+                                controller,
+                                data=data,
+                                ball_qpos=ball_qpos,
+                                goal=goal,
+                                left_goal_plane_x_m=active.left_goal_plane_x_m,
+                            ).copy()
                         if (
                             strike_phase_config is not None
                             and controller.cell.self_model.primary_role is MatchRole.FINISHER

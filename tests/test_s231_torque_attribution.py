@@ -72,6 +72,7 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
         "pass_stance_bypass",
         "receive_lateral_braking",
         "locomotion_action_frame_sync",
+        "post_receive_contact_control",
     ):
         legacy.pop(field)
     assert default.config_hash == str(hash_json(legacy))
