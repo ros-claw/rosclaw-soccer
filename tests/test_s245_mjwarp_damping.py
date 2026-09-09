@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -56,3 +57,43 @@ def test_actual_passive_kernel_preserves_each_compiled_dof(joint, disabled):
     assert result["physics_steps"] == 0
     assert result["maximum_absolute_force_error"] < 1e-7
     assert result["probes"] == 3
+
+
+@pytest.mark.skipif(
+    os.environ.get("ROSCLAW_RUN_MJWARP_TESTS") != "1", reason="explicit GPU kernel test"
+)
+def test_keeper_backend_qualifies_physics_before_loading_policy(tmp_path, monkeypatch):
+    import mujoco
+
+    from rosclaw_soccer.sim import mjwarp_contract
+    from rosclaw_soccer.training.goalkeeper_mjwarp import (
+        GoalkeeperMJWarpBatch,
+        GoalkeeperMJWarpConfig,
+    )
+    from rosclaw_soccer.world import field
+
+    # A deliberately unloadable policy proves rejection precedes model rollout
+    # and policy deserialization. No external robot asset is needed for this test.
+    policy = tmp_path / "invalid.pt"
+    policy.write_bytes(b"not a policy")
+    model = mujoco.MjModel.from_xml_string(
+        "<mujoco><worldbody><body><freejoint/>"
+        '<geom type="sphere" size=".1"/></body></worldbody></mujoco>'
+    )
+    calls = []
+
+    def reject(candidate, *, device):
+        assert candidate is model
+        calls.append(device)
+        raise ValueError("per-DOF damping rejected test backend")
+
+    monkeypatch.setattr(field, "build_g1_stadium_model", lambda _: model)
+    monkeypatch.setattr(mjwarp_contract, "qualify_mjwarp_damping", reject)
+    with pytest.raises(ValueError, match="per-DOF damping rejected"):
+        GoalkeeperMJWarpBatch(
+            asset_root=Path(tmp_path),
+            locomotion_policy_path=policy,
+            device="cuda:0",
+            config=GoalkeeperMJWarpConfig(environment_count=1),
+        )
+    assert calls == ["cuda:0"]

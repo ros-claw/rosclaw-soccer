@@ -630,6 +630,7 @@ class GoalkeeperMJWarpBatch:
         import torch
         import warp as wp
 
+        from rosclaw_soccer.sim.mjwarp_contract import qualify_mjwarp_damping
         from rosclaw_soccer.world.field import build_g1_stadium_model
 
         self.torch = torch
@@ -656,6 +657,9 @@ class GoalkeeperMJWarpBatch:
             raise RuntimeError("MJWarp process did not bind the requested physics device")
         with wp.ScopedDevice(str(self.device)):
             self.cpu_model = build_g1_stadium_model(self._asset_root)
+            self.damping_qualification = qualify_mjwarp_damping(
+                self.cpu_model, device=str(self.device)
+            )
             cpu_data = mujoco.MjData(self.cpu_model)
             mujoco.mj_forward(self.cpu_model, cpu_data)
             self.model = mjw.put_model(self.cpu_model)
@@ -685,9 +689,7 @@ class GoalkeeperMJWarpBatch:
         self._pre_quarantine_left_foot = torch.zeros(
             self.count, dtype=torch.bool, device=self.device
         )
-        self._pre_quarantine_right_foot = torch.zeros_like(
-            self._pre_quarantine_left_foot
-        )
+        self._pre_quarantine_right_foot = torch.zeros_like(self._pre_quarantine_left_foot)
         self._loco_to_motor = torch.tensor(_LOCO_TO_MOTOR, dtype=torch.long, device=self.device)
         self._loco_default = torch.tensor(_LOCO_DEFAULT, dtype=torch.float32, device=self.device)
         self._kp = torch.zeros(29, dtype=torch.float32, device=self.device)
@@ -1473,8 +1475,9 @@ class GoalkeeperMJWarpBatch:
         root_angular_soft_limit = self.config.root_angular_speed_soft_limit_rad_s
         return {
             **self.task.summary(),
-            "schema_version": "rosclaw_soccer.goalkeeper_mjwarp_summary.v6",
+            "schema_version": "rosclaw_soccer.goalkeeper_mjwarp_summary.v7",
             "physics_backend": "mujoco_warp",
+            "passive_damping_qualification": self.damping_qualification,
             "physics_model": "qualified_g1_native_mujoco",
             "config_hash": self.config.config_hash,
             "world_steps": self._step_index * self.world_steps_per_control_step,
