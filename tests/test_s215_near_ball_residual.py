@@ -100,6 +100,38 @@ def test_actual_ppo_updates_only_sampled_private_actor() -> None:
         np.testing.assert_array_equal(child.weights[k][1:], p.weights[k][1:])
 
 
+def test_training_scope_freezes_sampled_roles_without_relabeling_rollouts():
+    pytest.importorskip("torch")
+    p = policy()
+    trace = samples(p)
+    trace["residual_active"][:, 1] = True
+    original = {k: v.copy() for k, v in trace.items()}
+    child, rows = update_private_actors(p, [trace], trainable_agent_ids=("agent.0",))
+    replay, replay_rows = update_private_actors(p, [trace], trainable_agent_ids=("agent.0",))
+    assert child.policy_hash == replay.policy_hash and rows == replay_rows
+    assert rows[0]["updated"]
+    assert rows[1]["active_samples"] == 40 and rows[1]["frozen_by_training_scope"]
+    assert not any(r["updated"] for r in rows[1:])
+    for k in p.weights:
+        np.testing.assert_array_equal(child.weights[k][1:], p.weights[k][1:])
+    for k in trace:
+        np.testing.assert_array_equal(trace[k], original[k])
+    all_roles, all_rows = update_private_actors(p, [trace], trainable_agent_ids=p.agent_ids)
+    default, _ = update_private_actors(p, [trace])
+    assert all_roles.policy_hash == default.policy_hash and all_rows[1]["updated"]
+    assert rows[0]["core_plasticity"] != all_rows[0]["core_plasticity"]
+
+
+@pytest.mark.parametrize(
+    "scope", [(), [], ("agent.1", "agent.0"), ("agent.0", "agent.0"), ("unknown",), (True,)]
+)
+def test_private_ppo_rejects_ambiguous_or_unknown_training_scope(scope):
+    pytest.importorskip("torch")
+    p = policy()
+    with pytest.raises(ValueError, match="trainable roles"):
+        update_private_actors(p, [samples(p)], trainable_agent_ids=scope)
+
+
 def test_private_ppo_binds_frozen_whole_body_components_without_changing_update():
     pytest.importorskip("torch")
     p = policy()

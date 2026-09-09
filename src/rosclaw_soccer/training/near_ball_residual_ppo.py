@@ -184,6 +184,7 @@ def update_private_actors(
     reward_shaping: str = "legacy",
     frozen_policy_hashes: Mapping[str, str] | None = None,
     behavior_anchor: RoleBehaviorAnchor | None = None,
+    trainable_agent_ids: tuple[str, ...] | None = None,
 ) -> tuple[NearBallResidualPolicy, list[dict[str, Any]]]:
     # Optional training dependency: readers and the simulator use only NumPy.
     import torch
@@ -191,6 +192,14 @@ def update_private_actors(
     torch.set_num_threads(1)
     if not rollouts or type(epochs) is not int or not 1 <= epochs <= 16:
         raise ValueError("PPO needs rollouts and bounded update epochs")
+    if trainable_agent_ids is not None and (
+        type(trainable_agent_ids) is not tuple
+        or not trainable_agent_ids
+        or any(type(agent) is not str for agent in trainable_agent_ids)
+        or tuple(sorted(set(trainable_agent_ids))) != trainable_agent_ids
+        or not set(trainable_agent_ids).issubset(parent.agent_ids)
+    ):
+        raise ValueError("trainable roles must be a nonempty canonical subset of the roster")
     if frozen_policy_hashes is not None and not isinstance(frozen_policy_hashes, Mapping):
         raise ValueError("frozen component bindings must be a mapping")
     frozen = dict(frozen_policy_hashes or {})
@@ -243,6 +252,11 @@ def update_private_actors(
                 **({"frozen_policy_hashes": frozen} if frozen else {}),
                 **({"behavior_anchor": behavior_anchor.anchor_hash} if behavior_anchor else {}),
                 **(
+                    {"trainable_agent_ids": trainable_agent_ids}
+                    if trainable_agent_ids is not None
+                    else {}
+                ),
+                **(
                     {"reward_shaping": reward_shaping, "gamma": gamma}
                     if reward_shaping != "legacy"
                     else {}
@@ -255,6 +269,12 @@ def update_private_actors(
         mask = active[:, i].astype(bool)
         n = int(mask.sum())
         row: dict[str, Any] = {"agent_id": agent, "active_samples": n, "updated": False}
+        if trainable_agent_ids is not None and agent not in trainable_agent_ids:
+            # Keep the measured active mask truthful. Learning eligibility is
+            # separate from which actor actually controlled the simulation.
+            row["frozen_by_training_scope"] = True
+            rows.append(row)
+            continue
         if n < 32:
             rows.append(row)
             continue
