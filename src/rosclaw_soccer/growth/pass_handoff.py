@@ -20,6 +20,7 @@ class PassHandoff:
     interrupted: bool = False
     lifetime_sec: float = 3.0
     flight_window_sec: float = 3.0
+    launch_target_xy: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -34,6 +35,17 @@ class PassHandoff:
             or not 0.5 <= self.lifetime_sec <= 4.0
             or not 0.5 <= self.flight_window_sec <= 4.0
             or type(self.interrupted) is not bool
+            or (
+                self.launch_target_xy is not None
+                and (
+                    type(self.launch_target_xy) is not tuple
+                    or len(self.launch_target_xy) != 2
+                    or any(
+                        type(x) not in (int, float) or not math.isfinite(x) or abs(x) > 1000
+                        for x in self.launch_target_xy
+                    )
+                )
+            )
             or (
                 self.source_foot_contact_sec is not None
                 and (
@@ -68,9 +80,59 @@ class PassHandoff:
             return self
         if agent_id.split(".")[0] != self.source.split(".")[0]:
             return replace(self, interrupted=True)
-        if agent_id == self.source and foot and self.source_foot_contact_sec is None:
+        if (
+            agent_id == self.source
+            and foot
+            and self.source_foot_contact_sec is None
+            and self.launch_target_xy is None
+        ):
             return replace(self, source_foot_contact_sec=time_sec)
         return self
+
+    def observe_directed_launch(
+        self,
+        *,
+        agent_id: str,
+        foot: bool,
+        force_n: float,
+        time_sec: float,
+        ball_xy: tuple[float, float],
+        ball_velocity_xy: tuple[float, float],
+    ) -> PassHandoff:
+        """Start flight on a physical source-foot outlet, not a preparation tap.
+
+        The destination is immutable from handshake creation. No repeated touch
+        renews an existing flight window; no proximity-only launch is possible.
+        This event does not confirm reception or authorize any motion.
+        """
+        if self.launch_target_xy is None:
+            raise ValueError("directed launch requires a handshake-bound target")
+        if any(
+            type(v) is not tuple
+            or len(v) != 2
+            or any(type(x) not in (int, float) or not math.isfinite(x) or abs(x) > 1000 for x in v)
+            for v in (ball_xy, ball_velocity_xy)
+        ):
+            raise ValueError("finite measured planar ball state required")
+        state = self.observe_contact(
+            agent_id=agent_id, foot=foot, force_n=force_n, time_sec=time_sec
+        )
+        if (
+            state.expired(time_sec)
+            or agent_id != self.source
+            or not foot
+            or force_n <= 1.0
+            or state.source_foot_contact_sec is not None
+        ):
+            return state
+        dx = self.launch_target_xy[0] - ball_xy[0]
+        dy = self.launch_target_xy[1] - ball_xy[1]
+        distance = math.hypot(dx, dy)
+        if distance > 1e-6 and (
+            ball_velocity_xy[0] * (dx / distance) + ball_velocity_xy[1] * (dy / distance) >= 0.4
+        ):
+            return replace(state, source_foot_contact_sec=time_sec)
+        return state
 
     def can_activate(self, time_sec: float, *, progressed: bool) -> bool:
         if type(progressed) is not bool:

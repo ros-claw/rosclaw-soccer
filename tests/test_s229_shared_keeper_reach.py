@@ -34,6 +34,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous.pop("locomotion_action_frame_sync")
     previous.pop("post_receive_contact_control")
     previous.pop("controlled_possession_retention")
+    previous.pop("directed_pass_launch")
     assert config.config_hash == hash_json(previous)
     assert (
         config.config_hash

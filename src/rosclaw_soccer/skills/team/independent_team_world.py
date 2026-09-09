@@ -152,6 +152,7 @@ class IndependentTeamWorldConfig:
     all_role_clearance: bool = False
     strict_receive_handoff: bool = False
     controlled_possession_retention: bool = False
+    directed_pass_launch: bool = False
     receiver_commitment_priority: bool = False
     strike_residual_enabled: bool = False
     strike_stance_lateral_m: float | None = None
@@ -179,6 +180,10 @@ class IndependentTeamWorldConfig:
             raise ValueError("post-receive contact control requires strict physical handoff")
         if type(self.locomotion_action_frame_sync) is not bool:
             raise ValueError("locomotion action-frame synchronization must be explicit")
+        if type(self.directed_pass_launch) is not bool or (
+            self.directed_pass_launch and not self.strict_receive_handoff
+        ):
+            raise ValueError("directed launch requires strict physical handoff")
         if type(self.controlled_possession_retention) is not bool or (
             self.controlled_possession_retention and not self.strict_receive_handoff
         ):
@@ -336,6 +341,8 @@ class IndependentTeamWorldConfig:
             value.pop("post_receive_contact_control")
         if not self.controlled_possession_retention:
             value.pop("controlled_possession_retention")
+        if not self.directed_pass_launch:
+            value.pop("directed_pass_launch")
         return str(hash_json(value))
 
 
@@ -1202,6 +1209,9 @@ def simulate_independent_team_world(
                             current_handshake.passer_agent_id,
                             current_handshake.receiver_agent_id,
                             float(data.time),
+                            launch_target_xy=(
+                                receive_lease_target_m if active.directed_pass_launch else None
+                            ),
                         )
                 if current_handshake is not None:
                     pass_source_agent_id = current_handshake.passer_agent_id
@@ -2195,12 +2205,28 @@ def simulate_independent_team_world(
                         if force <= 1e-6:
                             break
                         if receive_handoff is not None:
-                            receive_handoff = receive_handoff.observe_contact(
-                                agent_id=controller.cell.agent_id,
-                                foot=effector_code in (1, 2),
-                                force_n=force,
-                                time_sec=float(data.time),
-                            )
+                            if active.directed_pass_launch:
+                                receive_handoff = receive_handoff.observe_directed_launch(
+                                    agent_id=controller.cell.agent_id,
+                                    foot=effector_code in (1, 2),
+                                    force_n=force,
+                                    time_sec=float(data.time),
+                                    ball_xy=(
+                                        float(data.qpos[ball_qpos]),
+                                        float(data.qpos[ball_qpos + 1]),
+                                    ),
+                                    ball_velocity_xy=(
+                                        float(data.qvel[ball_qvel]),
+                                        float(data.qvel[ball_qvel + 1]),
+                                    ),
+                                )
+                            else:
+                                receive_handoff = receive_handoff.observe_contact(
+                                    agent_id=controller.cell.agent_id,
+                                    foot=effector_code in (1, 2),
+                                    force_n=force,
+                                    time_sec=float(data.time),
+                                )
                             if receive_handoff.interrupted:
                                 receive_lease_agent_id = None
                                 receive_lease_source_agent_id = None
