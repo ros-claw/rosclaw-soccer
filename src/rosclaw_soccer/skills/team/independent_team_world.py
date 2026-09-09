@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import io
+import json
 import math
 import re
 from collections.abc import Mapping
@@ -49,8 +50,10 @@ from rosclaw_soccer.growth.locomotion_contact_teacher import (
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy, bounded_residual
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.growth.pass_handoff import PassHandoff
+from rosclaw_soccer.growth.pass_preparation import PassPreparationLedger, PassPreparationProvider
 from rosclaw_soccer.growth.role_self_model import (
     MatchRole,
+    PassReceiveHandshake,
     TacticalIntent,
     TeamRoleRoster,
 )
@@ -756,6 +759,10 @@ def simulate_independent_team_world(
     motor_hashes = tuple(sorted((key, motor.contract_hash) for key, motor in motors.items()))
     motor_faults: set[str] = set()
     readiness_enabled = any(isinstance(m, TeamMotorReadinessProvider) for m in motors.values())
+    preparation_enabled = any(isinstance(m, PassPreparationProvider) for m in motors.values())
+    preparation_ledger = PassPreparationLedger(
+        str(hash_json({"scenario": scenario.scenario_hash, "config": active.config_hash}))
+    )
     motor_commitment_ready = {agent_id: True for agent_id in roster_ids}
     if (
         len(roster.agents) < 6
@@ -1002,6 +1009,7 @@ def simulate_independent_team_world(
         ):
             trace[name] = []
     for frame in range(total_frames):
+        fresh_preparation_handshake: PassReceiveHandshake | None = None
         for controller in controllers:
             _fill_locomotion_state(controller, data, ball_body, ball_qvel)
         if frame % decision_stride == 0:
@@ -1214,6 +1222,7 @@ def simulate_independent_team_world(
                             ),
                         )
                 if current_handshake is not None:
+                    fresh_preparation_handshake = current_handshake
                     pass_source_agent_id = current_handshake.passer_agent_id
                     pass_target_agent_id = current_handshake.receiver_agent_id
             for decision in decisions:
@@ -1659,6 +1668,63 @@ def simulate_independent_team_world(
                 # The frozen locomotion controller remains the fallback. This
                 # motor is latched off for the match; no silent candidate retry.
                 motor_faults.add(agent_id)
+        if preparation_enabled:
+            preparation_receipt: dict[str, object] | None = None
+            for agent_id, motor in motors.items():
+                if not isinstance(motor, PassPreparationProvider) or agent_id in motor_faults:
+                    continue
+                try:
+                    preparation = motor.preparation_request(frame=frame, time_sec=float(data.time))
+                    if preparation is None:
+                        continue
+                    handshake = fresh_preparation_handshake
+                    if (
+                        not active.strict_receive_handoff
+                        or not active.directed_pass_launch
+                        or handshake is None
+                        or handshake.passer_agent_id != agent_id
+                        or receive_handoff is None
+                        or preparation_receipt is not None
+                        or agent_id not in motor_targets
+                    ):
+                        raise ValueError("same-frame team agreement required for preparation")
+                    following_handoff, preparation_receipt = preparation_ledger.bind(
+                        receive_handoff,
+                        preparation,
+                        source=handshake.passer_agent_id,
+                        receiver=handshake.receiver_agent_id,
+                        accepted_target_xy=handshake.pass_target_m[:2],
+                        frame=frame,
+                        time_sec=float(data.time),
+                        agreement_hash=coordination.frame_hash,
+                        motor_target_hash=str(hash_json(asdict(motor_targets[agent_id]))),
+                        source_ready=bool(
+                            motor_commitment_ready[agent_id] and state_by_id[agent_id].stable
+                        ),
+                        receiver_ready=bool(
+                            motor_commitment_ready[handshake.receiver_agent_id]
+                            and state_by_id[handshake.receiver_agent_id].stable
+                        ),
+                        motor_target_valid=agent_id in motor_targets,
+                    )
+                    receive_handoff = following_handoff
+                    receive_lease_source_agent_id = following_handoff.source
+                    receive_lease_agent_id = following_handoff.receiver
+                    receive_lease_origin_m = np.asarray(
+                        data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64
+                    ).copy()
+                    receive_lease_target_m = following_handoff.launch_target_xy
+                    receive_lease_active = False
+                    flight_tracking_agent_id = None
+                except (ValueError, TypeError, RuntimeError, FloatingPointError):
+                    motor_faults.add(agent_id)
+                    motor_targets.pop(agent_id, None)
+            # JSON strings keep complete receipts without pickle/object arrays.
+            trace.setdefault("pass_preparation_receipt_json", []).append(
+                ""
+                if preparation_receipt is None
+                else json.dumps(preparation_receipt, sort_keys=True)
+            )
         if motors:
             if readiness_enabled:
                 trace.setdefault("motor_ball_commitment_ready", []).append(
