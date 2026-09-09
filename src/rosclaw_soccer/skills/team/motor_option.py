@@ -41,6 +41,8 @@ class TeamMotorObservation:
     navigation_command: tuple[float, float, float] | None = None
     # Team handshake context, never a claim that reception already happened.
     committed_receiver: bool = False
+    # Read-only current frozen inference, not a simulator or recurrent-state handle.
+    foundation: TeamMotorFoundation | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -73,6 +75,12 @@ class TeamMotorObservation:
                 or abs(command[2]) > 1.500000001
             ):
                 raise ValueError("bounded post-clearance navigation command required")
+        if self.foundation is not None and (
+            not isinstance(self.foundation, TeamMotorFoundation)
+            or self.foundation.agent_id != self.agent_id
+            or self.foundation.frame != self.frame
+        ):
+            raise ValueError("foundation proposal belongs to another player or frame")
 
 
 @dataclass(frozen=True)
@@ -92,6 +100,42 @@ class TeamMotorTarget:
                 raise ValueError("bounded immutable joint target/gain proposal required")
         if any(v < 0 for v in (*self.kp, *self.kd)):
             raise ValueError("motor gains cannot be negative")
+
+
+@dataclass(frozen=True)
+class TeamMotorFoundation:
+    """Immutable same-player/tick fallback proposal; no LSTM reset or mutation.
+
+    The hash identifies the frozen policy artifact, not a hardware permit or
+    a proof that a residual trained against it transfers to this world.
+    """
+
+    agent_id: str
+    frame: int
+    target: TeamMotorTarget
+    default_angles: tuple[float, ...]
+    policy_hash: str
+    configuration_hash: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.agent_id, str)
+            or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", self.agent_id) is None
+            or type(self.frame) is not int
+            or self.frame < 0
+            or not isinstance(self.target, TeamMotorTarget)
+            or type(self.default_angles) is not tuple
+            or len(self.default_angles) != 29
+            or any(
+                type(v) not in (float, int) or not math.isfinite(v) or abs(v) > 10
+                for v in self.default_angles
+            )
+            or not isinstance(self.policy_hash, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", self.policy_hash) is None
+            or not isinstance(self.configuration_hash, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", self.configuration_hash) is None
+        ):
+            raise ValueError("finite immutable player-bound foundation proposal required")
 
 
 class TeamMotorOption(Protocol):

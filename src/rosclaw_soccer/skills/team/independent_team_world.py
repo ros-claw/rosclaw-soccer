@@ -78,9 +78,11 @@ from rosclaw_soccer.sim.contracts import (
     G1_DDS_JOINT_NAMES,
     G1_HARD_TORQUE_LIMITS,
     ShotParameters,
+    hash_bytes,
     hash_json,
 )
 from rosclaw_soccer.skills.team.motor_option import (
+    TeamMotorFoundation,
     TeamMotorObservation,
     TeamMotorOption,
     TeamMotorPhysicsObservation,
@@ -796,6 +798,13 @@ def simulate_independent_team_world(
         )
         for agent in sorted(roster.agents, key=lambda item: item.agent_id)
     )
+    foundation_paths = {
+        Path(c.policy.policy_path) for c in controllers if c.cell.agent_id in motors
+    }
+    foundation_paths |= {p.parent.parent / "config/LocoMode.yaml" for p in foundation_paths}
+    if any(not p.is_file() or p.stat().st_size > 1024**3 for p in foundation_paths):
+        raise ValueError("bounded frozen locomotion artifact required for motor observations")
+    foundation_hashes = {p: hash_bytes(p.read_bytes()) for p in foundation_paths}
     ball_body = _id(model, mujoco.mjtObj.mjOBJ_BODY, "ball")
     if active.keeper_reach is not None:
         for controller in controllers:
@@ -1577,6 +1586,23 @@ def simulate_independent_team_world(
                         # Preparation starts at the accepted pass handshake,
                         # not only after the source has physically launched it.
                         committed_receiver=receive_lease_agent_id == agent_id,
+                        foundation=TeamMotorFoundation(
+                            agent_id=agent_id,
+                            frame=frame,
+                            target=TeamMotorTarget(
+                                tuple(float(x) for x in controller.output.actions),
+                                tuple(float(x) for x in controller.output.kps),
+                                tuple(float(x) for x in controller.output.kds),
+                            ),
+                            default_angles=tuple(
+                                float(x) for x in controller.policy.default_angles_reorder
+                            ),
+                            policy_hash=foundation_hashes[Path(controller.policy.policy_path)],
+                            configuration_hash=foundation_hashes[
+                                Path(controller.policy.policy_path).parent.parent
+                                / "config/LocoMode.yaml"
+                            ],
+                        ),
                     )
                 )
                 if proposal is not None:
