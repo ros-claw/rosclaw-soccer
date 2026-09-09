@@ -162,3 +162,161 @@ def test_duplicate_zero_action_history_is_also_rejected():
     handoff_sonic_history(**c)
     with pytest.raises(ValueError):
         handoff_sonic_history(**c)
+
+
+def rotated_case():
+    c = fixture()
+    q = np.array(c["destination_observation"].qpos)
+    v = np.array(c["destination_observation"].qvel)
+    for start in (0, 36):
+        q[start : start + 2] = [6 - q[start], -q[start + 1]]
+        w, x, y, z = q[start + 3 : start + 7]
+        q[start + 3 : start + 7] = [-z, -y, x, w]
+    v[:2] *= -1
+    v[35:37] *= -1
+    c["destination_observation"] = replace(
+        c["destination_observation"], qpos=tuple(q.tolist()), qvel=tuple(v.tolist())
+    )
+    return c
+
+
+def test_heading_frame_transform_is_explicit_and_preserves_local_history():
+    with pytest.raises(ValueError, match="same measured state"):
+        handoff_sonic_history(**rotated_case())
+    c = rotated_case()
+    result = handoff_sonic_history(**c, allow_planar_yaw_rotation=True)
+    assert result.history_hash == handoff_sonic_history(**fixture()).history_hash
+    assert_history_equal(c["source"]._history, c["destination"]._history)
+
+
+@pytest.mark.parametrize("part", ["world_velocity", "ball_orientation", "local_angular_velocity"])
+def test_partial_heading_transform_rejected(part):
+    c = rotated_case()
+    o = c["destination_observation"]
+    q, v = list(o.qpos), list(o.qvel)
+    if part == "world_velocity":
+        v[0] *= -1
+    elif part == "ball_orientation":
+        q[39:43] = [1.0, 0.0, 0.0, 0.0]
+    else:
+        v[3] += 0.2
+    c["destination_observation"] = replace(o, qpos=tuple(q), qvel=tuple(v))
+    with pytest.raises(ValueError, match="same measured state"):
+        handoff_sonic_history(**c, allow_planar_yaw_rotation=True)
+
+
+def navigation_fixture():
+    from rosclaw_soccer.providers.g1.sonic_navigation import (
+        G1SonicNavigation,
+        SonicNavigationConfig,
+    )
+
+    c = fixture()
+    nav = object.__new__(G1SonicNavigation)
+    nav.agent_id = "red.finisher"
+    nav.config = SonicNavigationConfig()
+    nav.backend = c["source"]
+    nav._next_frame = c["source_observation"].frame
+    nav._faulted = nav._retired = False
+    nav._origin_frame = 0
+    nav._ready_from_handoff = False
+    return nav, c
+
+
+def test_navigation_commits_final_observation_and_retires_once():
+    nav, c = navigation_fixture()
+    old_first = c["source"]._history[1][0].copy()
+    receipt = nav.handoff_to(
+        c["destination"],
+        observation=c["source_observation"],
+        destination_observation=c["destination_observation"],
+    )
+    assert receipt.frame == 120 and nav._next_frame == 121 and nav._retired
+    np.testing.assert_array_equal(c["destination"]._history[0][0], old_first)
+    with pytest.raises(ValueError, match="retired"):
+        nav.propose(c["source_observation"])
+    with pytest.raises(ValueError, match="retired"):
+        nav.handoff_to(
+            c["destination"],
+            observation=c["source_observation"],
+            destination_observation=c["destination_observation"],
+        )
+
+
+def test_failed_navigation_handoff_latches_without_retrying_history():
+    nav, c = navigation_fixture()
+    bad = replace(c["destination_observation"], agent_id="blue.finisher")
+    with pytest.raises(ValueError, match="latched"):
+        nav.handoff_to(
+            c["destination"], observation=c["source_observation"], destination_observation=bad
+        )
+    after = history_copy(nav.backend)
+    assert nav._faulted and not nav._retired
+    with pytest.raises(ValueError, match="faulted"):
+        nav.handoff_to(
+            c["destination"],
+            observation=c["source_observation"],
+            destination_observation=c["destination_observation"],
+        )
+    assert_history_equal(after, nav.backend._history)
+
+
+def fresh_navigation():
+    nav, c = navigation_fixture()
+    nav.backend = c["destination"]
+    nav.backend._history.clear()
+    nav._next_frame = 0
+    calls = {"reset": 0, "frames": []}
+
+    def reset(state):
+        calls["reset"] += 1
+        nav.backend.action = np.zeros(29, dtype=np.float32)
+        entry = nav.backend._history_entry(state, nav.backend.action)
+        nav.backend._history = collections.deque(
+            [tuple(v.copy() for v in entry) for _ in range(10)], maxlen=10
+        )
+        nav.backend._history_handoff_binding = None
+
+    def tick(state, frame):
+        calls["frames"].append(frame)
+        return np.zeros(29)
+
+    nav.backend.reset = reset
+    nav.backend.navigation_tick = tick
+    return nav, c, calls
+
+
+def test_resume_navigation_uses_global_clock_without_repeating_imported_state():
+    nav, c, calls = fresh_navigation()
+    o = replace(c["source_observation"], navigation_command=(0.3, 0.0, 0.0))
+    nav.start_from_history(c["source"], source_observation=o, observation=o)
+    expected = history_copy(nav.backend)
+    assert nav._origin_frame == 120 and calls["reset"] == 1
+    nav.propose(o)
+    assert calls["reset"] == 1 and calls["frames"] == [0]
+    assert_history_equal(expected, nav.backend._history)
+    nav.propose(replace(o, frame=121, time_sec=2.42))
+    assert calls["frames"] == [0, 1] and nav._next_frame == 122
+    assert_history_equal(expected[1:], list(nav.backend._history)[:-1])
+
+
+def test_imported_navigation_cannot_implicitly_restart():
+    nav, c, _ = fresh_navigation()
+    o = replace(c["source_observation"], navigation_command=(0.3, 0.0, 0.0))
+    nav.start_from_history(c["source"], source_observation=o, observation=o)
+    before = history_copy(nav.backend)
+    with pytest.raises(ValueError, match="latched"):
+        nav.start_from_history(c["source"], source_observation=o, observation=o)
+    assert nav._faulted
+    assert_history_equal(before, nav.backend._history)
+
+
+def test_history_started_navigation_can_handoff_again_after_a_real_control_tick():
+    nav, c, _ = fresh_navigation()
+    o = replace(c["source_observation"], navigation_command=(0.3, 0.0, 0.0))
+    nav.start_from_history(c["source"], source_observation=o, observation=o)
+    nav.propose(o)
+    destination = fixture()["destination"]
+    next_o = replace(o, frame=121, time_sec=2.42)
+    receipt = nav.handoff_to(destination, observation=next_o, destination_observation=next_o)
+    assert receipt.frame == 121 and nav._retired

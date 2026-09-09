@@ -39,17 +39,50 @@ def _parameters(controller: G1SonicRunupController) -> dict[str, object]:
     return result
 
 
+def _rotation(q: np.ndarray) -> np.ndarray:
+    w, x, y, z = q
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+
+def _same_planar_measurement(
+    sq: np.ndarray, dq: np.ndarray, sv: np.ndarray, dv: np.ndarray
+) -> bool:
+    rotation = _rotation(dq[3:7]) @ _rotation(sq[3:7]).T
+    translation = dq[:3] - rotation @ sq[:3]
+    pairs = (
+        (rotation[:, 2], np.array([0.0, 0.0, 1.0])),
+        (translation[2:], np.zeros(1)),
+        (dq[7:36], sq[7:36]),
+        (dq[36:39], rotation @ sq[36:39] + translation),
+        (_rotation(dq[39:43]), rotation @ _rotation(sq[39:43])),
+        (dv[:3], rotation @ sv[:3]),
+        (dv[3:35], sv[3:35]),
+        (dv[35:38], rotation @ sv[35:38]),
+        (dv[38:41], sv[38:41]),
+    )
+    return all(np.allclose(a, b, rtol=0, atol=1e-8) for a, b in pairs)
+
+
 def handoff_sonic_history(
     *,
     source: G1SonicRunupController,
     destination: G1SonicRunupController,
     source_observation: TeamMotorObservation,
     destination_observation: TeamMotorObservation,
+    allow_planar_yaw_rotation: bool = False,
 ) -> SonicHistoryHandoffReceipt:
     """Validate everything before replacing the new option's private history.
 
     Destination must have just been reset from the same measured body state.
-    Only inference-copy XY translation of body AND ball is permitted; physical
+    Inference-copy XY translation of body AND ball is permitted; yaw rotation
+    additionally requires explicit opt-in and rotated world-frame velocities.
+    Free-joint local angular velocities must not rotate. Physical
     course transforms need the separate contact-course-frame validation. Source
     must have committed its latest post-control observation. Reference schedules
     stay separate and neither controller's physics state is touched.
@@ -58,6 +91,7 @@ def handoff_sonic_history(
         not isinstance(source, G1SonicRunupController)
         or not isinstance(destination, G1SonicRunupController)
         or source is destination
+        or type(allow_planar_yaw_rotation) is not bool
         or getattr(destination, "_history_handoff_binding", None) is not None
         or not isinstance(source_observation, TeamMotorObservation)
         or not isinstance(destination_observation, TeamMotorObservation)
@@ -80,10 +114,15 @@ def handoff_sonic_history(
         raise ValueError("unit measured body and ball orientations required")
     unchanged = np.ones(43, dtype=bool)
     unchanged[[0, 1, 36, 37]] = False
-    if (
-        not np.allclose(sq[unchanged], dq[unchanged], rtol=0, atol=1e-8)
-        or not np.allclose(sv, dv, rtol=0, atol=1e-8)
-        or not np.allclose(dq[:2] - sq[:2], dq[36:38] - sq[36:38], rtol=0, atol=1e-8)
+    translation_matches = (
+        np.allclose(sq[unchanged], dq[unchanged], rtol=0, atol=1e-8)
+        and np.allclose(sv, dv, rtol=0, atol=1e-8)
+        and np.allclose(dq[:2] - sq[:2], dq[36:38] - sq[36:38], rtol=0, atol=1e-8)
+    )
+    if not (
+        _same_planar_measurement(sq, dq, sv, dv)
+        if allow_planar_yaw_rotation
+        else translation_matches
     ):
         raise ValueError("handoff observations do not describe the same measured state")
     histories = []
@@ -156,6 +195,7 @@ def handoff_sonic_history(
                 "destination_qpos": destination_observation.qpos,
                 "qvel": source_observation.qvel,
                 "activation_ceiling": "SIM_ONLY",
+                **({"allow_planar_yaw_rotation": True} if allow_planar_yaw_rotation else {}),
             }
         )
     )

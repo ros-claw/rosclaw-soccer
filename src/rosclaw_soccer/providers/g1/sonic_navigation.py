@@ -14,6 +14,10 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from rosclaw_soccer.providers.g1.sonic_history_handoff import (
+    SonicHistoryHandoffReceipt,
+    handoff_sonic_history,
+)
 from rosclaw_soccer.providers.g1.sonic_runup import (
     G1SonicRunupConfig,
     G1SonicRunupController,
@@ -195,15 +199,20 @@ class G1SonicNavigation:
         )
         self._next_frame = 0
         self._faulted = False
+        self._retired = False
+        self._origin_frame = 0
+        self._ready_from_handoff = False
 
     def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget:
+        if self._retired:
+            raise ValueError("navigation retired after history handoff; a new option is required")
         if self._faulted:
             raise ValueError("navigation fault is latched; a new episode is required")
         try:
             if (
                 observation.agent_id != self.agent_id
                 or observation.frame != self._next_frame
-                or observation.frame >= self.config.maximum_frames
+                or observation.frame >= self._origin_frame + self.config.maximum_frames
                 or abs(observation.time_sec - observation.frame * 0.02) > 1e-6
                 or observation.navigation_command is None
             ):
@@ -217,11 +226,13 @@ class G1SonicNavigation:
             self.backend.command = observation.navigation_command
             w, x, y, z = q[3:7]
             self.backend.facing = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-            if observation.frame == 0:
-                self.backend.reset(state)
+            local_frame = observation.frame - self._origin_frame
+            if local_frame == 0:
+                if not self._ready_from_handoff:
+                    self.backend.reset(state)
             else:
                 self.backend.observe(state)
-            target = self.backend.navigation_tick(state, observation.frame)
+            target = self.backend.navigation_tick(state, local_frame)
             proposal = TeamMotorTarget(
                 tuple(float(v) for v in target),
                 tuple(float(v) for v in self.backend.kp),
@@ -232,3 +243,100 @@ class G1SonicNavigation:
         except Exception as error:
             self._faulted = True
             raise ValueError("navigation proposal failed; option latched off") from error
+
+    def handoff_to(
+        self,
+        destination: G1SonicRunupController,
+        *,
+        observation: TeamMotorObservation,
+        destination_observation: TeamMotorObservation,
+        allow_planar_yaw_rotation: bool = False,
+    ) -> SonicHistoryHandoffReceipt:
+        """Commit the final measured state, transfer history and retire navigation.
+
+        This replaces this tick's navigation proposal. The destination owns the
+        new reference and next proposal; the caller still owns physical stepping.
+        Any failed handoff latches navigation off, rather than retrying with an
+        extra observation in the policy history.
+        """
+        if self._faulted or self._retired:
+            raise ValueError("navigation is faulted or retired")
+        try:
+            if (
+                observation.agent_id != self.agent_id
+                or observation.frame != self._next_frame
+                or not self._origin_frame + 1
+                <= observation.frame
+                < self._origin_frame + self.config.maximum_frames
+                or abs(observation.time_sec - observation.frame * 0.02) > 1e-6
+            ):
+                raise ValueError("handoff requires the next timed observation for this player")
+            self.backend.observe(
+                SimpleNamespace(
+                    qpos=np.asarray(observation.qpos), qvel=np.asarray(observation.qvel)
+                )
+            )
+            receipt = handoff_sonic_history(
+                source=self.backend,
+                destination=destination,
+                source_observation=observation,
+                destination_observation=destination_observation,
+                allow_planar_yaw_rotation=allow_planar_yaw_rotation,
+            )
+            self._retired = True
+            self._next_frame += 1
+            return receipt
+        except Exception as error:
+            self._faulted = True
+            raise ValueError("navigation history handoff failed; option latched off") from error
+
+    def start_from_history(
+        self,
+        source: G1SonicRunupController,
+        *,
+        source_observation: TeamMotorObservation,
+        observation: TeamMotorObservation,
+        allow_planar_yaw_rotation: bool = False,
+    ) -> SonicHistoryHandoffReceipt:
+        """Initialize a fresh navigation option on the existing global clock.
+
+        The next propose() consumes this SAME boundary observation at local
+        reference frame zero. It neither resets imported history nor adds a
+        duplicate measured entry. This is not an implicit restart of a faulted
+        option; construct a new instance for the next declared skill segment.
+        """
+        if self._faulted or self._retired:
+            raise ValueError("navigation is faulted or retired")
+        try:
+            if (
+                self._next_frame != 0
+                or self._ready_from_handoff
+                or len(self.backend._history) != 0
+                or observation.agent_id != self.agent_id
+                or observation.navigation_command is None
+                or abs(observation.time_sec - observation.frame * 0.02) > 1e-6
+            ):
+                raise ValueError(
+                    "new navigation and its current post-clearance observation required"
+                )
+            self.backend.command = observation.navigation_command
+            q, v = np.asarray(observation.qpos), np.asarray(observation.qvel)
+            w, x, y, z = q[3:7]
+            self.backend.facing = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+            self.backend.reset(SimpleNamespace(qpos=q, qvel=v))
+            receipt = handoff_sonic_history(
+                source=source,
+                destination=self.backend,
+                source_observation=source_observation,
+                destination_observation=observation,
+                allow_planar_yaw_rotation=allow_planar_yaw_rotation,
+            )
+            self._origin_frame = observation.frame
+            self._next_frame = observation.frame
+            self._ready_from_handoff = True
+            return receipt
+        except Exception as error:
+            self._faulted = True
+            raise ValueError(
+                "navigation history initialization failed; option latched off"
+            ) from error
