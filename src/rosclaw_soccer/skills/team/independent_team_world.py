@@ -86,6 +86,7 @@ from rosclaw_soccer.sim.contracts import (
     hash_json,
 )
 from rosclaw_soccer.skills.team.motor_option import (
+    TeamBallContact,
     TeamMotorFoundation,
     TeamMotorObservation,
     TeamMotorOption,
@@ -2705,6 +2706,42 @@ def _observe_team_motor_physics(
             targets.clear()
             return
         measured.append((other, max(0.0, float(wrench[0]))))
+    attributed: list[TeamBallContact] = []
+    try:
+        for geom, force in measured:
+            owner = next(
+                (
+                    c
+                    for c in controllers
+                    if geom in getattr(c, "robot_geoms", c.left_foot_geoms | c.right_foot_geoms)
+                ),
+                None,
+            )
+            effector = "environment"
+            if owner is not None:
+                if geom in owner.left_foot_geoms:
+                    effector = "left_foot"
+                elif geom in owner.right_foot_geoms:
+                    effector = "right_foot"
+                elif geom in getattr(owner, "left_glove_geoms", ()):
+                    effector = "left_hand"
+                elif geom in getattr(owner, "right_glove_geoms", ()):
+                    effector = "right_hand"
+                else:
+                    effector = "body"
+            attributed.append(
+                TeamBallContact(
+                    geometry_id=geom,
+                    agent_id=None if owner is None else owner.cell.agent_id,
+                    effector=effector,
+                    normal_force_n=force,
+                )
+            )
+    except (ValueError, TypeError):
+        faults.update(targets)
+        targets.clear()
+        return
+    contacts = tuple(attributed)
     for controller in controllers:
         agent = controller.cell.agent_id
         if agent not in targets or not isinstance(motors[agent], TeamMotorPhysicsObserver):
@@ -2735,6 +2772,9 @@ def _observe_team_motor_physics(
                     other_non_ground_normal_force_n=max(
                         (force for geom, force in measured if geom not in feet), default=0.0
                     ),
+                    observer_agent_id=agent,
+                    contacts_complete=True,
+                    ball_contacts=contacts,
                 )
             )
         except (ValueError, TypeError, FloatingPointError):

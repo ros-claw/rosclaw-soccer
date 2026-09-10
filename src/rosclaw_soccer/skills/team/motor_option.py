@@ -196,6 +196,41 @@ def motor_ball_action_ready(
 
 
 @dataclass(frozen=True)
+class TeamBallContact:
+    """Measured non-ground ball counterpart, not possession or handoff approval."""
+
+    geometry_id: int
+    agent_id: str | None
+    effector: str
+    normal_force_n: float
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.geometry_id) is not int
+            or self.geometry_id < 0
+            or type(self.effector) is not str
+            or self.effector
+            not in {"left_foot", "right_foot", "left_hand", "right_hand", "body", "environment"}
+            or type(self.normal_force_n) not in (int, float)
+            or not math.isfinite(self.normal_force_n)
+            or self.normal_force_n < 0
+            or (self.agent_id is None) != (self.effector == "environment")
+            or (
+                self.agent_id is not None
+                and (
+                    type(self.agent_id) is not str
+                    or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", self.agent_id) is None
+                )
+            )
+        ):
+            raise ValueError("finite immutable ball-contact identity required")
+
+    @property
+    def is_foot(self) -> bool:
+        return self.effector in {"left_foot", "right_foot"}
+
+
+@dataclass(frozen=True)
 class TeamMotorPhysicsObservation:
     """One measured physics step, with this player's feet as contact source.
 
@@ -209,6 +244,10 @@ class TeamMotorPhysicsObservation:
     world_bodies_safe: bool
     foot_normal_force_n: float
     other_non_ground_normal_force_n: float
+    # Optional complete attribution; legacy aggregates keep their old meaning.
+    observer_agent_id: str | None = None
+    contacts_complete: bool = False
+    ball_contacts: tuple[TeamBallContact, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -231,6 +270,40 @@ class TeamMotorPhysicsObservation:
             < 0
         ):
             raise ValueError("finite immutable physical motor evidence required")
+        if (
+            type(self.contacts_complete) is not bool
+            or type(self.ball_contacts) is not tuple
+            or len(self.ball_contacts) > 1024
+            or any(not isinstance(c, TeamBallContact) for c in self.ball_contacts)
+        ):
+            raise ValueError("immutable complete ball-contact records required")
+        if not self.contacts_complete:
+            if self.observer_agent_id is not None or self.ball_contacts:
+                raise ValueError("partial contact attribution cannot imply completeness")
+            return
+        if (
+            type(self.observer_agent_id) is not str
+            or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", self.observer_agent_id) is None
+        ):
+            raise ValueError("contact attribution requires the observing player identity")
+        own_foot = max(
+            (
+                c.normal_force_n
+                for c in self.ball_contacts
+                if c.agent_id == self.observer_agent_id and c.is_foot
+            ),
+            default=0.0,
+        )
+        other = max(
+            (
+                c.normal_force_n
+                for c in self.ball_contacts
+                if not (c.agent_id == self.observer_agent_id and c.is_foot)
+            ),
+            default=0.0,
+        )
+        if own_foot != self.foot_normal_force_n or other != self.other_non_ground_normal_force_n:
+            raise ValueError("contact identities disagree with unchanged force aggregates")
 
 
 @runtime_checkable
