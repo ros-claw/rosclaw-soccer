@@ -27,7 +27,8 @@ class FullBodyPPOUpdateConfig:
             type(self.epochs) is not int
             or type(self.observation_size) is not int
             or type(self.action_size) is not int
-            or (self.observation_size, self.action_size) not in ((133, 29), (136, 29), (139, 32))
+            or (self.observation_size, self.action_size)
+            not in ((133, 29), (136, 29), (139, 32), (136, 3))
             or not 1 <= self.epochs <= 16
             or type(self.minibatch_size) is not int
             or not 1 <= self.minibatch_size <= 4096
