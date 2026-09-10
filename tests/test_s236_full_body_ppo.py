@@ -70,6 +70,24 @@ def test_optimizer_cannot_include_another_learner():
         update_full_body_ppo(actor, optimizer, data)
 
 
+@pytest.mark.parametrize("field", ["obs", "raw", "value", "logp", "reward"])
+@pytest.mark.parametrize("kind", ["bool", "integer", "list"])
+def test_nonfloating_learning_evidence_rejected_before_inference_or_optimizer(field, kind):
+    torch, actor, optimizer, data = case()
+    before = copy.deepcopy(actor.state_dict())
+    rng = torch.get_rng_state().clone()
+    data[field] = (
+        data[field].tolist()
+        if kind == "list"
+        else data[field].to(torch.bool if kind == "bool" else torch.int64)
+    )
+    with pytest.raises(ValueError, match="rollout tensors"):
+        update_full_body_ppo(actor, optimizer, data)
+    assert all(torch.equal(before[k], actor.state_dict()[k]) for k in before)
+    assert not optimizer.state
+    assert torch.equal(rng, torch.get_rng_state())
+
+
 @pytest.mark.parametrize(
     "kwargs", [{"epochs": 0}, {"epochs": True}, {"gamma": 1}, {"target_kl": float("nan")}]
 )

@@ -58,6 +58,8 @@ def update_full_body_ppo(
     if set(rollout) != required:
         raise ValueError("complete on-policy rollout fields required")
     data = dict(rollout)
+    if any(not isinstance(value, torch.Tensor) for value in data.values()):
+        raise ValueError("complete detached rollout tensors required")
     if data["reward"].ndim != 2:
         raise ValueError("episodic time/world reward axes required")
     horizon, worlds = data["reward"].shape
@@ -71,7 +73,15 @@ def update_full_body_ppo(
         )
         if name not in {"obs", "raw"}:
             shape = (horizon, worlds)
-        if value.shape != shape or value.requires_grad or not bool(torch.isfinite(value).all()):
+        if (
+            value.shape != shape
+            or value.requires_grad
+            or value.layout != torch.strided
+            or torch.is_complex(value)
+            or value.device != data["obs"].device
+            or (name not in {"alive", "next_alive"} and not torch.is_floating_point(value))
+            or not bool(torch.isfinite(value).all())
+        ):
             raise ValueError("finite detached rollout tensors with matching shapes required")
     for name in ("alive", "next_alive"):
         if not bool(((data[name] == 0) | (data[name] == 1)).all()):
