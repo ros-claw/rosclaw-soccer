@@ -21,6 +21,7 @@ class FullBodyPPOUpdateConfig:
     target_kl: float = 0.02
     observation_size: int = 133
     action_size: int = 29
+    minimum_log_std: float = -2.5
 
     def __post_init__(self) -> None:
         if (
@@ -36,6 +37,9 @@ class FullBodyPPOUpdateConfig:
             or not 0.9 <= self.gamma < 1
             or not 0.9 <= self.trace_decay < 1
             or not 0 < self.target_kl <= 0.05
+            or type(self.minimum_log_std) not in (float, int)
+            or not math.isfinite(self.minimum_log_std)
+            or not -6.0 <= self.minimum_log_std <= -2.5
         ):
             raise ValueError("bounded PPO update configuration required")
 
@@ -51,6 +55,9 @@ def update_full_body_ppo(
     Caller owns rollback if an optimizer raises. Episodic horizons are terminal
     (zero bootstrap), and dead worlds cannot silently revive inside a rollout.
     Restore Torch RNG and optimizer state to replay the same minibatch order.
+    A smaller exploration floor must also be used by the rollout collector;
+    starting-likelihood validation rejects mismatched distributions. The default
+    retains the historical -2.5 floor exactly. This does not change action limits.
     """
     import torch
 
@@ -103,7 +110,9 @@ def update_full_body_ppo(
     old = data["logp"].reshape(-1)[keep]
     with torch.no_grad():
         mean, value = agent(obs)
-        distribution: Any = torch.distributions.Normal(mean, agent.logstd.clamp(-2.5, -0.3).exp())
+        distribution: Any = torch.distributions.Normal(
+            mean, agent.logstd.clamp(active.minimum_log_std, -0.3).exp()
+        )
         if not bool((distribution.log_prob(raw).sum(1) - old).abs().max() <= 1e-3) or not bool(
             (value - data["value"].reshape(-1)[keep]).abs().max() <= 1e-3
         ):
@@ -133,7 +142,9 @@ def update_full_body_ppo(
         permutation: Any = torch.randperm(len(obs), device=obs.device)
         for indices in permutation.split(active.minibatch_size):
             mean, value = agent(obs[indices])
-            distribution = torch.distributions.Normal(mean, agent.logstd.clamp(-2.5, -0.3).exp())
+            distribution = torch.distributions.Normal(
+                mean, agent.logstd.clamp(active.minimum_log_std, -0.3).exp()
+            )
             logp = distribution.log_prob(raw[indices]).sum(1)
             ratio = (logp - old[indices]).exp()
             loss = (
@@ -151,7 +162,9 @@ def update_full_body_ppo(
             steps += 1
         with torch.no_grad():
             mean, _ = agent(obs)
-            distribution = torch.distributions.Normal(mean, agent.logstd.clamp(-2.5, -0.3).exp())
+            distribution = torch.distributions.Normal(
+                mean, agent.logstd.clamp(active.minimum_log_std, -0.3).exp()
+            )
             logp = distribution.log_prob(raw).sum(1)
             delta = logp - old
             kl = float((delta.exp() - 1 - delta).mean())
@@ -166,6 +179,7 @@ def update_full_body_ppo(
         "epochs_completed": completed,
         "active_samples": len(obs),
         "on_policy_inputs_verified": True,
+        "minimum_log_std": active.minimum_log_std,
         "activation_ceiling": "SIM_ONLY",
         "promotion_eligible": False,
     }
