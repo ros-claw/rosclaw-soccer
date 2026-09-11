@@ -4,6 +4,7 @@ import pytest
 
 from rosclaw_soccer.training.handoff_policy import (
     HandoffPolicyConfig,
+    build_handoff_actor_critic,
     build_handoff_features,
     shape_handoff_action,
 )
@@ -52,3 +53,9 @@ def test_undefined_target_heading_rejected() -> None:
         build_handoff_features(
             target_dx=0, target_dy=0, body_yaw=1, ball_x=0, ball_y=0, residual_norm=0
         )
+
+
+@pytest.mark.parametrize("size", [True, 0, 29.0, "29", 32])
+def test_motor_and_navigation_contracts_are_explicit(size) -> None:
+    with pytest.raises(ValueError):
+        build_handoff_actor_critic(action_size=size)

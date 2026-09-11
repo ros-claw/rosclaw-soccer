@@ -7,15 +7,14 @@ from rosclaw_soccer.training.handoff_policy import build_handoff_actor_critic
 from rosclaw_soccer.training.reception_navigation import build_reception_navigation_actor_critic
 
 
-def case(observation_size=136):
+def case(observation_size=136, action_size=3):
     torch = pytest.importorskip("torch")
     torch.manual_seed(525)
-    builder = (
-        build_handoff_actor_critic
+    agent = (
+        build_handoff_actor_critic(action_size=action_size)
         if observation_size == 143
-        else build_reception_navigation_actor_critic
+        else build_reception_navigation_actor_critic()
     )
-    agent = builder()
     with torch.no_grad():
         agent.logstd.fill_(-5.3)
     optimizer = torch.optim.Adam(agent.parameters(), lr=1e-6)
@@ -26,7 +25,7 @@ def case(observation_size=136):
         raw = normal.sample()
         data = dict(
             obs=obs,
-            raw=raw.reshape(4, 2, 3),
+            raw=raw.reshape(4, 2, action_size),
             logp=normal.log_prob(raw).sum(1).reshape(4, 2),
             value=value.reshape(4, 2),
             reward=torch.randn(4, 2),
@@ -36,21 +35,23 @@ def case(observation_size=136):
     return torch, agent, optimizer, data
 
 
-@pytest.mark.parametrize("observation_size", [136, 143])
-def test_precision_exploration_has_matching_likelihood_and_exact_replay(observation_size):
-    torch, agent, optimizer, data = case(observation_size)
+@pytest.mark.parametrize("observation_size,action_size", [(136, 3), (143, 3), (143, 29)])
+def test_precision_exploration_has_matching_likelihood_and_exact_replay(
+    observation_size, action_size
+):
+    torch, agent, optimizer, data = case(observation_size, action_size)
     original = copy.deepcopy(agent.state_dict())
     rng = torch.get_rng_state().clone()
     config = FullBodyPPOUpdateConfig(
         observation_size=observation_size,
-        action_size=3,
+        action_size=action_size,
         minimum_log_std=-5.5,
         epochs=2,
         minibatch_size=4,
     )
     result = update_full_body_ppo(agent, optimizer, data, config)
     repeated = (
-        build_handoff_actor_critic()
+        build_handoff_actor_critic(action_size=action_size)
         if observation_size == 143
         else build_reception_navigation_actor_critic()
     )
@@ -63,9 +64,11 @@ def test_precision_exploration_has_matching_likelihood_and_exact_replay(observat
     assert result["activation_ceiling"] == "SIM_ONLY" and not result["promotion_eligible"]
 
 
-@pytest.mark.parametrize("observation_size", [136, 143])
-def test_default_floor_rejects_fine_noise_rollout_before_any_mutation(observation_size):
-    torch, agent, optimizer, data = case(observation_size)
+@pytest.mark.parametrize("observation_size,action_size", [(136, 3), (143, 3), (143, 29)])
+def test_default_floor_rejects_fine_noise_rollout_before_any_mutation(
+    observation_size, action_size
+):
+    torch, agent, optimizer, data = case(observation_size, action_size)
     original = copy.deepcopy(agent.state_dict())
     rng = torch.get_rng_state().clone()
     with pytest.raises(ValueError, match="likelihood"):
@@ -73,7 +76,7 @@ def test_default_floor_rejects_fine_noise_rollout_before_any_mutation(observatio
             agent,
             optimizer,
             data,
-            FullBodyPPOUpdateConfig(observation_size=observation_size, action_size=3),
+            FullBodyPPOUpdateConfig(observation_size=observation_size, action_size=action_size),
         )
     assert all(torch.equal(v, original[k]) for k, v in agent.state_dict().items())
     assert not optimizer.state and torch.equal(rng, torch.get_rng_state())

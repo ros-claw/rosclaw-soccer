@@ -84,14 +84,17 @@ def shape_handoff_action(
     return yaw, forward, lateral
 
 
-def build_handoff_actor_critic() -> Any:
+def build_handoff_actor_critic(*, action_size: int = 3) -> Any:
     """Optional Torch learner: 133 motor + 3 navigation history + 7 goal features.
 
-    The motor block includes all 29 previous joint residuals. Navigation is
-    selected before advancing the frozen motor foundation, so this block must
-    use the previous foundation target. Outputs are raw navigation proposals,
-    requiring bounded composition and scene clearance in a simulation caller.
+    The motor block includes all 29 previous joint residuals. Three outputs
+    propose navigation and require the PREVIOUS foundation target in the input.
+    With 29 outputs and independently fixed navigation, the caller may use the
+    CURRENT foundation target and apply the existing joint residual envelope.
+    Neither variant produces torques or bypasses scene/actuator guards.
     """
+    if type(action_size) is not int or action_size not in (3, 29):
+        raise ValueError("explicit navigation (3) or motor residual (29) contract required")
     import torch
 
     from rosclaw_soccer.training.ball_residual import build_ball_residual_actor_critic
@@ -103,10 +106,10 @@ def build_handoff_actor_critic() -> Any:
             self.actor, self.critic = parent.actor, parent.critic
             self.actor[0] = torch.nn.Linear(143, 128)
             self.critic[0] = torch.nn.Linear(143, 128)
-            self.actor[-1] = torch.nn.Linear(128, 3)
+            self.actor[-1] = torch.nn.Linear(128, action_size)
             torch.nn.init.zeros_(self.actor[-1].weight)
             torch.nn.init.zeros_(self.actor[-1].bias)
-            self.logstd = torch.nn.Parameter(torch.full((3,), -5.3))
+            self.logstd = torch.nn.Parameter(torch.full((action_size,), -5.3))
 
         def forward(self, observation: Any) -> tuple[Any, Any]:
             if (
