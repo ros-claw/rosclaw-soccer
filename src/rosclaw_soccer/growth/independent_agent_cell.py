@@ -175,6 +175,7 @@ class AgentTacticalProfile:
     goalkeeper_depth_m: float = 0.48
     schema_version: str = "rosclaw_soccer.agent_tactical_profile.v1"
     blocked_shot_layoff: bool = False
+    moving_ball_finish_intent: bool = False
 
     def __post_init__(self) -> None:
         values = (
@@ -190,6 +191,7 @@ class AgentTacticalProfile:
             or not isinstance(self.active_competition, bool)
             or not isinstance(self.anticipatory_contact, bool)
             or type(self.blocked_shot_layoff) is not bool
+            or type(self.moving_ball_finish_intent) is not bool
             or any(not math.isfinite(value) for value in values)
             or abs(self.home_position_m[2]) > 1.0e-12
             or not 0.25 <= self.maximum_target_shift_m <= 4.0
@@ -208,6 +210,8 @@ class AgentTacticalProfile:
         value = asdict(self)
         if not self.blocked_shot_layoff:
             value.pop("blocked_shot_layoff")
+        if not self.moving_ball_finish_intent:
+            value.pop("moving_ball_finish_intent")
         return value
 
 
@@ -334,7 +338,18 @@ class RosclawSoccerAgentCell:
                 - np.asarray(observation.self_state.position_m[:2])
             )
             <= 1.0
-            and np.linalg.norm(observation.ball_velocity_mps[:2]) <= 0.50
+            and (
+                np.linalg.norm(observation.ball_velocity_mps[:2]) <= 0.50
+                or (
+                    # Explicit SIM_ONLY tactical proposal, not a possession
+                    # claim or qualification of the downstream motor skill.
+                    # Existing receive commitments and recovery take priority.
+                    self.tactical_profile.moving_ball_finish_intent
+                    and role is MatchRole.FINISHER
+                    and observation.ball_position_m[2] <= 0.30
+                    and np.linalg.norm(observation.ball_velocity_mps[:2]) <= 1.50
+                )
+            )
         ):
             # An intention to make first contact is not a claim of possession.
             if role is MatchRole.PLAYMAKER or (

@@ -172,6 +172,40 @@ def test_active_receive_context_precedes_anticipatory_shooting(fixture, team):
     assert cell.decide(held).intent is TacticalIntent.SHOOT
 
 
+@pytest.mark.parametrize("team,sign", [("red", 1), ("blue", -1)])
+def test_moving_finish_is_explicit_bounded_intent_only(fixture, team, sign):
+    base = next(c for c in fixture.cells if c.agent_id == team + ".finisher")
+    base = replace(base, tactical_profile=replace(base.tactical_profile, anticipatory_contact=True))
+    cell = replace(
+        base, tactical_profile=replace(base.tactical_profile, moving_ball_finish_intent=True)
+    )
+    value = _observation(fixture, cell.agent_id, blue=team == "blue")
+    value = replace(
+        value,
+        ball_position_m=(3 + sign * 0.6, 0.0, 0.115),
+        ball_velocity_mps=(sign * 1.2, 0.0, 0.0),
+        ball_chaser_agent_id=cell.agent_id,
+        self_state=replace(value.self_state, position_m=(3.0, 0.0, 0.78)),
+    )
+    assert base.decide(value).intent is TacticalIntent.RECEIVE
+    assert cell.decide(value).intent is TacticalIntent.SHOOT
+    assert cell.cell_hash != base.cell_hash
+    assert "moving_ball_finish_intent" not in base.tactical_profile.to_dict()
+    assert cell.tactical_profile.to_dict()["moving_ball_finish_intent"] is True
+    assert value.possession_agent_id is None
+    assert cell.activation_ceiling == "SIM_ONLY" and not cell.hardware_authorized
+    for changed in (
+        replace(value, ball_velocity_mps=(1.501, 0.0, 0.0)),
+        replace(value, ball_position_m=(3 + sign * 0.6, 0.0, 0.301)),
+        replace(value, active_receive_source_agent_id=team + ".playmaker"),
+        replace(value, ball_chaser_agent_id=team + ".playmaker"),
+        replace(value, self_state=replace(value.self_state, stable=False)),
+    ):
+        assert cell.decide(changed).intent is not TacticalIntent.SHOOT
+    with pytest.raises(ValueError):
+        replace(base.tactical_profile, moving_ball_finish_intent=1)
+
+
 @pytest.mark.parametrize("sender", ["blue.playmaker", "red.finisher", "unknown", True])
 def test_active_receive_context_rejects_non_teammates(fixture, sender):
     value = _observation(fixture, "red.finisher")
