@@ -23,15 +23,16 @@ def fuse_actor_output_offset(
     """
     import torch
 
+    actor: Any = getattr(agent, "actor", None)
     if (
         not isinstance(agent, torch.nn.Module)
-        or type(getattr(agent, "actor", None)) is not torch.nn.Sequential
-        or len(agent.actor) == 0
-        or type(agent.actor[-1]) is not torch.nn.Linear
-        or agent.actor[-1].bias is None
+        or type(actor) is not torch.nn.Sequential
+        or len(actor) == 0
+        or type(actor[-1]) is not torch.nn.Linear
+        or actor[-1].bias is None
     ):
         raise ValueError("a sequential actor with final biased linear layer is required")
-    bias = agent.actor[-1].bias
+    bias = actor[-1].bias
     if (
         type(maximum_absolute_offset) not in (int, float)
         or not math.isfinite(maximum_absolute_offset)
@@ -51,8 +52,9 @@ def fuse_actor_output_offset(
     if any(not bool(torch.isfinite(value).all()) for value in agent.state_dict().values()):
         raise ValueError("source policy parameters and buffers must be finite")
     candidate = copy.deepcopy(agent)
+    candidate_actor: Any = candidate.actor
     with torch.no_grad():
-        candidate.actor[-1].bias.add_(offset)
-    if not bool(torch.isfinite(candidate.actor[-1].bias).all()):
+        candidate_actor[-1].bias.add_(offset)
+    if not bool(torch.isfinite(candidate_actor[-1].bias).all()):
         raise ValueError("fused actor bias overflow")
     return candidate
