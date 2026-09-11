@@ -476,6 +476,7 @@ class IndependentTeamWorldResult:
     schema_version: str = "rosclaw_soccer.independent_team_world_result.v1"
     motor_policy_hashes: tuple[tuple[str, str], ...] = ()
     motor_fault_agents: tuple[str, ...] = ()
+    persistent_physics_observer_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         counts = (
@@ -492,7 +493,15 @@ class IndependentTeamWorldResult:
         )
         quality_ids = tuple(value.agent_id for value in self.qualities)
         if (
-            len({agent for agent, _ in self.motor_policy_hashes}) != len(self.motor_policy_hashes)
+            type(self.persistent_physics_observer_ids) is not tuple
+            or any(type(agent) is not str for agent in self.persistent_physics_observer_ids)
+            or tuple(sorted(set(self.persistent_physics_observer_ids)))
+            != self.persistent_physics_observer_ids
+            or not set(self.persistent_physics_observer_ids).issubset(
+                dict(self.motor_policy_hashes)
+            )
+            or len({agent for agent, _ in self.motor_policy_hashes})
+            != len(self.motor_policy_hashes)
             or not set(self.motor_fault_agents).issubset(dict(self.motor_policy_hashes))
             or len(set(self.motor_fault_agents)) != len(self.motor_fault_agents)
             or any(
@@ -590,6 +599,11 @@ class IndependentTeamWorldResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            **(
+                {"persistent_physics_observer_ids": list(self.persistent_physics_observer_ids)}
+                if self.persistent_physics_observer_ids
+                else {}
+            ),
             **(
                 {"keeper_policy_hashes": dict(self.keeper_policy_hashes)}
                 if self.keeper_policy_hashes
@@ -716,8 +730,16 @@ def simulate_independent_team_world(
     near_ball_explore: bool = False,
     near_ball_exploration_agent_ids: tuple[str, ...] | None = None,
     motor_options: Mapping[str, TeamMotorOption] | None = None,
+    persistent_physics_observer_ids: tuple[str, ...] = (),
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
-    """Run all agent cells and all neural locomotion bodies in one clock."""
+    """Run all agent cells and all neural locomotion bodies in one clock.
+
+    Explicit persistent observers retain read-only microphysics evidence when
+    their registered motor returns no override. They receive no writable model
+    or actuator handle; registration does not grant any additional motion.
+    Their callbacks must handle pre-entry and post-exit observations. Failures
+    latch in the existing motor fault ledger and disqualify the result.
+    """
 
     active = config or IndependentTeamWorldConfig()
     if active.post_receive_contact_control and contact_teacher_config is None:
@@ -742,6 +764,17 @@ def simulate_independent_team_world(
             [agent in scope for agent in near_ball_policy.agent_ids], dtype=bool
         )
     motors = dict(motor_options or {})
+    if (
+        type(persistent_physics_observer_ids) is not tuple
+        or any(type(agent) is not str for agent in persistent_physics_observer_ids)
+        or tuple(sorted(set(persistent_physics_observer_ids))) != persistent_physics_observer_ids
+        or not set(persistent_physics_observer_ids).issubset(motors)
+        or any(
+            not isinstance(motors[agent], TeamMotorPhysicsObserver)
+            for agent in persistent_physics_observer_ids
+        )
+    ):
+        raise ValueError("persistent observers require an explicit sorted registered motor subset")
     if (
         not set(motors).issubset(roster_ids)
         or len({id(motor) for motor in motors.values()}) != len(motors)
@@ -2202,7 +2235,7 @@ def simulate_independent_team_world(
                     state=opposite_net_state,
                 )
             mujoco.mj_step(model, data)
-            if motor_targets:
+            if motor_targets or persistent_physics_observer_ids:
                 _observe_team_motor_physics(
                     model,
                     data,
@@ -2213,6 +2246,7 @@ def simulate_independent_team_world(
                     ball_geom,
                     ball_qpos,
                     ball_qvel,
+                    persistent_observer_ids=persistent_physics_observer_ids,
                 )
             (
                 substep_robot_contacts,
@@ -2660,6 +2694,7 @@ def simulate_independent_team_world(
         ),
         motor_policy_hashes=motor_hashes,
         motor_fault_agents=tuple(sorted(motor_faults)),
+        persistent_physics_observer_ids=persistent_physics_observer_ids,
     )
     return result, trajectory
 
@@ -2674,9 +2709,15 @@ def _observe_team_motor_physics(
     ball_geom: int,
     ball_qpos: int,
     ball_qvel: int,
+    *,
+    persistent_observer_ids: tuple[str, ...] = (),
 ) -> None:
     import mujoco
 
+    # Evidence lifetime is independent of override ownership. This set is never
+    # inserted into targets and cannot grant a joint command. Failed consumers
+    # remain latched; active and persistent subscriptions deliver only once.
+    observed_agents = (set(targets) | set(persistent_observer_ids)) - faults
     safe = bool(np.isfinite(data.qpos).all() and np.isfinite(data.qvel).all())
     for controller in controllers:
         pose = data.qpos[controller.qpos_base : controller.qpos_base + 7]
@@ -2702,7 +2743,7 @@ def _observe_team_motor_physics(
         wrench = np.zeros(6)
         mujoco.mj_contactForce(model, data, index, wrench)
         if not np.isfinite(wrench).all():
-            faults.update(targets)
+            faults.update(observed_agents)
             targets.clear()
             return
         measured.append((other, max(0.0, float(wrench[0]))))
@@ -2738,13 +2779,13 @@ def _observe_team_motor_physics(
                 )
             )
     except (ValueError, TypeError):
-        faults.update(targets)
+        faults.update(observed_agents)
         targets.clear()
         return
     contacts = tuple(attributed)
     for controller in controllers:
         agent = controller.cell.agent_id
-        if agent not in targets or not isinstance(motors[agent], TeamMotorPhysicsObserver):
+        if agent not in observed_agents or not isinstance(motors[agent], TeamMotorPhysicsObserver):
             continue
         feet = controller.left_foot_geoms | controller.right_foot_geoms
         q = np.r_[
@@ -2779,7 +2820,7 @@ def _observe_team_motor_physics(
             )
         except (ValueError, TypeError, FloatingPointError):
             faults.add(agent)
-            targets.pop(agent)  # Remove this override before the next 2 ms step.
+            targets.pop(agent, None)  # Remove any override before the next 2 ms step.
 
 
 def _make_player_controller(

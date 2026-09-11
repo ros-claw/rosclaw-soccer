@@ -83,6 +83,13 @@ def test_independent_world_result_requires_all_six_current_decisions() -> None:
 
     assert result.passed
     with_motor = replace(result, motor_policy_hashes=(("red.finisher", _hash("motor")),))
+    persistent = replace(with_motor, persistent_physics_observer_ids=("red.finisher",))
+    assert "persistent_physics_observer_ids" not in with_motor.to_dict()
+    assert persistent.to_dict()["persistent_physics_observer_ids"] == ["red.finisher"]
+    assert persistent.result_hash != with_motor.result_hash
+    for invalid in (None, [], (1,), ("unknown",), ("red.finisher", "red.finisher")):
+        with pytest.raises(ValueError):
+            replace(with_motor, persistent_physics_observer_ids=invalid)
     faulted_motor = replace(with_motor, motor_fault_agents=("red.finisher",))
     assert with_motor.passed and faulted_motor.safe and not faulted_motor.passed
     assert faulted_motor.to_dict()["motor_fault_agents"] == ["red.finisher"]

@@ -129,7 +129,8 @@ def test_physics_observation_rejects_mutable_or_nonfinite_evidence():
 
 
 @pytest.mark.parametrize("failure", ["none", "observer", "force"])
-def test_physics_observer_is_read_only_and_fault_removes_override(monkeypatch, failure):
+@pytest.mark.parametrize("mode", ["active", "active-persistent", "idle-persistent", "latched"])
+def test_physics_observer_is_read_only_and_fault_removes_override(monkeypatch, failure, mode):
     import mujoco
 
     from rosclaw_soccer.skills.team.independent_team_world import _observe_team_motor_physics
@@ -170,15 +171,31 @@ def test_physics_observer_is_read_only_and_fault_removes_override(monkeypatch, f
         wrench[0] = float("nan") if failure == "force" else 2.0
 
     monkeypatch.setattr(mujoco, "mj_contactForce", force)
-    targets = {"red.a": TeamMotorTarget((0.0,) * 29, (50.0,) * 29, (1.0,) * 29)}
-    faults = set()
+    targets = (
+        {"red.a": TeamMotorTarget((0.0,) * 29, (50.0,) * 29, (1.0,) * 29)}
+        if mode.startswith("active")
+        else {}
+    )
+    faults = {"red.a"} if mode == "latched" else set()
     saved = q.copy()
     _observe_team_motor_physics(
-        model, d, (player,), {"red.a": observer}, targets, faults, 9, 36, 35
+        model,
+        d,
+        (player,),
+        {"red.a": observer},
+        targets,
+        faults,
+        9,
+        36,
+        35,
+        persistent_observer_ids=() if mode == "active" else ("red.a",),
     )
     np.testing.assert_array_equal(q, saved)
-    if failure == "none":
-        assert targets and not faults and len(observer.seen) == 1
+    if mode == "latched":
+        assert not targets and faults == {"red.a"} and not observer.seen
+    elif failure == "none":
+        assert bool(targets) == mode.startswith("active")
+        assert not faults and len(observer.seen) == 1
         evidence = observer.seen[0]
         assert evidence.world_bodies_safe and evidence.foot_normal_force_n == 2.0
         assert evidence.other_non_ground_normal_force_n == 0.0
@@ -186,3 +203,17 @@ def test_physics_observer_is_read_only_and_fault_removes_override(monkeypatch, f
             evidence.qpos[0] = 9
     else:
         assert not targets and faults == {"red.a"}
+
+
+@pytest.mark.parametrize("ids", [None, [], ["red.a"], ("red.a",), ("red.a", "red.a"), (1,)])
+def test_persistent_observer_registration_rejects_invalid_or_unbound_scope(ids):
+    with pytest.raises(ValueError, match="persistent observers"):
+        simulate_independent_team_world(
+            asset_root=Path("must-not-be-opened"),
+            roster=SimpleNamespace(agents=[]),
+            cells=(),
+            players=(),
+            scenario=None,
+            goal=None,
+            persistent_physics_observer_ids=ids,
+        )
