@@ -1,0 +1,36 @@
+--- a/mujoco_warp/_src/passive.py
++++ b/mujoco_warp/_src/passive.py
+@@ -100,6 +100,11 @@
+   has_stiffness = (stiffness != 0.0 or spoly[0] != 0.0 or spoly[1] != 0.0) and not (opt_disableflags & DisableBit.SPRING)
+   has_damping = (damping != 0.0 or dpoly[0] != 0.0 or dpoly[1] != 0.0) and not (opt_disableflags & DisableBit.DAMPER)
+ 
++  # A free/ball joint can have zero damping on its first DOF and nonzero
++  # coefficients on later DOFs. Do not use the first coefficient as a mask.
++  if jnttype == JointType.FREE or jnttype == JointType.BALL:
++    has_damping = not (opt_disableflags & DisableBit.DAMPER)
++
+   if not has_stiffness:
+     if jnttype == JointType.FREE:
+       for i in range(6):
+@@ -163,7 +168,9 @@
+     if has_damping:
+       for i in range(6):
+         v = qvel_in[worldid, dofid + i]
+-        qfrc_damper_out[worldid, dofid + i] = -v * util_misc._poly_force(damping, dpoly, v, 1)
++        damping_i = dof_damping[worldid % dof_damping.shape[0], dofid + i]
++        dpoly_i = dof_dampingpoly[worldid % dof_dampingpoly.shape[0], dofid + i]
++        qfrc_damper_out[worldid, dofid + i] = -v * util_misc._poly_force(damping_i, dpoly_i, v, 1)
+ 
+   elif jnttype == JointType.BALL:
+     # spring
+@@ -192,7 +199,9 @@
+     if has_damping:
+       for i in range(3):
+         v = qvel_in[worldid, dofid + i]
+-        qfrc_damper_out[worldid, dofid + i] = -v * util_misc._poly_force(damping, dpoly, v, 1)
++        damping_i = dof_damping[worldid % dof_damping.shape[0], dofid + i]
++        dpoly_i = dof_dampingpoly[worldid % dof_dampingpoly.shape[0], dofid + i]
++        qfrc_damper_out[worldid, dofid + i] = -v * util_misc._poly_force(damping_i, dpoly_i, v, 1)
+ 
+   else:  # mjJNT_SLIDE, mjJNT_HINGE
+     # spring
