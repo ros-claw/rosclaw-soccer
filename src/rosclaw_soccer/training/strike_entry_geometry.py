@@ -6,6 +6,7 @@ reference-policy coverage, permission, or evidence of a completed strike.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -69,3 +70,63 @@ def evaluate_strike_entry_geometry(
     for value in (depth, lateral, forward, upright, eligible):
         value.flags.writeable = False
     return StrikeEntryGeometry(depth, lateral, forward, upright, eligible)
+
+
+def evaluate_short_range_moving_strike_entry(
+    qpos: NDArray[np.floating],
+    qvel: NDArray[np.floating],
+    *,
+    attack_sign: int,
+    reference_yaw_rad: float,
+    allow_planted: bool = False,
+) -> StrikeEntryGeometry:
+    """Experimental S653-derived proposal domain, NOT the legacy entry gate.
+
+    A closer .18..32 m ball moving goalward .5..1.5 m/s, rolling height,
+    and reference-facing body are needed in addition to the old body checks.
+    This does not qualify reference transfer, relax physical safety guards,
+    assign possession or authorize a motor. Shared-world validation is separate.
+    Explicit planted mode additionally admits near-zero forward speed (within
+    .05 m/s) and planar speed <=.2 m/s. That is NOT a running-strike claim.
+    """
+    if (
+        type(allow_planted) is not bool
+        or type(reference_yaw_rad) not in (int, float)
+        or not math.isfinite(reference_yaw_rad)
+        or abs(reference_yaw_rad) > math.pi
+    ):
+        raise ValueError("finite signed reference yaw required")
+    geometry = evaluate_strike_entry_geometry(qpos, qvel, attack_sign=attack_sign)
+    p = qpos.astype(np.float64)
+    w, x, y, z = p[:, 3:7].T
+    yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    error = np.arctan2(np.sin(yaw - reference_yaw_rad), np.cos(yaw - reference_yaw_rad))
+    ball_forward = attack_sign * qvel[:, 35].astype(np.float64)
+    eligible = (
+        (geometry.depth_m >= 0.18)
+        & (geometry.depth_m <= 0.32)
+        & (np.abs(geometry.lateral_m) <= 0.30)
+        & (
+            (geometry.forward_speed_mps > 0.1)
+            | (
+                allow_planted
+                & (np.abs(geometry.forward_speed_mps) <= 0.05)
+                & (np.linalg.norm(qvel[:, :2].astype(np.float64), axis=1) <= 0.2)
+            )
+        )
+        & (p[:, 2] > 0.65)
+        & (geometry.upright > 0.9)
+        & (ball_forward > 0.5)
+        & (np.linalg.norm(qvel[:, 35:38].astype(np.float64), axis=1) <= 1.5)
+        & (p[:, 38] >= 0)
+        & (p[:, 38] <= 0.3)
+        & (np.abs(error) <= 0.35)
+    )
+    eligible.flags.writeable = False
+    return StrikeEntryGeometry(
+        geometry.depth_m,
+        geometry.lateral_m,
+        geometry.forward_speed_mps,
+        geometry.upright,
+        eligible,
+    )
