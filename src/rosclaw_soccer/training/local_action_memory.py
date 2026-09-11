@@ -111,6 +111,12 @@ def build_phase_action_memory(
             )
             for index in phase.unique():
                 selected = phase == index
+                if (
+                    not bool(torch.isfinite(self.correction[index]).all())
+                    or not bool(torch.isfinite(self.scales[index]).all())
+                    or bool((self.scales[index] < scale_floor).any())
+                ):
+                    raise ValueError("invalid local memory correction or normalization")
                 distance = (
                     ((self.centers[index][None] - value[selected, None]) / self.scales[index])
                     .square()

@@ -92,3 +92,14 @@ def test_invalid_plasticity_configuration_rejected(kwargs):
     _, observations, actions = bank()
     with pytest.raises(ValueError):
         build(observations, actions, **kwargs)
+
+
+@pytest.mark.parametrize("field", ["correction", "scales"])
+@pytest.mark.parametrize("value", [float("inf"), float("nan")])
+def test_invalid_internal_state_cannot_hide_behind_saturation(field, value):
+    torch, observations, actions = bank()
+    model = build(observations, actions)
+    with torch.no_grad():
+        getattr(model, field)[0].fill_(value)
+    with pytest.raises(ValueError):
+        model(observations[0, :1])
