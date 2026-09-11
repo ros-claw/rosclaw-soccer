@@ -3,17 +3,23 @@ import copy
 import pytest
 
 from rosclaw_soccer.training.full_body_ppo import FullBodyPPOUpdateConfig, update_full_body_ppo
+from rosclaw_soccer.training.handoff_policy import build_handoff_actor_critic
 from rosclaw_soccer.training.reception_navigation import build_reception_navigation_actor_critic
 
 
-def case():
+def case(observation_size=136):
     torch = pytest.importorskip("torch")
     torch.manual_seed(525)
-    agent = build_reception_navigation_actor_critic()
+    builder = (
+        build_handoff_actor_critic
+        if observation_size == 143
+        else build_reception_navigation_actor_critic
+    )
+    agent = builder()
     with torch.no_grad():
         agent.logstd.fill_(-5.3)
     optimizer = torch.optim.Adam(agent.parameters(), lr=1e-6)
-    obs = torch.randn(4, 2, 136) * 0.1
+    obs = torch.randn(4, 2, observation_size) * 0.1
     with torch.no_grad():
         mean, value = agent(obs.flatten(0, 1))
         normal = torch.distributions.Normal(mean, agent.logstd.clamp(-5.5, -0.3).exp())
@@ -30,15 +36,24 @@ def case():
     return torch, agent, optimizer, data
 
 
-def test_precision_exploration_has_matching_likelihood_and_exact_replay():
-    torch, agent, optimizer, data = case()
+@pytest.mark.parametrize("observation_size", [136, 143])
+def test_precision_exploration_has_matching_likelihood_and_exact_replay(observation_size):
+    torch, agent, optimizer, data = case(observation_size)
     original = copy.deepcopy(agent.state_dict())
     rng = torch.get_rng_state().clone()
     config = FullBodyPPOUpdateConfig(
-        observation_size=136, action_size=3, minimum_log_std=-5.5, epochs=2, minibatch_size=4
+        observation_size=observation_size,
+        action_size=3,
+        minimum_log_std=-5.5,
+        epochs=2,
+        minibatch_size=4,
     )
     result = update_full_body_ppo(agent, optimizer, data, config)
-    repeated = build_reception_navigation_actor_critic()
+    repeated = (
+        build_handoff_actor_critic()
+        if observation_size == 143
+        else build_reception_navigation_actor_critic()
+    )
     repeated.load_state_dict(original)
     repeated_optimizer = torch.optim.Adam(repeated.parameters(), lr=1e-6)
     torch.set_rng_state(rng)
@@ -48,13 +63,17 @@ def test_precision_exploration_has_matching_likelihood_and_exact_replay():
     assert result["activation_ceiling"] == "SIM_ONLY" and not result["promotion_eligible"]
 
 
-def test_default_floor_rejects_fine_noise_rollout_before_any_mutation():
-    torch, agent, optimizer, data = case()
+@pytest.mark.parametrize("observation_size", [136, 143])
+def test_default_floor_rejects_fine_noise_rollout_before_any_mutation(observation_size):
+    torch, agent, optimizer, data = case(observation_size)
     original = copy.deepcopy(agent.state_dict())
     rng = torch.get_rng_state().clone()
     with pytest.raises(ValueError, match="likelihood"):
         update_full_body_ppo(
-            agent, optimizer, data, FullBodyPPOUpdateConfig(observation_size=136, action_size=3)
+            agent,
+            optimizer,
+            data,
+            FullBodyPPOUpdateConfig(observation_size=observation_size, action_size=3),
         )
     assert all(torch.equal(v, original[k]) for k, v in agent.state_dict().items())
     assert not optimizer.state and torch.equal(rng, torch.get_rng_state())
