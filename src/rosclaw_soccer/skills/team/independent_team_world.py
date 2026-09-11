@@ -1222,6 +1222,28 @@ def simulate_independent_team_world(
             pass_handshake_count += len(coordination.pass_receive_handshakes)
             pass_source_agent_id = None
             pass_target_agent_id = None
+            if receive_handoff is not None:
+                # A pending promise must not pin a supporting teammate after
+                # its source switches to shooting/recovery or another receiver.
+                # Check the source's actual decision, not motor readiness:
+                # an ongoing pass may temporarily own an exclusive motor.
+                following_promise = receive_handoff.withdraw_unlaunched(
+                    source_still_committed=any(
+                        decision.agent_id == receive_handoff.source
+                        and decision.intent is TacticalIntent.PASS
+                        and decision.target_agent_id == receive_handoff.receiver
+                        for decision in decisions
+                    )
+                )
+                if following_promise.interrupted:
+                    receive_lease_agent_id = None
+                    receive_lease_source_agent_id = None
+                    receive_lease_origin_m = None
+                    receive_lease_target_m = None
+                    receive_lease_active = False
+                    flight_tracking_agent_id = None
+                    receive_handoff = None
+                    handoff_cancellations += 1
             if current_possession_agent_id is not None or prospective_team_contact:
                 current_handshake = next(
                     (

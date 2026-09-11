@@ -71,6 +71,19 @@ class PassHandoff:
             )
         )
 
+    def withdraw_unlaunched(self, *, source_still_committed: bool) -> PassHandoff:
+        """Withdraw an unlaunched promise when its source changes the option.
+
+        A physical launch survives later tactical changes: the receiver must
+        still track the ball. This only interrupts task evidence, never motion
+        authority. Motor readiness alone is not a withdrawal of intention.
+        """
+        if type(source_still_committed) is not bool:
+            raise ValueError("source commitment must be an observed boolean predicate")
+        if not source_still_committed and self.source_foot_contact_sec is None:
+            return replace(self, interrupted=True)
+        return self
+
     def observe_contact(
         self, *, agent_id: str, foot: bool, force_n: float, time_sec: float
     ) -> PassHandoff:
