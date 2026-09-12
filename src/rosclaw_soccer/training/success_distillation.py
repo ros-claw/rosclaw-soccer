@@ -16,6 +16,8 @@ from typing import Any
 class SuccessDistillationConfig:
     steps: int = 1000
     learning_rate: float = 0.001
+    observation_size: int = 133
+    action_size: int = 29
 
     def __post_init__(self) -> None:
         if (
@@ -24,6 +26,9 @@ class SuccessDistillationConfig:
             or isinstance(self.learning_rate, bool)
             or not math.isfinite(self.learning_rate)
             or not 0 < self.learning_rate <= 0.001
+            or type(self.observation_size) is not int
+            or type(self.action_size) is not int
+            or (self.observation_size, self.action_size) not in ((133, 29), (139, 32))
         ):
             raise ValueError("bounded supervised update configuration required")
 
@@ -36,13 +41,14 @@ def distill_successful_motor_actions(
     sample_weights: Any,
     config: SuccessDistillationConfig | None = None,
 ) -> dict[str, Any]:
-    """Fit the existing 133/29 actor only, with a fresh, locally owned Adam.
+    """Fit an explicitly selected 133/29 or 139/32 actor with local fresh Adam.
 
     Inputs are detached float32 training tensors, NOT fresh PPO likelihoods.
     All inputs and actor ownership are checked before updates. On optimizer
     failure the caller must discard/restore the candidate, just as with PPO.
     Only actual successful optimizer.step calls enter the returned step count.
     Critic/noise weights and pre-existing requires_grad flags are untouched.
+    The default remains 133/29; no shape-based policy contract migration occurs.
     """
     import torch
 
@@ -53,7 +59,7 @@ def distill_successful_motor_actions(
     if observations.ndim != 2 or not 2 <= len(observations) <= 65536:
         raise ValueError("bounded sample/feature axes required")
     size = len(observations)
-    shapes = ((size, 133), (size, 29), (size,))
+    shapes = ((size, active.observation_size), (size, active.action_size), (size,))
     for value, shape in zip(values, shapes, strict=True):
         if (
             value.shape != shape
@@ -97,7 +103,7 @@ def distill_successful_motor_actions(
     with torch.no_grad():
         prediction = actor(observations)
         if prediction.shape != raw_actions.shape or not bool(torch.isfinite(prediction).all()):
-            raise ValueError("finite 29-action actor output required")
+            raise ValueError(f"finite {active.action_size}-action actor output required")
         initial_loss = float(((prediction - raw_actions).square().mean(1) * sample_weights).sum())
     optimizer = torch.optim.Adam(actor_parameters, lr=active.learning_rate)
     executed_steps = 0
