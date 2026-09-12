@@ -50,6 +50,19 @@ class SonicNavigationConfig:
             )
 
 
+@dataclass(frozen=True)
+class SonicObservationStartReceipt:
+    """Fresh measured initialization, not a history handoff or motion permit."""
+
+    agent_id: str
+    frame: int
+    time_sec: float
+    observation_hash: str
+    reference_hash: str
+    binding_hash: str
+    activation_ceiling: str = "SIM_ONLY"
+
+
 def future_reference_context(reference: np.ndarray, start: int) -> np.ndarray:
     """Four future 30 Hz samples, with short-hemisphere normalized quaternions.
 
@@ -202,6 +215,68 @@ class G1SonicNavigation:
         self._retired = False
         self._origin_frame = 0
         self._ready_from_handoff = False
+        self._ready_from_observation = False
+        self._boundary_observation_hash: str | None = None
+
+    def start_from_observation(
+        self, observation: TeamMotorObservation
+    ) -> SonicObservationStartReceipt:
+        """Initialize an unused option at the current global simulation frame.
+
+        The backend cold-start pads from the current measurement; this is not
+        evidence of earlier observed states. No stale history is imported. The
+        next propose() must consume this same bound observation. The caller
+        still owns admission and physical stepping.
+        An invalid initialization latches off, never rearms an old option.
+        """
+        if self._faulted or self._retired:
+            raise ValueError("navigation is faulted or retired")
+        try:
+            if (
+                self._next_frame != 0
+                or self._ready_from_handoff
+                or self._ready_from_observation
+                or len(self.backend._history) != 0
+                or not isinstance(observation, TeamMotorObservation)
+                or observation.agent_id != self.agent_id
+                or observation.navigation_command is None
+                or abs(observation.time_sec - observation.frame * 0.02) > 1e-6
+            ):
+                raise ValueError("unused navigation and current cleared observation required")
+            q, v = np.asarray(observation.qpos), np.asarray(observation.qvel)
+            if abs(float(np.linalg.norm(q[3:7])) - 1) > 0.01:
+                raise ValueError("unit measured body quaternion required")
+            self.backend.command = observation.navigation_command
+            w, x, y, z = q[3:7]
+            self.backend.facing = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+            self.backend.reset(SimpleNamespace(qpos=q, qvel=v))
+            observation_hash = hash_json(asdict(observation))
+            reference_hash = hash_bytes(self.backend.reference.tobytes())
+            receipt = SonicObservationStartReceipt(
+                agent_id=self.agent_id,
+                frame=observation.frame,
+                time_sec=observation.time_sec,
+                observation_hash=observation_hash,
+                reference_hash=reference_hash,
+                binding_hash=hash_json(
+                    {
+                        "kind": "fresh_observation_navigation_start.v1",
+                        "navigation_contract": self.contract_hash,
+                        "observation_hash": observation_hash,
+                        "reference_hash": reference_hash,
+                    }
+                ),
+            )
+            self._origin_frame = observation.frame
+            self._next_frame = observation.frame
+            self._ready_from_observation = True
+            self._boundary_observation_hash = observation_hash
+            return receipt
+        except Exception as error:
+            self._faulted = True
+            raise ValueError(
+                "navigation observation initialization failed; option latched off"
+            ) from error
 
     def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget:
         if self._retired:
@@ -228,7 +303,12 @@ class G1SonicNavigation:
             self.backend.facing = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
             local_frame = observation.frame - self._origin_frame
             if local_frame == 0:
-                if not self._ready_from_handoff:
+                if (
+                    self._boundary_observation_hash is not None
+                    and hash_json(asdict(observation)) != self._boundary_observation_hash
+                ):
+                    raise ValueError("navigation boundary observation commitment changed")
+                if not (self._ready_from_handoff or self._ready_from_observation):
                     self.backend.reset(state)
             else:
                 self.backend.observe(state)
@@ -311,6 +391,7 @@ class G1SonicNavigation:
             if (
                 self._next_frame != 0
                 or self._ready_from_handoff
+                or self._ready_from_observation
                 or len(self.backend._history) != 0
                 or observation.agent_id != self.agent_id
                 or observation.navigation_command is None
@@ -334,6 +415,7 @@ class G1SonicNavigation:
             self._origin_frame = observation.frame
             self._next_frame = observation.frame
             self._ready_from_handoff = True
+            self._boundary_observation_hash = hash_json(asdict(observation))
             return receipt
         except Exception as error:
             self._faulted = True

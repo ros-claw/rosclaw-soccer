@@ -220,6 +220,8 @@ def navigation_fixture():
     nav._faulted = nav._retired = False
     nav._origin_frame = 0
     nav._ready_from_handoff = False
+    nav._ready_from_observation = False
+    nav._boundary_observation_hash = None
     return nav, c
 
 
@@ -308,6 +310,17 @@ def test_imported_navigation_cannot_implicitly_restart():
     with pytest.raises(ValueError, match="latched"):
         nav.start_from_history(c["source"], source_observation=o, observation=o)
     assert nav._faulted
+    assert_history_equal(before, nav.backend._history)
+
+
+def test_history_start_binds_first_proposal_to_boundary_observation():
+    nav, c, calls = fresh_navigation()
+    o = replace(c["source_observation"], navigation_command=(0.3, 0.0, 0.0))
+    nav.start_from_history(c["source"], source_observation=o, observation=o)
+    before = history_copy(nav.backend)
+    with pytest.raises(ValueError):
+        nav.propose(replace(o, navigation_command=(0.4, 0.0, 0.0)))
+    assert nav._faulted and calls["frames"] == []
     assert_history_equal(before, nav.backend._history)
 
 

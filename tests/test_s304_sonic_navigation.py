@@ -84,9 +84,12 @@ class Backend:
         self.kp = np.ones(29) * 50
         self.kd = np.ones(29)
         self.resets = self.observations = self.updates = 0
+        self._history = []
+        self.reference = np.zeros((710, 36))
 
     def reset(self, state):
         self.resets += 1
+        self._history.append((state.qpos.copy(), state.qvel.copy()))
 
     def observe(self, state):
         self.observations += 1
@@ -96,9 +99,9 @@ class Backend:
         return np.zeros(29)
 
 
-def controller(monkeypatch):
+def controller(monkeypatch, config=None):
     monkeypatch.setattr("rosclaw_soccer.providers.g1.sonic_navigation._StreamingBackend", Backend)
-    return G1SonicNavigation(None, "red.defender")
+    return G1SonicNavigation(None, "red.defender", config)
 
 
 def test_navigation_history_continuous_and_fault_never_silently_restarts(monkeypatch):
@@ -112,6 +115,110 @@ def test_navigation_history_continuous_and_fault_never_silently_restarts(monkeyp
     with pytest.raises(ValueError, match="latched"):
         motor.propose(observation(21))
     assert motor.backend.updates == 21
+
+
+def test_explicit_measured_start_uses_global_clock_without_duplicate_reset(monkeypatch):
+    motor = controller(monkeypatch)
+    current = observation(285)
+    receipt = motor.start_from_observation(current)
+    assert receipt.frame == 285 and receipt.time_sec == 5.7
+    assert receipt.agent_id == current.agent_id and receipt.activation_ceiling == "SIM_ONLY"
+    assert receipt.observation_hash.startswith("sha256:")
+    assert motor.backend.resets == 1 and motor.backend.updates == 0
+    motor.propose(current)
+    motor.propose(observation(286))
+    assert (motor.backend.resets, motor.backend.observations, motor.backend.updates) == (1, 1, 2)
+    np.testing.assert_array_equal(motor.backend._history[0][0], current.qpos)
+    assert motor._origin_frame == 285 and motor._next_frame == 287
+
+
+def test_measured_start_cannot_skip_boundary_or_restart(monkeypatch):
+    motor = controller(monkeypatch)
+    motor.start_from_observation(observation(285))
+    with pytest.raises(ValueError, match="latched off"):
+        motor.propose(observation(286))
+    with pytest.raises(ValueError, match="faulted"):
+        motor.start_from_observation(observation(286))
+    assert motor.backend.resets == 1 and motor.backend.updates == 0
+
+
+@pytest.mark.parametrize("frame", [0, 285])
+def test_duplicate_measured_start_latches_even_before_first_proposal(monkeypatch, frame):
+    motor = controller(monkeypatch)
+    motor.start_from_observation(observation(frame))
+    with pytest.raises(ValueError, match="latched off"):
+        motor.start_from_observation(observation(frame))
+    with pytest.raises(ValueError, match="latched"):
+        motor.propose(observation(frame))
+    assert motor.backend.resets == 1
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"agent_id": "blue.defender"},
+        {"time_sec": 5.71},
+        {"navigation_command": None},
+        {"qpos": (0.0,) * 43},
+    ],
+)
+def test_invalid_measured_start_latches_before_backend_reset(monkeypatch, change):
+    motor = controller(monkeypatch)
+    with pytest.raises(ValueError, match="latched off"):
+        motor.start_from_observation(replace(observation(285), **change))
+    assert motor.backend.resets == 0
+    with pytest.raises(ValueError, match="faulted"):
+        motor.start_from_observation(observation(285))
+
+
+def test_used_or_retired_navigation_cannot_be_reinitialized(monkeypatch):
+    motor = controller(monkeypatch)
+    motor.propose(observation())
+    with pytest.raises(ValueError, match="latched off"):
+        motor.start_from_observation(observation(285))
+    assert motor.backend.resets == 1
+    retired = controller(monkeypatch)
+    retired._retired = True
+    with pytest.raises(ValueError, match="retired"):
+        retired.start_from_observation(observation(285))
+    assert retired.backend.resets == 0
+
+
+def test_measured_start_backend_failure_is_terminal(monkeypatch):
+    motor = controller(monkeypatch)
+    motor.backend.reset = lambda state: (_ for _ in ()).throw(RuntimeError("planner failure"))
+    with pytest.raises(ValueError, match="latched off"):
+        motor.start_from_observation(observation(285))
+    with pytest.raises(ValueError, match="faulted"):
+        motor.start_from_observation(observation(285))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"navigation_command": (0.4, 0.0, 0.0)},
+        {"target_position_m": (4.0, 0.0, 0.0)},
+        {"intent": "shoot"},
+        {"qvel": (0.01,) + (0.0,) * 40},
+    ],
+)
+def test_measured_boundary_observation_cannot_change_before_proposal(monkeypatch, change):
+    motor = controller(monkeypatch)
+    current = observation(285)
+    motor.start_from_observation(current)
+    with pytest.raises(ValueError, match="latched off"):
+        motor.propose(replace(current, **change))
+    assert motor.backend.resets == 1 and motor.backend.updates == 0
+
+
+def test_explicit_start_horizon_is_bounded_from_its_origin(monkeypatch):
+    motor = controller(monkeypatch, SonicNavigationConfig(maximum_frames=50))
+    motor.start_from_observation(observation(285))
+    for frame in range(285, 335):
+        motor.propose(observation(frame))
+    with pytest.raises(ValueError, match="latched off"):
+        motor.propose(observation(335))
+    assert motor.backend.updates == 50 and motor.backend.resets == 1
 
 
 @pytest.mark.parametrize(
