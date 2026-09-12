@@ -84,7 +84,7 @@ class G1FrozenGoalReferenceMotor:
             shapes[f"{head}.0.bias"] = (32,)
             shapes[f"{head}.2.weight"] = (n_out, 32)
             shapes[f"{head}.2.bias"] = (n_out,)
-        self._parameters, self.policy_hash = load_bounded_reference_parameters(
+        self._parameters, self.policy_hash = self._load_parameters(
             weights, expected_actor_hash, shapes
         )
         self._default = _vector(default_angles, 29).copy()
@@ -117,8 +117,19 @@ class G1FrozenGoalReferenceMotor:
         self._frame = 0
         self._previous: NDArray[np.float32] = np.zeros(29, dtype=np.float32)
         self._heading: NDArray[np.float32] = np.zeros(1, dtype=np.float32)
-        self._target = np.zeros(2, dtype=np.float64)
+        self._target: NDArray[np.float64] = np.zeros(2, dtype=np.float64)
         self._episode_hash = ""
+
+    def _load_parameters(
+        self, weights: Path, expected_hash: str, shapes: dict[str, tuple[int, ...]]
+    ) -> tuple[dict[str, NDArray[Any]], str]:
+        return cast(
+            tuple[dict[str, NDArray[Any]], str],
+            load_bounded_reference_parameters(weights, expected_hash, shapes),
+        )
+
+    def _network_parameters(self) -> dict[str, NDArray[Any]]:
+        return self._parameters
 
     def begin_episode(self, *, target_position_xy: NDArray[Any]) -> None:
         """Reset this instance only; invalid resets leave it unavailable."""
@@ -140,7 +151,7 @@ class G1FrozenGoalReferenceMotor:
     def _network(
         self, name: str, observation: NDArray[Any], *, body: bool = False
     ) -> NDArray[np.float32]:
-        p = self._parameters
+        p = self._network_parameters()
         x = np.tanh(p[f"{name}.0.weight"] @ observation + p[f"{name}.0.bias"])
         x = p[f"{name}.2.weight"] @ x + p[f"{name}.2.bias"]
         if body:
