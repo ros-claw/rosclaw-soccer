@@ -6,6 +6,7 @@ The caller owns frame transforms, teacher history, admission and physical guards
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -53,7 +54,14 @@ class G1FrozenGoalReferenceMotor:
         reference_library_hash: str,
         course_transform_hash: str,
         default_angles: NDArray[Any],
+        reference_center_rad: float = 0.0,
     ) -> None:
+        if (
+            type(reference_center_rad) not in (int, float)
+            or not math.isfinite(reference_center_rad)
+            or abs(reference_center_rad) > 0.6
+        ):
+            raise ValueError("finite declared reference center within +/-0.6 rad required")
         for value in (
             expected_actor_hash,
             foundation_hash,
@@ -82,11 +90,13 @@ class G1FrozenGoalReferenceMotor:
         self._default = _vector(default_angles, 29).copy()
         self._default.setflags(write=False)
         self._envelope = BallResidualEnvelope()
-        self._heading_envelope = ReferenceHeadingEnvelope(center_rad=0.0, maximum_offset_rad=0.1)
+        self._heading_envelope = ReferenceHeadingEnvelope(
+            center_rad=float(reference_center_rad), maximum_offset_rad=0.1
+        )
         self.contract_hash = str(
             hash_json(
                 {
-                    "schema": "rosclaw_soccer.g1_frozen_goal_reference_motor.v1",
+                    "schema": "rosclaw_soccer.g1_frozen_goal_reference_motor.v2",
                     "actor_hash": self.policy_hash,
                     "foundation_hash": foundation_hash,
                     "reference_library_hash": reference_library_hash,
@@ -94,6 +104,7 @@ class G1FrozenGoalReferenceMotor:
                     "default_angles": self._default.tolist(),
                     "residual_envelope": asdict(self._envelope),
                     "reference_envelope": asdict(self._heading_envelope),
+                    "reference_initial_rad": self._heading_envelope.center_rad,
                     "observation": "course_ball_133+target_ray_xy+previous_heading",
                     "control_dt_sec": 0.02,
                     "episode_frames": 200,
@@ -121,7 +132,7 @@ class G1FrozenGoalReferenceMotor:
             hash_json({"contract_hash": self.contract_hash, "target_position_xy": target.tolist()})
         )
         self._previous = np.zeros(29, dtype=np.float32)
-        self._heading = np.zeros(1, dtype=np.float32)
+        self._heading = np.full(1, self._heading_envelope.center_rad, dtype=np.float32)
         self._frame = 0
         self._faulted = False
         self._active = True
@@ -171,7 +182,10 @@ class G1FrozenGoalReferenceMotor:
                     -self._envelope.maximum_step_rad,
                     self._envelope.maximum_step_rad,
                 )
-                desired_heading = self._heading_envelope.maximum_offset_rad * np.tanh(reference_raw)
+                desired_heading = (
+                    self._heading_envelope.center_rad
+                    + self._heading_envelope.maximum_offset_rad * np.tanh(reference_raw)
+                )
                 next_heading = self._heading + np.clip(
                     self._heading_envelope.smoothing * (desired_heading - self._heading),
                     -self._heading_envelope.maximum_step_rad,

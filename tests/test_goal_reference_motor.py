@@ -47,7 +47,8 @@ def propose(motor, frame=0, **overrides):
     )
 
 
-def test_full_episode_matches_torch_actor_and_both_history_filters(checkpoint):
+@pytest.mark.parametrize("center", [0.0, -0.36, 0.36, -0.6, 0.6])
+def test_full_episode_matches_torch_actor_and_both_history_filters(checkpoint, center):
     import torch
 
     from rosclaw_soccer.training.ball_residual import advance_ball_residual
@@ -57,12 +58,12 @@ def test_full_episode_matches_torch_actor_and_both_history_filters(checkpoint):
     )
 
     weights, kwargs, actor = checkpoint
-    motor = G1FrozenGoalReferenceMotor(weights, **kwargs)
+    motor = G1FrozenGoalReferenceMotor(weights, **kwargs, reference_center_rad=center)
     goal = np.array([3.0, 1.0])
     motor.begin_episode(target_position_xy=goal)
     goal[:] = 99  # Caller-owned target mutation must not alter this episode.
     goal = np.array([3.0, 1.0])
-    previous, heading = torch.zeros(1, 29), torch.zeros(1)
+    previous, heading = torch.zeros(1, 29), torch.full((1,), center)
     rng = np.random.default_rng(773)
     for frame in range(200):
         q, v = state()
@@ -88,16 +89,40 @@ def test_full_episode_matches_torch_actor_and_both_history_filters(checkpoint):
             following = advance_reference_heading(
                 raw[:, 29],
                 heading,
-                ReferenceHeadingEnvelope(center_rad=0.0, maximum_offset_rad=0.1),
+                ReferenceHeadingEnvelope(center_rad=center, maximum_offset_rad=0.1),
             )
         result = motor.propose(frame=frame, course_qpos=q, course_qvel=v, teacher_target=base)
         np.testing.assert_allclose(result.target_rad, base + residual[0].numpy(), atol=1e-7, rtol=0)
         assert result.reference_heading_used_rad == pytest.approx(float(heading[0]), abs=1e-7)
         assert result.next_reference_heading_rad == pytest.approx(float(following[0]), abs=1e-7)
         assert result.activation_ceiling == "SIM_ONLY"
+        assert center - 0.1 - 1e-7 <= result.next_reference_heading_rad <= center + 0.1 + 1e-7
         previous, heading = residual, following
     with pytest.raises(ValueError):
         propose(motor, 200)
+
+
+@pytest.mark.parametrize("center", [True, None, "-0.36", float("nan"), float("inf"), -0.61, 0.61])
+def test_invalid_reference_center_rejected(checkpoint, center):
+    weights, kwargs, _ = checkpoint
+    with pytest.raises(ValueError, match="reference center"):
+        G1FrozenGoalReferenceMotor(weights, **kwargs, reference_center_rad=center)
+
+
+def test_reference_center_bound_to_contract_and_restored_on_reset(checkpoint):
+    weights, kwargs, _ = checkpoint
+    default = G1FrozenGoalReferenceMotor(weights, **kwargs)
+    zero = G1FrozenGoalReferenceMotor(weights, **kwargs, reference_center_rad=0.0)
+    shifted = G1FrozenGoalReferenceMotor(weights, **kwargs, reference_center_rad=-0.36)
+    assert default.contract_hash == zero.contract_hash != shifted.contract_hash
+    for motor in (default, shifted):
+        motor.begin_episode(target_position_xy=np.array([3.0, 1.0]))
+    first = propose(shifted)
+    assert first.episode_hash != propose(default).episode_hash
+    assert first.reference_heading_used_rad == pytest.approx(-0.36)
+    propose(shifted, 1)
+    shifted.begin_episode(target_position_xy=np.array([3.0, 1.0]))
+    assert propose(shifted) == first
 
 
 def test_runtime_does_not_require_torch_and_returns_immutable_proposal(checkpoint, monkeypatch):
