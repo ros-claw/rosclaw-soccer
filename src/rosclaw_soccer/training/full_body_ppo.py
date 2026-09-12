@@ -37,6 +37,7 @@ class FullBodyPPOUpdateConfig:
                 (143, 3),
                 (143, 29),
                 (136, 30),
+                (137, 30),  # 136-state actor plus causal binary successor feature.
                 (142, 30),
             )
             or not 1 <= self.epochs <= 16
