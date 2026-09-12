@@ -22,6 +22,7 @@ class FullBodyPPOUpdateConfig:
     observation_size: int = 133
     action_size: int = 29
     minimum_log_std: float = -2.5
+    learning_observation_index: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -50,6 +51,13 @@ class FullBodyPPOUpdateConfig:
             or type(self.minimum_log_std) not in (float, int)
             or not math.isfinite(self.minimum_log_std)
             or not -6.0 <= self.minimum_log_std <= -2.5
+            or (
+                self.learning_observation_index is not None
+                and (
+                    type(self.learning_observation_index) is not int
+                    or not 0 <= self.learning_observation_index < self.observation_size
+                )
+            )
         ):
             raise ValueError("bounded PPO update configuration required")
 
@@ -68,6 +76,9 @@ def update_full_body_ppo(
     A smaller exploration floor must also be used by the rollout collector;
     starting-likelihood validation rejects mismatched distributions. The default
     retains the historical -2.5 floor exactly. This does not change action limits.
+    An optional binary observation feature selects optimization samples only:
+    all live likelihoods/values are still verified, and GAE uses the continuous
+    episode. Feature provenance and candidate admission remain caller-owned.
     """
     import torch
 
@@ -115,6 +126,14 @@ def update_full_body_ppo(
     keep = data["alive"].reshape(-1) > 0
     if int(keep.sum()) < 2:
         raise ValueError("at least two active learning samples required")
+    learning_keep = keep
+    if active.learning_observation_index is not None:
+        feature = data["obs"][..., active.learning_observation_index]
+        if not bool(((feature == 0) | (feature == 1)).all()):
+            raise ValueError("binary learning-window observation required")
+        learning_keep = keep & (feature.reshape(-1) == 1)
+        if int(learning_keep.sum()) < 2:
+            raise ValueError("at least two selected learning samples required")
     obs = data["obs"].reshape(-1, active.observation_size)[keep]
     raw = data["raw"].reshape(-1, active.action_size)[keep]
     old = data["logp"].reshape(-1)[keep]
@@ -127,6 +146,11 @@ def update_full_body_ppo(
             (value - data["value"].reshape(-1)[keep]).abs().max() <= 1e-3
         ):
             raise ValueError("rollout likelihood or critic differs from the starting learner")
+    if active.learning_observation_index is not None:
+        keep = learning_keep
+        obs = data["obs"].reshape(-1, active.observation_size)[keep]
+        raw = data["raw"].reshape(-1, active.action_size)[keep]
+        old = data["logp"].reshape(-1)[keep]
     advantage = torch.zeros_like(data["reward"])
     carry = torch.zeros(worlds, device=obs.device)
     for frame in reversed(range(horizon)):
@@ -183,7 +207,7 @@ def update_full_body_ppo(
         completed = epoch + 1
         if kl > active.target_kl:
             break
-    return {
+    result = {
         "optimizer_steps": steps,
         "approx_kl": kl,
         "epochs_completed": completed,
@@ -193,3 +217,9 @@ def update_full_body_ppo(
         "activation_ceiling": "SIM_ONLY",
         "promotion_eligible": False,
     }
+    if active.learning_observation_index is not None:
+        result.update(
+            learning_observation_index=active.learning_observation_index,
+            verified_active_samples=int(data["alive"].sum()),
+        )
+    return result
