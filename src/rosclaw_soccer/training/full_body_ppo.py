@@ -34,6 +34,7 @@ class FullBodyPPOUpdateConfig:
                 (133, 29),
                 (136, 29),
                 (139, 32),
+                (140, 32),  # 139 policy features plus training-only binary learning bit.
                 (136, 3),
                 (143, 3),
                 (143, 29),
