@@ -24,6 +24,8 @@
 
 与滚动模型、目标参考网络和入场记忆网络联合测试共 **76 passed**。新模块定向 mypy、全仓 Ruff 通过。
 
+随后全量测试记录为 **2225 passed、29 skipped、11 failed**，不是全量通过。11 个失败均为此前已在基线复现的外部存量证据检查；没有删除测试或放宽断言。JUnit 保存在 `/home/dell/rosclaw_soccer_evidence/s774-repository-tests.xml`。
+
 S774 使用与 S772 完全相同的 32 个初始状态，在原生 CPU MuJoCo 和原 CPU ONNX 教师上回放全部 4 秒。实际关节与参考朝向命令均由新的数值冻结接口给出；Torch 网络仅保留用于诊断记录，不控制身体、不做训练。
 
 | 指标 | 结果 |
