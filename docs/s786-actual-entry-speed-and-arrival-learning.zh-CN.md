@@ -65,6 +65,34 @@ S801 从 S791 实际第 451 帧、参考中心 -0.1 rad、S786 模型开始，�
 
 S803 继续利用这四批成功/失败样本形成的候选均值、方差和最佳偏置，另做 16 批暖启动搜索。新随机种子，旧最佳候选重新评估，不沿用旧分数。它是数据驱动的教师搜索，**不是额外 PPO 更新、在线部署或每个运行案例的人工动作路由**。尚须导出模型、原生新扰动考试、恢复复核及共享世界返回。
 
+### S803–S813 后续复核：速度与精度仍未同时通过
+
+S803 已完成，搜索与全部 16 条微步审计通过。最后开发候选的误差为 0.10535 m、速度为 3.01157 m/s，仍不满足 0.1 m，不作四舍五入通过。普通导出模型 `teacher-015.npz` 的 SHA-256 为 `2717d510015632e5ae0f54d6dd6f3676c56234651a94c5a190999807c1c40735`。
+
+S805/S806 用原生 CPU MuJoCo、原 CPU ONNX，比较同一实际入场状态加 31 个新扰动。S813 独立重建全部 2 ms 接触/速度/平面指标并确认初始状态逐值相同：
+
+| 模型 | 速度合格 | 联合精度合格 | 身体安全 / 非脚接触 | 平均误差 |
+| --- | --- | --- | --- | --- |
+| S786 父模型 | 0/32 | 0/32 | 32/32 / 0 | 0.11337 m |
+| S803 搜索模型 | 15/32 | 0/32 | 32/32 / 0 | 0.13324 m |
+
+只有 7 例误差下降，均值增加约 0.01987 m。速度改进不能掩盖精度退化；该候选没有晋升。
+
+### 教师推理差异必须区分层次
+
+S807 将 S805 的 CPU 教师换为 CUDA 教师、保留原生 CPU 物理，严格闭环等价检查**失败**：接触前缀最大速度差 0.17108，超出原 0.01 阈值。标签一致、平面误差差值较小，不能抵消该失败。
+
+S809 固定回放相同身体状态，但两套教师各用自身预测动作维护历史，最大关节目标差 0.08151 rad，也未通过。相同物理输入不等于相同完整神经网络输入。
+
+随后只做诊断，不修改教师代码或阈值：
+
+- S811：把完整 CPU 编码器/解码器输入交给 GPU，包括 CPU 的历史动作和 token。编码 token 逐值一致，解码动作最大差 2.80e-6，通过 1e-5 的组件检查。
+- S812：检查原有批量编码特征构造。速度/姿态特征存在约 1e-6/1e-7 的差，但全部编码 token 一致，没有证据支持用修改特征精度来解决当前问题。
+
+因此保留 S807/S809 的失败状态，不把组件检查包装成闭环资格。差异可能沿动作历史和接触反馈放大，尚未定位为某个已证明的软件缺陷。
+
+S810 正在进行单独声明的**近似教师 + 近似 GPU 物理**训练：256 世界、计划 16 次 PPO 更新，S791 第 451 帧、参考中心 -0.1 rad、原偏移/关节/力矩限制。它不是失败等价检查的重试通过，也不改变默认运行后端。所有导出候选仍须原生 CPU/CPU ONNX 新扰动考试、恢复复核及共享世界验证。当前不得据此宣称达到宣传标准。
+
 ## 本地证据
 
 所有目录位于 `/home/dell/rosclaw_soccer_evidence/`，具体文件哈希及限制见各自 `result.json` 和审计记录：
@@ -79,5 +107,9 @@ S803 继续利用这四批成功/失败样本形成的候选均值、方差和�
 - `s794-actual-arrival-phase-screen-v1`、`s796-actual-arrival-reference-center-screen-v1`
 - `s799-actual-arrival-reference-tempo-screen-v1`、`s800-trained-actual-arrival-tempo-screen-v1`
 - `s801-arrival-entry-teacher-feasibility-v1`、`s803-arrival-teacher-warm-search-v1`
+- `s805-arrival-teacher-native-exam-v1`、`s806-arrival-parent-native-exam-v1`、`s813-arrival-teacher-native-pair-audit-v1`
+- `s807-arrival-teacher-cuda3-exam-v1`、`s809-arrival-teacher-recorded-input-parity-v1`
+- `s811-arrival-teacher-network-input-audit-v1`、`s812-arrival-tracker-encoder-diagnosis-v1`
+- `s810-arrival-joint-approximate-gpu-ppo-v1`（运行中，非完成报告）
 
 本阶段代码仍全部 SIM_ONLY，无真实机器人、ROS/DDS、硬件许可或传输操作。
