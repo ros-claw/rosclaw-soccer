@@ -10,6 +10,7 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from rosclaw_soccer.providers.g1.contact_storage import validate_active_contact_storage
 from rosclaw_soccer.sim.contracts import hash_json
 
 
@@ -128,13 +129,9 @@ class G1VectorContactProbe:
                 )
             normal = self._force[:, 0]
             valid = self._slots < self._count[0]
-            if not bool(torch.isfinite(normal[valid]).all()) or bool(
-                (
-                    (self._world[valid] < 0)
-                    | (self._world[valid] >= motor.config.environment_count)
-                ).any()
-            ):
-                raise FloatingPointError("invalid physical contact force or world identity")
+            validate_active_contact_storage(
+                normal, self._world, valid, environment_count=motor.config.environment_count
+            )
             active = valid & (normal > self.minimum_force)
             g0, g1 = self._geom.unbind(1)
             ball0, ball1 = torch.isin(g0, self._target), torch.isin(g1, self._target)
