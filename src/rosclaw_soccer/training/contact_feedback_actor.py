@@ -167,14 +167,33 @@ def build_contact_feedback_actor_critic(parent_state: Mapping[str, Any]) -> Any:
 
 
 def build_normalized_contact_actor_critic(
-    parent_state: Mapping[str, Any], mean: Any, scale: Any
+    parent_state: Mapping[str, Any],
+    mean: Any,
+    scale: Any,
+    *,
+    critic_mean: Any = None,
+    critic_scale: Any = None,
 ) -> Any:
-    """Explicit normalized-head checkpoint variant; parent still sees raw 139 features."""
+    """Frozen head scaling; optional separate critic statistics, raw 139 parent.
+
+    Caller owns training-only fitting and provenance. Actor windows and full
+    critic trajectories may have different distributions. Omitting both critic
+    vectors preserves the original shared-statistics construction exactly.
+    """
     from rosclaw_soccer.training.frozen_feature_normalization import normalize_network_inputs
 
+    if (critic_mean is None) != (critic_scale is None):
+        raise ValueError("both explicit critic normalization vectors required")
     agent = build_contact_feedback_actor_critic(parent_state)
     agent.actor = normalize_network_inputs(agent.actor, mean, scale)
-    agent.critic = normalize_network_inputs(agent.critic, mean, scale)
-    if len(agent.actor.mean) != CONTACT_OBSERVATION_SIZE:
+    agent.critic = normalize_network_inputs(
+        agent.critic,
+        mean if critic_mean is None else critic_mean,
+        scale if critic_scale is None else critic_scale,
+    )
+    if (
+        len(agent.actor.mean) != CONTACT_OBSERVATION_SIZE
+        or len(agent.critic.mean) != CONTACT_OBSERVATION_SIZE
+    ):
         raise ValueError("explicit 169-feature contact normalization required")
     return agent

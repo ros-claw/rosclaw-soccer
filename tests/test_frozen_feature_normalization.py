@@ -70,3 +70,33 @@ def test_normalization_contract_rejects_wrong_dtype_or_contact_size():
             torch.zeros(139),
             torch.ones(139),
         )
+
+
+def test_separate_frozen_actor_and_critic_statistics_preserve_initial_parent():
+    parent = build_coupled_ball_residual_actor_critic()
+    model = build_normalized_contact_actor_critic(
+        parent.state_dict(),
+        torch.zeros(169),
+        torch.full((169,), 0.03),
+        critic_mean=torch.ones(169),
+        critic_scale=torch.full((169,), 2.0),
+    )
+    obs = torch.zeros(4, 169)
+    obs[:, 136] = 1
+    obs[:, 138] = 0.48
+    for actual, expected in zip(model(obs), parent(obs[:, :139].contiguous()), strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    assert not torch.equal(model.actor.mean, model.critic.mean)
+    assert torch.equal(model.critic.scale, torch.full((169,), 2.0))
+    assert all(not value.requires_grad for value in model.buffers())
+
+
+def test_separate_critic_requires_both_vectors_and_explicit_size():
+    state = build_coupled_ball_residual_actor_critic().state_dict()
+    for extra in (
+        {"critic_mean": torch.zeros(169)},
+        {"critic_scale": torch.ones(169)},
+        {"critic_mean": torch.zeros(139), "critic_scale": torch.ones(139)},
+    ):
+        with pytest.raises(ValueError):
+            build_normalized_contact_actor_critic(state, torch.zeros(169), torch.ones(169), **extra)
