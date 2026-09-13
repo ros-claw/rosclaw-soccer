@@ -242,3 +242,95 @@ def test_unequal_episode_windows_balance_weights_and_replay(all_critic):
     assert not result["promotion_eligible"]
     assert all(torch.equal(v, replay.state_dict()[k]) for k, v in actor.state_dict().items())
     assert all(torch.equal(v, preserved[k]) for k, v in data.items())
+
+
+@pytest.mark.parametrize("all_critic", [False, True])
+def test_group_outcome_update_replays_exactly_and_preserves_inputs(all_critic):
+    torch, actor, optimizer, data = window_case()
+    data["episode_group"] = torch.tensor([42, 42])
+    replay, preserved = copy.deepcopy(actor), copy.deepcopy(data)
+    rng = torch.get_rng_state()
+    config = FullBodyPPOUpdateConfig(
+        epochs=2,
+        minibatch_size=2,
+        learning_observation_index=132,
+        episode_balanced_actor=True,
+        group_relative_actor=True,
+        critic_all_active=all_critic,
+    )
+    result = update_full_body_ppo(actor, optimizer, data, config)
+    torch.set_rng_state(rng)
+    repeated = update_full_body_ppo(
+        replay,
+        torch.optim.Adam(replay.parameters(), lr=1e-4),
+        data,
+        config,
+    )
+    assert result == repeated
+    assert result["group_relative_actor"] and result["actor_task_groups"] == 1
+    assert not result["promotion_eligible"]
+    assert all(torch.equal(v, replay.state_dict()[k]) for k, v in actor.state_dict().items())
+    assert all(torch.equal(v, preserved[k]) for k, v in data.items())
+
+
+def test_equal_group_failures_do_not_invent_actor_signal():
+    torch, actor, optimizer, data = case()
+    data["episode_group"] = torch.tensor([0, 0])
+    data["reward"].fill_(-1)
+    before = copy.deepcopy(actor.state_dict())
+    update_full_body_ppo(
+        actor,
+        optimizer,
+        data,
+        FullBodyPPOUpdateConfig(
+            epochs=2,
+            episode_balanced_actor=True,
+            group_relative_actor=True,
+            critic_all_active=True,
+        ),
+    )
+    assert all(
+        torch.equal(value, actor.state_dict()[name])
+        for name, value in before.items()
+        if name.startswith("actor.") or name == "logstd"
+    )
+    assert any(
+        not torch.equal(value, actor.state_dict()[name])
+        for name, value in before.items()
+        if name.startswith("critic.")
+    )
+
+
+@pytest.mark.parametrize("fault", ["missing", "singleton", "wrong_dtype", "unexpected"])
+def test_group_metadata_rejected_before_optimizer_mutation(fault):
+    torch, actor, optimizer, data = case()
+    before = copy.deepcopy(actor.state_dict())
+    if fault != "missing":
+        data["episode_group"] = torch.tensor([0, 1] if fault == "singleton" else [0, 0])
+    if fault == "wrong_dtype":
+        data["episode_group"] = data["episode_group"].float()
+    with pytest.raises(ValueError):
+        update_full_body_ppo(
+            actor,
+            optimizer,
+            data,
+            FullBodyPPOUpdateConfig(
+                episode_balanced_actor=True,
+                group_relative_actor=fault != "unexpected",
+            ),
+        )
+    assert not optimizer.state
+    assert all(torch.equal(value, actor.state_dict()[name]) for name, value in before.items())
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"group_relative_actor": True},
+        {"group_relative_actor": 1, "episode_balanced_actor": True},
+        {"group_relative_actor": None, "episode_balanced_actor": True},
+    ],
+)
+def test_group_relative_configuration_requires_balanced_explicit_boolean(kwargs):
+    with pytest.raises(ValueError):
+        FullBodyPPOUpdateConfig(**kwargs)

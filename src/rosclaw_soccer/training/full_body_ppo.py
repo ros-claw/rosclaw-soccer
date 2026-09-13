@@ -25,11 +25,14 @@ class FullBodyPPOUpdateConfig:
     learning_observation_index: int | None = None
     critic_all_active: bool = False
     episode_balanced_actor: bool = False
+    group_relative_actor: bool = False
 
     def __post_init__(self) -> None:
         if (
             type(self.critic_all_active) is not bool
             or type(self.episode_balanced_actor) is not bool
+            or type(self.group_relative_actor) is not bool
+            or (self.group_relative_actor and not self.episode_balanced_actor)
             or type(self.epochs) is not int
             or type(self.observation_size) is not int
             or type(self.action_size) is not int
@@ -92,15 +95,22 @@ def update_full_body_ppo(
     equal total policy-loss weight, instead of favouring longer action windows.
     It changes neither GAE, advantage normalization, critic weights nor sample
     selection. Divergence checks retain both time-step and balanced views.
+    A separate group-relative option replaces only the actor advantage with
+    normalized discounted episode outcomes within explicit episode_group IDs.
+    It requires episode balancing; critic GAE and validation stay unchanged.
+    This is a continuous-action research variant, not full paper GRPO.
     The default path preserves historical optimizer ordering and RNG usage.
     """
     import torch
 
     active = config or FullBodyPPOUpdateConfig()
     required = {"obs", "raw", "logp", "value", "reward", "alive", "next_alive"}
+    if active.group_relative_actor:
+        required.add("episode_group")
     if set(rollout) != required:
         raise ValueError("complete on-policy rollout fields required")
     data = dict(rollout)
+    group_ids = data.pop("episode_group", None)
     if any(not isinstance(value, torch.Tensor) for value in data.values()):
         raise ValueError("complete detached rollout tensors required")
     if data["reward"].ndim != 2:
@@ -187,7 +197,17 @@ def update_full_body_ppo(
     returns = (advantage + data["value"]).reshape(-1)[keep]
     all_returns = (advantage + data["value"]).reshape(-1)[all_keep]
     adv = advantage.reshape(-1)[keep]
-    adv = (adv - adv.mean()) / (adv.std() + 1e-6)
+    if active.group_relative_actor:
+        from rosclaw_soccer.training.episode_group_advantage import group_relative_advantages
+
+        discount = active.gamma ** torch.arange(
+            horizon, device=obs.device, dtype=data["reward"].dtype
+        )
+        outcomes = (data["reward"] * data["alive"] * discount[:, None]).sum(0)
+        outcome_advantage = group_relative_advantages(outcomes, group_ids)
+        adv = outcome_advantage.expand(horizon, worlds).reshape(-1)[keep]
+    else:
+        adv = (adv - adv.mean()) / (adv.std() + 1e-6)
     actor_weights = None
     if active.episode_balanced_actor:
         counts = keep.reshape(horizon, worlds).sum(0)
@@ -278,5 +298,9 @@ def update_full_body_ppo(
             actor_weight_min=float(actor_weights.min()),
             actor_weight_max=float(actor_weights.max()),
             actor_represented_worlds=int(represented),
+        )
+    if active.group_relative_actor:
+        result.update(
+            group_relative_actor=True, actor_task_groups=int(torch.unique(group_ids).numel())
         )
     return result
