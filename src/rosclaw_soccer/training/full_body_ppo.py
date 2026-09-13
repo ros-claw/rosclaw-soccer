@@ -46,6 +46,8 @@ class FullBodyPPOUpdateConfig:
                 (170, 32),  # 169 policy features plus training-only binary learning bit.
                 (170, 3),  # Contact features plus explicit selected foot; force latents.
                 (171, 3),  # Same task-space policy plus training-only learning bit.
+                (170, 6),  # Explicit carry force and bounded navigation corrections.
+                (171, 6),  # Carry policy plus training-only influence bit.
                 (136, 3),
                 (143, 3),
                 (143, 29),

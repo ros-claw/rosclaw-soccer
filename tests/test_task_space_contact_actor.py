@@ -6,18 +6,22 @@ from rosclaw_soccer.training.binary_learning_window import attach_binary_learnin
 from rosclaw_soccer.training.coupled_ball_residual import build_coupled_ball_residual_actor_critic
 from rosclaw_soccer.training.full_body_ppo import FullBodyPPOUpdateConfig, update_full_body_ppo
 from rosclaw_soccer.training.task_space_contact_actor import (
+    build_task_space_carry_actor_critic,
     build_task_space_contact_actor_critic,
 )
 
 torch = pytest.importorskip("torch")
 
 
-def build():
+def build(actions=3):
     parent = build_coupled_ball_residual_actor_critic()
     zero, one = torch.zeros(169), torch.ones(169)
-    learner = build_task_space_contact_actor_critic(
-        parent.state_dict(), zero, one, critic_mean=zero, critic_scale=one
+    factory = (
+        build_task_space_contact_actor_critic
+        if actions == 3
+        else build_task_space_carry_actor_critic
     )
+    learner = factory(parent.state_dict(), zero, one, critic_mean=zero, critic_scale=one)
     obs = torch.zeros(4, 170)
     obs[:, 136] = 1
     obs[:, 138] = 0.48
@@ -25,11 +29,12 @@ def build():
     return learner, obs
 
 
-def test_initial_force_zero_parent_and_normalization_frozen():
-    learner, obs = build()
+@pytest.mark.parametrize("actions", [3, 6])
+def test_initial_force_zero_parent_and_normalization_frozen(actions):
+    learner, obs = build(actions)
     mean, value = learner(obs)
     _, expected = learner.parent(obs[:, :169])
-    assert torch.equal(mean, torch.zeros(4, 3))
+    assert torch.equal(mean, torch.zeros(4, actions))
     assert torch.equal(value, expected)
     assert not any(p.requires_grad for p in learner.parent.parameters())
     assert learner.actor.mean.shape == (170,)
@@ -53,8 +58,9 @@ def test_no_implicit_state_or_foot_contract(fault):
         learner(obs)
 
 
-def test_explicit_171_by_3_ppo_replays_without_changing_parent():
-    learner, obs = build()
+@pytest.mark.parametrize("actions", [3, 6])
+def test_explicit_171_ppo_replays_without_changing_parent(actions):
+    learner, obs = build(actions)
     agent = attach_binary_learning_window(learner, observation_size=170)
     starting = copy.deepcopy(agent.state_dict())
     observation = torch.cat((obs, torch.ones(4, 1)), 1).repeat(4, 1, 1)
@@ -65,7 +71,7 @@ def test_explicit_171_by_3_ppo_replays_without_changing_parent():
         raw = normal.sample()
         data = dict(
             obs=observation,
-            raw=raw.reshape(4, 4, 3),
+            raw=raw.reshape(4, 4, actions),
             logp=normal.log_prob(raw).sum(1).reshape(4, 4),
             value=value.reshape(4, 4),
             reward=torch.arange(16).reshape(4, 4).float() / 16,
@@ -77,7 +83,7 @@ def test_explicit_171_by_3_ppo_replays_without_changing_parent():
         epochs=2,
         minibatch_size=4,
         observation_size=171,
-        action_size=3,
+        action_size=actions,
         minimum_log_std=-4,
         learning_observation_index=170,
         critic_all_active=True,
@@ -101,3 +107,10 @@ def test_explicit_171_by_3_ppo_replays_without_changing_parent():
     assert outcomes[0][0] == outcomes[1][0]
     for key in starting:
         assert torch.equal(outcomes[0][1][key], outcomes[1][1][key])
+
+
+def test_force_only_weights_do_not_silently_load_as_force_and_navigation():
+    contact, _ = build(3)
+    carry, _ = build(6)
+    with pytest.raises(RuntimeError):
+        carry.load_state_dict(contact.state_dict())

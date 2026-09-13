@@ -24,6 +24,39 @@ def build_task_space_contact_actor_critic(
     Both learning heads and logstd train; all parent parameters and scaling
     buffers remain frozen. No exam data or fitting occurs in this constructor.
     """
+    return _build_task_space_actor_critic(
+        parent_state, mean, scale, critic_mean=critic_mean, critic_scale=critic_scale, actions=3
+    )
+
+
+def build_task_space_carry_actor_critic(
+    parent_state: Mapping[str, Any],
+    mean: Any,
+    scale: Any,
+    *,
+    critic_mean: Any,
+    critic_scale: Any,
+) -> Any:
+    """Explicit170/6: three foot-force and three navigation-correction latents.
+
+    Caller must map both heads through separate bounded application paths and
+    bind the ground-carry task. Six-dimensional weights do not load into the
+    three-dimensional contact policy. No physical output occurs here.
+    """
+    return _build_task_space_actor_critic(
+        parent_state, mean, scale, critic_mean=critic_mean, critic_scale=critic_scale, actions=6
+    )
+
+
+def _build_task_space_actor_critic(
+    parent_state: Mapping[str, Any],
+    mean: Any,
+    scale: Any,
+    *,
+    critic_mean: Any,
+    critic_scale: Any,
+    actions: int,
+) -> Any:
     import torch
 
     from rosclaw_soccer.training.contact_feedback_actor import (
@@ -44,7 +77,7 @@ def build_task_space_contact_actor_critic(
             super().__init__()
             self.parent = parent
             for name, width, centre, spread in (
-                ("actor", 3, mean, scale),
+                ("actor", actions, mean, scale),
                 ("critic", 1, critic_mean, critic_scale),
             ):
                 network = torch.nn.Sequential(
@@ -66,7 +99,7 @@ def build_task_space_contact_actor_critic(
                         torch.cat((spread, spread.new_tensor([0.5]))),
                     ),
                 )
-            self.logstd = torch.nn.Parameter(torch.full((3,), -2.5))
+            self.logstd = torch.nn.Parameter(torch.full((actions,), -2.5))
 
         def forward(self, observation: Any) -> tuple[Any, Any]:
             if (
