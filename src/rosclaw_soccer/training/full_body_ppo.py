@@ -35,6 +35,8 @@ class FullBodyPPOUpdateConfig:
                 (136, 29),
                 (139, 32),
                 (140, 32),  # 139 policy features plus training-only binary learning bit.
+                (169, 32),  # Explicit foot/ball feedback plus one measured interval history.
+                (170, 32),  # 169 policy features plus training-only binary learning bit.
                 (136, 3),
                 (143, 3),
                 (143, 29),
