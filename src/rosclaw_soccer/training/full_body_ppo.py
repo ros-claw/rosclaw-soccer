@@ -44,6 +44,8 @@ class FullBodyPPOUpdateConfig:
                 (140, 32),  # 139 policy features plus training-only binary learning bit.
                 (169, 32),  # Explicit foot/ball feedback plus one measured interval history.
                 (170, 32),  # 169 policy features plus training-only binary learning bit.
+                (170, 3),  # Contact features plus explicit selected foot; force latents.
+                (171, 3),  # Same task-space policy plus training-only learning bit.
                 (136, 3),
                 (143, 3),
                 (143, 29),
