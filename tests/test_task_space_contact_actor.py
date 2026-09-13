@@ -6,6 +6,7 @@ from rosclaw_soccer.training.binary_learning_window import attach_binary_learnin
 from rosclaw_soccer.training.coupled_ball_residual import build_coupled_ball_residual_actor_critic
 from rosclaw_soccer.training.full_body_ppo import FullBodyPPOUpdateConfig, update_full_body_ppo
 from rosclaw_soccer.training.task_space_contact_actor import (
+    build_contextual_carry_actor_critic,
     build_task_space_carry_actor_critic,
     build_task_space_contact_actor_critic,
 )
@@ -17,15 +18,21 @@ def build(actions=3):
     parent = build_coupled_ball_residual_actor_critic()
     zero, one = torch.zeros(169), torch.ones(169)
     factory = (
-        build_task_space_contact_actor_critic
-        if actions == 3
-        else build_task_space_carry_actor_critic
+        build_contextual_carry_actor_critic
+        if actions == 182
+        else (
+            build_task_space_contact_actor_critic
+            if actions == 3
+            else build_task_space_carry_actor_critic
+        )
     )
     learner = factory(parent.state_dict(), zero, one, critic_mean=zero, critic_scale=one)
     obs = torch.zeros(4, 170)
     obs[:, 136] = 1
     obs[:, 138] = 0.48
     obs[2:, 169] = 1
+    if actions == 182:
+        obs = torch.cat((obs, torch.zeros(4, 12)), 1)
     return learner, obs
 
 
@@ -58,15 +65,18 @@ def test_no_implicit_state_or_foot_contract(fault):
         learner(obs)
 
 
-@pytest.mark.parametrize("actions", [3, 6])
+@pytest.mark.parametrize("actions", [3, 6, 182])
 def test_explicit_171_ppo_replays_without_changing_parent(actions):
     learner, obs = build(actions)
-    agent = attach_binary_learning_window(learner, observation_size=170)
+    width = obs.shape[1]
+    if actions == 182:
+        actions = 6
+    agent = attach_binary_learning_window(learner, observation_size=width)
     starting = copy.deepcopy(agent.state_dict())
     observation = torch.cat((obs, torch.ones(4, 1)), 1).repeat(4, 1, 1)
     observation[2:, :, -1] = 0
     with torch.no_grad():
-        mean, value = agent(observation.reshape(-1, 171))
+        mean, value = agent(observation.reshape(-1, width + 1))
         normal = torch.distributions.Normal(mean, agent.logstd.exp())
         raw = normal.sample()
         data = dict(
@@ -82,10 +92,10 @@ def test_explicit_171_ppo_replays_without_changing_parent(actions):
     config = FullBodyPPOUpdateConfig(
         epochs=2,
         minibatch_size=4,
-        observation_size=171,
+        observation_size=width + 1,
         action_size=actions,
         minimum_log_std=-4,
-        learning_observation_index=170,
+        learning_observation_index=width,
         critic_all_active=True,
     )
     outcomes = []
@@ -114,3 +124,27 @@ def test_force_only_weights_do_not_silently_load_as_force_and_navigation():
     carry, _ = build(6)
     with pytest.raises(RuntimeError):
         carry.load_state_dict(contact.state_dict())
+
+
+def test_contextual_carry_is_explicit_zero_initialized_and_sees_task_features():
+    learner, obs = build(182)
+    mean, value = learner(obs)
+    assert mean.shape == (4, 6) and not mean.any()
+    assert torch.equal(value, learner.parent(obs[:, :169])[1])
+    assert learner.actor.mean.shape == (182,)
+    assert not learner.actor.mean[170:].any()
+    assert torch.equal(learner.actor.scale[170:], torch.ones(12))
+    with torch.no_grad():
+        learner.actor.network[-1].weight.fill_(0.01)
+    changed = obs.clone()
+    changed[:, 172] = 0.2
+    assert not torch.equal(learner(obs)[0], learner(changed)[0])
+    old, _ = build(6)
+    with pytest.raises(RuntimeError):
+        learner.load_state_dict(old.state_dict())
+    with pytest.raises(ValueError):
+        learner(obs[:, :170])
+    changed[:, 172] = 1.1
+    with pytest.raises(ValueError):
+        learner(changed)
+    FullBodyPPOUpdateConfig(observation_size=183, action_size=6, learning_observation_index=182)

@@ -48,6 +48,8 @@ class FullBodyPPOUpdateConfig:
                 (171, 3),  # Same task-space policy plus training-only learning bit.
                 (170, 6),  # Explicit carry force and bounded navigation corrections.
                 (171, 6),  # Carry policy plus training-only influence bit.
+                (182, 6),  # Local carry features plus explicit12 task-context features.
+                (183, 6),  # Contextual carry plus training-only influence bit.
                 (136, 3),
                 (143, 3),
                 (143, 29),

@@ -48,6 +48,30 @@ def build_task_space_carry_actor_critic(
     )
 
 
+def build_contextual_carry_actor_critic(
+    parent_state: Mapping[str, Any],
+    mean: Any,
+    scale: Any,
+    *,
+    critic_mean: Any,
+    critic_scale: Any,
+) -> Any:
+    """Explicit182/6:170 local features plus12 measured carry-task features.
+
+    This is not checkpoint-compatible with170/6. The frozen parent still sees
+    only its original169 features. Context is bounded, not fitted to exam data.
+    """
+    return _build_task_space_actor_critic(
+        parent_state,
+        mean,
+        scale,
+        critic_mean=critic_mean,
+        critic_scale=critic_scale,
+        actions=6,
+        contextual=True,
+    )
+
+
 def _build_task_space_actor_critic(
     parent_state: Mapping[str, Any],
     mean: Any,
@@ -56,6 +80,7 @@ def _build_task_space_actor_critic(
     critic_mean: Any,
     critic_scale: Any,
     actions: int,
+    contextual: bool = False,
 ) -> Any:
     import torch
 
@@ -81,7 +106,7 @@ def _build_task_space_actor_critic(
                 ("critic", 1, critic_mean, critic_scale),
             ):
                 network = torch.nn.Sequential(
-                    torch.nn.Linear(170, 128),
+                    torch.nn.Linear(182 if contextual else 170, 128),
                     torch.nn.Tanh(),
                     torch.nn.Linear(128, 128),
                     torch.nn.Tanh(),
@@ -90,13 +115,18 @@ def _build_task_space_actor_critic(
                 output: Any = network[-1]
                 torch.nn.init.zeros_(output.weight)
                 torch.nn.init.zeros_(output.bias)
+                feature_mean = torch.cat((centre, centre.new_tensor([0.5])))
+                feature_scale = torch.cat((spread, spread.new_tensor([0.5])))
+                if contextual:
+                    feature_mean = torch.cat((feature_mean, centre.new_zeros(12)))
+                    feature_scale = torch.cat((feature_scale, spread.new_ones(12)))
                 setattr(
                     self,
                     name,
                     normalize_network_inputs(
                         network,
-                        torch.cat((centre, centre.new_tensor([0.5]))),
-                        torch.cat((spread, spread.new_tensor([0.5]))),
+                        feature_mean,
+                        feature_scale,
                     ),
                 )
             self.logstd = torch.nn.Parameter(torch.full((actions,), -2.5))
@@ -105,12 +135,17 @@ def _build_task_space_actor_critic(
             if (
                 not isinstance(observation, torch.Tensor)
                 or observation.ndim != 2
-                or observation.shape[1] != 170
+                or observation.shape[1] != (182 if contextual else 170)
                 or observation.dtype != torch.float32
                 or not 1 <= len(observation) <= 65536
                 or not bool(((observation[:, 169] == 0) | (observation[:, 169] == 1)).all())
             ):
                 raise ValueError("explicit contact features and binary selected foot required")
+            if contextual and (
+                not bool(torch.isfinite(observation[:, 170:]).all())
+                or bool((observation[:, 170:].abs() > 1).any())
+            ):
+                raise ValueError("bounded measured carry task context required")
             with torch.no_grad():
                 _, value = self.parent(observation[:, :169].contiguous())
             mean = 2 * torch.tanh(self.actor(observation))
