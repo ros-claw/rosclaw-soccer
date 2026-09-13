@@ -13,6 +13,56 @@ import numpy as np
 from rosclaw_soccer.providers.g1.mujoco_primitives import mirror_g1_joint_positions
 
 
+def encode_applied_locomotion_target(
+    target: np.ndarray,
+    *,
+    default_angles: np.ndarray,
+    action_scale: float,
+    joint_to_motor: np.ndarray,
+    reflected: bool,
+) -> np.ndarray:
+    """Express an externally applied motor target in a shadow policy's frame.
+
+    Float32 policy defaults and float32/64 applied targets preserve inference
+    arithmetic before producing a float32 action. Defaults are in
+    policy order, while target is in physical motor order. A caller must own
+    evidence that this is the previous applied target for this player/tick;
+    this pure conversion neither establishes that provenance nor transfers or
+    initializes recurrent state. Using it changes the previous-action convention
+    and requires separate physical qualification of the consuming controller.
+    """
+    if (
+        type(reflected) is not bool
+        or type(action_scale) not in (int, float)
+        or not math.isfinite(action_scale)
+        or not 0.001 <= action_scale <= 5.0
+        or not isinstance(joint_to_motor, np.ndarray)
+        or joint_to_motor.shape != (29,)
+        or joint_to_motor.dtype.kind not in "iu"
+        or not np.array_equal(np.sort(joint_to_motor), np.arange(29))
+    ):
+        raise ValueError("explicit frame, bounded scale and bijective joint mapping required")
+    for value, dtypes in (
+        (target, (np.dtype("float32"), np.dtype("float64"))),
+        (default_angles, (np.dtype("float32"),)),
+    ):
+        if (
+            not isinstance(value, np.ndarray)
+            or value.shape != (29,)
+            or value.dtype not in dtypes
+            or not np.isfinite(value).all()
+            or np.max(np.abs(value)) > 10
+        ):
+            raise ValueError("bounded float32/64 target and float32 policy defaults required")
+    physical = mirror_g1_joint_positions(target).astype(target.dtype) if reflected else target
+    result: np.ndarray = (physical[joint_to_motor] - default_angles) / np.asarray(
+        action_scale, dtype=target.dtype
+    )
+    if not np.isfinite(result).all() or np.max(np.abs(result)) > 100:
+        raise ValueError("applied target cannot be represented within policy action envelope")
+    return result.astype(np.float32, copy=True)
+
+
 def remap_previous_locomotion_action(
     action: np.ndarray,
     *,
