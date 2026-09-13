@@ -181,3 +181,64 @@ def test_all_selected_window_preserves_default_update_exactly():
     )
     assert {k: selected[k] for k in default} == default
     assert all(torch.equal(v, replay.state_dict()[k]) for k, v in actor.state_dict().items())
+
+
+@pytest.mark.parametrize("value", [1, 0, None, "yes"])
+def test_episode_balancing_requires_explicit_boolean(value):
+    with pytest.raises(ValueError):
+        FullBodyPPOUpdateConfig(episode_balanced_actor=value)
+
+
+def test_equal_episode_windows_preserve_unweighted_update_exactly():
+    torch, actor, optimizer, data = window_case()
+    replay = copy.deepcopy(actor)
+    rng = torch.get_rng_state()
+    args = dict(epochs=2, minibatch_size=2, learning_observation_index=132)
+    original = update_full_body_ppo(actor, optimizer, data, FullBodyPPOUpdateConfig(**args))
+    torch.set_rng_state(rng)
+    balanced = update_full_body_ppo(
+        replay,
+        torch.optim.Adam(replay.parameters(), lr=1e-4),
+        data,
+        FullBodyPPOUpdateConfig(**args, episode_balanced_actor=True),
+    )
+    assert {k: balanced[k] for k in original} == original
+    assert balanced["actor_weight_min"] == balanced["actor_weight_max"] == 1
+    assert all(torch.equal(v, replay.state_dict()[k]) for k, v in actor.state_dict().items())
+
+
+@pytest.mark.parametrize("all_critic", [False, True])
+def test_unequal_episode_windows_balance_weights_and_replay(all_critic):
+    torch, actor, optimizer, data = window_case()
+    data["obs"][3, 0, 132] = 0  # One selected sample versus two.
+    with torch.no_grad():
+        mean, value = actor(data["obs"].reshape(-1, 133))
+        normal = torch.distributions.Normal(mean, actor.logstd.clamp(-2.5, -0.3).exp())
+        data["value"] = value.reshape(4, 2)
+        data["logp"] = normal.log_prob(data["raw"].reshape(-1, 29)).sum(1).reshape(4, 2)
+    replay, preserved = copy.deepcopy(actor), copy.deepcopy(data)
+    rng = torch.get_rng_state()
+    config = FullBodyPPOUpdateConfig(
+        epochs=2,
+        minibatch_size=2,
+        learning_observation_index=132,
+        episode_balanced_actor=True,
+        critic_all_active=all_critic,
+    )
+    result = update_full_body_ppo(actor, optimizer, data, config)
+    torch.set_rng_state(rng)
+    repeated = update_full_body_ppo(
+        replay,
+        torch.optim.Adam(replay.parameters(), lr=1e-4),
+        data,
+        config,
+    )
+    assert result == repeated
+    assert result["actor_weight_min"] == 0.75
+    assert result["actor_weight_max"] == 1.5
+    assert result["actor_represented_worlds"] == 2
+    assert result["active_samples"] == 3
+    assert result["verified_active_samples"] == 8
+    assert not result["promotion_eligible"]
+    assert all(torch.equal(v, replay.state_dict()[k]) for k, v in actor.state_dict().items())
+    assert all(torch.equal(v, preserved[k]) for k, v in data.items())

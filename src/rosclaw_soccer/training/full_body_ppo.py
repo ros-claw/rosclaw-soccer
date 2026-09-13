@@ -24,10 +24,12 @@ class FullBodyPPOUpdateConfig:
     minimum_log_std: float = -2.5
     learning_observation_index: int | None = None
     critic_all_active: bool = False
+    episode_balanced_actor: bool = False
 
     def __post_init__(self) -> None:
         if (
             type(self.critic_all_active) is not bool
+            or type(self.episode_balanced_actor) is not bool
             or type(self.epochs) is not int
             or type(self.observation_size) is not int
             or type(self.action_size) is not int
@@ -86,6 +88,10 @@ def update_full_body_ppo(
     episode. Feature provenance and candidate admission remain caller-owned.
     With critic_all_active, value targets cover all live samples once per
     completed epoch; only actor likelihood loss uses the learning window.
+    Optional episode balancing gives each world with selected actor samples
+    equal total policy-loss weight, instead of favouring longer action windows.
+    It changes neither GAE, advantage normalization, critic weights nor sample
+    selection. Divergence checks retain both time-step and balanced views.
     The default path preserves historical optimizer ordering and RNG usage.
     """
     import torch
@@ -182,6 +188,12 @@ def update_full_body_ppo(
     all_returns = (advantage + data["value"]).reshape(-1)[all_keep]
     adv = advantage.reshape(-1)[keep]
     adv = (adv - adv.mean()) / (adv.std() + 1e-6)
+    actor_weights = None
+    if active.episode_balanced_actor:
+        counts = keep.reshape(horizon, worlds).sum(0)
+        represented = (counts > 0).sum()
+        per_world = len(obs) / (represented * counts.clamp_min(1))
+        actor_weights = per_world.expand(horizon, worlds).reshape(-1)[keep]
     steps, kl, completed = 0, 0.0, 0
     for epoch in range(active.epochs):
         permutation: Any = torch.randperm(len(obs), device=obs.device)
@@ -198,8 +210,9 @@ def update_full_body_ppo(
             )
             logp = distribution.log_prob(raw[indices]).sum(1)
             ratio = (logp - old[indices]).exp()
-            policy_loss = -torch.minimum(
-                ratio * adv[indices], ratio.clamp(0.8, 1.2) * adv[indices]
+            surrogate = torch.minimum(ratio * adv[indices], ratio.clamp(0.8, 1.2) * adv[indices])
+            policy_loss = -(
+                surrogate if actor_weights is None else surrogate * actor_weights[indices]
             ).mean()
             loss = policy_loss
             if not active.critic_all_active:
@@ -209,7 +222,7 @@ def update_full_body_ppo(
             optimizer.zero_grad()
             loss.backward()
             if active.critic_all_active:
-                critic_indices = critic_batches[batch_index]
+                critic_indices: Any = critic_batches[batch_index]
                 # Bound forward/backward memory without changing the mean loss.
                 for chunk in critic_indices.split(active.minibatch_size):
                     _, prediction = agent(all_obs[chunk])
@@ -232,6 +245,11 @@ def update_full_body_ppo(
             logp = distribution.log_prob(raw).sum(1)
             delta = logp - old
             kl = float((delta.exp() - 1 - delta).mean())
+            if actor_weights is not None:
+                balanced_kl = float(((delta.exp() - 1 - delta) * actor_weights).mean())
+                if not math.isfinite(balanced_kl):
+                    raise FloatingPointError("nonfinite balanced full-body PPO divergence")
+                kl = max(kl, balanced_kl)
         if not math.isfinite(kl):
             raise FloatingPointError("nonfinite full-body PPO divergence")
         completed = epoch + 1
@@ -254,4 +272,11 @@ def update_full_body_ppo(
         )
     if active.critic_all_active:
         result.update(critic_all_active=True, critic_samples_per_epoch=len(all_obs))
+    if actor_weights is not None:
+        result.update(
+            episode_balanced_actor=True,
+            actor_weight_min=float(actor_weights.min()),
+            actor_weight_max=float(actor_weights.max()),
+            actor_represented_worlds=int(represented),
+        )
     return result
