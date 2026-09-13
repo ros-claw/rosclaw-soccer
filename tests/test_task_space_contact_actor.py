@@ -7,6 +7,7 @@ from rosclaw_soccer.training.coupled_ball_residual import build_coupled_ball_res
 from rosclaw_soccer.training.full_body_ppo import FullBodyPPOUpdateConfig, update_full_body_ppo
 from rosclaw_soccer.training.task_space_contact_actor import (
     build_contextual_carry_actor_critic,
+    build_full_body_carry_actor_critic,
     build_task_space_carry_actor_critic,
     build_task_space_contact_actor_critic,
 )
@@ -26,12 +27,14 @@ def build(actions=3):
             else build_task_space_carry_actor_critic
         )
     )
+    if actions == 183:
+        factory = build_full_body_carry_actor_critic
     learner = factory(parent.state_dict(), zero, one, critic_mean=zero, critic_scale=one)
     obs = torch.zeros(4, 170)
     obs[:, 136] = 1
     obs[:, 138] = 0.48
     obs[2:, 169] = 1
-    if actions == 182:
+    if actions in (182, 183):
         obs = torch.cat((obs, torch.zeros(4, 12)), 1)
     return learner, obs
 
@@ -65,12 +68,14 @@ def test_no_implicit_state_or_foot_contract(fault):
         learner(obs)
 
 
-@pytest.mark.parametrize("actions", [3, 6, 182])
+@pytest.mark.parametrize("actions", [3, 6, 182, 183])
 def test_explicit_171_ppo_replays_without_changing_parent(actions):
     learner, obs = build(actions)
     width = obs.shape[1]
     if actions == 182:
         actions = 6
+    elif actions == 183:
+        actions = 32
     agent = attach_binary_learning_window(learner, observation_size=width)
     starting = copy.deepcopy(agent.state_dict())
     observation = torch.cat((obs, torch.ones(4, 1)), 1).repeat(4, 1, 1)
@@ -126,10 +131,11 @@ def test_force_only_weights_do_not_silently_load_as_force_and_navigation():
         carry.load_state_dict(contact.state_dict())
 
 
-def test_contextual_carry_is_explicit_zero_initialized_and_sees_task_features():
-    learner, obs = build(182)
+@pytest.mark.parametrize("contract,actions", [(182, 6), (183, 32)])
+def test_contextual_carry_is_explicit_zero_initialized_and_sees_task_features(contract, actions):
+    learner, obs = build(contract)
     mean, value = learner(obs)
-    assert mean.shape == (4, 6) and not mean.any()
+    assert mean.shape == (4, actions) and not mean.any()
     assert torch.equal(value, learner.parent(obs[:, :169])[1])
     assert learner.actor.mean.shape == (182,)
     assert not learner.actor.mean[170:].any()
@@ -147,4 +153,6 @@ def test_contextual_carry_is_explicit_zero_initialized_and_sees_task_features():
     changed[:, 172] = 1.1
     with pytest.raises(ValueError):
         learner(changed)
-    FullBodyPPOUpdateConfig(observation_size=183, action_size=6, learning_observation_index=182)
+    FullBodyPPOUpdateConfig(
+        observation_size=183, action_size=actions, learning_observation_index=182
+    )

@@ -50,6 +50,8 @@ class FullBodyPPOUpdateConfig:
                 (171, 6),  # Carry policy plus training-only influence bit.
                 (182, 6),  # Local carry features plus explicit12 task-context features.
                 (183, 6),  # Contextual carry plus training-only influence bit.
+                (182, 32),  # Contextual full-body carry:29 joints and3 navigation latents.
+                (183, 32),  # Full-body carry plus training-only influence bit.
                 (136, 3),
                 (143, 3),
                 (143, 29),

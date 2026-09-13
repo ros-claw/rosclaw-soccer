@@ -72,6 +72,32 @@ def build_contextual_carry_actor_critic(
     )
 
 
+def build_full_body_carry_actor_critic(
+    parent_state: Mapping[str, Any],
+    mean: Any,
+    scale: Any,
+    *,
+    critic_mean: Any,
+    critic_scale: Any,
+) -> Any:
+    """Explicit182/32:29 joint-target residual and3 navigation latents.
+
+    Not foot forces or direct motor torques. Caller must use the explicit
+    coupled residual envelope, foundation-only carry contract and independent
+    physics qualification. The contact parent supplies a frozen value baseline,
+    not an applied pass action. Zero means do not initialize physical history.
+    """
+    return _build_task_space_actor_critic(
+        parent_state,
+        mean,
+        scale,
+        critic_mean=critic_mean,
+        critic_scale=critic_scale,
+        actions=32,
+        contextual=True,
+    )
+
+
 def _build_task_space_actor_critic(
     parent_state: Mapping[str, Any],
     mean: Any,
