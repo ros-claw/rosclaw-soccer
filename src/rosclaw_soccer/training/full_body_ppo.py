@@ -23,10 +23,12 @@ class FullBodyPPOUpdateConfig:
     action_size: int = 29
     minimum_log_std: float = -2.5
     learning_observation_index: int | None = None
+    critic_all_active: bool = False
 
     def __post_init__(self) -> None:
         if (
-            type(self.epochs) is not int
+            type(self.critic_all_active) is not bool
+            or type(self.epochs) is not int
             or type(self.observation_size) is not int
             or type(self.action_size) is not int
             or (self.observation_size, self.action_size)
@@ -82,6 +84,9 @@ def update_full_body_ppo(
     An optional binary observation feature selects optimization samples only:
     all live likelihoods/values are still verified, and GAE uses the continuous
     episode. Feature provenance and candidate admission remain caller-owned.
+    With critic_all_active, value targets cover all live samples once per
+    completed epoch; only actor likelihood loss uses the learning window.
+    The default path preserves historical optimizer ordering and RNG usage.
     """
     import torch
 
@@ -149,6 +154,8 @@ def update_full_body_ppo(
             (value - data["value"].reshape(-1)[keep]).abs().max() <= 1e-3
         ):
             raise ValueError("rollout likelihood or critic differs from the starting learner")
+    all_obs = obs
+    all_keep = keep
     if active.learning_observation_index is not None:
         keep = learning_keep
         obs = data["obs"].reshape(-1, active.observation_size)[keep]
@@ -172,26 +179,46 @@ def update_full_body_ppo(
         ) * data["alive"][frame]
         advantage[frame] = carry
     returns = (advantage + data["value"]).reshape(-1)[keep]
+    all_returns = (advantage + data["value"]).reshape(-1)[all_keep]
     adv = advantage.reshape(-1)[keep]
     adv = (adv - adv.mean()) / (adv.std() + 1e-6)
     steps, kl, completed = 0, 0.0, 0
     for epoch in range(active.epochs):
         permutation: Any = torch.randperm(len(obs), device=obs.device)
-        for indices in permutation.split(active.minibatch_size):
+        batches = permutation.split(active.minibatch_size)
+        critic_batches = (
+            torch.tensor_split(torch.randperm(len(all_obs), device=obs.device), len(batches))
+            if active.critic_all_active
+            else ()
+        )
+        for batch_index, indices in enumerate(batches):
             mean, value = agent(obs[indices])
             distribution = torch.distributions.Normal(
                 mean, agent.logstd.clamp(active.minimum_log_std, -0.3).exp()
             )
             logp = distribution.log_prob(raw[indices]).sum(1)
             ratio = (logp - old[indices]).exp()
-            loss = (
-                -torch.minimum(ratio * adv[indices], ratio.clamp(0.8, 1.2) * adv[indices]).mean()
-                + 0.5 * (value - returns[indices]).square().mean()
-            )
+            policy_loss = -torch.minimum(
+                ratio * adv[indices], ratio.clamp(0.8, 1.2) * adv[indices]
+            ).mean()
+            loss = policy_loss
+            if not active.critic_all_active:
+                loss = loss + 0.5 * (value - returns[indices]).square().mean()
             if not bool(torch.isfinite(loss)):
                 raise FloatingPointError("nonfinite full-body PPO loss")
             optimizer.zero_grad()
             loss.backward()
+            if active.critic_all_active:
+                critic_indices = critic_batches[batch_index]
+                # Bound forward/backward memory without changing the mean loss.
+                for chunk in critic_indices.split(active.minibatch_size):
+                    _, prediction = agent(all_obs[chunk])
+                    critic_loss = (
+                        0.5 * (prediction - all_returns[chunk]).square().sum() / len(critic_indices)
+                    )
+                    if not bool(torch.isfinite(critic_loss)):
+                        raise FloatingPointError("nonfinite full-episode critic loss")
+                    critic_loss.backward()
             norm = torch.nn.utils.clip_grad_norm_(agent.parameters(), 0.5)
             if not bool(torch.isfinite(norm)):
                 raise FloatingPointError("nonfinite full-body PPO gradient")
@@ -225,4 +252,6 @@ def update_full_body_ppo(
             learning_observation_index=active.learning_observation_index,
             verified_active_samples=int(data["alive"].sum()),
         )
+    if active.critic_all_active:
+        result.update(critic_all_active=True, critic_samples_per_epoch=len(all_obs))
     return result
