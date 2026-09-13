@@ -8,10 +8,10 @@ torch = pytest.importorskip("torch")
 
 
 class Learner(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, observation_size=169):
         super().__init__()
-        self.actor = torch.nn.Linear(169, 32)
-        self.critic = torch.nn.Linear(169, 1)
+        self.actor = torch.nn.Linear(observation_size, 32)
+        self.critic = torch.nn.Linear(observation_size, 1)
         self.logstd = torch.nn.Parameter(torch.full((32,), -3.5))
         for head in (self.actor, self.critic):
             torch.nn.init.zeros_(head.weight)
@@ -101,3 +101,80 @@ def test_exact_replay_and_exclusive_optimizer():
     opt.add_param_group({"params": [torch.nn.Parameter(torch.zeros(1))]})
     with pytest.raises(ValueError, match="exclusively"):
         update_self_imitation(first, opt, batch)
+
+
+@pytest.mark.parametrize("size", [True, 169.0, 0, 170, 183, 513])
+def test_unknown_observation_contract_is_rejected_before_optimizer(size):
+    model, optimizer, batch = setup()
+    before = copy.deepcopy(model.state_dict())
+    with pytest.raises(ValueError, match="observation contract"):
+        update_self_imitation(model, optimizer, batch, observation_size=size)
+    assert not optimizer.state
+    assert all(torch.equal(before[k], v) for k, v in model.state_dict().items())
+
+
+def test_explicit_legacy_contract_preserves_exact_optimizer_math():
+    first, opt, batch = setup()
+    second, other, _ = setup()
+    for _ in range(3):
+        assert update_self_imitation(first, opt, batch) == update_self_imitation(
+            second, other, batch, observation_size=169
+        )
+    assert all(torch.equal(v, second.state_dict()[k]) for k, v in first.state_dict().items())
+    for a, b in zip(opt.state.values(), other.state.values(), strict=True):
+        assert all(torch.equal(a[k], b[k]) for k in a)
+
+
+def test_contextual_contract_requires_opt_in_and_replays_actor_critic_and_adam():
+    first = Learner(182)
+    second = copy.deepcopy(first)
+    opt = torch.optim.Adam(first.parameters(), lr=1e-4)
+    other = torch.optim.Adam(second.parameters(), lr=1e-4)
+    batch = dict(
+        obs=torch.ones(8, 182),
+        raw=torch.full((8, 32), 0.1),
+        returns=torch.ones(8),
+        actor_mask=torch.ones(8),
+    )
+    with pytest.raises(ValueError, match="aligned"):
+        update_self_imitation(first, opt, batch)
+    assert not opt.state
+    for _ in range(3):
+        result = update_self_imitation(first, opt, batch, observation_size=182)
+        assert result == update_self_imitation(second, other, batch, observation_size=182)
+        assert not result["on_policy"] and not result["promotion_eligible"]
+    mean, value = first(batch["obs"])
+    assert (mean > 0).all() and (value > 0).all()
+    assert all(torch.equal(v, second.state_dict()[k]) for k, v in first.state_dict().items())
+    for a, b in zip(opt.state.values(), other.state.values(), strict=True):
+        assert all(torch.equal(a[k], b[k]) for k in a)
+
+
+def test_real_full_body_rehearsal_preserves_frozen_parent_and_normalization():
+    from rosclaw_soccer.training.coupled_ball_residual import (
+        build_coupled_ball_residual_actor_critic,
+    )
+    from rosclaw_soccer.training.task_space_contact_actor import build_full_body_carry_actor_critic
+
+    parent = build_coupled_ball_residual_actor_critic()
+    zero, one = torch.zeros(169), torch.ones(169)
+    model = build_full_body_carry_actor_critic(
+        parent.state_dict(), zero, one, critic_mean=zero, critic_scale=one
+    )
+    obs = torch.zeros(8, 182)
+    obs[:, 136] = 1
+    obs[:, 138] = 0.2
+    obs[4:, 169] = 1
+    before = copy.deepcopy(model.state_dict())
+    optimizer = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=1e-4)
+    with torch.no_grad():
+        mean, value = model(obs)
+    batch = dict(obs=obs, raw=mean + 0.1, returns=value + 1, actor_mask=torch.ones(8))
+    result = update_self_imitation(model, optimizer, batch, observation_size=182)
+    assert result["positive_actor_samples"] == 8 and result["optimizer_steps"] == 1
+    after = model.state_dict()
+    protected = [k for k in before if k.startswith("parent.") or k.endswith((".mean", ".scale"))]
+    assert protected and all(torch.equal(before[k], after[k]) for k in protected)
+    assert any(not torch.equal(before[k], after[k]) for k in before if k.startswith("actor."))
+    assert any(not torch.equal(before[k], after[k]) for k in before if k.startswith("critic."))
+    assert not any(p.requires_grad or p.grad is not None for p in model.parent.parameters())

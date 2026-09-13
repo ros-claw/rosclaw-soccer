@@ -10,10 +10,17 @@ from collections.abc import Mapping
 from typing import Any
 
 
-def update_self_imitation(agent: Any, optimizer: Any, batch: Mapping[str, Any]) -> dict[str, Any]:
+def update_self_imitation(
+    agent: Any,
+    optimizer: Any,
+    batch: Mapping[str, Any],
+    *,
+    observation_size: int = 169,
+) -> dict[str, Any]:
     """One actor/critic step using positive return gaps and a binary actor mask.
 
-    Inputs are detached 169-feature observations, 32 raw latent actions,
+    Inputs are detached 169-feature observations (or explicitly requested
+    182-feature contextual observations), 32 raw latent actions,
     Monte Carlo returns and actor masks. No behavior likelihood is accepted,
     and this function never represents replay data as on-policy experience.
     Positive advantages are capped at one; one-sided Huber value weight is
@@ -22,6 +29,10 @@ def update_self_imitation(agent: Any, optimizer: Any, batch: Mapping[str, Any]) 
     """
     import torch
 
+    # Shape alone never selects a policy contract. The historical default is
+    # unchanged; callers must explicitly declare the contextual replay path.
+    if type(observation_size) is not int or observation_size not in (169, 182):
+        raise ValueError("explicit supported self-imitation observation contract required")
     if not isinstance(batch, Mapping) or set(batch) != {"obs", "raw", "returns", "actor_mask"}:
         raise ValueError("explicit off-policy self-imitation fields required")
     observation = batch["obs"]
@@ -30,7 +41,12 @@ def update_self_imitation(agent: Any, optimizer: Any, batch: Mapping[str, Any]) 
     n = len(observation)
     if not 1 <= n <= 4096:
         raise ValueError("bounded self-imitation minibatch required")
-    shapes = {"obs": (n, 169), "raw": (n, 32), "returns": (n,), "actor_mask": (n,)}
+    shapes = {
+        "obs": (n, observation_size),
+        "raw": (n, 32),
+        "returns": (n,),
+        "actor_mask": (n,),
+    }
     for key, value in batch.items():
         if (
             not isinstance(value, torch.Tensor)
