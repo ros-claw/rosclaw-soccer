@@ -7,6 +7,7 @@ torch = pytest.importorskip("torch")
 from rosclaw_soccer.training.ball_carry_credit import (  # noqa: E402
     advance_ball_carry,
     begin_ball_carry,
+    ground_carry_potential,
     ground_carry_success,
 )
 
@@ -146,3 +147,23 @@ def test_extent_history_cannot_be_reset_to_hide_loss_of_control():
 def test_one_metre_threshold_is_not_relaxed():
     h = successful()
     assert not ground_carry_success(replace(h, forward_progress=torch.tensor([1.0 - 1e-6]))).item()
+
+
+def test_potential_is_bounded_and_does_not_require_success():
+    assert ground_carry_potential(initial()).item() == 0
+    partial = step(initial(), x=0.5)
+    assert not ground_carry_success(partial).item()
+    assert ground_carry_potential(partial).item() == 3.5
+    assert ground_carry_potential(successful()).item() == 6
+
+
+@pytest.mark.parametrize("cause", ["body", "distance", "height"])
+def test_potential_cannot_recover_after_latched_failure(cause):
+    args = {
+        "body": {"body_valid": torch.tensor([False])},
+        "distance": {"root_x": 0.0},
+        "height": {"ball_position": torch.tensor([[1.25, 0.0, 0.7]])},
+    }[cause]
+    h = step(successful(), x=1.0, **args)
+    assert ground_carry_potential(h).item() == 0
+    assert ground_carry_potential(step(h, x=1.0)).item() == 0

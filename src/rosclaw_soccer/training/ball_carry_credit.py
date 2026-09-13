@@ -268,3 +268,27 @@ def ground_carry_success(history: BallCarryCredit) -> Any:
         & (history.separation <= 0.65)
         & (history.maximum_ball_height <= 0.5)
     )
+
+
+def ground_carry_potential(history: BallCarryCredit) -> Any:
+    """Bounded [0,6] training signal, not a success label or motion proposal.
+
+    Ball/root progress contribute at most5/1 respectively, with lateral and
+    separation penalties. A recorded physical failure, loss of close control
+    or high ball zeros the potential permanently within this history. A
+    trainer must bind its discount/terminal/reward semantics separately and
+    evaluate actual success with ``ground_carry_success``, not this value.
+    """
+    ground_carry_success(history)  # validate history without granting task success
+    valid = (
+        ~history.failed
+        & (history.maximum_separation <= 0.75)
+        & (history.maximum_ball_height <= 0.5)
+    )
+    value = (
+        5 * history.forward_progress.clamp(0, 1)
+        + 2 * history.root_progress.clamp(0, 0.5)
+        - 2 * history.lateral_error.clamp(0, 1)
+        - 2 * (history.separation - 0.45).clamp(0, 1)
+    ).clamp(0, 6)
+    return value * valid.to(value.dtype)
