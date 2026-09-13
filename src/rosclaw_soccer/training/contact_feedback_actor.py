@@ -107,7 +107,7 @@ def build_contact_feedback_actor_critic(parent_state: Mapping[str, Any]) -> Any:
     ):
         raise ValueError("explicit finite float32 parent tensors required")
 
-    class ContactActorCritic(torch.nn.Module):  # type: ignore[misc]  # Optional lazy Torch import.
+    class ContactActorCritic(torch.nn.Module):
         def __init__(self) -> None:
             super().__init__()
             self.parent = build_coupled_ball_residual_actor_critic()
@@ -130,8 +130,9 @@ def build_contact_feedback_actor_critic(parent_state: Mapping[str, Any]) -> Any:
                 torch.nn.Linear(128, 1),
             )
             for layer in (self.actor[-1], self.critic[-1]):
-                torch.nn.init.zeros_(layer.weight)
-                torch.nn.init.zeros_(layer.bias)
+                output_layer: Any = layer
+                torch.nn.init.zeros_(output_layer.weight)
+                torch.nn.init.zeros_(output_layer.bias)
             self.logstd = torch.nn.Parameter(torch.full((32,), -3.5))
 
         def forward(self, observation: Any) -> tuple[Any, Any]:
@@ -163,3 +164,17 @@ def build_contact_feedback_actor_critic(parent_state: Mapping[str, Any]) -> Any:
             return mean, value
 
     return ContactActorCritic()
+
+
+def build_normalized_contact_actor_critic(
+    parent_state: Mapping[str, Any], mean: Any, scale: Any
+) -> Any:
+    """Explicit normalized-head checkpoint variant; parent still sees raw 139 features."""
+    from rosclaw_soccer.training.frozen_feature_normalization import normalize_network_inputs
+
+    agent = build_contact_feedback_actor_critic(parent_state)
+    agent.actor = normalize_network_inputs(agent.actor, mean, scale)
+    agent.critic = normalize_network_inputs(agent.critic, mean, scale)
+    if len(agent.actor.mean) != CONTACT_OBSERVATION_SIZE:
+        raise ValueError("explicit 169-feature contact normalization required")
+    return agent
