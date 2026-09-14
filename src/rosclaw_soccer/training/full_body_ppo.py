@@ -42,6 +42,7 @@ class FullBodyPPOUpdateConfig:
             not in (
                 (133, 29),
                 (136, 29),
+                (554, 29),  # Full kick547 + goal3 + rootvelocity3 + learning bit.
                 (139, 32),
                 (140, 32),  # 139 policy features plus training-only binary learning bit.
                 (169, 32),  # Explicit foot/ball feedback plus one measured interval history.
