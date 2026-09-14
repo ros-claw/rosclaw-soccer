@@ -59,6 +59,87 @@ def test_role_complete_mirrored_roster_and_private_memories(fixture):
         replace(fixture, players=(*fixture.players, fixture.players[0]))
 
 
+@pytest.mark.parametrize("contact_ready", [False, True])
+def test_continuous_exam_cli_routes_real_four_vs_four_fixture(
+    fixture, monkeypatch, tmp_path, contact_ready
+):
+    import sys
+
+    from rosclaw_soccer.training import continuous_competitive_match_growth as module
+
+    captured = {}
+
+    def run(**kwargs):
+        captured.update(kwargs)
+        return {"passed": False}
+
+    monkeypatch.setattr(module, "run_continuous_competitive_match_growth", run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "exam",
+            "--players",
+            "8",
+            "--duration-sec",
+            "25",
+            "--asset-root",
+            "unused",
+            "--evidence-dir",
+            str(tmp_path),
+        ]
+        + (["--contact-ready"] if contact_ready else []),
+    )
+    module.main()
+    assert len(captured["fixture"].players) == 8
+    assert all(c.self_model.basic_ball_play for c in captured["fixture"].cells)
+    assert captured["world_config"].bilateral_goals
+    assert captured["world_config"].simulation_duration_sec == 25
+    assert not captured["world_config"].stop_on_ball_exit
+    assert captured["scenario"].ball_initial_position_m[:2] == (3.0, 0.0)
+    assert captured["world_config"].all_role_clearance is contact_ready
+    assert captured["world_config"].stationary_ball_acquisition is contact_ready
+    assert captured["world_config"].predictive_separation is contact_ready
+    assert all(
+        c.tactical_profile.anticipatory_contact is contact_ready for c in captured["fixture"].cells
+    )
+
+
+def test_continuous_exam_cli_preserves_legacy_six_player_defaults(monkeypatch, tmp_path):
+    import sys
+
+    from rosclaw_soccer.training import continuous_competitive_match_growth as module
+
+    captured = {}
+
+    def run(**kwargs):
+        captured.update(kwargs)
+        return {"passed": False}
+
+    monkeypatch.setattr(module, "run_continuous_competitive_match_growth", run)
+    monkeypatch.setattr(
+        sys, "argv", ["exam", "--asset-root", "unused", "--evidence-dir", str(tmp_path)]
+    )
+    module.main()
+    assert captured["fixture"] is None
+    assert captured["scenario"] is None
+    assert captured["world_config"] == module.default_continuous_match_config()
+
+
+def test_contact_ready_profile_refuses_implicit_six_player_selection(monkeypatch, tmp_path):
+    import sys
+
+    from rosclaw_soccer.training import continuous_competitive_match_growth as module
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["exam", "--asset-root", "unused", "--evidence-dir", str(tmp_path), "--contact-ready"],
+    )
+    with pytest.raises(ValueError, match="eight-player"):
+        module.main()
+
+
 def test_forward_lane_curriculum_is_mirrored_and_distinct_from_baseline(fixture):
     curriculum = build_four_vs_four_fixture(Path("unused"), forward_receiver_lane=True)
     assert curriculum.fixture_hash != fixture.fixture_hash

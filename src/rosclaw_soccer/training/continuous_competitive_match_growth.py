@@ -1,4 +1,4 @@
-"""Strict-replay evidence loop for one continuous physical 3v3 match chain.
+"""Strict-replay evidence loop for one continuous physical 3v3 or 4v4 chain.
 
 This is deliberately a hard qualification exam rather than a highlight
 renderer.  Every credited skill is reconstructed from foot/glove contacts,
@@ -12,7 +12,7 @@ import json
 import math
 import os
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -164,6 +164,8 @@ def run_continuous_competitive_match_growth(
     teacher_config: G1LocomotionContactTeacherConfig | None = None,
     option_config: G1RollingOptionBridgeConfig | None = None,
     thresholds: CompetitiveMatchThresholds | None = None,
+    fixture: IndependentTeamFixture | None = None,
+    scenario: IndependentTeamWorldScenario | None = None,
 ) -> dict[str, Any]:
     """Run, replay, assess, persist, and revalidate one hard match exam."""
 
@@ -171,8 +173,8 @@ def run_continuous_competitive_match_growth(
     if root.exists() and any(root.iterdir()):
         raise ValueError("continuous-match evidence directory must be empty")
     root.mkdir(parents=True, exist_ok=True)
-    fixture = build_continuous_competitive_fixture(asset_root)
-    scenario = default_continuous_match_scenario()
+    fixture = fixture or build_continuous_competitive_fixture(asset_root)
+    scenario = scenario or default_continuous_match_scenario()
     world = world_config or default_continuous_match_config()
     teacher = teacher_config or G1LocomotionContactTeacherConfig()
     option = option_config or G1RollingOptionBridgeConfig(
@@ -241,6 +243,8 @@ def run_continuous_competitive_match_growth(
         "status": "PASS_CONTINUOUS_MATCH_CHAIN" if passed else "REJECTED_CONTINUOUS_MATCH_CHAIN",
         "passed": passed,
         "fixture_hash": fixture.fixture_hash,
+        "fixture": fixture.to_dict(),
+        "agent_cells": [cell.to_dict() for cell in fixture.cells],
         "scenario": asdict(scenario),
         "scenario_hash": scenario.scenario_hash,
         "world_config": asdict(world),
@@ -261,7 +265,7 @@ def run_continuous_competitive_match_growth(
         "evidence_boundary": {
             "physics_authority": "CPU_MUJOCO",
             "activation_ceiling": "SIM_ONLY",
-            "whole_body_g1_count": 6,
+            "whole_body_g1_count": len(fixture.players),
             "one_rosclaw_cell_per_body": True,
             "root_or_ball_state_writes": False,
             "pixels_used_for_scoring": False,
@@ -389,14 +393,60 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--asset-root", required=True, type=Path)
+    parser.add_argument("--players", type=int, choices=(6, 8), default=6)
+    parser.add_argument("--duration-sec", type=float, default=10.0)
+    parser.add_argument(
+        "--contact-ready",
+        action="store_true",
+        help="Experimental 4v4 coordination; not a trained champion",
+    )
     return parser
 
 
 def main() -> None:
     arguments = _parser().parse_args()
+    if arguments.contact_ready and arguments.players != 8:
+        raise ValueError("contact-ready profile requires an explicit eight-player exam")
+    fixture = None
+    scenario = None
+    world = replace(
+        default_continuous_match_config(),
+        simulation_duration_sec=arguments.duration_sec,
+    )
+    if arguments.players == 8:
+        from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
+
+        fixture = build_four_vs_four_fixture(arguments.asset_root, basic_ball_play=True)
+        scenario = IndependentTeamWorldScenario(
+            scenario_id="s199.continuous.symmetric-4v4.baseline",
+            ball_initial_position_m=(3.0, 0.0, fixture.goal.ball_radius_m),
+            ball_initial_velocity_mps=(0.0, 0.0, 0.0),
+            seed=1928,
+        )
+        world = replace(world, bilateral_goals=True)
+        if arguments.contact_ready:
+            fixture = replace(
+                fixture,
+                cells=tuple(
+                    replace(
+                        cell,
+                        tactical_profile=replace(cell.tactical_profile, anticipatory_contact=True),
+                    )
+                    for cell in fixture.cells
+                ),
+            )
+            world = replace(
+                world,
+                stationary_ball_acquisition=True,
+                predictive_separation=True,
+                all_role_clearance=True,
+            )
     value = run_continuous_competitive_match_growth(
         evidence_dir=arguments.evidence_dir,
         asset_root=arguments.asset_root,
+        fixture=fixture,
+        scenario=scenario,
+        world_config=world,
     )
     print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
 
