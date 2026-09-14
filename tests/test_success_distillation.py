@@ -130,3 +130,37 @@ def test_coupled_contract_opt_in_and_exact_actor_only_update():
         for key, tensor in agent.state_dict().items()
         if not key.startswith("actor.")
     )
+
+
+def test_moving_contact_contract_requires_opt_in_and_preserves_critic_noise():
+    from rosclaw_soccer.training.moving_contact_learning import build_moving_contact_actor_critic
+
+    agent = build_moving_contact_actor_critic()
+    reference = copy.deepcopy(agent)
+    before = {key: value.clone() for key, value in agent.state_dict().items()}
+    observations = torch.zeros(8, 136)
+    observations[:, 106] = 1
+    raw = torch.full((8, 29), 0.12)
+    weights = torch.full((8,), 0.125)
+    tensors = dict(observations=observations, raw_actions=raw, sample_weights=weights)
+    with pytest.raises(ValueError):
+        distill_successful_motor_actions(agent, **tensors)
+    assert all(torch.equal(value, agent.state_dict()[key]) for key, value in before.items())
+    config = SuccessDistillationConfig(steps=4, learning_rate=1e-4, observation_size=136)
+    result = distill_successful_motor_actions(agent, **tensors, config=config)
+    optimizer = torch.optim.Adam(reference.actor.parameters(), lr=config.learning_rate)
+    for _ in range(config.steps):
+        loss = ((reference.actor(observations) - raw).square().mean(1) * weights).sum()
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(reference.actor.parameters(), 1, error_if_nonfinite=True)
+        optimizer.step()
+    assert result["final_weighted_mse"] < result["initial_weighted_mse"]
+    assert all(
+        torch.equal(value, reference.state_dict()[key]) for key, value in agent.state_dict().items()
+    )
+    assert all(
+        torch.equal(value, agent.state_dict()[key])
+        for key, value in before.items()
+        if not key.startswith("actor.")
+    )

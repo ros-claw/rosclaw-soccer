@@ -28,7 +28,7 @@ class SuccessDistillationConfig:
             or not 0 < self.learning_rate <= 0.001
             or type(self.observation_size) is not int
             or type(self.action_size) is not int
-            or (self.observation_size, self.action_size) not in ((133, 29), (139, 32))
+            or (self.observation_size, self.action_size) not in ((133, 29), (136, 29), (139, 32))
         ):
             raise ValueError("bounded supervised update configuration required")
 
@@ -41,7 +41,7 @@ def distill_successful_motor_actions(
     sample_weights: Any,
     config: SuccessDistillationConfig | None = None,
 ) -> dict[str, Any]:
-    """Fit an explicitly selected 133/29 or 139/32 actor with local fresh Adam.
+    """Fit an explicitly selected 133/29, 136/29 or 139/32 actor with fresh Adam.
 
     Inputs are detached float32 training tensors, NOT fresh PPO likelihoods.
     All inputs and actor ownership are checked before updates. On optimizer
@@ -49,6 +49,8 @@ def distill_successful_motor_actions(
     Only actual successful optimizer.step calls enter the returned step count.
     Critic/noise weights and pre-existing requires_grad flags are untouched.
     The default remains 133/29; no shape-based policy contract migration occurs.
+    The caller must separately bind the semantic feature schema/checkpoint;
+    matching dimensions alone do not establish moving-contact compatibility.
     """
     import torch
 
