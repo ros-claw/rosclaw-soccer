@@ -1618,7 +1618,9 @@ class G1SharedWorldResult:
     passer_joint_limit_violation: bool = False
     shooter_joint_limit_violation: bool = False
     goalkeeper_joint_limit_violation: bool = False
-    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v26"
+    joint_limit_sampling_period_sec: float | None = None
+    joint_limit_samples_per_role: int | None = None
+    schema_version: str = "rosclaw_soccer.g1_shared_world_result.v27"
 
     @property
     def pass_precision_passed(self) -> bool:
@@ -3975,6 +3977,7 @@ def _simulate_shared_world(
     finite = True
     joint_violation = False
     role_joint_violation = {robot.role: False for robot in robots}
+    joint_limit_sample_count = 0
     torque_violation = False
     actuator_saturation = False
     robot_robot_contact_count = 0
@@ -6176,6 +6179,12 @@ def _simulate_shared_world(
                 # simultaneous net response.
                 data.xfrc_applied[ball_body, :3] += second_threat_force
             mujoco.mj_step(model, data)
+            # Latch every native substep, not only the policy-rate endpoint:
+            # a joint can leave its range and return within one 20 ms frame.
+            joint_violation = _latch_joint_limit_violations(
+                model=model, data=data, robots=robots, violations=role_joint_violation
+            )
+            joint_limit_sample_count += 1
             for robot in robots:
                 executed_torque[robot.role] = data.actuator_force[robot.actuators].copy()
             observation = _contacts(
@@ -6720,16 +6729,6 @@ def _simulate_shared_world(
         passer_pitch_peak = max(passer_pitch_peak, abs(passer_pitch))
         shooter_roll_peak = max(shooter_roll_peak, abs(shooter_roll))
         shooter_pitch_peak = max(shooter_pitch_peak, abs(shooter_pitch))
-        for robot in robots:
-            ranges = model.jnt_range[robot.joint_ids]
-            limited = model.jnt_limited[robot.joint_ids].astype(bool)
-            q = data.qpos[robot.joint_qpos]
-            role_violation = bool(
-                np.any(q[limited] < ranges[limited, 0] - 1e-5)
-                or np.any(q[limited] > ranges[limited, 1] + 1e-5)
-            )
-            role_joint_violation[robot.role] = role_joint_violation[robot.role] or role_violation
-            joint_violation = joint_violation or role_violation
         finite = finite and all(
             np.all(np.isfinite(value)) for value in (data.qpos, data.qvel, data.ctrl, ball_position)
         )
@@ -7754,6 +7753,8 @@ def _simulate_shared_world(
         passer_joint_limit_violation=role_joint_violation["passer"],
         shooter_joint_limit_violation=role_joint_violation["shooter"],
         goalkeeper_joint_limit_violation=role_joint_violation.get("goalkeeper", False),
+        joint_limit_sampling_period_sec=_PHYSICS_DT,
+        joint_limit_samples_per_role=joint_limit_sample_count,
     )
     return result, trajectory
 
@@ -10299,6 +10300,29 @@ def _apply_recovery_controller(
         _mirror_g1_joint_positions(recovery.target) if left_foot_mirror else recovery.target
     )
     return recovery_target, output_kp, output_kd
+
+
+def _latch_joint_limit_violations(
+    *, model: Any, data: Any, robots: tuple[_Robot, ...], violations: dict[str, bool]
+) -> bool:
+    """Latch sampled range/invalid-state evidence without changing control.
+
+    Call immediately after each native physics step. The existing 1e-5 rad
+    range tolerance is unchanged. This records evidence, not motor protection;
+    an earlier failure cannot disappear when a later sample returns in range.
+    ``joint_ids`` and ``joint_qpos`` are the robot's existing scalar-DoF map.
+    """
+    for robot in robots:
+        ranges = model.jnt_range[robot.joint_ids]
+        limited = model.jnt_limited[robot.joint_ids].astype(bool)
+        q = data.qpos[robot.joint_qpos]
+        failed = bool(
+            not np.isfinite(q).all()
+            or np.any(q[limited] < ranges[limited, 0] - 1e-5)
+            or np.any(q[limited] > ranges[limited, 1] + 1e-5)
+        )
+        violations[robot.role] = violations[robot.role] or failed
+    return any(violations.values())
 
 
 def _contacts(
