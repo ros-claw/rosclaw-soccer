@@ -9,6 +9,7 @@ serialization; this is not a concurrent access lock or a hardware interface.
 import dataclasses
 import hashlib
 import inspect
+import math
 from pathlib import Path
 from typing import Any
 
@@ -164,6 +165,101 @@ class CpuKinematicsSnapshot:
                 ):
                     raise RuntimeError("CPU simulation advanced during kinematics capture")
             return {key: torch.from_numpy(np.stack(items)) for key, items in values.items()}
+        except Exception:
+            self._invalid = True
+            raise
+
+    def read_surface_pairs(
+        self, pairs: tuple[tuple[int, int], ...], *, maximum_distance_m: float = 1.0
+    ) -> dict[str, Any]:
+        """Current-qpos surface distances and relative world-point Jacobians.
+
+        Each pair is (geom1, geom2). Jacobians describe point2 minus point1,
+        with shape [batch, pair, xyz, dof]. Censored pairs have zero endpoints
+        and zero Jacobians: their distance is an upper cutoff, not an exact
+        measurement. Contact impulses are deliberately not recomputed. Copies
+        are detached; the caller still owns model identity and serialization.
+        """
+        import mujoco
+        import numpy as np
+        import torch
+
+        if self._invalid:
+            raise RuntimeError("simulation kinematics snapshot is invalid")
+        try:
+            if (
+                type(pairs) is not tuple
+                or not 1 <= len(pairs) <= 32
+                or any(
+                    type(pair) is not tuple
+                    or len(pair) != 2
+                    or any(type(g) is not int or not 0 <= g < self._model.ngeom for g in pair)
+                    or pair[0] == pair[1]
+                    for pair in pairs
+                )
+                or len(set(pairs)) != len(pairs)
+                or type(maximum_distance_m) not in (float, int)
+                or not math.isfinite(maximum_distance_m)
+                or not 0 < maximum_distance_m <= 10
+                or self._model.nv > 1024
+            ):
+                raise ValueError("bounded distinct surface pairs and distance cutoff required")
+            result = self.read()
+            distances = np.empty((len(self._shadow), len(pairs)), dtype=np.float64)
+            segments = np.zeros((*distances.shape, 6), dtype=np.float64)
+            jacobians = np.zeros((*distances.shape, 3, self._model.nv), dtype=np.float64)
+            censored = np.ones(distances.shape, dtype=bool)
+            for batch, (live, shadow) in enumerate(zip(self._live, self._shadow, strict=True)):
+                # read() has already refreshed kinematics into private storage.
+                # mj_comPos supplies the current COM frame required by mj_jac.
+                mujoco.mj_comPos(self._model, shadow)
+                for index, (first, second) in enumerate(pairs):
+                    distance = mujoco.mj_geomDistance(
+                        self._model,
+                        shadow,
+                        first,
+                        second,
+                        maximum_distance_m,
+                        segments[batch, index],
+                    )
+                    distances[batch, index] = distance
+                    if distance >= maximum_distance_m:
+                        continue
+                    censored[batch, index] = False
+                    first_jac = np.zeros((3, self._model.nv), dtype=np.float64)
+                    second_jac = np.zeros_like(first_jac)
+                    mujoco.mj_jac(
+                        self._model,
+                        shadow,
+                        first_jac,
+                        None,
+                        segments[batch, index, :3],
+                        int(self._model.geom_bodyid[first]),
+                    )
+                    mujoco.mj_jac(
+                        self._model,
+                        shadow,
+                        second_jac,
+                        None,
+                        segments[batch, index, 3:],
+                        int(self._model.geom_bodyid[second]),
+                    )
+                    jacobians[batch, index] = second_jac - first_jac
+                if live.time != shadow.time or any(
+                    not np.array_equal(getattr(live, key), getattr(shadow, key))
+                    for key in ("qpos", "qvel", "mocap_pos", "mocap_quat")
+                ):
+                    raise RuntimeError("CPU simulation advanced during surface capture")
+            if any(not np.isfinite(value).all() for value in (distances, segments, jacobians)):
+                raise ValueError("nonfinite current surface geometry")
+            result.update(
+                pair_geom_ids=torch.tensor(pairs, dtype=torch.int64),
+                signed_surface_distance_m=torch.from_numpy(distances),
+                surface_segment_world=torch.from_numpy(segments),
+                relative_point_jacobian=torch.from_numpy(jacobians),
+                distance_censored=torch.from_numpy(censored),
+            )
+            return result
         except Exception:
             self._invalid = True
             raise
