@@ -602,14 +602,32 @@ def g1_ball_inside_goal_mouth(
     *,
     ball_y_m: float,
     ball_z_m: float,
+    ground_contact_tolerance_m: float = 0.0,
 ) -> bool:
-    """Return whether the complete ball fits through the scoring aperture."""
+    """Return whether the complete ball fits through the scoring aperture.
+
+    The default preserves the strict geometric contract. A simulation may
+    explicitly allow at most 1 mm of numerical floor contact penetration;
+    bind that choice into its scoring/evidence contract and re-examine both
+    baseline and candidate. Never use it to enlarge the sides or crossbar,
+    loosen target precision, or silently reinterpret existing goal receipts.
+    This aperture predicate alone does not prove the ball crossed the line.
+    """
+
+    if (
+        type(ground_contact_tolerance_m) not in (int, float)
+        or not math.isfinite(ground_contact_tolerance_m)
+        or not 0.0 <= ground_contact_tolerance_m <= 0.001
+    ):
+        raise ValueError("ground contact tolerance must be finite and in [0, 0.001] m")
 
     if not math.isfinite(ball_y_m) or not math.isfinite(ball_z_m):
         return False
     return bool(
         abs(ball_y_m) <= spec.width_m / 2.0 - spec.ball_radius_m
-        and spec.ball_radius_m <= ball_z_m <= spec.height_m - spec.ball_radius_m
+        and spec.ball_radius_m - ground_contact_tolerance_m
+        <= ball_z_m
+        <= spec.height_m - spec.ball_radius_m
     )
 
 
