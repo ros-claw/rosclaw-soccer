@@ -34,3 +34,16 @@ pytest -q
 Set `ROSCLAW_SOCCER_EVIDENCE` to the external evidence root before building
 media. Set `ROSCLAW_SOCCER_DATA` for external datasets. Do not hard-code local
 absolute paths in source or committed manifests.
+
+## Experimental evidence checks
+
+- For generated or expanded Python experiment runners, lint the final expanded
+  source for undefined names (`ruff check --isolated --select F821,F822`) before
+  running physics. Checking only a wrapper does not check its execution namespace.
+- Pass potentially negative scientific-notation numbers as `--key=value`.
+- A regulation-sized goal does not prove regulation ball dimensions. Inspect
+  the compiled ball's size and body mass with `physics.native_ball_dimensions`.
+  Historical humanoid training fixtures may deliberately use other dimensions;
+  preserve their evidence but never inherit adult-regulation publicity claims.
+- Changes of physical dimensions define a new experiment protocol. Do not pick
+  dimensions for favorable outcomes or silently rewrite legacy certificates.
