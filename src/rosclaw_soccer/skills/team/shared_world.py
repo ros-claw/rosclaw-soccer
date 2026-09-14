@@ -8124,9 +8124,11 @@ def _fill_local_state(robot: _Robot, data: Any, ball_body: int, ball_qvel: int) 
     robot.state.q = data.qpos[robot.joint_qpos].copy()
     robot.state.dq = data.qvel[robot.joint_qvel].copy()
     robot.state.tau_est = data.ctrl[robot.actuators].copy()
-    # MuJoCo stores a free joint's six tangent velocities in the joint frame.
-    # The attached passer frame is therefore already the policy's local frame;
-    # rotating these values a second time flips x/y and destabilizes inference.
+    # Legacy checkpoint contract: despite the suffix, root_lin_vel_b currently
+    # contains WORLD linear velocity. MuJoCo's angular qvel is body-local, but
+    # its linear qvel is not. Do not silently migrate learned keeper inputs:
+    # sim.free_joint_velocity provides the correct explicit body-frame adapter,
+    # whose adoption needs versioned observations and checkpoint requalification.
     robot.state.root_lin_vel_b = data.qvel[robot.qvel_base : robot.qvel_base + 3].copy()
     robot.state.root_ang_vel_b = data.qvel[robot.qvel_base + 3 : robot.qvel_base + 6].copy()
     robot.state.torso_pos_w = _to_local(data.xpos[robot.torso_body], robot)
