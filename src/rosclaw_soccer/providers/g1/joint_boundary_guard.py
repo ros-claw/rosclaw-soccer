@@ -109,4 +109,56 @@ def project_g1_joint_boundary_torque(
     return projected, active, excess
 
 
-__all__ = ["G1JointBoundaryGuardConfig", "project_g1_joint_boundary_torque"]
+def project_g1_policy_position_reference(
+    *,
+    target_position: np.ndarray,
+    joint_ranges: np.ndarray,
+    limited: np.ndarray,
+    margin_rad: float = 0.0,
+) -> np.ndarray:
+    """Copy a G1 policy's position reference into its limited-joint envelope.
+
+    This is an opt-in policy-adapter operation, not a safety certificate or a
+    replacement for torque projection and measured native-step joint checks.
+    Learned policies can encode torque through out-of-range virtual targets;
+    changing those targets changes the controller and requires requalification.
+    Actual positions, velocity references, policy history and inputs are never
+    modified. Unlimited joints are copied unchanged. Joint order must be the
+    canonical 29-DoF G1 order, including the supplied model ranges and mask.
+    """
+    if (
+        not isinstance(target_position, np.ndarray)
+        or not isinstance(joint_ranges, np.ndarray)
+        or not isinstance(limited, np.ndarray)
+        or target_position.shape != (29,)
+        or joint_ranges.shape != (29, 2)
+        or limited.shape != (29,)
+        or target_position.dtype.kind not in {"f", "i", "u"}
+        or joint_ranges.dtype.kind not in {"f", "i", "u"}
+        or limited.dtype != np.dtype(bool)
+    ):
+        raise ValueError("G1 reference projection requires real 29-DoF arrays and a boolean mask")
+    if (
+        isinstance(margin_rad, bool)
+        or not isinstance(margin_rad, (float, int))
+        or not math.isfinite(margin_rad)
+        or not 0.0 <= margin_rad <= 0.10
+    ):
+        raise ValueError("G1 reference margin must be finite and in [0, 0.10] rad")
+    reference = np.array(target_position, dtype=np.float64, copy=True)
+    ranges = np.asarray(joint_ranges, dtype=np.float64)
+    if not np.isfinite(reference).all() or not np.isfinite(ranges).all():
+        raise ValueError("G1 position references and ranges must be finite")
+    lower = ranges[limited, 0] + margin_rad
+    upper = ranges[limited, 1] - margin_rad
+    if np.any(lower >= upper):
+        raise ValueError("G1 reference margin collapses a limited joint range")
+    reference[limited] = np.clip(reference[limited], lower, upper)
+    return reference
+
+
+__all__ = [
+    "G1JointBoundaryGuardConfig",
+    "project_g1_joint_boundary_torque",
+    "project_g1_policy_position_reference",
+]
