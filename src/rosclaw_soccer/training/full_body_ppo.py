@@ -26,12 +26,14 @@ class FullBodyPPOUpdateConfig:
     critic_all_active: bool = False
     episode_balanced_actor: bool = False
     group_relative_actor: bool = False
+    binary_terminal_outcome: bool = False
 
     def __post_init__(self) -> None:
         if (
             type(self.critic_all_active) is not bool
             or type(self.episode_balanced_actor) is not bool
             or type(self.group_relative_actor) is not bool
+            or type(self.binary_terminal_outcome) is not bool
             or (self.group_relative_actor and not self.episode_balanced_actor)
             or type(self.epochs) is not int
             or type(self.observation_size) is not int
@@ -63,8 +65,16 @@ class FullBodyPPOUpdateConfig:
             or type(self.minibatch_size) is not int
             or not 1 <= self.minibatch_size <= 4096
             or not all(math.isfinite(x) for x in (self.gamma, self.trace_decay, self.target_kl))
-            or not 0.9 <= self.gamma < 1
-            or not 0.9 <= self.trace_decay < 1
+            or (
+                (
+                    type(self.gamma) not in (int, float)
+                    or type(self.trace_decay) not in (int, float)
+                    or self.gamma != 1.0
+                    or self.trace_decay != 1.0
+                )
+                if self.binary_terminal_outcome
+                else (not 0.9 <= self.gamma < 1 or not 0.9 <= self.trace_decay < 1)
+            )
             or not 0 < self.target_kl <= 0.05
             or type(self.minimum_log_std) not in (float, int)
             or not math.isfinite(self.minimum_log_std)
@@ -107,6 +117,9 @@ def update_full_body_ppo(
     normalized discounted episode outcomes within explicit episode_group IDs.
     It requires episode balancing; critic GAE and validation stay unchanged.
     This is a continuous-action research variant, not full paper GRPO.
+    Binary terminal outcome mode explicitly uses gamma=lambda=1, requires
+    complete zero-padded episodes and only terminal binary rewards. It cannot
+    silently reinterpret dense shaped rewards as success-probability learning.
     The default path preserves historical optimizer ordering and RNG usage.
     """
     import torch
@@ -151,6 +164,15 @@ def update_full_body_ppo(
         (data["alive"][1:] == data["next_alive"][:-1]).all()
     ):
         raise ValueError("rollout contains an undeclared episode reset")
+    if active.binary_terminal_outcome:
+        terminal = (data["alive"] == 1) & (data["next_alive"] == 0)
+        if (
+            bool((data["next_alive"][-1] != 0).any())
+            or any(bool((value[data["alive"] == 0] != 0).any()) for value in data.values())
+            or not bool(((data["reward"] == 0) | (data["reward"] == 1)).all())
+            or bool(((data["reward"] != 0) & ~terminal).any())
+        ):
+            raise ValueError("complete zero-padded binary terminal outcome episodes required")
     expected = {id(p) for p in agent.parameters() if p.requires_grad}
     actual = [id(p) for group in optimizer.param_groups for p in group["params"]]
     if set(actual) != expected or len(actual) != len(expected):
@@ -311,4 +333,6 @@ def update_full_body_ppo(
         result.update(
             group_relative_actor=True, actor_task_groups=int(torch.unique(group_ids).numel())
         )
+    if active.binary_terminal_outcome:
+        result.update(binary_terminal_outcome=True)
     return result
