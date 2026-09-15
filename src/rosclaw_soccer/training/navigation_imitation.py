@@ -46,7 +46,10 @@ def fit_navigation_demonstration(
         raise ValueError("demonstration exceeds navigation authority or is unaligned")
     import torch
 
-    model = build_local_navigation_actor_critic()
+    # Initialization is overwritten by the supplied parent. Do not advance the
+    # caller's exploration stream merely to allocate this private CPU model.
+    with torch.random.fork_rng(devices=[]):
+        model = build_local_navigation_actor_critic()
     expected = model.state_dict()
     if (
         not isinstance(parent, Mapping)

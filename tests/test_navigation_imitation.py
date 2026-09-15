@@ -26,6 +26,21 @@ def test_imitation_is_exact_replay_and_does_not_mutate_parent_or_critic():
     assert all(np.array_equal(child[k], parent[k]) for k in child if not k.startswith("actor."))
 
 
+@pytest.mark.parametrize("invalid_parent", [False, True])
+def test_private_fit_preserves_callers_cpu_exploration_rng(invalid_parent):
+    torch = pytest.importorskip("torch")
+    parent, obs, target = examples()
+    if invalid_parent:
+        parent["logstd"][0] = np.nan
+    before = torch.random.get_rng_state().clone()
+    if invalid_parent:
+        with pytest.raises(ValueError):
+            fit_navigation_demonstration(parent, obs, target, steps=2)
+    else:
+        fit_navigation_demonstration(parent, obs, target, steps=2)
+    assert torch.equal(torch.random.get_rng_state(), before)
+
+
 @pytest.mark.parametrize("fault", ["nan", "authority", "unaligned", "parent", "steps"])
 def test_invalid_training_inputs_rejected(fault):
     parent, obs, target = examples()
