@@ -29,6 +29,7 @@ class ReceivingSampler(G1RecurrentReceiver):
         episode_frames: int = 100,
         followup_target_position_m: tuple[float, float, float] | None = None,
         canonical_half_turn: bool | None = None,
+        canonical_translation_xy_m: tuple[float, float] | None = None,
     ) -> None:
         if type(seed) is not int or not 0 <= seed < 2**32:
             raise ValueError("bounded explicit receiving exploration seed required")
@@ -42,6 +43,7 @@ class ReceivingSampler(G1RecurrentReceiver):
             episode_frames=episode_frames,
             followup_target_position_m=followup_target_position_m,
             canonical_half_turn=canonical_half_turn,
+            canonical_translation_xy_m=canonical_translation_xy_m,
         )
         self.contract_hash = str(
             hash_json(

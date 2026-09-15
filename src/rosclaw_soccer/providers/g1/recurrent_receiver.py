@@ -22,8 +22,11 @@ from rosclaw_soccer.training.ball_residual import (
     build_ball_residual_actor_critic,
 )
 from rosclaw_soccer.training.receiving_frame import (
+    CANONICAL_POSE_RECEIVER_CONTRACT,
     CANONICAL_RECEIVER_CONTRACT,
     canonical_receiving_features,
+    canonical_receiving_state,
+    receiving_frame_translation,
 )
 
 
@@ -42,6 +45,7 @@ class G1RecurrentReceiver:
         episode_frames: int = 100,
         followup_target_position_m: tuple[float, float, float] | None = None,
         canonical_half_turn: bool | None = None,
+        canonical_translation_xy_m: tuple[float, float] | None = None,
     ) -> None:
         import torch
 
@@ -50,16 +54,25 @@ class G1RecurrentReceiver:
             "recurrent_receiver_world_heading_135_float32.v2",
             "recurrent_receiver_followup_target_138_float32.v3",
             CANONICAL_RECEIVER_CONTRACT,
+            CANONICAL_POSE_RECEIVER_CONTRACT,
         }:
             raise ValueError("explicit supported receiving observation contract required")
         self.observation_contract = observation_contract
-        canonical = observation_contract == CANONICAL_RECEIVER_CONTRACT
+        canonical_pose = observation_contract == CANONICAL_POSE_RECEIVER_CONTRACT
+        canonical = observation_contract == CANONICAL_RECEIVER_CONTRACT or canonical_pose
         if canonical:
             if type(canonical_half_turn) is not bool:
                 raise ValueError("canonical contract requires explicit boolean half-turn")
         elif canonical_half_turn is not None:
             raise ValueError("half-turn requires explicit canonical receiver contract")
         self._canonical_half_turn = canonical_half_turn
+        if canonical_pose:
+            if canonical_translation_xy_m is None:
+                raise ValueError("canonical pose contract requires explicit frame translation")
+            canonical_translation_xy_m = receiving_frame_translation(canonical_translation_xy_m)
+        elif canonical_translation_xy_m is not None:
+            raise ValueError("frame translation requires explicit canonical pose contract")
+        self._canonical_translation_xy_m = canonical_translation_xy_m
         goal_conditioned = observation_contract.endswith(".v3")
         if goal_conditioned:
             if (
@@ -110,6 +123,11 @@ class G1RecurrentReceiver:
                     "agent_id": agent_id,
                     "observation": observation_contract,
                     **({"canonical_half_turn": canonical_half_turn} if canonical else {}),
+                    **(
+                        {"canonical_translation_xy_m": canonical_translation_xy_m}
+                        if canonical_pose
+                        else {}
+                    ),
                     **(
                         {
                             "followup_target_position_m": followup_target_position_m,
@@ -177,8 +195,20 @@ class G1RecurrentReceiver:
                 raise ValueError("consecutive 50 Hz receiver frames required")
             assert observation.foundation is not None
             foundation = observation.foundation
-            p = torch.tensor(observation.qpos, dtype=torch.float32)[None]
-            w = torch.tensor(observation.qvel, dtype=torch.float32)[None]
+            if self.observation_contract == CANONICAL_POSE_RECEIVER_CONTRACT:
+                assert self._canonical_half_turn is not None
+                assert self._canonical_translation_xy_m is not None
+                canonical_p, canonical_v = canonical_receiving_state(
+                    np.asarray(observation.qpos, dtype=np.float64),
+                    np.asarray(observation.qvel, dtype=np.float64),
+                    half_turn=self._canonical_half_turn,
+                    translation_xy_m=self._canonical_translation_xy_m,
+                )
+                p = torch.tensor(canonical_p, dtype=torch.float32)[None]
+                w = torch.tensor(canonical_v, dtype=torch.float32)[None]
+            else:
+                p = torch.tensor(observation.qpos, dtype=torch.float32)[None]
+                w = torch.tensor(observation.qvel, dtype=torch.float32)[None]
             if abs(float(torch.linalg.vector_norm(p[0, 3:7])) - 1.0) > 1e-4:
                 raise ValueError("normalized receiver root quaternion required")
             default = torch.tensor(foundation.default_angles, dtype=torch.float32)
