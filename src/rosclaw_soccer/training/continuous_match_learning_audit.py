@@ -20,6 +20,10 @@ from rosclaw_soccer.training.continuous_match_residual_ppo import (
     evaluation_kickoffs,
     training_kickoffs,
 )
+from rosclaw_soccer.training.continuous_retention import (
+    first_batch_anchor,
+    validate_retention_coefficient,
+)
 from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
 from rosclaw_soccer.training.near_ball_residual_ppo import update_private_actors
 
@@ -39,6 +43,10 @@ def audit(root: Path) -> dict[str, Any]:
         raise ValueError("invalid training iteration count")
     initial_generation = iterations[0]["generation"] - 1
     parent = NearBallResidualPolicy.load(root / f"generation-{initial_generation:03d}.npz")
+    initial = parent
+    anchor = None
+    retention = manifest.get("retention_coefficient", 0.0)
+    validate_retention_coefficient(retention)
     scope = recorded_training_scope(manifest["trainable_agent_ids"], parent.agent_ids)
     if (
         scope is None
@@ -47,9 +55,29 @@ def audit(root: Path) -> dict[str, Any]:
         or manifest["optimizer_epochs"] != 8
         or manifest["gamma"] != 0.997
         or manifest["trace_decay"] != 0.997
-        or manifest["reward_shaping"] not in ("contact_safety_v1", "motor_task_contact_v1")
+        or manifest["reward_shaping"]
+        not in ("contact_safety_v1", "motor_task_contact_v1", "in_play_motor_task_v1")
     ):
         raise ValueError("continuous learning scope or protocol differs")
+    joint = manifest.get("joint_team_learning", False)
+    in_play = manifest["reward_shaping"] == "in_play_motor_task_v1"
+    if type(joint) is not bool or manifest.get("stop_on_ball_exit", False) is not in_play:
+        raise ValueError("explicit team and in-play training protocol required")
+    if joint and not (
+        scope == parent.agent_ids
+        and manifest.get("finisher_option_learning", False)
+        and manifest.get("prospective_motor", False)
+        and manifest.get("task_context_bound", False)
+        and manifest.get("per_player_options", False)
+        and manifest.get("team_chain_kickoffs", False)
+    ):
+        raise ValueError("joint team learning requires all private actors and bound motor slots")
+    if (
+        manifest.get("finisher_option_learning", False)
+        and not joint
+        and not set(scope).issubset({"red.finisher", "blue.finisher"})
+    ):
+        raise ValueError("finisher-only learning scope differs")
     checked = []
     coverage = {
         agent: {"active_samples": 0, "learning_samples": 0, "optimizer_updates": 0}
@@ -60,6 +88,7 @@ def audit(root: Path) -> dict[str, Any]:
         varied=manifest.get("varied_ball_positions", offsets == [0.0, -0.02, 0.02, -0.04, 0.04]),
         balanced_motor=manifest.get("balanced_motor_kickoffs", False),
         buildup=manifest.get("buildup_kickoffs", False),
+        team_chain=manifest.get("team_chain_kickoffs", False),
     )
     if offsets != [y for _, y in kickoffs] or manifest.get(
         "training_ball_xy_m", [list(xy) for xy in kickoffs]
@@ -72,6 +101,7 @@ def audit(root: Path) -> dict[str, Any]:
         manifest.get("prospective_strike_approach", False),
         manifest.get("teammate_approach_clearance_m", 0.0),
         manifest.get("receiver_commitment_priority", False),
+        in_play,
     )
     world_hash = world.config_hash
     option_hash = collection_options(
@@ -180,6 +210,8 @@ def audit(root: Path) -> dict[str, Any]:
             proofs.append(report["report_hash"])
         if proofs != row["rollout_report_hashes"]:
             raise ValueError("optimizer dataset ordering differs")
+        if iteration == 0:
+            anchor = first_batch_anchor(initial, traces, coefficient=retention)
         rebuilt, players = update_private_actors(
             parent,
             traces,
@@ -188,6 +220,7 @@ def audit(root: Path) -> dict[str, Any]:
             trace_decay=0.997,
             reward_shaping=manifest["reward_shaping"],
             trainable_agent_ids=scope,
+            behavior_anchor=anchor,
         )
         saved = NearBallResidualPolicy.load(root / f"generation-{rebuilt.generation:03d}.npz")
         if (
@@ -204,7 +237,10 @@ def audit(root: Path) -> dict[str, Any]:
         checked.append(saved.policy_hash)
         parent = saved
     if "evaluation_case_names" in manifest:
-        exams = evaluation_kickoffs(buildup=manifest.get("buildup_kickoffs", False))
+        exams = evaluation_kickoffs(
+            buildup=manifest.get("buildup_kickoffs", False),
+            team_chain=manifest.get("team_chain_kickoffs", False),
+        )
         if (
             manifest["evaluation_case_names"] != [name for name, _, _ in exams]
             or manifest["evaluation_ball_xy_m"] != [[x, y] for _, x, y in exams]

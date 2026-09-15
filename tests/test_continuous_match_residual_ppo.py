@@ -38,6 +38,32 @@ def test_training_receive_priority_requires_strict_physical_handoff():
         collection_world(None, False, receiver_commitment_priority=True)
 
 
+def test_joint_team_curriculum_has_symmetric_sources_and_disjoint_examinations():
+    from rosclaw_soccer.training.continuous_match_residual_ppo import (
+        evaluation_kickoffs,
+        training_kickoffs,
+    )
+
+    points = training_kickoffs(varied=False, balanced_motor=False, team_chain=True)
+    assert len(points) == len(set(points)) == 18
+    for x, y in points:
+        assert any(abs(xx - (6 - x)) < 1e-9 and abs(yy + y) < 1e-9 for xx, yy in points)
+    exams = evaluation_kickoffs(team_chain=True)
+    assert len(exams) == len({name for name, _, _ in exams}) == 13
+    assert not set(points).intersection((x, y) for _, x, y in exams)
+    with pytest.raises(ValueError):
+        training_kickoffs(varied=False, balanced_motor=False, buildup=True, team_chain=True)
+
+
+def test_first_exit_mode_is_bound_to_the_world_identity():
+    from rosclaw_soccer.training.continuous_match_residual_ppo import collection_world
+
+    old = collection_world(None, False)
+    bounded = collection_world(None, False, stop_on_ball_exit=True)
+    assert bounded.stop_on_ball_exit
+    assert bounded.config_hash != old.config_hash
+
+
 def test_buildup_curriculum_covers_both_keepers_and_defenders_with_disjoint_exams():
     from rosclaw_soccer.training.continuous_match_residual_ppo import (
         evaluation_kickoffs,

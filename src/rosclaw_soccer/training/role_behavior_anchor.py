@@ -40,7 +40,7 @@ class RoleBehaviorAnchor:
         obs, active = np.asarray(self.observations), np.asarray(self.active)
         if (
             obs.ndim != 3
-            or obs.shape[1:] != (8, 56)
+            or obs.shape[1:] != (8, self.policy.observation_dim)
             or not 1 <= len(obs) <= 8192
             or obs.dtype.kind not in "fiu"
             or not np.all(np.isfinite(obs))

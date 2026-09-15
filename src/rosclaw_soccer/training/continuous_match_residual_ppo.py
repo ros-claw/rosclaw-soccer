@@ -30,6 +30,10 @@ from rosclaw_soccer.training.continuous_competitive_match_growth import (
     run_continuous_competitive_match_growth,
     validate_continuous_competitive_match_growth,
 )
+from rosclaw_soccer.training.continuous_retention import (
+    first_batch_anchor,
+    validate_retention_coefficient,
+)
 from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
 from rosclaw_soccer.training.independent_team_growth import IndependentTeamFixture
 from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
@@ -58,6 +62,7 @@ class MatchCollection:
     per_player_options: bool = False
     continuous_motor_rearm: bool = False
     receiver_commitment_priority: bool = False
+    stop_on_ball_exit: bool = False
 
 
 def collection_options(
@@ -80,11 +85,16 @@ def collection_options(
 
 
 def training_kickoffs(
-    *, varied: bool, balanced_motor: bool, buildup: bool = False
+    *, varied: bool, balanced_motor: bool, buildup: bool = False, team_chain: bool = False
 ) -> tuple[tuple[float, float], ...]:
-    flags = (varied, balanced_motor, buildup)
+    flags = (varied, balanced_motor, buildup, team_chain)
     if any(type(flag) is not bool for flag in flags) or sum(flags) > 1:
         raise ValueError("explicit nonoverlapping kickoff curriculum required")
+    if team_chain:
+        bases = training_kickoffs(
+            varied=False, balanced_motor=False, buildup=True
+        ) + training_kickoffs(varied=False, balanced_motor=True)
+        return tuple((x, y + dy) for dy in (-0.04, 0.0, 0.04) for x, y in bases)
     if buildup:
         return ((-0.4, 0.0), (6.4, 0.0), (1.05, 0.6), (4.95, -0.6))
     if balanced_motor:
@@ -92,9 +102,20 @@ def training_kickoffs(
     return tuple((3.0, y) for y in ((0.0, -0.02, 0.02, -0.04, 0.04) if varied else (0.0,)))
 
 
-def evaluation_kickoffs(*, buildup: bool = False) -> tuple[tuple[str, float, float], ...]:
-    if type(buildup) is not bool:
+def evaluation_kickoffs(
+    *, buildup: bool = False, team_chain: bool = False
+) -> tuple[tuple[str, float, float], ...]:
+    if type(buildup) is not bool or type(team_chain) is not bool or (buildup and team_chain):
         raise ValueError("evaluation curriculum must be explicit")
+    if team_chain:
+        bases = training_kickoffs(
+            varied=False, balanced_motor=False, buildup=True
+        ) + training_kickoffs(varied=False, balanced_motor=True)
+        return (("centre", 3.0, 0.0),) + tuple(
+            (f"chain-{index}-{dy:+.2f}", x, y + dy)
+            for index, (x, y) in enumerate(bases)
+            for dy in (-0.08, 0.08)
+        )
     if not buildup:
         return tuple((f"{y:+.2f}", 3.0, y) for y in (-0.06, 0.0, 0.06))
     bases = training_kickoffs(varied=False, balanced_motor=False, buildup=True)
@@ -132,6 +153,7 @@ def collection_world(
     prospective_strike_approach: bool = False,
     teammate_approach_clearance_m: float = 0.0,
     receiver_commitment_priority: bool = False,
+    stop_on_ball_exit: bool = False,
 ) -> IndependentTeamWorldConfig:
     if type(strict_handoff) is not bool:
         raise ValueError("strict handoff must be explicit")
@@ -152,6 +174,7 @@ def collection_world(
         prospective_strike_approach=prospective_strike_approach,
         teammate_approach_clearance_m=teammate_approach_clearance_m,
         receiver_commitment_priority=receiver_commitment_priority,
+        stop_on_ball_exit=stop_on_ball_exit,
     )
 
 
@@ -164,6 +187,7 @@ def collect(job: MatchCollection) -> str:
         job.prospective_strike_approach,
         job.teammate_approach_clearance_m,
         job.receiver_commitment_priority,
+        job.stop_on_ball_exit,
     )
     report = run_continuous_competitive_match_growth(
         evidence_dir=job.output,
@@ -218,11 +242,22 @@ def train(
     per_player_options: bool = False,
     continuous_motor_rearm: bool = False,
     receiver_commitment_priority: bool = False,
+    team_chain_kickoffs: bool = False,
+    joint_team_learning: bool = False,
+    retention_coefficient: float = 0.0,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
-    if reward_shaping not in ("contact_safety_v1", "motor_task_contact_v1"):
+    if reward_shaping not in (
+        "contact_safety_v1",
+        "motor_task_contact_v1",
+        "in_play_motor_task_v1",
+    ):
         raise ValueError("continuous match reward contract is unsupported")
+    validate_retention_coefficient(retention_coefficient)
+    if type(joint_team_learning) is not bool:
+        raise ValueError("joint team learning must be explicit")
+    in_play = reward_shaping == "in_play_motor_task_v1"
     if type(iterations) is not int or not 1 <= iterations <= 20:
         raise ValueError("bounded continuous training iterations required")
     if type(workers) is not int or not 1 <= workers <= 4:
@@ -236,6 +271,7 @@ def train(
         prospective_strike_approach,
         teammate_approach_clearance_m,
         receiver_commitment_priority,
+        in_play,
     )
     if prospective_strike_approach and not (prospective_motor and task_context_bound):
         raise ValueError("prospective approach requires a bound prospective motor")
@@ -243,8 +279,9 @@ def train(
         varied=varied_ball_positions,
         balanced_motor=balanced_motor_kickoffs,
         buildup=buildup_kickoffs,
+        team_chain=team_chain_kickoffs,
     )
-    exams = evaluation_kickoffs(buildup=buildup_kickoffs)
+    exams = evaluation_kickoffs(buildup=buildup_kickoffs, team_chain=team_chain_kickoffs)
     if type(keeper_distribution_preview) is not bool:
         raise ValueError("keeper distribution preview must be explicit")
     options = collection_options(
@@ -260,12 +297,26 @@ def train(
     parent = NearBallResidualPolicy.load(checkpoint)
     if type(scope) is not tuple or recorded_training_scope(list(scope), parent.agent_ids) != scope:
         raise ValueError("explicit canonical trainable scope required")
-    if finisher_option_learning and not set(scope).issubset(("red.finisher", "blue.finisher")):
+    if joint_team_learning and not (
+        scope == parent.agent_ids
+        and finisher_option_learning
+        and prospective_motor
+        and task_context_bound
+        and per_player_options
+        and team_chain_kickoffs
+    ):
+        raise ValueError("joint team learning requires all private actors and bound motor slots")
+    if (
+        finisher_option_learning
+        and not joint_team_learning
+        and not set(scope).issubset(("red.finisher", "blue.finisher"))
+    ):
         raise ValueError("finisher option training must freeze all other private heads")
     fixture_hash = collection_fixture(
         assets, keeper_preview=keeper_distribution_preview
     ).fixture_hash
     initial = parent
+    anchor = None
     output.mkdir(parents=True)
     parent.save(output / f"generation-{parent.generation:03d}.npz")
     manifest: dict[str, Any] = {
@@ -286,6 +337,10 @@ def train(
         "per_player_options": per_player_options,
         "continuous_motor_rearm": continuous_motor_rearm,
         "receiver_commitment_priority": receiver_commitment_priority,
+        "stop_on_ball_exit": in_play,
+        "team_chain_kickoffs": team_chain_kickoffs,
+        "joint_team_learning": joint_team_learning,
+        "retention_coefficient": retention_coefficient,
         "collection_fixture_hash": fixture_hash,
         "collection_option_config_hash": options.config_hash,
         "prospective_motor": prospective_motor,
@@ -329,6 +384,7 @@ def train(
                 per_player_options=per_player_options,
                 continuous_motor_rearm=continuous_motor_rearm,
                 receiver_commitment_priority=receiver_commitment_priority,
+                stop_on_ball_exit=in_play,
             )
             for index in range(4)
         ]
@@ -346,6 +402,8 @@ def train(
             with np.load(Path(path).parent / "primary.npz", allow_pickle=False) as archive:
                 traces.append({k: archive[k] for k in archive.files})
             hashes.append(report["report_hash"])
+        if iteration == 0:
+            anchor = first_batch_anchor(initial, traces, coefficient=retention_coefficient)
         child, rows = update_private_actors(
             parent,
             traces,
@@ -354,6 +412,7 @@ def train(
             trace_decay=0.997,
             reward_shaping=reward_shaping,
             trainable_agent_ids=scope,
+            behavior_anchor=anchor,
         )
         child.save(output / f"generation-{child.generation:03d}.npz")
         manifest["iterations"].append(
@@ -399,6 +458,7 @@ def train(
             per_player_options=per_player_options,
             continuous_motor_rearm=continuous_motor_rearm,
             receiver_commitment_priority=receiver_commitment_priority,
+            stop_on_ball_exit=in_play,
         )
         for label, policy in (("parent", initial), ("candidate", parent))
         for name, x, y in exams
@@ -444,9 +504,12 @@ def main() -> None:
     parser.add_argument("--per-player-options", action="store_true")
     parser.add_argument("--continuous-motor-rearm", action="store_true")
     parser.add_argument("--receiver-commitment-priority", action="store_true")
+    parser.add_argument("--team-chain-kickoffs", action="store_true")
+    parser.add_argument("--joint-team-learning", action="store_true")
+    parser.add_argument("--retention-coefficient", type=float, default=0.0)
     parser.add_argument(
         "--reward-shaping",
-        choices=("contact_safety_v1", "motor_task_contact_v1"),
+        choices=("contact_safety_v1", "motor_task_contact_v1", "in_play_motor_task_v1"),
         default="contact_safety_v1",
     )
     args = parser.parse_args()
@@ -473,6 +536,9 @@ def main() -> None:
         per_player_options=args.per_player_options,
         continuous_motor_rearm=args.continuous_motor_rearm,
         receiver_commitment_priority=args.receiver_commitment_priority,
+        team_chain_kickoffs=args.team_chain_kickoffs,
+        joint_team_learning=args.joint_team_learning,
+        retention_coefficient=args.retention_coefficient,
     )
 
 

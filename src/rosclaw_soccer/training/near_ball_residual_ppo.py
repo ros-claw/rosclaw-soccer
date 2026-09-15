@@ -233,6 +233,7 @@ def update_private_actors(
             not isinstance(behavior_anchor, RoleBehaviorAnchor)
             or behavior_anchor.policy.agent_ids != parent.agent_ids
             or behavior_anchor.policy.body_hash != parent.body_hash
+            or behavior_anchor.policy.observation_contract != parent.observation_contract
             or "retention.anchor" in frozen
         ):
             raise ValueError("behavior anchor must match body/roster without binding aliases")
