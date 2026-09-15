@@ -20,7 +20,11 @@ from rosclaw_soccer.training.near_ball_curriculum import (
     examination_courses,
     training_batch,
 )
-from rosclaw_soccer.training.near_ball_plasticity import private_weight_hashes, verify_update_record
+from rosclaw_soccer.training.near_ball_plasticity import (
+    private_weight_hashes,
+    recorded_training_scope,
+    verify_update_record,
+)
 
 
 def _verify_training_course(report: dict[str, Any], course: RoleCourse, seed: int) -> None:
@@ -89,6 +93,7 @@ def audit(root: Path) -> dict[str, Any]:
     ):
         raise ValueError("initial checkpoint commitment differs")
     parent = initial_policy
+    trainable = recorded_training_scope(manifest.get("trainable_agent_ids"), parent.agent_ids)
     players = {
         agent: {"active_samples": 0, "actor_squared_delta": 0.0, "critic_squared_delta": 0.0}
         for agent in parent.agent_ids
@@ -160,6 +165,7 @@ def audit(root: Path) -> dict[str, Any]:
                     "parent": parent.policy_hash,
                     "roster": parent.agent_ids,
                     "dataset": dataset_hash,
+                    **({"trainable_agent_ids": trainable} if trainable is not None else {}),
                     **(
                         {"reward_shaping": reward_shaping, "gamma": manifest["credit"]["gamma"]}
                         if reward_shaping != "legacy"
@@ -180,6 +186,17 @@ def audit(root: Path) -> dict[str, Any]:
             }
             if counts[i] < 32 and any(deltas.values()):
                 raise ValueError("unsampled private actor was modified")
+            scoped_out = trainable is not None and agent not in trainable
+            if scoped_out and (
+                any(
+                    not np.array_equal(child.weights[k][i], parent.weights[k][i])
+                    for k in parent.weights
+                )
+                or row.get("frozen_by_training_scope") is not True
+                or row.get("updated") is not False
+                or "core_plasticity" in row
+            ):
+                raise ValueError("frozen private actor differs from its training scope")
             before_hashes = private_weight_hashes(progressive, parent.agent_ids, parent.body_hash)
             for key in progressive:
                 progressive[key][i] = child.weights[key][i]
@@ -195,7 +212,7 @@ def audit(root: Path) -> dict[str, Any]:
                     maximum_steps=optimizer_epochs,
                 )
                 core_verified += 1
-            elif requires_core and counts[i] >= 32:
+            elif requires_core and counts[i] >= 32 and not scoped_out:
                 raise ValueError("trainable private actor lacks its Core plasticity proof")
             players[agent]["active_samples"] += int(counts[i])
             players[agent]["actor_squared_delta"] += sum(

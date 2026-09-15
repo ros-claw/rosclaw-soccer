@@ -31,6 +31,7 @@ from rosclaw_soccer.growth.locomotion_contact_teacher import (
     G1LocomotionContactTeacherConfig,
     G1RollingOptionBridgeConfig,
 )
+from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.growth.role_self_model import MatchRole, TeamRoleRoster
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -166,9 +167,33 @@ def run_continuous_competitive_match_growth(
     thresholds: CompetitiveMatchThresholds | None = None,
     fixture: IndependentTeamFixture | None = None,
     scenario: IndependentTeamWorldScenario | None = None,
+    near_ball_policy: NearBallResidualPolicy | None = None,
+    near_ball_explore: bool = False,
+    near_ball_seed: int = 0,
+    near_ball_exploration_agent_ids: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Run, replay, assess, persist, and revalidate one hard match exam."""
 
+    if (
+        type(near_ball_explore) is not bool
+        or type(near_ball_seed) is not int
+        or not 0 <= near_ball_seed < 2**32
+        or (near_ball_explore and near_ball_policy is None)
+        or (
+            near_ball_exploration_agent_ids is not None
+            and (
+                not near_ball_explore
+                or near_ball_policy is None
+                or type(near_ball_exploration_agent_ids) is not tuple
+                or not near_ball_exploration_agent_ids
+                or any(type(a) is not str for a in near_ball_exploration_agent_ids)
+                or tuple(sorted(set(near_ball_exploration_agent_ids)))
+                != near_ball_exploration_agent_ids
+                or not set(near_ball_exploration_agent_ids).issubset(near_ball_policy.agent_ids)
+            )
+        )
+    ):
+        raise ValueError("invalid explicit continuous-match sampling contract")
     root = evidence_dir.expanduser().resolve()
     if root.exists() and any(root.iterdir()):
         raise ValueError("continuous-match evidence directory must be empty")
@@ -182,6 +207,14 @@ def run_continuous_competitive_match_growth(
         maximum_strike_lateral_error_m=0.60,
     )
     active_thresholds = thresholds or CompetitiveMatchThresholds()
+    policy_artifact = None
+    if near_ball_policy is not None:
+        policy_path = root / "near-ball-policy.npz"
+        near_ball_policy.save(policy_path)
+        policy_artifact = {
+            "file": policy_path.name,
+            "file_hash": hash_bytes(policy_path.read_bytes()),
+        }
     primary, primary_trace = simulate_independent_team_world(
         asset_root=asset_root,
         roster=fixture.roster,
@@ -192,6 +225,10 @@ def run_continuous_competitive_match_growth(
         config=world,
         contact_teacher_config=teacher,
         option_bridge_config=option,
+        near_ball_policy=near_ball_policy,
+        near_ball_explore=near_ball_explore,
+        near_ball_seed=near_ball_seed,
+        near_ball_exploration_agent_ids=near_ball_exploration_agent_ids,
     )
     replay, replay_trace = simulate_independent_team_world(
         asset_root=asset_root,
@@ -203,6 +240,10 @@ def run_continuous_competitive_match_growth(
         config=world,
         contact_teacher_config=teacher,
         option_bridge_config=option,
+        near_ball_policy=near_ball_policy,
+        near_ball_explore=near_ball_explore,
+        near_ball_seed=near_ball_seed,
+        near_ball_exploration_agent_ids=near_ball_exploration_agent_ids,
     )
     primary_artifact = _write_trajectory(root / "primary.npz", primary_trace)
     replay_artifact = _write_trajectory(root / "replay.npz", replay_trace)
@@ -232,7 +273,8 @@ def run_continuous_competitive_match_growth(
         thresholds=active_thresholds,
     )
     passed = bool(
-        exact_replay
+        not near_ball_explore
+        and exact_replay
         and primary.passed
         and replay.passed
         and primary_assessment.passed
@@ -245,6 +287,15 @@ def run_continuous_competitive_match_growth(
         "fixture_hash": fixture.fixture_hash,
         "fixture": fixture.to_dict(),
         "agent_cells": [cell.to_dict() for cell in fixture.cells],
+        "near_ball_policy_hash": None if near_ball_policy is None else near_ball_policy.policy_hash,
+        "near_ball_policy_artifact": policy_artifact,
+        "sampling": {
+            "explore": near_ball_explore,
+            "seed": near_ball_seed,
+            "exploration_agent_ids": None
+            if near_ball_exploration_agent_ids is None
+            else list(near_ball_exploration_agent_ids),
+        },
         "scenario": asdict(scenario),
         "scenario_hash": scenario.scenario_hash,
         "world_config": asdict(world),
@@ -310,6 +361,20 @@ def validate_continuous_competitive_match_growth(path: Path) -> dict[str, Any]:
         raise ValueError("continuous-match evidence must be an object")
     expected = value.pop("report_hash", None)
     try:
+        policy_hash = value.get("near_ball_policy_hash")
+        policy_artifact = value.get("near_ball_policy_artifact")
+        if policy_hash is not None:
+            policy_path = resolved.parent / "near-ball-policy.npz"
+            if (
+                not isinstance(policy_artifact, dict)
+                or policy_artifact.get("file") != policy_path.name
+                or not policy_path.is_file()
+                or hash_bytes(policy_path.read_bytes()) != policy_artifact.get("file_hash")
+                or NearBallResidualPolicy.load(policy_path).policy_hash != policy_hash
+            ):
+                raise ValueError("continuous-match policy artifact binding changed")
+        elif policy_artifact is not None:
+            raise ValueError("continuous-match policy artifact lacks its policy identity")
         for label in ("primary_artifact", "replay_artifact"):
             artifact = value.get(label)
             if not isinstance(artifact, dict):
@@ -324,8 +389,27 @@ def validate_continuous_competitive_match_growth(path: Path) -> dict[str, Any]:
                 raise ValueError("continuous-match trajectory binding changed")
         assessment = value.get("primary_assessment")
         boundary = value.get("evidence_boundary")
+        sampling = value.get(
+            "sampling", {"explore": False, "seed": 0, "exploration_agent_ids": None}
+        )
+        if (
+            not isinstance(sampling, dict)
+            or type(sampling.get("explore")) is not bool
+            or type(sampling.get("seed")) is not int
+            or not 0 <= sampling["seed"] < 2**32
+            or (sampling["explore"] and policy_hash is None)
+        ):
+            raise ValueError("invalid continuous-match sampling evidence")
+        scope = sampling.get("exploration_agent_ids")
+        if scope is not None:
+            from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
+
+            if not sampling["explore"] or policy_hash is None:
+                raise ValueError("exploration scope requires stochastic policy collection")
+            recorded_training_scope(scope, NearBallResidualPolicy.load(policy_path).agent_ids)
         passed = bool(
-            value.get("exact_replay") is True
+            not sampling["explore"]
+            and value.get("exact_replay") is True
             and value.get("primary_result", {}).get("passed") is True
             and value.get("replay_result", {}).get("passed") is True
             and isinstance(assessment, dict)
@@ -395,6 +479,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--asset-root", required=True, type=Path)
     parser.add_argument("--players", type=int, choices=(6, 8), default=6)
     parser.add_argument("--duration-sec", type=float, default=10.0)
+    parser.add_argument("--near-ball-policy", type=Path)
+    parser.add_argument("--strike-residual", action="store_true")
+    parser.add_argument(
+        "--contact-control-profile",
+        action="store_true",
+        help="Use the same bounded contact control profile as near-ball PPO collection",
+    )
     parser.add_argument(
         "--contact-ready",
         action="store_true",
@@ -407,11 +498,21 @@ def main() -> None:
     arguments = _parser().parse_args()
     if arguments.contact_ready and arguments.players != 8:
         raise ValueError("contact-ready profile requires an explicit eight-player exam")
+    if arguments.near_ball_policy is not None and arguments.players != 8:
+        raise ValueError("private near-ball policy requires an explicit eight-player exam")
+    if arguments.strike_residual and arguments.near_ball_policy is None:
+        raise ValueError("strike residual requires an explicit policy checkpoint")
+    near_ball_policy = (
+        None
+        if arguments.near_ball_policy is None
+        else NearBallResidualPolicy.load(arguments.near_ball_policy)
+    )
     fixture = None
     scenario = None
     world = replace(
         default_continuous_match_config(),
         simulation_duration_sec=arguments.duration_sec,
+        strike_residual_enabled=arguments.strike_residual,
     )
     if arguments.players == 8:
         from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
@@ -441,12 +542,21 @@ def main() -> None:
                 predictive_separation=True,
                 all_role_clearance=True,
             )
+    teacher = G1LocomotionContactTeacherConfig()
+    if arguments.contact_control_profile:
+        from rosclaw_soccer.training.contact_control_profile import ContactControlProfile
+
+        world, teacher = ContactControlProfile(
+            strike_residual_enabled=arguments.strike_residual
+        ).apply(world, teacher)
     value = run_continuous_competitive_match_growth(
         evidence_dir=arguments.evidence_dir,
         asset_root=arguments.asset_root,
         fixture=fixture,
         scenario=scenario,
         world_config=world,
+        teacher_config=teacher,
+        near_ball_policy=near_ball_policy,
     )
     print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
 

@@ -463,6 +463,7 @@ def train(
     reward_shaping: str = "legacy",
     contact_control_profile: ContactControlProfile | None = None,
     optimizer_epochs: int = 4,
+    trainable_agent_ids: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -497,6 +498,14 @@ def train(
         raise ValueError("bounded online training budget required")
     fixture = build_four_vs_four_fixture(assets)
     ids = tuple(sorted(c.agent_id for c in fixture.cells))
+    if trainable_agent_ids is not None and (
+        type(trainable_agent_ids) is not tuple
+        or not trainable_agent_ids
+        or any(type(agent) is not str for agent in trainable_agent_ids)
+        or tuple(sorted(set(trainable_agent_ids))) != trainable_agent_ids
+        or not set(trainable_agent_ids).issubset(ids)
+    ):
+        raise ValueError("trainable actors must be a canonical nonempty roster subset")
     body = fixture.cells[0].growth_scope.body_hash
     policy = (
         NearBallResidualPolicy.initialize(ids, body)
@@ -527,6 +536,7 @@ def train(
         "prospective_curriculum": prospective_curriculum,
         "workers": workers,
         "optimizer_epochs": optimizer_epochs,
+        "trainable_agent_ids": trainable_agent_ids,
         "initial_generation": policy.generation,
         "initial_policy_hash": policy.policy_hash,
         "baseline_label": "parent" if initial_checkpoint is not None else "zero",
@@ -614,6 +624,7 @@ def train(
             gamma=manifest["credit"]["gamma"],
             trace_decay=manifest["credit"]["trace_decay"],
             reward_shaping=reward_shaping,
+            trainable_agent_ids=trainable_agent_ids,
         )
         policy.save(output / f"generation-{policy.generation:03d}.npz")
         manifest["iterations"].append(
@@ -716,6 +727,11 @@ def main() -> None:
     parser.add_argument("--strike-residual", action="store_true")
     parser.add_argument("--strike-stance-lateral", type=float)
     parser.add_argument("--optimizer-epochs", type=int, default=4)
+    parser.add_argument(
+        "--trainable-agent",
+        action="append",
+        help="Explicit private actor to update; repeat for each actor. Others remain frozen.",
+    )
     parser.add_argument("--reward-shaping", choices=REWARD_SHAPING_MODES, default="legacy")
     args = parser.parse_args()
     if args.strike_residual and not args.contact_control_profile:
@@ -744,6 +760,9 @@ def main() -> None:
         if args.contact_control_profile
         else None,
         optimizer_epochs=args.optimizer_epochs,
+        trainable_agent_ids=None
+        if args.trainable_agent is None
+        else tuple(sorted(args.trainable_agent)),
     )
 
 

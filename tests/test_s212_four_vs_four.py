@@ -140,6 +140,148 @@ def test_contact_ready_profile_refuses_implicit_six_player_selection(monkeypatch
         module.main()
 
 
+def test_continuous_exam_loads_bound_private_policy_without_training(
+    fixture, monkeypatch, tmp_path
+):
+    import sys
+
+    from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
+    from rosclaw_soccer.training import continuous_competitive_match_growth as module
+
+    policy = NearBallResidualPolicy.initialize(
+        tuple(sorted(c.agent_id for c in fixture.cells)), fixture.cells[0].growth_scope.body_hash
+    )
+    path = tmp_path / "candidate.npz"
+    policy.save(path)
+    captured = {}
+
+    def run(**kwargs):
+        captured.update(kwargs)
+        return {"passed": False}
+
+    monkeypatch.setattr(module, "run_continuous_competitive_match_growth", run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "exam",
+            "--asset-root",
+            "unused",
+            "--evidence-dir",
+            str(tmp_path / "exam"),
+            "--players",
+            "8",
+            "--near-ball-policy",
+            str(path),
+            "--strike-residual",
+        ],
+    )
+    module.main()
+    assert captured["near_ball_policy"].policy_hash == policy.policy_hash
+    assert captured["near_ball_policy"].generation == 0
+    assert captured["world_config"].strike_residual_enabled
+
+
+def test_continuous_exam_rejects_strike_residual_without_weights(monkeypatch, tmp_path):
+    import sys
+
+    from rosclaw_soccer.training import continuous_competitive_match_growth as module
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "exam",
+            "--asset-root",
+            "unused",
+            "--evidence-dir",
+            str(tmp_path),
+            "--strike-residual",
+        ],
+    )
+    with pytest.raises(ValueError, match="checkpoint"):
+        module.main()
+
+
+def test_stochastic_collection_cannot_qualify_even_with_all_physical_gates(
+    monkeypatch, tmp_path, fixture
+):
+    import numpy as np
+
+    from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
+    from rosclaw_soccer.training import continuous_competitive_match_growth as module
+
+    policy = NearBallResidualPolicy.initialize(
+        tuple(sorted(c.agent_id for c in fixture.cells)), fixture.cells[0].growth_scope.body_hash
+    )
+    calls = []
+
+    def simulate(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            passed=True, safe=True, trajectory_hash="same", to_dict=lambda: {"passed": True}
+        ), {"time": np.array([0.02, 0.04])}
+
+    monkeypatch.setattr(module, "simulate_independent_team_world", simulate)
+    monkeypatch.setattr(
+        module,
+        "assess_competitive_match_trajectory",
+        lambda **kwargs: SimpleNamespace(passed=True, to_dict=lambda: {"passed": True}),
+    )
+    report = module.run_continuous_competitive_match_growth(
+        evidence_dir=tmp_path / "collection",
+        asset_root=Path("unused"),
+        fixture=fixture,
+        near_ball_policy=policy,
+        near_ball_explore=True,
+        near_ball_seed=123,
+        near_ball_exploration_agent_ids=("red.defender",),
+    )
+    assert report["primary_assessment"]["passed"]
+    assert not report["passed"]
+    assert report["sampling"]["exploration_agent_ids"] == ["red.defender"]
+    assert len(calls) == 2
+    assert all(c["near_ball_seed"] == 123 and c["near_ball_explore"] for c in calls)
+
+
+def test_continuous_exam_reuses_training_contact_profile(monkeypatch, tmp_path, fixture):
+    import sys
+
+    from rosclaw_soccer.training import continuous_competitive_match_growth as module
+    from rosclaw_soccer.training import four_vs_four_match
+
+    monkeypatch.setattr(four_vs_four_match, "build_four_vs_four_fixture", lambda *a, **k: fixture)
+    captured = {}
+
+    def run(**kwargs):
+        captured.update(kwargs)
+        return {"passed": False}
+
+    monkeypatch.setattr(module, "run_continuous_competitive_match_growth", run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "exam",
+            "--asset-root",
+            "unused",
+            "--evidence-dir",
+            str(tmp_path),
+            "--players",
+            "8",
+            "--contact-ready",
+            "--contact-control-profile",
+        ],
+    )
+    module.main()
+    world = captured["world_config"]
+    assert world.minimum_player_separation_m == 0.85
+    assert world.joint_guard_margin_rad == 0.08
+    assert world.stationary_ball_acquisition
+    assert not world.strike_residual_enabled
+    assert captured["teacher_config"].contact_leg_stiffness_scale == 0.8
+
+
 def test_forward_lane_curriculum_is_mirrored_and_distinct_from_baseline(fixture):
     curriculum = build_four_vs_four_fixture(Path("unused"), forward_receiver_lane=True)
     assert curriculum.fixture_hash != fixture.fixture_hash

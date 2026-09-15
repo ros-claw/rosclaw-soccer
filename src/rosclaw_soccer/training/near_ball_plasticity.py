@@ -23,6 +23,21 @@ from rosclaw.continual.plasticity_lease import (
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
+def recorded_training_scope(value: Any, roster: tuple[str, ...]) -> tuple[str, ...] | None:
+    """Decode an explicit canonical subset; absent legacy scopes mean all actors."""
+    if value is None:
+        return None
+    if (
+        type(value) is not list
+        or not value
+        or any(type(agent) is not str for agent in value)
+        or sorted(set(value)) != value
+        or not set(value).issubset(roster)
+    ):
+        raise ValueError("recorded training scope is not a canonical roster subset")
+    return tuple(value)
+
+
 def private_weight_hashes(
     weights: Mapping[str, np.ndarray],
     ids: tuple[str, ...],
@@ -166,6 +181,9 @@ def replay_recorded_update(root: Path, output: Path) -> dict[str, Any]:
         gamma=credit["gamma"],
         trace_decay=credit["trace_decay"],
         reward_shaping=manifest.get("reward_shaping", "legacy"),
+        trainable_agent_ids=recorded_training_scope(
+            manifest.get("trainable_agent_ids"), parent.agent_ids
+        ),
     )
     if child.policy_hash != expected.policy_hash:
         raise ValueError("Core lease integration changed the recorded optimizer result")

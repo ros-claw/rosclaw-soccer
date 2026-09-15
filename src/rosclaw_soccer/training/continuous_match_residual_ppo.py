@@ -1,0 +1,227 @@
+"""Scoped on-policy residual learning on actual central-kickoff 4v4 trajectories.
+
+No reset between events, scripted ball forces, or automatic candidate activation.
+Frozen roles use deterministic parent actions during collection as well as exams.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
+from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from rosclaw_soccer.skills.team.independent_team_world import IndependentTeamWorldScenario
+from rosclaw_soccer.training.continuous_competitive_match_growth import (
+    default_continuous_match_config,
+    run_continuous_competitive_match_growth,
+    validate_continuous_competitive_match_growth,
+)
+from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
+from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
+from rosclaw_soccer.training.near_ball_residual_ppo import update_private_actors
+
+
+@dataclass(frozen=True)
+class MatchCollection:
+    assets: Path
+    output: Path
+    checkpoint: Path
+    seed: int
+    scope: tuple[str, ...]
+    explore: bool = True
+    ball_y_m: float = 0.0
+
+
+def collect(job: MatchCollection) -> str:
+    fixture = build_four_vs_four_fixture(job.assets, basic_ball_play=True)
+    fixture = replace(
+        fixture,
+        cells=tuple(
+            replace(c, tactical_profile=replace(c.tactical_profile, anticipatory_contact=True))
+            for c in fixture.cells
+        ),
+    )
+    report = run_continuous_competitive_match_growth(
+        evidence_dir=job.output,
+        asset_root=job.assets,
+        fixture=fixture,
+        scenario=IndependentTeamWorldScenario(
+            scenario_id="s199.continuous.scoped-ppo.central-kickoff",
+            ball_initial_position_m=(3.0, job.ball_y_m, fixture.goal.ball_radius_m),
+            ball_initial_velocity_mps=(0.0, 0.0, 0.0),
+            seed=1928,
+        ),
+        world_config=replace(
+            default_continuous_match_config(),
+            simulation_duration_sec=25.0,
+            bilateral_goals=True,
+            stationary_ball_acquisition=True,
+            predictive_separation=True,
+            all_role_clearance=True,
+            strike_residual_enabled=True,
+        ),
+        near_ball_policy=NearBallResidualPolicy.load(job.checkpoint),
+        near_ball_explore=job.explore,
+        near_ball_seed=job.seed,
+        near_ball_exploration_agent_ids=job.scope if job.explore else None,
+    )
+    if not report["exact_replay"]:
+        raise ValueError("nonreproducible continuous collection rejected")
+    return str(job.output / "continuous-match-exam.json")
+
+
+def train(
+    *,
+    assets: Path,
+    output: Path,
+    checkpoint: Path,
+    scope: tuple[str, ...],
+    iterations: int = 3,
+    workers: int = 4,
+) -> dict[str, Any]:
+    if output.exists():
+        raise FileExistsError(output)
+    if type(iterations) is not int or not 1 <= iterations <= 20:
+        raise ValueError("bounded continuous training iterations required")
+    if type(workers) is not int or not 1 <= workers <= 4:
+        raise ValueError("bounded collection workers required")
+    parent = NearBallResidualPolicy.load(checkpoint)
+    if type(scope) is not tuple or recorded_training_scope(list(scope), parent.agent_ids) != scope:
+        raise ValueError("explicit canonical trainable scope required")
+    initial = parent
+    output.mkdir(parents=True)
+    parent.save(output / f"generation-{parent.generation:03d}.npz")
+    manifest: dict[str, Any] = {
+        "schema": "rosclaw_soccer.continuous_match_residual_ppo.v1",
+        "activation_ceiling": "SIM_ONLY",
+        "promotion_eligible": False,
+        "initial_policy_hash": parent.policy_hash,
+        "initial_checkpoint_file_hash": hash_bytes(checkpoint.read_bytes()),
+        "source_hash": hash_bytes(Path(__file__).read_bytes()),
+        "trainable_agent_ids": list(scope),
+        "exploration_agent_ids": list(scope),
+        "training_ball_y_m": [0.0],
+        "evaluation_ball_y_m": [-0.06, 0.0, 0.06],
+        "optimizer_epochs": 8,
+        "gamma": 0.997,
+        "trace_decay": 0.997,
+        "reward_shaping": "contact_safety_v1",
+        "iterations": [],
+        "evaluation": [],
+    }
+    for iteration in range(iterations):
+        jobs = [
+            MatchCollection(
+                assets,
+                output / f"train-{iteration:03d}-{index}",
+                output / f"generation-{parent.generation:03d}.npz",
+                196000 + 4 * iteration + index,
+                scope,
+            )
+            for index in range(4)
+        ]
+        with ProcessPoolExecutor(
+            max_workers=workers, mp_context=multiprocessing.get_context("spawn")
+        ) as pool:
+            paths = list(pool.map(collect, jobs))
+        traces, hashes = [], []
+        for path in paths:
+            report = validate_continuous_competitive_match_growth(Path(path))
+            if report["near_ball_policy_hash"] != parent.policy_hash:
+                raise ValueError("collection parent binding differs")
+            if report["sampling"]["exploration_agent_ids"] != list(scope):
+                raise ValueError("collection exploration scope differs")
+            with np.load(Path(path).parent / "primary.npz", allow_pickle=False) as archive:
+                traces.append({k: archive[k] for k in archive.files})
+            hashes.append(report["report_hash"])
+        child, rows = update_private_actors(
+            parent,
+            traces,
+            epochs=8,
+            gamma=0.997,
+            trace_decay=0.997,
+            reward_shaping="contact_safety_v1",
+            trainable_agent_ids=scope,
+        )
+        child.save(output / f"generation-{child.generation:03d}.npz")
+        manifest["iterations"].append(
+            {
+                "parent_policy_hash": parent.policy_hash,
+                "policy_hash": child.policy_hash,
+                "generation": child.generation,
+                "rollout_report_hashes": hashes,
+                "players": rows,
+            }
+        )
+        parent = child
+        (output / "training-progress.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        print(
+            json.dumps(
+                {
+                    "iteration": iteration,
+                    "policy_hash": parent.policy_hash,
+                    "updated": [r["agent_id"] for r in rows if r["updated"]],
+                }
+            ),
+            flush=True,
+        )
+    jobs = [
+        MatchCollection(
+            assets,
+            output / f"eval-{label}-{offset:+.2f}",
+            output / f"generation-{policy.generation:03d}.npz",
+            0,
+            scope,
+            False,
+            offset,
+        )
+        for label, policy in (("parent", initial), ("candidate", parent))
+        for offset in (-0.06, 0.0, 0.06)
+    ]
+    with ProcessPoolExecutor(
+        max_workers=workers, mp_context=multiprocessing.get_context("spawn")
+    ) as pool:
+        paths = list(pool.map(collect, jobs))
+    for path in paths:
+        report = validate_continuous_competitive_match_growth(Path(path))
+        manifest["evaluation"].append(
+            {
+                "course": Path(path).parent.name,
+                "report_hash": report["report_hash"],
+                "assessment": report["primary_assessment"],
+            }
+        )
+    manifest["manifest_hash"] = hash_json(manifest)
+    (output / "training.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    return manifest
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--asset-root", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--trainable-agent", action="append", required=True)
+    parser.add_argument("--iterations", type=int, default=3)
+    parser.add_argument("--workers", type=int, default=4)
+    args = parser.parse_args()
+    train(
+        assets=args.asset_root,
+        output=args.output,
+        checkpoint=args.checkpoint,
+        scope=tuple(sorted(args.trainable_agent)),
+        iterations=args.iterations,
+        workers=args.workers,
+    )
+
+
+if __name__ == "__main__":
+    main()

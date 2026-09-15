@@ -59,6 +59,39 @@ def test_continuous_validator_fails_closed_on_an_unbound_report(
         validate_continuous_competitive_match_growth(path)
 
 
+@pytest.mark.parametrize(
+    "payload,message",
+    [
+        ('{"near_ball_policy_hash": "sha256:missing"}', "policy artifact binding"),
+        ('{"near_ball_policy_artifact": {"file": "elsewhere.npz"}}', "policy identity"),
+    ],
+)
+def test_continuous_validator_requires_local_policy_artifact(tmp_path, payload, message):
+    path = tmp_path / "report.json"
+    path.write_text(payload, encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        validate_continuous_competitive_match_growth(path)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"near_ball_explore": True},
+        {"near_ball_seed": True},
+        {"near_ball_seed": -1},
+        {"near_ball_seed": 2**32},
+        {"near_ball_exploration_agent_ids": ("red.finisher",)},
+    ],
+)
+def test_collection_rejects_unbound_sampling_before_creating_evidence(tmp_path, kwargs):
+    output = tmp_path / "evidence"
+    with pytest.raises(ValueError, match="sampling contract"):
+        run_continuous_competitive_match_growth(
+            evidence_dir=output, asset_root=tmp_path / "unused", **kwargs
+        )
+    assert not output.exists()
+
+
 def test_video_timeline_binds_first_touch_and_has_three_views() -> None:
     count = 180
     time = 0.02 * (np.arange(count, dtype=np.float64) + 1.0)

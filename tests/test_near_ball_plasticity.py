@@ -53,3 +53,52 @@ def test_record_verification_binds_weights_context_and_integer_budget() -> None:
     for steps in (True, 1.0, -1):
         with pytest.raises(ValueError, match="nonnegative integer"):
             finish_update(lease=lease, before=before, after=after, steps=steps)
+
+
+@pytest.mark.parametrize(
+    "value", [[], ["blue.defender", "blue.defender"], ["unknown"], [True], "blue.defender"]
+)
+def test_recorded_training_scope_rejects_ambiguous_or_unknown_actors(value):
+    from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
+
+    with pytest.raises(ValueError, match="scope"):
+        recorded_training_scope(value, ("blue.defender", "red.defender"))
+
+
+def test_recorded_training_scope_preserves_explicit_and_legacy_meaning():
+    from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
+
+    roster = ("blue.defender", "red.defender")
+    assert recorded_training_scope(None, roster) is None
+    assert recorded_training_scope(["blue.defender"], roster) == ("blue.defender",)
+
+
+def test_training_cli_forwards_explicit_private_scope(monkeypatch, tmp_path):
+    import sys
+
+    from rosclaw_soccer.training import near_ball_residual_ppo as module
+
+    captured = {}
+
+    def train(**kwargs):
+        captured.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(module, "train", train)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train",
+            "--asset-root",
+            "unused",
+            "--output",
+            str(tmp_path),
+            "--trainable-agent",
+            "red.playmaker",
+            "--trainable-agent",
+            "blue.playmaker",
+        ],
+    )
+    module.main()
+    assert captured["trainable_agent_ids"] == ("blue.playmaker", "red.playmaker")
