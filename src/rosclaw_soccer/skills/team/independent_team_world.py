@@ -733,6 +733,7 @@ class _PlayerController:
     option_origin_kp: NDArray[np.float64] | None = None
     option_origin_kd: NDArray[np.float64] | None = None
     option_parameters: ShotParameters | None = None
+    option_task_target_m: tuple[float, float, float] | None = None
     option_contact_observed: bool = False
     option_completed: bool = False
     last_ball_contact_foot: str | None = None
@@ -1574,6 +1575,15 @@ def simulate_independent_team_world(
             (controller for controller in controllers if controller.option_active),
             None,
         )
+        option_task_target = None
+        if (
+            option_controller is not None
+            and option_bridge_config is not None
+            and option_bridge_config.task_context_bound
+        ):
+            option_task_target = option_controller.option_task_target_m
+            if option_task_target is None:
+                raise RuntimeError("admitted motor option has no bound task target")
         option_policy_frame = 0
         option_override: (
             tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]] | None
@@ -1871,6 +1881,9 @@ def simulate_independent_team_world(
                         ball_qpos=ball_qpos,
                         ball_qvel=ball_qvel,
                         previous=residual_previous[i],
+                        task_target_position_m=option_task_target
+                        if c is option_controller
+                        else None,
                     )
                     for i, c in enumerate(ordered)
                 ]
@@ -2632,7 +2645,10 @@ def simulate_independent_team_world(
         if option_controller is not None:
             assert option_controller.kick_policy is not None
             recorded_option_target = np.asarray(
-                option_controller.kick_policy.target_pos_w, dtype=np.float64
+                option_controller.kick_policy.target_pos_w
+                if option_task_target is None
+                else option_task_target,
+                dtype=np.float64,
             ).copy()
         trace["option_target_position_m"].append(recorded_option_target)
         recorded_phase_controller = next(
@@ -3042,6 +3058,7 @@ def _near_ball_observation(
     ball_qpos: int,
     ball_qvel: int,
     previous: NDArray[np.float64],
+    task_target_position_m: tuple[float, float, float] | None = None,
 ) -> NDArray[np.float64]:
     """Measured proprioception and local task context; no future trajectory input."""
     state = controller.state
@@ -3052,6 +3069,8 @@ def _near_ball_observation(
         if controller.decision is None
         else np.asarray(controller.decision.target_position_m)[:2]
     )
+    if task_target_position_m is not None:
+        target = np.asarray(task_target_position_m, dtype=np.float64)[:2]
     direction = target - ball[:2]
     direction = direction / max(float(np.linalg.norm(direction)), 1e-6)
     observation = np.concatenate(
@@ -3819,10 +3838,25 @@ def _activate_rolling_option(
         and candidate.cell.self_model.team_id == "blue"
         else (goal.plane_x_m, goal.target_y_m, goal.target_z_m)
     )
+    is_pass = not leased_shot and candidate.decision.intent is TacticalIntent.PASS
+    preferred_target = (
+        candidate.decision.target_position_m
+        if is_pass
+        else (
+            attacking_goal[0],
+            attacking_goal[1]
+            + (0.0 if phase_config is None else phase_config.strike_aim_lateral_bias_m),
+            attacking_goal[2],
+        )
+    )
     ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
     pelvis = np.asarray(data.qpos[candidate.qpos_base : candidate.qpos_base + 2], dtype=np.float64)
     target = np.asarray(
-        attacking_goal[:2] if leased_shot else candidate.decision.target_position_m[:2],
+        preferred_target[:2]
+        if config.task_context_bound
+        else attacking_goal[:2]
+        if leased_shot
+        else candidate.decision.target_position_m[:2],
         dtype=np.float64,
     )
     direction = target - ball
@@ -3847,18 +3881,12 @@ def _activate_rolling_option(
         return
     with contextlib.redirect_stdout(io.StringIO()):
         candidate.kick_policy.enter()
-    is_pass = not leased_shot and candidate.decision.intent is TacticalIntent.PASS
-    preferred_target = (
-        candidate.decision.target_position_m
-        if is_pass
-        else (
-            attacking_goal[0],
-            attacking_goal[1]
-            + (0.0 if phase_config is None else phase_config.strike_aim_lateral_bias_m),
-            attacking_goal[2],
-        )
-    )
     candidate.kick_policy.target_pos_w = np.asarray(preferred_target, dtype=np.float32)
+    candidate.option_task_target_m = (
+        float(preferred_target[0]),
+        float(preferred_target[1]),
+        float(preferred_target[2]),
+    )
     if is_pass and config.pass_reference_distance_m > 0:
         # Calibrated motor reference is distinct from the tactical receiver.
         # The receiver remains the physical scoring target; no ball state changes.

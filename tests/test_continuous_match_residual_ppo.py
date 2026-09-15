@@ -6,6 +6,87 @@ from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.training.continuous_match_residual_ppo import train
 
 
+def test_balanced_motor_kickoffs_are_half_turn_pairs_not_hidden_resets():
+    from rosclaw_soccer.training.continuous_match_residual_ppo import training_kickoffs
+
+    positions = training_kickoffs(varied=False, balanced_motor=True)
+    assert positions == ((3.2, -0.3), (2.8, 0.3))
+    assert positions[1] == (6.0 - positions[0][0], -positions[0][1])
+    with pytest.raises(ValueError, match="nonoverlapping"):
+        training_kickoffs(varied=True, balanced_motor=True)
+
+
+def test_collection_options_bind_task_context_and_motor_entry_geometry():
+    from rosclaw_soccer.training.continuous_match_residual_ppo import (
+        collection_options,
+        collection_world,
+    )
+
+    world = collection_world(None, False, True)
+    original = collection_options(world)
+    bound = collection_options(world, prospective=True, bound_context=True, lateral_limit_m=0.3)
+    assert bound.bilateral_enabled and bound.prospective_enabled and bound.task_context_bound
+    assert bound.maximum_strike_lateral_error_m == 0.3
+    assert bound.config_hash != original.config_hash
+
+
+def test_balanced_motor_training_cannot_silently_use_contact_only_admission(tmp_path):
+    with pytest.raises(ValueError, match="prospective finisher learning"):
+        train(
+            assets=tmp_path,
+            output=tmp_path / "out",
+            checkpoint=tmp_path / "unused",
+            scope=("red.finisher",),
+            balanced_motor_kickoffs=True,
+            finisher_option_learning=True,
+        )
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("commitment", [None, "sha256:" + "0" * 64])
+def test_new_motor_curriculum_requires_correct_option_commitment(tmp_path, monkeypatch, commitment):
+    import json
+    from types import SimpleNamespace
+
+    from rosclaw_soccer.sim.contracts import hash_json
+    from rosclaw_soccer.training.continuous_match_learning_audit import audit
+
+    ids = tuple(
+        f"{team}.{role}"
+        for team in ("blue", "red")
+        for role in ("defender", "finisher", "goalkeeper", "playmaker")
+    )
+    monkeypatch.setattr(
+        NearBallResidualPolicy,
+        "load",
+        lambda _: SimpleNamespace(
+            agent_ids=ids,
+            policy_hash="sha256:" + "1" * 64,
+        ),
+    )
+    manifest = {
+        "schema": "rosclaw_soccer.continuous_match_residual_ppo.v1",
+        "activation_ceiling": "SIM_ONLY",
+        "promotion_eligible": False,
+        "iterations": [{"generation": 5}],
+        "trainable_agent_ids": ["red.finisher"],
+        "exploration_agent_ids": ["red.finisher"],
+        "initial_policy_hash": "sha256:" + "1" * 64,
+        "optimizer_epochs": 8,
+        "gamma": 0.997,
+        "trace_decay": 0.997,
+        "reward_shaping": "motor_task_contact_v1",
+        "training_ball_y_m": [0.0],
+        "prospective_motor": True,
+    }
+    if commitment is not None:
+        manifest["collection_option_config_hash"] = commitment
+    manifest["manifest_hash"] = hash_json(manifest)
+    (tmp_path / "training.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="option"):
+        audit(tmp_path)
+
+
 def test_outlet_stance_scope_excludes_finishers_and_handoff_is_bound():
     from rosclaw_soccer.training.continuous_match_residual_ppo import collection_world
 

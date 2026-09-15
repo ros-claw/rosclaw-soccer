@@ -14,7 +14,11 @@ from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.training.continuous_competitive_match_growth import (
     validate_continuous_competitive_match_growth,
 )
-from rosclaw_soccer.training.continuous_match_residual_ppo import collection_world
+from rosclaw_soccer.training.continuous_match_residual_ppo import (
+    collection_options,
+    collection_world,
+    training_kickoffs,
+)
 from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
 from rosclaw_soccer.training.near_ball_residual_ppo import update_private_actors
 
@@ -51,13 +55,37 @@ def audit(root: Path) -> dict[str, Any]:
         for agent in parent.agent_ids
     }
     offsets = manifest["training_ball_y_m"]
-    if offsets not in ([0.0], [0.0, -0.02, 0.02, -0.04, 0.04]):
+    kickoffs = training_kickoffs(
+        varied=manifest.get("varied_ball_positions", offsets == [0.0, -0.02, 0.02, -0.04, 0.04]),
+        balanced_motor=manifest.get("balanced_motor_kickoffs", False),
+    )
+    if offsets != [y for _, y in kickoffs] or manifest.get(
+        "training_ball_xy_m", [list(xy) for xy in kickoffs]
+    ) != [list(xy) for xy in kickoffs]:
         raise ValueError("unknown committed ball-position curriculum")
-    world_hash = collection_world(
+    world = collection_world(
         manifest.get("outlet_stance_depth_m"),
         manifest.get("strict_handoff", False),
         manifest.get("finisher_option_learning", False),
+    )
+    world_hash = world.config_hash
+    option_hash = collection_options(
+        world,
+        prospective=manifest.get("prospective_motor", False),
+        bound_context=manifest.get("task_context_bound", False),
+        lateral_limit_m=manifest.get("motor_lateral_limit_m", 0.6),
     ).config_hash
+    bound_option_hash = manifest.get("collection_option_config_hash")
+    if bound_option_hash is not None and bound_option_hash != option_hash:
+        raise ValueError("committed motor option differs")
+    if (
+        any(
+            manifest.get(k, False)
+            for k in ("prospective_motor", "task_context_bound", "balanced_motor_kickoffs")
+        )
+        and bound_option_hash is None
+    ):
+        raise ValueError("new motor curriculum requires an option commitment")
     if manifest.get("collection_world_config_hash", world_hash) != world_hash:
         raise ValueError("committed physical world differs")
     for iteration, row in enumerate(iterations):
@@ -80,8 +108,12 @@ def audit(root: Path) -> dict[str, Any]:
                 or report["passed"] is not False
                 or not report["exact_replay"]
                 or report["world_config_hash"] != world_hash
+                or (
+                    bound_option_hash is not None
+                    and report["option_config_hash"] != bound_option_hash
+                )
                 or report["scenario"]["ball_initial_position_m"][:2]
-                != [3.0, offsets[(4 * iteration + index) % len(offsets)]]
+                != list(kickoffs[(4 * iteration + index) % len(kickoffs)])
             ):
                 raise ValueError("continuous collection binding differs")
             with np.load(directory / "primary.npz", allow_pickle=False) as archive:

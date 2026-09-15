@@ -208,6 +208,7 @@ class G1RollingOptionBridgeConfig:
     training_only: bool = True
     hardware_authorized: bool = False
     schema_version: str = "rosclaw_soccer.g1_rolling_option_bridge_config.v1"
+    task_context_bound: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -224,6 +225,7 @@ class G1RollingOptionBridgeConfig:
             or not isinstance(self.bilateral_enabled, bool)
             or not isinstance(self.observation_warmstart, bool)
             or not isinstance(self.prospective_enabled, bool)
+            or type(self.task_context_bound) is not bool
             or not (
                 self.pass_reference_distance_m == 0.0
                 or 4.0 <= self.pass_reference_distance_m <= 8.0
@@ -236,7 +238,10 @@ class G1RollingOptionBridgeConfig:
 
     @property
     def config_hash(self) -> str:
-        return str(hash_json(asdict(self)))
+        value = asdict(self)
+        if not self.task_context_bound:
+            value.pop("task_context_bound")
+        return str(hash_json(value))
 
 
 def locomotion_contact_teacher_effect(
