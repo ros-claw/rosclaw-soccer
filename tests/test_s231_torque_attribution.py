@@ -88,6 +88,7 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
         "cyclic_receive_motors",
         "outward_waist_braking_damping",
         "experimental_navigation_envelopes",
+        "rotation_equivariant_receive_heading",
     ):
         legacy.pop(field)
     assert default.config_hash == str(hash_json(legacy))

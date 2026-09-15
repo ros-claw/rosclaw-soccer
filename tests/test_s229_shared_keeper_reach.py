@@ -48,6 +48,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous.pop("cyclic_receive_motors")
     previous.pop("outward_waist_braking_damping")
     previous.pop("experimental_navigation_envelopes")
+    previous.pop("rotation_equivariant_receive_heading")
     assert config.config_hash == hash_json(previous)
     assert (
         config.config_hash

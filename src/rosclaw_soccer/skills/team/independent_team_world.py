@@ -225,8 +225,13 @@ class IndependentTeamWorldConfig:
     cyclic_receive_motors: bool = False
     outward_waist_braking_damping: float | None = None
     experimental_navigation_envelopes: tuple[SimulationNavigationEnvelope, ...] = ()
+    rotation_equivariant_receive_heading: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.rotation_equivariant_receive_heading) is not bool or (
+            self.rotation_equivariant_receive_heading and not self.bilateral_goals
+        ):
+            raise ValueError("rotation-equivariant receiving requires explicit bilateral opt-in")
         envelopes = self.experimental_navigation_envelopes
         if (
             type(envelopes) is not tuple
@@ -447,6 +452,8 @@ class IndependentTeamWorldConfig:
     @property
     def config_hash(self) -> str:
         value = asdict(self)
+        if not self.rotation_equivariant_receive_heading:
+            value.pop("rotation_equivariant_receive_heading")
         if not self.experimental_navigation_envelopes:
             value.pop("experimental_navigation_envelopes")
         if self.outward_waist_braking_damping is None:
@@ -4044,9 +4051,14 @@ def _movement_command(
         and float(np.linalg.norm(ball - current)) > 1.0e-6
     ):
         ball_bearing = math.atan2(ball[1] - current[1], ball[0] - current[0])
+        # A half-turn swaps field halves, not anatomical handedness. The
+        # legacy team-dependent sign makes equivalent receivers face opposite
+        # sides of the incoming ball. Keep legacy numerics unless explicitly
+        # opting into the same anatomical opening direction on both teams.
         desired_yaw = ball_bearing + (
             -config.receive_open_body_angle_rad
             if controller.cell.self_model.team_id == "red"
+            and not config.rotation_equivariant_receive_heading
             else config.receive_open_body_angle_rad
         )
     yaw_rate_limit = config.maximum_yaw_rate_radps
