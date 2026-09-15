@@ -135,3 +135,75 @@ def receiving_window(
         "promotion_eligible": False,
         "activation_ceiling": "SIM_ONLY",
     }
+
+
+def explain_receiving_window(
+    trace: dict[str, Any],
+    *,
+    agent_ids: tuple[str, ...],
+    agent_id: str,
+    start: int,
+    frames: int,
+    required_frames: int = 100,
+) -> dict[str, Any]:
+    """Explain every failed capture criterion without changing legacy scores.
+
+    This is a read-only diagnostic, not a task receipt or policy activation.
+    Validation and the authoritative decision remain in ``receiving_window``.
+    """
+    _, outcome = receiving_window(
+        trace,
+        agent_ids=agent_ids,
+        agent_id=agent_id,
+        start=start,
+        frames=frames,
+        required_frames=required_frames,
+    )
+    window = slice(start, start + frames)
+    key = agent_id.replace(".", "_")
+    index = agent_ids.index(agent_id)
+    time = np.asarray(trace["time"])[window]
+    ball = np.asarray(trace["ball_pose"])[window, :3]
+    speed = np.linalg.norm(np.asarray(trace["ball_velocity"])[window, :3], axis=1)
+    distance = np.minimum(
+        *[
+            np.linalg.norm(np.asarray(trace[key + suffix])[window] - ball, axis=1)
+            for suffix in ("_left_foot_position", "_right_foot_position")
+        ]
+    )
+    contact = np.asarray(trace["ball_contact_agent_code"])[window]
+    force = np.asarray(trace["ball_contact_force_n"])[window]
+    forbidden = (
+        (np.asarray(trace["ball_nonfoot_contact_agent_code"])[window] > 0)
+        & (np.asarray(trace["ball_nonfoot_contact_force_n"])[window] > 0)
+    ) | ((contact > 0) & (contact != index + 1) & (force > 0))
+    first_time = outcome["first_foot_contact_sec"]
+    post_contact = np.zeros(frames, dtype=bool) if first_time is None else time >= first_time
+    observation_sec = None if first_time is None else float(time[-1] - first_time)
+    tail = slice(-10, None)
+    criteria = {
+        "measured_own_foot_contact": first_time is not None,
+        "complete_window": frames == required_frames,
+        "body_and_collision_safe": outcome["body_and_collision_safe"],
+        "half_second_after_contact": observation_sec is not None and observation_sec >= 0.5 - 1e-8,
+        "no_forbidden_contact_after_touch": not bool(forbidden[post_contact].any()),
+        "near_foot_tail": bool((distance[tail] <= 0.35).all()),
+        "slow_ball_tail": bool((speed[tail] <= 0.35).all()),
+        "low_ball_tail": bool((ball[tail, 2] <= 0.20).all()),
+    }
+    if all(criteria.values()) != outcome["controlled_reception"]:
+        raise ValueError("receiving diagnostic disagrees with authoritative score")
+    return {
+        "schema": "soccer.receiving_window.explanation.v1",
+        "agent_id": agent_id,
+        "controlled_reception": outcome["controlled_reception"],
+        "criteria": criteria,
+        "failed_criteria": [name for name, passed in criteria.items() if not passed],
+        "post_contact_observation_sec": observation_sec,
+        "forbidden_post_contact_frames": int(np.count_nonzero(forbidden & post_contact)),
+        "tail_maximum_foot_distance_m": float(distance[tail].max()),
+        "tail_maximum_ball_speed_mps": float(speed[tail].max()),
+        "tail_maximum_ball_height_m": float(ball[tail, 2].max()),
+        "activation_ceiling": "SIM_ONLY",
+        "promotion_eligible": False,
+    }

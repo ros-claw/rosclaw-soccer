@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.training.receiving_rollout import receiving_window
+from rosclaw_soccer.training.receiving_rollout import explain_receiving_window, receiving_window
 
 
 def trace():
@@ -85,3 +85,72 @@ def test_bad_time_and_foreign_code_fail_closed():
     t["ball_contact_agent_code"][3] = 4
     with pytest.raises(ValueError):
         assess(t)
+
+
+def explain(t, frames=100):
+    return explain_receiving_window(
+        t,
+        agent_ids=("blue.other", "red.receiver"),
+        agent_id="red.receiver",
+        start=1,
+        frames=frames,
+    )
+
+
+@pytest.mark.parametrize(
+    "fault,criterion",
+    [
+        ("missing", "measured_own_foot_contact"),
+        ("late", "half_second_after_contact"),
+        ("fast", "slow_ball_tail"),
+        ("far", "near_foot_tail"),
+        ("high", "low_ball_tail"),
+        ("foreign", "no_forbidden_contact_after_touch"),
+        ("unsafe", "body_and_collision_safe"),
+        ("short", "complete_window"),
+    ],
+)
+def test_explanation_identifies_independent_failure(fault, criterion):
+    t = trace()
+    if fault != "missing":
+        contact(t, 99 if fault == "late" else 20)
+    if fault == "fast":
+        t["ball_velocity"][-5, 0] = 0.36  # Final speed alone would miss this.
+    if fault == "far":
+        t["red_receiver_left_foot_position"][-5, 0] = 0.36
+        t["red_receiver_right_foot_position"][-5, 0] = 0.36
+    if fault == "high":
+        t["ball_pose"][-5, 2] = 0.21
+    if fault == "foreign":
+        t["ball_nonfoot_contact_agent_code"][25] = 1
+        t["ball_nonfoot_contact_force_n"][25] = 1
+    if fault == "unsafe":
+        t["red_receiver_joint_safety_margin_rad"][25, 0] = -0.01
+    before = {k: v.copy() for k, v in t.items()}
+    result = explain(t, 99 if fault == "short" else 100)
+    assert criterion in result["failed_criteria"]
+    assert not result["controlled_reception"]
+    assert all(np.array_equal(t[k], v) for k, v in before.items())
+
+
+def test_explanation_retains_success_and_ignores_pre_touch_foreign_contact():
+    t = trace()
+    contact(t)
+    t["ball_nonfoot_contact_agent_code"][10] = 1
+    t["ball_nonfoot_contact_force_n"][10] = 1
+    result = explain(t)
+    assert result["controlled_reception"] and not result["failed_criteria"]
+    assert result["forbidden_post_contact_frames"] == 0
+    assert result["activation_ceiling"] == "SIM_ONLY"
+    assert not result["promotion_eligible"]
+
+
+def test_explanation_does_not_swallow_invalid_evidence():
+    t = trace()
+    t["ball_velocity"][0, 0] = np.nan
+    with pytest.raises(ValueError):
+        explain(t)
+    t = trace()
+    t["ball_contact_agent_code"][3] = 4
+    with pytest.raises(ValueError):
+        explain(t)
