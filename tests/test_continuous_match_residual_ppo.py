@@ -21,6 +21,16 @@ def test_outlet_stance_scope_excludes_finishers_and_handoff_is_bound():
             collection_world(depth, True)
 
 
+def test_finisher_option_learning_is_a_distinct_explicit_control_contract():
+    from rosclaw_soccer.training.continuous_match_residual_ppo import collection_world
+
+    old = collection_world(None, False)
+    new = collection_world(None, False, True)
+    assert new.option_only_residual_roles == ("finisher",)
+    assert new.config_hash != old.config_hash
+    assert old.option_only_residual_roles is None
+
+
 @pytest.mark.parametrize("iterations,workers", [(0, 1), (21, 1), (True, 1), (1, 0), (1, 5)])
 def test_budget_rejected_without_artifact_creation(tmp_path, iterations, workers):
     output = tmp_path / "run"

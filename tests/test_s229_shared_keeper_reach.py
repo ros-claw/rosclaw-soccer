@@ -36,6 +36,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous.pop("controlled_possession_retention")
     previous.pop("directed_pass_launch")
     previous.pop("owned_contact_roles")
+    previous.pop("option_only_residual_roles")
     assert config.config_hash == hash_json(previous)
     assert (
         config.config_hash

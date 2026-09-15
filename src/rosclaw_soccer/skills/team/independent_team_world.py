@@ -51,6 +51,10 @@ from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy, bou
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.growth.pass_handoff import PassHandoff
 from rosclaw_soccer.growth.pass_preparation import PassPreparationLedger, PassPreparationProvider
+from rosclaw_soccer.growth.residual_skill_routing import (
+    residual_skill_preempted,
+    residual_skill_selected,
+)
 from rosclaw_soccer.growth.role_self_model import (
     MatchRole,
     PassReceiveHandshake,
@@ -177,8 +181,23 @@ class IndependentTeamWorldConfig:
     receive_lateral_braking: bool = False
     locomotion_action_frame_sync: bool = False
     post_receive_contact_control: bool = False
+    option_only_residual_roles: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
+        if self.option_only_residual_roles is not None:
+            roles = self.option_only_residual_roles
+            if (
+                type(roles) not in (list, tuple)
+                or not roles
+                or any(type(role) is not str for role in roles)
+                or list(roles) != sorted(set(roles))
+                or not set(roles).issubset(role.value for role in MatchRole)
+                or not self.strike_residual_enabled
+            ):
+                raise ValueError(
+                    "option-only residuals require a canonical role scope and strike coverage"
+                )
+            object.__setattr__(self, "option_only_residual_roles", tuple(roles))
         if self.owned_contact_roles is not None:
             roles = self.owned_contact_roles
             if (
@@ -336,6 +355,8 @@ class IndependentTeamWorldConfig:
             value.pop("keeper_reach")  # Preserve historical disabled configuration identities.
         if self.owned_contact_roles is None:
             value.pop("owned_contact_roles")
+        if self.option_only_residual_roles is None:
+            value.pop("option_only_residual_roles")
         if self.glove_material is None:
             value.pop("glove_material")
         if self.joint_guard_margin_rad == 0.04:
@@ -950,6 +971,7 @@ def simulate_independent_team_world(
         "contact_teacher_target_m": [],
         "option_agent_code": [],
         "option_policy_frame": [],
+        "option_target_position_m": [],
         "strike_phase_agent_code": [],
         "strike_phase_code": [],
         "strike_phase_elapsed_sec": [],
@@ -1855,8 +1877,12 @@ def simulate_independent_team_world(
             )
             residual_active = np.asarray(
                 [
-                    c is teacher_controller
-                    and c is not option_controller
+                    residual_skill_selected(
+                        role=c.cell.self_model.primary_role.value,
+                        option_only_roles=active.option_only_residual_roles,
+                        is_contact_teacher=c is teacher_controller,
+                        is_motor_option=c is option_controller,
+                    )
                     and c.cell.agent_id not in residual_blocked
                     and not (
                         c.cell.agent_id not in capture_context_agent_ids
@@ -1894,7 +1920,11 @@ def simulate_independent_team_world(
             for i, c in enumerate(ordered):
                 if (
                     c.cell.agent_id in residual_blocked
-                    or c is option_controller
+                    or residual_skill_preempted(
+                        role=c.cell.self_model.primary_role.value,
+                        option_only_roles=active.option_only_residual_roles,
+                        is_motor_option=c is option_controller,
+                    )
                     or (
                         c.cell.agent_id not in capture_context_agent_ids
                         and last_receive_contact_agent_id == c.cell.agent_id
@@ -2598,6 +2628,13 @@ def simulate_independent_team_world(
             0 if option_controller is None else agent_codes[option_controller.cell.agent_id]
         )
         trace["option_policy_frame"].append(option_policy_frame)
+        recorded_option_target = np.zeros(3, dtype=np.float64)
+        if option_controller is not None:
+            assert option_controller.kick_policy is not None
+            recorded_option_target = np.asarray(
+                option_controller.kick_policy.target_pos_w, dtype=np.float64
+            ).copy()
+        trace["option_target_position_m"].append(recorded_option_target)
         recorded_phase_controller = next(
             (
                 controller

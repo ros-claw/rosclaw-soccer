@@ -33,6 +33,7 @@ from rosclaw_soccer.training.football_reward_shaping import (
     terminal_approach_shaping,
 )
 from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
+from rosclaw_soccer.training.motor_task_rewards import motor_task_targets
 from rosclaw_soccer.training.near_ball_curriculum import (
     TRAIN_OFFSETS,
     RoleRolloutJob,
@@ -84,7 +85,17 @@ def physical_rewards(
         after = np.minimum(*(np.linalg.norm(f - ball, axis=1) for f in feet))
         # Approach gain cannot be maximized merely by dwelling beside the ball.
         rewards[:, i] = 2.0 * (np.exp(-4 * after) - np.exp(-4 * before))
-        target = np.asarray(trace[key + "_target_position"])[:, :2]
+        target = np.asarray(trace[key + "_target_position"])
+        if reward_shaping == "motor_task_contact_v1":
+            if "option_target_position_m" not in trace or "option_agent_code" not in trace:
+                raise ValueError("motor-task reward requires recorded option targets")
+            target = motor_task_targets(
+                target,
+                np.asarray(trace["option_target_position_m"]),
+                np.asarray(trace["option_agent_code"]),
+                agent_code=i + 1,
+            )
+        target = target[:, :2]
         direction = target - ball[:, :2]
         direction /= np.maximum(np.linalg.norm(direction, axis=1, keepdims=True), 1e-6)
         toward = (np.asarray(trace["ball_velocity"])[:, :2] * direction).sum(axis=1)
@@ -131,7 +142,7 @@ def physical_rewards(
             credited.add(event)
     if not np.all(np.isfinite(rewards)):
         raise ValueError("nonfinite physical reward")
-    if reward_shaping in {"terminal_potential_v1", "contact_safety_v1"}:
+    if reward_shaping in {"terminal_potential_v1", "contact_safety_v1", "motor_task_contact_v1"}:
         distance = np.minimum(
             np.linalg.norm(obs[:, :, 38:41], axis=2),
             np.linalg.norm(obs[:, :, 41:44], axis=2),
@@ -147,7 +158,7 @@ def physical_rewards(
             )
             rewards[:, i] -= 2.0 * (np.exp(-4 * after) - np.exp(-4 * distance[:, i]))
         rewards += terminal_approach_shaping(distance, gamma=gamma)
-    if reward_shaping == "contact_safety_v1":
+    if reward_shaping in {"contact_safety_v1", "motor_task_contact_v1"}:
         margins = np.stack(
             [np.asarray(trace[a.replace(".", "_") + "_joint_safety_margin_rad"]) for a in ids],
             axis=1,

@@ -35,6 +35,18 @@ def test_continuous_match_defaults_define_a_hard_sim_only_exam() -> None:
     assert thresholds.minimum_save_velocity_change_mps == 0.50
 
 
+def test_bilateral_pitch_gets_bilateral_motor_options():
+    from dataclasses import replace
+
+    from rosclaw_soccer.training.continuous_competitive_match_growth import (
+        default_continuous_match_options,
+    )
+
+    world = default_continuous_match_config()
+    assert not default_continuous_match_options(world).bilateral_enabled
+    assert default_continuous_match_options(replace(world, bilateral_goals=True)).bilateral_enabled
+
+
 def test_continuous_growth_refuses_to_overwrite_evidence(tmp_path: Path) -> None:
     evidence = tmp_path / "evidence"
     evidence.mkdir()

@@ -42,7 +42,7 @@ def audit(root: Path) -> dict[str, Any]:
         or manifest["optimizer_epochs"] != 8
         or manifest["gamma"] != 0.997
         or manifest["trace_decay"] != 0.997
-        or manifest["reward_shaping"] != "contact_safety_v1"
+        or manifest["reward_shaping"] not in ("contact_safety_v1", "motor_task_contact_v1")
     ):
         raise ValueError("continuous learning scope or protocol differs")
     checked = []
@@ -54,7 +54,9 @@ def audit(root: Path) -> dict[str, Any]:
     if offsets not in ([0.0], [0.0, -0.02, 0.02, -0.04, 0.04]):
         raise ValueError("unknown committed ball-position curriculum")
     world_hash = collection_world(
-        manifest.get("outlet_stance_depth_m"), manifest.get("strict_handoff", False)
+        manifest.get("outlet_stance_depth_m"),
+        manifest.get("strict_handoff", False),
+        manifest.get("finisher_option_learning", False),
     ).config_hash
     if manifest.get("collection_world_config_hash", world_hash) != world_hash:
         raise ValueError("committed physical world differs")
@@ -110,7 +112,7 @@ def audit(root: Path) -> dict[str, Any]:
             epochs=8,
             gamma=0.997,
             trace_decay=0.997,
-            reward_shaping="contact_safety_v1",
+            reward_shaping=manifest["reward_shaping"],
             trainable_agent_ids=scope,
         )
         saved = NearBallResidualPolicy.load(root / f"generation-{rebuilt.generation:03d}.npz")

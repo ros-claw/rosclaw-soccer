@@ -232,12 +232,15 @@ def test_stochastic_collection_cannot_qualify_even_with_all_physical_gates(
         evidence_dir=tmp_path / "collection",
         asset_root=Path("unused"),
         fixture=fixture,
+        world_config=replace(module.default_continuous_match_config(), bilateral_goals=True),
         near_ball_policy=policy,
         near_ball_explore=True,
         near_ball_seed=123,
         near_ball_exploration_agent_ids=("red.defender",),
     )
     assert report["primary_assessment"]["passed"]
+    assert report["motor_capability_parity"]
+    assert all(c["option_bridge_config"].bilateral_enabled for c in calls)
     assert not report["passed"]
     assert report["sampling"]["exploration_agent_ids"] == ["red.defender"]
     assert len(calls) == 2

@@ -11,7 +11,12 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
-REWARD_SHAPING_MODES = ("legacy", "terminal_potential_v1", "contact_safety_v1")
+REWARD_SHAPING_MODES = (
+    "legacy",
+    "terminal_potential_v1",
+    "contact_safety_v1",
+    "motor_task_contact_v1",
+)
 
 
 def joint_safety_penalty(margins: NDArray[np.float64]) -> NDArray[np.float64]:

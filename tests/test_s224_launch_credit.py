@@ -66,3 +66,25 @@ def test_nonfoot_interruption_and_invalid_contract_cannot_earn_completion(shapin
     trace["pass_feedback_launch_relative"] = np.ones(61, dtype=float)
     with pytest.raises(ValueError, match="contract"):
         physical_rewards(trace, ids, reward_shaping=shaping, gamma=0.997)
+
+
+def test_motor_task_reward_changes_only_contact_direction_and_preserves_guards():
+    ids, trace = delayed_pass_trace()
+    for agent in ids:
+        trace[agent.replace(".", "_") + "_joint_safety_margin_rad"] = np.ones((61, 29))
+    trace["option_agent_code"] = np.zeros(61, dtype=np.int64)
+    trace["option_agent_code"][45] = 6
+    trace["option_target_position_m"] = np.tile([7.5, 1, 0.115], (61, 1))
+    trace["red_finisher_target_position"][45] = [-1, 0, 0]
+    trace["ball_velocity"][45, :2] = [8, 0]
+    old = physical_rewards(trace, ids, reward_shaping="contact_safety_v1", gamma=0.997)
+    bound = physical_rewards(trace, ids, reward_shaping="motor_task_contact_v1", gamma=0.997)
+    difference = np.zeros((61, 8))
+    difference[45, 5] = 0.16  # -0.08 wrong-way credit becomes +0.08.
+    np.testing.assert_allclose(bound - old, difference, atol=1e-12)
+    del trace["option_target_position_m"]
+    with pytest.raises(ValueError, match="recorded option targets"):
+        physical_rewards(trace, ids, reward_shaping="motor_task_contact_v1", gamma=0.997)
+    np.testing.assert_array_equal(
+        physical_rewards(trace, ids, reward_shaping="contact_safety_v1", gamma=0.997), old
+    )

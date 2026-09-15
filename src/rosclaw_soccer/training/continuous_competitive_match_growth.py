@@ -157,6 +157,17 @@ def default_continuous_match_scenario() -> IndependentTeamWorldScenario:
     )
 
 
+def default_continuous_match_options(
+    world: IndependentTeamWorldConfig,
+) -> G1RollingOptionBridgeConfig:
+    """A bilateral pitch must expose both attacking coordinate frames."""
+    return G1RollingOptionBridgeConfig(
+        minimum_strike_stance_depth_m=0.30,
+        maximum_strike_lateral_error_m=0.60,
+        bilateral_enabled=world.bilateral_goals,
+    )
+
+
 def run_continuous_competitive_match_growth(
     *,
     evidence_dir: Path,
@@ -202,9 +213,9 @@ def run_continuous_competitive_match_growth(
     scenario = scenario or default_continuous_match_scenario()
     world = world_config or default_continuous_match_config()
     teacher = teacher_config or G1LocomotionContactTeacherConfig()
-    option = option_config or G1RollingOptionBridgeConfig(
-        minimum_strike_stance_depth_m=0.30,
-        maximum_strike_lateral_error_m=0.60,
+    option = option_config or default_continuous_match_options(world)
+    motor_capability_parity = len(fixture.players) != 8 or (
+        world.bilateral_goals and option.bilateral_enabled
     )
     active_thresholds = thresholds or CompetitiveMatchThresholds()
     policy_artifact = None
@@ -274,6 +285,7 @@ def run_continuous_competitive_match_growth(
     )
     passed = bool(
         not near_ball_explore
+        and motor_capability_parity
         and exact_replay
         and primary.passed
         and replay.passed
@@ -289,6 +301,7 @@ def run_continuous_competitive_match_growth(
         "agent_cells": [cell.to_dict() for cell in fixture.cells],
         "near_ball_policy_hash": None if near_ball_policy is None else near_ball_policy.policy_hash,
         "near_ball_policy_artifact": policy_artifact,
+        "motor_capability_parity": motor_capability_parity,
         "sampling": {
             "explore": near_ball_explore,
             "seed": near_ball_seed,
@@ -407,8 +420,15 @@ def validate_continuous_competitive_match_growth(path: Path) -> dict[str, Any]:
             if not sampling["explore"] or policy_hash is None:
                 raise ValueError("exploration scope requires stochastic policy collection")
             recorded_training_scope(scope, NearBallResidualPolicy.load(policy_path).agent_ids)
+        motor_parity = len(value.get("fixture", {}).get("player_specs", [])) != 8 or (
+            value.get("world_config", {}).get("bilateral_goals") is True
+            and value.get("option_config", {}).get("bilateral_enabled") is True
+        )
+        if value.get("motor_capability_parity", motor_parity) is not motor_parity:
+            raise ValueError("continuous-match motor capability parity differs")
         passed = bool(
             not sampling["explore"]
+            and motor_parity
             and value.get("exact_replay") is True
             and value.get("primary_result", {}).get("passed") is True
             and value.get("replay_result", {}).get("passed") is True
