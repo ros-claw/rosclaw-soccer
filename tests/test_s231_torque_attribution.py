@@ -85,6 +85,7 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
         "motor_clearance_prediction_sec",
         "retire_completed_motors",
         "motor_receive_commitment_context",
+        "cyclic_receive_motors",
     ):
         legacy.pop(field)
     assert default.config_hash == str(hash_json(legacy))

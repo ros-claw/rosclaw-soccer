@@ -108,6 +108,11 @@ from rosclaw_soccer.skills.team.motor_option import (
     motor_ball_action_ready,
     motor_blocks_residual,
 )
+from rosclaw_soccer.skills.team.motor_rearm import (
+    TeamMotorRearmContext,
+    TeamMotorRearmProvider,
+    validate_motor_successor,
+)
 from rosclaw_soccer.skills.team.motor_retirement import (
     TeamMotorRetirementProvider,
     validate_motor_retirement,
@@ -211,8 +216,14 @@ class IndependentTeamWorldConfig:
     motor_clearance_prediction_sec: float = 0.0
     retire_completed_motors: bool = False
     motor_receive_commitment_context: bool = False
+    cyclic_receive_motors: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.cyclic_receive_motors) is not bool or (
+            self.cyclic_receive_motors
+            and not (self.motor_receive_commitment_context and self.retire_completed_motors)
+        ):
+            raise ValueError("cyclic receivers require explicit retirement and commitment context")
         if type(self.motor_receive_commitment_context) is not bool:
             raise ValueError("receive commitment context requires explicit boolean opt-in")
         if type(self.retire_completed_motors) is not bool or (
@@ -410,6 +421,8 @@ class IndependentTeamWorldConfig:
     @property
     def config_hash(self) -> str:
         value = asdict(self)
+        if not self.cyclic_receive_motors:
+            value.pop("cyclic_receive_motors")
         if not self.motor_receive_commitment_context:
             value.pop("motor_receive_commitment_context")
         if not self.retire_completed_motors:
@@ -951,6 +964,7 @@ def simulate_independent_team_world(
     motor_hashes = tuple(sorted((key, motor.contract_hash) for key, motor in motors.items()))
     motor_faults: set[str] = set()
     motor_retirements: dict[str, int] = {}
+    motor_rearm_generations: dict[str, int] = {}
     readiness_enabled = any(isinstance(m, TeamMotorReadinessProvider) for m in motors.values())
     preparation_enabled = any(isinstance(m, PassPreparationProvider) for m in motors.values())
     preparation_ledger = PassPreparationLedger(
@@ -1220,6 +1234,48 @@ def simulate_independent_team_world(
         fresh_preparation_handshake: PassReceiveHandshake | None = None
         for controller in controllers:
             _fill_locomotion_state(controller, data, ball_body, ball_qvel)
+        if active.cyclic_receive_motors and receive_commitment is not None:
+            for controller in controllers:
+                agent_id = controller.cell.agent_id
+                if (
+                    agent_id in motor_faults
+                    or agent_id not in motor_retirements
+                    or agent_id != receive_lease_agent_id
+                    or not isinstance(motors[agent_id], TeamMotorRearmProvider)
+                ):
+                    continue
+                try:
+                    context = TeamMotorRearmContext(
+                        agent_id,
+                        frame,
+                        float(data.time),
+                        motor_retirements[agent_id],
+                        dict(motor_hashes)[agent_id],
+                        controller.option_active,
+                        receive_commitment,
+                    )
+                    if not context.eligible:
+                        continue
+                    predecessor = motors[agent_id]
+                    assert isinstance(predecessor, TeamMotorRearmProvider)
+                    successor = predecessor.successor(context)
+                    if successor is not None:
+                        validate_motor_successor(
+                            context, predecessor=predecessor, successor=successor
+                        )
+                        if any(successor is motor for motor in motors.values()):
+                            raise ValueError("motor successor is not player-private")
+                        motors[agent_id] = successor
+                        del motor_retirements[agent_id]
+                        motor_rearm_generations[agent_id] = context.commitment.generation
+                except Exception:
+                    # Factory I/O/load failures are terminal too; a new lease
+                    # never clears a failed motor or crashes the world loop.
+                    motor_faults.add(agent_id)
+        if active.cyclic_receive_motors:
+            trace.setdefault("motor_rearm_generation", []).append(
+                [motor_rearm_generations.get(c.cell.agent_id, 0) for c in controllers]
+            )
         if frame % decision_stride == 0:
             if readiness_enabled:
                 for agent_id, motor in motors.items():
