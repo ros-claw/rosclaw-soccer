@@ -190,8 +190,11 @@ class IndependentTeamWorldConfig:
     option_only_residual_roles: tuple[str, ...] | None = None
     prospective_strike_approach: bool = False
     teammate_approach_clearance_m: float = 0.0
+    disjoint_motor_backends: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.disjoint_motor_backends) is not bool:
+            raise ValueError("disjoint motor backends require explicit opt-in")
         if type(self.prospective_strike_approach) is not bool or (
             type(self.teammate_approach_clearance_m) not in (float, int)
             or not math.isfinite(self.teammate_approach_clearance_m)
@@ -370,6 +373,8 @@ class IndependentTeamWorldConfig:
     @property
     def config_hash(self) -> str:
         value = asdict(self)
+        if not self.disjoint_motor_backends:
+            value.pop("disjoint_motor_backends")
         if self.keeper_reach is None:
             value.pop("keeper_reach")  # Preserve historical disabled configuration identities.
         if self.owned_contact_roles is None:
@@ -854,6 +859,11 @@ def simulate_independent_team_world(
         or any(not _HASH.fullmatch(motor.contract_hash) for motor in motors.values())
         or motors
         and option_bridge_config is not None
+        and not (
+            active.disjoint_motor_backends and option_bridge_config.per_player_options_enabled
+        )
+        or active.disjoint_motor_backends
+        and (not motors or option_bridge_config is None)
         or active.motor_idle_residual_fallback
         and (not motors or near_ball_policy is None)
         or active.keeper_reach is not None
@@ -1620,7 +1630,11 @@ def simulate_independent_team_world(
                     ),
                 )
         _activate_rolling_option(
-            controllers=controllers,
+            # A registered full-body backend owns its player's admission even
+            # while idle/faulted. Other players keep their independent options.
+            controllers=tuple(c for c in controllers if c.cell.agent_id not in motors)
+            if active.disjoint_motor_backends
+            else controllers,
             current_possession_agent_id=current_possession_agent_id,
             last_ball_contact_agent_id=last_ball_contact_agent_id,
             strike_lease_agent_id=strike_lease_agent_id,
