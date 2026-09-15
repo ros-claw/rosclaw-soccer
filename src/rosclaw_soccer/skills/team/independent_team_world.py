@@ -118,6 +118,7 @@ from rosclaw_soccer.world.field import (
     apply_g1_compliant_goal_net_force,
 )
 from rosclaw_soccer.world.goalkeeper_glove_material import GoalkeeperGloveMaterial
+from rosclaw_soccer.world.motor_clearance import motor_clearance_planes
 from rosclaw_soccer.world.multi_player import (
     G1PitchPlayerSpec,
     build_g1_multi_player_stadium_model,
@@ -202,8 +203,16 @@ class IndependentTeamWorldConfig:
     prospective_strike_approach: bool = False
     teammate_approach_clearance_m: float = 0.0
     disjoint_motor_backends: bool = False
+    motor_clearance_prediction_sec: float = 0.0
 
     def __post_init__(self) -> None:
+        if (
+            type(self.motor_clearance_prediction_sec) not in (int, float)
+            or not math.isfinite(self.motor_clearance_prediction_sec)
+            or self.motor_clearance_prediction_sec != 0.0
+            and not (self.all_role_clearance and 0.1 <= self.motor_clearance_prediction_sec <= 0.5)
+        ):
+            raise ValueError("motor clearance preview requires bounded explicit all-role opt-in")
         if type(self.disjoint_motor_backends) is not bool:
             raise ValueError("disjoint motor backends require explicit opt-in")
         if type(self.prospective_strike_approach) is not bool or (
@@ -388,6 +397,8 @@ class IndependentTeamWorldConfig:
     @property
     def config_hash(self) -> str:
         value = asdict(self)
+        if self.motor_clearance_prediction_sec == 0.0:
+            value.pop("motor_clearance_prediction_sec")
         if not self.disjoint_motor_backends:
             value.pop("disjoint_motor_backends")
         if self.keeper_reach is None:
@@ -1779,6 +1790,15 @@ def simulate_independent_team_world(
         option_overrides: dict[
             str, tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]
         ] = {}
+        motor_peer_velocities = (
+            {
+                c.cell.agent_id: np.asarray(data.qvel[c.qvel_base : c.qvel_base + 2]).copy()
+                for c in controllers
+                if c.option_active
+            }
+            if active.motor_clearance_prediction_sec > 0.0
+            else None
+        )
         for controller in controllers:
             current_decision = controller.decision
             if current_decision is None:
@@ -1787,6 +1807,7 @@ def simulate_independent_team_world(
                 controller=controller,
                 navigation_slot=navigation.get(controller.cell.agent_id),
                 navigation_frame=frame,
+                motor_peer_velocities=motor_peer_velocities,
                 decision=current_decision,
                 positions=positions,
                 data=data,
@@ -3481,6 +3502,7 @@ def _movement_command(
     reserved_stance_target_m: tuple[float, float] | None = None,
     navigation_slot: NavigationSlot | None = None,
     navigation_frame: int = 0,
+    motor_peer_velocities: Mapping[str, NDArray[np.float64]] | None = None,
 ) -> NDArray[np.float64]:
     current = positions[controller.cell.agent_id]
     target = np.asarray(decision.target_position_m[:2], dtype=np.float64)
@@ -3919,6 +3941,23 @@ def _movement_command(
                 reserved_stance_xy - ball,
                 clearance_m=config.teammate_approach_clearance_m,
             )
+        if motor_peer_velocities:
+            peers = sorted(a for a in motor_peer_velocities if a != controller.cell.agent_id)
+            predicted_planes = motor_clearance_planes(
+                np.asarray([positions[a] - current for a in peers], dtype=np.float64).reshape(
+                    -1, 2
+                ),
+                np.asarray([motor_peer_velocities[a] for a in peers], dtype=np.float64).reshape(
+                    -1, 2
+                ),
+                horizon_sec=config.motor_clearance_prediction_sec,
+            )
+            if len(predicted_planes):
+                task_halfplane = (
+                    predicted_planes
+                    if task_halfplane is None
+                    else np.concatenate((task_halfplane, predicted_planes))
+                )
         proposal = propose_clearance_velocity(
             command[:2],
             np.asarray(

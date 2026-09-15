@@ -82,6 +82,7 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
         "prospective_strike_approach",
         "teammate_approach_clearance_m",
         "disjoint_motor_backends",
+        "motor_clearance_prediction_sec",
     ):
         legacy.pop(field)
     assert default.config_hash == str(hash_json(legacy))
