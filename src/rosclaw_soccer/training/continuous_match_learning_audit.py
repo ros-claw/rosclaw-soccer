@@ -17,6 +17,7 @@ from rosclaw_soccer.training.continuous_competitive_match_growth import (
 from rosclaw_soccer.training.continuous_match_residual_ppo import (
     collection_options,
     collection_world,
+    evaluation_kickoffs,
     training_kickoffs,
 )
 from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
@@ -58,6 +59,7 @@ def audit(root: Path) -> dict[str, Any]:
     kickoffs = training_kickoffs(
         varied=manifest.get("varied_ball_positions", offsets == [0.0, -0.02, 0.02, -0.04, 0.04]),
         balanced_motor=manifest.get("balanced_motor_kickoffs", False),
+        buildup=manifest.get("buildup_kickoffs", False),
     )
     if offsets != [y for _, y in kickoffs] or manifest.get(
         "training_ball_xy_m", [list(xy) for xy in kickoffs]
@@ -90,6 +92,34 @@ def audit(root: Path) -> dict[str, Any]:
         raise ValueError("new motor curriculum requires an option commitment")
     if manifest.get("collection_world_config_hash", world_hash) != world_hash:
         raise ValueError("committed physical world differs")
+    preview = manifest.get("keeper_distribution_preview", False)
+    fixture_hash = manifest.get("collection_fixture_hash")
+    if type(preview) is not bool or (
+        (preview or manifest.get("buildup_kickoffs", False))
+        and (
+            not isinstance(fixture_hash, str)
+            or len(fixture_hash) != 71
+            or not fixture_hash.startswith("sha256:")
+        )
+    ):
+        raise ValueError("buildup learning requires an explicit fixture commitment")
+    if fixture_hash is not None and not {
+        "evaluation_case_names",
+        "evaluation_ball_xy_m",
+        "evaluation_ball_y_m",
+        "evaluation",
+    }.issubset(manifest):
+        raise ValueError("fixture-bound learning requires held-out evaluation commitments")
+
+    def fixture_matches(report: dict[str, Any]) -> bool:
+        return bool(
+            (fixture_hash is None or report["fixture_hash"] == fixture_hash)
+            and all(
+                cell["tactical_profile"].get("keeper_distribution_preview", False) is preview
+                for cell in report["agent_cells"]
+            )
+        )
+
     for iteration, row in enumerate(iterations):
         if (
             row["generation"] != parent.generation + 1
@@ -110,6 +140,7 @@ def audit(root: Path) -> dict[str, Any]:
                 or report["passed"] is not False
                 or not report["exact_replay"]
                 or report["world_config_hash"] != world_hash
+                or not fixture_matches(report)
                 or (
                     bound_option_hash is not None
                     and report["option_config_hash"] != bound_option_hash
@@ -163,6 +194,40 @@ def audit(root: Path) -> dict[str, Any]:
             counts["optimizer_updates"] += int("core_plasticity" in player)
         checked.append(saved.policy_hash)
         parent = saved
+    if "evaluation_case_names" in manifest:
+        exams = evaluation_kickoffs(buildup=manifest.get("buildup_kickoffs", False))
+        if (
+            manifest["evaluation_case_names"] != [name for name, _, _ in exams]
+            or manifest["evaluation_ball_xy_m"] != [[x, y] for _, x, y in exams]
+            or manifest["evaluation_ball_y_m"] != [y for _, _, y in exams]
+            or len(manifest["evaluation"]) != 2 * len(exams)
+        ):
+            raise ValueError("held-out curriculum differs")
+        entries = iter(manifest["evaluation"])
+        for label, policy_hash in (
+            ("parent", manifest["initial_policy_hash"]),
+            ("candidate", parent.policy_hash),
+        ):
+            for name, x, y in exams:
+                row = next(entries)
+                course = f"eval-{label}-{name}"
+                report = validate_continuous_competitive_match_growth(
+                    root / course / "continuous-match-exam.json"
+                )
+                if (
+                    row["course"] != course
+                    or row["report_hash"] != report["report_hash"]
+                    or row["assessment"] != report["primary_assessment"]
+                    or report["sampling"]
+                    != {"explore": False, "seed": 0, "exploration_agent_ids": None}
+                    or report["near_ball_policy_hash"] != policy_hash
+                    or report["world_config_hash"] != world_hash
+                    or report["option_config_hash"] != option_hash
+                    or not fixture_matches(report)
+                    or not report["exact_replay"]
+                    or report["scenario"]["ball_initial_position_m"][:2] != [x, y]
+                ):
+                    raise ValueError("held-out physical evaluation binding differs")
     result = {
         "training_manifest_hash": commitment,
         "exact_rebuilt_policy_hashes": checked,

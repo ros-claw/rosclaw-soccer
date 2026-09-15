@@ -1,4 +1,4 @@
-"""Scoped on-policy residual learning on actual central-kickoff 4v4 trajectories.
+"""Scoped on-policy residual learning on actual 4v4 trajectories.
 
 No reset between events, scripted ball forces, or automatic candidate activation.
 Frozen roles use deterministic parent actions during collection as well as exams.
@@ -31,6 +31,7 @@ from rosclaw_soccer.training.continuous_competitive_match_growth import (
     validate_continuous_competitive_match_growth,
 )
 from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
+from rosclaw_soccer.training.independent_team_growth import IndependentTeamFixture
 from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
 from rosclaw_soccer.training.near_ball_residual_ppo import update_private_actors
 
@@ -53,6 +54,7 @@ class MatchCollection:
     motor_lateral_limit_m: float = 0.60
     prospective_strike_approach: bool = False
     teammate_approach_clearance_m: float = 0.0
+    keeper_distribution_preview: bool = False
 
 
 def collection_options(
@@ -70,12 +72,50 @@ def collection_options(
     )
 
 
-def training_kickoffs(*, varied: bool, balanced_motor: bool) -> tuple[tuple[float, float], ...]:
-    if type(varied) is not bool or type(balanced_motor) is not bool or varied and balanced_motor:
+def training_kickoffs(
+    *, varied: bool, balanced_motor: bool, buildup: bool = False
+) -> tuple[tuple[float, float], ...]:
+    flags = (varied, balanced_motor, buildup)
+    if any(type(flag) is not bool for flag in flags) or sum(flags) > 1:
         raise ValueError("explicit nonoverlapping kickoff curriculum required")
+    if buildup:
+        return ((-0.4, 0.0), (6.4, 0.0), (1.05, 0.6), (4.95, -0.6))
     if balanced_motor:
         return ((3.2, -0.3), (2.8, 0.3))
     return tuple((3.0, y) for y in ((0.0, -0.02, 0.02, -0.04, 0.04) if varied else (0.0,)))
+
+
+def evaluation_kickoffs(*, buildup: bool = False) -> tuple[tuple[str, float, float], ...]:
+    if type(buildup) is not bool:
+        raise ValueError("evaluation curriculum must be explicit")
+    if not buildup:
+        return tuple((f"{y:+.2f}", 3.0, y) for y in (-0.06, 0.0, 0.06))
+    bases = training_kickoffs(varied=False, balanced_motor=False, buildup=True)
+    return (("centre", 3.0, 0.0),) + tuple(
+        (f"outlet-{index}-{offset:+.2f}", x, y + offset)
+        for index, (x, y) in enumerate(bases)
+        for offset in (-0.06, 0.06)
+    )
+
+
+def collection_fixture(assets: Path, *, keeper_preview: bool = False) -> IndependentTeamFixture:
+    if type(keeper_preview) is not bool:
+        raise ValueError("keeper distribution preview must be explicit")
+    fixture = build_four_vs_four_fixture(assets, basic_ball_play=True)
+    return replace(
+        fixture,
+        cells=tuple(
+            replace(
+                c,
+                tactical_profile=replace(
+                    c.tactical_profile,
+                    anticipatory_contact=True,
+                    keeper_distribution_preview=keeper_preview,
+                ),
+            )
+            for c in fixture.cells
+        ),
+    )
 
 
 def collection_world(
@@ -107,14 +147,7 @@ def collection_world(
 
 
 def collect(job: MatchCollection) -> str:
-    fixture = build_four_vs_four_fixture(job.assets, basic_ball_play=True)
-    fixture = replace(
-        fixture,
-        cells=tuple(
-            replace(c, tactical_profile=replace(c.tactical_profile, anticipatory_contact=True))
-            for c in fixture.cells
-        ),
-    )
+    fixture = collection_fixture(job.assets, keeper_preview=job.keeper_distribution_preview)
     world = collection_world(
         job.outlet_stance_depth_m,
         job.strict_handoff,
@@ -168,6 +201,8 @@ def train(
     motor_lateral_limit_m: float = 0.60,
     prospective_strike_approach: bool = False,
     teammate_approach_clearance_m: float = 0.0,
+    buildup_kickoffs: bool = False,
+    keeper_distribution_preview: bool = False,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -189,8 +224,13 @@ def train(
     if prospective_strike_approach and not (prospective_motor and task_context_bound):
         raise ValueError("prospective approach requires a bound prospective motor")
     kickoffs = training_kickoffs(
-        varied=varied_ball_positions, balanced_motor=balanced_motor_kickoffs
+        varied=varied_ball_positions,
+        balanced_motor=balanced_motor_kickoffs,
+        buildup=buildup_kickoffs,
     )
+    exams = evaluation_kickoffs(buildup=buildup_kickoffs)
+    if type(keeper_distribution_preview) is not bool:
+        raise ValueError("keeper distribution preview must be explicit")
     options = collection_options(
         world,
         prospective=prospective_motor,
@@ -204,6 +244,9 @@ def train(
         raise ValueError("explicit canonical trainable scope required")
     if finisher_option_learning and not set(scope).issubset(("red.finisher", "blue.finisher")):
         raise ValueError("finisher option training must freeze all other private heads")
+    fixture_hash = collection_fixture(
+        assets, keeper_preview=keeper_distribution_preview
+    ).fixture_hash
     initial = parent
     output.mkdir(parents=True)
     parent.save(output / f"generation-{parent.generation:03d}.npz")
@@ -220,6 +263,9 @@ def train(
         "training_ball_xy_m": [list(xy) for xy in kickoffs],
         "varied_ball_positions": varied_ball_positions,
         "balanced_motor_kickoffs": balanced_motor_kickoffs,
+        "buildup_kickoffs": buildup_kickoffs,
+        "keeper_distribution_preview": keeper_distribution_preview,
+        "collection_fixture_hash": fixture_hash,
         "collection_option_config_hash": options.config_hash,
         "prospective_motor": prospective_motor,
         "task_context_bound": task_context_bound,
@@ -230,7 +276,9 @@ def train(
         "outlet_stance_depth_m": outlet_stance_depth_m,
         "strict_handoff": strict_handoff,
         "finisher_option_learning": finisher_option_learning,
-        "evaluation_ball_y_m": [-0.06, 0.0, 0.06],
+        "evaluation_ball_y_m": [y for _, _, y in exams],
+        "evaluation_ball_xy_m": [[x, y] for _, x, y in exams],
+        "evaluation_case_names": [name for name, _, _ in exams],
         "optimizer_epochs": 8,
         "gamma": 0.997,
         "trace_decay": 0.997,
@@ -256,6 +304,7 @@ def train(
                 outlet_stance_depth_m=outlet_stance_depth_m,
                 strict_handoff=strict_handoff,
                 finisher_option_learning=finisher_option_learning,
+                keeper_distribution_preview=keeper_distribution_preview,
             )
             for index in range(4)
         ]
@@ -307,12 +356,12 @@ def train(
     jobs = [
         MatchCollection(
             assets,
-            output / f"eval-{label}-{offset:+.2f}",
+            output / f"eval-{label}-{name}",
             output / f"generation-{policy.generation:03d}.npz",
             0,
             scope,
             False,
-            offset,
+            y,
             outlet_stance_depth_m,
             strict_handoff,
             finisher_option_learning,
@@ -321,9 +370,11 @@ def train(
             motor_lateral_limit_m=motor_lateral_limit_m,
             prospective_strike_approach=prospective_strike_approach,
             teammate_approach_clearance_m=teammate_approach_clearance_m,
+            ball_x_m=x,
+            keeper_distribution_preview=keeper_distribution_preview,
         )
         for label, policy in (("parent", initial), ("candidate", parent))
-        for offset in (-0.06, 0.0, 0.06)
+        for name, x, y in exams
     ]
     with ProcessPoolExecutor(
         max_workers=workers, mp_context=multiprocessing.get_context("spawn")
@@ -361,6 +412,8 @@ def main() -> None:
     parser.add_argument("--motor-lateral-limit", type=float, default=0.60)
     parser.add_argument("--prospective-strike-approach", action="store_true")
     parser.add_argument("--teammate-approach-clearance", type=float, default=0.0)
+    parser.add_argument("--buildup-kickoffs", action="store_true")
+    parser.add_argument("--keeper-distribution-preview", action="store_true")
     parser.add_argument(
         "--reward-shaping",
         choices=("contact_safety_v1", "motor_task_contact_v1"),
@@ -385,6 +438,8 @@ def main() -> None:
         motor_lateral_limit_m=args.motor_lateral_limit,
         prospective_strike_approach=args.prospective_strike_approach,
         teammate_approach_clearance_m=args.teammate_approach_clearance,
+        buildup_kickoffs=args.buildup_kickoffs,
+        keeper_distribution_preview=args.keeper_distribution_preview,
     )
 
 

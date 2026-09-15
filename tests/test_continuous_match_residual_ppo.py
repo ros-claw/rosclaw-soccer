@@ -6,6 +6,104 @@ from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.training.continuous_match_residual_ppo import train
 
 
+def test_buildup_curriculum_covers_both_keepers_and_defenders_with_disjoint_exams():
+    from rosclaw_soccer.training.continuous_match_residual_ppo import (
+        evaluation_kickoffs,
+        training_kickoffs,
+    )
+
+    points = training_kickoffs(varied=False, balanced_motor=False, buildup=True)
+    assert len(points) == 4
+    for x, y in points:
+        assert any(abs(xx - (6 - x)) < 1e-9 and abs(yy + y) < 1e-9 for xx, yy in points)
+    exams = evaluation_kickoffs(buildup=True)
+    assert len(exams) == 9 and len({name for name, _, _ in exams}) == 9
+    assert not set(points).intersection((x, y) for _, x, y in exams)
+    assert evaluation_kickoffs() == (
+        ("-0.06", 3.0, -0.06),
+        ("+0.00", 3.0, 0.0),
+        ("+0.06", 3.0, 0.06),
+    )
+    for kwargs in (
+        dict(varied=True, balanced_motor=False, buildup=True),
+        dict(varied=False, balanced_motor=True, buildup=True),
+        dict(varied=False, balanced_motor=False, buildup=1),
+    ):
+        with pytest.raises(ValueError, match="nonoverlapping"):
+            training_kickoffs(**kwargs)
+
+
+def test_collection_fixture_binds_keeper_preview_and_default_preserves_cells(monkeypatch):
+    from dataclasses import replace
+
+    import test_s220_basic_ball_play as basic
+
+    from rosclaw_soccer.training import continuous_match_residual_ppo as trainer
+
+    fixture = basic.course.__wrapped__(monkeypatch)
+    monkeypatch.setattr(trainer, "build_four_vs_four_fixture", lambda *a, **k: fixture)
+    old = trainer.collection_fixture(Path("unused"))
+    expected = replace(
+        fixture,
+        cells=tuple(
+            replace(c, tactical_profile=replace(c.tactical_profile, anticipatory_contact=True))
+            for c in fixture.cells
+        ),
+    )
+    assert old.fixture_hash == expected.fixture_hash
+    new = trainer.collection_fixture(Path("unused"), keeper_preview=True)
+    assert new.fixture_hash != old.fixture_hash
+    assert all(c.tactical_profile.keeper_distribution_preview for c in new.cells)
+    with pytest.raises(ValueError, match="explicit"):
+        trainer.collection_fixture(Path("unused"), keeper_preview=1)
+
+
+@pytest.mark.parametrize(
+    "fixture_hash,match",
+    [(None, "fixture commitment"), ("sha256:" + "2" * 64, "held-out evaluation")],
+)
+def test_preview_protocol_cannot_omit_fixture_or_exam_commitments(
+    tmp_path, monkeypatch, fixture_hash, match
+):
+    import json
+    from types import SimpleNamespace
+
+    from rosclaw_soccer.sim.contracts import hash_json
+    from rosclaw_soccer.training.continuous_match_learning_audit import audit
+
+    ids = tuple(
+        f"{team}.{role}"
+        for team in ("blue", "red")
+        for role in ("defender", "finisher", "goalkeeper", "playmaker")
+    )
+    monkeypatch.setattr(
+        NearBallResidualPolicy,
+        "load",
+        lambda _: SimpleNamespace(agent_ids=ids, policy_hash="sha256:" + "1" * 64),
+    )
+    manifest = dict(
+        schema="rosclaw_soccer.continuous_match_residual_ppo.v1",
+        activation_ceiling="SIM_ONLY",
+        promotion_eligible=False,
+        iterations=[{"generation": 5}],
+        trainable_agent_ids=["red.goalkeeper"],
+        exploration_agent_ids=["red.goalkeeper"],
+        initial_policy_hash="sha256:" + "1" * 64,
+        optimizer_epochs=8,
+        gamma=0.997,
+        trace_decay=0.997,
+        reward_shaping="motor_task_contact_v1",
+        training_ball_y_m=[0.0],
+        keeper_distribution_preview=True,
+    )
+    if fixture_hash is not None:
+        manifest["collection_fixture_hash"] = fixture_hash
+    manifest["manifest_hash"] = hash_json(manifest)
+    (tmp_path / "training.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match=match):
+        audit(tmp_path)
+
+
 def test_balanced_motor_kickoffs_are_half_turn_pairs_not_hidden_resets():
     from rosclaw_soccer.training.continuous_match_residual_ppo import training_kickoffs
 

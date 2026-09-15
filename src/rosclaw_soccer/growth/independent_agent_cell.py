@@ -176,6 +176,7 @@ class AgentTacticalProfile:
     schema_version: str = "rosclaw_soccer.agent_tactical_profile.v1"
     blocked_shot_layoff: bool = False
     moving_ball_finish_intent: bool = False
+    keeper_distribution_preview: bool = False
 
     def __post_init__(self) -> None:
         values = (
@@ -192,6 +193,7 @@ class AgentTacticalProfile:
             or not isinstance(self.anticipatory_contact, bool)
             or type(self.blocked_shot_layoff) is not bool
             or type(self.moving_ball_finish_intent) is not bool
+            or type(self.keeper_distribution_preview) is not bool
             or any(not math.isfinite(value) for value in values)
             or abs(self.home_position_m[2]) > 1.0e-12
             or not 0.25 <= self.maximum_target_shift_m <= 4.0
@@ -212,6 +214,8 @@ class AgentTacticalProfile:
             value.pop("blocked_shot_layoff")
         if not self.moving_ball_finish_intent:
             value.pop("moving_ball_finish_intent")
+        if not self.keeper_distribution_preview:
+            value.pop("keeper_distribution_preview")
         return value
 
 
@@ -501,6 +505,28 @@ class RosclawSoccerAgentCell:
             and np.linalg.norm(ball[:2] - own_goal[:2]) < 2.0
             and np.linalg.norm(velocity[:2]) <= 0.5
         ):
+            if (
+                self.tactical_profile.keeper_distribution_preview
+                and self.tactical_profile.anticipatory_contact
+                and value.ball_chaser_agent_id == self.agent_id
+                and value.active_receive_source_agent_id is None
+                and ball[2] <= 0.30
+                and np.linalg.norm(velocity) <= 0.5
+                and self.self_model.authorizes(TacticalIntent.PASS, SoccerSkill.LEAD_PASS)
+            ):
+                # Negotiate the grounded outlet before making the first foot
+                # contact. This proposal neither invents possession nor grants
+                # an incoming-ball save or receive permission to be preempted.
+                receiver = self._best_receiver(value)
+                if receiver is not None and self._lane_clear(value, receiver):
+                    return self._decision(
+                        value,
+                        TacticalIntent.PASS,
+                        SoccerSkill.LEAD_PASS,
+                        receiver.position_m,
+                        receiver.agent_id,
+                        0.80,
+                    )
             return self._decision(
                 value,
                 TacticalIntent.RECEIVE,
