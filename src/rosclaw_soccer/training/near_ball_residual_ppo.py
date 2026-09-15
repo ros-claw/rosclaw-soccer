@@ -88,7 +88,7 @@ def physical_rewards(
         # Approach gain cannot be maximized merely by dwelling beside the ball.
         rewards[:, i] = 2.0 * (np.exp(-4 * after) - np.exp(-4 * before))
         target = np.asarray(trace[key + "_target_position"])
-        if reward_shaping == "motor_task_contact_v1":
+        if reward_shaping in {"motor_task_contact_v1", "in_play_motor_task_v1"}:
             if "option_target_position_m" not in trace or "option_agent_code" not in trace:
                 raise ValueError("motor-task reward requires recorded option targets")
             per_player = per_player_motor_columns(trace, agent, agent_code=i + 1, frames=count)
@@ -147,7 +147,12 @@ def physical_rewards(
             credited.add(event)
     if not np.all(np.isfinite(rewards)):
         raise ValueError("nonfinite physical reward")
-    if reward_shaping in {"terminal_potential_v1", "contact_safety_v1", "motor_task_contact_v1"}:
+    if reward_shaping in {
+        "terminal_potential_v1",
+        "contact_safety_v1",
+        "motor_task_contact_v1",
+        "in_play_motor_task_v1",
+    }:
         distance = np.minimum(
             np.linalg.norm(obs[:, :, 38:41], axis=2),
             np.linalg.norm(obs[:, :, 41:44], axis=2),
@@ -163,7 +168,7 @@ def physical_rewards(
             )
             rewards[:, i] -= 2.0 * (np.exp(-4 * after) - np.exp(-4 * distance[:, i]))
         rewards += terminal_approach_shaping(distance, gamma=gamma)
-    if reward_shaping in {"contact_safety_v1", "motor_task_contact_v1"}:
+    if reward_shaping in {"contact_safety_v1", "motor_task_contact_v1", "in_play_motor_task_v1"}:
         margins = np.stack(
             [np.asarray(trace[a.replace(".", "_") + "_joint_safety_margin_rad"]) for a in ids],
             axis=1,
@@ -171,6 +176,10 @@ def physical_rewards(
         if margins.shape != (count, 8, 29):
             raise ValueError("joint margin trace does not match reward observations")
         rewards += joint_safety_penalty(margins)
+    if reward_shaping == "in_play_motor_task_v1":
+        from rosclaw_soccer.training.in_play_rewards import in_play_rewards
+
+        rewards = in_play_rewards(rewards, trace, ids)
     return rewards
 
 
@@ -517,6 +526,7 @@ def train(
         or not 1 <= role_batch_rounds <= 5
         or (role_batch_rounds != 1 and not role_curriculum)
         or reward_shaping not in REWARD_SHAPING_MODES
+        or reward_shaping == "in_play_motor_task_v1"
         or (strict_receive_handoff and not role_curriculum)
         or (role_curriculum and not (prospective_curriculum and all_role_clearance))
         or (
@@ -764,7 +774,11 @@ def main() -> None:
         action="append",
         help="Explicit private actor to update; repeat for each actor. Others remain frozen.",
     )
-    parser.add_argument("--reward-shaping", choices=REWARD_SHAPING_MODES, default="legacy")
+    parser.add_argument(
+        "--reward-shaping",
+        choices=tuple(mode for mode in REWARD_SHAPING_MODES if mode != "in_play_motor_task_v1"),
+        default="legacy",
+    )
     args = parser.parse_args()
     if args.strike_residual and not args.contact_control_profile:
         parser.error("--strike-residual requires --contact-control-profile")
