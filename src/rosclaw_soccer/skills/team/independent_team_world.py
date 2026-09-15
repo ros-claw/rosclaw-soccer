@@ -47,11 +47,13 @@ from rosclaw_soccer.growth.locomotion_contact_teacher import (
     G1RollingOptionBridgeConfig,
     locomotion_contact_teacher_effect,
 )
+from rosclaw_soccer.growth.motor_option_lifecycle import MotorOptionLifecycle
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy, bounded_residual
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.growth.pass_handoff import PassHandoff
 from rosclaw_soccer.growth.pass_preparation import PassPreparationLedger, PassPreparationProvider
 from rosclaw_soccer.growth.residual_skill_routing import (
+    prospective_contact_preempted,
     residual_skill_preempted,
     residual_skill_selected,
 )
@@ -757,6 +759,8 @@ class _PlayerController:
     option_task_target_m: tuple[float, float, float] | None = None
     option_contact_observed: bool = False
     option_completed: bool = False
+    option_lifecycle: MotorOptionLifecycle = field(default_factory=MotorOptionLifecycle)
+    option_rearm_ready: bool = False
     last_ball_contact_foot: str | None = None
     post_receive_joint_target: NDArray[np.float64] | None = None
     post_receive_direction_xy: NDArray[np.float64] | None = None
@@ -1587,6 +1591,34 @@ def simulate_independent_team_world(
                 option_completed=phase_controller.option_completed,
                 config=strike_phase_config,
             )
+        if option_bridge_config is not None and option_bridge_config.continuous_rearm_enabled:
+            for c in controllers:
+                pose = data.qpos[c.qpos_base : c.qpos_base + 7]
+                roll, pitch = _roll_pitch(pose[3:7])
+                joints = data.qpos[c.joint_qpos]
+                ranges = model.jnt_range[c.joint_ids]
+                limited = model.jnt_limited[c.joint_ids].astype(bool)
+                body_ready = bool(
+                    np.isfinite(pose).all()
+                    and np.isfinite(joints).all()
+                    and pose[2] >= active.minimum_pelvis_height_m
+                    and max(abs(roll), abs(pitch)) <= active.maximum_tilt_rad
+                    and np.all(joints[limited] >= ranges[limited, 0])
+                    and np.all(joints[limited] <= ranges[limited, 1])
+                )
+                c.option_rearm_ready = c.option_lifecycle.ready(
+                    frame,
+                    ball_distance_m=float(
+                        np.linalg.norm(pose[:2] - data.qpos[ball_qpos : ball_qpos + 2])
+                    ),
+                    body_ready=body_ready,
+                    incoming_receive=bool(
+                        c.cell.agent_id == receive_lease_agent_id
+                        or c.cell.agent_id == last_receive_contact_agent_id
+                        and float(data.time) - last_receive_contact_time_sec
+                        <= active.post_receive_hold_sec
+                    ),
+                )
         _activate_rolling_option(
             controllers=controllers,
             current_possession_agent_id=current_possession_agent_id,
@@ -1607,6 +1639,11 @@ def simulate_independent_team_world(
             (controller for controller in controllers if controller.option_active),
             None,
         )
+        if option_bridge_config is not None and option_bridge_config.continuous_rearm_enabled:
+            for c in controllers:
+                trace.setdefault(
+                    c.cell.agent_id.replace(".", "_") + "_rolling_option_activation_count", []
+                ).append(c.option_lifecycle.activation_count)
         option_task_target = None
         if (
             option_controller is not None
@@ -2125,10 +2162,12 @@ def simulate_independent_team_world(
                     and (not post_receive_stabilizing or active.post_receive_contact_control)
                     and not (
                         option_bridge_config is not None
-                        and option_bridge_config.prospective_enabled
                         and controller.decision is not None
-                        and controller.decision.intent
-                        in {TacticalIntent.PASS, TacticalIntent.SHOOT}
+                        and prospective_contact_preempted(
+                            prospective_enabled=option_bridge_config.prospective_enabled,
+                            pass_enabled=option_bridge_config.pass_enabled,
+                            intent=controller.decision.intent,
+                        )
                     )
                     and (
                         strike_phase_config is None
@@ -3906,7 +3945,11 @@ def _activate_rolling_option(
                 or config.pass_enabled
                 and controller.decision.intent is TacticalIntent.PASS
             )
-            and not controller.option_completed
+            and (
+                not controller.option_completed
+                or config.continuous_rearm_enabled
+                and controller.option_rearm_ready
+            )
         ),
         None,
     )
@@ -3996,6 +4039,10 @@ def _activate_rolling_option(
         prepare_kick_handoff(candidate.kick_policy, entry_frame=config.entry_policy_frame)
     parameters = config.pass_parameters if is_pass else config.shoot_parameters
     candidate.option_active = True
+    if config.continuous_rearm_enabled:
+        candidate.option_lifecycle.start(frame)
+        candidate.option_completed = False
+        candidate.option_rearm_ready = False
     candidate.option_activation_frame = frame
     candidate.option_origin_target = None
     candidate.option_origin_kp = None
@@ -4206,6 +4253,10 @@ def _rolling_option_target(
     ):
         controller.option_active = False
         controller.option_completed = True
+        if config.continuous_rearm_enabled:
+            controller.option_lifecycle.finish(
+                frame, contact_observed=controller.option_contact_observed
+            )
     return blended, policy_frame
 
 

@@ -8,6 +8,23 @@ not a capability grant, hardware Permit, or candidate promotion.
 from __future__ import annotations
 
 
+def prospective_contact_preempted(
+    *, prospective_enabled: bool, pass_enabled: bool, intent: str
+) -> bool:
+    """Reserve contact only for an enabled motor skill, not its disabled sibling.
+
+    False does not grant contact authority: ordinary teacher selection, body,
+    distance, active-motor and receive/recovery guards still apply downstream.
+    """
+    if (
+        type(prospective_enabled) is not bool
+        or type(pass_enabled) is not bool
+        or not isinstance(intent, str)
+    ):
+        raise ValueError("explicit motor capability and tactical intent required")
+    return prospective_enabled and (intent == "shoot" or pass_enabled and intent == "pass")
+
+
 def residual_skill_selected(
     *,
     role: str,
