@@ -1144,7 +1144,16 @@ def simulate_independent_team_world(
     for controller in controllers:
         key = _agent_key(controller.cell.agent_id)
         if controller.keeper_reach is not None:
-            for suffix in ("keeper_active", "keeper_residual", "keeper_punch_torque"):
+            for suffix in (
+                "keeper_active",
+                "keeper_residual",
+                "keeper_punch_torque",
+                "keeper_entry_intercept",
+                "keeper_entry_confidence",
+                "keeper_entry_lateral_error_m",
+                "keeper_entry_gates",
+                "keeper_observation_time_sec",
+            ):
                 trace[f"{key}_{suffix}"] = []
         trace.update(
             {
@@ -4844,6 +4853,13 @@ def _append_player_trace(
         trace[f"{key}_keeper_active"].append(controller.keeper_reach.active)
         trace[f"{key}_keeper_residual"].append(controller.keeper_reach.previous.copy())
         trace[f"{key}_keeper_punch_torque"].append(controller.keeper_reach.torque_nm.copy())
+        trace[f"{key}_keeper_entry_intercept"].append(controller.keeper_reach.entry_intercept)
+        trace[f"{key}_keeper_entry_confidence"].append(controller.keeper_reach.entry_confidence)
+        trace[f"{key}_keeper_entry_lateral_error_m"].append(
+            controller.keeper_reach.entry_lateral_error_m
+        )
+        trace[f"{key}_keeper_entry_gates"].append(controller.keeper_reach.entry_gates)
+        trace[f"{key}_keeper_observation_time_sec"].append(controller.keeper_reach.last_time)
     if f"{key}_clearance_feasible" in trace:
         trace[f"{key}_clearance_feasible"].append(controller.clearance_feasible)
         trace[f"{key}_clearance_constrained"].append(controller.clearance_constrained)

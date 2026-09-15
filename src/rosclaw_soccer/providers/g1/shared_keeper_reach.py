@@ -144,6 +144,12 @@ class SharedKeeperReach:
         self.last_time: float | None = None
         self.started: float | None = None
         self.active = False
+        # Passive, pre-control diagnostics. Entry gates do not describe the
+        # separate ongoing-reach/contact hysteresis below.
+        self.entry_intercept = (0.0, 0.0, 0.0)
+        self.entry_confidence = 0.0
+        self.entry_lateral_error_m = 0.0
+        self.entry_gates: tuple[bool, ...] = (False,) * 7
         self.peak_residual_rad = 0.0
         self.torque_nm = np.zeros(29)
         self.contact_time: float | None = None
@@ -276,15 +282,22 @@ class SharedKeeperReach:
         if horizon <= 0 and self.contact_time is None:
             self.gate_choice = None
         gravity = _gravity_orientation(snapshot.qpos[3:7])
-        active = bool(
-            observation.intercept_confidence >= self.config.minimum_intercept_confidence
-            and 0 < horizon <= self.config.maximum_horizon_sec
-            and 0.65 <= height <= 1.70
-            and abs(lateral + snapshot.qpos[1]) <= 0.65
-            and snapshot.qpos[2] >= 0.60
-            and gravity[2] < -0.8
-            and local_ball[0] > -0.12
+        self.entry_intercept = (float(horizon), float(lateral), float(height))
+        self.entry_confidence = float(observation.intercept_confidence)
+        self.entry_lateral_error_m = abs(float(lateral + snapshot.qpos[1]))
+        self.entry_gates = tuple(
+            bool(value)
+            for value in (
+                observation.intercept_confidence >= self.config.minimum_intercept_confidence,
+                0 < horizon <= self.config.maximum_horizon_sec,
+                0.65 <= height <= 1.70,
+                self.entry_lateral_error_m <= 0.65,
+                snapshot.qpos[2] >= 0.60,
+                gravity[2] < -0.8,
+                local_ball[0] > -0.12,
+            )
         )
+        active = all(self.entry_gates)
         if self.active and observation.intercept_confidence >= 0.5:
             # Preserve a single incoming motor epoch across a noisy height
             # boundary. Never retain authority across a fall or receding ball.

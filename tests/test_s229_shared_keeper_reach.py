@@ -148,6 +148,14 @@ def test_bilateral_adapter_is_arm_only_private_causal_and_recovers():
             )
             before = (data.qpos.copy(), data.qvel.copy(), data.ctrl.copy())
             target = controller.step(model, data, ready)
+            assert controller.last_time == data.time
+            assert len(controller.entry_intercept) == 3
+            assert np.isfinite(controller.entry_intercept).all()
+            assert len(controller.entry_gates) == 7
+            assert all(type(value) is bool for value in controller.entry_gates)
+            assert controller.entry_gates[3] == (controller.entry_lateral_error_m <= 0.65)
+            if all(controller.entry_gates):
+                assert controller.active
             np.testing.assert_array_equal(target[:15], ready[:15])
             for prior, after in zip(before, (data.qpos, data.qvel, data.ctrl), strict=True):
                 np.testing.assert_array_equal(prior, after)
