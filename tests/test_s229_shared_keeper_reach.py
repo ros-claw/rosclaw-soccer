@@ -45,6 +45,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous.pop("motor_clearance_prediction_sec")
     previous.pop("retire_completed_motors")
     previous.pop("motor_receive_commitment_context")
+    previous.pop("cyclic_receive_motors")
     assert config.config_hash == hash_json(previous)
     assert (
         config.config_hash
