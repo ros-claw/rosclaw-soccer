@@ -67,6 +67,33 @@ def test_learned_stance_replaces_distant_fixed_retreat():
     assert np.linalg.norm(owned[:2]) <= config.maximum_speed_mps
     held = _movement_command(**{**kwargs, "post_receive_hold": True}, config=config)
     np.testing.assert_array_equal(held, np.zeros(3))
+    excluded = replace(config, owned_contact_roles=("defender", "goalkeeper"))
+    np.testing.assert_array_equal(_movement_command(**kwargs, config=excluded), legacy)
+    included = replace(config, owned_contact_roles=("playmaker",))
+    np.testing.assert_array_equal(_movement_command(**kwargs, config=included), owned)
+
+
+@pytest.mark.parametrize(
+    "roles",
+    [(), ("unknown",), ("finisher", "defender"), ("defender", "defender"), (True,), "defender"],
+)
+def test_contact_role_scope_rejects_ambiguous_identity(roles):
+    with pytest.raises(ValueError, match="canonical scope"):
+        IndependentTeamWorldConfig(
+            owned_contact_policy=OwnedBallContactPolicy(), owned_contact_roles=roles
+        )
+
+
+def test_contact_role_scope_is_hash_bound_and_roundtrips_json():
+    legacy = IndependentTeamWorldConfig(owned_contact_policy=OwnedBallContactPolicy())
+    scoped = replace(legacy, owned_contact_roles=("defender", "goalkeeper", "playmaker"))
+    assert scoped.config_hash != legacy.config_hash
+    assert (
+        replace(scoped, owned_contact_roles=list(scoped.owned_contact_roles)).config_hash
+        == scoped.config_hash
+    )
+    with pytest.raises(ValueError, match="canonical scope"):
+        IndependentTeamWorldConfig(owned_contact_roles=("defender",))
 
 
 def test_reward_does_not_credit_running_or_intentions():

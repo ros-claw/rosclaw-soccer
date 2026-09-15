@@ -14,6 +14,7 @@ from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.training.continuous_competitive_match_growth import (
     validate_continuous_competitive_match_growth,
 )
+from rosclaw_soccer.training.continuous_match_residual_ppo import collection_world
 from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
 from rosclaw_soccer.training.near_ball_residual_ppo import update_private_actors
 
@@ -45,6 +46,18 @@ def audit(root: Path) -> dict[str, Any]:
     ):
         raise ValueError("continuous learning scope or protocol differs")
     checked = []
+    coverage = {
+        agent: {"active_samples": 0, "learning_samples": 0, "optimizer_updates": 0}
+        for agent in parent.agent_ids
+    }
+    offsets = manifest["training_ball_y_m"]
+    if offsets not in ([0.0], [0.0, -0.02, 0.02, -0.04, 0.04]):
+        raise ValueError("unknown committed ball-position curriculum")
+    world_hash = collection_world(
+        manifest.get("outlet_stance_depth_m"), manifest.get("strict_handoff", False)
+    ).config_hash
+    if manifest.get("collection_world_config_hash", world_hash) != world_hash:
+        raise ValueError("committed physical world differs")
     for iteration, row in enumerate(iterations):
         if (
             row["generation"] != parent.generation + 1
@@ -64,6 +77,9 @@ def audit(root: Path) -> dict[str, Any]:
                 != {"explore": True, "seed": seed, "exploration_agent_ids": list(scope)}
                 or report["passed"] is not False
                 or not report["exact_replay"]
+                or report["world_config_hash"] != world_hash
+                or report["scenario"]["ball_initial_position_m"][:2]
+                != [3.0, offsets[(4 * iteration + index) % len(offsets)]]
             ):
                 raise ValueError("continuous collection binding differs")
             with np.load(directory / "primary.npz", allow_pickle=False) as archive:
@@ -104,12 +120,22 @@ def audit(root: Path) -> dict[str, Any]:
             or players != row["players"]
         ):
             raise ValueError("recorded optimizer and Core lease proofs cannot be reproduced")
+        for player in players:
+            counts = coverage[player["agent_id"]]
+            counts["active_samples"] += player["active_samples"]
+            counts["learning_samples"] += player.get("learning_samples", player["active_samples"])
+            counts["optimizer_updates"] += int("core_plasticity" in player)
         checked.append(saved.policy_hash)
         parent = saved
     result = {
         "training_manifest_hash": commitment,
         "exact_rebuilt_policy_hashes": checked,
         "verified_collection_pairs": 4 * len(checked),
+        "verified_core_updates": sum(c["optimizer_updates"] for c in coverage.values()),
+        "role_learning_coverage": coverage,
+        "requested_but_never_updated": [
+            agent for agent in scope if coverage[agent]["optimizer_updates"] == 0
+        ],
         "activation_ceiling": "SIM_ONLY",
         "promotion_eligible": False,
     }

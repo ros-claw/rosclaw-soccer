@@ -17,8 +17,12 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
+from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
-from rosclaw_soccer.skills.team.independent_team_world import IndependentTeamWorldScenario
+from rosclaw_soccer.skills.team.independent_team_world import (
+    IndependentTeamWorldConfig,
+    IndependentTeamWorldScenario,
+)
 from rosclaw_soccer.training.continuous_competitive_match_growth import (
     default_continuous_match_config,
     run_continuous_competitive_match_growth,
@@ -38,6 +42,25 @@ class MatchCollection:
     scope: tuple[str, ...]
     explore: bool = True
     ball_y_m: float = 0.0
+    outlet_stance_depth_m: float | None = None
+    strict_handoff: bool = False
+
+
+def collection_world(depth: float | None, strict_handoff: bool) -> IndependentTeamWorldConfig:
+    if type(strict_handoff) is not bool:
+        raise ValueError("strict handoff must be explicit")
+    return replace(
+        default_continuous_match_config(),
+        simulation_duration_sec=25.0,
+        bilateral_goals=True,
+        stationary_ball_acquisition=True,
+        predictive_separation=True,
+        all_role_clearance=True,
+        strike_residual_enabled=True,
+        owned_contact_policy=None if depth is None else OwnedBallContactPolicy(depth_m=depth),
+        owned_contact_roles=None if depth is None else ("defender", "goalkeeper", "playmaker"),
+        strict_receive_handoff=strict_handoff,
+    )
 
 
 def collect(job: MatchCollection) -> str:
@@ -59,15 +82,7 @@ def collect(job: MatchCollection) -> str:
             ball_initial_velocity_mps=(0.0, 0.0, 0.0),
             seed=1928,
         ),
-        world_config=replace(
-            default_continuous_match_config(),
-            simulation_duration_sec=25.0,
-            bilateral_goals=True,
-            stationary_ball_acquisition=True,
-            predictive_separation=True,
-            all_role_clearance=True,
-            strike_residual_enabled=True,
-        ),
+        world_config=collection_world(job.outlet_stance_depth_m, job.strict_handoff),
         near_ball_policy=NearBallResidualPolicy.load(job.checkpoint),
         near_ball_explore=job.explore,
         near_ball_seed=job.seed,
@@ -86,6 +101,9 @@ def train(
     scope: tuple[str, ...],
     iterations: int = 3,
     workers: int = 4,
+    outlet_stance_depth_m: float | None = None,
+    strict_handoff: bool = False,
+    varied_ball_positions: bool = False,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -93,6 +111,10 @@ def train(
         raise ValueError("bounded continuous training iterations required")
     if type(workers) is not int or not 1 <= workers <= 4:
         raise ValueError("bounded collection workers required")
+    if type(varied_ball_positions) is not bool:
+        raise ValueError("ball-position curriculum must be explicit")
+    world = collection_world(outlet_stance_depth_m, strict_handoff)
+    offsets = (0.0, -0.02, 0.02, -0.04, 0.04) if varied_ball_positions else (0.0,)
     parent = NearBallResidualPolicy.load(checkpoint)
     if type(scope) is not tuple or recorded_training_scope(list(scope), parent.agent_ids) != scope:
         raise ValueError("explicit canonical trainable scope required")
@@ -108,7 +130,10 @@ def train(
         "source_hash": hash_bytes(Path(__file__).read_bytes()),
         "trainable_agent_ids": list(scope),
         "exploration_agent_ids": list(scope),
-        "training_ball_y_m": [0.0],
+        "training_ball_y_m": list(offsets),
+        "collection_world_config_hash": world.config_hash,
+        "outlet_stance_depth_m": outlet_stance_depth_m,
+        "strict_handoff": strict_handoff,
         "evaluation_ball_y_m": [-0.06, 0.0, 0.06],
         "optimizer_epochs": 8,
         "gamma": 0.997,
@@ -125,6 +150,9 @@ def train(
                 output / f"generation-{parent.generation:03d}.npz",
                 196000 + 4 * iteration + index,
                 scope,
+                ball_y_m=offsets[(iteration * 4 + index) % len(offsets)],
+                outlet_stance_depth_m=outlet_stance_depth_m,
+                strict_handoff=strict_handoff,
             )
             for index in range(4)
         ]
@@ -182,6 +210,8 @@ def train(
             scope,
             False,
             offset,
+            outlet_stance_depth_m,
+            strict_handoff,
         )
         for label, policy in (("parent", initial), ("candidate", parent))
         for offset in (-0.06, 0.0, 0.06)
@@ -212,6 +242,9 @@ def main() -> None:
     parser.add_argument("--trainable-agent", action="append", required=True)
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--outlet-stance-depth", type=float)
+    parser.add_argument("--strict-handoff", action="store_true")
+    parser.add_argument("--varied-ball-positions", action="store_true")
     args = parser.parse_args()
     train(
         assets=args.asset_root,
@@ -220,6 +253,9 @@ def main() -> None:
         scope=tuple(sorted(args.trainable_agent)),
         iterations=args.iterations,
         workers=args.workers,
+        outlet_stance_depth_m=args.outlet_stance_depth,
+        strict_handoff=args.strict_handoff,
+        varied_ball_positions=args.varied_ball_positions,
     )
 
 

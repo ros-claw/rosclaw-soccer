@@ -164,6 +164,7 @@ class IndependentTeamWorldConfig:
     glove_material: GoalkeeperGloveMaterial | None = None
     stop_on_ball_exit: bool = False
     owned_contact_policy: OwnedBallContactPolicy | None = None
+    owned_contact_roles: tuple[str, ...] | None = None
     minimum_pelvis_height_m: float = 0.55
     maximum_tilt_rad: float = 0.80
     joint_guard_margin_rad: float = 0.04
@@ -178,6 +179,18 @@ class IndependentTeamWorldConfig:
     post_receive_contact_control: bool = False
 
     def __post_init__(self) -> None:
+        if self.owned_contact_roles is not None:
+            roles = self.owned_contact_roles
+            if (
+                type(roles) not in (list, tuple)
+                or not roles
+                or any(type(role) is not str for role in roles)
+                or list(roles) != sorted(set(roles))
+                or not set(roles).issubset(role.value for role in MatchRole)
+                or self.owned_contact_policy is None
+            ):
+                raise ValueError("owned-contact roles require a canonical scope and policy")
+            object.__setattr__(self, "owned_contact_roles", tuple(roles))
         if type(self.post_receive_contact_control) is not bool or (
             self.post_receive_contact_control and not self.strict_receive_handoff
         ):
@@ -321,6 +334,8 @@ class IndependentTeamWorldConfig:
         value = asdict(self)
         if self.keeper_reach is None:
             value.pop("keeper_reach")  # Preserve historical disabled configuration identities.
+        if self.owned_contact_roles is None:
+            value.pop("owned_contact_roles")
         if self.glove_material is None:
             value.pop("glove_material")
         if self.joint_guard_margin_rad == 0.04:
@@ -3360,6 +3375,10 @@ def _movement_command(
     desired_yaw: float | None = None
     if (
         config.owned_contact_policy is not None
+        and (
+            config.owned_contact_roles is None
+            or controller.cell.self_model.primary_role.value in config.owned_contact_roles
+        )
         and not motor_approach
         and not post_receive_hold
         and strike_phase_config is None

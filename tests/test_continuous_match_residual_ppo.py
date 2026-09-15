@@ -6,6 +6,21 @@ from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.training.continuous_match_residual_ppo import train
 
 
+def test_outlet_stance_scope_excludes_finishers_and_handoff_is_bound():
+    from rosclaw_soccer.training.continuous_match_residual_ppo import collection_world
+
+    old = collection_world(None, False)
+    new = collection_world(0.24, True)
+    assert old.owned_contact_policy is None
+    assert new.owned_contact_roles == ("defender", "goalkeeper", "playmaker")
+    assert new.owned_contact_policy.depth_m == 0.24
+    assert new.strict_receive_handoff
+    assert new.config_hash != old.config_hash
+    for depth in (-0.2, 0.0, 0.5, float("nan")):
+        with pytest.raises(ValueError):
+            collection_world(depth, True)
+
+
 @pytest.mark.parametrize("iterations,workers", [(0, 1), (21, 1), (True, 1), (1, 0), (1, 5)])
 def test_budget_rejected_without_artifact_creation(tmp_path, iterations, workers):
     output = tmp_path / "run"
