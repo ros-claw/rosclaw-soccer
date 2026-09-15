@@ -107,6 +107,11 @@ from rosclaw_soccer.skills.team.motor_option import (
     motor_ball_action_ready,
     motor_blocks_residual,
 )
+from rosclaw_soccer.skills.team.navigation_option import (
+    NavigationObservation,
+    NavigationSlot,
+    TeamNavigationPolicy,
+)
 from rosclaw_soccer.world.field import (
     G1CompliantGoalNetState,
     G1TrainingGoalSpec,
@@ -554,6 +559,8 @@ class IndependentTeamWorldResult:
     schema_version: str = "rosclaw_soccer.independent_team_world_result.v1"
     motor_policy_hashes: tuple[tuple[str, str], ...] = ()
     motor_fault_agents: tuple[str, ...] = ()
+    navigation_policy_hashes: tuple[tuple[str, str], ...] = ()
+    navigation_fault_agents: tuple[str, ...] = ()
     persistent_physics_observer_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -582,9 +589,16 @@ class IndependentTeamWorldResult:
             != len(self.motor_policy_hashes)
             or not set(self.motor_fault_agents).issubset(dict(self.motor_policy_hashes))
             or len(set(self.motor_fault_agents)) != len(self.motor_fault_agents)
+            or len(dict(self.navigation_policy_hashes)) != len(self.navigation_policy_hashes)
+            or not set(self.navigation_fault_agents).issubset(dict(self.navigation_policy_hashes))
+            or len(set(self.navigation_fault_agents)) != len(self.navigation_fault_agents)
             or any(
                 agent not in quality_ids or not _HASH.fullmatch(value)
-                for agent, value in (*self.keeper_policy_hashes, *self.motor_policy_hashes)
+                for agent, value in (
+                    *self.keeper_policy_hashes,
+                    *self.motor_policy_hashes,
+                    *self.navigation_policy_hashes,
+                )
             )
             or any(
                 not _HASH.fullmatch(value)
@@ -669,6 +683,7 @@ class IndependentTeamWorldResult:
             and self.role_complete_both_teams
             and self.safe
             and not self.motor_fault_agents
+            and not self.navigation_fault_agents
         )
 
     @property
@@ -677,6 +692,14 @@ class IndependentTeamWorldResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            **(
+                {
+                    "navigation_policy_hashes": dict(self.navigation_policy_hashes),
+                    "navigation_fault_agents": list(self.navigation_fault_agents),
+                }
+                if self.navigation_policy_hashes
+                else {}
+            ),
             **(
                 {"persistent_physics_observer_ids": list(self.persistent_physics_observer_ids)}
                 if self.persistent_physics_observer_ids
@@ -811,6 +834,7 @@ def simulate_independent_team_world(
     near_ball_explore: bool = False,
     near_ball_exploration_agent_ids: tuple[str, ...] | None = None,
     motor_options: Mapping[str, TeamMotorOption] | None = None,
+    navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all neural locomotion bodies in one clock.
@@ -856,6 +880,17 @@ def simulate_independent_team_world(
             [agent in scope for agent in near_ball_policy.agent_ids], dtype=bool
         )
     motors = dict(motor_options or {})
+    if navigation_policies is not None and not isinstance(navigation_policies, Mapping):
+        raise ValueError("explicit per-player navigation mapping required")
+    navigation = {
+        agent: NavigationSlot(policy) for agent, policy in (navigation_policies or {}).items()
+    }
+    if (
+        not set(navigation).issubset(roster_ids)
+        or any(agent != slot.agent_id for agent, slot in navigation.items())
+        or len({id(slot.policy) for slot in navigation.values()}) != len(navigation)
+    ):
+        raise ValueError("navigation providers must be private and roster-bound")
     if (
         type(persistent_physics_observer_ids) is not tuple
         or any(type(agent) is not str for agent in persistent_physics_observer_ids)
@@ -954,12 +989,24 @@ def simulate_independent_team_world(
         for agent in sorted(roster.agents, key=lambda item: item.agent_id)
     )
     foundation_paths = {
-        Path(c.policy.policy_path) for c in controllers if c.cell.agent_id in motors
+        Path(c.policy.policy_path)
+        for c in controllers
+        if c.cell.agent_id in motors or c.cell.agent_id in navigation
     }
     foundation_paths |= {p.parent.parent / "config/LocoMode.yaml" for p in foundation_paths}
     if any(not p.is_file() or p.stat().st_size > 1024**3 for p in foundation_paths):
         raise ValueError("bounded frozen locomotion artifact required for motor observations")
     foundation_hashes = {p: hash_bytes(p.read_bytes()) for p in foundation_paths}
+    for controller in controllers:
+        slot = navigation.get(controller.cell.agent_id)
+        if slot is not None:
+            path = Path(controller.policy.policy_path)
+            if (
+                slot.foundation_hash != foundation_hashes[path]
+                or slot.foundation_config_hash
+                != foundation_hashes[path.parent.parent / "config/LocoMode.yaml"]
+            ):
+                raise ValueError("navigation policy does not bind the actual frozen foundation")
     ball_body = _id(model, mujoco.mjtObj.mjOBJ_BODY, "ball")
     if active.keeper_reach is not None:
         for controller in controllers:
@@ -1738,6 +1785,8 @@ def simulate_independent_team_world(
                 raise RuntimeError("independent agent has no current decision")
             command = _movement_command(
                 controller=controller,
+                navigation_slot=navigation.get(controller.cell.agent_id),
+                navigation_frame=frame,
                 decision=current_decision,
                 positions=positions,
                 data=data,
@@ -2703,6 +2752,28 @@ def simulate_independent_team_world(
             controller.maximum_tilt_rad = max(controller.maximum_tilt_rad, abs(roll), abs(pitch))
             _append_player_trace(trace, controller=controller, data=data, model=model)
         trace["time"].append(float(data.time))
+        if navigation:
+            trace.setdefault("navigation_active", []).append(
+                np.asarray(
+                    [navigation[a].active if a in navigation else False for a in sorted(roster_ids)]
+                )
+            )
+            trace.setdefault("navigation_faulted", []).append(
+                np.asarray(
+                    [
+                        navigation[a].faulted if a in navigation else False
+                        for a in sorted(roster_ids)
+                    ]
+                )
+            )
+            trace.setdefault("navigation_proposed_delta", []).append(
+                np.asarray(
+                    [
+                        navigation[a].delta if a in navigation else (0.0, 0.0, 0.0)
+                        for a in sorted(roster_ids)
+                    ]
+                )
+            )
         trace["ball_pose"].append(data.qpos[ball_qpos : ball_qpos + 7].copy())
         trace["ball_velocity"].append(data.qvel[ball_qvel : ball_qvel + 6].copy())
         trace["coordination_frame_index"].append(current_coordination_index)
@@ -2977,6 +3048,10 @@ def simulate_independent_team_world(
         ),
         motor_policy_hashes=motor_hashes,
         motor_fault_agents=tuple(sorted(motor_faults)),
+        navigation_policy_hashes=tuple(
+            (a, navigation[a].contract_hash) for a in sorted(navigation)
+        ),
+        navigation_fault_agents=tuple(a for a in sorted(navigation) if navigation[a].faulted),
         persistent_physics_observer_ids=persistent_physics_observer_ids,
     )
     return result, trajectory
@@ -3404,6 +3479,8 @@ def _movement_command(
     continuous_motor_approach: bool = False,
     pending_receive_target_m: tuple[float, float] | None = None,
     reserved_stance_target_m: tuple[float, float] | None = None,
+    navigation_slot: NavigationSlot | None = None,
+    navigation_frame: int = 0,
 ) -> NDArray[np.float64]:
     current = positions[controller.cell.agent_id]
     target = np.asarray(decision.target_position_m[:2], dtype=np.float64)
@@ -3710,6 +3787,7 @@ def _movement_command(
             if controller.cell.self_model.team_id == "red"
             else config.receive_open_body_angle_rad
         )
+    yaw_rate_limit = config.maximum_yaw_rate_radps
     if desired_yaw is not None:
         current_yaw = _pelvis_yaw(
             np.asarray(
@@ -3733,6 +3811,40 @@ def _movement_command(
                 yaw_rate_limit,
             )
         )
+    if navigation_slot is not None:
+        previous_command = (
+            np.zeros(3) if controller.last_world_command is None else controller.last_world_command
+        )
+        observation = NavigationObservation(
+            agent_id=controller.cell.agent_id,
+            frame=navigation_frame,
+            time_sec=float(data.time),
+            role=controller.cell.self_model.primary_role.value,
+            intent=decision.intent.value,
+            body_pose=tuple(data.qpos[controller.qpos_base : controller.qpos_base + 7].tolist()),
+            body_velocity=tuple(
+                data.qvel[controller.qvel_base : controller.qvel_base + 3].tolist()
+            ),
+            ball_position=tuple(data.qpos[ball_qpos : ball_qpos + 3].tolist()),
+            ball_velocity=tuple(data.qvel[ball_qvel : ball_qvel + 3].tolist()),
+            task_target=decision.target_position_m,
+            steering_target=tuple((current + error).tolist()),
+            baseline_command=tuple(command.tolist()),
+            previous_command=tuple(previous_command.tolist()),
+            neighbors=tuple(
+                (a, float(p[0]), float(p[1]))
+                for a, p in sorted(positions.items())
+                if a != controller.cell.agent_id
+            ),
+        )
+        navigation_delta = navigation_slot.propose(observation)
+        if navigation_slot.faulted:
+            command[:] = 0.0
+        elif not post_receive_hold and decision.intent is not TacticalIntent.RECOVER:
+            command += np.asarray(navigation_delta)
+            command[2] = np.clip(command[2], -yaw_rate_limit, yaw_rate_limit)
+        else:
+            navigation_slot.active = False
     for other_id, other in positions.items():
         if other_id == controller.cell.agent_id:
             continue
