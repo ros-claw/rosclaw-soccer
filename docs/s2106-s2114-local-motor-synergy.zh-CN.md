@@ -3,7 +3,8 @@
 状态：SIM_ONLY。没有合格连续比赛、没有新冠军，没有可据此发布的比赛宣传片。
 本文记录已结束实验以及 S2114 的启动设计，二者不能混淆。
 S2114 后续首轮候选被拒绝，采集遇到磁盘中断，详见
-[中断与断点核验](s2114-storage-interruption.zh-CN.md)；四轮计划未完成。
+[中断与断点核验](s2114-storage-interruption.zh-CN.md)。随后四轮计划已恢复完成，
+四个候选均被拒绝，见 [最终续跑结果](s2114-completed-recovery-review.zh-CN.md)。
 
 ## 结束的两条学习线
 
