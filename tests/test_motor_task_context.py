@@ -130,3 +130,31 @@ def test_bound_context_is_explicit_hash_bound_and_keeps_legacy_hash():
     assert replace(old, task_context_bound=True).config_hash != old.config_hash
     with pytest.raises(ValueError, match="SIM-only"):
         G1RollingOptionBridgeConfig(task_context_bound=1)
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_other_body_recovery_only_blocks_legacy_global_motor_slot(parallel):
+    candidate, data = controller_fixture(y=0)
+    recovering, _ = controller_fixture(blue=True)
+    recovering.option_active = True
+    _activate_rolling_option(
+        controllers=(recovering, candidate),
+        current_possession_agent_id=candidate.cell.agent_id,
+        last_ball_contact_agent_id=candidate.cell.agent_id,
+        strike_lease_agent_id=None,
+        frame=1,
+        data=data,
+        ball_qpos=7,
+        goal=replace(G1TrainingGoalSpec(), plane_x_m=7.5, target_y_m=0.0),
+        config=G1RollingOptionBridgeConfig(
+            task_context_bound=True, per_player_options_enabled=parallel
+        ),
+        left_goal_plane_x_m=-1.5,
+    )
+    assert candidate.option_active is parallel
+    assert recovering.option_active
+
+
+def test_parallel_motor_requires_bound_tasks():
+    with pytest.raises(ValueError):
+        G1RollingOptionBridgeConfig(per_player_options_enabled=True)

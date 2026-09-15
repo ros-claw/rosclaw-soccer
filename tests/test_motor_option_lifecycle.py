@@ -91,6 +91,7 @@ def test_default_option_hash_preserved_and_flag_is_not_numeric():
     config = G1RollingOptionBridgeConfig()
     legacy = asdict(config)
     legacy.pop("continuous_rearm_enabled")
+    legacy.pop("per_player_options_enabled")
     legacy.pop("task_context_bound")
     assert config.config_hash == hash_json(legacy)
     with pytest.raises(ValueError):

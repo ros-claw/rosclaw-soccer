@@ -11,10 +11,25 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.growth.per_player_motor_trace import per_player_motor_columns
+
 
 def diagnose_shot_options(
     trace: dict[str, Any], agent_ids: tuple[str, ...], *, goal_planes_x_m: tuple[float, float]
 ) -> list[dict[str, Any]]:
+    if not agent_ids or len(set(agent_ids)) != len(agent_ids):
+        raise ValueError("unique nonempty agent roster required")
+    if "per_player_motor_contract" in trace:
+        results = []
+        for code, agent in enumerate(agent_ids, 1):
+            columns = per_player_motor_columns(
+                trace, agent, agent_code=code, frames=len(trace["time"])
+            )
+            assert columns is not None
+            local = {k: v for k, v in trace.items() if k != "per_player_motor_contract"}
+            local["option_agent_code"], local["option_target_position_m"] = columns
+            results.extend(diagnose_shot_options(local, agent_ids, goal_planes_x_m=goal_planes_x_m))
+        return sorted(results, key=lambda r: (r["option_start_sec"], r["agent_id"]))
     time = np.asarray(trace["time"])
     count = len(time)
     if (

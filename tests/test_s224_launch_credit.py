@@ -88,3 +88,29 @@ def test_motor_task_reward_changes_only_contact_direction_and_preserves_guards()
     np.testing.assert_array_equal(
         physical_rewards(trace, ids, reward_shaping="contact_safety_v1", gamma=0.997), old
     )
+
+
+def test_parallel_motor_rewards_use_each_body_target_not_the_empty_scalar_slot():
+    ids, trace = delayed_pass_trace()
+    trace["option_agent_code"] = np.zeros(61, dtype=np.int64)
+    trace["option_target_position_m"] = np.zeros((61, 3))
+    for agent in ids:
+        key = agent.replace(".", "_")
+        trace[key + "_joint_safety_margin_rad"] = np.ones((61, 29))
+        trace[key + "_motor_option_active"] = np.zeros(61, dtype=bool)
+        trace[key + "_motor_option_target_m"] = np.zeros((61, 3))
+    for agent, direction in (("red.finisher", 1), ("blue.finisher", -1)):
+        key = agent.replace(".", "_")
+        trace[key + "_motor_option_active"][44:46] = True
+        trace[key + "_motor_option_target_m"][44:46] = [direction * 7.5, 0, 1.5]
+        trace[key + "_target_position"][44:46] = [-direction * 7.5, 0, 1.5]
+    trace["ball_contact_agent_code"][44] = 2
+    trace["ball_velocity"][44, 0] = -8
+    trace["ball_velocity"][45, 0] = 8
+    old = physical_rewards(trace, ids, reward_shaping="motor_task_contact_v1", gamma=0.997)
+    trace["per_player_motor_contract"] = np.ones(61, dtype=bool)
+    bound = physical_rewards(trace, ids, reward_shaping="motor_task_contact_v1", gamma=0.997)
+    expected = np.zeros((61, 8))
+    expected[44, 1] = 0.16
+    expected[45, 5] = 0.16
+    np.testing.assert_allclose(bound - old, expected, atol=1e-12)

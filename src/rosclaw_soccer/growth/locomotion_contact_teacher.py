@@ -210,6 +210,7 @@ class G1RollingOptionBridgeConfig:
     schema_version: str = "rosclaw_soccer.g1_rolling_option_bridge_config.v1"
     task_context_bound: bool = False
     continuous_rearm_enabled: bool = False
+    per_player_options_enabled: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -228,6 +229,9 @@ class G1RollingOptionBridgeConfig:
             or not isinstance(self.prospective_enabled, bool)
             or type(self.task_context_bound) is not bool
             or type(self.continuous_rearm_enabled) is not bool
+            or type(self.per_player_options_enabled) is not bool
+            or self.per_player_options_enabled
+            and not self.task_context_bound
             or not (
                 self.pass_reference_distance_m == 0.0
                 or 4.0 <= self.pass_reference_distance_m <= 8.0
@@ -245,6 +249,8 @@ class G1RollingOptionBridgeConfig:
             value.pop("task_context_bound")
         if not self.continuous_rearm_enabled:
             value.pop("continuous_rearm_enabled")
+        if not self.per_player_options_enabled:
+            value.pop("per_player_options_enabled")
         return str(hash_json(value))
 
 

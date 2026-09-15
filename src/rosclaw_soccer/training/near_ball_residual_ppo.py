@@ -23,6 +23,7 @@ import numpy as np
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.growth.pass_failure_feedback import diagnose_passes
+from rosclaw_soccer.growth.per_player_motor_trace import per_player_motor_columns
 from rosclaw_soccer.providers.g1.asset_qualification import trajectory_digest
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.active_team_probe import run_probe, validate_probe
@@ -89,10 +90,13 @@ def physical_rewards(
         if reward_shaping == "motor_task_contact_v1":
             if "option_target_position_m" not in trace or "option_agent_code" not in trace:
                 raise ValueError("motor-task reward requires recorded option targets")
+            per_player = per_player_motor_columns(trace, agent, agent_code=i + 1, frames=count)
             target = motor_task_targets(
                 target,
-                np.asarray(trace["option_target_position_m"]),
-                np.asarray(trace["option_agent_code"]),
+                np.asarray(trace["option_target_position_m"])
+                if per_player is None
+                else per_player[1],
+                np.asarray(trace["option_agent_code"]) if per_player is None else per_player[0],
                 agent_code=i + 1,
             )
         target = target[:, :2]

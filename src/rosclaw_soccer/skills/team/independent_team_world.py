@@ -1635,25 +1635,29 @@ def simulate_independent_team_world(
                 assigned_ball_chaser_agent_id if current_possession_agent_id is None else None
             ),
         )
-        option_controller = next(
-            (controller for controller in controllers if controller.option_active),
-            None,
+        option_controllers = {c.cell.agent_id: c for c in controllers if c.option_active}
+        # Legacy scalar columns are unambiguous only for one active body.
+        option_controller = (
+            next(iter(option_controllers.values())) if len(option_controllers) == 1 else None
         )
         if option_bridge_config is not None and option_bridge_config.continuous_rearm_enabled:
             for c in controllers:
                 trace.setdefault(
                     c.cell.agent_id.replace(".", "_") + "_rolling_option_activation_count", []
                 ).append(c.option_lifecycle.activation_count)
-        option_task_target = None
-        if (
-            option_controller is not None
-            and option_bridge_config is not None
-            and option_bridge_config.task_context_bound
-        ):
-            option_task_target = option_controller.option_task_target_m
-            if option_task_target is None:
-                raise RuntimeError("admitted motor option has no bound task target")
+        option_task_targets = {}
+        if option_bridge_config is not None and option_bridge_config.task_context_bound:
+            for agent_id, c in option_controllers.items():
+                if c.option_task_target_m is None:
+                    raise RuntimeError("admitted motor option has no bound task target")
+                option_task_targets[agent_id] = c.option_task_target_m
+        option_task_target = (
+            None
+            if option_controller is None
+            else option_task_targets.get(option_controller.cell.agent_id)
+        )
         option_policy_frame = 0
+        option_policy_frames: dict[str, int] = {}
         prospective_strike_owner = next(
             (
                 c
@@ -1681,9 +1685,9 @@ def simulate_independent_team_world(
             toward_goal /= max(float(np.linalg.norm(toward_goal)), 1e-9)
             stance_xy = current_ball_xy - 0.72 * toward_goal
             reserved_stance_target = (float(stance_xy[0]), float(stance_xy[1]))
-        option_override: (
-            tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]] | None
-        ) = None
+        option_overrides: dict[
+            str, tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]
+        ] = {}
         for controller in controllers:
             current_decision = controller.decision
             if current_decision is None:
@@ -1799,12 +1803,16 @@ def simulate_independent_team_world(
                     controller.output.kps, controller.output.kds
                 )
             controller.active_frames += int(float(np.linalg.norm(command[:2])) >= 0.04)
-            if controller is option_controller:
-                option_override, option_policy_frame = _rolling_option_target(
+            if controller.cell.agent_id in option_controllers:
+                rolling_proposal, local_policy_frame = _rolling_option_target(
                     controller,
                     frame=frame,
                     config=option_bridge_config,
                 )
+                option_overrides[controller.cell.agent_id] = rolling_proposal
+                option_policy_frames[controller.cell.agent_id] = local_policy_frame
+                if controller is option_controller:
+                    option_policy_frame = local_policy_frame
         if active.locomotion_action_frame_sync:
             trace.setdefault("locomotion_reflection_frame", []).append(
                 [c.locomotion_reflection_frame is True for c in controllers]
@@ -1994,9 +2002,7 @@ def simulate_independent_team_world(
                         ball_qpos=ball_qpos,
                         ball_qvel=ball_qvel,
                         previous=residual_previous[i],
-                        task_target_position_m=option_task_target
-                        if c is option_controller
-                        else None,
+                        task_target_position_m=option_task_targets.get(c.cell.agent_id),
                     )
                     for i, c in enumerate(ordered)
                 ]
@@ -2007,7 +2013,7 @@ def simulate_independent_team_world(
                         role=c.cell.self_model.primary_role.value,
                         option_only_roles=active.option_only_residual_roles,
                         is_contact_teacher=c is teacher_controller,
-                        is_motor_option=c is option_controller,
+                        is_motor_option=c.cell.agent_id in option_controllers,
                     )
                     and c.cell.agent_id not in residual_blocked
                     and not (
@@ -2049,7 +2055,7 @@ def simulate_independent_team_world(
                     or residual_skill_preempted(
                         role=c.cell.self_model.primary_role.value,
                         option_only_roles=active.option_only_residual_roles,
-                        is_motor_option=c is option_controller,
+                        is_motor_option=c.cell.agent_id in option_controllers,
                     )
                     or (
                         c.cell.agent_id not in capture_context_agent_ids
@@ -2125,8 +2131,8 @@ def simulate_independent_team_world(
                         np.asarray(values, dtype=np.float64)
                         for values in (motor_target.target_rad, motor_target.kp, motor_target.kd)
                     )
-                elif controller is option_controller and option_override is not None:
-                    target, kp, kd = option_override
+                elif controller.cell.agent_id in option_overrides:
+                    target, kp, kd = option_overrides[controller.cell.agent_id]
                 elif (
                     post_receive_stabilizing or one_touch_finishing
                 ) and controller.post_receive_joint_target is not None:
@@ -2158,7 +2164,7 @@ def simulate_independent_team_world(
                 if (
                     controller is teacher_controller
                     and controller.cell.agent_id not in motor_targets
-                    and controller is not option_controller
+                    and controller.cell.agent_id not in option_controllers
                     and (not post_receive_stabilizing or active.post_receive_contact_control)
                     and not (
                         option_bridge_config is not None
@@ -2583,7 +2589,7 @@ def simulate_independent_team_world(
                     controller.last_ball_contact_foot = (
                         "left" if effector_code == 1 else "right" if effector_code == 2 else None
                     )
-                    if controller is option_controller:
+                    if controller.cell.agent_id in option_controllers:
                         controller.option_contact_observed = True
                     break
             if controlled_possession is not None:
@@ -2766,6 +2772,21 @@ def simulate_independent_team_world(
                 dtype=np.float64,
             ).copy()
         trace["option_target_position_m"].append(recorded_option_target)
+        if option_bridge_config is not None and option_bridge_config.per_player_options_enabled:
+            trace.setdefault("per_player_motor_contract", []).append(True)
+            for c in controllers:
+                key = c.cell.agent_id.replace(".", "_")
+                trace.setdefault(key + "_motor_option_active", []).append(
+                    c.cell.agent_id in option_controllers
+                )
+                trace.setdefault(key + "_motor_option_frame", []).append(
+                    option_policy_frames.get(c.cell.agent_id, 0)
+                )
+                trace.setdefault(key + "_motor_option_target_m", []).append(
+                    np.asarray(
+                        option_task_targets.get(c.cell.agent_id, (0.0, 0.0, 0.0)), dtype=np.float64
+                    )
+                )
         recorded_phase_controller = next(
             (
                 controller
@@ -3913,7 +3934,10 @@ def _activate_rolling_option(
 ) -> None:
     """Warm-start one owned PASS/SHOOT option after contact-derived possession."""
 
-    if config is None or any(controller.option_active for controller in controllers):
+    if config is None or (
+        not config.per_player_options_enabled
+        and any(controller.option_active for controller in controllers)
+    ):
         return
     leased_shot = bool(
         strike_lease_agent_id is not None and strike_lease_agent_id == last_ball_contact_agent_id
@@ -3939,6 +3963,7 @@ def _activate_rolling_option(
                 else current_possession_agent_id
             )
             and controller.decision is not None
+            and not controller.option_active
             and (
                 leased_shot
                 or controller.decision.intent is TacticalIntent.SHOOT

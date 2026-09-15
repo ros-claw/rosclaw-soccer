@@ -87,3 +87,22 @@ def test_measured_crossing_error_and_zero_force_body_records():
     assert result["body_contacts"] == []
     assert result["observed_centre_plane_crossing"]["target_error_m"] == 0.25
     assert not result["observed_centre_plane_crossing"]["intervening_or_concurrent_contact"]
+
+
+def test_simultaneous_actors_are_both_diagnosed_without_scalar_winner():
+    trace = trace_fixture()
+    trace["per_player_motor_contract"] = np.ones(8, dtype=bool)
+    for agent in IDS:
+        key = agent.replace(".", "_")
+        trace[key + "_motor_option_active"] = np.zeros(8, dtype=bool)
+        trace[key + "_motor_option_target_m"] = np.zeros((8, 3))
+    for agent, direction in (("red.finisher", 1), ("blue.finisher", -1)):
+        key = agent.replace(".", "_")
+        trace[key + "_motor_option_active"][:4] = True
+        trace[key + "_motor_option_target_m"][:4] = [direction, 0, 0.3]
+    trace["option_agent_code"][:] = 0
+    trace["option_target_position_m"][:] = 0
+    results = diagnose_shot_options(trace, IDS, goal_planes_x_m=(-1.0, 1.0))
+    assert [r["agent_id"] for r in results] == ["blue.finisher", "red.finisher"]
+    assert results[0]["first_foot_contact_sec"] is None
+    assert results[1]["first_foot_contact_sec"] == 0.02
