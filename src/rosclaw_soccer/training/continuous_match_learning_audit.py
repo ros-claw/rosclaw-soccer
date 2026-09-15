@@ -78,6 +78,8 @@ def audit(root: Path) -> dict[str, Any]:
         prospective=manifest.get("prospective_motor", False),
         bound_context=manifest.get("task_context_bound", False),
         lateral_limit_m=manifest.get("motor_lateral_limit_m", 0.6),
+        per_player_options=manifest.get("per_player_options", False),
+        continuous_motor_rearm=manifest.get("continuous_motor_rearm", False),
     ).config_hash
     bound_option_hash = manifest.get("collection_option_config_hash")
     if bound_option_hash is not None and bound_option_hash != option_hash:
@@ -85,7 +87,13 @@ def audit(root: Path) -> dict[str, Any]:
     if (
         any(
             manifest.get(k, False)
-            for k in ("prospective_motor", "task_context_bound", "balanced_motor_kickoffs")
+            for k in (
+                "prospective_motor",
+                "task_context_bound",
+                "balanced_motor_kickoffs",
+                "per_player_options",
+                "continuous_motor_rearm",
+            )
         )
         and bound_option_hash is None
     ):

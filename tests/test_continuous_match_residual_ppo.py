@@ -6,6 +6,27 @@ from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.training.continuous_match_residual_ppo import train
 
 
+def test_collection_motor_concurrency_and_rearm_are_explicit_and_hash_bound():
+    from rosclaw_soccer.training.continuous_match_residual_ppo import (
+        collection_options,
+        collection_world,
+    )
+
+    world = collection_world(None, False)
+    old = collection_options(world, bound_context=True)
+    new = collection_options(
+        world, bound_context=True, per_player_options=True, continuous_motor_rearm=True
+    )
+    assert new.per_player_options_enabled and new.continuous_rearm_enabled
+    assert old.config_hash != new.config_hash
+    assert collection_options(world, bound_context=True, per_player_options=False) == old
+    with pytest.raises(ValueError):
+        collection_options(world, per_player_options=True)
+    for bad in (1, "yes"):
+        with pytest.raises(ValueError):
+            collection_options(world, bound_context=True, per_player_options=bad)
+
+
 def test_buildup_curriculum_covers_both_keepers_and_defenders_with_disjoint_exams():
     from rosclaw_soccer.training.continuous_match_residual_ppo import (
         evaluation_kickoffs,

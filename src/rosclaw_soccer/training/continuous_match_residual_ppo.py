@@ -55,6 +55,8 @@ class MatchCollection:
     prospective_strike_approach: bool = False
     teammate_approach_clearance_m: float = 0.0
     keeper_distribution_preview: bool = False
+    per_player_options: bool = False
+    continuous_motor_rearm: bool = False
 
 
 def collection_options(
@@ -63,12 +65,16 @@ def collection_options(
     prospective: bool = False,
     bound_context: bool = False,
     lateral_limit_m: float = 0.60,
+    per_player_options: bool = False,
+    continuous_motor_rearm: bool = False,
 ) -> G1RollingOptionBridgeConfig:
     return replace(
         default_continuous_match_options(world),
         prospective_enabled=prospective,
         task_context_bound=bound_context,
         maximum_strike_lateral_error_m=lateral_limit_m,
+        per_player_options_enabled=per_player_options,
+        continuous_rearm_enabled=continuous_motor_rearm,
     )
 
 
@@ -171,6 +177,8 @@ def collect(job: MatchCollection) -> str:
             prospective=job.prospective_motor,
             bound_context=job.task_context_bound,
             lateral_limit_m=job.motor_lateral_limit_m,
+            per_player_options=job.per_player_options,
+            continuous_motor_rearm=job.continuous_motor_rearm,
         ),
         near_ball_policy=NearBallResidualPolicy.load(job.checkpoint),
         near_ball_explore=job.explore,
@@ -203,6 +211,8 @@ def train(
     teammate_approach_clearance_m: float = 0.0,
     buildup_kickoffs: bool = False,
     keeper_distribution_preview: bool = False,
+    per_player_options: bool = False,
+    continuous_motor_rearm: bool = False,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -236,6 +246,8 @@ def train(
         prospective=prospective_motor,
         bound_context=task_context_bound,
         lateral_limit_m=motor_lateral_limit_m,
+        per_player_options=per_player_options,
+        continuous_motor_rearm=continuous_motor_rearm,
     )
     if balanced_motor_kickoffs and not (prospective_motor and finisher_option_learning):
         raise ValueError("balanced motor curriculum requires prospective finisher learning")
@@ -265,6 +277,8 @@ def train(
         "balanced_motor_kickoffs": balanced_motor_kickoffs,
         "buildup_kickoffs": buildup_kickoffs,
         "keeper_distribution_preview": keeper_distribution_preview,
+        "per_player_options": per_player_options,
+        "continuous_motor_rearm": continuous_motor_rearm,
         "collection_fixture_hash": fixture_hash,
         "collection_option_config_hash": options.config_hash,
         "prospective_motor": prospective_motor,
@@ -305,6 +319,8 @@ def train(
                 strict_handoff=strict_handoff,
                 finisher_option_learning=finisher_option_learning,
                 keeper_distribution_preview=keeper_distribution_preview,
+                per_player_options=per_player_options,
+                continuous_motor_rearm=continuous_motor_rearm,
             )
             for index in range(4)
         ]
@@ -372,6 +388,8 @@ def train(
             teammate_approach_clearance_m=teammate_approach_clearance_m,
             ball_x_m=x,
             keeper_distribution_preview=keeper_distribution_preview,
+            per_player_options=per_player_options,
+            continuous_motor_rearm=continuous_motor_rearm,
         )
         for label, policy in (("parent", initial), ("candidate", parent))
         for name, x, y in exams
@@ -414,6 +432,8 @@ def main() -> None:
     parser.add_argument("--teammate-approach-clearance", type=float, default=0.0)
     parser.add_argument("--buildup-kickoffs", action="store_true")
     parser.add_argument("--keeper-distribution-preview", action="store_true")
+    parser.add_argument("--per-player-options", action="store_true")
+    parser.add_argument("--continuous-motor-rearm", action="store_true")
     parser.add_argument(
         "--reward-shaping",
         choices=("contact_safety_v1", "motor_task_contact_v1"),
@@ -440,6 +460,8 @@ def main() -> None:
         teammate_approach_clearance_m=args.teammate_approach_clearance,
         buildup_kickoffs=args.buildup_kickoffs,
         keeper_distribution_preview=args.keeper_distribution_preview,
+        per_player_options=args.per_player_options,
+        continuous_motor_rearm=args.continuous_motor_rearm,
     )
 
 
