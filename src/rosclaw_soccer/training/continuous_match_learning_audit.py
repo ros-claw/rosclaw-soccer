@@ -71,6 +71,7 @@ def audit(root: Path) -> dict[str, Any]:
         manifest.get("finisher_option_learning", False),
         manifest.get("prospective_strike_approach", False),
         manifest.get("teammate_approach_clearance_m", 0.0),
+        manifest.get("receiver_commitment_priority", False),
     )
     world_hash = world.config_hash
     option_hash = collection_options(

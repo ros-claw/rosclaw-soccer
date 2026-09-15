@@ -27,6 +27,17 @@ def test_collection_motor_concurrency_and_rearm_are_explicit_and_hash_bound():
             collection_options(world, bound_context=True, per_player_options=bad)
 
 
+def test_training_receive_priority_requires_strict_physical_handoff():
+    from rosclaw_soccer.training.continuous_match_residual_ppo import collection_world
+
+    old = collection_world(None, True)
+    new = collection_world(None, True, receiver_commitment_priority=True)
+    assert new.receiver_commitment_priority
+    assert new.config_hash != old.config_hash
+    with pytest.raises(ValueError):
+        collection_world(None, False, receiver_commitment_priority=True)
+
+
 def test_buildup_curriculum_covers_both_keepers_and_defenders_with_disjoint_exams():
     from rosclaw_soccer.training.continuous_match_residual_ppo import (
         evaluation_kickoffs,

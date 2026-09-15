@@ -57,6 +57,7 @@ class MatchCollection:
     keeper_distribution_preview: bool = False
     per_player_options: bool = False
     continuous_motor_rearm: bool = False
+    receiver_commitment_priority: bool = False
 
 
 def collection_options(
@@ -130,6 +131,7 @@ def collection_world(
     finisher_option_learning: bool = False,
     prospective_strike_approach: bool = False,
     teammate_approach_clearance_m: float = 0.0,
+    receiver_commitment_priority: bool = False,
 ) -> IndependentTeamWorldConfig:
     if type(strict_handoff) is not bool:
         raise ValueError("strict handoff must be explicit")
@@ -149,6 +151,7 @@ def collection_world(
         option_only_residual_roles=("finisher",) if finisher_option_learning else None,
         prospective_strike_approach=prospective_strike_approach,
         teammate_approach_clearance_m=teammate_approach_clearance_m,
+        receiver_commitment_priority=receiver_commitment_priority,
     )
 
 
@@ -160,6 +163,7 @@ def collect(job: MatchCollection) -> str:
         job.finisher_option_learning,
         job.prospective_strike_approach,
         job.teammate_approach_clearance_m,
+        job.receiver_commitment_priority,
     )
     report = run_continuous_competitive_match_growth(
         evidence_dir=job.output,
@@ -213,6 +217,7 @@ def train(
     keeper_distribution_preview: bool = False,
     per_player_options: bool = False,
     continuous_motor_rearm: bool = False,
+    receiver_commitment_priority: bool = False,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -230,6 +235,7 @@ def train(
         finisher_option_learning,
         prospective_strike_approach,
         teammate_approach_clearance_m,
+        receiver_commitment_priority,
     )
     if prospective_strike_approach and not (prospective_motor and task_context_bound):
         raise ValueError("prospective approach requires a bound prospective motor")
@@ -279,6 +285,7 @@ def train(
         "keeper_distribution_preview": keeper_distribution_preview,
         "per_player_options": per_player_options,
         "continuous_motor_rearm": continuous_motor_rearm,
+        "receiver_commitment_priority": receiver_commitment_priority,
         "collection_fixture_hash": fixture_hash,
         "collection_option_config_hash": options.config_hash,
         "prospective_motor": prospective_motor,
@@ -321,6 +328,7 @@ def train(
                 keeper_distribution_preview=keeper_distribution_preview,
                 per_player_options=per_player_options,
                 continuous_motor_rearm=continuous_motor_rearm,
+                receiver_commitment_priority=receiver_commitment_priority,
             )
             for index in range(4)
         ]
@@ -390,6 +398,7 @@ def train(
             keeper_distribution_preview=keeper_distribution_preview,
             per_player_options=per_player_options,
             continuous_motor_rearm=continuous_motor_rearm,
+            receiver_commitment_priority=receiver_commitment_priority,
         )
         for label, policy in (("parent", initial), ("candidate", parent))
         for name, x, y in exams
@@ -434,6 +443,7 @@ def main() -> None:
     parser.add_argument("--keeper-distribution-preview", action="store_true")
     parser.add_argument("--per-player-options", action="store_true")
     parser.add_argument("--continuous-motor-rearm", action="store_true")
+    parser.add_argument("--receiver-commitment-priority", action="store_true")
     parser.add_argument(
         "--reward-shaping",
         choices=("contact_safety_v1", "motor_task_contact_v1"),
@@ -462,6 +472,7 @@ def main() -> None:
         keeper_distribution_preview=args.keeper_distribution_preview,
         per_player_options=args.per_player_options,
         continuous_motor_rearm=args.continuous_motor_rearm,
+        receiver_commitment_priority=args.receiver_commitment_priority,
     )
 
 
