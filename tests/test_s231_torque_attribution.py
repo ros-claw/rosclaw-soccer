@@ -70,6 +70,7 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
         "motor_idle_residual_fallback",
         "receiver_commitment_priority",
         "pass_target_commitment",
+        "preserve_launched_handoff",
         "pass_stance_bypass",
         "receive_lateral_braking",
         "locomotion_action_frame_sync",

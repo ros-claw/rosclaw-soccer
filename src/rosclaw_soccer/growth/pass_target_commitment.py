@@ -5,6 +5,15 @@ from __future__ import annotations
 from rosclaw_soccer.growth.pass_handoff import PassHandoff
 
 
+def live_pass_flight(handoff: PassHandoff | None, *, time_sec: float) -> bool:
+    """A proposal cannot replace an observed launch before its original expiry."""
+    return bool(
+        handoff is not None
+        and not handoff.expired(time_sec)
+        and handoff.source_foot_contact_sec is not None
+    )
+
+
 def preferred_unlaunched_receiver(
     handoff: PassHandoff | None,
     *,

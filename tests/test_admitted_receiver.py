@@ -61,3 +61,30 @@ def test_foreign_or_skipped_observation_latches_and_blocks_commitment(tmp_path):
     assert not m.readiness(frame=418, time_sec=8.36).ball_action_ready
     with pytest.raises(ValueError, match="faulted"):
         m.propose(incoming(416))
+
+
+def test_slow_incoming_protocol_is_explicit_and_does_not_invent_commitment(tmp_path):
+    o = incoming()
+    v = list(o.qvel)
+    v[35] = -0.25
+    slow = replace(o, qvel=tuple(v))
+    assert not incoming_receive_admissible(slow)
+    assert incoming_receive_admissible(slow, minimum_speed_mps=0.1)
+    assert not incoming_receive_admissible(
+        replace(slow, committed_receiver=False), minimum_speed_mps=0.1
+    )
+    frozen = motor(tmp_path)
+    default = AdmittedRecurrentReceiver(frozen)
+    assert (
+        default.contract_hash
+        == AdmittedRecurrentReceiver(frozen, minimum_speed_mps=0.4).contract_hash
+    )
+    assert (
+        default.contract_hash
+        != AdmittedRecurrentReceiver(frozen, minimum_speed_mps=0.1).contract_hash
+    )
+    for invalid in (True, 0.0, float("nan"), float("inf"), 1.1):
+        with pytest.raises(ValueError):
+            AdmittedRecurrentReceiver(frozen, minimum_speed_mps=invalid)
+        with pytest.raises(ValueError):
+            incoming_receive_admissible(slow, minimum_speed_mps=invalid)

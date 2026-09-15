@@ -52,7 +52,10 @@ from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy, bou
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.growth.pass_handoff import PassHandoff
 from rosclaw_soccer.growth.pass_preparation import PassPreparationLedger, PassPreparationProvider
-from rosclaw_soccer.growth.pass_target_commitment import preferred_unlaunched_receiver
+from rosclaw_soccer.growth.pass_target_commitment import (
+    live_pass_flight,
+    preferred_unlaunched_receiver,
+)
 from rosclaw_soccer.growth.residual_skill_routing import (
     prospective_contact_preempted,
     residual_skill_preempted,
@@ -170,6 +173,7 @@ class IndependentTeamWorldConfig:
     directed_pass_launch: bool = False
     receiver_commitment_priority: bool = False
     pass_target_commitment: bool = False
+    preserve_launched_handoff: bool = False
     strike_residual_enabled: bool = False
     strike_stance_lateral_m: float | None = None
     keeper_reach: SharedKeeperReachConfig | None = None
@@ -310,6 +314,8 @@ class IndependentTeamWorldConfig:
             or type(self.receiver_commitment_priority) is not bool
             or type(self.pass_target_commitment) is not bool
             or (self.pass_target_commitment and not self.strict_receive_handoff)
+            or type(self.preserve_launched_handoff) is not bool
+            or (self.preserve_launched_handoff and not self.strict_receive_handoff)
             or (self.receiver_commitment_priority and not self.strict_receive_handoff)
             or type(self.strike_residual_enabled) is not bool
             or type(self.motor_idle_residual_fallback) is not bool
@@ -405,6 +411,8 @@ class IndependentTeamWorldConfig:
             value.pop("receiver_commitment_priority")
         if not self.pass_target_commitment:
             value.pop("pass_target_commitment")
+        if not self.preserve_launched_handoff:
+            value.pop("preserve_launched_handoff")
         if not self.pass_stance_bypass:
             value.pop("pass_stance_bypass")
         if not self.receive_lateral_braking:
@@ -1347,7 +1355,10 @@ def simulate_independent_team_world(
                     flight_tracking_agent_id = None
                     receive_handoff = None
                     handoff_cancellations += 1
-            if current_possession_agent_id is not None or prospective_team_contact:
+            if (current_possession_agent_id is not None or prospective_team_contact) and not (
+                active.preserve_launched_handoff
+                and live_pass_flight(receive_handoff, time_sec=float(data.time))
+            ):
                 current_handshake = next(
                     (
                         handshake

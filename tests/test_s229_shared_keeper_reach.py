@@ -30,6 +30,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous.pop("motor_idle_residual_fallback")
     previous.pop("receiver_commitment_priority")
     previous.pop("pass_target_commitment")
+    previous.pop("preserve_launched_handoff")
     previous.pop("pass_stance_bypass")
     previous.pop("receive_lateral_braking")
     previous.pop("locomotion_action_frame_sync")
