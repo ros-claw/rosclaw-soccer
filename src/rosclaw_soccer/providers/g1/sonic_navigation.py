@@ -25,6 +25,7 @@ from rosclaw_soccer.providers.g1.sonic_runup import (
 )
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation, TeamMotorTarget
+from rosclaw_soccer.skills.team.navigation_envelope import SimulationNavigationEnvelope
 
 
 @dataclass(frozen=True)
@@ -33,8 +34,15 @@ class SonicNavigationConfig:
     planner_seed: int = 30300
     replan_frames: int = 20
     lookahead_frames: int = 10
+    experimental_maximum_speed_mps: float | None = None
 
     def __post_init__(self) -> None:
+        if self.experimental_maximum_speed_mps is not None and (
+            type(self.experimental_maximum_speed_mps) not in (int, float)
+            or not math.isfinite(self.experimental_maximum_speed_mps)
+            or not 0.7 < self.experimental_maximum_speed_mps <= 1.5
+        ):
+            raise ValueError("experimental SONIC speed must be in (0.7, 1.5] m/s")
         if (
             type(self.maximum_frames) is not int
             or not 50 <= self.maximum_frames <= 3000
@@ -118,7 +126,7 @@ class _StreamingBackend(G1SonicRunupController):
         feed = {
             "context_mujoco_qpos": context[None].astype(np.float32),
             "target_vel": np.asarray([speed], dtype=np.float32),
-            "mode": np.asarray([0 if speed < 0.02 else 1], dtype=np.int64),
+            "mode": np.asarray([0 if speed < 0.02 else 1 if speed <= 0.8 else 2], dtype=np.int64),
             "movement_direction": np.asarray([[*direction, 0.0]], dtype=np.float32),
             "facing_direction": np.asarray(
                 [[math.cos(heading), math.sin(heading), 0.0]], dtype=np.float32
@@ -200,13 +208,20 @@ class G1SonicNavigation:
         self.agent_id = agent_id
         self.config = config or SonicNavigationConfig()
         self.backend = _StreamingBackend(model_root, self.config)
+        config_record = asdict(self.config)
+        if self.config.experimental_maximum_speed_mps is None:
+            config_record.pop("experimental_maximum_speed_mps")
         self.contract_hash = hash_json(
             {
                 "schema": "rosclaw_soccer.g1_sonic_navigation.v1",
                 "agent_id": agent_id,
-                "config": asdict(self.config),
+                "config": config_record,
                 "foundation": self.backend.qualification.qualification_hash,
-                "command": "post-clearance world vx vy <= .7 m/s, yaw rate <= 1.5 rad/s",
+                "command": (
+                    "post-clearance world vx vy <= .7 m/s, yaw rate <= 1.5 rad/s"
+                    if self.config.experimental_maximum_speed_mps is None
+                    else "explicit experimental envelope; post-clearance command only; yaw <= 1.5"
+                ),
                 "activation_ceiling": "SIM_ONLY",
             }
         )
@@ -217,6 +232,19 @@ class G1SonicNavigation:
         self._ready_from_handoff = False
         self._ready_from_observation = False
         self._boundary_observation_hash: str | None = None
+
+    @property
+    def navigation_envelope(self) -> SimulationNavigationEnvelope | None:
+        limit = self.config.experimental_maximum_speed_mps
+        return (
+            None
+            if limit is None
+            else SimulationNavigationEnvelope(self.agent_id, self.contract_hash, limit)
+        )
+
+    def _check_navigation_envelope(self, observation: TeamMotorObservation) -> None:
+        if observation.navigation_envelope != self.navigation_envelope:
+            raise ValueError("navigation envelope does not bind this private motor contract")
 
     def start_from_observation(
         self, observation: TeamMotorObservation
@@ -232,6 +260,7 @@ class G1SonicNavigation:
         if self._faulted or self._retired:
             raise ValueError("navigation is faulted or retired")
         try:
+            self._check_navigation_envelope(observation)
             if (
                 self._next_frame != 0
                 or self._ready_from_handoff
@@ -284,6 +313,7 @@ class G1SonicNavigation:
         if self._faulted:
             raise ValueError("navigation fault is latched; a new episode is required")
         try:
+            self._check_navigation_envelope(observation)
             if (
                 observation.agent_id != self.agent_id
                 or observation.frame != self._next_frame
@@ -342,6 +372,7 @@ class G1SonicNavigation:
         if self._faulted or self._retired:
             raise ValueError("navigation is faulted or retired")
         try:
+            self._check_navigation_envelope(observation)
             if (
                 observation.agent_id != self.agent_id
                 or observation.frame != self._next_frame
@@ -388,6 +419,7 @@ class G1SonicNavigation:
         if self._faulted or self._retired:
             raise ValueError("navigation is faulted or retired")
         try:
+            self._check_navigation_envelope(observation)
             if (
                 self._next_frame != 0
                 or self._ready_from_handoff

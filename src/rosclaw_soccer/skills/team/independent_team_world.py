@@ -118,6 +118,7 @@ from rosclaw_soccer.skills.team.motor_retirement import (
     TeamMotorRetirementProvider,
     validate_motor_retirement,
 )
+from rosclaw_soccer.skills.team.navigation_envelope import SimulationNavigationEnvelope
 from rosclaw_soccer.skills.team.navigation_option import (
     NavigationObservation,
     NavigationSlot,
@@ -219,8 +220,21 @@ class IndependentTeamWorldConfig:
     motor_receive_commitment_context: bool = False
     cyclic_receive_motors: bool = False
     outward_waist_braking_damping: float | None = None
+    experimental_navigation_envelopes: tuple[SimulationNavigationEnvelope, ...] = ()
 
     def __post_init__(self) -> None:
+        envelopes = self.experimental_navigation_envelopes
+        if (
+            type(envelopes) is not tuple
+            or any(not isinstance(item, SimulationNavigationEnvelope) for item in envelopes)
+            or tuple(item.agent_id for item in envelopes)
+            != tuple(sorted({item.agent_id for item in envelopes}))
+            or envelopes
+            and not (self.all_role_clearance and self.predictive_separation)
+        ):
+            raise ValueError("sorted experimental navigation envelopes require all-role clearance")
+        for envelope in envelopes:
+            envelope.__post_init__()
         if self.outward_waist_braking_damping is not None and (
             type(self.outward_waist_braking_damping) not in (int, float)
             or not math.isfinite(self.outward_waist_braking_damping)
@@ -429,6 +443,8 @@ class IndependentTeamWorldConfig:
     @property
     def config_hash(self) -> str:
         value = asdict(self)
+        if not self.experimental_navigation_envelopes:
+            value.pop("experimental_navigation_envelopes")
         if self.outward_waist_braking_damping is None:
             value.pop("outward_waist_braking_damping")
         if not self.cyclic_receive_motors:
@@ -972,6 +988,17 @@ def simulate_independent_team_world(
     ):
         raise ValueError("per-player motor identity, binding or override ownership differs")
     motor_hashes = tuple(sorted((key, motor.contract_hash) for key, motor in motors.items()))
+    experimental_navigation = {
+        envelope.agent_id: envelope for envelope in active.experimental_navigation_envelopes
+    }
+    if any(
+        agent not in motors
+        or agent in navigation
+        or motors[agent].contract_hash != envelope.motor_contract_hash
+        or getattr(motors[agent], "navigation_envelope", None) != envelope
+        for agent, envelope in experimental_navigation.items()
+    ):
+        raise ValueError("experimental navigation must bind its private motor, not an old learner")
     motor_faults: set[str] = set()
     motor_retirements: dict[str, int] = {}
     motor_rearm_generations: dict[str, int] = {}
@@ -1917,6 +1944,13 @@ def simulate_independent_team_world(
             if current_decision is None:
                 raise RuntimeError("independent agent has no current decision")
             command = _movement_command(
+                experimental_navigation_speed_mps=(
+                    experimental_navigation[controller.cell.agent_id].maximum_speed_mps
+                    if controller.cell.agent_id in experimental_navigation
+                    and controller.cell.agent_id not in motor_faults
+                    and controller.cell.agent_id not in motor_retirements
+                    else None
+                ),
                 controller=controller,
                 navigation_slot=navigation.get(controller.cell.agent_id),
                 navigation_frame=frame,
@@ -2010,6 +2044,10 @@ def simulate_independent_team_world(
                 )
             )
             local_command = _rotate_z(command, -current_yaw)
+            if controller.cell.agent_id in experimental_navigation:
+                fallback_speed = float(np.linalg.norm(local_command[:2]))
+                if fallback_speed > 0.7:
+                    local_command[:2] *= 0.7 / fallback_speed
             controller.state.vel_cmd = _normalized_locomotion_command(
                 controller.policy, local_command
             )
@@ -2094,6 +2132,7 @@ def simulate_independent_team_world(
                         receive_commitment=(
                             receive_commitment if receive_lease_agent_id == agent_id else None
                         ),
+                        navigation_envelope=experimental_navigation.get(agent_id),
                         foundation=TeamMotorFoundation(
                             agent_id=agent_id,
                             frame=frame,
@@ -3657,7 +3696,16 @@ def _movement_command(
     navigation_slot: NavigationSlot | None = None,
     navigation_frame: int = 0,
     motor_peer_velocities: Mapping[str, NDArray[np.float64]] | None = None,
+    experimental_navigation_speed_mps: float | None = None,
 ) -> NDArray[np.float64]:
+    if experimental_navigation_speed_mps is not None and (
+        type(experimental_navigation_speed_mps) not in (int, float)
+        or not math.isfinite(experimental_navigation_speed_mps)
+        or not 0.7 < experimental_navigation_speed_mps <= 1.5
+        or not config.all_role_clearance
+        or not config.predictive_separation
+    ):
+        raise ValueError("bounded experimental speed requires explicit player clearance")
     current = positions[controller.cell.agent_id]
     target = np.asarray(decision.target_position_m[:2], dtype=np.float64)
     ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
@@ -3886,6 +3934,8 @@ def _movement_command(
         if controller.cell.self_model.primary_role is MatchRole.GOALKEEPER
         else config.maximum_speed_mps
     )
+    if experimental_navigation_speed_mps is not None:
+        speed_limit = experimental_navigation_speed_mps
     speed = float(np.linalg.norm(command[:2]))
     if speed > speed_limit:
         command[:2] *= speed_limit / speed
@@ -4123,6 +4173,7 @@ def _movement_command(
             ).reshape((-1, 2)),
             maximum_speed_mps=speed_limit,
             additional_halfplanes=task_halfplane,
+            experimental_fast_navigation=experimental_navigation_speed_mps is not None,
         )
         command[:2] = proposal.velocity_mps
         controller.clearance_feasible = proposal.feasible

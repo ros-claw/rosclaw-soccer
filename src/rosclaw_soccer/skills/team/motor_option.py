@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from rosclaw_soccer.skills.team.navigation_envelope import SimulationNavigationEnvelope
+
 
 def motor_blocks_residual(
     *, registered: bool, proposed: bool, faulted: bool, allow_idle_fallback: bool
@@ -75,6 +77,7 @@ class TeamMotorObservation:
     # Read-only current frozen inference, not a simulator or recurrent-state handle.
     foundation: TeamMotorFoundation | None = None
     receive_commitment: TeamReceiveCommitment | None = None
+    navigation_envelope: SimulationNavigationEnvelope | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -97,13 +100,22 @@ class TeamMotorObservation:
             or self.time_sec < 0
         ):
             raise ValueError("finite immutable shared motor observation required")
+        speed_limit = 0.7
+        if self.navigation_envelope is not None:
+            envelope = self.navigation_envelope
+            if not isinstance(envelope, SimulationNavigationEnvelope):
+                raise ValueError("typed simulation navigation envelope required")
+            envelope.__post_init__()
+            if envelope.agent_id != self.agent_id or self.navigation_command is None:
+                raise ValueError("navigation envelope requires its player's cleared command")
+            speed_limit = envelope.maximum_speed_mps
         if self.navigation_command is not None:
             command = self.navigation_command
             if (
                 type(command) is not tuple
                 or len(command) != 3
                 or any(type(v) not in (int, float) or not math.isfinite(v) for v in command)
-                or math.hypot(*command[:2]) > 0.700000001
+                or math.hypot(*command[:2]) > speed_limit + 1e-9
                 or abs(command[2]) > 1.500000001
             ):
                 raise ValueError("bounded post-clearance navigation command required")
