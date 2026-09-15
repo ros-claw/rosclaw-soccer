@@ -46,6 +46,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous.pop("retire_completed_motors")
     previous.pop("motor_receive_commitment_context")
     previous.pop("cyclic_receive_motors")
+    previous.pop("outward_waist_braking_damping")
     assert config.config_hash == hash_json(previous)
     assert (
         config.config_hash

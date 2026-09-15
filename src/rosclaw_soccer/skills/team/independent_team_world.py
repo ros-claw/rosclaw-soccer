@@ -95,6 +95,7 @@ from rosclaw_soccer.sim.contracts import (
     hash_bytes,
     hash_json,
 )
+from rosclaw_soccer.sim.joint_braking import strengthen_outward_joint_braking
 from rosclaw_soccer.skills.team.motor_option import (
     TeamBallContact,
     TeamMotorFoundation,
@@ -217,8 +218,15 @@ class IndependentTeamWorldConfig:
     retire_completed_motors: bool = False
     motor_receive_commitment_context: bool = False
     cyclic_receive_motors: bool = False
+    outward_waist_braking_damping: float | None = None
 
     def __post_init__(self) -> None:
+        if self.outward_waist_braking_damping is not None and (
+            type(self.outward_waist_braking_damping) not in (int, float)
+            or not math.isfinite(self.outward_waist_braking_damping)
+            or not 6.0 <= self.outward_waist_braking_damping <= 20.0
+        ):
+            raise ValueError("bounded explicit outward waist braking required")
         if type(self.cyclic_receive_motors) is not bool or (
             self.cyclic_receive_motors
             and not (self.motor_receive_commitment_context and self.retire_completed_motors)
@@ -421,6 +429,8 @@ class IndependentTeamWorldConfig:
     @property
     def config_hash(self) -> str:
         value = asdict(self)
+        if self.outward_waist_braking_damping is None:
+            value.pop("outward_waist_braking_damping")
         if not self.cyclic_receive_motors:
             value.pop("cyclic_receive_motors")
         if not self.motor_receive_commitment_context:
@@ -2655,6 +2665,17 @@ def simulate_independent_team_world(
                     limited=model.jnt_limited[controller.joint_ids].astype(bool),
                     margin_rad=active.joint_guard_margin_rad,
                 )
+                if active.outward_waist_braking_damping is not None:
+                    projected_torque = strengthen_outward_joint_braking(
+                        joint_position=q,
+                        joint_velocity=dq,
+                        projected_torque=projected_torque,
+                        joint_ranges=np.asarray(model.jnt_range[controller.joint_ids]),
+                        limited=model.jnt_limited[controller.joint_ids].astype(bool),
+                        selected_joints=(G1_DDS_JOINT_NAMES.index("waist_pitch_joint"),),
+                        damping=active.outward_waist_braking_damping,
+                        margin_rad=active.joint_guard_margin_rad,
+                    )
                 torque = np.clip(projected_torque, -guarded_limits, guarded_limits)
                 if teacher_effect_observed:
                     frame_teacher_guarded = torque.copy()
