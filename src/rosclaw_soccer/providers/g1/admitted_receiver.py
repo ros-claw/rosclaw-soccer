@@ -1,0 +1,101 @@
+"""One-shot causal admission of an existing learned receive policy in simulation.
+
+This adapter does not learn, navigate, reset a recurrent foundation, or claim
+reception. Its 100-tick proposal must still be assessed using physical contacts.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from rosclaw_soccer.providers.g1.recurrent_receiver import G1RecurrentReceiver
+from rosclaw_soccer.sim.contracts import hash_json
+from rosclaw_soccer.skills.team.motor_option import (
+    TeamMotorObservation,
+    TeamMotorReadiness,
+    TeamMotorTarget,
+)
+
+
+def incoming_receive_admissible(observation: TeamMotorObservation) -> bool:
+    """Accepted handshake plus measured incoming ball and upright body."""
+    if not isinstance(observation, TeamMotorObservation):
+        raise ValueError("immutable measured motor observation required")
+    q, v = np.asarray(observation.qpos), np.asarray(observation.qvel)
+    relative = q[36:38] - q[:2]
+    velocity = v[35:37]
+    return bool(
+        observation.committed_receiver
+        and 0.15 < np.linalg.norm(relative) <= 1.2
+        and np.linalg.norm(velocity) > 0.4
+        and relative @ velocity < 0
+        and q[2] > 0.65
+        and abs(np.linalg.norm(q[3:7]) - 1) <= 1e-4
+        and 1 - 2 * (q[4] ** 2 + q[5] ** 2) > 0.9
+    )
+
+
+class AdmittedRecurrentReceiver:
+    """Private model instance; no automatic retry or rearm after completion/fault."""
+
+    def __init__(self, receiver: G1RecurrentReceiver, *, admission_enabled: bool = True) -> None:
+        if not isinstance(receiver, G1RecurrentReceiver) or type(admission_enabled) is not bool:
+            raise ValueError("content-bound recurrent receiver required")
+        self.receiver = receiver
+        self.admission_enabled = admission_enabled
+        self.agent_id = receiver.agent_id
+        self.contract_hash = str(
+            hash_json(
+                {
+                    "schema": "soccer.admitted_recurrent_receiver.v1",
+                    "receiver": receiver.contract_hash,
+                    "admission_enabled": admission_enabled,
+                    "admission": "accepted_incoming_0.15_1.2_speed_0.4_height_0.65_upright_0.9",
+                    "duration_frames": 100,
+                    "automatic_rearm": False,
+                    "navigation_override": False,
+                    "activation_ceiling": "SIM_ONLY",
+                }
+            )
+        )
+        self.start_frame: int | None = None
+        self.completed = False
+        self.faulted = False
+        self._last_frame: int | None = None
+
+    def readiness(self, *, frame: int, time_sec: float) -> TeamMotorReadiness:
+        return TeamMotorReadiness(
+            self.agent_id,
+            frame,
+            time_sec,
+            not self.faulted and (self.start_frame is None or self.completed),
+        )
+
+    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:
+        if self.faulted:
+            raise ValueError("receiver admission remains faulted")
+        try:
+            if (
+                observation.agent_id != self.agent_id
+                or self._last_frame is not None
+                and observation.frame != self._last_frame + 1
+            ):
+                raise ValueError("consecutive same-player admission observations required")
+            # Validate the immutable foundation even while idle; no stale model
+            # identity silently accepted until a ball happens to arrive.
+            self.receiver._validate(observation)
+            self._last_frame = observation.frame
+            if self.completed:
+                return None
+            if self.start_frame is None:
+                if not self.admission_enabled or not incoming_receive_admissible(observation):
+                    return None
+                self.receiver.begin_skill(observation)
+                self.start_frame = observation.frame
+            if observation.frame - self.start_frame == 100:
+                self.completed = True
+                return None
+            return self.receiver.propose(observation)
+        except (ValueError, TypeError, FloatingPointError):
+            self.faulted = True
+            raise
