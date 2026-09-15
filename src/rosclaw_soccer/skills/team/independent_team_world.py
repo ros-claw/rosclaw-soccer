@@ -2003,10 +2003,13 @@ def simulate_independent_team_world(
                         ball_qvel=ball_qvel,
                         previous=residual_previous[i],
                         task_target_position_m=option_task_targets.get(c.cell.agent_id),
+                        observation_contract=near_ball_policy.observation_contract,
                     )
                     for i, c in enumerate(ordered)
                 ]
             )
+            if near_ball_policy.observation_contract == "task_geometry_v2":
+                trace.setdefault("residual_observation_contract_code", []).append(2)
             residual_active = np.asarray(
                 [
                     residual_skill_selected(
@@ -3195,6 +3198,7 @@ def _near_ball_observation(
     ball_qvel: int,
     previous: NDArray[np.float64],
     task_target_position_m: tuple[float, float, float] | None = None,
+    observation_contract: str = "direction_v1",
 ) -> NDArray[np.float64]:
     """Measured proprioception and local task context; no future trajectory input."""
     state = controller.state
@@ -3223,6 +3227,19 @@ def _near_ball_observation(
             previous,
         )
     )
+    if observation_contract == "task_geometry_v2":
+        task = (
+            np.asarray(task_target_position_m, dtype=np.float64)
+            if task_target_position_m is not None
+            else ball
+            if controller.decision is None
+            else np.asarray(controller.decision.target_position_m, dtype=np.float64)
+        )
+        observation = np.r_[
+            observation, np.linalg.norm(task[:2] - ball[:2]) / 5.0, (task[2] - ball[2]) / 2.0
+        ]
+    elif observation_contract != "direction_v1":
+        raise ValueError("unknown residual observation contract")
     return np.asarray(np.clip(observation, -5, 5), dtype=np.float64)
 
 

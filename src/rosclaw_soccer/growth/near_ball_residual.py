@@ -37,6 +37,7 @@ class NearBallResidualPolicy:
     generation: int
     parent_hash: str
     weights: Mapping[str, np.ndarray]
+    observation_contract: str = "direction_v1"
 
     def __post_init__(self) -> None:
         if (
@@ -50,9 +51,12 @@ class NearBallResidualPolicy:
             or type(self.generation) is not int
             or not 0 <= self.generation <= 1000000
             or set(self.weights) != set(_SHAPES)
+            or self.observation_contract not in {"direction_v1", "task_geometry_v2"}
         ):
             raise ValueError("invalid private residual policy identity")
         for name, shape in _SHAPES.items():
+            if name == "w1":
+                shape = (self.observation_dim, HIDDEN_DIM)
             value = self.weights[name]
             if (
                 not isinstance(value, np.ndarray)
@@ -84,6 +88,25 @@ class NearBallResidualPolicy:
         return cls(agent_ids, body_hash, 0, str(hash_json({"zero_residual": body_hash})), weights)
 
     @property
+    def observation_dim(self) -> int:
+        return 58 if self.observation_contract == "task_geometry_v2" else 56
+
+    def with_task_geometry(self) -> NearBallResidualPolicy:
+        """Zero-pad new inputs; structural migration, not a learning update."""
+        if self.observation_contract != "direction_v1":
+            raise ValueError("only legacy direction policies require geometry migration")
+        weights = {k: v.copy() for k, v in self.weights.items()}
+        weights["w1"] = np.concatenate((weights["w1"], np.zeros((8, 2, HIDDEN_DIM))), axis=1)
+        return NearBallResidualPolicy(
+            self.agent_ids,
+            self.body_hash,
+            self.generation + 1,
+            self.policy_hash,
+            weights,
+            "task_geometry_v2",
+        )
+
+    @property
     def policy_hash(self) -> str:
         return str(
             hash_json(
@@ -95,6 +118,11 @@ class NearBallResidualPolicy:
                     "weights": {k: v.tolist() for k, v in self.weights.items()},
                     "limit_rad": RESIDUAL_LIMIT_RAD,
                     "activation_ceiling": "SIM_ONLY",
+                    **(
+                        {"observation_contract": self.observation_contract}
+                        if self.observation_contract != "direction_v1"
+                        else {}
+                    ),
                 }
             )
         )
@@ -107,8 +135,8 @@ class NearBallResidualPolicy:
         explore: bool,
         exploration_mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        if observations.shape != (8, 56) or not np.all(np.isfinite(observations)):
-            raise ValueError("residual observation must be finite 8x56 proprioception")
+        if observations.shape != (8, self.observation_dim) or not np.all(np.isfinite(observations)):
+            raise ValueError("residual observation must match finite versioned proprioception")
         if type(explore) is not bool or (
             exploration_mask is not None
             and (
@@ -146,6 +174,11 @@ class NearBallResidualPolicy:
             body_hash=self.body_hash,
             generation=self.generation,
             parent_hash=self.parent_hash,
+            **(
+                {"observation_contract": self.observation_contract}  # type: ignore[arg-type]
+                if self.observation_contract != "direction_v1"
+                else {}
+            ),
             **self.weights,  # type: ignore[arg-type]
         )
 
@@ -161,12 +194,21 @@ class NearBallResidualPolicy:
                 or archive["generation"].dtype.kind not in "iu"
             ):
                 raise ValueError("residual generation must be an integer scalar")
-            if set(archive.files) != set(_SHAPES) | {
+            contract = "direction_v1"
+            if "observation_contract" in archive.files:
+                value = archive["observation_contract"]
+                if value.shape != () or value.dtype.kind != "U":
+                    raise ValueError("observation contract must be a text scalar")
+                contract = str(value)
+            expected = set(_SHAPES) | {
                 "agent_ids",
                 "body_hash",
                 "generation",
                 "parent_hash",
-            }:
+            }
+            if "observation_contract" in archive.files:
+                expected.add("observation_contract")
+            if set(archive.files) != expected:
                 raise ValueError("residual artifact keys differ")
             return cls(
                 tuple(archive["agent_ids"].tolist()),
@@ -174,6 +216,7 @@ class NearBallResidualPolicy:
                 int(archive["generation"]),
                 str(archive["parent_hash"]),
                 {k: np.asarray(archive[k], dtype=np.float64) for k in _SHAPES},
+                contract,
             )
 
 
