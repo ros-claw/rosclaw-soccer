@@ -21,6 +21,10 @@ from rosclaw_soccer.training.ball_residual import (
     advance_ball_residual,
     build_ball_residual_actor_critic,
 )
+from rosclaw_soccer.training.receiving_frame import (
+    CANONICAL_RECEIVER_CONTRACT,
+    canonical_receiving_features,
+)
 
 
 class G1RecurrentReceiver:
@@ -37,6 +41,7 @@ class G1RecurrentReceiver:
         observation_contract: str = "recurrent_receiver_133_float32.v1",
         episode_frames: int = 100,
         followup_target_position_m: tuple[float, float, float] | None = None,
+        canonical_half_turn: bool | None = None,
     ) -> None:
         import torch
 
@@ -44,9 +49,17 @@ class G1RecurrentReceiver:
             "recurrent_receiver_133_float32.v1",
             "recurrent_receiver_world_heading_135_float32.v2",
             "recurrent_receiver_followup_target_138_float32.v3",
+            CANONICAL_RECEIVER_CONTRACT,
         }:
             raise ValueError("explicit supported receiving observation contract required")
         self.observation_contract = observation_contract
+        canonical = observation_contract == CANONICAL_RECEIVER_CONTRACT
+        if canonical:
+            if type(canonical_half_turn) is not bool:
+                raise ValueError("canonical contract requires explicit boolean half-turn")
+        elif canonical_half_turn is not None:
+            raise ValueError("half-turn requires explicit canonical receiver contract")
+        self._canonical_half_turn = canonical_half_turn
         goal_conditioned = observation_contract.endswith(".v3")
         if goal_conditioned:
             if (
@@ -77,7 +90,7 @@ class G1RecurrentReceiver:
             observation_size=138
             if goal_conditioned
             else 135
-            if observation_contract.endswith(".v2")
+            if observation_contract.endswith(".v2") or canonical
             else 133
         )
         shapes = {k: tuple(v.shape) for k, v in self._actor.state_dict().items()}
@@ -96,6 +109,7 @@ class G1RecurrentReceiver:
                     "foundation_configuration_hash": foundation_config_hash,
                     "agent_id": agent_id,
                     "observation": observation_contract,
+                    **({"canonical_half_turn": canonical_half_turn} if canonical else {}),
                     **(
                         {
                             "followup_target_position_m": followup_target_position_m,
@@ -215,6 +229,13 @@ class G1RecurrentReceiver:
             if not bool(torch.isfinite(features).all()):
                 raise ValueError("receiver feature conversion overflow")
             features = features.clamp(-10, 10)
+            if self.observation_contract == CANONICAL_RECEIVER_CONTRACT:
+                assert self._canonical_half_turn is not None
+                features = torch.from_numpy(
+                    canonical_receiving_features(
+                        features.detach().cpu().numpy(), half_turn=self._canonical_half_turn
+                    )
+                )
             with torch.no_grad():
                 mean, value = self._actor(features)
                 raw = self._select_raw_action(features, mean, value)
