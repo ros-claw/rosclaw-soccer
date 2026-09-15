@@ -100,6 +100,10 @@ class G1RecurrentReceiver:
         self._start_frame = observation.frame
         self._start_time = observation.time_sec
 
+    def _select_raw_action(self, features: Any, mean: Any, value: Any) -> Any:
+        """Frozen execution uses the mean; simulation training may record sampling."""
+        return mean
+
     def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget:
         import torch
 
@@ -152,8 +156,9 @@ class G1RecurrentReceiver:
                 raise ValueError("receiver feature conversion overflow")
             features = features.clamp(-10, 10)
             with torch.no_grad():
-                mean, _ = self._actor(features)
-                residual = advance_ball_residual(mean, self._previous)
+                mean, value = self._actor(features)
+                raw = self._select_raw_action(features, mean, value)
+                residual = advance_ball_residual(raw, self._previous)
                 target = base + residual
             proposal = TeamMotorTarget(
                 tuple(float(x) for x in target[0]), foundation.target.kp, foundation.target.kd
