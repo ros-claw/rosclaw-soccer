@@ -93,6 +93,11 @@ def test_default_option_hash_preserved_and_flag_is_not_numeric():
     legacy.pop("continuous_rearm_enabled")
     legacy.pop("per_player_options_enabled")
     legacy.pop("task_context_bound")
+    legacy.pop("reference_rebase_only")
     assert config.config_hash == hash_json(legacy)
+    assert (
+        config.config_hash
+        == "sha256:f455e7d360bd866fba5d2f8b061b68440b97408aef2556fbdcae99f9c3fa43de"
+    )
     with pytest.raises(ValueError):
         G1RollingOptionBridgeConfig(continuous_rearm_enabled=1)

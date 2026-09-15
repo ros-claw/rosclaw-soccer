@@ -4085,6 +4085,10 @@ def _activate_rolling_option(
     candidate.kick_policy.time_step = (
         int(candidate.kick_policy.WARMUP_STEPS) + config.entry_policy_frame
     )
+    if config.reference_rebase_only:
+        from rosclaw_soccer.providers.g1.kick_warmstart import rebase_kick_reference
+
+        rebase_kick_reference(candidate.kick_policy, entry_frame=config.entry_policy_frame)
     if config.observation_warmstart:
         from rosclaw_soccer.providers.g1.kick_warmstart import prepare_kick_handoff
 
