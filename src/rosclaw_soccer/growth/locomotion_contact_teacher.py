@@ -221,7 +221,9 @@ class G1RollingOptionBridgeConfig:
             or not 0.30 <= self.minimum_strike_stance_depth_m <= 0.80
             or not 0.80 <= self.maximum_strike_stance_depth_m <= 1.50
             or self.minimum_strike_stance_depth_m >= self.maximum_strike_stance_depth_m
-            or not 0.20 <= self.maximum_strike_lateral_error_m <= 0.60
+            # Smaller tolerances tighten native entry; the previous 0.20 m
+            # floor prevented experiments requiring closer foot/ball alignment.
+            or not 0.05 <= self.maximum_strike_lateral_error_m <= 0.60
             or not 0.15 <= self.maximum_strike_yaw_error_rad <= 0.60
             or not 0.8 <= self.strike_lease_duration_sec <= 6.0
             or not isinstance(self.pass_enabled, bool)
@@ -232,7 +234,8 @@ class G1RollingOptionBridgeConfig:
             or type(self.continuous_rearm_enabled) is not bool
             or type(self.per_player_options_enabled) is not bool
             or type(self.reference_rebase_only) is not bool
-            or self.reference_rebase_only and self.observation_warmstart
+            or self.reference_rebase_only
+            and self.observation_warmstart
             or self.per_player_options_enabled
             and not self.task_context_bound
             or not (
