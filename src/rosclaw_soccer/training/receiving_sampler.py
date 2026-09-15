@@ -25,6 +25,7 @@ class ReceivingSampler(G1RecurrentReceiver):
         expected_actor_hash: str,
         foundation_hash: str,
         foundation_config_hash: str,
+        observation_contract: str = "recurrent_receiver_133_float32.v1",
     ) -> None:
         if type(seed) is not int or not 0 <= seed < 2**32:
             raise ValueError("bounded explicit receiving exploration seed required")
@@ -34,6 +35,7 @@ class ReceivingSampler(G1RecurrentReceiver):
             expected_actor_hash=expected_actor_hash,
             foundation_hash=foundation_hash,
             foundation_config_hash=foundation_config_hash,
+            observation_contract=observation_contract,
         )
         self.contract_hash = str(
             hash_json(
@@ -54,7 +56,9 @@ class ReceivingSampler(G1RecurrentReceiver):
     def _select_raw_action(self, features: Any, mean: Any, value: Any) -> Any:
         import torch
 
-        distribution: Any = torch.distributions.Normal(mean, self._actor.logstd.clamp(-2.5, -0.3).exp())
+        distribution: Any = torch.distributions.Normal(
+            mean, self._actor.logstd.clamp(-2.5, -0.3).exp()
+        )
         noise = torch.tensor(
             self._rng.standard_normal(tuple(mean.shape)), dtype=mean.dtype, device=mean.device
         )

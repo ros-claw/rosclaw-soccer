@@ -33,9 +33,16 @@ class G1RecurrentReceiver:
         expected_actor_hash: str,
         foundation_hash: str,
         foundation_config_hash: str,
+        observation_contract: str = "recurrent_receiver_133_float32.v1",
     ) -> None:
         import torch
 
+        if type(observation_contract) is not str or observation_contract not in {
+            "recurrent_receiver_133_float32.v1",
+            "recurrent_receiver_world_heading_135_float32.v2",
+        }:
+            raise ValueError("explicit supported receiving observation contract required")
+        self.observation_contract = observation_contract
         if (
             not isinstance(agent_id, str)
             or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", agent_id) is None
@@ -45,7 +52,9 @@ class G1RecurrentReceiver:
             or re.fullmatch(r"sha256:[0-9a-f]{64}", foundation_config_hash) is None
         ):
             raise ValueError("explicit player and frozen foundation hash required")
-        self._actor = build_ball_residual_actor_critic()
+        self._actor = build_ball_residual_actor_critic(
+            observation_size=135 if observation_contract.endswith(".v2") else 133
+        )
         shapes = {k: tuple(v.shape) for k, v in self._actor.state_dict().items()}
         parameters, digest = load_bounded_reference_parameters(weights, expected_actor_hash, shapes)
         self._actor.load_state_dict({k: torch.from_numpy(v.copy()) for k, v in parameters.items()})
@@ -61,7 +70,7 @@ class G1RecurrentReceiver:
                     "foundation_artifact_hash": foundation_hash,
                     "foundation_configuration_hash": foundation_config_hash,
                     "agent_id": agent_id,
-                    "observation": "recurrent_receiver_133_float32.v1",
+                    "observation": observation_contract,
                     "episode_frames": 100,
                     "control_dt_sec": 0.02,
                     "maximum_offset_rad": 0.25,
@@ -152,6 +161,16 @@ class G1RecurrentReceiver:
                 ),
                 1,
             )
+            if self.observation_contract == "recurrent_receiver_world_heading_135_float32.v2":
+                # World-frame ball offsets alone cannot distinguish identical
+                # joint states facing opposite directions at zero velocity.
+                # Append heading; never silently reinterpret the old 133 fields.
+                heading_y = 2 * (qw * qz + qx * qy)
+                heading_x = 1 - 2 * (qy * qy + qz * qz)
+                if bool((heading_x.square() + heading_y.square() < 1e-8).any()):
+                    raise ValueError("receiving body has undefined horizontal heading")
+                heading = torch.atan2(heading_y, heading_x)
+                features = torch.cat((features, torch.stack((heading.sin(), heading.cos()), 1)), 1)
             if not bool(torch.isfinite(features).all()):
                 raise ValueError("receiver feature conversion overflow")
             features = features.clamp(-10, 10)
