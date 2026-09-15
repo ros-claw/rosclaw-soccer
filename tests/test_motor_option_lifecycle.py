@@ -94,6 +94,7 @@ def test_default_option_hash_preserved_and_flag_is_not_numeric():
     legacy.pop("per_player_options_enabled")
     legacy.pop("task_context_bound")
     legacy.pop("reference_rebase_only")
+    legacy.pop("measured_state_history")
     assert config.config_hash == hash_json(legacy)
     assert (
         config.config_hash

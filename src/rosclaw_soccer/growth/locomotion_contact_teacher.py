@@ -212,6 +212,7 @@ class G1RollingOptionBridgeConfig:
     continuous_rearm_enabled: bool = False
     per_player_options_enabled: bool = False
     reference_rebase_only: bool = False
+    measured_state_history: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -234,6 +235,9 @@ class G1RollingOptionBridgeConfig:
             or type(self.continuous_rearm_enabled) is not bool
             or type(self.per_player_options_enabled) is not bool
             or type(self.reference_rebase_only) is not bool
+            or type(self.measured_state_history) is not bool
+            or self.measured_state_history
+            and not self.observation_warmstart
             or self.reference_rebase_only
             and self.observation_warmstart
             or self.per_player_options_enabled
@@ -259,6 +263,8 @@ class G1RollingOptionBridgeConfig:
             value.pop("per_player_options_enabled")
         if not self.reference_rebase_only:
             value.pop("reference_rebase_only")
+        if not self.measured_state_history:
+            value.pop("measured_state_history")
         return str(hash_json(value))
 
 

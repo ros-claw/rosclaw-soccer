@@ -63,6 +63,7 @@ def test_rebase_is_explicit_and_legacy_config_hash_unchanged():
     base = G1RollingOptionBridgeConfig()
     legacy = asdict(base)
     for key in (
+        "measured_state_history",
         "reference_rebase_only",
         "per_player_options_enabled",
         "continuous_rearm_enabled",

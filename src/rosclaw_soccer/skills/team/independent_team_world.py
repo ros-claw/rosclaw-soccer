@@ -77,6 +77,10 @@ from rosclaw_soccer.providers.g1.asset_qualification import (
     trajectory_digest,
 )
 from rosclaw_soccer.providers.g1.keeper_frame import KeeperFrame
+from rosclaw_soccer.providers.g1.kick_measured_history import (
+    KickMeasuredSample,
+    install_measured_kick_history,
+)
 from rosclaw_soccer.providers.g1.locomotion_action_frame import remap_previous_locomotion_action
 from rosclaw_soccer.providers.g1.mujoco_primitives import (
     adapt_shot_target,
@@ -872,6 +876,10 @@ class _PlayerController:
     option_rearm_ready: bool = False
     last_ball_contact_foot: str | None = None
     post_receive_joint_target: NDArray[np.float64] | None = None
+    last_applied_pd_target: NDArray[np.float64] | None = None
+    last_applied_pd_target_frame: int = -1
+    measured_kick_history: list[KickMeasuredSample] = field(default_factory=list)
+    measured_kick_history_receipt: str | None = None
     post_receive_direction_xy: NDArray[np.float64] | None = None
     strike_phase: StrikePhaseState = field(default_factory=StrikePhaseState)
     pass_stroke: ContactStroke = field(default_factory=ContactStroke)
@@ -1280,6 +1288,29 @@ def simulate_independent_team_world(
         fresh_preparation_handshake: PassReceiveHandshake | None = None
         for controller in controllers:
             _fill_locomotion_state(controller, data, ball_body, ball_qvel)
+            if (
+                option_bridge_config is not None
+                and option_bridge_config.measured_state_history
+                and controller.last_applied_pd_target is not None
+            ):
+                state = controller.state
+                controller.measured_kick_history.append(
+                    KickMeasuredSample(
+                        frame=frame,
+                        time_sec=float(data.time),
+                        previous_target_frame=controller.last_applied_pd_target_frame,
+                        joint_position=tuple(float(v) for v in state.q),
+                        joint_velocity=tuple(float(v) for v in state.dq),
+                        angular_velocity=tuple(float(v) for v in state.root_ang_vel_b),
+                        pelvis_position=tuple(float(v) for v in state.pelvis_pos_w),
+                        pelvis_quaternion=tuple(float(v) for v in state.pelvis_quat_w),
+                        ball_position=tuple(float(v) for v in state.ball_pos_w),
+                        previous_pd_target=tuple(
+                            float(v) for v in controller.last_applied_pd_target
+                        ),
+                    )
+                )
+                del controller.measured_kick_history[:-5]
         if active.cyclic_receive_motors and receive_commitment is not None:
             for controller in controllers:
                 agent_id = controller.cell.agent_id
@@ -2457,6 +2488,11 @@ def simulate_independent_team_world(
                     target[:12] += residual
                 dq = np.asarray(data.qvel[controller.joint_qvel], dtype=np.float64)
                 raw_torque = kp * (target - q) - kd * dq
+                if option_bridge_config is not None and option_bridge_config.measured_state_history:
+                    # Record the chosen PD target, not inferred q + torque/kp.
+                    # Any additive task torque remains separately governed.
+                    controller.last_applied_pd_target = target.copy()
+                    controller.last_applied_pd_target_frame = frame
                 teacher_effect_observed = False
                 if controller.keeper_reach is not None:
                     raw_torque += controller.keeper_reach.torque_nm
@@ -4469,6 +4505,8 @@ def _activate_rolling_option(
         or yaw_error > config.maximum_strike_yaw_error_rad
     ):
         return
+    if config.measured_state_history and len(candidate.measured_kick_history) != 5:
+        return
     with contextlib.redirect_stdout(io.StringIO()):
         candidate.kick_policy.enter()
     candidate.kick_policy.target_pos_w = np.asarray(preferred_target, dtype=np.float32)
@@ -4495,6 +4533,13 @@ def _activate_rolling_option(
         from rosclaw_soccer.providers.g1.kick_warmstart import prepare_kick_handoff
 
         prepare_kick_handoff(candidate.kick_policy, entry_frame=config.entry_policy_frame)
+    if config.measured_state_history:
+        candidate.measured_kick_history_receipt = install_measured_kick_history(
+            candidate.kick_policy,
+            tuple(candidate.measured_kick_history),
+            frame=frame,
+            time_sec=float(data.time),
+        )
     parameters = config.pass_parameters if is_pass else config.shoot_parameters
     candidate.option_active = True
     if config.continuous_rearm_enabled:
@@ -4907,6 +4952,23 @@ def _append_player_trace(
     trace[f"{key}_joint_position"].append(data.qpos[controller.joint_qpos].copy())
     trace[f"{key}_joint_velocity"].append(data.qvel[controller.joint_qvel].copy())
     trace[f"{key}_joint_torque"].append(data.ctrl[controller.actuators].copy())
+    if controller.last_applied_pd_target is not None:
+        sample = controller.measured_kick_history[-1] if controller.measured_kick_history else None
+        trace.setdefault(f"{key}_measured_kick_input", []).append(
+            sample.numeric_record() if sample is not None else np.r_[-1.0, np.zeros(102)]
+        )
+        trace.setdefault(f"{key}_applied_pd_target", []).append(
+            controller.last_applied_pd_target.copy()
+        )
+        trace.setdefault(f"{key}_root_angular_velocity", []).append(
+            data.qvel[controller.qvel_base + 3 : controller.qvel_base + 6].copy()
+        )
+        receipt = controller.measured_kick_history_receipt
+        trace.setdefault(f"{key}_measured_kick_history_receipt", []).append(
+            np.frombuffer(
+                bytes(32) if receipt is None else bytes.fromhex(receipt[7:]), dtype=np.uint8
+            )
+        )
     if f"{key}_joint_safety_margin_rad" in trace:
         if model is None:
             raise ValueError("joint margin tracing requires the physical model")
