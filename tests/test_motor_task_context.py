@@ -120,6 +120,16 @@ def test_proprioception_task_direction_matches_the_admitted_option():
     assert bound[37] > 0
     np.testing.assert_array_equal(old[:36], bound[:36])
     np.testing.assert_array_equal(old[38:], bound[38:])
+    extended = _near_ball_observation(
+        controller,
+        **kwargs,
+        task_target_position_m=(7.5, 0.8, 1.5),
+        observation_contract="task_geometry_v2",
+    )
+    np.testing.assert_array_equal(extended[:56], bound)
+    assert extended.shape == (58,)
+    assert extended[56] == pytest.approx(np.hypot(4.5, 0.8) / 5.0)
+    assert extended[57] == pytest.approx((1.5 - 0.115) / 2.0)
 
 
 def test_bound_context_is_explicit_hash_bound_and_keeps_legacy_hash():

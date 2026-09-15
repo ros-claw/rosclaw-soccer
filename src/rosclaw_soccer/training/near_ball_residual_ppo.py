@@ -67,7 +67,8 @@ def physical_rewards(
     if reward_shaping not in REWARD_SHAPING_MODES:
         raise ValueError("unknown reward shaping contract")
     count = len(trace["time"])
-    if obs.shape != (count, 8, 56) or not np.all(np.isfinite(obs)):
+    dimension = _trace_observation_dimension(trace, count)
+    if obs.shape != (count, 8, dimension) or not np.all(np.isfinite(obs)):
         raise ValueError("PPO observations are not finite physical samples")
     rewards = np.zeros((count, 8))
     ball = np.asarray(trace["ball_pose"])[:, :3]
@@ -396,15 +397,31 @@ def update_private_actors(
         )
         rows.append(row)
     return NearBallResidualPolicy(
-        parent.agent_ids, parent.body_hash, parent.generation + 1, parent.policy_hash, weights
+        parent.agent_ids,
+        parent.body_hash,
+        parent.generation + 1,
+        parent.policy_hash,
+        weights,
+        parent.observation_contract,
     ), rows
+
+
+def _trace_observation_dimension(trace: dict[str, Any], frames: int) -> int:
+    if "residual_observation_contract_code" not in trace:
+        return 56
+    code = np.asarray(trace["residual_observation_contract_code"])
+    if code.shape != (frames,) or code.dtype.kind not in "iu" or not np.all(code == 2):
+        raise ValueError("invalid explicit residual observation contract")
+    return 58
 
 
 def _validate_on_policy(policy: NearBallResidualPolicy, trace: dict[str, Any]) -> None:
     obs = np.asarray(trace["residual_observations"])
     n = len(trace["time"])
+    if _trace_observation_dimension(trace, n) != policy.observation_dim:
+        raise ValueError("policy and rollout observation contracts differ")
     shapes = {
-        "residual_observations": (n, 8, 56),
+        "residual_observations": (n, 8, policy.observation_dim),
         "residual_latent": (n, 8, 12),
         "residual_value": (n, 8),
         "residual_log_probability": (n, 8),
