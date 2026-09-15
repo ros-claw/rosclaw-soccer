@@ -87,6 +87,8 @@ class AgentCellObservation:
     schema_version: str = "rosclaw_soccer.agent_cell_observation.v1"
     # A live, physically launched teammate pass. This is not possession.
     active_receive_source_agent_id: str | None = None
+    # An unlaunched, unexpired peer agreement; preference, never possession.
+    preferred_pass_receiver_agent_id: str | None = None
 
     def __post_init__(self) -> None:
         vectors = (
@@ -125,6 +127,14 @@ class AgentCellObservation:
             or self.pixels_used
             or self.privileged_labels_used
             or (
+                self.preferred_pass_receiver_agent_id is not None
+                and (
+                    not isinstance(self.preferred_pass_receiver_agent_id, str)
+                    or self.preferred_pass_receiver_agent_id
+                    not in {state.agent_id for state in self.teammate_states}
+                )
+            )
+            or (
                 self.active_receive_source_agent_id is not None
                 and (
                     not isinstance(self.active_receive_source_agent_id, str)
@@ -142,6 +152,11 @@ class AgentCellObservation:
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
+            **(
+                {"preferred_pass_receiver_agent_id": self.preferred_pass_receiver_agent_id}
+                if self.preferred_pass_receiver_agent_id is not None
+                else {}
+            ),
             **(
                 {"active_receive_source_agent_id": self.active_receive_source_agent_id}
                 if self.active_receive_source_agent_id is not None
@@ -891,6 +906,17 @@ class RosclawSoccerAgentCell:
         ]
         if not candidates:
             return None
+        preferred = next(
+            (
+                state
+                for state in candidates
+                if state.agent_id == value.preferred_pass_receiver_agent_id
+                and self._lane_clear(value, state)
+            ),
+            None,
+        )
+        if preferred is not None:
+            return preferred
         goal = np.asarray(value.opponent_goal_m[:2], dtype=np.float64)
         return min(
             candidates,

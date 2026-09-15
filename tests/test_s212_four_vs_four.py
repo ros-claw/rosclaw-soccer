@@ -452,6 +452,80 @@ def test_receive_priority_requires_explicit_strict_handoff():
     assert enabled.config_hash != replace(enabled, receiver_commitment_priority=False).config_hash
 
 
+def test_pending_pass_preference_preserves_eligibility_and_does_not_force_intent(fixture):
+    cell = next(c for c in fixture.cells if c.agent_id == "red.goalkeeper")
+    value = _observation(fixture, cell.agent_id)
+    value = replace(value, possession_agent_id=cell.agent_id)
+    preferred = "red.finisher"
+    following = replace(value, preferred_pass_receiver_agent_id=preferred)
+    assert cell._best_receiver(following).agent_id == preferred
+    assert cell.decide(following).target_agent_id == preferred
+    assert "preferred_pass_receiver_agent_id" not in value.to_dict()
+    assert following.observation_hash != value.observation_hash
+    unstable = replace(
+        following,
+        teammate_states=tuple(
+            replace(s, stable=False) if s.agent_id == preferred else s
+            for s in following.teammate_states
+        ),
+    )
+    assert cell._best_receiver(unstable).agent_id != preferred
+    recovering = replace(following, self_state=replace(following.self_state, stable=False))
+    assert cell.decide(recovering).intent is TacticalIntent.RECOVER
+    opponent = replace(following, possession_agent_id="blue.finisher")
+    assert cell.decide(opponent).intent is not TacticalIntent.PASS
+    for invalid in (True, "blue.finisher", cell.agent_id):
+        with pytest.raises(ValueError):
+            replace(value, preferred_pass_receiver_agent_id=invalid)
+
+
+def test_pending_pass_binding_expires_and_never_renews_flight():
+    from rosclaw_soccer.growth.pass_handoff import PassHandoff
+    from rosclaw_soccer.growth.pass_target_commitment import preferred_unlaunched_receiver
+    from rosclaw_soccer.skills.team.independent_team_world import IndependentTeamWorldConfig
+
+    handoff = PassHandoff("red.defender", "red.playmaker", 1.0)
+    kwargs = dict(
+        source=handoff.source,
+        time_sec=1.2,
+        possession_agent_id=None,
+        source_ready=True,
+        receiver_ready=True,
+    )
+    assert preferred_unlaunched_receiver(handoff, **kwargs) == handoff.receiver
+    for change in (
+        {"time_sec": 4.0},
+        {"source": "red.finisher"},
+        {"possession_agent_id": "blue.defender"},
+        {"source_ready": False},
+        {"receiver_ready": False},
+    ):
+        assert preferred_unlaunched_receiver(handoff, **(kwargs | change)) is None
+    for invalidated in (
+        None,
+        replace(handoff, interrupted=True),
+        replace(handoff, source_foot_contact_sec=1.1),
+    ):
+        assert preferred_unlaunched_receiver(invalidated, **kwargs) is None
+    with pytest.raises(ValueError):
+        preferred_unlaunched_receiver(handoff, **(kwargs | {"receiver_ready": 1}))
+    legacy = IndependentTeamWorldConfig()
+    assert (
+        legacy.config_hash
+        == "sha256:fd442bce83f737c64e2ee59ecc09dc204376100f9476a21361b41b538d8c41d1"
+    )
+    for kwargs in (
+        {"pass_target_commitment": True},
+        {"pass_target_commitment": 1, "strict_receive_handoff": True},
+    ):
+        with pytest.raises(ValueError):
+            replace(legacy, **kwargs)
+    assert (
+        replace(legacy, strict_receive_handoff=True, pass_target_commitment=True).config_hash
+        != legacy.config_hash
+    )
+
+
 def test_opposite_net_is_identical_under_rotation_without_pose_writes():
     spec = G1TrainingGoalSpec(plane_x_m=7.5, width_m=3.0, height_m=2.0)
     right = SimpleNamespace(

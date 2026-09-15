@@ -52,6 +52,7 @@ from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy, bou
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
 from rosclaw_soccer.growth.pass_handoff import PassHandoff
 from rosclaw_soccer.growth.pass_preparation import PassPreparationLedger, PassPreparationProvider
+from rosclaw_soccer.growth.pass_target_commitment import preferred_unlaunched_receiver
 from rosclaw_soccer.growth.residual_skill_routing import (
     prospective_contact_preempted,
     residual_skill_preempted,
@@ -168,6 +169,7 @@ class IndependentTeamWorldConfig:
     controlled_possession_retention: bool = False
     directed_pass_launch: bool = False
     receiver_commitment_priority: bool = False
+    pass_target_commitment: bool = False
     strike_residual_enabled: bool = False
     strike_stance_lateral_m: float | None = None
     keeper_reach: SharedKeeperReachConfig | None = None
@@ -306,6 +308,8 @@ class IndependentTeamWorldConfig:
             or not isinstance(self.all_role_clearance, bool)
             or not isinstance(self.strict_receive_handoff, bool)
             or type(self.receiver_commitment_priority) is not bool
+            or type(self.pass_target_commitment) is not bool
+            or (self.pass_target_commitment and not self.strict_receive_handoff)
             or (self.receiver_commitment_priority and not self.strict_receive_handoff)
             or type(self.strike_residual_enabled) is not bool
             or type(self.motor_idle_residual_fallback) is not bool
@@ -399,6 +403,8 @@ class IndependentTeamWorldConfig:
             value.pop("motor_idle_residual_fallback")
         if not self.receiver_commitment_priority:
             value.pop("receiver_commitment_priority")
+        if not self.pass_target_commitment:
+            value.pop("pass_target_commitment")
         if not self.pass_stance_bypass:
             value.pop("pass_stance_bypass")
         if not self.receive_lateral_braking:
@@ -859,9 +865,7 @@ def simulate_independent_team_world(
         or any(not _HASH.fullmatch(motor.contract_hash) for motor in motors.values())
         or motors
         and option_bridge_config is not None
-        and not (
-            active.disjoint_motor_backends and option_bridge_config.per_player_options_enabled
-        )
+        and not (active.disjoint_motor_backends and option_bridge_config.per_player_options_enabled)
         or active.disjoint_motor_backends
         and (not motors or option_bridge_config is None)
         or active.motor_idle_residual_fallback
@@ -1278,6 +1282,21 @@ def simulate_independent_team_world(
                     left_goal_plane_x_m=active.left_goal_plane_x_m,
                     possession_agent_id=current_possession_agent_id,
                     ball_chaser_agent_id=assigned_ball_chaser_agent_id,
+                    preferred_pass_receiver_agent_id=(
+                        preferred_unlaunched_receiver(
+                            receive_handoff,
+                            source=controller.cell.agent_id,
+                            time_sec=float(data.time),
+                            possession_agent_id=current_possession_agent_id,
+                            source_ready=motor_commitment_ready[controller.cell.agent_id],
+                            receiver_ready=bool(
+                                receive_handoff is not None
+                                and motor_commitment_ready[receive_handoff.receiver]
+                            ),
+                        )
+                        if active.pass_target_commitment
+                        else None
+                    ),
                     active_receive_source_agent_id=(
                         receive_lease_source_agent_id
                         if active.receiver_commitment_priority
@@ -3300,6 +3319,7 @@ def _agent_observation(
     possession_agent_id: str | None,
     ball_chaser_agent_id: str | None,
     active_receive_source_agent_id: str | None = None,
+    preferred_pass_receiver_agent_id: str | None = None,
 ) -> AgentCellObservation:
     model = roster.agent(controller.cell.agent_id)
     own_goal_x = goal.plane_x_m if model.team_id == "blue" else left_goal_plane_x_m
@@ -3327,6 +3347,7 @@ def _agent_observation(
         opponent_states=tuple(state_by_id[agent_id] for agent_id in model.opponent_ids),
         ball_chaser_agent_id=ball_chaser_agent_id,
         active_receive_source_agent_id=active_receive_source_agent_id,
+        preferred_pass_receiver_agent_id=preferred_pass_receiver_agent_id,
     )
 
 
