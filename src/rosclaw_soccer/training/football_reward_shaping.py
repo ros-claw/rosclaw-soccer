@@ -16,6 +16,7 @@ REWARD_SHAPING_MODES = (
     "terminal_potential_v1",
     "contact_safety_v1",
     "motor_task_contact_v1",
+    "in_play_motor_task_v1",
 )
 
 

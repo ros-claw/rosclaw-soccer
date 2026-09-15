@@ -2845,6 +2845,16 @@ def simulate_independent_team_world(
         if active.stop_on_ball_exit:
             from rosclaw_soccer.world.match_boundary import ball_exit_reason
 
+            trace.setdefault("pitch_boundary_geometry", []).append(
+                [
+                    active.left_goal_plane_x_m,
+                    goal.plane_x_m,
+                    3.0,
+                    goal.ball_radius_m,
+                    goal.width_m,
+                    goal.height_m,
+                ]
+            )
             if (
                 ball_exit_reason(
                     tuple(float(v) for v in data.qpos[ball_qpos : ball_qpos + 3]),
