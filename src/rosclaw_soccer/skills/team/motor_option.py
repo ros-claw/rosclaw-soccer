@@ -28,6 +28,37 @@ def motor_blocks_residual(
 
 
 @dataclass(frozen=True)
+class TeamReceiveCommitment:
+    """Accepted receive lease identity, not contact evidence or motor authority."""
+
+    source_agent_id: str
+    receiver_agent_id: str
+    generation: int
+    accepted_frame: int
+    accepted_time_sec: float
+    handshake_hash: str
+
+    def __post_init__(self) -> None:
+        if (
+            any(
+                type(v) is not str or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", v) is None
+                for v in (self.source_agent_id, self.receiver_agent_id)
+            )
+            or self.source_agent_id == self.receiver_agent_id
+            or type(self.generation) is not int
+            or self.generation < 1
+            or type(self.accepted_frame) is not int
+            or self.accepted_frame < 0
+            or type(self.accepted_time_sec) not in (int, float)
+            or not math.isfinite(self.accepted_time_sec)
+            or self.accepted_time_sec < 0
+            or type(self.handshake_hash) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", self.handshake_hash) is None
+        ):
+            raise ValueError("finite accepted receive commitment identity required")
+
+
+@dataclass(frozen=True)
 class TeamMotorObservation:
     agent_id: str
     frame: int
@@ -43,6 +74,7 @@ class TeamMotorObservation:
     committed_receiver: bool = False
     # Read-only current frozen inference, not a simulator or recurrent-state handle.
     foundation: TeamMotorFoundation | None = None
+    receive_commitment: TeamReceiveCommitment | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -81,6 +113,18 @@ class TeamMotorObservation:
             or self.foundation.frame != self.frame
         ):
             raise ValueError("foundation proposal belongs to another player or frame")
+        if self.receive_commitment is not None:
+            commitment = self.receive_commitment
+            if not isinstance(commitment, TeamReceiveCommitment):
+                raise ValueError("typed receive commitment required")
+            commitment.__post_init__()
+            if (
+                not self.committed_receiver
+                or commitment.receiver_agent_id != self.agent_id
+                or commitment.accepted_frame > self.frame
+                or commitment.accepted_time_sec > self.time_sec
+            ):
+                raise ValueError("receive commitment belongs to another player or future frame")
 
 
 @dataclass(frozen=True)

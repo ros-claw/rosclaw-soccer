@@ -104,6 +104,7 @@ from rosclaw_soccer.skills.team.motor_option import (
     TeamMotorPhysicsObserver,
     TeamMotorReadinessProvider,
     TeamMotorTarget,
+    TeamReceiveCommitment,
     motor_ball_action_ready,
     motor_blocks_residual,
 )
@@ -209,8 +210,11 @@ class IndependentTeamWorldConfig:
     disjoint_motor_backends: bool = False
     motor_clearance_prediction_sec: float = 0.0
     retire_completed_motors: bool = False
+    motor_receive_commitment_context: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.motor_receive_commitment_context) is not bool:
+            raise ValueError("receive commitment context requires explicit boolean opt-in")
         if type(self.retire_completed_motors) is not bool or (
             self.retire_completed_motors and not self.disjoint_motor_backends
         ):
@@ -406,6 +410,8 @@ class IndependentTeamWorldConfig:
     @property
     def config_hash(self) -> str:
         value = asdict(self)
+        if not self.motor_receive_commitment_context:
+            value.pop("motor_receive_commitment_context")
         if not self.retire_completed_motors:
             value.pop("retire_completed_motors")
         if self.motor_clearance_prediction_sec == 0.0:
@@ -1176,6 +1182,8 @@ def simulate_independent_team_world(
     receive_lease_origin_m: NDArray[np.float64] | None = None
     receive_lease_target_m: tuple[float, float] | None = None
     receive_lease_active = False
+    receive_commitment: TeamReceiveCommitment | None = None
+    receive_commitment_generation = 0
     flight_tracking_agent_id: str | None = None
     receive_handoff: PassHandoff | None = None
     handoff_cancellations = 0
@@ -1243,6 +1251,7 @@ def simulate_independent_team_world(
                 receive_lease_origin_m = None
                 receive_lease_target_m = None
                 receive_lease_active = False
+                receive_commitment = None
                 receive_handoff = None
                 handoff_cancellations += 1
             proximity_possession = _infer_possession(
@@ -1424,6 +1433,7 @@ def simulate_independent_team_world(
                     receive_lease_origin_m = None
                     receive_lease_target_m = None
                     receive_lease_active = False
+                    receive_commitment = None
                     flight_tracking_agent_id = None
                     receive_handoff = None
                     handoff_cancellations += 1
@@ -1454,6 +1464,16 @@ def simulate_independent_team_world(
                     receive_lease_active = False
                     flight_tracking_agent_id = None
                     receive_lease_target_m = current_handshake.pass_target_m[:2]
+                    if active.motor_receive_commitment_context:
+                        receive_commitment_generation += 1
+                        receive_commitment = TeamReceiveCommitment(
+                            current_handshake.passer_agent_id,
+                            current_handshake.receiver_agent_id,
+                            receive_commitment_generation,
+                            frame,
+                            float(data.time),
+                            hash_json(asdict(current_handshake)),
+                        )
                     if active.strict_receive_handoff:
                         receive_handoff = PassHandoff(
                             current_handshake.passer_agent_id,
@@ -1996,6 +2016,9 @@ def simulate_independent_team_world(
                         # Preparation starts at the accepted pass handshake,
                         # not only after the source has physically launched it.
                         committed_receiver=receive_lease_agent_id == agent_id,
+                        receive_commitment=(
+                            receive_commitment if receive_lease_agent_id == agent_id else None
+                        ),
                         foundation=TeamMotorFoundation(
                             agent_id=agent_id,
                             frame=frame,
