@@ -34,7 +34,7 @@ class BallResidualEnvelope:
             raise ValueError("bounded simulation-only full-body residual envelope required")
 
 
-def build_ball_residual_actor_critic(*, observation_size: int = 133) -> Any:
+def build_ball_residual_actor_critic(*, observation_size: int = 133, action_size: int = 29) -> Any:
     """Lazy optional Torch backend; zero residual mean preserves the teacher.
 
     Observations: q-default(29), dq*0.1(29), gravity(3), root linear
@@ -47,6 +47,15 @@ def build_ball_residual_actor_critic(*, observation_size: int = 133) -> Any:
 
     if type(observation_size) is not int or observation_size not in (133, 135, 138):
         raise ValueError("explicit world-frame or heading-conditioned receiving contract required")
+    if type(action_size) is not int or (observation_size, action_size) not in {
+        (133, 29),
+        (135, 29),
+        (138, 29),
+        (138, 3),
+    }:
+        raise ValueError(
+            "explicit joint or three-dimensional motor-synergy action contract required"
+        )
 
     class ActorCritic(torch.nn.Module):
         def __init__(self) -> None:
@@ -61,10 +70,10 @@ def build_ball_residual_actor_critic(*, observation_size: int = 133) -> Any:
                     torch.nn.Linear(128, output),
                 )
 
-            self.actor, self.critic = network(29), network(1)
+            self.actor, self.critic = network(action_size), network(1)
             torch.nn.init.zeros_(self.actor[-1].weight)
             torch.nn.init.zeros_(self.actor[-1].bias)
-            self.logstd = torch.nn.Parameter(torch.full((29,), -1.0))
+            self.logstd = torch.nn.Parameter(torch.full((action_size,), -1.0))
 
         def forward(self, observation: Any) -> tuple[Any, Any]:
             if (
