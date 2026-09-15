@@ -226,8 +226,13 @@ class IndependentTeamWorldConfig:
     outward_waist_braking_damping: float | None = None
     experimental_navigation_envelopes: tuple[SimulationNavigationEnvelope, ...] = ()
     rotation_equivariant_receive_heading: bool = False
+    rotation_equivariant_duel_side: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.rotation_equivariant_duel_side) is not bool or (
+            self.rotation_equivariant_duel_side and not self.bilateral_goals
+        ):
+            raise ValueError("rotation-equivariant duel side requires explicit bilateral opt-in")
         if type(self.rotation_equivariant_receive_heading) is not bool or (
             self.rotation_equivariant_receive_heading and not self.bilateral_goals
         ):
@@ -454,6 +459,8 @@ class IndependentTeamWorldConfig:
         value = asdict(self)
         if not self.rotation_equivariant_receive_heading:
             value.pop("rotation_equivariant_receive_heading")
+        if not self.rotation_equivariant_duel_side:
+            value.pop("rotation_equivariant_duel_side")
         if not self.experimental_navigation_envelopes:
             value.pop("experimental_navigation_envelopes")
         if self.outward_waist_braking_damping is None:
@@ -3850,7 +3857,15 @@ def _movement_command(
             )
         if opponent_has_ball:
             lateral = np.asarray((-travel_direction[1], travel_direction[0]), dtype=np.float64)
-            duel_side = -1.0 if controller.cell.self_model.team_id == "red" else 1.0
+            # Keep the same side relative to ball travel under a field
+            # half-turn. Team colour is not an anatomical side. Preserve the
+            # legacy red defender's path; this opt-in changes blue's offset.
+            duel_side = (
+                -1.0
+                if controller.cell.self_model.team_id == "red"
+                or config.rotation_equivariant_duel_side
+                else 1.0
+            )
             target += duel_side * config.duel_lateral_offset_m * lateral
         if committed_receiver:
             ball_xyz = np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64)

@@ -11,7 +11,7 @@ from rosclaw_soccer.skills.team.independent_team_world import (
 )
 
 
-def command(team, enabled, *, held=False, committed=True):
+def command(team, enabled, *, held=False, committed=True, duel=False, opponent=False):
     blue = team == "blue"
     root = np.array([4.25, 1.1]) if blue else np.array([1.75, -1.1])
     ball = np.array([4.92, -0.49]) if blue else np.array([1.08, 0.49])
@@ -21,7 +21,7 @@ def command(team, enabled, *, held=False, committed=True):
             primary_role=MatchRole.PLAYMAKER,
             team_id=team,
             teammate_ids=(),
-            opponent_ids=(),
+            opponent_ids=("opponent.defender",),
         ),
     )
     controller = SimpleNamespace(
@@ -40,14 +40,16 @@ def command(team, enabled, *, held=False, committed=True):
         data=data,
         ball_qpos=7,
         ball_qvel=0,
-        possession_agent_id=None,
+        possession_agent_id="opponent.defender" if opponent else None,
         committed_receiver=committed,
         active_receiver=False,
         post_receive_hold=held,
         receive_foot_lateral_offset_m=0.12,
         strike_target_position_m=None,
         config=IndependentTeamWorldConfig(
-            bilateral_goals=True, rotation_equivariant_receive_heading=enabled
+            bilateral_goals=True,
+            rotation_equivariant_receive_heading=enabled,
+            rotation_equivariant_duel_side=duel,
         ),
     )
 
@@ -85,3 +87,35 @@ def test_heading_option_cannot_override_hold_or_uncommitted_movement(team):
     np.testing.assert_array_equal(
         command(team, True, committed=False), command(team, False, committed=False)
     )
+
+
+@pytest.mark.parametrize("value", [0, 1, None, "yes", np.bool_(True)])
+def test_duel_side_contract_is_explicit(value):
+    with pytest.raises(ValueError):
+        IndependentTeamWorldConfig(bilateral_goals=True, rotation_equivariant_duel_side=value)
+
+
+def test_duel_side_optin_is_bound_and_requires_bilateral_world():
+    with pytest.raises(ValueError):
+        IndependentTeamWorldConfig(rotation_equivariant_duel_side=True)
+    a = IndependentTeamWorldConfig(bilateral_goals=True)
+    assert a.config_hash != replace(a, rotation_equivariant_duel_side=True).config_hash
+
+
+def test_opponent_receive_offset_rotates_without_changing_clearance_or_legacy_red():
+    old_red = command("red", False, committed=False, opponent=True)
+    old_blue = command("blue", False, committed=False, opponent=True)
+    red = command("red", False, committed=False, opponent=True, duel=True)
+    blue = command("blue", False, committed=False, opponent=True, duel=True)
+    np.testing.assert_array_equal(red, old_red)
+    assert not np.allclose(old_red[:2], -old_blue[:2])
+    np.testing.assert_allclose(red[:2], -blue[:2], atol=1e-12)
+    for team in ("red", "blue"):
+        np.testing.assert_array_equal(
+            command(team, False, committed=False, opponent=False, duel=True),
+            command(team, False, committed=False, opponent=False, duel=False),
+        )
+        np.testing.assert_array_equal(
+            command(team, False, committed=False, opponent=True, duel=True, held=True),
+            np.zeros(3),
+        )
