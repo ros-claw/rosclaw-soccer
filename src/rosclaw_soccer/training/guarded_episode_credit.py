@@ -43,8 +43,10 @@ def guarded_terminal_credit(
     """Keep failed physics below failed contact below qualified task rewards.
 
     Combine ONLY with the bounded joint-margin penalty above to retain these
-    ordered total-return intervals: [-120,-100], [-80,-60], [-40,10]. Adding
-    unrelated rewards invalidates the guarantee. This does not relax the
+    ordered UNDISCOUNTED total-return intervals: [-120,-100], [-80,-60],
+    [-40,10]. Adding unrelated rewards invalidates the guarantee. Discounting
+    unequal-length episodes or using GAE does not preserve this ordering in
+    optimizer advantages. This is not constrained RL and does not relax the
     separate physical qualification or promotion criteria.
     """
     if (

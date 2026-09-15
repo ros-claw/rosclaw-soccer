@@ -16,7 +16,7 @@ def test_bounded_monotonic_margin_credit_does_not_modify_measurements():
     assert penalty.dtype == np.float32
 
 
-def test_task_score_cannot_compensate_failed_physics_or_contact():
+def test_undiscounted_task_score_cannot_compensate_failed_physics_or_contact():
     worst_margin = float(joint_margin_penalty(np.zeros((400, 29))).sum(dtype=np.float64))
     best_unsafe = guarded_terminal_credit(
         task_score=1e100, physically_safe=False, contact_qualified=True
@@ -33,6 +33,16 @@ def test_task_score_cannot_compensate_failed_physics_or_contact():
         + worst_margin
     )
     assert best_unsafe < worst_contact_failure < best_contact_failure < worst_qualified
+
+
+def test_discounted_unequal_horizons_are_not_a_safety_ordering_guarantee():
+    # A concrete counterexample prevents treating reward strata as constrained RL.
+    unsafe = guarded_terminal_credit(task_score=0.0, physically_safe=False, contact_qualified=True)
+    qualified = guarded_terminal_credit(
+        task_score=-20.0, physically_safe=True, contact_qualified=True
+    )
+    assert unsafe < qualified
+    assert unsafe * 0.995**399 > qualified
 
 
 @pytest.mark.parametrize("fault", ["nan", "integer", "empty", "long", "rank", "wide"])
