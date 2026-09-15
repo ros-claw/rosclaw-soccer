@@ -7,6 +7,7 @@ The caller supplies same-player/frame immutable foundation observations.
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -35,15 +36,31 @@ class G1RecurrentReceiver:
         foundation_config_hash: str,
         observation_contract: str = "recurrent_receiver_133_float32.v1",
         episode_frames: int = 100,
+        followup_target_position_m: tuple[float, float, float] | None = None,
     ) -> None:
         import torch
 
         if type(observation_contract) is not str or observation_contract not in {
             "recurrent_receiver_133_float32.v1",
             "recurrent_receiver_world_heading_135_float32.v2",
+            "recurrent_receiver_followup_target_138_float32.v3",
         }:
             raise ValueError("explicit supported receiving observation contract required")
         self.observation_contract = observation_contract
+        goal_conditioned = observation_contract.endswith(".v3")
+        if goal_conditioned:
+            if (
+                type(followup_target_position_m) is not tuple
+                or len(followup_target_position_m) != 3
+                or any(
+                    type(x) not in (int, float) or not math.isfinite(x) or abs(x) > 200
+                    for x in followup_target_position_m
+                )
+            ):
+                raise ValueError("explicit bounded immutable next-skill target required")
+        elif followup_target_position_m is not None:
+            raise ValueError("next-skill targets require the explicit 138-feature contract")
+        self._followup_target_position_m = followup_target_position_m
         if type(episode_frames) is not int or not 100 <= episode_frames <= 250:
             raise ValueError("explicit receiving duration must be 100 to 250 frames")
         self.episode_frames = episode_frames
@@ -57,7 +74,11 @@ class G1RecurrentReceiver:
         ):
             raise ValueError("explicit player and frozen foundation hash required")
         self._actor = build_ball_residual_actor_critic(
-            observation_size=135 if observation_contract.endswith(".v2") else 133
+            observation_size=138
+            if goal_conditioned
+            else 135
+            if observation_contract.endswith(".v2")
+            else 133
         )
         shapes = {k: tuple(v.shape) for k, v in self._actor.state_dict().items()}
         parameters, digest = load_bounded_reference_parameters(weights, expected_actor_hash, shapes)
@@ -75,6 +96,14 @@ class G1RecurrentReceiver:
                     "foundation_configuration_hash": foundation_config_hash,
                     "agent_id": agent_id,
                     "observation": observation_contract,
+                    **(
+                        {
+                            "followup_target_position_m": followup_target_position_m,
+                            "followup_target_offset_scale_m": 5.0,
+                        }
+                        if goal_conditioned
+                        else {}
+                    ),
                     "episode_frames": episode_frames,
                     **({"phase_period_frames": 100} if episode_frames != 100 else {}),
                     "control_dt_sec": 0.02,
@@ -168,7 +197,7 @@ class G1RecurrentReceiver:
                 ),
                 1,
             )
-            if self.observation_contract == "recurrent_receiver_world_heading_135_float32.v2":
+            if self.observation_contract != "recurrent_receiver_133_float32.v1":
                 # World-frame ball offsets alone cannot distinguish identical
                 # joint states facing opposite directions at zero velocity.
                 # Append heading; never silently reinterpret the old 133 fields.
@@ -178,6 +207,11 @@ class G1RecurrentReceiver:
                     raise ValueError("receiving body has undefined horizontal heading")
                 heading = torch.atan2(heading_y, heading_x)
                 features = torch.cat((features, torch.stack((heading.sin(), heading.cos()), 1)), 1)
+            if self.observation_contract == "recurrent_receiver_followup_target_138_float32.v3":
+                # This is the planned next skill's target, not the current
+                # receive/intercept waypoint. It is immutable and contract-bound.
+                followup = torch.tensor(self._followup_target_position_m, dtype=torch.float32)[None]
+                features = torch.cat((features, (followup - p[:, :3]) / 5.0), 1)
             if not bool(torch.isfinite(features).all()):
                 raise ValueError("receiver feature conversion overflow")
             features = features.clamp(-10, 10)

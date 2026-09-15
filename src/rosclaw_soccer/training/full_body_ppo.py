@@ -44,6 +44,7 @@ class FullBodyPPOUpdateConfig:
                 (40, 3),  # Same navigation features plus training-only influence bit.
                 (133, 29),
                 (135, 29),  # Existing receiving fields plus explicit world heading sin/cos.
+                (138, 29),  # Heading fields plus an explicit next-skill target offset.
                 (136, 29),
                 (554, 29),  # Full kick547 + goal3 + rootvelocity3 + learning bit.
                 (583, 29),  # Full kick554 plus explicit preceding sampled raw action29.

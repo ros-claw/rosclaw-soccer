@@ -45,7 +45,7 @@ def build_ball_residual_actor_critic(*, observation_size: int = 133) -> Any:
     """
     import torch
 
-    if type(observation_size) is not int or observation_size not in (133, 135):
+    if type(observation_size) is not int or observation_size not in (133, 135, 138):
         raise ValueError("explicit world-frame or heading-conditioned receiving contract required")
 
     class ActorCritic(torch.nn.Module):
