@@ -107,6 +107,10 @@ from rosclaw_soccer.skills.team.motor_option import (
     motor_ball_action_ready,
     motor_blocks_residual,
 )
+from rosclaw_soccer.skills.team.motor_retirement import (
+    TeamMotorRetirementProvider,
+    validate_motor_retirement,
+)
 from rosclaw_soccer.skills.team.navigation_option import (
     NavigationObservation,
     NavigationSlot,
@@ -204,8 +208,13 @@ class IndependentTeamWorldConfig:
     teammate_approach_clearance_m: float = 0.0
     disjoint_motor_backends: bool = False
     motor_clearance_prediction_sec: float = 0.0
+    retire_completed_motors: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.retire_completed_motors) is not bool or (
+            self.retire_completed_motors and not self.disjoint_motor_backends
+        ):
+            raise ValueError("motor retirement requires explicit disjoint ownership")
         if (
             type(self.motor_clearance_prediction_sec) not in (int, float)
             or not math.isfinite(self.motor_clearance_prediction_sec)
@@ -397,6 +406,8 @@ class IndependentTeamWorldConfig:
     @property
     def config_hash(self) -> str:
         value = asdict(self)
+        if not self.retire_completed_motors:
+            value.pop("retire_completed_motors")
         if self.motor_clearance_prediction_sec == 0.0:
             value.pop("motor_clearance_prediction_sec")
         if not self.disjoint_motor_backends:
@@ -933,6 +944,7 @@ def simulate_independent_team_world(
         raise ValueError("per-player motor identity, binding or override ownership differs")
     motor_hashes = tuple(sorted((key, motor.contract_hash) for key, motor in motors.items()))
     motor_faults: set[str] = set()
+    motor_retirements: dict[str, int] = {}
     readiness_enabled = any(isinstance(m, TeamMotorReadinessProvider) for m in motors.values())
     preparation_enabled = any(isinstance(m, PassPreparationProvider) for m in motors.values())
     preparation_ledger = PassPreparationLedger(
@@ -1205,6 +1217,8 @@ def simulate_independent_team_world(
                 for agent_id, motor in motors.items():
                     if agent_id in motor_faults:
                         motor_commitment_ready[agent_id] = False
+                    elif agent_id in motor_retirements:
+                        motor_commitment_ready[agent_id] = True
                     elif isinstance(motor, TeamMotorReadinessProvider):
                         try:
                             motor_commitment_ready[agent_id] = motor_ball_action_ready(
@@ -1720,7 +1734,11 @@ def simulate_independent_team_world(
         _activate_rolling_option(
             # A registered full-body backend owns its player's admission even
             # while idle/faulted. Other players keep their independent options.
-            controllers=tuple(c for c in controllers if c.cell.agent_id not in motors)
+            controllers=tuple(
+                c
+                for c in controllers
+                if c.cell.agent_id not in motors or c.cell.agent_id in motor_retirements
+            )
             if active.disjoint_motor_backends
             else controllers,
             current_possession_agent_id=current_possession_agent_id,
@@ -1881,6 +1899,7 @@ def simulate_independent_team_world(
                 continuous_motor_approach=bool(
                     controller.cell.agent_id in motors
                     and controller.cell.agent_id not in motor_faults
+                    and controller.cell.agent_id not in motor_retirements
                 ),
                 pending_receive_target_m=(
                     receive_lease_target_m
@@ -1937,7 +1956,7 @@ def simulate_independent_team_world(
         motor_targets: dict[str, TeamMotorTarget] = {}
         for controller in controllers:
             agent_id = controller.cell.agent_id
-            if agent_id not in motors or agent_id in motor_faults:
+            if agent_id not in motors or agent_id in motor_faults or agent_id in motor_retirements:
                 continue
             assert controller.decision is not None
             intent = controller.decision.intent.value
@@ -1996,6 +2015,23 @@ def simulate_independent_team_world(
                         ),
                     )
                 )
+                retirement_provider = motors[agent_id]
+                if active.retire_completed_motors and isinstance(
+                    retirement_provider, TeamMotorRetirementProvider
+                ):
+                    retirement = retirement_provider.retirement_request(
+                        frame=frame, time_sec=float(data.time)
+                    )
+                    if retirement is not None:
+                        validate_motor_retirement(
+                            retirement,
+                            agent_id=agent_id,
+                            frame=frame,
+                            time_sec=float(data.time),
+                            contract_hash=dict(motor_hashes)[agent_id],
+                            proposed_target=proposal is not None,
+                        )
+                        motor_retirements[agent_id] = frame
                 if proposal is not None:
                     if not isinstance(proposal, TeamMotorTarget):
                         raise ValueError("motor returned a non-contract proposal")
@@ -2009,7 +2045,11 @@ def simulate_independent_team_world(
         if preparation_enabled:
             preparation_receipt: dict[str, object] | None = None
             for agent_id, motor in motors.items():
-                if not isinstance(motor, PassPreparationProvider) or agent_id in motor_faults:
+                if (
+                    not isinstance(motor, PassPreparationProvider)
+                    or agent_id in motor_faults
+                    or agent_id in motor_retirements
+                ):
                     continue
                 try:
                     preparation = motor.preparation_request(frame=frame, time_sec=float(data.time))
@@ -2093,10 +2133,15 @@ def simulate_independent_team_world(
                 [c.cell.agent_id in capture_context_agent_ids for c in controllers]
             )
         residual_by_id: dict[str, NDArray[np.float64]] = {}
+        if active.retire_completed_motors:
+            trace.setdefault("full_body_motor_retired", []).append(
+                [c.cell.agent_id in motor_retirements for c in controllers]
+            )
         residual_blocked = {
             agent_id
             for agent_id in motors
-            if motor_blocks_residual(
+            if agent_id not in motor_retirements
+            and motor_blocks_residual(
                 registered=True,
                 proposed=agent_id in motor_targets,
                 faulted=agent_id in motor_faults,

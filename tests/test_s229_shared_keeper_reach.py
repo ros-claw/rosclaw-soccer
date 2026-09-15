@@ -43,6 +43,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous.pop("teammate_approach_clearance_m")
     previous.pop("disjoint_motor_backends")
     previous.pop("motor_clearance_prediction_sec")
+    previous.pop("retire_completed_motors")
     assert config.config_hash == hash_json(previous)
     assert (
         config.config_hash

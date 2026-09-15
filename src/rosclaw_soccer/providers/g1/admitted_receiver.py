@@ -17,6 +17,7 @@ from rosclaw_soccer.skills.team.motor_option import (
     TeamMotorReadiness,
     TeamMotorTarget,
 )
+from rosclaw_soccer.skills.team.motor_retirement import TeamMotorRetirement
 
 
 def _validate_minimum_speed(value: float) -> None:
@@ -54,10 +55,14 @@ class AdmittedRecurrentReceiver:
         *,
         admission_enabled: bool = True,
         minimum_speed_mps: float = 0.4,
+        retire_on_completion: bool = False,
     ) -> None:
         if not isinstance(receiver, G1RecurrentReceiver) or type(admission_enabled) is not bool:
             raise ValueError("content-bound recurrent receiver required")
         self.receiver = receiver
+        if type(retire_on_completion) is not bool:
+            raise ValueError("receiver retirement requires explicit opt-in")
+        self.retire_on_completion = retire_on_completion
         _validate_minimum_speed(minimum_speed_mps)
         self.minimum_speed_mps = minimum_speed_mps
         self.admission_enabled = admission_enabled
@@ -68,6 +73,7 @@ class AdmittedRecurrentReceiver:
                     "schema": "soccer.admitted_recurrent_receiver.v1",
                     "receiver": receiver.contract_hash,
                     "admission_enabled": admission_enabled,
+                    **({"retire_on_completion": True} if retire_on_completion else {}),
                     **(
                         {"minimum_speed_mps": minimum_speed_mps} if minimum_speed_mps != 0.4 else {}
                     ),
@@ -90,6 +96,16 @@ class AdmittedRecurrentReceiver:
         self.completed = False
         self.faulted = False
         self._last_frame: int | None = None
+        self._last_time: float | None = None
+
+    def retirement_request(self, *, frame: int, time_sec: float) -> TeamMotorRetirement | None:
+        if not self.retire_on_completion:
+            return None
+        if self.faulted or frame != self._last_frame or time_sec != self._last_time:
+            raise ValueError("retirement requires this frame's validated motor observation")
+        if not self.completed:
+            return None
+        return TeamMotorRetirement(self.agent_id, frame, time_sec, self.contract_hash)
 
     def readiness(self, *, frame: int, time_sec: float) -> TeamMotorReadiness:
         return TeamMotorReadiness(
@@ -113,6 +129,7 @@ class AdmittedRecurrentReceiver:
             # identity silently accepted until a ball happens to arrive.
             self.receiver._validate(observation)
             self._last_frame = observation.frame
+            self._last_time = observation.time_sec
             if self.completed:
                 return None
             if self.start_frame is None:

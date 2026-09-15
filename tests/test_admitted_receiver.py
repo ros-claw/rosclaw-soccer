@@ -88,3 +88,34 @@ def test_slow_incoming_protocol_is_explicit_and_does_not_invent_commitment(tmp_p
             AdmittedRecurrentReceiver(frozen, minimum_speed_mps=invalid)
         with pytest.raises(ValueError):
             incoming_receive_admissible(slow, minimum_speed_mps=invalid)
+
+
+def test_retirement_only_after_validated_completion_and_without_success_claim(tmp_path):
+    from rosclaw_soccer.skills.team.motor_retirement import validate_motor_retirement
+
+    backend = motor(tmp_path)
+    default = AdmittedRecurrentReceiver(backend)
+    assert (
+        default.contract_hash
+        == AdmittedRecurrentReceiver(backend, retire_on_completion=False).contract_hash
+    )
+    model = AdmittedRecurrentReceiver(backend, retire_on_completion=True)
+    assert model.contract_hash != default.contract_hash
+    for frame in range(415, 515):
+        assert model.propose(incoming(frame)) is not None
+        assert model.retirement_request(frame=frame, time_sec=frame * 0.02) is None
+    assert model.propose(incoming(515)) is None
+    request = model.retirement_request(frame=515, time_sec=10.3)
+    validate_motor_retirement(
+        request,
+        agent_id=model.agent_id,
+        frame=515,
+        time_sec=10.3,
+        contract_hash=model.contract_hash,
+        proposed_target=False,
+    )
+    with pytest.raises(ValueError):
+        model.retirement_request(frame=516, time_sec=10.32)
+    model.faulted = True
+    with pytest.raises(ValueError):
+        model.retirement_request(frame=515, time_sec=10.3)
