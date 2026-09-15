@@ -40,6 +40,8 @@ class FullBodyPPOUpdateConfig:
             or type(self.action_size) is not int
             or (self.observation_size, self.action_size)
             not in (
+                (39, 3),  # Read-only world-heading local navigation, frozen joint foundation.
+                (40, 3),  # Same navigation features plus training-only influence bit.
                 (133, 29),
                 (135, 29),  # Existing receiving fields plus explicit world heading sin/cos.
                 (136, 29),
