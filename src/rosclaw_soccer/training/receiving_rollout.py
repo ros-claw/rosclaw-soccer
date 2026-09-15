@@ -14,14 +14,17 @@ def receiving_window(
     agent_id: str,
     start: int,
     frames: int,
+    required_frames: int = 100,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     if (
         tuple(sorted(set(agent_ids))) != agent_ids
         or agent_id not in agent_ids
         or type(start) is not int
         or type(frames) is not int
+        or type(required_frames) is not int
+        or not 100 <= required_frames <= 250
         or start < 1
-        or not 1 <= frames <= 100
+        or not 1 <= frames <= required_frames
     ):
         raise ValueError("explicit roster and admitted receiving window required")
     time = np.asarray(trace["time"])
@@ -92,7 +95,7 @@ def receiving_window(
     # an uninterrupted post-contact window and a slow near-foot stable tail.
     controlled = bool(
         first is not None
-        and frames == 100
+        and frames == required_frames
         and safe.all()
         and time[start + frames - 1] - time[start + first] >= 0.5 - 1e-8
         and not forbidden[first:].any()
@@ -115,7 +118,12 @@ def receiving_window(
             reward[i] -= 0.1
     reward[-1] += 10 if controlled else -1 if first is not None else -2
     return reward, {
-        "schema": "soccer.receiving_window.v1",
+        "schema": (
+            "soccer.receiving_window.v1"
+            if required_frames == 100
+            else "soccer.receiving_window.duration.v2"
+        ),
+        **({"required_frames": required_frames} if required_frames != 100 else {}),
         "agent_id": agent_id,
         "frames": frames,
         "first_foot_contact_sec": None if first is None else float(time[start + first]),

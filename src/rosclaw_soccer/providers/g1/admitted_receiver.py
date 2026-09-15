@@ -1,7 +1,7 @@
 """One-shot causal admission of an existing learned receive policy in simulation.
 
 This adapter does not learn, navigate, reset a recurrent foundation, or claim
-reception. Its 100-tick proposal must still be assessed using physical contacts.
+reception. Its bounded proposal must still be assessed using physical contacts.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ class AdmittedRecurrentReceiver:
                             "_height_0.65_upright_0.9"
                         )
                     ),
-                    "duration_frames": 100,
+                    "duration_frames": receiver.episode_frames,
                     "automatic_rearm": False,
                     "navigation_override": False,
                     "activation_ceiling": "SIM_ONLY",
@@ -122,7 +122,7 @@ class AdmittedRecurrentReceiver:
                     return None
                 self.receiver.begin_skill(observation)
                 self.start_frame = observation.frame
-            if observation.frame - self.start_frame == 100:
+            if observation.frame - self.start_frame == self.receiver.episode_frames:
                 self.completed = True
                 return None
             return self.receiver.propose(observation)

@@ -16,10 +16,16 @@ def capture_retention_window(
     agent_id: str,
     start: int,
     frames: int,
+    required_frames: int = 100,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     # Validate the full evidence through the existing physical scoring contract.
     reward, outcome = receiving_window(
-        trace, agent_ids=agent_ids, agent_id=agent_id, start=start, frames=frames
+        trace,
+        agent_ids=agent_ids,
+        agent_id=agent_id,
+        start=start,
+        frames=frames,
+        required_frames=required_frames,
     )
     window = slice(start, start + frames)
     ball = np.asarray(trace["ball_pose"])[window, :3]
@@ -38,7 +44,7 @@ def capture_retention_window(
     return reward, {
         **outcome,
         "schema": "soccer.receiving_capture_retention.v2",
-        "success_contract": "soccer.receiving_window.v1",
+        "success_contract": outcome["schema"],
         "dense_distance_speed_cost": float(cost.sum()),
         "shaped_return": float(reward.sum()),
     }

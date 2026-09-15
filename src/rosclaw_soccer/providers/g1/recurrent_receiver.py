@@ -1,6 +1,6 @@
 """Frozen learned receiving residual over a live player's recurrent foundation.
 
-Owns only a 100-tick residual filter. Never owns/restarts the LSTM, supplies
+Owns only a bounded residual filter (default 100 ticks). Never owns/restarts the LSTM, supplies
 navigation, steps physics, selects a role, or grants skill admission/promotion.
 The caller supplies same-player/frame immutable foundation observations.
 """
@@ -34,6 +34,7 @@ class G1RecurrentReceiver:
         foundation_hash: str,
         foundation_config_hash: str,
         observation_contract: str = "recurrent_receiver_133_float32.v1",
+        episode_frames: int = 100,
     ) -> None:
         import torch
 
@@ -43,6 +44,9 @@ class G1RecurrentReceiver:
         }:
             raise ValueError("explicit supported receiving observation contract required")
         self.observation_contract = observation_contract
+        if type(episode_frames) is not int or not 100 <= episode_frames <= 250:
+            raise ValueError("explicit receiving duration must be 100 to 250 frames")
+        self.episode_frames = episode_frames
         if (
             not isinstance(agent_id, str)
             or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", agent_id) is None
@@ -71,7 +75,8 @@ class G1RecurrentReceiver:
                     "foundation_configuration_hash": foundation_config_hash,
                     "agent_id": agent_id,
                     "observation": observation_contract,
-                    "episode_frames": 100,
+                    "episode_frames": episode_frames,
+                    **({"phase_period_frames": 100} if episode_frames != 100 else {}),
                     "control_dt_sec": 0.02,
                     "maximum_offset_rad": 0.25,
                     "maximum_step_rad": 0.025,
@@ -123,7 +128,7 @@ class G1RecurrentReceiver:
             frame = observation.frame - self._start_frame
             if (
                 frame != self._next_frame
-                or not 0 <= frame < 100
+                or not 0 <= frame < self.episode_frames
                 or abs(observation.time_sec - self._start_time - frame * 0.02) > 1e-6
             ):
                 raise ValueError("consecutive 50 Hz receiver frames required")
@@ -144,6 +149,8 @@ class G1RecurrentReceiver:
                 ),
                 1,
             )
+            # Keep the original oscillator period; a longer admitted lifetime
+            # must not rescale the existing prefix or fabricate an LSTM reset.
             phase = torch.full((1, 1), frame / 100)
             features = torch.cat(
                 (

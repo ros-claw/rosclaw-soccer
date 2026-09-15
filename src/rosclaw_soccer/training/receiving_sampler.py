@@ -26,6 +26,7 @@ class ReceivingSampler(G1RecurrentReceiver):
         foundation_hash: str,
         foundation_config_hash: str,
         observation_contract: str = "recurrent_receiver_133_float32.v1",
+        episode_frames: int = 100,
     ) -> None:
         if type(seed) is not int or not 0 <= seed < 2**32:
             raise ValueError("bounded explicit receiving exploration seed required")
@@ -36,6 +37,7 @@ class ReceivingSampler(G1RecurrentReceiver):
             foundation_hash=foundation_hash,
             foundation_config_hash=foundation_config_hash,
             observation_contract=observation_contract,
+            episode_frames=episode_frames,
         )
         self.contract_hash = str(
             hash_json(
