@@ -112,6 +112,10 @@ from rosclaw_soccer.world.multi_player import (
     build_g1_multi_player_stadium_model,
 )
 from rosclaw_soccer.world.player_clearance import propose_clearance_velocity
+from rosclaw_soccer.world.task_lane_clearance import (
+    stance_clearance_halfplane,
+    stance_reservation_allowed,
+)
 
 _CONTROL_DT = 0.02
 _PHYSICS_DT = 0.002
@@ -182,8 +186,21 @@ class IndependentTeamWorldConfig:
     locomotion_action_frame_sync: bool = False
     post_receive_contact_control: bool = False
     option_only_residual_roles: tuple[str, ...] | None = None
+    prospective_strike_approach: bool = False
+    teammate_approach_clearance_m: float = 0.0
 
     def __post_init__(self) -> None:
+        if type(self.prospective_strike_approach) is not bool or (
+            type(self.teammate_approach_clearance_m) not in (float, int)
+            or not math.isfinite(self.teammate_approach_clearance_m)
+            or self.teammate_approach_clearance_m != 0.0
+            and not (
+                0.8 <= self.teammate_approach_clearance_m <= 1.5
+                and self.prospective_strike_approach
+                and self.all_role_clearance
+            )
+        ):
+            raise ValueError("task approach requires bounded simultaneous teammate clearance")
         if self.option_only_residual_roles is not None:
             roles = self.option_only_residual_roles
             if (
@@ -357,6 +374,10 @@ class IndependentTeamWorldConfig:
             value.pop("owned_contact_roles")
         if self.option_only_residual_roles is None:
             value.pop("option_only_residual_roles")
+        if not self.prospective_strike_approach:
+            value.pop("prospective_strike_approach")
+        if self.teammate_approach_clearance_m == 0.0:
+            value.pop("teammate_approach_clearance_m")
         if self.glove_material is None:
             value.pop("glove_material")
         if self.joint_guard_margin_rad == 0.04:
@@ -779,6 +800,17 @@ def simulate_independent_team_world(
     """
 
     active = config or IndependentTeamWorldConfig()
+    if active.prospective_strike_approach and (
+        option_bridge_config is None
+        or not option_bridge_config.prospective_enabled
+        or not option_bridge_config.task_context_bound
+        or strike_phase_config is not None
+        or active.owned_contact_policy is not None
+        and (active.owned_contact_roles is None or "finisher" in active.owned_contact_roles)
+    ):
+        raise ValueError(
+            "prospective approach requires a bound option without competing stance control"
+        )
     if active.post_receive_contact_control and contact_teacher_config is None:
         raise ValueError("post-receive contact control requires a bounded contact teacher")
     cell_by_id = {cell.agent_id: cell for cell in cells}
@@ -1585,6 +1617,33 @@ def simulate_independent_team_world(
             if option_task_target is None:
                 raise RuntimeError("admitted motor option has no bound task target")
         option_policy_frame = 0
+        prospective_strike_owner = next(
+            (
+                c
+                for c in controllers
+                if active.prospective_strike_approach
+                and current_possession_agent_id is None
+                and c.cell.agent_id == assigned_ball_chaser_agent_id
+                and c.cell.self_model.primary_role is MatchRole.FINISHER
+                and c.decision is not None
+                and c.decision.intent is TacticalIntent.SHOOT
+            ),
+            None,
+        )
+        reserved_stance_target = None
+        if prospective_strike_owner is not None:
+            is_blue = prospective_strike_owner.cell.self_model.team_id == "blue"
+            prospective_goal = np.array(
+                (
+                    active.left_goal_plane_x_m if is_blue else goal.plane_x_m,
+                    -goal.target_y_m if is_blue else goal.target_y_m,
+                )
+            )
+            current_ball_xy = np.asarray(data.qpos[ball_qpos : ball_qpos + 2])
+            toward_goal = prospective_goal - current_ball_xy
+            toward_goal /= max(float(np.linalg.norm(toward_goal)), 1e-9)
+            stance_xy = current_ball_xy - 0.72 * toward_goal
+            reserved_stance_target = (float(stance_xy[0]), float(stance_xy[1]))
         option_override: (
             tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]] | None
         ) = None
@@ -1623,11 +1682,20 @@ def simulate_independent_team_world(
                 strike_target_position_m=(
                     None
                     if strike_lease_agent_id != controller.cell.agent_id
+                    and prospective_strike_owner is not controller
                     else (
                         goal.plane_x_m
                         if controller.cell.self_model.team_id == "red"
                         else active.left_goal_plane_x_m,
-                        0.0 if active.bilateral_goals else goal.target_y_m,
+                        (
+                            goal.target_y_m
+                            if controller.cell.self_model.team_id == "red"
+                            else -goal.target_y_m
+                        )
+                        if active.prospective_strike_approach
+                        else 0.0
+                        if active.bilateral_goals
+                        else goal.target_y_m,
                     )
                 ),
                 strike_phase=(
@@ -1646,6 +1714,14 @@ def simulate_independent_team_world(
                     else None
                 ),
                 config=active,
+                reserved_stance_target_m=(
+                    reserved_stance_target
+                    if prospective_strike_owner is not None
+                    and controller.cell.agent_id
+                    in prospective_strike_owner.cell.self_model.teammate_ids
+                    and controller.cell.self_model.primary_role is not MatchRole.GOALKEEPER
+                    else None
+                ),
                 prospective_contact=prospective_team_contact,
                 continuous_motor_approach=bool(
                     controller.cell.agent_id in motors
@@ -3194,6 +3270,7 @@ def _movement_command(
     prospective_contact: bool = False,
     continuous_motor_approach: bool = False,
     pending_receive_target_m: tuple[float, float] | None = None,
+    reserved_stance_target_m: tuple[float, float] | None = None,
 ) -> NDArray[np.float64]:
     current = positions[controller.cell.agent_id]
     target = np.asarray(decision.target_position_m[:2], dtype=np.float64)
@@ -3582,6 +3659,21 @@ def _movement_command(
     if speed > speed_limit:
         command[:2] *= speed_limit / speed
     if config.all_role_clearance:
+        task_halfplane = None
+        if (
+            reserved_stance_target_m is not None
+            and config.teammate_approach_clearance_m > 0
+            and stance_reservation_allowed(
+                intent=decision.intent, post_receive_hold=post_receive_hold
+            )
+        ):
+            reserved_stance_xy = np.asarray(reserved_stance_target_m, dtype=np.float64)
+            task_halfplane = stance_clearance_halfplane(
+                current,
+                reserved_stance_xy,
+                reserved_stance_xy - ball,
+                clearance_m=config.teammate_approach_clearance_m,
+            )
         proposal = propose_clearance_velocity(
             command[:2],
             np.asarray(
@@ -3592,6 +3684,7 @@ def _movement_command(
                 ]
             ).reshape((-1, 2)),
             maximum_speed_mps=speed_limit,
+            additional_halfplanes=task_halfplane,
         )
         command[:2] = proposal.velocity_mps
         controller.clearance_feasible = proposal.feasible

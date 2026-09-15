@@ -51,6 +51,8 @@ class MatchCollection:
     prospective_motor: bool = False
     task_context_bound: bool = False
     motor_lateral_limit_m: float = 0.60
+    prospective_strike_approach: bool = False
+    teammate_approach_clearance_m: float = 0.0
 
 
 def collection_options(
@@ -77,7 +79,11 @@ def training_kickoffs(*, varied: bool, balanced_motor: bool) -> tuple[tuple[floa
 
 
 def collection_world(
-    depth: float | None, strict_handoff: bool, finisher_option_learning: bool = False
+    depth: float | None,
+    strict_handoff: bool,
+    finisher_option_learning: bool = False,
+    prospective_strike_approach: bool = False,
+    teammate_approach_clearance_m: float = 0.0,
 ) -> IndependentTeamWorldConfig:
     if type(strict_handoff) is not bool:
         raise ValueError("strict handoff must be explicit")
@@ -95,6 +101,8 @@ def collection_world(
         owned_contact_roles=None if depth is None else ("defender", "goalkeeper", "playmaker"),
         strict_receive_handoff=strict_handoff,
         option_only_residual_roles=("finisher",) if finisher_option_learning else None,
+        prospective_strike_approach=prospective_strike_approach,
+        teammate_approach_clearance_m=teammate_approach_clearance_m,
     )
 
 
@@ -108,7 +116,11 @@ def collect(job: MatchCollection) -> str:
         ),
     )
     world = collection_world(
-        job.outlet_stance_depth_m, job.strict_handoff, job.finisher_option_learning
+        job.outlet_stance_depth_m,
+        job.strict_handoff,
+        job.finisher_option_learning,
+        job.prospective_strike_approach,
+        job.teammate_approach_clearance_m,
     )
     report = run_continuous_competitive_match_growth(
         evidence_dir=job.output,
@@ -154,6 +166,8 @@ def train(
     task_context_bound: bool = False,
     balanced_motor_kickoffs: bool = False,
     motor_lateral_limit_m: float = 0.60,
+    prospective_strike_approach: bool = False,
+    teammate_approach_clearance_m: float = 0.0,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -165,7 +179,15 @@ def train(
         raise ValueError("bounded collection workers required")
     if type(varied_ball_positions) is not bool:
         raise ValueError("ball-position curriculum must be explicit")
-    world = collection_world(outlet_stance_depth_m, strict_handoff, finisher_option_learning)
+    world = collection_world(
+        outlet_stance_depth_m,
+        strict_handoff,
+        finisher_option_learning,
+        prospective_strike_approach,
+        teammate_approach_clearance_m,
+    )
+    if prospective_strike_approach and not (prospective_motor and task_context_bound):
+        raise ValueError("prospective approach requires a bound prospective motor")
     kickoffs = training_kickoffs(
         varied=varied_ball_positions, balanced_motor=balanced_motor_kickoffs
     )
@@ -202,6 +224,8 @@ def train(
         "prospective_motor": prospective_motor,
         "task_context_bound": task_context_bound,
         "motor_lateral_limit_m": motor_lateral_limit_m,
+        "prospective_strike_approach": prospective_strike_approach,
+        "teammate_approach_clearance_m": teammate_approach_clearance_m,
         "collection_world_config_hash": world.config_hash,
         "outlet_stance_depth_m": outlet_stance_depth_m,
         "strict_handoff": strict_handoff,
@@ -227,6 +251,8 @@ def train(
                 prospective_motor=prospective_motor,
                 task_context_bound=task_context_bound,
                 motor_lateral_limit_m=motor_lateral_limit_m,
+                prospective_strike_approach=prospective_strike_approach,
+                teammate_approach_clearance_m=teammate_approach_clearance_m,
                 outlet_stance_depth_m=outlet_stance_depth_m,
                 strict_handoff=strict_handoff,
                 finisher_option_learning=finisher_option_learning,
@@ -293,6 +319,8 @@ def train(
             prospective_motor=prospective_motor,
             task_context_bound=task_context_bound,
             motor_lateral_limit_m=motor_lateral_limit_m,
+            prospective_strike_approach=prospective_strike_approach,
+            teammate_approach_clearance_m=teammate_approach_clearance_m,
         )
         for label, policy in (("parent", initial), ("candidate", parent))
         for offset in (-0.06, 0.0, 0.06)
@@ -331,6 +359,8 @@ def main() -> None:
     parser.add_argument("--bound-motor-context", action="store_true")
     parser.add_argument("--balanced-motor-kickoffs", action="store_true")
     parser.add_argument("--motor-lateral-limit", type=float, default=0.60)
+    parser.add_argument("--prospective-strike-approach", action="store_true")
+    parser.add_argument("--teammate-approach-clearance", type=float, default=0.0)
     parser.add_argument(
         "--reward-shaping",
         choices=("contact_safety_v1", "motor_task_contact_v1"),
@@ -353,6 +383,8 @@ def main() -> None:
         task_context_bound=args.bound_motor_context,
         balanced_motor_kickoffs=args.balanced_motor_kickoffs,
         motor_lateral_limit_m=args.motor_lateral_limit,
+        prospective_strike_approach=args.prospective_strike_approach,
+        teammate_approach_clearance_m=args.teammate_approach_clearance,
     )
 
 
