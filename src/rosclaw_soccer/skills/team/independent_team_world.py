@@ -1999,6 +1999,7 @@ def simulate_independent_team_world(
                 controller=controller,
                 navigation_slot=navigation.get(controller.cell.agent_id),
                 navigation_frame=frame,
+                motor_option_retired=controller.cell.agent_id in motor_retirements,
                 motor_peer_velocities=motor_peer_velocities,
                 decision=current_decision,
                 positions=positions,
@@ -3747,6 +3748,7 @@ def _movement_command(
     navigation_frame: int = 0,
     motor_peer_velocities: Mapping[str, NDArray[np.float64]] | None = None,
     experimental_navigation_speed_mps: float | None = None,
+    motor_option_retired: bool = False,
 ) -> NDArray[np.float64]:
     if experimental_navigation_speed_mps is not None and (
         type(experimental_navigation_speed_mps) not in (int, float)
@@ -4133,6 +4135,7 @@ def _movement_command(
                 )
             ),
             committed_receiver=committed_receiver,
+            motor_option_retired=motor_option_retired,
             neighbors=tuple(
                 (a, float(p[0]), float(p[1]))
                 for a, p in sorted(positions.items())

@@ -128,6 +128,28 @@ def test_receive_commitment_requires_explicit_boolean():
         replace(observation(), committed_receiver=1)
 
 
+@pytest.mark.parametrize("value", [0, 1, None, "completed"])
+def test_motor_retirement_requires_explicit_boolean(value):
+    with pytest.raises(ValueError):
+        replace(observation(), motor_option_retired=value)
+
+
+def test_motor_retirement_is_a_read_only_lifecycle_observation():
+    obs = replace(observation(), motor_option_retired=True)
+    assert obs.motor_option_retired and not obs.committed_receiver
+    with pytest.raises(AttributeError):
+        obs.motor_option_retired = False
+
+
+def test_tampered_retirement_observation_faults_before_provider_call():
+    policy = Policy()
+    slot = NavigationSlot(policy)
+    obs = observation()
+    object.__setattr__(obs, "motor_option_retired", "success")
+    assert slot.propose(obs) == (0.0, 0.0, 0.0)
+    assert slot.faulted and policy.calls == 0
+
+
 def test_tampered_effector_snapshot_faults_before_policy_is_called():
     policy = Policy()
     slot = NavigationSlot(policy)

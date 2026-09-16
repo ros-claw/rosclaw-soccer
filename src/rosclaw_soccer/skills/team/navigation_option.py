@@ -43,6 +43,8 @@ class NavigationObservation:
     # Optional measured world-frame end-effectors, never inferred from root pose.
     effector_positions: tuple[tuple[str, float, float, float], ...] = ()
     committed_receiver: bool = False
+    # Runtime lifecycle only: retirement is not evidence of skill success.
+    motor_option_retired: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -70,6 +72,7 @@ class NavigationObservation:
             or not _vector(self.steering_target, 2)
             or type(self.neighbors) is not tuple
             or type(self.committed_receiver) is not bool
+            or type(self.motor_option_retired) is not bool
             or type(self.effector_positions) is not tuple
             or len(self.effector_positions) > 16
             or any(

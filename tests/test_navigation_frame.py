@@ -48,6 +48,7 @@ def test_end_effectors_rotate_with_world_without_exchanging_anatomical_sides() -
         observation(),
         effector_positions=(("left_foot", 1.0, 0.125, 0.05), ("right_foot", 1.0, -0.125, 0.06)),
         committed_receiver=True,
+        motor_option_retired=True,
     )
     result = project(obs)
     assert result.effector_positions == (
@@ -55,6 +56,7 @@ def test_end_effectors_rotate_with_world_without_exchanging_anatomical_sides() -
         ("right_foot", 5.0, 0.125, 0.06),
     )
     assert result.committed_receiver
+    assert result.motor_option_retired
     assert project(result).effector_positions == obs.effector_positions
     assert np.array_equal(
         local_navigation_features(obs),
