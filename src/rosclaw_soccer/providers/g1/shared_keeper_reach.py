@@ -195,6 +195,7 @@ class SharedKeeperReach:
                 Path(self.config.muscle_gate_path),
                 parent_policy_hash=self.muscle.policy_hash,
                 config_hash=gate_config_hash(asdict(self.config)),
+                explicit_config=asdict(self.config),
             )
         if self.config.gmt_model_path is not None and self.config.gmt_skill_path is not None:
             import torch

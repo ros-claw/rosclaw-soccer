@@ -72,6 +72,84 @@ def test_common_contract_excludes_only_model_location_and_choice():
     assert gate_config_hash(base) != gate_config_hash(dict(base, gain_scale=1.6))
 
 
+def configured_gate(tmp_path, artifact_config, requested_config, *, explicit=True, **changes):
+    path = tmp_path / "configured-gate.json"
+    path.write_text(
+        json.dumps(dict(payload(), config_hash=gate_config_hash(artifact_config), **changes))
+    )
+    return KeeperContextGate(
+        path,
+        parent_policy_hash="parent",
+        config_hash=gate_config_hash(requested_config),
+        explicit_config=requested_config if explicit else None,
+    )
+
+
+def test_legacy_default_heights_require_explicit_unchanged_config(tmp_path):
+    old = dict(gain_scale=1.5)
+    current = dict(old, minimum_intercept_height_m=0.65, minimum_reach_height_m=0.72)
+    before = dict(current)
+    gate = configured_gate(tmp_path, old, current)
+    assert gate.config_binding == "LEGACY_DEFAULT_HEIGHTS"
+    assert gate.bound_config_hash == gate_config_hash(old)
+    assert current == before
+    assert not gate.select_reach(1.3) and gate.select_reach(1.5)
+    with pytest.raises(ValueError, match="parent mismatch"):
+        configured_gate(tmp_path, old, current, explicit=False)
+
+
+def test_current_literal_hash_and_intermediate_schema_are_preserved(tmp_path):
+    current = dict(gain_scale=1.5, minimum_intercept_height_m=0.4, minimum_reach_height_m=0.72)
+    literal = configured_gate(tmp_path, current, current)
+    assert literal.config_binding == "EXACT"
+    intermediate = {k: v for k, v in current.items() if k != "minimum_reach_height_m"}
+    gate = configured_gate(tmp_path, intermediate, current)
+    assert gate.config_binding == "LEGACY_DEFAULT_HEIGHTS"
+    # Omitting a changed admission floor would remove a real physical constraint.
+    with pytest.raises(ValueError, match="parent mismatch"):
+        configured_gate(tmp_path, dict(gain_scale=1.5), current)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        dict(minimum_intercept_height_m=0.64),
+        dict(minimum_reach_height_m=0.71),
+        dict(gain_scale=1.6),
+        dict(minimum_reach_height_m="0.72"),
+        dict(minimum_intercept_height_m="0.65"),
+    ],
+)
+def test_legacy_binding_cannot_hide_changed_physical_config(tmp_path, changes):
+    current = dict(gain_scale=1.5, minimum_intercept_height_m=0.65, minimum_reach_height_m=0.72)
+    current.update(changes)
+    with pytest.raises(ValueError, match="parent mismatch"):
+        configured_gate(tmp_path, dict(gain_scale=1.5), current)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        dict(parent_policy_hash="other"),
+        dict(promotion_authorized=True),
+        dict(activation_ceiling="REAL"),
+    ],
+)
+def test_legacy_compatibility_keeps_parent_and_authority_checks(tmp_path, changes):
+    current = dict(gain_scale=1.5, minimum_intercept_height_m=0.65, minimum_reach_height_m=0.72)
+    with pytest.raises(ValueError, match="parent mismatch"):
+        configured_gate(tmp_path, dict(gain_scale=1.5), current, **changes)
+
+
+def test_explicit_config_cannot_disagree_with_primary_hash(tmp_path):
+    path = tmp_path / "gate.json"
+    path.write_text(json.dumps(payload()))
+    with pytest.raises(ValueError, match="declared hash"):
+        KeeperContextGate(
+            path, parent_policy_hash="parent", config_hash="config", explicit_config={}
+        )
+
+
 def test_learning_uses_bound_physical_labels_and_single_focal_core_audit(tmp_path, monkeypatch):
     from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
     from rosclaw_soccer.training import keeper_context_learning as learning
