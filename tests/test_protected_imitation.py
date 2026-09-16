@@ -112,3 +112,109 @@ def test_bad_model_weights_fail_before_fit():
         seed.plastic.actor[0].weight[0, 0] = float("nan")
     with pytest.raises(ValueError):
         fit_protected_demonstration(seed, obs, target, steps=1)
+
+
+def test_rehearsal_uses_seed_means_and_reduces_drift_without_mutating_inputs():
+    seed, obs, target = fixture()
+    rehearsal = obs.copy()
+    rehearsal[:, 0] += 2
+    saved = rehearsal.copy()
+    plain, _ = fit_protected_demonstration(seed, obs, target, steps=128)
+    retained, stats = fit_protected_demonstration(
+        seed,
+        obs,
+        target,
+        steps=128,
+        rehearsal_observation=rehearsal,
+        rehearsal_coefficient=100,
+    )
+    repeated, repeated_stats = fit_protected_demonstration(
+        seed,
+        obs,
+        target,
+        steps=128,
+        rehearsal_observation=rehearsal,
+        rehearsal_coefficient=100,
+    )
+    with torch.no_grad():
+        x = torch.from_numpy(rehearsal)
+        expected = seed(x)[0]
+        plain_drift = float((plain(x)[0] - expected).square().mean())
+        actual_drift = float((retained(x)[0] - expected).square().mean())
+    assert actual_drift < plain_drift
+    assert stats["rehearsal_mean_squared_drift"] == actual_drift
+    assert stats["rehearsal_samples"] == len(rehearsal)
+    assert stats["closed_loop_retention_verified"] is False
+    assert stats["final_loss"] < stats["initial_loss"]
+    assert np.array_equal(rehearsal, saved)
+    assert stats == repeated_stats
+    assert all(torch.equal(v, repeated.state_dict()[k]) for k, v in retained.state_dict().items())
+    assert all(
+        torch.equal(v, seed.state_dict()[k])
+        for k, v in retained.state_dict().items()
+        if not k.startswith("plastic.actor.")
+    )
+
+
+@pytest.mark.parametrize(
+    "fault", ["nan", "float64", "empty", "shape", "ignored", "huge", "list", "flat"]
+)
+def test_invalid_rehearsal_states_rejected(fault):
+    seed, obs, target = fixture()
+    rehearsal = obs.copy()
+    if fault == "nan":
+        rehearsal[0, 0] = np.nan
+    elif fault == "float64":
+        rehearsal = rehearsal.astype(np.float64)
+    elif fault == "empty":
+        rehearsal = rehearsal[:0]
+    elif fault == "shape":
+        rehearsal = rehearsal[:, :2]
+    elif fault == "ignored":
+        rehearsal[0, -1] = 0
+    elif fault == "huge":
+        rehearsal[0, 0] = 11
+    elif fault == "list":
+        rehearsal = rehearsal.tolist()
+    else:
+        rehearsal = rehearsal[0]
+    with pytest.raises(ValueError):
+        fit_protected_demonstration(
+            seed,
+            obs,
+            target,
+            steps=1,
+            rehearsal_observation=rehearsal,
+            rehearsal_coefficient=1,
+        )
+
+
+@pytest.mark.parametrize("coefficient", [True, float("nan"), -1, 101, 0])
+def test_rehearsal_requires_explicit_bounded_nonzero_coefficient(coefficient):
+    seed, obs, target = fixture()
+    with pytest.raises(ValueError):
+        fit_protected_demonstration(
+            seed,
+            obs,
+            target,
+            steps=1,
+            rehearsal_observation=obs,
+            rehearsal_coefficient=coefficient,
+        )
+
+
+def test_rehearsal_coefficient_without_states_rejected():
+    with pytest.raises(ValueError):
+        fit_protected_demonstration(*fixture(), steps=1, rehearsal_coefficient=1)
+
+
+def test_explicit_disabled_rehearsal_preserves_default_math():
+    first, stats = fit_protected_demonstration(*fixture(), steps=4)
+    second, again = fit_protected_demonstration(
+        *fixture(),
+        steps=4,
+        rehearsal_observation=None,
+        rehearsal_coefficient=0,
+    )
+    assert stats == again and "rehearsal_samples" not in stats
+    assert all(torch.equal(v, second.state_dict()[k]) for k, v in first.state_dict().items())

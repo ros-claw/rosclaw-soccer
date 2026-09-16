@@ -23,6 +23,8 @@ def fit_protected_demonstration(
     steps: int = 512,
     learning_rate: float = 1e-4,
     retention_coefficient: float = 0.1,
+    rehearsal_observation: np.ndarray | None = None,
+    rehearsal_coefficient: float = 0.0,
 ) -> tuple[Any, dict[str, Any]]:
     """Fit only ``plastic.actor`` on explicitly executed post-event actions.
 
@@ -31,6 +33,10 @@ def fit_protected_demonstration(
     must never be presented as an executed demonstration. All non-actor state,
     including the critic and exploration scale, is preserved exactly. Input
     arrays and the seed remain untouched, including their gradient flags.
+    Optional rehearsal states are a separate, caller-qualified set of visited
+    post-event states. Their targets are the seed's deterministic means, not
+    recorded but unexecuted noise. This is a soft retention loss, never proof
+    of closed-loop retention. The default preserves the original update math.
     """
     import torch
 
@@ -39,10 +45,12 @@ def fit_protected_demonstration(
         or not 1 <= steps <= 1024
         or any(
             type(v) not in (int, float) or not math.isfinite(v)
-            for v in (learning_rate, retention_coefficient)
+            for v in (learning_rate, retention_coefficient, rehearsal_coefficient)
         )
         or not 1e-6 <= learning_rate <= 1e-3
         or not 0 <= retention_coefficient <= 10
+        or not 0 <= rehearsal_coefficient <= 100
+        or (rehearsal_observation is None) != (rehearsal_coefficient == 0)
         or not isinstance(seed, torch.nn.Module)
         or not isinstance(getattr(seed, "anchor", None), torch.nn.Module)
         or not isinstance(getattr(seed, "plastic", None), torch.nn.Module)
@@ -68,6 +76,17 @@ def fit_protected_demonstration(
         or not np.all(observation[:, -1] == 1)
     ):
         raise ValueError("finite float32 executed post-event observation/action pairs required")
+    if rehearsal_observation is not None and (
+        not isinstance(rehearsal_observation, np.ndarray)
+        or rehearsal_observation.dtype != np.float32
+        or rehearsal_observation.ndim != 2
+        or not 1 <= len(rehearsal_observation) <= 4096
+        or rehearsal_observation.shape[1] != observation.shape[1]
+        or not np.isfinite(rehearsal_observation).all()
+        or np.any(np.abs(rehearsal_observation) > 10)
+        or not np.all(rehearsal_observation[:, -1] == 1)
+    ):
+        raise ValueError("finite float32 visited post-event rehearsal observations required")
     state = seed.state_dict()
     if not state or any(
         v.dtype != torch.float32
@@ -109,13 +128,26 @@ def fit_protected_demonstration(
         anchor = anchor.detach().clone()
     if anchor.shape != y.shape:
         raise ValueError("demonstration action shape differs from the protected actor")
+    rehearsal_x = (
+        None if rehearsal_observation is None else torch.from_numpy(rehearsal_observation.copy())
+    )
+    rehearsal_target = None
+    if rehearsal_x is not None:
+        with torch.no_grad():
+            rehearsal_target = model(rehearsal_x)[0].detach().clone()
     optimizer = torch.optim.Adam(parameters, lr=learning_rate)
 
     def objective() -> Any:
         predicted, _ = model(x)
-        return (predicted - y).square().mean() + retention_coefficient * (
+        loss = (predicted - y).square().mean() + retention_coefficient * (
             predicted - anchor
         ).square().mean()
+        if rehearsal_x is not None:
+            loss = (
+                loss
+                + rehearsal_coefficient * (model(rehearsal_x)[0] - rehearsal_target).square().mean()
+            )
+        return loss
 
     initial = float(objective().detach())
     for _ in range(steps):
@@ -140,7 +172,7 @@ def fit_protected_demonstration(
         raise ValueError("offline distillation modified protected model state")
     for name, parameter in model.named_parameters():
         parameter.requires_grad_(flags[name])
-    return model, {
+    stats = {
         "steps": steps,
         "initial_loss": initial,
         "final_loss": final,
@@ -151,3 +183,13 @@ def fit_protected_demonstration(
         "activation_ceiling": "SIM_ONLY",
         "promotion_eligible": False,
     }
+    if rehearsal_x is not None:
+        with torch.no_grad():
+            drift = float((model(rehearsal_x)[0] - rehearsal_target).square().mean())
+        stats.update(
+            rehearsal_samples=len(rehearsal_x),
+            rehearsal_coefficient=rehearsal_coefficient,
+            rehearsal_mean_squared_drift=drift,
+            closed_loop_retention_verified=False,
+        )
+    return model, stats
