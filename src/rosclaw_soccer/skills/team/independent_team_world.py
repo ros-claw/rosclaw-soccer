@@ -4120,6 +4120,19 @@ def _movement_command(
             steering_target=tuple((current + error).tolist()),
             baseline_command=tuple(command.tolist()),
             previous_command=tuple(previous_command.tolist()),
+            effector_positions=tuple(
+                (
+                    name,
+                    float(data.xpos[body, 0]),
+                    float(data.xpos[body, 1]),
+                    float(data.xpos[body, 2]),
+                )
+                for name, body in (
+                    ("left_foot", controller.left_ankle_body),
+                    ("right_foot", controller.right_ankle_body),
+                )
+            ),
+            committed_receiver=committed_receiver,
             neighbors=tuple(
                 (a, float(p[0]), float(p[1]))
                 for a, p in sorted(positions.items())

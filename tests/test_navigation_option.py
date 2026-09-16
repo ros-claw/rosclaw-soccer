@@ -106,3 +106,32 @@ def test_navigation_contract_rejects_mutable_foreign_and_nonfinite_values():
     p.activation_ceiling = "REAL"
     with pytest.raises(ValueError):
         NavigationSlot(p)
+
+
+@pytest.mark.parametrize(
+    "effectors",
+    [
+        [("foot", 0.0, 0.0, 0.0)],
+        (("foot", float("nan"), 0.0, 0.0),),
+        (("foot", 0.0, 0.0),),
+        (("foot", 0.0, 0.0, 0.0),) * 2,
+        (("right", 0.0, 0.0, 0.0), ("left", 0.0, 0.0, 0.0)),
+    ],
+)
+def test_measured_effector_snapshot_rejects_invalid_or_ambiguous_values(effectors):
+    with pytest.raises(ValueError):
+        replace(observation(), effector_positions=effectors)
+
+
+def test_receive_commitment_requires_explicit_boolean():
+    with pytest.raises(ValueError):
+        replace(observation(), committed_receiver=1)
+
+
+def test_tampered_effector_snapshot_faults_before_policy_is_called():
+    policy = Policy()
+    slot = NavigationSlot(policy)
+    obs = observation()
+    object.__setattr__(obs, "effector_positions", (("foot", float("nan"), 0.0, 0.0),))
+    assert slot.propose(obs) == (0.0, 0.0, 0.0)
+    assert slot.faulted and policy.calls == 0

@@ -40,6 +40,9 @@ class NavigationObservation:
     baseline_command: tuple[float, float, float]
     previous_command: tuple[float, float, float]
     neighbors: tuple[tuple[str, float, float], ...]
+    # Optional measured world-frame end-effectors, never inferred from root pose.
+    effector_positions: tuple[tuple[str, float, float, float], ...] = ()
+    committed_receiver: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -66,6 +69,13 @@ class NavigationObservation:
             )
             or not _vector(self.steering_target, 2)
             or type(self.neighbors) is not tuple
+            or type(self.committed_receiver) is not bool
+            or type(self.effector_positions) is not tuple
+            or len(self.effector_positions) > 16
+            or any(
+                type(v) is not tuple or len(v) != 4 or not _identity(v[0]) or not _vector(v[1:], 3)
+                for v in self.effector_positions
+            )
             or len(self.neighbors) > 31
             or any(
                 type(v) is not tuple
@@ -80,6 +90,9 @@ class NavigationObservation:
         ids = tuple(v[0] for v in self.neighbors)
         if tuple(sorted(set(ids))) != ids:
             raise ValueError("unique sorted navigation neighbors required")
+        effectors = tuple(v[0] for v in self.effector_positions)
+        if tuple(sorted(set(effectors))) != effectors:
+            raise ValueError("unique sorted measured end-effectors required")
 
 
 @dataclass(frozen=True)
@@ -162,6 +175,7 @@ class NavigationSlot:
                 and abs(observation.time_sec - self._time - 0.02) > 1e-6
             ):
                 raise ValueError("navigation identity, clock or content binding changed")
+            observation.__post_init__()
             self._frame, self._time = observation.frame, observation.time_sec
             proposal = self.policy.propose(observation)
             if proposal is None:

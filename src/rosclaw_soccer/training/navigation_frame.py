@@ -52,6 +52,9 @@ def canonical_navigation_observation(
         baseline_command=velocity(observation.baseline_command),
         previous_command=velocity(observation.previous_command),
         neighbors=tuple((agent, tx - px, ty - py) for agent, px, py in observation.neighbors),
+        effector_positions=tuple(
+            (name, tx - px, ty - py, pz) for name, px, py, pz in observation.effector_positions
+        ),
     )
 
 

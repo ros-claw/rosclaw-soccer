@@ -5,13 +5,13 @@ from dataclasses import asdict, replace
 
 import numpy as np
 import pytest
+
+from rosclaw_soccer.skills.team.navigation_option import NavigationDelta, NavigationObservation
+from rosclaw_soccer.training.local_navigation import local_navigation_features
 from rosclaw_soccer.training.navigation_frame import (
     canonical_navigation_delta,
     canonical_navigation_observation,
 )
-
-from rosclaw_soccer.skills.team.navigation_option import NavigationDelta, NavigationObservation
-from rosclaw_soccer.training.local_navigation import local_navigation_features
 
 
 def observation() -> NavigationObservation:
@@ -41,6 +41,25 @@ def test_off_preserves_values_without_returning_live_object() -> None:
     obs = observation()
     assert project(obs, False) == obs
     assert project(obs, False) is not obs
+
+
+def test_end_effectors_rotate_with_world_without_exchanging_anatomical_sides() -> None:
+    obs = replace(
+        observation(),
+        effector_positions=(("left_foot", 1.0, 0.125, 0.05), ("right_foot", 1.0, -0.125, 0.06)),
+        committed_receiver=True,
+    )
+    result = project(obs)
+    assert result.effector_positions == (
+        ("left_foot", 5.0, -0.125, 0.05),
+        ("right_foot", 5.0, 0.125, 0.06),
+    )
+    assert result.committed_receiver
+    assert project(result).effector_positions == obs.effector_positions
+    assert np.array_equal(
+        local_navigation_features(obs),
+        local_navigation_features(replace(obs, effector_positions=())),
+    )
 
 
 def test_projection_transforms_all_world_fields_not_identity_clock_or_yaw_rate() -> None:
