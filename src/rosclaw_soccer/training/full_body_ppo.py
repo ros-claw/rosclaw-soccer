@@ -64,6 +64,8 @@ class FullBodyPPOUpdateConfig:
                 (136, 3),
                 (143, 3),
                 (143, 29),
+                (149, 29),  # Receiving143 plus explicit bilateral foot-relative velocity6.
+                (150, 29),  # Same feedback plus a separate binary plasticity mask.
                 (136, 30),
                 (137, 30),  # 136-state actor plus causal binary successor feature.
                 (142, 30),
