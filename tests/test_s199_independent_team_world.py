@@ -4,6 +4,7 @@ import os
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from rosclaw_soccer.growth.role_self_model import MatchRole
@@ -13,6 +14,7 @@ from rosclaw_soccer.skills.team.independent_team_world import (
     IndependentTeamWorldConfig,
     IndependentTeamWorldResult,
     IndependentTeamWorldScenario,
+    simulate_independent_team_world,
 )
 from rosclaw_soccer.training.independent_team_growth import (
     build_independent_three_vs_three_fixture,
@@ -148,3 +150,45 @@ def test_multi_player_builder_compiles_174_independent_actuators() -> None:
 
     assert model.nu == 6 * 29
     assert model.nq == 223
+
+
+@pytest.mark.integration
+def test_boundary_observation_is_independent_of_exit_termination() -> None:
+    value = os.environ.get("ROSCLAW_G1_ASSET_ROOT")
+    if value is None:
+        pytest.skip("ROSCLAW_G1_ASSET_ROOT is not configured")
+    root = Path(value)
+    traces = []
+    for stop in (True, False):
+        fixture = build_independent_three_vs_three_fixture(root)
+        _, trace = simulate_independent_team_world(
+            asset_root=root,
+            roster=fixture.roster,
+            cells=fixture.cells,
+            players=fixture.players,
+            scenario=IndependentTeamWorldScenario(
+                "s199.boundary-observation",
+                (fixture.goal.plane_x_m - 0.01, 0.0, fixture.goal.ball_radius_m),
+                (1.0, 0.0, 0.0),
+                2506,
+            ),
+            goal=fixture.goal,
+            config=IndependentTeamWorldConfig(simulation_duration_sec=5.0, stop_on_ball_exit=stop),
+        )
+        expected = [
+            -1.5,
+            fixture.goal.plane_x_m,
+            3.0,
+            fixture.goal.ball_radius_m,
+            fixture.goal.width_m,
+            fixture.goal.height_m,
+        ]
+        np.testing.assert_array_equal(
+            trace["pitch_boundary_geometry"], np.tile(expected, (len(trace["time"]), 1))
+        )
+        traces.append(trace)
+    bounded, full = traces
+    assert 0 < len(bounded["time"]) < len(full["time"]) == 250
+    assert bounded.keys() == full.keys()
+    for key in bounded:
+        np.testing.assert_array_equal(bounded[key], full[key][: len(bounded[key])])
