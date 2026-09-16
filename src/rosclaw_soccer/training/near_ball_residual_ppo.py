@@ -47,6 +47,7 @@ from rosclaw_soccer.training.near_ball_plasticity import (
     finish_update,
     private_weight_hashes,
 )
+from rosclaw_soccer.training.returned_ball_learning import require_returned_live_segment
 from rosclaw_soccer.training.role_behavior_anchor import RoleBehaviorAnchor
 
 
@@ -63,6 +64,7 @@ def physical_rewards(
     on this player's measured foot-contact frames. Dense contact is capped by
     the control period, so resting on the ball cannot earn an event bonus.
     """
+    require_returned_live_segment(trace)
     obs = np.asarray(trace["residual_observations"], dtype=float)
     if reward_shaping not in REWARD_SHAPING_MODES:
         raise ValueError("unknown reward shaping contract")
