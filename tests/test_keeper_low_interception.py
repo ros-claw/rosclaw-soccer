@@ -44,6 +44,7 @@ def test_invalid_reach_floor_is_rejected(height):
 
 def test_reach_floor_changes_task_target_not_geometry_or_leg_authority(monkeypatch):
     import mujoco
+
     from rosclaw_soccer.skills.team.shared_world import (
         _apply_goalkeeper_bimanual_operational_space_reach,
     )
