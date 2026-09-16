@@ -75,6 +75,7 @@ def test_default_and_hash_remain_legacy(course):
     legacy.pop("blocked_shot_layoff")
     legacy.pop("moving_ball_finish_intent")
     legacy.pop("keeper_distribution_preview")
+    legacy.pop("goalkeeper_angle_cover")
     assert cell.tactical_profile.profile_hash == hash_json(legacy)
     assert cell.to_dict()["tactical_profile"] == legacy
     assert (

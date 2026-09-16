@@ -61,6 +61,7 @@ def test_default_preserves_receive_and_legacy_hash(course):
         "blocked_shot_layoff",
         "moving_ball_finish_intent",
         "keeper_distribution_preview",
+        "goalkeeper_angle_cover",
     ):
         legacy.pop(field)
     assert cell.tactical_profile.profile_hash == hash_json(legacy)

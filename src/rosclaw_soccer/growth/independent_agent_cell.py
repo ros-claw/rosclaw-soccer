@@ -192,6 +192,7 @@ class AgentTacticalProfile:
     blocked_shot_layoff: bool = False
     moving_ball_finish_intent: bool = False
     keeper_distribution_preview: bool = False
+    goalkeeper_angle_cover: bool = False
 
     def __post_init__(self) -> None:
         values = (
@@ -209,6 +210,7 @@ class AgentTacticalProfile:
             or type(self.blocked_shot_layoff) is not bool
             or type(self.moving_ball_finish_intent) is not bool
             or type(self.keeper_distribution_preview) is not bool
+            or type(self.goalkeeper_angle_cover) is not bool
             or any(not math.isfinite(value) for value in values)
             or abs(self.home_position_m[2]) > 1.0e-12
             or not 0.25 <= self.maximum_target_shift_m <= 4.0
@@ -231,6 +233,8 @@ class AgentTacticalProfile:
             value.pop("moving_ball_finish_intent")
         if not self.keeper_distribution_preview:
             value.pop("keeper_distribution_preview")
+        if not self.goalkeeper_angle_cover:
+            value.pop("goalkeeper_angle_cover")
         return value
 
 
@@ -568,6 +572,20 @@ class RosclawSoccerAgentCell:
             if not toward_goal:
                 depth += min(0.65, max(0.0, abs(float(ball[0] - own_goal[0])) - 2.0) * 0.12)
             target = (float(own_goal[0] + attack_sign * depth), target[1], 0.0)
+        if self.tactical_profile.goalkeeper_angle_cover:
+            from rosclaw_soccer.growth.goalkeeper_positioning import goalkeeper_cover_target
+
+            target = goalkeeper_cover_target(
+                ball_position_m=value.ball_position_m,
+                ball_velocity_mps=value.ball_velocity_mps,
+                own_goal_m=value.own_goal_m,
+                opponent_goal_m=value.opponent_goal_m,
+                depth_m=(
+                    depth
+                    if self.tactical_profile.active_competition
+                    else self.tactical_profile.goalkeeper_depth_m
+                ),
+            )
         return self._decision(
             value,
             TacticalIntent.SAVE if toward_goal and danger else TacticalIntent.COVER,
