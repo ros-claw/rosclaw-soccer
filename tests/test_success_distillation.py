@@ -11,22 +11,23 @@ from rosclaw_soccer.training.success_distillation import (
 torch = pytest.importorskip("torch")
 
 
-def data():
+def data(observation_size=133):
     generator = torch.Generator().manual_seed(480)
     return dict(
-        observations=torch.randn(8, 133, generator=generator) * 0.1,
+        observations=torch.randn(8, observation_size, generator=generator) * 0.1,
         raw_actions=torch.randn(8, 29, generator=generator) * 0.1,
         sample_weights=torch.full((8,), 0.125),
     )
 
 
-def test_supervised_math_exact_and_protected_weights_unchanged():
-    agent = build_ball_residual_actor_critic()
+@pytest.mark.parametrize("observation_size", [133, 135])
+def test_supervised_math_exact_and_protected_weights_unchanged(observation_size):
+    agent = build_ball_residual_actor_critic(observation_size=observation_size)
     reference = copy.deepcopy(agent)
     before = {k: t.clone() for k, t in agent.state_dict().items()}
     flags = [p.requires_grad for p in agent.parameters()]
-    tensors = data()
-    config = SuccessDistillationConfig(steps=4)
+    tensors = data(observation_size)
+    config = SuccessDistillationConfig(steps=4, observation_size=observation_size)
     result = distill_successful_motor_actions(agent, **tensors, config=config)
     optimizer = torch.optim.Adam(reference.actor.parameters(), lr=0.001)
     for _ in range(4):
@@ -46,6 +47,14 @@ def test_supervised_math_exact_and_protected_weights_unchanged():
     assert result["optimizer_steps"] == 4
     assert result["final_weighted_mse"] < result["initial_weighted_mse"]
     assert result["promotion_eligible"] is False
+
+
+def test_heading_receiving_contract_requires_explicit_opt_in():
+    agent = build_ball_residual_actor_critic(observation_size=135)
+    before = {k: v.clone() for k, v in agent.state_dict().items()}
+    with pytest.raises(ValueError):
+        distill_successful_motor_actions(agent, **data(135))
+    assert all(torch.equal(v, agent.state_dict()[k]) for k, v in before.items())
 
 
 @pytest.mark.parametrize("bad", ["nan", "shape", "grad", "dtype", "weight", "bound", "list"])
