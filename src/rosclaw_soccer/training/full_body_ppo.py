@@ -53,6 +53,7 @@ class FullBodyPPOUpdateConfig:
                 (136, 29),
                 (554, 29),  # Full kick547 + goal3 + rootvelocity3 + learning bit.
                 (583, 29),  # Full kick554 plus explicit preceding sampled raw action29.
+                (612, 29),  # Native-anchor583 plus preceding sampled residual29.
                 (139, 32),
                 (140, 32),  # 139 policy features plus training-only binary learning bit.
                 (169, 32),  # Explicit foot/ball feedback plus one measured interval history.
