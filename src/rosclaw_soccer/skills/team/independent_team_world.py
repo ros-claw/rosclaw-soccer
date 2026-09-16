@@ -144,6 +144,10 @@ from rosclaw_soccer.world.task_lane_clearance import (
     stance_clearance_halfplane,
     stance_reservation_allowed,
 )
+from rosclaw_soccer.world.training_ball_return import (
+    TrainingBallReturnConfig,
+    TrainingBallReturnReferee,
+)
 
 _CONTROL_DT = 0.02
 _PHYSICS_DT = 0.002
@@ -227,8 +231,15 @@ class IndependentTeamWorldConfig:
     experimental_navigation_envelopes: tuple[SimulationNavigationEnvelope, ...] = ()
     rotation_equivariant_receive_heading: bool = False
     rotation_equivariant_duel_side: bool = False
+    training_ball_return: TrainingBallReturnConfig | None = None
 
     def __post_init__(self) -> None:
+        if self.training_ball_return is not None and (
+            not isinstance(self.training_ball_return, TrainingBallReturnConfig)
+            or self.stop_on_ball_exit
+            or not self.bilateral_goals
+        ):
+            raise ValueError("training ball return requires bilateral, non-terminating SIM world")
         if type(self.rotation_equivariant_duel_side) is not bool or (
             self.rotation_equivariant_duel_side and not self.bilateral_goals
         ):
@@ -411,7 +422,9 @@ class IndependentTeamWorldConfig:
             )
             or not isinstance(self.stop_on_ball_exit, bool)
             or any(not math.isfinite(value) for value in values)
-            or not 5.0 <= self.simulation_duration_sec <= 25.0
+            or not 5.0
+            <= self.simulation_duration_sec
+            <= (60.0 if self.training_ball_return else 25.0)
             or not 0.08 <= self.decision_period_sec <= 0.20
             or not 0.20 <= self.maximum_speed_mps <= 0.70
             or not 0.20 <= self.goalkeeper_maximum_speed_mps <= 0.60
@@ -457,6 +470,8 @@ class IndependentTeamWorldConfig:
     @property
     def config_hash(self) -> str:
         value = asdict(self)
+        if self.training_ball_return is None:
+            value.pop("training_ball_return")
         if not self.rotation_equivariant_receive_heading:
             value.pop("rotation_equivariant_receive_heading")
         if not self.rotation_equivariant_duel_side:
@@ -1298,7 +1313,73 @@ def simulate_independent_team_world(
             "residual_applied",
         ):
             trace[name] = []
+    return_referee = (
+        TrainingBallReturnReferee(
+            active.training_ball_return,
+            left_x=active.left_goal_plane_x_m,
+            right_x=goal.plane_x_m,
+            radius=goal.ball_radius_m,
+            goal_width=goal.width_m,
+            goal_height=goal.height_m,
+        )
+        if active.training_ball_return is not None
+        else None
+    )
     for frame in range(total_frames):
+        if return_referee is not None:
+            before_pose = data.qpos[ball_qpos : ball_qpos + 7].copy()
+            before_velocity = data.qvel[ball_qvel : ball_qvel + 6].copy()
+            event = return_referee.observe(
+                time_sec=float(data.time),
+                ball_position_m=(
+                    float(before_pose[0]),
+                    float(before_pose[1]),
+                    float(before_pose[2]),
+                ),
+                player_positions_xy_m=tuple(
+                    (float(data.qpos[c.qpos_base]), float(data.qpos[c.qpos_base + 1]))
+                    for c in controllers
+                ),
+            )
+            if event is not None and event.code == 2:
+                # Explicit user-requested dead-ball training assist, never a
+                # player action. Do not reset the clock or any robot state.
+                data.qpos[ball_qpos : ball_qpos + 3] = event.release_position_m
+                data.qpos[ball_qpos + 3 : ball_qpos + 7] = (1.0, 0.0, 0.0, 0.0)
+                data.qvel[ball_qvel : ball_qvel + 3] = event.release_velocity_mps
+                data.qvel[ball_qvel + 3 : ball_qvel + 6] = 0.0
+                data.qacc_warmstart[ball_qvel : ball_qvel + 6] = 0.0
+                net_state = G1CompliantGoalNetState()
+                opposite_net_state = G1CompliantGoalNetState()
+                # Prior ball flight and ownership no longer describe this ball.
+                last_ball_contact_agent_id = current_possession_agent_id = None
+                last_receive_contact_agent_id = loose_ball_chaser_agent_id = None
+                last_ball_contact_time_sec = last_receive_contact_time_sec = -math.inf
+                ball_chaser_lease_start_sec = strike_lease_start_sec = -math.inf
+                receive_lease_agent_id = receive_lease_source_agent_id = None
+                receive_lease_origin_m = receive_lease_target_m = None
+                receive_lease_active = False
+                receive_commitment = None
+                flight_tracking_agent_id = receive_handoff = None
+                pass_source_agent_id = pass_target_agent_id = strike_lease_agent_id = None
+                assigned_ball_chaser_agent_id = None
+                controlled_possession = (
+                    ContactPossession() if active.controlled_possession_retention else None
+                )
+                mujoco.mj_forward(model, data)
+            for key, value in (
+                ("training_return_event_code", 0 if event is None else event.code),
+                ("training_return_count", return_referee.return_count),
+                ("training_return_event_time_sec", float(data.time)),
+                ("training_return_before_ball_pose", before_pose),
+                ("training_return_before_ball_velocity", before_velocity),
+                ("training_return_after_ball_pose", data.qpos[ball_qpos : ball_qpos + 7].copy()),
+                (
+                    "training_return_after_ball_velocity",
+                    data.qvel[ball_qvel : ball_qvel + 6].copy(),
+                ),
+            ):
+                trace.setdefault(key, []).append(value)
         fresh_preparation_handshake: PassReceiveHandshake | None = None
         for controller in controllers:
             _fill_locomotion_state(controller, data, ball_body, ball_qvel)
