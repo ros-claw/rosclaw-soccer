@@ -9591,6 +9591,7 @@ def _apply_goalkeeper_bimanual_operational_space_reach(
     memory_decay: float,
     memory_maximum_rad: float,
     elapsed_sec: float,
+    minimum_target_height_m: float = 0.72,
 ) -> bool:
     """Decode one causal high-ball intent into a bounded two-glove pocket.
 
@@ -9603,6 +9604,13 @@ def _apply_goalkeeper_bimanual_operational_space_reach(
 
     import mujoco
 
+    if (
+        isinstance(minimum_target_height_m, (bool, np.bool_))
+        or not isinstance(minimum_target_height_m, (int, float))
+        or not math.isfinite(minimum_target_height_m)
+        or not 0.20 <= minimum_target_height_m <= 0.72
+    ):
+        raise ValueError("keeper task-space minimum height outside bounded envelope")
     if robot.goalkeeper_reach_memory is None:
         robot.goalkeeper_reach_memory = np.zeros(29, dtype=np.float64)
     if observation.intercept_confidence < 0.20 or elapsed_sec < 0.04:
@@ -9640,7 +9648,7 @@ def _apply_goalkeeper_bimanual_operational_space_reach(
     )
     pelvis_y = float(data.qpos[robot.qpos_base + 1])
     target_center[1] = float(np.clip(target_center[1], pelvis_y - 0.42, pelvis_y + 0.42))
-    target_center[2] = float(np.clip(target_center[2], 0.72, 1.55))
+    target_center[2] = float(np.clip(target_center[2], minimum_target_height_m, 1.55))
     decay = memory_decay
     robot.goalkeeper_reach_memory *= decay
     active = False

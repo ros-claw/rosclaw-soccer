@@ -50,8 +50,16 @@ class SharedKeeperReachConfig:
     muscle_reach_correction: bool = False
     muscle_gate_path: str | None = None
     minimum_intercept_height_m: float = 0.65
+    minimum_reach_height_m: float = 0.72
 
     def __post_init__(self) -> None:
+        if (
+            isinstance(self.minimum_reach_height_m, (bool, np.bool_))
+            or not isinstance(self.minimum_reach_height_m, (int, float))
+            or not np.isfinite(self.minimum_reach_height_m)
+            or not 0.20 <= self.minimum_reach_height_m <= 0.72
+        ):
+            raise ValueError("keeper reach height outside bounded SIM_ONLY envelope")
         if (
             isinstance(self.minimum_intercept_height_m, (bool, np.bool_))
             or not isinstance(self.minimum_intercept_height_m, (int, float))
@@ -420,6 +428,7 @@ class SharedKeeperReach:
                 memory_decay=self.config.memory_decay,
                 memory_maximum_rad=self.config.maximum_memory_rad,
                 elapsed_sec=snapshot.time - self.started,
+                minimum_target_height_m=self.config.minimum_reach_height_m,
             )
         else:
             self.started = None
