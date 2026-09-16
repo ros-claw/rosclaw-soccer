@@ -11,6 +11,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from rosclaw_soccer.training.stateless_forward import stateless_actor_critic_rows
+
 
 @dataclass(frozen=True)
 class FullBodyPPOUpdateConfig:
@@ -27,10 +29,12 @@ class FullBodyPPOUpdateConfig:
     episode_balanced_actor: bool = False
     group_relative_actor: bool = False
     binary_terminal_outcome: bool = False
+    stateless_rowwise_forward: bool = False
 
     def __post_init__(self) -> None:
         if (
             type(self.critic_all_active) is not bool
+            or type(self.stateless_rowwise_forward) is not bool
             or type(self.episode_balanced_actor) is not bool
             or type(self.group_relative_actor) is not bool
             or type(self.binary_terminal_outcome) is not bool
@@ -113,6 +117,10 @@ def update_full_body_ppo(
     A smaller exploration floor must also be used by the rollout collector;
     starting-likelihood validation rejects mismatched distributions. The default
     retains the historical -2.5 floor exactly. This does not change action limits.
+
+    Stateless row-wise forwarding is separately opt-in. It uses singleton
+    arithmetic for rollout-likelihood checks, actor/critic updates and KL checks;
+    it never lowers the likelihood tolerance or adapts recurrent controllers.
     An optional binary observation feature selects optimization samples only:
     all live likelihoods/values are still verified, and GAE uses the continuous
     episode. Feature provenance and candidate admission remain caller-owned.
@@ -201,7 +209,11 @@ def update_full_body_ppo(
     raw = data["raw"].reshape(-1, active.action_size)[keep]
     old = data["logp"].reshape(-1)[keep]
     with torch.no_grad():
-        mean, value = agent(obs)
+        mean, value = (
+            stateless_actor_critic_rows(agent, obs)
+            if active.stateless_rowwise_forward
+            else agent(obs)
+        )
         distribution: Any = torch.distributions.Normal(
             mean, agent.logstd.clamp(active.minimum_log_std, -0.3).exp()
         )
@@ -263,7 +275,11 @@ def update_full_body_ppo(
             else ()
         )
         for batch_index, indices in enumerate(batches):
-            mean, value = agent(obs[indices])
+            mean, value = (
+                stateless_actor_critic_rows(agent, obs[indices])
+                if active.stateless_rowwise_forward
+                else agent(obs[indices])
+            )
             distribution = torch.distributions.Normal(
                 mean, agent.logstd.clamp(active.minimum_log_std, -0.3).exp()
             )
@@ -284,7 +300,11 @@ def update_full_body_ppo(
                 critic_indices: Any = critic_batches[batch_index]
                 # Bound forward/backward memory without changing the mean loss.
                 for chunk in critic_indices.split(active.minibatch_size):
-                    _, prediction = agent(all_obs[chunk])
+                    _, prediction = (
+                        stateless_actor_critic_rows(agent, all_obs[chunk])
+                        if active.stateless_rowwise_forward
+                        else agent(all_obs[chunk])
+                    )
                     critic_loss = (
                         0.5 * (prediction - all_returns[chunk]).square().sum() / len(critic_indices)
                     )
@@ -297,7 +317,11 @@ def update_full_body_ppo(
             optimizer.step()
             steps += 1
         with torch.no_grad():
-            mean, _ = agent(obs)
+            mean, _ = (
+                stateless_actor_critic_rows(agent, obs)
+                if active.stateless_rowwise_forward
+                else agent(obs)
+            )
             distribution = torch.distributions.Normal(
                 mean, agent.logstd.clamp(active.minimum_log_std, -0.3).exp()
             )
@@ -344,4 +368,6 @@ def update_full_body_ppo(
         )
     if active.binary_terminal_outcome:
         result.update(binary_terminal_outcome=True)
+    if active.stateless_rowwise_forward:
+        result.update(stateless_rowwise_forward=True)
     return result
