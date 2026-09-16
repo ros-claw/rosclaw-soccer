@@ -49,8 +49,16 @@ class SharedKeeperReachConfig:
     muscle_actor_path: str | None = None
     muscle_reach_correction: bool = False
     muscle_gate_path: str | None = None
+    minimum_intercept_height_m: float = 0.65
 
     def __post_init__(self) -> None:
+        if (
+            isinstance(self.minimum_intercept_height_m, (bool, np.bool_))
+            or not isinstance(self.minimum_intercept_height_m, (int, float))
+            or not np.isfinite(self.minimum_intercept_height_m)
+            or not 0.20 <= self.minimum_intercept_height_m <= 0.65
+        ):
+            raise ValueError("keeper interception height outside bounded SIM_ONLY envelope")
         bounds = (
             (self.gain_scale, 0.5, 4.0),
             (self.maximum_step_rad, 0.04, 0.25),
@@ -290,7 +298,7 @@ class SharedKeeperReach:
             for value in (
                 observation.intercept_confidence >= self.config.minimum_intercept_confidence,
                 0 < horizon <= self.config.maximum_horizon_sec,
-                0.65 <= height <= 1.70,
+                self.config.minimum_intercept_height_m <= height <= 1.70,
                 self.entry_lateral_error_m <= 0.65,
                 snapshot.qpos[2] >= 0.60,
                 gravity[2] < -0.8,
@@ -303,7 +311,7 @@ class SharedKeeperReach:
             # boundary. Never retain authority across a fall or receding ball.
             active = active or bool(
                 0 < horizon <= 1.2
-                and 0.55 <= height <= 1.85
+                and max(0.115, self.config.minimum_intercept_height_m - 0.10) <= height <= 1.85
                 and local_ball[0] > 0
                 and snapshot.qpos[2] >= 0.60
                 and gravity[2] < -0.8

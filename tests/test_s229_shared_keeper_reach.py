@@ -104,7 +104,13 @@ def test_physics_contact_latch_is_once_per_epoch_and_frame_bounded():
             SharedKeeperReach.notify_glove_contact(keeper, invalid)
 
 
-def test_bilateral_adapter_is_arm_only_private_causal_and_recovers():
+@pytest.mark.parametrize(
+    ("target_height", "minimum_height", "expected_active"),
+    [(1.35, 0.65, True), (0.45, 0.65, False), (0.45, 0.30, True)],
+)
+def test_bilateral_adapter_is_arm_only_private_causal_and_recovers(
+    target_height, minimum_height, expected_active
+):
     assets = os.environ.get("ROSCLAW_G1_ASSET_ROOT")
     if not assets:
         pytest.skip("requires actual G1 MuJoCo assets")
@@ -126,7 +132,11 @@ def test_bilateral_adapter_is_arm_only_private_causal_and_recovers():
         data = mujoco.MjData(model)
         frame = KeeperFrame(player.origin_m[:2], player.yaw_rad)
         controller = SharedKeeperReach(
-            asset_root=root, goal=fixture.goal, frame=frame, prefix=player.body_prefix
+            asset_root=root,
+            goal=fixture.goal,
+            frame=frame,
+            prefix=player.body_prefix,
+            config=SharedKeeperReachConfig(minimum_intercept_height_m=minimum_height),
         )
         q = int(model.jnt_qposadr[model.joint(player.body_prefix + "floating_base_joint").id])
         data.qpos[q : q + 7] = (
@@ -145,7 +155,9 @@ def test_bilateral_adapter_is_arm_only_private_causal_and_recovers():
         for tick in range(100):
             data.time = tick * 0.02
             canonical = (
-                np.array((2.0 + tick * 0.08, 0.1, 1.35)) if tick < 30 else np.array((0, 0, 0.115))
+                np.array((2.0 + tick * 0.08, 0.1, target_height))
+                if tick < 30
+                else np.array((0, 0, 0.115))
             )
             data.qpos[bq : bq + 3] = np.array((*frame.origin_xy, 0)) + frame.world_vector(
                 canonical - (4.52, 0, 0)
@@ -165,7 +177,7 @@ def test_bilateral_adapter_is_arm_only_private_causal_and_recovers():
                 np.testing.assert_array_equal(prior, after)
             values.append(target)
         np.testing.assert_allclose(values[-1], ready, atol=1e-12)
-        assert np.max(np.abs(np.asarray(values) - ready)) > 0.01
+        assert bool(np.max(np.abs(np.asarray(values) - ready)) > 0.01) is expected_active
         assert not controller.active
         assert np.max(np.abs(np.diff(values, axis=0))) <= 0.100001
         with pytest.raises(ValueError, match="50 Hz"):
