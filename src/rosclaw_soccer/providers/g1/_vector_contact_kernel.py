@@ -18,6 +18,9 @@ def accumulate_ball_contacts(
     invalid: wp.array[int],
 ):
     i = wp.tid()
+    if nacon[0] < 0 or nacon[0] > geom.shape[0]:
+        wp.atomic_max(invalid, 0, 1)
+        return
     if i >= nacon[0]:
         return
     a, b = geom[i][0], geom[i][1]

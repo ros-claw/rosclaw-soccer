@@ -56,7 +56,9 @@ def test_malformed_or_wrong_body_tree_rejected(failure):
         robot_contact_geometry_labels(value)
 
 
-@pytest.mark.parametrize("fault", [None, "nonfinite_force", "bad_world", "bad_geometry"])
+@pytest.mark.parametrize(
+    "fault", [None, "nonfinite_force", "bad_world", "bad_geometry", "overflow", "negative_count"]
+)
 def test_sensor_kernel_counts_only_solved_positive_robot_force_and_rejects_bad_data(fault):
     wp = pytest.importorskip("warp")
     from rosclaw_soccer.providers.g1._vector_contact_kernel import accumulate_ball_contacts
@@ -73,7 +75,11 @@ def test_sensor_kernel_counts_only_solved_positive_robot_force_and_rejects_bad_d
     elif fault == "bad_geometry":
         geoms[0, 1] = 99
     inputs = [
-        wp.array(np.array([5], dtype=np.int32), dtype=int, device="cpu"),
+        wp.array(
+            np.array([7 if fault == "overflow" else -1 if fault == "negative_count" else 5]),
+            dtype=int,
+            device="cpu",
+        ),
         wp.array(world, dtype=int, device="cpu"),
         wp.array(geoms, dtype=wp.vec2i, device="cpu"),
         wp.array(forces, dtype=wp.spatial_vector, device="cpu"),
@@ -91,6 +97,8 @@ def test_sensor_kernel_counts_only_solved_positive_robot_force_and_rejects_bad_d
     )
     assert invalid.numpy()[0] == int(fault is not None)
     expected = np.array([[3 if fault is None else 0, 0, 0], [0, 7, 0]])
+    if fault in ("overflow", "negative_count"):
+        expected[:] = 0
     np.testing.assert_array_equal(peak.numpy(), expected)
     np.testing.assert_array_equal(samples.numpy(), expected > 0)
     for old, value in zip(before, inputs[:5], strict=True):
