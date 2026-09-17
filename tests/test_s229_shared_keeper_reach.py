@@ -22,6 +22,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     config = IndependentTeamWorldConfig()
     previous = asdict(config)
     previous.pop("training_ball_return")
+    previous.pop("revalidate_strike_task_lease")
     previous.pop("keeper_reach")
     previous.pop("glove_material")
     previous.pop("joint_guard_margin_rad")

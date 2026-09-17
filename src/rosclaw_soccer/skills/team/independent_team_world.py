@@ -163,6 +163,7 @@ class IndependentTeamWorldConfig:
     simulation_duration_sec: float = 10.0
     decision_period_sec: float = 0.10
     maximum_speed_mps: float = 0.38
+    revalidate_strike_task_lease: bool = False
     goalkeeper_maximum_speed_mps: float = 0.30
     maximum_acceleration_mps2: float = 0.60
     maximum_yaw_rate_radps: float = 0.80
@@ -234,6 +235,8 @@ class IndependentTeamWorldConfig:
     training_ball_return: TrainingBallReturnConfig | None = None
 
     def __post_init__(self) -> None:
+        if type(self.revalidate_strike_task_lease) is not bool:
+            raise ValueError("strike task lease revalidation must be explicit")
         if self.training_ball_return is not None and (
             not isinstance(self.training_ball_return, TrainingBallReturnConfig)
             or self.stop_on_ball_exit
@@ -470,6 +473,8 @@ class IndependentTeamWorldConfig:
     @property
     def config_hash(self) -> str:
         value = asdict(self)
+        if not self.revalidate_strike_task_lease:
+            value.pop("revalidate_strike_task_lease")
         if self.training_ball_return is None:
             value.pop("training_ball_return")
         if not self.rotation_equivariant_receive_heading:
@@ -1951,6 +1956,22 @@ def simulate_independent_team_world(
                 option_completed=phase_controller.option_completed,
                 config=strike_phase_config,
             )
+        if active.revalidate_strike_task_lease and strike_lease_agent_id is not None:
+            from rosclaw_soccer.growth.strike_task_lease import should_release_strike_task
+
+            lease_owner = next(c for c in controllers if c.cell.agent_id == strike_lease_agent_id)
+            if lease_owner.decision is not None and should_release_strike_task(
+                intent=lease_owner.decision.intent,
+                owns_ball=current_possession_agent_id == strike_lease_agent_id,
+                motor_executing=bool(
+                    lease_owner.option_active
+                    or strike_lease_agent_id in motors
+                    and strike_lease_agent_id not in motor_retirements
+                ),
+                phase_active=lease_owner.strike_phase.active,
+            ):
+                strike_lease_agent_id = None
+                strike_lease_start_sec = -math.inf
         if option_bridge_config is not None and option_bridge_config.continuous_rearm_enabled:
             for c in controllers:
                 pose = data.qpos[c.qpos_base : c.qpos_base + 7]

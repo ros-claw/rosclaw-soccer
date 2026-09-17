@@ -91,6 +91,7 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
         "rotation_equivariant_receive_heading",
         "rotation_equivariant_duel_side",
         "training_ball_return",
+        "revalidate_strike_task_lease",
     ):
         legacy.pop(field)
     assert default.config_hash == str(hash_json(legacy))
