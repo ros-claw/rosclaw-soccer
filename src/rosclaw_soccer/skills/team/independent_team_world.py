@@ -1636,6 +1636,11 @@ def simulate_independent_team_world(
                 cell_by_id[observation.observer_agent_id].decide(observation)
                 for observation in observations
             )
+            from rosclaw_soccer.growth.pass_readiness import reconcile_pass_readiness
+
+            decisions = reconcile_pass_readiness(
+                cells=cells, observations=observations, decisions=decisions
+            )
             coordination = build_team_coordination_frame(
                 roster=roster,
                 cells=cells,

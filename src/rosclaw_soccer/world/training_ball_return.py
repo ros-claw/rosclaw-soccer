@@ -17,6 +17,16 @@ class TrainingBallReturnConfig:
     release_height_m: float = 0.8
     player_clearance_m: float = 0.75
 
+    @classmethod
+    def rapid_practice(cls) -> TrainingBallReturnConfig:
+        """Explicit dense-practice preset, not an official match restart.
+
+        Preserve the throw geometry and clearance. The half-second delay only
+        starts after a measured whole-ball exit; blocked releases still wait.
+        A bounded ten-return budget avoids the legacy three-return early stop.
+        """
+        return cls(delay_sec=0.5, maximum_returns=10)
+
     def __post_init__(self) -> None:
         for value, lower, upper in (
             (self.delay_sec, 0.5, 5.0),
