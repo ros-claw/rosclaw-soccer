@@ -108,6 +108,44 @@ def physical_rewards(
         toward = (np.asarray(trace["ball_velocity"])[:, :2] * direction).sum(axis=1)
         touching = (contact == i + 1) & foot
         rewards[:, i] += touching * 0.04 * np.clip(toward, -2, 2)
+        if reward_shaping == "role_receiving_v1":
+            from rosclaw_soccer.growth.role_self_model import TacticalIntent
+            from rosclaw_soccer.training.receiving_contact_reward import (
+                receiving_contact_adjustment,
+            )
+
+            if "training_return_after_ball_velocity" not in trace:
+                raise ValueError("role receiving requires recorded pre-control ball velocity")
+            before_velocity = np.asarray(trace["training_return_after_ball_velocity"])
+            if before_velocity.shape != (count, 6):
+                raise ValueError("role receiving requires recorded pre-control ball velocity")
+            roles = np.asarray(trace[key + "_intent_code"])
+            if (
+                roles.shape != (count,)
+                or roles.dtype.kind not in "iu"
+                or not np.isin(roles, range(len(TacticalIntent))).all()
+            ):
+                raise ValueError("role receiving requires valid actual intent codes")
+            rewards[:, i] += receiving_contact_adjustment(
+                time=np.asarray(trace["time"]),
+                receiving=np.isin(
+                    roles,
+                    [
+                        list(TacticalIntent).index(x)
+                        for x in (
+                            TacticalIntent.RECEIVE,
+                            TacticalIntent.PRESS,
+                            TacticalIntent.INTERCEPT,
+                        )
+                    ],
+                ),
+                foot_contact=touching & (np.asarray(trace["ball_contact_force_n"]) > 1),
+                owns_ball=np.asarray(trace["possession_agent_code"]) == i + 1,
+                speed_before=np.linalg.norm(before_velocity[:, :2], axis=1),
+                speed_after=np.linalg.norm(np.asarray(trace["ball_velocity"])[:, :2], axis=1),
+                foot_distance=after,
+                directed_reward=touching * 0.04 * np.clip(toward, -2, 2),
+            )
         rewards[:, i] -= 0.02 * (nonfoot == i + 1)
         gravity = obs[:, i, :3]
         rewards[:, i] -= 0.015 * np.square(gravity[:, :2]).sum(axis=1)
@@ -154,6 +192,7 @@ def physical_rewards(
         "contact_safety_v1",
         "motor_task_contact_v1",
         "in_play_motor_task_v1",
+        "role_receiving_v1",
     }:
         distance = np.minimum(
             np.linalg.norm(obs[:, :, 38:41], axis=2),
@@ -170,7 +209,12 @@ def physical_rewards(
             )
             rewards[:, i] -= 2.0 * (np.exp(-4 * after) - np.exp(-4 * distance[:, i]))
         rewards += terminal_approach_shaping(distance, gamma=gamma)
-    if reward_shaping in {"contact_safety_v1", "motor_task_contact_v1", "in_play_motor_task_v1"}:
+    if reward_shaping in {
+        "contact_safety_v1",
+        "motor_task_contact_v1",
+        "in_play_motor_task_v1",
+        "role_receiving_v1",
+    }:
         margins = np.stack(
             [np.asarray(trace[a.replace(".", "_") + "_joint_safety_margin_rad"]) for a in ids],
             axis=1,
@@ -219,6 +263,9 @@ def update_private_actors(
     torch.set_num_threads(1)
     if not rollouts or type(epochs) is not int or not 1 <= epochs <= 16:
         raise ValueError("PPO needs rollouts and bounded update epochs")
+    scoped_learning = any("residual_learning_mask" in trace for trace in rollouts)
+    if scoped_learning and not all("residual_learning_mask" in trace for trace in rollouts):
+        raise ValueError("learning eligibility must be explicit for every rollout")
     if trainable_agent_ids is not None and (
         type(trainable_agent_ids) is not tuple
         or not trainable_agent_ids
@@ -268,6 +315,9 @@ def update_private_actors(
     actions = np.concatenate([t["residual_latent"] for t in rollouts])
     logps = np.concatenate([t["residual_log_probability"] for t in rollouts])
     active = np.concatenate([t["residual_active"] for t in rollouts])
+    learning = (
+        np.concatenate([t["residual_learning_mask"] for t in rollouts]) if scoped_learning else None
+    )
     scoped_exploration = any("residual_exploration_mask" in t for t in rollouts)
     exploration = np.concatenate(
         [
@@ -308,6 +358,13 @@ def update_private_actors(
             mask &= exploration[:, i]
             n = int(mask.sum())
             row["learning_samples"] = n
+        if learning is not None:
+            # Task eligibility is neither physical activation nor exploration.
+            # Do not relabel sampled actions to exclude support/cover tasks.
+            mask &= learning[:, i]
+            n = int(mask.sum())
+            row["learning_samples"] = n
+            row["task_eligibility_applied"] = True
         if trainable_agent_ids is not None and agent not in trainable_agent_ids:
             # Keep the measured active mask truthful. Learning eligibility is
             # separate from which actor actually controlled the simulation.
@@ -449,6 +506,10 @@ def _validate_on_policy(policy: NearBallResidualPolicy, trace: dict[str, Any]) -
         mask = np.asarray(trace["residual_exploration_mask"])
         if mask.shape != (n, 8) or mask.dtype != np.bool_:
             raise ValueError("PPO exploration mask must be an explicit boolean frame/role array")
+    if "residual_learning_mask" in trace:
+        learning = np.asarray(trace["residual_learning_mask"])
+        if learning.shape != (n, 8) or learning.dtype != np.bool_:
+            raise ValueError("PPO learning mask must be an explicit boolean frame/role array")
     w = policy.weights
     hidden = np.tanh(np.einsum("tni,nij->tnj", obs, w["w1"]) + w["b1"])
     mean = np.einsum("tni,nij->tnj", hidden, w["w2"]) + w["b2"]
