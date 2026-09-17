@@ -108,6 +108,21 @@ def physical_rewards(
         toward = (np.asarray(trace["ball_velocity"])[:, :2] * direction).sum(axis=1)
         touching = (contact == i + 1) & foot
         rewards[:, i] += touching * 0.04 * np.clip(toward, -2, 2)
+        if reward_shaping == "team_capture_v1":
+            from rosclaw_soccer.growth.role_self_model import TacticalIntent
+
+            receiving = np.isin(
+                trace[key + "_intent_code"],
+                [
+                    list(TacticalIntent).index(x)
+                    for x in (
+                        TacticalIntent.RECEIVE,
+                        TacticalIntent.PRESS,
+                        TacticalIntent.INTERCEPT,
+                    )
+                ],
+            )
+            rewards[:, i] -= receiving * touching * 0.04 * np.clip(toward, -2, 2)
         if reward_shaping == "role_receiving_v1":
             from rosclaw_soccer.growth.role_self_model import TacticalIntent
             from rosclaw_soccer.training.receiving_contact_reward import (
@@ -193,6 +208,7 @@ def physical_rewards(
         "motor_task_contact_v1",
         "in_play_motor_task_v1",
         "role_receiving_v1",
+        "team_capture_v1",
     }:
         distance = np.minimum(
             np.linalg.norm(obs[:, :, 38:41], axis=2),
@@ -214,6 +230,7 @@ def physical_rewards(
         "motor_task_contact_v1",
         "in_play_motor_task_v1",
         "role_receiving_v1",
+        "team_capture_v1",
     }:
         margins = np.stack(
             [np.asarray(trace[a.replace(".", "_") + "_joint_safety_margin_rad"]) for a in ids],
@@ -226,6 +243,11 @@ def physical_rewards(
         from rosclaw_soccer.training.in_play_rewards import in_play_rewards
 
         rewards = in_play_rewards(rewards, trace, ids)
+    if reward_shaping == "team_capture_v1":
+        from rosclaw_soccer.training.team_capture_curriculum import team_capture_trials
+
+        capture_reward, _ = team_capture_trials(trace, agent_ids=ids)
+        rewards += capture_reward
     return rewards
 
 

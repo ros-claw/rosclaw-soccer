@@ -18,6 +18,7 @@ REWARD_SHAPING_MODES = (
     "motor_task_contact_v1",
     "in_play_motor_task_v1",
     "role_receiving_v1",
+    "team_capture_v1",
 )
 
 

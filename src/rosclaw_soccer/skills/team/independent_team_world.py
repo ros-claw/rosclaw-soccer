@@ -220,6 +220,10 @@ class IndependentTeamWorldConfig:
     receive_lateral_braking: bool = False
     locomotion_action_frame_sync: bool = False
     post_receive_contact_control: bool = False
+    loose_ball_capture_hold: bool = False
+    loose_ball_capture_control: bool = False
+    loose_ball_capture_hold_sec: float = 0.20
+    loose_ball_capture_live_foundation: bool = False
     option_only_residual_roles: tuple[str, ...] | None = None
     prospective_strike_approach: bool = False
     teammate_approach_clearance_m: float = 0.0
@@ -330,6 +334,23 @@ class IndependentTeamWorldConfig:
             self.post_receive_contact_control and not self.strict_receive_handoff
         ):
             raise ValueError("post-receive contact control requires strict physical handoff")
+        if type(self.loose_ball_capture_hold) is not bool or (
+            self.loose_ball_capture_hold and not self.strict_receive_handoff
+        ):
+            raise ValueError("loose-ball capture requires strict measured contact handling")
+        if (
+            type(self.loose_ball_capture_control) is not bool
+            or self.loose_ball_capture_control
+            and not self.loose_ball_capture_hold
+            or type(self.loose_ball_capture_hold_sec) not in (int, float)
+            or not math.isfinite(self.loose_ball_capture_hold_sec)
+            or not 0.2 <= self.loose_ball_capture_hold_sec <= 1.0
+        ):
+            raise ValueError("explicit bounded loose-ball capture control required")
+        if type(self.loose_ball_capture_live_foundation) is not bool or (
+            self.loose_ball_capture_live_foundation and not self.loose_ball_capture_control
+        ):
+            raise ValueError("live capture foundation requires scoped active capture control")
         if type(self.locomotion_action_frame_sync) is not bool:
             raise ValueError("locomotion action-frame synchronization must be explicit")
         if type(self.directed_pass_launch) is not bool or (
@@ -531,6 +552,11 @@ class IndependentTeamWorldConfig:
             value.pop("locomotion_action_frame_sync")
         if not self.post_receive_contact_control:
             value.pop("post_receive_contact_control")
+        if not self.loose_ball_capture_hold:
+            value.pop("loose_ball_capture_hold")
+            value.pop("loose_ball_capture_control")
+            value.pop("loose_ball_capture_hold_sec")
+            value.pop("loose_ball_capture_live_foundation")
         if not self.controlled_possession_retention:
             value.pop("controlled_possession_retention")
         if not self.directed_pass_launch:
@@ -967,7 +993,9 @@ def simulate_independent_team_world(
         raise ValueError(
             "prospective approach requires a bound option without competing stance control"
         )
-    if active.post_receive_contact_control and contact_teacher_config is None:
+    if (
+        active.post_receive_contact_control or active.loose_ball_capture_control
+    ) and contact_teacher_config is None:
         raise ValueError("post-receive contact control requires a bounded contact teacher")
     cell_by_id = {cell.agent_id: cell for cell in cells}
     player_by_id = {player.agent_id: player for player in players}
@@ -1291,6 +1319,9 @@ def simulate_independent_team_world(
     handoff_cancellations = 0
     last_receive_contact_agent_id: str | None = None
     last_receive_contact_time_sec = -math.inf
+    capture_contact_control = active.post_receive_contact_control
+    capture_hold_sec = active.post_receive_hold_sec
+    capture_live_foundation = False
     pass_source_agent_id: str | None = None
     pass_target_agent_id: str | None = None
     strike_lease_agent_id: str | None = None
@@ -1360,6 +1391,9 @@ def simulate_independent_team_world(
                 last_ball_contact_agent_id = current_possession_agent_id = None
                 last_receive_contact_agent_id = loose_ball_chaser_agent_id = None
                 last_ball_contact_time_sec = last_receive_contact_time_sec = -math.inf
+                capture_contact_control = active.post_receive_contact_control
+                capture_hold_sec = active.post_receive_hold_sec
+                capture_live_foundation = False
                 ball_chaser_lease_start_sec = strike_lease_start_sec = -math.inf
                 receive_lease_agent_id = receive_lease_source_agent_id = None
                 receive_lease_origin_m = receive_lease_target_m = None
@@ -2001,8 +2035,7 @@ def simulate_independent_team_world(
                     incoming_receive=bool(
                         c.cell.agent_id == receive_lease_agent_id
                         or c.cell.agent_id == last_receive_contact_agent_id
-                        and float(data.time) - last_receive_contact_time_sec
-                        <= active.post_receive_hold_sec
+                        and float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
                     ),
                 )
         _activate_rolling_option(
@@ -2121,8 +2154,7 @@ def simulate_independent_team_world(
                 ),
                 post_receive_hold=bool(
                     last_receive_contact_agent_id == controller.cell.agent_id
-                    and float(data.time) - last_receive_contact_time_sec
-                    <= active.post_receive_hold_sec
+                    and float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
                     and not (
                         contact_teacher_config is not None
                         and contact_teacher_config.one_touch_finish_enabled
@@ -2407,20 +2439,25 @@ def simulate_independent_team_world(
         capture_context_agent_ids = {
             c.cell.agent_id
             for c in controllers
-            if active.post_receive_contact_control
+            if capture_contact_control
             and last_receive_contact_agent_id == c.cell.agent_id
-            and 0
-            <= float(data.time) - last_receive_contact_time_sec
-            <= active.post_receive_hold_sec
+            and 0 <= float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
             and not (
                 contact_teacher_config is not None
                 and contact_teacher_config.one_touch_finish_enabled
                 and c.cell.self_model.primary_role is MatchRole.FINISHER
             )
         }
-        if active.post_receive_contact_control:
+        if active.post_receive_contact_control or active.loose_ball_capture_control:
             trace.setdefault("post_receive_capture_context", []).append(
                 [c.cell.agent_id in capture_context_agent_ids for c in controllers]
+            )
+        if active.loose_ball_capture_live_foundation:
+            trace.setdefault("capture_live_foundation_active", []).append(
+                [
+                    capture_live_foundation and c.cell.agent_id in capture_context_agent_ids
+                    for c in controllers
+                ]
             )
         residual_by_id: dict[str, NDArray[np.float64]] = {}
         if active.retire_completed_motors:
@@ -2471,8 +2508,7 @@ def simulate_independent_team_world(
                     and not (
                         c.cell.agent_id not in capture_context_agent_ids
                         and last_receive_contact_agent_id == c.cell.agent_id
-                        and float(data.time) - last_receive_contact_time_sec
-                        <= active.post_receive_hold_sec
+                        and float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
                     )
                     and c.decision is not None
                     and _residual_intent_enabled(
@@ -2512,8 +2548,7 @@ def simulate_independent_team_world(
                     or (
                         c.cell.agent_id not in capture_context_agent_ids
                         and last_receive_contact_agent_id == c.cell.agent_id
-                        and float(data.time) - last_receive_contact_time_sec
-                        <= active.post_receive_hold_sec
+                        and float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
                     )
                 ):
                     residual_previous[i] = 0
@@ -2525,6 +2560,7 @@ def simulate_independent_team_world(
             trace["residual_active"].append(residual_active)
             trace["residual_applied"].append(residual_previous.copy())
         frame_contact_agent_code = 0
+        frame_loose_capture_agent_code = 0
         frame_contact_effector_code = 0
         frame_contact_foot_code = 0
         frame_contact_force_n = 0.0
@@ -2561,8 +2597,7 @@ def simulate_independent_team_world(
             for controller in controllers:
                 post_receive_stabilizing = bool(
                     last_receive_contact_agent_id == controller.cell.agent_id
-                    and float(data.time) - last_receive_contact_time_sec
-                    <= active.post_receive_hold_sec
+                    and float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
                     and not (
                         contact_teacher_config is not None
                         and contact_teacher_config.one_touch_finish_enabled
@@ -2586,7 +2621,7 @@ def simulate_independent_team_world(
                 elif controller.cell.agent_id in option_overrides:
                     target, kp, kd = option_overrides[controller.cell.agent_id]
                 elif (
-                    post_receive_stabilizing or one_touch_finishing
+                    post_receive_stabilizing and not capture_live_foundation or one_touch_finishing
                 ) and controller.post_receive_joint_target is not None:
                     target = controller.post_receive_joint_target
                     kp = np.asarray(controller.output.kps, dtype=np.float64)
@@ -2604,7 +2639,7 @@ def simulate_independent_team_world(
                     and controller.cell.agent_id not in motor_faults
                     and residual is not None
                     and np.any(residual)
-                    and (not post_receive_stabilizing or active.post_receive_contact_control)
+                    and (not post_receive_stabilizing or capture_contact_control)
                 ):
                     target = target.copy()
                     target[:12] += residual
@@ -2622,7 +2657,7 @@ def simulate_independent_team_world(
                     controller is teacher_controller
                     and controller.cell.agent_id not in motor_targets
                     and controller.cell.agent_id not in option_controllers
-                    and (not post_receive_stabilizing or active.post_receive_contact_control)
+                    and (not post_receive_stabilizing or capture_contact_control)
                     and not (
                         option_bridge_config is not None
                         and controller.decision is not None
@@ -2763,14 +2798,14 @@ def simulate_independent_team_world(
                     stroke_progress = None
                     effect_direction = teacher_direction.copy()
                     capture_progress = None
-                    if active.post_receive_contact_control and post_receive_stabilizing:
+                    if capture_contact_control and post_receive_stabilizing:
                         if controller.post_receive_direction_xy is None:
                             raise ValueError("post-receive controller lost its contact direction")
                         effect_direction = controller.post_receive_direction_xy.copy()
                         capture_progress = float(
                             np.clip(
                                 (float(data.time) - last_receive_contact_time_sec)
-                                / active.post_receive_hold_sec,
+                                / capture_hold_sec,
                                 0.0,
                                 1.0,
                             )
@@ -3016,20 +3051,68 @@ def simulate_independent_team_world(
                         frame_contact_effector_code = effector_code
                         frame_contact_foot_code = effector_code if effector_code <= 2 else 0
                         frame_contact_force_n = force
+                    loose_capture = False
+                    if active.loose_ball_capture_hold and controller.decision is not None:
+                        from rosclaw_soccer.growth.loose_ball_capture import (
+                            admit_loose_ball_capture,
+                        )
+
+                        loose_capture = admit_loose_ball_capture(
+                            intent=controller.decision.intent,
+                            effector_code=effector_code,
+                            contact_force_n=force,
+                            fresh_contact=bool(
+                                last_ball_contact_agent_id != controller.cell.agent_id
+                                or float(data.time) - last_ball_contact_time_sec > 0.3
+                            ),
+                            receive_lease_present=receive_lease_agent_id is not None,
+                            motor_busy=bool(
+                                controller.cell.agent_id in motor_targets
+                                or controller.cell.agent_id in option_controllers
+                                or controller.strike_phase.active
+                                or contact_teacher_config is not None
+                                and contact_teacher_config.one_touch_finish_enabled
+                                and controller.cell.self_model.primary_role is MatchRole.FINISHER
+                            ),
+                            capture_busy=bool(
+                                float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
+                            ),
+                        )
+                    if loose_capture:
+                        frame_loose_capture_agent_code = agent_codes[controller.cell.agent_id]
                     last_ball_contact_agent_id = controller.cell.agent_id
                     last_ball_contact_time_sec = float(data.time)
                     if loose_ball_chaser_agent_id != controller.cell.agent_id:
                         loose_ball_chaser_agent_id = controller.cell.agent_id
                         ball_chaser_lease_start_sec = float(data.time)
-                    if receive_lease_agent_id == controller.cell.agent_id and (
-                        not active.strict_receive_handoff or effector_code in (1, 2)
+                    if (
+                        loose_capture
+                        or receive_lease_agent_id == controller.cell.agent_id
+                        and (not active.strict_receive_handoff or effector_code in (1, 2))
                     ):
                         last_receive_contact_agent_id = controller.cell.agent_id
                         last_receive_contact_time_sec = float(data.time)
+                        capture_contact_control = bool(
+                            active.post_receive_contact_control
+                            or loose_capture
+                            and active.loose_ball_capture_control
+                        )
+                        capture_hold_sec = (
+                            active.loose_ball_capture_hold_sec
+                            if loose_capture
+                            else active.post_receive_hold_sec
+                        )
+                        # Active balance must not be replaced by a frozen pose
+                        # captured at an arbitrary phase of the walking gait.
+                        # This opt-in preserves the legacy committed-receive
+                        # and one-touch paths and never changes foundation weights.
+                        capture_live_foundation = bool(
+                            loose_capture and active.loose_ball_capture_live_foundation
+                        )
                         controller.post_receive_joint_target = np.asarray(
                             data.qpos[controller.joint_qpos], dtype=np.float64
                         ).copy()
-                        if active.post_receive_contact_control:
+                        if capture_contact_control:
                             controller.post_receive_direction_xy = _contact_teacher_direction(
                                 controller,
                                 data=data,
@@ -3177,7 +3260,7 @@ def simulate_independent_team_world(
         trace["post_receive_hold_active"].append(
             bool(
                 last_receiver is not None
-                and float(data.time) - last_receive_contact_time_sec <= active.post_receive_hold_sec
+                and float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
                 and not (
                     contact_teacher_config is not None
                     and contact_teacher_config.one_touch_finish_enabled
@@ -3223,6 +3306,8 @@ def simulate_independent_team_world(
         trace["strike_stance_lateral_error_m"].append(strike_metrics[1])
         trace["strike_stance_yaw_error_rad"].append(strike_metrics[2])
         trace["ball_contact_agent_code"].append(frame_contact_agent_code)
+        if active.loose_ball_capture_hold:
+            trace.setdefault("loose_capture_agent_code", []).append(frame_loose_capture_agent_code)
         trace["ball_contact_effector_code"].append(frame_contact_effector_code)
         trace["ball_contact_foot_code"].append(frame_contact_foot_code)
         trace["ball_contact_force_n"].append(frame_contact_force_n)
