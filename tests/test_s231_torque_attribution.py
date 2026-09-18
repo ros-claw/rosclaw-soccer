@@ -79,6 +79,7 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
         "loose_ball_capture_control",
         "loose_ball_capture_hold_sec",
         "loose_ball_capture_live_foundation",
+        "loose_ball_capture_follow_navigation",
         "controlled_possession_retention",
         "directed_pass_launch",
         "owned_contact_roles",

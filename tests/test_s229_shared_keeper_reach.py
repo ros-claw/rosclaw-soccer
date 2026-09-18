@@ -41,6 +41,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous.pop("loose_ball_capture_control")
     previous.pop("loose_ball_capture_hold_sec")
     previous.pop("loose_ball_capture_live_foundation")
+    previous.pop("loose_ball_capture_follow_navigation")
     previous.pop("controlled_possession_retention")
     previous.pop("directed_pass_launch")
     previous.pop("owned_contact_roles")

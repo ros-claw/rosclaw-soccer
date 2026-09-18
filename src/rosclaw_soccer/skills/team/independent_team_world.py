@@ -47,6 +47,7 @@ from rosclaw_soccer.growth.locomotion_contact_teacher import (
     G1RollingOptionBridgeConfig,
     locomotion_contact_teacher_effect,
 )
+from rosclaw_soccer.growth.loose_ball_capture import hold_capture_navigation
 from rosclaw_soccer.growth.motor_option_lifecycle import MotorOptionLifecycle
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy, bounded_residual
 from rosclaw_soccer.growth.owned_ball_contact import OwnedBallContactPolicy
@@ -224,6 +225,7 @@ class IndependentTeamWorldConfig:
     loose_ball_capture_control: bool = False
     loose_ball_capture_hold_sec: float = 0.20
     loose_ball_capture_live_foundation: bool = False
+    loose_ball_capture_follow_navigation: bool = False
     option_only_residual_roles: tuple[str, ...] | None = None
     prospective_strike_approach: bool = False
     teammate_approach_clearance_m: float = 0.0
@@ -351,6 +353,11 @@ class IndependentTeamWorldConfig:
             self.loose_ball_capture_live_foundation and not self.loose_ball_capture_control
         ):
             raise ValueError("live capture foundation requires scoped active capture control")
+        if type(self.loose_ball_capture_follow_navigation) is not bool or (
+            self.loose_ball_capture_follow_navigation
+            and not self.loose_ball_capture_live_foundation
+        ):
+            raise ValueError("capture following requires scoped live balance")
         if type(self.locomotion_action_frame_sync) is not bool:
             raise ValueError("locomotion action-frame synchronization must be explicit")
         if type(self.directed_pass_launch) is not bool or (
@@ -557,6 +564,8 @@ class IndependentTeamWorldConfig:
             value.pop("loose_ball_capture_control")
             value.pop("loose_ball_capture_hold_sec")
             value.pop("loose_ball_capture_live_foundation")
+        if not self.loose_ball_capture_follow_navigation:
+            value.pop("loose_ball_capture_follow_navigation")
         if not self.controlled_possession_retention:
             value.pop("controlled_possession_retention")
         if not self.directed_pass_launch:
@@ -2152,14 +2161,19 @@ def simulate_independent_team_world(
                     (receive_lease_active or flight_tracking_agent_id == controller.cell.agent_id)
                     and receive_lease_agent_id == controller.cell.agent_id
                 ),
-                post_receive_hold=bool(
-                    last_receive_contact_agent_id == controller.cell.agent_id
-                    and float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
-                    and not (
-                        contact_teacher_config is not None
-                        and contact_teacher_config.one_touch_finish_enabled
-                        and controller.cell.self_model.primary_role is MatchRole.FINISHER
-                    )
+                post_receive_hold=hold_capture_navigation(
+                    capture_active=bool(
+                        last_receive_contact_agent_id == controller.cell.agent_id
+                        and float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
+                        and not (
+                            contact_teacher_config is not None
+                            and contact_teacher_config.one_touch_finish_enabled
+                            and controller.cell.self_model.primary_role is MatchRole.FINISHER
+                        )
+                    ),
+                    follow_enabled=active.loose_ball_capture_follow_navigation,
+                    live_foundation=capture_live_foundation,
+                    intent=current_decision.intent,
                 ),
                 receive_foot_lateral_offset_m=(
                     0.18

@@ -5,6 +5,30 @@ import math
 from rosclaw_soccer.growth.role_self_model import TacticalIntent
 
 
+def hold_capture_navigation(
+    *,
+    capture_active: bool,
+    follow_enabled: bool,
+    live_foundation: bool,
+    intent: TacticalIntent,
+) -> bool:
+    """Keep legacy navigation hold unless scoped active-balance following applies.
+
+    Caller supplies the existing measured-contact capture state. This only
+    changes navigation scheduling, never capture admission, time or ball state.
+    The movement planner retains speed, acceleration and collision guards.
+    """
+    if not isinstance(intent, TacticalIntent) or any(
+        type(v) is not bool for v in (capture_active, follow_enabled, live_foundation)
+    ):
+        raise ValueError("explicit measured capture and navigation scope required")
+    return capture_active and not (
+        follow_enabled
+        and live_foundation
+        and intent in {TacticalIntent.RECEIVE, TacticalIntent.PRESS, TacticalIntent.INTERCEPT}
+    )
+
+
 def admit_loose_ball_capture(
     *,
     intent: TacticalIntent,
