@@ -108,9 +108,12 @@ class G1LocomotionContactTeacherConfig:
             or not 0.05 <= self.minimum_receive_ball_speed_mps <= 0.50
             or not 0.0 <= self.receive_follow_through_speed_mps <= 1.0
             or not 0.0 <= self.committed_receive_follow_through_speed_mps <= 1.0
-            or not 5.0 <= self.committed_receive_velocity_damping_n_per_mps <= 25.0
-            or not 40.0 <= self.committed_receive_maximum_task_force_n <= 160.0
-            or not 8.0 <= self.committed_receive_maximum_joint_residual_nm <= 25.0
+            # These are copied into ordinary task-control fields during the
+            # receive transition. Validate the intersecting envelope now, not
+            # after physics has started; never enlarge the actuator bounds.
+            or not 5.0 <= self.committed_receive_velocity_damping_n_per_mps <= 15.0
+            or not 40.0 <= self.committed_receive_maximum_task_force_n <= 120.0
+            or not 8.0 <= self.committed_receive_maximum_joint_residual_nm <= 20.0
             or not -1.0 <= self.committed_receive_aim_yaw_bias_rad <= 1.0
             or not 0.30 <= self.strike_foot_speed_mps <= 2.50
             or not 0.50 <= self.pass_strike_foot_speed_mps <= 2.50
