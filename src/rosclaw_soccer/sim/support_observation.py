@@ -12,8 +12,6 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from rosclaw_soccer.sim.physical_checkpoint import PhysicalCheckpoint
-
 
 @dataclass(frozen=True)
 class SupportObservation:
@@ -69,9 +67,17 @@ def observe_support(
         or force_threshold_n <= 0
     ):
         raise ValueError("invalid force threshold")
-    # Restore to new data before forward: the original integration state,
-    # contacts, derived fields and warm-start values are untouched.
-    sample = PhysicalCheckpoint.capture(model, data).restore(model)
+    # This is a synchronous, same-model observation, not an external checkpoint
+    # restore. Copy the identical integration specification into fresh data;
+    # do not serialize/hash the large compiled mesh model twice per player.
+    # Durable PhysicalCheckpoint capture/restore still verifies model identity.
+    spec = mujoco.mjtState.mjSTATE_INTEGRATION
+    state = np.empty(mujoco.mj_stateSize(model, spec), dtype=np.float64)
+    mujoco.mj_getState(model, data, state, spec)
+    if not np.isfinite(state).all():
+        raise ValueError("nonfinite integration state")
+    sample = mujoco.MjData(model)
+    mujoco.mj_setState(model, sample, state, spec)
     mujoco.mj_forward(model, sample)
     forces = [0.0, 0.0]
     wrench = np.zeros(6)

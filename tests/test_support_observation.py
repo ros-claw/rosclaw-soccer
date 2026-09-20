@@ -62,3 +62,35 @@ def test_overlap_rejected():
     model, data, bindings = fixture()
     with pytest.raises(ValueError, match="disjoint"):
         observe_support(model, data, **(bindings | dict(right_foot_geoms=frozenset({1}))))
+
+
+def test_observation_avoids_serializing_compiled_model(monkeypatch):
+    model, data, bindings = fixture()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("read-only same-model observation must not serialize the model")
+
+    monkeypatch.setattr(mujoco, "mj_saveModel", forbidden)
+    assert observe_support(model, data, **bindings).support_code == 3
+
+
+def test_same_results_as_checkpoint_roundtrip_across_contact_states():
+    model, data, bindings = fixture()
+    for _ in range(12):
+        prior = PhysicalCheckpoint.capture(model, data).restore(model)
+        expected = observe_support(model, prior, **bindings)
+        before = PhysicalCheckpoint.capture(model, data)
+        actual = observe_support(model, data, **bindings)
+        assert actual == expected
+        assert PhysicalCheckpoint.capture(model, data) == before
+        mujoco.mj_step(model, data)
+
+
+def test_nonfinite_integration_rejected_without_touching_live_state():
+    model, data, bindings = fixture()
+    data.qvel[0] = np.nan
+    before = data.qpos.copy()
+    with pytest.raises(ValueError, match="nonfinite integration"):
+        observe_support(model, data, **bindings)
+    np.testing.assert_array_equal(data.qpos, before)
+    assert np.isnan(data.qvel[0])
