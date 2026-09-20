@@ -16,6 +16,8 @@ from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
         {"capture_support": 1},
         {"capture_oracle_authority": 1},
         {"capture_oracle_authority": True},
+        {"capture_locomotion_memory": 1},
+        {"capture_locomotion_memory": True},
         {"sonic_start_frame": 30},
         {"sonic_velocity_scale": 0.5},
         {"suppression": ContactTeacherSuppression("red.playmaker", 0)},

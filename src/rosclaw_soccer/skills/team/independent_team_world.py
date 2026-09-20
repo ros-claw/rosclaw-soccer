@@ -1000,6 +1000,7 @@ def simulate_independent_team_world(
     receiving_phase_reference: ReceivingPhaseReference | None = None,
     receiving_feedback: ReceivingFeedbackProvider | None = None,
     capture_oracle_authority: bool = False,
+    capture_locomotion_memory: bool = False,
     capture_initial_physics: bool = False,
     capture_initial_support: bool = False,
     physics_checkpoint_frame: int = 0,
@@ -1015,6 +1016,10 @@ def simulate_independent_team_world(
     """
 
     active = config or IndependentTeamWorldConfig()
+    if type(capture_locomotion_memory) is not bool or (
+        capture_locomotion_memory and receiving_oracle is None
+    ):
+        raise ValueError("locomotion memory capture requires an explicit focal receiving oracle")
     if type(capture_oracle_authority) is not bool or (
         capture_oracle_authority and receiving_oracle is None
     ):
@@ -1256,7 +1261,13 @@ def simulate_independent_team_world(
     foundation_paths = {
         Path(c.policy.policy_path)
         for c in controllers
-        if c.cell.agent_id in motors or c.cell.agent_id in navigation
+        if c.cell.agent_id in motors
+        or c.cell.agent_id in navigation
+        or (
+            capture_locomotion_memory
+            and receiving_oracle is not None
+            and c.cell.agent_id == receiving_oracle.agent_id
+        )
     }
     foundation_paths |= {p.parent.parent / "config/LocoMode.yaml" for p in foundation_paths}
     if any(not p.is_file() or p.stat().st_size > 1024**3 for p in foundation_paths):
@@ -2455,6 +2466,35 @@ def simulate_independent_team_world(
                 ),
             )
             controller.last_world_command = command.copy()
+            if (
+                capture_locomotion_memory
+                and receiving_oracle is not None
+                and controller.cell.agent_id == receiving_oracle.agent_id
+            ):
+                from rosclaw_soccer.providers.g1.locomotion_memory import (
+                    capture_locomotion_memory as snapshot_memory,
+                )
+
+                memory = snapshot_memory(
+                    controller.policy.policy,
+                    policy_hash=foundation_hashes[Path(controller.policy.policy_path)],
+                )
+                for name, payload in (("hidden", memory.hidden), ("cell", memory.cell)):
+                    trace.setdefault(f"loco_memory_{name}", []).append(
+                        np.frombuffer(payload, dtype="<f4").copy()
+                    )
+                for name, value in (
+                    ("observation", controller.policy.obs),
+                    ("raw_action", controller.policy.action),
+                    ("foundation_target", controller.output.actions),
+                    ("world_command", command),
+                ):
+                    trace.setdefault(f"loco_memory_{name}", []).append(np.asarray(value).copy())
+                trace.setdefault("loco_memory_hash", []).append(memory.state_hash)
+                trace.setdefault("loco_memory_policy_hash", []).append(memory.policy_hash)
+                trace.setdefault("loco_memory_reflected", []).append(
+                    bool(local_command[1] < -1.0e-6)
+                )
             if controller.keeper_reach is not None:
                 controller.output.actions = controller.keeper_reach.step(
                     model, data, np.asarray(controller.output.actions, dtype=np.float64)

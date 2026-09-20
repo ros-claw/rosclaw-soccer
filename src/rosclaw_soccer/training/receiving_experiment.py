@@ -49,6 +49,7 @@ def simulate_r0_receiving_course(
     checkpoint_frame: int = 0,
     capture_support: bool = False,
     capture_oracle_authority: bool = False,
+    capture_locomotion_memory: bool = False,
     oracle: ReceivingOracleSchedule | None = None,
     phase_reference: ReceivingPhaseReference | None = None,
     feedback_provider: ReceivingFeedbackProvider | None = None,
@@ -87,6 +88,10 @@ def simulate_r0_receiving_course(
             raise ValueError("phase reference must bind this A0 schedule and entry")
     if type(capture_oracle_authority) is not bool or (capture_oracle_authority and oracle is None):
         raise ValueError("authority capture requires a receiving oracle")
+    if type(capture_locomotion_memory) is not bool or (
+        capture_locomotion_memory and oracle is None
+    ):
+        raise ValueError("locomotion memory capture requires a receiving oracle")
     if (
         type(checkpoint_frame) is not int
         or not 0 <= checkpoint_frame < 300
@@ -163,6 +168,7 @@ def simulate_r0_receiving_course(
         receiving_phase_reference=phase_reference,
         receiving_feedback=feedback_provider,
         capture_oracle_authority=capture_oracle_authority,
+        capture_locomotion_memory=capture_locomotion_memory,
         contact_teacher_suppression=suppression,
         capture_initial_physics=True,
         capture_initial_support=capture_support,
