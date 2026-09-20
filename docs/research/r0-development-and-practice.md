@@ -61,6 +61,18 @@ A0/A1/A2/A3，仍为每组 16 次预算，最多 512 次。两 worker，每完�
 每条 CLI 的 stdout/stderr、目录数据库、知识文件和 `complete.json`。
 没有调用机器人 Runtime、训练权重、访问设备或修改用户默认 ROSCLAW_HOME。
 
+进一步实测：尚未索引时 `query failures` 返回空列表，不能据此说失败记忆已可
+检索。随后通过 `ingest-seekdb` 显式写入本次独立 SQLite 兼容数据库，查询得到
+两条带原始轨迹 SHA-256 的不同失败；重复索引仍为两条，不膨胀样本计数。
+这验证的是本地结构化存储兼容路径，不是远端原生 SeekDB/OceanBase 服务。
+最初检查脚本误用顶层 `failure_id`，实际查询主键是 `id`、原字段在 metadata；
+修正检查后重跑通过，原日志保留。
+
+还在本次私有导入副本上追加一个空行，严格校验确实拒绝；随后原字节完整恢复，
+严格校验重新通过。原始物理 NPZ 从未修改。新增凭据为
+`retrieval-and-tamper.json` 和 `indexed-retrieval.json`；前者记录索引前空查询，
+后者才是索引后成功检索，不混淆二者。
+
 ## 测试与尚未越过的门
 
 最新聚焦回归 219 passed、1 skipped；随后提供真实外部资产执行 SONIC 测试，
