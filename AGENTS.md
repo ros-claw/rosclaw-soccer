@@ -40,6 +40,12 @@ absolute paths in source or committed manifests.
 - For generated or expanded Python experiment runners, lint the final expanded
   source for undefined names (`ruff check --isolated --select F821,F822`) before
   running physics. Checking only a wrapper does not check its execution namespace.
+- Check smoke-test and lint exit codes independently (or use a fail-fast chain).
+  A later successful command must not mask an earlier failed preflight.
+- Pin runner/helper source before import or worker allocation, preferably in an
+  immutable checkout, and verify those hashes again on completion. Do not edit
+  code used by a running experiment. A completion-time file hash alone does not
+  identify the module that a long-lived Python process actually loaded.
 - Pass potentially negative scientific-notation numbers as `--key=value`.
 - A regulation-sized goal does not prove regulation ball dimensions. Inspect
   the compiled ball's size and body mass with `physics.native_ball_dimensions`.
