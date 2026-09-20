@@ -2847,12 +2847,14 @@ def simulate_independent_team_world(
                     committed_receive=bool(
                         receive_lease_active and receive_lease_agent_id == oracle_agent
                     ),
+                    previous_filtered_residual_rad=tuple(float(v) for v in oracle_predecessor),
+                    residual_admitted=oracle_active,
                 )
                 feedback_desired = feedback_slot.step(feedback_observation)
                 trace.setdefault("receiving_feedback_observation_hash", []).append(
                     feedback_observation.observation_hash
                 )
-                for field in ("qpos", "qvel", "native_actor_raw"):
+                for field in ("qpos", "qvel", "native_actor_raw", "previous_filtered_residual_rad"):
                     trace.setdefault(f"receiving_feedback_{field}", []).append(
                         np.asarray(getattr(feedback_observation, field))
                     )
@@ -2879,6 +2881,7 @@ def simulate_independent_team_world(
                 trace.setdefault("receiving_feedback_committed_receive", []).append(
                     feedback_observation.committed_receive
                 )
+                trace.setdefault("receiving_feedback_residual_admitted", []).append(oracle_active)
                 trace.setdefault("receiving_feedback_contract", []).append(
                     feedback_slot.contract_hash
                 )

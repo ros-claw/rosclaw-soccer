@@ -58,6 +58,8 @@ class ReceivingFeedbackObservation:
     last_own_contact_foot: int | None
     capture_context: ReceivingCaptureContext | None = None
     committed_receive: bool = False
+    previous_filtered_residual_rad: tuple[float, ...] = (0.0,) * 12
+    residual_admitted: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -87,6 +89,16 @@ class ReceivingFeedbackObservation:
         self.foundation_target.__post_init__()
         if type(self.committed_receive) is not bool:
             raise ValueError("explicit current receiving commitment required")
+        if (
+            type(self.residual_admitted) is not bool
+            or type(self.previous_filtered_residual_rad) is not tuple
+            or len(self.previous_filtered_residual_rad) != 12
+            or any(
+                type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 0.1
+                for v in self.previous_filtered_residual_rad
+            )
+        ):
+            raise ValueError("bounded prior filter output and explicit admission required")
         if self.capture_context is not None:
             if not isinstance(self.capture_context, ReceivingCaptureContext):
                 raise ValueError("typed measured capture context required")

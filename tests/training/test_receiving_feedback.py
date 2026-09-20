@@ -216,3 +216,19 @@ def test_capture_event_clock_is_not_latest_contact_clock():
 def test_invalid_capture_context_rejected(changes):
     with pytest.raises(ValueError):
         replace(ReceivingCaptureContext(0.1, 0.6, 1, (1.0, 0.0)), **changes)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"residual_admitted": 1},
+        {"previous_filtered_residual_rad": (True,) * 12},
+        {"previous_filtered_residual_rad": (float("nan"),) * 12},
+        {"previous_filtered_residual_rad": (0.100001,) * 12},
+        {"previous_filtered_residual_rad": (0.0,) * 11},
+        {"previous_filtered_residual_rad": [0.0] * 12},
+    ],
+)
+def test_invalid_prior_filter_observation(changes):
+    with pytest.raises(ValueError):
+        replace(observation(), **changes)
