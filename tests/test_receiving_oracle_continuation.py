@@ -4,6 +4,7 @@ import pytest
 from rosclaw_soccer.training.receiving_oracle_continuation import (
     locked_knot_count,
     propose_continuations,
+    timing_continuations,
 )
 from rosclaw_soccer.training.receiving_oracle_schedule import (
     ReceivingOracleCursor,
@@ -60,3 +61,33 @@ def test_cannot_rewrite_past_final_knot():
 def test_reject_boolean_time():
     with pytest.raises(ValueError):
         locked_knot_count(schedule(), branch_frame=True)
+
+
+@pytest.mark.parametrize("branch", [5, 7, 15, 16, 17, 50])
+def test_timing_proposals_preserve_executed_filter_history(branch):
+    original = ReceivingOracleSchedule(
+        "blue.playmaker",
+        "A0_leg12",
+        5,
+        10,
+        tuple((float(np.sin(i)),) * 12 for i in range(12)),
+    )
+    proposals = timing_continuations(original, branch_frame=branch)
+    assert len(proposals) == 7
+    expected = None
+    for proposal in proposals:
+        cursor = ReceivingOracleCursor(proposal)
+        prefix = []
+        for frame in range(branch):
+            delta = cursor.step(frame, active=True, predecessor=np.zeros(12))
+            prefix.append(np.zeros(12) if delta is None else delta)
+        if expected is None:
+            expected = np.asarray(prefix)
+        else:
+            np.testing.assert_array_equal(prefix, expected)
+        assert np.max(np.abs(proposal.knots)) <= 1
+
+
+def test_timing_proposals_do_not_rewrite_consumed_trajectory():
+    with pytest.raises(ValueError, match="no unexecuted"):
+        timing_continuations(schedule(), branch_frame=125)

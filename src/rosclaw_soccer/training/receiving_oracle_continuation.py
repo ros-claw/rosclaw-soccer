@@ -64,3 +64,36 @@ def propose_continuations(
             replace(schedule, knots=tuple(tuple(float(v) for v in row) for row in values))
         )
     return tuple(proposals)
+
+
+def timing_continuations(
+    schedule: ReceivingOracleSchedule, *, branch_frame: int
+) -> tuple[ReceivingOracleSchedule, ...]:
+    """Fixed timing/amplitude probes guided by the teacher-seeding diagnosis.
+
+    Future reference shifts are -200, -100, +100, +200 ms at 50 Hz;
+    amplitude factors are 0.5 and 1.5. Executed/interpolating prefix knots
+    remain immutable, all outputs remain in the original [-1, 1] envelope.
+    These are proposals for physics evaluation, not automatic corrections.
+    """
+    locked = locked_knot_count(schedule, branch_frame=branch_frame)
+    if locked == len(schedule.knots):
+        raise ValueError("no unexecuted knots remain")
+    source = np.asarray(schedule.knots, dtype=np.float64)
+    times = np.arange(len(source)) * schedule.knot_frames
+    variants = []
+    for shift in (-10, -5, 5, 10):
+        values = source.copy()
+        for dimension in range(source.shape[1]):
+            values[locked:, dimension] = np.interp(
+                times[locked:] + shift, times, source[:, dimension]
+            )
+        variants.append(values)
+    for factor in (0.5, 1.5):
+        values = source.copy()
+        values[locked:] = np.clip(source[locked:] * factor, -1, 1)
+        variants.append(values)
+    return (schedule,) + tuple(
+        replace(schedule, knots=tuple(tuple(float(v) for v in row) for row in values))
+        for values in variants
+    )
