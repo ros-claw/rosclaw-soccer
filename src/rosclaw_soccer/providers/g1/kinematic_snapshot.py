@@ -120,6 +120,7 @@ class CpuKinematicsSnapshot:
             or not 1 <= len(data) <= 32
             or any(
                 not isinstance(item, mujoco.MjData)
+                or item.model is not model
                 or item.qpos.shape != (model.nq,)
                 or item.qvel.shape != (model.nv,)
                 for item in data

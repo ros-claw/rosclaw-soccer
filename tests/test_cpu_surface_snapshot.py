@@ -41,6 +41,16 @@ def live_arrays(data):
     }
 
 
+def test_equal_shape_foreign_model_is_not_a_valid_snapshot_source():
+    model, _ = model_data()
+    other_model, foreign = model_data(0.3)
+    assert model.nq == other_model.nq and model.nv == other_model.nv
+    before = live_arrays(foreign)
+    with pytest.raises(ValueError, match="model/data"):
+        CpuKinematicsSnapshot(model, [foreign])
+    assert all(np.array_equal(value, getattr(foreign, key)) for key, value in before.items())
+
+
 @pytest.mark.parametrize("ball_x", [0.1, 0.2])
 def test_current_geometry_gradient_and_live_solver_preservation(ball_x):
     model, live = model_data(ball_x)
