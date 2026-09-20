@@ -479,6 +479,7 @@ class G1SonicRunupController:
     def _update_from_reference(self, data: Any, frame: int) -> np.ndarray:
         encoder_input = self._encoder_observation(data, frame)
         token = self._encoder.run(None, {self._encoder.get_inputs()[0].name: encoder_input})[0]
+        token = self._transform_token(token, frame)
         decoder_input = np.zeros((1, 994), dtype=np.float32)
         decoder_input[0, :64] = token[0]
         history = list(self._history)
@@ -492,6 +493,12 @@ class G1SonicRunupController:
             raise FloatingPointError("SONIC decoder emitted an invalid action")
         self.target = self.default_angles + self.action[ISAACLAB_TO_MUJOCO] * self._action_scale
         return self.target.copy()
+
+    def _transform_token(self, token: np.ndarray, frame: int) -> np.ndarray:
+        """Default frozen encoder path; experimental subclasses remain bounded."""
+        if token.shape != (1, 64) or not np.isfinite(token).all():
+            raise FloatingPointError("SONIC encoder emitted an invalid token")
+        return token
 
     def observe(self, data: Any) -> None:
         """Commit the post-control proprioceptive state for the next policy tick."""

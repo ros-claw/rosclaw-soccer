@@ -9,6 +9,7 @@ import math
 from dataclasses import replace
 from pathlib import Path
 
+from rosclaw_soccer.providers.g1.sonic_latent import SonicLatentSchedule
 from rosclaw_soccer.providers.g1.sonic_navigation import G1SonicNavigation, SonicNavigationConfig
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation, TeamMotorTarget
@@ -23,6 +24,7 @@ class ReceivingSonicOption:
         start_frame: int,
         velocity_scale: float = 1.0,
         planner_seed: int = 920101,
+        latent_schedule: SonicLatentSchedule | None = None,
     ) -> None:
         if (
             type(start_frame) is not int
@@ -39,7 +41,10 @@ class ReceivingSonicOption:
             model_root,
             agent_id,
             SonicNavigationConfig(
-                maximum_frames=1000, planner_seed=planner_seed, model_variant="low_latency"
+                maximum_frames=1000,
+                planner_seed=planner_seed,
+                model_variant="low_latency",
+                latent_schedule=latent_schedule,
             ),
         )
         self.contract_hash = str(
