@@ -47,6 +47,11 @@ def test_g1_features_do_not_observe_absolute_planar_tracking_error(feature_contr
 
     motor.reference[:, :2] += [5.0, 7.0]
     np.testing.assert_array_equal(encoded, motor._encoder_observation(state, 0))
+    state.qpos[2] += 0.1
+    motor.reference[:, 2] += 0.2
+    np.testing.assert_array_equal(encoded, motor._encoder_observation(state, 0))
+    for before, after in zip(history, motor._history_entry(state, action), strict=True):
+        np.testing.assert_array_equal(before, after)
     # Translating references alone cannot repair this body's planar error.
     # An outer planner must regenerate joint/orientation motion from feedback.
 

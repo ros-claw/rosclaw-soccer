@@ -3,6 +3,9 @@
 This replaces navigation planning, not measured proprioception or physics.
 Provenance and dynamic feasibility require external evidence; a hash alone
 does not authenticate a demonstration or certify a collision-free motion.
+G1-mode encoding consumes joint positions/velocities and relative orientation,
+not root translation. Stored root XYZ binds the demonstration and entry pose;
+it does not provide Cartesian tracking authority or support-load feedback.
 """
 
 import re

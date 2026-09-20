@@ -19,3 +19,21 @@
 
 本轮 A2/A3 结论只适用于记录的 checkpoint、planner、增益与冷启动配置；
 没有覆盖全部 SONIC 能力，也没有否定官方 v1.1 的稳定性改进。
+
+## 2026-09-21 身体资产迁移审计
+
+官方固定提交 XML 引用的 36 个 STL 已按 LFS 声明的大小和 SHA-256 下载到外部
+审计目录，未改原参考 checkout。编译后官方资产身体质量约 35.112 kg，足球资产
+约 33.341 kg；腰部质量/惯量、部分安装位置、关节 armature/frictionloss 以及
+脚部碰撞几何存在差异。官方脚底使用离散小球，足球资产使用胶囊组合。
+这些是资产对比，不代表官方训练环境或完整原生运行栈。
+
+另作四次三秒诊断：两种资产各 primary/replay，冻结 low-latency 控制器、
+相同初态关节/根姿态、相同生成参考，匹配地面材料和主要求解选项，不评价球技。
+两边分别精确重放，参考哈希一致。官方资产最低骨盆高度约 0.124 m（跌倒），
+足球资产约 0.684 m。右踝 pitch PD 跟踪 RMS 分别约 0.536 / 0.544 rad。
+**直接替换官方 XML 并没有解决问题**；这是多项身体差异捆绑的迁移测试，
+不能归因于某一个参数，也不是官方 SONIC 原生质量结论。不修改冻结 M0 物理。
+
+外置证据：`sonic-body-transfer-audit-v1.json`、
+`sonic-official-audit-assets/manifest.json`、`sonic-body-transfer-probe-v1/complete.json`。
