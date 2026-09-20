@@ -103,3 +103,23 @@ live pose/cache 或模型，未推进物理。Core 的相关 16 项测试及 sim
 `m0/sonic-positive-neighbourhood-v1/recovered-partial-report.json`、
 `m0/swing-surface-reference-v2/complete.json` 及 `intervention-audit.json`。
 这些检查没有新增权重、晋升候选或打开 Sealed Bank。
+
+### 命名关节的局部权限检查
+
+`shin-contact-audit.json` 重建包含双侧球门的完整场景，并要求编译物理哈希
+与原轨迹完全一致后才解释碰撞 ID。确认慢球例为右小腿、快球例为左小腿。
+不能拿省略第二球门的场景解释数字 ID；几何插入顺序会改变这些编号。
+
+后续局部探针固定 token、导航速度、时间和其他关节，只对相应腿的膝/踝
+给出预声明的 3×3 组合，每坐标最大改变 0.025 rad 的未过滤名义残差。
+原有裁剪、滤波、力矩门及考试不变。每案含零改动对照，各自重放，最多
+36 次执行。无增益则停止该族；即使找到成功也只是局部可达性，非反馈教师。
+结果以 `m0/shin-clearance-local-oracle-v1/complete.json` 为准，不能从协议
+的预算数量推断完成数量。
+
+可复用的 `training.receiving_oracle_local_probe.local_oracle_proposals` 使用
+具名关节而非裸索引，保留原解为第一个候选，拒绝越界、重复坐标、重复
+候选及完全饱和的无效修改。它与该探针两组各九个提案逐元素一致。
+新增 18 项单测，连同嵌入、调度、课程预检共 54 项通过；目标模块 Ruff
+和限定导入的 mypy 通过。跟随全依赖的 mypy 仍报三个其他模块错误，不能
+称全仓类型检查通过。
