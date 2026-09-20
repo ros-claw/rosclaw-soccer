@@ -19,6 +19,7 @@ from rosclaw_soccer.providers.g1.sonic_history_handoff import (
     handoff_sonic_history,
 )
 from rosclaw_soccer.providers.g1.sonic_latent import SonicLatentSchedule
+from rosclaw_soccer.providers.g1.sonic_pose_reference import SonicPoseReference
 from rosclaw_soccer.providers.g1.sonic_runup import (
     G1SonicModelVariant,
     G1SonicRunupConfig,
@@ -39,8 +40,20 @@ class SonicNavigationConfig:
     experimental_maximum_speed_mps: float | None = None
     model_variant: G1SonicModelVariant = "sonic_v1_1"
     latent_schedule: SonicLatentSchedule | None = None
+    pose_reference: SonicPoseReference | None = None
 
     def __post_init__(self) -> None:
+        if self.pose_reference is not None:
+            if (
+                not isinstance(self.pose_reference, SonicPoseReference)
+                or self.model_variant != "low_latency"
+                or self.latent_schedule is not None
+                or self.experimental_maximum_speed_mps is not None
+                or type(self.maximum_frames) is not int
+                or len(self.pose_reference.poses) > self.maximum_frames + 110
+            ):
+                raise ValueError("pose-reference probe requires low-latency without latent search")
+            self.pose_reference.__post_init__()
         if self.model_variant not in {"sonic_v1_1", "low_latency"}:
             raise ValueError("qualified streaming SONIC variant required")
         if self.latent_schedule is not None:
@@ -193,6 +206,10 @@ class _StreamingBackend(G1SonicRunupController):
         return _resample_segments_30_to_50([segment], 0.02)
 
     def _generate_reference(self, initial_qpos: np.ndarray) -> np.ndarray:
+        if self.navigation.pose_reference is not None:
+            return self.navigation.pose_reference.initialize(
+                initial_qpos, frames=self.navigation.maximum_frames + 110
+            )
         segment = self.plan(np.repeat(initial_qpos[None], 4, axis=0), 0)
         length = self.navigation.maximum_frames + 110
         return np.concatenate(
@@ -200,7 +217,11 @@ class _StreamingBackend(G1SonicRunupController):
         )
 
     def navigation_tick(self, state: SimpleNamespace, frame: int) -> np.ndarray:
-        if frame and frame % self.navigation.replan_frames == 0:
+        if (
+            self.navigation.pose_reference is None
+            and frame
+            and frame % self.navigation.replan_frames == 0
+        ):
             start = frame + self.navigation.lookahead_frames
             segment = self.plan(future_reference_context(self.reference, start), frame)
             n = min(len(segment), len(self.reference) - start)
@@ -231,6 +252,9 @@ class G1SonicNavigation:
         self.config = config or SonicNavigationConfig()
         self.backend = _StreamingBackend(model_root, self.config)
         config_record = asdict(self.config)
+        config_record.pop("pose_reference")
+        if self.config.pose_reference is not None:
+            config_record["pose_reference_hash"] = self.config.pose_reference.contract_hash
         if self.config.latent_schedule is None:
             config_record.pop("latent_schedule")
         # Preserve the existing v1.1 contract; low-latency is an explicit variant.
@@ -245,7 +269,9 @@ class G1SonicNavigation:
                 "config": config_record,
                 "foundation": self.backend.qualification.qualification_hash,
                 "command": (
-                    "post-clearance world vx vy <= .7 m/s, yaw rate <= 1.5 rad/s"
+                    "SIM_ONLY fixed-pose reference probe; not post-clearance navigation tracking"
+                    if self.config.pose_reference is not None
+                    else "post-clearance world vx vy <= .7 m/s, yaw rate <= 1.5 rad/s"
                     if self.config.experimental_maximum_speed_mps is None
                     else "explicit experimental envelope; post-clearance command only; yaw <= 1.5"
                 ),

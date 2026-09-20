@@ -14,6 +14,7 @@ from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.providers.g1.receiving_sonic import ReceivingSonicOption
 from rosclaw_soccer.providers.g1.sonic_command_scale import SonicCommandScaleSchedule
 from rosclaw_soccer.providers.g1.sonic_latent import SonicLatentSchedule
+from rosclaw_soccer.providers.g1.sonic_pose_reference import SonicPoseReference
 from rosclaw_soccer.skills.team.independent_team_world import (
     IndependentTeamWorldResult,
     IndependentTeamWorldScenario,
@@ -51,6 +52,7 @@ def simulate_r0_receiving_course(
     sonic_planner_seed: int = 920101,
     sonic_latent_schedule: SonicLatentSchedule | None = None,
     sonic_command_scale_schedule: SonicCommandScaleSchedule | None = None,
+    sonic_pose_reference: SonicPoseReference | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, np.ndarray]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -90,6 +92,7 @@ def simulate_r0_receiving_course(
         or sonic_planner_seed != 920101
         or sonic_latent_schedule is not None
         or sonic_command_scale_schedule is not None
+        or sonic_pose_reference is not None
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
     if sonic_model_root is not None and (
@@ -118,6 +121,7 @@ def simulate_r0_receiving_course(
             planner_seed=sonic_planner_seed,
             latent_schedule=sonic_latent_schedule,
             command_scale_schedule=sonic_command_scale_schedule,
+            pose_reference=sonic_pose_reference,
         )
     result, trace = simulate_independent_team_world(
         asset_root=asset_root,
@@ -163,5 +167,13 @@ def simulate_r0_receiving_course(
         trace["sonic_command_requested_scale"] = np.asarray([row[1] for row in scale_records])
         trace["sonic_command_scale_schedule_hash"] = np.asarray(
             [sonic_command_scale_schedule.contract_hash]
+        )
+    if sonic_pose_reference is not None:
+        trace["sonic_pose_reference_hash"] = np.asarray([sonic_pose_reference.contract_hash])
+        trace["sonic_pose_reference_source_hash"] = np.asarray(
+            [sonic_pose_reference.source_evidence_hash]
+        )
+        trace["sonic_planner_calls"] = np.asarray(
+            [motors[course.agent_id].navigation.backend.planner_calls]
         )
     return result, trace

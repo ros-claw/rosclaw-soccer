@@ -12,6 +12,7 @@ from pathlib import Path
 from rosclaw_soccer.providers.g1.sonic_command_scale import SonicCommandScaleSchedule
 from rosclaw_soccer.providers.g1.sonic_latent import SonicLatentSchedule
 from rosclaw_soccer.providers.g1.sonic_navigation import G1SonicNavigation, SonicNavigationConfig
+from rosclaw_soccer.providers.g1.sonic_pose_reference import SonicPoseReference
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation, TeamMotorTarget
 
@@ -27,6 +28,7 @@ class ReceivingSonicOption:
         planner_seed: int = 920101,
         latent_schedule: SonicLatentSchedule | None = None,
         command_scale_schedule: SonicCommandScaleSchedule | None = None,
+        pose_reference: SonicPoseReference | None = None,
     ) -> None:
         if (
             type(start_frame) is not int
@@ -40,6 +42,10 @@ class ReceivingSonicOption:
             if not isinstance(command_scale_schedule, SonicCommandScaleSchedule):
                 raise ValueError("typed command attenuation schedule required")
             command_scale_schedule.__post_init__()
+        if pose_reference is not None and (
+            velocity_scale != 0 or command_scale_schedule is not None
+        ):
+            raise ValueError("fixed reference probe must explicitly disable navigation commands")
         self.agent_id = agent_id
         self.start_frame = start_frame
         self.velocity_scale = velocity_scale
@@ -53,6 +59,7 @@ class ReceivingSonicOption:
                 planner_seed=planner_seed,
                 model_variant="low_latency",
                 latent_schedule=latent_schedule,
+                pose_reference=pose_reference,
             ),
         )
         self.contract_hash = str(
