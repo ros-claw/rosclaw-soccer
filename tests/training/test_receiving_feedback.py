@@ -9,6 +9,7 @@ from rosclaw_soccer.training.receiving_feedback import (
     ReceivingCaptureContext,
     ReceivingFeedbackObservation,
     ReceivingFeedbackSlot,
+    ReceivingLocomotionContext,
 )
 from rosclaw_soccer.training.receiving_oracle_schedule import (
     ReceivingOracleCursor,
@@ -49,6 +50,72 @@ class Provider:
     def propose(self, obs):
         self.calls += 1
         return self.result
+
+
+def locomotion(frame=0):
+    from rosclaw_soccer.providers.g1.locomotion_memory import LocomotionMemory
+
+    return ReceivingLocomotionContext(
+        frame,
+        LocomotionMemory("sha256:" + "a" * 64, bytes(1024), bytes(1024)),
+        "sha256:" + "b" * 64,
+        (0.0,) * 29,
+        (0.0,) * 3,
+        False,
+    )
+
+
+def test_memory_is_opt_in_bound_and_hashable():
+    from dataclasses import asdict
+
+    from rosclaw_soccer.sim.contracts import hash_json
+
+    old = observation()
+    old_fields = asdict(old)
+    old_fields.pop("locomotion")
+    assert old.observation_hash == hash_json(old_fields)
+    new = replace(old, locomotion=locomotion())
+    assert new.observation_hash != old.observation_hash
+    source = schedule()
+    provider = Provider(source)
+    provider.requires_locomotion_memory = True
+    assert ReceivingFeedbackSlot(provider, source).step(new) == provider.result
+    slot = ReceivingFeedbackSlot(provider, source)
+    with pytest.raises(ValueError):
+        slot.step(old)
+    assert slot.faulted and provider.calls == 1
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"frame": 1},
+        {"memory": None},
+        {"reflected": 1},
+        {"raw_action": (float("nan"),) * 29},
+        {"world_command": [0.0] * 3},
+        {"configuration_hash": "unknown"},
+    ],
+)
+def test_bad_or_stale_locomotion_context(changes):
+    with pytest.raises(ValueError):
+        replace(observation(), locomotion=replace(locomotion(), **changes))
+
+
+def test_memory_requirement_cannot_change_during_proposal():
+    source = schedule()
+    provider = Provider(source)
+    provider.requires_locomotion_memory = True
+
+    def mutate(obs):
+        provider.requires_locomotion_memory = 1
+        return provider.result
+
+    provider.propose = mutate
+    slot = ReceivingFeedbackSlot(provider, source)
+    with pytest.raises(ValueError):
+        slot.step(replace(observation(), locomotion=locomotion()))
+    assert slot.faulted
 
 
 def test_preentry_observes_without_querying_provider():

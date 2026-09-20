@@ -83,6 +83,9 @@ from rosclaw_soccer.providers.g1.kick_measured_history import (
     install_measured_kick_history,
 )
 from rosclaw_soccer.providers.g1.locomotion_action_frame import remap_previous_locomotion_action
+from rosclaw_soccer.providers.g1.locomotion_memory import (
+    capture_locomotion_memory as snapshot_memory,
+)
 from rosclaw_soccer.providers.g1.mujoco_primitives import (
     adapt_shot_target,
     load_robonaldo,
@@ -135,6 +138,7 @@ from rosclaw_soccer.training.receiving_feedback import (
     ReceivingFeedbackObservation,
     ReceivingFeedbackProvider,
     ReceivingFeedbackSlot,
+    ReceivingLocomotionContext,
 )
 from rosclaw_soccer.training.receiving_oracle_schedule import (
     ReceivingOracleCursor,
@@ -1087,6 +1091,8 @@ def simulate_independent_team_world(
         if receiving_oracle is None or receiving_phase_reference is not None:
             raise ValueError("feedback requires its oracle schedule without another phase provider")
         feedback_slot = ReceivingFeedbackSlot(receiving_feedback, receiving_oracle)
+        if feedback_slot.requires_locomotion_memory and not capture_locomotion_memory:
+            raise ValueError("recurrent feedback requires explicit recorded locomotion memory")
     if receiving_phase_reference is not None:
         if not isinstance(receiving_phase_reference, ReceivingPhaseReference):
             raise ValueError("typed phase reference required")
@@ -2471,10 +2477,6 @@ def simulate_independent_team_world(
                 and receiving_oracle is not None
                 and controller.cell.agent_id == receiving_oracle.agent_id
             ):
-                from rosclaw_soccer.providers.g1.locomotion_memory import (
-                    capture_locomotion_memory as snapshot_memory,
-                )
-
                 memory = snapshot_memory(
                     controller.policy.policy,
                     policy_hash=foundation_hashes[Path(controller.policy.policy_path)],
@@ -2857,6 +2859,23 @@ def simulate_independent_team_world(
             feedback_desired = None
             if feedback_slot is not None:
                 focal_controller = next(c for c in controllers if c.cell.agent_id == oracle_agent)
+                locomotion_context = None
+                if feedback_slot.requires_locomotion_memory:
+                    foundation_path = Path(focal_controller.policy.policy_path)
+                    assert focal_controller.last_world_command is not None
+                    locomotion_context = ReceivingLocomotionContext(
+                        frame=frame,
+                        memory=snapshot_memory(
+                            focal_controller.policy.policy,
+                            policy_hash=foundation_hashes[foundation_path],
+                        ),
+                        configuration_hash=foundation_hashes[
+                            foundation_path.parent.parent / "config/LocoMode.yaml"
+                        ],
+                        raw_action=tuple(float(v) for v in focal_controller.policy.action),
+                        world_command=tuple(float(v) for v in focal_controller.last_world_command),
+                        reflected=bool(trace["loco_memory_reflected"][-1]),
+                    )
                 feedback_capture = None
                 if oracle_agent in capture_context_agent_ids:
                     capture_direction = focal_controller.post_receive_direction_xy
@@ -2905,6 +2924,7 @@ def simulate_independent_team_world(
                     ),
                     previous_filtered_residual_rad=tuple(float(v) for v in oracle_predecessor),
                     residual_admitted=oracle_active,
+                    locomotion=locomotion_context,
                 )
                 feedback_desired = feedback_slot.step(feedback_observation)
                 trace.setdefault("receiving_feedback_observation_hash", []).append(

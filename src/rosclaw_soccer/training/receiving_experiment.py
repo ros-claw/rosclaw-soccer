@@ -73,7 +73,9 @@ def simulate_r0_receiving_course(
     if feedback_provider is not None:
         if oracle is None or phase_reference is not None:
             raise ValueError("feedback must bind one schedule without competing phase feedback")
-        ReceivingFeedbackSlot(feedback_provider, oracle)
+        feedback_slot = ReceivingFeedbackSlot(feedback_provider, oracle)
+        if feedback_slot.requires_locomotion_memory and capture_locomotion_memory is not True:
+            raise ValueError("recurrent feedback requires explicit recorded locomotion memory")
     if phase_reference is not None:
         if not isinstance(phase_reference, ReceivingPhaseReference):
             raise ValueError("typed phase reference required")

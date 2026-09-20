@@ -10,6 +10,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Protocol, runtime_checkable
 
+from rosclaw_soccer.providers.g1.locomotion_memory import LocomotionMemory
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.skills.team.motor_option import TeamMotorTarget
 from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSchedule
@@ -46,6 +47,40 @@ class ReceivingCaptureContext:
 
 
 @dataclass(frozen=True)
+class ReceivingLocomotionContext:
+    """Post-inference frozen memory and command, never a writable policy."""
+
+    frame: int
+    memory: LocomotionMemory
+    configuration_hash: str
+    raw_action: tuple[float, ...]
+    world_command: tuple[float, ...]
+    reflected: bool
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.frame) is not int
+            or not 0 <= self.frame < 1000
+            or not isinstance(self.memory, LocomotionMemory)
+            or type(self.configuration_hash) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", self.configuration_hash) is None
+            or type(self.reflected) is not bool
+        ):
+            raise ValueError("bound current locomotion memory required")
+        self.memory.__post_init__()
+        for values, size in ((self.raw_action, 29), (self.world_command, 3)):
+            if (
+                type(values) is not tuple
+                or len(values) != size
+                or any(
+                    type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 100
+                    for v in values
+                )
+            ):
+                raise ValueError("bounded immutable locomotion values required")
+
+
+@dataclass(frozen=True)
 class ReceivingFeedbackObservation:
     agent_id: str
     frame: int
@@ -60,6 +95,7 @@ class ReceivingFeedbackObservation:
     committed_receive: bool = False
     previous_filtered_residual_rad: tuple[float, ...] = (0.0,) * 12
     residual_admitted: bool = False
+    locomotion: ReceivingLocomotionContext | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -87,6 +123,12 @@ class ReceivingFeedbackObservation:
         if not isinstance(self.foundation_target, TeamMotorTarget):
             raise ValueError("typed current foundation target required")
         self.foundation_target.__post_init__()
+        if self.locomotion is not None:
+            if not isinstance(self.locomotion, ReceivingLocomotionContext):
+                raise ValueError("typed locomotion context required")
+            self.locomotion.__post_init__()
+            if self.locomotion.frame != self.frame:
+                raise ValueError("locomotion memory must share the current observation clock")
         if type(self.committed_receive) is not bool:
             raise ValueError("explicit current receiving commitment required")
         if (
@@ -121,7 +163,12 @@ class ReceivingFeedbackObservation:
 
     @property
     def observation_hash(self) -> str:
-        return str(hash_json(asdict(self)))
+        value = asdict(self)
+        if self.locomotion is None:
+            value.pop("locomotion")  # Preserve existing providers' observation identities.
+        else:
+            value["locomotion"]["memory"] = self.locomotion.memory.state_hash
+        return str(hash_json(value))
 
 
 @runtime_checkable
@@ -156,6 +203,9 @@ class ReceivingFeedbackSlot:
         ):
             raise ValueError("SIM-only feedback must bind the exact leg schedule")
         self.provider = provider
+        self.requires_locomotion_memory = getattr(provider, "requires_locomotion_memory", False)
+        if type(self.requires_locomotion_memory) is not bool:
+            raise ValueError("explicit locomotion memory requirement required")
         self.agent_id = schedule.agent_id
         self.schedule_hash = schedule.contract_hash
         self.contract_hash = provider.contract_hash
@@ -177,6 +227,10 @@ class ReceivingFeedbackSlot:
                 or self.provider.schedule_hash != self.schedule_hash
                 or self.provider.contract_hash != self.contract_hash
                 or self.provider.activation_ceiling != "SIM_ONLY"
+                or getattr(self.provider, "requires_locomotion_memory", False)
+                != self.requires_locomotion_memory
+                or type(getattr(self.provider, "requires_locomotion_memory", False)) is not bool
+                or (self.requires_locomotion_memory and observation.locomotion is None)
             ):
                 raise ValueError("feedback identity, clock or source binding changed")
             self.next_frame += 1
@@ -190,6 +244,9 @@ class ReceivingFeedbackSlot:
                 or self.provider.schedule_hash != self.schedule_hash
                 or self.provider.contract_hash != self.contract_hash
                 or self.provider.activation_ceiling != "SIM_ONLY"
+                or getattr(self.provider, "requires_locomotion_memory", False)
+                != self.requires_locomotion_memory
+                or type(getattr(self.provider, "requires_locomotion_memory", False)) is not bool
             ):
                 raise ValueError("feedback changed its input or binding during proposal")
             if (
