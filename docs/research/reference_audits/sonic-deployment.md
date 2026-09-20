@@ -59,3 +59,35 @@ qpos/qvel 地址及 actuator joint 映射，冻结 low-latency 模型、增益�
 支持直接把 XML 替换进冻结接球考试。
 
 证据：`sonic-stationary-probe-v1/complete.json`。没有据此改写原 M0 或其物理哈希。
+
+## 单因素复核：缺失 armature 导致原始资产站立失败
+
+继续核对后发现，上述原始 `gear_sonic_deploy/g1/g1_29dof.xml` 的受控关节
+没有 armature、damping、frictionloss；而官方运行场景引用的带手模型，通过
+关节类别默认值设置 armature=0.01、damping=0.05，frictionloss=0.1 或 0.2。
+不能把视觉/运动学 XML 直接视为完整部署场景。模型控制器里的电机常数也不会
+自动写入 MuJoCo `dof_armature`。
+
+固定姿态、冻结 low-latency、同一初态和地面，追加四变体 × primary/replay，
+共 8 次三秒运行。只改具名关节的指定动力学字段，不改质量、脚几何、增益
+或参考。原始组逐数组重现前次原件；四组各自独立重放精确一致。
+
+| 原始 29DoF 资产变体 | 最低骨盆 m | 最大绝对 roll/pitch rad |
+| --- | --- | --- |
+| 不改参数 | 0.10623 | 2.03887 |
+| 只补运行场景 armature | 0.73582 | 0.06633 |
+| 只补运行场景 damping/frictionloss | 0.12784 | 3.10705 |
+| 三种关节属性全部补齐 | 0.73642 | 0.06631 |
+
+这支持一个**有限条件下的因果诊断**：缺失关节 armature 是该原始资产在本次
+冻结站立控制下跌倒的关键因素；仅补阻尼/摩擦不足。先前的跌倒不能拿来否定
+SONIC 或官方完整场景，也不能拿来评价该原始资产的接球能力。
+
+足球考试资产原本不是这个零 armature XML；本发现**不证明足球接球已经变好**。
+原始 M0、其身体和物理参数均未修改。仍没有运行官方含 DDS/弹性带的完整栈。
+证据：`sonic-joint-properties-probe-v1/complete.json`，其先行协议记录逐关节来源值。
+
+反馈至 ROSClaw Core：扩展已有通用 `inspect_model_full`，显示实际编译模型的
+armature/frictionloss、身体质量与惯量、重力及求解容差，而不是新增 G1 专属
+检查器。实际外部模型的原始/显式变体均经该接口读取，检查前后模型摘要不变；
+检查本身无物理步或硬件执行。证据：`core-dynamics-inspection-v1.json`。
