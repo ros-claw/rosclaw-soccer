@@ -30,3 +30,19 @@
 外置证据：`receiving-mechanism-reboot/m0/sonic-pose-reference-v1/complete.json`
 和 `pose-reference-default-qualification-v1/verification.json`。
 不改正在运行的原始 64×4 M0 协议或其源代码。
+
+## 参考姿态表面提案：同样没有通过
+
+`sonic-reference-surface-v1` 使用组织者原轨迹首次小腿触球处的真实表面 Jacobian，
+生成三种 6/12/18 mm 小腿间隙目标的关节耦合参考变化。参考变化从第 20 帧
+平滑引入，第 50–85 帧保持，第 110 帧前退出；不增加电机残差或附加任务力矩。
+基线、三提案和选中重放共 5 次，基线与上轮原始数组精确一致，选中重放也一致。
+
+6/12 mm 提案仍有禁止接触，18 mm 提案则没有形成脚部触球；全部安全，但
+全部接球失败。该小预算系列结束，不扩大同类局部姿态参数搜索。此时没有足够
+证据宣称 SONIC 的动作容量不足，也没有足够证据开始 DAgger 或 PPO。
+
+并行工作转向执行先前冻结的 256 条公开 Development Bank：只评价原 R0，
+每条 primary/replay，共 512 次预算，四 CPU worker，无权重更新、无 sealed
+访问。用途是获得真实上下文能力覆盖；固定 6 秒课程长度不是技能完成时长，
+未测量的下一技能 readiness 必须继续为空，不能填给 TacticalWorld 当作已知。
