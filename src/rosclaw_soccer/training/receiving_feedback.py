@@ -16,6 +16,36 @@ from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSch
 
 
 @dataclass(frozen=True)
+class ReceivingCaptureContext:
+    """Measured capture event retained by the executor, not a success label."""
+
+    start_time_sec: float
+    duration_sec: float
+    foot: int
+    direction_xy: tuple[float, float]
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.start_time_sec) not in (int, float)
+            or not math.isfinite(self.start_time_sec)
+            or self.start_time_sec < 0
+            or type(self.duration_sec) not in (int, float)
+            or not math.isfinite(self.duration_sec)
+            or not 0.2 <= self.duration_sec <= 1.0
+            or type(self.foot) is not int
+            or self.foot not in (1, 2)
+            or type(self.direction_xy) is not tuple
+            or len(self.direction_xy) != 2
+            or any(
+                type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 1e4
+                for v in self.direction_xy
+            )
+            or math.hypot(*self.direction_xy) <= 1e-9
+        ):
+            raise ValueError("bounded measured capture context required")
+
+
+@dataclass(frozen=True)
 class ReceivingFeedbackObservation:
     agent_id: str
     frame: int
@@ -26,6 +56,8 @@ class ReceivingFeedbackObservation:
     native_actor_raw: tuple[float, ...]
     last_own_foot_contact_time_sec: float | None
     last_own_contact_foot: int | None
+    capture_context: ReceivingCaptureContext | None = None
+    committed_receive: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -53,6 +85,15 @@ class ReceivingFeedbackObservation:
         if not isinstance(self.foundation_target, TeamMotorTarget):
             raise ValueError("typed current foundation target required")
         self.foundation_target.__post_init__()
+        if type(self.committed_receive) is not bool:
+            raise ValueError("explicit current receiving commitment required")
+        if self.capture_context is not None:
+            if not isinstance(self.capture_context, ReceivingCaptureContext):
+                raise ValueError("typed measured capture context required")
+            self.capture_context.__post_init__()
+            age = self.time_sec - self.capture_context.start_time_sec
+            if not -1e-9 <= age <= self.capture_context.duration_sec + 1e-9:
+                raise ValueError("capture event must be current and not from the future")
         contact = self.last_own_foot_contact_time_sec
         if contact is None:
             if self.last_own_contact_foot is not None:

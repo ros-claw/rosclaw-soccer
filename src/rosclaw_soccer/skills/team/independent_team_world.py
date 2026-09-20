@@ -131,6 +131,7 @@ from rosclaw_soccer.skills.team.navigation_option import (
 )
 from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
 from rosclaw_soccer.training.receiving_feedback import (
+    ReceivingCaptureContext,
     ReceivingFeedbackObservation,
     ReceivingFeedbackProvider,
     ReceivingFeedbackSlot,
@@ -2800,6 +2801,20 @@ def simulate_independent_team_world(
             feedback_desired = None
             if feedback_slot is not None:
                 focal_controller = next(c for c in controllers if c.cell.agent_id == oracle_agent)
+                feedback_capture = None
+                if oracle_agent in capture_context_agent_ids:
+                    capture_direction = focal_controller.post_receive_direction_xy
+                    if capture_direction is None or focal_controller.last_ball_contact_foot not in (
+                        "left",
+                        "right",
+                    ):
+                        raise ValueError("receiving feedback lost measured capture context")
+                    feedback_capture = ReceivingCaptureContext(
+                        float(last_receive_contact_time_sec),
+                        float(capture_hold_sec),
+                        1 if focal_controller.last_ball_contact_foot == "left" else 2,
+                        (float(capture_direction[0]), float(capture_direction[1])),
+                    )
                 feedback_observation = ReceivingFeedbackObservation(
                     agent_id=oracle_agent,
                     frame=frame,
@@ -2828,6 +2843,10 @@ def simulate_independent_team_world(
                     native_actor_raw=tuple(float(v) for v in latent[oracle_index]),
                     last_own_foot_contact_time_sec=feedback_contact_time,
                     last_own_contact_foot=feedback_contact_foot,
+                    capture_context=feedback_capture,
+                    committed_receive=bool(
+                        receive_lease_active and receive_lease_agent_id == oracle_agent
+                    ),
                 )
                 feedback_desired = feedback_slot.step(feedback_observation)
                 trace.setdefault("receiving_feedback_observation_hash", []).append(
@@ -2846,6 +2865,19 @@ def simulate_independent_team_world(
                         -1.0 if feedback_contact_time is None else feedback_contact_time,
                         -1 if feedback_contact_foot is None else feedback_contact_foot,
                     )
+                )
+                trace.setdefault("receiving_feedback_capture_context", []).append(
+                    (-1.0, 0.0, 0, 0.0, 0.0)
+                    if feedback_capture is None
+                    else (
+                        feedback_capture.start_time_sec,
+                        feedback_capture.duration_sec,
+                        feedback_capture.foot,
+                        *feedback_capture.direction_xy,
+                    )
+                )
+                trace.setdefault("receiving_feedback_committed_receive", []).append(
+                    feedback_observation.committed_receive
                 )
                 trace.setdefault("receiving_feedback_contract", []).append(
                     feedback_slot.contract_hash

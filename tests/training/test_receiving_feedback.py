@@ -6,6 +6,7 @@ import pytest
 
 from rosclaw_soccer.skills.team.motor_option import TeamMotorTarget
 from rosclaw_soccer.training.receiving_feedback import (
+    ReceivingCaptureContext,
     ReceivingFeedbackObservation,
     ReceivingFeedbackSlot,
 )
@@ -177,3 +178,41 @@ def test_unbound_provider_rejected_before_loading_assets():
             scenario_id="feedback.preflight",
             feedback_provider=Provider(schedule()),
         )
+
+
+def test_capture_event_clock_is_not_latest_contact_clock():
+    capture = ReceivingCaptureContext(0.1, 0.6, 1, (1.0, 0.0))
+    obs = replace(
+        observation(20),
+        capture_context=capture,
+        last_own_foot_contact_time_sec=0.39,
+        last_own_contact_foot=1,
+    )
+    assert obs.time_sec - capture.start_time_sec == pytest.approx(0.3)
+    assert obs.time_sec - obs.last_own_foot_contact_time_sec == pytest.approx(0.01)
+    assert obs.observation_hash != observation(20).observation_hash
+    for changes in (
+        {"time_sec": 0.08, "frame": 4},
+        {"time_sec": 0.72, "frame": 36},
+        {"committed_receive": 1},
+        {"capture_context": {}},
+    ):
+        with pytest.raises(ValueError):
+            replace(obs, **changes)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"foot": True},
+        {"foot": 3},
+        {"duration_sec": 1.01},
+        {"start_time_sec": -0.01},
+        {"direction_xy": (0.0, 0.0)},
+        {"direction_xy": (float("nan"), 0.0)},
+        {"direction_xy": [1.0, 0.0]},
+    ],
+)
+def test_invalid_capture_context_rejected(changes):
+    with pytest.raises(ValueError):
+        replace(ReceivingCaptureContext(0.1, 0.6, 1, (1.0, 0.0)), **changes)
