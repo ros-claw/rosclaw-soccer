@@ -9,6 +9,11 @@
 明确区分 low-latency 和 v1.1。80 ms 与 200 ms 是参考 lookahead，
 不是总闭环实测延迟。
 
+还须区分编码模式：本地 low-latency `observation_config.yaml` 明确规定
+SMPL 使用 4 帧、step1，而 G1 关节与姿态参考使用 10 帧、step1。
+不能将宣传中的 80 ms 直接套用到 G1 编码模式，再把十帧输入误判为布局错误。
+当前足球路径使用 G1 模式；这项配置核对没有发现需修改其帧数的证据。
+
 2026-08-31 更新中的 per-motor Kp/Kd 示例，是 v1.1 左右踝 pitch
 硬件索引 4、10 的可选 1.5 倍配置。官方明确它不改变其他 checkpoint。
 不能把这一配置默认套给本轮冻结的 low-latency，再归因于模型本身。

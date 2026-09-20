@@ -129,3 +129,19 @@ future，并等待在途 worker 完成，不删除任何试次、不修改原考
 `m0/positive-selected-audit-v1.json`、`m0/nested-action-witness-v1/complete.json`、
 `core-oracle-assay-decision-v1.json`、`core-nested-assay-decision-v1.json`、
 `m0/original-search-drain-request-v1.json`。
+
+## 嵌套种子搜索的小规模否证
+
+后续在原银行 m0-25、m0-57 两场（双方组织者、0.5 m/s、居中来球）完成
+64 次物理执行。A0 保留原 incumbent，加入本场特权未来力矩提案及同角色
+历史提案，再作固定预算的随机/CEM 搜索；A1 保留经过验证的 A0 嵌入结果，
+再探索上肢等额外自由度。两场、两接口各 16 次，包含选中结果独立重放。
+
+嵌套 incumbent 的物理等价性及选中结果精确重放均成立，但 **新增安全接球
+为 0/2**。先行协议规定零增益则停止本搜索族扩展，因此不将此方法扩大到
+整组银行。这不推翻历史六场的可行性证明，也不证明这两场物理不可达。
+未来力矩种子属于 privileged proposal，不是可部署反馈教师。
+
+证据：`m0/nested-seeded-pilot-v1/complete.json`，代码快照 `dba4c20`，
+manifest `380f9393f2ba28bcb249ffd4af1d3cd8ed9eb0043da00b99356cc8476d9b2260`。
+无学习更新、无晋升；未通过 E1/E2，不启动学生或 PPO。
