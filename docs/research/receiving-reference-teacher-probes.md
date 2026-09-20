@@ -39,3 +39,25 @@
 `kinematic-diagnostic.json`，以及 `m0/causal-foot-reference-v1/complete.json`。
 实验脚本 `probe_causal_foot_reference.py` 的内容哈希写入协议与轨迹；
 该外置原型没有修改默认控制路径。
+
+## 支撑脚资格：抬高脚踝不等于离地
+
+另做无球基础能力检查，固定站立、横向移重心 8 cm、移重心并让右脚参考
+抬升 8 cm，各两次五秒执行，共六次。身体稳定且重放一致。第三种条件
+右脚踝在固定保持窗口平均高约 0.093 m，但右脚仍承担约 88 N 法向负载。
+从已完成 qpos 在私有数据上重新计算七个脚碰撞几何的表面距离，脚仍贴地。
+
+再用四次执行隔离“只约束脚位置”和“同时保持脚姿态”的参考 IK。位置组
+逐数组复现前次原件；姿态约束组仍约 90 N 右脚负载，没有真正获得离地窗口。
+因此不能把遗漏姿态约束当作已解决的根因，也不继续盲目调足高/增益。
+这些是基础跟踪和支撑诊断，不是接球分数或完整官方 SONIC 系统质量判断。
+
+这一教训反馈到通用 Core `surface_snapshot`：从当前姿态的私有 FK 查询
+具名碰撞几何间距，不用身体原点代替表面；截止距离/不支持的组合返回未知。
+该接口在上述实际轨迹 100 帧、每帧七个几何对上与独立审计完全一致，未改
+live pose/cache 或模型，未推进物理。Core 的相关 16 项测试及 sim 全组
+338 项通过（一个既有模型 attach 警告）。代码进入 Core PR，不混入足球控制器。
+
+证据：`sonic-support-transfer-v1/complete.json`、
+`sonic-support-orientation-v1/complete.json`，各自 `surface-clearance-audit.json`，
+以及 `core-surface-snapshot-v1.json`。

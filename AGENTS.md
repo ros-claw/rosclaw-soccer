@@ -47,3 +47,9 @@ absolute paths in source or committed manifests.
   preserve their evidence but never inherit adult-regulation publicity claims.
 - Changes of physical dimensions define a new experiment protocol. Do not pick
   dimensions for favorable outcomes or silently rewrite legacy certificates.
+- Before allocating workers for a new receiving course bank, validate every
+  declared course with `training.receiving_course_preflight.preflight_receiving_courses`.
+  A perturbation of a boundary course can leave the launch domain. Reject the
+  entire declaration before execution; do not clip, replace, or silently drop
+  invalid cases after observing other results. Paired rollouts/replays remain
+  executions of their source course, not additional independent courses.
