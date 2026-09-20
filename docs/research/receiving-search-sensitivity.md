@@ -145,3 +145,14 @@ future，并等待在途 worker 完成，不删除任何试次、不修改原考
 证据：`m0/nested-seeded-pilot-v1/complete.json`，代码快照 `dba4c20`，
 manifest `380f9393f2ba28bcb249ffd4af1d3cd8ed9eb0043da00b99356cc8476d9b2260`。
 无学习更新、无晋升；未通过 E1/E2，不启动学生或 PPO。
+
+## 原批次收尾清点
+
+父进程在等待在途 worker 完成后以 SIGINT 对应的 130 退出。逐一校验所有
+试次 receipt 与 NPZ 文件哈希，实际保留 **1760 次执行、110 个完整组**：
+A0/A1 各 28 组，A2/A3 各 27 组。剩余 146 组未执行，不计作失败。
+110 组的选中轨迹与重放（220 条）另行重新计算接球信用，全部与原件一致。
+这仍不是完整 64×4 M0，也没有重算每个候选的全部微步安全。
+
+证据：`m0/original-search-drain-complete-v1.json`、
+`m0/matched-selected-drained-audit-v1.json`。不重启已被正对照证伪敏感性的旧搜索。
