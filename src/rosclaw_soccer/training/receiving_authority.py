@@ -70,6 +70,28 @@ def receiving_authority_diagnostics(trace: dict[str, np.ndarray]) -> dict[str, A
     tracking = values["pd_target_rad"] - values["joint_position_rad"]
     pd_torque = values["kp"] * tracking - values["kd"] * values["joint_velocity_radps"]
     requested_mask = abs(requested) > 1e-9
+    support_names = ("completed_support_time_sec", "completed_ground_force_n")
+    support_present = [prefix + name in trace for name in support_names]
+    support_mean = None
+    if any(support_present):
+        if not all(support_present):
+            raise ValueError("paired completed support clock and forces required")
+        support_time = np.asarray(trace[prefix + support_names[0]])
+        support_force = np.asarray(trace[prefix + support_names[1]])
+        if (
+            support_time.shape != (n,)
+            or support_time.dtype.kind not in "fiu"
+            or not np.isfinite(support_time).all()
+            or not np.allclose(support_time, time + 0.002, rtol=0, atol=1e-7)
+            or support_force.shape != (n, 2)
+            or support_force.dtype.kind not in "fiu"
+            or not np.isfinite(support_force).all()
+            or np.any(support_force < 0)
+        ):
+            raise ValueError("finite left/right completed-interval support required")
+        support_mean = np.mean(support_force, axis=0)
+        if not np.isfinite(support_mean).all():
+            raise ValueError("nonfinite derived support statistic")
     return dict(
         schema="soccer.receiving_authority_diagnostics.v1",
         microsteps=n,
@@ -90,4 +112,6 @@ def receiving_authority_diagnostics(trace: dict[str, np.ndarray]) -> dict[str, A
         evidence_authenticated_here=False,
         contact_success_inferred=False,
         promotion_authorized=False,
+        completed_ground_force_mean_n=(None if support_mean is None else support_mean.tolist()),
+        support_implies_balance_or_readiness=False,
     )

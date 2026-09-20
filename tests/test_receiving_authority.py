@@ -72,3 +72,36 @@ def test_invalid_measurements_fail_closed(key, value):
 def test_missing_path_is_not_synthesized_from_motion():
     with pytest.raises(ValueError):
         receiving_authority_diagnostics({})
+
+
+def support_fixture():
+    trace = fixture()
+    trace["receiving_authority_completed_support_time_sec"] = np.arange(1, 21) * 0.002
+    trace["receiving_authority_completed_ground_force_n"] = np.tile([120.0, 180.0], (20, 1))
+    return trace
+
+
+def test_completed_support_is_optional_and_not_readiness():
+    assert receiving_authority_diagnostics(fixture())["completed_ground_force_mean_n"] is None
+    report = receiving_authority_diagnostics(support_fixture())
+    assert report["completed_ground_force_mean_n"] == [120.0, 180.0]
+    assert not report["support_implies_balance_or_readiness"]
+
+
+@pytest.mark.parametrize("fault", ["missing", "start_clock", "negative", "nan", "shape"])
+def test_invalid_completed_support_rejected(fault):
+    trace = support_fixture()
+    clock = "receiving_authority_completed_support_time_sec"
+    force = "receiving_authority_completed_ground_force_n"
+    if fault == "missing":
+        del trace[clock]
+    elif fault == "start_clock":
+        trace[clock] -= 0.002
+    elif fault == "negative":
+        trace[force][0, 0] = -1
+    elif fault == "nan":
+        trace[force][0, 0] = np.nan
+    else:
+        trace[force] = np.zeros((20, 3))
+    with pytest.raises(ValueError):
+        receiving_authority_diagnostics(trace)

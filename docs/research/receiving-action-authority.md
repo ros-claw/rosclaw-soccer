@@ -42,3 +42,24 @@
 证据目录：`receiving-mechanism-reboot/m0/authority-qualification-v1`，
 包括 `complete.json`、两条原始 NPZ、`pair-diagnostic.json`。
 负结果保留在 `sonic-surface-coupling-v1/complete.json`。
+
+## 完成物理步的支撑载荷观测
+
+新增 `CompletedGroundSupport`，仅在显式权限诊断模式中读取刚完成的 MuJoCo
+接触求解结果，记录左右脚与静态地面之间的法向力。不调用 `mj_forward`，不把
+球地接触或其他机器人的接触算入支撑，不从载荷推断平衡或下一动作 readiness。
+时钟使用物理步结束时间，与此前步前的动作记录相差 2 ms，诊断器检查两者配对。
+
+对同一公开课程的基线与 18 mm 提案重新执行，共两次；此前全部原始数组精确
+一致。第 60–85 帧右脚平均地面载荷分别为 151.14 N / 159.36 N；第 78–82 帧
+为 161.38 N / 182.09 N。两条轨迹整个 6 秒内左右脚的每个物理步载荷均超过
+20 N（这里只是描述阈值，不是安全判据）。因此这是持续承重中的关节跟踪问题，
+不能将局部表面几何提案视为自由摆腿；仍不能单凭相关性断言支撑是唯一原因。
+下一项机制检验应考虑支撑转换与全身参考协调，不扩大已有失败的局部踝扰动族。
+
+证据：`m0/completed-support-qualification-v1/complete.json`、
+`support-diagnostic-v2.json`。早版 `support-diagnostic.json` 的 scope 误写为两门课程，
+保留原件；v2 修正为同一课程的两种提案，数值不变。
+本次单元测试 19 项通过，两个诊断模块 mypy 和所有变更文件 Ruff 通过。
+此前 86d0423 回归：4,772 passed、50 skipped、11 failed；11 项均属于已记录的
+旧外部证据校验测试，未豁免、未重新签名，不宣称全仓测试通过。

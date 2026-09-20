@@ -1256,6 +1256,25 @@ def simulate_independent_team_world(
     ball_joint = _id(model, mujoco.mjtObj.mjOBJ_JOINT, "ball_free")
     ball_qpos = int(model.jnt_qposadr[ball_joint])
     ball_qvel = int(model.jnt_dofadr[ball_joint])
+    authority_support = None
+    if capture_oracle_authority:
+        from rosclaw_soccer.sim.completed_support import CompletedGroundSupport
+
+        assert receiving_oracle is not None
+        focal_controller = next(
+            c for c in controllers if c.cell.agent_id == receiving_oracle.agent_id
+        )
+        authority_support = CompletedGroundSupport(
+            model,
+            pelvis_body=focal_controller.pelvis_body,
+            left_foot_geoms=focal_controller.left_foot_geoms,
+            right_foot_geoms=focal_controller.right_foot_geoms,
+            ground_geoms=frozenset(
+                int(i)
+                for i in range(model.ngeom)
+                if model.geom_bodyid[i] == 0 and model.geom_type[i] == mujoco.mjtGeom.mjGEOM_PLANE
+            ),
+        )
     data.qpos[ball_qpos : ball_qpos + 3] = scenario.ball_initial_position_m
     data.qpos[ball_qpos + 3 : ball_qpos + 7] = (1.0, 0.0, 0.0, 0.0)
     data.qvel[ball_qvel : ball_qvel + 3] = scenario.ball_initial_velocity_mps
@@ -3166,6 +3185,13 @@ def simulate_independent_team_world(
                     state=opposite_net_state,
                 )
             mujoco.mj_step(model, data)
+            if authority_support is not None:
+                trace.setdefault("receiving_authority_completed_support_time_sec", []).append(
+                    float(data.time)
+                )
+                trace.setdefault("receiving_authority_completed_ground_force_n", []).append(
+                    authority_support.read(data)
+                )
             if motor_targets or persistent_physics_observer_ids:
                 _observe_team_motor_physics(
                     model,
