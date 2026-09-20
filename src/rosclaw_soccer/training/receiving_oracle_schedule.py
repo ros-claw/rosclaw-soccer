@@ -74,6 +74,7 @@ class ReceivingOracleCursor:
         active: bool,
         predecessor: np.ndarray,
         reference_frame: int | None = None,
+        desired_override_rad: tuple[float, ...] | None = None,
     ) -> np.ndarray | None:
         if self.faulted:
             raise ValueError("oracle cursor fault is latched")
@@ -86,6 +87,18 @@ class ReceivingOracleCursor:
                 or frame < self.schedule.start_frame
             ):
                 raise ValueError("explicit bounded post-entry reference frame required")
+            if desired_override_rad is not None and (
+                self.schedule.substrate != "A0_leg12"
+                or reference_frame is not None
+                or frame < self.schedule.start_frame
+                or type(desired_override_rad) is not tuple
+                or len(desired_override_rad) != 12
+                or any(
+                    type(v) not in (int, float) or not np.isfinite(v) or abs(v) > 0.1
+                    for v in desired_override_rad
+                )
+            ):
+                raise ValueError("bounded post-entry leg feedback cannot mix with phase override")
             old = np.asarray(predecessor)
             if old.shape != (12,) or not np.isfinite(old).all() or np.any(abs(old) > 0.100000001):
                 raise ValueError("bounded actual predecessor required")
@@ -105,6 +118,8 @@ class ReceivingOracleCursor:
             fraction = min(offset - left, 1.0)
             knots = np.asarray(self.schedule.knots)
             desired = 0.1 * ((1 - fraction) * knots[left] + fraction * knots[right])
+            if desired_override_rad is not None:
+                desired = np.asarray(desired_override_rad, dtype=np.float64)
             if not active:
                 desired[:] = 0
             self.previous += np.clip(0.25 * (desired - self.previous), -0.02, 0.02)

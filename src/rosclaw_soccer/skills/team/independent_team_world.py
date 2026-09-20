@@ -130,6 +130,11 @@ from rosclaw_soccer.skills.team.navigation_option import (
     TeamNavigationPolicy,
 )
 from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
+from rosclaw_soccer.training.receiving_feedback import (
+    ReceivingFeedbackObservation,
+    ReceivingFeedbackProvider,
+    ReceivingFeedbackSlot,
+)
 from rosclaw_soccer.training.receiving_oracle_schedule import (
     ReceivingOracleCursor,
     ReceivingOracleSchedule,
@@ -992,6 +997,7 @@ def simulate_independent_team_world(
     persistent_physics_observer_ids: tuple[str, ...] = (),
     receiving_oracle: ReceivingOracleSchedule | None = None,
     receiving_phase_reference: ReceivingPhaseReference | None = None,
+    receiving_feedback: ReceivingFeedbackProvider | None = None,
     capture_oracle_authority: bool = False,
     capture_initial_physics: bool = False,
     capture_initial_support: bool = False,
@@ -1068,6 +1074,13 @@ def simulate_independent_team_world(
         raise ValueError("delayed SONIC requires an explicit unchanged-prefix fallback")
     oracle_cursor = None
     phase_cursor = None
+    feedback_slot = None
+    feedback_contact_time: float | None = None
+    feedback_contact_foot: int | None = None
+    if receiving_feedback is not None:
+        if receiving_oracle is None or receiving_phase_reference is not None:
+            raise ValueError("feedback requires its oracle schedule without another phase provider")
+        feedback_slot = ReceivingFeedbackSlot(receiving_feedback, receiving_oracle)
     if receiving_phase_reference is not None:
         if not isinstance(receiving_phase_reference, ReceivingPhaseReference):
             raise ValueError("typed phase reference required")
@@ -2784,11 +2797,71 @@ def simulate_independent_team_world(
                 trace.setdefault("receiving_phase_contract", []).append(
                     phase_cursor.reference.contract_hash
                 )
+            feedback_desired = None
+            if feedback_slot is not None:
+                focal_controller = next(c for c in controllers if c.cell.agent_id == oracle_agent)
+                feedback_observation = ReceivingFeedbackObservation(
+                    agent_id=oracle_agent,
+                    frame=frame,
+                    time_sec=float(data.time),
+                    qpos=tuple(
+                        float(v)
+                        for v in np.r_[
+                            data.qpos[focal_controller.qpos_base : focal_controller.qpos_base + 7],
+                            data.qpos[focal_controller.joint_qpos],
+                            data.qpos[ball_qpos : ball_qpos + 7],
+                        ]
+                    ),
+                    qvel=tuple(
+                        float(v)
+                        for v in np.r_[
+                            data.qvel[focal_controller.qvel_base : focal_controller.qvel_base + 6],
+                            data.qvel[focal_controller.joint_qvel],
+                            data.qvel[ball_qvel : ball_qvel + 6],
+                        ]
+                    ),
+                    foundation_target=TeamMotorTarget(
+                        tuple(float(v) for v in focal_controller.output.actions),
+                        tuple(float(v) for v in focal_controller.output.kps),
+                        tuple(float(v) for v in focal_controller.output.kds),
+                    ),
+                    native_actor_raw=tuple(float(v) for v in latent[oracle_index]),
+                    last_own_foot_contact_time_sec=feedback_contact_time,
+                    last_own_contact_foot=feedback_contact_foot,
+                )
+                feedback_desired = feedback_slot.step(feedback_observation)
+                trace.setdefault("receiving_feedback_observation_hash", []).append(
+                    feedback_observation.observation_hash
+                )
+                for field in ("qpos", "qvel", "native_actor_raw"):
+                    trace.setdefault(f"receiving_feedback_{field}", []).append(
+                        np.asarray(getattr(feedback_observation, field))
+                    )
+                for field in ("target_rad", "kp", "kd"):
+                    trace.setdefault(f"receiving_feedback_foundation_{field}", []).append(
+                        np.asarray(getattr(feedback_observation.foundation_target, field))
+                    )
+                trace.setdefault("receiving_feedback_last_foot_contact", []).append(
+                    (
+                        -1.0 if feedback_contact_time is None else feedback_contact_time,
+                        -1 if feedback_contact_foot is None else feedback_contact_foot,
+                    )
+                )
+                trace.setdefault("receiving_feedback_contract", []).append(
+                    feedback_slot.contract_hash
+                )
+                trace.setdefault("receiving_feedback_active", []).append(
+                    feedback_desired is not None
+                )
+                trace.setdefault("receiving_feedback_desired_rad", []).append(
+                    np.zeros(12) if feedback_desired is None else np.asarray(feedback_desired)
+                )
             oracle_delta = oracle_cursor.step(
                 frame,
                 active=oracle_active,
                 predecessor=oracle_predecessor,
                 reference_frame=reference_frame,
+                desired_override_rad=feedback_desired,
             )
             if oracle_delta is not None and oracle_agent not in motor_faults:
                 residual_by_id[oracle_agent] = oracle_delta
@@ -3285,6 +3358,14 @@ def simulate_independent_team_world(
                     wrench: NDArray[np.float64] = np.zeros(6, dtype=np.float64)
                     mujoco.mj_contactForce(model, data, contact_index, wrench)
                     force = float(np.linalg.norm(wrench[:3]))
+                    if (
+                        feedback_slot is not None
+                        and controller.cell.agent_id == feedback_slot.agent_id
+                        and effector_code in (1, 2)
+                        and force > 0
+                    ):
+                        feedback_contact_time = float(data.time)
+                        feedback_contact_foot = effector_code
                     if controlled_possession is not None and force > 1.0:
                         if effector_code in (1, 2):
                             control_foot_agents.add(controller.cell.agent_id)

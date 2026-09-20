@@ -27,6 +27,10 @@ from rosclaw_soccer.training.receiving_classroom import (
     coached_receiving_cells,
     r0_receiving_configuration,
 )
+from rosclaw_soccer.training.receiving_feedback import (
+    ReceivingFeedbackProvider,
+    ReceivingFeedbackSlot,
+)
 from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSchedule
 from rosclaw_soccer.training.receiving_phase_feedback import ReceivingPhaseReference
 from rosclaw_soccer.training.role_receiving_courses import (
@@ -47,6 +51,7 @@ def simulate_r0_receiving_course(
     capture_oracle_authority: bool = False,
     oracle: ReceivingOracleSchedule | None = None,
     phase_reference: ReceivingPhaseReference | None = None,
+    feedback_provider: ReceivingFeedbackProvider | None = None,
     suppression: ContactTeacherSuppression | None = None,
     sonic_model_root: Path | None = None,
     sonic_start_frame: int = 0,
@@ -64,6 +69,10 @@ def simulate_r0_receiving_course(
     """
     if not isinstance(course, ReceivingCourse) or course.agent_id not in ROSTER:
         raise ValueError("typed focal receiving course required")
+    if feedback_provider is not None:
+        if oracle is None or phase_reference is not None:
+            raise ValueError("feedback must bind one schedule without competing phase feedback")
+        ReceivingFeedbackSlot(feedback_provider, oracle)
     if phase_reference is not None:
         if not isinstance(phase_reference, ReceivingPhaseReference):
             raise ValueError("typed phase reference required")
@@ -152,6 +161,7 @@ def simulate_r0_receiving_course(
         motor_options=motors,
         receiving_oracle=oracle,
         receiving_phase_reference=phase_reference,
+        receiving_feedback=feedback_provider,
         capture_oracle_authority=capture_oracle_authority,
         contact_teacher_suppression=suppression,
         capture_initial_physics=True,
