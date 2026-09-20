@@ -98,3 +98,34 @@ PPO 的门槛保持不变。历史 17/128、DEV256 和上述正例集合不得�
 这是接球信用与轨迹完整性复核，不是独立重算全部微步安全，也不是完整 M0
 通过。没有复算所有搜索提案，不能扩大此结论。证据为
 `m0/matched-selected-audit-v1.json`，外置脚本 `audit_completed_oracle.py`。
+
+## 正对照完成与嵌套接口证伪
+
+八场原生成功课程的四接口随机搜索现已完成 512 次执行：A0 安全接球 1/8，
+A1/A2/A3 各 0/8。32 组的选中轨迹和重放都已从原始接触重新评分，结果一致。
+其中六场已被四节点动作种子证明可行；A0 搜索只找回其中一场。对此 Core
+先记录 `NEED_EVIDENCE`，没有将低搜索分数当作物理不可达。
+
+随后对这六个 A0 动作做明确的嵌套检验：每个 12D 节点追加 17 个零，得到
+A1 的 29D 节点，入口、时间基底、滤波、边界与场景均不改变。六场各执行
+primary/replay，共 12 次，**6/6 安全接球**；除动作合同身份外，原 A0 的所有
+记录数组完全相同，独立 A1 重放也相同。
+
+这直接证明：A1 随机搜索的 0/8 并不表示它没有这些接球能力。更高维搜索
+丢掉了低维接口中已知可行的解，因此不能据此给动作空间排序。通用 Research
+Coach 用这六个已认证 A1 正例及搜索零找回证据，实际返回 `SEARCH_OR_ASSAY`，
+训练和晋升授权仍为 false。
+
+已向原 4096 上限批次的单一父进程请求优雅收尾：现有异常处理取消待执行
+future，并等待在途 worker 完成，不删除任何试次、不修改原考题。该批次是
+**因搜索方法诊断而提前结束，不是完成全部 64×4 的 M0**；最终实际次数须在
+进程退出后按各组原件统计。不能把被取消的组算失败、把部分分母当 64。
+
+新增 `receiving_oracle_embedding.embed_leg_oracle_in_body` 保留这一可测试的
+映射；后续搜索必须以经过物理验证的嵌入解作 incumbent，再探索额外自由度。
+不假设 A0 与 SONIC 等不同运动基础之间也存在这种等价映射。
+
+证据：`m0/positive-oracle-controls-v1/complete.json`、
+`m0/positive-selected-audit-v1.json`、`m0/nested-action-witness-v1/complete.json`、
+`core-oracle-assay-decision-v1.json`、`core-nested-assay-decision-v1.json`、
+`m0/original-search-drain-request-v1.json`。
