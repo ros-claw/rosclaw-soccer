@@ -986,6 +986,7 @@ def simulate_independent_team_world(
     persistent_physics_observer_ids: tuple[str, ...] = (),
     receiving_oracle: ReceivingOracleSchedule | None = None,
     capture_initial_physics: bool = False,
+    capture_initial_support: bool = False,
     physics_checkpoint_frame: int = 0,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all neural locomotion bodies in one clock.
@@ -1000,6 +1001,10 @@ def simulate_independent_team_world(
     active = config or IndependentTeamWorldConfig()
     if type(capture_initial_physics) is not bool:
         raise ValueError("explicit physical capture flag required")
+    if type(capture_initial_support) is not bool or (
+        capture_initial_support and not capture_initial_physics
+    ):
+        raise ValueError("support capture requires an explicit physical checkpoint")
     if (
         type(physics_checkpoint_frame) is not int
         or not 0 <= physics_checkpoint_frame < round(active.simulation_duration_sec / _CONTROL_DT)
@@ -1431,6 +1436,53 @@ def simulate_independent_team_world(
             trace["initial_integration_hash"] = [initial_checkpoint.state_hash]
             trace["initial_mujoco_version"] = [initial_checkpoint.mujoco_version]
             trace["initial_control_frame"] = [frame]
+            if capture_initial_support:
+                from rosclaw_soccer.sim.support_observation import observe_support
+
+                ground_geoms = frozenset(
+                    i
+                    for i in range(model.ngeom)
+                    if model.geom(i).name in {"floor", "ground", "pitch"}
+                    and model.geom_bodyid[i] == 0
+                )
+                support_rows = []
+                for controller in controllers:
+                    support = observe_support(
+                        model,
+                        data,
+                        pelvis_body=controller.pelvis_body,
+                        left_foot_geoms=controller.left_foot_geoms,
+                        right_foot_geoms=controller.right_foot_geoms,
+                        ground_geoms=ground_geoms,
+                    )
+                    support_rows.append(
+                        [
+                            *support.pelvis_position_m,
+                            *support.pelvis_velocity_mps,
+                            *support.subtree_com_m,
+                            support.left_normal_force_n,
+                            support.right_normal_force_n,
+                            support.support_code,
+                            support.force_threshold_n,
+                        ]
+                    )
+                trace["initial_support_measurements"] = support_rows
+                trace["initial_support_agent_ids"] = [c.cell.agent_id for c in controllers]
+                trace["initial_support_columns"] = [
+                    "pelvis_x_m",
+                    "pelvis_y_m",
+                    "pelvis_z_m",
+                    "pelvis_vx_mps",
+                    "pelvis_vy_mps",
+                    "pelvis_vz_mps",
+                    "subtree_com_x_m",
+                    "subtree_com_y_m",
+                    "subtree_com_z_m",
+                    "left_ground_normal_force_n",
+                    "right_ground_normal_force_n",
+                    "support_code_0_air_1_left_2_right_3_double",
+                    "force_threshold_n",
+                ]
         if return_referee is not None:
             before_pose = data.qpos[ball_qpos : ball_qpos + 7].copy()
             before_velocity = data.qvel[ball_qvel : ball_qvel + 6].copy()

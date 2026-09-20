@@ -192,3 +192,41 @@ def test_boundary_observation_is_independent_of_exit_termination() -> None:
     assert bounded.keys() == full.keys()
     for key in bounded:
         np.testing.assert_array_equal(bounded[key], full[key][: len(bounded[key])])
+
+
+@pytest.mark.integration
+def test_entry_support_capture_does_not_change_physical_trajectory() -> None:
+    value = os.environ.get("ROSCLAW_G1_ASSET_ROOT")
+    if value is None:
+        pytest.skip("ROSCLAW_G1_ASSET_ROOT is not configured")
+    root = Path(value)
+    traces = []
+    for enabled in (False, True):
+        fixture = build_independent_three_vs_three_fixture(root)
+        _, trace = simulate_independent_team_world(
+            asset_root=root,
+            roster=fixture.roster,
+            cells=fixture.cells,
+            players=fixture.players,
+            scenario=IndependentTeamWorldScenario(
+                "s199.entry-support",
+                (2.0, 0.0, fixture.goal.ball_radius_m),
+                (0.2, 0.0, 0.0),
+                920601,
+            ),
+            goal=fixture.goal,
+            config=IndependentTeamWorldConfig(simulation_duration_sec=5.0),
+            capture_initial_physics=True,
+            capture_initial_support=enabled,
+            physics_checkpoint_frame=30,
+        )
+        traces.append(trace)
+    baseline, observed = traces
+    for key in baseline:
+        np.testing.assert_array_equal(baseline[key], observed[key])
+    measurements = observed["initial_support_measurements"]
+    assert measurements.shape == (6, 13)
+    assert np.isfinite(measurements).all()
+    assert set(measurements[:, 11]) <= {0, 1, 2, 3}
+    assert len(set(observed["initial_support_agent_ids"])) == 6
+    assert len(observed["initial_support_columns"]) == 13
