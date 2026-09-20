@@ -129,6 +129,7 @@ from rosclaw_soccer.skills.team.navigation_option import (
     NavigationSlot,
     TeamNavigationPolicy,
 )
+from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
 from rosclaw_soccer.training.receiving_oracle_schedule import (
     ReceivingOracleCursor,
     ReceivingOracleSchedule,
@@ -988,6 +989,7 @@ def simulate_independent_team_world(
     capture_initial_physics: bool = False,
     capture_initial_support: bool = False,
     physics_checkpoint_frame: int = 0,
+    contact_teacher_suppression: ContactTeacherSuppression | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all neural locomotion bodies in one clock.
 
@@ -1054,6 +1056,18 @@ def simulate_independent_team_world(
     ):
         raise ValueError("delayed SONIC requires an explicit unchanged-prefix fallback")
     oracle_cursor = None
+    if contact_teacher_suppression is not None:
+        if not isinstance(contact_teacher_suppression, ContactTeacherSuppression):
+            raise ValueError("typed contact teacher suppression required")
+        contact_teacher_suppression.__post_init__()
+        if (
+            contact_teacher_config is None
+            or contact_teacher_suppression.agent_id not in roster_ids
+            or near_ball_explore
+        ):
+            raise ValueError(
+                "teacher ablation requires configured teacher, frozen policy and roster"
+            )
     if receiving_oracle is not None:
         receiving_oracle.__post_init__()
         if (
@@ -1425,6 +1439,18 @@ def simulate_independent_team_world(
         else None
     )
     for frame in range(total_frames):
+        teacher_suppressed_agent = (
+            contact_teacher_suppression.suppressed_agent(frame)
+            if contact_teacher_suppression is not None
+            else None
+        )
+        if contact_teacher_suppression is not None:
+            trace.setdefault("contact_teacher_suppression_contract", []).append(
+                contact_teacher_suppression.contract_hash
+            )
+            trace.setdefault("contact_teacher_suppressed_agent", []).append(
+                teacher_suppressed_agent or ""
+            )
         if capture_initial_physics and frame == physics_checkpoint_frame:
             from rosclaw_soccer.sim.physical_checkpoint import PhysicalCheckpoint
 
@@ -2820,6 +2846,7 @@ def simulate_independent_team_world(
                     raw_torque += controller.keeper_reach.torque_nm
                 if (
                     controller is teacher_controller
+                    and controller.cell.agent_id != teacher_suppressed_agent
                     and controller.cell.agent_id not in motor_targets
                     and controller.cell.agent_id not in option_controllers
                     and (not post_receive_stabilizing or capture_contact_control)
