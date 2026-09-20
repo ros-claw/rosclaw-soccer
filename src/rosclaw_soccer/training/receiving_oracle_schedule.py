@@ -67,12 +67,25 @@ class ReceivingOracleCursor:
         self.previous: np.ndarray | None = None
         self.faulted = False
 
-    def step(self, frame: int, *, active: bool, predecessor: np.ndarray) -> np.ndarray | None:
+    def step(
+        self,
+        frame: int,
+        *,
+        active: bool,
+        predecessor: np.ndarray,
+        reference_frame: int | None = None,
+    ) -> np.ndarray | None:
         if self.faulted:
             raise ValueError("oracle cursor fault is latched")
         try:
             if type(frame) is not int or frame != self.next_frame or type(active) is not bool:
                 raise ValueError("consecutive oracle frames and explicit admission required")
+            if reference_frame is not None and (
+                type(reference_frame) is not int
+                or not self.schedule.start_frame <= reference_frame < 1000
+                or frame < self.schedule.start_frame
+            ):
+                raise ValueError("explicit bounded post-entry reference frame required")
             old = np.asarray(predecessor)
             if old.shape != (12,) or not np.isfinite(old).all() or np.any(abs(old) > 0.100000001):
                 raise ValueError("bounded actual predecessor required")
@@ -85,7 +98,8 @@ class ReceivingOracleCursor:
                 # SONIC has no preceding leg residual; do not invent one.
                 if self.schedule.substrate != "A3_sonic_residual":
                     self.previous[:12] = old
-            offset = (frame - self.schedule.start_frame) / self.schedule.knot_frames
+            selected_frame = frame if reference_frame is None else reference_frame
+            offset = (selected_frame - self.schedule.start_frame) / self.schedule.knot_frames
             left = min(int(offset), len(self.schedule.knots) - 1)
             right = min(left + 1, len(self.schedule.knots) - 1)
             fraction = min(offset - left, 1.0)

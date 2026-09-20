@@ -28,6 +28,7 @@ from rosclaw_soccer.training.receiving_classroom import (
     r0_receiving_configuration,
 )
 from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSchedule
+from rosclaw_soccer.training.receiving_phase_feedback import ReceivingPhaseReference
 from rosclaw_soccer.training.role_receiving_courses import (
     ROSTER,
     ReceivingCourse,
@@ -45,6 +46,7 @@ def simulate_r0_receiving_course(
     capture_support: bool = False,
     capture_oracle_authority: bool = False,
     oracle: ReceivingOracleSchedule | None = None,
+    phase_reference: ReceivingPhaseReference | None = None,
     suppression: ContactTeacherSuppression | None = None,
     sonic_model_root: Path | None = None,
     sonic_start_frame: int = 0,
@@ -62,6 +64,18 @@ def simulate_r0_receiving_course(
     """
     if not isinstance(course, ReceivingCourse) or course.agent_id not in ROSTER:
         raise ValueError("typed focal receiving course required")
+    if phase_reference is not None:
+        if not isinstance(phase_reference, ReceivingPhaseReference):
+            raise ValueError("typed phase reference required")
+        phase_reference.__post_init__()
+        if (
+            oracle is None
+            or not isinstance(oracle, ReceivingOracleSchedule)
+            or oracle.substrate != "A0_leg12"
+            or phase_reference.schedule_hash != oracle.contract_hash
+            or phase_reference.start_frame != oracle.start_frame
+        ):
+            raise ValueError("phase reference must bind this A0 schedule and entry")
     if type(capture_oracle_authority) is not bool or (capture_oracle_authority and oracle is None):
         raise ValueError("authority capture requires a receiving oracle")
     if (
@@ -137,6 +151,7 @@ def simulate_r0_receiving_course(
         near_ball_explore=False,
         motor_options=motors,
         receiving_oracle=oracle,
+        receiving_phase_reference=phase_reference,
         capture_oracle_authority=capture_oracle_authority,
         contact_teacher_suppression=suppression,
         capture_initial_physics=True,

@@ -134,6 +134,11 @@ from rosclaw_soccer.training.receiving_oracle_schedule import (
     ReceivingOracleCursor,
     ReceivingOracleSchedule,
 )
+from rosclaw_soccer.training.receiving_phase_feedback import (
+    ReceivingPhaseCursor,
+    ReceivingPhaseReference,
+    receiving_phase_features,
+)
 from rosclaw_soccer.world.field import (
     G1CompliantGoalNetState,
     G1TrainingGoalSpec,
@@ -986,6 +991,7 @@ def simulate_independent_team_world(
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
     receiving_oracle: ReceivingOracleSchedule | None = None,
+    receiving_phase_reference: ReceivingPhaseReference | None = None,
     capture_oracle_authority: bool = False,
     capture_initial_physics: bool = False,
     capture_initial_support: bool = False,
@@ -1061,6 +1067,19 @@ def simulate_independent_team_world(
     ):
         raise ValueError("delayed SONIC requires an explicit unchanged-prefix fallback")
     oracle_cursor = None
+    phase_cursor = None
+    if receiving_phase_reference is not None:
+        if not isinstance(receiving_phase_reference, ReceivingPhaseReference):
+            raise ValueError("typed phase reference required")
+        receiving_phase_reference.__post_init__()
+        if (
+            receiving_oracle is None
+            or receiving_oracle.substrate != "A0_leg12"
+            or receiving_phase_reference.schedule_hash != receiving_oracle.contract_hash
+            or receiving_phase_reference.start_frame != receiving_oracle.start_frame
+        ):
+            raise ValueError("phase diagnostic must bind this A0 schedule and entry")
+        phase_cursor = ReceivingPhaseCursor(receiving_phase_reference)
     if contact_teacher_suppression is not None:
         if not isinstance(contact_teacher_suppression, ContactTeacherSuppression):
             raise ValueError("typed contact teacher suppression required")
@@ -2748,8 +2767,28 @@ def simulate_independent_team_world(
             oracle_active = bool(residual_active[oracle_index])
             if receiving_oracle.substrate == "A3_sonic_residual":
                 oracle_active = oracle_agent in motor_targets and oracle_agent not in motor_faults
+            reference_frame = None
+            if phase_cursor is not None:
+                focal_controller = next(c for c in controllers if c.cell.agent_id == oracle_agent)
+                features = receiving_phase_features(
+                    data.qpos[focal_controller.qpos_base : focal_controller.qpos_base + 7],
+                    data.qpos[focal_controller.joint_qpos[:12]],
+                    data.qpos[ball_qpos : ball_qpos + 3],
+                    data.qvel[ball_qvel : ball_qvel + 3],
+                )
+                reference_frame = phase_cursor.step(frame, features)
+                trace.setdefault("receiving_phase_reference_frame", []).append(
+                    -1 if reference_frame is None else reference_frame
+                )
+                trace.setdefault("receiving_phase_observed_features", []).append(features)
+                trace.setdefault("receiving_phase_contract", []).append(
+                    phase_cursor.reference.contract_hash
+                )
             oracle_delta = oracle_cursor.step(
-                frame, active=oracle_active, predecessor=oracle_predecessor
+                frame,
+                active=oracle_active,
+                predecessor=oracle_predecessor,
+                reference_frame=reference_frame,
             )
             if oracle_delta is not None and oracle_agent not in motor_faults:
                 residual_by_id[oracle_agent] = oracle_delta
