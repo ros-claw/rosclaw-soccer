@@ -37,3 +37,25 @@
 
 外置证据：`sonic-body-transfer-audit-v1.json`、
 `sonic-official-audit-assets/manifest.json`、`sonic-body-transfer-probe-v1/complete.json`。
+
+## 静止参考与零命令复查
+
+为分离“跑动参考困难”和资产迁移因素，另外执行 8 次三秒 CPU MuJoCo 诊断：
+两种资产 × 固定初始姿态/零速度 planner × primary/replay。逐个核对 29 关节
+qpos/qvel 地址及 actuator joint 映射，冻结 low-latency 模型、增益及保护。
+所有成对轨迹逐数组一致；没有 DDS、真实设备、额外支撑力或学习更新。
+
+| 资产 / 参考 | 最低骨盆高度 m | 最大绝对 roll/pitch rad |
+| --- | --- | --- |
+| 官方 29DoF XML / 固定姿态 | 0.1062 | 2.0389 |
+| 官方 29DoF XML / 零命令 planner | 0.0698 | 3.0360 |
+| 足球资产 / 固定姿态 | 0.7377 | 0.0667 |
+| 足球资产 / 零命令 planner | 0.7477 | 0.0783 |
+
+足球资产上的冻结跟踪器能在这两个无球条件下维持站立，不能把接球失败泛化为
+“SONIC 连站立都不会”。反之，直接导入 `gear_sonic_deploy/g1/g1_29dof.xml`
+仍不能当作已资格原生 sim2sim；官方运行配置实际指向带手的 `scene_43dof.xml`，
+还包含初始化/状态传输等其他运行条件。此表不是官方完整系统质量结论，也不
+支持直接把 XML 替换进冻结接球考试。
+
+证据：`sonic-stationary-probe-v1/complete.json`。没有据此改写原 M0 或其物理哈希。
