@@ -97,3 +97,42 @@ def timing_continuations(
         replace(schedule, knots=tuple(tuple(float(v) for v in row) for row in values))
         for values in variants
     )
+
+
+def coordinate_continuations(
+    schedule: ReceivingOracleSchedule,
+    *,
+    branch_frame: int,
+    dimensions: tuple[int, ...],
+    normalized_step: float = 0.35,
+) -> tuple[ReceivingOracleSchedule, ...]:
+    """Probe declared future joint coordinates, preserving the entire past.
+
+    The caller binds indices to its model joint contract and measures contact
+    consequences in physics. No anatomical meaning or success is inferred here.
+    """
+    locked = locked_knot_count(schedule, branch_frame=branch_frame)
+    width = len(schedule.knots[0])
+    if (
+        type(dimensions) is not tuple
+        or not 1 <= len(dimensions) <= 12
+        or any(type(index) is not int or not 0 <= index < width for index in dimensions)
+        or len(set(dimensions)) != len(dimensions)
+        or type(normalized_step) not in (int, float)
+        or not np.isfinite(normalized_step)
+        or not 0 < normalized_step <= 0.5
+        or locked == len(schedule.knots)
+    ):
+        raise ValueError("bounded unique future coordinates and perturbation required")
+    source = np.asarray(schedule.knots, dtype=np.float64)
+    proposals = [schedule]
+    for dimension in dimensions:
+        for sign in (-1, 1):
+            values = source.copy()
+            values[locked:, dimension] = np.clip(
+                source[locked:, dimension] + sign * normalized_step, -1, 1
+            )
+            proposals.append(
+                replace(schedule, knots=tuple(tuple(float(v) for v in row) for row in values))
+            )
+    return tuple(proposals)

@@ -119,3 +119,26 @@
 
 证据：`command-scale-default-qualification-v1/verification.json`、
 `command-scale-optional-qualification-v1/optional-verification.json`。
+
+## A3 未来关节反馈 v1：仍未通过，不能进入学生训练
+
+固定 m0-00 的潜变量与导航倍率，扩展末端保持节点，另取两条公开课程：
+blue.defender，0.6 m/s，侧偏 -0.10/-0.14 m。
+第 40/60/80/100 帧分别比较 incumbent 与 4 个未来关节扰动，最后独立重放，
+共 42 次仿真。所有分支的物理状态、模型和过去轨迹一致，最终逐数组精确重放。
+
+两例都是开环失败、反馈后仍失败，安全检查通过。-0.14 m 那例的最长连续
+控制从 0.74 s 增至 1.22 s，但仍有 2 帧非脚部接触；-0.10 m 那例从 2 帧
+减至 1 帧，仍无连续干净控球。不能用这些局部指标替代原判决。
+
+对两例初始轨迹额外检查了触球对齐的完整窗口；即使消除原窗口长度不足，
+仍有非脚部接触与尾段距离过大，所以不是单纯的评分边界问题。
+这些事后窗口仅供诊断，未替代原 admission，也未生成训练成功标签。
+
+下一项有限提案针对触球前的膝踝坐标，而不是在已经出现禁止接触后继续
+扰动未来动作。`coordinate_continuations` 保留插值依赖的整个过去，只修改
+显式列出的未来关节，仍维持 ±0.1 rad、原滤波和力矩保护。
+坐标与原 continuation 合计 46 项测试通过；此接口本身不是训练成果。
+
+证据：`sonic-feedback-v1/complete.json`、`final-diagnostics-v1.json`、
+`incumbent-window-boundary-audit.json`。E2 未合格，DAgger/PPO 未启动。
