@@ -986,6 +986,7 @@ def simulate_independent_team_world(
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
     receiving_oracle: ReceivingOracleSchedule | None = None,
+    capture_oracle_authority: bool = False,
     capture_initial_physics: bool = False,
     capture_initial_support: bool = False,
     physics_checkpoint_frame: int = 0,
@@ -1001,6 +1002,10 @@ def simulate_independent_team_world(
     """
 
     active = config or IndependentTeamWorldConfig()
+    if type(capture_oracle_authority) is not bool or (
+        capture_oracle_authority and receiving_oracle is None
+    ):
+        raise ValueError("authority capture requires an explicit receiving oracle")
     if type(capture_initial_physics) is not bool:
         raise ValueError("explicit physical capture flag required")
     if type(capture_initial_support) is not bool or (
@@ -2816,7 +2821,14 @@ def simulate_independent_team_world(
                     kp = np.asarray(controller.output.kps, dtype=np.float64)
                     kd = np.asarray(controller.output.kds, dtype=np.float64)
                 q = np.asarray(data.qpos[controller.joint_qpos], dtype=np.float64)
+                observe_authority = bool(
+                    capture_oracle_authority
+                    and receiving_oracle is not None
+                    and controller.cell.agent_id == receiving_oracle.agent_id
+                )
+                authority_foundation = target.copy() if observe_authority else None
                 residual = residual_by_id.get(controller.cell.agent_id)
+                authority_added = np.zeros(29) if observe_authority else None
                 if (
                     (
                         controller.cell.agent_id not in residual_blocked
@@ -2829,6 +2841,8 @@ def simulate_independent_team_world(
                 ):
                     target = target.copy()
                     target[: len(residual)] += residual
+                    if authority_added is not None:
+                        authority_added[: len(residual)] = residual
                 dq = np.asarray(data.qvel[controller.joint_qvel], dtype=np.float64)
                 raw_torque = kp * (target - q) - kd * dq
                 if (
@@ -3101,6 +3115,27 @@ def simulate_independent_team_world(
                         margin_rad=active.joint_guard_margin_rad,
                     )
                 torque = np.clip(projected_torque, -guarded_limits, guarded_limits)
+                if observe_authority:
+                    assert authority_foundation is not None and authority_added is not None
+                    requested = np.zeros(29)
+                    if residual is not None:
+                        requested[: len(residual)] = residual
+                    for name, value in (
+                        ("time_sec", float(data.time)),
+                        ("control_frame", frame),
+                        ("foundation_target_rad", authority_foundation),
+                        ("requested_residual_rad", requested),
+                        ("added_residual_rad", authority_added),
+                        ("pd_target_rad", target.copy()),
+                        ("joint_position_rad", q.copy()),
+                        ("joint_velocity_radps", dq.copy()),
+                        ("kp", kp.copy()),
+                        ("kd", kd.copy()),
+                        ("raw_torque_nm", raw_torque.copy()),
+                        ("projected_torque_nm", projected_torque.copy()),
+                        ("executed_torque_nm", torque.copy()),
+                    ):
+                        trace.setdefault("receiving_authority_" + name, []).append(value)
                 if teacher_effect_observed:
                     frame_teacher_guarded = torque.copy()
                 data.ctrl[controller.actuators] = torque

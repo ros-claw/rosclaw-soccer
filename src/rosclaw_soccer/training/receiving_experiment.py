@@ -42,6 +42,7 @@ def simulate_r0_receiving_course(
     scenario_id: str,
     checkpoint_frame: int = 0,
     capture_support: bool = False,
+    capture_oracle_authority: bool = False,
     oracle: ReceivingOracleSchedule | None = None,
     suppression: ContactTeacherSuppression | None = None,
     sonic_model_root: Path | None = None,
@@ -59,6 +60,8 @@ def simulate_r0_receiving_course(
     """
     if not isinstance(course, ReceivingCourse) or course.agent_id not in ROSTER:
         raise ValueError("typed focal receiving course required")
+    if type(capture_oracle_authority) is not bool or (capture_oracle_authority and oracle is None):
+        raise ValueError("authority capture requires a receiving oracle")
     if (
         type(checkpoint_frame) is not int
         or not 0 <= checkpoint_frame < 300
@@ -130,6 +133,7 @@ def simulate_r0_receiving_course(
         near_ball_explore=False,
         motor_options=motors,
         receiving_oracle=oracle,
+        capture_oracle_authority=capture_oracle_authority,
         contact_teacher_suppression=suppression,
         capture_initial_physics=True,
         capture_initial_support=capture_support,
