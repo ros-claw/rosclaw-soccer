@@ -2495,6 +2495,22 @@ def simulate_independent_team_world(
                 trace.setdefault("loco_memory_reflected", []).append(
                     bool(local_command[1] < -1.0e-6)
                 )
+                # Same pre-integration clock as this inference; do not infer
+                # velocities from the later end-of-frame position trace.
+                trace.setdefault("loco_memory_qpos", []).append(
+                    np.r_[
+                        data.qpos[controller.qpos_base : controller.qpos_base + 7],
+                        data.qpos[controller.joint_qpos],
+                        data.qpos[ball_qpos : ball_qpos + 7],
+                    ]
+                )
+                trace.setdefault("loco_memory_qvel", []).append(
+                    np.r_[
+                        data.qvel[controller.qvel_base : controller.qvel_base + 6],
+                        data.qvel[controller.joint_qvel],
+                        data.qvel[ball_qvel : ball_qvel + 6],
+                    ]
+                )
             if controller.keeper_reach is not None:
                 controller.output.actions = controller.keeper_reach.step(
                     model, data, np.asarray(controller.output.actions, dtype=np.float64)
