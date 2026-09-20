@@ -33,3 +33,32 @@ forward/left/right kick 各 30，carry 51，pickball-kick 59。
 可复查外置证据：`receiving-mechanism-reboot/omnicontact-audit-v1.json` 和
 `audit_omnicontact.py`，包含逐文件哈希、划分、字段清单和检查逻辑。
 这是主实施中的定向数据质量检查；还没有训练 OmniContact prior 或通过 E2。
+
+## 2026-09-21：用 MuJoCo FK 实证对齐，而不是猜测身体索引
+
+继续读取本地官方 `OmniContact_sim2sim` 的 `NPZmotion_reference.py`、
+`OmniContact.yaml` 和 `g1_29dof.xml`，固定仓库提交
+`3a61521f49eb051558d9561f8edd28a1985240de`。
+按每条训练 capture 等间隔取 5 帧，共 130 条、650 帧；未用 val/test 选映射。
+
+使用官方 `lab2mj` 关节排列后，骨盆对应 body 0、躯干 11、左右踝 25/26。
+躯干与双踝的最大位置误差小于 1.5e-7 m。
+错误地直接使用原关节顺序，双踝平均误差约 0.236/0.236 m，最大超过 1 m。
+这解释了为什么不能把形状同为 29D 的数组直接当成另一个控制器的动作。
+
+还发现官方 loader 将 body 37/38 命名为 wrist，但实际对应 XML 的
+`left_palm_link` / `right_palm_link`：
+
+- 按手腕关节原点解释，存在稳定的约 0.041608 m 位置偏差；
+- 按掌心原点核对，最大位置误差分别约 6.88e-7 / 6.80e-7 m。
+
+新增 `training.omnicontact_reference`：显式映射关节与身体姿态，验证数组、
+采样率和四元数，返回只读副本；不猜测速度、支撑、接触力或接球成功。
+12 项单元测试、聚焦 Ruff/mypy 检查通过。
+外部文件逐一核对原审计哈希后，全部 130 条训练 capture、744,135 帧均通过
+该映射器。744,135 是帧数，不是独立样本、物理执行次数或训练步数。
+
+证据：`omnicontact-kinematic-mapping-v1.json`、
+`omnicontact-palm-alias-v1.json`、`omnicontact-pose-mapper-qualification-v1.json`。
+这是运动学与数据接口验证，尚未证明动力学跟踪、接球可达性或学生学习成功。
+数据及派生研究资产仍保留非商业限制，不进入宣传材料或默认发布包。
