@@ -10,7 +10,18 @@ from rosclaw_soccer.providers.g1.locomotion_memory import (
 )
 
 torch = pytest.importorskip("torch")
-POLICY = "a" * 64
+POLICY = "sha256:" + "a" * 64
+
+
+def test_canonical_soccer_hash_binding():
+    from rosclaw_soccer.sim.contracts import hash_bytes
+
+    digest = hash_bytes(b"qualified artifact fixture")
+    snapshot = capture_locomotion_memory(model(), policy_hash=digest)
+    assert snapshot.policy_hash == digest
+    assert snapshot.state_hash.startswith("sha256:")
+    with pytest.raises(ValueError):
+        capture_locomotion_memory(model(), policy_hash=digest.removeprefix("sha256:"))
 
 
 def model():

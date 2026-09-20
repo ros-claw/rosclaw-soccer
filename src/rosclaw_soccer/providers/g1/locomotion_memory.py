@@ -23,7 +23,7 @@ class LocomotionMemory:
 
     def __post_init__(self) -> None:
         if not isinstance(self.policy_hash, str) or not re.fullmatch(
-            r"[0-9a-f]{64}", self.policy_hash
+            r"sha256:[0-9a-f]{64}", self.policy_hash
         ):
             raise ValueError("qualified policy SHA256 required")
         for value in (self.hidden, self.cell):
@@ -34,9 +34,15 @@ class LocomotionMemory:
 
     @property
     def state_hash(self) -> str:
-        return hashlib.sha256(
-            b"g1-locomotion-memory.v1\0" + bytes.fromhex(self.policy_hash) + self.hidden + self.cell
-        ).hexdigest()
+        return (
+            "sha256:"
+            + hashlib.sha256(
+                b"g1-locomotion-memory.v1\0"
+                + bytes.fromhex(self.policy_hash.removeprefix("sha256:"))
+                + self.hidden
+                + self.cell
+            ).hexdigest()
+        )
 
 
 def _states(model: Any) -> tuple[Any, Any]:
