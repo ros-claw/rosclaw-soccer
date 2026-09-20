@@ -54,6 +54,7 @@ def test_navigation_command_is_immutable_finite_and_no_larger_than_world(command
         {"replan_frames": 10},
         {"lookahead_frames": 9},
         {"planner_seed": -1},
+        {"model_variant": "unknown"},
     ],
 )
 def test_navigation_has_explicit_bounded_horizon(config):
@@ -115,6 +116,24 @@ def test_navigation_history_continuous_and_fault_never_silently_restarts(monkeyp
     with pytest.raises(ValueError, match="latched"):
         motor.propose(observation(21))
     assert motor.backend.updates == 21
+
+
+def test_low_latency_variant_is_explicitly_bound(monkeypatch):
+    legacy = controller(monkeypatch)
+    low = controller(monkeypatch, SonicNavigationConfig(model_variant="low_latency"))
+    assert legacy.config.model_variant == "sonic_v1_1"
+    assert low.contract_hash != legacy.contract_hash
+
+
+@pytest.mark.parametrize("variant", ["low_latency", "sonic_v1_1"])
+def test_streaming_backend_loads_requested_variant(monkeypatch, variant):
+    received = []
+    monkeypatch.setattr(
+        "rosclaw_soccer.providers.g1.sonic_navigation.G1SonicRunupController.__init__",
+        lambda self, root, config: received.append(config.model_variant),
+    )
+    _StreamingBackend(None, SonicNavigationConfig(model_variant=variant))
+    assert received == [variant]
 
 
 def test_explicit_measured_start_uses_global_clock_without_duplicate_reset(monkeypatch):

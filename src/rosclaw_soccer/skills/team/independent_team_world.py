@@ -129,6 +129,10 @@ from rosclaw_soccer.skills.team.navigation_option import (
     NavigationSlot,
     TeamNavigationPolicy,
 )
+from rosclaw_soccer.training.receiving_oracle_schedule import (
+    ReceivingOracleCursor,
+    ReceivingOracleSchedule,
+)
 from rosclaw_soccer.world.field import (
     G1CompliantGoalNetState,
     G1TrainingGoalSpec,
@@ -980,6 +984,9 @@ def simulate_independent_team_world(
     motor_options: Mapping[str, TeamMotorOption] | None = None,
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
+    receiving_oracle: ReceivingOracleSchedule | None = None,
+    capture_initial_physics: bool = False,
+    physics_checkpoint_frame: int = 0,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all neural locomotion bodies in one clock.
 
@@ -991,6 +998,14 @@ def simulate_independent_team_world(
     """
 
     active = config or IndependentTeamWorldConfig()
+    if type(capture_initial_physics) is not bool:
+        raise ValueError("explicit physical capture flag required")
+    if (
+        type(physics_checkpoint_frame) is not int
+        or not 0 <= physics_checkpoint_frame < round(active.simulation_duration_sec / _CONTROL_DT)
+        or (not capture_initial_physics and physics_checkpoint_frame != 0)
+    ):
+        raise ValueError("physical checkpoint must identify an actual control-frame boundary")
     if active.prospective_strike_approach and (
         option_bridge_config is None
         or not option_bridge_config.prospective_enabled
@@ -1026,6 +1041,40 @@ def simulate_independent_team_world(
             [agent in scope for agent in near_ball_policy.agent_ids], dtype=bool
         )
     motors = dict(motor_options or {})
+    from rosclaw_soccer.providers.g1.receiving_sonic import ReceivingSonicOption
+
+    if (
+        any(isinstance(m, ReceivingSonicOption) for m in motors.values())
+        and not active.motor_idle_residual_fallback
+    ):
+        raise ValueError("delayed SONIC requires an explicit unchanged-prefix fallback")
+    oracle_cursor = None
+    if receiving_oracle is not None:
+        receiving_oracle.__post_init__()
+        if (
+            near_ball_policy is None
+            or near_ball_explore
+            or receiving_oracle.agent_id not in roster_ids
+            or (receiving_oracle.substrate == "A3_sonic_residual")
+            != (receiving_oracle.agent_id in motors)
+        ):
+            raise ValueError("oracle requires a frozen roster and matching motor ownership")
+        if receiving_oracle.substrate == "A3_sonic_residual":
+            from rosclaw_soccer.providers.g1.sonic_navigation import G1SonicNavigation
+
+            oracle_motor = motors[receiving_oracle.agent_id]
+            if (
+                not isinstance(oracle_motor, (G1SonicNavigation, ReceivingSonicOption))
+                or isinstance(oracle_motor, G1SonicNavigation)
+                and oracle_motor.config.model_variant != "low_latency"
+                or isinstance(oracle_motor, ReceivingSonicOption)
+                and (
+                    oracle_motor.start_frame != receiving_oracle.start_frame
+                    or not active.motor_idle_residual_fallback
+                )
+            ):
+                raise ValueError("A3 requires the explicit low-latency SONIC backend")
+        oracle_cursor = ReceivingOracleCursor(receiving_oracle)
     if navigation_policies is not None and not isinstance(navigation_policies, Mapping):
         raise ValueError("explicit per-player navigation mapping required")
     navigation = {
@@ -1371,6 +1420,17 @@ def simulate_independent_team_world(
         else None
     )
     for frame in range(total_frames):
+        if capture_initial_physics and frame == physics_checkpoint_frame:
+            from rosclaw_soccer.sim.physical_checkpoint import PhysicalCheckpoint
+
+            initial_checkpoint = PhysicalCheckpoint.capture(model, data)
+            trace["initial_integration_state"] = np.frombuffer(
+                initial_checkpoint.state_bytes, dtype="<f8"
+            ).tolist()
+            trace["initial_physics_hash"] = [initial_checkpoint.model_hash]
+            trace["initial_integration_hash"] = [initial_checkpoint.state_hash]
+            trace["initial_mujoco_version"] = [initial_checkpoint.mujoco_version]
+            trace["initial_control_frame"] = [frame]
         if return_referee is not None:
             before_pose = data.qpos[ball_qpos : ball_qpos + 7].copy()
             before_velocity = data.qvel[ball_qvel : ball_qvel + 6].copy()
@@ -2474,6 +2534,11 @@ def simulate_independent_team_world(
                 ]
             )
         residual_by_id: dict[str, NDArray[np.float64]] = {}
+        oracle_predecessor = (
+            residual_previous[residual_ids.index(receiving_oracle.agent_id)].copy()
+            if receiving_oracle is not None
+            else None
+        )
         if active.retire_completed_motors:
             trace.setdefault("full_body_motor_retired", []).append(
                 [c.cell.agent_id in motor_retirements for c in controllers]
@@ -2573,6 +2638,32 @@ def simulate_independent_team_world(
             trace["residual_value"].append(values)
             trace["residual_active"].append(residual_active)
             trace["residual_applied"].append(residual_previous.copy())
+        oracle_override_agent: str | None = None
+        if oracle_cursor is not None:
+            assert receiving_oracle is not None and oracle_predecessor is not None
+            oracle_agent = receiving_oracle.agent_id
+            oracle_index = residual_ids.index(oracle_agent)
+            oracle_active = bool(residual_active[oracle_index])
+            if receiving_oracle.substrate == "A3_sonic_residual":
+                oracle_active = oracle_agent in motor_targets and oracle_agent not in motor_faults
+            oracle_delta = oracle_cursor.step(
+                frame, active=oracle_active, predecessor=oracle_predecessor
+            )
+            if oracle_delta is not None and oracle_agent not in motor_faults:
+                residual_by_id[oracle_agent] = oracle_delta
+                oracle_override_agent = oracle_agent
+                residual_previous[oracle_index] = oracle_delta[:12]
+                trace["residual_applied"][-1][oracle_index] = oracle_delta[:12]
+            trace.setdefault("receiving_oracle_contract", []).append(receiving_oracle.contract_hash)
+            trace.setdefault("receiving_oracle_active", []).append(oracle_active)
+            trace.setdefault("receiving_oracle_override", []).append(
+                oracle_override_agent is not None
+            )
+            trace.setdefault("receiving_oracle_delta_rad", []).append(
+                np.zeros(29)
+                if oracle_delta is None
+                else np.pad(oracle_delta, (0, 29 - len(oracle_delta)))
+            )
         frame_contact_agent_code = 0
         frame_loose_capture_agent_code = 0
         frame_contact_effector_code = 0
@@ -2649,17 +2740,25 @@ def simulate_independent_team_world(
                 q = np.asarray(data.qpos[controller.joint_qpos], dtype=np.float64)
                 residual = residual_by_id.get(controller.cell.agent_id)
                 if (
-                    controller.cell.agent_id not in residual_blocked
+                    (
+                        controller.cell.agent_id not in residual_blocked
+                        or controller.cell.agent_id == oracle_override_agent
+                    )
                     and controller.cell.agent_id not in motor_faults
                     and residual is not None
                     and np.any(residual)
                     and (not post_receive_stabilizing or capture_contact_control)
                 ):
                     target = target.copy()
-                    target[:12] += residual
+                    target[: len(residual)] += residual
                 dq = np.asarray(data.qvel[controller.joint_qvel], dtype=np.float64)
                 raw_torque = kp * (target - q) - kd * dq
-                if option_bridge_config is not None and option_bridge_config.measured_state_history:
+                if (
+                    option_bridge_config is not None and option_bridge_config.measured_state_history
+                ) or (
+                    receiving_oracle is not None
+                    and controller.cell.agent_id == receiving_oracle.agent_id
+                ):
                     # Record the chosen PD target, not inferred q + torque/kp.
                     # Any additive task torque remains separately governed.
                     controller.last_applied_pd_target = target.copy()

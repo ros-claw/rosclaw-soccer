@@ -19,6 +19,7 @@ from rosclaw_soccer.providers.g1.sonic_history_handoff import (
     handoff_sonic_history,
 )
 from rosclaw_soccer.providers.g1.sonic_runup import (
+    G1SonicModelVariant,
     G1SonicRunupConfig,
     G1SonicRunupController,
     _resample_segments_30_to_50,
@@ -35,8 +36,11 @@ class SonicNavigationConfig:
     replan_frames: int = 20
     lookahead_frames: int = 10
     experimental_maximum_speed_mps: float | None = None
+    model_variant: G1SonicModelVariant = "sonic_v1_1"
 
     def __post_init__(self) -> None:
+        if self.model_variant not in {"sonic_v1_1", "low_latency"}:
+            raise ValueError("qualified streaming SONIC variant required")
         if self.experimental_maximum_speed_mps is not None and (
             type(self.experimental_maximum_speed_mps) not in (int, float)
             or not math.isfinite(self.experimental_maximum_speed_mps)
@@ -111,7 +115,7 @@ class _StreamingBackend(G1SonicRunupController):
         self.events: list[dict[str, object]] = []
         super().__init__(
             model_root,
-            G1SonicRunupConfig(model_variant="sonic_v1_1", execution_duration_sec=4.5),
+            G1SonicRunupConfig(model_variant=config.model_variant, execution_duration_sec=4.5),
         )
 
     def plan(self, context: np.ndarray, frame: int) -> np.ndarray:
@@ -209,6 +213,9 @@ class G1SonicNavigation:
         self.config = config or SonicNavigationConfig()
         self.backend = _StreamingBackend(model_root, self.config)
         config_record = asdict(self.config)
+        # Preserve the existing v1.1 contract; low-latency is an explicit variant.
+        if self.config.model_variant == "sonic_v1_1":
+            config_record.pop("model_variant")
         if self.config.experimental_maximum_speed_mps is None:
             config_record.pop("experimental_maximum_speed_mps")
         self.contract_hash = hash_json(
