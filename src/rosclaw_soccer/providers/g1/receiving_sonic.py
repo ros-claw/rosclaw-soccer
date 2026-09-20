@@ -9,6 +9,7 @@ import math
 from dataclasses import replace
 from pathlib import Path
 
+from rosclaw_soccer.providers.g1.sonic_command_scale import SonicCommandScaleSchedule
 from rosclaw_soccer.providers.g1.sonic_latent import SonicLatentSchedule
 from rosclaw_soccer.providers.g1.sonic_navigation import G1SonicNavigation, SonicNavigationConfig
 from rosclaw_soccer.sim.contracts import hash_json
@@ -25,6 +26,7 @@ class ReceivingSonicOption:
         velocity_scale: float = 1.0,
         planner_seed: int = 920101,
         latent_schedule: SonicLatentSchedule | None = None,
+        command_scale_schedule: SonicCommandScaleSchedule | None = None,
     ) -> None:
         if (
             type(start_frame) is not int
@@ -34,9 +36,15 @@ class ReceivingSonicOption:
             or not 0 <= velocity_scale <= 1
         ):
             raise ValueError("bounded declared SONIC entry and velocity scale required")
+        if command_scale_schedule is not None:
+            if not isinstance(command_scale_schedule, SonicCommandScaleSchedule):
+                raise ValueError("typed command attenuation schedule required")
+            command_scale_schedule.__post_init__()
         self.agent_id = agent_id
         self.start_frame = start_frame
         self.velocity_scale = velocity_scale
+        self.command_scale_schedule = command_scale_schedule
+        self.command_scale_records: list[tuple[int, float]] = []
         self.navigation = G1SonicNavigation(
             model_root,
             agent_id,
@@ -56,6 +64,11 @@ class ReceivingSonicOption:
                     "velocity_scale": velocity_scale,
                     "history": "cold_start_at_measured_entry_not_hidden_state_transfer",
                     "activation_ceiling": "SIM_ONLY",
+                    **(
+                        {"command_scale_schedule_hash": command_scale_schedule.contract_hash}
+                        if command_scale_schedule is not None
+                        else {}
+                    ),
                 }
             )
         )
@@ -80,17 +93,23 @@ class ReceivingSonicOption:
             # No larger command is introduced. Physical collision guards and
             # evidence remain necessary; scaling is not a new clearance proof.
             vx, vy, yaw = observation.navigation_command
+            scale = self.velocity_scale
+            if self.command_scale_schedule is not None:
+                scale *= self.command_scale_schedule.at(observation.frame - self.start_frame)
             measured = replace(
                 observation,
                 navigation_command=(
-                    float(vx * self.velocity_scale),
-                    float(vy * self.velocity_scale),
-                    float(yaw * self.velocity_scale),
+                    float(vx * scale),
+                    float(vy * scale),
+                    float(yaw * scale),
                 ),
             )
             if observation.frame == self.start_frame:
                 self.navigation.start_from_observation(measured)
-            return self.navigation.propose(measured)
+            result = self.navigation.propose(measured)
+            if self.command_scale_schedule is not None:
+                self.command_scale_records.append((observation.frame - self.start_frame, scale))
+            return result
         except (ValueError, TypeError, RuntimeError, FloatingPointError):
             self.faulted = True
             raise

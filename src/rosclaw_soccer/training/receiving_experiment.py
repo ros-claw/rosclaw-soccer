@@ -12,6 +12,7 @@ import numpy as np
 
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.providers.g1.receiving_sonic import ReceivingSonicOption
+from rosclaw_soccer.providers.g1.sonic_command_scale import SonicCommandScaleSchedule
 from rosclaw_soccer.providers.g1.sonic_latent import SonicLatentSchedule
 from rosclaw_soccer.skills.team.independent_team_world import (
     IndependentTeamWorldResult,
@@ -48,6 +49,7 @@ def simulate_r0_receiving_course(
     sonic_velocity_scale: float = 1.0,
     sonic_planner_seed: int = 920101,
     sonic_latent_schedule: SonicLatentSchedule | None = None,
+    sonic_command_scale_schedule: SonicCommandScaleSchedule | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, np.ndarray]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -84,6 +86,7 @@ def simulate_r0_receiving_course(
         or sonic_velocity_scale != 1.0
         or sonic_planner_seed != 920101
         or sonic_latent_schedule is not None
+        or sonic_command_scale_schedule is not None
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
     if sonic_model_root is not None and (
@@ -111,6 +114,7 @@ def simulate_r0_receiving_course(
             velocity_scale=sonic_velocity_scale,
             planner_seed=sonic_planner_seed,
             latent_schedule=sonic_latent_schedule,
+            command_scale_schedule=sonic_command_scale_schedule,
         )
     result, trace = simulate_independent_team_world(
         asset_root=asset_root,
@@ -147,4 +151,13 @@ def simulate_r0_receiving_course(
             else np.empty((0, 64), dtype=np.float32)
         )
         trace["sonic_latent_schedule_hash"] = np.asarray([sonic_latent_schedule.contract_hash])
+    if sonic_model_root is not None and sonic_command_scale_schedule is not None:
+        scale_records = motors[course.agent_id].command_scale_records
+        trace["sonic_command_scale_local_frames"] = np.asarray(
+            [row[0] for row in scale_records], dtype=np.int64
+        )
+        trace["sonic_command_requested_scale"] = np.asarray([row[1] for row in scale_records])
+        trace["sonic_command_scale_schedule_hash"] = np.asarray(
+            [sonic_command_scale_schedule.contract_hash]
+        )
     return result, trace
