@@ -62,3 +62,29 @@ forward/left/right kick 各 30，carry 51，pickball-kick 59。
 `omnicontact-palm-alias-v1.json`、`omnicontact-pose-mapper-qualification-v1.json`。
 这是运动学与数据接口验证，尚未证明动力学跟踪、接球可达性或学生学习成功。
 数据及派生研究资产仍保留非商业限制，不进入宣传材料或默认发布包。
+
+## 独立原生 CFtrack/CFgen 踢球基线
+
+仅在外部参考仓库运行官方 headless MuJoCo 路径，不接 ROS/DDS/硬件。
+固定 `kick_50k.onnx`、CFgen kickball、初始球位 (1,0)、目标 (3,0)、
+seed 9217100，关闭重规划，每次 10,000 个物理步。
+这是原生环境：200 Hz 物理、50 Hz 控制，球半径 0.10 m、质量 0.43 kg；
+不是 R0 的球/环境，也不是接球考试。模型实际输入 1244 维，原配置写 1343，
+官方 runner 按 ONNX 维度运行；日志保留了这条警告。
+
+两次独立初始化的 2,500 帧记录逐数组相同，最低骨盆高度约 0.7506 m，
+最高球速约 1.5662 m/s。原生任务标志均为 `failure`，不能因球动了就写成功。
+随后逐物理步加入只读接触观测并再次运行，两次原观测数组仍完全相同：
+每次约 7.015 s 开始出现右踝足部接触，7 个接触子步样本，峰值法向力约 106.59 N。
+7 个子步不是 7 次独立踢球。没有人为修正物理球位置或注入额外广义力；
+原生 ghost 更新被核对不改变机器人与物理球 qpos。
+
+接触归属第一次将所有非 world body 误归为机器人，包含台面和球门 holder。
+另存修正证据后按编译模型的 pelvis 子树分类：真正机器人接触仅来自
+`right_ankle_roll_link`。保留原记录，不覆盖错误字段；以修正文件为准。
+
+证据：`omnicontact-native-kick-v1/complete.json`、
+`omnicontact-native-contact-audit-v1/contacts.json` 与
+`body-ownership-correction.json`。
+参考仓库代码/模型遵循其 CC BY-NC-SA 4.0 限制；数据卡的 CC BY-NC 4.0
+是另一份许可，不能混称。外部代码、模型和轨迹未并入 Soccer 默认发布包。
