@@ -2,6 +2,11 @@
 
 2026-09-20。依据用户的 `rosclaw_soccer讨论0920.md` 与 `rosclaw_soccer下一阶段实施总纲.md`，后者的收敛范围优先。不启动 S2781 或另一轮全队 PPO。
 
+> 本文保留启动时快照，不是最新完成清单。后续实测见
+> [状态重放](receiving-state-replay.md)、[动作权限](receiving-action-authority.md)、
+> [姿态参考](receiving-pose-reference.md)、[公开开发集与 Practice](r0-development-and-practice.md)、
+> [人类战术先验](tactical-intent-pilot.md)。完整 M0 未结束前不宣布可达性结论。
+
 ## 已落实的方向变化
 
 - 停止 whole-team leg12 PPO / epochs sweep 配置族；不是停止所有研究。
