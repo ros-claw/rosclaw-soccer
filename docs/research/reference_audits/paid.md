@@ -13,7 +13,7 @@
 - controller frequency：本次 `control_dt=0.02 s`，即 50 Hz。
 - ball randomization：官方初态采样＋非重叠拒绝采样；本次启用 0.1–0.3 m/s 滚动球，未人为修改运行中的球。
 - transition structure：官方 progressive helper 先 motion tracking、后 rolling-ball；本次只执行发布策略推理，不宣称重跑 Isaac Lab 训练链。
-- reward：本次没有训练，不从 MuJoCo 评价指标反推训练 reward。Isaac Lab 训练 reward 的逐项权重审计仍待完成。
+- reward：本次没有训练；下方单独审计固定源码中的训练配置，不从 MuJoCo 评价指标反推 reward。
 
 ## 可复现命令
 
@@ -42,3 +42,29 @@ python exp/mujoco_soccer_experiment.py \
 
 官方 README 明确 CC BY-NC 4.0，并将商业产品宣传 demo 列为禁止用途。
 本次仅研究验证；任何宣传素材使用、再分发、商业集成都需要另行解决许可，不能因有公开 checkpoint 就默认允许。
+
+## 固定源码的训练目标审计
+
+检查 `tracking_env_cfg.py`、`config/g1/soccer_flat_env_cfg.py` 与
+`mdp/rewards.py`，没有导入或启动硬件、Isaac Lab 训练或更改参考代码。
+
+基础 tracking 的姿态、身体位置、线速度、角速度项权重各为 1；
+action-rate 为 -0.1，关节限位为 -10，非期望接触为 -0.1。
+足球 proximity 子类将全局 anchor 位置跟踪设为 0，加入目标接近度 1、
+腰部 action-rate -0.25、骨盆方向 -1、足部位置跟踪 1。
+这体现了“保持运动先验，但释放足球任务需要的位置约束”，不是废除所有跟踪约束。
+
+Kick 子类新增：预期脚首次接触 50、侧向摆脚对齐 50、球速方向对齐 30、
+球速 10；垂直球速惩罚权重是 -0.0，不能说该配置启用了这一惩罚。
+接触检测的水平力阈值为 10 N。方向和速度奖励只在正确脚接触后的
+5 个 reward 调用窗口内激活；球速项为随水平速度增大而增加的饱和函数。
+
+因此它是射门专家目标，**不能照搬成接球卸力目标**。
+尤其不能把球速奖励作为 ABSORB 阶段奖励。本项目仍保持原判决标准，
+未因参考审计而开新的 reward 参数搜索。
+
+Moving 子类的训练初始球速按 x、y 各 [-0.3, 0.3] m/s 采样、z=0；
+它与上面的 MuJoCo smoke 使用的速度模长区间不是同一个随机化定义。
+源码还有一个需注意的配置细节：足球子类的一段 orientation 配置赋给
+`self.motion_body_ori` 而非 `self.rewards.motion_body_ori`，不能据此宣称覆盖了
+基础 reward 中的 body 列表。以上是源码审计，不是运行时配置导出证明。
