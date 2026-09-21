@@ -25,6 +25,7 @@
 - [参考与接触教师探针](receiving-reference-teacher-probes.md)：静态/自然参考、接触对象及局部权限实验。
 - [实测技能模型](measured-receiving-capability-pilot.md)：覆盖未知值、概率校验失败，不伪造 ready/duration。
 - [人类战术意图](tactical-intent-pilot.md)、[路径先验](tactical-waypoint-pilot.md)：与机器人能力资格分开。
+- [历史能力保留及触后控球](historical-receiving-retention.md)：区分短暂接住、整段安全与持续控球；组合跟随方案在十门旧成功上仅保留九门，已拒绝扩大，并经 Core 路由留档。
 
 ## 最近完成的停止判据
 
