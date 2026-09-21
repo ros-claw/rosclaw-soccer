@@ -26,7 +26,11 @@ class ReceivingCourse:
 
 
 def receiving_courses(*, repetitions: int, first_seed: int) -> tuple[ReceivingCourse, ...]:
-    """Equal opportunities per player/speed; seeds are independent, not replay counts."""
+    """Equal opportunities per player/speed with unique run identifiers.
+
+    Distinct seeds alone do not establish distinct physical situations or
+    statistically independent evidence; audit measured states separately.
+    """
     if (
         type(repetitions) is not int
         or not 1 <= repetitions <= 128
