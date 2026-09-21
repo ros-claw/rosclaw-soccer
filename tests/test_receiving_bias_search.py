@@ -6,6 +6,7 @@ import pytest
 
 from rosclaw_soccer.training.receiving_bias_search import (
     ReceivingBiasForecast,
+    receiving_acquisition_confirmed,
     receiving_bias_beam_seeds,
     receiving_bias_candidates,
     receiving_bias_is_clean,
@@ -209,3 +210,52 @@ def test_search_validates_all_forecast_fields_before_short_circuit():
         )
         == "ball_escape"
     )
+
+
+def test_horizon_edge_contact_is_not_settled_acquisition():
+    values = diagnostics(nonfoot_contact_samples=0, first_foot_contact_sec=0.478)
+    assert receiving_bias_is_clean(values)
+    assert not receiving_acquisition_confirmed(values, horizon_sec=0.5)
+    assert receiving_acquisition_confirmed(values, horizon_sec=1.0)
+    values["terminal_ball_speed"] = 0.676
+    assert not receiving_acquisition_confirmed(values, horizon_sec=1.0)
+    values.update(terminal_ball_speed=0.2, first_foot_contact_sec=0.5)
+    assert receiving_acquisition_confirmed(values, horizon_sec=1.0)
+    values["first_foot_contact_sec"] = 0.500001
+    assert not receiving_acquisition_confirmed(values, horizon_sec=1.0)
+
+
+def test_missing_contact_cannot_be_confirmed_and_does_not_mutate_input():
+    values = diagnostics(foot_contact_samples=0, first_foot_contact_sec=None)
+    before = values.copy()
+    assert not receiving_acquisition_confirmed(values, horizon_sec=1.0)
+    assert values == before
+    with pytest.raises(ValueError):
+        receiving_acquisition_confirmed(diagnostics(), horizon_sec=1.0)
+
+
+@pytest.mark.parametrize("contact", [None, True, -0.001, 1.01, float("nan"), float("inf"), "0.1"])
+def test_invalid_or_inconsistent_predicted_contact_timing(contact):
+    with pytest.raises(ValueError):
+        receiving_acquisition_confirmed(
+            diagnostics(first_foot_contact_sec=contact), horizon_sec=1.0
+        )
+
+
+@pytest.mark.parametrize("value", [True, 0, -0.1, 2.01, float("nan"), float("inf")])
+def test_invalid_prediction_and_settling_horizons(value):
+    values = diagnostics(first_foot_contact_sec=0.1)
+    with pytest.raises(ValueError):
+        receiving_acquisition_confirmed(values, horizon_sec=value)
+    with pytest.raises(ValueError):
+        receiving_acquisition_confirmed(values, horizon_sec=1.0, minimum_post_contact_sec=value)
+
+
+def test_inconsistent_prediction_is_rejected_even_if_already_unsafe():
+    with pytest.raises(ValueError):
+        receiving_acquisition_confirmed(
+            diagnostics(unsafe=True, foot_contact_samples=0, first_foot_contact_sec=0.1),
+            horizon_sec=1.0,
+        )
+    with pytest.raises(ValueError):
+        receiving_acquisition_confirmed(diagnostics(first_foot_contact_sec=0.1), horizon_sec=0.2)

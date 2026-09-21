@@ -122,6 +122,42 @@ def receiving_bias_search_reason(
     return None
 
 
+def receiving_acquisition_confirmed(
+    diagnostics: Mapping[str, Any],
+    *,
+    horizon_sec: float,
+    minimum_post_contact_sec: float = 0.5,
+) -> bool:
+    """Require predicted settling time as well as a clean acquisition forecast.
+
+    A first touch at the horizon edge cannot prove absorption. Times describe the
+    same private prediction, never actual future observations. Passing this local
+    filter does not qualify the predictive model, authorize execution, or replace
+    the original receiving exam and historical-retention checks.
+    """
+    forecast = ReceivingBiasForecast.from_mapping(diagnostics)
+    for value in (horizon_sec, minimum_post_contact_sec):
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= 2:
+            raise ValueError("finite positive prediction and settling horizons <= 2 s required")
+    if minimum_post_contact_sec > horizon_sec:
+        raise ValueError("settling interval cannot exceed the prediction horizon")
+    if "first_foot_contact_sec" not in diagnostics:
+        raise ValueError("explicit predicted first-contact timing required")
+    contact = diagnostics["first_foot_contact_sec"]
+    if contact is None:
+        if forecast.foot_contact_samples:
+            raise ValueError("predicted foot contact requires its first-contact timing")
+        return False
+    if (
+        type(contact) not in (int, float)
+        or not math.isfinite(contact)
+        or not 0 <= contact <= horizon_sec
+        or forecast.foot_contact_samples == 0
+    ):
+        raise ValueError("predicted first contact must agree with samples and horizon")
+    return forecast.clean and horizon_sec - contact >= minimum_post_contact_sec
+
+
 def receiving_bias_beam_seeds(
     rows: Sequence[Mapping[str, Any]],
     *,
