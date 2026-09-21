@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from rosclaw_soccer.providers.g1.sonic_command_replanning import command_event_requires_replan
 from rosclaw_soccer.providers.g1.sonic_history_handoff import (
     SonicHistoryHandoffReceipt,
     handoff_sonic_history,
@@ -41,8 +42,19 @@ class SonicNavigationConfig:
     model_variant: G1SonicModelVariant = "sonic_v1_1"
     latent_schedule: SonicLatentSchedule | None = None
     pose_reference: SonicPoseReference | None = None
+    experimental_command_replanning: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.experimental_command_replanning) is not bool or (
+            self.experimental_command_replanning
+            and (
+                self.model_variant != "low_latency"
+                or self.pose_reference is not None
+                or self.latent_schedule is not None
+                or self.experimental_maximum_speed_mps is not None
+            )
+        ):
+            raise ValueError("command-event probe requires unmixed low-latency navigation")
         if self.pose_reference is not None:
             if (
                 not isinstance(self.pose_reference, SonicPoseReference)
@@ -134,6 +146,8 @@ class _StreamingBackend(G1SonicRunupController):
         self.command = (0.0, 0.0, 0.0)
         self.facing = 0.0
         self.planner_calls = 0
+        self.last_planned_frame = 0
+        self.last_planned_command = self.command
         self.events: list[dict[str, object]] = []
         self.latent_records: list[tuple[int, np.ndarray, np.ndarray]] = []
         super().__init__(
@@ -203,6 +217,8 @@ class _StreamingBackend(G1SonicRunupController):
             }
         )
         self.planner_calls += 1
+        self.last_planned_frame = frame
+        self.last_planned_command = self.command
         return _resample_segments_30_to_50([segment], 0.02)
 
     def _generate_reference(self, initial_qpos: np.ndarray) -> np.ndarray:
@@ -217,12 +233,20 @@ class _StreamingBackend(G1SonicRunupController):
         )
 
     def navigation_tick(self, state: SimpleNamespace, frame: int) -> np.ndarray:
+        urgent = self.navigation.experimental_command_replanning and command_event_requires_replan(
+            frame=frame,
+            last_plan_frame=self.last_planned_frame,
+            command=self.command,
+            last_planned_command=self.last_planned_command,
+        )
         if (
             self.navigation.pose_reference is None
             and frame
-            and frame % self.navigation.replan_frames == 0
+            and (urgent or frame % self.navigation.replan_frames == 0)
         ):
-            start = frame + self.navigation.lookahead_frames
+            # The opt-in branch refreshes only the unexecuted reference. The
+            # tracker, history, gains, joint/torque limits and world guards stay.
+            start = frame + (4 if urgent else self.navigation.lookahead_frames)
             segment = self.plan(future_reference_context(self.reference, start), frame)
             n = min(len(segment), len(self.reference) - start)
             self.reference[start : start + n] = segment[:n]
@@ -252,6 +276,8 @@ class G1SonicNavigation:
         self.config = config or SonicNavigationConfig()
         self.backend = _StreamingBackend(model_root, self.config)
         config_record = asdict(self.config)
+        if not self.config.experimental_command_replanning:
+            config_record.pop("experimental_command_replanning")
         config_record.pop("pose_reference")
         if self.config.pose_reference is not None:
             config_record["pose_reference_hash"] = self.config.pose_reference.contract_hash

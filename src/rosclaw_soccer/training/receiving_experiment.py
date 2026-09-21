@@ -61,6 +61,7 @@ def simulate_r0_receiving_course(
     sonic_latent_schedule: SonicLatentSchedule | None = None,
     sonic_command_scale_schedule: SonicCommandScaleSchedule | None = None,
     sonic_pose_reference: SonicPoseReference | None = None,
+    sonic_command_replanning: bool = False,
 ) -> tuple[IndependentTeamWorldResult, dict[str, np.ndarray]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -70,6 +71,11 @@ def simulate_r0_receiving_course(
     """
     if not isinstance(course, ReceivingCourse) or course.agent_id not in ROSTER:
         raise ValueError("typed focal receiving course required")
+    if type(sonic_command_replanning) is not bool or (
+        sonic_command_replanning
+        and (sonic_latent_schedule is not None or sonic_pose_reference is not None)
+    ):
+        raise ValueError("command-event probe requires unmixed SONIC navigation")
     if feedback_provider is not None:
         if oracle is None or phase_reference is not None:
             raise ValueError("feedback must bind one schedule without competing phase feedback")
@@ -123,6 +129,7 @@ def simulate_r0_receiving_course(
         or sonic_latent_schedule is not None
         or sonic_command_scale_schedule is not None
         or sonic_pose_reference is not None
+        or sonic_command_replanning
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
     if sonic_model_root is not None and (
@@ -152,6 +159,7 @@ def simulate_r0_receiving_course(
             latent_schedule=sonic_latent_schedule,
             command_scale_schedule=sonic_command_scale_schedule,
             pose_reference=sonic_pose_reference,
+            experimental_command_replanning=sonic_command_replanning,
         )
     result, trace = simulate_independent_team_world(
         asset_root=asset_root,
@@ -200,6 +208,18 @@ def simulate_r0_receiving_course(
         trace["sonic_command_requested_scale"] = np.asarray([row[1] for row in scale_records])
         trace["sonic_command_scale_schedule_hash"] = np.asarray(
             [sonic_command_scale_schedule.contract_hash]
+        )
+    if sonic_command_replanning:
+        navigation = motors[course.agent_id].navigation
+        trace["sonic_command_replanning_contract_hash"] = np.asarray([navigation.contract_hash])
+        trace["sonic_planner_local_frames"] = np.asarray(
+            [event["frame"] for event in navigation.backend.events], dtype=np.int64
+        )
+        trace["sonic_planner_commands"] = np.asarray(
+            [event["command"] for event in navigation.backend.events], dtype=np.float64
+        ).reshape(-1, 3)
+        trace["sonic_planner_reference_hashes"] = np.asarray(
+            [event["reference_hash"] for event in navigation.backend.events], dtype=str
         )
     if sonic_pose_reference is not None:
         trace["sonic_pose_reference_hash"] = np.asarray([sonic_pose_reference.contract_hash])

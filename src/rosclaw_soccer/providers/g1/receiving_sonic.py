@@ -29,6 +29,7 @@ class ReceivingSonicOption:
         latent_schedule: SonicLatentSchedule | None = None,
         command_scale_schedule: SonicCommandScaleSchedule | None = None,
         pose_reference: SonicPoseReference | None = None,
+        experimental_command_replanning: bool = False,
     ) -> None:
         if (
             type(start_frame) is not int
@@ -60,6 +61,7 @@ class ReceivingSonicOption:
                 model_variant="low_latency",
                 latent_schedule=latent_schedule,
                 pose_reference=pose_reference,
+                experimental_command_replanning=experimental_command_replanning,
             ),
         )
         self.contract_hash = str(
