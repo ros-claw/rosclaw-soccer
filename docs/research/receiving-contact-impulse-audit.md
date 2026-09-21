@@ -64,5 +64,21 @@ case-32 都与各自原始轨迹逐数组一致，观察器独立重放一致。
 `early-contact-lane-audit-v1/complete.json`。这排除了本次固定计划附近
 的简单侧移方案，不是所有迎球站位或导航策略的不可行证明。
 
+## 通用观测与经验闭环
+
+Core `0595e90d` 增加无 G1/足球假设的只读 `contact_snapshot`：明确
+积分前评估状态、接触力方向及接触点速度，拒绝错时状态，不改现场求解器。
+两课各重放两次，共四次实际执行、12000 个物理子步；原物理数组不变，
+通用观测与此前专用观察器在 1e-12 绝对容差内一致。
+`m0/core-contact-micro-v1/complete.json` 内部 manifest：
+`1e48600a0b034b3851d4b8feba2330f16c1ac7ddd7f7c5194e07161be586b05f`。
+
+两份诊断经 pinned Core CLI record/strict verify/distill/本地入库/query
+全部完成，成功、失败各检索一条，重复导入失败不增加条目。600 个控制帧
+保留各自十个物理子步的脚部／非脚部冲量及原件哈希，不混同反事实预测。
+`practice-contact-impulse-memory-v1/complete.json` 内部 manifest：
+`e7230293deb11c811b5c74ae1185f93321a9a5d703b9d6b3a4f3830e5c5a612d`。
+这些是经验记录与诊断闭环，**不是新增独立课程或神经权重学习**。
+
 力坐标语义参考 [MuJoCo 接触说明](https://mujoco.readthedocs.io/en/stable/computation/index.html#contact)，
 积分核对参考 [3.12.0 引擎实现](https://github.com/google-deepmind/mujoco/blob/3.12.0/src/engine/engine_forward.c)。
