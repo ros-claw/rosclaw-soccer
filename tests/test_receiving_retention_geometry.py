@@ -55,6 +55,12 @@ def test_thresholds_inclusive_not_relaxed():
     )
 
 
+def test_measured_clock_roundoff_matches_feedback_observation():
+    assert check(forecast(), touch=1.0600000000000007, now=1.06)
+    with pytest.raises(ValueError):
+        check(forecast(), touch=1.060000002, now=1.06)
+
+
 @pytest.mark.parametrize("field", ["terminal_distance_m", "terminal_height_m"])
 @pytest.mark.parametrize("value", [True, "0.1", -0.01, float("nan"), float("inf"), 10001])
 def test_bad_geometry_rejected_even_without_contact(field, value):

@@ -35,8 +35,10 @@ def receiving_retention_feasible(
     if prior_own_touch_sec is not None and (
         type(prior_own_touch_sec) not in (int, float)
         or not math.isfinite(prior_own_touch_sec)
-        or not 0 <= prior_own_touch_sec <= observation_time_sec
+        or not 0 <= prior_own_touch_sec <= observation_time_sec + 1e-9
     ):
+        # Match ReceivingFeedbackObservation's simulator/50Hz clock roundoff;
+        # this is not a prediction horizon or physical threshold relaxation.
         raise ValueError("measured own-foot contact must not be in the future")
     try:
         distance = diagnostics["terminal_distance_m"]
