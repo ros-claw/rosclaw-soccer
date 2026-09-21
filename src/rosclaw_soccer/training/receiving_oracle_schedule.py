@@ -88,17 +88,17 @@ class ReceivingOracleCursor:
             ):
                 raise ValueError("explicit bounded post-entry reference frame required")
             if desired_override_rad is not None and (
-                self.schedule.substrate != "A0_leg12"
+                self.schedule.substrate not in ("A0_leg12", "A1_body29")
                 or reference_frame is not None
                 or frame < self.schedule.start_frame
                 or type(desired_override_rad) is not tuple
-                or len(desired_override_rad) != 12
+                or len(desired_override_rad) != len(self.schedule.knots[0])
                 or any(
                     type(v) not in (int, float) or not np.isfinite(v) or abs(v) > 0.1
                     for v in desired_override_rad
                 )
             ):
-                raise ValueError("bounded post-entry leg feedback cannot mix with phase override")
+                raise ValueError("bounded post-entry feedback cannot mix with phase override")
             old = np.asarray(predecessor)
             if old.shape != (12,) or not np.isfinite(old).all() or np.any(abs(old) > 0.100000001):
                 raise ValueError("bounded actual predecessor required")

@@ -73,6 +73,8 @@ def test_memory_is_opt_in_bound_and_hashable():
     old = observation()
     old_fields = asdict(old)
     old_fields.pop("locomotion")
+    old_fields.pop("action_substrate")
+    old_fields.pop("previous_body_residual_rad")
     assert old.observation_hash == hash_json(old_fields)
     new = replace(old, locomotion=locomotion())
     assert new.observation_hash != old.observation_hash
@@ -217,6 +219,142 @@ def test_cursor_preserves_original_filter_limits_and_copies():
         2, active=False, predecessor=np.zeros(12), desired_override_rad=(0.1,) * 12
     )
     np.testing.assert_allclose(result, 0.03)
+
+
+def body_schedule(start=0):
+    return replace(schedule(start), substrate="A1_body29", knots=((0.0,) * 29,))
+
+
+def body_observation(frame=0, previous=(0.0,) * 29):
+    return replace(
+        observation(frame),
+        action_substrate="A1_body29",
+        previous_filtered_residual_rad=previous[:12],
+        previous_body_residual_rad=previous,
+    )
+
+
+def body_provider(source):
+    provider = Provider(source)
+    provider.action_substrate = "A1_body29"
+    provider.result = (0.1,) * 29
+    return provider
+
+
+def test_whole_body_feedback_requires_explicit_scope_and_complete_memory():
+    source = body_schedule()
+    provider = body_provider(source)
+    slot = ReceivingFeedbackSlot(provider, source)
+    assert slot.step(body_observation()) == provider.result
+    assert slot.action_dimension == 29
+    assert body_observation().observation_hash != observation().observation_hash
+    changed = (0.0,) * 28 + (0.01,)
+    assert (
+        body_observation(previous=changed).observation_hash != body_observation().observation_hash
+    )
+    for bad in (observation(), body_observation(1)):
+        rejected = ReceivingFeedbackSlot(provider, source)
+        with pytest.raises(ValueError):
+            rejected.step(bad)
+        assert rejected.faulted
+
+
+@pytest.mark.parametrize(
+    "previous",
+    [
+        None,
+        (0.0,) * 12,
+        [0.0] * 29,
+        (True,) * 29,
+        (float("nan"),) * 29,
+        (0.100001,) * 29,
+        (0.01,) * 29,
+    ],
+)
+def test_body_filter_requires_finite_bounded_state_and_matching_legs(previous):
+    with pytest.raises(ValueError):
+        replace(observation(), action_substrate="A1_body29", previous_body_residual_rad=previous)
+
+
+@pytest.mark.parametrize(
+    "result",
+    [(0.0,) * 12, (0.0,) * 28, (float("inf"),) * 29, (0.100001,) * 29, (True,) * 29, [0.0] * 29],
+)
+def test_body_proposal_is_not_implicitly_padded_or_clipped(result):
+    source = body_schedule()
+    provider = body_provider(source)
+    provider.result = result
+    slot = ReceivingFeedbackSlot(provider, source)
+    with pytest.raises(ValueError):
+        slot.step(body_observation())
+    assert slot.faulted
+
+
+@pytest.mark.parametrize("mutation", ["before", "during"])
+def test_action_substrate_binding_is_immutable(mutation):
+    source = body_schedule()
+    provider = body_provider(source)
+    slot = ReceivingFeedbackSlot(provider, source)
+    if mutation == "before":
+        provider.action_substrate = "A0_leg12"
+    else:
+
+        def mutate(obs):
+            provider.action_substrate = "A0_leg12"
+            return (0.1,) * 29
+
+        provider.propose = mutate
+    with pytest.raises(ValueError):
+        slot.step(body_observation())
+    assert slot.faulted
+
+
+def test_whole_body_cursor_matches_zero_extended_leg_feedback_and_decays_arms():
+    leg = ReceivingOracleCursor(schedule(2))
+    body = ReceivingOracleCursor(body_schedule(2))
+    old = np.linspace(-0.02, 0.02, 12)
+    for frame in range(30):
+        desired = tuple(float(v) for v in 0.1 * np.sin(np.arange(12) + frame))
+        active = frame % 3 != 0
+        a = leg.step(
+            frame,
+            active=active,
+            predecessor=old,
+            desired_override_rad=None if frame < 2 else desired,
+        )
+        b = body.step(
+            frame,
+            active=active,
+            predecessor=old,
+            desired_override_rad=None if frame < 2 else desired + (0.0,) * 17,
+        )
+        if a is None:
+            assert b is None
+        else:
+            np.testing.assert_array_equal(a, b[:12])
+            np.testing.assert_array_equal(b[12:], np.zeros(17))
+            old = a.copy()
+    cursor = ReceivingOracleCursor(body_schedule())
+    result = cursor.step(
+        0, active=True, predecessor=np.zeros(12), desired_override_rad=(0.0,) * 12 + (0.1,) * 17
+    )
+    np.testing.assert_allclose(result[12:], 0.02)
+    result = cursor.step(
+        1, active=False, predecessor=np.zeros(12), desired_override_rad=(0.0,) * 12 + (0.1,) * 17
+    )
+    np.testing.assert_allclose(result[12:], 0.015)
+
+
+def test_sonic_feedback_stays_rejected_even_with_explicit_opt_in():
+    source = replace(body_schedule(), substrate="A3_sonic_residual")
+    provider = body_provider(source)
+    provider.action_substrate = source.substrate
+    with pytest.raises(ValueError):
+        ReceivingFeedbackSlot(provider, source)
+    cursor = ReceivingOracleCursor(source)
+    with pytest.raises(ValueError):
+        cursor.step(0, active=True, predecessor=np.zeros(12), desired_override_rad=(0.0,) * 29)
+    assert cursor.faulted
 
 
 def test_feedback_cannot_mix_with_phase_or_preentry():

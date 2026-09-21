@@ -29,6 +29,8 @@ def scene():
 def test_memory_only_hash_is_unchanged():
     obs = replace(observation(), locomotion=locomotion())
     expected = asdict(obs)
+    expected.pop("action_substrate")
+    expected.pop("previous_body_residual_rad")
     expected["locomotion"].pop("scene")
     expected["locomotion"]["memory"] = obs.locomotion.memory.state_hash
     assert obs.observation_hash == hash_json(expected)

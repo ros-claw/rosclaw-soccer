@@ -108,6 +108,8 @@ class ReceivingFeedbackObservation:
     previous_filtered_residual_rad: tuple[float, ...] = (0.0,) * 12
     residual_admitted: bool = False
     locomotion: ReceivingLocomotionContext | None = None
+    action_substrate: str = "A0_leg12"
+    previous_body_residual_rad: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -152,6 +154,24 @@ class ReceivingFeedbackObservation:
                 raise ValueError("scene must bind the observed receiving agent")
         if type(self.committed_receive) is not bool:
             raise ValueError("explicit current receiving commitment required")
+        if type(self.action_substrate) is not str or self.action_substrate not in (
+            "A0_leg12",
+            "A1_body29",
+        ):
+            raise ValueError("explicit supported feedback action substrate required")
+        body = self.previous_body_residual_rad
+        if self.action_substrate == "A0_leg12":
+            if body is not None:
+                raise ValueError("leg feedback cannot carry whole-body filter state")
+        elif (
+            type(body) is not tuple
+            or len(body) != 29
+            or any(
+                type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 0.1 for v in body
+            )
+            or body[:12] != self.previous_filtered_residual_rad
+        ):
+            raise ValueError("whole-body feedback requires the complete consistent filter state")
         if (
             type(self.residual_admitted) is not bool
             or type(self.previous_filtered_residual_rad) is not tuple
@@ -185,6 +205,9 @@ class ReceivingFeedbackObservation:
     @property
     def observation_hash(self) -> str:
         value = asdict(self)
+        if self.action_substrate == "A0_leg12" and self.previous_body_residual_rad is None:
+            value.pop("action_substrate")
+            value.pop("previous_body_residual_rad")
         if self.locomotion is None:
             value.pop("locomotion")  # Preserve existing providers' observation identities.
         else:
@@ -216,7 +239,8 @@ class ReceivingFeedbackSlot:
             raise ValueError("typed receiving schedule required")
         schedule.__post_init__()
         if (
-            schedule.substrate != "A0_leg12"
+            schedule.substrate not in ("A0_leg12", "A1_body29")
+            or getattr(provider, "action_substrate", "A0_leg12") != schedule.substrate
             or not isinstance(provider, ReceivingFeedbackProvider)
             or provider.agent_id != schedule.agent_id
             or provider.schedule_hash != schedule.contract_hash
@@ -224,7 +248,7 @@ class ReceivingFeedbackSlot:
             or type(provider.contract_hash) is not str
             or re.fullmatch(r"sha256:[0-9a-f]{64}", provider.contract_hash) is None
         ):
-            raise ValueError("SIM-only feedback must bind the exact leg schedule")
+            raise ValueError("SIM-only feedback must bind the exact action schedule")
         self.provider = provider
         self.requires_locomotion_memory = getattr(provider, "requires_locomotion_memory", False)
         if type(self.requires_locomotion_memory) is not bool:
@@ -235,6 +259,8 @@ class ReceivingFeedbackSlot:
         ):
             raise ValueError("navigation context requires explicit current locomotion memory")
         self.agent_id = schedule.agent_id
+        self.action_substrate = schedule.substrate
+        self.action_dimension = len(schedule.knots[0])
         self.schedule_hash = schedule.contract_hash
         self.contract_hash = provider.contract_hash
         self.start_frame = schedule.start_frame
@@ -250,6 +276,8 @@ class ReceivingFeedbackSlot:
             observation.__post_init__()
             if (
                 observation.agent_id != self.agent_id
+                or observation.action_substrate != self.action_substrate
+                or getattr(self.provider, "action_substrate", "A0_leg12") != self.action_substrate
                 or observation.frame != self.next_frame
                 or self.provider.agent_id != self.agent_id
                 or self.provider.schedule_hash != self.schedule_hash
@@ -275,6 +303,7 @@ class ReceivingFeedbackSlot:
             proposal = self.provider.propose(observation)
             if (
                 observation.observation_hash != observation_hash
+                or getattr(self.provider, "action_substrate", "A0_leg12") != self.action_substrate
                 or self.provider.agent_id != self.agent_id
                 or self.provider.schedule_hash != self.schedule_hash
                 or self.provider.contract_hash != self.contract_hash
@@ -289,14 +318,14 @@ class ReceivingFeedbackSlot:
                 raise ValueError("feedback changed its input or binding during proposal")
             if (
                 type(proposal) is not tuple
-                or len(proposal) != 12
+                or len(proposal) != self.action_dimension
                 or any(
                     type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 0.1
                     for v in proposal
                 )
             ):
                 raise ValueError(
-                    "finite immutable desired leg residual bounded by 0.1 rad required"
+                    "finite immutable action-bound desired residual limited to 0.1 rad required"
                 )
             return proposal
         except Exception as error:

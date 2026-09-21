@@ -2950,6 +2950,18 @@ def simulate_independent_team_world(
                         1 if focal_controller.last_ball_contact_foot == "left" else 2,
                         (float(capture_direction[0]), float(capture_direction[1])),
                     )
+                feedback_body_previous = None
+                if feedback_slot.action_substrate == "A1_body29":
+                    # The native predecessor only stores legs. After entry, the
+                    # cursor owns all 29 filtered values, including arm decay.
+                    feedback_body_previous = tuple(
+                        float(v)
+                        for v in (
+                            np.pad(oracle_predecessor, (0, 17))
+                            if oracle_cursor.previous is None
+                            else oracle_cursor.previous
+                        )
+                    )
                 feedback_observation = ReceivingFeedbackObservation(
                     agent_id=oracle_agent,
                     frame=frame,
@@ -2985,8 +2997,14 @@ def simulate_independent_team_world(
                     previous_filtered_residual_rad=tuple(float(v) for v in oracle_predecessor),
                     residual_admitted=oracle_active,
                     locomotion=locomotion_context,
+                    action_substrate=feedback_slot.action_substrate,
+                    previous_body_residual_rad=feedback_body_previous,
                 )
                 feedback_desired = feedback_slot.step(feedback_observation)
+                if feedback_body_previous is not None:
+                    trace.setdefault("receiving_feedback_previous_body_residual_rad", []).append(
+                        np.asarray(feedback_body_previous)
+                    )
                 if feedback_scene is not None:
                     trace.setdefault("receiving_feedback_scene_hash", []).append(
                         hash_json(asdict(feedback_scene))
@@ -3032,7 +3050,9 @@ def simulate_independent_team_world(
                     feedback_desired is not None
                 )
                 trace.setdefault("receiving_feedback_desired_rad", []).append(
-                    np.zeros(12) if feedback_desired is None else np.asarray(feedback_desired)
+                    np.zeros(feedback_slot.action_dimension)
+                    if feedback_desired is None
+                    else np.asarray(feedback_desired)
                 )
             oracle_delta = oracle_cursor.step(
                 frame,
