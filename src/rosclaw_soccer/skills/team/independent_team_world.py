@@ -142,6 +142,7 @@ from rosclaw_soccer.training.receiving_feedback import (
     ReceivingFeedbackSlot,
     ReceivingLocomotionContext,
 )
+from rosclaw_soccer.training.receiving_foundation_handoff import ReceivingFoundationHandoff
 from rosclaw_soccer.training.receiving_oracle_schedule import (
     ReceivingOracleCursor,
     ReceivingOracleSchedule,
@@ -1035,6 +1036,7 @@ def simulate_independent_team_world(
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
     physics_evidence_consumers: Mapping[str, PhysicsEvidenceConsumer] | None = None,
+    receiving_foundation_handoff: ReceivingFoundationHandoff | None = None,
     receiving_oracle: ReceivingOracleSchedule | None = None,
     receiving_phase_reference: ReceivingPhaseReference | None = None,
     receiving_feedback: ReceivingFeedbackProvider | None = None,
@@ -1173,14 +1175,35 @@ def simulate_independent_team_world(
             raise ValueError(
                 "teacher ablation requires configured teacher, frozen policy and roster"
             )
+    if receiving_foundation_handoff is not None:
+        if (
+            not isinstance(receiving_foundation_handoff, ReceivingFoundationHandoff)
+            or receiving_oracle is None
+            or set(motors) != {receiving_foundation_handoff.agent_id}
+            or option_bridge_config is not None
+            or not isinstance(motors[receiving_foundation_handoff.agent_id], ReceivingSonicOption)
+        ):
+            raise ValueError("handoff requires one delayed SONIC successor and no competing bridge")
+        handoff_motor = motors[receiving_foundation_handoff.agent_id]
+        assert isinstance(handoff_motor, ReceivingSonicOption)
+        receiving_foundation_handoff.validate_binding(
+            receiving_oracle,
+            motor_agent_id=handoff_motor.agent_id,
+            motor_contract_hash=handoff_motor.contract_hash,
+            motor_entry_frame=handoff_motor.start_frame,
+            idle_residual_fallback=active.motor_idle_residual_fallback,
+        )
     if receiving_oracle is not None:
         receiving_oracle.__post_init__()
         if (
             near_ball_policy is None
             or near_ball_explore
             or receiving_oracle.agent_id not in roster_ids
-            or (receiving_oracle.substrate == "A3_sonic_residual")
-            != (receiving_oracle.agent_id in motors)
+            or (
+                receiving_foundation_handoff is None
+                and (receiving_oracle.substrate == "A3_sonic_residual")
+                != (receiving_oracle.agent_id in motors)
+            )
         ):
             raise ValueError("oracle requires a frozen roster and matching motor ownership")
         if receiving_oracle.substrate == "A3_sonic_residual":
@@ -2958,6 +2981,12 @@ def simulate_independent_team_world(
             oracle_agent = receiving_oracle.agent_id
             oracle_index = residual_ids.index(oracle_agent)
             oracle_active = bool(residual_active[oracle_index])
+            predecessor_retired = (
+                receiving_foundation_handoff is not None
+                and receiving_foundation_handoff.predecessor_retired(frame)
+            )
+            if predecessor_retired:
+                oracle_active = False
             if receiving_oracle.substrate == "A3_sonic_residual":
                 oracle_active = oracle_agent in motor_targets and oracle_agent not in motor_faults
             reference_frame = None
@@ -3137,12 +3166,25 @@ def simulate_independent_team_world(
                 reference_frame=reference_frame,
                 desired_override_rad=feedback_desired,
             )
-            if oracle_delta is not None and oracle_agent not in motor_faults:
+            if predecessor_retired:
+                # Keep the oracle's internal decay history, but retire its
+                # executable authority even if the successor faults or idles.
+                residual_by_id[oracle_agent] = np.zeros(12, dtype=np.float64)
+                residual_previous[oracle_index] = 0.0
+                trace["residual_applied"][-1][oracle_index] = 0.0
+            elif oracle_delta is not None and oracle_agent not in motor_faults:
                 residual_by_id[oracle_agent] = oracle_delta
                 oracle_override_agent = oracle_agent
                 residual_previous[oracle_index] = oracle_delta[:12]
                 trace["residual_applied"][-1][oracle_index] = oracle_delta[:12]
             trace.setdefault("receiving_oracle_contract", []).append(receiving_oracle.contract_hash)
+            if receiving_foundation_handoff is not None:
+                trace.setdefault("receiving_foundation_handoff_contract", []).append(
+                    receiving_foundation_handoff.contract_hash
+                )
+                trace.setdefault("receiving_foundation_predecessor_retired", []).append(
+                    predecessor_retired
+                )
             trace.setdefault("receiving_oracle_active", []).append(oracle_active)
             trace.setdefault("receiving_oracle_override", []).append(
                 oracle_override_agent is not None
