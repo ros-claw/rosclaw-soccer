@@ -31,6 +31,7 @@ def test_memory_only_hash_is_unchanged():
     expected = asdict(obs)
     expected.pop("action_substrate")
     expected.pop("previous_body_residual_rad")
+    expected.pop("contact_history")
     expected["locomotion"].pop("scene")
     expected["locomotion"]["memory"] = obs.locomotion.memory.state_hash
     assert obs.observation_hash == hash_json(expected)

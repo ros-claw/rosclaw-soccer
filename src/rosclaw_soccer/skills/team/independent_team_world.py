@@ -135,6 +135,7 @@ from rosclaw_soccer.skills.team.navigation_option import (
 from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
 from rosclaw_soccer.training.receiving_feedback import (
     ReceivingCaptureContext,
+    ReceivingContactHistory,
     ReceivingFeedbackObservation,
     ReceivingFeedbackProvider,
     ReceivingFeedbackSlot,
@@ -1088,6 +1089,7 @@ def simulate_independent_team_world(
     feedback_slot = None
     feedback_contact_time: float | None = None
     feedback_contact_foot: int | None = None
+    feedback_interruption_time: float | None = None
     if receiving_feedback is not None:
         if receiving_oracle is None or receiving_phase_reference is not None:
             raise ValueError("feedback requires its oracle schedule without another phase provider")
@@ -2999,8 +3001,22 @@ def simulate_independent_team_world(
                     locomotion=locomotion_context,
                     action_substrate=feedback_slot.action_substrate,
                     previous_body_residual_rad=feedback_body_previous,
+                    contact_history=(
+                        ReceivingContactHistory(float(data.time), feedback_interruption_time)
+                        if feedback_slot.requires_contact_history
+                        else None
+                    ),
                 )
                 feedback_desired = feedback_slot.step(feedback_observation)
+                if feedback_observation.contact_history is not None:
+                    trace.setdefault("receiving_feedback_contact_history", []).append(
+                        (
+                            float(data.time),
+                            -1.0
+                            if feedback_interruption_time is None
+                            else feedback_interruption_time,
+                        )
+                    )
                 if feedback_body_previous is not None:
                     trace.setdefault("receiving_feedback_previous_body_residual_rad", []).append(
                         np.asarray(feedback_body_previous)
@@ -3533,6 +3549,12 @@ def simulate_independent_team_world(
                 frame_robot_contact_force_n = substep_robot_contact_force_n
             control_foot_agents: set[str] = set()
             control_interrupted = substep_robot_contacts > 0
+            if (
+                feedback_slot is not None
+                and feedback_slot.requires_contact_history
+                and substep_robot_contacts > 0
+            ):
+                feedback_interruption_time = float(data.time)
             for contact_index in range(int(data.ncon)):
                 contact = data.contact[contact_index]
                 pair = {int(contact.geom1), int(contact.geom2)}
@@ -3556,6 +3578,14 @@ def simulate_independent_team_world(
                     wrench: NDArray[np.float64] = np.zeros(6, dtype=np.float64)
                     mujoco.mj_contactForce(model, data, contact_index, wrench)
                     force = float(np.linalg.norm(wrench[:3]))
+                    if feedback_slot is not None and feedback_slot.requires_contact_history:
+                        if not math.isfinite(force):
+                            raise ValueError("nonfinite contact cannot establish complete history")
+                        if force > 0 and (
+                            controller.cell.agent_id != feedback_slot.agent_id
+                            or effector_code not in (1, 2)
+                        ):
+                            feedback_interruption_time = float(data.time)
                     if (
                         feedback_slot is not None
                         and controller.cell.agent_id == feedback_slot.agent_id

@@ -93,6 +93,31 @@ class ReceivingLocomotionContext:
 
 
 @dataclass(frozen=True)
+class ReceivingContactHistory:
+    """Completed native contact history, not possession or successor readiness.
+
+    Interruption means force-positive foreign-player or non-foot ball contact,
+    or robot-robot contact. Ground/net contact is not classified as a player.
+    A same-time own-foot touch and interruption must not count as clean control.
+    """
+
+    observed_through_time_sec: float
+    last_interruption_time_sec: float | None
+
+    def __post_init__(self) -> None:
+        now = self.observed_through_time_sec
+        interruption = self.last_interruption_time_sec
+        if type(now) not in (int, float) or not math.isfinite(now) or not 0 <= now <= 20:
+            raise ValueError("bounded completed contact observation clock required")
+        if interruption is not None and (
+            type(interruption) not in (int, float)
+            or not math.isfinite(interruption)
+            or not 0 <= interruption <= now + 1e-9
+        ):
+            raise ValueError("interruption must be a measured past contact event")
+
+
+@dataclass(frozen=True)
 class ReceivingFeedbackObservation:
     agent_id: str
     frame: int
@@ -110,6 +135,7 @@ class ReceivingFeedbackObservation:
     locomotion: ReceivingLocomotionContext | None = None
     action_substrate: str = "A0_leg12"
     previous_body_residual_rad: tuple[float, ...] | None = None
+    contact_history: ReceivingContactHistory | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -154,6 +180,12 @@ class ReceivingFeedbackObservation:
                 raise ValueError("scene must bind the observed receiving agent")
         if type(self.committed_receive) is not bool:
             raise ValueError("explicit current receiving commitment required")
+        if self.contact_history is not None:
+            if not isinstance(self.contact_history, ReceivingContactHistory):
+                raise ValueError("typed completed contact history required")
+            self.contact_history.__post_init__()
+            if abs(self.contact_history.observed_through_time_sec - self.time_sec) > 1e-9:
+                raise ValueError("contact history must cover the current observation clock")
         if type(self.action_substrate) is not str or self.action_substrate not in (
             "A0_leg12",
             "A1_body29",
@@ -205,6 +237,8 @@ class ReceivingFeedbackObservation:
     @property
     def observation_hash(self) -> str:
         value = asdict(self)
+        if self.contact_history is None:
+            value.pop("contact_history")
         if self.action_substrate == "A0_leg12" and self.previous_body_residual_rad is None:
             value.pop("action_substrate")
             value.pop("previous_body_residual_rad")
@@ -250,6 +284,9 @@ class ReceivingFeedbackSlot:
         ):
             raise ValueError("SIM-only feedback must bind the exact action schedule")
         self.provider = provider
+        self.requires_contact_history = getattr(provider, "requires_contact_history", False)
+        if type(self.requires_contact_history) is not bool:
+            raise ValueError("explicit completed-contact history requirement required")
         self.requires_locomotion_memory = getattr(provider, "requires_locomotion_memory", False)
         if type(self.requires_locomotion_memory) is not bool:
             raise ValueError("explicit locomotion memory requirement required")
@@ -266,6 +303,7 @@ class ReceivingFeedbackSlot:
         self.start_frame = schedule.start_frame
         self.next_frame = 0
         self.faulted = False
+        self._last_interruption_time: float | None = None
 
     def step(self, observation: ReceivingFeedbackObservation) -> tuple[float, ...] | None:
         if self.faulted:
@@ -276,6 +314,10 @@ class ReceivingFeedbackSlot:
             observation.__post_init__()
             if (
                 observation.agent_id != self.agent_id
+                or type(getattr(self.provider, "requires_contact_history", False)) is not bool
+                or getattr(self.provider, "requires_contact_history", False)
+                != self.requires_contact_history
+                or (self.requires_contact_history and observation.contact_history is None)
                 or observation.action_substrate != self.action_substrate
                 or getattr(self.provider, "action_substrate", "A0_leg12") != self.action_substrate
                 or observation.frame != self.next_frame
@@ -296,6 +338,13 @@ class ReceivingFeedbackSlot:
                 )
             ):
                 raise ValueError("feedback identity, clock or source binding changed")
+            if observation.contact_history is not None:
+                interruption = observation.contact_history.last_interruption_time_sec
+                if self._last_interruption_time is not None and (
+                    interruption is None or interruption < self._last_interruption_time
+                ):
+                    raise ValueError("completed contact history cannot forget an interruption")
+                self._last_interruption_time = interruption
             self.next_frame += 1
             if observation.frame < self.start_frame:
                 return None
@@ -303,6 +352,9 @@ class ReceivingFeedbackSlot:
             proposal = self.provider.propose(observation)
             if (
                 observation.observation_hash != observation_hash
+                or type(getattr(self.provider, "requires_contact_history", False)) is not bool
+                or getattr(self.provider, "requires_contact_history", False)
+                != self.requires_contact_history
                 or getattr(self.provider, "action_substrate", "A0_leg12") != self.action_substrate
                 or self.provider.agent_id != self.agent_id
                 or self.provider.schedule_hash != self.schedule_hash

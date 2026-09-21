@@ -7,6 +7,7 @@ import pytest
 from rosclaw_soccer.skills.team.motor_option import TeamMotorTarget
 from rosclaw_soccer.training.receiving_feedback import (
     ReceivingCaptureContext,
+    ReceivingContactHistory,
     ReceivingFeedbackObservation,
     ReceivingFeedbackSlot,
     ReceivingLocomotionContext,
@@ -75,6 +76,7 @@ def test_memory_is_opt_in_bound_and_hashable():
     old_fields.pop("locomotion")
     old_fields.pop("action_substrate")
     old_fields.pop("previous_body_residual_rad")
+    old_fields.pop("contact_history")
     assert old.observation_hash == hash_json(old_fields)
     new = replace(old, locomotion=locomotion())
     assert new.observation_hash != old.observation_hash
@@ -355,6 +357,88 @@ def test_sonic_feedback_stays_rejected_even_with_explicit_opt_in():
     with pytest.raises(ValueError):
         cursor.step(0, active=True, predecessor=np.zeros(12), desired_override_rad=(0.0,) * 29)
     assert cursor.faulted
+
+
+def test_contact_history_is_opt_in_current_and_changes_identity():
+    old = observation()
+    current = replace(old, contact_history=ReceivingContactHistory(0.0, None))
+    assert current.observation_hash != old.observation_hash
+    provider = Provider(schedule())
+    provider.requires_contact_history = True
+    assert ReceivingFeedbackSlot(provider, schedule()).step(current) == provider.result
+    slot = ReceivingFeedbackSlot(provider, schedule())
+    with pytest.raises(ValueError):
+        slot.step(old)
+    assert slot.faulted
+
+
+@pytest.mark.parametrize(
+    "clock,event",
+    [
+        (True, None),
+        (float("nan"), None),
+        (-0.01, None),
+        (21.0, None),
+        (0.0, 0.01),
+        (0.0, True),
+        (0.0, float("inf")),
+        (0.0, -0.01),
+    ],
+)
+def test_contact_history_rejects_unknown_or_future_events(clock, event):
+    with pytest.raises(ValueError):
+        ReceivingContactHistory(clock, event)
+
+
+def test_contact_history_rejects_stale_clock_and_untyped_context():
+    for value in ({}, ReceivingContactHistory(0.02, None)):
+        with pytest.raises(ValueError):
+            replace(observation(), contact_history=value)
+
+
+@pytest.mark.parametrize("event", [None, 0.0])
+def test_contact_history_cannot_erase_a_completed_interruption(event):
+    provider = Provider(schedule())
+    provider.requires_contact_history = True
+    slot = ReceivingFeedbackSlot(provider, schedule())
+    slot.step(replace(observation(), contact_history=ReceivingContactHistory(0.0, None)))
+    slot.step(replace(observation(1), contact_history=ReceivingContactHistory(0.02, 0.01)))
+    with pytest.raises(ValueError):
+        slot.step(replace(observation(2), contact_history=ReceivingContactHistory(0.04, event)))
+    assert slot.faulted
+
+
+@pytest.mark.parametrize("mutation", ["before", "during", "input"])
+def test_contact_history_requirement_and_observation_cannot_change(mutation):
+    provider = Provider(schedule())
+    provider.requires_contact_history = True
+    slot = ReceivingFeedbackSlot(provider, schedule())
+    if mutation == "before":
+        provider.requires_contact_history = 1
+    else:
+
+        def mutate(obs):
+            if mutation == "during":
+                provider.requires_contact_history = False
+            else:
+                object.__setattr__(obs.contact_history, "last_interruption_time_sec", 0.0)
+            return provider.result
+
+        provider.propose = mutate
+    with pytest.raises(ValueError):
+        slot.step(replace(observation(), contact_history=ReceivingContactHistory(0.0, None)))
+    assert slot.faulted
+
+
+def test_contact_history_accepts_same_substep_ties_without_claiming_possession():
+    obs = replace(
+        observation(1),
+        last_own_foot_contact_time_sec=0.01,
+        last_own_contact_foot=1,
+        contact_history=ReceivingContactHistory(0.02, 0.01),
+    )
+    assert obs.contact_history.last_interruption_time_sec == obs.last_own_foot_contact_time_sec
+    assert obs.capture_context is None
 
 
 def test_feedback_cannot_mix_with_phase_or_preentry():
