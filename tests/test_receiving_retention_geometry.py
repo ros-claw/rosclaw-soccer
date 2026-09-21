@@ -3,7 +3,10 @@ from copy import deepcopy
 import pytest
 
 from rosclaw_soccer.training.receiving_bias_search import receiving_bias_is_clean
-from rosclaw_soccer.training.receiving_retention_geometry import receiving_retention_feasible
+from rosclaw_soccer.training.receiving_retention_geometry import (
+    receiving_departure_margin,
+    receiving_retention_feasible,
+)
 
 
 def forecast(**changes):
@@ -94,3 +97,39 @@ def test_invalid_observation_time(now):
 def test_inherited_diagnostics_validated(changes):
     with pytest.raises(ValueError):
         check(forecast(**changes))
+
+
+def test_departure_margin_separates_ball_slow_from_retained():
+    assert receiving_departure_margin(distance_m=0.34, radial_departure_mps=0.28) < 0
+    assert receiving_departure_margin(distance_m=0.25, radial_departure_mps=0.1) == pytest.approx(
+        0.05
+    )
+    assert receiving_departure_margin(distance_m=0.25, radial_departure_mps=-1) == pytest.approx(
+        0.1
+    )
+    assert receiving_departure_margin(distance_m=0.36, radial_departure_mps=-1) < 0
+
+
+@pytest.mark.parametrize("key", ["distance_m", "radial_departure_mps", "projection_sec"])
+@pytest.mark.parametrize("bad", [True, "0.1", float("nan"), float("inf"), 10001])
+def test_departure_margin_rejects_corrupt_inputs(key, bad):
+    kwargs = dict(distance_m=0.2, radial_departure_mps=0.1, projection_sec=0.5)
+    kwargs[key] = bad
+    with pytest.raises(ValueError):
+        receiving_departure_margin(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        dict(distance_m=-0.1),
+        dict(projection_sec=0),
+        dict(projection_sec=-1),
+        dict(projection_sec=2.001),
+    ],
+)
+def test_departure_margin_rejects_invalid_physical_domain(changes):
+    kwargs = dict(distance_m=0.2, radial_departure_mps=0.1, projection_sec=0.5)
+    kwargs.update(changes)
+    with pytest.raises(ValueError):
+        receiving_departure_margin(**kwargs)

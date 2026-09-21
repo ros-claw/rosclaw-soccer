@@ -13,6 +13,25 @@ from typing import Any
 from rosclaw_soccer.training.receiving_bias_search import ReceivingBiasForecast
 
 
+def receiving_departure_margin(
+    *, distance_m: float, radial_departure_mps: float, projection_sec: float = 0.5
+) -> float:
+    """Linear pocket margin using ball-minus-foot velocity projected outwards.
+
+    Positive means only that the linear extrapolation stays within 0.35 m.
+    It is NOT a control barrier certificate: acceleration, foot switching,
+    contacts and policy changes are not modeled. Never use it as the real exam.
+    Closing velocity does not create extra credit beyond the current margin.
+    Geometry and velocity must refer to the same instant and selected foot.
+    """
+    for value in (distance_m, radial_departure_mps, projection_sec):
+        if type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 1e4:
+            raise ValueError("finite bounded real geometry, velocity and projection required")
+    if distance_m < 0 or not 0 < projection_sec <= 2:
+        raise ValueError("nonnegative distance and projection in (0, 2] seconds required")
+    return float(0.35 - distance_m - projection_sec * max(radial_departure_mps, 0.0))
+
+
 def receiving_retention_feasible(
     diagnostics: Mapping[str, Any],
     *,
