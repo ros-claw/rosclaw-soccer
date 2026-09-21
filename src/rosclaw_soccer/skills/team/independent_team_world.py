@@ -2487,10 +2487,20 @@ def simulate_independent_team_world(
                         or motor_retirements
                         or motor_peer_velocities
                         or strike_phase_config is not None
-                        or reserved_stance_target is not None
-                        or strike_lease_agent_id is not None
-                        or flight_tracking_agent_id is not None
-                        or prospective_team_contact
+                        or (
+                            reserved_stance_target is not None
+                            and stance_reservation_allowed(
+                                intent=current_decision.intent,
+                                post_receive_hold=post_receive_hold,
+                            )
+                        )
+                        or strike_lease_agent_id == controller.cell.agent_id
+                        or prospective_strike_owner is controller
+                        or flight_tracking_agent_id == controller.cell.agent_id
+                        or (
+                            prospective_team_contact
+                            and current_decision.intent is not TacticalIntent.RECEIVE
+                        )
                         or not active.loose_ball_capture_follow_navigation
                         or not active.loose_ball_capture_live_foundation
                     ),
