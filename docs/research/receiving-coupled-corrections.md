@@ -147,3 +147,46 @@ Soccer `ccb444b` 全量为 **5058 passed、55 skipped、11 failed**，XML
 - `m0/packaged-acquisition-physical-equivalence-v1/complete.json`：封装等价。
 - `m0/acquisition-horizon-audit-v2/complete.json`：45 次时域诊断。
 - `reboot-regression-ccb444b.xml`：全量回归。
+
+这次保留失败也实际经过 Core `ResearchCampaign` / `ResearchObservation`
+路由：认证原始 16 次执行的内容、重算原考试并逐数组比较重放后，
+`retention_pass=false` 路由到 `STABILITY_PLASTICITY`，训练和晋升授权均
+为 false。证据 `core-acquisition-regression-observation-v2.json`，manifest
+`f52271ae2ce7b28dcc6275a7b542925d2ee01862f745229317eccf8e8d740be2`。
+这里是控制教师工程改动的保留性退化，不是神经网络已发生灾难性遗忘。
+该注解是事后认证输入，不代表完整自动调度器；未虚构 train/dev/sealed
+银行身份。首版注解因认证函数移除封装哈希字段而在写出前失败，原脚本及
+STOPPED 记录保留，修正不重签任何旧物理证据。
+
+### 触后确认的实际对照
+
+确认只作用于新增缺触球触发的首选候选，未修改旧碰腿/逃逸搜索。两个
+退化案例在 frame 30 的长预测均被拒绝；另一侧后卫/中场在 frame 35
+的候选通过确认。四例实跑八次，原三个成功保留、一个失败救回，全部
+身体安全且精确重放，共 4540 次私有预测。
+
+再冻结同一规则检验其余六例，十二次执行全部通过、安全、重放一致，
+3036 次私有预测。合起来是十个已见局部课程通过，不是十个独立盲测，
+不改写 R0 17/128，不代表学生继承或实时 50 Hz MPC，也未证明接球后
+立即传射。作为反例的旧版两例退化永久保留，不能被新版结果覆盖。
+
+- `m0/confirmed-acquisition-teacher-v1/complete.json`：针对性四例，manifest
+  `6858cdd46fd200b8e3990d1fb6c94a961c6f0e50954e9764388db57700475d41`。
+- `m0/confirmed-acquisition-retention-v1/complete.json`：其余六例，manifest
+  `571ba3d4ee88fd83a45631e7721753f8b3c4f4968d6316827e12e11dcef11c17`。
+
+`receiving_acquisition_confirmed` 将预测接触时刻、预测时域、触后观察长度
+和完整预测标签一起验证。缺时间、时序矛盾、NaN、布尔伪数值或不充分
+触后时域均不得得到确认。它是研究过滤器，不授予执行或教师资格；相关
+单测扩到 52 项通过。封装的物理等价检查独立于课程成绩。
+
+封装验证随后完成：四例、八次实际执行的完整物理字段与全部提案均逐值
+一致。`m0/packaged-confirmation-physical-equivalence-v1/complete.json`，
+manifest `86ee535dffaa031c991995ecba24d8a9df68fbb8a00221590ae642840b16162a`。
+Soccer `2632094` 全量 **5074 passed、55 skipped、11 failed**；XML 核对
+仍是相同十一项历史外部证据失败，未新增；全仓 lint 和相关模块类型通过。
+
+下一项固定 1.25 m/s，蓝/红 × 后卫/中场 × ±0.08 m，八课与静态先验
+配对并重放，最多 32 次实际执行。这些是历史几何的开发挑战，不是换 seed
+得到盲测，也不是把快球难度降到已有成功范围。只有全八课安全通过、无旧
+对照退化且重放一致才通过这一局部门；尚未完成时不报告结果。
