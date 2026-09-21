@@ -151,6 +151,7 @@ from rosclaw_soccer.training.receiving_phase_feedback import (
     receiving_phase_features,
 )
 from rosclaw_soccer.training.receiving_scene import ReceivingPeerState, ReceivingSceneContext
+from rosclaw_soccer.training.rolling_strike_entry import inspect_rolling_strike_entry
 from rosclaw_soccer.world.field import (
     G1CompliantGoalNetState,
     G1TrainingGoalSpec,
@@ -5329,25 +5330,18 @@ def _activate_rolling_option(
         else candidate.decision.target_position_m[:2],
         dtype=np.float64,
     )
-    direction = target - ball
-    direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
-    target_yaw = math.atan2(float(direction[1]), float(direction[0]))
     current_yaw = _pelvis_yaw(
         np.asarray(data.qpos[candidate.qpos_base + 3 : candidate.qpos_base + 7], dtype=np.float64)
     )
-    yaw_error = abs(
-        math.atan2(math.sin(target_yaw - current_yaw), math.cos(target_yaw - current_yaw))
+    entry = inspect_rolling_strike_entry(
+        pelvis_xy=(float(pelvis[0]), float(pelvis[1])),
+        ball_xy=(float(ball[0]), float(ball[1])),
+        target_xy=(float(target[0]), float(target[1])),
+        yaw_rad=current_yaw,
+        config=config,
     )
-    lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
-    stance_depth = float(np.dot(ball - pelvis, direction))
-    lateral_error = abs(float(np.dot(ball - pelvis, lateral)))
-    if not phase_required and (
-        not config.minimum_strike_stance_depth_m
-        <= stance_depth
-        <= config.maximum_strike_stance_depth_m
-        or lateral_error > config.maximum_strike_lateral_error_m
-        or yaw_error > config.maximum_strike_yaw_error_rad
-    ):
+    direction = np.asarray(entry.direction_xy, dtype=np.float64)
+    if not phase_required and not entry.geometry_admissible:
         return
     if config.measured_state_history and len(candidate.measured_kick_history) != 5:
         return
