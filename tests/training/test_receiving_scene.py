@@ -21,6 +21,8 @@ def scene():
         None,
         False,
         False,
+        False,
+        0.12,
     )
 
 
@@ -73,6 +75,10 @@ def test_scene_is_opt_in_bound_to_current_agent_and_clock():
         {"receive_lease_active": True},
         {"receive_lease_active": 1},
         {"navigation_overrides_present": 0},
+        {"post_receive_hold": 1},
+        {"receive_foot_lateral_offset_m": float("nan")},
+        {"receive_foot_lateral_offset_m": -0.1},
+        {"receive_foot_lateral_offset_m": True},
     ],
 )
 def test_invalid_scene(changes):

@@ -48,6 +48,8 @@ class ReceivingSceneContext:
     receive_lease_agent_id: str | None
     receive_lease_active: bool
     navigation_overrides_present: bool
+    post_receive_hold: bool
+    receive_foot_lateral_offset_m: float
 
     def __post_init__(self) -> None:
         if (
@@ -62,6 +64,10 @@ class ReceivingSceneContext:
             or len(self.peers) > 31
             or type(self.receive_lease_active) is not bool
             or type(self.navigation_overrides_present) is not bool
+            or type(self.post_receive_hold) is not bool
+            or type(self.receive_foot_lateral_offset_m) not in (int, float)
+            or not math.isfinite(self.receive_foot_lateral_offset_m)
+            or not 0 <= self.receive_foot_lateral_offset_m <= 1
         ):
             raise ValueError("bounded current receiving scene required")
         for peer in self.peers:

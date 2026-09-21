@@ -2351,6 +2351,25 @@ def simulate_independent_team_world(
             current_decision = controller.decision
             if current_decision is None:
                 raise RuntimeError("independent agent has no current decision")
+            post_receive_hold = hold_capture_navigation(
+                capture_active=bool(
+                    last_receive_contact_agent_id == controller.cell.agent_id
+                    and float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
+                    and not (
+                        contact_teacher_config is not None
+                        and contact_teacher_config.one_touch_finish_enabled
+                        and controller.cell.self_model.primary_role is MatchRole.FINISHER
+                    )
+                ),
+                follow_enabled=active.loose_ball_capture_follow_navigation,
+                live_foundation=capture_live_foundation,
+                intent=current_decision.intent,
+            )
+            receive_foot_lateral_offset_m = (
+                0.18
+                if contact_teacher_config is None
+                else contact_teacher_config.committed_receive_ankle_lateral_offset_m
+            )
             command = _movement_command(
                 experimental_navigation_speed_mps=(
                     experimental_navigation[controller.cell.agent_id].maximum_speed_mps
@@ -2375,25 +2394,8 @@ def simulate_independent_team_world(
                     (receive_lease_active or flight_tracking_agent_id == controller.cell.agent_id)
                     and receive_lease_agent_id == controller.cell.agent_id
                 ),
-                post_receive_hold=hold_capture_navigation(
-                    capture_active=bool(
-                        last_receive_contact_agent_id == controller.cell.agent_id
-                        and float(data.time) - last_receive_contact_time_sec <= capture_hold_sec
-                        and not (
-                            contact_teacher_config is not None
-                            and contact_teacher_config.one_touch_finish_enabled
-                            and controller.cell.self_model.primary_role is MatchRole.FINISHER
-                        )
-                    ),
-                    follow_enabled=active.loose_ball_capture_follow_navigation,
-                    live_foundation=capture_live_foundation,
-                    intent=current_decision.intent,
-                ),
-                receive_foot_lateral_offset_m=(
-                    0.18
-                    if contact_teacher_config is None
-                    else contact_teacher_config.committed_receive_ankle_lateral_offset_m
-                ),
+                post_receive_hold=post_receive_hold,
+                receive_foot_lateral_offset_m=receive_foot_lateral_offset_m,
                 strike_target_position_m=(
                     None
                     if strike_lease_agent_id != controller.cell.agent_id
@@ -2490,8 +2492,10 @@ def simulate_independent_team_world(
                         or flight_tracking_agent_id is not None
                         or prospective_team_contact
                         or not active.loose_ball_capture_follow_navigation
-                        or not capture_live_foundation
+                        or not active.loose_ball_capture_live_foundation
                     ),
+                    post_receive_hold=post_receive_hold,
+                    receive_foot_lateral_offset_m=receive_foot_lateral_offset_m,
                 )
             current_yaw = _pelvis_yaw(
                 np.asarray(
