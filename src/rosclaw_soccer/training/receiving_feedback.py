@@ -248,6 +248,8 @@ class ReceivingFeedbackObservation:
             value["locomotion"]["memory"] = self.locomotion.memory.state_hash
             if self.locomotion.scene is None:
                 value["locomotion"].pop("scene")  # Preserve memory-only observation identities.
+            else:
+                value["locomotion"]["scene"] = self.locomotion.scene.to_dict()
         return str(hash_json(value))
 
 
@@ -295,6 +297,11 @@ class ReceivingFeedbackSlot:
             self.requires_navigation_context and not self.requires_locomotion_memory
         ):
             raise ValueError("navigation context requires explicit current locomotion memory")
+        self.requires_navigation_target = getattr(provider, "requires_navigation_target", False)
+        if type(self.requires_navigation_target) is not bool or (
+            self.requires_navigation_target and not self.requires_navigation_context
+        ):
+            raise ValueError("decision target requires explicit navigation context")
         self.agent_id = schedule.agent_id
         self.action_substrate = schedule.substrate
         self.action_dimension = len(schedule.knots[0])
@@ -319,6 +326,17 @@ class ReceivingFeedbackSlot:
                 != self.requires_contact_history
                 or (self.requires_contact_history and observation.contact_history is None)
                 or observation.action_substrate != self.action_substrate
+                or type(getattr(self.provider, "requires_navigation_target", False)) is not bool
+                or getattr(self.provider, "requires_navigation_target", False)
+                != self.requires_navigation_target
+                or (
+                    self.requires_navigation_target
+                    and (
+                        observation.locomotion is None
+                        or observation.locomotion.scene is None
+                        or observation.locomotion.scene.decision_target_position_m is None
+                    )
+                )
                 or getattr(self.provider, "action_substrate", "A0_leg12") != self.action_substrate
                 or observation.frame != self.next_frame
                 or self.provider.agent_id != self.agent_id
@@ -352,6 +370,9 @@ class ReceivingFeedbackSlot:
             proposal = self.provider.propose(observation)
             if (
                 observation.observation_hash != observation_hash
+                or type(getattr(self.provider, "requires_navigation_target", False)) is not bool
+                or getattr(self.provider, "requires_navigation_target", False)
+                != self.requires_navigation_target
                 or type(getattr(self.provider, "requires_contact_history", False)) is not bool
                 or getattr(self.provider, "requires_contact_history", False)
                 != self.requires_contact_history

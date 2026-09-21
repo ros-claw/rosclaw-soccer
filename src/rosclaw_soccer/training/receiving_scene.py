@@ -2,7 +2,8 @@
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from typing import Any
 
 
 def _agent(value: object) -> bool:
@@ -50,6 +51,7 @@ class ReceivingSceneContext:
     navigation_overrides_present: bool
     post_receive_hold: bool
     receive_foot_lateral_offset_m: float
+    decision_target_position_m: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -82,3 +84,24 @@ class ReceivingSceneContext:
                 raise ValueError("scene owner must be an observed agent")
         if self.receive_lease_active and self.receive_lease_agent_id is None:
             raise ValueError("active receive lease requires its owner")
+        target = self.decision_target_position_m
+        if target is not None and (
+            type(target) is not tuple
+            or len(target) != 3
+            or any(
+                type(v) not in (int, float) or abs(v) > 1e4 or not math.isfinite(v) for v in target
+            )
+        ):
+            raise ValueError("finite immutable current decision target required")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Canonical value representation; absent opt-in target preserves identity.
+
+        The target is the current AgentCell request before movement guards, not
+        an executed command or permission. Existing capture timing is carried
+        separately by ReceivingFeedbackObservation.capture_context.
+        """
+        value = asdict(self)
+        if self.decision_target_position_m is None:
+            value.pop("decision_target_position_m")
+        return value

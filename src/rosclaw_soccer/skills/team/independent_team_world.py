@@ -2508,6 +2508,11 @@ def simulate_independent_team_world(
                     ),
                     post_receive_hold=post_receive_hold,
                     receive_foot_lateral_offset_m=receive_foot_lateral_offset_m,
+                    decision_target_position_m=(
+                        current_decision.target_position_m
+                        if feedback_slot.requires_navigation_target
+                        else None
+                    ),
                 )
             current_yaw = _pelvis_yaw(
                 np.asarray(
@@ -3023,10 +3028,10 @@ def simulate_independent_team_world(
                     )
                 if feedback_scene is not None:
                     trace.setdefault("receiving_feedback_scene_hash", []).append(
-                        hash_json(asdict(feedback_scene))
+                        hash_json(feedback_scene.to_dict())
                     )
                     trace.setdefault("receiving_feedback_scene_json", []).append(
-                        json.dumps(asdict(feedback_scene), sort_keys=True, allow_nan=False)
+                        json.dumps(feedback_scene.to_dict(), sort_keys=True, allow_nan=False)
                     )
                 trace.setdefault("receiving_feedback_observation_hash", []).append(
                     feedback_observation.observation_hash

@@ -122,3 +122,97 @@ def test_requirement_cannot_change_in_callback():
     with pytest.raises(ValueError):
         slot.step(replace(observation(), locomotion=replace(locomotion(), scene=scene())))
     assert slot.faulted
+
+
+def test_legacy_scene_serialization_and_observation_identity_preserved():
+    current = scene()
+    legacy = asdict(current)
+    legacy.pop("decision_target_position_m")
+    assert current.to_dict() == legacy
+    obs = replace(observation(), locomotion=replace(locomotion(), scene=current))
+    expected = asdict(obs)
+    for key in ("action_substrate", "previous_body_residual_rad", "contact_history"):
+        expected.pop(key)
+    expected["locomotion"]["memory"] = obs.locomotion.memory.state_hash
+    expected["locomotion"]["scene"] = legacy
+    assert obs.observation_hash == hash_json(expected)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        [1.0, 2.0, 0.0],
+        (1.0, 2.0),
+        (True, 0.0, 0.0),
+        (float("nan"), 0.0, 0.0),
+        (float("inf"), 0.0, 0.0),
+        (10**1000, 0.0, 0.0),
+    ],
+)
+def test_invalid_current_decision_target(target):
+    with pytest.raises(ValueError):
+        replace(scene(), decision_target_position_m=target)
+
+
+@pytest.mark.parametrize(
+    "target_required,context_required", [(True, False), (1, True), (None, True)]
+)
+def test_target_requirement_needs_strict_navigation_opt_in(target_required, context_required):
+    source = schedule()
+    provider = Provider(source)
+    provider.requires_locomotion_memory = True
+    provider.requires_navigation_context = context_required
+    provider.requires_navigation_target = target_required
+    with pytest.raises(ValueError):
+        ReceivingFeedbackSlot(provider, source)
+
+
+def target_provider():
+    source = schedule()
+    provider = Provider(source)
+    provider.requires_locomotion_memory = provider.requires_navigation_context = True
+    provider.requires_navigation_target = True
+    return provider, source
+
+
+def target_observation():
+    return replace(
+        observation(),
+        locomotion=replace(
+            locomotion(), scene=replace(scene(), decision_target_position_m=(1.0, 2.0, 0.0))
+        ),
+    )
+
+
+def test_target_required_missing_is_latched_failure():
+    provider, source = target_provider()
+    slot = ReceivingFeedbackSlot(provider, source)
+    with pytest.raises(ValueError):
+        slot.step(replace(observation(), locomotion=replace(locomotion(), scene=scene())))
+    assert slot.faulted and provider.calls == 0
+
+
+def test_target_is_bound_to_observation_without_changing_proposal():
+    provider, source = target_provider()
+    obs = target_observation()
+    old = replace(obs, locomotion=replace(locomotion(), scene=scene()))
+    assert obs.observation_hash != old.observation_hash
+    assert ReceivingFeedbackSlot(provider, source).step(obs) == provider.result
+
+
+@pytest.mark.parametrize("when", ["before", "during"])
+def test_target_requirement_cannot_mutate(when):
+    provider, source = target_provider()
+    slot = ReceivingFeedbackSlot(provider, source)
+    if when == "before":
+        provider.requires_navigation_target = False
+    else:
+
+        def mutate(obs):
+            provider.requires_navigation_target = False
+            return provider.result
+
+        provider.propose = mutate
+    with pytest.raises(ValueError):
+        slot.step(target_observation())
+    assert slot.faulted
