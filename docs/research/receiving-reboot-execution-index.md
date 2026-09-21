@@ -112,6 +112,14 @@ FK，完成 148 次 100 ms 预测（含一次重复），不是新增 148 场接
 私有模型没有推进这部分运动记忆。先检验独立推理状态恢复与下一步输出复现，
 再判断是否能改善预测；尚未证明它是接球失败的主因。
 
+已完成这一步的组件验收，见
+[运动记忆与预测边界](locomotion-memory-forecast.md)。两份既有成功课和两份
+既有失败课分别完成记忆记录／独立重放，原物理结果不变；从真实身体状态
+重新构造输入，合计 1196 次后续推理逐值复现。两个 200 ms 预测对照各
+108 次私有预测，失败课近球脚误差从 9.15/18.91 mm 降到 0.39/0.36 mm。
+仍不算新接球成功；接下来做原生／保持目标 MPC／循环网络预测 MPC 的
+固定双案例对照，候选、代价、幅度、频率及考试不变。E2 和学生训练门未开启。
+
 `practice-mpc-memory-v1/complete.json` 将两份既有成功 fixture 和两份已
 认证 MPC 失败轨迹，经 pinned Core CLI 的 record/strict verify/distill/
 本地 SQLite-compatible ingest/query 串通；成功和失败各查回两条，重复
@@ -145,3 +153,9 @@ capture 上下文扩展的相关测试 **136 passed**，尚不代表新教师物
 55 skipped、11 failed**，XML 比较仍为相同十一项历史证据失败，没有新增。
 Core `438e86dd` 的远端自动测试（含 Python 3.11 全量及 3.12/3.13）、类型、
 边界和验收均已通过；人工 gate 待审，不自行合并 Core PR。
+
+循环记忆接口 `e0cfc48` 在不可变 worktree 全量运行：**4966 passed、
+55 skipped、11 failed**。XML 用例身份比较与 `4b5f5e5` 的十一项失败完全
+一致，无新增失败。显式配置真实 G1 资产的世界测试 **6 passed**。
+完整仓库依然不是全绿；不重签历史失败证据。记录接口首版的 hash 前缀
+集成失败单独保留在 `m0/locomotion-memory-replay-v1/STOPPED.md`。
