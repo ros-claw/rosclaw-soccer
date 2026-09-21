@@ -95,6 +95,33 @@ def receiving_bias_is_clean(diagnostics: Mapping[str, Any]) -> bool:
     return ReceivingBiasForecast.from_mapping(diagnostics).clean
 
 
+def receiving_bias_search_reason(
+    diagnostics: Mapping[str, Any],
+    *,
+    first_contact_observed: bool,
+    seek_first_contact: bool = False,
+) -> str | None:
+    """Explain a private search trigger without authorizing any resulting action.
+
+    A safe no-contact prediction is not successful acquisition. Opt-in first-touch
+    search covers that gap before measured contact; it never invents a contact
+    event. The default preserves the earlier safety/contact/escape trigger.
+    Incoming ball speed alone is not an escape event without predicted foot touch.
+    """
+    if type(first_contact_observed) is not bool or type(seek_first_contact) is not bool:
+        raise ValueError("explicit measured-contact and acquisition-mode flags required")
+    forecast = ReceivingBiasForecast.from_mapping(diagnostics)
+    if forecast.unsafe:
+        return "body_unsafe"
+    if forecast.nonfoot_contact_samples > 0:
+        return "nonfoot_contact"
+    if seek_first_contact and not first_contact_observed and forecast.foot_contact_samples == 0:
+        return "missing_first_touch"
+    if forecast.foot_contact_samples > 0 and forecast.terminal_ball_speed > 0.35:
+        return "ball_escape"
+    return None
+
+
 def receiving_bias_beam_seeds(
     rows: Sequence[Mapping[str, Any]],
     *,

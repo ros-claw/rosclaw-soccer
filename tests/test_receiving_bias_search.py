@@ -1,4 +1,5 @@
 from dataclasses import replace
+from itertools import product
 
 import numpy as np
 import pytest
@@ -8,6 +9,7 @@ from rosclaw_soccer.training.receiving_bias_search import (
     receiving_bias_beam_seeds,
     receiving_bias_candidates,
     receiving_bias_is_clean,
+    receiving_bias_search_reason,
 )
 
 
@@ -142,3 +144,68 @@ def test_batch_is_bounded_and_complete():
         receiving_bias_beam_seeds([row()] * 257)
     with pytest.raises(ValueError):
         receiving_bias_beam_seeds([{"change_squared": 0}])
+
+
+def test_search_trigger_matches_old_rule_and_explicit_acquisition_extension():
+    for unsafe, foot, nonfoot, speed, observed in product(
+        (False, True), (0, 3), (0, 2), (0.0, 0.35, 0.350001, 0.8), (False, True)
+    ):
+        values = diagnostics(
+            unsafe=unsafe,
+            foot_contact_samples=foot,
+            nonfoot_contact_samples=nonfoot,
+            terminal_ball_speed=speed,
+        )
+        old = unsafe or nonfoot > 0 or (foot > 0 and speed > 0.35)
+        assert bool(receiving_bias_search_reason(values, first_contact_observed=observed)) == old
+        new = receiving_bias_search_reason(
+            values, first_contact_observed=observed, seek_first_contact=True
+        )
+        assert bool(new) == (old or (not observed and foot == 0))
+
+
+def test_missing_touch_is_not_ball_escape_or_synthetic_observation():
+    values = diagnostics(nonfoot_contact_samples=0, foot_contact_samples=0, terminal_ball_speed=0.8)
+    original = values.copy()
+    assert receiving_bias_search_reason(values, first_contact_observed=False) is None
+    assert (
+        receiving_bias_search_reason(values, first_contact_observed=False, seek_first_contact=True)
+        == "missing_first_touch"
+    )
+    assert (
+        receiving_bias_search_reason(values, first_contact_observed=True, seek_first_contact=True)
+        is None
+    )
+    assert values == original
+
+
+@pytest.mark.parametrize("observed,enabled", [(None, True), (1, True), (False, 1), (False, None)])
+def test_search_requires_explicit_contact_semantics(observed, enabled):
+    with pytest.raises(ValueError):
+        receiving_bias_search_reason(
+            diagnostics(), first_contact_observed=observed, seek_first_contact=enabled
+        )
+
+
+def test_search_validates_all_forecast_fields_before_short_circuit():
+    with pytest.raises(ValueError):
+        receiving_bias_search_reason(
+            diagnostics(unsafe=True, terminal_ball_speed=float("nan")),
+            first_contact_observed=False,
+            seek_first_contact=True,
+        )
+    assert (
+        receiving_bias_search_reason(diagnostics(unsafe=True), first_contact_observed=False)
+        == "body_unsafe"
+    )
+    assert (
+        receiving_bias_search_reason(diagnostics(), first_contact_observed=False)
+        == "nonfoot_contact"
+    )
+    assert (
+        receiving_bias_search_reason(
+            diagnostics(nonfoot_contact_samples=0, terminal_ball_speed=0.36),
+            first_contact_observed=True,
+        )
+        == "ball_escape"
+    )
