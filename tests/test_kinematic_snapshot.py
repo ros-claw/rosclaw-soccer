@@ -1,4 +1,7 @@
+import hashlib
+import inspect
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -38,18 +41,65 @@ def test_dataclass_type_is_not_a_live_simulation_instance():
         WarpKinematicsSnapshot(None, Data)
 
 
+def test_source_mismatch_still_rejected_before_cloning(monkeypatch):
+    mjw = pytest.importorskip("mujoco_warp")
+    wp = pytest.importorskip("warp")
+    from rosclaw_soccer.providers.g1 import kinematic_snapshot as snapshot
+
+    def forbidden_kernel(model, data):
+        raise AssertionError("unqualified source must not execute")
+
+    def forbidden_clone(value):
+        raise AssertionError("unqualified source must not allocate")
+
+    monkeypatch.setattr(mjw, "kinematics", forbidden_kernel)
+    monkeypatch.setattr(wp, "clone", forbidden_clone)
+    monkeypatch.setattr(
+        snapshot,
+        "_KINEMATICS_HASH",
+        hashlib.sha256(inspect.getsource(forbidden_kernel).encode()).hexdigest(),
+    )
+    monkeypatch.setattr(snapshot, "_SMOOTH_SOURCE_HASH", "0" * 64)
+
+    @dataclass
+    class Data:
+        nworld: int = 1
+
+    with pytest.raises(ValueError, match="unqualified simulation kinematics kernel"):
+        snapshot.WarpKinematicsSnapshot(None, Data())
+
+
 @pytest.mark.parametrize("worlds", [0, 4097, True, 1.0, None])
-def test_batch_bound_checked_before_cloning(worlds):
-    pytest.importorskip("mujoco_warp")
-    pytest.importorskip("warp")
-    from rosclaw_soccer.providers.g1.kinematic_snapshot import WarpKinematicsSnapshot
+def test_batch_bound_checked_before_cloning(worlds, monkeypatch):
+    mjw = pytest.importorskip("mujoco_warp")
+    wp = pytest.importorskip("warp")
+    from rosclaw_soccer.providers.g1 import kinematic_snapshot as snapshot
+
+    # Isolate batch validation from the locally installed kernel version. This
+    # fake must never run or clone storage; production qualification is unchanged.
+    def forbidden_kernel(model, data):
+        raise AssertionError("batch rejection must precede execution")
+
+    def forbidden_clone(value):
+        raise AssertionError("batch rejection must precede allocation")
+
+    monkeypatch.setattr(mjw, "kinematics", forbidden_kernel)
+    monkeypatch.setattr(wp, "clone", forbidden_clone)
+    monkeypatch.setattr(
+        snapshot,
+        "_KINEMATICS_HASH",
+        hashlib.sha256(inspect.getsource(forbidden_kernel).encode()).hexdigest(),
+    )
+    monkeypatch.setattr(
+        snapshot, "_SMOOTH_SOURCE_HASH", hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    )
 
     @dataclass
     class Data:
         nworld: object
 
     with pytest.raises(ValueError, match="bounded"):
-        WarpKinematicsSnapshot(None, Data(worlds))
+        snapshot.WarpKinematicsSnapshot(None, Data(worlds))
 
 
 def test_actual_cpu_current_fk_private_output_and_no_live_solver_mutation():
@@ -60,7 +110,7 @@ def test_actual_cpu_current_fk_private_output_and_no_live_solver_mutation():
     model = mujoco.MjModel.from_xml_string(
         '<mujoco><worldbody><body><joint axis="0 0 1"/>'
         '<geom type="box" size=".1 .1 .1" pos=".4 0 0"/>'
-        '</body></worldbody></mujoco>'
+        "</body></worldbody></mujoco>"
     )
     live = mujoco.MjData(model)
     live.qvel[0] = 2
