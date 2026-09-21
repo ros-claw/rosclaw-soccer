@@ -84,6 +84,18 @@ def test_independent_world_result_requires_all_six_current_decisions() -> None:
     )
 
     assert result.passed
+    observed = replace(result, physics_evidence_hashes=(("red.finisher", _hash("observer")),))
+    assert observed.passed and not observed.motor_policy_hashes
+    assert "physics_evidence_hashes" not in result.to_dict()
+    assert observed.result_hash != result.result_hash
+    failed_evidence = replace(observed, physics_evidence_fault_agents=("red.finisher",))
+    assert failed_evidence.safe and not failed_evidence.passed
+    assert failed_evidence.to_dict()["physics_evidence_fault_agents"] == ["red.finisher"]
+    for invalid in (None, [], (("red.finisher", 1),), (("unknown", _hash("observer")),)):
+        with pytest.raises(ValueError):
+            replace(result, physics_evidence_hashes=invalid)
+    with pytest.raises(ValueError):
+        replace(result, physics_evidence_fault_agents=("red.finisher",))
     with_motor = replace(result, motor_policy_hashes=(("red.finisher", _hash("motor")),))
     persistent = replace(with_motor, persistent_physics_observer_ids=("red.finisher",))
     assert "persistent_physics_observer_ids" not in with_motor.to_dict()

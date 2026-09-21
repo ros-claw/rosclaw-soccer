@@ -132,6 +132,7 @@ from rosclaw_soccer.skills.team.navigation_option import (
     NavigationSlot,
     TeamNavigationPolicy,
 )
+from rosclaw_soccer.skills.team.physics_evidence import PhysicsEvidenceConsumer, PhysicsEvidenceSlot
 from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
 from rosclaw_soccer.training.receiving_feedback import (
     ReceivingCaptureContext,
@@ -725,6 +726,8 @@ class IndependentTeamWorldResult:
     navigation_policy_hashes: tuple[tuple[str, str], ...] = ()
     navigation_fault_agents: tuple[str, ...] = ()
     persistent_physics_observer_ids: tuple[str, ...] = ()
+    physics_evidence_hashes: tuple[tuple[str, str], ...] = ()
+    physics_evidence_fault_agents: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         counts = (
@@ -741,6 +744,18 @@ class IndependentTeamWorldResult:
         )
         quality_ids = tuple(value.agent_id for value in self.qualities)
         if (
+            type(self.physics_evidence_hashes) is not tuple
+            or any(
+                type(row) is not tuple or len(row) != 2 or any(type(v) is not str for v in row)
+                for row in self.physics_evidence_hashes
+            )
+            or type(self.physics_evidence_fault_agents) is not tuple
+            or any(type(agent) is not str for agent in self.physics_evidence_fault_agents)
+            or tuple(sorted(set(self.physics_evidence_fault_agents)))
+            != self.physics_evidence_fault_agents
+        ):
+            raise ValueError("immutable physics evidence bindings required")
+        if (
             type(self.persistent_physics_observer_ids) is not tuple
             or any(type(agent) is not str for agent in self.persistent_physics_observer_ids)
             or tuple(sorted(set(self.persistent_physics_observer_ids)))
@@ -755,12 +770,19 @@ class IndependentTeamWorldResult:
             or len(dict(self.navigation_policy_hashes)) != len(self.navigation_policy_hashes)
             or not set(self.navigation_fault_agents).issubset(dict(self.navigation_policy_hashes))
             or len(set(self.navigation_fault_agents)) != len(self.navigation_fault_agents)
+            or len(dict(self.physics_evidence_hashes)) != len(self.physics_evidence_hashes)
+            or not set(self.physics_evidence_fault_agents).issubset(
+                dict(self.physics_evidence_hashes)
+            )
+            or len(set(self.physics_evidence_fault_agents))
+            != len(self.physics_evidence_fault_agents)
             or any(
                 agent not in quality_ids or not _HASH.fullmatch(value)
                 for agent, value in (
                     *self.keeper_policy_hashes,
                     *self.motor_policy_hashes,
                     *self.navigation_policy_hashes,
+                    *self.physics_evidence_hashes,
                 )
             )
             or any(
@@ -847,6 +869,7 @@ class IndependentTeamWorldResult:
             and self.safe
             and not self.motor_fault_agents
             and not self.navigation_fault_agents
+            and not self.physics_evidence_fault_agents
         )
 
     @property
@@ -855,6 +878,14 @@ class IndependentTeamWorldResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            **(
+                {
+                    "physics_evidence_hashes": dict(self.physics_evidence_hashes),
+                    "physics_evidence_fault_agents": list(self.physics_evidence_fault_agents),
+                }
+                if self.physics_evidence_hashes
+                else {}
+            ),
             **(
                 {
                     "navigation_policy_hashes": dict(self.navigation_policy_hashes),
@@ -1003,6 +1034,7 @@ def simulate_independent_team_world(
     motor_options: Mapping[str, TeamMotorOption] | None = None,
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
+    physics_evidence_consumers: Mapping[str, PhysicsEvidenceConsumer] | None = None,
     receiving_oracle: ReceivingOracleSchedule | None = None,
     receiving_phase_reference: ReceivingPhaseReference | None = None,
     receiving_feedback: ReceivingFeedbackProvider | None = None,
@@ -1086,6 +1118,26 @@ def simulate_independent_team_world(
     ):
         raise ValueError("delayed SONIC requires an explicit unchanged-prefix fallback")
     oracle_cursor = None
+    if physics_evidence_consumers is not None and not isinstance(
+        physics_evidence_consumers, Mapping
+    ):
+        raise ValueError("explicit per-player physics evidence mapping required")
+    evidence_slots = {
+        agent: PhysicsEvidenceSlot(consumer)
+        for agent, consumer in (physics_evidence_consumers or {}).items()
+    }
+    if (
+        not set(evidence_slots).issubset(roster_ids)
+        or any(agent != slot.agent_id for agent, slot in evidence_slots.items())
+        or len({id(slot.consumer) for slot in evidence_slots.values()}) != len(evidence_slots)
+        or {id(slot.consumer) for slot in evidence_slots.values()}
+        & {id(motor) for motor in motors.values()}
+    ):
+        raise ValueError("physics evidence consumers must be private and roster-bound")
+    evidence_hashes = tuple(
+        sorted((agent, slot.contract_hash) for agent, slot in evidence_slots.items())
+    )
+    evidence_faults: set[str] = set()
     phase_cursor = None
     feedback_slot = None
     feedback_contact_time: float | None = None
@@ -1156,6 +1208,8 @@ def simulate_independent_team_world(
         not set(navigation).issubset(roster_ids)
         or any(agent != slot.agent_id for agent, slot in navigation.items())
         or len({id(slot.policy) for slot in navigation.values()}) != len(navigation)
+        or {id(slot.consumer) for slot in evidence_slots.values()}
+        & {id(slot.policy) for slot in navigation.values()}
     ):
         raise ValueError("navigation providers must be private and roster-bound")
     if (
@@ -3537,6 +3591,24 @@ def simulate_independent_team_world(
                     ball_qvel,
                     persistent_observer_ids=persistent_physics_observer_ids,
                 )
+            if evidence_slots and len(evidence_faults) < len(evidence_slots):
+                # Local empty target map: read-only evidence cannot clear or
+                # acquire any real motor override or residual ownership.
+                _observe_team_motor_physics(
+                    model,
+                    data,
+                    controllers,
+                    evidence_slots,
+                    {},
+                    evidence_faults,
+                    ball_geom,
+                    ball_qpos,
+                    ball_qvel,
+                    persistent_observer_ids=tuple(sorted(evidence_slots)),
+                )
+                evidence_faults.update(
+                    agent for agent, slot in evidence_slots.items() if slot.faulted
+                )
             (
                 substep_robot_contacts,
                 substep_first_agent,
@@ -4120,6 +4192,8 @@ def simulate_independent_team_world(
         ),
         navigation_fault_agents=tuple(a for a in sorted(navigation) if navigation[a].faulted),
         persistent_physics_observer_ids=persistent_physics_observer_ids,
+        physics_evidence_hashes=evidence_hashes,
+        physics_evidence_fault_agents=tuple(sorted(evidence_faults)),
     )
     return result, trajectory
 
@@ -4128,7 +4202,7 @@ def _observe_team_motor_physics(
     model: Any,
     data: Any,
     controllers: tuple[_PlayerController, ...],
-    motors: dict[str, TeamMotorOption],
+    motors: Mapping[str, TeamMotorOption | TeamMotorPhysicsObserver],
     targets: dict[str, TeamMotorTarget],
     faults: set[str],
     ball_geom: int,
