@@ -41,6 +41,7 @@ class ReceivingControlWitness:
         self.faulted = False
         self._control_since: float | None = None
         self._last_interruption: float | None = None
+        self._last_own_contact: float | None = None
 
     @property
     def agent_id(self) -> str:
@@ -96,6 +97,11 @@ class ReceivingControlWitness:
                 self._control_since = None
             self._last_interruption = interruption
             own_contact = observation.last_own_foot_contact_time_sec
+            if self._last_own_contact is not None and (
+                own_contact is None or own_contact < self._last_own_contact
+            ):
+                raise ValueError("completed own-contact history cannot regress")
+            self._last_own_contact = own_contact
             clean = own_contact is not None and (
                 interruption is None or own_contact > interruption + 1e-9
             )

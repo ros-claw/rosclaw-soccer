@@ -70,6 +70,15 @@ def test_interruption_history_cannot_be_forgotten_or_regress(new_interruption):
     assert witness.faulted
 
 
+@pytest.mark.parametrize("new_contact", [None, 0.01])
+def test_own_contact_history_cannot_be_forgotten_or_regress(new_contact):
+    witness = ReceivingControlWitness("blue.finisher", start_frame=1)
+    observe(witness, sample(1, own=0.02))
+    with pytest.raises(ValueError, match="own-contact history cannot regress"):
+        observe(witness, sample(2, own=new_contact))
+    assert witness.faulted
+
+
 @pytest.mark.parametrize("failure", ["speed", "distance", "height", "joint", "body"])
 def test_measured_control_loss_resets_streak(failure):
     witness = ReceivingControlWitness("blue.finisher", start_frame=0)
