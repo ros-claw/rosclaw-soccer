@@ -149,6 +149,7 @@ from rosclaw_soccer.training.receiving_phase_feedback import (
     ReceivingPhaseReference,
     receiving_phase_features,
 )
+from rosclaw_soccer.training.receiving_scene import ReceivingPeerState, ReceivingSceneContext
 from rosclaw_soccer.world.field import (
     G1CompliantGoalNetState,
     G1TrainingGoalSpec,
@@ -2345,6 +2346,7 @@ def simulate_independent_team_world(
             if active.motor_clearance_prediction_sec > 0.0
             else None
         )
+        feedback_scene = None
         for controller in controllers:
             current_decision = controller.decision
             if current_decision is None:
@@ -2448,6 +2450,49 @@ def simulate_independent_team_world(
                     else None
                 ),
             )
+            if (
+                feedback_slot is not None
+                and feedback_slot.requires_navigation_context
+                and controller.cell.agent_id == feedback_slot.agent_id
+            ):
+                feedback_scene = ReceivingSceneContext(
+                    frame=frame,
+                    agent_id=controller.cell.agent_id,
+                    world_config_hash=active.config_hash,
+                    intent=current_decision.intent.value,
+                    peers=tuple(
+                        ReceivingPeerState(
+                            peer.cell.agent_id,
+                            (
+                                float(positions[peer.cell.agent_id][0]),
+                                float(positions[peer.cell.agent_id][1]),
+                            ),
+                            (
+                                float(data.qvel[peer.qvel_base]),
+                                float(data.qvel[peer.qvel_base + 1]),
+                            ),
+                        )
+                        for peer in sorted(controllers, key=lambda c: c.cell.agent_id)
+                        if peer is not controller
+                    ),
+                    possession_agent_id=current_possession_agent_id,
+                    receive_lease_agent_id=receive_lease_agent_id,
+                    receive_lease_active=bool(receive_lease_active),
+                    navigation_overrides_present=bool(
+                        navigation
+                        or motors
+                        or experimental_navigation
+                        or motor_retirements
+                        or motor_peer_velocities
+                        or strike_phase_config is not None
+                        or reserved_stance_target is not None
+                        or strike_lease_agent_id is not None
+                        or flight_tracking_agent_id is not None
+                        or prospective_team_contact
+                        or not active.loose_ball_capture_follow_navigation
+                        or not capture_live_foundation
+                    ),
+                )
             current_yaw = _pelvis_yaw(
                 np.asarray(
                     data.qpos[controller.qpos_base + 3 : controller.qpos_base + 7],
@@ -2875,6 +2920,7 @@ def simulate_independent_team_world(
                         raw_action=tuple(float(v) for v in focal_controller.policy.action),
                         world_command=tuple(float(v) for v in focal_controller.last_world_command),
                         reflected=bool(trace["loco_memory_reflected"][-1]),
+                        scene=feedback_scene,
                     )
                 feedback_capture = None
                 if oracle_agent in capture_context_agent_ids:
@@ -2927,6 +2973,13 @@ def simulate_independent_team_world(
                     locomotion=locomotion_context,
                 )
                 feedback_desired = feedback_slot.step(feedback_observation)
+                if feedback_scene is not None:
+                    trace.setdefault("receiving_feedback_scene_hash", []).append(
+                        hash_json(asdict(feedback_scene))
+                    )
+                    trace.setdefault("receiving_feedback_scene_json", []).append(
+                        json.dumps(asdict(feedback_scene), sort_keys=True, allow_nan=False)
+                    )
                 trace.setdefault("receiving_feedback_observation_hash", []).append(
                     feedback_observation.observation_hash
                 )

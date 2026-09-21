@@ -5,15 +5,20 @@ world's oracle cursor retains filtering, amplitude/rate limits and safety.
 This opt-in research boundary neither qualifies a teacher nor permits hardware.
 """
 
+from __future__ import annotations
+
 import math
 import re
 from dataclasses import asdict, dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rosclaw_soccer.providers.g1.locomotion_memory import LocomotionMemory
 from rosclaw_soccer.sim.contracts import hash_json
-from rosclaw_soccer.skills.team.motor_option import TeamMotorTarget
 from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSchedule
+from rosclaw_soccer.training.receiving_scene import ReceivingSceneContext
+
+if TYPE_CHECKING:
+    from rosclaw_soccer.skills.team.motor_option import TeamMotorTarget
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,7 @@ class ReceivingLocomotionContext:
     raw_action: tuple[float, ...]
     world_command: tuple[float, ...]
     reflected: bool
+    scene: ReceivingSceneContext | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -68,6 +74,12 @@ class ReceivingLocomotionContext:
         ):
             raise ValueError("bound current locomotion memory required")
         self.memory.__post_init__()
+        if self.scene is not None:
+            if not isinstance(self.scene, ReceivingSceneContext):
+                raise ValueError("typed current receiving scene required")
+            self.scene.__post_init__()
+            if self.scene.frame != self.frame:
+                raise ValueError("scene must share the locomotion clock")
         for values, size in ((self.raw_action, 29), (self.world_command, 3)):
             if (
                 type(values) is not tuple
@@ -120,6 +132,10 @@ class ReceivingFeedbackObservation:
                 raise ValueError("bounded immutable measured vectors required")
         if any(abs(sum(v * v for v in self.qpos[a:b]) - 1) > 2e-4 for a, b in ((3, 7), (39, 43))):
             raise ValueError("measured unit body and ball quaternions required")
+        # Team package eagerly imports the world, which imports this contract.
+        # Defer the runtime type check until construction, not module import.
+        from rosclaw_soccer.skills.team.motor_option import TeamMotorTarget
+
         if not isinstance(self.foundation_target, TeamMotorTarget):
             raise ValueError("typed current foundation target required")
         self.foundation_target.__post_init__()
@@ -129,6 +145,11 @@ class ReceivingFeedbackObservation:
             self.locomotion.__post_init__()
             if self.locomotion.frame != self.frame:
                 raise ValueError("locomotion memory must share the current observation clock")
+            if (
+                self.locomotion.scene is not None
+                and self.locomotion.scene.agent_id != self.agent_id
+            ):
+                raise ValueError("scene must bind the observed receiving agent")
         if type(self.committed_receive) is not bool:
             raise ValueError("explicit current receiving commitment required")
         if (
@@ -168,6 +189,8 @@ class ReceivingFeedbackObservation:
             value.pop("locomotion")  # Preserve existing providers' observation identities.
         else:
             value["locomotion"]["memory"] = self.locomotion.memory.state_hash
+            if self.locomotion.scene is None:
+                value["locomotion"].pop("scene")  # Preserve memory-only observation identities.
         return str(hash_json(value))
 
 
@@ -206,6 +229,11 @@ class ReceivingFeedbackSlot:
         self.requires_locomotion_memory = getattr(provider, "requires_locomotion_memory", False)
         if type(self.requires_locomotion_memory) is not bool:
             raise ValueError("explicit locomotion memory requirement required")
+        self.requires_navigation_context = getattr(provider, "requires_navigation_context", False)
+        if type(self.requires_navigation_context) is not bool or (
+            self.requires_navigation_context and not self.requires_locomotion_memory
+        ):
+            raise ValueError("navigation context requires explicit current locomotion memory")
         self.agent_id = schedule.agent_id
         self.schedule_hash = schedule.contract_hash
         self.contract_hash = provider.contract_hash
@@ -231,6 +259,13 @@ class ReceivingFeedbackSlot:
                 != self.requires_locomotion_memory
                 or type(getattr(self.provider, "requires_locomotion_memory", False)) is not bool
                 or (self.requires_locomotion_memory and observation.locomotion is None)
+                or type(getattr(self.provider, "requires_navigation_context", False)) is not bool
+                or getattr(self.provider, "requires_navigation_context", False)
+                != self.requires_navigation_context
+                or (
+                    self.requires_navigation_context
+                    and (observation.locomotion is None or observation.locomotion.scene is None)
+                )
             ):
                 raise ValueError("feedback identity, clock or source binding changed")
             self.next_frame += 1
@@ -247,6 +282,9 @@ class ReceivingFeedbackSlot:
                 or getattr(self.provider, "requires_locomotion_memory", False)
                 != self.requires_locomotion_memory
                 or type(getattr(self.provider, "requires_locomotion_memory", False)) is not bool
+                or type(getattr(self.provider, "requires_navigation_context", False)) is not bool
+                or getattr(self.provider, "requires_navigation_context", False)
+                != self.requires_navigation_context
             ):
                 raise ValueError("feedback changed its input or binding during proposal")
             if (
