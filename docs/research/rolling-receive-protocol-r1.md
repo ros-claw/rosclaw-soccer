@@ -196,3 +196,27 @@ yaw 收敛、捕获扩展零回归——缺的是把三者同时接通的一次�
 
 mr1b-debug/mr1b-debug2 两组诊断为探针排障记录，一并保留。mr1 至 mr1h 的
 protocol/complete/NPZ/witness/500Hz 物理记录均在 m0 对应目录。
+
+### mr1i（ORIENT 引导启动）：相位链成功启动，但 playmaker 朝向通道不收敛
+
+源码 `1be3457`（新鲜 PASS 决策 + 无主近球 + 本队追球者 → begin_capture；
+56 项 strike 回归全绿）。四次执行：
+
+- **引导机制本身工作**：control 与 prospective 均从 f31 起 CAPTURE→ORIENT
+  （闩锁 t=0.40，相位 f31/t≈0.62 启动，不再需要触球）。
+- 但 ORIENT 3.4s 超时（中止码4）：深度 0.35→0.93 m 收敛入窗、横向
+  0.03-0.15 m 合格，而 approach yaw 误差停在 2.3-3.1 rad 且后段反向增大。
+  playmaker 几乎没有被相位驱动（3.4s 位移约 0.4 m），疑似闩锁的 PASS 意图
+  cell 导航与相位 ORIENT 导航在同一通道上互相覆盖——mr1f 的 finisher 能被
+  相位驱动，playmaker 这条路的导航所有权需要专门核查。
+- prospective 两次均 safe=False：red_finisher 在 f401 关节安全裕度 -0.0047
+  （世界其余部分无互撞/失高）。按 fail-closed 判据该组否决；是否与机制
+  相关未定性（混沌分叉下 finisher 行为不同），保留完整记录。
+- control（prospective 关）两次均 safe=True，同样 ORIENT 超时。
+
+结论：引导死锁已解（MR1i 机制成立），剩余问题是 playmaker 的相位导航
+所有权/朝向驱动。下一步（MR1j 前先只读审计）：对 mr1i 的 f41-f212 逐帧
+重建相位导航命令与 cell PASS 导航命令的来源与优先级，确认是谁在写
+playmaker 的 world_command；不改参数、不再盲目执行物理。若确认为通道
+冲突，修复方向是把闩锁后的 cell 决策在相位激活期间让位（原生语义，
+类似既有 phase_active 处理）。
