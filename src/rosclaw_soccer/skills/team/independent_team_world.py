@@ -2178,6 +2178,7 @@ def simulate_independent_team_world(
                 goal=goal,
                 ball_qvel=ball_qvel,
                 prediction_horizon_sec=strike_phase_config.strike_contact_horizon_sec,
+                target_xy=_phase_task_target(phase_controller),
             )
             ball_speed = float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 3]))
             if (
@@ -2190,6 +2191,7 @@ def simulate_independent_team_world(
                     ball_qvel=ball_qvel,
                     goal=goal,
                     config=strike_phase_config,
+                    target_xy=_phase_task_target(phase_controller),
                 )
                 observation = StrikeCoordinationObservation(
                     phase_progress=min(
@@ -2262,6 +2264,7 @@ def simulate_independent_team_world(
                 goal=goal,
                 config=strike_phase_config,
                 goal_yaw_blend=frame_coordination_action.goal_yaw_blend,
+                target_xy=_phase_task_target(phase_controller),
             )
             frame_phase_approach_yaw_error = approach_yaw_error
             ball_position = np.asarray(data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64)
@@ -5553,6 +5556,19 @@ def _strike_stance_metrics(
     )
 
 
+def _phase_task_target(controller: _PlayerController) -> tuple[float, float] | None:
+    """Explicit PASS task target for phase stance/orientation.
+
+    ``None`` keeps the original goal-referenced path bit-for-bit. Only a PASS
+    decision with its (always finite, validated) target injects a task target;
+    SHOOT and every other intent keep the frozen goal frame.
+    """
+    decision = controller.decision
+    if decision is None or decision.intent is not TacticalIntent.PASS:
+        return None
+    return (float(decision.target_position_m[0]), float(decision.target_position_m[1]))
+
+
 def _controller_strike_stance_metrics(
     *,
     controller: _PlayerController,
@@ -5561,6 +5577,7 @@ def _controller_strike_stance_metrics(
     goal: G1TrainingGoalSpec,
     ball_qvel: int | None = None,
     prediction_horizon_sec: float = 0.0,
+    target_xy: tuple[float, float] | None = None,
 ) -> tuple[float, float, float]:
     ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64)
     if ball_qvel is not None and prediction_horizon_sec > 0.0:
@@ -5570,7 +5587,11 @@ def _controller_strike_stance_metrics(
     pelvis = np.asarray(
         data.qpos[controller.qpos_base : controller.qpos_base + 2], dtype=np.float64
     )
-    direction = np.asarray((goal.plane_x_m, goal.target_y_m), dtype=np.float64) - ball
+    direction = (
+        np.asarray((goal.plane_x_m, goal.target_y_m), dtype=np.float64)
+        if target_xy is None
+        else np.asarray(target_xy, dtype=np.float64)
+    ) - ball
     direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
     lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
     target_yaw = math.atan2(float(direction[1]), float(direction[0]))
@@ -5596,6 +5617,7 @@ def _strike_tracking_yaw_error(
     goal: G1TrainingGoalSpec,
     config: StrikePhaseConfig,
     goal_yaw_blend: float = 0.0,
+    target_xy: tuple[float, float] | None = None,
 ) -> float:
     # MuJoCo slices are writable views into ``data.qvel``.  This function is an
     # observation-only error calculation, so own the buffer before normalizing.
@@ -5604,7 +5626,11 @@ def _strike_tracking_yaw_error(
     # prediction can never mutate authoritative football state.
     phase_ball = np.asarray(data.qpos[ball_qpos : ball_qpos + 2], dtype=np.float64).copy()
     phase_ball = phase_ball + config.strike_contact_horizon_sec * ball_velocity
-    direction = np.asarray((goal.plane_x_m, goal.target_y_m), dtype=np.float64) - phase_ball
+    direction = (
+        np.asarray((goal.plane_x_m, goal.target_y_m), dtype=np.float64)
+        if target_xy is None
+        else np.asarray(target_xy, dtype=np.float64)
+    ) - phase_ball
     direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
     pelvis = np.asarray(
         data.qpos[controller.qpos_base : controller.qpos_base + 2], dtype=np.float64
