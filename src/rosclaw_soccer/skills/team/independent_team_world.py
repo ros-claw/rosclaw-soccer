@@ -3844,10 +3844,17 @@ def simulate_independent_team_world(
                                 goal=goal,
                                 left_goal_plane_x_m=active.left_goal_plane_x_m,
                             ).copy()
-                        if (
-                            strike_phase_config is not None
-                            and controller.cell.self_model.primary_role is MatchRole.FINISHER
+                        if strike_phase_config is not None and (
+                            controller.cell.self_model.primary_role is MatchRole.FINISHER
+                            or (
+                                controller.decision is not None
+                                and controller.decision.intent is TacticalIntent.PASS
+                            )
                         ):
+                            # Rolling-receive protocol R1: a PASS decision at the contact
+                            # also captures, so the receiver can chain into the kick.
+                            # The FINISHER path is unchanged; stock scenes decide the pass
+                            # only after the touch, so their capture set is unchanged.
                             controller.strike_phase.begin_capture(float(data.time))
                         receive_lease_agent_id = None
                         receive_lease_source_agent_id = None
