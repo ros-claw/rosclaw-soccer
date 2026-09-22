@@ -2159,6 +2159,30 @@ def simulate_independent_team_world(
             ),
             None,
         )
+        if strike_phase_config is not None and phase_controller is None:
+            for controller in controllers:
+                decision = controller.decision
+                if (
+                    controller.strike_phase.phase is StrikePhase.IDLE
+                    and decision is not None
+                    and decision.intent is TacticalIntent.PASS
+                    and current_possession_agent_id is None
+                    and assigned_ball_chaser_agent_id == controller.cell.agent_id
+                    and not controller.option_active
+                    and float(
+                        np.linalg.norm(
+                            data.qpos[controller.qpos_base : controller.qpos_base + 2]
+                            - data.qpos[ball_qpos : ball_qpos + 2]
+                        )
+                    )
+                    <= 1.20
+                ):
+                    # Rolling-receive protocol R1: bootstrap the chain from a committed
+                    # pass near an unowned ball. A foot contact still captures via the
+                    # contact block; this only starts the approach when no chain exists.
+                    controller.strike_phase.begin_capture(float(data.time))
+                    phase_controller = controller
+                    break
         frame_phase_approach_yaw_error = 0.0
         phase_metrics = (0.0, 0.0, 0.0)
         frame_coordination_observation = np.zeros(6, dtype=np.float64)
