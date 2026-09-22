@@ -220,3 +220,26 @@ protocol/complete/NPZ/witness/500Hz 物理记录均在 m0 对应目录。
 playmaker 的 world_command；不改参数、不再盲目执行物理。若确认为通道
 冲突，修复方向是把闩锁后的 cell 决策在相位激活期间让位（原生语义，
 类似既有 phase_active 处理）。
+
+### MR1j 只读审计（无物理执行）：playmaker 的相位驱动为什么慢且不转向
+
+对 mr1i 记录的源码路径逐行核查（`independent_team_world.py:4845-4895`）：
+
+- 相位导航输出的是**位置目标**，不是朝向命令；身体朝向由行走方向自然
+  跟随。mr1h 记录中 playmaker 的 world_command 第三分量（yaw rate）恒为 0。
+- ORIENT 的步速：球速 ≤0.10 m/s 时
+  `phase_approach_velocity = direction * min(0.12, orient_goalward_lag_mps)`。
+  mr1i 的球恰好在 0.1 m/s 附近蠕动，趋近速度被压到每秒厘米级——这解释了
+  3.4 s 仅 0.4 m 位移。球速 >0.10 时才有完整 ball_velocity-lag+lateral 修正
+  的趋近速度（mr1f 的 finisher 球速 0.24-0.27 m/s，故能走到 PLANT）。
+- 结论：playmaker 场景"静球起步→前传"落在慢球分支，ORIENT 在 3.4 s
+  时限内物理上走不完朝向收敛；这不是通道冲突，而是慢球趋近速度与时限的
+  组合。修改方向（下一轮二选一，先声明再执行）：(a) 场景换成球仍有
+  0.2-0.3 m/s 滚速的接球（沿 mr1f 路径，但改为前传/合法帧的接球者），
+  与既有证据最一致；(b) 声明式提高慢球分支的趋近下限（参数语义改动，
+  需要新的资格验证，不作为首选）。
+
+MR1 阶段总结：从"接后回传"到"散球前传"八组有界迭代，两个零回归源码
+扩展（PASS 目标注入 9d1ba20、PASS 触球捕获 7e86b16、PASS 引导 1be3457），
+所有单元单独验证通过；完整前传链的剩余阻塞是慢球 ORIENT 时限，属场景
+选择问题而非机制缺陷。下一轮按 (a) 执行。
