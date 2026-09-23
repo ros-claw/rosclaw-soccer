@@ -391,3 +391,28 @@ hd3 剩余两项的最终定位：(a) 触球前 ~10 ms 的 199 N 身体-球接�
 踢球接近段的策略微行为，归 E2/E3（传球调校的踢球/轻点策略）问题域，
 不是导航 shim 能再推进的。全套 protocol/complete/NPZ/500Hz 记录保留于
 m0/rolling-receive-pass-mr1h-hd*。
+
+## 13. 首次完整传球链（stock-pass-chain-v4，2026-09-23）
+
+**`clean_transfer_observed = True`** —— 在 stock 复跑（无探针 cell、无朝向包装、
+无 prospective、v1 冻结树）中，playmaker 于 **t=1.716 s 右脚传出脚触球**，
+球无中断滚动 1.3 秒，**finisher 于 t=3.008 s 脚到达接住**。完整 500 Hz 触球
+归属考试（`pass_contact_chain`）零失败原因、零中断。同一条轨迹随后
+finisher 的相位链 **CAPTURE→ORIENT→PLANT→STRIKE 无中止完成**，射门发动
+（球至 (4.8,-2.0) 区域）。
+
+这首次构成考试级证据的完整序列：**拾取 → 传出（真实脚触球）→ 滚动 →
+接住（真实脚到达）→ 全相位射门**。考试验证所需的关键条件（事后澄清）：
+发送方的传球握手形成于球权新鲜窗口内（stock 决策时序），接收方在球到达时
+处于接收状态（stock readiness 时序），记录者必须为发送方
+（`observer_agent_id == sender_id`，v2/v3 组因记录者/配置差异不抵达或
+不合规——这些差异也验证了仲裁时序的敏感性，不是可忽略的混沌）。
+
+视频：`media/first-pass-20260923-v1/first-kick.mp4`（三段：踢出 1.72s、
+接球 3.01s、相位射门，原速+慢放）。
+
+诚实边界：传球由原生接触教师 stroke 执行（不是 kick-policy 版本——后者
+在 mr1h-hd3 能激活踢出但身体夹球/瞄准偏差未解）；这是同一已见场景的单次
+完成，不是课程库统计；不构成训练、Sealed 或晋升依据；与 hd3 的 kick 版
+本并存为两条机制证据。轨迹与 mr1b 非逐值一致（recorder agent 不同），
+但自身安全且链考试通过。
