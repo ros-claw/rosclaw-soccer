@@ -27,6 +27,7 @@ def verify_holdout(root: Path, *, stadium_assets: Path) -> dict[str, Any]:
         not in (
             *([[x, y] for y in (0.04, 0.08, 0.12, 0.16)] for x in (1.8, 1.9, 2.0)),
             [[2.1, y] for y in (0.05, 0.09, 0.13, 0.17)],
+            [[2.15, y] for y in (0.055, 0.095, 0.135, 0.175)],
         )
         or manifest.get("promotion_authorized") is not False
     ):

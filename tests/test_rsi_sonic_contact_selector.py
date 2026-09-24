@@ -2,7 +2,13 @@ import copy
 
 import pytest
 
-from rosclaw_soccer.rsi.sonic_contact_selector import SCHEMA, SCHEMA_V2, SCHEMA_V3, choose_lateral
+from rosclaw_soccer.rsi.sonic_contact_selector import (
+    SCHEMA,
+    SCHEMA_V2,
+    SCHEMA_V3,
+    SCHEMA_V4,
+    choose_lateral,
+)
 from rosclaw_soccer.sim.contracts import hash_json
 
 
@@ -82,3 +88,35 @@ def test_continuous_v3_interpolates_only_inside_bounded_far_course():
     )
     with pytest.raises(ValueError, match="teacher knots"):
         choose_lateral(forged, ball_x_m=2.1, ball_y_m=0.05)
+
+
+def test_failure_conditioned_v4_corrects_narrow_right_foot_course():
+    body = {
+        "schema": SCHEMA_V4,
+        "activation_ceiling": "SIM_ONLY",
+        "promotion_authorized": False,
+        "threshold_y_m": 0.0875,
+        "far_distance_switch_x_m": 1.85,
+        "far_right_foot_switch_y_m": 0.1,
+        "continuous_right_foot_start_x_m": 1.95,
+        "continuous_right_foot_knots": [
+            [0.04, 0.04],
+            [0.08, 0.06],
+            [0.09, 0.09],
+            [0.12, 0.1],
+            [0.16, 0.1],
+        ],
+    }
+    model = {**body, "model_hash": hash_json(body)}
+    assert choose_lateral(model, ball_x_m=2.15, ball_y_m=0.09) == 0.09
+    assert choose_lateral(model, ball_x_m=2.15, ball_y_m=0.095) == pytest.approx(
+        0.09166666666666667
+    )
+    assert choose_lateral(model, ball_x_m=2.15, ball_y_m=0.175) == 0.1
+    with pytest.raises(ValueError, match="bounded"):
+        choose_lateral(model, ball_x_m=2.21, ball_y_m=0.09)
+    forged = copy.deepcopy(model)
+    forged["continuous_right_foot_knots"][2][0] = 0.10
+    forged["model_hash"] = hash_json({k: v for k, v in forged.items() if k != "model_hash"})
+    with pytest.raises(ValueError, match="teacher knots"):
+        choose_lateral(forged, ball_x_m=2.15, ball_y_m=0.09)

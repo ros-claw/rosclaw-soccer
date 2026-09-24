@@ -51,7 +51,7 @@ def main() -> None:
     parser.add_argument("--stadium-assets", required=True, type=Path)
     parser.add_argument("--selector", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
-    parser.add_argument("--ball-x-m", type=float, choices=(1.8, 1.9, 2.0, 2.1), default=1.8)
+    parser.add_argument("--ball-x-m", type=float, choices=(1.8, 1.9, 2.0, 2.1, 2.15), default=1.8)
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
     if args.output_root.exists() or not 1 <= args.workers <= 4:
@@ -61,7 +61,12 @@ def main() -> None:
     runner_hash = hash_bytes(Path(__file__).read_bytes())
     probe_file = Path(__file__).with_name("rsi_sonic_ball_contact_probe.py")
     probe_hash = hash_bytes(probe_file.read_bytes())
-    y_values = (0.05, 0.09, 0.13, 0.17) if args.ball_x_m == 2.1 else (0.04, 0.08, 0.12, 0.16)
+    if args.ball_x_m == 2.15:
+        y_values = (0.055, 0.095, 0.135, 0.175)
+    elif args.ball_x_m == 2.1:
+        y_values = (0.05, 0.09, 0.13, 0.17)
+    else:
+        y_values = (0.04, 0.08, 0.12, 0.16)
     courses = [(args.ball_x_m, y) for y in y_values]
     tasks = [
         (x, y, choose_lateral(selector, ball_x_m=x, ball_y_m=y), candidate)
