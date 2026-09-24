@@ -80,9 +80,11 @@ class AthleteObservation:
 
     body_id: str
     body_hash: str
+    joint_map_hash: str
     frame: int
     root_position_m: tuple[float, float, float]
     root_velocity_mps: tuple[float, float, float]
+    root_angular_velocity_rad_s: tuple[float, float, float]
     root_quaternion_wxyz: tuple[float, float, float, float]
     joint_position: tuple[float, ...]
     joint_velocity: tuple[float, ...]
@@ -92,12 +94,15 @@ class AthleteObservation:
         if (
             not _id(self.body_id)
             or not _hash(self.body_hash)
+            or not _hash(self.joint_map_hash)
             or type(self.frame) is not int
             or self.frame < 0
             or not _vector(self.root_position_m, minimum=3)
             or len(self.root_position_m) != 3
             or not _vector(self.root_velocity_mps, minimum=3)
             or len(self.root_velocity_mps) != 3
+            or not _vector(self.root_angular_velocity_rad_s, minimum=3)
+            or len(self.root_angular_velocity_rad_s) != 3
             or not _vector(self.root_quaternion_wxyz, minimum=4)
             or len(self.root_quaternion_wxyz) != 4
             or abs(sum(v * v for v in self.root_quaternion_wxyz) - 1.0) > 1.0e-3
@@ -151,6 +156,8 @@ class PolicyArtifact:
     joint_map_hash: str
     physics_hash: str
     gain_hash: str
+    action_kind: str
+    action_size: int
     parent_hash: str | None = None
     activation_ceiling: str = "SIM_ONLY"
 
@@ -173,6 +180,9 @@ class PolicyArtifact:
             )
             or self.parent_hash is not None
             and not _hash(self.parent_hash)
+            or self.action_kind not in ("JOINT_TARGET", "MOTOR_LATENT")
+            or type(self.action_size) is not int
+            or not 1 <= self.action_size <= 512
             or self.activation_ceiling != "SIM_ONLY"
         ):
             raise ValueError(
@@ -279,8 +289,13 @@ def validate_athlete_proposal(
     if (
         action.body_hash != artifact.body_hash
         or observation.body_hash != artifact.body_hash
+        or observation.joint_map_hash != artifact.joint_map_hash
         or action.policy_hash != artifact.contract_hash
         or action.frame != observation.frame
+        or artifact.action_kind == "JOINT_TARGET"
+        and (action.joint_target is None or len(action.joint_target) != artifact.action_size)
+        or artifact.action_kind == "MOTOR_LATENT"
+        and (action.motor_latent is None or len(action.motor_latent) != artifact.action_size)
         or action.joint_target is not None
         and len(action.joint_target) != len(observation.joint_position)
     ):
