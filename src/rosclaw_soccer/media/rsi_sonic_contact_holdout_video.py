@@ -23,6 +23,22 @@ from rosclaw_soccer.rsi.verify_sonic_contact_holdout import verify_holdout
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
+def _showcase_camera(
+    mujoco: Any, view: str, pelvis: NDArray[np.float64], ball: NDArray[np.float64]
+) -> Any:
+    """Keep athlete, ball and goal in the continuous evidence shot."""
+
+    if view != "follow":
+        return _camera(mujoco, view, pelvis, ball)
+    camera = mujoco.MjvCamera()
+    camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+    camera.lookat[:] = (3.10, 0.15, 0.62)
+    camera.distance = 6.15
+    camera.azimuth = 118.0
+    camera.elevation = -10.0
+    return camera
+
+
 def render(
     *,
     holdout: Path,
@@ -209,7 +225,7 @@ def render(
                 mujoco.mj_forward(model, data)
                 renderer.update_scene(
                     data,
-                    camera=_camera(
+                    camera=_showcase_camera(
                         mujoco,
                         clip.view,
                         np.asarray(pelvis, dtype=np.float64),

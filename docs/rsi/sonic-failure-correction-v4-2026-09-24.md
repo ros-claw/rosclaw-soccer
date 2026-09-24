@@ -8,7 +8,7 @@ v3 在未训练的 `x=2.10 m` 四球位取得右脚先触球进门 `3/4`，`y=0.
 
 模型：`/data/rosclaw_overflow/rsi-sonic-contact-selector-20260924-v4.json`，哈希 `sha256:23126ae9179e8493d54d07410e5e32be72e4e75581cec7f8c97a52a44d80901e`。新考试在此前未执行过的 `x=2.15 m`、`y=0.055/0.095/0.135/0.175 m` 上运行原始 SONIC 与候选各 4 次，起始物理状态逐对一致，代码和模型在执行过程中冻结。结果：候选 **4/4 右脚先触球并整个球入门**；原始 SONIC **0/4**（其中一次虽越过门线，但先由小腿触球，按预先定义不算）。候选峰值球速 `2.41–2.52 m/s`，这是近距离地滚球，绝非高难度大力射门。
 
-原始证据：`/data/rosclaw_overflow/rsi-sonic-contact-selector-holdout-20260924-x215-v4/`。独立验证哈希：`sha256:19661e80874b1efcb13fc4d0f6ae7b470a9f521bb1f935333cb05f42635990f1`。26.47 秒 1080p 物理轨迹可视化：`/data/rosclaw_overflow/rsi-sonic-contact-x215-fresh-four-goals-20260924-1080p.mp4`，SHA-256 `ac6e2b0bc861bfa0bddd24f2357e852661e1fa7115c18e206aaedb37eaf46bbf`；画面标记 `SIM ONLY / NOT PROMOTED`，并显示完整 4/4 与 0/4 的对照，不用于评分。
+原始证据：`/data/rosclaw_overflow/rsi-sonic-contact-selector-holdout-20260924-x215-v4/`。独立验证哈希：`sha256:19661e80874b1efcb13fc4d0f6ae7b470a9f521bb1f935333cb05f42635990f1`。26.47 秒 1080p 物理轨迹可视化：`/data/rosclaw_overflow/rsi-sonic-contact-x215-fresh-four-goals-20260924-1080p-v2.mp4`，SHA-256 `a6443f013820293f68773fcacc777679ffdf6bf1be01422dd0f20b7018ab772f`；v2 镜头让 G1、球、球门同框，不更动物理轨迹。画面标记 `SIM ONLY / NOT PROMOTED`，并显示完整 4/4 与 0/4 的对照，不用于评分。这里使用的是 **2.4 × 1.6 m 人形训练球门**，不是标准成人球门，不能混为同一难度。
 
 ## 反证：现有 SONIC 助跑＋旧式踢球拼接链
 
