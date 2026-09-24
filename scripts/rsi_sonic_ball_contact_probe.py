@@ -27,8 +27,14 @@ from rosclaw_soccer.world.field import G1TrainingGoalSpec, build_g1_stadium_mode
 
 
 def _observation(
-    data: mujoco.MjData, frame: int, envelope: SimulationNavigationEnvelope | None
+    data: mujoco.MjData,
+    frame: int,
+    envelope: SimulationNavigationEnvelope | None,
+    run_speed_mps: float,
+    run_lateral_mps: float,
+    stop_frame: int,
 ) -> TeamMotorObservation:
+    forward_mps = math.sqrt(run_speed_mps**2 - run_lateral_mps**2)
     return TeamMotorObservation(
         agent_id="blue.playmaker",
         frame=frame,
@@ -38,7 +44,11 @@ def _observation(
         qpos=tuple(float(value) for value in data.qpos),
         qvel=tuple(float(value) for value in data.qvel),
         target_position_m=(0.0, 0.0, 0.0),
-        navigation_command=(1.2 if frame < 115 else 0.0, 0.0, 0.0),
+        navigation_command=(
+            forward_mps if frame < stop_frame else 0.0,
+            run_lateral_mps if frame < stop_frame else 0.0,
+            0.0,
+        ),
         navigation_envelope=envelope,
     )
 
@@ -51,6 +61,9 @@ def run(
     ball_x_m: float,
     ball_y_m: float,
     frames: int,
+    run_speed_mps: float = 1.2,
+    run_lateral_mps: float = 0.0,
+    stop_frame: int = 115,
 ) -> dict[str, Any]:
     if (
         output_dir.exists()
@@ -59,6 +72,12 @@ def run(
         or not 1.0 <= ball_x_m <= 2.2
         or abs(ball_y_m) > 0.25
         or not 180 <= frames <= 350
+        or not math.isfinite(run_speed_mps)
+        or not 0.7 < run_speed_mps <= 1.5
+        or not math.isfinite(run_lateral_mps)
+        or abs(run_lateral_mps) > 0.30
+        or abs(run_lateral_mps) >= run_speed_mps
+        or not 70 <= stop_frame <= min(170, frames - 30)
     ):
         raise ValueError("new output and bounded ball position required")
     source_hash = hash_bytes(Path(__file__).read_bytes())
@@ -100,7 +119,7 @@ def run(
         SonicNavigationConfig(
             maximum_frames=frames,
             model_variant="low_latency",
-            experimental_maximum_speed_mps=1.2,
+            experimental_maximum_speed_mps=run_speed_mps,
             planner_seed=920101,
         ),
     )
@@ -112,7 +131,9 @@ def run(
     foot_contacts: list[dict[str, Any]] = []
     initial_ball_position = data.qpos[36:39].copy()
     for frame in range(frames):
-        observation = _observation(data, frame, nav.navigation_envelope)
+        observation = _observation(
+            data, frame, nav.navigation_envelope, run_speed_mps, run_lateral_mps, stop_frame
+        )
         if frame == 0:
             nav.start_from_observation(observation)
         action = nav.propose(observation)
@@ -171,6 +192,9 @@ def run(
         "ball_mass_kg": ball_dimensions.body_mass_kg,
         "ball_initial_xy_m": [ball_x_m, ball_y_m],
         "frames": frames,
+        "run_speed_mps": run_speed_mps,
+        "run_lateral_mps": run_lateral_mps,
+        "stop_frame": stop_frame,
         "goal_plane_x_m": goal_spec.plane_x_m,
         "whole_ball_goal_crossed": goal_frame is not None,
         "goal_frame": goal_frame,
@@ -203,6 +227,9 @@ def main() -> None:
     parser.add_argument("--ball-x-m", type=float, required=True)
     parser.add_argument("--ball-y-m", type=float, required=True)
     parser.add_argument("--frames", type=int, default=300)
+    parser.add_argument("--run-speed-mps", type=float, default=1.2)
+    parser.add_argument("--run-lateral-mps", type=float, default=0.0)
+    parser.add_argument("--stop-frame", type=int, default=115)
     args = parser.parse_args()
     print(
         json.dumps(
@@ -213,6 +240,9 @@ def main() -> None:
                 ball_x_m=args.ball_x_m,
                 ball_y_m=args.ball_y_m,
                 frames=args.frames,
+                run_speed_mps=args.run_speed_mps,
+                run_lateral_mps=args.run_lateral_mps,
+                stop_frame=args.stop_frame,
             ),
             sort_keys=True,
         )
