@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +82,7 @@ def run(
     ):
         raise ValueError("new output and bounded ball position required")
     source_hash = hash_bytes(Path(__file__).read_bytes())
+    execution_id = uuid.uuid4().hex
     model = build_g1_stadium_model(
         stadium_assets, G1TrainingGoalSpec(ball_radius_m=0.11, ball_mass_kg=0.43)
     )
@@ -129,6 +131,19 @@ def run(
     qvel = []
     target_rows = []
     foot_contacts: list[dict[str, Any]] = []
+    robot_contacts: list[dict[str, Any]] = []
+    physics_qpos = []
+    pelvis_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
+    if pelvis_body < 0:
+        raise ValueError("compiled G1 pelvis body missing")
+
+    def belongs_to_robot(body_id: int) -> bool:
+        while body_id > 0:
+            if body_id == pelvis_body:
+                return True
+            body_id = int(model.body_parentid[body_id])
+        return False
+
     initial_ball_position = data.qpos[36:39].copy()
     for frame in range(frames):
         observation = _observation(
@@ -146,12 +161,24 @@ def run(
             )
             data.ctrl[:] = torque
             mujoco.mj_step(model, data)
+            physics_qpos.append(data.qpos.copy())
             for contact_index in range(data.ncon):
                 contact = data.contact[contact_index]
                 if not (set((int(contact.geom1), int(contact.geom2))) & ball_geoms):
                     continue
                 other = contact.geom2 if int(contact.geom1) in ball_geoms else contact.geom1
+                body = int(model.geom_bodyid[int(other)])
                 name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(other)) or ""
+                if belongs_to_robot(body):
+                    robot_contacts.append(
+                        {
+                            "time_sec": frame * 0.02 + (substep + 1) * 0.002,
+                            "body": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body),
+                            "geom": name,
+                            "ball_position_m": data.qpos[36:39].tolist(),
+                            "ball_velocity_mps": data.qvel[35:38].tolist(),
+                        }
+                    )
                 if "foot" in name or "ankle" in name:
                     foot_contacts.append(
                         {
@@ -164,7 +191,12 @@ def run(
         qpos.append(data.qpos.copy())
         qvel.append(data.qvel.copy())
         target_rows.append(target.copy())
-    arrays = {"qpos": np.asarray(qpos), "qvel": np.asarray(qvel), "target": np.asarray(target_rows)}
+    arrays = {
+        "qpos": np.asarray(qpos),
+        "qvel": np.asarray(qvel),
+        "target": np.asarray(target_rows),
+        "physics_qpos": np.asarray(physics_qpos),
+    }
     if any(not np.isfinite(value).all() for value in arrays.values()):
         raise ValueError("nonfinite ball-contact physics")
     output_dir.mkdir(parents=True)
@@ -181,7 +213,8 @@ def run(
     goal_frames = np.flatnonzero(whole_ball_across & inside_posts & below_crossbar)
     goal_frame = int(goal_frames[0]) if len(goal_frames) else None
     report: dict[str, Any] = {
-        "schema": "rosclaw_soccer.rsi.sonic_ball_contact_probe.v1",
+        "schema": "rosclaw_soccer.rsi.sonic_ball_contact_probe.v2",
+        "execution_id": execution_id,
         "partition": "DISCOVERY",
         "activation_ceiling": "SIM_ONLY",
         "source_hash": source_hash,
@@ -203,6 +236,12 @@ def run(
         ),
         "foot_ball_contact_substeps": len(foot_contacts),
         "first_foot_ball_contact": foot_contacts[0] if foot_contacts else None,
+        "robot_ball_contact_substeps": len(robot_contacts),
+        "first_robot_ball_contact": robot_contacts[0] if robot_contacts else None,
+        "first_robot_ball_contact_is_foot": bool(
+            robot_contacts
+            and ("foot" in robot_contacts[0]["geom"] or "ankle" in robot_contacts[0]["geom"])
+        ),
         "peak_ball_speed_mps": float(ball_speed.max()),
         "final_ball_displacement_xyz_m": ball_delta[-1].tolist(),
         "minimum_pelvis_height_m": float(arrays["qpos"][:, 2].min()),

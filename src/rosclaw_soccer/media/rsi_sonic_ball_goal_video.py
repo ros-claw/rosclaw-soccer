@@ -14,7 +14,10 @@ from typing import IO, Any
 import numpy as np
 from numpy.typing import NDArray
 
-from rosclaw_soccer.media.trajectory_render import sample_g1_ball_trajectory
+from rosclaw_soccer.media.trajectory_render import (
+    escape_filtergraph_option,
+    sample_g1_ball_trajectory,
+)
 from rosclaw_soccer.rsi.verify_sonic_ball_goal import verify_sonic_ball_goal
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
@@ -28,14 +31,27 @@ class Clip:
     view: str
 
 
-CLIPS = (
-    Clip("opening", 0.0, 0.8, 0.0, "wide"),
-    Clip("continuous_run_and_goal", 0.0, 4.6, 1.0, "follow"),
-    Clip("foot_ball_contact_slow", 1.15, 1.95, 0.40, "contact"),
-    Clip("whole_ball_goal_slow", 3.25, 4.30, 0.55, "goal"),
-    Clip("recovery", 4.3, 5.98, 1.0, "recovery"),
-    Clip("closing", 5.98, 5.98, 0.0, "wide"),
-)
+def _clips(contact_sec: float, goal_sec: float, end_sec: float) -> tuple[Clip, ...]:
+    return (
+        Clip("opening", 0.0, 0.0, 0.0, "wide"),
+        Clip("continuous_run_and_goal", 0.0, min(end_sec, goal_sec + 1.2), 1.0, "follow"),
+        Clip(
+            "foot_ball_contact_slow",
+            max(0.0, contact_sec - 0.35),
+            min(end_sec, contact_sec + 0.55),
+            0.40,
+            "contact",
+        ),
+        Clip(
+            "whole_ball_goal_slow",
+            max(0.0, goal_sec - 0.55),
+            min(end_sec, goal_sec + 0.45),
+            0.55,
+            "goal",
+        ),
+        Clip("recovery", min(end_sec, goal_sec + 0.45), end_sec, 1.0, "recovery"),
+        Clip("closing", end_sec, end_sec, 0.0, "wide"),
+    )
 
 
 def _timeline(clip: Clip, fps: int) -> NDArray[np.float64]:
@@ -51,20 +67,20 @@ def _camera(mujoco: Any, view: str, pelvis: NDArray[np.float64], ball: NDArray[n
     camera = mujoco.MjvCamera()
     camera.type = mujoco.mjtCamera.mjCAMERA_FREE
     if view == "wide":
-        camera.lookat[:] = (2.5, 0.0, 0.58)
-        camera.distance, camera.azimuth, camera.elevation = 8.0, 100.0, -10.0
+        camera.lookat[:] = (2.25, 0.0, 0.58)
+        camera.distance, camera.azimuth, camera.elevation = 6.8, 103.0, -10.0
     elif view == "follow":
-        camera.lookat[:] = (min(3.3, 0.6 * pelvis[0] + 0.4 * ball[0]), 0.25, 0.6)
-        camera.distance, camera.azimuth, camera.elevation = 5.2, 105.0, -9.0
+        camera.lookat[:] = (min(3.2, 0.65 * pelvis[0] + 0.35 * ball[0]), 0.20, 0.65)
+        camera.distance, camera.azimuth, camera.elevation = 3.9, 105.0, -9.0
     elif view == "contact":
-        camera.lookat[:] = (ball[0], ball[1], 0.48)
-        camera.distance, camera.azimuth, camera.elevation = 3.35, 90.0, -6.0
+        camera.lookat[:] = (ball[0] - 0.1, ball[1], 0.48)
+        camera.distance, camera.azimuth, camera.elevation = 2.85, 96.0, -6.0
     elif view == "goal":
         camera.lookat[:] = (4.65, 0.28, 0.56)
-        camera.distance, camera.azimuth, camera.elevation = 5.4, 145.0, -8.0
+        camera.distance, camera.azimuth, camera.elevation = 4.2, 145.0, -8.0
     elif view == "recovery":
         camera.lookat[:] = (pelvis[0], pelvis[1], 0.67)
-        camera.distance, camera.azimuth, camera.elevation = 3.9, 108.0, -8.0
+        camera.distance, camera.azimuth, camera.elevation = 3.1, 108.0, -8.0
     else:
         raise ValueError("unknown evidence camera")
     return camera
@@ -80,8 +96,13 @@ def render(
     width: int = 1280,
     height: int = 720,
 ) -> dict[str, Any]:
-    verification = verify_sonic_ball_goal(primary, replay)
-    if not verification["strict_replay"] or not verification["whole_ball_goal_crossed"]:
+    os.environ.setdefault("MUJOCO_GL", "egl")
+    verification = verify_sonic_ball_goal(primary, replay, stadium_assets=stadium_assets)
+    if (
+        not verification["strict_replay"]
+        or not verification["whole_ball_goal_crossed"]
+        or not verification["foot_ball_contact_independently_reconstructed"]
+    ):
         raise ValueError("video requires a physically verified goal and strict replay")
     checkout = Path(__file__).resolve().parents[3]
     resolved = output.expanduser().resolve()
@@ -108,7 +129,9 @@ def render(
         "joint_position": q[:, 7:36],
         "ball_pose": q[:, 36:43],
     }
-    os.environ.setdefault("MUJOCO_GL", "egl")
+    contact_sec = float(report["first_robot_ball_contact"]["time_sec"])
+    goal_sec = float(report["goal_frame"]) * 0.02
+    clips = _clips(contact_sec, goal_sec, float(trajectory["time"][-1]))
     import mujoco
 
     from rosclaw_soccer.sim.physical_checkpoint import compiled_model_hash
@@ -123,9 +146,12 @@ def render(
     model.vis.global_.offwidth = max(int(model.vis.global_.offwidth), width)
     model.vis.global_.offheight = max(int(model.vis.global_.offheight), height)
     data = mujoco.MjData(model)
-    timelines = tuple(_timeline(clip, fps) for clip in CLIPS)
+    timelines = tuple(_timeline(clip, fps) for clip in clips)
     count = sum(len(timeline) for timeline in timelines)
     resolved.parent.mkdir(parents=True, exist_ok=True)
+    evidence_caption = escape_filtergraph_option(
+        f"SIM ONLY | FROZEN SONIC | FOOT FIRST GOAL | {report['run_speed_mps']:.1f} M/S"
+    )
     command = [
         ffmpeg,
         "-hide_banner",
@@ -142,6 +168,18 @@ def render(
         str(fps),
         "-i",
         "pipe:0",
+        "-vf",
+        ",".join(
+            (
+                "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+                "text=ROSCLAW SOCCER:fontsize=34:fontcolor=white:x=38:y=30:"
+                "box=1:boxcolor=black@0.42:boxborderw=12",
+                "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:"
+                f"text={evidence_caption}:"
+                "fontsize=20:fontcolor=white:x=38:y=h-58:"
+                "box=1:boxcolor=black@0.42:boxborderw=9",
+            )
+        ),
         "-an",
         "-c:v",
         "libx264",
@@ -161,7 +199,7 @@ def render(
         if process.stdin is None:
             raise RuntimeError("ffmpeg rawvideo pipe unavailable")
         ffmpeg_input: IO[bytes] = process.stdin
-        for clip, timeline in zip(CLIPS, timelines, strict=True):
+        for clip, timeline in zip(clips, timelines, strict=True):
             for simulation_time in timeline:
                 _, pelvis, joints, ball = sample_g1_ball_trajectory(trajectory, simulation_time)
                 data.qpos[:7] = pelvis
@@ -226,7 +264,7 @@ def render(
         "height": height,
         "frame_count": count,
         "duration_sec": count / fps,
-        "clips": [asdict(clip) for clip in CLIPS],
+        "clips": [asdict(clip) for clip in clips],
         "training_goal_width_m": 2.4,
         "training_goal_height_m": 1.6,
         "frozen_sonic_parent_only": True,

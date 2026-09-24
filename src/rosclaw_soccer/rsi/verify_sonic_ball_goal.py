@@ -24,24 +24,94 @@ def _read(path: Path) -> tuple[dict[str, Any], dict[str, NDArray[np.float64]]]:
         raise ValueError("SONIC ball goal trajectory hash mismatch")
     with np.load(trace, allow_pickle=False) as stream:
         arrays = {key: stream[key].copy() for key in stream.files}
+    expected = {"qpos", "qvel", "target"}
+    if report.get("schema") == "rosclaw_soccer.rsi.sonic_ball_contact_probe.v2":
+        expected.add("physics_qpos")
     if (
-        set(arrays) != {"qpos", "qvel", "target"}
+        set(arrays) != expected
         or arrays["qpos"].shape != (300, 43)
         or arrays["qvel"].shape != (300, 41)
         or arrays["target"].shape != (300, 29)
+        or "physics_qpos" in arrays
+        and arrays["physics_qpos"].shape != (3000, 43)
         or any(not np.isfinite(value).all() for value in arrays.values())
     ):
         raise ValueError("SONIC ball goal raw tensor layout is invalid")
     return report, arrays
 
 
-def verify_sonic_ball_goal(primary: Path, replay: Path) -> dict[str, Any]:
+def _first_physics_contact(
+    positions: NDArray[np.float64], stadium_assets: Path, expected_physics_hash: str
+) -> dict[str, Any] | None:
+    import mujoco
+
+    from rosclaw_soccer.sim.physical_checkpoint import compiled_model_hash
+    from rosclaw_soccer.world.field import G1TrainingGoalSpec, build_g1_stadium_model
+
+    model = build_g1_stadium_model(
+        stadium_assets, G1TrainingGoalSpec(ball_radius_m=0.11, ball_mass_kg=0.43)
+    )
+    model.opt.timestep = 0.002
+    if compiled_model_hash(model) != expected_physics_hash:
+        raise ValueError("contact audit model differs from physical execution")
+    ball_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ball")
+    pelvis_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
+    ball_geoms = {
+        index for index in range(model.ngeom) if int(model.geom_bodyid[index]) == ball_body
+    }
+    data = mujoco.MjData(model)
+    for index, q in enumerate(positions):
+        data.qpos[:] = q
+        mujoco.mj_forward(model, data)
+        for contact in data.contact:
+            first, second = int(contact.geom1), int(contact.geom2)
+            if first not in ball_geoms and second not in ball_geoms:
+                continue
+            other = second if first in ball_geoms else first
+            body = int(model.geom_bodyid[other])
+            ancestor = body
+            while ancestor > 0 and ancestor != pelvis_body:
+                ancestor = int(model.body_parentid[ancestor])
+            if ancestor != pelvis_body:
+                continue
+            geom = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, other) or ""
+            return {
+                "time_sec": (index + 1) * 0.002,
+                "geom": geom,
+                "is_foot": "foot" in geom or "ankle" in geom,
+            }
+    return None
+
+
+def verify_sonic_ball_goal(
+    primary: Path, replay: Path, *, stadium_assets: Path | None = None
+) -> dict[str, Any]:
+    if primary.expanduser().resolve() == replay.expanduser().resolve():
+        raise ValueError("strict replay requires two distinct execution bundles")
     first, a = _read(primary.expanduser().resolve())
     second, b = _read(replay.expanduser().resolve())
-    if first != second or any(not np.array_equal(a[name], b[name]) for name in a):
+    first_comparable = dict(first)
+    second_comparable = dict(second)
+    first_execution = first_comparable.pop("execution_id", None)
+    second_execution = second_comparable.pop("execution_id", None)
+    if first["schema"].endswith(".v2") and (
+        not isinstance(first_execution, str)
+        or not isinstance(second_execution, str)
+        or len(first_execution) != 32
+        or len(second_execution) != 32
+        or first_execution == second_execution
+    ):
+        raise ValueError("paired physical executions need distinct runner identities")
+    if first_comparable != second_comparable or any(
+        not np.array_equal(a[name], b[name]) for name in a
+    ):
         raise ValueError("SONIC ball goal is not an exact physical replay")
     if (
-        first["schema"] != "rosclaw_soccer.rsi.sonic_ball_contact_probe.v1"
+        first["schema"]
+        not in (
+            "rosclaw_soccer.rsi.sonic_ball_contact_probe.v1",
+            "rosclaw_soccer.rsi.sonic_ball_contact_probe.v2",
+        )
         or first["partition"] != "DISCOVERY"
         or first["activation_ceiling"] != "SIM_ONLY"
         or first["promotion_authorized"]
@@ -51,7 +121,7 @@ def verify_sonic_ball_goal(primary: Path, replay: Path) -> dict[str, Any]:
         or first["ball_mass_kg"] != 0.43
         or first["goal_plane_x_m"] != 5.0
         or first["foot_ball_contact_substeps"] < 1
-        or first["first_foot_ball_contact"]["foot_geom"] != "left_foot3_collision"
+        or not isinstance(first["first_foot_ball_contact"], dict)
     ):
         raise ValueError("SONIC ball goal is outside the declared discovery contract")
     q = a["qpos"]
@@ -88,6 +158,26 @@ def verify_sonic_ball_goal(primary: Path, replay: Path) -> dict[str, Any]:
         or checks["minimum_pelvis_height_m"] < 0.55
     ):
         raise ValueError("SONIC ball goal claim differs from raw physical outcome")
+    independently_reconstructed = False
+    if first["schema"].endswith(".v2"):
+        if stadium_assets is None:
+            raise ValueError("v2 physical contact audit requires stadium assets")
+        if not np.array_equal(a["physics_qpos"][9::10], q):
+            raise ValueError("500 Hz and 50 Hz physical trajectories differ")
+        contact = _first_physics_contact(a["physics_qpos"], stadium_assets, first["physics_hash"])
+        claimed_contact = first["first_robot_ball_contact"]
+        if (
+            contact is None
+            or not contact["is_foot"]
+            or first["first_robot_ball_contact_is_foot"] is not True
+            or contact["geom"] != claimed_contact["geom"]
+            or abs(contact["time_sec"] - claimed_contact["time_sec"]) > 0.006
+            or first["first_foot_ball_contact"]["foot_geom"] != claimed_contact["geom"]
+            or abs(first["first_foot_ball_contact"]["time_sec"] - claimed_contact["time_sec"])
+            > 0.002
+        ):
+            raise ValueError("foot-first contact claim differs from reconstructed physics")
+        independently_reconstructed = True
     return {
         "schema": "rosclaw_soccer.rsi.sonic_ball_goal_verification.v1",
         "strict_replay": True,
@@ -95,7 +185,7 @@ def verify_sonic_ball_goal(primary: Path, replay: Path) -> dict[str, Any]:
         "goal_frame": goal_frame,
         "minimum_pelvis_height_m": checks["minimum_pelvis_height_m"],
         "foot_ball_contact_reported": True,
-        "foot_ball_contact_independently_reconstructed": False,
+        "foot_ball_contact_independently_reconstructed": independently_reconstructed,
         "physical_execution_count": 2,
         "partition": "DISCOVERY",
         "promotion_authorized": False,
@@ -112,8 +202,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--primary", required=True, type=Path)
     parser.add_argument("--replay", required=True, type=Path)
+    parser.add_argument("--stadium-assets", type=Path)
     args = parser.parse_args()
-    print(json.dumps(verify_sonic_ball_goal(args.primary, args.replay), sort_keys=True, indent=2))
+    print(
+        json.dumps(
+            verify_sonic_ball_goal(args.primary, args.replay, stadium_assets=args.stadium_assets),
+            sort_keys=True,
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
