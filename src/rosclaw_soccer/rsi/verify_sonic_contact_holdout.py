@@ -24,7 +24,10 @@ def verify_holdout(root: Path, *, stadium_assets: Path) -> dict[str, Any]:
         or manifest.get("partition") != "FRESH"
         or manifest.get("physical_execution_count") != 8
         or manifest.get("courses")
-        not in tuple([[x, y] for y in (0.04, 0.08, 0.12, 0.16)] for x in (1.8, 1.9, 2.0))
+        not in (
+            *([[x, y] for y in (0.04, 0.08, 0.12, 0.16)] for x in (1.8, 1.9, 2.0)),
+            [[2.1, y] for y in (0.05, 0.09, 0.13, 0.17)],
+        )
         or manifest.get("promotion_authorized") is not False
     ):
         raise ValueError("fresh holdout manifest contract failed")

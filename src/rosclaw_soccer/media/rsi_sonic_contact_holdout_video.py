@@ -36,10 +36,19 @@ def render(
     verification = verify_holdout(holdout, stadium_assets=stadium_assets)
     if (
         not verification["contact_independently_reconstructed"]
-        or verification["candidate_foot_goals"] != 4
+        or verification["candidate_foot_goals"] < 2
         or verification["physical_execution_count"] != 8
     ):
-        raise ValueError("four independently verified fresh foot goals required")
+        raise ValueError("at least two independently verified fresh foot goals required")
+    ball_x_values = {float(row["ball_xy_m"][0]) for row in verification["results"]}
+    if len(ball_x_values) != 1:
+        raise ValueError("one physical ball-distance course per film required")
+    ball_x_m = ball_x_values.pop()
+    goal_y_values = tuple(
+        float(row["ball_xy_m"][1])
+        for row in verification["results"]
+        if row["candidate"] and row["foot_first_goal"]
+    )
     resolved = output.expanduser().resolve()
     checkout = Path(__file__).resolve().parents[3]
     if (
@@ -71,8 +80,8 @@ def render(
     trajectories: dict[float, dict[str, NDArray[np.float64]]] = {}
     shots: list[tuple[float, Clip]] = []
     report_hashes = []
-    for y in (0.04, 0.08, 0.12, 0.16):
-        course = holdout / f"x1800-y{round(1000 * y):04d}-candidate"
+    for y in goal_y_values:
+        course = holdout / f"x{round(1000 * ball_x_m):04d}-y{round(1000 * y):04d}-candidate"
         report = json.loads((course / "report.json").read_text(encoding="utf-8"))
         if video_model_hash != report["physics_hash"]:
             raise ValueError("video world differs from holdout physical evidence")
@@ -88,7 +97,7 @@ def render(
         report_hashes.append(hash_bytes((course / "report.json").read_bytes()))
         contact_sec = float(report["first_robot_ball_contact"]["time_sec"])
         goal_sec = float(report["goal_frame"]) * 0.02
-        if y == 0.04:
+        if y == goal_y_values[0]:
             shots.append((y, Clip("opening", 0.0, 0.0, 0.0, "wide")))
         shots.extend(
             (
@@ -109,13 +118,15 @@ def render(
                 ),
             )
         )
-        if y == 0.16:
+        if y == goal_y_values[-1]:
             shots.append((y, Clip("closing", 6.0, 6.0, 0.0, "wide")))
     timelines = [_timeline(clip, fps) for _, clip in shots]
     frame_count = sum(len(timeline) for timeline in timelines)
     resolved.parent.mkdir(parents=True, exist_ok=True)
     caption = escape_filtergraph_option(
-        "SIM ONLY | FRESH 4/4 VS PARENT 2/4 | FOOT-FIRST GOALS | NOT PROMOTED"
+        "SIM ONLY | FRESH "
+        f"{verification['candidate_foot_goals']}/4 VS PARENT {verification['parent_foot_goals']}/4"
+        " | FOOT-FIRST GOALS | NOT PROMOTED"
     )
     results = {
         (float(row["ball_xy_m"][1]), bool(row["candidate"])): row for row in verification["results"]
@@ -129,7 +140,7 @@ def render(
         "box=1:boxcolor=black@0.42:boxborderw=9",
     ]
     frame_offset = 0
-    for index, y in enumerate((0.04, 0.08, 0.12, 0.16), start=1):
+    for index, y in enumerate(goal_y_values, start=1):
         course_frames = sum(
             len(timeline)
             for (course_y, _), timeline in zip(shots, timelines, strict=True)
@@ -139,7 +150,7 @@ def render(
         candidate = results[(y, True)]
         parent_label = "PARENT GOAL" if parent["foot_first_goal"] else "PARENT MISS"
         label = escape_filtergraph_option(
-            f"SHOT {index:02d} | BALL Y +{y:.2f} M | {parent_label}"
+            f"SHOT {index:02d} | BALL {ball_x_m:.2f} M / Y +{y:.2f} M | {parent_label}"
             f" | CANDIDATE {candidate['peak_ball_speed_mps']:.2f} M/S"
         )
         start_sec = frame_offset / fps
@@ -253,7 +264,7 @@ def render(
         "fps": fps,
         "frame_count": frame_count,
         "duration_sec": frame_count / fps,
-        "shots": [{"ball_y_m": y, **asdict(clip)} for y, clip in shots],
+        "shots": [{"ball_x_m": ball_x_m, "ball_y_m": y, **asdict(clip)} for y, clip in shots],
         "pixels_used_for_scoring": False,
         "visualization_only": True,
         "promotion_authorized": False,
