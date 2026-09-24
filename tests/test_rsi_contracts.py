@@ -17,7 +17,9 @@ J = "sha256:" + "b" * 64
 
 
 def artifact() -> PolicyArtifact:
-    return PolicyArtifact("g1.athlete", "sonic", H, H, H, H, H, H, H, H, "JOINT_TARGET", 29)
+    return PolicyArtifact(
+        "g1.athlete", "sonic", H, H, H, H, H, H, H, H, H, "JOINT_TARGET", 29, 0.02
+    )
 
 
 def observation() -> AthleteObservation:
@@ -25,7 +27,9 @@ def observation() -> AthleteObservation:
         "g1",
         H,
         H,
+        H,
         50,
+        1.0,
         (0.0, 0.0, 0.8),
         (0.0, 0.0, 0.0),
         (0.0, 0.0, 0.0),
@@ -76,7 +80,16 @@ def test_matching_simulation_proposal_is_only_a_typed_proposal():
 
 
 @pytest.mark.parametrize(
-    "fault", ["foreign_body", "foreign_joint_map", "wrong_policy", "stale_frame", "wrong_joints"]
+    "fault",
+    [
+        "foreign_body",
+        "foreign_joint_map",
+        "foreign_physics",
+        "wrong_clock",
+        "wrong_policy",
+        "stale_frame",
+        "wrong_joints",
+    ],
 )
 def test_foreign_or_stale_policy_cannot_consume_body_state(fault):
     parent = artifact()
@@ -86,6 +99,14 @@ def test_foreign_or_stale_policy_cannot_consume_body_state(fault):
     elif fault == "foreign_joint_map":
         with pytest.raises(ValueError):
             validate_athlete_proposal(parent, replace(observation(), joint_map_hash=J), action)
+        return
+    elif fault == "foreign_physics":
+        with pytest.raises(ValueError):
+            validate_athlete_proposal(parent, replace(observation(), physics_hash=J), action)
+        return
+    elif fault == "wrong_clock":
+        with pytest.raises(ValueError):
+            validate_athlete_proposal(parent, replace(observation(), time_sec=1.02), action)
         return
     elif fault == "wrong_policy":
         action = replace(action, policy_hash=J)

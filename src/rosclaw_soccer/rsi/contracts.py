@@ -81,7 +81,9 @@ class AthleteObservation:
     body_id: str
     body_hash: str
     joint_map_hash: str
+    physics_hash: str
     frame: int
+    time_sec: float
     root_position_m: tuple[float, float, float]
     root_velocity_mps: tuple[float, float, float]
     root_angular_velocity_rad_s: tuple[float, float, float]
@@ -95,8 +97,11 @@ class AthleteObservation:
             not _id(self.body_id)
             or not _hash(self.body_hash)
             or not _hash(self.joint_map_hash)
+            or not _hash(self.physics_hash)
             or type(self.frame) is not int
             or self.frame < 0
+            or not _scalar(self.time_sec)
+            or self.time_sec < 0
             or not _vector(self.root_position_m, minimum=3)
             or len(self.root_position_m) != 3
             or not _vector(self.root_velocity_mps, minimum=3)
@@ -148,6 +153,7 @@ class PolicyArtifact:
 
     artifact_id: str
     backend_id: str
+    backend_contract_hash: str
     code_hash: str
     weights_hash: str
     body_hash: str
@@ -158,6 +164,7 @@ class PolicyArtifact:
     gain_hash: str
     action_kind: str
     action_size: int
+    control_dt_s: float
     parent_hash: str | None = None
     activation_ceiling: str = "SIM_ONLY"
 
@@ -169,6 +176,7 @@ class PolicyArtifact:
                 not _hash(value)
                 for value in (
                     self.code_hash,
+                    self.backend_contract_hash,
                     self.weights_hash,
                     self.body_hash,
                     self.observation_hash,
@@ -183,6 +191,8 @@ class PolicyArtifact:
             or self.action_kind not in ("JOINT_TARGET", "MOTOR_LATENT")
             or type(self.action_size) is not int
             or not 1 <= self.action_size <= 512
+            or not _scalar(self.control_dt_s)
+            or not 0 < self.control_dt_s <= 1.0
             or self.activation_ceiling != "SIM_ONLY"
         ):
             raise ValueError(
@@ -290,6 +300,8 @@ def validate_athlete_proposal(
         action.body_hash != artifact.body_hash
         or observation.body_hash != artifact.body_hash
         or observation.joint_map_hash != artifact.joint_map_hash
+        or observation.physics_hash != artifact.physics_hash
+        or abs(observation.time_sec - observation.frame * artifact.control_dt_s) > 1.0e-6
         or action.policy_hash != artifact.contract_hash
         or action.frame != observation.frame
         or artifact.action_kind == "JOINT_TARGET"
