@@ -68,6 +68,9 @@ def run(
     left_hip_residual_rad: float = 0.0,
     left_knee_residual_rad: float = 0.0,
     left_ankle_residual_rad: float = 0.0,
+    right_hip_residual_rad: float = 0.0,
+    right_knee_residual_rad: float = 0.0,
+    right_ankle_residual_rad: float = 0.0,
     partition: str = "DISCOVERY",
     selector_hash: str | None = None,
     sonic_variant: str = "low_latency",
@@ -91,6 +94,9 @@ def run(
                 left_hip_residual_rad,
                 left_knee_residual_rad,
                 left_ankle_residual_rad,
+                right_hip_residual_rad,
+                right_knee_residual_rad,
+                right_ankle_residual_rad,
             )
         )
         or partition not in ("DISCOVERY", "FRESH")
@@ -153,6 +159,9 @@ def run(
     foot_contacts: list[dict[str, Any]] = []
     robot_contacts: list[dict[str, Any]] = []
     physics_qpos = []
+    saturated_substeps = 0
+    peak_torque_demand_ratio = 0.0
+    peak_pelvis_tilt_rad = 0.0
     pelvis_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
     if pelvis_body < 0:
         raise ValueError("compiled G1 pelvis body missing")
@@ -178,14 +187,26 @@ def run(
         target[0] += left_hip_residual_rad * contact_envelope
         target[3] += left_knee_residual_rad * contact_envelope
         target[4] += left_ankle_residual_rad * contact_envelope
+        target[6] += right_hip_residual_rad * contact_envelope
+        target[9] += right_knee_residual_rad * contact_envelope
+        target[10] += right_ankle_residual_rad * contact_envelope
         for substep in range(10):
-            torque = np.clip(
-                (target - data.qpos[7:36]) * nav.backend.kp - data.qvel[6:35] * nav.backend.kd,
-                -torque_limits,
-                torque_limits,
+            demanded_torque = (target - data.qpos[7:36]) * nav.backend.kp - data.qvel[
+                6:35
+            ] * nav.backend.kd
+            peak_torque_demand_ratio = max(
+                peak_torque_demand_ratio,
+                float(np.max(np.abs(demanded_torque) / torque_limits)),
             )
+            saturated_substeps += int(np.any(np.abs(demanded_torque) > torque_limits))
+            torque = np.clip(demanded_torque, -torque_limits, torque_limits)
             data.ctrl[:] = torque
             mujoco.mj_step(model, data)
+            quat = data.qpos[3:7]
+            peak_pelvis_tilt_rad = max(
+                peak_pelvis_tilt_rad,
+                math.acos(float(np.clip(1.0 - 2.0 * (quat[1] ** 2 + quat[2] ** 2), -1.0, 1.0))),
+            )
             physics_qpos.append(data.qpos.copy())
             for contact_index in range(data.ncon):
                 contact = data.contact[contact_index]
@@ -260,6 +281,14 @@ def run(
             left_knee_residual_rad,
             left_ankle_residual_rad,
         ],
+        "right_contact_residual_rad": [
+            right_hip_residual_rad,
+            right_knee_residual_rad,
+            right_ankle_residual_rad,
+        ],
+        "peak_torque_demand_ratio": peak_torque_demand_ratio,
+        "actuator_saturation_fraction": saturated_substeps / (frames * 10),
+        "peak_pelvis_tilt_rad": peak_pelvis_tilt_rad,
         "contact_envelope_relative_x_center_m": 0.48,
         "contact_envelope_relative_x_sigma_m": 0.18,
         "goal_plane_x_m": goal_spec.plane_x_m,
@@ -306,6 +335,11 @@ def main() -> None:
     parser.add_argument("--left-hip-residual-rad", type=float, default=0.0)
     parser.add_argument("--left-knee-residual-rad", type=float, default=0.0)
     parser.add_argument("--left-ankle-residual-rad", type=float, default=0.0)
+    parser.add_argument("--right-hip-residual-rad", type=float, default=0.0)
+    parser.add_argument("--right-knee-residual-rad", type=float, default=0.0)
+    parser.add_argument("--right-ankle-residual-rad", type=float, default=0.0)
+    parser.add_argument("--partition", choices=("DISCOVERY", "FRESH"), default="DISCOVERY")
+    parser.add_argument("--selector-hash")
     parser.add_argument(
         "--sonic-variant", choices=("low_latency", "sonic_v1_1"), default="low_latency"
     )
@@ -325,6 +359,11 @@ def main() -> None:
                 left_hip_residual_rad=args.left_hip_residual_rad,
                 left_knee_residual_rad=args.left_knee_residual_rad,
                 left_ankle_residual_rad=args.left_ankle_residual_rad,
+                right_hip_residual_rad=args.right_hip_residual_rad,
+                right_knee_residual_rad=args.right_knee_residual_rad,
+                right_ankle_residual_rad=args.right_ankle_residual_rad,
+                partition=args.partition,
+                selector_hash=args.selector_hash,
                 sonic_variant=args.sonic_variant,
             ),
             sort_keys=True,
