@@ -1,0 +1,78 @@
+{
+  "schema": "rosclaw_soccer.reference_manifest.v1",
+  "references": [
+    {
+      "name": "ProtoMotions",
+      "repository": "https://github.com/NVlabs/ProtoMotions.git",
+      "commit": "a6df301d312dc58ac40a4d994f4f1064728d854c",
+      "license_file": "LICENSE.md",
+      "license_sha256": "59899c6091b540582ed617e8eeaac4919dc985ccfc35459ee9752b699be5205b",
+      "license_id": "Apache-2.0",
+      "weight_license": "NOT_ASSERTED_CHECKPOINT_SPECIFIC",
+      "purpose": "G1 motor foundation and GPC design reference",
+      "reused_as": "external_algorithm_reference",
+      "files_reviewed": ["README.md", "LICENSE.md", "docs/source/user_guide/gpc.rst"],
+      "copied_code": false
+    },
+    {
+      "name": "GR00T-WholeBodyControl",
+      "repository": "https://github.com/NVlabs/GR00T-WholeBodyControl.git",
+      "commit": "32c8260e54118b1f92b1fdeb9395d70d828e51a5",
+      "license_file": "LICENSE",
+      "license_sha256": "24ab66be50d1aca4fc5e029ef76ce4ceaac6557ea21665caf4b140695a76ffee",
+      "license_id": "Apache-2.0",
+      "weight_license": "NVIDIA-Open-Model",
+      "purpose": "Frozen SONIC G1 athlete baseline",
+      "reused_as": "external_runtime_and_checkpoint",
+      "files_reviewed": ["README.md", "LICENSE", "gear_sonic_deploy/g1/g1_29dof.xml"],
+      "copied_code": false
+    },
+    {
+      "name": "on-policy",
+      "repository": "https://github.com/marlbenchmark/on-policy.git",
+      "commit": "de66d7a4b23fac2513f56f96f73b3f5cb96695ac",
+      "license_file": "LICENSE",
+      "license_sha256": "0335be1babd64ea33302d4d365cdecc5985aaf5c4481236e0c5da07eb37a4580",
+      "license_id": "MIT",
+      "weight_license": "NONE",
+      "purpose": "MAPPO algorithm semantics reference only",
+      "reused_as": "external_algorithm_reference",
+      "files_reviewed": ["README.md", "LICENSE", "onpolicy/algorithms/r_mappo/r_mappo.py"],
+      "copied_code": false
+    },
+    {
+      "name": "verl",
+      "repository": "https://github.com/volcengine/verl.git",
+      "commit": "6093e007cc341973c9d9a6fb3867a85976c7c458",
+      "license_file": "LICENSE",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "license_id": "Apache-2.0",
+      "weight_license": "NONE",
+      "purpose": "Deferred distributed training architecture reference",
+      "reused_as": "external_design_reference",
+      "files_reviewed": ["README.md", "LICENSE"],
+      "copied_code": false
+    },
+    {
+      "name": "verl-vla",
+      "repository": "https://github.com/verl-project/verl-vla.git",
+      "commit": "c1de826c7c9256e4d9b6900091e4b0e243d16f5e",
+      "license_file": "LICENSE",
+      "license_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "license_id": "Apache-2.0",
+      "weight_license": "NONE",
+      "purpose": "Deferred rollout and weight-sync architecture reference",
+      "reused_as": "external_design_reference",
+      "files_reviewed": ["README.md", "LICENSE"],
+      "copied_code": false
+    }
+  ],
+  "pending": [
+    {
+      "name": "Dream-RSI",
+      "repository": "https://github.com/zhengkid/Dream-RSI",
+      "status": "official repository says code is being prepared; no runnable source or pinned code commit used",
+      "reused_as": "paper_and_design_reference_only"
+    }
+  ]
+}
