@@ -149,8 +149,11 @@ def render(
     timelines = tuple(_timeline(clip, fps) for clip in clips)
     count = sum(len(timeline) for timeline in timelines)
     resolved.parent.mkdir(parents=True, exist_ok=True)
+    residual = tuple(float(value) for value in report.get("left_contact_residual_rad", ()))
+    residual_active = any(value != 0.0 for value in residual)
+    method_label = "SONIC + BOUNDED CONTACT RESIDUAL" if residual_active else "FROZEN SONIC"
     evidence_caption = escape_filtergraph_option(
-        f"SIM ONLY | FROZEN SONIC | FOOT FIRST GOAL | {report['run_speed_mps']:.1f} M/S"
+        f"SIM ONLY | {method_label} | FOOT FIRST GOAL | {report['run_speed_mps']:.1f} M/S"
     )
     command = [
         ffmpeg,
@@ -267,7 +270,8 @@ def render(
         "clips": [asdict(clip) for clip in clips],
         "training_goal_width_m": 2.4,
         "training_goal_height_m": 1.6,
-        "frozen_sonic_parent_only": True,
+        "frozen_sonic_parent_only": not residual_active,
+        "contact_residual_rad": list(residual),
         "learned_contact_actor": False,
         "visualization_only": True,
         "pixels_used_for_scoring": False,

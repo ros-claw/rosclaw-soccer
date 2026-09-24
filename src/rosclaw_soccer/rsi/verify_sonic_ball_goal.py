@@ -112,7 +112,7 @@ def verify_sonic_ball_goal(
             "rosclaw_soccer.rsi.sonic_ball_contact_probe.v1",
             "rosclaw_soccer.rsi.sonic_ball_contact_probe.v2",
         )
-        or first["partition"] != "DISCOVERY"
+        or first["partition"] not in ("DISCOVERY", "FRESH")
         or first["activation_ceiling"] != "SIM_ONLY"
         or first["promotion_authorized"]
         or first["trained_actor"]
@@ -187,7 +187,7 @@ def verify_sonic_ball_goal(
         "foot_ball_contact_reported": True,
         "foot_ball_contact_independently_reconstructed": independently_reconstructed,
         "physical_execution_count": 2,
-        "partition": "DISCOVERY",
+        "partition": first["partition"],
         "promotion_authorized": False,
         "verification_hash": hash_json(
             {

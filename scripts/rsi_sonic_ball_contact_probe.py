@@ -65,6 +65,12 @@ def run(
     run_speed_mps: float = 1.2,
     run_lateral_mps: float = 0.0,
     stop_frame: int = 115,
+    left_hip_residual_rad: float = 0.0,
+    left_knee_residual_rad: float = 0.0,
+    left_ankle_residual_rad: float = 0.0,
+    partition: str = "DISCOVERY",
+    selector_hash: str | None = None,
+    sonic_variant: str = "low_latency",
 ) -> dict[str, Any]:
     if (
         output_dir.exists()
@@ -79,6 +85,20 @@ def run(
         or abs(run_lateral_mps) > 0.30
         or abs(run_lateral_mps) >= run_speed_mps
         or not 70 <= stop_frame <= min(170, frames - 30)
+        or any(
+            not math.isfinite(value) or abs(value) > 0.25
+            for value in (
+                left_hip_residual_rad,
+                left_knee_residual_rad,
+                left_ankle_residual_rad,
+            )
+        )
+        or partition not in ("DISCOVERY", "FRESH")
+        or (
+            selector_hash is not None
+            and (not selector_hash.startswith("sha256:") or len(selector_hash) != 71)
+        )
+        or sonic_variant not in ("low_latency", "sonic_v1_1")
     ):
         raise ValueError("new output and bounded ball position required")
     source_hash = hash_bytes(Path(__file__).read_bytes())
@@ -120,7 +140,7 @@ def run(
         "blue.playmaker",
         SonicNavigationConfig(
             maximum_frames=frames,
-            model_variant="low_latency",
+            model_variant=sonic_variant,
             experimental_maximum_speed_mps=run_speed_mps,
             planner_seed=920101,
         ),
@@ -153,6 +173,11 @@ def run(
             nav.start_from_observation(observation)
         action = nav.propose(observation)
         target = np.asarray(action.target_rad, dtype=np.float64)
+        relative_ball_x_m = float(data.qpos[36] - data.qpos[0])
+        contact_envelope = math.exp(-0.5 * ((relative_ball_x_m - 0.48) / 0.18) ** 2)
+        target[0] += left_hip_residual_rad * contact_envelope
+        target[3] += left_knee_residual_rad * contact_envelope
+        target[4] += left_ankle_residual_rad * contact_envelope
         for substep in range(10):
             torque = np.clip(
                 (target - data.qpos[7:36]) * nav.backend.kp - data.qvel[6:35] * nav.backend.kd,
@@ -215,11 +240,13 @@ def run(
     report: dict[str, Any] = {
         "schema": "rosclaw_soccer.rsi.sonic_ball_contact_probe.v2",
         "execution_id": execution_id,
-        "partition": "DISCOVERY",
+        "partition": partition,
+        "selector_hash": selector_hash,
         "activation_ceiling": "SIM_ONLY",
         "source_hash": source_hash,
         "physics_hash": compiled_model_hash(model),
         "model_hash": nav.backend.qualification.qualification_hash,
+        "sonic_variant": sonic_variant,
         "initial_state_hash": initial_hash,
         "ball_radius_m": ball_dimensions.radius_m,
         "ball_mass_kg": ball_dimensions.body_mass_kg,
@@ -228,6 +255,13 @@ def run(
         "run_speed_mps": run_speed_mps,
         "run_lateral_mps": run_lateral_mps,
         "stop_frame": stop_frame,
+        "left_contact_residual_rad": [
+            left_hip_residual_rad,
+            left_knee_residual_rad,
+            left_ankle_residual_rad,
+        ],
+        "contact_envelope_relative_x_center_m": 0.48,
+        "contact_envelope_relative_x_sigma_m": 0.18,
         "goal_plane_x_m": goal_spec.plane_x_m,
         "whole_ball_goal_crossed": goal_frame is not None,
         "goal_frame": goal_frame,
@@ -269,6 +303,12 @@ def main() -> None:
     parser.add_argument("--run-speed-mps", type=float, default=1.2)
     parser.add_argument("--run-lateral-mps", type=float, default=0.0)
     parser.add_argument("--stop-frame", type=int, default=115)
+    parser.add_argument("--left-hip-residual-rad", type=float, default=0.0)
+    parser.add_argument("--left-knee-residual-rad", type=float, default=0.0)
+    parser.add_argument("--left-ankle-residual-rad", type=float, default=0.0)
+    parser.add_argument(
+        "--sonic-variant", choices=("low_latency", "sonic_v1_1"), default="low_latency"
+    )
     args = parser.parse_args()
     print(
         json.dumps(
@@ -282,6 +322,10 @@ def main() -> None:
                 run_speed_mps=args.run_speed_mps,
                 run_lateral_mps=args.run_lateral_mps,
                 stop_frame=args.stop_frame,
+                left_hip_residual_rad=args.left_hip_residual_rad,
+                left_knee_residual_rad=args.left_knee_residual_rad,
+                left_ankle_residual_rad=args.left_ankle_residual_rad,
+                sonic_variant=args.sonic_variant,
             ),
             sort_keys=True,
         )
