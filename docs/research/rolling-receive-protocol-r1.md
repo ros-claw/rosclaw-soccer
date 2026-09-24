@@ -565,3 +565,36 @@ MR4 教师资格、MR5 DAgger）按当前证据都必须穿越 E3 学习门，�
 规则开 E3 门；(b) 接受单场景为 R1 终态，机制工作收官。证据全部归档于
 m0/{aim-teacher-calibrate-v1/v2, pass-chain-v4tree-v1,
 pass-chain-heading-mr4-v1/v2, scene-discovery-v1, scene-mining-v1}。
+
+## 20. R1 收官（用户决策，2026-09-24）
+
+**用户拍板：单场景收官。** 接受单场景进球链为 R1 终态，机制工作收官；
+不豁免"教师场景重复"规则，不启动 E3/DAgger，不做大规模场景挖掘。
+
+**R1 最终成果清单**：
+
+1. **完整进球链（1 个有效场景，最高证据等级）**：拾取→传球
+   （`pass_contact_chain` clean，1.716s→3.008s）→接球→
+   CAPTURE→ORIENT→PLANT→STRIKE→RECOVER→COMPLETE→9.660268 m/s 破门
+   （y=-0.484279、z=1.124058，门将 y=-1.105886 未触及）。3 次执行逐位
+   一致；跨冻结树（9d1ba20→1060216）逐位重放；4 seed 不变。
+2. **自动化瞄准教师**：合法站位扫描→选位→三次确认全流程自动化；
+   -0.17 为扫描集中唯一进球站位；扫描地图全留档。
+3. **零回归源码扩展（4 项，均在 main）**：PASS 目标注入（9d1ba20）、
+   PASS 触球捕获（7e86b16）、PASS 引导启动（1be3457）、踝 roll 外向
+   制动（1060216）。
+4. **否定性测量（同等重要的科学产出）**：完成域单点（±0.02m 网格
+   1/7、广泛挖掘 0/8）；导航层闭环教师两变体否决（20 帧有界偏航即杀
+   链）；A0 有界残差无法产出步态相位对齐的再接触（8 个机制族）。
+5. **视频证据（逐帧目检）**：`media/goal-bank-20260924-v1/goal-bank.mp4`
+   三视角+0.25x 慢放；`media/first-goal-20260924-v2/first-kick.mp4`；
+   first-kick/first-pass/pass-chain-baseline/s208-shot-arc 各阶段片。
+
+**遗留（明确移交未来会话/章程决策）**：若未来要泛化进球链，唯一已知
+可行路径是穿越 E3 学习门（须章程豁免"教师场景重复"规则），以
+m0/aim-teacher-calibrate-v1 的 3 次逐位一致执行 + 物理 json 为示范集
+起点；在那之前任何"成功率"宣传都仅限单一已见场景。
+
+**状态封存**：无训练、无 Sealed、无晋升、无硬件；全部 NPZ/JSON/MP4
+证据保留于 /data/rosclaw_overflow/receiving-mechanism-reboot/m0/ 与
+media/；证据绑定的 helper 文件不再编辑。
