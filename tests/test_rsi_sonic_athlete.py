@@ -57,7 +57,7 @@ def _observation(frame=0):
 
 
 def _intent():
-    return AthleticIntent((0.5, 0.0), 0.0, 0.0, 0.75, "locomotion", "soccer")
+    return AthleticIntent((0.5, 0.0), 0.0, 0.0, 0.793, "locomotion", "soccer")
 
 
 def _adapter(monkeypatch):
@@ -105,6 +105,9 @@ def test_sonic_athlete_maps_only_robot_proprioception_and_preserves_clock(monkey
         "foreign_map",
         "foreign_physics",
         "contact_intent",
+        "absolute_heading",
+        "height_request",
+        "target_position",
         "too_fast",
         "stale_frame",
     ],
@@ -122,6 +125,12 @@ def test_sonic_athlete_bad_state_latches_no_retry(monkeypatch, fault):
         obs = replace(obs, physics_hash=J)
     elif fault == "contact_intent":
         intent = replace(intent, contact_intent="kick")
+    elif fault == "absolute_heading":
+        intent = replace(intent, heading_rad=0.4)
+    elif fault == "height_request":
+        intent = replace(intent, body_height_m=0.7)
+    elif fault == "target_position":
+        intent = replace(intent, future_target_xy_m=(1.0, 0.0))
     elif fault == "too_fast":
         intent = replace(intent, velocity_xy_mps=(0.8, 0.0))
     else:

@@ -75,9 +75,11 @@ class SonicAthleteAdapter:
                 or abs(observation.time_sec - observation.frame * 0.02) > 1.0e-6
                 or len(observation.joint_position) != 29
                 or intent.contact_intent not in ("none", "locomotion")
+                or abs(intent.heading_rad) > 1.0e-9
+                or abs(intent.body_height_m - 0.793) > 1.0e-9
+                or intent.future_target_xy_m is not None
             ):
-                raise ValueError("foreign or contact-seeking SONIC athlete state")
-            target_xy = intent.future_target_xy_m or (0.0, 0.0)
+                raise ValueError("foreign or unsupported SONIC athlete intent/state")
             # The existing SONIC team input is robot qpos[0:36]/qvel[0:35]
             # followed by a ball free joint. The backend never consumes the tail.
             # It is intentionally non-physical padding, not a ball observation.
@@ -107,7 +109,7 @@ class SonicAthleteAdapter:
                 prospective_owner=False,
                 qpos=qpos,
                 qvel=qvel,
-                target_position_m=(target_xy[0], target_xy[1], 0.0),
+                target_position_m=(0.0, 0.0, 0.0),
                 navigation_command=(
                     *intent.velocity_xy_mps,
                     intent.yaw_rate_rad_s,

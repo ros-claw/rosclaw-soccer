@@ -56,6 +56,10 @@ def _source_binding() -> str:
         "src/rosclaw_soccer/rsi/sonic_athlete.py",
         "src/rosclaw_soccer/providers/g1/sonic_navigation.py",
         "src/rosclaw_soccer/providers/g1/sonic_runup.py",
+        "src/rosclaw_soccer/providers/g1/joint_contract.py",
+        "src/rosclaw_soccer/sim/contracts.py",
+        "src/rosclaw_soccer/sim/physical_checkpoint.py",
+        "src/rosclaw_soccer/world/field.py",
     )
     return str(hash_json({name: hash_bytes((root / name).read_bytes()) for name in paths}))
 
@@ -124,6 +128,7 @@ def _course(
     joint_map_hash: str,
     code_hash: str,
     course: Course,
+    label: str,
     output_dir: Path,
 ) -> dict[str, Any]:
     data = mujoco.MjData(model)
@@ -205,7 +210,7 @@ def _course(
     arrays = {name: np.asarray(value) for name, value in rows.items()}
     if any(not np.isfinite(value).all() for value in arrays.values()):
         raise ValueError("nonfinite physical trajectory")
-    trace_path = output_dir / f"{course.name}.npz"
+    trace_path = output_dir / f"{label}.npz"
     np.savez_compressed(
         trace_path,
         qpos=arrays["qpos"],
@@ -232,6 +237,7 @@ def _course(
     result = {
         "schema": "rosclaw_soccer.rsi.sonic_combine_course.v1",
         "course": course.name,
+        "execution_id": label,
         "partition": "DISCOVERY",
         "activation_ceiling": "SIM_ONLY",
         "teacher_active": False,
@@ -245,10 +251,45 @@ def _course(
         "initial_state_hash": initial_state_hash,
         "physics_hash": body_hash,
         "artifact_hash": artifact.contract_hash,
+        "artifact": asdict(artifact),
         "trajectory_hash": hash_bytes(trace_path.read_bytes()),
     }
-    _write_receipt(output_dir / f"{course.name}.json", result)
+    _write_receipt(output_dir / f"{label}.json", result)
     return result
+
+
+def _zero_torque_ablation(model: mujoco.MjModel, output_dir: Path) -> dict[str, Any]:
+    """Same initial body/field and horizon, with all 29 actuator efforts zero."""
+    data = mujoco.MjData(model)
+    data.qpos[:7] = (0.0, 0.0, 0.793, 1.0, 0.0, 0.0, 0.0)
+    data.qpos[7:36] = G1SonicRunupController.default_angles
+    if model.nq > 36:
+        data.qpos[36:39] = (20.0, 20.0, 0.2)
+    mujoco.mj_forward(model, data)
+    initial_state_hash = hash_json({"qpos": data.qpos.tolist(), "qvel": data.qvel.tolist()})
+    positions = []
+    for _ in range(1500):
+        data.ctrl[:] = 0
+        mujoco.mj_step(model, data)
+        positions.append(data.qpos[:36].copy())
+    trace = np.asarray(positions)
+    if not np.isfinite(trace).all():
+        raise ValueError("zero-torque ablation became nonfinite")
+    path = output_dir / "run-zero-torque.npz"
+    np.savez_compressed(path, qpos=trace)
+    row = {
+        "schema": "rosclaw_soccer.rsi.sonic_zero_torque_ablation.v1",
+        "partition": "DISCOVERY",
+        "same_initial_state": True,
+        "initial_state_hash": initial_state_hash,
+        "steps": 1500,
+        "minimum_pelvis_height_m": float(trace[:, 2].min()),
+        "displacement_xy_m": float(np.linalg.norm(trace[-1, :2] - trace[0, :2])),
+        "trajectory_hash": hash_bytes(path.read_bytes()),
+        "activation_ceiling": "SIM_ONLY",
+    }
+    _write_receipt(output_dir / "run-zero-torque.json", row)
+    return row
 
 
 def main() -> None:
@@ -286,16 +327,48 @@ def main() -> None:
         "model_root": str(args.model_root.expanduser().resolve()),
         "stadium_assets": str(args.stadium_assets.expanduser().resolve()),
         "courses": [asdict(course) for course in COURSES],
+        "repeats_per_course": 2,
+        "ablation": "run course initial state, 1500 physics steps, zero actuator torque",
     }
     _write_receipt(output_dir / "protocol.json", protocol)
     rows = []
+    replay_rows = []
     for course in COURSES:
         if _source_binding() != source_hash:
             raise RuntimeError("source changed during SONIC combine assay")
         row = _course(
-            model, args.model_root, body_hash, joint_map_hash, source_hash, course, output_dir
+            model,
+            args.model_root,
+            body_hash,
+            joint_map_hash,
+            source_hash,
+            course,
+            f"{course.name}-primary",
+            output_dir,
         )
+        replay = _course(
+            model,
+            args.model_root,
+            body_hash,
+            joint_map_hash,
+            source_hash,
+            course,
+            f"{course.name}-replay",
+            output_dir,
+        )
+        with (
+            np.load(output_dir / f"{course.name}-primary.npz", allow_pickle=False) as first,
+            np.load(output_dir / f"{course.name}-replay.npz", allow_pickle=False) as second,
+        ):
+            identical = all(np.array_equal(first[key], second[key]) for key in first.files)
+        if (
+            not identical
+            or row["initial_state_hash"] != replay["initial_state_hash"]
+            or row["physics_hash"] != replay["physics_hash"]
+        ):
+            raise ValueError(f"{course.name}: strict replay failed")
         rows.append(row)
+        replay_rows.append(replay)
         print(
             json.dumps(
                 {
@@ -310,6 +383,13 @@ def main() -> None:
         )
     if _source_binding() != source_hash:
         raise RuntimeError("source changed before SONIC combine completion")
+    ablation = _zero_torque_ablation(model, output_dir)
+    if ablation["initial_state_hash"] != next(
+        row["initial_state_hash"] for row in rows if row["course"] == "run"
+    ):
+        raise ValueError("zero-torque ablation initial state differs")
+    if _source_binding() != source_hash:
+        raise RuntimeError("source changed during SONIC ablation")
     complete = {
         "schema": "rosclaw_soccer.rsi.sonic_combine_complete.v1",
         "source_hash": source_hash,
@@ -317,7 +397,17 @@ def main() -> None:
         "partition": "DISCOVERY",
         "pass_count": sum(bool(row["task_success"]) for row in rows),
         "course_count": len(rows),
+        "physical_execution_count": len(rows) + len(replay_rows) + 1,
+        "strict_replay": True,
+        "causal_separation": bool(
+            next(row["displacement_xy_m"] for row in rows if row["course"] == "run")
+            - ablation["displacement_xy_m"]
+            >= 1.0
+            and ablation["minimum_pelvis_height_m"] < 0.55
+        ),
         "rows": rows,
+        "replay_rows": replay_rows,
+        "zero_torque_ablation": ablation,
         "promotion_authorized": False,
     }
     _write_receipt(output_dir / "complete.json", complete)
