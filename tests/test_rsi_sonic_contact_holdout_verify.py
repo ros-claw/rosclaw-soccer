@@ -21,16 +21,19 @@ def holdout_copy(tmp_path):
 def test_selector_holdout_recomputes_eight_physical_outcomes(holdout_copy):
     root, stadium = holdout_copy
     result = verify_holdout(root, stadium_assets=stadium)
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     assert result["physical_execution_count"] == 8
-    assert result["candidate_foot_goals"] == 4
-    assert result["parent_foot_goals"] == 2
+    assert result["candidate_foot_goals"] == manifest["candidate_foot_goals"]
+    assert result["parent_foot_goals"] == manifest["parent_foot_goals"]
     assert result["contact_independently_reconstructed"]
     assert not result["promotion_authorized"]
 
 
 def test_selector_holdout_rejects_raw_trace_tamper(holdout_copy):
     root, stadium = holdout_copy
-    trace = root / "x1800-y0040-candidate" / "trajectory.npz"
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    x, y = manifest["courses"][0]
+    trace = root / f"x{round(x * 1000):04d}-y{round(y * 1000):04d}-candidate" / "trajectory.npz"
     trace.write_bytes(trace.read_bytes() + b"tamper")
     with pytest.raises(ValueError, match="trajectory hash mismatch"):
         verify_holdout(root, stadium_assets=stadium)

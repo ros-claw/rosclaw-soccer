@@ -23,7 +23,8 @@ def verify_holdout(root: Path, *, stadium_assets: Path) -> dict[str, Any]:
         or manifest.get("schema") != "rosclaw_soccer.rsi.sonic_contact_selector_holdout.v1"
         or manifest.get("partition") != "FRESH"
         or manifest.get("physical_execution_count") != 8
-        or manifest.get("courses") != [[1.8, y] for y in (0.04, 0.08, 0.12, 0.16)]
+        or manifest.get("courses")
+        not in tuple([[x, y] for y in (0.04, 0.08, 0.12, 0.16)] for x in (1.8, 1.9, 2.0))
         or manifest.get("promotion_authorized") is not False
     ):
         raise ValueError("fresh holdout manifest contract failed")

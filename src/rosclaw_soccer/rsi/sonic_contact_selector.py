@@ -13,17 +13,19 @@ from typing import Any
 from rosclaw_soccer.sim.contracts import hash_json
 
 SCHEMA = "rosclaw_soccer.rsi.sonic_contact_selector.v1"
+SCHEMA_V2 = "rosclaw_soccer.rsi.sonic_contact_selector.v2"
 
 
 def choose_lateral(model: dict[str, Any], *, ball_x_m: float, ball_y_m: float) -> float:
     claimed = model.get("model_hash")
     body = {key: value for key, value in model.items() if key != "model_hash"}
-    if claimed != hash_json(body) or model.get("schema") != SCHEMA:
+    if claimed != hash_json(body) or model.get("schema") not in (SCHEMA, SCHEMA_V2):
         raise ValueError("selector checkpoint integrity or schema failed")
+    maximum_x = 1.9 if model["schema"] == SCHEMA else 2.1
     if (
         not math.isfinite(ball_x_m)
         or not math.isfinite(ball_y_m)
-        or not 1.3 <= ball_x_m <= 1.9
+        or not 1.3 <= ball_x_m <= maximum_x
         or not 0.0 <= ball_y_m <= 0.2
         or model.get("activation_ceiling") != "SIM_ONLY"
         or model.get("promotion_authorized") is not False
@@ -32,6 +34,18 @@ def choose_lateral(model: dict[str, Any], *, ball_x_m: float, ball_y_m: float) -
     threshold = model.get("threshold_y_m")
     if not isinstance(threshold, float) or not 0.025 < threshold < 0.175:
         raise ValueError("selector threshold outside trained ball-position domain")
+    if model["schema"] == SCHEMA_V2:
+        x_switch = model.get("far_distance_switch_x_m")
+        far_y_switch = model.get("far_right_foot_switch_y_m")
+        if (
+            not isinstance(x_switch, float)
+            or not isinstance(far_y_switch, float)
+            or not 1.8 < x_switch < 1.9
+            or not 0.08 < far_y_switch < 0.12
+        ):
+            raise ValueError("phase-aware selector thresholds outside trained range")
+        if ball_x_m >= x_switch:
+            return -0.1 if ball_y_m < far_y_switch else 0.1
     return -0.1 if ball_y_m < threshold else 0.0
 
 
