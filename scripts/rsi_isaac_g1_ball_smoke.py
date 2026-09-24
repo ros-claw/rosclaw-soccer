@@ -12,13 +12,17 @@ from pathlib import Path
 from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--g1-usd", type=Path, required=True)
+asset_group = parser.add_mutually_exclusive_group(required=True)
+asset_group.add_argument("--g1-usd", type=Path)
+asset_group.add_argument("--official-g1", action="store_true")
 parser.add_argument("--steps", type=int, default=120)
 parser.add_argument("--num-envs", type=int, default=4)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
-if not 1 <= args.steps <= 1000 or not 1 <= args.num_envs <= 16 or args.g1_usd.stat().st_size < 1000:
-    parser.error("bounded steps/environments and a non-pointer local G1 USD are required")
+if not 1 <= args.steps <= 1000 or not 1 <= args.num_envs <= 16:
+    parser.error("bounded steps and environments are required")
+if args.g1_usd is not None and (not args.g1_usd.is_file() or args.g1_usd.stat().st_size < 1000):
+    parser.error("a non-pointer local G1 USD is required")
 launcher = AppLauncher(args)
 simulation_app = launcher.app
 
@@ -33,26 +37,28 @@ def main() -> None:
     print("RSI_ISAAC_G1_STAGE=build", flush=True)
     from pxr import Usd, UsdPhysics
 
-    asset_stage = Usd.Stage.Open(str(args.g1_usd.resolve()))
-    asset_roots = [
-        str(prim.GetPath())
-        for prim in asset_stage.Traverse()
-        if prim.HasAPI(UsdPhysics.ArticulationRootAPI)
-    ]
-    print(
-        "RSI_ISAAC_G1_ASSET="
-        + json.dumps(
-            {
-                "default_prim": str(asset_stage.GetDefaultPrim().GetPath()),
-                "articulation_roots": asset_roots,
-                "prim_count": sum(1 for _ in asset_stage.Traverse()),
-            },
-            sort_keys=True,
-        ),
-        flush=True,
-    )
-    if len(asset_roots) != 1:
-        raise RuntimeError("local G1 USD has no unique articulation root")
+    if args.g1_usd is not None:
+        asset_stage = Usd.Stage.Open(str(args.g1_usd.resolve()))
+        asset_roots = [
+            str(prim.GetPath())
+            for prim in asset_stage.Traverse()
+            if prim.HasAPI(UsdPhysics.ArticulationRootAPI)
+        ]
+        print(
+            "RSI_ISAAC_G1_ASSET="
+            + json.dumps(
+                {
+                    "source": "local",
+                    "default_prim": str(asset_stage.GetDefaultPrim().GetPath()),
+                    "articulation_roots": asset_roots,
+                    "prim_count": sum(1 for _ in asset_stage.Traverse()),
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        if len(asset_roots) != 1:
+            raise RuntimeError("local G1 USD has no unique articulation root")
     sim = SimulationContext(sim_utils.SimulationCfg(device=args.device, dt=1.0 / 120.0))
     ground = sim_utils.GroundPlaneCfg()
     ground.func("/World/ground", ground)
@@ -67,8 +73,15 @@ def main() -> None:
         )
     robot_cfg = G1_29DOF_CFG.copy()
     robot_cfg.prim_path = "/World/Env.*/G1"
-    robot_cfg.spawn.usd_path = str(args.g1_usd.resolve())
-    robot_cfg.actuators.pop("hands")  # SONIC's 29-DoF URDF has no finger joints.
+    if args.g1_usd is not None:
+        robot_cfg.spawn.usd_path = str(args.g1_usd.resolve())
+        robot_cfg.actuators.pop("hands")  # SONIC's 29-DoF URDF has no finger joints.
+    else:
+        print(
+            "RSI_ISAAC_G1_ASSET="
+            + json.dumps({"source": "isaaclab_official", "usd_path": robot_cfg.spawn.usd_path}),
+            flush=True,
+        )
     robot = Articulation(cfg=robot_cfg)
     ball = RigidObject(
         cfg=RigidObjectCfg(
@@ -110,6 +123,7 @@ def main() -> None:
     result = {
         "schema": "rosclaw_soccer.rsi.isaac_g1_ball_smoke.v1",
         "activation_ceiling": "SIM_ONLY",
+        "asset_source": "local" if args.g1_usd is not None else "isaaclab_official",
         "steps": args.steps,
         "joint_count": int(joints.shape[1]),
         "num_envs": robot.num_instances,
@@ -127,8 +141,9 @@ def main() -> None:
         "trained_actor": False,
     }
     print("RSI_ISAAC_G1_BALL_SMOKE=" + json.dumps(result, sort_keys=True))
+    expected_joint_count = 29 if args.g1_usd is not None else 43
     if (
-        result["joint_count"] != 29
+        result["joint_count"] != expected_joint_count
         or robot.num_instances != args.num_envs
         or not result["finite"]
         or args.num_envs >= 2
