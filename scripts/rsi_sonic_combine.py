@@ -39,6 +39,13 @@ class Course:
     maximum_final_speed_mps: float = 10.0
 
 
+@dataclass(frozen=True)
+class InitialCondition:
+    root_yaw_rad: float = 0.0
+    lateral_velocity_mps: float = 0.0
+    left_hip_pitch_offset_rad: float = 0.0
+
+
 COURSES = (
     Course("stand", 0.0, 0.0, 0.0, 150, maximum_displacement_m=0.20, maximum_final_speed_mps=0.25),
     Course("walk", 0.4, 0.4, 0.0, 150, minimum_displacement_m=0.35),
@@ -78,6 +85,32 @@ def _angles(q: np.ndarray) -> tuple[float, float, float]:
     pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
     yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
     return roll, pitch, yaw
+
+
+def _prepare_initial(model: mujoco.MjModel, data: mujoco.MjData, initial: InitialCondition) -> str:
+    if (
+        abs(initial.root_yaw_rad) > 0.20
+        or abs(initial.lateral_velocity_mps) > 0.15
+        or abs(initial.left_hip_pitch_offset_rad) > 0.03
+    ):
+        raise ValueError("initial perturbation exceeds the declared discovery envelope")
+    data.qpos[:7] = (
+        0.0,
+        0.0,
+        0.793,
+        math.cos(initial.root_yaw_rad / 2.0),
+        0.0,
+        0.0,
+        math.sin(initial.root_yaw_rad / 2.0),
+    )
+    data.qpos[7:36] = G1SonicRunupController.default_angles
+    hip = G1_DDS_JOINT_NAMES.index("left_hip_pitch_joint")
+    data.qpos[7 + hip] += initial.left_hip_pitch_offset_rad
+    data.qvel[1] = initial.lateral_velocity_mps
+    if model.nq > 36:
+        data.qpos[36:39] = (20.0, 20.0, 0.2)
+    mujoco.mj_forward(model, data)
+    return str(hash_json({"qpos": data.qpos.tolist(), "qvel": data.qvel.tolist()}))
 
 
 def _observation(
@@ -128,16 +161,12 @@ def _course(
     joint_map_hash: str,
     code_hash: str,
     course: Course,
+    initial: InitialCondition,
     label: str,
     output_dir: Path,
 ) -> dict[str, Any]:
     data = mujoco.MjData(model)
-    data.qpos[:7] = (0.0, 0.0, 0.793, 1.0, 0.0, 0.0, 0.0)
-    data.qpos[7:36] = G1SonicRunupController.default_angles
-    if model.nq > 36:
-        data.qpos[36:39] = (20.0, 20.0, 0.2)
-    mujoco.mj_forward(model, data)
-    initial_state_hash = hash_json({"qpos": data.qpos.tolist(), "qvel": data.qvel.tolist()})
+    initial_state_hash = _prepare_initial(model, data, initial)
     navigation = G1SonicNavigation(
         model_root,
         "blue.playmaker",
@@ -258,15 +287,12 @@ def _course(
     return result
 
 
-def _zero_torque_ablation(model: mujoco.MjModel, output_dir: Path) -> dict[str, Any]:
+def _zero_torque_ablation(
+    model: mujoco.MjModel, initial: InitialCondition, output_dir: Path
+) -> dict[str, Any]:
     """Same initial body/field and horizon, with all 29 actuator efforts zero."""
     data = mujoco.MjData(model)
-    data.qpos[:7] = (0.0, 0.0, 0.793, 1.0, 0.0, 0.0, 0.0)
-    data.qpos[7:36] = G1SonicRunupController.default_angles
-    if model.nq > 36:
-        data.qpos[36:39] = (20.0, 20.0, 0.2)
-    mujoco.mj_forward(model, data)
-    initial_state_hash = hash_json({"qpos": data.qpos.tolist(), "qvel": data.qvel.tolist()})
+    initial_state_hash = _prepare_initial(model, data, initial)
     positions = []
     for _ in range(1500):
         data.ctrl[:] = 0
@@ -297,7 +323,23 @@ def main() -> None:
     parser.add_argument("--model-root", required=True, type=Path)
     parser.add_argument("--stadium-assets", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--initial-yaw-rad", type=float, default=0.0)
+    parser.add_argument("--initial-lateral-velocity-mps", type=float, default=0.0)
+    parser.add_argument("--initial-left-hip-pitch-offset-rad", type=float, default=0.0)
     args = parser.parse_args()
+    initial = InitialCondition(
+        root_yaw_rad=args.initial_yaw_rad,
+        lateral_velocity_mps=args.initial_lateral_velocity_mps,
+        left_hip_pitch_offset_rad=args.initial_left_hip_pitch_offset_rad,
+    )
+    if any(not math.isfinite(value) for value in asdict(initial).values()):
+        parser.error("initial perturbation must be finite")
+    if (
+        abs(initial.root_yaw_rad) > 0.20
+        or abs(initial.lateral_velocity_mps) > 0.15
+        or abs(initial.left_hip_pitch_offset_rad) > 0.03
+    ):
+        parser.error("initial perturbation exceeds the declared discovery envelope")
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=False, exist_ok=False)
     source_hash = _source_binding()
@@ -327,6 +369,7 @@ def main() -> None:
         "model_root": str(args.model_root.expanduser().resolve()),
         "stadium_assets": str(args.stadium_assets.expanduser().resolve()),
         "courses": [asdict(course) for course in COURSES],
+        "initial_condition": asdict(initial),
         "repeats_per_course": 2,
         "ablation": "run course initial state, 1500 physics steps, zero actuator torque",
     }
@@ -343,6 +386,7 @@ def main() -> None:
             joint_map_hash,
             source_hash,
             course,
+            initial,
             f"{course.name}-primary",
             output_dir,
         )
@@ -353,6 +397,7 @@ def main() -> None:
             joint_map_hash,
             source_hash,
             course,
+            initial,
             f"{course.name}-replay",
             output_dir,
         )
@@ -383,7 +428,7 @@ def main() -> None:
         )
     if _source_binding() != source_hash:
         raise RuntimeError("source changed before SONIC combine completion")
-    ablation = _zero_torque_ablation(model, output_dir)
+    ablation = _zero_torque_ablation(model, initial, output_dir)
     if ablation["initial_state_hash"] != next(
         row["initial_state_hash"] for row in rows if row["course"] == "run"
     ):

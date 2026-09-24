@@ -44,7 +44,13 @@ def _observation(
 
 
 def run(
-    *, model_root: Path, stadium_assets: Path, output_dir: Path, ball_x_m: float, ball_y_m: float
+    *,
+    model_root: Path,
+    stadium_assets: Path,
+    output_dir: Path,
+    ball_x_m: float,
+    ball_y_m: float,
+    frames: int,
 ) -> dict[str, Any]:
     if (
         output_dir.exists()
@@ -52,6 +58,7 @@ def run(
         or not math.isfinite(ball_y_m)
         or not 1.0 <= ball_x_m <= 2.2
         or abs(ball_y_m) > 0.25
+        or not 180 <= frames <= 350
     ):
         raise ValueError("new output and bounded ball position required")
     source_hash = hash_bytes(Path(__file__).read_bytes())
@@ -91,7 +98,7 @@ def run(
         model_root,
         "blue.playmaker",
         SonicNavigationConfig(
-            maximum_frames=180,
+            maximum_frames=frames,
             model_variant="low_latency",
             experimental_maximum_speed_mps=1.2,
             planner_seed=920101,
@@ -104,7 +111,7 @@ def run(
     target_rows = []
     foot_contacts: list[dict[str, Any]] = []
     initial_ball_position = data.qpos[36:39].copy()
-    for frame in range(180):
+    for frame in range(frames):
         observation = _observation(data, frame, nav.navigation_envelope)
         if frame == 0:
             nav.start_from_observation(observation)
@@ -144,6 +151,14 @@ def run(
     np.savez_compressed(path, **arrays)
     ball_speed = np.linalg.norm(arrays["qvel"][:, 35:38], axis=1)
     ball_delta = arrays["qpos"][:, 36:39] - initial_ball_position
+    goal_spec = G1TrainingGoalSpec(ball_radius_m=0.11, ball_mass_kg=0.43)
+    whole_ball_across = arrays["qpos"][:, 36] - ball_dimensions.radius_m >= goal_spec.plane_x_m
+    inside_posts = (
+        np.abs(arrays["qpos"][:, 37]) + ball_dimensions.radius_m <= goal_spec.width_m / 2.0
+    )
+    below_crossbar = arrays["qpos"][:, 38] + ball_dimensions.radius_m <= goal_spec.height_m
+    goal_frames = np.flatnonzero(whole_ball_across & inside_posts & below_crossbar)
+    goal_frame = int(goal_frames[0]) if len(goal_frames) else None
     report: dict[str, Any] = {
         "schema": "rosclaw_soccer.rsi.sonic_ball_contact_probe.v1",
         "partition": "DISCOVERY",
@@ -155,6 +170,13 @@ def run(
         "ball_radius_m": ball_dimensions.radius_m,
         "ball_mass_kg": ball_dimensions.body_mass_kg,
         "ball_initial_xy_m": [ball_x_m, ball_y_m],
+        "frames": frames,
+        "goal_plane_x_m": goal_spec.plane_x_m,
+        "whole_ball_goal_crossed": goal_frame is not None,
+        "goal_frame": goal_frame,
+        "goal_crossing_ball_center_xyz_m": (
+            arrays["qpos"][goal_frame, 36:39].tolist() if goal_frame is not None else None
+        ),
         "foot_ball_contact_substeps": len(foot_contacts),
         "first_foot_ball_contact": foot_contacts[0] if foot_contacts else None,
         "peak_ball_speed_mps": float(ball_speed.max()),
@@ -180,6 +202,7 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--ball-x-m", type=float, required=True)
     parser.add_argument("--ball-y-m", type=float, required=True)
+    parser.add_argument("--frames", type=int, default=300)
     args = parser.parse_args()
     print(
         json.dumps(
@@ -189,6 +212,7 @@ def main() -> None:
                 output_dir=args.output_dir,
                 ball_x_m=args.ball_x_m,
                 ball_y_m=args.ball_y_m,
+                frames=args.frames,
             ),
             sort_keys=True,
         )

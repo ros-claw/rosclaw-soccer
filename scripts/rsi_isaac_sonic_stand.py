@@ -81,6 +81,7 @@ def main() -> None:
             },
             stiffness={name: float(value) for name, value in zip(names, kp, strict=True)},
             damping={name: float(value) for name, value in zip(names, kd, strict=True)},
+            armature={name: 0.01 for name in names},
         )
     }
     robot = Articulation(cfg=robot_cfg)
@@ -173,6 +174,7 @@ def main() -> None:
         "joint_names": list(names),
         "joint_map_hash": hash_json(list(names)),
         "gain_hash": hash_json({"kp": kp.tolist(), "kd": kd.tolist()}),
+        "joint_armature_kg_m2": 0.01,
         "frames": args.frames,
         "min_pelvis_height_m": float(heights.min()),
         "final_pelvis_height_m": float(heights[-1]),
