@@ -288,6 +288,7 @@ def run_probe(
         near_ball_policy.save(output / "residual-policy.npz")
     for name, trajectory in zip(("primary", "replay"), trajectories, strict=True):
         np.savez_compressed(output / f"{name}.npz", **trajectory)  # type: ignore[arg-type]
+    source_stable = implementation_unchanged(implementation, source_root)
     report = {
         "schema_version": "rosclaw_soccer.active_team_probe.v1",
         "active_competition": active,
@@ -314,6 +315,7 @@ def run_probe(
         },
         "fixture_hash": fixture.fixture_hash,
         "implementation": implementation,
+        "source_stable_during_run": source_stable,
         "results": results,
         "engagement": rows,
         "exact_replay": exact,
@@ -361,7 +363,23 @@ def run_probe(
     )
     report["report_hash"] = hash_json(report)
     (output / "probe.json").write_text(json.dumps(report, indent=2) + "\n")
+    if not source_stable:
+        raise RuntimeError(
+            "implementation source changed during physics; rejected evidence preserved"
+        )
     return report
+
+
+def implementation_unchanged(implementation: dict[str, str], source_root: Path) -> bool:
+    """Reject a run whose code changed while its physical rollouts were executing."""
+
+    try:
+        return all(
+            hash_bytes((source_root / relative).read_bytes()) == digest
+            for relative, digest in implementation.items()
+        )
+    except OSError:
+        return False
 
 
 def engagement_rows(trajectory: dict[str, Any], agent_ids: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -399,6 +417,8 @@ def validate_probe(path: Path) -> dict[str, Any]:
     digest = report.pop("report_hash")
     if digest != hash_json(report):
         raise ValueError("active team report hash changed")
+    if report.get("source_stable_during_run", True) is not True:
+        raise ValueError("implementation source changed during physics")
     if report.get("near_ball_residual") is not None:
         residual = report["near_ball_residual"]
         artifact = path.parent / "residual-policy.npz"
