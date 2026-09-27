@@ -37,6 +37,8 @@ parser.add_argument("--track-ball-contacts", action="store_true")
 parser.add_argument("--ball-x-m", type=float, default=2.5)
 parser.add_argument("--ball-y-m", type=float, default=0.0)
 parser.add_argument("--right-knee-contact-residual-rad", type=float, default=0.0)
+parser.add_argument("--right-hip-pitch-contact-residual-rad", type=float, default=0.0)
+parser.add_argument("--contact-speed-actor", type=Path)
 parser.add_argument("--control-mode", choices=("sonic", "frozen_target"), default="sonic")
 parser.add_argument(
     "--actuator-mode",
@@ -127,9 +129,27 @@ if (
     or not -0.4 <= args.ball_y_m <= 0.4
     or not math.isfinite(args.right_knee_contact_residual_rad)
     or not -0.12 <= args.right_knee_contact_residual_rad <= 0.12
+    or not math.isfinite(args.right_hip_pitch_contact_residual_rad)
+    or not -0.12 <= args.right_hip_pitch_contact_residual_rad <= 0.12
     or (
-        args.right_knee_contact_residual_rad != 0.0
+        (
+            args.right_knee_contact_residual_rad != 0.0
+            or args.right_hip_pitch_contact_residual_rad != 0.0
+        )
         and (args.agent_count != 1 or not args.track_ball_contacts)
+    )
+    or (
+        args.contact_speed_actor is not None
+        and (
+            not args.contact_speed_actor.is_file()
+            or args.agent_count != 1
+            or not args.track_ball_contacts
+            or args.stop_at_frame is not None
+            or args.forward_command_m_s != 0.0
+            or args.reactive_lateral_command_m_s != 0.08
+            or args.right_knee_contact_residual_rad != 0.12
+            or args.right_hip_pitch_contact_residual_rad != 0.0
+        )
     )
     or args.output_dir.exists()
 ):
@@ -153,6 +173,7 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
 )
 from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController  # noqa: E402
 from rosclaw_soccer.sim.ball_contact_evidence import classify_ball_body_contacts  # noqa: E402
+from rosclaw_soccer.sim.contact_speed_actor import choose_contact_speed  # noqa: E402
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json  # noqa: E402
 from rosclaw_soccer.sim.isaac_root_bridge import isaac_root_to_mujoco  # noqa: E402
 from rosclaw_soccer.sim.joint_target_projection import (  # noqa: E402
@@ -263,6 +284,16 @@ def main() -> None:
         names.index(name) for name in ("left_ankle_pitch_joint", "right_ankle_pitch_joint")
     ]
     right_knee_index = names.index("right_knee_joint")
+    right_hip_pitch_index = names.index("right_hip_pitch_joint")
+    contact_kinematic_body_names = (
+        "left_ankle_roll_link",
+        "right_ankle_roll_link",
+        "left_knee_link",
+        "right_knee_link",
+    )
+    contact_kinematic_body_indices = [
+        robot.body_names.index(name) for name in contact_kinematic_body_names
+    ]
     initial_joint = robot.data.default_joint_pos.torch.clone()
     initial_joint[:, indices] = torch.as_tensor(
         G1SonicRunupController.default_angles, device=sim.device, dtype=initial_joint.dtype
@@ -286,14 +317,35 @@ def main() -> None:
     robot.reset()
     ball.write_root_pose_to_sim_index(root_pose=ball.data.default_root_pose.torch.clone())
     ball.reset()
+    contact_speed_actor = (
+        json.loads(args.contact_speed_actor.read_text(encoding="utf-8"))
+        if args.contact_speed_actor is not None
+        else None
+    )
+    if contact_speed_actor is not None and (
+        contact_speed_actor["model_hash"] != qualification.qualification_hash
+        or contact_speed_actor["asset_hash"] != asset_hash
+    ):
+        raise ValueError("contact-speed actor model or asset identity mismatch")
+    selected_forward_speed_m_s = (
+        choose_contact_speed(
+            contact_speed_actor,
+            observed_ball_x_m=float(ball.data.root_pos_w.torch[0, 0]),
+        )
+        if contact_speed_actor is not None
+        else args.forward_command_m_s
+    )
     if contact_sensor is not None:
         contact_sensor.reset()
     qpos_rows = []
     qvel_rows = []
     target_rows = []
     ball_position_rows = []
+    ball_observation_position_rows = []
     ball_body_contact_force_rows = []
     ball_body_contact_micro_rows = []
+    contact_body_position_rows = []
+    contact_body_velocity_rows = []
     initial_body_xyz_m: dict[str, dict[str, list[float]]] = {}
     brake_released = [False] * args.agent_count
     brake_release_frame: list[int | None] = [None] * args.agent_count
@@ -301,6 +353,25 @@ def main() -> None:
     joint_projection_count = [0] * args.agent_count
     maximum_joint_projection_rad = [0.0] * args.agent_count
     for frame in range(args.frames):
+        ball_observation_position_rows.append(
+            ball.data.root_pos_w.torch[0].detach().cpu().numpy().astype(np.float64).copy()
+        )
+        contact_body_position_rows.append(
+            robot.data.body_pos_w.torch[:, contact_kinematic_body_indices]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float64)
+            .copy()
+        )
+        contact_body_velocity_rows.append(
+            robot.data.body_lin_vel_w.torch[:, contact_kinematic_body_indices]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float64)
+            .copy()
+        )
         if frame == 0:
             initial_body_xyz_m = {
                 agent_id: {
@@ -394,7 +465,7 @@ def main() -> None:
                 qvel=tuple(float(value) for value in qvel),
                 target_position_m=(0.0, 0.0, 0.0),
                 navigation_command=(
-                    args.forward_command_m_s
+                    selected_forward_speed_m_s
                     if args.stop_at_frame is None or frame < args.stop_at_frame
                     else args.brake_command_m_s
                     if frame < args.stop_at_frame + args.brake_frames and not brake_released[index]
@@ -490,7 +561,10 @@ def main() -> None:
                 maximum_joint_projection_rad[index] = max(
                     maximum_joint_projection_rad[index], projection.maximum_projection_rad
                 )
-            if args.right_knee_contact_residual_rad != 0.0:
+            if (
+                args.right_knee_contact_residual_rad != 0.0
+                or args.right_hip_pitch_contact_residual_rad != 0.0
+            ):
                 ball_xyz = ball.data.root_pos_w.torch[0].detach().cpu().numpy()
                 ball_gap_m = float(ball_xyz[0] - root_pose[0])
                 ball_origin_displacement_m = float(
@@ -498,9 +572,17 @@ def main() -> None:
                 )
                 if 0.1 <= ball_gap_m <= 1.0 and ball_origin_displacement_m < 0.05:
                     phase_weight = min(1.0, (1.0 - ball_gap_m) / 0.5)
-                    proposal_target[right_knee_index] += (
-                        args.right_knee_contact_residual_rad * phase_weight
-                    )
+                    modified_indices = []
+                    if args.right_knee_contact_residual_rad != 0.0:
+                        proposal_target[right_knee_index] += (
+                            args.right_knee_contact_residual_rad * phase_weight
+                        )
+                        modified_indices.append(right_knee_index)
+                    if args.right_hip_pitch_contact_residual_rad != 0.0:
+                        proposal_target[right_hip_pitch_index] += (
+                            args.right_hip_pitch_contact_residual_rad * phase_weight
+                        )
+                        modified_indices.append(right_hip_pitch_index)
                     limits = (
                         robot.data.joint_pos_limits.torch[index, indices]
                         .detach()
@@ -511,7 +593,7 @@ def main() -> None:
                     projection = project_modified_joint_targets(
                         target_rad=proposal_target,
                         limits_rad=limits,
-                        modified_indices=(right_knee_index,),
+                        modified_indices=modified_indices,
                     )
                     proposal_target = projection.target_rad
                     joint_projection_count[index] += projection.projection_count
@@ -562,8 +644,11 @@ def main() -> None:
         "qvel": np.asarray(qvel_rows),
         "target": np.asarray(target_rows),
         "ball_position_m": np.asarray(ball_position_rows),
+        "ball_observation_position_m": np.asarray(ball_observation_position_rows),
         "ball_body_contact_force_peak_n": np.asarray(ball_body_contact_force_rows),
         "ball_body_contact_force_micro_n": np.asarray(ball_body_contact_micro_rows),
+        "contact_body_position_m": np.asarray(contact_body_position_rows),
+        "contact_body_velocity_m_s": np.asarray(contact_body_velocity_rows),
     }
     if any(not np.isfinite(value).all() for value in arrays.values()):
         raise ValueError("nonfinite Isaac SONIC trajectory")
@@ -620,7 +705,11 @@ def main() -> None:
         "root_orientation": args.root_orientation,
         "root_quat_xyzw": root_quat,
         "observation_root_frame": args.observation_root_frame,
-        "forward_command_m_s": args.forward_command_m_s,
+        "forward_command_m_s": selected_forward_speed_m_s,
+        "requested_forward_command_m_s": args.forward_command_m_s,
+        "contact_speed_actor_hash": (
+            contact_speed_actor["actor_hash"] if contact_speed_actor is not None else None
+        ),
         "lateral_command_m_s": args.lateral_command_m_s,
         "lateral_start_frame": args.lateral_start_frame,
         "lateral_end_frame": args.lateral_end_frame,
@@ -651,6 +740,7 @@ def main() -> None:
             )
         ),
         "ball_body_contact_labels": contact_body_labels,
+        "contact_kinematic_body_names": contact_kinematic_body_names,
         "ball_body_contact_peak_n": np.max(
             arrays["ball_body_contact_force_peak_n"], axis=0
         ).tolist(),
@@ -671,6 +761,7 @@ def main() -> None:
         "ball_x_m": args.ball_x_m,
         "ball_y_m": args.ball_y_m,
         "right_knee_contact_residual_rad": args.right_knee_contact_residual_rad,
+        "right_hip_pitch_contact_residual_rad": args.right_hip_pitch_contact_residual_rad,
         "trajectory_hash": hash_bytes((args.output_dir / "trajectory.npz").read_bytes()),
         "stand_passed": bool(heights.min() >= 0.55 and np.isfinite(heights[-1]).all()),
         "trained_actor": False,
