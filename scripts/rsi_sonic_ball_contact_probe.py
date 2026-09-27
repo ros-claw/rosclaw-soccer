@@ -71,6 +71,8 @@ def run(
     right_hip_residual_rad: float = 0.0,
     right_knee_residual_rad: float = 0.0,
     right_ankle_residual_rad: float = 0.0,
+    contact_envelope_center_m: float = 0.48,
+    contact_envelope_sigma_m: float = 0.18,
     partition: str = "DISCOVERY",
     selector_hash: str | None = None,
     sonic_variant: str = "low_latency",
@@ -99,6 +101,10 @@ def run(
                 right_ankle_residual_rad,
             )
         )
+        or not math.isfinite(contact_envelope_center_m)
+        or not 0.35 <= contact_envelope_center_m <= 0.65
+        or not math.isfinite(contact_envelope_sigma_m)
+        or not 0.08 <= contact_envelope_sigma_m <= 0.25
         or partition not in ("DISCOVERY", "FRESH")
         or (
             selector_hash is not None
@@ -183,7 +189,9 @@ def run(
         action = nav.propose(observation)
         target = np.asarray(action.target_rad, dtype=np.float64)
         relative_ball_x_m = float(data.qpos[36] - data.qpos[0])
-        contact_envelope = math.exp(-0.5 * ((relative_ball_x_m - 0.48) / 0.18) ** 2)
+        contact_envelope = math.exp(
+            -0.5 * ((relative_ball_x_m - contact_envelope_center_m) / contact_envelope_sigma_m) ** 2
+        )
         target[0] += left_hip_residual_rad * contact_envelope
         target[3] += left_knee_residual_rad * contact_envelope
         target[4] += left_ankle_residual_rad * contact_envelope
@@ -289,8 +297,8 @@ def run(
         "peak_torque_demand_ratio": peak_torque_demand_ratio,
         "actuator_saturation_fraction": saturated_substeps / (frames * 10),
         "peak_pelvis_tilt_rad": peak_pelvis_tilt_rad,
-        "contact_envelope_relative_x_center_m": 0.48,
-        "contact_envelope_relative_x_sigma_m": 0.18,
+        "contact_envelope_relative_x_center_m": contact_envelope_center_m,
+        "contact_envelope_relative_x_sigma_m": contact_envelope_sigma_m,
         "goal_plane_x_m": goal_spec.plane_x_m,
         "whole_ball_goal_crossed": goal_frame is not None,
         "goal_frame": goal_frame,
@@ -338,6 +346,8 @@ def main() -> None:
     parser.add_argument("--right-hip-residual-rad", type=float, default=0.0)
     parser.add_argument("--right-knee-residual-rad", type=float, default=0.0)
     parser.add_argument("--right-ankle-residual-rad", type=float, default=0.0)
+    parser.add_argument("--contact-envelope-center-m", type=float, default=0.48)
+    parser.add_argument("--contact-envelope-sigma-m", type=float, default=0.18)
     parser.add_argument("--partition", choices=("DISCOVERY", "FRESH"), default="DISCOVERY")
     parser.add_argument("--selector-hash")
     parser.add_argument(
@@ -362,6 +372,8 @@ def main() -> None:
                 right_hip_residual_rad=args.right_hip_residual_rad,
                 right_knee_residual_rad=args.right_knee_residual_rad,
                 right_ankle_residual_rad=args.right_ankle_residual_rad,
+                contact_envelope_center_m=args.contact_envelope_center_m,
+                contact_envelope_sigma_m=args.contact_envelope_sigma_m,
                 partition=args.partition,
                 selector_hash=args.selector_hash,
                 sonic_variant=args.sonic_variant,
