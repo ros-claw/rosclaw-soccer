@@ -7,11 +7,16 @@ weights, write artifacts, or create a runtime/hardware execution path.
 
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
-from rosclaw_soccer.providers.g1.receiving_sonic import ReceivingSonicOption
+from rosclaw_soccer.providers.g1.receiving_sonic import (
+    ReceivingSonicFeedbackOption,
+    ReceivingSonicOption,
+)
 from rosclaw_soccer.providers.g1.sonic_command_scale import SonicCommandScaleSchedule
 from rosclaw_soccer.providers.g1.sonic_latent import SonicLatentSchedule
 from rosclaw_soccer.providers.g1.sonic_pose_reference import SonicPoseReference
@@ -62,7 +67,8 @@ def simulate_r0_receiving_course(
     sonic_command_scale_schedule: SonicCommandScaleSchedule | None = None,
     sonic_pose_reference: SonicPoseReference | None = None,
     sonic_command_replanning: bool = False,
-) -> tuple[IndependentTeamWorldResult, dict[str, np.ndarray]]:
+    feedback_actor_path: Path | None = None,
+) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run one frozen course with private controller state and unchanged guards.
 
     A query checkpoint can be after contact for feedback reconstruction; the
@@ -130,6 +136,7 @@ def simulate_r0_receiving_course(
         or sonic_command_scale_schedule is not None
         or sonic_pose_reference is not None
         or sonic_command_replanning
+        or feedback_actor_path is not None
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
     if sonic_model_root is not None and (
@@ -150,7 +157,15 @@ def simulate_r0_receiving_course(
     if sonic_model_root is not None:
         world = replace(world, motor_idle_residual_fallback=True)
         # Instantiate a fresh backend for every simulation, never reuse its history.
-        motors[course.agent_id] = ReceivingSonicOption(
+        option_type = (
+            ReceivingSonicFeedbackOption
+            if feedback_actor_path is not None
+            else ReceivingSonicOption
+        )
+        extra = (
+            {"feedback_actor_path": feedback_actor_path} if feedback_actor_path is not None else {}
+        )
+        motors[course.agent_id] = option_type(
             sonic_model_root,
             course.agent_id,
             start_frame=sonic_start_frame,
@@ -160,6 +175,7 @@ def simulate_r0_receiving_course(
             command_scale_schedule=sonic_command_scale_schedule,
             pose_reference=sonic_pose_reference,
             experimental_command_replanning=sonic_command_replanning,
+            **extra,
         )
     result, trace = simulate_independent_team_world(
         asset_root=asset_root,
@@ -200,6 +216,13 @@ def simulate_r0_receiving_course(
             else np.empty((0, 64), dtype=np.float32)
         )
         trace["sonic_latent_schedule_hash"] = np.asarray([sonic_latent_schedule.contract_hash])
+    if feedback_actor_path is not None:
+        feedback_motor = motors[course.agent_id]
+        assert isinstance(feedback_motor, ReceivingSonicFeedbackOption)
+        actor = feedback_motor.feedback_actor
+        trace["feedback_actor_hash"] = np.asarray([actor.artifact_hash])
+        trace["feedback_actor_foot_seen"] = np.asarray([feedback_motor.feedback_foot_seen])
+        trace["feedback_actor_nonfoot_seen"] = np.asarray([feedback_motor.feedback_nonfoot_seen])
     if sonic_model_root is not None and sonic_command_scale_schedule is not None:
         scale_records = motors[course.agent_id].command_scale_records
         trace["sonic_command_scale_local_frames"] = np.asarray(

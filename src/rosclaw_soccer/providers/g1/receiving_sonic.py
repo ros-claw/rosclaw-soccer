@@ -9,12 +9,17 @@ import math
 from dataclasses import replace
 from pathlib import Path
 
+from rosclaw_soccer.providers.g1.feedback_leg_actor import FrozenFeedbackLegActor
 from rosclaw_soccer.providers.g1.sonic_command_scale import SonicCommandScaleSchedule
 from rosclaw_soccer.providers.g1.sonic_latent import SonicLatentSchedule
 from rosclaw_soccer.providers.g1.sonic_navigation import G1SonicNavigation, SonicNavigationConfig
 from rosclaw_soccer.providers.g1.sonic_pose_reference import SonicPoseReference
 from rosclaw_soccer.sim.contracts import hash_json
-from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation, TeamMotorTarget
+from rosclaw_soccer.skills.team.motor_option import (
+    TeamMotorObservation,
+    TeamMotorPhysicsObservation,
+    TeamMotorTarget,
+)
 
 
 class ReceivingSonicOption:
@@ -122,3 +127,82 @@ class ReceivingSonicOption:
         except (ValueError, TypeError, RuntimeError, FloatingPointError):
             self.faulted = True
             raise
+
+
+class ReceivingSonicFeedbackOption(ReceivingSonicOption):
+    """Explicit opt-in per-player feedback motor; legacy SONIC remains unchanged."""
+
+    def __init__(
+        self,
+        model_root: Path,
+        agent_id: str,
+        *,
+        start_frame: int,
+        feedback_actor_path: Path,
+        velocity_scale: float = 1.0,
+        planner_seed: int = 920101,
+        latent_schedule: SonicLatentSchedule | None = None,
+        command_scale_schedule: SonicCommandScaleSchedule | None = None,
+        pose_reference: SonicPoseReference | None = None,
+        experimental_command_replanning: bool = False,
+    ) -> None:
+        super().__init__(
+            model_root,
+            agent_id,
+            start_frame=start_frame,
+            velocity_scale=velocity_scale,
+            planner_seed=planner_seed,
+            latent_schedule=latent_schedule,
+            command_scale_schedule=command_scale_schedule,
+            pose_reference=pose_reference,
+            experimental_command_replanning=experimental_command_replanning,
+        )
+        self.feedback_actor = FrozenFeedbackLegActor.load(feedback_actor_path)
+        self.feedback_foot_seen = False
+        self.feedback_nonfoot_seen = False
+        self.feedback_last_physics_time_sec = -1.0
+        self.contract_hash = str(
+            hash_json(
+                {
+                    "schema": "soccer.receiving_sonic_feedback_option.v1",
+                    "base": self.contract_hash,
+                    "feedback_actor_hash": self.feedback_actor.artifact_hash,
+                    "activation_ceiling": "SIM_ONLY",
+                }
+            )
+        )
+
+    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:
+        result = super().propose(observation)
+        if result is None:
+            return None
+        try:
+            return self.feedback_actor.propose(
+                observation,
+                result,
+                foot_seen=self.feedback_foot_seen,
+                nonfoot_seen=self.feedback_nonfoot_seen,
+            )
+        except (ValueError, TypeError, FloatingPointError):
+            self.faulted = True
+            raise
+
+    def observe_physics(self, observation: TeamMotorPhysicsObservation) -> None:
+        if self.faulted:
+            raise ValueError("latched receiving feedback motor cannot observe")
+        if (
+            not isinstance(observation, TeamMotorPhysicsObservation)
+            or not observation.contacts_complete
+            or observation.observer_agent_id != self.agent_id
+            or observation.time_sec <= self.feedback_last_physics_time_sec
+        ):
+            self.faulted = True
+            raise ValueError("complete consecutive same-player contact evidence required")
+        self.feedback_last_physics_time_sec = observation.time_sec
+        for contact in observation.ball_contacts:
+            if contact.agent_id != self.agent_id:
+                continue
+            if contact.is_foot:
+                self.feedback_foot_seen = True
+            else:
+                self.feedback_nonfoot_seen = True
