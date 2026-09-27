@@ -27,6 +27,8 @@ parser.add_argument("--brake-frames", type=int, default=0)
 parser.add_argument("--brake-release-speed-m-s", type=float)
 parser.add_argument("--brake-release-window-frames", type=int, default=1)
 parser.add_argument("--brake-min-frames", type=int, default=0)
+parser.add_argument("--hip-brake-gains")
+parser.add_argument("--ankle-brake-gains")
 parser.add_argument("--control-mode", choices=("sonic", "frozen_target"), default="sonic")
 parser.add_argument(
     "--actuator-mode",
@@ -43,6 +45,19 @@ parser.add_argument(
 )
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
+try:
+    hip_brake_gains = (
+        [0.0] * args.agent_count
+        if args.hip_brake_gains is None
+        else [float(value) for value in args.hip_brake_gains.split(",")]
+    )
+    ankle_brake_gains = (
+        [0.0] * args.agent_count
+        if args.ankle_brake_gains is None
+        else [float(value) for value in args.ankle_brake_gains.split(",")]
+    )
+except ValueError:
+    parser.error("finite bounded comma-separated joint brake gains required")
 if (
     not args.g1_usd.is_file()
     or args.g1_usd.stat().st_size < 1000
@@ -73,6 +88,11 @@ if (
         args.brake_release_speed_m_s is None
         and (args.brake_release_window_frames != 1 or args.brake_min_frames != 0)
     )
+    or len(hip_brake_gains) != args.agent_count
+    or len(ankle_brake_gains) != args.agent_count
+    or any(not math.isfinite(value) or abs(value) > 0.35 for value in hip_brake_gains)
+    or any(not math.isfinite(value) or abs(value) > 0.35 for value in ankle_brake_gains)
+    or (args.stop_at_frame is None and (any(hip_brake_gains) or any(ankle_brake_gains)))
     or args.output_dir.exists()
 ):
     parser.error("bounded frames, qualified local inputs, and a new output directory required")
@@ -95,6 +115,9 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
 from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController  # noqa: E402
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json  # noqa: E402
 from rosclaw_soccer.sim.isaac_root_bridge import isaac_root_to_mujoco  # noqa: E402
+from rosclaw_soccer.sim.joint_target_projection import (  # noqa: E402
+    project_modified_joint_targets,
+)
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation  # noqa: E402
 
 
@@ -160,6 +183,12 @@ def main() -> None:
     if set(robot.joint_names) != set(names) or len(robot.joint_names) != 29:
         raise ValueError("Isaac 29-DoF joint names differ from SONIC")
     indices = [robot.joint_names.index(name) for name in names]
+    hip_pitch_indices = [
+        names.index(name) for name in ("left_hip_pitch_joint", "right_hip_pitch_joint")
+    ]
+    ankle_pitch_indices = [
+        names.index(name) for name in ("left_ankle_pitch_joint", "right_ankle_pitch_joint")
+    ]
     initial_joint = robot.data.default_joint_pos.torch.clone()
     initial_joint[:, indices] = torch.as_tensor(
         G1SonicRunupController.default_angles, device=sim.device, dtype=initial_joint.dtype
@@ -190,6 +219,8 @@ def main() -> None:
     brake_released = [False] * args.agent_count
     brake_release_frame: list[int | None] = [None] * args.agent_count
     root_x_history: list[list[float]] = [[] for _ in agent_ids]
+    joint_projection_count = [0] * args.agent_count
+    maximum_joint_projection_rad = [0.0] * args.agent_count
     for frame in range(args.frames):
         if frame == 0:
             initial_body_xyz_m = {
@@ -300,6 +331,65 @@ def main() -> None:
                 proposal_target = np.asarray(
                     G1SonicRunupController.default_angles, dtype=np.float64
                 )
+            if args.stop_at_frame is not None and frame >= args.stop_at_frame:
+                speed_window = min(10, len(root_x_history[index]) - 1)
+                measured_speed = (
+                    root_x_history[index][-1] - root_x_history[index][-speed_window - 1]
+                ) / (speed_window * 0.02)
+                bounded_speed = min(0.6, max(0.0, measured_speed))
+                ramp = min(1.0, (frame - args.stop_at_frame + 1) / 5.0)
+                for joint_index in hip_pitch_indices:
+                    proposal_target[joint_index] += hip_brake_gains[index] * bounded_speed * ramp
+                for joint_index in ankle_pitch_indices:
+                    proposal_target[joint_index] += ankle_brake_gains[index] * bounded_speed * ramp
+            if (
+                args.stop_at_frame is not None
+                and frame >= args.stop_at_frame
+                and (hip_brake_gains[index] or ankle_brake_gains[index])
+            ):
+                limits = (
+                    robot.data.joint_pos_limits.torch[index, indices]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype(np.float64)
+                )
+                modified = (hip_pitch_indices if hip_brake_gains[index] else []) + (
+                    ankle_pitch_indices if ankle_brake_gains[index] else []
+                )
+                try:
+                    projection = project_modified_joint_targets(
+                        target_rad=proposal_target,
+                        limits_rad=limits,
+                        modified_indices=modified,
+                    )
+                except ValueError:
+                    print(
+                        "RSI_ISAAC_JOINT_PROJECTION_DIAG="
+                        + json.dumps(
+                            {
+                                "agent_id": agent_id,
+                                "frame": frame,
+                                "joints": [
+                                    {
+                                        "name": names[joint_index],
+                                        "target_rad": float(proposal_target[joint_index]),
+                                        "lower_rad": float(limits[joint_index, 0]),
+                                        "upper_rad": float(limits[joint_index, 1]),
+                                    }
+                                    for joint_index in modified
+                                ],
+                            },
+                            sort_keys=True,
+                        ),
+                        flush=True,
+                    )
+                    raise
+                proposal_target = projection.target_rad
+                joint_projection_count[index] += projection.projection_count
+                maximum_joint_projection_rad[index] = max(
+                    maximum_joint_projection_rad[index], projection.maximum_projection_rad
+                )
             target[index, indices] = torch.as_tensor(
                 proposal_target, device=sim.device, dtype=target.dtype
             )
@@ -352,6 +442,8 @@ def main() -> None:
             ),
             "pre_stop_displacement_m": stop_x_m,
             "brake_release_frame": brake_release_frame[index],
+            "joint_projection_count": joint_projection_count[index],
+            "maximum_joint_projection_rad": maximum_joint_projection_rad[index],
             "terminal_half_second_speed_m_s": float(
                 (trajectory[-1, 0] - trajectory[-min(26, args.frames), 0])
                 / (min(25, args.frames - 1) * 0.02)
@@ -380,6 +472,8 @@ def main() -> None:
         "brake_release_speed_m_s": args.brake_release_speed_m_s,
         "brake_release_window_frames": args.brake_release_window_frames,
         "brake_min_frames": args.brake_min_frames,
+        "hip_brake_gains": hip_brake_gains,
+        "ankle_brake_gains": ankle_brake_gains,
         "agent_count": args.agent_count,
         "agent_ids": agent_ids,
         "lane_y_m": lane_y_m,
