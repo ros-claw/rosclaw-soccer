@@ -35,7 +35,6 @@ def extract_precontact_samples(
     *,
     body_names: tuple[str, ...],
     window_frames: int = 20,
-    control_dt_s: float = 0.02,
 ) -> PrecontactSamples:
     """Return observed ball/foot/knee geometry strictly before impact.
 
@@ -43,9 +42,10 @@ def extract_precontact_samples(
     velocity (12); for both knees, ball-relative position (6).  The sample
     label comes from all physics microsteps of the *whole* episode.
     """
-    if body_names != BODY_ORDER or not 1 <= window_frames <= 100 or not 0 < control_dt_s <= 0.1:
+    if body_names != BODY_ORDER or not 1 <= window_frames <= 100:
         raise ValueError("qualified body order and bounded sample window required")
     ball = np.asarray(arrays["ball_observation_position_m"], dtype=np.float64)
+    ball_velocity = np.asarray(arrays["ball_observation_velocity_m_s"], dtype=np.float64)
     position = np.asarray(arrays["contact_body_position_m"], dtype=np.float64)
     velocity = np.asarray(arrays["contact_body_velocity_m_s"], dtype=np.float64)
     force = np.asarray(arrays["ball_body_contact_force_micro_n"], dtype=np.float64)
@@ -53,11 +53,14 @@ def extract_precontact_samples(
     if (
         frames < 2
         or ball.shape != (frames, 3)
+        or ball_velocity.shape != (frames, 3)
         or position.shape != (frames, 1, 4, 3)
         or velocity.shape != position.shape
         or force.shape[:2] != (frames, 10)
         or force.shape[2] != 6
-        or not all(np.isfinite(value).all() for value in (ball, position, velocity, force))
+        or not all(
+            np.isfinite(value).all() for value in (ball, ball_velocity, position, velocity, force)
+        )
     ):
         raise ValueError("complete finite Isaac contact trajectory required")
     summary = classify_ball_body_contacts(force)
@@ -67,7 +70,7 @@ def extract_precontact_samples(
     if cutoff < 2:
         raise ValueError("at least two pre-contact frames required")
     indices = np.arange(max(1, cutoff - window_frames), cutoff, dtype=np.int64)
-    ball_velocity = (ball[indices] - ball[indices - 1]) / control_dt_s
+    ball_velocity = ball_velocity[indices]
     foot_position = position[indices, 0, :2]
     foot_velocity = velocity[indices, 0, :2]
     knee_position = position[indices, 0, 2:]

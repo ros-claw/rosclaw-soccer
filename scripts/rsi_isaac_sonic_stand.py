@@ -37,6 +37,9 @@ parser.add_argument("--ankle-brake-gains")
 parser.add_argument("--track-ball-contacts", action="store_true")
 parser.add_argument("--ball-x-m", type=float, default=2.5)
 parser.add_argument("--ball-y-m", type=float, default=0.0)
+parser.add_argument("--ball-initial-vx-m-s", type=float, default=0.0)
+parser.add_argument("--ball-initial-vy-m-s", type=float, default=0.0)
+parser.add_argument("--ball-rolling-start", action="store_true")
 parser.add_argument("--right-knee-contact-residual-rad", type=float, default=0.0)
 parser.add_argument("--right-hip-pitch-contact-residual-rad", type=float, default=0.0)
 parser.add_argument("--right-ankle-pitch-contact-residual-rad", type=float, default=0.0)
@@ -134,6 +137,13 @@ if (
     or not 2.0 <= args.ball_x_m <= 3.0
     or not math.isfinite(args.ball_y_m)
     or not -0.4 <= args.ball_y_m <= 0.4
+    or not math.isfinite(args.ball_initial_vx_m_s)
+    or not math.isfinite(args.ball_initial_vy_m_s)
+    or math.hypot(args.ball_initial_vx_m_s, args.ball_initial_vy_m_s) > 2.0
+    or (
+        args.ball_rolling_start
+        and math.hypot(args.ball_initial_vx_m_s, args.ball_initial_vy_m_s) < 0.01
+    )
     or not math.isfinite(args.right_knee_contact_residual_rad)
     or not -0.12 <= args.right_knee_contact_residual_rad <= 0.12
     or not math.isfinite(args.right_hip_pitch_contact_residual_rad)
@@ -197,6 +207,7 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
 )
 from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController  # noqa: E402
 from rosclaw_soccer.sim.ball_contact_evidence import classify_ball_body_contacts  # noqa: E402
+from rosclaw_soccer.sim.ball_rolling_evidence import precontact_rolling_evidence  # noqa: E402
 from rosclaw_soccer.sim.contact_speed_actor import choose_contact_speed  # noqa: E402
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json  # noqa: E402
 from rosclaw_soccer.sim.foot_target_ik import bounded_foot_target_delta  # noqa: E402
@@ -355,6 +366,16 @@ def main() -> None:
     robot.write_joint_velocity_to_sim_index(velocity=robot.data.default_joint_vel.torch.clone())
     robot.reset()
     ball.write_root_pose_to_sim_index(root_pose=ball.data.default_root_pose.torch.clone())
+    ball_initial_velocity = ball.data.default_root_vel.torch.clone()
+    ball_initial_velocity[0, :2] = torch.tensor(
+        (args.ball_initial_vx_m_s, args.ball_initial_vy_m_s), device=sim.device
+    )
+    if args.ball_rolling_start:
+        ball_initial_velocity[0, 3:5] = torch.tensor(
+            (-args.ball_initial_vy_m_s / 0.11, args.ball_initial_vx_m_s / 0.11),
+            device=sim.device,
+        )
+    ball.write_root_velocity_to_sim_index(root_velocity=ball_initial_velocity)
     ball.reset()
     contact_speed_actor = (
         json.loads(args.contact_speed_actor.read_text(encoding="utf-8"))
@@ -381,6 +402,8 @@ def main() -> None:
     target_rows = []
     ball_position_rows = []
     ball_observation_position_rows = []
+    ball_observation_velocity_rows = []
+    ball_observation_angular_velocity_rows = []
     ball_body_contact_force_rows = []
     ball_body_contact_micro_rows = []
     contact_body_position_rows = []
@@ -395,6 +418,12 @@ def main() -> None:
     for frame in range(args.frames):
         ball_observation_position_rows.append(
             ball.data.root_pos_w.torch[0].detach().cpu().numpy().astype(np.float64).copy()
+        )
+        ball_observation_velocity_rows.append(
+            ball.data.root_lin_vel_w.torch[0].detach().cpu().numpy().astype(np.float64).copy()
+        )
+        ball_observation_angular_velocity_rows.append(
+            ball.data.root_ang_vel_w.torch[0].detach().cpu().numpy().astype(np.float64).copy()
         )
         contact_body_position_rows.append(
             robot.data.body_pos_w.torch[:, contact_kinematic_body_indices]
@@ -756,6 +785,10 @@ def main() -> None:
         "target": np.asarray(target_rows),
         "ball_position_m": np.asarray(ball_position_rows),
         "ball_observation_position_m": np.asarray(ball_observation_position_rows),
+        "ball_observation_velocity_m_s": np.asarray(ball_observation_velocity_rows),
+        "ball_observation_angular_velocity_rad_s": np.asarray(
+            ball_observation_angular_velocity_rows
+        ),
         "ball_body_contact_force_peak_n": np.asarray(ball_body_contact_force_rows),
         "ball_body_contact_force_micro_n": np.asarray(ball_body_contact_micro_rows),
         "contact_body_position_m": np.asarray(contact_body_position_rows),
@@ -767,6 +800,17 @@ def main() -> None:
     np.savez_compressed(args.output_dir / "trajectory.npz", **arrays)
     heights = arrays["qpos"][:, :, 2]
     contact_summary = classify_ball_body_contacts(arrays["ball_body_contact_force_micro_n"])
+    impact_steps = (
+        contact_summary.first_foot_microstep,
+        contact_summary.first_nonfoot_microstep,
+    )
+    first_body_impact = min((step for step in impact_steps if step is not None), default=None)
+    rolling = precontact_rolling_evidence(
+        arrays["ball_observation_position_m"],
+        arrays["ball_observation_velocity_m_s"],
+        arrays["ball_observation_angular_velocity_rad_s"],
+        first_body_impact_microstep=first_body_impact,
+    )
     individual = {}
     for index, agent_id in enumerate(agent_ids):
         trajectory = arrays["qpos"][:, index, :]
@@ -872,6 +916,12 @@ def main() -> None:
         "track_ball_contacts": args.track_ball_contacts,
         "ball_x_m": args.ball_x_m,
         "ball_y_m": args.ball_y_m,
+        "ball_initial_vx_m_s": args.ball_initial_vx_m_s,
+        "ball_initial_vy_m_s": args.ball_initial_vy_m_s,
+        "ball_rolling_start": args.ball_rolling_start,
+        "ball_precontact_grounded_frames": rolling.grounded_frames,
+        "ball_precontact_mean_slip_m_s": rolling.mean_slip_m_s,
+        "ball_precontact_maximum_slip_m_s": rolling.maximum_slip_m_s,
         "right_knee_contact_residual_rad": args.right_knee_contact_residual_rad,
         "right_hip_pitch_contact_residual_rad": args.right_hip_pitch_contact_residual_rad,
         "right_ankle_pitch_contact_residual_rad": args.right_ankle_pitch_contact_residual_rad,

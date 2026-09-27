@@ -15,6 +15,7 @@ def _episode() -> dict[str, np.ndarray]:
     force[20, 3, 1] = 10.0
     return {
         "ball_observation_position_m": ball,
+        "ball_observation_velocity_m_s": np.zeros_like(ball),
         "contact_body_position_m": body,
         "contact_body_velocity_m_s": np.zeros_like(body),
         "ball_body_contact_force_micro_n": force,
@@ -39,4 +40,20 @@ def test_rejects_missing_geometry_and_nonfinite_values() -> None:
         extract_precontact_samples(episode, body_names=BODY_ORDER[::-1])
     episode["contact_body_position_m"][0, 0, 0, 0] = np.nan
     with pytest.raises(ValueError):
+        extract_precontact_samples(episode, body_names=BODY_ORDER)
+
+
+def test_moving_ball_uses_aligned_observed_velocity() -> None:
+    episode = _episode()
+    episode["ball_observation_velocity_m_s"][:, 0] = -0.5
+    episode["contact_body_velocity_m_s"][:, 0, 0, 0] = 0.2
+    sample = extract_precontact_samples(episode, body_names=BODY_ORDER, window_frames=4)
+    assert sample.features[:, 6].tolist() == pytest.approx([-0.7] * 4)
+    assert sample.features[:, 9].tolist() == pytest.approx([-0.5] * 4)
+
+
+def test_rejects_missing_moving_ball_velocity() -> None:
+    episode = _episode()
+    del episode["ball_observation_velocity_m_s"]
+    with pytest.raises(KeyError):
         extract_precontact_samples(episode, body_names=BODY_ORDER)
