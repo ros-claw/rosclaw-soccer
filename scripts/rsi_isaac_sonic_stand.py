@@ -35,6 +35,7 @@ parser.add_argument("--ankle-brake-gains")
 parser.add_argument("--track-ball-contacts", action="store_true")
 parser.add_argument("--ball-x-m", type=float, default=2.5)
 parser.add_argument("--ball-y-m", type=float, default=0.0)
+parser.add_argument("--right-knee-contact-residual-rad", type=float, default=0.0)
 parser.add_argument("--control-mode", choices=("sonic", "frozen_target"), default="sonic")
 parser.add_argument(
     "--actuator-mode",
@@ -112,6 +113,12 @@ if (
     or not 2.0 <= args.ball_x_m <= 3.0
     or not math.isfinite(args.ball_y_m)
     or not -0.4 <= args.ball_y_m <= 0.4
+    or not math.isfinite(args.right_knee_contact_residual_rad)
+    or not -0.12 <= args.right_knee_contact_residual_rad <= 0.12
+    or (
+        args.right_knee_contact_residual_rad != 0.0
+        and (args.agent_count != 1 or not args.track_ball_contacts)
+    )
     or args.output_dir.exists()
 ):
     parser.error("bounded frames, qualified local inputs, and a new output directory required")
@@ -243,6 +250,7 @@ def main() -> None:
     ankle_pitch_indices = [
         names.index(name) for name in ("left_ankle_pitch_joint", "right_ankle_pitch_joint")
     ]
+    right_knee_index = names.index("right_knee_joint")
     initial_joint = robot.data.default_joint_pos.torch.clone()
     initial_joint[:, indices] = torch.as_tensor(
         G1SonicRunupController.default_angles, device=sim.device, dtype=initial_joint.dtype
@@ -455,6 +463,34 @@ def main() -> None:
                 maximum_joint_projection_rad[index] = max(
                     maximum_joint_projection_rad[index], projection.maximum_projection_rad
                 )
+            if args.right_knee_contact_residual_rad != 0.0:
+                ball_xyz = ball.data.root_pos_w.torch[0].detach().cpu().numpy()
+                ball_gap_m = float(ball_xyz[0] - root_pose[0])
+                ball_origin_displacement_m = float(
+                    np.linalg.norm(ball_xyz[:2] - np.asarray((args.ball_x_m, args.ball_y_m)))
+                )
+                if 0.1 <= ball_gap_m <= 1.0 and ball_origin_displacement_m < 0.05:
+                    phase_weight = min(1.0, (1.0 - ball_gap_m) / 0.5)
+                    proposal_target[right_knee_index] += (
+                        args.right_knee_contact_residual_rad * phase_weight
+                    )
+                    limits = (
+                        robot.data.joint_pos_limits.torch[index, indices]
+                        .detach()
+                        .cpu()
+                        .numpy()
+                        .astype(np.float64)
+                    )
+                    projection = project_modified_joint_targets(
+                        target_rad=proposal_target,
+                        limits_rad=limits,
+                        modified_indices=(right_knee_index,),
+                    )
+                    proposal_target = projection.target_rad
+                    joint_projection_count[index] += projection.projection_count
+                    maximum_joint_projection_rad[index] = max(
+                        maximum_joint_projection_rad[index], projection.maximum_projection_rad
+                    )
             target[index, indices] = torch.as_tensor(
                 proposal_target, device=sim.device, dtype=target.dtype
             )
@@ -606,6 +642,7 @@ def main() -> None:
         "track_ball_contacts": args.track_ball_contacts,
         "ball_x_m": args.ball_x_m,
         "ball_y_m": args.ball_y_m,
+        "right_knee_contact_residual_rad": args.right_knee_contact_residual_rad,
         "trajectory_hash": hash_bytes((args.output_dir / "trajectory.npz").read_bytes()),
         "stand_passed": bool(heights.min() >= 0.55 and np.isfinite(heights[-1]).all()),
         "trained_actor": False,
