@@ -38,6 +38,7 @@ parser.add_argument("--ball-x-m", type=float, default=2.5)
 parser.add_argument("--ball-y-m", type=float, default=0.0)
 parser.add_argument("--right-knee-contact-residual-rad", type=float, default=0.0)
 parser.add_argument("--right-hip-pitch-contact-residual-rad", type=float, default=0.0)
+parser.add_argument("--right-ankle-pitch-contact-residual-rad", type=float, default=0.0)
 parser.add_argument("--contact-speed-actor", type=Path)
 parser.add_argument("--control-mode", choices=("sonic", "frozen_target"), default="sonic")
 parser.add_argument(
@@ -131,10 +132,13 @@ if (
     or not -0.12 <= args.right_knee_contact_residual_rad <= 0.12
     or not math.isfinite(args.right_hip_pitch_contact_residual_rad)
     or not -0.12 <= args.right_hip_pitch_contact_residual_rad <= 0.12
+    or not math.isfinite(args.right_ankle_pitch_contact_residual_rad)
+    or not -0.12 <= args.right_ankle_pitch_contact_residual_rad <= 0.12
     or (
         (
             args.right_knee_contact_residual_rad != 0.0
             or args.right_hip_pitch_contact_residual_rad != 0.0
+            or args.right_ankle_pitch_contact_residual_rad != 0.0
         )
         and (args.agent_count != 1 or not args.track_ball_contacts)
     )
@@ -149,6 +153,7 @@ if (
             or args.reactive_lateral_command_m_s != 0.08
             or args.right_knee_contact_residual_rad != 0.12
             or args.right_hip_pitch_contact_residual_rad != 0.0
+            or args.right_ankle_pitch_contact_residual_rad != 0.0
         )
     )
     or args.output_dir.exists()
@@ -285,6 +290,7 @@ def main() -> None:
     ]
     right_knee_index = names.index("right_knee_joint")
     right_hip_pitch_index = names.index("right_hip_pitch_joint")
+    right_ankle_pitch_index = names.index("right_ankle_pitch_joint")
     contact_kinematic_body_names = (
         "left_ankle_roll_link",
         "right_ankle_roll_link",
@@ -564,6 +570,7 @@ def main() -> None:
             if (
                 args.right_knee_contact_residual_rad != 0.0
                 or args.right_hip_pitch_contact_residual_rad != 0.0
+                or args.right_ankle_pitch_contact_residual_rad != 0.0
             ):
                 ball_xyz = ball.data.root_pos_w.torch[0].detach().cpu().numpy()
                 ball_gap_m = float(ball_xyz[0] - root_pose[0])
@@ -583,6 +590,11 @@ def main() -> None:
                             args.right_hip_pitch_contact_residual_rad * phase_weight
                         )
                         modified_indices.append(right_hip_pitch_index)
+                    if args.right_ankle_pitch_contact_residual_rad != 0.0:
+                        proposal_target[right_ankle_pitch_index] += (
+                            args.right_ankle_pitch_contact_residual_rad * phase_weight
+                        )
+                        modified_indices.append(right_ankle_pitch_index)
                     limits = (
                         robot.data.joint_pos_limits.torch[index, indices]
                         .detach()
@@ -762,6 +774,7 @@ def main() -> None:
         "ball_y_m": args.ball_y_m,
         "right_knee_contact_residual_rad": args.right_knee_contact_residual_rad,
         "right_hip_pitch_contact_residual_rad": args.right_hip_pitch_contact_residual_rad,
+        "right_ankle_pitch_contact_residual_rad": args.right_ankle_pitch_contact_residual_rad,
         "trajectory_hash": hash_bytes((args.output_dir / "trajectory.npz").read_bytes()),
         "stand_passed": bool(heights.min() >= 0.55 and np.isfinite(heights[-1]).all()),
         "trained_actor": False,
