@@ -19,6 +19,7 @@ parser.add_argument("--g1-usd", required=True, type=Path)
 parser.add_argument("--model-root", required=True, type=Path)
 parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--frames", type=int, default=150)
+parser.add_argument("--agent-count", type=int, default=1)
 parser.add_argument("--forward-command-m-s", type=float, default=0.0)
 parser.add_argument("--control-mode", choices=("sonic", "frozen_target"), default="sonic")
 parser.add_argument(
@@ -41,6 +42,8 @@ if (
     or args.g1_usd.stat().st_size < 1000
     or not args.model_root.is_dir()
     or not 50 <= args.frames <= 600
+    or type(args.agent_count) is not int
+    or not 1 <= args.agent_count <= 3
     or not math.isfinite(args.forward_command_m_s)
     or not -0.5 <= args.forward_command_m_s <= 0.5
     or args.output_dir.exists()
@@ -71,23 +74,29 @@ from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation  # noqa
 def main() -> None:
     source_hash = hash_bytes(Path(__file__).read_bytes())
     asset_hash = hash_bytes(args.g1_usd.read_bytes())
-    navigation = G1SonicNavigation(
-        args.model_root,
-        "blue.playmaker",
-        SonicNavigationConfig(maximum_frames=args.frames, model_variant="low_latency"),
-    )
-    qualification = navigation.backend.qualification
-    qualification.require_eligible()
+    agent_ids = ("blue.playmaker", "blue.striker", "blue.goalkeeper")[: args.agent_count]
+    navigations = [
+        G1SonicNavigation(
+            args.model_root,
+            agent_id,
+            SonicNavigationConfig(maximum_frames=args.frames, model_variant="low_latency"),
+        )
+        for agent_id in agent_ids
+    ]
+    for navigation in navigations:
+        navigation.backend.qualification.require_eligible()
+    qualification = navigations[0].backend.qualification
     names = tuple(G1_DDS_JOINT_NAMES)
-    kp = np.asarray(navigation.backend.kp, dtype=np.float64)
-    kd = np.asarray(navigation.backend.kd, dtype=np.float64)
+    kp = np.asarray(navigations[0].backend.kp, dtype=np.float64)
+    kd = np.asarray(navigations[0].backend.kd, dtype=np.float64)
     effort = np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
     if len(names) != 29 or kp.shape != (29,) or kd.shape != (29,) or effort.shape != (29,):
         raise ValueError("SONIC joint/gain/effort shape changed")
     sim = SimulationContext(sim_utils.SimulationCfg(device=args.device, dt=0.002))
     ground = sim_utils.GroundPlaneCfg()
     ground.func("/World/ground", ground)
-    sim_utils.create_prim("/World/Env0", "Xform")
+    for index in range(args.agent_count):
+        sim_utils.create_prim(f"/World/Env{index}", "Xform")
     robot_cfg = G1_29DOF_CFG.copy()
     robot_cfg.prim_path = "/World/Env.*/G1"
     robot_cfg.spawn.usd_path = str(args.g1_usd.resolve())
@@ -108,7 +117,7 @@ def main() -> None:
     robot = Articulation(cfg=robot_cfg)
     ball = RigidObject(
         cfg=RigidObjectCfg(
-            prim_path="/World/Env.*/Ball",
+            prim_path="/World/Env0/Ball",
             spawn=sim_utils.SphereCfg(
                 radius=0.11,
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(),
@@ -119,15 +128,19 @@ def main() -> None:
         )
     )
     sim.reset()
+    if robot.num_instances != args.agent_count:
+        raise ValueError("Isaac articulation instance count differs from requested agents")
     if set(robot.joint_names) != set(names) or len(robot.joint_names) != 29:
         raise ValueError("Isaac 29-DoF joint names differ from SONIC")
     indices = [robot.joint_names.index(name) for name in names]
     initial_joint = robot.data.default_joint_pos.torch.clone()
-    initial_joint[0, indices] = torch.as_tensor(
+    initial_joint[:, indices] = torch.as_tensor(
         G1SonicRunupController.default_angles, device=sim.device, dtype=initial_joint.dtype
     )
     pose = robot.data.default_root_pose.torch.clone()
-    pose[0, :3] = torch.tensor((0.0, 0.0, 0.793), device=sim.device)
+    lane_y_m = [2.5 * (index - (args.agent_count - 1) / 2) for index in range(args.agent_count)]
+    for index, lane_y in enumerate(lane_y_m):
+        pose[index, :3] = torch.tensor((0.0, lane_y, 0.793), device=sim.device)
     root_quat = (
         (1.0, 0.0, 0.0, 0.0)
         if args.root_orientation == "legacy_numeric_identity"
@@ -135,7 +148,7 @@ def main() -> None:
         if args.root_orientation == "official_yaw90"
         else (0.0, 0.0, 0.0, 1.0)
     )
-    pose[0, 3:7] = torch.tensor(root_quat, device=sim.device)
+    pose[:, 3:7] = torch.tensor(root_quat, device=sim.device)
     robot.write_root_pose_to_sim_index(root_pose=pose)
     robot.write_root_velocity_to_sim_index(root_velocity=robot.data.default_root_vel.torch.clone())
     robot.write_joint_position_to_sim_index(position=initial_joint)
@@ -146,77 +159,99 @@ def main() -> None:
     qpos_rows = []
     qvel_rows = []
     target_rows = []
-    initial_body_z_m: dict[str, float] = {}
-    initial_body_xyz_m: dict[str, list[float]] = {}
+    initial_body_xyz_m: dict[str, dict[str, list[float]]] = {}
     for frame in range(args.frames):
         if frame == 0:
-            body_positions = robot.data.body_pos_w.torch[0].detach().cpu().numpy()
-            initial_body_z_m = {
-                name: float(body_positions[index, 2])
-                for index, name in enumerate(robot.body_names)
-                if any(part in name.lower() for part in ("pelvis", "ankle", "foot"))
-            }
             initial_body_xyz_m = {
-                name: [float(value) for value in body_positions[index]]
-                for index, name in enumerate(robot.body_names)
-                if any(part in name.lower() for part in ("pelvis", "ankle", "foot"))
-            }
-        root_pose = robot.data.root_link_pose_w.torch[0].detach().cpu().numpy().astype(np.float64)
-        root_velocity = (
-            robot.data.root_link_vel_w.torch[0].detach().cpu().numpy().astype(np.float64)
-        )
-        joint = robot.data.joint_pos.torch[0, indices].detach().cpu().numpy().astype(np.float64)
-        velocity = robot.data.joint_vel.torch[0, indices].detach().cpu().numpy().astype(np.float64)
-        if args.observation_root_frame == "asset_aligned":
-            qpos_root, qvel_root = isaac_root_to_mujoco(
-                pose_xyzw=root_pose,
-                velocity_world=root_velocity,
-                asset_quaternion_xyzw=np.asarray(root_quat),
-            )
-        else:
-            qpos_root, qvel_root = root_pose, root_velocity
-        qpos = np.concatenate((qpos_root, joint, (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)))
-        qvel = np.concatenate((qvel_root, velocity, np.zeros(6)))
-        if qpos.shape != (43,) or qvel.shape != (41,) or not np.isfinite(qpos).all():
-            raise ValueError("Isaac body observation is invalid")
-        obs = TeamMotorObservation(
-            agent_id="blue.playmaker",
-            frame=frame,
-            time_sec=frame * 0.02,
-            intent="other",
-            prospective_owner=False,
-            qpos=tuple(float(value) for value in qpos),
-            qvel=tuple(float(value) for value in qvel),
-            target_position_m=(0.0, 0.0, 0.0),
-            navigation_command=(args.forward_command_m_s, 0.0, 0.0),
-            navigation_envelope=navigation.navigation_envelope,
-        )
-        if args.control_mode == "sonic":
-            if frame == 0:
-                navigation.start_from_observation(obs)
-            try:
-                proposal = navigation.propose(obs)
-            except ValueError:
-                print(
-                    "RSI_ISAAC_SONIC_PROPOSAL_DIAG="
-                    + json.dumps(
-                        {
-                            "frame": frame,
-                            "root_z_m": float(root_pose[2]),
-                            "observed_quat_wxyz": qpos[3:7].tolist(),
-                            "max_abs_joint_rad": float(np.max(np.abs(joint))),
-                            "max_abs_joint_velocity_rad_s": float(np.max(np.abs(velocity))),
-                        },
-                        sort_keys=True,
-                    ),
-                    flush=True,
+                agent_id: {
+                    name: [float(value) for value in body_positions[body_index]]
+                    for body_index, name in enumerate(robot.body_names)
+                    if any(part in name.lower() for part in ("pelvis", "ankle", "foot"))
+                }
+                for agent_id, body_positions in zip(
+                    agent_ids, robot.data.body_pos_w.torch.detach().cpu().numpy(), strict=True
                 )
-                raise
-            proposal_target = np.asarray(proposal.target_rad, dtype=np.float64)
-        else:
-            proposal_target = np.asarray(G1SonicRunupController.default_angles, dtype=np.float64)
+            }
         target = robot.data.joint_pos.torch.clone()
-        target[0, indices] = torch.as_tensor(proposal_target, device=sim.device, dtype=target.dtype)
+        frame_qpos = []
+        frame_qvel = []
+        frame_targets = []
+        for index, (agent_id, navigation) in enumerate(zip(agent_ids, navigations, strict=True)):
+            root_pose = (
+                robot.data.root_link_pose_w.torch[index].detach().cpu().numpy().astype(np.float64)
+            )
+            root_velocity = (
+                robot.data.root_link_vel_w.torch[index].detach().cpu().numpy().astype(np.float64)
+            )
+            joint = (
+                robot.data.joint_pos.torch[index, indices].detach().cpu().numpy().astype(np.float64)
+            )
+            velocity = (
+                robot.data.joint_vel.torch[index, indices].detach().cpu().numpy().astype(np.float64)
+            )
+            if args.observation_root_frame == "asset_aligned":
+                qpos_root, qvel_root = isaac_root_to_mujoco(
+                    pose_xyzw=root_pose,
+                    velocity_world=root_velocity,
+                    asset_quaternion_xyzw=np.asarray(root_quat),
+                )
+            else:
+                qpos_root, qvel_root = root_pose, root_velocity
+            world_qpos = np.concatenate((qpos_root, joint, (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)))
+            qvel = np.concatenate((qvel_root, velocity, np.zeros(6)))
+            if (
+                world_qpos.shape != (43,)
+                or qvel.shape != (41,)
+                or not np.isfinite(world_qpos).all()
+            ):
+                raise ValueError("Isaac body observation is invalid")
+            policy_qpos = world_qpos.copy()
+            policy_qpos[1] -= lane_y_m[index]
+            obs = TeamMotorObservation(
+                agent_id=agent_id,
+                frame=frame,
+                time_sec=frame * 0.02,
+                intent="other",
+                prospective_owner=False,
+                qpos=tuple(float(value) for value in policy_qpos),
+                qvel=tuple(float(value) for value in qvel),
+                target_position_m=(0.0, 0.0, 0.0),
+                navigation_command=(args.forward_command_m_s, 0.0, 0.0),
+                navigation_envelope=navigation.navigation_envelope,
+            )
+            if args.control_mode == "sonic":
+                if frame == 0:
+                    navigation.start_from_observation(obs)
+                try:
+                    proposal = navigation.propose(obs)
+                except ValueError:
+                    print(
+                        "RSI_ISAAC_SONIC_PROPOSAL_DIAG="
+                        + json.dumps(
+                            {
+                                "agent_id": agent_id,
+                                "frame": frame,
+                                "root_z_m": float(root_pose[2]),
+                                "observed_quat_wxyz": world_qpos[3:7].tolist(),
+                                "max_abs_joint_rad": float(np.max(np.abs(joint))),
+                                "max_abs_joint_velocity_rad_s": float(np.max(np.abs(velocity))),
+                            },
+                            sort_keys=True,
+                        ),
+                        flush=True,
+                    )
+                    raise
+                proposal_target = np.asarray(proposal.target_rad, dtype=np.float64)
+            else:
+                proposal_target = np.asarray(
+                    G1SonicRunupController.default_angles, dtype=np.float64
+                )
+            target[index, indices] = torch.as_tensor(
+                proposal_target, device=sim.device, dtype=target.dtype
+            )
+            frame_qpos.append(world_qpos[:36].copy())
+            frame_qvel.append(qvel[:35].copy())
+            frame_targets.append(proposal_target)
         for _ in range(10):
             robot.set_joint_position_target_index(target=target)
             robot.write_data_to_sim()
@@ -224,9 +259,9 @@ def main() -> None:
             sim.step()
             robot.update(sim.get_physics_dt())
             ball.update(sim.get_physics_dt())
-        qpos_rows.append(qpos[:36].copy())
-        qvel_rows.append(qvel[:35].copy())
-        target_rows.append(proposal_target)
+        qpos_rows.append(frame_qpos)
+        qvel_rows.append(frame_qvel)
+        target_rows.append(frame_targets)
     arrays = {
         "qpos": np.asarray(qpos_rows),
         "qvel": np.asarray(qvel_rows),
@@ -236,9 +271,20 @@ def main() -> None:
         raise ValueError("nonfinite Isaac SONIC trajectory")
     args.output_dir.mkdir(parents=True)
     np.savez_compressed(args.output_dir / "trajectory.npz", **arrays)
-    heights = arrays["qpos"][:, 2]
+    heights = arrays["qpos"][:, :, 2]
+    individual = {}
+    for index, agent_id in enumerate(agent_ids):
+        trajectory = arrays["qpos"][:, index, :]
+        displacement = trajectory[:, :2] - trajectory[0, :2]
+        individual[agent_id] = {
+            "min_pelvis_height_m": float(heights[:, index].min()),
+            "final_pelvis_height_m": float(heights[-1, index]),
+            "forward_displacement_m": float(trajectory[-1, 0] - trajectory[0, 0]),
+            "max_displacement_m": float(np.max(np.linalg.norm(displacement, axis=1))),
+            "stand_passed": bool(heights[:, index].min() >= 0.55),
+        }
     report = {
-        "schema": "rosclaw_soccer.rsi.isaac_sonic_stand.v1",
+        "schema": "rosclaw_soccer.rsi.isaac_sonic_stand.v2",
         "activation_ceiling": "SIM_ONLY",
         "source_hash": source_hash,
         "asset_hash": asset_hash,
@@ -253,15 +299,17 @@ def main() -> None:
         "root_quat_xyzw": root_quat,
         "observation_root_frame": args.observation_root_frame,
         "forward_command_m_s": args.forward_command_m_s,
-        "initial_body_z_m": initial_body_z_m,
+        "agent_count": args.agent_count,
+        "agent_ids": agent_ids,
+        "lane_y_m": lane_y_m,
         "initial_body_xyz_m": initial_body_xyz_m,
+        "individual": individual,
         "frames": args.frames,
         "min_pelvis_height_m": float(heights.min()),
-        "final_pelvis_height_m": float(heights[-1]),
-        "max_displacement_m": float(np.max(np.linalg.norm(arrays["qpos"][:, :2], axis=1))),
+        "final_pelvis_height_m": float(heights[-1].min()),
         "ball_final_height_m": float(ball.data.root_pos_w.torch[0, 2].item()),
         "trajectory_hash": hash_bytes((args.output_dir / "trajectory.npz").read_bytes()),
-        "stand_passed": bool(heights.min() >= 0.55 and math.isfinite(float(heights[-1]))),
+        "stand_passed": bool(heights.min() >= 0.55 and np.isfinite(heights[-1]).all()),
         "trained_actor": False,
         "promotion_authorized": False,
     }
