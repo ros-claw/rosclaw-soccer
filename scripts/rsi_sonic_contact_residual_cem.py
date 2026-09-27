@@ -28,9 +28,12 @@ TIMING_TRAIN = ((2.14, 0.070), (2.14, 0.110), (2.14, 0.150))
 TIMING_RESERVED = ((2.197, 0.085), (2.197, 0.125), (2.197, 0.165))
 SPATIOTEMPORAL_TRAIN = tuple((x, y) for x in (2.12, 2.15, 2.18) for y in (0.07, 0.11, 0.15))
 SPATIOTEMPORAL_RESERVED = ((2.195, 0.085), (2.195, 0.125), (2.195, 0.165))
+AIM_TRAIN = tuple((x, y) for x in (2.12, 2.15, 2.18) for y in (0.06, 0.10, 0.14, 0.18))
+AIM_RESERVED = ((2.20, 0.08), (2.20, 0.12), (2.20, 0.16))
 RESIDUAL_PARENT = np.array((-0.25, 0.0, -0.25, 0.0), dtype=np.float64)
 TIMING_PARENT = np.array((0.48, 0.0, 0.18, 0.0), dtype=np.float64)
-SCHEMA = "rosclaw_soccer.rsi.sonic_contact_cem.v3"
+AIM_PARENT = np.array((0.48, 0.18, 0.0, 0.0), dtype=np.float64)
+SCHEMA = "rosclaw_soccer.rsi.sonic_contact_cem.v4"
 
 
 @dataclass(frozen=True)
@@ -70,7 +73,7 @@ def _params(values: np.ndarray) -> tuple[float, float, float, float]:
     return (float(values[0]), float(values[1]), float(values[2]), float(values[3]))
 
 
-def _score(report: dict[str, Any]) -> float:
+def _score(report: dict[str, Any], *, mode: str = "residual") -> float:
     numbers = (
         float(report["minimum_pelvis_height_m"]),
         float(report["peak_pelvis_tilt_rad"]),
@@ -89,6 +92,13 @@ def _score(report: dict[str, Any]) -> float:
     foot = bool(report["first_robot_ball_contact_is_foot"])
     goal = bool(report["whole_ball_goal_crossed"])
     speed = min(float(report["peak_ball_speed_mps"]), 6.0)
+    if mode == "aim":
+        crossing = report["goal_crossing_ball_center_xyz_m"]
+        if not foot or not goal or crossing is None:
+            return -2.0 if not foot else 1.0
+        if len(crossing) != 3 or not all(math.isfinite(float(value)) for value in crossing):
+            return -10.0
+        return 10.0 + 0.3 * speed - 5.0 * abs(float(crossing[1]))
     if foot and goal:
         return 10.0 + speed
     if foot:
@@ -109,7 +119,11 @@ def _course_run(
     mode: str,
 ) -> dict[str, Any]:
     x, y = course
-    if mode in ("timing", "spatiotemporal"):
+    gain, ankle = 0.0, 0.0
+    if mode == "aim":
+        center, sigma, gain, ankle = candidate.params
+        hip, knee = -0.25, -0.25
+    elif mode in ("timing", "spatiotemporal"):
         center, sigma = (
             _spatiotemporal_timing(candidate.params, x, y)
             if mode == "spatiotemporal"
@@ -135,8 +149,10 @@ def _course_run(
         left_knee_residual_rad=0.15,
         right_hip_residual_rad=hip,
         right_knee_residual_rad=knee,
+        right_ankle_residual_rad=ankle,
         contact_envelope_center_m=center,
         contact_envelope_sigma_m=sigma,
+        lateral_feedback_gain_s_inv=gain,
         partition="FRESH" if partition == "RESERVED" else "DISCOVERY",
         selector_hash=selector["model_hash"],
     )
@@ -145,7 +161,7 @@ def _course_run(
         "course": [x, y],
         "repeat": repeat,
         "partition": partition,
-        "score": _score(report),
+        "score": _score(report, mode=mode),
         "safe": report["minimum_pelvis_height_m"] >= 0.62
         and report["peak_pelvis_tilt_rad"] <= 0.32
         and report["actuator_saturation_fraction"] <= 0.01,
@@ -156,6 +172,13 @@ def _course_run(
         "contact_sigma_m": sigma,
         "right_hip_rad": hip,
         "right_knee_rad": knee,
+        "right_ankle_rad": ankle,
+        "lateral_feedback_gain_s_inv": gain,
+        "goal_error_m": (
+            abs(float(report["goal_crossing_ball_center_xyz_m"][1]))
+            if report["goal_crossing_ball_center_xyz_m"] is not None
+            else None
+        ),
         "report_hash": report["report_hash"],
         "trajectory_hash": report["trajectory_hash"],
     }
@@ -217,7 +240,7 @@ def main() -> None:
     parser.add_argument("--population", type=int, default=6)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument(
-        "--mode", choices=("residual", "timing", "spatiotemporal"), default="residual"
+        "--mode", choices=("residual", "timing", "spatiotemporal", "aim"), default="residual"
     )
     args = parser.parse_args()
     if (
@@ -231,20 +254,30 @@ def main() -> None:
         raise ValueError("bounded run with new external output and qualified inputs required")
     selector = load_selector(args.selector)
     train_courses = (
-        SPATIOTEMPORAL_TRAIN
+        AIM_TRAIN
+        if args.mode == "aim"
+        else SPATIOTEMPORAL_TRAIN
         if args.mode == "spatiotemporal"
         else TIMING_TRAIN
         if args.mode == "timing"
         else RESIDUAL_TRAIN
     )
     reserved_courses = (
-        SPATIOTEMPORAL_RESERVED
+        AIM_RESERVED
+        if args.mode == "aim"
+        else SPATIOTEMPORAL_RESERVED
         if args.mode == "spatiotemporal"
         else TIMING_RESERVED
         if args.mode == "timing"
         else RESIDUAL_RESERVED
     )
-    parent_params = TIMING_PARENT if args.mode != "residual" else RESIDUAL_PARENT
+    parent_params = (
+        AIM_PARENT
+        if args.mode == "aim"
+        else TIMING_PARENT
+        if args.mode != "residual"
+        else RESIDUAL_PARENT
+    )
     source = Path(__file__)
     probe = source.with_name("rsi_sonic_ball_contact_probe.py")
     source_hash = hash_bytes(source.read_bytes())
@@ -268,7 +301,9 @@ def main() -> None:
         "parent": parent_params.tolist(),
         "mode": args.mode,
         "plastic_boundary": (
-            "contact_envelope_center_conditional_on_ball_x_and_width_on_ball_y"
+            "contact_envelope_plus_lateral_state_feedback_and_right_ankle"
+            if args.mode == "aim"
+            else "contact_envelope_center_conditional_on_ball_x_and_width_on_ball_y"
             if args.mode == "spatiotemporal"
             else "contact_envelope_center_and_width_conditional_on_ball_y"
             if args.mode == "timing"
@@ -279,9 +314,16 @@ def main() -> None:
         "generations": args.generations,
         "population": args.population,
         "workers": args.workers,
-        "score": "foot_first_goal_and_ball_speed_with_body_safety",
+        "score": (
+            "foot_first_goal_and_center_target_error_with_body_safety"
+            if args.mode == "aim"
+            else "foot_first_goal_and_ball_speed_with_body_safety"
+        ),
         "acceptance": (
-            "all_reserved_safe_and_foot_first_goal; strict_replay; mean_speed_gain>=0.20mps"
+            "all_reserved_safe_foot_first_goal_and_error<=0.20m; mean_error_gain>=0.15m; "
+            "mean_speed_noninferiority>=-0.20mps; strict_replay"
+            if args.mode == "aim"
+            else "all_reserved_safe_and_foot_first_goal; strict_replay; mean_speed_gain>=0.20mps"
         ),
     }
     args.output_root.mkdir(parents=True)
@@ -305,7 +347,9 @@ def main() -> None:
     rng = np.random.default_rng(92801)
     mean = parent_params.copy()
     std = (
-        np.array((0.035, 0.50, 0.025, 0.20))
+        np.array((0.035, 0.025, 0.35, 0.06))
+        if args.mode == "aim"
+        else np.array((0.035, 0.50, 0.025, 0.20))
         if args.mode == "spatiotemporal"
         else np.array((0.035, 0.25, 0.025, 0.20))
         if args.mode == "timing"
@@ -321,12 +365,16 @@ def main() -> None:
                 _params(
                     np.clip(
                         mean + rng.normal(size=4) * std,
-                        (0.35, -2.0, 0.08, -1.0)
+                        (0.35, 0.08, 0.0, -0.15)
+                        if args.mode == "aim"
+                        else (0.35, -2.0, 0.08, -1.0)
                         if args.mode == "spatiotemporal"
                         else (0.35, -1.0, 0.08, -1.0)
                         if args.mode == "timing"
                         else (-0.25, -1.0, -0.25, -1.0),
-                        (0.65, 2.0, 0.25, 1.0)
+                        (0.65, 0.25, 1.5, 0.15)
+                        if args.mode == "aim"
+                        else (0.65, 2.0, 0.25, 1.0)
                         if args.mode == "spatiotemporal"
                         else (0.65, 1.0, 0.25, 1.0)
                         if args.mode == "timing"
@@ -361,7 +409,9 @@ def main() -> None:
         elites = [candidate for _, candidate in ranking[: max(2, args.population // 3)]]
         mean = np.mean(np.asarray([elite.params for elite in elites]), axis=0)
         floor = (
-            np.array((0.005, 0.06, 0.004, 0.03))
+            np.array((0.005, 0.004, 0.05, 0.008))
+            if args.mode == "aim"
+            else np.array((0.005, 0.06, 0.004, 0.03))
             if args.mode == "spatiotemporal"
             else np.array((0.005, 0.03, 0.004, 0.03))
             if args.mode == "timing"
@@ -431,6 +481,20 @@ def main() -> None:
     )
     parent_speed = float(np.mean([row["peak_speed_mps"] for row in parent_rows]))
     selected_speed = float(np.mean([row["peak_speed_mps"] for row in selected_rows]))
+
+    def mean_error(rows: list[dict[str, Any]]) -> float | None:
+        values = [row["goal_error_m"] for row in rows]
+        if any(value is None for value in values):
+            return None
+        return float(np.mean(values))
+
+    parent_error = mean_error(parent_rows)
+    selected_error = mean_error(selected_rows)
+    selected_max_error = (
+        max(float(row["goal_error_m"]) for row in selected_rows)
+        if selected_error is not None
+        else None
+    )
     source_stable = bool(
         hash_bytes(source.read_bytes()) == source_hash
         and hash_bytes(probe.read_bytes()) == probe_hash
@@ -445,7 +509,16 @@ def main() -> None:
         and selected_passed
         and strict(parent_rows)
         and strict(selected_rows)
-        and selected_speed - parent_speed >= 0.20
+        and (
+            selected_speed - parent_speed >= 0.20
+            if args.mode != "aim"
+            else parent_error is not None
+            and selected_error is not None
+            and selected_max_error is not None
+            and parent_error - selected_error >= 0.15
+            and selected_max_error <= 0.20
+            and selected_speed - parent_speed >= -0.20
+        )
         and source_stable
     )
     summary = {
@@ -466,6 +539,9 @@ def main() -> None:
         ),
         "parent_speed_mps": parent_speed,
         "selected_speed_mps": selected_speed,
+        "parent_mean_goal_error_m": parent_error,
+        "selected_mean_goal_error_m": selected_error,
+        "selected_max_goal_error_m": selected_max_error,
         "parent_strict_replay": strict(parent_rows),
         "selected_strict_replay": strict(selected_rows),
         "source_stable_during_run": source_stable,

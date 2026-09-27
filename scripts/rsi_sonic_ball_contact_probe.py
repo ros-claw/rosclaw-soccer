@@ -73,6 +73,7 @@ def run(
     right_ankle_residual_rad: float = 0.0,
     contact_envelope_center_m: float = 0.48,
     contact_envelope_sigma_m: float = 0.18,
+    lateral_feedback_gain_s_inv: float = 0.0,
     partition: str = "DISCOVERY",
     selector_hash: str | None = None,
     sonic_variant: str = "low_latency",
@@ -105,6 +106,8 @@ def run(
         or not 0.35 <= contact_envelope_center_m <= 0.65
         or not math.isfinite(contact_envelope_sigma_m)
         or not 0.08 <= contact_envelope_sigma_m <= 0.25
+        or not math.isfinite(lateral_feedback_gain_s_inv)
+        or not 0.0 <= lateral_feedback_gain_s_inv <= 1.5
         or partition not in ("DISCOVERY", "FRESH")
         or (
             selector_hash is not None
@@ -181,8 +184,16 @@ def run(
 
     initial_ball_position = data.qpos[36:39].copy()
     for frame in range(frames):
+        lateral_error_m = float(data.qpos[37] - data.qpos[1] + 0.19)
+        live_lateral_mps = float(
+            np.clip(
+                run_lateral_mps + lateral_feedback_gain_s_inv * lateral_error_m,
+                -0.30,
+                0.30,
+            )
+        )
         observation = _observation(
-            data, frame, nav.navigation_envelope, run_speed_mps, run_lateral_mps, stop_frame
+            data, frame, nav.navigation_envelope, run_speed_mps, live_lateral_mps, stop_frame
         )
         if frame == 0:
             nav.start_from_observation(observation)
@@ -283,6 +294,8 @@ def run(
         "frames": frames,
         "run_speed_mps": run_speed_mps,
         "run_lateral_mps": run_lateral_mps,
+        "lateral_feedback_gain_s_inv": lateral_feedback_gain_s_inv,
+        "desired_ball_relative_y_m": -0.19,
         "stop_frame": stop_frame,
         "left_contact_residual_rad": [
             left_hip_residual_rad,
@@ -348,6 +361,7 @@ def main() -> None:
     parser.add_argument("--right-ankle-residual-rad", type=float, default=0.0)
     parser.add_argument("--contact-envelope-center-m", type=float, default=0.48)
     parser.add_argument("--contact-envelope-sigma-m", type=float, default=0.18)
+    parser.add_argument("--lateral-feedback-gain-s-inv", type=float, default=0.0)
     parser.add_argument("--partition", choices=("DISCOVERY", "FRESH"), default="DISCOVERY")
     parser.add_argument("--selector-hash")
     parser.add_argument(
@@ -374,6 +388,7 @@ def main() -> None:
                 right_ankle_residual_rad=args.right_ankle_residual_rad,
                 contact_envelope_center_m=args.contact_envelope_center_m,
                 contact_envelope_sigma_m=args.contact_envelope_sigma_m,
+                lateral_feedback_gain_s_inv=args.lateral_feedback_gain_s_inv,
                 partition=args.partition,
                 selector_hash=args.selector_hash,
                 sonic_variant=args.sonic_variant,
