@@ -24,6 +24,7 @@ parser.add_argument("--forward-command-m-s", type=float, default=0.0)
 parser.add_argument("--lateral-command-m-s", type=float, default=0.0)
 parser.add_argument("--lateral-start-frame", type=int)
 parser.add_argument("--lateral-end-frame", type=int)
+parser.add_argument("--reactive-lateral-command-m-s", type=float, default=0.0)
 parser.add_argument("--stop-at-frame", type=int)
 parser.add_argument("--brake-command-m-s", type=float, default=0.0)
 parser.add_argument("--brake-frames", type=int, default=0)
@@ -81,6 +82,17 @@ if (
     or (
         args.lateral_start_frame is not None
         and not 0 <= args.lateral_start_frame < args.lateral_end_frame <= args.frames
+    )
+    or not math.isfinite(args.reactive_lateral_command_m_s)
+    or not -0.2 <= args.reactive_lateral_command_m_s <= 0.2
+    or (
+        args.reactive_lateral_command_m_s != 0.0
+        and (
+            args.agent_count != 1
+            or not args.track_ball_contacts
+            or args.lateral_command_m_s != 0.0
+            or args.lateral_start_frame is not None
+        )
     )
     or (args.stop_at_frame is not None and not 1 <= args.stop_at_frame < args.frames)
     or not math.isfinite(args.brake_command_m_s)
@@ -351,6 +363,27 @@ def main() -> None:
             ):
                 brake_released[index] = True
                 brake_release_frame[index] = frame
+            lateral_command = (
+                args.lateral_command_m_s
+                if (args.stop_at_frame is None or frame < args.stop_at_frame)
+                and (
+                    args.lateral_start_frame is None
+                    or args.lateral_start_frame <= frame < args.lateral_end_frame
+                )
+                else 0.0
+            )
+            if args.reactive_lateral_command_m_s != 0.0:
+                ball_xyz = ball.data.root_pos_w.torch[0].detach().cpu().numpy()
+                ball_gap_m = float(ball_xyz[0] - root_pose[0])
+                ball_origin_displacement_m = float(
+                    np.linalg.norm(ball_xyz[:2] - np.asarray((args.ball_x_m, args.ball_y_m)))
+                )
+                if (
+                    (args.stop_at_frame is None or frame < args.stop_at_frame)
+                    and 0.15 <= ball_gap_m <= 0.70
+                    and ball_origin_displacement_m < 0.05
+                ):
+                    lateral_command = args.reactive_lateral_command_m_s
             obs = TeamMotorObservation(
                 agent_id=agent_id,
                 frame=frame,
@@ -366,13 +399,7 @@ def main() -> None:
                     else args.brake_command_m_s
                     if frame < args.stop_at_frame + args.brake_frames and not brake_released[index]
                     else 0.0,
-                    args.lateral_command_m_s
-                    if (args.stop_at_frame is None or frame < args.stop_at_frame)
-                    and (
-                        args.lateral_start_frame is None
-                        or args.lateral_start_frame <= frame < args.lateral_end_frame
-                    )
-                    else 0.0,
+                    lateral_command,
                     0.0,
                 ),
                 navigation_envelope=navigation.navigation_envelope,
@@ -597,6 +624,7 @@ def main() -> None:
         "lateral_command_m_s": args.lateral_command_m_s,
         "lateral_start_frame": args.lateral_start_frame,
         "lateral_end_frame": args.lateral_end_frame,
+        "reactive_lateral_command_m_s": args.reactive_lateral_command_m_s,
         "stop_at_frame": args.stop_at_frame,
         "brake_command_m_s": args.brake_command_m_s,
         "brake_frames": args.brake_frames,
