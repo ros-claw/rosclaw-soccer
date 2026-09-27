@@ -1,7 +1,7 @@
 """SIM_ONLY frozen SONIC run-through against one real MuJoCo football.
 
-Discovery-only contact diagnostic. It records every physics-step ball/foot
-contact and ball velocity; no kick, goal, or learning success is assumed.
+Contact diagnostic with an optional sealed SIM_ONLY feedback actor. It records
+every physics-step ball/foot contact and ball velocity; no promotion is assumed.
 """
 
 from __future__ import annotations
@@ -11,15 +11,16 @@ import json
 import math
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 
 from rosclaw_soccer.physics.native_ball_dimensions import inspect_native_ball_dimensions
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.providers.g1.sonic_navigation import G1SonicNavigation, SonicNavigationConfig
-from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController
+from rosclaw_soccer.providers.g1.sonic_runup import G1SonicModelVariant, G1SonicRunupController
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json
 from rosclaw_soccer.sim.physical_checkpoint import compiled_model_hash
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation
@@ -77,6 +78,7 @@ def run(
     partition: str = "DISCOVERY",
     selector_hash: str | None = None,
     sonic_variant: str = "low_latency",
+    feedback_actor: Path | None = None,
 ) -> dict[str, Any]:
     if (
         output_dir.exists()
@@ -114,9 +116,40 @@ def run(
             and (not selector_hash.startswith("sha256:") or len(selector_hash) != 71)
         )
         or sonic_variant not in ("low_latency", "sonic_v1_1")
+        or (
+            feedback_actor is not None
+            and any(
+                value != 0.0
+                for value in (
+                    left_hip_residual_rad,
+                    left_knee_residual_rad,
+                    left_ankle_residual_rad,
+                    right_hip_residual_rad,
+                    right_knee_residual_rad,
+                    right_ankle_residual_rad,
+                )
+            )
+        )
     ):
         raise ValueError("new output and bounded ball position required")
     source_hash = hash_bytes(Path(__file__).read_bytes())
+    actor_commitment: str | None = None
+    actor_matrix: NDArray[np.float64] | None = None
+    actor_bias: NDArray[np.float64] | None = None
+    if feedback_actor is not None:
+        actor_payload = json.loads(feedback_actor.read_text(encoding="utf-8"))
+        actor_commitment = actor_payload.pop("result_hash", None)
+        if (
+            actor_commitment != hash_json(actor_payload)
+            or actor_payload.get("schema") != "rosclaw_soccer.rsi.mjx_contact_residual_es.v1"
+            or actor_payload.get("promotion_authorized") is not False
+        ):
+            raise ValueError("sealed unpromoted SIM_ONLY feedback actor required")
+        actor_parameters = np.asarray(actor_payload["parameters"], dtype=np.float64)
+        if actor_parameters.shape != (64,) or not np.isfinite(actor_parameters).all():
+            raise ValueError("bounded 64-parameter feedback actor required")
+        actor_matrix = actor_parameters[:60].reshape(4, 15)
+        actor_bias = actor_parameters[60:]
     execution_id = uuid.uuid4().hex
     model = build_g1_stadium_model(
         stadium_assets, G1TrainingGoalSpec(ball_radius_m=0.11, ball_mass_kg=0.43)
@@ -155,7 +188,7 @@ def run(
         "blue.playmaker",
         SonicNavigationConfig(
             maximum_frames=frames,
-            model_variant=sonic_variant,
+            model_variant=cast(G1SonicModelVariant, sonic_variant),
             experimental_maximum_speed_mps=run_speed_mps,
             planner_seed=920101,
         ),
@@ -171,6 +204,7 @@ def run(
     saturated_substeps = 0
     peak_torque_demand_ratio = 0.0
     peak_pelvis_tilt_rad = 0.0
+    actor_projection_count = 0
     pelvis_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
     if pelvis_body < 0:
         raise ValueError("compiled G1 pelvis body missing")
@@ -209,6 +243,43 @@ def run(
         target[6] += right_hip_residual_rad * contact_envelope
         target[9] += right_knee_residual_rad * contact_envelope
         target[10] += right_ankle_residual_rad * contact_envelope
+        if actor_matrix is not None and actor_bias is not None:
+            actor_indices = np.asarray((0, 3, 6, 9))
+            actor_features = np.concatenate(
+                (
+                    np.asarray(
+                        (
+                            relative_ball_x_m,
+                            data.qpos[37] - data.qpos[1],
+                            data.qvel[35] - data.qvel[0],
+                            data.qvel[0],
+                            data.qpos[2] - 0.75,
+                        )
+                    ),
+                    data.qpos[7 + actor_indices],
+                    data.qvel[6 + actor_indices] / 5.0,
+                    np.asarray(
+                        (
+                            bool(foot_contacts),
+                            any(
+                                "foot" not in row["geom"] and "ankle" not in row["geom"]
+                                for row in robot_contacts
+                            ),
+                        ),
+                        dtype=np.float64,
+                    ),
+                )
+            )
+            if actor_features.shape != (15,) or not np.isfinite(actor_features).all():
+                raise ValueError("nonfinite deployable motor observation")
+            gate = float((0.05 < relative_ball_x_m < 1.2) or bool(foot_contacts))
+            residual = 0.12 * gate * np.tanh(actor_matrix @ actor_features + actor_bias)
+            limits = model.jnt_range[model.actuator_trnid[actor_indices, 0]]
+            modified = np.clip(target[actor_indices] + residual, limits[:, 0], limits[:, 1])
+            actor_projection_count += int(
+                np.count_nonzero(np.abs(modified - target[actor_indices] - residual) > 1e-8)
+            )
+            target[actor_indices] = modified
         for substep in range(10):
             demanded_torque = (target - data.qpos[7:36]) * nav.backend.kp - data.qvel[
                 6:35
@@ -266,7 +337,7 @@ def run(
         raise ValueError("nonfinite ball-contact physics")
     output_dir.mkdir(parents=True)
     path = output_dir / "trajectory.npz"
-    np.savez_compressed(path, **arrays)
+    np.savez_compressed(path, **arrays)  # type: ignore[arg-type]
     ball_speed = np.linalg.norm(arrays["qvel"][:, 35:38], axis=1)
     ball_delta = arrays["qpos"][:, 36:39] - initial_ball_position
     goal_spec = G1TrainingGoalSpec(ball_radius_m=0.11, ball_mass_kg=0.43)
@@ -330,7 +401,9 @@ def run(
         "final_ball_displacement_xyz_m": ball_delta[-1].tolist(),
         "minimum_pelvis_height_m": float(arrays["qpos"][:, 2].min()),
         "trajectory_hash": hash_bytes(path.read_bytes()),
-        "trained_actor": False,
+        "trained_actor": feedback_actor is not None,
+        "feedback_actor_hash": actor_commitment,
+        "feedback_actor_projection_count": actor_projection_count,
         "promotion_authorized": False,
     }
     report["report_hash"] = hash_json(report)
@@ -364,6 +437,7 @@ def main() -> None:
     parser.add_argument("--lateral-feedback-gain-s-inv", type=float, default=0.0)
     parser.add_argument("--partition", choices=("DISCOVERY", "FRESH"), default="DISCOVERY")
     parser.add_argument("--selector-hash")
+    parser.add_argument("--feedback-actor", type=Path)
     parser.add_argument(
         "--sonic-variant", choices=("low_latency", "sonic_v1_1"), default="low_latency"
     )
@@ -392,6 +466,7 @@ def main() -> None:
                 partition=args.partition,
                 selector_hash=args.selector_hash,
                 sonic_variant=args.sonic_variant,
+                feedback_actor=args.feedback_actor,
             ),
             sort_keys=True,
         )
