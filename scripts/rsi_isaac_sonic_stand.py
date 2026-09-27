@@ -21,6 +21,7 @@ parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--frames", type=int, default=150)
 parser.add_argument("--agent-count", type=int, default=1)
 parser.add_argument("--forward-command-m-s", type=float, default=0.0)
+parser.add_argument("--experimental-high-speed", action="store_true")
 parser.add_argument("--lateral-command-m-s", type=float, default=0.0)
 parser.add_argument("--lateral-start-frame", type=int)
 parser.add_argument("--lateral-end-frame", type=int)
@@ -39,6 +40,8 @@ parser.add_argument("--ball-y-m", type=float, default=0.0)
 parser.add_argument("--right-knee-contact-residual-rad", type=float, default=0.0)
 parser.add_argument("--right-hip-pitch-contact-residual-rad", type=float, default=0.0)
 parser.add_argument("--right-ankle-pitch-contact-residual-rad", type=float, default=0.0)
+parser.add_argument("--right-foot-ik-forward-m", type=float, default=0.0)
+parser.add_argument("--right-knee-clearance-m", type=float, default=0.0)
 parser.add_argument("--contact-speed-actor", type=Path)
 parser.add_argument("--control-mode", choices=("sonic", "frozen_target"), default="sonic")
 parser.add_argument(
@@ -77,10 +80,13 @@ if (
     or type(args.agent_count) is not int
     or not 1 <= args.agent_count <= 3
     or not math.isfinite(args.forward_command_m_s)
-    or not -0.5 <= args.forward_command_m_s <= 0.5
+    or not -0.5 <= args.forward_command_m_s <= 1.5
+    or (args.experimental_high_speed and not 0.7 < args.forward_command_m_s <= 1.5)
+    or (args.forward_command_m_s > 0.5 and not args.experimental_high_speed)
     or not math.isfinite(args.lateral_command_m_s)
     or not -0.2 <= args.lateral_command_m_s <= 0.2
-    or math.hypot(args.forward_command_m_s, args.lateral_command_m_s) > 0.7
+    or math.hypot(args.forward_command_m_s, args.lateral_command_m_s)
+    > (1.5 if args.experimental_high_speed else 0.7)
     or ((args.lateral_start_frame is None) != (args.lateral_end_frame is None))
     or (
         args.lateral_start_frame is not None
@@ -134,6 +140,19 @@ if (
     or not -0.12 <= args.right_hip_pitch_contact_residual_rad <= 0.12
     or not math.isfinite(args.right_ankle_pitch_contact_residual_rad)
     or not -0.12 <= args.right_ankle_pitch_contact_residual_rad <= 0.12
+    or not math.isfinite(args.right_foot_ik_forward_m)
+    or not 0.0 <= args.right_foot_ik_forward_m <= 0.15
+    or not math.isfinite(args.right_knee_clearance_m)
+    or not 0.0 <= args.right_knee_clearance_m <= 0.05
+    or (args.right_knee_clearance_m != 0.0 and args.right_foot_ik_forward_m == 0.0)
+    or (
+        args.right_foot_ik_forward_m != 0.0
+        and (
+            args.agent_count != 1
+            or not args.track_ball_contacts
+            or args.contact_speed_actor is not None
+        )
+    )
     or (
         (
             args.right_knee_contact_residual_rad != 0.0
@@ -180,6 +199,7 @@ from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController  # no
 from rosclaw_soccer.sim.ball_contact_evidence import classify_ball_body_contacts  # noqa: E402
 from rosclaw_soccer.sim.contact_speed_actor import choose_contact_speed  # noqa: E402
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json  # noqa: E402
+from rosclaw_soccer.sim.foot_target_ik import bounded_foot_target_delta  # noqa: E402
 from rosclaw_soccer.sim.isaac_root_bridge import isaac_root_to_mujoco  # noqa: E402
 from rosclaw_soccer.sim.joint_target_projection import (  # noqa: E402
     project_modified_joint_targets,
@@ -195,7 +215,11 @@ def main() -> None:
         G1SonicNavigation(
             args.model_root,
             agent_id,
-            SonicNavigationConfig(maximum_frames=args.frames, model_variant="low_latency"),
+            SonicNavigationConfig(
+                maximum_frames=args.frames,
+                model_variant="low_latency",
+                experimental_maximum_speed_mps=(1.5 if args.experimental_high_speed else None),
+            ),
         )
         for agent_id in agent_ids
     ]
@@ -300,6 +324,15 @@ def main() -> None:
     contact_kinematic_body_indices = [
         robot.body_names.index(name) for name in contact_kinematic_body_names
     ]
+    right_foot_body_index = robot.body_names.index("right_ankle_roll_link")
+    left_foot_body_index = robot.body_names.index("left_ankle_roll_link")
+    right_knee_body_index = robot.body_names.index("right_knee_link")
+    right_leg_indices = (right_hip_pitch_index, right_knee_index, right_ankle_pitch_index)
+    right_leg_jacobian_columns = [6 + robot.joint_names.index(names[i]) for i in right_leg_indices]
+    if args.right_foot_ik_forward_m != 0.0 and (
+        robot.data.body_link_jacobian_w.torch.shape[-1] != 35 or robot.num_base_dofs != 6
+    ):
+        raise ValueError("floating-base right-foot Jacobian contract changed")
     initial_joint = robot.data.default_joint_pos.torch.clone()
     initial_joint[:, indices] = torch.as_tensor(
         G1SonicRunupController.default_angles, device=sim.device, dtype=initial_joint.dtype
@@ -358,6 +391,7 @@ def main() -> None:
     root_x_history: list[list[float]] = [[] for _ in agent_ids]
     joint_projection_count = [0] * args.agent_count
     maximum_joint_projection_rad = [0.0] * args.agent_count
+    foot_ik_applied_frames = 0
     for frame in range(args.frames):
         ball_observation_position_rows.append(
             ball.data.root_pos_w.torch[0].detach().cpu().numpy().astype(np.float64).copy()
@@ -612,6 +646,71 @@ def main() -> None:
                     maximum_joint_projection_rad[index] = max(
                         maximum_joint_projection_rad[index], projection.maximum_projection_rad
                     )
+            if args.right_foot_ik_forward_m != 0.0:
+                ball_xyz = ball.data.root_pos_w.torch[0].detach().cpu().numpy()
+                body_xyz = robot.data.body_pos_w.torch[index].detach().cpu().numpy()
+                foot_xyz = body_xyz[right_foot_body_index]
+                ball_gap_m = float(ball_xyz[0] - root_pose[0])
+                ball_origin_displacement_m = float(
+                    np.linalg.norm(ball_xyz[:2] - np.asarray((args.ball_x_m, args.ball_y_m)))
+                )
+                if (
+                    0.1 <= ball_gap_m <= 0.75
+                    and ball_origin_displacement_m < 0.05
+                    and foot_xyz[2] > 0.09
+                    and body_xyz[left_foot_body_index, 2] < 0.10
+                ):
+                    jacobian_full = (
+                        robot.data.body_link_jacobian_w.torch[index, right_foot_body_index]
+                        .detach()
+                        .cpu()
+                        .numpy()
+                    )
+                    jacobian = jacobian_full[:, right_leg_jacobian_columns]
+                    knee_jacobian_x = (
+                        robot.data.body_link_jacobian_w.torch[index, right_knee_body_index, 0]
+                        .detach()
+                        .cpu()
+                        .numpy()[right_leg_jacobian_columns]
+                    )
+                    desired_xz = np.asarray(
+                        (
+                            min(
+                                args.right_foot_ik_forward_m,
+                                max(0.0, float(ball_xyz[0] - foot_xyz[0]) - 0.05),
+                            ),
+                            float(np.clip(ball_xyz[2] - foot_xyz[2], -0.04, 0.04)),
+                        ),
+                        dtype=np.float64,
+                    )
+                    delta = bounded_foot_target_delta(
+                        jacobian[[0, 2]],
+                        desired_xz,
+                        knee_jacobian_x_m_per_rad=(
+                            knee_jacobian_x if args.right_knee_clearance_m != 0.0 else None
+                        ),
+                        knee_retreat_m=args.right_knee_clearance_m,
+                    )
+                    for joint_index, joint_delta in zip(right_leg_indices, delta, strict=True):
+                        proposal_target[joint_index] += joint_delta
+                    limits = (
+                        robot.data.joint_pos_limits.torch[index, indices]
+                        .detach()
+                        .cpu()
+                        .numpy()
+                        .astype(np.float64)
+                    )
+                    projection = project_modified_joint_targets(
+                        target_rad=proposal_target,
+                        limits_rad=limits,
+                        modified_indices=right_leg_indices,
+                    )
+                    proposal_target = projection.target_rad
+                    joint_projection_count[index] += projection.projection_count
+                    maximum_joint_projection_rad[index] = max(
+                        maximum_joint_projection_rad[index], projection.maximum_projection_rad
+                    )
+                    foot_ik_applied_frames += 1
             target[index, indices] = torch.as_tensor(
                 proposal_target, device=sim.device, dtype=target.dtype
             )
@@ -718,6 +817,7 @@ def main() -> None:
         "root_quat_xyzw": root_quat,
         "observation_root_frame": args.observation_root_frame,
         "forward_command_m_s": selected_forward_speed_m_s,
+        "experimental_high_speed": args.experimental_high_speed,
         "requested_forward_command_m_s": args.forward_command_m_s,
         "contact_speed_actor_hash": (
             contact_speed_actor["actor_hash"] if contact_speed_actor is not None else None
@@ -775,6 +875,9 @@ def main() -> None:
         "right_knee_contact_residual_rad": args.right_knee_contact_residual_rad,
         "right_hip_pitch_contact_residual_rad": args.right_hip_pitch_contact_residual_rad,
         "right_ankle_pitch_contact_residual_rad": args.right_ankle_pitch_contact_residual_rad,
+        "right_foot_ik_forward_m": args.right_foot_ik_forward_m,
+        "right_knee_clearance_m": args.right_knee_clearance_m,
+        "foot_ik_applied_frames": foot_ik_applied_frames,
         "trajectory_hash": hash_bytes((args.output_dir / "trajectory.npz").read_bytes()),
         "stand_passed": bool(heights.min() >= 0.55 and np.isfinite(heights[-1]).all()),
         "trained_actor": False,
