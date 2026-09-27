@@ -21,6 +21,9 @@ parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--frames", type=int, default=150)
 parser.add_argument("--agent-count", type=int, default=1)
 parser.add_argument("--forward-command-m-s", type=float, default=0.0)
+parser.add_argument("--lateral-command-m-s", type=float, default=0.0)
+parser.add_argument("--lateral-start-frame", type=int)
+parser.add_argument("--lateral-end-frame", type=int)
 parser.add_argument("--stop-at-frame", type=int)
 parser.add_argument("--brake-command-m-s", type=float, default=0.0)
 parser.add_argument("--brake-frames", type=int, default=0)
@@ -29,6 +32,9 @@ parser.add_argument("--brake-release-window-frames", type=int, default=1)
 parser.add_argument("--brake-min-frames", type=int, default=0)
 parser.add_argument("--hip-brake-gains")
 parser.add_argument("--ankle-brake-gains")
+parser.add_argument("--track-ball-contacts", action="store_true")
+parser.add_argument("--ball-x-m", type=float, default=2.5)
+parser.add_argument("--ball-y-m", type=float, default=0.0)
 parser.add_argument("--control-mode", choices=("sonic", "frozen_target"), default="sonic")
 parser.add_argument(
     "--actuator-mode",
@@ -67,6 +73,14 @@ if (
     or not 1 <= args.agent_count <= 3
     or not math.isfinite(args.forward_command_m_s)
     or not -0.5 <= args.forward_command_m_s <= 0.5
+    or not math.isfinite(args.lateral_command_m_s)
+    or not -0.2 <= args.lateral_command_m_s <= 0.2
+    or math.hypot(args.forward_command_m_s, args.lateral_command_m_s) > 0.7
+    or ((args.lateral_start_frame is None) != (args.lateral_end_frame is None))
+    or (
+        args.lateral_start_frame is not None
+        and not 0 <= args.lateral_start_frame < args.lateral_end_frame <= args.frames
+    )
     or (args.stop_at_frame is not None and not 1 <= args.stop_at_frame < args.frames)
     or not math.isfinite(args.brake_command_m_s)
     or not -0.5 <= args.brake_command_m_s <= 0.0
@@ -93,6 +107,11 @@ if (
     or any(not math.isfinite(value) or abs(value) > 0.35 for value in hip_brake_gains)
     or any(not math.isfinite(value) or abs(value) > 0.35 for value in ankle_brake_gains)
     or (args.stop_at_frame is None and (any(hip_brake_gains) or any(ankle_brake_gains)))
+    or (args.track_ball_contacts and args.agent_count != 1)
+    or not math.isfinite(args.ball_x_m)
+    or not 2.0 <= args.ball_x_m <= 3.0
+    or not math.isfinite(args.ball_y_m)
+    or not -0.4 <= args.ball_y_m <= 0.4
     or args.output_dir.exists()
 ):
     parser.error("bounded frames, qualified local inputs, and a new output directory required")
@@ -104,6 +123,7 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg  # noqa: E402
+from isaaclab.sensors import ContactSensor, ContactSensorCfg  # noqa: E402
 from isaaclab.sim import SimulationContext  # noqa: E402
 from isaaclab_assets.robots.unitree import G1_29DOF_CFG  # noqa: E402
 
@@ -113,6 +133,7 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
     SonicNavigationConfig,
 )
 from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController  # noqa: E402
+from rosclaw_soccer.sim.ball_contact_evidence import classify_ball_body_contacts  # noqa: E402
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json  # noqa: E402
 from rosclaw_soccer.sim.isaac_root_bridge import isaac_root_to_mujoco  # noqa: E402
 from rosclaw_soccer.sim.joint_target_projection import (  # noqa: E402
@@ -173,10 +194,43 @@ def main() -> None:
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(),
                 mass_props=sim_utils.MassPropertiesCfg(mass=0.43),
                 collision_props=sim_utils.CollisionPropertiesCfg(),
+                activate_contact_sensors=args.track_ball_contacts,
             ),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(2.5, 0.0, 0.13)),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(args.ball_x_m, args.ball_y_m, 0.13)),
         )
     )
+    contact_sensor = None
+    contact_body_labels = (
+        "left_foot",
+        "right_foot",
+        "left_ankle_pitch",
+        "right_ankle_pitch",
+        "left_knee",
+        "right_knee",
+    )
+    if args.track_ball_contacts:
+        body_root = "/World/Env0/G1/Geometry/pelvis"
+        left_lower = (
+            body_root + "/left_hip_pitch_link/left_hip_roll_link/left_hip_yaw_link/left_knee_link"
+        )
+        right_lower = (
+            body_root
+            + "/right_hip_pitch_link/right_hip_roll_link/right_hip_yaw_link/right_knee_link"
+        )
+        contact_sensor = ContactSensor(
+            ContactSensorCfg(
+                prim_path="/World/Env0/Ball",
+                update_period=0.0,
+                filter_prim_paths_expr=[
+                    left_lower + "/left_ankle_pitch_link/left_ankle_roll_link",
+                    right_lower + "/right_ankle_pitch_link/right_ankle_roll_link",
+                    left_lower + "/left_ankle_pitch_link",
+                    right_lower + "/right_ankle_pitch_link",
+                    left_lower,
+                    right_lower,
+                ],
+            )
+        )
     sim.reset()
     if robot.num_instances != args.agent_count:
         raise ValueError("Isaac articulation instance count differs from requested agents")
@@ -212,9 +266,14 @@ def main() -> None:
     robot.reset()
     ball.write_root_pose_to_sim_index(root_pose=ball.data.default_root_pose.torch.clone())
     ball.reset()
+    if contact_sensor is not None:
+        contact_sensor.reset()
     qpos_rows = []
     qvel_rows = []
     target_rows = []
+    ball_position_rows = []
+    ball_body_contact_force_rows = []
+    ball_body_contact_micro_rows = []
     initial_body_xyz_m: dict[str, dict[str, list[float]]] = {}
     brake_released = [False] * args.agent_count
     brake_release_frame: list[int | None] = [None] * args.agent_count
@@ -299,7 +358,13 @@ def main() -> None:
                     else args.brake_command_m_s
                     if frame < args.stop_at_frame + args.brake_frames and not brake_released[index]
                     else 0.0,
-                    0.0,
+                    args.lateral_command_m_s
+                    if (args.stop_at_frame is None or frame < args.stop_at_frame)
+                    and (
+                        args.lateral_start_frame is None
+                        or args.lateral_start_frame <= frame < args.lateral_end_frame
+                    )
+                    else 0.0,
                     0.0,
                 ),
                 navigation_envelope=navigation.navigation_envelope,
@@ -396,6 +461,8 @@ def main() -> None:
             frame_qpos.append(world_qpos[:36].copy())
             frame_qvel.append(qvel[:35].copy())
             frame_targets.append(proposal_target)
+        foot_force_peak = np.zeros(len(contact_body_labels), dtype=np.float64)
+        micro_forces = []
         for _ in range(10):
             robot.set_joint_position_target_index(target=target)
             robot.write_data_to_sim()
@@ -403,19 +470,44 @@ def main() -> None:
             sim.step()
             robot.update(sim.get_physics_dt())
             ball.update(sim.get_physics_dt())
+            if contact_sensor is not None:
+                contact_sensor.update(sim.get_physics_dt())
+                matrix = contact_sensor.data.force_matrix_w
+                if matrix is None:
+                    raise ValueError("foot-ball filtered contact matrix unavailable")
+                force = matrix.torch.detach().cpu().numpy()
+                if (
+                    force.shape != (1, 1, len(contact_body_labels), 3)
+                    or not np.isfinite(force).all()
+                ):
+                    raise ValueError("foot-ball contact matrix shape or values invalid")
+                contact_force_n = np.linalg.norm(force[0, 0], axis=1)
+                foot_force_peak = np.maximum(foot_force_peak, contact_force_n)
+                micro_forces.append(contact_force_n.copy())
+            else:
+                micro_forces.append(np.zeros(len(contact_body_labels), dtype=np.float64))
         qpos_rows.append(frame_qpos)
         qvel_rows.append(frame_qvel)
         target_rows.append(frame_targets)
+        ball_position_rows.append(
+            ball.data.root_pos_w.torch[0].detach().cpu().numpy().astype(np.float64).copy()
+        )
+        ball_body_contact_force_rows.append(foot_force_peak)
+        ball_body_contact_micro_rows.append(micro_forces)
     arrays = {
         "qpos": np.asarray(qpos_rows),
         "qvel": np.asarray(qvel_rows),
         "target": np.asarray(target_rows),
+        "ball_position_m": np.asarray(ball_position_rows),
+        "ball_body_contact_force_peak_n": np.asarray(ball_body_contact_force_rows),
+        "ball_body_contact_force_micro_n": np.asarray(ball_body_contact_micro_rows),
     }
     if any(not np.isfinite(value).all() for value in arrays.values()):
         raise ValueError("nonfinite Isaac SONIC trajectory")
     args.output_dir.mkdir(parents=True)
     np.savez_compressed(args.output_dir / "trajectory.npz", **arrays)
     heights = arrays["qpos"][:, :, 2]
+    contact_summary = classify_ball_body_contacts(arrays["ball_body_contact_force_micro_n"])
     individual = {}
     for index, agent_id in enumerate(agent_ids):
         trajectory = arrays["qpos"][:, index, :]
@@ -451,7 +543,7 @@ def main() -> None:
             "stand_passed": bool(heights[:, index].min() >= 0.55),
         }
     report = {
-        "schema": "rosclaw_soccer.rsi.isaac_sonic_stand.v2",
+        "schema": "rosclaw_soccer.rsi.isaac_sonic_stand.v3",
         "activation_ceiling": "SIM_ONLY",
         "source_hash": source_hash,
         "asset_hash": asset_hash,
@@ -466,6 +558,9 @@ def main() -> None:
         "root_quat_xyzw": root_quat,
         "observation_root_frame": args.observation_root_frame,
         "forward_command_m_s": args.forward_command_m_s,
+        "lateral_command_m_s": args.lateral_command_m_s,
+        "lateral_start_frame": args.lateral_start_frame,
+        "lateral_end_frame": args.lateral_end_frame,
         "stop_at_frame": args.stop_at_frame,
         "brake_command_m_s": args.brake_command_m_s,
         "brake_frames": args.brake_frames,
@@ -483,6 +578,34 @@ def main() -> None:
         "min_pelvis_height_m": float(heights.min()),
         "final_pelvis_height_m": float(heights[-1].min()),
         "ball_final_height_m": float(ball.data.root_pos_w.torch[0, 2].item()),
+        "ball_initial_xyz_m": arrays["ball_position_m"][0].tolist(),
+        "ball_final_xyz_m": ball.data.root_pos_w.torch[0].detach().cpu().numpy().tolist(),
+        "ball_horizontal_displacement_m": float(
+            np.linalg.norm(
+                ball.data.root_pos_w.torch[0, :2].detach().cpu().numpy()
+                - arrays["ball_position_m"][0, :2]
+            )
+        ),
+        "ball_body_contact_labels": contact_body_labels,
+        "ball_body_contact_peak_n": np.max(
+            arrays["ball_body_contact_force_peak_n"], axis=0
+        ).tolist(),
+        "foot_ball_contact_peak_n": np.max(
+            arrays["ball_body_contact_force_peak_n"][:, :2], axis=0
+        ).tolist(),
+        "foot_ball_contact_frames": int(
+            np.count_nonzero(np.max(arrays["ball_body_contact_force_peak_n"][:, :2], axis=1) > 1.0)
+        ),
+        "nonfoot_lower_leg_ball_contact_frames": int(
+            np.count_nonzero(np.max(arrays["ball_body_contact_force_peak_n"][:, 2:], axis=1) > 1.0)
+        ),
+        "first_foot_ball_contact_microstep": contact_summary.first_foot_microstep,
+        "first_nonfoot_lower_leg_ball_contact_microstep": contact_summary.first_nonfoot_microstep,
+        "foot_first_contact_verified": contact_summary.foot_first,
+        "clean_foot_only_contact_verified": contact_summary.clean_foot_only,
+        "track_ball_contacts": args.track_ball_contacts,
+        "ball_x_m": args.ball_x_m,
+        "ball_y_m": args.ball_y_m,
         "trajectory_hash": hash_bytes((args.output_dir / "trajectory.npz").read_bytes()),
         "stand_passed": bool(heights.min() >= 0.55 and np.isfinite(heights[-1]).all()),
         "trained_actor": False,
