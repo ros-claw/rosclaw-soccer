@@ -21,6 +21,12 @@ parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--frames", type=int, default=150)
 parser.add_argument("--agent-count", type=int, default=1)
 parser.add_argument("--forward-command-m-s", type=float, default=0.0)
+parser.add_argument("--stop-at-frame", type=int)
+parser.add_argument("--brake-command-m-s", type=float, default=0.0)
+parser.add_argument("--brake-frames", type=int, default=0)
+parser.add_argument("--brake-release-speed-m-s", type=float)
+parser.add_argument("--brake-release-window-frames", type=int, default=1)
+parser.add_argument("--brake-min-frames", type=int, default=0)
 parser.add_argument("--control-mode", choices=("sonic", "frozen_target"), default="sonic")
 parser.add_argument(
     "--actuator-mode",
@@ -46,6 +52,27 @@ if (
     or not 1 <= args.agent_count <= 3
     or not math.isfinite(args.forward_command_m_s)
     or not -0.5 <= args.forward_command_m_s <= 0.5
+    or (args.stop_at_frame is not None and not 1 <= args.stop_at_frame < args.frames)
+    or not math.isfinite(args.brake_command_m_s)
+    or not -0.5 <= args.brake_command_m_s <= 0.0
+    or not 0 <= args.brake_frames <= 50
+    or (args.stop_at_frame is None and args.brake_frames != 0)
+    or (args.brake_frames == 0 and args.brake_command_m_s != 0.0)
+    or (args.stop_at_frame is not None and args.stop_at_frame + args.brake_frames >= args.frames)
+    or (
+        args.brake_release_speed_m_s is not None
+        and (
+            not math.isfinite(args.brake_release_speed_m_s)
+            or not 0.0 <= args.brake_release_speed_m_s <= 0.5
+            or args.brake_frames == 0
+        )
+    )
+    or not 1 <= args.brake_release_window_frames <= 20
+    or not 0 <= args.brake_min_frames <= args.brake_frames
+    or (
+        args.brake_release_speed_m_s is None
+        and (args.brake_release_window_frames != 1 or args.brake_min_frames != 0)
+    )
     or args.output_dir.exists()
 ):
     parser.error("bounded frames, qualified local inputs, and a new output directory required")
@@ -160,6 +187,9 @@ def main() -> None:
     qvel_rows = []
     target_rows = []
     initial_body_xyz_m: dict[str, dict[str, list[float]]] = {}
+    brake_released = [False] * args.agent_count
+    brake_release_frame: list[int | None] = [None] * args.agent_count
+    root_x_history: list[list[float]] = [[] for _ in agent_ids]
     for frame in range(args.frames):
         if frame == 0:
             initial_body_xyz_m = {
@@ -207,6 +237,22 @@ def main() -> None:
                 raise ValueError("Isaac body observation is invalid")
             policy_qpos = world_qpos.copy()
             policy_qpos[1] -= lane_y_m[index]
+            root_x_history[index].append(float(root_pose[0]))
+            release_speed = float(root_velocity[0])
+            window = args.brake_release_window_frames
+            if len(root_x_history[index]) > window:
+                release_speed = (root_x_history[index][-1] - root_x_history[index][-window - 1]) / (
+                    window * 0.02
+                )
+            if (
+                args.stop_at_frame is not None
+                and args.brake_release_speed_m_s is not None
+                and frame >= args.stop_at_frame + args.brake_min_frames
+                and not brake_released[index]
+                and release_speed <= args.brake_release_speed_m_s
+            ):
+                brake_released[index] = True
+                brake_release_frame[index] = frame
             obs = TeamMotorObservation(
                 agent_id=agent_id,
                 frame=frame,
@@ -216,7 +262,15 @@ def main() -> None:
                 qpos=tuple(float(value) for value in policy_qpos),
                 qvel=tuple(float(value) for value in qvel),
                 target_position_m=(0.0, 0.0, 0.0),
-                navigation_command=(args.forward_command_m_s, 0.0, 0.0),
+                navigation_command=(
+                    args.forward_command_m_s
+                    if args.stop_at_frame is None or frame < args.stop_at_frame
+                    else args.brake_command_m_s
+                    if frame < args.stop_at_frame + args.brake_frames and not brake_released[index]
+                    else 0.0,
+                    0.0,
+                    0.0,
+                ),
                 navigation_envelope=navigation.navigation_envelope,
             )
             if args.control_mode == "sonic":
@@ -276,11 +330,32 @@ def main() -> None:
     for index, agent_id in enumerate(agent_ids):
         trajectory = arrays["qpos"][:, index, :]
         displacement = trajectory[:, :2] - trajectory[0, :2]
+        stop_x_m = (
+            float(trajectory[args.stop_at_frame, 0] - trajectory[0, 0])
+            if args.stop_at_frame is not None
+            else None
+        )
         individual[agent_id] = {
             "min_pelvis_height_m": float(heights[:, index].min()),
             "final_pelvis_height_m": float(heights[-1, index]),
             "forward_displacement_m": float(trajectory[-1, 0] - trajectory[0, 0]),
             "max_displacement_m": float(np.max(np.linalg.norm(displacement, axis=1))),
+            "post_stop_displacement_m": (
+                float(trajectory[-1, 0] - trajectory[args.stop_at_frame, 0])
+                if args.stop_at_frame is not None
+                else None
+            ),
+            "post_stop_peak_backtrack_m": (
+                float(np.max(trajectory[args.stop_at_frame :, 0]) - trajectory[-1, 0])
+                if args.stop_at_frame is not None
+                else None
+            ),
+            "pre_stop_displacement_m": stop_x_m,
+            "brake_release_frame": brake_release_frame[index],
+            "terminal_half_second_speed_m_s": float(
+                (trajectory[-1, 0] - trajectory[-min(26, args.frames), 0])
+                / (min(25, args.frames - 1) * 0.02)
+            ),
             "stand_passed": bool(heights[:, index].min() >= 0.55),
         }
     report = {
@@ -299,6 +374,12 @@ def main() -> None:
         "root_quat_xyzw": root_quat,
         "observation_root_frame": args.observation_root_frame,
         "forward_command_m_s": args.forward_command_m_s,
+        "stop_at_frame": args.stop_at_frame,
+        "brake_command_m_s": args.brake_command_m_s,
+        "brake_frames": args.brake_frames,
+        "brake_release_speed_m_s": args.brake_release_speed_m_s,
+        "brake_release_window_frames": args.brake_release_window_frames,
+        "brake_min_frames": args.brake_min_frames,
         "agent_count": args.agent_count,
         "agent_ids": agent_ids,
         "lane_y_m": lane_y_m,
