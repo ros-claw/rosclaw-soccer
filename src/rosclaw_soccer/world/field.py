@@ -192,6 +192,36 @@ def build_g1_stadium_model(asset_root: Path, spec: G1TrainingGoalSpec | None = N
     return model
 
 
+def build_g1_stadium_sensorless_model(
+    asset_root: Path, spec: G1TrainingGoalSpec | None = None
+) -> Any:
+    """Compile the same physical stadium without read-only sensors for MJX.
+
+    MJX does not support all RoboNaldo frame sensor object types. Removing
+    sensors changes neither geometry nor actuation; callers must still compare
+    physical trajectories against the canonical sensor-bearing MuJoCo model.
+    This model is SIM_ONLY training infrastructure, never promotion truth.
+    """
+    import mujoco
+
+    goal = spec or G1TrainingGoalSpec()
+    parent = _stadium_spec(asset_root, goal)
+    _add_goalkeeper_hand_envelopes(
+        parent,
+        body_prefix="",
+        geom_prefix="",
+        mujoco=mujoco,
+    )
+    for sensor in list(parent.sensors):
+        parent.delete(sensor)
+    model = parent.compile()
+    _configure_ball_dof_damping(model, goal)
+    _require_stadium_model(model)
+    if model.nsensor != 0:
+        raise AssertionError("MJX stadium retained unsupported read-only sensors")
+    return model
+
+
 def build_g1_coupled_stadium_model(
     asset_root: Path,
     *,
