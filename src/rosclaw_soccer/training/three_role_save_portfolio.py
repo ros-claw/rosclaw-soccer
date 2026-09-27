@@ -171,9 +171,7 @@ def evaluate_three_role_save_lane(
     report["glove_contact_position_m"] = result.goalkeeper_glove_contact_position_m
     report["glove_contact_time_sec"] = result.goalkeeper_glove_contact_time_sec
     report["glove_contact_side"] = result.goalkeeper_glove_contact_side
-    report["glove_contact_surface_distance_m"] = (
-        result.goalkeeper_glove_contact_surface_distance_m
-    )
+    report["glove_contact_surface_distance_m"] = result.goalkeeper_glove_contact_surface_distance_m
     return report
 
 
@@ -200,6 +198,7 @@ def run_three_role_save_portfolio_evidence(
     paths = (striker_actor_path, goalkeeper_actor_path, gmt_model_path, gmt_skill_path)
     if any(not path.expanduser().resolve().is_file() for path in paths):
         raise ValueError("save portfolio artifacts must be readable files")
+    implementation_hash_at_start = _implementation_hash()
     lane_kwargs = {
         lane.lane_id: three_role_save_lane_kwargs(
             lane=lane,
@@ -227,6 +226,7 @@ def run_three_role_save_portfolio_evidence(
         "body_hash": qualification.body_hash,
         "kick_prior_hash": qualification.kick_prior_hash,
         "artifacts": artifacts,
+        "implementation_hash_at_start": implementation_hash_at_start,
         "source_commit": _git_head(checkout),
         "physics_authority": "CPU_MUJOCO",
         "activation_ceiling": "SIM_ONLY",
@@ -234,6 +234,7 @@ def run_three_role_save_portfolio_evidence(
     }
     output.mkdir(parents=True)
     _write_json(output / "request.json", request)
+    request_hash_at_start = hash_bytes((output / "request.json").read_bytes())
     cases: dict[str, Any] = {}
     contact_positions_y: list[float] = []
     contact_sides: list[str] = []
@@ -275,16 +276,37 @@ def run_three_role_save_portfolio_evidence(
     ordered_y = sorted(contact_positions_y)
     span_m = ordered_y[-1] - ordered_y[0] if len(ordered_y) == len(active.lanes) else 0.0
     separations = tuple(
-        right - left
-        for left, right in zip(ordered_y[:-1], ordered_y[1:], strict=True)
+        right - left for left, right in zip(ordered_y[:-1], ordered_y[1:], strict=True)
     )
+    try:
+        implementation_hash_at_end: str | None = _implementation_hash()
+    except OSError:
+        implementation_hash_at_end = None
+    source_stable_during_run = implementation_hash_at_start == implementation_hash_at_end
+    try:
+        artifacts_stable_during_run = artifacts == {
+            "striker_actor_hash": hash_bytes(striker_actor_path.read_bytes()),
+            "goalkeeper_actor_hash": hash_bytes(goalkeeper_actor_path.read_bytes()),
+            "gmt_model_hash": hash_bytes(gmt_model_path.read_bytes()),
+            "gmt_skill_hash": hash_bytes(gmt_skill_path.read_bytes()),
+        }
+    except OSError:
+        artifacts_stable_during_run = False
+    try:
+        request_stable_during_run = (
+            hash_bytes((output / "request.json").read_bytes()) == request_hash_at_start
+        )
+    except OSError:
+        request_stable_during_run = False
     portfolio_gates = {
+        "source_stable_during_run": source_stable_during_run,
+        "artifacts_stable_during_run": artifacts_stable_during_run,
+        "request_stable_during_run": request_stable_during_run,
         "all_lanes_passed": all(case["passed"] for case in cases.values()),
         "all_lanes_strict_replay": all(case["strict_replay"] for case in cases.values()),
         "contact_span": span_m >= active.minimum_contact_span_m,
         "contact_separation": bool(
-            separations
-            and min(separations) >= active.minimum_adjacent_contact_separation_m
+            separations and min(separations) >= active.minimum_adjacent_contact_separation_m
         ),
         "both_sides_of_center": bool(ordered_y and ordered_y[0] < 0.0 < ordered_y[-1]),
         "both_glove_sides": {"left", "right"} <= set(contact_sides),
@@ -307,8 +329,9 @@ def run_three_role_save_portfolio_evidence(
         "pixels_used_for_scoring": False,
         "simultaneous_three_body_physics_per_case": True,
         "single_shared_ball_per_case": True,
-        "request_hash": hash_bytes((output / "request.json").read_bytes()),
-        "implementation_hash": _implementation_hash(),
+        "request_hash": request_hash_at_start,
+        "implementation_hash": implementation_hash_at_start,
+        "implementation_hash_at_end": implementation_hash_at_end,
         "artifacts": artifacts,
     }
     _write_json(output / "evidence.json", report)

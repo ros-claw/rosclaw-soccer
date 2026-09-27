@@ -100,8 +100,10 @@ def render_three_role_save_portfolio_video(
         "goalkeeper_joint_position",
     }
     for lane_id, case_value in cases_value.items():
-        if not isinstance(lane_id, str) or not isinstance(case_value, dict) or not (
-            case_value.get("passed") is True and case_value.get("strict_replay") is True
+        if (
+            not isinstance(lane_id, str)
+            or not isinstance(case_value, dict)
+            or not (case_value.get("passed") is True and case_value.get("strict_replay") is True)
         ):
             raise ValueError("three-role save-portfolio case did not strictly pass")
         replay = case_value.get("replay")
@@ -128,7 +130,7 @@ def render_three_role_save_portfolio_video(
         trajectories[lane_id] = trajectory
         goals[lane_id] = goal
         trajectory_hashes[lane_id] = trajectory_hash
-    clips = _timeline(cases, trajectories, fps)
+    clips = _timeline(cases, trajectories, fps, float(evidence["contact_span_m"]))
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
     if ffmpeg is None or ffprobe is None:
@@ -246,13 +248,15 @@ def _timeline(
     cases: dict[str, dict[str, Any]],
     trajectories: dict[str, dict[str, np.ndarray]],
     fps: int,
+    contact_span_m: float,
 ) -> tuple[_Clip, ...]:
     clips: list[_Clip] = []
+    case_count = len(cases)
     first_lane = next(iter(cases))
     first_time = float(trajectories[first_lane]["time"][0])
     clips.append(
         _Clip(
-            "FOUR SHOT LANES · THREE G1 · FOUR STRICT PHYSICAL SAVES",
+            f"{case_count} SHOT LANES · THREE G1 · STRICT PHYSICAL SAVES",
             tuple(_Frame(first_lane, first_time, "wide") for _ in range(round(1.4 * fps))),
         )
     )
@@ -267,7 +271,7 @@ def _timeline(
         pass_mm = 1_000.0 * float(result["pass_delivery_error_m"])
         clips.append(
             _Clip(
-                f"SAVE {index}/4 · {label} · {pass_mm:.1f} mm RELAY PASS",
+                f"SAVE {index}/{case_count} · {label} · {pass_mm:.1f} mm RELAY PASS",
                 (
                     *_segment(lane_id, pass_time - 0.65, shot_time + 0.18, 0.82, "chain", fps),
                     *_segment(lane_id, shot_time + 0.18, save_time + 0.82, 0.72, "hero", fps),
@@ -285,7 +289,8 @@ def _timeline(
     end = float(trajectories[last_lane]["time"][-1])
     clips.append(
         _Clip(
-            "4/4 STRICT CPU MUJOCO REPLAYS · 0.885 m CONTACT SPAN · ALL THREE STABLE",
+            f"{case_count}/{case_count} STRICT CPU MUJOCO REPLAYS · "
+            f"{contact_span_m:.3f} m CONTACT SPAN · ALL THREE STABLE",
             tuple(_Frame(last_lane, end, "wide_goal") for _ in range(round(2.0 * fps))),
         )
     )
@@ -304,8 +309,7 @@ def _segment(
         raise ValueError("save-portfolio video segment is invalid")
     count = max(1, int(math.ceil((end - start) / speed * fps)))
     return tuple(
-        _Frame(lane_id, min(end, start + index / fps * speed), view)
-        for index in range(count)
+        _Frame(lane_id, min(end, start + index / fps * speed), view) for index in range(count)
     )
 
 
@@ -339,9 +343,7 @@ def _write_frames(
             poses = _sample(trajectory, frame.simulation_time_sec)
             data.qpos[:] = model.qpos0
             for role in ("shooter", "passer", "goalkeeper"):
-                data.qpos[free_qpos[role] : free_qpos[role] + 7] = poses[
-                    f"{role}_pelvis_pose"
-                ]
+                data.qpos[free_qpos[role] : free_qpos[role] + 7] = poses[f"{role}_pelvis_pose"]
                 data.qpos[joint_qpos[role]] = poses[f"{role}_joint_position"]
             data.qpos[ball_qpos : ball_qpos + 7] = poses["ball_pose"]
             mujoco.mj_forward(model, data)
@@ -445,8 +447,7 @@ def _slerp(left: np.ndarray, right: np.ndarray, ratio: float) -> NDArray[np.floa
     angle = float(np.arccos(dot))
     scale = float(np.sin(angle))
     return np.asarray(
-        np.sin((1.0 - ratio) * angle) / scale * start
-        + np.sin(ratio * angle) / scale * end,
+        np.sin((1.0 - ratio) * angle) / scale * start + np.sin(ratio * angle) / scale * end,
         dtype=np.float64,
     )
 
