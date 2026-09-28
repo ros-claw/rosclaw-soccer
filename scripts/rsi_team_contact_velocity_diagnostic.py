@@ -111,6 +111,8 @@ def main() -> None:
             contact_relative_velocity = np.asarray(
                 action["observed_own_foot_counterpart_minus_ball_velocity_w"]
             )
+            normal_impulse = np.asarray(action["observed_own_foot_normal_impulse_ns"])
+            impulse_on_ball = np.asarray(action["observed_own_foot_impulse_on_ball_w_ns"])
         with np.load(folder / "candidate/trajectory.npz", allow_pickle=False) as physics:
             ball_velocity = np.asarray(physics["ball_velocity"])
             force = np.asarray(physics["ball_contact_force_n"])
@@ -122,6 +124,11 @@ def main() -> None:
             or contact_position.shape != (250, 1, 3)
             or contact_normal.shape != (250, 1, 3)
             or contact_relative_velocity.shape != (250, 1, 3)
+            or normal_impulse.shape != (250, 1)
+            or impulse_on_ball.shape != (250, 1, 3)
+            or not np.isfinite(normal_impulse).all()
+            or not np.isfinite(impulse_on_ball).all()
+            or np.min(normal_impulse) < 0
         ):
             raise ValueError("invalid measured full-body foot velocity trace")
         frames = report["focal_foot_contact_frames"]
@@ -172,6 +179,10 @@ def main() -> None:
                     if first is not None
                     else None
                 ),
+                "episode_focal_normal_impulse_ns": float(np.sum(normal_impulse[:, 0])),
+                "episode_focal_normal_impulse_on_ball_world_ns": np.sum(
+                    impulse_on_ball[:, 0], axis=0
+                ).tolist(),
             }
         )
     if source_hashes != {str(p.relative_to(root)): hash_bytes(p.read_bytes()) for p in sources}:

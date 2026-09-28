@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from rosclaw_soccer.skills.team.foot_kinematics import TeamFootKinematics
 from rosclaw_soccer.skills.team.motor_option import (
@@ -82,6 +83,7 @@ def test_foreign_or_nonfoot_contact_does_not_release_swing() -> None:
     motor = TeamSwingMotor("red.playmaker", True, ACTION)
     for frame in range(31):
         motor.propose(_observation(frame, 2.0 if frame < 30 else 1.35))
+    motor.last_physics_time_sec = 0.60
     q = _observation(30, 1.35).qpos
     foreign = TeamBallContact(10, "blue.playmaker", "right_foot", 5.0)
     own_body = TeamBallContact(11, "red.playmaker", "body", 4.0)
@@ -122,6 +124,8 @@ def test_foreign_or_nonfoot_contact_does_not_release_swing() -> None:
         )
     )
     assert motor.first_contact_frame == 30
+    assert motor.own_foot_normal_impulse_ns[30] == pytest.approx(6.0 * 0.02)
+    assert motor.own_foot_impulse_on_ball_w_ns[30][0] == pytest.approx(6.0 * 0.02)
 
 
 def test_contact_code_uses_sorted_roster_not_fixture_layout() -> None:

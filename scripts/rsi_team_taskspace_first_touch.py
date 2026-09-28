@@ -66,6 +66,9 @@ class TeamSwingMotor:
         self.own_foot_contact_point_w: list[tuple[float, float, float]] = []
         self.own_foot_contact_normal_w: list[tuple[float, float, float]] = []
         self.own_foot_relative_velocity_w: list[tuple[float, float, float]] = []
+        self.own_foot_normal_impulse_ns: list[float] = []
+        self.own_foot_impulse_on_ball_w_ns: list[np.ndarray[Any, Any]] = []
+        self.last_physics_time_sec = 0.0
         self.contract_hash = hash_json(
             {
                 "schema": "rsi_team_swing_motor_v13",
@@ -89,6 +92,8 @@ class TeamSwingMotor:
         self.own_foot_contact_point_w.append((0.0, 0.0, 0.0))
         self.own_foot_contact_normal_w.append((0.0, 0.0, 0.0))
         self.own_foot_relative_velocity_w.append((0.0, 0.0, 0.0))
+        self.own_foot_normal_impulse_ns.append(0.0)
+        self.own_foot_impulse_on_ball_w_ns.append(np.zeros(3))
         kinematics = observation.foot_kinematics
         if kinematics.foot_linear_velocity_world_mps is None:
             raise ValueError("measured same-frame foot velocity required")
@@ -152,11 +157,24 @@ class TeamSwingMotor:
     def observe_physics(self, observation: TeamMotorPhysicsObservation) -> None:
         if observation.observer_agent_id != self.agent_id or not observation.world_bodies_safe:
             raise ValueError("unsafe or foreign physical motor observation")
-        own_contacts = (
+        dt = observation.time_sec - self.last_physics_time_sec
+        if not 0 < dt <= 0.1:
+            raise ValueError("non-monotonic or skipped contact physics clock")
+        self.last_physics_time_sec = observation.time_sec
+        own_contacts = tuple(
             contact
             for contact in observation.ball_contacts
             if contact.agent_id == self.agent_id and contact.effector in {"left_foot", "right_foot"}
         )
+        for contact in own_contacts:
+            if contact.normal_force_n <= 0:
+                continue
+            normal = contact.normal_ball_to_counterpart_world
+            if normal is None:
+                raise ValueError("complete measured ball-foot contact normal required")
+            impulse = contact.normal_force_n * dt
+            self.own_foot_normal_impulse_ns[-1] += impulse
+            self.own_foot_impulse_on_ball_w_ns[-1] -= impulse * np.asarray(normal)
         strongest = max(own_contacts, key=lambda contact: contact.normal_force_n, default=None)
         own_force = 0.0 if strongest is None else strongest.normal_force_n
         if own_force > 1.0 and (
@@ -258,6 +276,10 @@ def _run_one(
         observed_own_foot_counterpart_minus_ball_velocity_w=np.asarray(
             motor.own_foot_relative_velocity_w
         )[:, None],
+        observed_own_foot_normal_impulse_ns=np.asarray(motor.own_foot_normal_impulse_ns)[:, None],
+        observed_own_foot_impulse_on_ball_w_ns=np.asarray(motor.own_foot_impulse_on_ball_w_ns)[
+            :, None
+        ],
         predicted_baseline_joint_target_rad=np.asarray(motor.observations["predicted_baseline"])[
             :, None
         ],
