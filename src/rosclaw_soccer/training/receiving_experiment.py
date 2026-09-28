@@ -13,6 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
+from rosclaw_soccer.providers.g1.qualified_receiving_student import QualifiedReceivingStudent
 from rosclaw_soccer.providers.g1.receiving_sonic import (
     ReceivingSonicBallFollowOption,
     ReceivingSonicFeedbackOption,
@@ -77,6 +78,7 @@ def simulate_r0_receiving_course(
     sonic_ball_follow_post_touch_chase: bool = False,
     sonic_ball_follow_brake_distance_m: float | None = None,
     capture_ball_follow_targets: bool = False,
+    receiving_student: QualifiedReceivingStudent | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -201,6 +203,20 @@ def simulate_r0_receiving_course(
         )
     ):
         raise ValueError("pure measured-ball follow teacher capture required")
+    if receiving_student is not None and (
+        not isinstance(receiving_student, QualifiedReceivingStudent)
+        or sonic_model_root is None
+        or sonic_ball_follow_gain != 0.75
+        or sonic_start_frame != 0
+        or sonic_ball_follow_fast_replan
+        or sonic_ball_follow_post_touch_chase
+        or sonic_ball_follow_brake_distance_m is not None
+        or capture_ball_follow_targets
+        or feedback_actor_path is not None
+        or oracle is not None
+        or feedback_provider is not None
+    ):
+        raise ValueError("qualified student requires unmixed 0.75 SONIC receiving foundation")
     # Validate physical launch values before allocating/loading the simulator.
     receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     fixture = collection_fixture(asset_root, keeper_preview=True)
@@ -268,6 +284,9 @@ def simulate_r0_receiving_course(
         near_ball_seed=course.seed,
         near_ball_explore=False,
         motor_options=motors,
+        receiving_students=(
+            {course.agent_id: receiving_student} if receiving_student is not None else None
+        ),
         receiving_oracle=oracle,
         receiving_phase_reference=phase_reference,
         receiving_feedback=feedback_provider,

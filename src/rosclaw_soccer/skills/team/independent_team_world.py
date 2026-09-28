@@ -92,6 +92,7 @@ from rosclaw_soccer.providers.g1.mujoco_primitives import (
     mirror_g1_joint_gains,
     mirror_g1_joint_positions,
 )
+from rosclaw_soccer.providers.g1.qualified_receiving_student import QualifiedReceivingStudent
 from rosclaw_soccer.providers.g1.shared_keeper_reach import (
     SharedKeeperReach,
     SharedKeeperReachConfig,
@@ -1042,6 +1043,7 @@ def simulate_independent_team_world(
     near_ball_explore: bool = False,
     near_ball_exploration_agent_ids: tuple[str, ...] | None = None,
     motor_options: Mapping[str, TeamMotorOption] | None = None,
+    receiving_students: Mapping[str, QualifiedReceivingStudent] | None = None,
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
     physics_evidence_consumers: Mapping[str, PhysicsEvidenceConsumer] | None = None,
@@ -1121,7 +1123,10 @@ def simulate_independent_team_world(
             [agent in scope for agent in near_ball_policy.agent_ids], dtype=bool
         )
     motors = dict(motor_options or {})
-    from rosclaw_soccer.providers.g1.receiving_sonic import ReceivingSonicOption
+    from rosclaw_soccer.providers.g1.receiving_sonic import (
+        ReceivingSonicBallFollowOption,
+        ReceivingSonicOption,
+    )
 
     if (
         any(isinstance(m, ReceivingSonicOption) for m in motors.values())
@@ -1274,6 +1279,20 @@ def simulate_independent_team_world(
     ):
         raise ValueError("per-player motor identity, binding or override ownership differs")
     motor_hashes = tuple(sorted((key, motor.contract_hash) for key, motor in motors.items()))
+    students = dict(receiving_students or {})
+    if (
+        receiving_students is not None
+        and not isinstance(receiving_students, Mapping)
+        or len(students) > 1
+        or not set(students).issubset(motors)
+        or any(
+            not isinstance(student, QualifiedReceivingStudent)
+            or student.activation_ceiling != "SIM_ONLY"
+            or not isinstance(motors[agent], ReceivingSonicBallFollowOption)
+            for agent, student in students.items()
+        )
+    ):
+        raise ValueError("one Fresh8-qualified receiving student requires private SONIC ownership")
     experimental_navigation = {
         envelope.agent_id: envelope for envelope in active.experimental_navigation_envelopes
     }
@@ -1544,6 +1563,7 @@ def simulate_independent_team_world(
     }
     last_ball_contact_agent_id: str | None = None
     last_ball_contact_time_sec = -math.inf
+    student_first_foot_contact_time = {agent: None for agent in students}
     current_possession_agent_id: str | None = None
     controlled_possession = ContactPossession() if active.controlled_possession_retention else None
     loose_ball_chaser_agent_id: str | None = None
@@ -3252,7 +3272,9 @@ def simulate_independent_team_world(
             ),
             None,
         )
-        for _ in range(_SUBSTEPS):
+        student_frame_targets: dict[str, NDArray[np.float64]] = {}
+        student_active_substeps = 0
+        for substep in range(_SUBSTEPS):
             frame_teacher_last_substep_valid = False
             frame_teacher_baseline = np.zeros(29, dtype=np.float64)
             frame_teacher_residual = np.zeros(29, dtype=np.float64)
@@ -3327,6 +3349,33 @@ def simulate_independent_team_world(
                     if authority_added is not None:
                         authority_added[: len(residual)] = residual
                 dq = np.asarray(data.qvel[controller.joint_qvel], dtype=np.float64)
+                student = students.get(controller.cell.agent_id)
+                student_active = bool(
+                    student is not None
+                    and 46 <= frame <= 100
+                    and controller.cell.agent_id in motor_targets
+                    and controller.cell.agent_id not in motor_faults
+                )
+                if student_active:
+                    assert student is not None
+                    local_qpos = np.r_[  # 7 root + 29 joints + 7 ball
+                        data.qpos[controller.qpos_base : controller.qpos_base + 7],
+                        q,
+                        data.qpos[ball_qpos : ball_qpos + 7],
+                    ]
+                    local_qvel = np.r_[  # 6 root + 29 joints + 6 ball
+                        data.qvel[controller.qvel_base : controller.qvel_base + 6],
+                        dq,
+                        data.qvel[ball_qvel : ball_qvel + 6],
+                    ]
+                    if substep == 0:
+                        student_frame_targets[controller.cell.agent_id] = student.motor_target(
+                            qpos=local_qpos,
+                            qvel=local_qvel,
+                            foundation_target=target,
+                            joint_ranges=np.asarray(model.jnt_range[controller.joint_ids]),
+                        )
+                    target = student_frame_targets[controller.cell.agent_id]
                 raw_torque = kp * (target - q) - kd * dq
                 if (
                     option_bridge_config is not None and option_bridge_config.measured_state_history
@@ -3578,6 +3627,18 @@ def simulate_independent_team_world(
                         frame_teacher_peak_torque_nm,
                         float(np.max(np.abs(effect.torque_nm))),
                     )
+                if student_active:
+                    assert student is not None
+                    first_time = student_first_foot_contact_time[controller.cell.agent_id]
+                    raw_torque += student.torque(
+                        qpos=local_qpos,
+                        qvel=local_qvel,
+                        has_foot_contact=first_time is not None,
+                        elapsed_sec=(
+                            -1.0 if first_time is None else max(0.0, float(data.time) - first_time)
+                        ),
+                    )
+                    student_active_substeps += 1
                 projected_torque = _project_joint_safe_torque(
                     joint_position=q,
                     joint_velocity=dq,
@@ -3748,6 +3809,13 @@ def simulate_independent_team_world(
                     wrench: NDArray[np.float64] = np.zeros(6, dtype=np.float64)
                     mujoco.mj_contactForce(model, data, contact_index, wrench)
                     force = float(np.linalg.norm(wrench[:3]))
+                    if (
+                        controller.cell.agent_id in student_first_foot_contact_time
+                        and student_first_foot_contact_time[controller.cell.agent_id] is None
+                        and effector_code in (1, 2)
+                        and force > 1e-6
+                    ):
+                        student_first_foot_contact_time[controller.cell.agent_id] = float(data.time)
                     if feedback_slot is not None and feedback_slot.requires_contact_history:
                         if not math.isfinite(force):
                             raise ValueError("nonfinite contact cannot establish complete history")
@@ -4110,6 +4178,13 @@ def simulate_independent_team_world(
         trace["contact_teacher_ankle_position_m"].append(frame_teacher_ankle)
         trace["contact_teacher_mode_code"].append(frame_teacher_mode_code)
         trace["contact_teacher_foot_code"].append(frame_teacher_foot_code)
+        if students:
+            trace.setdefault("receiving_student_active_substeps", []).append(
+                student_active_substeps
+            )
+            trace.setdefault("receiving_student_model_hash", []).append(
+                next(iter(students.values())).model_hash
+            )
         trace["contact_teacher_target_m"].append(frame_teacher_target_m)
         trace["option_agent_code"].append(
             0 if option_controller is None else agent_codes[option_controller.cell.agent_id]
