@@ -39,10 +39,16 @@ def audit_taskspace_swing_trace(
     vertical = report.get("taskspace_vertical_offset_m", 0.0)
     acquisition_gap = report.get("taskspace_acquisition_max_gap_m", 0.95)
     family_hash = report.get("taskspace_family_actor_hash")
+    late_hash = report.get("late_swing_actor_hash")
     family_actions = report.get("selected_taskspace_actions")
     order = report.get("taskspace_joint_order")
     mask_raw = report.get("selected_taskspace_mask")
-    if mask_raw is None and report.get("taskspace_gate_actor_hash") is None and family_hash is None:
+    if (
+        mask_raw is None
+        and report.get("taskspace_gate_actor_hash") is None
+        and family_hash is None
+        and late_hash is None
+    ):
         mask_raw = [True] * count
     if family_hash is not None and (
         not isinstance(family_actions, list)
@@ -118,7 +124,7 @@ def audit_taskspace_swing_trace(
                     feet[frame, lane],
                     ball_world,
                     int(side[lane]),
-                    acquisition_max_gap_m=acquisition_gap,
+                    acquisition_max_gap_m=(0.55 if late_hash is not None else acquisition_gap),
                 )
             if selected_sides[frame, lane] != side[lane]:
                 raise ValueError("task-space side used future contact or altered support leg")
@@ -146,9 +152,12 @@ def audit_taskspace_swing_trace(
                         ),
                         vertical_offset_m=(
                             0.04
-                            if family_hash is not None
-                            and family_actions is not None
-                            and family_actions[lane] == 1
+                            if (
+                                family_hash is not None
+                                and family_actions is not None
+                                and family_actions[lane] == 1
+                            )
+                            or late_hash is not None
                             else vertical
                         ),
                     )

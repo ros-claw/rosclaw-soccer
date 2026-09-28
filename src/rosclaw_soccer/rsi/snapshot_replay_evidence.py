@@ -61,6 +61,7 @@ def audit_snapshot_replay(
     local_phase_policy_path: Path | None = None,
     taskspace_gate_policy_path: Path | None = None,
     taskspace_family_policy_path: Path | None = None,
+    late_swing_policy_path: Path | None = None,
 ) -> dict[str, Any]:
     bank_audit = audit_snapshot_bank(snapshot_bank)
     manifest = json.loads((snapshot_bank / "manifest.json").read_text(encoding="utf-8"))
@@ -76,6 +77,7 @@ def audit_snapshot_replay(
     taskspace_probe = report.get("taskspace_forward_m") is not None
     taskspace_gate_hash = report.get("taskspace_gate_actor_hash")
     taskspace_family_hash = report.get("taskspace_family_actor_hash")
+    late_swing_hash = report.get("late_swing_actor_hash")
     phase_probe = (
         phase_target is not None or phase_actor_hash is not None or local_phase_hash is not None
     )
@@ -108,6 +110,15 @@ def audit_snapshot_replay(
         or (taskspace_probe and report.get("phase_recovery_frames") is not None)
         or (taskspace_gate_policy_path is None) != (taskspace_gate_hash is None)
         or (taskspace_family_policy_path is None) != (taskspace_family_hash is None)
+        or (late_swing_policy_path is None) != (late_swing_hash is None)
+        or (
+            late_swing_hash is not None
+            and (
+                not taskspace_probe
+                or taskspace_gate_hash is not None
+                or taskspace_family_hash is not None
+            )
+        )
         or (
             taskspace_family_hash is not None
             and (not taskspace_probe or taskspace_gate_hash is not None)
@@ -283,6 +294,54 @@ def audit_snapshot_replay(
                 or report.get("selected_taskspace_mask") != (selected != 0).tolist()
             ):
                 raise ValueError("task-space family action differs from snapshot observation")
+        if late_swing_hash is not None:
+            from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module
+            from rosclaw_soccer.rsi import late_swing_memory as late_module
+            from rosclaw_soccer.rsi import taskspace_gate_memory as gate_module
+            from rosclaw_soccer.rsi.contact_time_phase_features import (
+                current_context,
+                gait_phase_features,
+                predict_contact_time,
+            )
+            from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor
+            from rosclaw_soccer.rsi.taskspace_gate_memory import select_taskspace_gate
+
+            if late_swing_policy_path is None:
+                raise ValueError("missing late-swing actor")
+            late_actor = load_late_swing_actor(late_swing_policy_path)
+            if (
+                late_actor["actor_hash"] != late_swing_hash
+                or late_actor["frozen_phase_actor_hash"] != local_phase_hash
+                or gate_module.__file__ is None
+                or time_phase_module.__file__ is None
+                or late_actor["policy_source_hash"]
+                != hash_bytes(Path(gate_module.__file__).read_bytes())
+                or late_actor["feature_source_hash"]
+                != hash_bytes(Path(time_phase_module.__file__).read_bytes())
+                or late_module.__file__ is None
+                or late_actor["loader_source_hash"]
+                != hash_bytes(Path(late_module.__file__).read_bytes())
+            ):
+                raise ValueError("late-swing actor or frozen source changed")
+            raw = current_context(
+                bank["root_pose_local_xyzw_m"][start : start + count],
+                bank["root_velocity_world"][start : start + count],
+                bank["ball_position_local_m"][start : start + count],
+                bank["ball_linear_velocity_m_s"][start : start + count],
+            )
+            predicted = predict_contact_time(raw, np.asarray(late_actor["contact_time_weights"]))
+            selected = select_taskspace_gate(
+                gait_phase_features(raw, predicted),
+                np.asarray(late_actor["memory_features"]),
+                np.asarray(late_actor["memory_clean"]),
+                np.asarray(late_actor["memory_reward"]),
+                np.asarray(late_actor["memory_groups"]),
+                neighbors=late_actor["neighbors"],
+                confidence=late_actor["confidence"],
+                baseline_clean_ceiling=late_actor["baseline_clean_ceiling"],
+            )
+            if report.get("selected_taskspace_mask") != selected.tolist():
+                raise ValueError("late-swing action differs from snapshot observation")
         taskspace_audit = None
         if taskspace_probe:
             from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_trace
@@ -697,6 +756,11 @@ def audit_snapshot_replay(
         result["taskspace_selected_lane_count"] = int(
             np.count_nonzero(report["selected_taskspace_mask"])
         )
+    if late_swing_hash is not None:
+        result["late_swing_actor_hash"] = late_swing_hash
+        result["taskspace_selected_lane_count"] = int(
+            np.count_nonzero(report["selected_taskspace_mask"])
+        )
     result["report_hash"] = hash_json(result)
     return result
 
@@ -710,6 +774,7 @@ def main() -> None:
     parser.add_argument("--local-phase-policy", type=Path)
     parser.add_argument("--taskspace-gate-policy", type=Path)
     parser.add_argument("--taskspace-family-policy", type=Path)
+    parser.add_argument("--late-swing-policy", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.output.exists():
@@ -722,6 +787,7 @@ def main() -> None:
         local_phase_policy_path=args.local_phase_policy,
         taskspace_gate_policy_path=args.taskspace_gate_policy,
         taskspace_family_policy_path=args.taskspace_family_policy,
+        late_swing_policy_path=args.late_swing_policy,
     )
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(result, sort_keys=True))

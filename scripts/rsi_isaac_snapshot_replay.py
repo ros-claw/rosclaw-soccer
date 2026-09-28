@@ -38,6 +38,7 @@ parser.add_argument(
 )
 parser.add_argument("--taskspace-gate-policy", type=Path)
 parser.add_argument("--taskspace-family-policy", type=Path)
+parser.add_argument("--late-swing-policy", type=Path)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -70,6 +71,20 @@ if (
     or (args.taskspace_forward_m is not None and args.local_phase_policy is None)
     or (args.taskspace_gate_policy is not None and not args.taskspace_gate_policy.is_file())
     or (args.taskspace_family_policy is not None and not args.taskspace_family_policy.is_file())
+    or (args.late_swing_policy is not None and not args.late_swing_policy.is_file())
+    or (
+        args.late_swing_policy is not None
+        and (args.taskspace_family_policy is not None or args.taskspace_gate_policy is not None)
+    )
+    or (args.late_swing_policy is not None and args.taskspace_forward_m != 0.08)
+    or (
+        args.late_swing_policy is not None
+        and (
+            args.taskspace_lateral_cap_m != 0.05
+            or args.taskspace_vertical_offset_m != 0.0
+            or args.taskspace_acquisition_max_gap_m != 0.95
+        )
+    )
     or (args.taskspace_family_policy is not None and args.taskspace_gate_policy is not None)
     or (args.taskspace_family_policy is not None and args.taskspace_forward_m != 0.08)
     or (args.taskspace_family_policy is not None and args.taskspace_acquisition_max_gap_m != 0.95)
@@ -128,6 +143,7 @@ from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa
 from rosclaw_soccer.rsi import baseline_retention_phase as guarded_phase_module  # noqa: E402
 from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module  # noqa: E402
 from rosclaw_soccer.rsi import contextual_phase_policy as phase_policy_module  # noqa: E402
+from rosclaw_soccer.rsi import late_swing_memory as late_swing_module  # noqa: E402
 from rosclaw_soccer.rsi import local_phase_memory as local_phase_module  # noqa: E402
 from rosclaw_soccer.rsi import taskspace_family_memory as taskspace_family_module  # noqa: E402
 from rosclaw_soccer.rsi import taskspace_gate_memory as taskspace_gate_module  # noqa: E402
@@ -147,6 +163,7 @@ from rosclaw_soccer.rsi.contextual_phase_policy import (  # noqa: E402
 )
 from rosclaw_soccer.rsi.first_touch_candidate import project_residual_target  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_snapshot_bank import audit_snapshot_bank  # noqa: E402
+from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor  # noqa: E402
 from rosclaw_soccer.rsi.local_phase_memory import (  # noqa: E402
     load_local_phase_actor,
     select_local_phase,
@@ -291,6 +308,7 @@ def main() -> None:
         )
     taskspace_gate_hash = None
     taskspace_family_hash = None
+    late_swing_actor_hash = None
     selected_taskspace_mask = np.ones(args.sample_count, dtype=np.bool_)
     selected_taskspace_actions = np.zeros(args.sample_count, dtype=np.int64)
     if args.taskspace_gate_policy is not None:
@@ -352,6 +370,37 @@ def main() -> None:
             confidence=family_actor["confidence"],
         )
         selected_taskspace_mask = selected_taskspace_actions != 0
+    if args.late_swing_policy is not None:
+        late_actor = load_late_swing_actor(args.late_swing_policy)
+        if (
+            late_actor["frozen_phase_actor_hash"] != local_phase_hash
+            or late_actor["policy_source_hash"]
+            != hash_bytes(Path(taskspace_gate_module.__file__).read_bytes())
+            or late_actor["feature_source_hash"]
+            != hash_bytes(Path(time_phase_module.__file__).read_bytes())
+            or late_swing_module.__file__ is None
+            or late_actor["loader_source_hash"]
+            != hash_bytes(Path(late_swing_module.__file__).read_bytes())
+        ):
+            raise ValueError("late-swing actor source or frozen parent changed")
+        late_swing_actor_hash = late_actor["actor_hash"]
+        late_raw = current_context(
+            snapshots["root_pose_local_xyzw_m"],
+            snapshots["root_velocity_world"],
+            snapshots["ball_position_local_m"],
+            snapshots["ball_linear_velocity_m_s"],
+        )
+        late_time = predict_contact_time(late_raw, np.asarray(late_actor["contact_time_weights"]))
+        selected_taskspace_mask = select_taskspace_gate(
+            gait_phase_features(late_raw, late_time),
+            np.asarray(late_actor["memory_features"]),
+            np.asarray(late_actor["memory_clean"]),
+            np.asarray(late_actor["memory_reward"]),
+            np.asarray(late_actor["memory_groups"]),
+            neighbors=late_actor["neighbors"],
+            confidence=late_actor["confidence"],
+            baseline_clean_ceiling=late_actor["baseline_clean_ceiling"],
+        )
     if manifest["source_identity"][1] != hash_bytes(args.g1_usd.read_bytes()):
         raise ValueError("snapshot G1 asset hash changed")
     names = tuple(G1_DDS_JOINT_NAMES)
@@ -841,7 +890,11 @@ def main() -> None:
                         feet[lane],
                         ball.data.root_pos_w.torch[lane].detach().cpu().numpy(),
                         int(swing_side[lane]),
-                        acquisition_max_gap_m=args.taskspace_acquisition_max_gap_m,
+                        acquisition_max_gap_m=(
+                            0.55
+                            if late_swing_actor_hash is not None
+                            else args.taskspace_acquisition_max_gap_m
+                        ),
                     )
                 side = int(swing_side[lane])
                 if side < 0:
@@ -867,6 +920,7 @@ def main() -> None:
                         vertical_offset_m=(
                             0.04
                             if selected_taskspace_actions[lane] == 1
+                            or late_swing_actor_hash is not None
                             else args.taskspace_vertical_offset_m
                         ),
                     )
@@ -1031,6 +1085,7 @@ def main() -> None:
         else None,
         "taskspace_gate_actor_hash": taskspace_gate_hash,
         "taskspace_family_actor_hash": taskspace_family_hash,
+        "late_swing_actor_hash": late_swing_actor_hash,
         "selected_taskspace_actions": selected_taskspace_actions.tolist()
         if taskspace_family_hash is not None
         else None,
