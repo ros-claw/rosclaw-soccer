@@ -1,0 +1,21 @@
+{
+  "run_id": "first-touch-incoming-tempo-20260928-v1",
+  "purpose": "SIM_ONLY causal probe of ball-aware gait timing on difficult incoming first touches",
+  "code_sha": "d8f38f4",
+  "physics_source_hash": "sha256:6e9c7c50bb64fe71286424255fabf18f5c7a93afb3c8813dbf87b4657430af4e",
+  "training_course_seed": 20260928,
+  "course_count": 16,
+  "frames": 300,
+  "frozen_parent_report_hash": "sha256:95fbaf4ce337fa9fbdf172dd0d1642276e75fe31b5225c152ee459a349ecf079",
+  "single_changed_variable": "ball-aware navigation tempo: 1.4 m/s to 0.8 m/s only for approaching balls within 1.4 m longitudinal and 0.5 m lateral gap before first contact",
+  "navigation_speed_mps": 1.4,
+  "near_ball_gap_m": 1.4,
+  "near_ball_speed_mps": 0.8,
+  "near_ball_incoming_only": true,
+  "baseline_incoming_clean_count": 1,
+  "baseline_outgoing_clean_count": 5,
+  "diagnostic_success_criterion": "at least 3/8 incoming clean foot-only contacts, no loss in 5/8 outgoing, pelvis minimum >=0.65m",
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
