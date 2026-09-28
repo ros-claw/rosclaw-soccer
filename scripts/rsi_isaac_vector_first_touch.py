@@ -372,7 +372,11 @@ def main() -> None:
                 qpos_rows.append(qpos)
                 qvel_rows.append(qvel)
                 command_speed = args.navigation_speed_mps
-                if ball_xyz_frame is not None and not contact_seen[i]:
+                if (
+                    args.near_ball_gap_m is not None
+                    and ball_xyz_frame is not None
+                    and not contact_seen[i]
+                ):
                     gap_m = float(ball_xyz_frame[i, 0] - root_pose[0])
                     lateral_gap_m = float(ball_xyz_frame[i, 1] - root_pose[1])
                     if (
@@ -947,5 +951,5 @@ try:
 except Exception as exc:
     print(f"RSI_ISAAC_VECTOR_FAILURE={type(exc).__name__}:{exc}", flush=True)
     raise
-finally:
+else:
     simulation_app.close()
