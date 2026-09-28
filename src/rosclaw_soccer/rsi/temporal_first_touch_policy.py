@@ -33,6 +33,18 @@ MAX_WEIGHT = 1.0
 MAX_FOLLOWTHROUGH_FRAMES = 30
 
 
+def knee_extension_probe_weights() -> np.ndarray:
+    """A fixed, bounded causal probe derived from foot-behind-knee observations.
+
+    This is not a learned actor: it tests whether decreasing right-knee flexion
+    during the existing incoming-ball window can alter first-contact geometry.
+    """
+    weights = np.zeros((16, len(FEATURE_NAMES), len(JOINT_NAMES)))
+    weights[:, 0, 1] = -0.7
+    weights[:, 4, 1] = -0.8
+    return weights
+
+
 @dataclass(frozen=True)
 class TemporalFirstTouchCandidate:
     parent_report_hash: str
@@ -197,7 +209,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--parent-report", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--mode", required=True, choices=("zero", "random"))
+    parser.add_argument("--mode", required=True, choices=("zero", "random", "knee_extension_probe"))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--weight-std", type=float, default=0.5)
     args = parser.parse_args()
@@ -220,17 +232,18 @@ def main() -> None:
         )
         for row in parent["environments"]
     )
-    weights = (
-        np.zeros((16, len(FEATURE_NAMES), len(JOINT_NAMES)))
-        if args.mode == "zero"
-        else np.clip(
+    if args.mode == "zero":
+        weights = np.zeros((16, len(FEATURE_NAMES), len(JOINT_NAMES)))
+    elif args.mode == "knee_extension_probe":
+        weights = knee_extension_probe_weights()
+    else:
+        weights = np.clip(
             np.random.default_rng(args.seed).normal(
                 0.0, args.weight_std, (16, len(FEATURE_NAMES), len(JOINT_NAMES))
             ),
             -MAX_WEIGHT,
             MAX_WEIGHT,
         )
-    )
     manifest = candidate_manifest(
         courses=courses,
         parent_report_hash=parent["report_hash"],

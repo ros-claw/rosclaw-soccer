@@ -1,0 +1,20 @@
+{
+  "run_id": "first-touch-knee-extension-causal-probe-20260930-31-v1",
+  "purpose": "SIM_ONLY pre-registered test of the replicated incoming-ball shin-first geometry hypothesis; fixed teacher probe, not learned actor",
+  "runner_source_hash": "sha256:56c7550d8a5ed6918b9519c4e02cc21e55a08d933311ca4b1b3c634a36401def",
+  "policy_source_hash": "sha256:5ef11bf96882f824a1fcc6409a4947d7e68f7998aa847bc622635fdfe4614416",
+  "auditor_source_hash": "sha256:78cd0fcc2c3f1ec3a85efc49af2877b3681b3bde5b54f0e45fb943fba3217e07",
+  "consumed_course_seeds": [20260930, 20260931],
+  "parent_clean_counts": [7, 8],
+  "candidate_manifest_hashes": [
+    "sha256:189186bc7fb4dbcaf3f84f03c36e419b2e64df004fdfc3bc0c353b25a266ab57",
+    "sha256:e44c91eb9e0d9cb26ce58cd1b8e97d55922906be26abeb938b95b3fe67701596"
+  ],
+  "fixed_weight_rule": "right-knee bias -0.7 and knee-position feature -0.8, all other weights zero, identical over 16 lanes; policy only active on incoming ball",
+  "maximum_joint_target_residual_rad": 0.08,
+  "primary_measures": ["audited actual joint target residual", "incoming first foot contact", "eventual clean foot-only contact", "first contact body", "minimum pelvis height", "per-course gains and losses"],
+  "screening_acceptance": "Valid audit, no pelvis below 0.65 m, pooled clean foot-only gain at least 2 of 32 with zero lost clean courses, and incoming clean gain at least 2; otherwise reject probe for further learning",
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

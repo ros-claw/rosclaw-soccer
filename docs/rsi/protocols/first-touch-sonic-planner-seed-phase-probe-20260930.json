@@ -1,0 +1,19 @@
+{
+  "run_id": "first-touch-sonic-planner-seed-phase-probe-20260930-v1",
+  "purpose": "SIM_ONLY probe whether frozen SONIC's own bounded planner seed changes approach gait phase and physical first-contact geometry",
+  "runner_source_hash": "sha256:d892c79482a738539a0e51527d32be6ad7df1bb70cda5bdedea5964a337f5e33",
+  "auditor_source_hash": "sha256:79366fb6adc7a9679c347cd73172667ebfc72678a72b4b1be6f97309d12b849a",
+  "course_seed": 20260930,
+  "parent_planner_seed": 30300,
+  "probe_planner_seeds": [30400, 30500],
+  "parent_clean_foot_only_count": 7,
+  "parent_incoming_clean_count": 1,
+  "episode_count_per_seed": 16,
+  "frames_per_episode": 300,
+  "other_changes": "none: fixed initial balls, SONIC weights, 1.4 m/s navigation, joint limits and collision assets; optional body/foot trace only",
+  "primary_measures": ["audited first contact class and frame", "incoming clean foot count", "right foot minus knee forward displacement", "minimum pelvis height", "per-course gains and losses"],
+  "screening_signal": "At least one seed reaches 10/16 clean overall and 3/8 clean incoming without pelvis below 0.65 m; correlated repeat-course exploration only, not generalization or promotion",
+  "learning_authorized": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

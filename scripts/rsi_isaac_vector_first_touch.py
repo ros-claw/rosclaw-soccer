@@ -20,6 +20,7 @@ parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--training-course-seed", type=int)
 parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
+parser.add_argument("--planner-seed", type=int, default=30300)
 parser.add_argument("--near-ball-gap-m", type=float)
 parser.add_argument("--near-ball-speed-mps", type=float)
 parser.add_argument("--near-ball-incoming-only", action="store_true")
@@ -45,6 +46,11 @@ if (
     or not 50 <= args.frames <= 400
     or not 2 <= args.env_count <= 16
     or not 0.8 <= args.navigation_speed_mps <= 1.5
+    or not 0 <= args.planner_seed <= 2**31 - 3000
+    or (
+        args.planner_seed != 30300
+        and (args.candidate_actions is not None or args.temporal_policy_actions is not None)
+    )
     or ((args.near_ball_gap_m is None) != (args.near_ball_speed_mps is None))
     or (args.near_ball_gap_m is not None and not 0.6 <= args.near_ball_gap_m <= 1.6)
     or (args.near_ball_speed_mps is not None and not 0.8 <= args.near_ball_speed_mps <= 1.5)
@@ -134,6 +140,7 @@ def main() -> None:
             f"vector.first_touch.{index}",
             SonicNavigationConfig(
                 maximum_frames=args.frames,
+                planner_seed=args.planner_seed,
                 model_variant="low_latency",
                 experimental_maximum_speed_mps=1.5,
                 inference_threads=args.inference_threads,
@@ -731,6 +738,8 @@ def main() -> None:
         "inference_threads": args.inference_threads,
         "environments": entries,
     }
+    if args.planner_seed != 30300:
+        report["planner_seed"] = args.planner_seed
     if args.torch_batch_shadow:
         report["torch_batch_shadow"] = True
         report["torch_batch_drive"] = args.torch_batch_drive
@@ -793,6 +802,7 @@ def main() -> None:
                 f"vector.first_touch.{index}",
                 SonicNavigationConfig(
                     maximum_frames=args.frames,
+                    planner_seed=args.planner_seed,
                     model_variant="low_latency",
                     experimental_maximum_speed_mps=1.5,
                     inference_threads=args.inference_threads,
@@ -947,6 +957,7 @@ def main() -> None:
                     f"vector.first_touch.{index}",
                     SonicNavigationConfig(
                         maximum_frames=args.frames,
+                        planner_seed=args.planner_seed,
                         model_variant="low_latency",
                         experimental_maximum_speed_mps=1.5,
                         inference_threads=args.inference_threads,

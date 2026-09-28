@@ -106,6 +106,14 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
         or type(report.get("navigation_speed_mps", 1.4)) not in (int, float)
         or not np.isfinite(report.get("navigation_speed_mps", 1.4))
         or not 0.8 <= report.get("navigation_speed_mps", 1.4) <= 1.5
+        or (
+            "planner_seed" in report
+            and (
+                type(report["planner_seed"]) is not int
+                or not 0 <= report["planner_seed"] <= 2**31 - 3000
+                or report["planner_seed"] == 30300
+            )
+        )
         or (("near_ball_gap_m" in report) != ("near_ball_speed_mps" in report))
         or (("near_ball_gap_m" in report) != ("near_ball_incoming_only" in report))
         or (

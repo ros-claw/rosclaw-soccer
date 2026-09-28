@@ -14,6 +14,7 @@ from rosclaw_soccer.rsi.temporal_first_touch_policy import (
     JOINT_NAMES,
     candidate_manifest,
     followthrough_residual,
+    knee_extension_probe_weights,
     load_candidate,
     temporal_residual,
 )
@@ -79,3 +80,24 @@ def test_followthrough_is_bounded_and_fades_without_jump() -> None:
         )
     with pytest.raises(ValueError, match="postcontact"):
         followthrough_residual(contact, elapsed_frames=1, followthrough_frames=31)
+
+
+def test_knee_extension_probe_is_shared_and_only_changes_incoming_right_knee() -> None:
+    weights = knee_extension_probe_weights()
+    assert weights.shape == (16, len(FEATURE_NAMES), len(JOINT_NAMES))
+    assert np.array_equal(weights[0], weights[-1])
+    assert np.count_nonzero(weights) == 32
+    q = np.zeros(29)
+    q[9] = 1.1
+    inputs = {
+        "ball_relative_xyz_m": (0.7, 0.0, -0.6),
+        "ball_vx_m_s": -0.5,
+        "joint_position_rad": q,
+        "joint_velocity_rad_s": np.zeros(29),
+    }
+    residual = temporal_residual(weights[0], **inputs)
+    assert residual[0] == residual[2] == 0
+    assert -0.08 <= residual[1] < 0
+    assert np.array_equal(
+        temporal_residual(weights[0], **{**inputs, "ball_vx_m_s": 0.5}), np.zeros(3)
+    )
