@@ -1,0 +1,20 @@
+{
+  "run_id": "first-touch-continual-v3_1-two-seed-mean-gate-20260928-v1",
+  "purpose": "SIM_ONLY provisional actor retention gate using deterministic means on old and new independent training seeds",
+  "code_sha": "e258d39",
+  "physics_source_hash": "sha256:ff2d8363965c3cf1abfb910a848a226b13df872cf2ca4cfc0ead62d729d8764f",
+  "previous_active_state_hash": "sha256:8dfa3e3edec18db006869d865156ba1b817d34bbd69207c03eaa4e0d6b39df1a",
+  "provisional_state_hash": "sha256:8617e71ff5b452000a60c1af11c930da03507fbb2e0a65ea88657a2a99f18cd8",
+  "old_parent_hash": "sha256:95fbaf4ce337fa9fbdf172dd0d1642276e75fe31b5225c152ee459a349ecf079",
+  "old_parent_clean_count": 6,
+  "old_mean_manifest_hash": "sha256:01aa3dfd512b61ee1eca77d63ee45d283d5f8acc991cd67616d2d760ba62f23b",
+  "new_parent_hash": "sha256:a124dd472f6d59ce9fcab3e5e14a32d693f39a49dbf08c94303498287911836d",
+  "new_parent_clean_count": 7,
+  "new_mean_manifest_hash": "sha256:043e6099727210fabfd5ee10dbec505641db06ac7fe9233f4491233802e9dbda",
+  "courses_per_seed": 16,
+  "generation": 1,
+  "single_changed_variable": "execute deterministic mean of provisional actor without exploration noise on both Parent course sets",
+  "qualification_rules": ["Each mean execution must preserve or improve its Parent clean-foot count", "All G1 pelvis minima >=0.65 m", "Manifests, model, assets, courses and actor commitment must match", "A failed gate leaves provisional actor non-executable as a next-generation sampler"],
+  "fresh_opened": false,
+  "activation_ceiling": "SIM_ONLY"
+}
