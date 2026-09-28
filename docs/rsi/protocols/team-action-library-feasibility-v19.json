@@ -1,0 +1,35 @@
+{
+  "schema": "rsi_team_action_library_feasibility_protocol_v19",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "consumed_failed_holdout_hash": "sha256:b074859685b89dc7d1a4883c3f417c50d30136a58dfbc2909c78e7a02f88c332",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "courses": [
+    {"name": "h01", "scenario_id": "s199.rsi-context-fresh-h01", "ball_initial_position_m": [3.55, -0.65, 0.115], "ball_initial_velocity_mps": [-0.4, 0.0, 0.0], "seed": 920700},
+    {"name": "h02", "scenario_id": "s199.rsi-context-fresh-h02", "ball_initial_position_m": [3.65, -0.75, 0.115], "ball_initial_velocity_mps": [-0.6, 0.0, 0.0], "seed": 920701},
+    {"name": "h03", "scenario_id": "s199.rsi-context-fresh-h03", "ball_initial_position_m": [3.75, -0.65, 0.115], "ball_initial_velocity_mps": [-0.6, 0.0, 0.0], "seed": 920702},
+    {"name": "h04", "scenario_id": "s199.rsi-context-fresh-h04", "ball_initial_position_m": [3.85, -0.75, 0.115], "ball_initial_velocity_mps": [-0.4, 0.0, 0.0], "seed": 920703},
+    {"name": "h05", "scenario_id": "s199.rsi-context-fresh-h05", "ball_initial_position_m": [3.95, -0.65, 0.115], "ball_initial_velocity_mps": [-0.4, 0.0, 0.0], "seed": 920704},
+    {"name": "h06", "scenario_id": "s199.rsi-context-fresh-h06", "ball_initial_position_m": [4.05, -0.75, 0.115], "ball_initial_velocity_mps": [-0.6, 0.0, 0.0], "seed": 920705},
+    {"name": "h07", "scenario_id": "s199.rsi-context-fresh-h07", "ball_initial_position_m": [3.75, -0.85, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920706},
+    {"name": "h08", "scenario_id": "s199.rsi-context-fresh-h08", "ball_initial_position_m": [3.85, -0.55, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920707}
+  ],
+  "arms": [
+    {"name": "phase_front04", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 0.0},
+    {"name": "phase_negative_lat08", "foot_selection": "phase", "forward_gain": 0.0, "lateral_gain": -0.8},
+    {"name": "phase_front04_negative", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": -0.8},
+    {"name": "phase_front04_positive", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 0.8},
+    {"name": "fixed_left_negative", "foot_selection": "left", "forward_gain": 0.0, "lateral_gain": -0.8}
+  ],
+  "interpretation": "These eight scenes are consumed by v18; this is a development-only action-library feasibility study. Count a per-scene oracle upper bound only for diagnosis, never as a deployable policy. If no safe arm achieves meaningful ball speed in enough scenes, do not train a chooser over a powerless library.",
+  "policy_intervention_authorized": false
+}
