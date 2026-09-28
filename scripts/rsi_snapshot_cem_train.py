@@ -21,6 +21,25 @@ from rosclaw_soccer.rsi.snapshot_shared_temporal_policy import candidate_manifes
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 SEARCH_COORDINATES = tuple((feature, joint) for feature in (0, 1, 4) for joint in range(3))
+PINNED_SOURCES = (
+    "scripts/rsi_snapshot_cem_train.py",
+    "scripts/rsi_isaac_snapshot_replay.py",
+    "src/rosclaw_soccer/rsi/first_touch_snapshot_bank.py",
+    "src/rosclaw_soccer/rsi/snapshot_replay_evidence.py",
+    "src/rosclaw_soccer/rsi/snapshot_shared_temporal_policy.py",
+    "src/rosclaw_soccer/rsi/temporal_first_touch_policy.py",
+    "src/rosclaw_soccer/rsi/vector_first_touch_evidence.py",
+    "src/rosclaw_soccer/providers/g1/sonic_navigation.py",
+    "src/rosclaw_soccer/providers/g1/sonic_runup.py",
+    "src/rosclaw_soccer/providers/g1/sonic_torch.py",
+    "src/rosclaw_soccer/providers/g1/sonic_vector.py",
+    "src/rosclaw_soccer/sim/contracts.py",
+)
+
+
+def source_fingerprints() -> dict[str, str]:
+    root = Path(__file__).resolve().parents[1]
+    return {name: hash_bytes((root / name).read_bytes()) for name in PINNED_SOURCES}
 
 
 def score_replay(trace_path: Path, *, max_lanes: int | None = None) -> dict[str, float | int]:
@@ -105,6 +124,12 @@ def main() -> None:
         or not args.model_root.is_dir()
     ):
         parser.error("bounded SIM_ONLY CEM configuration and local Isaac assets required")
+    pinned_sources = source_fingerprints()
+
+    def require_source_unchanged() -> None:
+        if source_fingerprints() != pinned_sources:
+            raise RuntimeError("CEM runner or imported helper changed during experiment")
+
     bank_audit = audit_snapshot_bank(args.snapshot_bank)
     bank = json.loads((args.snapshot_bank / "manifest.json").read_text(encoding="utf-8"))
     base_audit = audit_snapshot_replay(args.baseline_replay, snapshot_bank=args.snapshot_bank)
@@ -128,10 +153,7 @@ def main() -> None:
         "generations": args.generations,
         "seed": args.seed,
         "search_coordinates": [list(item) for item in SEARCH_COORDINATES],
-        "runner_source_hash": hash_bytes(
-            Path(__file__).with_name("rsi_isaac_snapshot_replay.py").read_bytes()
-        ),
-        "trainer_source_hash": hash_bytes(Path(__file__).read_bytes()),
+        "pinned_source_hashes": pinned_sources,
         "asset_hash": hash_bytes(args.g1_usd.read_bytes()),
         "baseline_score": baseline,
         "learning_authorized": False,
@@ -176,6 +198,7 @@ def main() -> None:
                     json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
                 )
             replay_dir = member_root / "replay"
+            require_source_unchanged()
             if not replay_dir.exists():
                 if (
                     args.max_new_evaluations is not None
@@ -221,14 +244,21 @@ def main() -> None:
                         timeout=900,
                         check=False,
                     )
+                require_source_unchanged()
                 if completed.returncode != 0 or not (replay_dir / "report.json").is_file():
                     raise RuntimeError(f"CEM Isaac candidate failed: {member_root}")
                 new_evaluations += 1
             audit = audit_snapshot_replay(
                 replay_dir, snapshot_bank=args.snapshot_bank, candidate_path=candidate_path
             )
+            replay_report = json.loads((replay_dir / "report.json").read_text(encoding="utf-8"))
             if not audit["intervention_action_audited"] or not audit["closed_loop_sonic"]:
                 raise ValueError("CEM action or closed-loop evidence missing")
+            if (
+                replay_report.get("runner_source_hash")
+                != pinned_sources["scripts/rsi_isaac_snapshot_replay.py"]
+            ):
+                raise ValueError("CEM report runner source differs from pinned checkout")
             score = score_replay(replay_dir / "replay.npz")
             score_record = {
                 "schema": "rsi_snapshot_shared_temporal_cem_score_v1",
@@ -261,6 +291,7 @@ def main() -> None:
                 ),
                 flush=True,
             )
+            require_source_unchanged()
         elite = sorted(scores, key=lambda row: row[0], reverse=True)[: max(1, args.population // 2)]
         mean = np.mean([row[1] for row in elite], axis=0)
         sigma = max(0.08, sigma * 0.7)
@@ -285,6 +316,7 @@ def main() -> None:
             summary_path.write_text(
                 json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
             )
+        require_source_unchanged()
 
 
 if __name__ == "__main__":

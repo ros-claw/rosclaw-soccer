@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from scripts.rsi_snapshot_cem_train import score_replay
+from scripts.rsi_snapshot_cem_train import score_replay, source_fingerprints
 
 
 def test_cem_score_counts_independent_lanes_and_root_guard(tmp_path: Path) -> None:
@@ -39,3 +39,10 @@ def test_cem_score_counts_independent_lanes_and_root_guard(tmp_path: Path) -> No
     )
     with pytest.raises(ValueError, match="unsafe"):
         score_replay(trace)
+
+
+def test_cem_pins_runner_and_auditor_sources() -> None:
+    fingerprints = source_fingerprints()
+    assert "scripts/rsi_isaac_snapshot_replay.py" in fingerprints
+    assert "src/rosclaw_soccer/rsi/snapshot_replay_evidence.py" in fingerprints
+    assert all(value.startswith("sha256:") and len(value) == 71 for value in fingerprints.values())
