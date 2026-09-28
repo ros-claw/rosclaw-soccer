@@ -1,0 +1,17 @@
+{
+  "run_id": "first-touch-isaac-foot-geometry-parity-20260930-v1",
+  "purpose": "SIM_ONLY non-actuating collection of causal foot, knee and ball geometry before learning a contact-timing policy",
+  "physics_source_hash": "sha256:56c7550d8a5ed6918b9519c4e02cc21e55a08d933311ca4b1b3c634a36401def",
+  "auditor_source_hash": "sha256:78cd0fcc2c3f1ec3a85efc49af2877b3681b3bde5b54f0e45fb943fba3217e07",
+  "training_course_seed": 20260930,
+  "frozen_parent_report_hash": "sha256:78cc2ea648a9686312b459227d54ed51583b506a353bb9b58b56d5c1de51e9bd",
+  "expected_clean_foot_only_count": 7,
+  "expected_environment_count": 16,
+  "expected_frames": 300,
+  "expected_contact_and_ball_trace_parity": true,
+  "recorded_body_order": ["left_ankle_roll_link", "right_ankle_roll_link", "left_knee_link", "right_knee_link"],
+  "allowed_effect": "observation only; no navigation or joint target intervention",
+  "learning_authorized": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

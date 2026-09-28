@@ -24,6 +24,7 @@ parser.add_argument("--near-ball-gap-m", type=float)
 parser.add_argument("--near-ball-speed-mps", type=float)
 parser.add_argument("--near-ball-incoming-only", action="store_true")
 parser.add_argument("--record-body-trace", action="store_true")
+parser.add_argument("--record-foot-geometry", action="store_true")
 parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
 parser.add_argument("--onnx-graph-encoder-layout", action="store_true")
 parser.add_argument("--torch-batch-shadow", action="store_true")
@@ -58,6 +59,7 @@ if (
     or (args.temporal_policy_actions is not None and not args.temporal_policy_actions.is_file())
     or not 0 <= args.temporal_followthrough_frames <= 30
     or (args.temporal_followthrough_frames > 0 and args.temporal_policy_actions is None)
+    or (args.record_foot_geometry and not args.record_body_trace)
     or (args.parent_report is not None and not args.parent_report.is_file())
     or (
         (args.candidate_actions is not None or args.temporal_policy_actions is not None)
@@ -294,6 +296,17 @@ def main() -> None:
     for contact in contacts:
         contact.reset()
     pelvis_index = robot.body_names.index("pelvis")
+    foot_geometry_body_names = (
+        "left_ankle_roll_link",
+        "right_ankle_roll_link",
+        "left_knee_link",
+        "right_knee_link",
+    )
+    foot_geometry_indices = (
+        [robot.body_names.index(name) for name in foot_geometry_body_names]
+        if args.record_foot_geometry
+        else []
+    )
 
     def rollout(current_navigations: list[G1SonicNavigation]):
         positions = []
@@ -309,6 +322,8 @@ def main() -> None:
         temporal_ball_velocity_observations = []
         temporal_baseline_target_observations = []
         temporal_residual_observations = []
+        foot_geometry_position_observations = []
+        foot_geometry_velocity_observations = []
         applied_frames = np.zeros(args.env_count, dtype=np.int64)
         projection_counts = np.zeros(args.env_count, dtype=np.int64)
         contact_seen = np.zeros(args.env_count, dtype=np.bool_)
@@ -325,12 +340,14 @@ def main() -> None:
         for frame in range(args.frames):
             ball_xyz_frame = (
                 ball.data.root_pos_w.torch.detach().cpu().numpy()
-                if args.near_ball_gap_m is not None or temporal_candidate is not None
+                if args.near_ball_gap_m is not None
+                or temporal_candidate is not None
+                or args.record_foot_geometry
                 else None
             )
             ball_velocity_frame = (
                 ball.data.root_lin_vel_w.torch.detach().cpu().numpy()
-                if temporal_candidate is not None
+                if temporal_candidate is not None or args.record_foot_geometry
                 else None
             )
             ball_vx_frame = (
@@ -350,6 +367,21 @@ def main() -> None:
             robot_joint_velocity_observations.append(
                 robot.data.joint_vel.torch[:, indices].detach().cpu().numpy().copy()
             )
+            if args.record_foot_geometry:
+                foot_geometry_position_observations.append(
+                    robot.data.body_pos_w.torch[:, foot_geometry_indices]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .copy()
+                )
+                foot_geometry_velocity_observations.append(
+                    robot.data.body_lin_vel_w.torch[:, foot_geometry_indices]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .copy()
+                )
             target = robot.data.joint_pos.torch.clone()
             frame_command_speeds = np.full(args.env_count, args.navigation_speed_mps)
             qpos_rows = []
@@ -452,9 +484,10 @@ def main() -> None:
                     target[:, indices] = batch_target
             baseline_target = target.clone()
             frame_temporal_residual = np.zeros((args.env_count, len(TEMPORAL_JOINT_NAMES)))
-            if temporal_candidate is not None:
+            if temporal_candidate is not None or args.record_foot_geometry:
                 temporal_ball_position_observations.append(ball_xyz_frame.copy())
                 temporal_ball_velocity_observations.append(ball_velocity_frame.copy())
+            if temporal_candidate is not None:
                 temporal_baseline_target_observations.append(
                     baseline_target[:, indices].detach().cpu().numpy().copy()
                 )
@@ -583,6 +616,8 @@ def main() -> None:
             np.asarray(temporal_ball_velocity_observations),
             np.asarray(temporal_baseline_target_observations),
             np.asarray(temporal_residual_observations),
+            np.asarray(foot_geometry_position_observations),
+            np.asarray(foot_geometry_velocity_observations),
             applied_frames,
             projection_counts,
             batch_target_max_difference,
@@ -603,6 +638,8 @@ def main() -> None:
         temporal_ball_velocity_observations,
         temporal_baseline_target_observations,
         temporal_residual_observations,
+        foot_geometry_position_observations,
+        foot_geometry_velocity_observations,
         applied_frames,
         projection_counts,
         batch_target_max_difference,
@@ -634,6 +671,17 @@ def main() -> None:
             "joint_target_rad": target_observations,
             "navigation_speed_mps": command_speed_observations,
         }
+        if args.record_foot_geometry:
+            body_record.update(
+                ball_position_before_step_m=temporal_ball_position_observations,
+                ball_linear_velocity_before_step_m_s=temporal_ball_velocity_observations,
+                foot_geometry_position_before_step_m=np.asarray(
+                    foot_geometry_position_observations
+                ),
+                foot_geometry_velocity_before_step_m_s=np.asarray(
+                    foot_geometry_velocity_observations
+                ),
+            )
         if temporal_candidate is not None:
             body_record.update(
                 ball_position_before_step_m=temporal_ball_position_observations,
@@ -699,6 +747,8 @@ def main() -> None:
         report["near_ball_incoming_only"] = args.near_ball_incoming_only
     if body_trace_hash is not None:
         report["body_trace_hash"] = body_trace_hash
+    if args.record_foot_geometry:
+        report["foot_geometry_body_names"] = list(foot_geometry_body_names)
     if args.onnx_graph_encoder_layout:
         report["onnx_graph_encoder_layout"] = True
     if candidate is not None:
@@ -765,6 +815,13 @@ def main() -> None:
             replay_joint_observations,
             replay_joint_velocity_observations,
             replay_target_observations,
+            _replay_command_speed_observations,
+            _replay_temporal_ball_position_observations,
+            _replay_temporal_ball_velocity_observations,
+            _replay_temporal_baseline_target_observations,
+            _replay_temporal_residual_observations,
+            _replay_foot_geometry_position_observations,
+            _replay_foot_geometry_velocity_observations,
             _replay_applied_frames,
             _replay_projection_counts,
             _replay_batch_target_max_difference,
@@ -908,6 +965,13 @@ def main() -> None:
                 second_joint,
                 second_joint_velocity,
                 second_target,
+                _second_command_speed_observations,
+                _second_temporal_ball_position_observations,
+                _second_temporal_ball_velocity_observations,
+                _second_temporal_baseline_target_observations,
+                _second_temporal_residual_observations,
+                _second_foot_geometry_position_observations,
+                _second_foot_geometry_velocity_observations,
                 _second_applied_frames,
                 _second_projection_counts,
                 _second_batch_target_max_difference,

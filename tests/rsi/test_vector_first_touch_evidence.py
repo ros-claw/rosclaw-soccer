@@ -149,6 +149,46 @@ def test_vector_audit_commits_body_and_command_trace(tmp_path: Path) -> None:
         audit_vector_first_touch(folder)
 
 
+def test_vector_audit_foot_geometry_is_aligned_and_ordered(tmp_path: Path) -> None:
+    folder = tmp_path / "case"
+    _fixture(folder)
+    report_path = folder / "report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["foot_geometry_body_names"] = [
+        "left_ankle_roll_link",
+        "right_ankle_roll_link",
+        "left_knee_link",
+        "right_knee_link",
+    ]
+    with np.load(folder / "trace.npz", allow_pickle=False) as physics:
+        positions = physics["ball_position_m"]
+    arrays = {
+        "root_pose_xyzw_m": np.zeros((50, 2, 7)),
+        "root_velocity_world": np.zeros((50, 2, 6)),
+        "joint_position_rad": np.zeros((50, 2, 29)),
+        "joint_velocity_rad_s": np.zeros((50, 2, 29)),
+        "joint_target_rad": np.zeros((50, 2, 29)),
+        "navigation_speed_mps": np.full((50, 2), 1.4),
+        "ball_position_before_step_m": positions.copy(),
+        "ball_linear_velocity_before_step_m_s": np.zeros((50, 2, 3)),
+        "foot_geometry_position_before_step_m": np.zeros((50, 2, 4, 3)),
+        "foot_geometry_velocity_before_step_m_s": np.zeros((50, 2, 4, 3)),
+    }
+    path = folder / "body_trace.npz"
+    np.savez_compressed(path, **arrays)
+    report["body_trace_hash"] = hash_bytes(path.read_bytes())
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert audit_vector_first_touch(folder)["recorded_body_frames"] == 50
+    arrays["ball_position_before_step_m"][2, 0, 0] += 0.1
+    np.savez_compressed(path, **arrays)
+    report["body_trace_hash"] = hash_bytes(path.read_bytes())
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="alignment"):
+        audit_vector_first_touch(folder)
+
+
 def test_vector_audit_requires_bounded_batched_torch_shadow(tmp_path: Path) -> None:
     folder = tmp_path / "case"
     _fixture(folder)

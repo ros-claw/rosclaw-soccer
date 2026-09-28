@@ -32,6 +32,21 @@ def audit_body_trace(folder: Path, report: dict[str, Any], frames: int, lanes: i
             "navigation_speed_mps": (frames, lanes),
         }
         temporal = report.get("schema") == "rsi_isaac_vector_first_touch_temporal_candidate_v1"
+        foot_geometry = "foot_geometry_body_names" in report
+        if foot_geometry:
+            if report["foot_geometry_body_names"] != [
+                "left_ankle_roll_link",
+                "right_ankle_roll_link",
+                "left_knee_link",
+                "right_knee_link",
+            ]:
+                raise ValueError("uncommitted foot geometry body order")
+            shapes.update(
+                ball_position_before_step_m=(frames, lanes, 3),
+                ball_linear_velocity_before_step_m_s=(frames, lanes, 3),
+                foot_geometry_position_before_step_m=(frames, lanes, 4, 3),
+                foot_geometry_velocity_before_step_m_s=(frames, lanes, 4, 3),
+            )
         if temporal:
             shapes.update(
                 ball_position_before_step_m=(frames, lanes, 3),
@@ -44,6 +59,15 @@ def audit_body_trace(folder: Path, report: dict[str, Any], frames: int, lanes: i
             for key, shape in shapes.items()
         ):
             raise ValueError("invalid G1 body trace shape or finite values")
+        if foot_geometry:
+            with np.load(folder / "trace.npz", allow_pickle=False) as physics:
+                if not np.allclose(
+                    body["ball_position_before_step_m"][1:],
+                    physics["ball_position_m"][:-1],
+                    atol=1e-5,
+                    rtol=0,
+                ):
+                    raise ValueError("foot geometry ball alignment invalid")
         command = body["navigation_speed_mps"]
         base_speed = report.get("navigation_speed_mps", 1.4)
         allowed = [base_speed]
