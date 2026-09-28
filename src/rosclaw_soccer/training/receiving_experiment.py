@@ -80,6 +80,7 @@ def simulate_r0_receiving_course(
     capture_ball_follow_targets: bool = False,
     receiving_student: QualifiedReceivingStudent | None = None,
     research_coupled_teacher: bool = False,
+    capture_team_motor_targets: bool = False,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -236,6 +237,18 @@ def simulate_r0_receiving_course(
         )
     ):
         raise ValueError("privileged coupled teacher requires unmixed 0.75 SONIC training world")
+    if (
+        type(capture_team_motor_targets) is not bool
+        or capture_team_motor_targets
+        and (
+            checkpoint_frame != 45
+            or receiving_student is not None
+            or research_coupled_teacher
+            or sonic_model_root is None
+            or sonic_ball_follow_gain != 0.75
+        )
+    ):
+        raise ValueError("read-only team motor capture requires unchanged frame-45 SONIC parent")
     # Validate physical launch values before allocating/loading the simulator.
     receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     fixture = collection_fixture(asset_root, keeper_preview=True)
@@ -316,6 +329,7 @@ def simulate_r0_receiving_course(
         capture_initial_physics=True,
         capture_initial_support=capture_support,
         physics_checkpoint_frame=checkpoint_frame,
+        capture_team_motor_targets=capture_team_motor_targets,
     )
     if suppression is not None:
         inspect_teacher_suppression(trace, contract=suppression, agent_ids=policy.agent_ids)

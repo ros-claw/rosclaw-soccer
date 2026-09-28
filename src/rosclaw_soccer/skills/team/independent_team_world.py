@@ -1057,6 +1057,7 @@ def simulate_independent_team_world(
     capture_initial_physics: bool = False,
     capture_initial_support: bool = False,
     physics_checkpoint_frame: int = 0,
+    capture_team_motor_targets: bool = False,
     contact_teacher_suppression: ContactTeacherSuppression | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all neural locomotion bodies in one clock.
@@ -1079,6 +1080,17 @@ def simulate_independent_team_world(
         raise ValueError("authority capture requires an explicit receiving oracle")
     if type(capture_initial_physics) is not bool:
         raise ValueError("explicit physical capture flag required")
+    if (
+        type(capture_team_motor_targets) is not bool
+        or capture_team_motor_targets
+        and (
+            not capture_initial_physics
+            or physics_checkpoint_frame != 45
+            or receiving_students
+            or research_coupled_teacher_agent_id is not None
+        )
+    ):
+        raise ValueError("read-only eight-G1 motor capture requires frame-45 parent physics")
     if type(capture_initial_support) is not bool or (
         capture_initial_support and not capture_initial_physics
     ):
@@ -3419,6 +3431,13 @@ def simulate_independent_team_world(
                         )
                     target = student_frame_targets[controller.cell.agent_id]
                 raw_torque = kp * (target - q) - kd * dq
+                recorded_pd_torque = raw_torque.copy() if capture_team_motor_targets else None
+                if capture_team_motor_targets:
+                    key = _agent_key(controller.cell.agent_id)
+                    if substep == 0:
+                        trace.setdefault(f"{key}_captured_pd_target", []).append(target.copy())
+                        trace.setdefault(f"{key}_captured_pd_kp", []).append(kp.copy())
+                        trace.setdefault(f"{key}_captured_pd_kd", []).append(kd.copy())
                 if (
                     option_bridge_config is not None and option_bridge_config.measured_state_history
                 ) or (
@@ -3772,6 +3791,13 @@ def simulate_independent_team_world(
                         margin_rad=active.joint_guard_margin_rad,
                     )
                 torque = np.clip(projected_torque, -guarded_limits, guarded_limits)
+                if capture_team_motor_targets:
+                    assert recorded_pd_torque is not None
+                    key = _agent_key(controller.cell.agent_id)
+                    trace.setdefault(f"{key}_captured_extra_torque_nm", []).append(
+                        (raw_torque - recorded_pd_torque).copy()
+                    )
+                    trace.setdefault(f"{key}_captured_executed_torque_nm", []).append(torque.copy())
                 if observe_authority:
                     assert authority_foundation is not None and authority_added is not None
                     requested = np.zeros(29)
