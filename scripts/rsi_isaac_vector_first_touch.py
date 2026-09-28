@@ -32,6 +32,7 @@ parser.add_argument("--torch-batch-plan-only", action="store_true")
 parser.add_argument("--reset-replay", action="store_true")
 parser.add_argument("--second-reset-replay", action="store_true")
 parser.add_argument("--candidate-actions", type=Path)
+parser.add_argument("--temporal-policy-actions", type=Path)
 parser.add_argument("--parent-report", type=Path)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -47,10 +48,22 @@ if (
     or (args.near_ball_speed_mps is not None and not 0.8 <= args.near_ball_speed_mps <= 1.5)
     or (args.near_ball_incoming_only and args.near_ball_gap_m is None)
     or (args.second_reset_replay and not args.reset_replay)
-    or ((args.candidate_actions is None) != (args.parent_report is None))
+    or (args.candidate_actions is not None and args.temporal_policy_actions is not None)
+    or (
+        (args.candidate_actions is not None or args.temporal_policy_actions is not None)
+        != (args.parent_report is not None)
+    )
     or (args.candidate_actions is not None and not args.candidate_actions.is_file())
+    or (args.temporal_policy_actions is not None and not args.temporal_policy_actions.is_file())
     or (args.parent_report is not None and not args.parent_report.is_file())
-    or (args.candidate_actions is not None and args.reset_replay)
+    or (
+        (args.candidate_actions is not None or args.temporal_policy_actions is not None)
+        and args.reset_replay
+    )
+    or (
+        args.temporal_policy_actions is not None
+        and (not args.record_body_trace or not args.torch_batch_plan_only or args.env_count != 16)
+    )
     or (args.torch_batch_drive and not args.torch_batch_shadow)
     or (args.torch_batch_plan_only and (args.torch_batch_shadow or args.torch_batch_drive))
     or (
@@ -89,6 +102,15 @@ from rosclaw_soccer.rsi.first_touch_candidate import (  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_course_catalog import (  # noqa: E402
     sample_training_courses,
     static_development_courses,
+)
+from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
+    JOINT_NAMES as TEMPORAL_JOINT_NAMES,
+)
+from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
+    load_candidate as load_temporal_candidate,
+)
+from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
+    temporal_residual,
 )
 from rosclaw_soccer.rsi.vector_first_touch_evidence import (  # noqa: E402
     audit_vector_first_touch,
@@ -190,7 +212,10 @@ def main() -> None:
         else sample_training_courses(args.training_course_seed, args.env_count)
     )
     candidate = None
-    if args.candidate_actions is not None and args.parent_report is not None:
+    temporal_candidate = None
+    if (
+        args.candidate_actions is not None or args.temporal_policy_actions is not None
+    ) and args.parent_report is not None:
         parent_audit = audit_vector_first_touch(args.parent_report.parent)
         parent = json.loads(args.parent_report.read_text(encoding="utf-8"))
         if (
@@ -221,13 +246,25 @@ def main() -> None:
             != courses
         ):
             raise ValueError("candidate Parent physics, asset or foundation differs")
-        candidate = load_first_touch_candidate(
-            args.candidate_actions,
-            expected_courses=tuple(courses),
-            parent_report_hash=parent["report_hash"],
-        )
-        print("RSI_ISAAC_CANDIDATE_READY=" + candidate.candidate_hash, flush=True)
+        if args.candidate_actions is not None:
+            candidate = load_first_touch_candidate(
+                args.candidate_actions,
+                expected_courses=tuple(courses),
+                parent_report_hash=parent["report_hash"],
+            )
+            print("RSI_ISAAC_CANDIDATE_READY=" + candidate.candidate_hash, flush=True)
+        else:
+            temporal_candidate = load_temporal_candidate(
+                args.temporal_policy_actions,
+                expected_courses=tuple(courses),
+                parent_report_hash=parent["report_hash"],
+            )
+            print(
+                "RSI_ISAAC_TEMPORAL_CANDIDATE_READY=" + temporal_candidate.candidate_hash,
+                flush=True,
+            )
     candidate_joint_indices = [robot.joint_names.index(name) for name in JOINT_NAMES]
+    temporal_joint_indices = [robot.joint_names.index(name) for name in TEMPORAL_JOINT_NAMES]
     pose = robot.data.default_root_pose.torch.clone()
     initial_joint = robot.data.default_joint_pos.torch.clone()
     initial_joint[:, indices] = torch.as_tensor(
@@ -264,6 +301,10 @@ def main() -> None:
         robot_joint_velocity_observations = []
         robot_target_observations = []
         command_speed_observations = []
+        temporal_ball_position_observations = []
+        temporal_ball_velocity_observations = []
+        temporal_baseline_target_observations = []
+        temporal_residual_observations = []
         applied_frames = np.zeros(args.env_count, dtype=np.int64)
         projection_counts = np.zeros(args.env_count, dtype=np.int64)
         contact_seen = np.zeros(args.env_count, dtype=np.bool_)
@@ -278,7 +319,12 @@ def main() -> None:
         for frame in range(args.frames):
             ball_xyz_frame = (
                 ball.data.root_pos_w.torch.detach().cpu().numpy()
-                if args.near_ball_gap_m is not None
+                if args.near_ball_gap_m is not None or temporal_candidate is not None
+                else None
+            )
+            ball_velocity_frame = (
+                ball.data.root_lin_vel_w.torch.detach().cpu().numpy()
+                if temporal_candidate is not None
                 else None
             )
             ball_vx_frame = (
@@ -395,6 +441,13 @@ def main() -> None:
                 if args.torch_batch_drive:
                     target[:, indices] = batch_target
             baseline_target = target.clone()
+            frame_temporal_residual = np.zeros((args.env_count, len(TEMPORAL_JOINT_NAMES)))
+            if temporal_candidate is not None:
+                temporal_ball_position_observations.append(ball_xyz_frame.copy())
+                temporal_ball_velocity_observations.append(ball_velocity_frame.copy())
+                temporal_baseline_target_observations.append(
+                    baseline_target[:, indices].detach().cpu().numpy().copy()
+                )
             if candidate is not None:
                 ball_xyz = ball.data.root_pos_w.torch.detach().cpu().numpy()
                 root_xyz = robot.data.root_link_pose_w.torch[:, :3].detach().cpu().numpy()
@@ -416,8 +469,42 @@ def main() -> None:
                             target[index, joint_index] = value
                             projection_counts[index] += projected
                         applied_frames[index] += 1
+            elif temporal_candidate is not None:
+                root_xyz = robot.data.root_link_pose_w.torch[:, :3].detach().cpu().numpy()
+                limits = robot.data.joint_pos_limits.torch.detach().cpu().numpy()
+                for index, weights in enumerate(temporal_candidate.weights_per_course):
+                    if contact_seen[index]:
+                        continue
+                    residuals = temporal_residual(
+                        weights,
+                        ball_relative_xyz_m=tuple(
+                            float(value) for value in ball_xyz_frame[index] - root_xyz[index]
+                        ),
+                        ball_vx_m_s=float(ball_velocity_frame[index, 0]),
+                        joint_position_rad=robot_joint_observations[-1][index],
+                        joint_velocity_rad_s=robot_joint_velocity_observations[-1][index],
+                    )
+                    if not np.any(residuals):
+                        continue
+                    for output_index, (joint_index, residual) in enumerate(
+                        zip(temporal_joint_indices, residuals, strict=True)
+                    ):
+                        value, projected = project_residual_target(
+                            float(target[index, joint_index]),
+                            float(residual),
+                            float(limits[index, joint_index, 0]),
+                            float(limits[index, joint_index, 1]),
+                        )
+                        frame_temporal_residual[index, output_index] = value - float(
+                            baseline_target[index, joint_index]
+                        )
+                        target[index, joint_index] = value
+                        projection_counts[index] += projected
+                    applied_frames[index] += 1
             robot_target_observations.append(target[:, indices].detach().cpu().numpy().copy())
             command_speed_observations.append(frame_command_speeds)
+            if temporal_candidate is not None:
+                temporal_residual_observations.append(frame_temporal_residual)
             frame_forces_gpu = torch.zeros((args.env_count, 6), device=sim.device)
             for _ in range(10):
                 robot.set_joint_position_target_index(target=target)
@@ -438,14 +525,17 @@ def main() -> None:
                         frame_forces_gpu[i], torch.linalg.vector_norm(force[0, 0], dim=-1)
                     )
                     if (
-                        candidate is not None
+                        (candidate is not None or temporal_candidate is not None)
                         and not contact_seen[i]
                         and bool(torch.any(torch.linalg.vector_norm(force[0, 0], dim=-1) > 1.0))
                     ):
                         contact_seen[i] = True
-                        target[i, candidate_joint_indices] = baseline_target[
-                            i, candidate_joint_indices
-                        ]
+                        active_joint_indices = (
+                            candidate_joint_indices
+                            if candidate is not None
+                            else temporal_joint_indices
+                        )
+                        target[i, active_joint_indices] = baseline_target[i, active_joint_indices]
             positions.append(ball.data.root_pos_w.torch.detach().cpu().numpy().copy())
             angular_velocities.append(ball.data.root_ang_vel_w.torch.detach().cpu().numpy().copy())
             contact_forces.append(frame_forces_gpu.detach().cpu().numpy().copy())
@@ -462,6 +552,10 @@ def main() -> None:
             np.asarray(robot_joint_velocity_observations),
             np.asarray(robot_target_observations),
             np.asarray(command_speed_observations),
+            np.asarray(temporal_ball_position_observations),
+            np.asarray(temporal_ball_velocity_observations),
+            np.asarray(temporal_baseline_target_observations),
+            np.asarray(temporal_residual_observations),
             applied_frames,
             projection_counts,
             batch_target_max_difference,
@@ -478,6 +572,10 @@ def main() -> None:
         joint_velocity_observations,
         target_observations,
         command_speed_observations,
+        temporal_ball_position_observations,
+        temporal_ball_velocity_observations,
+        temporal_baseline_target_observations,
+        temporal_residual_observations,
         applied_frames,
         projection_counts,
         batch_target_max_difference,
@@ -501,15 +599,22 @@ def main() -> None:
     body_trace_hash = None
     if args.record_body_trace:
         body_trace_path = args.output_dir / "body_trace.npz"
-        np.savez_compressed(
-            body_trace_path,
-            root_pose_xyzw_m=root_observations,
-            root_velocity_world=root_velocity_observations,
-            joint_position_rad=joint_observations,
-            joint_velocity_rad_s=joint_velocity_observations,
-            joint_target_rad=target_observations,
-            navigation_speed_mps=command_speed_observations,
-        )
+        body_record = {
+            "root_pose_xyzw_m": root_observations,
+            "root_velocity_world": root_velocity_observations,
+            "joint_position_rad": joint_observations,
+            "joint_velocity_rad_s": joint_velocity_observations,
+            "joint_target_rad": target_observations,
+            "navigation_speed_mps": command_speed_observations,
+        }
+        if temporal_candidate is not None:
+            body_record.update(
+                ball_position_before_step_m=temporal_ball_position_observations,
+                ball_linear_velocity_before_step_m_s=temporal_ball_velocity_observations,
+                baseline_joint_target_rad=temporal_baseline_target_observations,
+                applied_residual_rad=temporal_residual_observations,
+            )
+        np.savez_compressed(body_trace_path, **body_record)
         body_trace_hash = hash_bytes(body_trace_path.read_bytes())
     entries = []
     for i, (x, y, vx) in enumerate(courses):
@@ -535,6 +640,8 @@ def main() -> None:
         "schema": (
             "rsi_isaac_vector_first_touch_candidate_execution_v2"
             if candidate is not None
+            else "rsi_isaac_vector_first_touch_temporal_candidate_v1"
+            if temporal_candidate is not None
             else "rsi_isaac_vector_first_touch_smoke_v1"
         ),
         "activation_ceiling": "SIM_ONLY",
@@ -574,6 +681,13 @@ def main() -> None:
         report["candidate_actions_rad"] = [list(row) for row in candidate.actions_rad]
         report["candidate_actions_applied_frames"] = applied_frames.tolist()
         report["candidate_action_projection_count"] = projection_counts.tolist()
+        report["trained_actor"] = False
+    elif temporal_candidate is not None:
+        report["parent_report_hash"] = temporal_candidate.parent_report_hash
+        report["candidate_hash"] = temporal_candidate.candidate_hash
+        report["temporal_policy_joint_names"] = list(TEMPORAL_JOINT_NAMES)
+        report["temporal_policy_applied_frames"] = applied_frames.tolist()
+        report["temporal_policy_projection_count"] = projection_counts.tolist()
         report["trained_actor"] = False
     report["report_hash"] = hash_json(report)
     (args.output_dir / "report.json").write_text(

@@ -31,6 +31,14 @@ def audit_body_trace(folder: Path, report: dict[str, Any], frames: int, lanes: i
             "joint_target_rad": (frames, lanes, 29),
             "navigation_speed_mps": (frames, lanes),
         }
+        temporal = report.get("schema") == "rsi_isaac_vector_first_touch_temporal_candidate_v1"
+        if temporal:
+            shapes.update(
+                ball_position_before_step_m=(frames, lanes, 3),
+                ball_linear_velocity_before_step_m_s=(frames, lanes, 3),
+                baseline_joint_target_rad=(frames, lanes, 29),
+                applied_residual_rad=(frames, lanes, 3),
+            )
         if set(body.files) != set(shapes) or any(
             body[key].shape != shape or not np.isfinite(body[key]).all()
             for key, shape in shapes.items()
@@ -43,6 +51,20 @@ def audit_body_trace(folder: Path, report: dict[str, Any], frames: int, lanes: i
             allowed.append(report["near_ball_speed_mps"])
         if not np.isin(command, allowed).all():
             raise ValueError("G1 body trace has uncommitted navigation speed")
+        if temporal:
+            from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+            from rosclaw_soccer.rsi.temporal_first_touch_policy import JOINT_NAMES
+
+            joint_indices = [G1_DDS_JOINT_NAMES.index(name) for name in JOINT_NAMES]
+            actual_difference = body["joint_target_rad"] - body["baseline_joint_target_rad"]
+            residual = body["applied_residual_rad"]
+            remaining = np.delete(actual_difference, joint_indices, axis=2)
+            if (
+                np.max(np.abs(residual)) > 0.08 + 1e-6
+                or not np.allclose(actual_difference[:, :, joint_indices], residual, atol=1e-5)
+                or not np.allclose(remaining, 0.0, atol=1e-5)
+            ):
+                raise ValueError("temporal body trace violates bounded joint target delta")
         return int(np.count_nonzero(command != base_speed))
 
 
@@ -509,20 +531,187 @@ def audit_first_touch_candidate_execution(
     return result
 
 
+def audit_temporal_first_touch_execution(
+    folder: Path, *, parent_folder: Path, candidate_path: Path
+) -> dict[str, Any]:
+    """Recompute each proprioceptive action from pre-step body/ball evidence."""
+    from rosclaw_soccer.rsi.temporal_first_touch_policy import (
+        JOINT_NAMES as TEMPORAL_JOINT_NAMES,
+    )
+    from rosclaw_soccer.rsi.temporal_first_touch_policy import (
+        load_candidate,
+        temporal_residual,
+    )
+
+    parent_audit = audit_vector_first_touch(parent_folder)
+    parent = json.loads((parent_folder / "report.json").read_text(encoding="utf-8"))
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    trace_path = folder / "trace.npz"
+    courses = tuple(
+        (
+            row["course"]["ball_x_m"],
+            row["course"]["ball_y_local_m"],
+            row["course"]["ball_vx_m_s"],
+        )
+        for row in parent["environments"]
+    )
+    candidate = load_candidate(
+        candidate_path, expected_courses=courses, parent_report_hash=parent["report_hash"]
+    )
+    if (
+        report.get("schema") != "rsi_isaac_vector_first_touch_temporal_candidate_v1"
+        or report.get("activation_ceiling") != "SIM_ONLY"
+        or report.get("learning_authorized") is not False
+        or report.get("promotion_authorized") is not False
+        or report.get("trained_actor") is not False
+        or report.get("parent_report_hash") != parent["report_hash"]
+        or report.get("candidate_hash") != candidate.candidate_hash
+        or report.get("asset_hash") != parent["asset_hash"]
+        or report.get("sonic_qualification_hash") != parent["sonic_qualification_hash"]
+        or report.get("frames") != parent["frames"]
+        or report.get("training_course_seed") != parent["training_course_seed"]
+        or report.get("course_catalog_hash") != parent["course_catalog_hash"]
+        or report.get("torch_batch_plan_only") is not True
+        or report.get("navigation_speed_mps", 1.4) != 1.4
+        or report.get("temporal_policy_joint_names") != list(TEMPORAL_JOINT_NAMES)
+        or "near_ball_gap_m" in report
+        or not isinstance(report.get("body_trace_hash"), str)
+        or report.get("trace_hash") != hash_bytes(trace_path.read_bytes())
+        or report.get("report_hash")
+        != hash_json({key: value for key, value in report.items() if key != "report_hash"})
+    ):
+        raise ValueError("unauthenticated temporal first-touch physics")
+    frames, count = report["frames"], len(courses)
+    changed_commands = audit_body_trace(folder, report, frames, count)
+    if changed_commands != 0:
+        raise ValueError("temporal actor changed frozen navigation command")
+    with (
+        np.load(trace_path, allow_pickle=False) as physics,
+        np.load(folder / "body_trace.npz", allow_pickle=False) as body,
+    ):
+        positions = physics["ball_position_m"]
+        force = physics["ball_body_contact_force_peak_n"]
+        ball_before = body["ball_position_before_step_m"]
+        ball_velocity = body["ball_linear_velocity_before_step_m_s"]
+        root = body["root_pose_xyzw_m"]
+        joint = body["joint_position_rad"]
+        joint_velocity = body["joint_velocity_rad_s"]
+        applied = body["applied_residual_rad"]
+        if (
+            positions.shape != (frames, count, 3)
+            or force.shape != (frames, count, 6)
+            or not np.allclose(ball_before[1:], positions[:-1], atol=1e-5, rtol=0)
+        ):
+            raise ValueError("temporal pre-step ball/body alignment invalid")
+        clean = 0
+        rewards = []
+        applied_frames = []
+        for i, (x, y, _vx) in enumerate(courses):
+            row = report["environments"][i]
+            active = np.flatnonzero(np.max(force[:, i], axis=1) > 1.0)
+            first = int(active[0]) if len(active) else None
+            bodies = np.flatnonzero(np.max(force[:, i], axis=0) > 1.0).tolist()
+            if (
+                row["course"] != parent["environments"][i]["course"]
+                or row["lane_y_m"] != parent["environments"][i]["lane_y_m"]
+                or row["first_contact_frame"] != first
+                or row["contact_body_indices"] != bodies
+                or not np.allclose(ball_before[0, i], (x, row["lane_y_m"] + y, 0.13), atol=1e-6)
+                or not np.allclose(
+                    row["ball_final_local_xyz_m"],
+                    (
+                        positions[-1, i, 0],
+                        positions[-1, i, 1] - row["lane_y_m"],
+                        positions[-1, i, 2],
+                    ),
+                    atol=1e-5,
+                    rtol=0,
+                )
+                or row["minimum_pelvis_z_m"] < 0.65
+            ):
+                raise ValueError("temporal course, body or contact ledger invalid")
+            count_applied = 0
+            for frame in range(frames):
+                expected = (
+                    temporal_residual(
+                        candidate.weights_per_course[i],
+                        ball_relative_xyz_m=(
+                            float(ball_before[frame, i, 0] - root[frame, i, 0]),
+                            float(ball_before[frame, i, 1] - root[frame, i, 1]),
+                            float(ball_before[frame, i, 2] - root[frame, i, 2]),
+                        ),
+                        ball_vx_m_s=float(ball_velocity[frame, i, 0]),
+                        joint_position_rad=joint[frame, i],
+                        joint_velocity_rad_s=joint_velocity[frame, i],
+                    )
+                    if first is None or frame <= first
+                    else np.zeros(len(TEMPORAL_JOINT_NAMES))
+                )
+                actual = applied[frame, i]
+                if np.any(expected):
+                    count_applied += 1
+                if np.any((np.abs(actual - expected) > 1e-5) & (np.abs(actual) > 1e-5)):
+                    raise ValueError("temporal action differs from committed body-aware policy")
+            applied_frames.append(count_applied)
+            foot_only = bool(bodies and set(bodies) <= {0, 1})
+            clean += foot_only
+            rewards.append(1.0 if foot_only else -1.0 if bodies else -0.5)
+    projections = report.get("temporal_policy_projection_count")
+    if (
+        report.get("temporal_policy_applied_frames") != applied_frames
+        or not isinstance(projections, list)
+        or len(projections) != count
+        or any(type(value) is not int or not 0 <= value <= frames * 3 for value in projections)
+    ):
+        raise ValueError("temporal action application or projection ledger invalid")
+    result: dict[str, Any] = {
+        "schema": "rsi_isaac_temporal_first_touch_candidate_audit_v1",
+        "activation_ceiling": "SIM_ONLY",
+        "partition": "CONSUMED_DEV",
+        "parent_report_hash": parent["report_hash"],
+        "candidate_hash": candidate.candidate_hash,
+        "execution_report_hash": report["report_hash"],
+        "independent_training_course_count": count,
+        "parent_clean_foot_only_count": parent_audit["clean_foot_only_episode_count"],
+        "candidate_clean_foot_only_count": clean,
+        "reward_per_course": rewards,
+        "temporal_policy_applied_frames": applied_frames,
+        "temporal_policy_projection_count": projections,
+        "recorded_body_frames": frames,
+        "fresh_opened": False,
+        "promotion_authorized": False,
+    }
+    result["report_hash"] = hash_json(result)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--reset-replay", action="store_true")
     parser.add_argument("--candidate-manifest", type=Path)
+    parser.add_argument("--temporal-candidate-manifest", type=Path)
     parser.add_argument("--parent-folder", type=Path)
     args = parser.parse_args()
-    if args.reset_replay and args.candidate_manifest is not None:
+    if args.reset_replay and (
+        args.candidate_manifest is not None or args.temporal_candidate_manifest is not None
+    ):
         parser.error("reset replay and candidate audit are separate protocols")
-    if (args.candidate_manifest is None) != (args.parent_folder is None):
+    if args.candidate_manifest is not None and args.temporal_candidate_manifest is not None:
+        parser.error("choose one candidate protocol")
+    if (args.candidate_manifest is not None or args.temporal_candidate_manifest is not None) != (
+        args.parent_folder is not None
+    ):
         parser.error("candidate audit requires both manifest and Parent folder")
     report = (
-        audit_first_touch_candidate_execution(
+        audit_temporal_first_touch_execution(
+            args.folder,
+            parent_folder=args.parent_folder,
+            candidate_path=args.temporal_candidate_manifest,
+        )
+        if args.temporal_candidate_manifest is not None and args.parent_folder is not None
+        else audit_first_touch_candidate_execution(
             args.folder,
             parent_folder=args.parent_folder,
             candidate_path=args.candidate_manifest,
