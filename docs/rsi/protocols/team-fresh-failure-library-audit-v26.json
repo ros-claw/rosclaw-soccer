@@ -1,0 +1,10 @@
+{
+  "schema": "rsi_team_fresh_failure_library_audit_protocol_v26",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "failed_exam_protocol_path": "docs/rsi/protocols/team-contextual-nav-fresh-exam-v25.json",
+  "failed_exam_report_path": "/data/rosclaw_overflow/rsi-team-contextual-nav-fresh-v25/report.json",
+  "failed_exam_report_hash": "sha256:d77a62a25b4cb7e6c7e0f0a2b8bf4d8423b13aa8f3af63fd9b9601bb0a87b974",
+  "interpretation": "v25 fresh exam was already opened and rejected. Reuse those 12 scenarios only as consumed development data to separate selector error from action-library infeasibility."
+}
