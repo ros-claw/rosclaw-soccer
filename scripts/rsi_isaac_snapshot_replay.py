@@ -21,6 +21,7 @@ parser.add_argument("--sample-count", type=int, default=16)
 parser.add_argument("--start-index", type=int, default=0)
 parser.add_argument("--knee-extension-probe", action="store_true")
 parser.add_argument("--closed-loop-sonic", action="store_true")
+parser.add_argument("--shared-candidate", type=Path)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -30,6 +31,9 @@ if (
     or args.output_dir.exists()
     or not 2 <= args.sample_count <= 16
     or args.start_index < 0
+    or (args.knee_extension_probe and args.shared_candidate is not None)
+    or (args.shared_candidate is not None and not args.shared_candidate.is_file())
+    or (args.shared_candidate is not None and not args.closed_loop_sonic)
 ):
     parser.error("qualified snapshot bank, assets and fresh 2-16 lane output required")
 launcher = AppLauncher(args)
@@ -53,6 +57,7 @@ from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch  # noqa: 
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_candidate import project_residual_target  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_snapshot_bank import audit_snapshot_bank  # noqa: E402
+from rosclaw_soccer.rsi.snapshot_shared_temporal_policy import load_candidate  # noqa: E402
 from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
     JOINT_NAMES as PROBE_JOINT_NAMES,
 )
@@ -100,6 +105,12 @@ def _observation(
 def main() -> None:
     bank_audit = audit_snapshot_bank(args.snapshot_bank)
     manifest = json.loads((args.snapshot_bank / "manifest.json").read_text(encoding="utf-8"))
+    shared_candidate_hash = None
+    shared_weights = None
+    if args.shared_candidate is not None:
+        shared_candidate_hash, shared_weights = load_candidate(
+            args.shared_candidate, bank_manifest_hash=bank_audit["manifest_hash"]
+        )
     stop = args.start_index + args.sample_count
     if stop > manifest["snapshot_count"]:
         raise ValueError("snapshot selection exceeds authenticated bank")
@@ -396,8 +407,13 @@ def main() -> None:
     max_parent_target_error_at_snapshot = 0.0
     probe_applied_frames = np.zeros(args.sample_count, dtype=np.int64)
     contact_seen = np.zeros(args.sample_count, dtype=np.bool_)
-    probe_weights = knee_extension_probe_weights()[0]
+    probe_weights = (
+        shared_weights if shared_weights is not None else knee_extension_probe_weights()[0]
+    )
     probe_joint_indices = [robot.joint_names.index(name) for name in PROBE_JOINT_NAMES]
+    probe_joint_limits = (
+        robot.data.joint_pos_limits.torch[:, probe_joint_indices].detach().cpu().numpy().copy()
+    )
     for frame in range(manifest["window_frames"]):
         root_before = robot.data.root_link_pose_w.torch.detach().cpu().numpy().copy()
         joint_before = robot.data.joint_pos.torch[:, indices].detach().cpu().numpy().copy()
@@ -468,7 +484,7 @@ def main() -> None:
         predicted_baseline_target.append(target[:, indices].detach().cpu().numpy().copy())
         base_target = target.clone()
         frame_residual = np.zeros((args.sample_count, len(PROBE_JOINT_NAMES)))
-        if args.knee_extension_probe:
+        if args.knee_extension_probe or shared_weights is not None:
             limits = robot.data.joint_pos_limits.torch.detach().cpu().numpy()
             for lane in range(args.sample_count):
                 if contact_seen[lane]:
@@ -516,7 +532,7 @@ def main() -> None:
                     peak_force[lane], torch.linalg.vector_norm(matrix.torch[0, 0], dim=-1)
                 )
                 if (
-                    args.knee_extension_probe
+                    (args.knee_extension_probe or shared_weights is not None)
                     and not contact_seen[lane]
                     and bool(torch.any(torch.linalg.vector_norm(matrix.torch[0, 0], dim=-1) > 1.0))
                 ):
@@ -578,6 +594,7 @@ def main() -> None:
         pre_step_ball_linear_velocity_m_s=np.asarray(pre_step_ball_velocity),
         applied_probe_residual_rad=np.asarray(applied_residual),
         predicted_baseline_joint_target_rad=np.asarray(predicted_baseline_target),
+        probe_joint_position_limits_rad=probe_joint_limits,
         observed_ball_position_local_m=observed_ball_arr,
         observed_root_pose_local_xyzw_m=observed_root_arr,
         observed_ball_body_contact_force_peak_n=observed_force_arr,
@@ -597,6 +614,8 @@ def main() -> None:
         "sample_count": args.sample_count,
         "window_frames": manifest["window_frames"],
         "knee_extension_probe": args.knee_extension_probe,
+        "shared_candidate_hash": shared_candidate_hash,
+        "probe_joint_limits_recorded": True,
         "closed_loop_sonic": args.closed_loop_sonic,
         "warmup_max_target_error_rad": warmup_max_target_error,
         "max_parent_target_error_at_snapshot_rad": max_parent_target_error_at_snapshot,

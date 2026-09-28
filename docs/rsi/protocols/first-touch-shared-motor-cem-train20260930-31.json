@@ -1,0 +1,16 @@
+{
+  "schema": "rsi_first_touch_shared_motor_cem_protocol_v1",
+  "purpose": "Train one shared bounded hip/knee/ankle proprioceptive first-contact actor using closed-loop Isaac physical returns, without candidate promotion",
+  "activation_ceiling": "SIM_ONLY",
+  "snapshot_bank_manifest_hash": "sha256:40ff9080aa204aa78c93a2c8385343d1b183a83ed5f5ebd6bd1fef7e091a7d03",
+  "train_selection": {"start_index": 0, "sample_count": 15, "source_training_seeds": [20260930, 20260931]},
+  "holdout_selection": {"start_index": 15, "sample_count": 8, "source_training_seed": 20260932},
+  "search": {"method": "CEM", "population": 4, "generations": 2, "seed": 20260928, "search_features": ["bias", "longitudinal_ball_gap", "right_knee_position"], "joints": ["right_hip_pitch_joint", "right_knee_joint", "right_ankle_pitch_joint"], "max_weight_absolute": 1.0, "max_residual_rad": 0.08},
+  "score": "Mean per-lane reward: +1 for full-window clean-foot-only contact; +0.5 if first-contact bodies are feet only else -0.5; +0.2*clip(postcontact_x_speed,-1,3)/3; no contact -2; any root height <0.65 m rejects candidate",
+  "baseline_train": {"clean_foot_count": 4, "sample_count": 15, "mean_reward": 0.2638268012470669},
+  "development_gate": "Train clean-foot count >=7/15 and mean reward > baseline; do not inspect holdout until CEM candidate selection is frozen",
+  "holdout_gate": "At least 4/8 clean-foot contacts, no physical fall, zero nonfinite state, independently audited bounded actions, then full 300-frame runs on all three seeds",
+  "failure_rule": "If the development gate fails, retain frozen Parent and record the failed search; do not promote an actor or produce a claimed football demonstration",
+  "learning_authorized": false,
+  "promotion_authorized": false
+}

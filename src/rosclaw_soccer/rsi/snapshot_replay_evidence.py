@@ -13,14 +13,52 @@ from rosclaw_soccer.rsi.first_touch_snapshot_bank import audit_snapshot_bank
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
-def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any]:
+def projected_probe_residual(
+    desired: np.ndarray,
+    baseline_target: np.ndarray,
+    joint_limits: np.ndarray,
+    joint_indices: list[int],
+) -> np.ndarray:
+    """Recompute the bounded target delta after the physical joint-limit shield."""
+    from rosclaw_soccer.rsi.first_touch_candidate import project_residual_target
+
+    if (
+        desired.shape != (3,)
+        or baseline_target.shape != (29,)
+        or joint_limits.shape != (3, 2)
+        or len(joint_indices) != 3
+        or not np.isfinite(desired).all()
+        or not np.isfinite(baseline_target).all()
+        or not np.isfinite(joint_limits).all()
+    ):
+        raise ValueError("invalid bounded snapshot probe inputs")
+    return np.asarray(
+        [
+            project_residual_target(
+                float(baseline_target[joint_index]),
+                float(value),
+                float(joint_limits[output_index, 0]),
+                float(joint_limits[output_index, 1]),
+            )[0]
+            - float(baseline_target[joint_index])
+            for output_index, (joint_index, value) in enumerate(
+                zip(joint_indices, desired, strict=True)
+            )
+        ]
+    )
+
+
+def audit_snapshot_replay(
+    folder: Path, *, snapshot_bank: Path, candidate_path: Path | None = None
+) -> dict[str, Any]:
     bank_audit = audit_snapshot_bank(snapshot_bank)
     manifest = json.loads((snapshot_bank / "manifest.json").read_text(encoding="utf-8"))
     report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     trace_path = folder / "replay.npz"
     count = report.get("sample_count")
     start = report.get("start_index")
-    probe = report.get("knee_extension_probe", False)
+    shared_hash = report.get("shared_candidate_hash")
+    probe = bool(report.get("knee_extension_probe", False) or shared_hash is not None)
     closed_loop = report.get("closed_loop_sonic", False)
     if (
         report.get("schema") != "rsi_isaac_first_touch_snapshot_replay_v1"
@@ -32,7 +70,12 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
         or report.get("asset_hash") != manifest["source_identity"][1]
         or report.get("foundation_qualification_hash") != manifest["source_identity"][2]
         or report.get("runner_source_hash", "").startswith("sha256:") is not True
-        or type(probe) is not bool
+        or type(report.get("knee_extension_probe", False)) is not bool
+        or (
+            shared_hash is not None
+            and (report.get("knee_extension_probe") is True or not isinstance(shared_hash, str))
+        )
+        or (candidate_path is None) != (shared_hash is None)
         or type(closed_loop) is not bool
         or type(count) is not int
         or not 2 <= count <= 16
@@ -82,6 +125,8 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
             )
         if "closed_loop_sonic" in report:
             shapes["predicted_baseline_joint_target_rad"] = (frames, count, 29)
+        if report.get("probe_joint_limits_recorded") is True:
+            shapes["probe_joint_position_limits_rad"] = (count, 3, 2)
         if set(replay.files) != set(shapes) or any(
             replay[key].shape != shape or not np.isfinite(replay[key]).all()
             for key, shape in shapes.items()
@@ -144,6 +189,12 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
         if np.any(observed_force < 0):
             raise ValueError("negative physical contact force")
         if "knee_extension_probe" in report:
+            if shared_hash is not None and report.get("probe_joint_limits_recorded") is not True:
+                raise ValueError("shared motor candidate lacks physical joint limit evidence")
+            if report.get("probe_joint_limits_recorded") is True:
+                joint_limits = replay["probe_joint_position_limits_rad"]
+                if np.any(joint_limits[:, :, 0] >= joint_limits[:, :, 1]):
+                    raise ValueError("invalid bounded joint limit trace")
             if "closed_loop_sonic" in report:
                 target = replay["predicted_baseline_joint_target_rad"]
                 parent = bank["privileged_parent_joint_targets_rad"][
@@ -191,13 +242,27 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
             ):
                 raise ValueError("snapshot intervention pre-step state misaligned")
             if probe:
+                from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
                 from rosclaw_soccer.rsi.temporal_first_touch_policy import (
+                    JOINT_NAMES,
                     knee_extension_probe_weights,
                     temporal_residual,
                 )
 
-                weights = knee_extension_probe_weights()[0]
+                if shared_hash is None:
+                    weights = knee_extension_probe_weights()[0]
+                else:
+                    from rosclaw_soccer.rsi.snapshot_shared_temporal_policy import load_candidate
+
+                    if candidate_path is None:
+                        raise ValueError("shared snapshot intervention lacks candidate")
+                    candidate_hash, weights = load_candidate(
+                        candidate_path, bank_manifest_hash=bank_audit["manifest_hash"]
+                    )
+                    if candidate_hash != shared_hash:
+                        raise ValueError("shared snapshot intervention candidate changed")
                 applied_counts = []
+                joint_indices = [G1_DDS_JOINT_NAMES.index(name) for name in JOINT_NAMES]
                 for lane in range(count):
                     active = np.flatnonzero(np.max(observed_force[:, lane], axis=1) > 1.0)
                     first = int(active[0]) if len(active) else None
@@ -229,7 +294,15 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
                             else np.zeros(3)
                         )
                         actual_action = replay["applied_probe_residual_rad"][frame, lane]
-                        if np.any(expected_action):
+                        desired_nonzero = bool(np.any(expected_action))
+                        if report.get("probe_joint_limits_recorded") is True:
+                            expected_action = projected_probe_residual(
+                                expected_action,
+                                replay["predicted_baseline_joint_target_rad"][frame, lane],
+                                joint_limits[lane],
+                                joint_indices,
+                            )
+                        if desired_nonzero:
                             applied_count += 1
                         if not np.allclose(actual_action, expected_action, atol=1e-5, rtol=0):
                             raise ValueError(
@@ -305,6 +378,7 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
         "parent_replay_equivalent": parent_equivalent,
         "short_horizon_training_surrogate_qualified": qualified,
         "intervention_action_audited": probe,
+        "shared_candidate_hash": shared_hash,
         "closed_loop_sonic": closed_loop,
         "intervention_training_qualified": False,
         "future_parent_target_is_privileged": True,
@@ -318,11 +392,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", type=Path)
     parser.add_argument("--snapshot-bank", required=True, type=Path)
+    parser.add_argument("--shared-candidate", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("immutable replay audit output already exists")
-    result = audit_snapshot_replay(args.folder, snapshot_bank=args.snapshot_bank)
+    result = audit_snapshot_replay(
+        args.folder, snapshot_bank=args.snapshot_bank, candidate_path=args.shared_candidate
+    )
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(result, sort_keys=True))
 
