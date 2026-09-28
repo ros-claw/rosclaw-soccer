@@ -41,6 +41,7 @@ def _run(
     ball_course: tuple[float, float, float] | None = None,
     post_touch_bias: NDArray[np.float64] | None = None,
     near_touch_bias: NDArray[np.float64] | None = None,
+    substep_feedback: bool = False,
 ) -> dict[str, Any]:
     data = mujoco.MjData(model)
     data.qpos[:] = arrays["sonic_recorded_qpos"][SNAPSHOT]
@@ -84,39 +85,51 @@ def _run(
     minimum = float(data.qpos[2])
     maximum_tilt = 0.0
     for frame in range(SNAPSHOT + 1, 101):
-        target = arrays["sonic_recorded_target"][frame].copy()
+        base_target = arrays["sonic_recorded_target"][frame]
         kp = arrays["sonic_recorded_kp"][frame]
         kd = arrays["sonic_recorded_kd"][frame]
-        dx = data.qpos[36] - data.qpos[0]
-        feature = np.concatenate(
-            (
-                np.asarray(
+
+        def target_at_current_state(
+            base_target: NDArray[np.float64],
+            first: dict[str, Any] | None,
+            first_nonfoot: dict[str, Any] | None,
+        ) -> NDArray[np.float64]:
+            target = base_target.copy()
+            dx = data.qpos[36] - data.qpos[0]
+            if 0.12 < dx < 0.85:
+                feature = np.concatenate(
                     (
-                        dx,
-                        data.qpos[37] - data.qpos[1],
-                        data.qvel[35] - data.qvel[0],
-                        data.qvel[36] - data.qvel[1],
-                        data.qpos[2] - 0.75,
+                        np.asarray(
+                            (
+                                dx,
+                                data.qpos[37] - data.qpos[1],
+                                data.qvel[35] - data.qvel[0],
+                                data.qvel[36] - data.qvel[1],
+                                data.qpos[2] - 0.75,
+                            )
+                        ),
+                        data.qpos[7 + index],
+                        data.qvel[6 + index] / 5.0,
                     )
-                ),
-                data.qpos[7 + index],
-                data.qvel[6 + index] / 5.0,
-            )
-        )
-        if 0.12 < dx < 0.85:
-            phase_bias = bias
-            if first is None and dx <= 0.50 and near_touch_bias is not None:
-                phase_bias = near_touch_bias
-            elif (
-                post_touch_bias is not None
-                and first is not None
-                and first["kind"] == "foot"
-                and first_nonfoot is None
-            ):
-                phase_bias = post_touch_bias
-            residual = ACTION_LIMIT_RAD * np.tanh(matrix @ feature + phase_bias)
-            target[index] = np.clip(target[index] + residual, limits[:, 0], limits[:, 1])
+                )
+                phase_bias = bias
+                if first is None and dx <= 0.50 and near_touch_bias is not None:
+                    phase_bias = near_touch_bias
+                elif (
+                    post_touch_bias is not None
+                    and first is not None
+                    and first["kind"] == "foot"
+                    and first_nonfoot is None
+                ):
+                    phase_bias = post_touch_bias
+                residual = ACTION_LIMIT_RAD * np.tanh(matrix @ feature + phase_bias)
+                target[index] = np.clip(target[index] + residual, limits[:, 0], limits[:, 1])
+            return target
+
+        target = target_at_current_state(base_target, first, first_nonfoot)
         for substep in range(10):
+            if substep_feedback and substep > 0:
+                target = target_at_current_state(base_target, first, first_nonfoot)
             data.ctrl[:] = np.clip(
                 kp * (target - data.qpos[7:36]) - kd * data.qvel[6:35],
                 -torque_limit,
