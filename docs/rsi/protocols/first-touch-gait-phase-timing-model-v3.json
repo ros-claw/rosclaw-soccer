@@ -1,0 +1,27 @@
+{
+  "schema": "rsi_first_touch_gait_phase_timing_model_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "development_course_seeds": [20260930, 20260931, 20260934, 20260936, 20260937, 20260938],
+  "sealed_holdout_course_seeds": [20260939, 20260940],
+  "excluded_seen_holdout_seeds": [20260932, 20260935],
+  "estimated_gait_period_control_frames": 40,
+  "contact_time_teacher": "parent_physical_first_contact_offset_development_only",
+  "online_features": ["current_ball_relative_pose", "current_ball_velocity", "current_root_velocity", "predicted_contact_gait_phase"],
+  "candidate_actions_phase_frames": [0.0, 3.0, 6.0],
+  "validation": "leave_one_entire_course_seed_out_with_time_predictor_refit_per_fold",
+  "development_gate": {
+    "minimum_combined_clean_foot_gain": 4,
+    "require_no_seed_clean_foot_regression": true,
+    "require_mean_reward_above_parent": true,
+    "maximum_contact_time_mae_frames": 6.0
+  },
+  "holdout_gate": {
+    "minimum_combined_clean_foot_gain": 4,
+    "require_no_seed_clean_foot_regression": true,
+    "require_mean_reward_above_parent": true,
+    "minimum_root_height_m": 0.65
+  },
+  "full_episode_and_team_match_required_for_promotion": true,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
