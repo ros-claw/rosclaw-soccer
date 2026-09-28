@@ -1,0 +1,28 @@
+{
+  "schema": "rsi_first_touch_full_episode_transfer_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "frozen_parent_actor_hash": "sha256:78349ed4999982f0e1460fdc183ceb20052e756e1eac1458d74c4c13934955a6",
+  "frozen_late_swing_actor_hash": "sha256:40f710a9443dd4070950485395fd724ef27a5a5ca1dcffef6a369f1bc71ad623",
+  "snapshot_holdout_verdict_hash": "sha256:2020737f835739c3c9ba67dd5b4c74569625024221820a666142b4c72c859af9",
+  "reason": "Snapshot holdout passed 4/16 to 10/16, but restored roots diverged up to about 4cm before contact from their long source; short-window transfer is not established.",
+  "course_contract": "sixteen independent G1 plus rolling-ball lanes, 300 frames, fixed SONIC foundation and seed-specific course catalog; actor computes only current frame-30 body/ball state and then bounded foot IK using current observations; only incoming lanes eligible",
+  "consumed_development_course_seeds": [20260955, 20260956],
+  "fresh_sealed_holdout_course_seeds_if_development_gate_passes": [20260957, 20260958],
+  "metric": "full-episode clean-foot-only contact among all eight incoming lanes per seed; report all sixteen lanes, pelvis safety, and postcontact stability separately",
+  "development_gate": {
+    "minimum_combined_incoming_clean_foot_gain_over_parent": 4,
+    "require_no_seed_incoming_clean_foot_regression": true,
+    "require_all_parent_incoming_successes_retained": true,
+    "minimum_pelvis_height_m": 0.65,
+    "require_independent_action_trace_audit": true
+  },
+  "fresh_holdout_gate": {
+    "minimum_combined_incoming_clean_foot_gain_over_parent": 4,
+    "require_no_seed_incoming_clean_foot_regression": true,
+    "require_all_parent_incoming_successes_retained": true,
+    "minimum_pelvis_height_m": 0.65
+  },
+  "team_match_and_publicity_required_after_this_gate": true,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
