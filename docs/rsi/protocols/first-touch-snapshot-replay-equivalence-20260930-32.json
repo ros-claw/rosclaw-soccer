@@ -1,0 +1,16 @@
+{
+  "run_id": "first-touch-snapshot-replay-equivalence-20260930-32-v1",
+  "purpose": "SIM_ONLY test whether authenticated 30-frame precontact snapshots can reproduce frozen-parent physical collision before any RL training",
+  "runner_source_hash": "sha256:bd0b9793082af426286d93c1e2b9cdceca03e4e86c8e203b1e65fd9f728998a6",
+  "snapshot_bank_manifest_hash": "sha256:aaf6c89db7af6bdc4833cf5182583309d8c7891ec277eebbcd6de8d0a1482efe",
+  "snapshot_selection": {"start_index": 0, "sample_count": 16},
+  "physics_dt_s": 0.002,
+  "control_decimation": 10,
+  "replay_window_frames": 80,
+  "precontact_lead_frames": 30,
+  "diagnostic_teacher": "recorded future SONIC joint targets; privileged hindsight used only for parent replay equivalence, not a policy input",
+  "acceptance": "All 16 snapshots have precontact ball position maximum error <=0.005 m and root position <=0.01 m; first contact offset differs by <=1 control frame and first-contact body class is identical. Otherwise reject short-horizon training surrogate.",
+  "learning_authorized": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

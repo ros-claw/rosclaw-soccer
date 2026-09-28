@@ -1,0 +1,21 @@
+{
+  "run_id": "first-touch-precontact-snapshot-bank-20260930-32-v1",
+  "purpose": "Build authenticated short-horizon Isaac state snapshots 30 frames before incoming-ball contact for replay-equivalence research",
+  "extractor_source_hash": "sha256:c6172a215b0e9d7abff5c1fdc3469a9c7b6387403c41de77d5cb54424df192c6",
+  "source_course_seeds": [20260930, 20260931, 20260932],
+  "source_report_hashes": [
+    "sha256:3cc578661a0f094775054080639c29067e0adb24089ca138ab335cf259906816",
+    "sha256:571470b58f76b00bb459e1d1c97f9a78f5d33ca634c0c06955834b0eb8328f31",
+    "sha256:e4ad8f16d4d1ca339b31e589d99e8bdd77d9474caac2a32225c0b638d7cb200f"
+  ],
+  "precontact_lead_frames": 30,
+  "window_frames": 80,
+  "expected_contacted_incoming_snapshots": 23,
+  "state_fields": ["G1 root pose and velocity", "29 joint positions and velocities", "ball pose and linear/angular velocity", "four foot/knee body poses and velocities"],
+  "privileged_fields": ["future frozen-parent joint targets", "future ball and root trajectory", "future contact forces"],
+  "privileged_field_policy": "replay-equivalence diagnosis only; never an online observation or ground-truth promotion evidence",
+  "acceptance": "all source traces pass independent audit, exact snapshot/source equality, finite values and immutable hashes; no robot actuation",
+  "learning_authorized": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

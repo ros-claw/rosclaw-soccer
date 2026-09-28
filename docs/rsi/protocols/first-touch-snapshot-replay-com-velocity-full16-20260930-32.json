@@ -1,0 +1,12 @@
+{
+  "run_id": "first-touch-snapshot-replay-com-velocity-full16-20260930-32-v1",
+  "purpose": "SIM_ONLY expand the corrected COM-velocity snapshot replay from two passing lanes to all first 16 authenticated incoming contacts",
+  "runner_source_hash": "sha256:675abe60022aaac203f37b30dd13dd8a1cfc2ea67ebe952315bd117e01f408b2",
+  "snapshot_bank_manifest_hash": "sha256:aaf6c89db7af6bdc4833cf5182583309d8c7891ec277eebbcd6de8d0a1482efe",
+  "two_lane_diagnostic_report_hash": "sha256:0c7dcafe2484764d5fb2931ebbbdf9d7fd3c61e9a3d6ad4ad8c6c43ee3b1a920",
+  "snapshot_selection": {"start_index": 0, "sample_count": 16},
+  "acceptance": "All initial states within 0.0001, all precontact ball position errors <=0.005 m and root errors <=0.01 m, all first contact offsets within one control frame, and all contact-body classes identical; otherwise do not train on snapshot surrogate",
+  "learning_authorized": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

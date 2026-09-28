@@ -1,0 +1,13 @@
+{
+  "run_id": "first-touch-snapshot-replay-com-velocity-retry-20260930-v1",
+  "supersedes": "first-touch-snapshot-replay-state-diagnostic-20260930-v1",
+  "diagnostic_evidence": "All initial state fields restored exactly except root link velocity (up to 0.034637 m/s); Isaac root velocity writer expects center-of-mass, not link velocity.",
+  "runner_source_hash": "sha256:675abe60022aaac203f37b30dd13dd8a1cfc2ea67ebe952315bd117e01f408b2",
+  "snapshot_bank_manifest_hash": "sha256:aaf6c89db7af6bdc4833cf5182583309d8c7891ec277eebbcd6de8d0a1482efe",
+  "snapshot_selection": {"start_index": 0, "sample_count": 2},
+  "change": "At restored pose, convert authenticated root-link linear velocity to COM velocity with omega cross COM-offset before writing it to Isaac.",
+  "acceptance": "Initial root-link velocity max absolute error <=0.0001 m/s, and 30-frame precontact root position error <=0.01 m; otherwise reject snapshot surrogate pending further diagnosis",
+  "learning_authorized": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

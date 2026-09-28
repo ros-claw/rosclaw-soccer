@@ -1,0 +1,13 @@
+{
+  "run_id": "first-touch-snapshot-audited-complete23-20260930-32-v1",
+  "purpose": "SIM_ONLY independently audit all 23 incoming-ball short-horizon snapshot restores before using them for offline candidate development",
+  "runner_source_hash": "sha256:a6a48fa68d9789b5a686023597d0bb3ebedaecb3764d48a5c82fbe2c270e3c9c",
+  "auditor_source_hash": "sha256:bbd202a23cffd70bbdea9648f7ebb0617951e57aeb29f1319de4e64619ab0a23",
+  "snapshot_bank_manifest_hash": "sha256:aaf6c89db7af6bdc4833cf5182583309d8c7891ec277eebbcd6de8d0a1482efe",
+  "selections": [{"start_index": 0, "sample_count": 16}, {"start_index": 16, "sample_count": 7}],
+  "acceptance": "Each independent replay audit validates source hashes and actual initial-state arrays; max restore error <=0.0001, precontact ball <=0.005 m, root <=0.01 m, and exact first-contact frame and full-window body-class identity for all 23 snapshots",
+  "qualified_use_if_passed": "consumed development of SIM_ONLY short-horizon candidates only; privileged future parent joint targets are a replay teacher and must not become an online policy observation",
+  "learning_authorized": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

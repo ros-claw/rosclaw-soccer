@@ -1,0 +1,13 @@
+{
+  "run_id": "first-touch-snapshot-replay-state-diagnostic-20260930-v1",
+  "trigger": "initial 16-lane snapshot replay failed the predeclared 5 mm ball / 10 mm root / contact-class equivalence gate",
+  "runner_source_hash": "sha256:18b2954d5ab7ba08be7487dc1e5c659147d8ae086480de528b3651ea560fb484",
+  "snapshot_bank_manifest_hash": "sha256:aaf6c89db7af6bdc4833cf5182583309d8c7891ec277eebbcd6de8d0a1482efe",
+  "snapshot_selection": {"start_index": 0, "sample_count": 2},
+  "initial_replay_report_hash": "sha256:cb569c7f4d3d78e8e80de078f9a8815eb5fc4ed8548db61a5baf2932008d03f0",
+  "primary_measures": ["post-restore root pose and velocity error", "post-restore joint position and velocity error", "post-restore ball position and velocity error", "precontact error growth"],
+  "stop_rule": "If initial state differs materially or root drift remains >10 mm, do not use snapshot replay as an RL training surrogate",
+  "learning_authorized": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

@@ -1,0 +1,447 @@
+"""SIM_ONLY replay-equivalence gate for authenticated precontact G1 snapshots.
+
+The recorded future parent joint targets are privileged diagnostic input. This
+script neither trains a controller nor authorizes candidate promotion.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from isaaclab.app import AppLauncher
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--snapshot-bank", required=True, type=Path)
+parser.add_argument("--g1-usd", required=True, type=Path)
+parser.add_argument("--model-root", required=True, type=Path)
+parser.add_argument("--output-dir", required=True, type=Path)
+parser.add_argument("--sample-count", type=int, default=16)
+parser.add_argument("--start-index", type=int, default=0)
+parser.add_argument("--knee-extension-probe", action="store_true")
+AppLauncher.add_app_launcher_args(parser)
+args = parser.parse_args()
+if (
+    not args.snapshot_bank.is_dir()
+    or not args.g1_usd.is_file()
+    or not args.model_root.is_dir()
+    or args.output_dir.exists()
+    or not 2 <= args.sample_count <= 16
+    or args.start_index < 0
+):
+    parser.error("qualified snapshot bank, assets and fresh 2-16 lane output required")
+launcher = AppLauncher(args)
+simulation_app = launcher.app
+
+import isaaclab.sim as sim_utils  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
+from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg  # noqa: E402
+from isaaclab.sensors import ContactSensor, ContactSensorCfg  # noqa: E402
+from isaaclab.sim import SimulationContext  # noqa: E402
+from isaaclab_assets.robots.unitree import G1_29DOF_CFG  # noqa: E402
+
+from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES  # noqa: E402
+from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
+    G1SonicNavigation,
+    SonicNavigationConfig,
+)
+from rosclaw_soccer.rsi.first_touch_candidate import project_residual_target  # noqa: E402
+from rosclaw_soccer.rsi.first_touch_snapshot_bank import audit_snapshot_bank  # noqa: E402
+from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
+    JOINT_NAMES as PROBE_JOINT_NAMES,
+)
+from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
+    knee_extension_probe_weights,
+    temporal_residual,
+)
+from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json  # noqa: E402
+
+
+def main() -> None:
+    bank_audit = audit_snapshot_bank(args.snapshot_bank)
+    manifest = json.loads((args.snapshot_bank / "manifest.json").read_text(encoding="utf-8"))
+    stop = args.start_index + args.sample_count
+    if stop > manifest["snapshot_count"]:
+        raise ValueError("snapshot selection exceeds authenticated bank")
+    with np.load(args.snapshot_bank / "snapshots.npz", allow_pickle=False) as archive:
+        snapshots = {key: archive[key][args.start_index : stop].copy() for key in archive.files}
+    if manifest["source_identity"][1] != hash_bytes(args.g1_usd.read_bytes()):
+        raise ValueError("snapshot G1 asset hash changed")
+    names = tuple(G1_DDS_JOINT_NAMES)
+    navigation = G1SonicNavigation(
+        args.model_root,
+        "snapshot.replay.foundation",
+        SonicNavigationConfig(
+            maximum_frames=300, model_variant="low_latency", experimental_maximum_speed_mps=1.5
+        ),
+    )
+    navigation.backend.qualification.require_eligible()
+    if (
+        manifest["source_identity"][2] != navigation.backend.qualification.qualification_hash
+        or len(names) != 29
+    ):
+        raise ValueError("snapshot frozen foundation qualification changed")
+    kp = np.asarray(navigation.backend.kp, dtype=np.float64)
+    kd = np.asarray(navigation.backend.kd, dtype=np.float64)
+    effort = np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
+    if kp.shape != (29,) or kd.shape != (29,) or effort.shape != (29,):
+        raise ValueError("invalid SONIC G1 actuator contract")
+    sim = SimulationContext(sim_utils.SimulationCfg(device=args.device, dt=0.002))
+    ground = sim_utils.GroundPlaneCfg()
+    ground.func("/World/ground", ground)
+    for index in range(args.sample_count):
+        sim_utils.create_prim(f"/World/Env{index}", "Xform")
+    robot_cfg = G1_29DOF_CFG.copy()
+    robot_cfg.prim_path = "/World/Env.*/G1"
+    robot_cfg.spawn.usd_path = str(args.g1_usd.resolve())
+    robot_cfg.actuators = {
+        "sonic": ImplicitActuatorCfg(
+            joint_names_expr=list(names),
+            effort_limit_sim={name: float(v) for name, v in zip(names, effort, strict=True)},
+            stiffness={name: float(v) for name, v in zip(names, kp, strict=True)},
+            damping={name: float(v) for name, v in zip(names, kd, strict=True)},
+            armature={name: 0.01 for name in names},
+        )
+    }
+    robot = Articulation(cfg=robot_cfg)
+    ball = RigidObject(
+        cfg=RigidObjectCfg(
+            prim_path="/World/Env.*/Ball",
+            spawn=sim_utils.SphereCfg(
+                radius=0.11,
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+                mass_props=sim_utils.MassPropertiesCfg(mass=0.43),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                activate_contact_sensors=True,
+            ),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(2.5, 0.0, 0.13)),
+        )
+    )
+    contacts = []
+    for index in range(args.sample_count):
+        root = f"/World/Env{index}/G1/Geometry/pelvis"
+        left = root + "/left_hip_pitch_link/left_hip_roll_link/left_hip_yaw_link/left_knee_link"
+        right = (
+            root + "/right_hip_pitch_link/right_hip_roll_link/right_hip_yaw_link/right_knee_link"
+        )
+        contacts.append(
+            ContactSensor(
+                ContactSensorCfg(
+                    prim_path=f"/World/Env{index}/Ball",
+                    update_period=0.0,
+                    filter_prim_paths_expr=[
+                        left + "/left_ankle_pitch_link/left_ankle_roll_link",
+                        right + "/right_ankle_pitch_link/right_ankle_roll_link",
+                        left + "/left_ankle_pitch_link",
+                        right + "/right_ankle_pitch_link",
+                        left,
+                        right,
+                    ],
+                )
+            )
+        )
+    sim.reset()
+    if robot.num_instances != args.sample_count or ball.num_instances != args.sample_count:
+        raise ValueError("snapshot replay G1/ball count mismatch")
+    indices = [robot.joint_names.index(name) for name in names]
+    lanes = np.arange(args.sample_count, dtype=np.float64) * 8.0
+    root_pose = snapshots["root_pose_local_xyzw_m"].copy()
+    root_pose[:, 1] += lanes
+    ball_position = snapshots["ball_position_local_m"].copy()
+    ball_position[:, 1] += lanes
+    robot_pose = torch.as_tensor(root_pose, device=sim.device, dtype=torch.float32)
+    robot_velocity = torch.as_tensor(
+        snapshots["root_velocity_world"], device=sim.device, dtype=torch.float32
+    )
+    joint_position = robot.data.default_joint_pos.torch.clone()
+    joint_velocity = robot.data.default_joint_vel.torch.clone()
+    joint_position[:, indices] = torch.as_tensor(
+        snapshots["joint_position_rad"], device=sim.device, dtype=torch.float32
+    )
+    joint_velocity[:, indices] = torch.as_tensor(
+        snapshots["joint_velocity_rad_s"], device=sim.device, dtype=torch.float32
+    )
+    robot.write_root_pose_to_sim_index(root_pose=robot_pose)
+    robot.write_joint_position_to_sim_index(position=joint_position)
+    robot.write_joint_velocity_to_sim_index(velocity=joint_velocity)
+    robot.reset()
+    sim.forward()
+    # Isaac's root-velocity writer takes center-of-mass velocity, whereas the
+    # authenticated body trace records root *link* velocity. Convert at the
+    # restored pose before stepping, rather than silently shifting momentum.
+    com_offset = robot.data.root_com_pose_w.torch[:, :3] - robot.data.root_link_pose_w.torch[:, :3]
+    com_velocity = robot_velocity.clone()
+    com_velocity[:, :3] += torch.linalg.cross(robot_velocity[:, 3:], com_offset)
+    robot.write_root_velocity_to_sim_index(root_velocity=com_velocity)
+    ball_pose = ball.data.default_root_pose.torch.clone()
+    ball_pose[:, :3] = torch.as_tensor(ball_position, device=sim.device, dtype=torch.float32)
+    ball_velocity = torch.as_tensor(
+        np.concatenate(
+            (
+                snapshots["ball_linear_velocity_m_s"],
+                snapshots["ball_angular_velocity_rad_s"],
+            ),
+            axis=1,
+        ),
+        device=sim.device,
+        dtype=torch.float32,
+    )
+    ball.write_root_pose_to_sim_index(root_pose=ball_pose)
+    ball.write_root_velocity_to_sim_index(root_velocity=ball_velocity)
+    ball.reset()
+    for contact in contacts:
+        contact.reset()
+    sim.forward()
+    initial_state_error = {
+        "root_pose_m": np.max(
+            np.abs(
+                robot.data.root_link_pose_w.torch.detach().cpu().numpy() - robot_pose.cpu().numpy()
+            ),
+            axis=1,
+        ).tolist(),
+        "root_velocity_m_s": np.max(
+            np.abs(
+                robot.data.root_link_vel_w.torch.detach().cpu().numpy()
+                - snapshots["root_velocity_world"]
+            ),
+            axis=1,
+        ).tolist(),
+        "joint_position_rad": np.max(
+            np.abs(
+                robot.data.joint_pos.torch[:, indices].detach().cpu().numpy()
+                - snapshots["joint_position_rad"]
+            ),
+            axis=1,
+        ).tolist(),
+        "joint_velocity_rad_s": np.max(
+            np.abs(
+                robot.data.joint_vel.torch[:, indices].detach().cpu().numpy()
+                - snapshots["joint_velocity_rad_s"]
+            ),
+            axis=1,
+        ).tolist(),
+        "ball_position_m": np.max(
+            np.abs(ball.data.root_pos_w.torch.detach().cpu().numpy() - ball_position), axis=1
+        ).tolist(),
+        "ball_velocity_m_s": np.max(
+            np.abs(
+                np.concatenate(
+                    (
+                        ball.data.root_lin_vel_w.torch.detach().cpu().numpy(),
+                        ball.data.root_ang_vel_w.torch.detach().cpu().numpy(),
+                    ),
+                    axis=1,
+                )
+                - ball_velocity.cpu().numpy()
+            ),
+            axis=1,
+        ).tolist(),
+    }
+    initial_root_pose_local = robot.data.root_link_pose_w.torch.detach().cpu().numpy().copy()
+    initial_root_pose_local[:, 1] -= lanes
+    initial_ball_position_local = ball.data.root_pos_w.torch.detach().cpu().numpy().copy()
+    initial_ball_position_local[:, 1] -= lanes
+    initial_root_velocity = robot.data.root_link_vel_w.torch.detach().cpu().numpy().copy()
+    initial_joint_position = robot.data.joint_pos.torch[:, indices].detach().cpu().numpy().copy()
+    initial_joint_velocity = robot.data.joint_vel.torch[:, indices].detach().cpu().numpy().copy()
+    initial_ball_velocity = np.concatenate(
+        (
+            ball.data.root_lin_vel_w.torch.detach().cpu().numpy(),
+            ball.data.root_ang_vel_w.torch.detach().cpu().numpy(),
+        ),
+        axis=1,
+    )
+    observed_ball = []
+    observed_root = []
+    observed_force = []
+    pre_step_root = []
+    pre_step_joint = []
+    pre_step_joint_velocity = []
+    pre_step_ball = []
+    pre_step_ball_velocity = []
+    applied_residual = []
+    probe_applied_frames = np.zeros(args.sample_count, dtype=np.int64)
+    contact_seen = np.zeros(args.sample_count, dtype=np.bool_)
+    probe_weights = knee_extension_probe_weights()[0]
+    probe_joint_indices = [robot.joint_names.index(name) for name in PROBE_JOINT_NAMES]
+    for frame in range(manifest["window_frames"]):
+        root_before = robot.data.root_link_pose_w.torch.detach().cpu().numpy().copy()
+        joint_before = robot.data.joint_pos.torch[:, indices].detach().cpu().numpy().copy()
+        joint_velocity_before = robot.data.joint_vel.torch[:, indices].detach().cpu().numpy().copy()
+        ball_before = ball.data.root_pos_w.torch.detach().cpu().numpy().copy()
+        ball_velocity_before = ball.data.root_lin_vel_w.torch.detach().cpu().numpy().copy()
+        root_before[:, 1] -= lanes
+        ball_before[:, 1] -= lanes
+        pre_step_root.append(root_before)
+        pre_step_joint.append(joint_before)
+        pre_step_joint_velocity.append(joint_velocity_before)
+        pre_step_ball.append(ball_before)
+        pre_step_ball_velocity.append(ball_velocity_before)
+        target = robot.data.joint_pos.torch.clone()
+        target[:, indices] = torch.as_tensor(
+            snapshots["privileged_parent_joint_targets_rad"][:, frame],
+            device=sim.device,
+            dtype=torch.float32,
+        )
+        base_target = target.clone()
+        frame_residual = np.zeros((args.sample_count, len(PROBE_JOINT_NAMES)))
+        if args.knee_extension_probe:
+            limits = robot.data.joint_pos_limits.torch.detach().cpu().numpy()
+            for lane in range(args.sample_count):
+                if contact_seen[lane]:
+                    continue
+                residual = temporal_residual(
+                    probe_weights,
+                    ball_relative_xyz_m=tuple(
+                        float(v) for v in ball_before[lane] - root_before[lane, :3]
+                    ),
+                    ball_vx_m_s=float(ball_velocity_before[lane, 0]),
+                    joint_position_rad=joint_before[lane],
+                    joint_velocity_rad_s=joint_velocity_before[lane],
+                )
+                if not np.any(residual):
+                    continue
+                for output_index, (joint_index, value) in enumerate(
+                    zip(probe_joint_indices, residual, strict=True)
+                ):
+                    projected_target, _projected = project_residual_target(
+                        float(base_target[lane, joint_index]),
+                        float(value),
+                        float(limits[lane, joint_index, 0]),
+                        float(limits[lane, joint_index, 1]),
+                    )
+                    target[lane, joint_index] = projected_target
+                    frame_residual[lane, output_index] = projected_target - float(
+                        base_target[lane, joint_index]
+                    )
+                probe_applied_frames[lane] += 1
+        applied_residual.append(frame_residual)
+        peak_force = torch.zeros((args.sample_count, 6), device=sim.device)
+        for _ in range(10):
+            robot.set_joint_position_target_index(target=target)
+            robot.write_data_to_sim()
+            ball.write_data_to_sim()
+            sim.step()
+            robot.update(sim.get_physics_dt())
+            ball.update(sim.get_physics_dt())
+            for lane, contact in enumerate(contacts):
+                contact.update(sim.get_physics_dt())
+                matrix = contact.data.force_matrix_w
+                if matrix is None or matrix.torch.shape != (1, 1, 6, 3):
+                    raise ValueError("snapshot replay contact filter invalid")
+                peak_force[lane] = torch.maximum(
+                    peak_force[lane], torch.linalg.vector_norm(matrix.torch[0, 0], dim=-1)
+                )
+                if (
+                    args.knee_extension_probe
+                    and not contact_seen[lane]
+                    and bool(torch.any(torch.linalg.vector_norm(matrix.torch[0, 0], dim=-1) > 1.0))
+                ):
+                    contact_seen[lane] = True
+                    target[lane, probe_joint_indices] = base_target[lane, probe_joint_indices]
+        observed_ball.append(ball.data.root_pos_w.torch.detach().cpu().numpy().copy())
+        observed_root.append(robot.data.root_link_pose_w.torch.detach().cpu().numpy().copy())
+        observed_force.append(peak_force.detach().cpu().numpy().copy())
+    observed_ball_arr = np.asarray(observed_ball)
+    observed_root_arr = np.asarray(observed_root)
+    observed_force_arr = np.asarray(observed_force)
+    observed_ball_arr[:, :, 1] -= lanes[None, :]
+    observed_root_arr[:, :, 1] -= lanes[None, :]
+    reference_ball = snapshots["reference_ball_position_local_m"].transpose(1, 0, 2)
+    reference_root = snapshots["reference_root_pose_local_xyzw_m"].transpose(1, 0, 2)
+    reference_force = snapshots["reference_contact_force_n"].transpose(1, 0, 2)
+    precontact = manifest["lead_frames"]
+    ball_error = np.linalg.norm(observed_ball_arr - reference_ball, axis=2)
+    root_error = np.linalg.norm(observed_root_arr[:-1, :, :3] - reference_root[1:, :, :3], axis=2)
+    rows = []
+    for lane in range(args.sample_count):
+        source = manifest["snapshots"][args.start_index + lane]
+        observed = np.flatnonzero(np.max(observed_force_arr[:, lane], axis=1) > 1.0)
+        expected = np.flatnonzero(np.max(reference_force[:, lane], axis=1) > 1.0)
+        observed_first = int(observed[0]) if len(observed) else None
+        expected_first = int(expected[0]) if len(expected) else None
+        observed_bodies = np.flatnonzero(np.max(observed_force_arr[:, lane], axis=0) > 1.0).tolist()
+        expected_bodies = np.flatnonzero(np.max(reference_force[:, lane], axis=0) > 1.0).tolist()
+        rows.append(
+            {
+                "source_report_hash": source["source_report_hash"],
+                "source_lane": source["lane"],
+                "observed_first_contact_offset": observed_first,
+                "reference_first_contact_offset": expected_first,
+                "observed_contact_body_indices": observed_bodies,
+                "reference_contact_body_indices": expected_bodies,
+                "precontact_max_ball_position_error_m": float(
+                    np.max(ball_error[:precontact, lane])
+                ),
+                "precontact_max_root_position_error_m": float(
+                    np.max(root_error[:precontact, lane])
+                ),
+            }
+        )
+    args.output_dir.mkdir(parents=True)
+    trace_path = args.output_dir / "replay.npz"
+    np.savez_compressed(
+        trace_path,
+        initial_root_pose_local_xyzw_m=initial_root_pose_local,
+        initial_root_velocity_world=initial_root_velocity,
+        initial_joint_position_rad=initial_joint_position,
+        initial_joint_velocity_rad_s=initial_joint_velocity,
+        initial_ball_position_local_m=initial_ball_position_local,
+        initial_ball_velocity_world=initial_ball_velocity,
+        pre_step_root_pose_local_xyzw_m=np.asarray(pre_step_root),
+        pre_step_joint_position_rad=np.asarray(pre_step_joint),
+        pre_step_joint_velocity_rad_s=np.asarray(pre_step_joint_velocity),
+        pre_step_ball_position_local_m=np.asarray(pre_step_ball),
+        pre_step_ball_linear_velocity_m_s=np.asarray(pre_step_ball_velocity),
+        applied_probe_residual_rad=np.asarray(applied_residual),
+        observed_ball_position_local_m=observed_ball_arr,
+        observed_root_pose_local_xyzw_m=observed_root_arr,
+        observed_ball_body_contact_force_peak_n=observed_force_arr,
+    )
+    report = {
+        "schema": "rsi_isaac_first_touch_snapshot_replay_v1",
+        "activation_ceiling": "SIM_ONLY",
+        "learning_authorized": False,
+        "promotion_authorized": False,
+        "privileged_future_targets_diagnostic_only": True,
+        "snapshot_bank_manifest_hash": bank_audit["manifest_hash"],
+        "runner_source_hash": hash_bytes(Path(__file__).read_bytes()),
+        "asset_hash": hash_bytes(args.g1_usd.read_bytes()),
+        "foundation_qualification_hash": navigation.backend.qualification.qualification_hash,
+        "trace_hash": hash_bytes(trace_path.read_bytes()),
+        "start_index": args.start_index,
+        "sample_count": args.sample_count,
+        "window_frames": manifest["window_frames"],
+        "knee_extension_probe": args.knee_extension_probe,
+        "probe_applied_frames": probe_applied_frames.tolist(),
+        "initial_state_max_absolute_error": initial_state_error,
+        "rows": rows,
+    }
+    report["report_hash"] = hash_json(report)
+    (args.output_dir / "report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(
+        "RSI_ISAAC_SNAPSHOT_REPLAY="
+        + json.dumps(
+            {
+                "report_hash": report["report_hash"],
+                "sample_count": args.sample_count,
+                "max_precontact_ball_error_m": float(np.max(ball_error[:precontact])),
+                "max_precontact_root_error_m": float(np.max(root_error[:precontact])),
+            }
+        ),
+        flush=True,
+    )
+
+
+try:
+    main()
+except Exception as exc:
+    print("RSI_ISAAC_SNAPSHOT_REPLAY_FAILURE=" + repr(exc), flush=True)
+    raise
+else:
+    simulation_app.close()
