@@ -87,6 +87,11 @@ class Backend:
         self.resets = self.observations = self.updates = 0
         self._history = []
         self.reference = np.zeros((710, 36))
+        self.default_angles = np.zeros(29)
+        self._action_scale = np.ones(29)
+        self.action = np.zeros(29)
+        self.target = np.zeros(29)
+        self.plans = 0
 
     def reset(self, state):
         self.resets += 1
@@ -98,6 +103,9 @@ class Backend:
     def navigation_tick(self, state, frame):
         self.updates += 1
         return np.zeros(29)
+
+    def refresh_reference(self, state, frame):
+        self.plans += 1
 
 
 def controller(monkeypatch, config=None):
@@ -123,6 +131,36 @@ def test_low_latency_variant_is_explicitly_bound(monkeypatch):
     low = controller(monkeypatch, SonicNavigationConfig(model_variant="low_latency"))
     assert legacy.config.model_variant == "sonic_v1_1"
     assert low.contract_hash != legacy.contract_hash
+
+
+def test_batched_navigation_prepare_commit_and_fail_closed(monkeypatch):
+    motor = controller(monkeypatch, SonicNavigationConfig(model_variant="low_latency"))
+    reference = motor.prepare_batched_proposal(observation(0))
+    assert reference.shape == (710, 36)
+    assert motor.backend.updates == 0
+    assert motor.backend.plans == 1
+    proposal = motor.commit_batched_action(np.ones(29, dtype=np.float32) * 0.1)
+    np.testing.assert_allclose(proposal.target_rad, 0.1)
+    assert motor.backend.action.shape == (29,)
+    assert motor._next_frame == 1
+    motor.prepare_batched_proposal(observation(1))
+    assert motor.backend.observations == 1
+    with pytest.raises(ValueError, match="latched off"):
+        motor.commit_batched_action(np.full(29, np.nan))
+    with pytest.raises(ValueError, match="latched"):
+        motor.prepare_batched_proposal(observation(1))
+
+
+def test_batched_navigation_cannot_skip_commit_or_use_other_variant(monkeypatch):
+    motor = controller(monkeypatch, SonicNavigationConfig(model_variant="low_latency"))
+    motor.prepare_batched_proposal(observation(0))
+    with pytest.raises(ValueError, match="latched off"):
+        motor.prepare_batched_proposal(observation(0))
+    with pytest.raises(ValueError, match="latched off"):
+        motor.commit_batched_action(np.zeros(29))
+    legacy = controller(monkeypatch)
+    with pytest.raises(ValueError, match="latched off"):
+        legacy.prepare_batched_proposal(observation(0))
 
 
 def test_opt_in_onnx_graph_layout_changes_navigation_contract(monkeypatch):

@@ -248,6 +248,11 @@ class _StreamingBackend(G1SonicRunupController):
         )
 
     def navigation_tick(self, state: SimpleNamespace, frame: int) -> np.ndarray:
+        self.refresh_reference(state, frame)
+        return self._update_from_reference(state, frame)
+
+    def refresh_reference(self, state: SimpleNamespace, frame: int) -> None:
+        """Plan only the unexecuted lookahead, without invoking the decoder."""
         urgent = self.navigation.experimental_command_replanning and command_event_requires_replan(
             frame=frame,
             last_plan_frame=self.last_planned_frame,
@@ -266,7 +271,6 @@ class _StreamingBackend(G1SonicRunupController):
             n = min(len(segment), len(self.reference) - start)
             self.reference[start : start + n] = segment[:n]
             self.reference[start + n :] = segment[n - 1]
-        return self._update_from_reference(state, frame)
 
 
 class G1SonicNavigation:
@@ -330,6 +334,7 @@ class G1SonicNavigation:
         self._ready_from_handoff = False
         self._ready_from_observation = False
         self._boundary_observation_hash: str | None = None
+        self._batch_pending = False
 
     @property
     def navigation_envelope(self) -> SimulationNavigationEnvelope | None:
@@ -405,41 +410,49 @@ class G1SonicNavigation:
                 "navigation observation initialization failed; option latched off"
             ) from error
 
-    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget:
+    def _prepare_policy_observation(
+        self, observation: TeamMotorObservation
+    ) -> tuple[SimpleNamespace, int]:
         if self._retired:
             raise ValueError("navigation retired after history handoff; a new option is required")
         if self._faulted:
             raise ValueError("navigation fault is latched; a new episode is required")
-        try:
-            self._check_navigation_envelope(observation)
+        if self._batch_pending:
+            raise ValueError("previous batched navigation proposal has not been committed")
+        self._check_navigation_envelope(observation)
+        if (
+            observation.agent_id != self.agent_id
+            or observation.frame != self._next_frame
+            or observation.frame >= self._origin_frame + self.config.maximum_frames
+            or abs(observation.time_sec - observation.frame * 0.02) > 1e-6
+            or observation.navigation_command is None
+        ):
+            raise ValueError(
+                "consecutive timed navigation observations and clearance command required"
+            )
+        q, v = np.asarray(observation.qpos), np.asarray(observation.qvel)
+        if abs(float(np.linalg.norm(q[3:7])) - 1) > 0.01:
+            raise ValueError("unit measured body quaternion required")
+        state = SimpleNamespace(qpos=q, qvel=v)
+        self.backend.command = observation.navigation_command
+        w, x, y, z = q[3:7]
+        self.backend.facing = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+        local_frame = observation.frame - self._origin_frame
+        if local_frame == 0:
             if (
-                observation.agent_id != self.agent_id
-                or observation.frame != self._next_frame
-                or observation.frame >= self._origin_frame + self.config.maximum_frames
-                or abs(observation.time_sec - observation.frame * 0.02) > 1e-6
-                or observation.navigation_command is None
+                self._boundary_observation_hash is not None
+                and hash_json(asdict(observation)) != self._boundary_observation_hash
             ):
-                raise ValueError(
-                    "consecutive timed navigation observations and clearance command required"
-                )
-            q, v = np.asarray(observation.qpos), np.asarray(observation.qvel)
-            if abs(float(np.linalg.norm(q[3:7])) - 1) > 0.01:
-                raise ValueError("unit measured body quaternion required")
-            state = SimpleNamespace(qpos=q, qvel=v)
-            self.backend.command = observation.navigation_command
-            w, x, y, z = q[3:7]
-            self.backend.facing = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-            local_frame = observation.frame - self._origin_frame
-            if local_frame == 0:
-                if (
-                    self._boundary_observation_hash is not None
-                    and hash_json(asdict(observation)) != self._boundary_observation_hash
-                ):
-                    raise ValueError("navigation boundary observation commitment changed")
-                if not (self._ready_from_handoff or self._ready_from_observation):
-                    self.backend.reset(state)
-            else:
-                self.backend.observe(state)
+                raise ValueError("navigation boundary observation commitment changed")
+            if not (self._ready_from_handoff or self._ready_from_observation):
+                self.backend.reset(state)
+        else:
+            self.backend.observe(state)
+        return state, local_frame
+
+    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget:
+        try:
+            state, local_frame = self._prepare_policy_observation(observation)
             target = self.backend.navigation_tick(state, local_frame)
             proposal = TeamMotorTarget(
                 tuple(float(v) for v in target),
@@ -451,6 +464,60 @@ class G1SonicNavigation:
         except Exception as error:
             self._faulted = True
             raise ValueError("navigation proposal failed; option latched off") from error
+
+    def prepare_batched_proposal(self, observation: TeamMotorObservation) -> np.ndarray:
+        """Consume measured state and plan; only a separately verified batch may commit.
+
+        This SIM_ONLY path never opens a motor or simulator handle. A missed or
+        invalid commit latches the option off rather than reusing an old action.
+        """
+        try:
+            if (
+                self.config.model_variant != "low_latency"
+                or self.config.latent_schedule is not None
+                or self.config.pose_reference is not None
+                or self.config.experimental_command_replanning
+            ):
+                raise ValueError("batched decoder requires plain low-latency navigation")
+            state, local_frame = self._prepare_policy_observation(observation)
+            self.backend.refresh_reference(state, local_frame)
+            self._batch_pending = True
+            return self.backend.reference.copy()
+        except Exception as error:
+            self._faulted = True
+            raise ValueError("batched navigation preparation failed; option latched off") from error
+
+    def commit_batched_action(self, action: np.ndarray) -> TeamMotorTarget:
+        """Commit a checked 29-DoF neural action; target is derived locally."""
+        from rosclaw_soccer.providers.g1.sonic_runup import ISAACLAB_TO_MUJOCO
+
+        try:
+            value = np.asarray(action, dtype=np.float32)
+            if (
+                self._faulted
+                or not self._batch_pending
+                or value.shape != (29,)
+                or not np.isfinite(value).all()
+            ):
+                raise ValueError("finite pending batch action required")
+            self.backend.action = value.copy()
+            self.backend.target = (
+                self.backend.default_angles
+                + self.backend.action[ISAACLAB_TO_MUJOCO] * self.backend._action_scale
+            )
+            if not np.isfinite(self.backend.target).all():
+                raise FloatingPointError("invalid batched navigation target")
+            proposal = TeamMotorTarget(
+                tuple(float(v) for v in self.backend.target),
+                tuple(float(v) for v in self.backend.kp),
+                tuple(float(v) for v in self.backend.kd),
+            )
+            self._batch_pending = False
+            self._next_frame += 1
+            return proposal
+        except Exception as error:
+            self._faulted = True
+            raise ValueError("batched navigation commit failed; option latched off") from error
 
     def handoff_to(
         self,

@@ -22,6 +22,7 @@ parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
 parser.add_argument("--onnx-graph-encoder-layout", action="store_true")
 parser.add_argument("--torch-batch-shadow", action="store_true")
 parser.add_argument("--torch-batch-drive", action="store_true")
+parser.add_argument("--torch-batch-plan-only", action="store_true")
 parser.add_argument("--reset-replay", action="store_true")
 parser.add_argument("--second-reset-replay", action="store_true")
 parser.add_argument("--candidate-actions", type=Path)
@@ -40,6 +41,7 @@ if (
     or (args.parent_report is not None and not args.parent_report.is_file())
     or (args.candidate_actions is not None and args.reset_replay)
     or (args.torch_batch_drive and not args.torch_batch_shadow)
+    or (args.torch_batch_plan_only and (args.torch_batch_shadow or args.torch_batch_drive))
 ):
     parser.error("qualified assets, 2-16 environments and new output directory required")
 launcher = AppLauncher(args)
@@ -179,6 +181,7 @@ def main() -> None:
             or parent["sonic_qualification_hash"]
             != navigations[0].backend.qualification.qualification_hash
             or parent.get("onnx_graph_encoder_layout", False) is not args.onnx_graph_encoder_layout
+            or parent.get("torch_batch_plan_only", False) is not args.torch_batch_plan_only
             or len(parent["environments"]) != len(courses)
             or [
                 (
@@ -241,7 +244,7 @@ def main() -> None:
         batch_target_max_difference = 0.0
         batch_model = (
             FrozenSonicG1Torch(args.model_root, variant="low_latency", device=str(sim.device))
-            if args.torch_batch_shadow
+            if args.torch_batch_shadow or args.torch_batch_plan_only
             else None
         )
         for frame in range(args.frames):
@@ -297,8 +300,11 @@ def main() -> None:
                 )
                 if frame == 0:
                     navigation.start_from_observation(obs)
-                proposal = navigation.propose(obs)
-                target[i, indices] = torch.as_tensor(proposal.target_rad, device=sim.device)
+                if args.torch_batch_plan_only:
+                    navigation.prepare_batched_proposal(obs)
+                else:
+                    proposal = navigation.propose(obs)
+                    target[i, indices] = torch.as_tensor(proposal.target_rad, device=sim.device)
             if batch_model is not None:
                 qpos_batch = np.asarray(qpos_rows)
                 qvel_batch = np.asarray(qvel_rows)
@@ -324,12 +330,18 @@ def main() -> None:
                             ].config.lookahead_frames,
                         )
                 batch_target = batch_tracker.update(frame, qpos_batch, qvel_batch)
+                if args.torch_batch_plan_only:
+                    for i, navigation in enumerate(current_navigations):
+                        proposal = navigation.commit_batched_action(
+                            batch_tracker.action[i].detach().cpu().numpy()
+                        )
+                        target[i, indices] = torch.as_tensor(proposal.target_rad, device=sim.device)
                 difference = float(
                     torch.max(torch.abs(batch_target - target[:, indices])).detach().cpu()
                 )
                 batch_target_max_difference = max(batch_target_max_difference, difference)
                 if difference > 1e-3:
-                    raise ValueError("batched SONIC target differs from frozen ONNX shadow")
+                    raise ValueError("batched SONIC target differs from verified navigation target")
                 if args.torch_batch_drive:
                     target[:, indices] = batch_target
             baseline_target = target.clone()
@@ -474,6 +486,9 @@ def main() -> None:
         report["torch_batch_shadow"] = True
         report["torch_batch_drive"] = args.torch_batch_drive
         report["torch_batch_max_target_difference_rad"] = batch_target_max_difference
+    if args.torch_batch_plan_only:
+        report["torch_batch_plan_only"] = True
+        report["torch_batch_max_internal_target_difference_rad"] = batch_target_max_difference
     if args.onnx_graph_encoder_layout:
         report["onnx_graph_encoder_layout"] = True
     if candidate is not None:

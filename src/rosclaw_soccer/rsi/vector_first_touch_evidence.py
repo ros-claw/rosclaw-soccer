@@ -41,6 +41,21 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
             "torch_batch_shadow" not in report
             and ("torch_batch_drive" in report or "torch_batch_max_target_difference_rad" in report)
         )
+        or (
+            "torch_batch_plan_only" in report
+            and (
+                report["torch_batch_plan_only"] is not True
+                or "torch_batch_shadow" in report
+                or type(report.get("torch_batch_max_internal_target_difference_rad"))
+                not in (int, float)
+                or not np.isfinite(report["torch_batch_max_internal_target_difference_rad"])
+                or not 0 <= report["torch_batch_max_internal_target_difference_rad"] <= 1e-3
+            )
+        )
+        or (
+            "torch_batch_plan_only" not in report
+            and "torch_batch_max_internal_target_difference_rad" in report
+        )
     ):
         raise ValueError("unauthenticated vector first-touch evidence")
     entries = report.get("environments")
@@ -289,6 +304,8 @@ def audit_first_touch_candidate_execution(
         or report.get("onnx_graph_encoder_layout", False)
         is not parent.get("onnx_graph_encoder_layout", False)
         or report.get("torch_batch_drive", False) is not parent.get("torch_batch_drive", False)
+        or report.get("torch_batch_plan_only", False)
+        is not parent.get("torch_batch_plan_only", False)
         or report.get("candidate_action_joint_names") != list(JOINT_NAMES)
         or report.get("report_hash") != hash_json(committed)
         or report.get("trace_hash") != hash_bytes(trace_path.read_bytes())

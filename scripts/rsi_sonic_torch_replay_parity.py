@@ -20,7 +20,12 @@ from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation
 
 
 def compare_saved_states(
-    model_root: Path, probe_path: Path, *, frames: int, layout: str = "graph"
+    model_root: Path,
+    probe_path: Path,
+    *,
+    frames: int,
+    layout: str = "graph",
+    batch_plan_only: bool = False,
 ) -> dict:
     if not 2 <= frames <= 200:
         raise ValueError("bounded saved-body parity horizon required")
@@ -53,6 +58,11 @@ def compare_saved_states(
     navigations = [
         G1SonicNavigation(model_root, f"vector.first_touch.{i}", config) for i in range(count)
     ]
+    batched_navigations = (
+        [G1SonicNavigation(model_root, f"vector.first_touch.{i}", config) for i in range(count)]
+        if batch_plan_only
+        else None
+    )
 
     def observations(frame: int) -> tuple[list[TeamMotorObservation], np.ndarray, np.ndarray]:
         rows = []
@@ -88,10 +98,15 @@ def compare_saved_states(
     first_obs, first_q, first_v = observations(0)
     for navigation, observation in zip(navigations, first_obs, strict=True):
         navigation.start_from_observation(observation)
+    if batched_navigations is not None:
+        for navigation, observation in zip(batched_navigations, first_obs, strict=True):
+            navigation.start_from_observation(observation)
     model = FrozenSonicG1Torch(model_root, variant="low_latency", device="cuda:0")
     tracker = BatchedSonicTracker(
         model,
-        np.stack([navigation.backend.reference for navigation in navigations]),
+        np.stack(
+            [navigation.backend.reference for navigation in (batched_navigations or navigations)]
+        ),
         low_latency_legacy_encoder_layout=layout == "legacy",
     )
     tracker.reset(first_q, first_v)
@@ -104,13 +119,30 @@ def compare_saved_states(
                 for navigation, row in zip(navigations, obs, strict=True)
             ]
         )
+        if batched_navigations is not None:
+            for navigation, row in zip(batched_navigations, obs, strict=True):
+                navigation.prepare_batched_proposal(row)
         if frame and frame % config.replan_frames == 0:
             tracker.refresh_unexecuted_reference(
                 frame,
-                np.stack([navigation.backend.reference for navigation in navigations]),
+                np.stack(
+                    [
+                        navigation.backend.reference
+                        for navigation in (batched_navigations or navigations)
+                    ]
+                ),
                 unchanged_lookahead_frames=config.lookahead_frames,
             )
         actual = tracker.update(frame, q, v).detach().cpu().numpy()
+        if batched_navigations is not None:
+            actual = np.asarray(
+                [
+                    navigation.commit_batched_action(action).target_rad
+                    for navigation, action in zip(
+                        batched_navigations, tracker.action.detach().cpu().numpy(), strict=True
+                    )
+                ]
+            )
         maxima.append(float(np.max(np.abs(reference - actual))))
         if frame + 1 < frames:
             _, q_next, v_next = observations(frame + 1)
@@ -126,6 +158,7 @@ def compare_saved_states(
         "frame_count": frames,
         "player_count": count,
         "encoder_layout": layout,
+        "batch_plan_only": batch_plan_only,
         "per_frame_max_target_difference_rad": maxima,
         "maximum_target_difference_rad": maximum,
         "parity_passed": maximum <= 1e-3,
@@ -140,10 +173,15 @@ def main() -> None:
     parser.add_argument("--probe", required=True, type=Path)
     parser.add_argument("--frames", type=int, default=19)
     parser.add_argument("--layout", choices=("graph", "legacy"), default="graph")
+    parser.add_argument("--batch-plan-only", action="store_true")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     report = compare_saved_states(
-        args.model_root, args.probe, frames=args.frames, layout=args.layout
+        args.model_root,
+        args.probe,
+        frames=args.frames,
+        layout=args.layout,
+        batch_plan_only=args.batch_plan_only,
     )
     with args.output.open("x", encoding="utf-8") as stream:
         json.dump(report, stream, indent=2, sort_keys=True)
