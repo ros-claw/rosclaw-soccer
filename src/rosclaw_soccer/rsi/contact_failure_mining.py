@@ -85,9 +85,13 @@ def mine_episode(folder: Path) -> dict[str, Any]:
     contacts = trace["ball_contact_agent_code"]
     feet = trace["ball_contact_foot_code"]
     request_sec = report["request_time_sec"]
-    if type(request_sec) not in (int, float) or not math.isfinite(request_sec):
-        raise ValueError("committed pass request required before contact attribution")
-    after_request = time > request_sec + 1e-9
+    if request_sec is not None and (
+        type(request_sec) not in (int, float) or not math.isfinite(request_sec)
+    ):
+        raise ValueError("finite committed pass request or explicit absence required")
+    after_request = (
+        time > request_sec + 1e-9 if request_sec is not None else np.zeros(len(time), dtype=bool)
+    )
     source_mask = (contacts == source_code) & (feet > 0)
     incidental_precommit_count = int(np.count_nonzero(source_mask & ~after_request))
     source_frames = np.flatnonzero(source_mask & after_request)
@@ -108,7 +112,12 @@ def mine_episode(folder: Path) -> dict[str, Any]:
         _distance(trace["red_finisher_right_foot_position"], ball),
     )
     first_receiver = int(receiver_frames[0]) if len(receiver_frames) else None
-    if report.get("pass_shot_chain_succeeded", report.get("archived_parent_reproduced")):
+    critical: int | None
+    if request_sec is None:
+        stage = "NO_PASS_COMMITMENT"
+        search = np.flatnonzero(time <= 2.0)
+        critical = int(search[np.argmin(source_dist[search])]) if len(search) else 0
+    elif report.get("pass_shot_chain_succeeded", report.get("archived_parent_reproduced")):
         stage = "COMPLETE_CHAIN"
         critical = first_receiver
     elif first_source is None:
@@ -135,6 +144,7 @@ def mine_episode(folder: Path) -> dict[str, Any]:
         "partition": "CONSUMED_DEV",
         "report_hash": report["report_hash"],
         "trace_hash": report["trace_hash"],
+        "pass_request_time_sec": request_sec,
         "ball_initial_position_m": position,
         "safe": report["result"]["safe"],
         "stage": stage,
@@ -169,7 +179,7 @@ def mine_curriculum(folders: tuple[Path, ...]) -> dict[str, Any]:
         "stage_counts": counts,
         "next_training_priority": (
             "sender_first_touch"
-            if counts.get("NO_SOURCE_FOOT_CONTACT", 0)
+            if counts.get("NO_SOURCE_FOOT_CONTACT", 0) or counts.get("NO_PASS_COMMITMENT", 0)
             else "receiver_first_touch"
         ),
         "training_authorized": False,

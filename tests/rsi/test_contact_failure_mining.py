@@ -92,3 +92,18 @@ def test_tamper_and_duplicate_evidence_are_rejected(tmp_path: Path) -> None:
         stream.write(b"tamper")
     with pytest.raises(ValueError, match="unauthenticated"):
         mine_episode(folder)
+
+
+def test_missing_pass_commitment_is_a_failure_stage(tmp_path: Path) -> None:
+    folder = tmp_path / "episode"
+    _fixture(folder)
+    path = folder / "report.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["request_time_sec"] = None
+    report.pop("report_hash")
+    report["report_hash"] = hash_json(report)
+    path.write_text(json.dumps(report), encoding="utf-8")
+    episode = mine_episode(folder)
+    assert episode["stage"] == "NO_PASS_COMMITMENT"
+    assert episode["pass_request_time_sec"] is None
+    assert episode["incidental_precommit_source_foot_frames"] == 1
