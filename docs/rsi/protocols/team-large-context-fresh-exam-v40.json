@@ -1,0 +1,34 @@
+{
+  "schema": "rsi_team_large_context_fresh_exam_protocol_v40",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "model_path": "/data/rosclaw_overflow/rsi-team-large-context-chooser-v39/model.json",
+  "model_hash": "sha256:a9593411e943f8380643ebb346f7113531c881c3c53febb72bf6c4b12b05b690",
+  "train_report_path": "/data/rosclaw_overflow/rsi-team-large-context-chooser-v39/report.json",
+  "train_report_hash": "sha256:72ff171089cc66a0228fbcdb82bc863568a018a5653a181ae00e1fb9b2a25d6b",
+  "fixed_arm": "phase_front04_lat12",
+  "coordinate_seed": 20261020,
+  "identity_seed_base": 1100000,
+  "scene_count": 48,
+  "ball_x_m": [3.4, 4.15],
+  "ball_y_m": [-0.95, -0.45],
+  "ball_vx_mps": [-0.75, -0.25],
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "gate": {
+    "minimum_scenes": 48,
+    "minimum_candidate_useful": 10,
+    "minimum_useful_gain_vs_fixed": 3,
+    "maximum_unsafe_excess_vs_fixed": 0,
+    "maximum_unsafe_excess_vs_parent": 0
+  },
+  "interpretation": "New physical x/y/vx after frozen v39 model. Same-scene Parent, best fixed navigation, and online 16-feature chooser. Any incomplete pair fails closed; passing only supports bounded first-touch selection, not team match promotion."
+}
