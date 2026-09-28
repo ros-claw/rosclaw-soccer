@@ -73,7 +73,11 @@ def _capture(captured: Path, fidelity: Path) -> dict[str, NDArray[np.float64]]:
     return arrays
 
 
-def _rollout(model: mujoco.MjModel, arrays: dict[str, NDArray[np.float64]]) -> tuple[Any, Any]:
+def _rollout(
+    model: mujoco.MjModel,
+    arrays: dict[str, NDArray[np.float64]],
+    joint_indices: tuple[int, ...] = JOINTS,
+) -> tuple[Any, Any]:
     physics = mjx.put_model(model)
     cpu = mujoco.MjData(model)
     cpu.qpos[:] = arrays["sonic_recorded_qpos"][SNAPSHOT]
@@ -97,8 +101,8 @@ def _rollout(model: mujoco.MjModel, arrays: dict[str, NDArray[np.float64]]) -> t
     )
     ball_geom, robot_mask, foot_mask = _contact_masks(model)
     robot_flags, foot_flags = jnp.asarray(robot_mask), jnp.asarray(foot_mask)
-    index = jnp.asarray(JOINTS)
-    joint_limits = jnp.asarray(model.jnt_range[model.actuator_trnid[list(JOINTS), 0]])
+    index = jnp.asarray(joint_indices)
+    joint_limits = jnp.asarray(model.jnt_range[model.actuator_trnid[list(joint_indices), 0]])
     targets = jnp.asarray(
         arrays["sonic_recorded_target"][SNAPSHOT + 1 : SNAPSHOT + 1 + CONTROL_FRAMES]
     )
@@ -106,10 +110,11 @@ def _rollout(model: mujoco.MjModel, arrays: dict[str, NDArray[np.float64]]) -> t
     kd = jnp.asarray(arrays["sonic_recorded_kd"][SNAPSHOT + 1 : SNAPSHOT + 1 + CONTROL_FRAMES])
     frames = jnp.arange(SNAPSHOT + 1, SNAPSHOT + 1 + CONTROL_FRAMES)
     torque_limit = jnp.asarray(G1_HARD_TORQUE_LIMITS, dtype=jnp.float32)
+    features = 5 + 2 * len(joint_indices)
 
     def episode(state: mjx.Data, weights: jax.Array) -> jax.Array:
-        matrix = weights[: len(JOINTS) * FEATURES].reshape(len(JOINTS), FEATURES)
-        bias = weights[len(JOINTS) * FEATURES :]
+        matrix = weights[: len(joint_indices) * features].reshape(len(joint_indices), features)
+        bias = weights[len(joint_indices) * features :]
 
         def control_step(
             carry: tuple[Any, ...], desired: tuple[jax.Array, ...]

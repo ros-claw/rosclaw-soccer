@@ -13,7 +13,6 @@ from numpy.typing import NDArray
 from rsi_mjx_clean_touch_control_es import (
     ACTION_LIMIT_RAD,
     EXAM_FRAME,
-    FEATURES,
     JOINTS,
     SNAPSHOT,
     WEIGHTS,
@@ -38,17 +37,34 @@ def _run(
     model: mujoco.MjModel,
     arrays: dict[str, NDArray[np.float64]],
     weights: NDArray[np.float64],
+    joint_indices: tuple[int, ...] = JOINTS,
+    ball_course: tuple[float, float, float] | None = None,
 ) -> dict[str, Any]:
     data = mujoco.MjData(model)
     data.qpos[:] = arrays["sonic_recorded_qpos"][SNAPSHOT]
     data.qvel[:] = arrays["sonic_recorded_qvel"][SNAPSHOT]
+    if ball_course is not None:
+        x, y, vx = ball_course
+        if (
+            not all(np.isfinite(value) for value in ball_course)
+            or not 2.4 <= x <= 2.7
+            or not 1.2 <= y <= 1.5
+            or not -0.95 <= vx <= -0.75
+        ):
+            raise ValueError("bounded declared CPU training ball course required")
+        base_vx = float(data.qvel[35])
+        data.qpos[36] = x
+        data.qpos[37] = y
+        data.qvel[35] = vx
+        data.qvel[39] += (vx - base_vx) / 0.115
     mujoco.mj_forward(model, data)
     ball_geom, robot_mask, foot_mask = _contact_masks(model)
-    index = np.asarray(JOINTS)
-    limits = model.jnt_range[model.actuator_trnid[list(JOINTS), 0]]
+    index = np.asarray(joint_indices)
+    limits = model.jnt_range[model.actuator_trnid[list(joint_indices), 0]]
     torque_limit = np.asarray(G1_HARD_TORQUE_LIMITS)
-    matrix = weights[: len(JOINTS) * FEATURES].reshape(len(JOINTS), FEATURES)
-    bias = weights[len(JOINTS) * FEATURES :]
+    features = 5 + 2 * len(joint_indices)
+    matrix = weights[: len(joint_indices) * features].reshape(len(joint_indices), features)
+    bias = weights[len(joint_indices) * features :]
     first: dict[str, Any] | None = None
     first_nonfoot: dict[str, Any] | None = None
     foot_impulse = 0.0
