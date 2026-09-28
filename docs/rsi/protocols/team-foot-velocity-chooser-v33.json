@@ -1,0 +1,19 @@
+{
+  "schema": "rsi_team_foot_velocity_chooser_protocol_v33",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "v29_dataset_path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v29/paired_outcomes.npz",
+  "v29_dataset_hash": "sha256:1c9a57cff503ecf756f68a4ccd15dd61d6474c9afb952c37056de6212d2ee2fb",
+  "v31_dataset_path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v31/paired_outcomes.npz",
+  "v31_dataset_hash": "sha256:980426d578b8e5239659c5602c8f83b06486dd2b3f7c2f074ed7e2f382df8f5e",
+  "physical_result_root": "/data/rosclaw_overflow",
+  "training_split": "v29 indices 0..47 plus v31 indices 0..127",
+  "internal_validation_split": "v29 indices 48..63, already consumed during model exploration",
+  "eligible_arms": ["adaptive_c19", "fixed_left_negative", "phase_front04_lat12", "phase_front04_negative", "phase_front04_positive", "phase_stay_lat12"],
+  "feature_indices_in_raw_entry": [12,13,14,15,16,17,18,19,20,21,22,23],
+  "architecture": {"width": 24, "epochs": 50, "learning_rate": 0.004, "weight_decay": 0.04, "ensemble_seeds": [11,19,29], "safety_threshold": 0.65, "safety_quantile": 0.2},
+  "internal_gate": {"maximum_unsafe_equal_to_parent": 3, "minimum_useful": 5},
+  "fresh_exam_gate": {"minimum_scenes": 24, "maximum_unsafe_excess_vs_paired_parent": 0, "minimum_useful_gain_vs_paired_parent": 4, "minimum_useful_total": 5},
+  "interpretation": "Development evidence is not independent because the 16-scene set was inspected. The frozen model must run online on new physical x/y/vx and be compared to paired Parent; only that exam may support a skill claim."
+}

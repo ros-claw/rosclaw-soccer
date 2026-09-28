@@ -2609,6 +2609,7 @@ def simulate_independent_team_world(
                 motor_peer_velocities=motor_peer_velocities,
                 decision=current_decision,
                 positions=positions,
+                model=model,
                 data=data,
                 ball_qpos=ball_qpos,
                 ball_qvel=ball_qvel,
@@ -5126,6 +5127,7 @@ def _movement_command(
     controller: _PlayerController,
     decision: AgentCellDecision,
     positions: dict[str, NDArray[np.float64]],
+    model: Any,
     data: Any,
     ball_qpos: int,
     ball_qvel: int,
@@ -5506,6 +5508,32 @@ def _movement_command(
         previous_command = (
             np.zeros(3) if controller.last_world_command is None else controller.last_world_command
         )
+        measured_foot_motion = (
+            measure_team_foot_kinematics(
+                model=model,
+                data=data,
+                agent_id=controller.cell.agent_id,
+                frame=navigation_frame,
+                ankle_body_ids=(controller.left_ankle_body, controller.right_ankle_body),
+                leg_dof_ids=(
+                    tuple(int(value) for value in controller.joint_qvel[:6]),
+                    tuple(int(value) for value in controller.joint_qvel[6:12]),
+                ),
+                leg_joint_ranges=(
+                    tuple(
+                        tuple(float(value) for value in pair)
+                        for pair in model.jnt_range[controller.joint_ids[:6]]
+                    ),
+                    tuple(
+                        tuple(float(value) for value in pair)
+                        for pair in model.jnt_range[controller.joint_ids[6:12]]
+                    ),
+                ),
+            )
+            if navigation_frame == 30
+            and getattr(navigation_slot.policy, "needs_effector_velocities", False) is True
+            else None
+        )
         observation = NavigationObservation(
             agent_id=controller.cell.agent_id,
             frame=navigation_frame,
@@ -5533,6 +5561,19 @@ def _movement_command(
                     ("left_foot", controller.left_ankle_body),
                     ("right_foot", controller.right_ankle_body),
                 )
+            ),
+            effector_velocities=(
+                tuple(
+                    (name, *velocity)
+                    for name, velocity in zip(
+                        ("left_foot", "right_foot"),
+                        measured_foot_motion.foot_linear_velocity_world_mps,
+                        strict=True,
+                    )
+                )
+                if measured_foot_motion is not None
+                and measured_foot_motion.foot_linear_velocity_world_mps is not None
+                else ()
             ),
             committed_receiver=committed_receiver,
             motor_option_retired=motor_option_retired,

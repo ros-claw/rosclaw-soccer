@@ -1,0 +1,30 @@
+{
+  "schema": "rsi_team_foot_velocity_fresh_exam_protocol_v33",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "model_path": "/data/rosclaw_overflow/rsi-team-foot-velocity-chooser-v33/model.json",
+  "model_hash": "sha256:0e45739533122e589780bf70cbbcd07660b83445e6f1eea25736d6e3defc1cef",
+  "coordinate_seed": 20261003,
+  "identity_seed_base": 970000,
+  "scene_count": 24,
+  "ball_x_m": [3.4, 4.15],
+  "ball_y_m": [-0.95, -0.45],
+  "ball_vx_mps": [-0.75, -0.25],
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "gate": {
+    "minimum_scenes": 24,
+    "maximum_unsafe_excess_vs_paired_parent": 0,
+    "minimum_useful_gain_vs_paired_parent": 4,
+    "minimum_useful_total": 5
+  },
+  "interpretation": "New physical ball coordinates and velocity after frozen model. Same-scene Parent and online Candidate; no cherry-picking, incomplete Candidate counts as failure. Passing only proves bounded first-touch skill, not continuous team play."
+}

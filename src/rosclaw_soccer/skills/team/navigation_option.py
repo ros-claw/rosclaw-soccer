@@ -45,6 +45,8 @@ class NavigationObservation:
     committed_receiver: bool = False
     # Runtime lifecycle only: retirement is not evidence of skill success.
     motor_option_retired: bool = False
+    # Optional same-frame measured velocities; values only, never a world handle.
+    effector_velocities: tuple[tuple[str, float, float, float], ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -79,6 +81,12 @@ class NavigationObservation:
                 type(v) is not tuple or len(v) != 4 or not _identity(v[0]) or not _vector(v[1:], 3)
                 for v in self.effector_positions
             )
+            or type(self.effector_velocities) is not tuple
+            or len(self.effector_velocities) > 16
+            or any(
+                type(v) is not tuple or len(v) != 4 or not _identity(v[0]) or not _vector(v[1:], 3)
+                for v in self.effector_velocities
+            )
             or len(self.neighbors) > 31
             or any(
                 type(v) is not tuple
@@ -94,7 +102,13 @@ class NavigationObservation:
         if tuple(sorted(set(ids))) != ids:
             raise ValueError("unique sorted navigation neighbors required")
         effectors = tuple(v[0] for v in self.effector_positions)
-        if tuple(sorted(set(effectors))) != effectors:
+        velocity_effectors = tuple(v[0] for v in self.effector_velocities)
+        if (
+            tuple(sorted(set(effectors))) != effectors
+            or tuple(sorted(set(velocity_effectors))) != velocity_effectors
+            or velocity_effectors
+            and velocity_effectors != effectors
+        ):
             raise ValueError("unique sorted measured end-effectors required")
 
 

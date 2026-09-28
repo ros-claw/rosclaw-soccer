@@ -20,6 +20,7 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
 from rosclaw_soccer.rsi.team_adaptive_intercept_navigation import TeamAdaptiveInterceptNavigation
 from rosclaw_soccer.rsi.team_context_phase_navigation import TeamContextPhaseNavigation
 from rosclaw_soccer.rsi.team_contextual_nav_policy import TeamContextualNavigationMemory
+from rosclaw_soccer.rsi.team_foot_velocity_chooser import TeamFootVelocityChooser
 from rosclaw_soccer.rsi.team_intercept_navigation import TeamInterceptNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.independent_team_world import (
@@ -44,7 +45,7 @@ class TeamSwingMotor:
         agent_id: str,
         enabled: bool,
         action: dict[str, Any],
-        activation_selector: TeamContextualNavigationMemory | None = None,
+        activation_selector: TeamContextualNavigationMemory | TeamFootVelocityChooser | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.enabled = enabled
@@ -246,6 +247,7 @@ def _run_one(
         TeamInterceptNavigation
         | TeamContextPhaseNavigation
         | TeamContextualNavigationMemory
+        | TeamFootVelocityChooser
         | TeamAdaptiveInterceptNavigation
         | None
     ) = None,
