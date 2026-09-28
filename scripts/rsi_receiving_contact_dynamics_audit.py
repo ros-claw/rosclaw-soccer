@@ -44,6 +44,7 @@ def _run(
     precontact_pulse_weights: NDArray[np.float64] | None = None,
     substep_feedback: bool = False,
     receiving_leg_kp_scale: float = 1.0,
+    task_space_velocity_gain: float | None = None,
 ) -> dict[str, Any]:
     if (
         type(receiving_leg_kp_scale) not in (float, int)
@@ -51,6 +52,12 @@ def _run(
         or not 0.4 <= receiving_leg_kp_scale <= 1.0
     ):
         raise ValueError("bounded SIM_ONLY receiving-leg stiffness scale required")
+    if task_space_velocity_gain is not None and (
+        type(task_space_velocity_gain) not in (float, int)
+        or not np.isfinite(task_space_velocity_gain)
+        or not 0.0 <= task_space_velocity_gain <= 1.0
+    ):
+        raise ValueError("bounded causal task-space teacher gain required")
     data = mujoco.MjData(model)
     data.qpos[:] = arrays["sonic_recorded_qpos"][SNAPSHOT]
     data.qvel[:] = arrays["sonic_recorded_qvel"][SNAPSHOT]
@@ -76,6 +83,24 @@ def _run(
     features = 5 + 2 * len(joint_indices)
     matrix = weights[: len(joint_indices) * features].reshape(len(joint_indices), features)
     bias = weights[len(joint_indices) * features :]
+    foot_geom = -1
+    foot_body = -1
+    if task_space_velocity_gain is not None:
+        expected = (
+            "left_hip_pitch_joint",
+            "left_hip_roll_joint",
+            "left_knee_joint",
+            "left_ankle_pitch_joint",
+            "left_ankle_roll_joint",
+        )
+        actual = tuple(
+            mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, int(model.actuator_trnid[i, 0]))
+            for i in JOINTS
+        )
+        foot_geom = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "left_foot3_collision")
+        if actual != expected or foot_geom < 0:
+            raise ValueError("qualified left-foot task-space geometry required")
+        foot_body = int(model.geom_bodyid[foot_geom])
     if post_touch_bias is not None and (
         post_touch_bias.shape != (len(joint_indices),) or not np.isfinite(post_touch_bias).all()
     ):
@@ -98,6 +123,7 @@ def _run(
     minimum = float(data.qpos[2])
     maximum_tilt = 0.0
     impedance_substeps = 0
+    task_space_active_frames = 0
     for frame in range(SNAPSHOT + 1, 101):
         base_target = arrays["sonic_recorded_target"][frame]
         kp = arrays["sonic_recorded_kp"][frame]
@@ -149,6 +175,35 @@ def _run(
             return target
 
         target = target_at_current_state(base_target, first, first_nonfoot)
+        if task_space_velocity_gain is not None and first is None:
+            foot_point = np.asarray(data.geom_xpos[foot_geom], dtype=np.float64)
+            ball_point = np.asarray(data.qpos[36:39], dtype=np.float64)
+            foot_distance = float(np.linalg.norm(foot_point - ball_point))
+            dx = float(data.qpos[36] - data.qpos[0])
+            if foot_distance <= 0.55 and 0.12 < dx < 0.85:
+                jacp = np.zeros((3, model.nv), dtype=np.float64)
+                jacr = np.zeros((3, model.nv), dtype=np.float64)
+                mujoco.mj_jac(model, data, jacp, jacr, foot_point, foot_body)
+                foot_velocity = jacp @ data.qvel
+                leg_jacobian = jacp[:, 6 + np.asarray(JOINTS)]
+                desired_velocity = task_space_velocity_gain * data.qvel[35:38] - foot_velocity
+                correction = (
+                    0.08
+                    * leg_jacobian.T
+                    @ np.linalg.solve(
+                        leg_jacobian @ leg_jacobian.T + 0.05**2 * np.eye(3),
+                        desired_velocity,
+                    )
+                )
+                leg_limits = model.jnt_range[model.actuator_trnid[list(JOINTS), 0]]
+                existing_residual = target[list(JOINTS)] - base_target[list(JOINTS)]
+                target[list(JOINTS)] = np.clip(
+                    base_target[list(JOINTS)]
+                    + np.clip(existing_residual + correction, -0.12, 0.12),
+                    leg_limits[:, 0],
+                    leg_limits[:, 1],
+                )
+                task_space_active_frames += 1
         for substep in range(10):
             if substep_feedback and substep > 0:
                 target = target_at_current_state(base_target, first, first_nonfoot)
@@ -241,6 +296,7 @@ def _run(
         "minimum_pelvis_height_m": minimum,
         "maximum_tilt_rad": maximum_tilt,
         "impedance_substeps": impedance_substeps,
+        "task_space_active_frames": task_space_active_frames,
     }
 
 
