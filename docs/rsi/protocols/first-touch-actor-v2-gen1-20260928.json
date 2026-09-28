@@ -1,0 +1,19 @@
+{
+  "run_id": "first-touch-actor-v2-gen1-20260928-v1",
+  "purpose": "SIM_ONLY post-update evaluation of contextual actor-critic generation 1 against the frozen sixteen-course Parent",
+  "code_sha": "fc50a12",
+  "physics_source_hash": "sha256:ff2d8363965c3cf1abfb910a848a226b13df872cf2ca4cfc0ead62d729d8764f",
+  "parent_report_hash": "sha256:95fbaf4ce337fa9fbdf172dd0d1642276e75fe31b5225c152ee459a349ecf079",
+  "parent_clean_count": 6,
+  "generation_1_state_hash": "sha256:e762c732433409229fbd8b84c3b20bce2b66413a3ac7a32ba9f502abe2b07254",
+  "source_update_report_hash": "sha256:e9f63eb539a4d1bf9dc9e13b591ea1d50f6eeef443919bb13a3df8338d522dfe",
+  "candidate_manifest_hash": "sha256:6d8bca981c4f3459e7db565ec732068a67ddb309b85a1a483a93349be4b2befe",
+  "candidate_seed": 102,
+  "training_course_seed": 20260928,
+  "sample_count": 16,
+  "actor_bound": "six precontact joint-target residuals, Gaussian sigma 0.05 rad, clipped +/-0.08 rad; per-generation mean shift <=0.01 rad",
+  "metrics": ["clean foot-only count vs Parent", "mean audited reward delta", "nonfoot contact changes", "joint projection count", "minimum pelvis height"],
+  "acceptance": ["No physical safety breach", "No promotion based on consumed training courses", "Use outcome to select next curriculum/actor update, not as Fresh evidence"],
+  "fresh_opened": false,
+  "activation_ceiling": "SIM_ONLY"
+}
