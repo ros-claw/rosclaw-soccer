@@ -1,0 +1,23 @@
+{
+  "run_id": "first-touch-proprio-dataset-seed20260930-31-v1",
+  "purpose": "SIM_ONLY aligned episode-grain G1 proprioception/action/contact learning dataset",
+  "builder_code_sha": "8df04d1",
+  "builder_source_hash": "sha256:60890ee29ce413120dc6e78a043f139128b54e7131db5727463f99e560c07d0c",
+  "source_seeds": [20260930, 20260931],
+  "source_report_hashes": [
+    "sha256:78cc2ea648a9686312b459227d54ed51583b506a353bb9b58b56d5c1de51e9bd",
+    "sha256:cca816471933cc5021e313838cfe0600f58f92abec141268ba07be73a830db57"
+  ],
+  "source_audit_hashes": [
+    "sha256:1344a58ef91cc58a1fc555bdfd8acec6a524274548909575eceebaf6830a055d",
+    "sha256:6818457ce27f7e89df9d77880435a2b610c4e2e128c02a7ecac71d2c9c2703df"
+  ],
+  "independent_episode_count": 32,
+  "frames_per_episode": 300,
+  "feature_alignment": "both ball and body state at frame start; post-step ball trace shifted back one frame",
+  "action_separation": "current joint target stored outside policy observation features",
+  "evaluation_split_rule": "split by whole course seed or episode; never split control frames from one episode",
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
