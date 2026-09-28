@@ -21,10 +21,13 @@ from rosclaw_soccer.rsi.first_touch_candidate import (
     load_first_touch_candidate,
 )
 from rosclaw_soccer.rsi.first_touch_course_catalog import sample_training_courses
-from rosclaw_soccer.rsi.vector_first_touch_evidence import audit_first_touch_candidate_execution
+from rosclaw_soccer.rsi.vector_first_touch_evidence import (
+    audit_first_touch_candidate_execution,
+    audit_vector_first_touch,
+)
 from rosclaw_soccer.sim.contracts import hash_json
 
-SCHEMA = "rsi_isaac_continual_first_touch_actor_v3"
+SCHEMA = "rsi_isaac_continual_first_touch_actor_v3_1"
 DOMAIN_HASH = hash_json(
     {
         "schema": "rsi_isaac_first_touch_train_domain_v1",
@@ -48,6 +51,7 @@ STATE_FIELDS = frozenset(
         "domain_hash",
         "asset_hash",
         "sonic_qualification_hash",
+        "origin_parent_report_hash",
         "generation",
         "actor_weights",
         "critic_weights",
@@ -67,6 +71,7 @@ def _state(
     anchor_actor: np.ndarray,
     seeds: list[int],
     audits: list[str],
+    origin_parent_hash: str,
 ) -> dict[str, Any]:
     if (
         type(generation) is not int
@@ -83,6 +88,9 @@ def _state(
         or len(set(seeds)) != len(seeds)
         or type(audits) is not list
         or len(set(audits)) != len(audits)
+        or not isinstance(origin_parent_hash, str)
+        or len(origin_parent_hash) != 71
+        or not origin_parent_hash.startswith("sha256:")
         or any(
             not isinstance(value, str) or len(value) != 71 or not value.startswith("sha256:")
             for value in audits
@@ -96,6 +104,7 @@ def _state(
         "domain_hash": DOMAIN_HASH,
         "asset_hash": domain_parent["asset_hash"],
         "sonic_qualification_hash": domain_parent["sonic_qualification_hash"],
+        "origin_parent_report_hash": origin_parent_hash,
         "generation": generation,
         "actor_weights": actor.tolist(),
         "critic_weights": critic.tolist(),
@@ -126,17 +135,53 @@ def load_state(data: dict[str, Any]) -> dict[str, Any]:
         np.asarray(data["anchor_actor_weights"], dtype=np.float64),
         data["consumed_training_seeds"],
         data["consumed_audit_hashes"],
+        data["origin_parent_report_hash"],
     )
     if canonical["state_hash"] != data["state_hash"]:
         raise ValueError("continual actor canonical form changed")
     return canonical
 
 
-def migrate_v2(parent_folder: Path, v2_data: dict[str, Any]) -> dict[str, Any]:
+def initial_state(parent_folder: Path) -> dict[str, Any]:
+    """Start from the authenticated frozen Parent, never a failed learned mean."""
+    parent, _ = v2._parent(parent_folder)
+    if parent.get("torch_batch_plan_only") is not True:
+        raise ValueError("continual actor requires frozen batch-plan-only Parent")
+    return _state(
+        parent,
+        0,
+        np.zeros((4, 6)),
+        np.zeros(4),
+        np.zeros((4, 6)),
+        [parent["training_course_seed"]],
+        [],
+        parent["report_hash"],
+    )
+
+
+def migrate_v2(
+    parent_folder: Path,
+    v2_data: dict[str, Any],
+    *,
+    mean_folder: Path,
+    mean_manifest_path: Path,
+) -> dict[str, Any]:
     parent, _ = v2._parent(parent_folder)
     verified = v2.load_state_from_dict(parent, v2_data)
     if not parent.get("torch_batch_plan_only", False) or verified["generation"] < 1:
         raise ValueError("migration requires trained batch-plan-only v2 state")
+    manifest = json.loads(mean_manifest_path.read_text(encoding="utf-8"))
+    expected = v2.deterministic_mean_candidate(parent_folder, verified)
+    audited = audit_first_touch_candidate_execution(
+        mean_folder, parent_folder=parent_folder, candidate_path=mean_manifest_path
+    )
+    parent_clean = audit_vector_first_touch(parent_folder)["clean_foot_only_episode_count"]
+    if (
+        manifest != expected
+        or audited["candidate_hash"] != expected["candidate_hash"]
+        or audited["candidate_clean_foot_only_count"] < parent_clean
+    ):
+        raise ValueError("deterministic learned mean failed physical retention gate")
     actor = np.asarray(verified["actor_weights"], dtype=np.float64)
     return _state(
         parent,
@@ -146,6 +191,7 @@ def migrate_v2(parent_folder: Path, v2_data: dict[str, Any]) -> dict[str, Any]:
         actor.copy(),
         [parent["training_course_seed"]],
         verified["consumed_audit_hashes"],
+        parent["report_hash"],
     )
 
 
@@ -284,6 +330,7 @@ def update(
         anchor_actor,
         [*state["consumed_training_seeds"], parent["training_course_seed"]],
         [*state["consumed_audit_hashes"], audit["report_hash"]],
+        state["origin_parent_report_hash"],
     )
     report: dict[str, Any] = {
         "schema": "rsi_isaac_continual_first_touch_update_v3",
@@ -311,7 +358,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--parent-folder", required=True, type=Path)
     parser.add_argument("--state", type=Path)
+    parser.add_argument("--initialize", action="store_true")
     parser.add_argument("--migrate-v2", type=Path)
+    parser.add_argument("--retention-mean-folder", type=Path)
+    parser.add_argument("--retention-mean-manifest", type=Path)
     parser.add_argument("--candidate-folder", type=Path)
     parser.add_argument("--candidate-manifest", type=Path)
     parser.add_argument("--sample-seed", type=int)
@@ -319,21 +369,39 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--output-report", type=Path)
     args = parser.parse_args()
-    if args.migrate_v2 is not None:
+    if args.initialize:
+        if (
+            args.state is not None
+            or args.migrate_v2 is not None
+            or args.candidate_folder is not None
+            or args.sample_seed is not None
+            or args.deterministic_mean
+        ):
+            parser.error("initialization must be isolated")
+        result = initial_state(args.parent_folder)
+        report = None
+    elif args.migrate_v2 is not None:
         if (
             args.state is not None
             or args.candidate_folder is not None
             or args.sample_seed is not None
             or args.deterministic_mean
+            or args.retention_mean_folder is None
+            or args.retention_mean_manifest is None
         ):
-            parser.error("migration must be isolated")
+            parser.error("migration requires isolated, authenticated mean retention evidence")
         result = migrate_v2(
-            args.parent_folder, json.loads(args.migrate_v2.read_text(encoding="utf-8"))
+            args.parent_folder,
+            json.loads(args.migrate_v2.read_text(encoding="utf-8")),
+            mean_folder=args.retention_mean_folder,
+            mean_manifest_path=args.retention_mean_manifest,
         )
         report = None
     else:
         if args.state is None:
             parser.error("sampling/updating requires a committed continual state")
+        if args.retention_mean_folder is not None or args.retention_mean_manifest is not None:
+            parser.error("retention evidence is for migration only")
         state = load_state(json.loads(args.state.read_text(encoding="utf-8")))
         if args.sample_seed is not None or args.deterministic_mean:
             if args.candidate_folder is not None or args.candidate_manifest is not None:

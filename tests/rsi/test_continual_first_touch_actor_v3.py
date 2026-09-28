@@ -54,8 +54,8 @@ def _setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 def test_continual_update_accepts_new_seed_and_retains_anchors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    parent_a, parent_b, v2_state = _setup(monkeypatch, tmp_path)
-    state = learner.migrate_v2(parent_a, v2_state)
+    parent_a, parent_b, _ = _setup(monkeypatch, tmp_path)
+    state = learner.initial_state(parent_a)
     manifest = learner.sample_candidate(parent_b, state, seed=103)
     mean = learner.deterministic_mean_candidate(parent_b, state)
     assert mean["evaluation_mode"] == "FROZEN_TRANSFER_MEAN"
@@ -80,8 +80,8 @@ def test_continual_update_accepts_new_seed_and_retains_anchors(
 def test_continual_update_rejects_relabelled_action_or_state(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    parent_a, parent_b, v2_state = _setup(monkeypatch, tmp_path)
-    state = learner.migrate_v2(parent_a, v2_state)
+    parent_a, parent_b, _ = _setup(monkeypatch, tmp_path)
+    state = learner.initial_state(parent_a)
     manifest = learner.sample_candidate(parent_b, state, seed=103)
     manifest["actions_rad"][0][0] += 0.001
     manifest["candidate_hash"] = hash_json(
@@ -96,3 +96,30 @@ def test_continual_update_rejects_relabelled_action_or_state(
     state["actor_weights"][0][0] = 0.01
     with pytest.raises(ValueError, match="commitment"):
         learner.sample_candidate(parent_b, state, seed=104)
+
+
+def test_failed_learned_mean_cannot_be_migrated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parent_a, _, v2_state = _setup(monkeypatch, tmp_path)
+    mean_manifest = tmp_path / "mean.json"
+    expected = {"candidate_hash": "sha256:" + "f" * 64}
+    mean_manifest.write_text(json.dumps(expected), encoding="utf-8")
+    monkeypatch.setattr(v2, "deterministic_mean_candidate", lambda *_: expected)
+    monkeypatch.setattr(
+        learner,
+        "audit_vector_first_touch",
+        lambda *_: {"clean_foot_only_episode_count": 6},
+    )
+    monkeypatch.setattr(
+        learner,
+        "audit_first_touch_candidate_execution",
+        lambda *_args, **_kwargs: {
+            "candidate_hash": expected["candidate_hash"],
+            "candidate_clean_foot_only_count": 5,
+        },
+    )
+    with pytest.raises(ValueError, match="retention gate"):
+        learner.migrate_v2(
+            parent_a, v2_state, mean_folder=tmp_path, mean_manifest_path=mean_manifest
+        )
