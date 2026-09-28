@@ -21,9 +21,13 @@ from scripts.rsi_team_intercept_navigation_search import _score
 from scripts.rsi_team_taskspace_first_touch import _run_one
 
 
-def training_courses(protocol: dict[str, Any]) -> list[IndependentTeamWorldScenario]:
+def training_courses(
+    protocol: dict[str, Any], batch_index: int = 0
+) -> list[IndependentTeamWorldScenario]:
     curriculum = protocol["curriculum"]
-    generator = np.random.default_rng(curriculum["coordinate_seed"])
+    if type(batch_index) is not int or not 0 <= batch_index < curriculum.get("batch_count", 1):
+        raise ValueError("invalid committed physical batch index")
+    generator = np.random.default_rng(curriculum["coordinate_seed"] + batch_index)
     scenarios = []
     for index in range(curriculum["training_scene_count"]):
         x = round(float(generator.uniform(*curriculum["ball_x_m"])), 4)
@@ -31,10 +35,16 @@ def training_courses(protocol: dict[str, Any]) -> list[IndependentTeamWorldScena
         vx = round(float(generator.uniform(*curriculum["ball_vx_mps"])), 4)
         scenarios.append(
             IndependentTeamWorldScenario(
-                f"s199.rsi-diverse-training-t{index:03d}",
+                (
+                    f"s199.rsi-diverse-b{batch_index:02d}-t{index:03d}"
+                    if protocol["schema"] == "rsi_team_diverse_curriculum_protocol_v38"
+                    else f"s199.rsi-diverse-training-t{index:03d}"
+                ),
                 (x, y, 0.115),
                 (vx, 0.0, 0.0),
-                curriculum["identity_seed_base"] + index,
+                curriculum["identity_seed_base"]
+                + batch_index * curriculum["training_scene_count"]
+                + index,
             )
         )
     return scenarios
@@ -46,24 +56,26 @@ def main() -> None:
     parser.add_argument("--protocol", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--arm", required=True)
+    parser.add_argument("--batch-index", type=int, default=0)
     args = parser.parse_args()
     if args.output_dir.exists():
         parser.error("curriculum arm output already exists")
     protocol = json.loads(args.protocol.read_text(encoding="utf-8"))
     arms = protocol["arms"]
     arm = next((item for item in arms if item["name"] == args.arm), None)
-    scenarios = training_courses(protocol)
+    scenarios = training_courses(protocol, args.batch_index)
     if (
         protocol.get("schema")
         not in {
             "rsi_team_diverse_curriculum_protocol_v29",
             "rsi_team_diverse_curriculum_protocol_v31",
+            "rsi_team_diverse_curriculum_protocol_v38",
         }
         or protocol.get("development_only") is not True
         or protocol.get("promotion_authorized") is not False
         or protocol.get("frames") != 250
         or arm is None
-        or len(scenarios) not in {64, 128}
+        or len(scenarios) not in {32, 64, 128}
         or len({item["name"] for item in arms}) != len(arms)
         or len(arms) not in {7, 8}
         or len({(s.ball_initial_position_m, s.ball_initial_velocity_mps) for s in scenarios})
@@ -142,13 +154,20 @@ def main() -> None:
                 navigation_policy=navigation,
             )
         except ValueError as error:
-            if mode == "parent" or str(error) != "incomplete paired motor episode":
+            if str(error) not in {
+                "incomplete paired motor episode",
+                "task-space side used future contact or altered support leg",
+            }:
                 raise
             rows.append(
                 {
                     "scene": name,
                     "scenario_hash": scenario.scenario_hash,
-                    "status": "INCOMPLETE",
+                    "status": (
+                        "INCOMPLETE"
+                        if str(error) == "incomplete paired motor episode"
+                        else "AUDIT_REJECTED"
+                    ),
                     "safe": False,
                     "foot_contact_frames": [],
                     "useful_pass": False,
@@ -211,6 +230,7 @@ def main() -> None:
         "asset_body_hash": qualification.body_hash,
         "adaptive_model_hash": protocol["adaptive_model_hash"],
         "arm": arm,
+        "batch_index": args.batch_index,
         "rows": rows,
         "safe_count": sum(bool(row["safe"]) for row in rows),
         "safe_contact_count": sum(bool(row["safe"] and row["foot_contact_frames"]) for row in rows),

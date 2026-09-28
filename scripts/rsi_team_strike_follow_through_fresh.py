@@ -106,14 +106,41 @@ def main() -> None:
     rows = []
     for index, course in enumerate(courses):
         folder = args.output_dir / f"f{index:03d}"
-        parent_report = _run_one(
-            mode="parent",
-            asset_root=args.asset_root,
-            output_dir=folder,
-            fixture=fixture,
-            scenario=course,
-            protocol=protocol,
-        )
+        try:
+            parent_report = _run_one(
+                mode="parent",
+                asset_root=args.asset_root,
+                output_dir=folder,
+                fixture=fixture,
+                scenario=course,
+                protocol=protocol,
+            )
+        except ValueError as error:
+            if str(error) != "incomplete paired motor episode":
+                raise
+            # No authenticated pre-decision Parent state exists for this pair.
+            # Never infer a candidate win from a scene without causal pairing.
+            failed = {
+                "status": "PAIR_INCOMPLETE",
+                "safe": False,
+                "foot_contact_frames": [],
+                "useful_pass": False,
+                "outgoing_ball_vx_mps": None,
+                "report_hash": None,
+            }
+            rows.append(
+                {
+                    "scene": f"f{index:03d}",
+                    "scenario_hash": course.scenario_hash,
+                    "entry_hash": None,
+                    "selected_arm": None,
+                    "parent": failed,
+                    "zero": failed,
+                    "through": failed,
+                }
+            )
+            print(f"f{index:03d} PAIR_INCOMPLETE all variants fail-closed", flush=True)
+            continue
         parent = score_parent(parent_report, folder / "parent/trajectory.npz")
         parent_entry = entry_features(folder / "parent/taskspace_trace.npz", 30)
         variants: dict[str, dict[str, Any]] = {}
@@ -153,7 +180,10 @@ def main() -> None:
                     raise ValueError("changed pre-decision physical state")
                 status = "COMPLETE"
             except ValueError as error:
-                if str(error) != "incomplete paired motor episode":
+                if str(error) not in {
+                    "incomplete paired motor episode",
+                    "task-space side used future contact or altered support leg",
+                }:
                     raise
                 score = {
                     "safe": False,
@@ -162,7 +192,11 @@ def main() -> None:
                     "outgoing_ball_vx_mps": None,
                     "report_hash": None,
                 }
-                status = "INCOMPLETE"
+                status = (
+                    "INCOMPLETE"
+                    if str(error) == "incomplete paired motor episode"
+                    else "AUDIT_REJECTED"
+                )
             variants[name] = {"status": status, **score}
             selections[name] = navigation.selected_arm
         if selections["zero"] != selections["through"]:
