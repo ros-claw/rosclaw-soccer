@@ -1,0 +1,39 @@
+{
+  "schema": "rsi_team_local_joint_risk_fresh_exam_protocol_v45",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "development_report": "/data/rosclaw_overflow/rsi-team-local-joint-risk-swing-v44/report.json",
+  "development_report_hash": "sha256:0e2d4ceb4a46eda01534f0f91125f2d3909f0fb696500d784f2783704258b7b5",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "coordinate_seed": 20261022,
+  "identity_seed_base": 1300000,
+  "scene_count": 48,
+  "ball_x_m": [3.4, 4.15],
+  "ball_y_m": [-0.95, -0.45],
+  "ball_vx_mps": [-0.75, -0.25],
+  "fixed_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.10,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55,
+    "joint_risk_guard_margin_rad": 0.12
+  },
+  "gate": {
+    "minimum_complete_pairs": 48,
+    "minimum_candidate_useful": 12,
+    "minimum_useful_gain_vs_fixed": 4,
+    "minimum_safe_contact_gain_vs_fixed": 0,
+    "maximum_unsafe_excess_vs_fixed": 0
+  },
+  "interpretation": "New physical states test a different predeclared mechanism: improve useful outgoing contact quality without reducing safe contact count or increasing unsafe outcomes. v44 failed its own stricter development gate and remains failed. Passing this fresh exam would support only bounded first-touch transfer, not full-team match promotion."
+}
