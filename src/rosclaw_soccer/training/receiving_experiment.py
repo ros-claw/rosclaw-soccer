@@ -82,6 +82,7 @@ def simulate_r0_receiving_course(
     receiving_student_probe_torque_nm: float = 0.0,
     receiving_student_hip_roll_offset_rad: float = 0.0,
     receiving_student_contact_impedance_scale: float = 1.0,
+    receiving_student_posttouch_brake_nm: float = 0.0,
     research_coupled_teacher: bool = False,
     capture_team_motor_targets: bool = False,
     research_control_frame_limit: int | None = None,
@@ -258,6 +259,18 @@ def simulate_r0_receiving_course(
     ):
         raise ValueError("bounded SIM_ONLY impedance course requires fixed live short parent")
     if (
+        type(receiving_student_posttouch_brake_nm) is not float
+        or receiving_student_posttouch_brake_nm not in (-2.0, 0.0, 2.0)
+        or receiving_student_posttouch_brake_nm != 0.0
+        and (
+            receiving_student is None
+            or receiving_student_hip_roll_offset_rad != -0.06
+            or receiving_student_contact_impedance_scale != 1.0
+            or research_control_frame_limit != 130
+        )
+    ):
+        raise ValueError("bounded SIM_ONLY post-touch brake course requires live short parent")
+    if (
         type(research_coupled_teacher) is not bool
         or research_coupled_teacher
         and (
@@ -359,6 +372,7 @@ def simulate_r0_receiving_course(
         receiving_student_probe_torque_nm=receiving_student_probe_torque_nm,
         receiving_student_hip_roll_offset_rad=receiving_student_hip_roll_offset_rad,
         receiving_student_contact_impedance_scale=receiving_student_contact_impedance_scale,
+        receiving_student_posttouch_brake_nm=receiving_student_posttouch_brake_nm,
         research_coupled_teacher_agent_id=(course.agent_id if research_coupled_teacher else None),
         receiving_oracle=oracle,
         receiving_phase_reference=phase_reference,

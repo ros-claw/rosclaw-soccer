@@ -1047,6 +1047,7 @@ def simulate_independent_team_world(
     receiving_student_probe_torque_nm: float = 0.0,
     receiving_student_hip_roll_offset_rad: float = 0.0,
     receiving_student_contact_impedance_scale: float = 1.0,
+    receiving_student_posttouch_brake_nm: float = 0.0,
     research_coupled_teacher_agent_id: str | None = None,
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
@@ -1342,6 +1343,18 @@ def simulate_independent_team_world(
         and (len(students) != 1 or receiving_student_hip_roll_offset_rad != -0.06)
     ):
         raise ValueError("bounded SIM_ONLY contact impedance probe requires fixed hip parent")
+    if (
+        type(receiving_student_posttouch_brake_nm) is not float
+        or receiving_student_posttouch_brake_nm not in (-2.0, 0.0, 2.0)
+        or receiving_student_posttouch_brake_nm != 0.0
+        and (
+            len(students) != 1
+            or receiving_student_hip_roll_offset_rad != -0.06
+            or receiving_student_contact_impedance_scale != 1.0
+            or research_control_frame_limit != 130
+        )
+    ):
+        raise ValueError("bounded SIM_ONLY post-touch brake requires fixed live short parent")
     if research_coupled_teacher_agent_id is not None and (
         type(research_coupled_teacher_agent_id) is not str
         or research_coupled_teacher_agent_id not in motors
@@ -3335,6 +3348,7 @@ def simulate_independent_team_world(
         student_frame_targets: dict[str, NDArray[np.float64]] = {}
         student_active_substeps = 0
         student_probe_active_substeps = 0
+        student_brake_active_substeps = 0
         research_teacher_active_substeps = 0
         research_teacher_peak_torque_nm = 0.0
         for substep in range(_SUBSTEPS):
@@ -3755,6 +3769,14 @@ def simulate_independent_team_world(
                     if receiving_student_probe_torque_nm != 0.0 and 55 <= frame <= 75:
                         raw_torque[4] += receiving_student_probe_torque_nm
                         student_probe_active_substeps += 1
+                    if (
+                        receiving_student_posttouch_brake_nm != 0.0
+                        and first_time is not None
+                        and 0.0 <= float(data.time) - first_time <= 0.35
+                    ):
+                        raw_torque[6] += receiving_student_posttouch_brake_nm
+                        raw_torque[10] -= receiving_student_posttouch_brake_nm
+                        student_brake_active_substeps += 1
                 if research_teacher_active:
                     first_time = student_first_foot_contact_time[controller.cell.agent_id]
                     elapsed = (
@@ -4368,6 +4390,10 @@ def simulate_independent_team_world(
             trace.setdefault("receiving_student_probe_active_substeps", []).append(
                 student_probe_active_substeps
             )
+            if receiving_student_posttouch_brake_nm != 0.0:
+                trace.setdefault("receiving_student_brake_active_substeps", []).append(
+                    student_brake_active_substeps
+                )
         if research_coupled_teacher_agent_id is not None:
             trace.setdefault("research_receiving_teacher_active_substeps", []).append(
                 research_teacher_active_substeps

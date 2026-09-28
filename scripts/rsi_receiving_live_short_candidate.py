@@ -29,6 +29,7 @@ def evaluate(
     output_dir: Path,
     left_hip_roll_offset_rad: float,
     contact_impedance_scale: float = 1.0,
+    posttouch_brake_nm: float = 0.0,
 ) -> dict[str, Any]:
     source = Path(__file__)
     root = source.parents[1]
@@ -55,6 +56,13 @@ def evaluate(
         and left_hip_roll_offset_rad != -0.06
     ):
         raise ValueError("predeclared bounded contact impedance requires fixed hip parent")
+    if (
+        type(posttouch_brake_nm) is not float
+        or posttouch_brake_nm not in (-2.0, 0.0, 2.0)
+        or posttouch_brake_nm != 0.0
+        and (left_hip_roll_offset_rad != -0.06 or contact_impedance_scale != 1.0)
+    ):
+        raise ValueError("predeclared bounded post-touch brake requires fixed hip parent")
     gate: dict[str, Any] = json.loads(fidelity.read_text(encoding="utf-8"))
     gate_hash = gate.pop("report_hash")
     if (
@@ -82,6 +90,7 @@ def evaluate(
         receiving_student=student,
         receiving_student_hip_roll_offset_rad=left_hip_roll_offset_rad,
         receiving_student_contact_impedance_scale=contact_impedance_scale,
+        receiving_student_posttouch_brake_nm=posttouch_brake_nm,
         research_control_frame_limit=FRAMES,
     )
     result_dict = result.to_dict()
@@ -128,6 +137,12 @@ def evaluate(
         "research_control_frame_limit": FRAMES,
         "left_hip_roll_offset_rad": left_hip_roll_offset_rad,
         "contact_impedance_scale": contact_impedance_scale,
+        "posttouch_brake_nm": posttouch_brake_nm,
+        "posttouch_brake_active_substeps": (
+            int(np.sum(trace["receiving_student_brake_active_substeps"]))
+            if posttouch_brake_nm != 0.0
+            else 0
+        ),
         "trace_hash": hash_bytes(trajectory_path.read_bytes()),
         "result": result_dict,
         "measurement": measurement,
@@ -161,6 +176,7 @@ def main() -> None:
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--left-hip-roll-offset-rad", type=float, required=True)
     parser.add_argument("--contact-impedance-scale", type=float, default=1.0)
+    parser.add_argument("--posttouch-brake-nm", type=float, default=0.0)
     report = evaluate(**vars(parser.parse_args()))
     print(
         json.dumps(
