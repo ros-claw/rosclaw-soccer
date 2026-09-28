@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from rosclaw_soccer.providers.g1.qualified_receiving_student import QualifiedReceivingStudent
+from rosclaw_soccer.providers.g1.receiving_phase_adapter import ReceivingPhaseAdapter
 from rosclaw_soccer.providers.g1.receiving_sonic import ReceivingSonicBallFollowOption
 from rosclaw_soccer.sim.contracts import (
     G1_DDS_JOINT_NAMES,
@@ -43,6 +44,7 @@ def evaluate(
     fresh: Path,
     output_dir: Path,
     left_hip_roll_offset_rad: float = 0.0,
+    adapter_parameters: NDArray[np.float64] | None = None,
 ) -> dict[str, Any]:
     source = Path(__file__)
     root = source.parents[1]
@@ -51,12 +53,23 @@ def evaluate(
         "sonic": root / "src/rosclaw_soccer/providers/g1/receiving_sonic.py",
         "bridge": root / "src/rosclaw_soccer/providers/g1/qualified_receiving_student.py",
         "single_world": root / "src/rosclaw_soccer/world/field.py",
+        "adapter": root / "src/rosclaw_soccer/providers/g1/receiving_phase_adapter.py",
     }
     source_hashes = {key: hash_bytes(path.read_bytes()) for key, path in paths.items()}
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
         raise ValueError("new external SIM_ONLY one-G1 live proxy directory required")
-    if type(left_hip_roll_offset_rad) is not float or left_hip_roll_offset_rad not in (0.0, -0.08):
+    if (
+        type(left_hip_roll_offset_rad) is not float
+        or left_hip_roll_offset_rad not in (0.0, -0.08)
+        or adapter_parameters is not None
+        and left_hip_roll_offset_rad != 0.0
+    ):
         raise ValueError("predeclared zero or known minus-0.08 hip intervention required")
+    adapter = (
+        None
+        if adapter_parameters is None
+        else ReceivingPhaseAdapter(np.asarray(adapter_parameters, dtype=np.float64))
+    )
     commitment: dict[str, Any] = json.loads((captured / "report.json").read_text(encoding="utf-8"))
     tape_hash = commitment.pop("report_hash")
     tape_path = captured / "live-motor-tape.npz"
@@ -104,6 +117,12 @@ def evaluate(
     ball_pose = []
     ball_velocity = []
     pelvis_pose = []
+    left_foot_position = []
+    right_foot_position = []
+    left_ankle_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "left_ankle_roll_link")
+    right_ankle_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "right_ankle_roll_link")
+    if left_ankle_body < 0 or right_ankle_body < 0:
+        raise ValueError("measured left and right ankle bodies required")
     foot_frames: list[int] = []
     nonfoot_frames: list[int] = []
     minimum_pelvis = float("inf")
@@ -161,6 +180,19 @@ def evaluate(
                         frame_target[1] + left_hip_roll_offset_rad,
                         model.jnt_range[joint_ids[1], 0],
                         model.jnt_range[joint_ids[1], 1],
+                    )
+                if adapter is not None:
+                    frame_target = adapter.motor_target(
+                        qpos=np.asarray(data.qpos, dtype=np.float64),
+                        qvel=np.asarray(data.qvel, dtype=np.float64),
+                        foundation_target=frame_target,
+                        joint_ranges=np.asarray(model.jnt_range[joint_ids]),
+                        has_foot_contact=first_foot_time is not None,
+                        elapsed_sec=(
+                            -1.0
+                            if first_foot_time is None
+                            else max(0.0, float(data.time) - first_foot_time)
+                        ),
                     )
             raw = kp * (frame_target - q) - kd * dq
             if 46 <= frame <= 100:
@@ -237,9 +269,18 @@ def evaluate(
         ball_pose.append(np.asarray(data.qpos[36:43]).copy())
         ball_velocity.append(np.asarray(data.qvel[35:41]).copy())
         pelvis_pose.append(np.asarray(data.qpos[:7]).copy())
+        left_foot_position.append(np.asarray(data.xpos[left_ankle_body]).copy())
+        right_foot_position.append(np.asarray(data.xpos[right_ankle_body]).copy())
     ball_pose_array = np.asarray(ball_pose)
     ball_velocity_array = np.asarray(ball_velocity)
     pelvis_pose_array = np.asarray(pelvis_pose)
+    left_foot_array = np.asarray(left_foot_position)
+    right_foot_array = np.asarray(right_foot_position)
+    foot_distance = np.minimum(
+        np.linalg.norm(left_foot_array - ball_pose_array[:, :3], axis=1),
+        np.linalg.norm(right_foot_array - ball_pose_array[:, :3], axis=1),
+    )
+    ball_speed = np.linalg.norm(ball_velocity_array[:, :3], axis=1)
     full_speed = float(np.linalg.norm(tape["ball_velocity"][86, :2]))
     proxy_speed = float(np.linalg.norm(ball_velocity_array[86, :2]))
     full_distance = float(
@@ -255,18 +296,28 @@ def evaluate(
         ball_pose=ball_pose_array,
         ball_velocity=ball_velocity_array,
         pelvis_pose=pelvis_pose_array,
+        left_foot_position=left_foot_array,
+        right_foot_position=right_foot_array,
+        foot_distance_m=foot_distance,
+        ball_speed_mps=ball_speed,
         target_errors=np.asarray(target_errors),
         pre_qpos_errors=np.asarray(pre_qpos_errors),
         pre_qvel_errors=np.asarray(pre_qvel_errors),
     )
     report: dict[str, Any] = {
-        "schema": "rosclaw_soccer.rsi.receiving_single_live_sonic_proxy.v1",
+        "schema": (
+            "rosclaw_soccer.rsi.receiving_single_live_sonic_adapter.v1"
+            if adapter is not None
+            else "rosclaw_soccer.rsi.receiving_single_live_sonic_proxy.v1"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "source_hashes": source_hashes,
         "capture_report_hash": tape_hash,
         "student_model_hash": student.model_hash,
         "compiled_model_hash": compiled_model_hash(model),
         "left_hip_roll_offset_rad": left_hip_roll_offset_rad,
+        "adapter_hash": None if adapter is None else adapter.artifact_hash,
+        "adapter_parameters": None if adapter is None else adapter.parameters.tolist(),
         "frame_count": FRAMES,
         "trajectory_hash": hash_bytes(trajectory_path.read_bytes()),
         "maximum_foundation_target_error_rad": max(target_errors),
@@ -283,6 +334,10 @@ def evaluate(
         "full_frame86_ball_pelvis_distance_m": full_distance,
         "proxy_frame86_ball_pelvis_distance_m": proxy_distance,
         "frame86_ball_pelvis_distance_error_m": abs(proxy_distance - full_distance),
+        "tail_maximum_foot_distance_m": float(np.max(foot_distance[110:120])),
+        "tail_maximum_ball_speed_mps": float(np.max(ball_speed[110:120])),
+        "tail_mean_foot_distance_m": float(np.mean(foot_distance[110:120])),
+        "tail_mean_ball_speed_mps": float(np.mean(ball_speed[110:120])),
         "training_proxy_authorized": False,
         "promotion_authorized": False,
     }
