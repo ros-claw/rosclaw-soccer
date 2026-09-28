@@ -122,7 +122,7 @@ def main() -> None:
         "asset_body_hash": qualification.body_hash,
         "arm": arm,
         "rows": rows,
-        "safe_contact_count": sum(row["safe"] and row["foot_contact_frames"] for row in rows),
+        "safe_contact_count": sum(bool(row["safe"] and row["foot_contact_frames"]) for row in rows),
         "useful_pass_count": sum(row["useful_pass"] for row in rows),
         "unsafe_count": sum(not row["safe"] for row in rows),
         "fresh_holdout": False,

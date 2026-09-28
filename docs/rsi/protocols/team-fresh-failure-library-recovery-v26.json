@@ -1,0 +1,14 @@
+{
+  "schema": "rsi_team_fresh_failure_library_recovery_protocol_v26",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "failed_exam_protocol_path": "docs/rsi/protocols/team-contextual-nav-fresh-exam-v25.json",
+  "failed_exam_report_path": "/data/rosclaw_overflow/rsi-team-contextual-nav-fresh-v25/report.json",
+  "failed_exam_report_hash": "sha256:d77a62a25b4cb7e6c7e0f0a2b8bf4d8423b13aa8f3af63fd9b9601bb0a87b974",
+  "collector_output_root": "/data/rosclaw_overflow/rsi-team-fresh-failure-library-v26",
+  "collector_execution_commit": "4e0e32e",
+  "collector_execution_source_sha256": "24b61b68de546441a5de8bb3d26fb32a15cabd22fd0b82cbfb6845816763b519",
+  "expected_incomplete_arm": {"arm": "phase_front04_lat04", "first_incomplete_scene": "f03"},
+  "interpretation": "Recover 111 completed physical episodes. One arm aborted at f03; f04-f11 for that arm were not run. Missing episodes are excluded from lower-bound oracle counts."
+}
