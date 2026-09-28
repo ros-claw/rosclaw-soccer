@@ -19,10 +19,17 @@ from rosclaw_soccer.sim.physical_checkpoint import compiled_model_hash
 from rosclaw_soccer.world.field import G1TrainingGoalSpec, build_g1_stadium_model
 
 STEPS = (0.12, 0.06, 0.03)
+REFINE_STEPS = (0.015, 0.0075)
 
 
 def train(
-    *, asset_root: Path, captured: Path, fidelity: Path, warm_start: Path, output_dir: Path
+    *,
+    asset_root: Path,
+    captured: Path,
+    fidelity: Path,
+    warm_start: Path,
+    output_dir: Path,
+    resume: Path | None = None,
 ) -> dict[str, Any]:
     source = Path(__file__)
     helper = source.with_name("rsi_receiving_contact_dynamics_audit.py")
@@ -53,6 +60,29 @@ def train(
     )
     if tuple(payload["train_courses"][-1]) != center:
         raise ValueError("consumed center identity mismatch")
+    resume_hash = None
+    current = weights[BIAS_START:].copy()
+    steps = STEPS
+    if resume is not None:
+        prior: dict[str, Any] = json.loads(resume.read_text(encoding="utf-8"))
+        resume_hash = prior.pop("report_hash")
+        seed = np.asarray(prior["near_touch_bias"], dtype=np.float32)
+        if (
+            resume_hash != hash_json(prior)
+            or prior["schema"] != "rosclaw_soccer.rsi.cpu_receiving_near_touch_phase.v1"
+            or prior["warm_start_hash"] != commitment
+            or prior["full_weights_hash"] != hash_bytes(weights.tobytes())
+            or prior["near_touch_bias_hash"] != hash_bytes(seed.tobytes())
+            or prior["training_gate_passed"] is not False
+            or prior["fresh8_opened"] is not False
+            or prior["promotion_authorized"] is not False
+            or tuple(tuple(row) for row in prior["train_courses"]) != COURSES + (center,)
+            or seed.shape != (len(FULL_JOINTS),)
+            or not np.isfinite(seed).all()
+        ):
+            raise ValueError("sealed failed near-touch candidate required for refinement")
+        current = seed
+        steps = REFINE_STEPS
     courses = COURSES + (center,)
     model = build_g1_stadium_model(
         asset_root, G1TrainingGoalSpec(ball_radius_m=0.115, ball_mass_kg=0.41)
@@ -110,13 +140,12 @@ def train(
             - 80 * max(0.0, ratio["mean_speed"] / 0.85 - 1)
         )
 
-    current = weights[BIAS_START:].copy()
     start_rows = evaluate(current)
     current_rows = start_rows
     current_merit = merit(current_rows)
     history: list[dict[str, Any]] = []
     trials = 0
-    for step in STEPS:
+    for step in steps:
         for coordinate in range(len(FULL_JOINTS)):
             options = []
             for sign in (-1, 1):
@@ -160,15 +189,20 @@ def train(
         and result["center_distance"] <= 0.90
     )
     report: dict[str, Any] = {
-        "schema": "rosclaw_soccer.rsi.cpu_receiving_near_touch_phase.v1",
+        "schema": (
+            "rosclaw_soccer.rsi.cpu_receiving_near_touch_phase_refine.v1"
+            if resume is not None
+            else "rosclaw_soccer.rsi.cpu_receiving_near_touch_phase.v1"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "source_hash": source_hash,
         "helper_hash": helper_hash,
         "warm_start_hash": commitment,
+        "resume_hash": resume_hash,
         "compiled_model_hash": compiled_model_hash(model),
         "train_courses": [list(row) for row in courses],
         "reserved_fresh8": [list(row) for row in FRESH8],
-        "steps": list(STEPS),
+        "steps": list(steps),
         "trials": trials,
         "parent": parent,
         "start": _summary(start_rows),
@@ -203,6 +237,7 @@ def main() -> None:
     parser.add_argument("--fidelity", required=True, type=Path)
     parser.add_argument("--warm-start", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--resume", type=Path)
     report = train(**vars(parser.parse_args()))
     print(
         json.dumps(
