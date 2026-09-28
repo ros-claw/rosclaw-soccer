@@ -539,6 +539,8 @@ def audit_temporal_first_touch_execution(
         JOINT_NAMES as TEMPORAL_JOINT_NAMES,
     )
     from rosclaw_soccer.rsi.temporal_first_touch_policy import (
+        MAX_FOLLOWTHROUGH_FRAMES,
+        followthrough_residual,
         load_candidate,
         temporal_residual,
     )
@@ -558,6 +560,7 @@ def audit_temporal_first_touch_execution(
     candidate = load_candidate(
         candidate_path, expected_courses=courses, parent_report_hash=parent["report_hash"]
     )
+    followthrough_frames = report.get("temporal_followthrough_frames", 0)
     if (
         report.get("schema") != "rsi_isaac_vector_first_touch_temporal_candidate_v1"
         or report.get("activation_ceiling") != "SIM_ONLY"
@@ -574,6 +577,8 @@ def audit_temporal_first_touch_execution(
         or report.get("torch_batch_plan_only") is not True
         or report.get("navigation_speed_mps", 1.4) != 1.4
         or report.get("temporal_policy_joint_names") != list(TEMPORAL_JOINT_NAMES)
+        or type(followthrough_frames) is not int
+        or not 0 <= followthrough_frames <= MAX_FOLLOWTHROUGH_FRAMES
         or "near_ball_gap_m" in report
         or not isinstance(report.get("body_trace_hash"), str)
         or report.get("trace_hash") != hash_bytes(trace_path.read_bytes())
@@ -632,8 +637,18 @@ def audit_temporal_first_touch_execution(
                 raise ValueError("temporal course, body or contact ledger invalid")
             count_applied = 0
             for frame in range(frames):
-                expected = (
-                    temporal_residual(
+                if first is not None and frame > first:
+                    expected = (
+                        followthrough_residual(
+                            applied[first, i],
+                            elapsed_frames=frame - first,
+                            followthrough_frames=followthrough_frames,
+                        )
+                        if followthrough_frames
+                        else np.zeros(len(TEMPORAL_JOINT_NAMES))
+                    )
+                else:
+                    expected = temporal_residual(
                         candidate.weights_per_course[i],
                         ball_relative_xyz_m=(
                             float(ball_before[frame, i, 0] - root[frame, i, 0]),
@@ -644,9 +659,6 @@ def audit_temporal_first_touch_execution(
                         joint_position_rad=joint[frame, i],
                         joint_velocity_rad_s=joint_velocity[frame, i],
                     )
-                    if first is None or frame <= first
-                    else np.zeros(len(TEMPORAL_JOINT_NAMES))
-                )
                 actual = applied[frame, i]
                 if np.any(expected):
                     count_applied += 1

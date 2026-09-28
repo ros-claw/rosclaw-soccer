@@ -30,6 +30,7 @@ FEATURE_NAMES = (
     "right_knee_velocity",
 )
 MAX_WEIGHT = 1.0
+MAX_FOLLOWTHROUGH_FRAMES = 30
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,26 @@ def temporal_residual(
     result: np.ndarray = MAX_RESIDUAL_RAD * envelope * np.tanh(features @ weights)
     if result.shape != (len(JOINT_NAMES),) or not np.isfinite(result).all():
         raise ValueError("temporal first-touch policy produced invalid action")
+    return result
+
+
+def followthrough_residual(
+    contact_residual_rad: np.ndarray, *, elapsed_frames: int, followthrough_frames: int
+) -> np.ndarray:
+    """Bounded, continuous fade from the physically applied contact target."""
+    if (
+        contact_residual_rad.shape != (len(JOINT_NAMES),)
+        or not np.isfinite(contact_residual_rad).all()
+        or float(np.max(np.abs(contact_residual_rad))) > MAX_RESIDUAL_RAD + 1e-6
+        or type(elapsed_frames) is not int
+        or elapsed_frames < 1
+        or type(followthrough_frames) is not int
+        or not 0 <= followthrough_frames <= MAX_FOLLOWTHROUGH_FRAMES
+    ):
+        raise ValueError("invalid bounded postcontact transition")
+    if elapsed_frames > followthrough_frames:
+        return np.zeros(len(JOINT_NAMES))
+    result: np.ndarray = contact_residual_rad * (1.0 - elapsed_frames / (followthrough_frames + 1))
     return result
 
 

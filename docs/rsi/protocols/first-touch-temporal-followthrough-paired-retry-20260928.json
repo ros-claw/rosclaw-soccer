@@ -1,0 +1,22 @@
+{
+  "run_id": "first-touch-temporal-followthrough-paired-retry-20260928-v1",
+  "supersedes": "first-touch-temporal-followthrough-paired-20260928-v1",
+  "reason": "Initial physical runs revealed invalid resurrection of an earlier nonzero residual after the policy had already returned zero at contact; both initial runs remain rejected evidence.",
+  "physics_source_hash": "sha256:10e3a8cb9bb622cddaee612677eca759fb9418cf037465664d3959d05e72a66b",
+  "policy_source_hash": "sha256:b0bc01273d9d440c8801d13c1a1e91f172f7ae51a8009bb6a6cc67a04c744f6c",
+  "auditor_source_hash": "sha256:2d480bd43bf46fd0dd70b3916761c20ea1acb864eb1af70d6cb3128549cbe00b",
+  "training_course_seeds": [20260930, 20260931],
+  "candidate_manifest_hashes": [
+    "sha256:77bcd49e816142d4c46ad257f4c92e853f4f0bb37309010dc19dcce8bd5c68bb",
+    "sha256:04287b6790959508d19f3f80d6c285ff12aea09a4e927dafa66284eb33492b26"
+  ],
+  "frozen_parent_clean_counts": [7, 8],
+  "abrupt_reset_candidate_clean_counts": [7, 9],
+  "followthrough_frames": 20,
+  "maximum_joint_residual_rad": 0.08,
+  "primary_outcomes": ["audited action parity", "paired clean foot-only count", "secondary nonfoot contact after foot-first", "minimum pelvis height"],
+  "acceptance": "Valid action audit, no balance fall, no loss of clean foot-only outcomes, and fewer secondary nonfoot contacts than abrupt reset on pooled 32 courses; otherwise reject this duration",
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

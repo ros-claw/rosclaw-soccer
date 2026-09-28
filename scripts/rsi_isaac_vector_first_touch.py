@@ -33,6 +33,7 @@ parser.add_argument("--reset-replay", action="store_true")
 parser.add_argument("--second-reset-replay", action="store_true")
 parser.add_argument("--candidate-actions", type=Path)
 parser.add_argument("--temporal-policy-actions", type=Path)
+parser.add_argument("--temporal-followthrough-frames", type=int, default=0)
 parser.add_argument("--parent-report", type=Path)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -55,6 +56,8 @@ if (
     )
     or (args.candidate_actions is not None and not args.candidate_actions.is_file())
     or (args.temporal_policy_actions is not None and not args.temporal_policy_actions.is_file())
+    or not 0 <= args.temporal_followthrough_frames <= 30
+    or (args.temporal_followthrough_frames > 0 and args.temporal_policy_actions is None)
     or (args.parent_report is not None and not args.parent_report.is_file())
     or (
         (args.candidate_actions is not None or args.temporal_policy_actions is not None)
@@ -106,11 +109,12 @@ from rosclaw_soccer.rsi.first_touch_course_catalog import (  # noqa: E402
 from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
     JOINT_NAMES as TEMPORAL_JOINT_NAMES,
 )
-from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
-    load_candidate as load_temporal_candidate,
+from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402  # noqa: E402
+    followthrough_residual,
+    temporal_residual,
 )
 from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
-    temporal_residual,
+    load_candidate as load_temporal_candidate,
 )
 from rosclaw_soccer.rsi.vector_first_touch_evidence import (  # noqa: E402
     audit_vector_first_touch,
@@ -308,6 +312,8 @@ def main() -> None:
         applied_frames = np.zeros(args.env_count, dtype=np.int64)
         projection_counts = np.zeros(args.env_count, dtype=np.int64)
         contact_seen = np.zeros(args.env_count, dtype=np.bool_)
+        first_contact_frames = np.full(args.env_count, -1, dtype=np.int64)
+        contact_residuals = np.zeros((args.env_count, len(TEMPORAL_JOINT_NAMES)))
         minimum_pelvis = np.full(args.env_count, np.inf)
         batch_tracker = None
         batch_target_max_difference = 0.0
@@ -478,17 +484,26 @@ def main() -> None:
                 limits = robot.data.joint_pos_limits.torch.detach().cpu().numpy()
                 for index, weights in enumerate(temporal_candidate.weights_per_course):
                     if contact_seen[index]:
-                        continue
-                    residuals = temporal_residual(
-                        weights,
-                        ball_relative_xyz_m=tuple(
-                            float(value) for value in ball_xyz_frame[index] - root_xyz[index]
-                        ),
-                        ball_vx_m_s=float(ball_velocity_frame[index, 0]),
-                        joint_position_rad=robot_joint_observations[-1][index],
-                        joint_velocity_rad_s=robot_joint_velocity_observations[-1][index],
-                    )
+                        if args.temporal_followthrough_frames == 0:
+                            continue
+                        residuals = followthrough_residual(
+                            contact_residuals[index],
+                            elapsed_frames=frame - int(first_contact_frames[index]),
+                            followthrough_frames=args.temporal_followthrough_frames,
+                        )
+                    else:
+                        residuals = temporal_residual(
+                            weights,
+                            ball_relative_xyz_m=tuple(
+                                float(value) for value in ball_xyz_frame[index] - root_xyz[index]
+                            ),
+                            ball_vx_m_s=float(ball_velocity_frame[index, 0]),
+                            joint_position_rad=robot_joint_observations[-1][index],
+                            joint_velocity_rad_s=robot_joint_velocity_observations[-1][index],
+                        )
                     if not np.any(residuals):
+                        if not contact_seen[index]:
+                            contact_residuals[index] = 0.0
                         continue
                     for output_index, (joint_index, residual) in enumerate(
                         zip(temporal_joint_indices, residuals, strict=True)
@@ -504,6 +519,8 @@ def main() -> None:
                         )
                         target[index, joint_index] = value
                         projection_counts[index] += projected
+                    if not contact_seen[index]:
+                        contact_residuals[index] = frame_temporal_residual[index]
                     applied_frames[index] += 1
             robot_target_observations.append(target[:, indices].detach().cpu().numpy().copy())
             command_speed_observations.append(frame_command_speeds)
@@ -534,12 +551,18 @@ def main() -> None:
                         and bool(torch.any(torch.linalg.vector_norm(force[0, 0], dim=-1) > 1.0))
                     ):
                         contact_seen[i] = True
+                        first_contact_frames[i] = frame
                         active_joint_indices = (
                             candidate_joint_indices
                             if candidate is not None
                             else temporal_joint_indices
                         )
-                        target[i, active_joint_indices] = baseline_target[i, active_joint_indices]
+                        if not (
+                            temporal_candidate is not None and args.temporal_followthrough_frames
+                        ):
+                            target[i, active_joint_indices] = baseline_target[
+                                i, active_joint_indices
+                            ]
             positions.append(ball.data.root_pos_w.torch.detach().cpu().numpy().copy())
             angular_velocities.append(ball.data.root_ang_vel_w.torch.detach().cpu().numpy().copy())
             contact_forces.append(frame_forces_gpu.detach().cpu().numpy().copy())
@@ -692,6 +715,7 @@ def main() -> None:
         report["temporal_policy_joint_names"] = list(TEMPORAL_JOINT_NAMES)
         report["temporal_policy_applied_frames"] = applied_frames.tolist()
         report["temporal_policy_projection_count"] = projection_counts.tolist()
+        report["temporal_followthrough_frames"] = args.temporal_followthrough_frames
         report["trained_actor"] = False
     report["report_hash"] = hash_json(report)
     (args.output_dir / "report.json").write_text(
