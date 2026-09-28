@@ -1,0 +1,147 @@
+"""Train phase-aware bounded receiving stance on five consumed 3v3 courses."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+from rosclaw_soccer.providers.g1.asset_qualification import qualify_g1_assets
+from rosclaw_soccer.rsi.team_phase_intercept_navigation import TeamPhaseInterceptNavigation
+from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from rosclaw_soccer.skills.team.independent_team_world import IndependentTeamWorldScenario
+from rosclaw_soccer.training.independent_team_growth import build_independent_three_vs_three_fixture
+from scripts.rsi_team_intercept_navigation_search import _score
+from scripts.rsi_team_taskspace_first_touch import _run_one
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--asset-root", required=True, type=Path)
+    parser.add_argument("--protocol", required=True, type=Path)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    args = parser.parse_args()
+    if args.output_dir.exists():
+        parser.error("output directory already exists")
+    protocol: dict[str, Any] = json.loads(args.protocol.read_text(encoding="utf-8"))
+    params = protocol.get("parameter_family", [])
+    courses = protocol.get("training_courses", [])
+    if (
+        protocol.get("schema") != "rsi_team_phase_navigation_search_protocol_v16"
+        or protocol.get("development_only") is not True
+        or protocol.get("promotion_authorized") is not False
+        or protocol.get("frames") != 250
+        or protocol.get("candidate_action")
+        != {
+            "entry_frame": 30,
+            "forward_cap_m": 0.16,
+            "lateral_cap_m": 0.05,
+            "vertical_offset_m": 0.04,
+            "swing_foot_acquisition_gap_m": 0.55,
+        }
+        or [(p.get("name"), p.get("forward_gain"), p.get("lateral_gain")) for p in params]
+        != [
+            ("phase_front04", 0.4, 0.0),
+            ("phase_negative_lat08", 0.0, -0.8),
+            ("phase_front04_negative_lat08", 0.4, -0.8),
+            ("phase_front04_positive_lat08", 0.4, 0.8),
+        ]
+        or [p.get("name") for p in courses] != ["center", "near", "far", "left", "right"]
+    ):
+        raise ValueError("uncommitted SIM_ONLY phase-aware training protocol")
+    qualification = qualify_g1_assets(args.asset_root)
+    qualification.require_eligible()
+    fixture = build_independent_three_vs_three_fixture(args.asset_root)
+    policy_hash = hash_bytes(
+        (args.asset_root / "policy/loco_mode/model/policy_29dof.pt").read_bytes()
+    )
+    config_hash = hash_bytes(
+        (args.asset_root / "policy/loco_mode/config/LocoMode.yaml").read_bytes()
+    )
+    root = Path(__file__).parents[1]
+    sources = (
+        Path(__file__),
+        Path(__file__).with_name("rsi_team_taskspace_first_touch.py"),
+        root / "src/rosclaw_soccer/rsi/team_phase_intercept_navigation.py",
+        root / "src/rosclaw_soccer/skills/team/independent_team_world.py",
+    )
+    source_hashes = {str(p.relative_to(root)): hash_bytes(p.read_bytes()) for p in sources}
+    args.output_dir.mkdir(parents=True)
+    rows = []
+    for param in params:
+        outcomes = []
+        for course in courses:
+            scenario = IndependentTeamWorldScenario(
+                course["scenario_id"],
+                tuple(course["ball_initial_position_m"]),
+                tuple(course["ball_initial_velocity_mps"]),
+                course["seed"],
+            )
+            nav_policy = TeamPhaseInterceptNavigation(
+                agent_id=protocol["focal_agent_id"],
+                foundation_hash=policy_hash,
+                foundation_config_hash=config_hash,
+                forward_gain=float(param["forward_gain"]),
+                lateral_gain=float(param["lateral_gain"]),
+            )
+            folder = args.output_dir / param["name"] / course["name"]
+            candidate = _run_one(
+                mode="candidate",
+                asset_root=args.asset_root,
+                output_dir=folder,
+                fixture=fixture,
+                scenario=scenario,
+                protocol=protocol,
+                navigation_policy=nav_policy,
+            )
+            outcome = _score(candidate, folder / "candidate/trajectory.npz")
+            outcome["course"] = course["name"]
+            outcome["navigation_contract_hash"] = nav_policy.contract_hash
+            outcomes.append(outcome)
+        rows.append(
+            {
+                "name": param["name"],
+                "parameters": param,
+                "outcomes": outcomes,
+                "safe_foot_contact_count": sum(
+                    bool(r["safe"] and r["foot_contact_frames"]) for r in outcomes
+                ),
+                "useful_pass_count": sum(bool(r["useful_pass"]) for r in outcomes),
+                "all_safe": all(bool(r["safe"]) for r in outcomes),
+            }
+        )
+    if source_hashes != {str(p.relative_to(root)): hash_bytes(p.read_bytes()) for p in sources}:
+        raise ValueError("source changed during phase-aware training")
+    eligible = [r for r in rows if r["all_safe"]]
+    winner = max(
+        eligible,
+        key=lambda r: (
+            r["safe_foot_contact_count"],
+            r["useful_pass_count"],
+            -abs(r["parameters"]["forward_gain"]) - abs(r["parameters"]["lateral_gain"]),
+        ),
+        default=None,
+    )
+    report = {
+        "schema": "rsi_team_phase_navigation_search_report_v16",
+        "activation_ceiling": "SIM_ONLY",
+        "protocol_hash": hash_bytes(args.protocol.read_bytes()),
+        "source_hashes": source_hashes,
+        "asset_body_hash": qualification.body_hash,
+        "rows": rows,
+        "selected_training_candidate": winner["name"] if winner else None,
+        "fresh_holdout_open_authorized": bool(
+            winner and winner["safe_foot_contact_count"] >= 4 and winner["useful_pass_count"] >= 2
+        ),
+        "promotion_authorized": False,
+    }
+    report["report_hash"] = hash_json(report)
+    (args.output_dir / "report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print("RSI_TEAM_PHASE_NAVIGATION_SEARCH=" + json.dumps(report, sort_keys=True), flush=True)
+
+
+if __name__ == "__main__":
+    main()

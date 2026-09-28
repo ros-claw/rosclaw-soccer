@@ -7,6 +7,7 @@ from dataclasses import replace
 import pytest
 
 from rosclaw_soccer.rsi.team_intercept_navigation import TeamInterceptNavigation
+from rosclaw_soccer.rsi.team_phase_intercept_navigation import TeamPhaseInterceptNavigation
 from rosclaw_soccer.skills.team.navigation_option import NavigationObservation, NavigationSlot
 
 
@@ -51,3 +52,19 @@ def test_uncommitted_gain_is_rejected() -> None:
         TeamInterceptNavigation(
             "red.playmaker", "sha256:" + "1" * 64, "sha256:" + "2" * 64, 5.0, 0.8
         )
+
+
+def test_phase_aware_navigation_uses_measured_reachable_foot() -> None:
+    left_only = TeamInterceptNavigation(
+        "red.playmaker", "sha256:" + "1" * 64, "sha256:" + "2" * 64, 0.0, 0.8
+    )
+    phase = TeamPhaseInterceptNavigation(
+        "red.playmaker", "sha256:" + "1" * 64, "sha256:" + "2" * 64, 0.0, 0.8
+    )
+    observation = replace(
+        _observation(30, ball_y=-0.15),
+        effector_positions=(("left_foot", 0.0, 0.2, 0.1), ("right_foot", 0.0, -0.2, 0.2)),
+    )
+    assert left_only.propose(observation).velocity_delta[1] < 0
+    assert phase.propose(observation).velocity_delta[1] > 0
+    assert phase.contract_hash != left_only.contract_hash

@@ -1,0 +1,34 @@
+{
+  "schema": "rsi_team_phase_navigation_search_protocol_v16",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "parent_navigation_search_report_hash": "sha256:7dcc8466f4f66ca416b45f3aabbb9b639c03472a5d011d9991abf9c379bc5041",
+  "fixture": "s199.independent.3v3",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "training_courses": [
+    {"name": "center", "scenario_id": "s199.rsi-late-swing-shadow-v12", "ball_initial_position_m": [3.8, -0.7, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920629},
+    {"name": "near", "scenario_id": "s199.rsi-sweep-near-v14", "ball_initial_position_m": [3.6, -0.7, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920630},
+    {"name": "far", "scenario_id": "s199.rsi-sweep-far-v14", "ball_initial_position_m": [4.0, -0.7, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920631},
+    {"name": "left", "scenario_id": "s199.rsi-sweep-left-v14", "ball_initial_position_m": [3.8, -0.6, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920632},
+    {"name": "right", "scenario_id": "s199.rsi-sweep-right-v14", "ball_initial_position_m": [3.8, -0.8, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920633}
+  ],
+  "parameter_family": [
+    {"name": "phase_front04", "forward_gain": 0.4, "lateral_gain": 0.0},
+    {"name": "phase_negative_lat08", "forward_gain": 0.0, "lateral_gain": -0.8},
+    {"name": "phase_front04_negative_lat08", "forward_gain": 0.4, "lateral_gain": -0.8},
+    {"name": "phase_front04_positive_lat08", "forward_gain": 0.4, "lateral_gain": 0.8}
+  ],
+  "selection_metric": "only all-safe candidates: safe foot-contact count over all five consumed courses, then useful forward-pass count at postcontact x speed >=0.5m/s, then minimum parameter magnitude",
+  "advance_condition": "at least 4/5 safe foot contacts, at least 2 useful passes, zero nonfoot/motor/navigation faults; only then predeclare fresh holdout",
+  "stop_condition": "otherwise revisit whole-body gait phase and contact geometry; do not extrapolate from selected scene",
+  "policy_intervention_authorized": false
+}
