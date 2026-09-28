@@ -107,6 +107,35 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
         or np.any(force < 0)
     ):
         raise ValueError("invalid vector physics trace")
+    changed_command_frames = None
+    if "body_trace_hash" in report:
+        body_trace_path = folder / "body_trace.npz"
+        if not body_trace_path.is_file() or report["body_trace_hash"] != hash_bytes(
+            body_trace_path.read_bytes()
+        ):
+            raise ValueError("unauthenticated G1 body trace")
+        with np.load(body_trace_path, allow_pickle=False) as body:
+            shapes = {
+                "root_pose_xyzw_m": (frames, n, 7),
+                "root_velocity_world": (frames, n, 6),
+                "joint_position_rad": (frames, n, 29),
+                "joint_velocity_rad_s": (frames, n, 29),
+                "joint_target_rad": (frames, n, 29),
+                "navigation_speed_mps": (frames, n),
+            }
+            if set(body.files) != set(shapes) or any(
+                body[key].shape != shape or not np.isfinite(body[key]).all()
+                for key, shape in shapes.items()
+            ):
+                raise ValueError("invalid G1 body trace shape or finite values")
+            command = body["navigation_speed_mps"]
+            base_speed = report.get("navigation_speed_mps", 1.4)
+            allowed = [base_speed]
+            if "near_ball_speed_mps" in report:
+                allowed.append(report["near_ball_speed_mps"])
+            if not np.isin(command, allowed).all():
+                raise ValueError("G1 body trace has uncommitted navigation speed")
+            changed_command_frames = int(np.count_nonzero(command != base_speed))
     lanes = np.asarray([row["lane_y_m"] for row in entries], dtype=np.float64)
     if not np.isfinite(lanes).all() or np.min(np.diff(lanes)) < 6.0:
         raise ValueError("training lanes are not physically isolated")
@@ -174,6 +203,9 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
         "imitation_training_authorized": bool(n >= 8 and clean >= 4 and sides == {"left", "right"}),
         "promotion_authorized": False,
     }
+    if changed_command_frames is not None:
+        result["recorded_body_frames"] = frames
+        result["changed_navigation_command_frames"] = changed_command_frames
     result["report_hash"] = hash_json(result)
     return result
 

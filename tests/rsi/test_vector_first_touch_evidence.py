@@ -116,6 +116,39 @@ def test_vector_audit_requires_complete_bounded_near_ball_schedule(tmp_path: Pat
         audit_vector_first_touch(folder)
 
 
+def test_vector_audit_commits_body_and_command_trace(tmp_path: Path) -> None:
+    folder = tmp_path / "case"
+    _fixture(folder)
+    report_path = folder / "report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report.update(near_ball_gap_m=1.4, near_ball_speed_mps=0.8, near_ball_incoming_only=True)
+    speeds = np.full((50, 2), 1.4)
+    speeds[20:30, 0] = 0.8
+    arrays = {
+        "root_pose_xyzw_m": np.zeros((50, 2, 7)),
+        "root_velocity_world": np.zeros((50, 2, 6)),
+        "joint_position_rad": np.zeros((50, 2, 29)),
+        "joint_velocity_rad_s": np.zeros((50, 2, 29)),
+        "joint_target_rad": np.zeros((50, 2, 29)),
+        "navigation_speed_mps": speeds,
+    }
+    path = folder / "body_trace.npz"
+    np.savez_compressed(path, **arrays)
+    report["body_trace_hash"] = hash_bytes(path.read_bytes())
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    audited = audit_vector_first_touch(folder)
+    assert audited["recorded_body_frames"] == 50
+    assert audited["changed_navigation_command_frames"] == 10
+    arrays["navigation_speed_mps"][0, 0] = 0.7
+    np.savez_compressed(path, **arrays)
+    report["body_trace_hash"] = hash_bytes(path.read_bytes())
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="uncommitted navigation speed"):
+        audit_vector_first_touch(folder)
+
+
 def test_vector_audit_requires_bounded_batched_torch_shadow(tmp_path: Path) -> None:
     folder = tmp_path / "case"
     _fixture(folder)

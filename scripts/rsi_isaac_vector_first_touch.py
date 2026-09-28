@@ -23,6 +23,7 @@ parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
 parser.add_argument("--near-ball-gap-m", type=float)
 parser.add_argument("--near-ball-speed-mps", type=float)
 parser.add_argument("--near-ball-incoming-only", action="store_true")
+parser.add_argument("--record-body-trace", action="store_true")
 parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
 parser.add_argument("--onnx-graph-encoder-layout", action="store_true")
 parser.add_argument("--torch-batch-shadow", action="store_true")
@@ -262,6 +263,7 @@ def main() -> None:
         robot_joint_observations = []
         robot_joint_velocity_observations = []
         robot_target_observations = []
+        command_speed_observations = []
         applied_frames = np.zeros(args.env_count, dtype=np.int64)
         projection_counts = np.zeros(args.env_count, dtype=np.int64)
         contact_seen = np.zeros(args.env_count, dtype=np.bool_)
@@ -297,6 +299,7 @@ def main() -> None:
                 robot.data.joint_vel.torch[:, indices].detach().cpu().numpy().copy()
             )
             target = robot.data.joint_pos.torch.clone()
+            frame_command_speeds = np.full(args.env_count, args.navigation_speed_mps)
             qpos_rows = []
             qvel_rows = []
             for i, navigation in enumerate(current_navigations):
@@ -344,6 +347,7 @@ def main() -> None:
                     navigation_command=(command_speed, 0.0, 0.0),
                     navigation_envelope=navigation.navigation_envelope,
                 )
+                frame_command_speeds[i] = command_speed
                 if frame == 0:
                     navigation.start_from_observation(obs)
                 if args.torch_batch_plan_only:
@@ -413,6 +417,7 @@ def main() -> None:
                             projection_counts[index] += projected
                         applied_frames[index] += 1
             robot_target_observations.append(target[:, indices].detach().cpu().numpy().copy())
+            command_speed_observations.append(frame_command_speeds)
             frame_forces_gpu = torch.zeros((args.env_count, 6), device=sim.device)
             for _ in range(10):
                 robot.set_joint_position_target_index(target=target)
@@ -456,6 +461,7 @@ def main() -> None:
             np.asarray(robot_joint_observations),
             np.asarray(robot_joint_velocity_observations),
             np.asarray(robot_target_observations),
+            np.asarray(command_speed_observations),
             applied_frames,
             projection_counts,
             batch_target_max_difference,
@@ -471,6 +477,7 @@ def main() -> None:
         joint_observations,
         joint_velocity_observations,
         target_observations,
+        command_speed_observations,
         applied_frames,
         projection_counts,
         batch_target_max_difference,
@@ -491,6 +498,19 @@ def main() -> None:
         ball_body_contact_force_peak_n=forces_arr,
     )
     trace_hash = hash_bytes((args.output_dir / "trace.npz").read_bytes())
+    body_trace_hash = None
+    if args.record_body_trace:
+        body_trace_path = args.output_dir / "body_trace.npz"
+        np.savez_compressed(
+            body_trace_path,
+            root_pose_xyzw_m=root_observations,
+            root_velocity_world=root_velocity_observations,
+            joint_position_rad=joint_observations,
+            joint_velocity_rad_s=joint_velocity_observations,
+            joint_target_rad=target_observations,
+            navigation_speed_mps=command_speed_observations,
+        )
+        body_trace_hash = hash_bytes(body_trace_path.read_bytes())
     entries = []
     for i, (x, y, vx) in enumerate(courses):
         active = np.flatnonzero(np.max(forces_arr[:, i], axis=1) > 1.0)
@@ -543,6 +563,8 @@ def main() -> None:
         report["near_ball_gap_m"] = args.near_ball_gap_m
         report["near_ball_speed_mps"] = args.near_ball_speed_mps
         report["near_ball_incoming_only"] = args.near_ball_incoming_only
+    if body_trace_hash is not None:
+        report["body_trace_hash"] = body_trace_hash
     if args.onnx_graph_encoder_layout:
         report["onnx_graph_encoder_layout"] = True
     if candidate is not None:
