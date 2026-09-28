@@ -1060,6 +1060,7 @@ def simulate_independent_team_world(
     capture_initial_support: bool = False,
     physics_checkpoint_frame: int = 0,
     capture_team_motor_targets: bool = False,
+    research_control_frame_limit: int | None = None,
     contact_teacher_suppression: ContactTeacherSuppression | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all neural locomotion bodies in one clock.
@@ -1092,6 +1093,16 @@ def simulate_independent_team_world(
         )
     ):
         raise ValueError("read-only eight-G1 motor capture requires frame-45 physics")
+    if research_control_frame_limit is not None and (
+        type(research_control_frame_limit) is not int
+        or not 130
+        <= research_control_frame_limit
+        < round(active.simulation_duration_sec / _CONTROL_DT)
+        or receiving_students is None
+        or len(receiving_students) != 1
+        or capture_team_motor_targets
+    ):
+        raise ValueError("bounded SIM_ONLY live short course requires one qualified student")
     if type(capture_initial_support) is not bool or (
         capture_initial_support and not capture_initial_physics
     ):
@@ -1478,6 +1489,8 @@ def simulate_independent_team_world(
     mujoco.mj_forward(model, data)
 
     total_frames = int(round(active.simulation_duration_sec / _CONTROL_DT))
+    if research_control_frame_limit is not None:
+        total_frames = research_control_frame_limit
     decision_stride = max(1, int(round(active.decision_period_sec / _CONTROL_DT)))
     hard_limits = np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
     guarded_limits = 0.85 * hard_limits

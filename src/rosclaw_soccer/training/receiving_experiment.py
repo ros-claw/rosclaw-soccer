@@ -83,6 +83,7 @@ def simulate_r0_receiving_course(
     receiving_student_hip_roll_offset_rad: float = 0.0,
     research_coupled_teacher: bool = False,
     capture_team_motor_targets: bool = False,
+    research_control_frame_limit: int | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -237,6 +238,13 @@ def simulate_r0_receiving_course(
         and (receiving_student is None or receiving_student_probe_torque_nm != 0.0)
     ):
         raise ValueError("bounded student hip probe requires an unmixed qualified actor")
+    if research_control_frame_limit is not None and (
+        type(research_control_frame_limit) is not int
+        or research_control_frame_limit != 130
+        or receiving_student is None
+        or capture_team_motor_targets
+    ):
+        raise ValueError("SIM_ONLY live short receiving course requires one student and 130 frames")
     if (
         type(research_coupled_teacher) is not bool
         or research_coupled_teacher
@@ -349,6 +357,7 @@ def simulate_r0_receiving_course(
         capture_initial_support=capture_support,
         physics_checkpoint_frame=checkpoint_frame,
         capture_team_motor_targets=capture_team_motor_targets,
+        research_control_frame_limit=research_control_frame_limit,
     )
     if suppression is not None:
         inspect_teacher_suppression(trace, contract=suppression, agent_ids=policy.agent_ids)
