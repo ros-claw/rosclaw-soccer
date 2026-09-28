@@ -51,6 +51,7 @@ def _run(
     task_space_velocity_gain: float | None = None,
     privileged_teacher_lateral_sign: float | None = None,
     privileged_teacher_torque_scale: float = 1.0,
+    support_posture_gain: float | None = None,
 ) -> dict[str, Any]:
     if (
         type(receiving_leg_kp_scale) not in (float, int)
@@ -76,6 +77,13 @@ def _run(
         or (privileged_teacher_lateral_sign is None and privileged_teacher_torque_scale != 1.0)
     ):
         raise ValueError("bounded explicit privileged teacher torque scale required")
+    if support_posture_gain is not None and (
+        type(support_posture_gain) not in (float, int)
+        or not np.isfinite(support_posture_gain)
+        or not -0.20 <= support_posture_gain <= 0.20
+        or privileged_teacher_lateral_sign is None
+    ):
+        raise ValueError("bounded SIM_ONLY coupled support posture feedback required")
     data = mujoco.MjData(model)
     data.qpos[:] = arrays["sonic_recorded_qpos"][SNAPSHOT]
     data.qvel[:] = arrays["sonic_recorded_qvel"][SNAPSHOT]
@@ -112,6 +120,23 @@ def _run(
         )
         if teacher_ankle_body < 0:
             raise ValueError("qualified left ankle teacher geometry required")
+    pelvis_body = -1
+    support_limits = None
+    if support_posture_gain is not None:
+        pelvis_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
+        support_names = (
+            "right_hip_pitch_joint",
+            "right_hip_roll_joint",
+            "right_ankle_pitch_joint",
+            "right_ankle_roll_joint",
+        )
+        actual_names = tuple(
+            mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, int(model.actuator_trnid[i, 0]))
+            for i in (6, 7, 10, 11)
+        )
+        if pelvis_body < 0 or actual_names != support_names:
+            raise ValueError("qualified pelvis and right-support joints required")
+        support_limits = model.jnt_range[model.actuator_trnid[[6, 7, 10, 11], 0]]
     if task_space_velocity_gain is not None:
         expected = (
             "left_hip_pitch_joint",
@@ -201,6 +226,21 @@ def _run(
                 )
                 residual = ACTION_LIMIT_RAD * np.tanh(matrix @ feature + phase_bias + extra)
                 target[index] = np.clip(target[index] + residual, limits[:, 0], limits[:, 1])
+            if support_posture_gain is not None:
+                rotation = np.asarray(data.xmat[pelvis_body], dtype=np.float64).reshape(3, 3)
+                pitch = -float(rotation[2, 0]) + 0.05 * float(data.qvel[4])
+                roll = float(rotation[2, 1]) + 0.05 * float(data.qvel[3])
+                correction = np.clip(
+                    support_posture_gain * np.asarray((-pitch, -roll, pitch, roll)),
+                    -0.08,
+                    0.08,
+                )
+                assert support_limits is not None
+                target[[6, 7, 10, 11]] = np.clip(
+                    target[[6, 7, 10, 11]] + correction,
+                    support_limits[:, 0],
+                    support_limits[:, 1],
+                )
             return target
 
         target = target_at_current_state(base_target, first, first_nonfoot)
