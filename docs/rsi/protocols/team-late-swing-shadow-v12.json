@@ -1,0 +1,22 @@
+{
+  "schema": "rsi_team_late_swing_shadow_protocol_v12",
+  "activation_ceiling": "SIM_ONLY",
+  "actor_hash": "sha256:40f710a9443dd4070950485395fd724ef27a5a5ca1dcffef6a369f1bc71ad623",
+  "purpose": "Measure whether the Isaac single-player memory gate has compatible observations in a real shared 3v3 MuJoCo world before any actuator intervention.",
+  "fixture": "s199.independent.3v3",
+  "scenario": {
+    "scenario_id": "s199.rsi-late-swing-shadow-v12",
+    "ball_initial_position_m": [3.8, -0.7, 0.115],
+    "ball_initial_velocity_mps": [-0.5, 0.0, 0.0],
+    "seed": 920629
+  },
+  "shadow_agent_id": "red.playmaker",
+  "sample_frame": 30,
+  "simulation_duration_sec": 5.0,
+  "shadow_motor_target_count_required": 0,
+  "maximum_world_motor_speed_mps": 0.7,
+  "isaac_training_speed_mps": 1.4,
+  "cross_asset_calibration_equivalent": false,
+  "policy_intervention_authorized": false,
+  "promotion_authorized": false
+}
