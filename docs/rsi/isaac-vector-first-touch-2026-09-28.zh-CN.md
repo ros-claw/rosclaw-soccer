@@ -178,3 +178,25 @@ SONIC 首帧目标均为逐值相同；三次长回合首次触球帧分别为 `
 与四球道 Parent 完全相同。接触诊断哈希
 `sha256:f43b9ce4ed0535d3a1730bcbb5254388863574fe17999354b839d2ce07fde354`。
 这强化了该球位的动作因果证据，**但未证明新球位泛化**，也没有升级为宣传级能力。
+
+## 统计重置门：为高吞吐在线 RL 铺路
+
+之前要求同一进程重置后的全部 200 帧轨迹逐字节相同，这对存在 PhysX 接地求解
+数值分叉的在线 RL 过严；但也不能放弃初始状态和接触历史安全门。新增独立的
+`statistical_reset_contract`，重新验证既有严格重置报告与第二次重置报告的哈希，
+并从三份原始物理轨迹和身体状态探针计算：根位姿/速度、29 关节位置/速度、
+SONIC 首帧目标、球位/角速度初值均在 `1e-6` 内一致；前 20 帧无残留接触；
+三次回合骨盆最低高度不低于 0.65 m；接触帧、接触部位与报告一致。
+
+历史 `reset-probe-v6` 的审计结果：六次物理回合、**仅两个不同训练球位**，
+初始状态最大差 0，首次接触帧分别 `[85,177]`、`[85,176]`、`[84,177]`，
+严格轨迹重放失败而统计初始安全门通过。报告哈希
+`sha256:202d9da3239cb7ebae8407c57b7fbe761aac93317df378bb760ba5a8e19494c8`。
+该门只标识 `training_environment_design_ready=true`，仍显式
+`learning_authorized=false`、`promotion_authorized=false`。下一步需要在八球道、
+更多次重置上验证无历史泄漏，再引入每 20 ms 根据球—身体状态输出动作的
+Isaac Lab `DirectRLEnv` 和 skrl PPO；训练后必须在封存的 Fresh 球位上与冻结
+Parent 配对比较，不能把训练格点 3/8→4/8 当作泛化或球队宣传片。
+
+官方实现参照：[Isaac Lab 强化学习工作流](https://isaac-sim.github.io/IsaacLab/develop/source/concepts/reinforcement_learning.html)、
+[Isaac Lab 多 GPU 训练](https://isaac-sim.github.io/IsaacLab/main/source/features/multi_gpu.html)。
