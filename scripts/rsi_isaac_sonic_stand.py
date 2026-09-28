@@ -40,6 +40,7 @@ parser.add_argument("--ball-y-m", type=float, default=0.0)
 parser.add_argument("--ball-initial-vx-m-s", type=float, default=0.0)
 parser.add_argument("--ball-initial-vy-m-s", type=float, default=0.0)
 parser.add_argument("--ball-rolling-start", action="store_true")
+parser.add_argument("--rolling-contact-adapter", action="store_true")
 parser.add_argument("--right-knee-contact-residual-rad", type=float, default=0.0)
 parser.add_argument("--right-hip-pitch-contact-residual-rad", type=float, default=0.0)
 parser.add_argument("--right-ankle-pitch-contact-residual-rad", type=float, default=0.0)
@@ -144,6 +145,8 @@ if (
         args.ball_rolling_start
         and math.hypot(args.ball_initial_vx_m_s, args.ball_initial_vy_m_s) < 0.01
     )
+    or args.rolling_contact_adapter
+    and (not args.ball_rolling_start or not args.track_ball_contacts or args.agent_count != 1)
     or not math.isfinite(args.right_knee_contact_residual_rad)
     or not -0.12 <= args.right_knee_contact_residual_rad <= 0.12
     or not math.isfinite(args.right_hip_pitch_contact_residual_rad)
@@ -214,6 +217,9 @@ from rosclaw_soccer.sim.foot_target_ik import bounded_foot_target_delta  # noqa:
 from rosclaw_soccer.sim.isaac_root_bridge import isaac_root_to_mujoco  # noqa: E402
 from rosclaw_soccer.sim.joint_target_projection import (  # noqa: E402
     project_modified_joint_targets,
+)
+from rosclaw_soccer.sim.rolling_contact_window import (  # noqa: E402
+    contact_adapter_window_open,
 )
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation  # noqa: E402
 
@@ -415,6 +421,8 @@ def main() -> None:
     joint_projection_count = [0] * args.agent_count
     maximum_joint_projection_rad = [0.0] * args.agent_count
     foot_ik_applied_frames = 0
+    first_contact_seen = False
+    rolling_adapter_applied_frames = 0
     for frame in range(args.frames):
         ball_observation_position_rows.append(
             ball.data.root_pos_w.torch[0].detach().cpu().numpy().astype(np.float64).copy()
@@ -640,7 +648,15 @@ def main() -> None:
                 ball_origin_displacement_m = float(
                     np.linalg.norm(ball_xyz[:2] - np.asarray((args.ball_x_m, args.ball_y_m)))
                 )
-                if 0.1 <= ball_gap_m <= 1.0 and ball_origin_displacement_m < 0.05:
+                if contact_adapter_window_open(
+                    ball_root_gap_m=ball_gap_m,
+                    ball_origin_displacement_m=ball_origin_displacement_m,
+                    first_contact_seen=first_contact_seen,
+                    rolling_adapter_enabled=args.rolling_contact_adapter,
+                    maximum_gap_m=1.0,
+                ):
+                    if args.rolling_contact_adapter:
+                        rolling_adapter_applied_frames += 1
                     phase_weight = min(1.0, (1.0 - ball_gap_m) / 0.5)
                     modified_indices = []
                     if args.right_knee_contact_residual_rad != 0.0:
@@ -684,8 +700,13 @@ def main() -> None:
                     np.linalg.norm(ball_xyz[:2] - np.asarray((args.ball_x_m, args.ball_y_m)))
                 )
                 if (
-                    0.1 <= ball_gap_m <= 0.75
-                    and ball_origin_displacement_m < 0.05
+                    contact_adapter_window_open(
+                        ball_root_gap_m=ball_gap_m,
+                        ball_origin_displacement_m=ball_origin_displacement_m,
+                        first_contact_seen=first_contact_seen,
+                        rolling_adapter_enabled=args.rolling_contact_adapter,
+                        maximum_gap_m=0.75,
+                    )
                     and foot_xyz[2] > 0.09
                     and body_xyz[left_foot_body_index, 2] < 0.10
                 ):
@@ -779,6 +800,7 @@ def main() -> None:
         )
         ball_body_contact_force_rows.append(foot_force_peak)
         ball_body_contact_micro_rows.append(micro_forces)
+        first_contact_seen = first_contact_seen or bool(np.max(foot_force_peak) > 1.0)
     arrays = {
         "qpos": np.asarray(qpos_rows),
         "qvel": np.asarray(qvel_rows),
@@ -919,6 +941,14 @@ def main() -> None:
         "ball_initial_vx_m_s": args.ball_initial_vx_m_s,
         "ball_initial_vy_m_s": args.ball_initial_vy_m_s,
         "ball_rolling_start": args.ball_rolling_start,
+        "rolling_contact_adapter": args.rolling_contact_adapter,
+        "rolling_contact_adapter_applied_frames": rolling_adapter_applied_frames,
+        "rolling_contact_gate_hash": hash_bytes(
+            (
+                Path(__file__).resolve().parents[1]
+                / "src/rosclaw_soccer/sim/rolling_contact_window.py"
+            ).read_bytes()
+        ),
         "ball_precontact_grounded_frames": rolling.grounded_frames,
         "ball_precontact_mean_slip_m_s": rolling.mean_slip_m_s,
         "ball_precontact_maximum_slip_m_s": rolling.maximum_slip_m_s,
