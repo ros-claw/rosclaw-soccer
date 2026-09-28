@@ -62,6 +62,8 @@ class TeamSwingMotor:
         self.joint_limits: np.ndarray[Any, Any] | None = None
         self.contact_event_times: list[float] = []
         self.own_foot_force_peak_n: list[float] = []
+        self.own_foot_contact_point_w: list[tuple[float, float, float]] = []
+        self.own_foot_contact_normal_w: list[tuple[float, float, float]] = []
         self.contract_hash = hash_json(
             {
                 "schema": "rsi_team_swing_motor_v13",
@@ -82,6 +84,8 @@ class TeamSwingMotor:
             raise ValueError("same-player measured foot and foundation target required")
         self.next_frame += 1
         self.own_foot_force_peak_n.append(0.0)
+        self.own_foot_contact_point_w.append((0.0, 0.0, 0.0))
+        self.own_foot_contact_normal_w.append((0.0, 0.0, 0.0))
         kinematics = observation.foot_kinematics
         if kinematics.foot_linear_velocity_world_mps is None:
             raise ValueError("measured same-frame foot velocity required")
@@ -145,16 +149,22 @@ class TeamSwingMotor:
     def observe_physics(self, observation: TeamMotorPhysicsObservation) -> None:
         if observation.observer_agent_id != self.agent_id or not observation.world_bodies_safe:
             raise ValueError("unsafe or foreign physical motor observation")
-        own_force = max(
-            (
-                contact.normal_force_n
-                for contact in observation.ball_contacts
-                if contact.agent_id == self.agent_id
-                and contact.effector in {"left_foot", "right_foot"}
-            ),
-            default=0.0,
+        own_contacts = (
+            contact
+            for contact in observation.ball_contacts
+            if contact.agent_id == self.agent_id and contact.effector in {"left_foot", "right_foot"}
         )
-        self.own_foot_force_peak_n[-1] = max(self.own_foot_force_peak_n[-1], own_force)
+        strongest = max(own_contacts, key=lambda contact: contact.normal_force_n, default=None)
+        own_force = 0.0 if strongest is None else strongest.normal_force_n
+        if own_force > self.own_foot_force_peak_n[-1]:
+            self.own_foot_force_peak_n[-1] = own_force
+            if (
+                strongest is not None
+                and strongest.contact_position_world_m is not None
+                and strongest.normal_ball_to_counterpart_world is not None
+            ):
+                self.own_foot_contact_point_w[-1] = strongest.contact_position_world_m
+                self.own_foot_contact_normal_w[-1] = strongest.normal_ball_to_counterpart_world
         if self.first_contact_frame is not None:
             return
         if own_force > 1.0:
@@ -227,6 +237,10 @@ def _run_one(
         observed_ball_body_contact_force_peak_n=np.repeat(
             observed_own_foot_force[:, None, None], 6, axis=2
         ),
+        observed_own_foot_contact_position_w=np.asarray(motor.own_foot_contact_point_w)[:, None],
+        observed_own_foot_contact_normal_ball_to_foot_w=np.asarray(motor.own_foot_contact_normal_w)[
+            :, None
+        ],
         predicted_baseline_joint_target_rad=np.asarray(motor.observations["predicted_baseline"])[
             :, None
         ],

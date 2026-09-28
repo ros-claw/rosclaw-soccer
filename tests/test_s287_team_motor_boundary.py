@@ -149,7 +149,11 @@ def test_physics_observer_is_read_only_and_fault_removes_override(monkeypatch, f
     q[2] = 0.75
     q[3] = q[39] = 1
     d = SimpleNamespace(
-        qpos=q, qvel=np.zeros(41), time=0.002, ncon=1, contact=[SimpleNamespace(geom1=9, geom2=5)]
+        qpos=q,
+        qvel=np.zeros(41),
+        time=0.002,
+        ncon=1,
+        contact=[SimpleNamespace(geom1=9, geom2=5, pos=np.zeros(3), frame=np.eye(3))],
     )
     model = SimpleNamespace(
         jnt_range=np.tile([-10.0, 10.0], (29, 1)),

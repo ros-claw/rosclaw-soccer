@@ -38,6 +38,20 @@ def test_other_players_foot_remains_in_legacy_other_force():
         replace(value, other_non_ground_normal_force_n=0.0)
 
 
+def test_measured_contact_geometry_is_immutable_and_unit_normal() -> None:
+    contact = TeamBallContact(
+        5,
+        "red.a",
+        "left_foot",
+        2.0,
+        contact_position_world_m=(1.0, 0.2, 0.1),
+        normal_ball_to_counterpart_world=(1.0, 0.0, 0.0),
+    )
+    assert contact.normal_ball_to_counterpart_world == (1.0, 0.0, 0.0)
+    with pytest.raises(ValueError):
+        replace(contact, normal_ball_to_counterpart_world=(2.0, 0.0, 0.0))
+
+
 def test_legacy_or_explicitly_complete_empty_records():
     old = TeamMotorPhysicsObservation(0.002, (0.0,) * 43, (0.0,) * 41, True, 2.0, 3.0)
     assert not old.contacts_complete and not old.ball_contacts
@@ -65,6 +79,8 @@ def test_legacy_or_explicitly_complete_empty_records():
         {"normal_force_n": True},
         {"normal_force_n": float("nan")},
         {"normal_force_n": -1},
+        {"contact_position_world_m": (0.0, 0.0, 0.0)},
+        {"normal_ball_to_counterpart_world": (1.0, 0.0, 0.0)},
     ],
 )
 def test_invalid_counterpart_rejected(changes):
@@ -110,7 +126,15 @@ def test_world_attributes_each_counterpart_without_mutating_physics(monkeypatch)
         qvel=np.zeros(41),
         time=0.002,
         ncon=5,
-        contact=[SimpleNamespace(geom1=9, geom2=g) for g in (5, 7, 8, 11, 0)],
+        contact=[
+            SimpleNamespace(
+                geom1=g if index == 0 else 9,
+                geom2=9 if index == 0 else g,
+                pos=np.array([0.1, 0.2, 0.3]),
+                frame=np.diag((-1.0, 1.0, -1.0)) if index == 0 else np.eye(3),
+            )
+            for index, g in enumerate((5, 7, 8, 11, 0))
+        ],
     )
     model = SimpleNamespace(
         jnt_range=np.tile([-10.0, 10.0], (29, 1)),
@@ -161,3 +185,5 @@ def test_world_attributes_each_counterpart_without_mutating_physics(monkeypatch)
         ("blue.b", "body"),
         (None, "environment"),
     ]
+    assert all(c.contact_position_world_m == (0.1, 0.2, 0.3) for c in value.ball_contacts)
+    assert all(c.normal_ball_to_counterpart_world == (1.0, 0.0, 0.0) for c in value.ball_contacts)

@@ -267,6 +267,10 @@ class TeamBallContact:
     agent_id: str | None
     effector: str
     normal_force_n: float
+    # MuJoCo measured contact point and canonical ball-to-counterpart normal.
+    # Optional for old aggregate-only adapters; never an actuator handle.
+    contact_position_world_m: tuple[float, float, float] | None = None
+    normal_ball_to_counterpart_world: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -278,6 +282,29 @@ class TeamBallContact:
             or type(self.normal_force_n) not in (int, float)
             or not math.isfinite(self.normal_force_n)
             or self.normal_force_n < 0
+            or (self.contact_position_world_m is None)
+            != (self.normal_ball_to_counterpart_world is None)
+            or self.contact_position_world_m is not None
+            and (
+                type(self.contact_position_world_m) is not tuple
+                or len(self.contact_position_world_m) != 3
+                or any(
+                    type(value) not in (int, float) or not math.isfinite(value)
+                    for value in self.contact_position_world_m
+                )
+                or max(abs(value) for value in self.contact_position_world_m) > 1000
+            )
+            or self.normal_ball_to_counterpart_world is not None
+            and (
+                type(self.normal_ball_to_counterpart_world) is not tuple
+                or len(self.normal_ball_to_counterpart_world) != 3
+                or any(
+                    type(value) not in (int, float) or not math.isfinite(value)
+                    for value in self.normal_ball_to_counterpart_world
+                )
+                or abs(sum(value * value for value in self.normal_ball_to_counterpart_world) - 1)
+                > 1e-3
+            )
             or (self.agent_id is None) != (self.effector == "environment")
             or (
                 self.agent_id is not None

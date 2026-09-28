@@ -4696,7 +4696,7 @@ def _observe_team_motor_physics(
             and 1 - 2 * (pose[4] ** 2 + pose[5] ** 2) > 0.8
             and np.all(excess[limited] < 0.025)
         )
-    measured: list[tuple[int, float]] = []
+    measured: list[tuple[int, float, tuple[float, float, float], tuple[float, float, float]]] = []
     for index in range(data.ncon):
         contact = data.contact[index]
         pair = (int(contact.geom1), int(contact.geom2))
@@ -4711,10 +4711,34 @@ def _observe_team_motor_physics(
             faults.update(observed_agents)
             targets.clear()
             return
-        measured.append((other, max(0.0, float(wrench[0]))))
+        try:
+            normal = np.asarray(contact.frame, dtype=float).reshape(3, 3)[0]
+            contact_point = np.asarray(contact.pos, dtype=float).reshape(3)
+        except (ValueError, TypeError, AttributeError):
+            faults.update(observed_agents)
+            targets.clear()
+            return
+        if not np.isfinite(normal).all() or not np.isfinite(contact_point).all():
+            faults.update(observed_agents)
+            targets.clear()
+            return
+        if pair[0] != ball_geom:
+            normal = -normal
+        measured.append(
+            (
+                other,
+                max(0.0, float(wrench[0])),
+                (
+                    float(contact_point[0]),
+                    float(contact_point[1]),
+                    float(contact_point[2]),
+                ),
+                (float(normal[0]), float(normal[1]), float(normal[2])),
+            )
+        )
     attributed: list[TeamBallContact] = []
     try:
-        for geom, force in measured:
+        for geom, force, contact_xyz, normal in measured:
             owner = next(
                 (
                     c
@@ -4741,6 +4765,8 @@ def _observe_team_motor_physics(
                     agent_id=None if owner is None else owner.cell.agent_id,
                     effector=effector,
                     normal_force_n=force,
+                    contact_position_world_m=contact_xyz,
+                    normal_ball_to_counterpart_world=normal,
                 )
             )
     except (ValueError, TypeError):
@@ -4773,10 +4799,10 @@ def _observe_team_motor_physics(
                     qvel=tuple(float(x) for x in v),
                     world_bodies_safe=safe,
                     foot_normal_force_n=max(
-                        (force for geom, force in measured if geom in feet), default=0.0
+                        (force for geom, force, _, _ in measured if geom in feet), default=0.0
                     ),
                     other_non_ground_normal_force_n=max(
-                        (force for geom, force in measured if geom not in feet), default=0.0
+                        (force for geom, force, _, _ in measured if geom not in feet), default=0.0
                     ),
                     observer_agent_id=agent,
                     contacts_complete=True,
