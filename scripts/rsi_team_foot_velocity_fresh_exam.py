@@ -37,6 +37,33 @@ def scenarios(protocol: dict[str, Any]) -> list[IndependentTeamWorldScenario]:
     return result
 
 
+def score_parent(report: dict[str, Any], trajectory_path: Path) -> dict[str, Any]:
+    """Parent has no navigation trace field; score only observed body and ball."""
+    contacts = report["focal_foot_contact_frames"]
+    first = contacts[0] if contacts else None
+    with np.load(trajectory_path, allow_pickle=False) as physics:
+        ball_velocity = np.asarray(physics["ball_velocity"])
+    outgoing = (
+        float(np.max(ball_velocity[first : min(first + 5, len(ball_velocity)), 0]))
+        if first is not None
+        else None
+    )
+    safe = bool(
+        report["world_result"]["safe"]
+        and not report["world_result"]["motor_fault_agents"]
+        and not report["focal_nonfoot_contact_frames"]
+        and report["action_audit"]["taskspace_action_audited"]
+    )
+    return {
+        "report_hash": report["report_hash"],
+        "safe": safe,
+        "foot_contact_frames": contacts,
+        "useful_pass": bool(safe and outgoing is not None and outgoing >= 0.5),
+        "outgoing_ball_vx_mps": outgoing,
+        "navigation_proposed_active_frames": 0,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--asset-root", required=True, type=Path)
@@ -108,7 +135,7 @@ def main() -> None:
             scenario=scenario,
             protocol=protocol,
         )
-        parent_score = _score(parent, folder / "parent/trajectory.npz")
+        parent_score = score_parent(parent, folder / "parent/trajectory.npz")
         parent_entry = entry_features(folder / "parent/taskspace_trace.npz", 30)
         navigation = TeamFootVelocityChooser(
             agent_id=protocol["focal_agent_id"],
