@@ -41,6 +41,7 @@ def _run(
     ball_course: tuple[float, float, float] | None = None,
     post_touch_bias: NDArray[np.float64] | None = None,
     near_touch_bias: NDArray[np.float64] | None = None,
+    precontact_pulse_weights: NDArray[np.float64] | None = None,
     substep_feedback: bool = False,
 ) -> dict[str, Any]:
     data = mujoco.MjData(model)
@@ -76,6 +77,11 @@ def _run(
         near_touch_bias.shape != (len(joint_indices),) or not np.isfinite(near_touch_bias).all()
     ):
         raise ValueError("finite near-touch bias must match authorized joints")
+    if precontact_pulse_weights is not None and (
+        precontact_pulse_weights.shape != (len(joint_indices),)
+        or not np.isfinite(precontact_pulse_weights).all()
+    ):
+        raise ValueError("finite precontact pulse must match authorized joints")
     first: dict[str, Any] | None = None
     first_nonfoot: dict[str, Any] | None = None
     foot_impulse = 0.0
@@ -122,7 +128,15 @@ def _run(
                     and first_nonfoot is None
                 ):
                     phase_bias = post_touch_bias
-                residual = ACTION_LIMIT_RAD * np.tanh(matrix @ feature + phase_bias)
+                pulse = 0.0
+                if first is None and precontact_pulse_weights is not None:
+                    pulse = float(np.exp(-0.5 * ((dx - 0.45) / 0.10) ** 2))
+                extra = (
+                    pulse * precontact_pulse_weights
+                    if precontact_pulse_weights is not None
+                    else 0.0
+                )
+                residual = ACTION_LIMIT_RAD * np.tanh(matrix @ feature + phase_bias + extra)
                 target[index] = np.clip(target[index] + residual, limits[:, 0], limits[:, 1])
             return target
 
@@ -171,6 +185,8 @@ def _run(
                     "frame": frame,
                     "substep": substep,
                     "kind": kind,
+                    "ball_pelvis_dx_m": float(data.qpos[36] - data.qpos[0]),
+                    "x_closing_speed_mps": float(data.qvel[0] - data.qvel[35]),
                     "geom_name": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, other),
                     "contact_point_m": point.tolist(),
                     "ball_point_velocity_mps": ball_velocity.tolist(),
