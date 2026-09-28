@@ -1,0 +1,29 @@
+{
+  "schema": "rsi_team_contact_velocity_diagnostic_protocol_v20",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "parent_action_library_report_hash": "sha256:89c4809b690933777a6619ed3554c5b920a8ceaccdfbf711b71c5b16a22b5053",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "diagnostic_arm": {"name": "fixed_left_negative", "foot_selection": "left", "forward_gain": 0.0, "lateral_gain": -0.8},
+  "courses": [
+    {"name": "h01", "scenario_id": "s199.rsi-context-fresh-h01", "ball_initial_position_m": [3.55, -0.65, 0.115], "ball_initial_velocity_mps": [-0.4, 0.0, 0.0], "seed": 920700},
+    {"name": "h02", "scenario_id": "s199.rsi-context-fresh-h02", "ball_initial_position_m": [3.65, -0.75, 0.115], "ball_initial_velocity_mps": [-0.6, 0.0, 0.0], "seed": 920701},
+    {"name": "h03", "scenario_id": "s199.rsi-context-fresh-h03", "ball_initial_position_m": [3.75, -0.65, 0.115], "ball_initial_velocity_mps": [-0.6, 0.0, 0.0], "seed": 920702},
+    {"name": "h04", "scenario_id": "s199.rsi-context-fresh-h04", "ball_initial_position_m": [3.85, -0.75, 0.115], "ball_initial_velocity_mps": [-0.4, 0.0, 0.0], "seed": 920703},
+    {"name": "h05", "scenario_id": "s199.rsi-context-fresh-h05", "ball_initial_position_m": [3.95, -0.65, 0.115], "ball_initial_velocity_mps": [-0.4, 0.0, 0.0], "seed": 920704},
+    {"name": "h06", "scenario_id": "s199.rsi-context-fresh-h06", "ball_initial_position_m": [4.05, -0.75, 0.115], "ball_initial_velocity_mps": [-0.6, 0.0, 0.0], "seed": 920705},
+    {"name": "h07", "scenario_id": "s199.rsi-context-fresh-h07", "ball_initial_position_m": [3.75, -0.85, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920706},
+    {"name": "h08", "scenario_id": "s199.rsi-context-fresh-h08", "ball_initial_position_m": [3.85, -0.55, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920707}
+  ],
+  "interpretation": "Read-only trace enrichment on a consumed fixed-action arm. The full-world trajectory digest must match v19 exactly. Compare measured foot velocities and ball velocities around physical contact; do not infer causal policy success from one speed number.",
+  "policy_intervention_authorized": false
+}

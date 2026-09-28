@@ -49,6 +49,7 @@ class TeamSwingMotor:
             key: []
             for key in (
                 "feet",
+                "foot_velocity",
                 "jacobian",
                 "side",
                 "residual",
@@ -82,7 +83,10 @@ class TeamSwingMotor:
         self.next_frame += 1
         self.own_foot_force_peak_n.append(0.0)
         kinematics = observation.foot_kinematics
+        if kinematics.foot_linear_velocity_world_mps is None:
+            raise ValueError("measured same-frame foot velocity required")
         feet = np.asarray(kinematics.foot_position_world_m, dtype=float)
+        foot_velocity = np.asarray(kinematics.foot_linear_velocity_world_mps, dtype=float)
         jacobian = np.asarray(kinematics.foot_linear_jacobian_world, dtype=float)
         limits = np.asarray(kinematics.leg_joint_limits_rad, dtype=float)
         if self.joint_limits is None:
@@ -124,6 +128,7 @@ class TeamSwingMotor:
                 residual[ids] = target[ids] - baseline[ids]
         self.last_residual = residual.copy()
         self.observations["feet"].append(feet.copy())
+        self.observations["foot_velocity"].append(foot_velocity.copy())
         self.observations["jacobian"].append(jacobian.copy())
         self.observations["side"].append(np.asarray(self.side))
         self.observations["residual"].append(residual.copy())
@@ -211,6 +216,7 @@ def _run_one(
     np.savez_compressed(
         action_path,
         pre_step_foot_link_position_w=np.asarray(motor.observations["feet"])[:, None],
+        pre_step_foot_linear_velocity_w=np.asarray(motor.observations["foot_velocity"])[:, None],
         pre_step_foot_linear_jacobian_w=np.asarray(motor.observations["jacobian"])[:, None],
         taskspace_selected_side=np.asarray(motor.observations["side"])[:, None],
         applied_taskspace_joint_delta_rad=np.asarray(motor.observations["residual"])[:, None],

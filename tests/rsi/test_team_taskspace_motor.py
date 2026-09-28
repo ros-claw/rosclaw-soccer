@@ -58,6 +58,7 @@ def _observation(frame: int, ball_x: float) -> TeamMotorObservation:
                 tuple(tuple(float(value) for value in row) for row in side) for side in jac
             ),
             leg_joint_limits_rad=(((-1.0, 1.0),) * 6, ((-1.0, 1.0),) * 6),
+            foot_linear_velocity_world_mps=((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         ),
     )
 
