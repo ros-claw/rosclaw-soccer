@@ -19,6 +19,10 @@ from rsi_mjx_clean_touch_control_es import (
 )
 from rsi_mjx_contact_replay_smoke import _contact_masks
 
+from rosclaw_soccer.growth.locomotion_contact_teacher import (
+    G1LocomotionContactTeacherConfig,
+    locomotion_contact_teacher_effect,
+)
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json
 from rosclaw_soccer.sim.physical_checkpoint import compiled_model_hash
 from rosclaw_soccer.world.field import G1TrainingGoalSpec, build_g1_stadium_model
@@ -45,6 +49,8 @@ def _run(
     substep_feedback: bool = False,
     receiving_leg_kp_scale: float = 1.0,
     task_space_velocity_gain: float | None = None,
+    privileged_teacher_lateral_sign: float | None = None,
+    privileged_teacher_torque_scale: float = 1.0,
 ) -> dict[str, Any]:
     if (
         type(receiving_leg_kp_scale) not in (float, int)
@@ -58,6 +64,18 @@ def _run(
         or not 0.0 <= task_space_velocity_gain <= 1.0
     ):
         raise ValueError("bounded causal task-space teacher gain required")
+    if privileged_teacher_lateral_sign is not None and (
+        type(privileged_teacher_lateral_sign) not in (float, int)
+        or privileged_teacher_lateral_sign not in (-1.0, 1.0)
+    ):
+        raise ValueError("explicit privileged left-foot teacher sign required")
+    if (
+        type(privileged_teacher_torque_scale) not in (float, int)
+        or not np.isfinite(privileged_teacher_torque_scale)
+        or not 0.25 <= privileged_teacher_torque_scale <= 1.0
+        or (privileged_teacher_lateral_sign is None and privileged_teacher_torque_scale != 1.0)
+    ):
+        raise ValueError("bounded explicit privileged teacher torque scale required")
     data = mujoco.MjData(model)
     data.qpos[:] = arrays["sonic_recorded_qpos"][SNAPSHOT]
     data.qvel[:] = arrays["sonic_recorded_qvel"][SNAPSHOT]
@@ -85,6 +103,15 @@ def _run(
     bias = weights[len(joint_indices) * features :]
     foot_geom = -1
     foot_body = -1
+    teacher_config = None
+    teacher_ankle_body = -1
+    if privileged_teacher_lateral_sign is not None:
+        teacher_config = G1LocomotionContactTeacherConfig()
+        teacher_ankle_body = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_BODY, "left_ankle_roll_link"
+        )
+        if teacher_ankle_body < 0:
+            raise ValueError("qualified left ankle teacher geometry required")
     if task_space_velocity_gain is not None:
         expected = (
             "left_hip_pitch_joint",
@@ -124,6 +151,8 @@ def _run(
     maximum_tilt = 0.0
     impedance_substeps = 0
     task_space_active_frames = 0
+    privileged_teacher_active_substeps = 0
+    privileged_teacher_peak_torque_nm = 0.0
     for frame in range(SNAPSHOT + 1, 101):
         base_target = arrays["sonic_recorded_target"][frame]
         kp = arrays["sonic_recorded_kp"][frame]
@@ -225,11 +254,42 @@ def _run(
                 kp_effective = kp.copy()
                 kp_effective[[0, 1, 3, 4, 5]] *= receiving_leg_kp_scale
                 impedance_substeps += 1
-            data.ctrl[:] = np.clip(
-                kp_effective * (target - data.qpos[7:36]) - kd * data.qvel[6:35],
-                -torque_limit,
-                torque_limit,
-            )
+            raw_torque = kp_effective * (target - data.qpos[7:36]) - kd * data.qvel[6:35]
+            if teacher_config is not None and first_nonfoot is None:
+                contact_progress = None
+                teacher_window_open = first is None
+                if first is not None and first["kind"] == "foot":
+                    elapsed = (
+                        (frame - int(first["frame"])) * 10 + substep - int(first["substep"])
+                    ) * model.opt.timestep
+                    teacher_window_open = 0.0 <= elapsed <= 0.12
+                    if teacher_window_open:
+                        contact_progress = float(np.clip(elapsed / 0.12, 0.0, 1.0))
+                if teacher_window_open:
+                    effect = locomotion_contact_teacher_effect(
+                        model=model,
+                        data=data,
+                        ankle_body_id=teacher_ankle_body,
+                        actuated_dof_indices=np.arange(6, 35, dtype=np.int64),
+                        ball_position_m=np.asarray(data.qpos[36:39], dtype=np.float64),
+                        ball_velocity_mps=np.asarray(data.qvel[35:38], dtype=np.float64),
+                        desired_ball_direction_xy=np.asarray((1.0, 0.0), dtype=np.float64),
+                        contact_mode="receive",
+                        local_lateral_sign=privileged_teacher_lateral_sign,
+                        contact_recent=first is not None,
+                        config=teacher_config,
+                        receive_capture_progress=contact_progress,
+                    )
+                    if effect.active:
+                        raw_torque += privileged_teacher_torque_scale * effect.torque_nm
+                        privileged_teacher_active_substeps += 1
+                        privileged_teacher_peak_torque_nm = max(
+                            privileged_teacher_peak_torque_nm,
+                            float(
+                                privileged_teacher_torque_scale * np.max(np.abs(effect.torque_nm))
+                            ),
+                        )
+            data.ctrl[:] = np.clip(raw_torque, -torque_limit, torque_limit)
             mujoco.mj_step(model, data)
             minimum = min(minimum, float(data.qpos[2]))
             quat = data.qpos[3:7]
@@ -255,7 +315,7 @@ def _run(
                 )
                 relative = ball_velocity - body_velocity
                 normal = np.asarray(contact.frame[:3], dtype=np.float64)
-                force = np.zeros(6, dtype=np.float64)
+                force: NDArray[np.float64] = np.zeros(6, dtype=np.float64)
                 mujoco.mj_contactForce(model, data, contact_id, force)
                 impulse = max(0.0, float(force[0])) * model.opt.timestep
                 if kind == "foot":
@@ -297,6 +357,8 @@ def _run(
         "maximum_tilt_rad": maximum_tilt,
         "impedance_substeps": impedance_substeps,
         "task_space_active_frames": task_space_active_frames,
+        "privileged_teacher_active_substeps": privileged_teacher_active_substeps,
+        "privileged_teacher_peak_torque_nm": privileged_teacher_peak_torque_nm,
     }
 
 
