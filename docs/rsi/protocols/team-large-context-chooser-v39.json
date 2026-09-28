@@ -1,0 +1,19 @@
+{
+  "schema": "rsi_team_large_context_chooser_protocol_v39",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "dataset_path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v38/paired_outcomes.npz",
+  "dataset_hash": "sha256:2a7364d2f3f2091cec344d079cc76abe94dd4a18a659635bfd841126f0c44f26",
+  "training_indices": "batches_00_to_11_384_scenes",
+  "internal_validation_indices": "batches_12_to_15_128_scenes",
+  "feature_sets": ["relative_body_8","measured_feet_12","relative_feet_16","ball_feet_18","full_entry_24"],
+  "epochs": [25,50,100],
+  "safety_thresholds": [0.65,0.8],
+  "network_width": 24,
+  "ensemble_seeds": [11,19,29],
+  "optimizer": {"learning_rate": 0.004, "weight_decay": 0.04},
+  "internal_gate": {"minimum_useful": 23, "maximum_unsafe": 15, "maximum_abstained": 32},
+  "selection_rule": "eligible candidates only; highest useful, then lowest unsafe, highest safe contacts, lowest abstention, earliest predeclared candidate",
+  "interpretation": "Development-only 384/128 split by whole physical batches. Thirty predeclared small-model variants; validation is not a fresh online score, and any chosen architecture still needs a new paired physical exam."
+}

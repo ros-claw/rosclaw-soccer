@@ -40,7 +40,7 @@ def _observation() -> NavigationObservation:
     )
 
 
-def _model(path: Path) -> None:
+def _model(path: Path, *, large_context: bool = False) -> None:
     names = [
         "adaptive_c19",
         "fixed_left_negative",
@@ -50,7 +50,10 @@ def _model(path: Path) -> None:
         "phase_stay_lat12",
     ]
     layers = [
-        {"weight": [[0.0] * 12 for _ in range(24)], "bias": [0.0] * 24},
+        {
+            "weight": [[0.0] * (16 if large_context else 12) for _ in range(24)],
+            "bias": [0.0] * 24,
+        },
         {"weight": [[0.0] * 24 for _ in range(24)], "bias": [0.0] * 24},
         {
             "weight": [[0.0] * 24 for _ in range(18)],
@@ -58,10 +61,14 @@ def _model(path: Path) -> None:
         },
     ]
     model = {
-        "schema": "rsi_team_foot_velocity_chooser_model_v33",
+        "schema": (
+            "rsi_team_large_context_chooser_model_v39"
+            if large_context
+            else "rsi_team_foot_velocity_chooser_model_v33"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "promotion_authorized": False,
-        "feature_count": 12,
+        "feature_count": 16 if large_context else 12,
         "safety_threshold": 0.65,
         "safety_quantile": 0.2,
         "arm_names": names,
@@ -73,10 +80,12 @@ def _model(path: Path) -> None:
             "activation_max_gap_m": 2.0,
             "speed_cap_mps": 0.22,
         },
-        "mean": [0.0] * 12,
-        "scale": [1.0] * 12,
+        "mean": [0.0] * (16 if large_context else 12),
+        "scale": [1.0] * (16 if large_context else 12),
         "networks": [{"layers": layers} for _ in range(3)],
     }
+    if large_context:
+        model["feature_set"] = "relative_feet_16"
     model["model_hash"] = hash_json(model)
     path.write_text(json.dumps(model), encoding="utf-8")
 
@@ -101,6 +110,18 @@ def test_chooser_uses_measured_foot_velocity_and_bounded_navigation(tmp_path: Pa
     assert not slot.faulted
     assert chooser.selected_arm == "adaptive_c19"
     assert abs(delta[0]) <= 0.25 and abs(delta[1]) <= 0.25
+
+
+def test_large_context_chooser_binds_ball_and_measured_foot_features(tmp_path: Path) -> None:
+    path = tmp_path / "model.json"
+    _model(path, large_context=True)
+    chooser = _chooser(path)
+    slot = NavigationSlot(chooser)
+    slot._frame = 29
+    slot._time = 0.58
+    slot.propose(_observation())
+    assert not slot.faulted
+    assert chooser.selected_arm == "adaptive_c19"
 
 
 def test_missing_velocity_fails_closed(tmp_path: Path) -> None:
