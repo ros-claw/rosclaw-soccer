@@ -1,0 +1,20 @@
+{
+  "run_id": "first-touch-train16-candidate101-20260928-v1",
+  "purpose": "SIM_ONLY bounded randomized six-joint precontact residual on sixteen distinct seeded moving-ball training courses",
+  "code_sha": "8fce471",
+  "physics_source_hash": "sha256:ff2d8363965c3cf1abfb910a848a226b13df872cf2ca4cfc0ead62d729d8764f",
+  "parent_report_hash": "sha256:95fbaf4ce337fa9fbdf172dd0d1642276e75fe31b5225c152ee459a349ecf079",
+  "parent_clean_foot_only": 6,
+  "candidate_manifest_hash": "sha256:4ad219797a8c5102ca79a0e4c1bd19ff18c62a055d889ad72470bc4f0e4651a2",
+  "candidate_seed": 101,
+  "candidate_sigma_rad": 0.05,
+  "residual_clip_rad": 0.08,
+  "course_seed": 20260928,
+  "course_count": 16,
+  "frozen_modules": ["SONIC planner and batch encoder/decoder", "motor gains", "robot and ball assets"],
+  "trainable_modules": ["none in this exploratory rollout; authenticated action/outcome pairs may feed a later actor-critic update"],
+  "metrics": ["clean foot-only count vs Parent", "first foot/nonfoot contact frame", "joint-limit projection count", "minimum pelvis z", "reward per independent course"],
+  "stop_rules": ["Abort on parent, course catalog, asset or foundation mismatch", "Never activate outside SIM_ONLY", "No promotion or Fresh opening based on this one exploration"],
+  "fresh_opened": false,
+  "activation_ceiling": "SIM_ONLY"
+}
