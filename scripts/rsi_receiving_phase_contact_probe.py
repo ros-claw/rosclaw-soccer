@@ -20,9 +20,8 @@ from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash
 from rosclaw_soccer.sim.physical_checkpoint import compiled_model_hash
 from rosclaw_soccer.world.field import G1TrainingGoalSpec, build_g1_stadium_model
 
-SNAPSHOT = 20
 END_FRAME = 70
-LEFT_JOINTS = (1, 3, 4, 5, 6)  # hip roll, hip pitch, knee, ankle pitch, ankle roll
+LEFT_JOINTS = (0, 1, 3, 4, 5)  # hip pitch, hip roll, knee, ankle pitch, ankle roll
 LIMIT = 0.20
 
 
@@ -44,10 +43,11 @@ def _evaluate(
     kd: NDArray[np.float64],
     params: NDArray[np.float64],
     timing: tuple[int, int, int],
+    snapshot: int,
     masks: tuple[int, NDArray[np.bool_], NDArray[np.bool_]],
 ) -> dict[str, Any]:
-    data.qpos[:] = qpos[SNAPSHOT]
-    data.qvel[:] = qvel[SNAPSHOT]
+    data.qpos[:] = qpos[snapshot]
+    data.qvel[:] = qvel[snapshot]
     mujoco.mj_forward(model, data)
     ball_geom, robot_mask, foot_mask = masks
     torque_limit = np.asarray(G1_HARD_TORQUE_LIMITS)
@@ -56,7 +56,7 @@ def _evaluate(
     contacts: list[tuple[int, int, str]] = []
     minimum = float(data.qpos[2])
     maximum_tilt = 0.0
-    for frame in range(SNAPSHOT + 1, END_FRAME + 1):
+    for frame in range(snapshot + 1, END_FRAME + 1):
         proposal = target[frame].copy()
         proposal[joints] = np.clip(
             proposal[joints] + _window(frame, *timing) * params,
@@ -101,11 +101,14 @@ def _evaluate(
     }
 
 
-def probe(*, asset_root: Path, captured: Path, output_dir: Path, trials: int) -> dict[str, Any]:
+def probe(
+    *, asset_root: Path, captured: Path, output_dir: Path, trials: int, snapshot: int = 20
+) -> dict[str, Any]:
     source = Path(__file__)
     source_hash = hash_bytes(source.read_bytes())
     if (
         not 1 <= trials <= 500
+        or snapshot not in (0, 10, 20)
         or output_dir.exists()
         or output_dir.resolve().is_relative_to(source.resolve().parents[1])
     ):
@@ -138,14 +141,23 @@ def probe(*, asset_root: Path, captured: Path, output_dir: Path, trials: int) ->
     data = mujoco.MjData(model)
     masks = _contact_masks(model)
     zero = np.zeros(5, dtype=np.float64)
-    baseline = _evaluate(model, data, qpos, qvel, target, kp, kd, zero, (22, 33, 43), masks)
+    baseline = _evaluate(
+        model, data, qpos, qvel, target, kp, kd, zero, (22, 33, 43), snapshot, masks
+    )
     rng = np.random.default_rng(20260928)
     rows = []
-    timing_choices = ((21, 31, 43), (23, 34, 46), (25, 32, 40), (21, 35, 50))
+    timing_choices = (
+        (max(1, snapshot + 1), 31, 43),
+        (max(1, snapshot + 3), 34, 46),
+        (max(1, snapshot + 1), 32, 40),
+        (max(1, snapshot + 1), 35, 50),
+    )
     for index in range(trials):
         timing = timing_choices[index % len(timing_choices)]
         amplitude = rng.uniform(-LIMIT, LIMIT, size=5)
-        result = _evaluate(model, data, qpos, qvel, target, kp, kd, amplitude, timing, masks)
+        result = _evaluate(
+            model, data, qpos, qvel, target, kp, kd, amplitude, timing, snapshot, masks
+        )
         rows.append(
             {"trial": index, "timing": list(timing), "residual_rad": amplitude.tolist(), **result}
         )
@@ -167,6 +179,7 @@ def probe(*, asset_root: Path, captured: Path, output_dir: Path, trials: int) ->
         "capture_hash": committed,
         "compiled_model_hash": compiled_model_hash(model),
         "seed": 20260928,
+        "snapshot_frame": snapshot,
         "trials": trials,
         "baseline": baseline,
         "safe_clean_foot_count": sum(bool(row["safe"] and row["clean_foot"]) for row in rows),
@@ -192,6 +205,7 @@ def main() -> None:
     parser.add_argument("--captured", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--trials", required=True, type=int)
+    parser.add_argument("--snapshot", type=int, default=20)
     print(json.dumps(probe(**vars(parser.parse_args())), sort_keys=True))
 
 
