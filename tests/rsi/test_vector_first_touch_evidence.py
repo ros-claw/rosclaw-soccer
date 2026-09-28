@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from rosclaw_soccer.rsi.first_touch_course_catalog import sample_training_courses
 from rosclaw_soccer.rsi.vector_first_touch_evidence import (
     audit_first_touch_candidate_execution,
     audit_reset_replay,
@@ -107,6 +108,48 @@ def test_vector_audit_requires_bounded_plan_only_target(tmp_path: Path) -> None:
     report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
     report_path.write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(ValueError, match="unauthenticated"):
+        audit_vector_first_touch(folder)
+
+
+def test_seeded_sixteen_course_split_is_recomputed(tmp_path: Path) -> None:
+    folder = tmp_path / "case"
+    _fixture(folder)
+    report_path = folder / "report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    courses = sample_training_courses(20260928)
+    positions = np.zeros((50, 16, 3))
+    entries = []
+    for i, (x, y, vx) in enumerate(courses):
+        positions[:, i] = (x, i * 8.0 + y, 0.11)
+        entries.append(
+            {
+                "environment": i,
+                "lane_y_m": i * 8.0,
+                "course": {"ball_x_m": x, "ball_y_local_m": y, "ball_vx_m_s": vx},
+                "minimum_pelvis_z_m": 0.7,
+                "first_contact_frame": None,
+                "contact_body_indices": [],
+                "ball_final_local_xyz_m": [x, y, 0.11],
+            }
+        )
+    trace = folder / "trace.npz"
+    np.savez_compressed(
+        trace,
+        ball_position_m=positions,
+        ball_angular_velocity_rad_s=np.zeros_like(positions),
+        ball_body_contact_force_peak_n=np.zeros((50, 16, 6)),
+    )
+    report["trace_hash"] = hash_bytes(trace.read_bytes())
+    report["environments"] = entries
+    report["training_course_seed"] = 20260928
+    report["course_catalog_hash"] = hash_json(courses)
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert audit_vector_first_touch(folder)["independent_physical_episode_count"] == 16
+    report["environments"][0]["course"]["ball_x_m"] += 0.001
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="training courses differ"):
         audit_vector_first_touch(folder)
 
 

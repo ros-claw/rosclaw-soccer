@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.first_touch_course_catalog import sample_training_courses
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
@@ -95,6 +96,17 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
     if np.max(np.abs(positions[:, :, 1] - lanes[None, :])) >= 4.0:
         raise ValueError("ball escaped its lane")
     courses = []
+    training_seed = report.get("training_course_seed")
+    if training_seed is not None:
+        if (
+            type(training_seed) is not int
+            or n != 16
+            or "course_catalog_hash" not in report
+            or report["course_catalog_hash"] != hash_json(sample_training_courses(training_seed, n))
+        ):
+            raise ValueError("training course split is unauthenticated")
+    elif "course_catalog_hash" in report:
+        raise ValueError("unbound course catalog hash")
     clean = 0
     positives = 0
     sides: set[str] = set()
@@ -103,9 +115,14 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
         key = (course["ball_x_m"], course["ball_y_local_m"], course["ball_vx_m_s"])
         courses.append(key)
         if (
-            key[0] not in (2.4, 2.6)
-            or key[1] not in (-0.1, 0.1)
-            or key[2] not in (-0.5, 0.5)
+            (
+                training_seed is None
+                and (
+                    key[0] not in ((2.3, 2.4, 2.6, 2.7) if n == 16 else (2.4, 2.6))
+                    or key[1] not in (-0.1, 0.1)
+                    or key[2] not in (-0.5, 0.5)
+                )
+            )
             or not 0.65 <= row["minimum_pelvis_z_m"] <= 1.5
             or not np.allclose(
                 row["ball_final_local_xyz_m"],
@@ -127,6 +144,8 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
             sides.add("left" if force[first, i, 0] >= force[first, i, 1] else "right")
     if len(set(courses)) != len(courses):
         raise ValueError("duplicate courses are not independent episodes")
+    if training_seed is not None and tuple(courses) != sample_training_courses(training_seed, n):
+        raise ValueError("training courses differ from committed seed")
     result = {
         "schema": "rsi_isaac_vector_first_touch_audit_v1",
         "activation_ceiling": "SIM_ONLY",

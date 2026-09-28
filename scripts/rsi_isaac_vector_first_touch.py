@@ -18,6 +18,7 @@ parser.add_argument("--model-root", required=True, type=Path)
 parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
+parser.add_argument("--training-course-seed", type=int)
 parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
 parser.add_argument("--onnx-graph-encoder-layout", action="store_true")
 parser.add_argument("--torch-batch-shadow", action="store_true")
@@ -42,6 +43,15 @@ if (
     or (args.candidate_actions is not None and args.reset_replay)
     or (args.torch_batch_drive and not args.torch_batch_shadow)
     or (args.torch_batch_plan_only and (args.torch_batch_shadow or args.torch_batch_drive))
+    or (
+        args.training_course_seed is not None
+        and (
+            args.env_count != 16
+            or args.reset_replay
+            or args.candidate_actions is not None
+            or not 0 <= args.training_course_seed < 2**32
+        )
+    )
 ):
     parser.error("qualified assets, 2-16 environments and new output directory required")
 launcher = AppLauncher(args)
@@ -68,6 +78,10 @@ from rosclaw_soccer.rsi.first_touch_candidate import (  # noqa: E402
     JOINT_NAMES,
     load_first_touch_candidate,
     project_residual_target,
+)
+from rosclaw_soccer.rsi.first_touch_course_catalog import (  # noqa: E402
+    sample_training_courses,
+    static_development_courses,
 )
 from rosclaw_soccer.rsi.vector_first_touch_evidence import (  # noqa: E402
     audit_vector_first_touch,
@@ -163,14 +177,11 @@ def main() -> None:
     # At 6 s the ball can deflect >2 m sideways; 8 m lane spacing prevents
     # a struck ball from contaminating a neighboring G1's episode.
     lanes = np.arange(args.env_count, dtype=np.float64) * 8.0
-    courses = [
-        (
-            2.4 if (i // 4) % 2 == 0 else 2.6,
-            -0.1 if (i // 2) % 2 == 0 else 0.1,
-            -0.5 if i % 2 == 0 else 0.5,
-        )
-        for i in range(args.env_count)
-    ]
+    courses = list(
+        static_development_courses(args.env_count)
+        if args.training_course_seed is None
+        else sample_training_courses(args.training_course_seed, args.env_count)
+    )
     candidate = None
     if args.candidate_actions is not None and args.parent_report is not None:
         parent_audit = audit_vector_first_touch(args.parent_report.parent)
@@ -489,6 +500,9 @@ def main() -> None:
     if args.torch_batch_plan_only:
         report["torch_batch_plan_only"] = True
         report["torch_batch_max_internal_target_difference_rad"] = batch_target_max_difference
+    if args.training_course_seed is not None:
+        report["training_course_seed"] = args.training_course_seed
+        report["course_catalog_hash"] = hash_json(courses)
     if args.onnx_graph_encoder_layout:
         report["onnx_graph_encoder_layout"] = True
     if candidate is not None:
