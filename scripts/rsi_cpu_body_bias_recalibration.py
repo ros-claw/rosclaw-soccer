@@ -61,6 +61,8 @@ def train(
     generations: int,
     population: int,
     seed: int,
+    include_consumed_center: bool = False,
+    warm_start_candidate: Path | None = None,
 ) -> dict[str, Any]:
     source = Path(__file__)
     helper = source.with_name("rsi_receiving_contact_dynamics_audit.py")
@@ -72,6 +74,8 @@ def train(
         or not 4 <= population <= 32
         or population % 2
         or not 0 <= seed < 2**31
+        or type(include_consumed_center) is not bool
+        or (include_consumed_center != (warm_start_candidate is not None))
     ):
         raise ValueError("bounded external SIM_ONLY CPU training required")
     candidate: dict[str, Any] = json.loads(gpu_candidate.read_text(encoding="utf-8"))
@@ -91,16 +95,37 @@ def train(
     ):
         raise ValueError("sealed failed-center GPU warm start required")
     arrays = _capture(captured, fidelity)
+    center_course = (
+        float(arrays["sonic_recorded_qpos"][45, 36]),
+        float(arrays["sonic_recorded_qpos"][45, 37]),
+        float(arrays["sonic_recorded_qvel"][45, 35]),
+    )
+    active_courses = COURSES + (center_course,) if include_consumed_center else COURSES
     model = build_g1_stadium_model(
         asset_root, G1TrainingGoalSpec(ball_radius_m=0.115, ball_mass_kg=0.41)
     )
     _validate_body_joints(model)
     model.opt.timestep = 0.002
     original = weights.astype(np.float64)
+    warm_start_hash = None
+    if warm_start_candidate is not None:
+        warm_payload: dict[str, Any] = json.loads(warm_start_candidate.read_text(encoding="utf-8"))
+        warm_start_hash = warm_payload.pop("report_hash")
+        warm_weights = np.asarray(warm_payload["full_weights"], dtype=np.float32)
+        if (
+            warm_start_hash != hash_json(warm_payload)
+            or warm_payload["promotion_authorized"] is not False
+            or warm_payload["fresh8_opened"] is not False
+            or warm_weights.shape != (WEIGHTS,)
+            or warm_payload["full_weights_hash"] != hash_bytes(warm_weights.tobytes())
+            or not np.array_equal(warm_weights[:BIAS_START], weights[:BIAS_START])
+        ):
+            raise ValueError("same frozen feedback matrix warm start required")
+        original[BIAS_START:] = warm_weights[BIAS_START:]
     zero = np.zeros(WEIGHTS, dtype=np.float64)
 
     def evaluate(full: NDArray[np.float64]) -> list[dict[str, Any]]:
-        return [_run(model, arrays, full, FULL_JOINTS, course) for course in COURSES]
+        return [_run(model, arrays, full, FULL_JOINTS, course) for course in active_courses]
 
     parent_rows = evaluate(zero)
     warm_rows = evaluate(original)
@@ -116,7 +141,9 @@ def train(
         "capture_hash": hash_bytes((captured / "motor-trace.npz").read_bytes()),
         "gpu_candidate_hash": candidate_hash,
         "cpu_center_hash": center_hash,
-        "train_courses": [list(row) for row in COURSES],
+        "warm_start_hash": warm_start_hash,
+        "consumed_center_in_training": include_consumed_center,
+        "train_courses": [list(row) for row in active_courses],
         "reserved_fresh8": [list(row) for row in FRESH8],
         "plastic_coordinates": list(range(BIAS_START, WEIGHTS)),
         "generations": generations,
@@ -139,12 +166,22 @@ def train(
             40 * summary["clean_foot_count"]
             + 3 * summary["safe_count"]
             - 40 * summary["nonfoot_count"]
-            - 100 * (len(COURSES) - summary["safe_count"])
+            - 100 * (len(active_courses) - summary["safe_count"])
             - 40 * speed_ratio
             - 25 * distance_ratio
             - 30 * max(0.0, speed_ratio / 0.85 - 1)
             - 30 * max(0.0, distance_ratio / 0.90 - 1)
         )
+        if include_consumed_center:
+            center_speed_ratio = (
+                rows[-1]["exam_ball_speed_mps"] / parent_rows[-1]["exam_ball_speed_mps"]
+            )
+            center_distance_ratio = (
+                rows[-1]["exam_ball_pelvis_distance_m"]
+                / parent_rows[-1]["exam_ball_pelvis_distance_m"]
+            )
+            value -= 80 * max(0.0, center_speed_ratio / 0.85 - 1)
+            value -= 80 * max(0.0, center_distance_ratio / 0.90 - 1)
         return float(value)
 
     rng = np.random.default_rng(seed)
@@ -232,6 +269,8 @@ def main() -> None:
     parser.add_argument("--generations", required=True, type=int)
     parser.add_argument("--population", required=True, type=int)
     parser.add_argument("--seed", required=True, type=int)
+    parser.add_argument("--include-consumed-center", action="store_true")
+    parser.add_argument("--warm-start-candidate", type=Path)
     report = train(**vars(parser.parse_args()))
     print(json.dumps({key: report[key] for key in ("best", "report_hash")}, sort_keys=True))
 
