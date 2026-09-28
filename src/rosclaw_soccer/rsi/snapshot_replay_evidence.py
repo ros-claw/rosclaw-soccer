@@ -21,6 +21,7 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
     count = report.get("sample_count")
     start = report.get("start_index")
     probe = report.get("knee_extension_probe", False)
+    closed_loop = report.get("closed_loop_sonic", False)
     if (
         report.get("schema") != "rsi_isaac_first_touch_snapshot_replay_v1"
         or report.get("activation_ceiling") != "SIM_ONLY"
@@ -32,6 +33,7 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
         or report.get("foundation_qualification_hash") != manifest["source_identity"][2]
         or report.get("runner_source_hash", "").startswith("sha256:") is not True
         or type(probe) is not bool
+        or type(closed_loop) is not bool
         or type(count) is not int
         or not 2 <= count <= 16
         or type(start) is not int
@@ -78,6 +80,8 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
                 pre_step_ball_linear_velocity_m_s=(frames, count, 3),
                 applied_probe_residual_rad=(frames, count, 3),
             )
+        if "closed_loop_sonic" in report:
+            shapes["predicted_baseline_joint_target_rad"] = (frames, count, 29)
         if set(replay.files) != set(shapes) or any(
             replay[key].shape != shape or not np.isfinite(replay[key]).all()
             for key, shape in shapes.items()
@@ -140,6 +144,25 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
         if np.any(observed_force < 0):
             raise ValueError("negative physical contact force")
         if "knee_extension_probe" in report:
+            if "closed_loop_sonic" in report:
+                target = replay["predicted_baseline_joint_target_rad"]
+                parent = bank["privileged_parent_joint_targets_rad"][
+                    start : start + count
+                ].transpose(1, 0, 2)
+                first_error = float(np.max(np.abs(target[0] - parent[0])))
+                if (
+                    not np.isclose(
+                        report.get("max_parent_target_error_at_snapshot_rad"),
+                        first_error,
+                        atol=1e-6,
+                        rtol=0,
+                    )
+                    or not np.isfinite(report.get("warmup_max_target_error_rad", np.nan))
+                    or report["warmup_max_target_error_rad"] > 1e-3
+                    or (closed_loop and first_error > 1e-3)
+                    or (not closed_loop and not np.allclose(target, parent, atol=1e-5, rtol=0))
+                ):
+                    raise ValueError("snapshot SONIC controller target commitment invalid")
             if (
                 not np.allclose(
                     replay["pre_step_ball_position_local_m"][0],
@@ -259,7 +282,7 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
             class_equal += observed_bodies == reference_bodies
         max_ball = float(np.max(ball_error[:lead]))
         max_root = float(np.max(root_error[:lead]))
-    qualified = bool(
+    parent_equivalent = bool(
         not probe
         and max_initial <= 1e-4
         and max_ball <= 0.005
@@ -267,6 +290,7 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
         and first_equal == count
         and class_equal == count
     )
+    qualified = bool(closed_loop and parent_equivalent)
     result: dict[str, Any] = {
         "schema": "rsi_isaac_first_touch_snapshot_replay_audit_v1",
         "activation_ceiling": "SIM_ONLY",
@@ -278,8 +302,11 @@ def audit_snapshot_replay(folder: Path, *, snapshot_bank: Path) -> dict[str, Any
         "max_precontact_root_position_error_m": max_root,
         "first_contact_frame_equal_count": first_equal,
         "contact_body_class_equal_count": class_equal,
+        "parent_replay_equivalent": parent_equivalent,
         "short_horizon_training_surrogate_qualified": qualified,
         "intervention_action_audited": probe,
+        "closed_loop_sonic": closed_loop,
+        "intervention_training_qualified": False,
         "future_parent_target_is_privileged": True,
         "promotion_authorized": False,
     }

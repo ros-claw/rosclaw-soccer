@@ -1,0 +1,27 @@
+{
+  "schema": "rsi_first_touch_closed_loop_snapshot_prospective_protocol_v1",
+  "purpose": "Precommit an unseen-source-lane calibration of the truly closed-loop Isaac snapshot replay before treating it as a SIM_ONLY first-contact training surrogate",
+  "partition": "CONSUMED_DEV_DIAGNOSTIC_NOT_POLICY_FRESH",
+  "snapshot_bank_manifest_hash": "sha256:40ff9080aa204aa78c93a2c8385343d1b183a83ed5f5ebd6bd1fef7e091a7d03",
+  "source_training_seed": 20260932,
+  "snapshot_selection": {"start_index": 16, "sample_count": 7, "fixed_start_frame": 30, "window_frames": 120},
+  "intervention": "Shared bounded right-knee-extension probe; no trained actor; same candidate weights as seeds 20260930 and 20260931",
+  "full_run_parent": "/data/rosclaw_overflow/rsi-isaac-sonic-planonly-bodytrace-train16-seed20260932-v1",
+  "require_independent_full_run_candidate_audit": true,
+  "acceptance": {
+    "initial_state_error_max": 0.0001,
+    "warmup_target_error_rad_max": 0.001,
+    "first_snapshot_target_error_rad_max": 0.001,
+    "precontact_ball_error_m_max": 0.005,
+    "precontact_root_error_m_max": 0.01,
+    "first_contact_frame_absolute_difference_max": 1,
+    "first_contact_body_class_equal_min_of_7": 6,
+    "clean_foot_outcome_equal_min_of_7": 6,
+    "false_clean_foot_positive_max_of_7": 0,
+    "minimum_robot_root_height_m": 0.65
+  },
+  "qualified_use_if_passed": "SIM_ONLY development of first-contact controller candidates, followed by independent full 300-frame Isaac evaluation; not end-to-end football, not team-match capability and not policy promotion",
+  "learning_authorized": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}

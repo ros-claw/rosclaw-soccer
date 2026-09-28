@@ -24,6 +24,12 @@ def test_snapshot_horizon_rejects_invalid_values(lead: int, window: int) -> None
         _extract((Path("/nonexistent-source"),), lead_frames=lead, window_frames=window)
 
 
+@pytest.mark.parametrize("start", [-1, 0, True, 2.5])
+def test_snapshot_horizon_rejects_invalid_common_start(start: int) -> None:
+    with pytest.raises(ValueError, match="horizon"):
+        _extract((Path("/nonexistent-source"),), fixed_start_frame=start)
+
+
 def test_snapshot_bank_rejects_modified_archive_before_source_rebuild(tmp_path: Path) -> None:
     archive = tmp_path / "snapshots.npz"
     archive.write_bytes(b"sealed-simulated-state")

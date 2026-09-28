@@ -22,7 +22,11 @@ WINDOW_FRAMES = 80
 
 
 def _extract(
-    folders: tuple[Path, ...], *, lead_frames: int = LEAD_FRAMES, window_frames: int = WINDOW_FRAMES
+    folders: tuple[Path, ...],
+    *,
+    lead_frames: int = LEAD_FRAMES,
+    window_frames: int = WINDOW_FRAMES,
+    fixed_start_frame: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     if not folders or len(set(folders)) != len(folders):
         raise ValueError("nonempty distinct audited source folders required")
@@ -30,6 +34,10 @@ def _extract(
         type(lead_frames) is not int
         or type(window_frames) is not int
         or not 15 <= lead_frames < window_frames <= 150
+        or (
+            fixed_start_frame is not None
+            and (type(fixed_start_frame) is not int or fixed_start_frame < 1)
+        )
     ):
         raise ValueError("invalid bounded precontact snapshot horizon")
     rows: list[dict[str, Any]] = []
@@ -77,8 +85,12 @@ def _extract(
                 first = entry["first_contact_frame"]
                 if entry["course"]["ball_vx_m_s"] >= 0 or first is None:
                     continue
-                start = first - lead_frames
-                if start < 1 or start + window_frames > report["frames"]:
+                start = first - lead_frames if fixed_start_frame is None else fixed_start_frame
+                if (
+                    start < 1
+                    or first - start < lead_frames
+                    or start + window_frames > report["frames"]
+                ):
                     raise ValueError("incoming first contact outside snapshot horizon")
                 lane_y = float(entry["lane_y_m"])
                 root = body["root_pose_xyzw_m"][start, lane].copy()
@@ -127,7 +139,7 @@ def _extract(
                         "source_audit_hash": audit["report_hash"],
                         "lane": lane,
                         "start_frame": start,
-                        "first_contact_offset": lead_frames,
+                        "first_contact_offset": first - start,
                         "course": entry["course"],
                         "eventual_clean_foot_only": bool(
                             entry["contact_body_indices"]
@@ -151,6 +163,8 @@ def _extract(
         "learning_authorized": False,
         "promotion_authorized": False,
     }
+    if fixed_start_frame is not None:
+        manifest["fixed_start_frame"] = fixed_start_frame
     return manifest, arrays
 
 
@@ -160,10 +174,16 @@ def build_snapshot_bank(
     *,
     lead_frames: int = LEAD_FRAMES,
     window_frames: int = WINDOW_FRAMES,
+    fixed_start_frame: int | None = None,
 ) -> dict[str, Any]:
     if output.exists():
         raise ValueError("immutable snapshot bank output already exists")
-    manifest, arrays = _extract(folders, lead_frames=lead_frames, window_frames=window_frames)
+    manifest, arrays = _extract(
+        folders,
+        lead_frames=lead_frames,
+        window_frames=window_frames,
+        fixed_start_frame=fixed_start_frame,
+    )
     output.mkdir(parents=True)
     archive = output / "snapshots.npz"
     np.savez_compressed(archive, **arrays)  # type: ignore[arg-type]
@@ -197,6 +217,7 @@ def audit_snapshot_bank(output: Path) -> dict[str, Any]:
         source_folders,
         lead_frames=manifest["lead_frames"],
         window_frames=manifest["window_frames"],
+        fixed_start_frame=manifest.get("fixed_start_frame"),
     )
     if any(manifest.get(key) != value for key, value in expected_manifest.items()):
         raise ValueError("snapshot source commitment changed")
@@ -222,6 +243,7 @@ def main() -> None:
     parser.add_argument("--audit-only", action="store_true")
     parser.add_argument("--lead-frames", type=int, default=LEAD_FRAMES)
     parser.add_argument("--window-frames", type=int, default=WINDOW_FRAMES)
+    parser.add_argument("--fixed-start-frame", type=int)
     args = parser.parse_args()
     if args.audit_only:
         if args.folders:
@@ -233,6 +255,7 @@ def main() -> None:
             args.output,
             lead_frames=args.lead_frames,
             window_frames=args.window_frames,
+            fixed_start_frame=args.fixed_start_frame,
         )
     print(json.dumps(result, sort_keys=True))
 

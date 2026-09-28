@@ -20,6 +20,7 @@ parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--sample-count", type=int, default=16)
 parser.add_argument("--start-index", type=int, default=0)
 parser.add_argument("--knee-extension-probe", action="store_true")
+parser.add_argument("--closed-loop-sonic", action="store_true")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -48,6 +49,8 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
     G1SonicNavigation,
     SonicNavigationConfig,
 )
+from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch  # noqa: E402
+from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_candidate import project_residual_target  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_snapshot_bank import audit_snapshot_bank  # noqa: E402
 from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
@@ -58,6 +61,40 @@ from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
     temporal_residual,
 )
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json  # noqa: E402
+from rosclaw_soccer.sim.isaac_root_bridge import isaac_root_to_mujoco  # noqa: E402
+from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation  # noqa: E402
+
+
+def _canonical_state(
+    root: np.ndarray, velocity: np.ndarray, joint: np.ndarray, dq: np.ndarray, lane_y: float
+) -> tuple[np.ndarray, np.ndarray]:
+    qroot, vroot = isaac_root_to_mujoco(
+        pose_xyzw=root.astype(np.float64),
+        velocity_world=velocity.astype(np.float64),
+        asset_quaternion_xyzw=np.asarray((0.0, 0.0, 0.0, 1.0)),
+    )
+    qroot[1] -= lane_y
+    return (
+        np.concatenate((qroot, joint, (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0))),
+        np.concatenate((vroot, dq, np.zeros(6))),
+    )
+
+
+def _observation(
+    navigation: G1SonicNavigation, frame: int, qpos: np.ndarray, qvel: np.ndarray
+) -> TeamMotorObservation:
+    return TeamMotorObservation(
+        agent_id=navigation.agent_id,
+        frame=frame,
+        time_sec=frame * 0.02,
+        intent="other",
+        prospective_owner=False,
+        qpos=tuple(float(v) for v in qpos),
+        qvel=tuple(float(v) for v in qvel),
+        target_position_m=(0.0, 0.0, 0.0),
+        navigation_command=(1.4, 0.0, 0.0),
+        navigation_envelope=navigation.navigation_envelope,
+    )
 
 
 def main() -> None:
@@ -254,6 +291,98 @@ def main() -> None:
         ),
         axis=1,
     )
+    closed_navigations: list[G1SonicNavigation] = []
+    batch_tracker = None
+    warmup_max_target_error = 0.0
+    if args.closed_loop_sonic:
+        if manifest.get("fixed_start_frame") is None or manifest["fixed_start_frame"] < 1:
+            raise ValueError("closed-loop SONIC requires one common absolute snapshot frame")
+        source_data = {}
+        lane_sources = []
+        for row in manifest["snapshots"][args.start_index : stop]:
+            folder = Path(row["source_folder"])
+            if folder not in source_data:
+                source_report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+                if (
+                    source_report.get("navigation_speed_mps") != 1.4
+                    or source_report.get("torch_batch_plan_only") is not True
+                    or source_report.get("planner_seed", 30300) != 30300
+                ):
+                    raise ValueError("source SONIC controller contract is not replayable")
+                with np.load(folder / "body_trace.npz", allow_pickle=False) as record:
+                    source_data[folder] = (
+                        source_report,
+                        {key: record[key] for key in record.files},
+                    )
+            lane_sources.append((source_data[folder], row["lane"]))
+            closed_navigations.append(
+                G1SonicNavigation(
+                    args.model_root,
+                    f"vector.first_touch.{row['lane']}",
+                    SonicNavigationConfig(
+                        maximum_frames=300,
+                        planner_seed=30300,
+                        model_variant="low_latency",
+                        experimental_maximum_speed_mps=1.5,
+                        inference_threads=1,
+                    ),
+                )
+            )
+        batch_model = FrozenSonicG1Torch(
+            args.model_root, variant="low_latency", device=str(sim.device)
+        )
+        for frame in range(manifest["fixed_start_frame"]):
+            qpos_rows = []
+            qvel_rows = []
+            for lane, ((source_report, source_body), source_lane) in enumerate(lane_sources):
+                qpos, qvel = _canonical_state(
+                    source_body["root_pose_xyzw_m"][frame, source_lane],
+                    source_body["root_velocity_world"][frame, source_lane],
+                    source_body["joint_position_rad"][frame, source_lane],
+                    source_body["joint_velocity_rad_s"][frame, source_lane],
+                    float(source_report["environments"][source_lane]["lane_y_m"]),
+                )
+                qpos_rows.append(qpos)
+                qvel_rows.append(qvel)
+                observation = _observation(closed_navigations[lane], frame, qpos, qvel)
+                if frame == 0:
+                    closed_navigations[lane].start_from_observation(observation)
+                closed_navigations[lane].prepare_batched_proposal(observation)
+            qpos_batch = np.asarray(qpos_rows)
+            qvel_batch = np.asarray(qvel_rows)
+            if batch_tracker is None:
+                batch_tracker = BatchedSonicTracker(
+                    batch_model,
+                    np.stack([nav.backend.reference for nav in closed_navigations]),
+                    low_latency_legacy_encoder_layout=True,
+                )
+                batch_tracker.reset(qpos_batch, qvel_batch)
+            else:
+                batch_tracker.observe(qpos_batch, qvel_batch)
+                if frame % closed_navigations[0].config.replan_frames == 0:
+                    batch_tracker.refresh_unexecuted_reference(
+                        frame,
+                        np.stack([nav.backend.reference for nav in closed_navigations]),
+                        unchanged_lookahead_frames=closed_navigations[0].config.lookahead_frames,
+                    )
+            batch_tracker.update(frame, qpos_batch, qvel_batch)
+            for lane, ((_, source_body), source_lane) in enumerate(lane_sources):
+                proposal = closed_navigations[lane].commit_batched_action(
+                    batch_tracker.action[lane].detach().cpu().numpy()
+                )
+                warmup_max_target_error = max(
+                    warmup_max_target_error,
+                    float(
+                        np.max(
+                            np.abs(
+                                np.asarray(proposal.target_rad)
+                                - source_body["joint_target_rad"][frame, source_lane]
+                            )
+                        )
+                    ),
+                )
+        if warmup_max_target_error > 1e-3:
+            raise ValueError("SONIC controller history warmup differs from audited source")
     observed_ball = []
     observed_root = []
     observed_force = []
@@ -263,6 +392,8 @@ def main() -> None:
     pre_step_ball = []
     pre_step_ball_velocity = []
     applied_residual = []
+    predicted_baseline_target = []
+    max_parent_target_error_at_snapshot = 0.0
     probe_applied_frames = np.zeros(args.sample_count, dtype=np.int64)
     contact_seen = np.zeros(args.sample_count, dtype=np.bool_)
     probe_weights = knee_extension_probe_weights()[0]
@@ -281,11 +412,60 @@ def main() -> None:
         pre_step_ball.append(ball_before)
         pre_step_ball_velocity.append(ball_velocity_before)
         target = robot.data.joint_pos.torch.clone()
-        target[:, indices] = torch.as_tensor(
-            snapshots["privileged_parent_joint_targets_rad"][:, frame],
-            device=sim.device,
-            dtype=torch.float32,
-        )
+        if args.closed_loop_sonic:
+            if batch_tracker is None:
+                raise RuntimeError("SONIC closed-loop warmup did not initialize")
+            absolute_frame = manifest["fixed_start_frame"] + frame
+            qpos_rows = []
+            qvel_rows = []
+            for lane, navigation in enumerate(closed_navigations):
+                qpos, qvel = _canonical_state(
+                    root_before[lane],
+                    robot.data.root_link_vel_w.torch[lane].detach().cpu().numpy(),
+                    joint_before[lane],
+                    joint_velocity_before[lane],
+                    0.0,
+                )
+                qpos_rows.append(qpos)
+                qvel_rows.append(qvel)
+                navigation.prepare_batched_proposal(
+                    _observation(navigation, absolute_frame, qpos, qvel)
+                )
+            qpos_batch = np.asarray(qpos_rows)
+            qvel_batch = np.asarray(qvel_rows)
+            batch_tracker.observe(qpos_batch, qvel_batch)
+            if absolute_frame % closed_navigations[0].config.replan_frames == 0:
+                batch_tracker.refresh_unexecuted_reference(
+                    absolute_frame,
+                    np.stack([nav.backend.reference for nav in closed_navigations]),
+                    unchanged_lookahead_frames=closed_navigations[0].config.lookahead_frames,
+                )
+            batch_tracker.update(absolute_frame, qpos_batch, qvel_batch)
+            for lane, navigation in enumerate(closed_navigations):
+                proposal = navigation.commit_batched_action(
+                    batch_tracker.action[lane].detach().cpu().numpy()
+                )
+                target[lane, indices] = torch.as_tensor(
+                    proposal.target_rad, device=sim.device, dtype=torch.float32
+                )
+            if frame == 0:
+                max_parent_target_error_at_snapshot = float(
+                    np.max(
+                        np.abs(
+                            target[:, indices].detach().cpu().numpy()
+                            - snapshots["privileged_parent_joint_targets_rad"][:, 0]
+                        )
+                    )
+                )
+                if max_parent_target_error_at_snapshot > 1e-3:
+                    raise ValueError("restored SONIC target differs from authenticated parent")
+        else:
+            target[:, indices] = torch.as_tensor(
+                snapshots["privileged_parent_joint_targets_rad"][:, frame],
+                device=sim.device,
+                dtype=torch.float32,
+            )
+        predicted_baseline_target.append(target[:, indices].detach().cpu().numpy().copy())
         base_target = target.clone()
         frame_residual = np.zeros((args.sample_count, len(PROBE_JOINT_NAMES)))
         if args.knee_extension_probe:
@@ -397,6 +577,7 @@ def main() -> None:
         pre_step_ball_position_local_m=np.asarray(pre_step_ball),
         pre_step_ball_linear_velocity_m_s=np.asarray(pre_step_ball_velocity),
         applied_probe_residual_rad=np.asarray(applied_residual),
+        predicted_baseline_joint_target_rad=np.asarray(predicted_baseline_target),
         observed_ball_position_local_m=observed_ball_arr,
         observed_root_pose_local_xyzw_m=observed_root_arr,
         observed_ball_body_contact_force_peak_n=observed_force_arr,
@@ -416,6 +597,9 @@ def main() -> None:
         "sample_count": args.sample_count,
         "window_frames": manifest["window_frames"],
         "knee_extension_probe": args.knee_extension_probe,
+        "closed_loop_sonic": args.closed_loop_sonic,
+        "warmup_max_target_error_rad": warmup_max_target_error,
+        "max_parent_target_error_at_snapshot_rad": max_parent_target_error_at_snapshot,
         "probe_applied_frames": probe_applied_frames.tolist(),
         "initial_state_max_absolute_error": initial_state_error,
         "rows": rows,
