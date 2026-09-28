@@ -13,6 +13,39 @@ from rosclaw_soccer.rsi.first_touch_course_catalog import sample_training_course
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
+def audit_body_trace(folder: Path, report: dict[str, Any], frames: int, lanes: int) -> int | None:
+    """Verify optional proprioceptive sequence and return changed command frames."""
+    if "body_trace_hash" not in report:
+        return None
+    body_trace_path = folder / "body_trace.npz"
+    if not body_trace_path.is_file() or report["body_trace_hash"] != hash_bytes(
+        body_trace_path.read_bytes()
+    ):
+        raise ValueError("unauthenticated G1 body trace")
+    with np.load(body_trace_path, allow_pickle=False) as body:
+        shapes = {
+            "root_pose_xyzw_m": (frames, lanes, 7),
+            "root_velocity_world": (frames, lanes, 6),
+            "joint_position_rad": (frames, lanes, 29),
+            "joint_velocity_rad_s": (frames, lanes, 29),
+            "joint_target_rad": (frames, lanes, 29),
+            "navigation_speed_mps": (frames, lanes),
+        }
+        if set(body.files) != set(shapes) or any(
+            body[key].shape != shape or not np.isfinite(body[key]).all()
+            for key, shape in shapes.items()
+        ):
+            raise ValueError("invalid G1 body trace shape or finite values")
+        command = body["navigation_speed_mps"]
+        base_speed = report.get("navigation_speed_mps", 1.4)
+        allowed = [base_speed]
+        if "near_ball_speed_mps" in report:
+            allowed.append(report["near_ball_speed_mps"])
+        if not np.isin(command, allowed).all():
+            raise ValueError("G1 body trace has uncommitted navigation speed")
+        return int(np.count_nonzero(command != base_speed))
+
+
 def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
     report: dict[str, Any] = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     trace_path = folder / "trace.npz"
@@ -107,35 +140,7 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
         or np.any(force < 0)
     ):
         raise ValueError("invalid vector physics trace")
-    changed_command_frames = None
-    if "body_trace_hash" in report:
-        body_trace_path = folder / "body_trace.npz"
-        if not body_trace_path.is_file() or report["body_trace_hash"] != hash_bytes(
-            body_trace_path.read_bytes()
-        ):
-            raise ValueError("unauthenticated G1 body trace")
-        with np.load(body_trace_path, allow_pickle=False) as body:
-            shapes = {
-                "root_pose_xyzw_m": (frames, n, 7),
-                "root_velocity_world": (frames, n, 6),
-                "joint_position_rad": (frames, n, 29),
-                "joint_velocity_rad_s": (frames, n, 29),
-                "joint_target_rad": (frames, n, 29),
-                "navigation_speed_mps": (frames, n),
-            }
-            if set(body.files) != set(shapes) or any(
-                body[key].shape != shape or not np.isfinite(body[key]).all()
-                for key, shape in shapes.items()
-            ):
-                raise ValueError("invalid G1 body trace shape or finite values")
-            command = body["navigation_speed_mps"]
-            base_speed = report.get("navigation_speed_mps", 1.4)
-            allowed = [base_speed]
-            if "near_ball_speed_mps" in report:
-                allowed.append(report["near_ball_speed_mps"])
-            if not np.isin(command, allowed).all():
-                raise ValueError("G1 body trace has uncommitted navigation speed")
-            changed_command_frames = int(np.count_nonzero(command != base_speed))
+    changed_command_frames = audit_body_trace(folder, report, frames, n)
     lanes = np.asarray([row["lane_y_m"] for row in entries], dtype=np.float64)
     if not np.isfinite(lanes).all() or np.min(np.diff(lanes)) < 6.0:
         raise ValueError("training lanes are not physically isolated")
@@ -452,6 +457,7 @@ def audit_first_touch_candidate_execution(
         or np.any(force < 0)
     ):
         raise ValueError("candidate physics trace invalid")
+    changed_command_frames = audit_body_trace(folder, report, frames, count)
     clean, parent_clean = 0, parent_audit["clean_foot_only_episode_count"]
     rewards = []
     for index, row in enumerate(report["environments"]):
@@ -496,6 +502,9 @@ def audit_first_touch_candidate_execution(
         "fresh_opened": False,
         "promotion_authorized": False,
     }
+    if changed_command_frames is not None:
+        result["recorded_body_frames"] = frames
+        result["changed_navigation_command_frames"] = changed_command_frames
     result["report_hash"] = hash_json(result)
     return result
 
