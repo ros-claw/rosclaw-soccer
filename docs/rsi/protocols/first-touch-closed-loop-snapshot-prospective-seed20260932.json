@@ -6,7 +6,7 @@
   "source_training_seed": 20260932,
   "snapshot_selection": {"start_index": 16, "sample_count": 7, "fixed_start_frame": 30, "window_frames": 120},
   "intervention": "Shared bounded right-knee-extension probe; no trained actor; same candidate weights as seeds 20260930 and 20260931",
-  "full_run_parent": "/data/rosclaw_overflow/rsi-isaac-sonic-planonly-bodytrace-train16-seed20260932-v1",
+  "full_run_parent": "rsi-isaac-sonic-planonly-bodytrace-train16-seed20260932-v1",
   "require_independent_full_run_candidate_audit": true,
   "acceptance": {
     "initial_state_error_max": 0.0001,

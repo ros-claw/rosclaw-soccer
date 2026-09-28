@@ -72,7 +72,7 @@ def audit_snapshot_transfer(
         or bank.get("fixed_start_frame") != selection["fixed_start_frame"]
         or bank["window_frames"] != selection["window_frames"]
         or full_report.get("training_course_seed") != protocol["source_training_seed"]
-        or protocol["full_run_parent"] != str(full_parent)
+        or protocol["full_run_parent"] != full_parent.name
         or full_audit.get("execution_report_hash") != full_report["report_hash"]
         or not np.array_equal(
             np.asarray(manifest["weights_per_course"]), knee_extension_probe_weights()
