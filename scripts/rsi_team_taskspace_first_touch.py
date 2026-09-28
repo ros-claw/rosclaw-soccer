@@ -17,6 +17,7 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
     release_joint_delta,
     swing_joint_delta,
 )
+from rosclaw_soccer.rsi.team_context_phase_navigation import TeamContextPhaseNavigation
 from rosclaw_soccer.rsi.team_intercept_navigation import TeamInterceptNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.independent_team_world import (
@@ -174,7 +175,7 @@ def _run_one(
     fixture: Any,
     scenario: IndependentTeamWorldScenario,
     protocol: dict[str, Any],
-    navigation_policy: TeamInterceptNavigation | None = None,
+    navigation_policy: TeamInterceptNavigation | TeamContextPhaseNavigation | None = None,
 ) -> dict[str, Any]:
     enabled = mode == "candidate"
     motor = TeamSwingMotor(protocol["focal_agent_id"], enabled, protocol["candidate_action"])

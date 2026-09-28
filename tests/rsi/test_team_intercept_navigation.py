@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import pytest
 
+from rosclaw_soccer.rsi.team_context_phase_navigation import TeamContextPhaseNavigation
 from rosclaw_soccer.rsi.team_intercept_navigation import TeamInterceptNavigation
 from rosclaw_soccer.rsi.team_phase_intercept_navigation import TeamPhaseInterceptNavigation
 from rosclaw_soccer.skills.team.navigation_option import NavigationObservation, NavigationSlot
@@ -68,3 +69,18 @@ def test_phase_aware_navigation_uses_measured_reachable_foot() -> None:
     assert left_only.propose(observation).velocity_delta[1] < 0
     assert phase.propose(observation).velocity_delta[1] > 0
     assert phase.contract_hash != left_only.contract_hash
+
+
+def test_contextual_policy_latches_only_measured_entry_gap() -> None:
+    near = TeamContextPhaseNavigation("red.playmaker", "sha256:" + "1" * 64, "sha256:" + "2" * 64)
+    far = TeamContextPhaseNavigation("red.playmaker", "sha256:" + "1" * 64, "sha256:" + "2" * 64)
+    for frame in range(30):
+        near.propose(_observation(frame))
+        far.propose(_observation(frame))
+    near.propose(_observation(30))
+    far.propose(replace(_observation(30), ball_position=(1.6, 0.1, 0.115)))
+    assert near.selected_lateral_gain == 0.8
+    assert far.selected_lateral_gain == 0.0
+    assert near.entry_foot_gap_m == 0.8
+    assert far.entry_foot_gap_m == 1.6
+    assert near.contract_hash == far.contract_hash
