@@ -1046,6 +1046,7 @@ def simulate_independent_team_world(
     receiving_students: Mapping[str, QualifiedReceivingStudent] | None = None,
     receiving_student_probe_torque_nm: float = 0.0,
     receiving_student_hip_roll_offset_rad: float = 0.0,
+    receiving_student_contact_impedance_scale: float = 1.0,
     research_coupled_teacher_agent_id: str | None = None,
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
@@ -1334,6 +1335,13 @@ def simulate_independent_team_world(
         and (len(students) != 1 or receiving_student_probe_torque_nm != 0.0)
     ):
         raise ValueError("bounded explicit SIM_ONLY hip probe requires one qualified actor")
+    if (
+        type(receiving_student_contact_impedance_scale) is not float
+        or receiving_student_contact_impedance_scale not in (0.70, 0.85, 1.0)
+        or receiving_student_contact_impedance_scale != 1.0
+        and (len(students) != 1 or receiving_student_hip_roll_offset_rad != -0.06)
+    ):
+        raise ValueError("bounded SIM_ONLY contact impedance probe requires fixed hip parent")
     if research_coupled_teacher_agent_id is not None and (
         type(research_coupled_teacher_agent_id) is not str
         or research_coupled_teacher_agent_id not in motors
@@ -3469,6 +3477,12 @@ def simulate_independent_team_world(
                         )
                     target = student_frame_targets[controller.cell.agent_id]
                 raw_torque = kp * (target - q) - kd * dq
+                if (
+                    student_active
+                    and receiving_student_contact_impedance_scale != 1.0
+                    and 58 <= frame <= 66
+                ):
+                    raw_torque[:6] *= receiving_student_contact_impedance_scale
                 recorded_pd_torque = raw_torque.copy() if capture_team_motor_targets else None
                 if capture_team_motor_targets:
                     key = _agent_key(controller.cell.agent_id)
