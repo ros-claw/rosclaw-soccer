@@ -1,0 +1,16 @@
+{
+  "run_id": "first-touch-body-dataset-seed20260931-v1",
+  "purpose": "SIM_ONLY independent train-only G1 proprioceptive contact dataset expansion",
+  "physics_source_hash": "sha256:6b69ba4ae5a409929db1f996af277c379023f9e72823a732d85a4f09bd646eda",
+  "training_course_seed": 20260931,
+  "course_count": 16,
+  "frames": 300,
+  "navigation_speed_mps": 1.4,
+  "model": "qualified frozen SONIC low_latency batch-plan-only",
+  "record_body_trace": true,
+  "outcomes": ["foot-only", "knee/shin", "first-contact frame", "minimum pelvis height", "body-trace integrity"],
+  "course_partition": "TRAIN_ONLY_UNSEEN_BY_ACTOR_GEN1",
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
