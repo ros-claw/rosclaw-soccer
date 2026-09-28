@@ -1,0 +1,21 @@
+{
+  "schema": "rsi_team_diverse_curriculum_audit_protocol_v29",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "arm_result_root": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-v29",
+  "arm_report_hashes": {
+    "parent": "sha256:3bbf283a8ff6d53d30c3ce8391ef0ec9f7fc7621075c14e4d01420e13b71311b",
+    "adaptive_c19": "sha256:8c6dd6a312d35309f786c68b3216a743a5039fac00f3abff5584cec9c3351709",
+    "phase_front04_positive": "sha256:6782fd4dc8920813b9c31b420a2552587d07cb01d460ecf0a93141798a0dc7aa",
+    "phase_front04_lat12": "sha256:b243594355a2a20f1189f50564600e3af9f784c24ff9ac7c7e789f93e2cf1d00",
+    "phase_stay_lat12": "sha256:17529ec665995a546415cb4ec4f454d30033a0fb71d2553b6168ff953f9c93f9",
+    "fixed_left_negative": "sha256:e97fc34833da02ab1e982ba0f7973687239e236df9d2318061383f3cbefea28d",
+    "phase_front04_negative": "sha256:fb0b5614b9c1caee8d481c54ed138e7332dad5f817603c566e1fad57e0b6ca6a",
+    "through_front_lat12": "sha256:73809fa475c58c1bb0b557bfe233a4b054ac3676c8f7e800ae1e4fb9211b3f38"
+  },
+  "training_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47],
+  "internal_validation_indices": [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63],
+  "oracle_gate": {"minimum_safe_contacts": 40, "minimum_useful_passes": 24},
+  "interpretation": "Full-information paired TRAIN data only. Development action-library oracle is not a deployable or fresh score. Only first 48 contexts can fit a model; last 16 are internal validation after model freeze."
+}

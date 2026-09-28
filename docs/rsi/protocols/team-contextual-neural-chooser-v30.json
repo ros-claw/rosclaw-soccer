@@ -1,0 +1,19 @@
+{
+  "schema": "rsi_team_contextual_neural_chooser_protocol_v30",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "dataset_path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v29/paired_outcomes.npz",
+  "dataset_hash": "sha256:1c9a57cff503ecf756f68a4ccd15dd61d6474c9afb952c37056de6212d2ee2fb",
+  "training_indices": [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47],
+  "internal_validation_indices": [48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63],
+  "eligible_arms": ["adaptive_c19", "fixed_left_negative", "phase_front04_lat12", "phase_front04_negative", "phase_front04_positive", "phase_stay_lat12"],
+  "excluded_arm_reason": "through_front_lat12 requires a separate dynamically bound motor contract; keep this first chooser navigation-only",
+  "mlp_width": 24,
+  "ensemble_seeds": [11, 19, 29, 43, 61],
+  "epochs": 500,
+  "learning_rate": 0.004,
+  "weight_decay": 0.02,
+  "selection_gate": {"minimum_safe": 14, "minimum_useful": 4},
+  "interpretation": "Internal validation is consumed development data; passing is only permission for new physical scenes, not promotion."
+}
