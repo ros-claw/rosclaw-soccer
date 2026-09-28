@@ -54,6 +54,7 @@ def audit_snapshot_replay(
     snapshot_bank: Path,
     candidate_path: Path | None = None,
     phase_policy_path: Path | None = None,
+    local_phase_policy_path: Path | None = None,
 ) -> dict[str, Any]:
     bank_audit = audit_snapshot_bank(snapshot_bank)
     manifest = json.loads((snapshot_bank / "manifest.json").read_text(encoding="utf-8"))
@@ -65,7 +66,10 @@ def audit_snapshot_replay(
     probe = bool(report.get("knee_extension_probe", False) or shared_hash is not None)
     phase_target = report.get("phase_target_frames")
     phase_actor_hash = report.get("contextual_phase_actor_hash")
-    phase_probe = phase_target is not None or phase_actor_hash is not None
+    local_phase_hash = report.get("local_phase_actor_hash")
+    phase_probe = (
+        phase_target is not None or phase_actor_hash is not None or local_phase_hash is not None
+    )
     closed_loop = report.get("closed_loop_sonic", False)
     if (
         report.get("schema") != "rsi_isaac_first_touch_snapshot_replay_v1"
@@ -84,7 +88,12 @@ def audit_snapshot_replay(
         )
         or (candidate_path is None) != (shared_hash is None)
         or (phase_policy_path is None) != (phase_actor_hash is None)
+        or (local_phase_policy_path is None) != (local_phase_hash is None)
         or (phase_actor_hash is not None and phase_target is not None)
+        or (
+            local_phase_hash is not None
+            and (phase_target is not None or phase_actor_hash is not None)
+        )
         or (phase_probe and (probe or not closed_loop))
         or (not phase_probe and report.get("phase_ramp_frames") is not None)
         or type(closed_loop) is not bool
@@ -229,6 +238,51 @@ def audit_snapshot_replay(
                 )
                 if report.get("selected_phase_targets_frames") != targets.tolist():
                     raise ValueError("contextual phase selection differs from measured context")
+            elif local_phase_hash is not None:
+                from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module
+                from rosclaw_soccer.rsi import local_phase_memory as local_phase_module
+                from rosclaw_soccer.rsi.contact_time_phase_features import (
+                    current_context,
+                    gait_phase_features,
+                    predict_contact_time,
+                )
+                from rosclaw_soccer.rsi.local_phase_memory import (
+                    load_local_phase_actor,
+                    select_local_phase,
+                )
+
+                if local_phase_policy_path is None:
+                    raise ValueError("local phase actor missing")
+                local_actor = load_local_phase_actor(local_phase_policy_path)
+                if (
+                    local_actor["actor_hash"] != local_phase_hash
+                    or local_actor.get("holdout_open_authorized") is not True
+                    or local_actor.get("policy_source_hash")
+                    != hash_bytes(Path(local_phase_module.__file__).read_bytes())
+                    or local_actor.get("feature_source_hash")
+                    != hash_bytes(Path(time_phase_module.__file__).read_bytes())
+                ):
+                    raise ValueError("local phase source or actor changed")
+                raw = current_context(
+                    bank["root_pose_local_xyzw_m"][start : start + count],
+                    bank["root_velocity_world"][start : start + count],
+                    bank["ball_position_local_m"][start : start + count],
+                    bank["ball_linear_velocity_m_s"][start : start + count],
+                )
+                predicted = predict_contact_time(
+                    raw, np.asarray(local_actor["contact_time_weights"])
+                )
+                targets = select_local_phase(
+                    gait_phase_features(raw, predicted),
+                    np.asarray(local_actor["memory_features"]),
+                    np.asarray(local_actor["memory_clean"]),
+                    np.asarray(local_actor["memory_reward"]),
+                    np.asarray(local_actor["memory_groups"]),
+                    neighbors=local_actor["neighbors"],
+                    confidence=local_actor["confidence"],
+                )
+                if report.get("selected_phase_targets_frames") != targets.tolist():
+                    raise ValueError("local phase selection differs from measured context")
             else:
                 targets = np.full(count, phase_target)
             expected_phase = np.asarray(
@@ -437,6 +491,7 @@ def audit_snapshot_replay(
         "intervention_action_audited": probe or phase_probe,
         "phase_target_frames": phase_target,
         "contextual_phase_actor_hash": phase_actor_hash,
+        "local_phase_actor_hash": local_phase_hash,
         "shared_candidate_hash": shared_hash,
         "closed_loop_sonic": closed_loop,
         "intervention_training_qualified": False,
@@ -453,6 +508,7 @@ def main() -> None:
     parser.add_argument("--snapshot-bank", required=True, type=Path)
     parser.add_argument("--shared-candidate", type=Path)
     parser.add_argument("--contextual-phase-policy", type=Path)
+    parser.add_argument("--local-phase-policy", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.output.exists():
@@ -462,6 +518,7 @@ def main() -> None:
         snapshot_bank=args.snapshot_bank,
         candidate_path=args.shared_candidate,
         phase_policy_path=args.contextual_phase_policy,
+        local_phase_policy_path=args.local_phase_policy,
     )
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(result, sort_keys=True))

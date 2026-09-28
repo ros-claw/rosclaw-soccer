@@ -24,6 +24,7 @@ parser.add_argument("--closed-loop-sonic", action="store_true")
 parser.add_argument("--shared-candidate", type=Path)
 parser.add_argument("--phase-target-frames", type=float)
 parser.add_argument("--contextual-phase-policy", type=Path)
+parser.add_argument("--local-phase-policy", type=Path)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -51,6 +52,17 @@ if (
             or args.shared_candidate
         )
     )
+    or (args.local_phase_policy is not None and not args.local_phase_policy.is_file())
+    or (args.local_phase_policy is not None and not args.closed_loop_sonic)
+    or (
+        args.local_phase_policy is not None
+        and (
+            args.phase_target_frames is not None
+            or args.contextual_phase_policy is not None
+            or args.knee_extension_probe
+            or args.shared_candidate
+        )
+    )
 ):
     parser.error("qualified snapshot bank, assets and fresh 2-16 lane output required")
 launcher = AppLauncher(args)
@@ -72,7 +84,14 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
 )
 from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch  # noqa: E402
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa: E402
+from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module  # noqa: E402
 from rosclaw_soccer.rsi import contextual_phase_policy as phase_policy_module  # noqa: E402
+from rosclaw_soccer.rsi import local_phase_memory as local_phase_module  # noqa: E402
+from rosclaw_soccer.rsi.contact_time_phase_features import (  # noqa: E402
+    current_context,
+    gait_phase_features,
+    predict_contact_time,
+)
 from rosclaw_soccer.rsi.contextual_phase_policy import (  # noqa: E402
     context_features,
     load_phase_actor,
@@ -80,6 +99,10 @@ from rosclaw_soccer.rsi.contextual_phase_policy import (  # noqa: E402
 )
 from rosclaw_soccer.rsi.first_touch_candidate import project_residual_target  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_snapshot_bank import audit_snapshot_bank  # noqa: E402
+from rosclaw_soccer.rsi.local_phase_memory import (  # noqa: E402
+    load_local_phase_actor,
+    select_local_phase,
+)
 from rosclaw_soccer.rsi.snapshot_shared_temporal_policy import load_candidate  # noqa: E402
 from rosclaw_soccer.rsi.sonic_phase_probe import phase_offset_frames  # noqa: E402
 from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
@@ -143,6 +166,7 @@ def main() -> None:
     with np.load(args.snapshot_bank / "snapshots.npz", allow_pickle=False) as archive:
         snapshots = {key: archive[key][args.start_index : stop].copy() for key in archive.files}
     contextual_phase_hash = None
+    local_phase_hash = None
     selected_phase_targets = None
     if args.contextual_phase_policy is not None:
         contextual_phase_hash, phase_weights = load_phase_actor(args.contextual_phase_policy)
@@ -159,6 +183,35 @@ def main() -> None:
                 snapshots["foot_geometry_position_local_m"],
             ),
             phase_weights,
+        )
+    if args.local_phase_policy is not None:
+        local_actor = load_local_phase_actor(args.local_phase_policy)
+        if (
+            local_actor.get("holdout_open_authorized") is not True
+            or local_actor.get("policy_source_hash")
+            != hash_bytes(Path(local_phase_module.__file__).read_bytes())
+            or local_actor.get("feature_source_hash")
+            != hash_bytes(Path(time_phase_module.__file__).read_bytes())
+        ):
+            raise ValueError("local phase actor lacks frozen source or development gate")
+        local_phase_hash = local_actor["actor_hash"]
+        raw_context = current_context(
+            snapshots["root_pose_local_xyzw_m"],
+            snapshots["root_velocity_world"],
+            snapshots["ball_position_local_m"],
+            snapshots["ball_linear_velocity_m_s"],
+        )
+        predicted_time = predict_contact_time(
+            raw_context, np.asarray(local_actor["contact_time_weights"])
+        )
+        selected_phase_targets = select_local_phase(
+            gait_phase_features(raw_context, predicted_time),
+            np.asarray(local_actor["memory_features"]),
+            np.asarray(local_actor["memory_clean"]),
+            np.asarray(local_actor["memory_reward"]),
+            np.asarray(local_actor["memory_groups"]),
+            neighbors=local_actor["neighbors"],
+            confidence=local_actor["confidence"],
         )
     if manifest["source_identity"][1] != hash_bytes(args.g1_usd.read_bytes()):
         raise ValueError("snapshot G1 asset hash changed")
@@ -684,6 +737,7 @@ def main() -> None:
         if args.phase_target_frames is not None or selected_phase_targets is not None
         else None,
         "contextual_phase_actor_hash": contextual_phase_hash,
+        "local_phase_actor_hash": local_phase_hash,
         "selected_phase_targets_frames": (
             selected_phase_targets.tolist() if selected_phase_targets is not None else None
         ),
