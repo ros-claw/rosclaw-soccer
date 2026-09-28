@@ -1,0 +1,23 @@
+{
+  "schema": "rsi_first_touch_sonic_phase_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "bank_id": "rsi-isaac-first-touch-snapshot-bank-frame30-seed20260930-32-v1",
+  "baseline_id": "rsi-isaac-snapshot-closed-loop-baseline-frame30-first16-v2",
+  "training_selection": {"start_index": 0, "sample_count": 15},
+  "sealed_holdout_selection": {"start_index": 15, "sample_count": 8},
+  "candidates_phase_target_frames": [-6.0, 6.0],
+  "phase_ramp_frames": 20,
+  "maximum_phase_slew_frames_per_control_tick": 0.5,
+  "minimum_root_height_m": 0.65,
+  "baseline_training_clean_foot_count": 4,
+  "development_gate": {
+    "minimum_clean_foot_count_of_15": 7,
+    "require_reward_above_baseline": true,
+    "require_audited_phase_trace": true,
+    "require_first_target_parent_equivalence_rad": 0.001
+  },
+  "holdout_open_only_after_development_gate": true,
+  "full_episode_required_for_skill_promotion": true,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

@@ -22,6 +22,7 @@ parser.add_argument("--start-index", type=int, default=0)
 parser.add_argument("--knee-extension-probe", action="store_true")
 parser.add_argument("--closed-loop-sonic", action="store_true")
 parser.add_argument("--shared-candidate", type=Path)
+parser.add_argument("--phase-target-frames", type=float)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -34,6 +35,11 @@ if (
     or (args.knee_extension_probe and args.shared_candidate is not None)
     or (args.shared_candidate is not None and not args.shared_candidate.is_file())
     or (args.shared_candidate is not None and not args.closed_loop_sonic)
+    or (args.phase_target_frames is not None and not args.closed_loop_sonic)
+    or (
+        args.phase_target_frames is not None
+        and (args.knee_extension_probe or args.shared_candidate)
+    )
 ):
     parser.error("qualified snapshot bank, assets and fresh 2-16 lane output required")
 launcher = AppLauncher(args)
@@ -58,6 +64,7 @@ from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa
 from rosclaw_soccer.rsi.first_touch_candidate import project_residual_target  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_snapshot_bank import audit_snapshot_bank  # noqa: E402
 from rosclaw_soccer.rsi.snapshot_shared_temporal_policy import load_candidate  # noqa: E402
+from rosclaw_soccer.rsi.sonic_phase_probe import phase_offset_frames  # noqa: E402
 from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
     JOINT_NAMES as PROBE_JOINT_NAMES,
 )
@@ -103,6 +110,8 @@ def _observation(
 
 
 def main() -> None:
+    if args.phase_target_frames is not None:
+        phase_offset_frames(0, args.phase_target_frames)
     bank_audit = audit_snapshot_bank(args.snapshot_bank)
     manifest = json.loads((args.snapshot_bank / "manifest.json").read_text(encoding="utf-8"))
     shared_candidate_hash = None
@@ -404,6 +413,7 @@ def main() -> None:
     pre_step_ball_velocity = []
     applied_residual = []
     predicted_baseline_target = []
+    applied_phase_offsets = []
     max_parent_target_error_at_snapshot = 0.0
     probe_applied_frames = np.zeros(args.sample_count, dtype=np.int64)
     contact_seen = np.zeros(args.sample_count, dtype=np.bool_)
@@ -456,7 +466,21 @@ def main() -> None:
                     np.stack([nav.backend.reference for nav in closed_navigations]),
                     unchanged_lookahead_frames=closed_navigations[0].config.lookahead_frames,
                 )
-            batch_tracker.update(absolute_frame, qpos_batch, qvel_batch)
+            phase_offset = (
+                phase_offset_frames(frame, args.phase_target_frames)
+                if args.phase_target_frames is not None
+                else None
+            )
+            if phase_offset is None:
+                batch_tracker.update(absolute_frame, qpos_batch, qvel_batch)
+            else:
+                batch_tracker.update(
+                    absolute_frame,
+                    qpos_batch,
+                    qvel_batch,
+                    phase_offsets_frames=np.full(args.sample_count, phase_offset),
+                )
+                applied_phase_offsets.append(np.full(args.sample_count, phase_offset))
             for lane, navigation in enumerate(closed_navigations):
                 proposal = navigation.commit_batched_action(
                     batch_tracker.action[lane].detach().cpu().numpy()
@@ -579,8 +603,7 @@ def main() -> None:
         )
     args.output_dir.mkdir(parents=True)
     trace_path = args.output_dir / "replay.npz"
-    np.savez_compressed(
-        trace_path,
+    trace_values = dict(
         initial_root_pose_local_xyzw_m=initial_root_pose_local,
         initial_root_velocity_world=initial_root_velocity,
         initial_joint_position_rad=initial_joint_position,
@@ -599,6 +622,9 @@ def main() -> None:
         observed_root_pose_local_xyzw_m=observed_root_arr,
         observed_ball_body_contact_force_peak_n=observed_force_arr,
     )
+    if args.phase_target_frames is not None:
+        trace_values["applied_sonic_phase_offset_frames"] = np.asarray(applied_phase_offsets)
+    np.savez_compressed(trace_path, **trace_values)
     report = {
         "schema": "rsi_isaac_first_touch_snapshot_replay_v1",
         "activation_ceiling": "SIM_ONLY",
@@ -615,6 +641,8 @@ def main() -> None:
         "window_frames": manifest["window_frames"],
         "knee_extension_probe": args.knee_extension_probe,
         "shared_candidate_hash": shared_candidate_hash,
+        "phase_target_frames": args.phase_target_frames,
+        "phase_ramp_frames": 20 if args.phase_target_frames is not None else None,
         "probe_joint_limits_recorded": True,
         "closed_loop_sonic": args.closed_loop_sonic,
         "warmup_max_target_error_rad": warmup_max_target_error,

@@ -142,7 +142,9 @@ class BatchedSonicTracker:
             raise ValueError("replan altered frozen or current-lookahead reference")
         self.reference = proposed.clone()
 
-    def encoder_features(self, frame: int, qpos: Any, qvel: Any) -> Any:
+    def encoder_features(
+        self, frame: int, qpos: Any, qvel: Any, *, phase_offsets_frames: Any = None
+    ) -> Any:
         torch = self._torch
         q, _ = self._state(qpos, qvel)
         if (
@@ -152,13 +154,58 @@ class BatchedSonicTracker:
         ):
             raise ValueError("reference frame outside complete lookahead")
         indices = frame + torch.arange(10, device=self.model.device) * self.stride
-        future = self.reference[:, indices]
+        if phase_offsets_frames is None:
+            future = self.reference[:, indices]
+        else:
+            offsets = torch.as_tensor(
+                phase_offsets_frames, device=self.model.device, dtype=torch.float32
+            )
+            if (
+                offsets.shape != (self.count,)
+                or not bool(torch.isfinite(offsets).all())
+                or bool(torch.any(torch.abs(offsets) > 8.0))
+            ):
+                raise ValueError("finite bounded per-lane SONIC phase offsets required")
+            sample_at = indices[None, :].to(torch.float32) + offsets[:, None]
+            if bool(torch.any(sample_at < 0)) or bool(
+                torch.any(sample_at + (1 if self.native_velocity else 0) >= self.reference.shape[1])
+            ):
+                raise ValueError("phase-shifted reference outside complete lookahead")
+            lower = torch.floor(sample_at).to(torch.long)
+            upper = torch.clamp(lower + 1, max=self.reference.shape[1] - 1)
+            alpha = (sample_at - lower).unsqueeze(2)
+            first = torch.gather(self.reference, 1, lower.unsqueeze(2).expand(-1, -1, 36))
+            second = torch.gather(self.reference, 1, upper.unsqueeze(2).expand(-1, -1, 36))
+            future = first + alpha * (second - first)
+            orientation = future[:, :, 3:7]
+            # Equivalent quaternion signs can otherwise cancel at interpolation.
+            signed_second = torch.where(
+                (first[:, :, 3:7] * second[:, :, 3:7]).sum(dim=2, keepdim=True) < 0,
+                -second[:, :, 3:7],
+                second[:, :, 3:7],
+            )
+            orientation = first[:, :, 3:7] + alpha * (signed_second - first[:, :, 3:7])
+            future[:, :, 3:7] = torch.nn.functional.normalize(orientation, dim=2)
         positions = future[:, :, 7:36][:, :, self._to_isaac]
         if self.native_velocity:
-            start = torch.clamp(indices, max=self.reference.shape[1] - 2)
-            velocities = (
-                self.reference[:, start + 1, 7:36] - self.reference[:, start, 7:36]
-            ) / 0.02
+            if phase_offsets_frames is None:
+                start = torch.clamp(indices, max=self.reference.shape[1] - 2)
+                velocities = (
+                    self.reference[:, start + 1, 7:36] - self.reference[:, start, 7:36]
+                ) / 0.02
+            else:
+                next_at = sample_at + 1
+                next_lower = torch.floor(next_at).to(torch.long)
+                next_upper = torch.clamp(next_lower + 1, max=self.reference.shape[1] - 1)
+                next_alpha = (next_at - next_lower).unsqueeze(2)
+                next_first = torch.gather(
+                    self.reference, 1, next_lower.unsqueeze(2).expand(-1, -1, 36)
+                )
+                next_second = torch.gather(
+                    self.reference, 1, next_upper.unsqueeze(2).expand(-1, -1, 36)
+                )
+                next_future = next_first + next_alpha * (next_second - next_first)
+                velocities = (next_future[:, :, 7:36] - future[:, :, 7:36]) / 0.02
             velocities = velocities[:, :, self._to_isaac]
         else:
             velocities = torch.gradient(positions, spacing=(0.02 * self.stride,), dim=(1,))[0]
@@ -215,11 +262,13 @@ class BatchedSonicTracker:
             )
         return features
 
-    def update(self, frame: int, qpos: Any, qvel: Any) -> Any:
+    def update(self, frame: int, qpos: Any, qvel: Any, *, phase_offsets_frames: Any = None) -> Any:
         if len(self._history) != 10 or self._pending_observation or frame != self._next_frame:
             raise RuntimeError("SONIC reset/update/observe sequence differs")
         torch = self._torch
-        features = self.encoder_features(frame, qpos, qvel)
+        features = self.encoder_features(
+            frame, qpos, qvel, phase_offsets_frames=phase_offsets_frames
+        )
         token = self.model.encode_g1(features)
         history = [
             torch.stack([entry[i] for entry in self._history], dim=1).reshape(self.count, -1)

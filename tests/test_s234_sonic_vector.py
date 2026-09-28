@@ -170,3 +170,22 @@ def test_native_velocity_is_dense_difference_before_subsampling():
     expected = (reference[:, indices + 1, 7:36] - reference[:, indices, 7:36]) / 0.02
     expected = expected[:, :, MUJOCO_TO_ISAACLAB].reshape(2, 290)
     np.testing.assert_allclose(actual[:, 290:580], expected, atol=1e-6)
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_per_lane_phase_offset_matches_integer_reference_shift(native):
+    tracker, _, q, v = setup("low_latency", native=native)
+    baseline = tracker.encoder_features(3, q, v).numpy()
+    shifted = tracker.encoder_features(3, q, v, phase_offsets_frames=[0, 2]).numpy()
+    expected_second = tracker.encoder_features(5, q, v).numpy()[1]
+    np.testing.assert_allclose(shifted[0], baseline[0], atol=1e-5)
+    np.testing.assert_allclose(shifted[1], expected_second, atol=1e-5)
+    fractional = tracker.encoder_features(3, q, v, phase_offsets_frames=[0.5, -0.5])
+    assert np.isfinite(fractional.numpy()).all()
+
+
+@pytest.mark.parametrize("offsets", [[9, 0], [float("nan"), 0], [0], [-4, 0]])
+def test_per_lane_phase_offset_fails_closed(offsets):
+    tracker, _, q, v = setup("low_latency")
+    with pytest.raises(ValueError, match="phase"):
+        tracker.encoder_features(3, q, v, phase_offsets_frames=offsets)

@@ -14,11 +14,11 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
 def projected_probe_residual(
-    desired: np.ndarray,
-    baseline_target: np.ndarray,
-    joint_limits: np.ndarray,
+    desired: np.ndarray[Any, Any],
+    baseline_target: np.ndarray[Any, Any],
+    joint_limits: np.ndarray[Any, Any],
     joint_indices: list[int],
-) -> np.ndarray:
+) -> np.ndarray[Any, Any]:
     """Recompute the bounded target delta after the physical joint-limit shield."""
     from rosclaw_soccer.rsi.first_touch_candidate import project_residual_target
 
@@ -59,6 +59,8 @@ def audit_snapshot_replay(
     start = report.get("start_index")
     shared_hash = report.get("shared_candidate_hash")
     probe = bool(report.get("knee_extension_probe", False) or shared_hash is not None)
+    phase_target = report.get("phase_target_frames")
+    phase_probe = phase_target is not None
     closed_loop = report.get("closed_loop_sonic", False)
     if (
         report.get("schema") != "rsi_isaac_first_touch_snapshot_replay_v1"
@@ -76,6 +78,8 @@ def audit_snapshot_replay(
             and (report.get("knee_extension_probe") is True or not isinstance(shared_hash, str))
         )
         or (candidate_path is None) != (shared_hash is None)
+        or (phase_probe and (probe or not closed_loop))
+        or (not phase_probe and report.get("phase_ramp_frames") is not None)
         or type(closed_loop) is not bool
         or type(count) is not int
         or not 2 <= count <= 16
@@ -125,6 +129,8 @@ def audit_snapshot_replay(
             )
         if "closed_loop_sonic" in report:
             shapes["predicted_baseline_joint_target_rad"] = (frames, count, 29)
+        if phase_probe:
+            shapes["applied_sonic_phase_offset_frames"] = (frames, count)
         if report.get("probe_joint_limits_recorded") is True:
             shapes["probe_joint_position_limits_rad"] = (count, 3, 2)
         if set(replay.files) != set(shapes) or any(
@@ -188,6 +194,21 @@ def audit_snapshot_replay(
         )
         if np.any(observed_force < 0):
             raise ValueError("negative physical contact force")
+        if phase_probe:
+            from rosclaw_soccer.rsi.sonic_phase_probe import phase_offset_frames
+
+            if report.get("phase_ramp_frames") != 20:
+                raise ValueError("snapshot phase schedule changed")
+            expected_phase = np.asarray(
+                [phase_offset_frames(frame, phase_target) for frame in range(frames)]
+            )
+            if not np.allclose(
+                replay["applied_sonic_phase_offset_frames"],
+                expected_phase[:, None],
+                atol=1e-6,
+                rtol=0,
+            ):
+                raise ValueError("snapshot phase action differs from bounded schedule")
         if "knee_extension_probe" in report:
             if shared_hash is not None and report.get("probe_joint_limits_recorded") is not True:
                 raise ValueError("shared motor candidate lacks physical joint limit evidence")
@@ -357,6 +378,7 @@ def audit_snapshot_replay(
         max_root = float(np.max(root_error[:lead]))
     parent_equivalent = bool(
         not probe
+        and not phase_probe
         and max_initial <= 1e-4
         and max_ball <= 0.005
         and max_root <= 0.01
@@ -377,7 +399,8 @@ def audit_snapshot_replay(
         "contact_body_class_equal_count": class_equal,
         "parent_replay_equivalent": parent_equivalent,
         "short_horizon_training_surrogate_qualified": qualified,
-        "intervention_action_audited": probe,
+        "intervention_action_audited": probe or phase_probe,
+        "phase_target_frames": phase_target,
         "shared_candidate_hash": shared_hash,
         "closed_loop_sonic": closed_loop,
         "intervention_training_qualified": False,
