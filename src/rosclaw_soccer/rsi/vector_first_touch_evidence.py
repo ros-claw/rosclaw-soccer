@@ -239,14 +239,165 @@ def audit_reset_replay(folder: Path) -> dict[str, Any]:
     }
 
 
+def audit_first_touch_candidate_execution(
+    folder: Path, *, parent_folder: Path, candidate_path: Path
+) -> dict[str, Any]:
+    """Recompute bounded candidate outcomes from physics, never from video."""
+
+    from rosclaw_soccer.rsi.first_touch_candidate import (
+        JOINT_NAMES,
+        load_first_touch_candidate,
+    )
+
+    parent_audit = audit_vector_first_touch(parent_folder)
+    parent = json.loads((parent_folder / "report.json").read_text(encoding="utf-8"))
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    trace_path = folder / "trace.npz"
+    committed = {key: value for key, value in report.items() if key != "report_hash"}
+    if (
+        report.get("schema")
+        not in {
+            "rsi_isaac_vector_first_touch_candidate_execution_v1",
+            "rsi_isaac_vector_first_touch_candidate_execution_v2",
+        }
+        or report.get("activation_ceiling") != "SIM_ONLY"
+        or report.get("learning_authorized") is not False
+        or report.get("promotion_authorized") is not False
+        or report.get("trained_actor") is not False
+        or report.get("parent_report_hash") != parent["report_hash"]
+        or report.get("frames") != parent.get("frames")
+        or report.get("asset_hash") != parent.get("asset_hash")
+        or report.get("sonic_qualification_hash") != parent.get("sonic_qualification_hash")
+        or report.get("candidate_action_joint_names") != list(JOINT_NAMES)
+        or report.get("report_hash") != hash_json(committed)
+        or report.get("trace_hash") != hash_bytes(trace_path.read_bytes())
+    ):
+        raise ValueError("unauthenticated first-touch candidate physics")
+    courses = tuple(
+        (
+            row["course"]["ball_x_m"],
+            row["course"]["ball_y_local_m"],
+            row["course"]["ball_vx_m_s"],
+        )
+        for row in parent["environments"]
+    )
+    candidate = load_first_touch_candidate(
+        candidate_path,
+        expected_courses=courses,
+        parent_report_hash=parent["report_hash"],
+    )
+    projection_counts = report.get("candidate_action_projection_count")
+    if report["schema"].endswith("_v1"):
+        if projection_counts is not None:
+            raise ValueError("legacy candidate report cannot claim projection audit")
+        projection_counts = [0] * len(courses)
+    if (
+        report["candidate_hash"] != candidate.candidate_hash
+        or report["candidate_actions_rad"] != [list(row) for row in candidate.actions_rad]
+        or len(report["environments"]) != len(courses)
+        or not isinstance(report.get("candidate_actions_applied_frames"), list)
+        or len(report["candidate_actions_applied_frames"]) != len(courses)
+        or any(
+            type(count) is not int or not 0 <= count <= report["frames"]
+            for count in report["candidate_actions_applied_frames"]
+        )
+        or not isinstance(projection_counts, list)
+        or len(projection_counts) != len(courses)
+        or any(
+            type(count) is not int or not 0 <= count <= report["frames"] * len(JOINT_NAMES)
+            for count in projection_counts
+        )
+    ):
+        raise ValueError("candidate action execution ledger disagrees with manifest")
+    with np.load(trace_path, allow_pickle=False) as archive:
+        if set(archive.files) != {
+            "ball_position_m",
+            "ball_angular_velocity_rad_s",
+            "ball_body_contact_force_peak_n",
+        }:
+            raise ValueError("candidate physics trace contract changed")
+        positions = archive["ball_position_m"]
+        spin = archive["ball_angular_velocity_rad_s"]
+        force = archive["ball_body_contact_force_peak_n"]
+    frames, count = report["frames"], len(courses)
+    if (
+        positions.shape != (frames, count, 3)
+        or spin.shape != (frames, count, 3)
+        or force.shape != (frames, count, 6)
+        or not np.isfinite(positions).all()
+        or not np.isfinite(spin).all()
+        or not np.isfinite(force).all()
+        or np.any(force < 0)
+    ):
+        raise ValueError("candidate physics trace invalid")
+    clean, parent_clean = 0, parent_audit["clean_foot_only_episode_count"]
+    rewards = []
+    for index, row in enumerate(report["environments"]):
+        expected = parent["environments"][index]
+        if row["course"] != expected["course"] or row["lane_y_m"] != expected["lane_y_m"]:
+            raise ValueError("candidate course or lane differs from Parent")
+        active = np.flatnonzero(np.max(force[:, index], axis=1) > 1.0)
+        first = int(active[0]) if len(active) else None
+        bodies = np.flatnonzero(np.max(force[:, index], axis=0) > 1.0).tolist()
+        if (
+            row["first_contact_frame"] != first
+            or row["contact_body_indices"] != bodies
+            or not np.allclose(
+                row["ball_final_local_xyz_m"],
+                (
+                    positions[-1, index, 0],
+                    positions[-1, index, 1] - row["lane_y_m"],
+                    positions[-1, index, 2],
+                ),
+                atol=1e-5,
+                rtol=0,
+            )
+        ):
+            raise ValueError("candidate contact evidence disagrees with physics")
+        safe = row["minimum_pelvis_z_m"] >= 0.65
+        foot_only = bool(bodies and set(bodies) <= {0, 1} and safe)
+        clean += foot_only
+        base_reward = 1.0 if foot_only else -2.0 if not safe else -1.0 if bodies else -0.5
+        rewards.append(base_reward - min(0.5, projection_counts[index] * 0.01))
+    result = {
+        "schema": "rsi_isaac_first_touch_candidate_audit_v1",
+        "activation_ceiling": "SIM_ONLY",
+        "partition": "CONSUMED_DEV",
+        "parent_report_hash": parent["report_hash"],
+        "candidate_hash": candidate.candidate_hash,
+        "execution_report_hash": report["report_hash"],
+        "independent_training_course_count": count,
+        "parent_clean_foot_only_count": parent_clean,
+        "candidate_clean_foot_only_count": clean,
+        "reward_per_course": rewards,
+        "candidate_action_projection_count": projection_counts,
+        "fresh_opened": False,
+        "promotion_authorized": False,
+    }
+    result["report_hash"] = hash_json(result)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--reset-replay", action="store_true")
+    parser.add_argument("--candidate-manifest", type=Path)
+    parser.add_argument("--parent-folder", type=Path)
     args = parser.parse_args()
+    if args.reset_replay and args.candidate_manifest is not None:
+        parser.error("reset replay and candidate audit are separate protocols")
+    if (args.candidate_manifest is None) != (args.parent_folder is None):
+        parser.error("candidate audit requires both manifest and Parent folder")
     report = (
-        audit_reset_replay(args.folder)
+        audit_first_touch_candidate_execution(
+            args.folder,
+            parent_folder=args.parent_folder,
+            candidate_path=args.candidate_manifest,
+        )
+        if args.candidate_manifest is not None and args.parent_folder is not None
+        else audit_reset_replay(args.folder)
         if args.reset_replay
         else audit_vector_first_touch(args.folder)
     )

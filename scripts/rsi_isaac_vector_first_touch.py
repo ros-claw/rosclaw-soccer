@@ -21,6 +21,8 @@ parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
 parser.add_argument("--reset-replay", action="store_true")
 parser.add_argument("--second-reset-replay", action="store_true")
+parser.add_argument("--candidate-actions", type=Path)
+parser.add_argument("--parent-report", type=Path)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -30,6 +32,10 @@ if (
     or not 50 <= args.frames <= 400
     or not 2 <= args.env_count <= 16
     or (args.second_reset_replay and not args.reset_replay)
+    or ((args.candidate_actions is None) != (args.parent_report is None))
+    or (args.candidate_actions is not None and not args.candidate_actions.is_file())
+    or (args.parent_report is not None and not args.parent_report.is_file())
+    or (args.candidate_actions is not None and args.reset_replay)
 ):
     parser.error("qualified assets, 2-16 environments and new output directory required")
 launcher = AppLauncher(args)
@@ -50,6 +56,14 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
     SonicNavigationConfig,
 )
 from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController  # noqa: E402
+from rosclaw_soccer.rsi.first_touch_candidate import (  # noqa: E402
+    JOINT_NAMES,
+    load_first_touch_candidate,
+    project_residual_target,
+)
+from rosclaw_soccer.rsi.vector_first_touch_evidence import (  # noqa: E402
+    audit_vector_first_touch,
+)
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json  # noqa: E402
 from rosclaw_soccer.sim.isaac_root_bridge import isaac_root_to_mujoco  # noqa: E402
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation  # noqa: E402
@@ -148,6 +162,34 @@ def main() -> None:
         )
         for i in range(args.env_count)
     ]
+    candidate = None
+    if args.candidate_actions is not None and args.parent_report is not None:
+        parent_audit = audit_vector_first_touch(args.parent_report.parent)
+        parent = json.loads(args.parent_report.read_text(encoding="utf-8"))
+        if (
+            parent_audit["source_report_hash"] != parent["report_hash"]
+            or parent["asset_hash"] != hash_bytes(args.g1_usd.read_bytes())
+            or parent["sonic_qualification_hash"]
+            != navigations[0].backend.qualification.qualification_hash
+            or len(parent["environments"]) != len(courses)
+            or [
+                (
+                    row["course"]["ball_x_m"],
+                    row["course"]["ball_y_local_m"],
+                    row["course"]["ball_vx_m_s"],
+                )
+                for row in parent["environments"]
+            ]
+            != courses
+        ):
+            raise ValueError("candidate Parent physics, asset or foundation differs")
+        candidate = load_first_touch_candidate(
+            args.candidate_actions,
+            expected_courses=tuple(courses),
+            parent_report_hash=parent["report_hash"],
+        )
+        print("RSI_ISAAC_CANDIDATE_READY=" + candidate.candidate_hash, flush=True)
+    candidate_joint_indices = [robot.joint_names.index(name) for name in JOINT_NAMES]
     pose = robot.data.default_root_pose.torch.clone()
     initial_joint = robot.data.default_joint_pos.torch.clone()
     initial_joint[:, indices] = torch.as_tensor(
@@ -183,6 +225,9 @@ def main() -> None:
         robot_joint_observations = []
         robot_joint_velocity_observations = []
         robot_target_observations = []
+        applied_frames = np.zeros(args.env_count, dtype=np.int64)
+        projection_counts = np.zeros(args.env_count, dtype=np.int64)
+        contact_seen = np.zeros(args.env_count, dtype=np.bool_)
         minimum_pelvis = np.full(args.env_count, np.inf)
         for frame in range(args.frames):
             robot_root_observations.append(
@@ -235,6 +280,28 @@ def main() -> None:
                     navigation.start_from_observation(obs)
                 proposal = navigation.propose(obs)
                 target[i, indices] = torch.as_tensor(proposal.target_rad, device=sim.device)
+            baseline_target = target.clone()
+            if candidate is not None:
+                ball_xyz = ball.data.root_pos_w.torch.detach().cpu().numpy()
+                root_xyz = robot.data.root_link_pose_w.torch[:, :3].detach().cpu().numpy()
+                limits = robot.data.joint_pos_limits.torch.detach().cpu().numpy()
+                for index, residuals in enumerate(candidate.actions_rad):
+                    gap = float(ball_xyz[index, 0] - root_xyz[index, 0])
+                    lateral_gap = float(ball_xyz[index, 1] - root_xyz[index, 1])
+                    if not contact_seen[index] and 0.15 <= gap <= 1.0 and abs(lateral_gap) <= 0.5:
+                        weight = min(1.0, max(0.0, (1.0 - gap) / 0.5))
+                        for joint_index, residual in zip(
+                            candidate_joint_indices, residuals, strict=True
+                        ):
+                            value, projected = project_residual_target(
+                                float(target[index, joint_index]),
+                                residual * weight,
+                                float(limits[index, joint_index, 0]),
+                                float(limits[index, joint_index, 1]),
+                            )
+                            target[index, joint_index] = value
+                            projection_counts[index] += projected
+                        applied_frames[index] += 1
             robot_target_observations.append(target[:, indices].detach().cpu().numpy().copy())
             frame_forces_gpu = torch.zeros((args.env_count, 6), device=sim.device)
             for _ in range(10):
@@ -255,6 +322,15 @@ def main() -> None:
                     frame_forces_gpu[i] = torch.maximum(
                         frame_forces_gpu[i], torch.linalg.vector_norm(force[0, 0], dim=-1)
                     )
+                    if (
+                        candidate is not None
+                        and not contact_seen[i]
+                        and bool(torch.any(torch.linalg.vector_norm(force[0, 0], dim=-1) > 1.0))
+                    ):
+                        contact_seen[i] = True
+                        target[i, candidate_joint_indices] = baseline_target[
+                            i, candidate_joint_indices
+                        ]
             positions.append(ball.data.root_pos_w.torch.detach().cpu().numpy().copy())
             angular_velocities.append(ball.data.root_ang_vel_w.torch.detach().cpu().numpy().copy())
             contact_forces.append(frame_forces_gpu.detach().cpu().numpy().copy())
@@ -270,6 +346,8 @@ def main() -> None:
             np.asarray(robot_joint_observations),
             np.asarray(robot_joint_velocity_observations),
             np.asarray(robot_target_observations),
+            applied_frames,
+            projection_counts,
         )
 
     (
@@ -282,6 +360,8 @@ def main() -> None:
         joint_observations,
         joint_velocity_observations,
         target_observations,
+        applied_frames,
+        projection_counts,
     ) = rollout(navigations)
     if (
         not np.isfinite(positions_arr).all()
@@ -320,7 +400,11 @@ def main() -> None:
             }
         )
     report = {
-        "schema": "rsi_isaac_vector_first_touch_smoke_v1",
+        "schema": (
+            "rsi_isaac_vector_first_touch_candidate_execution_v2"
+            if candidate is not None
+            else "rsi_isaac_vector_first_touch_smoke_v1"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "learning_authorized": False,
         "promotion_authorized": False,
@@ -332,6 +416,14 @@ def main() -> None:
         "inference_threads": args.inference_threads,
         "environments": entries,
     }
+    if candidate is not None:
+        report["parent_report_hash"] = candidate.parent_report_hash
+        report["candidate_hash"] = candidate.candidate_hash
+        report["candidate_action_joint_names"] = list(JOINT_NAMES)
+        report["candidate_actions_rad"] = [list(row) for row in candidate.actions_rad]
+        report["candidate_actions_applied_frames"] = applied_frames.tolist()
+        report["candidate_action_projection_count"] = projection_counts.tolist()
+        report["trained_actor"] = False
     report["report_hash"] = hash_json(report)
     (args.output_dir / "report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -379,6 +471,8 @@ def main() -> None:
             replay_joint_observations,
             replay_joint_velocity_observations,
             replay_target_observations,
+            _replay_applied_frames,
+            _replay_projection_counts,
         ) = rollout(replay_navigations)
         replay_path = args.output_dir / "reset_replay.npz"
         np.savez_compressed(
@@ -518,6 +612,8 @@ def main() -> None:
                 second_joint,
                 second_joint_velocity,
                 second_target,
+                _second_applied_frames,
+                _second_projection_counts,
             ) = rollout(second_navigations)
             second_trace_path = args.output_dir / "second_reset_replay.npz"
             np.savez_compressed(
@@ -579,5 +675,8 @@ def main() -> None:
 
 try:
     main()
+except Exception as exc:
+    print(f"RSI_ISAAC_VECTOR_FAILURE={type(exc).__name__}:{exc}", flush=True)
+    raise
 finally:
     simulation_app.close()

@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.vector_first_touch_evidence import (
+    audit_first_touch_candidate_execution,
     audit_reset_replay,
     audit_vector_first_touch,
 )
@@ -36,6 +37,8 @@ def _fixture(folder: Path) -> None:
         "promotion_authorized": False,
         "frames": 50,
         "source_hash": hash_json("runner"),
+        "asset_hash": hash_json("asset"),
+        "sonic_qualification_hash": hash_json("sonic"),
         "trace_hash": hash_bytes(trace.read_bytes()),
         "environments": [
             {
@@ -121,3 +124,49 @@ def test_in_process_reset_replay_is_not_new_course(tmp_path: Path) -> None:
         stream.write(b"tamper")
     with pytest.raises(ValueError, match="unauthenticated"):
         audit_reset_replay(folder)
+
+
+def test_candidate_audit_recomputes_foot_only_reward(tmp_path: Path) -> None:
+    from rosclaw_soccer.rsi.first_touch_candidate import JOINT_NAMES, candidate_manifest
+
+    parent_folder, folder = tmp_path / "parent", tmp_path / "candidate"
+    _fixture(parent_folder)
+    folder.mkdir()
+    parent = json.loads((parent_folder / "report.json").read_text(encoding="utf-8"))
+    courses = tuple(
+        (
+            row["course"]["ball_x_m"],
+            row["course"]["ball_y_local_m"],
+            row["course"]["ball_vx_m_s"],
+        )
+        for row in parent["environments"]
+    )
+    actions = tuple((0.0,) * len(JOINT_NAMES) for _ in courses)
+    manifest = candidate_manifest(
+        courses=courses, parent_report_hash=parent["report_hash"], actions_rad=actions, seed=1
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with np.load(parent_folder / "trace.npz", allow_pickle=False) as original:
+        np.savez_compressed(folder / "trace.npz", **{k: original[k] for k in original.files})
+    report = {
+        **parent,
+        "schema": "rsi_isaac_vector_first_touch_candidate_execution_v2",
+        "trace_hash": hash_bytes((folder / "trace.npz").read_bytes()),
+        "parent_report_hash": parent["report_hash"],
+        "candidate_hash": manifest["candidate_hash"],
+        "candidate_action_joint_names": list(JOINT_NAMES),
+        "candidate_actions_rad": [list(row) for row in actions],
+        "candidate_actions_applied_frames": [1, 1],
+        "candidate_action_projection_count": [0, 0],
+        "trained_actor": False,
+    }
+    report.pop("report_hash")
+    report["report_hash"] = hash_json(report)
+    (folder / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    result = audit_first_touch_candidate_execution(
+        folder, parent_folder=parent_folder, candidate_path=manifest_path
+    )
+    assert result["candidate_clean_foot_only_count"] == 1
+    assert result["reward_per_course"] == [1.0, -0.5]
+    assert result["fresh_opened"] is False
