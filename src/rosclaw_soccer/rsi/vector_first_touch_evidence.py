@@ -23,6 +23,10 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
         or report.get("promotion_authorized") is not False
         or report.get("report_hash") != hash_json(committed)
         or report.get("trace_hash") != hash_bytes(trace_path.read_bytes())
+        or (
+            "onnx_graph_encoder_layout" in report
+            and report["onnx_graph_encoder_layout"] is not True
+        )
     ):
         raise ValueError("unauthenticated vector first-touch evidence")
     entries = report.get("environments")
@@ -268,6 +272,8 @@ def audit_first_touch_candidate_execution(
         or report.get("frames") != parent.get("frames")
         or report.get("asset_hash") != parent.get("asset_hash")
         or report.get("sonic_qualification_hash") != parent.get("sonic_qualification_hash")
+        or report.get("onnx_graph_encoder_layout", False)
+        is not parent.get("onnx_graph_encoder_layout", False)
         or report.get("candidate_action_joint_names") != list(JOINT_NAMES)
         or report.get("report_hash") != hash_json(committed)
         or report.get("trace_hash") != hash_bytes(trace_path.read_bytes())

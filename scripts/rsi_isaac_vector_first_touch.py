@@ -19,6 +19,7 @@ parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
+parser.add_argument("--onnx-graph-encoder-layout", action="store_true")
 parser.add_argument("--reset-replay", action="store_true")
 parser.add_argument("--second-reset-replay", action="store_true")
 parser.add_argument("--candidate-actions", type=Path)
@@ -80,6 +81,7 @@ def main() -> None:
                 model_variant="low_latency",
                 experimental_maximum_speed_mps=1.5,
                 inference_threads=args.inference_threads,
+                onnx_graph_encoder_layout=args.onnx_graph_encoder_layout,
             ),
         )
         for index in range(args.env_count)
@@ -171,6 +173,7 @@ def main() -> None:
             or parent["asset_hash"] != hash_bytes(args.g1_usd.read_bytes())
             or parent["sonic_qualification_hash"]
             != navigations[0].backend.qualification.qualification_hash
+            or parent.get("onnx_graph_encoder_layout", False) is not args.onnx_graph_encoder_layout
             or len(parent["environments"]) != len(courses)
             or [
                 (
@@ -416,6 +419,8 @@ def main() -> None:
         "inference_threads": args.inference_threads,
         "environments": entries,
     }
+    if args.onnx_graph_encoder_layout:
+        report["onnx_graph_encoder_layout"] = True
     if candidate is not None:
         report["parent_report_hash"] = candidate.parent_report_hash
         report["candidate_hash"] = candidate.candidate_hash
@@ -453,6 +458,7 @@ def main() -> None:
                     model_variant="low_latency",
                     experimental_maximum_speed_mps=1.5,
                     inference_threads=args.inference_threads,
+                    onnx_graph_encoder_layout=args.onnx_graph_encoder_layout,
                 ),
             )
             for index in range(args.env_count)
@@ -598,6 +604,7 @@ def main() -> None:
                         model_variant="low_latency",
                         experimental_maximum_speed_mps=1.5,
                         inference_threads=args.inference_threads,
+                        onnx_graph_encoder_layout=args.onnx_graph_encoder_layout,
                     ),
                 )
                 for index in range(args.env_count)

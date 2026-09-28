@@ -125,6 +125,17 @@ def test_low_latency_variant_is_explicitly_bound(monkeypatch):
     assert low.contract_hash != legacy.contract_hash
 
 
+def test_opt_in_onnx_graph_layout_changes_navigation_contract(monkeypatch):
+    legacy = controller(monkeypatch, SonicNavigationConfig(model_variant="low_latency"))
+    corrected = controller(
+        monkeypatch,
+        SonicNavigationConfig(model_variant="low_latency", onnx_graph_encoder_layout=True),
+    )
+    assert corrected.contract_hash != legacy.contract_hash
+    with pytest.raises(ValueError, match="low-latency only"):
+        SonicNavigationConfig(model_variant="sonic_v1_1", onnx_graph_encoder_layout=True)
+
+
 @pytest.mark.parametrize("variant", ["low_latency", "sonic_v1_1"])
 def test_streaming_backend_loads_requested_variant(monkeypatch, variant):
     received = []

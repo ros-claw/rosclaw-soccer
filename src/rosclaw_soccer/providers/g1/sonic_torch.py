@@ -40,6 +40,15 @@ class FrozenSonicG1Torch:
             if any(t.data_location == onnx.TensorProto.EXTERNAL for t in graph.initializer):
                 raise ValueError("SONIC requires inline numeric model tensors")
             graphs.append(graph)
+        g1_concat = [node for node in graphs[0].node if node.name == "/Concat_2"]
+        expected_orientation = (
+            "/Reshape_3_output_0" if variant == "low_latency" else "/Reshape_2_output_0"
+        )
+        if len(g1_concat) != 1 or list(g1_concat[0].input) != [
+            "/Reshape_1_output_0",
+            expected_orientation,
+        ]:
+            raise ValueError("SONIC G1 encoder observation graph layout changed")
 
         def tensor(value: Any) -> Any:
             array = np.asarray(value, dtype=np.float32)
@@ -97,7 +106,12 @@ class FrozenSonicG1Torch:
                 )
                 x[:, :4] = 0
                 expected = sessions[0].run(None, {sessions[0].get_inputs()[0].name: x})[0]
-                actual = self.encode_g1(tensor(x[:, 4:644])).cpu().numpy()
+                features = (
+                    np.concatenate((x[:, 4:584], x[:, 590:650]), axis=1)
+                    if variant == "low_latency"
+                    else x[:, 4:644]
+                )
+                actual = self.encode_g1(tensor(features)).cpu().numpy()
                 encoder_errors.append(float(np.max(np.abs(actual - expected))))
                 y = rng.normal(0, 0.2, (1, 994)).astype(np.float32)
                 expected = (

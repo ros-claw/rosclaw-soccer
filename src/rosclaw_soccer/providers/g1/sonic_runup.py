@@ -180,6 +180,7 @@ class G1SonicRunupConfig:
     authority_calibration_hash: str | None = None
     planner_seed: int = 0
     model_variant: G1SonicModelVariant = "low_latency"
+    onnx_graph_encoder_layout: bool = False
     schema_version: str = "rosclaw.simforge.g1_sonic_runup_config.v2"
     movement_heading_rad: float = 0.0
     facing_heading_rad: float = 0.0
@@ -219,6 +220,10 @@ class G1SonicRunupConfig:
             raise ValueError("SONIC planner seed must be non-negative")
         if self.model_variant not in _VARIANTS:
             raise ValueError("SONIC model variant is unsupported")
+        if type(self.onnx_graph_encoder_layout) is not bool or (
+            self.onnx_graph_encoder_layout and self.model_variant != "low_latency"
+        ):
+            raise ValueError("ONNX graph encoder layout is low-latency only")
         if any(
             isinstance(value, bool) or not math.isfinite(value) or abs(value) > math.pi
             for value in (self.movement_heading_rad, self.facing_heading_rad)
@@ -237,6 +242,8 @@ class G1SonicRunupConfig:
         for key in ("movement_heading_rad", "facing_heading_rad"):
             if value[key] == 0.0:
                 value.pop(key)
+        if not self.onnx_graph_encoder_layout:
+            value.pop("onnx_graph_encoder_layout")
         return hash_json(value)
 
 
@@ -625,7 +632,8 @@ class G1SonicRunupController:
             matrix = np.empty(9, dtype=np.float64)
             mujoco.mju_quat2Mat(matrix, relative)
             orientation.extend(matrix.reshape(3, 3)[:, :2].reshape(-1))
-        observation[0, 584:644] = orientation
+        orientation_start = 590 if self.config.onnx_graph_encoder_layout else 584
+        observation[0, orientation_start : orientation_start + 60] = orientation
         return observation
 
     def _history_entry(

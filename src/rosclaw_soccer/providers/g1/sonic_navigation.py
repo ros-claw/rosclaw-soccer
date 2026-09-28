@@ -44,12 +44,17 @@ class SonicNavigationConfig:
     pose_reference: SonicPoseReference | None = None
     experimental_command_replanning: bool = False
     inference_threads: int | None = None
+    onnx_graph_encoder_layout: bool = False
 
     def __post_init__(self) -> None:
         if self.inference_threads is not None and (
             type(self.inference_threads) is not int or not 1 <= self.inference_threads <= 8
         ):
             raise ValueError("SONIC inference threads must be 1-8")
+        if type(self.onnx_graph_encoder_layout) is not bool or (
+            self.onnx_graph_encoder_layout and self.model_variant != "low_latency"
+        ):
+            raise ValueError("ONNX graph encoder layout is low-latency only")
         if type(self.experimental_command_replanning) is not bool or (
             self.experimental_command_replanning
             and (
@@ -156,7 +161,9 @@ class _StreamingBackend(G1SonicRunupController):
         self.events: list[dict[str, object]] = []
         self.latent_records: list[tuple[int, np.ndarray, np.ndarray]] = []
         runup_config = G1SonicRunupConfig(
-            model_variant=config.model_variant, execution_duration_sec=4.5
+            model_variant=config.model_variant,
+            execution_duration_sec=4.5,
+            onnx_graph_encoder_layout=config.onnx_graph_encoder_layout,
         )
         if config.inference_threads is None:
             super().__init__(model_root, runup_config)
@@ -298,6 +305,8 @@ class G1SonicNavigation:
             config_record.pop("experimental_maximum_speed_mps")
         if self.config.inference_threads is None:
             config_record.pop("inference_threads")
+        if not self.config.onnx_graph_encoder_layout:
+            config_record.pop("onnx_graph_encoder_layout")
         self.contract_hash = hash_json(
             {
                 "schema": "rosclaw_soccer.g1_sonic_navigation.v1",

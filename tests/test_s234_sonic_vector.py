@@ -44,6 +44,24 @@ def test_batched_encoder_sensor_layout_matches_existing_cpu(variant):
         np.testing.assert_allclose(actual[i], expected, atol=3e-6, rtol=3e-6)
 
 
+def test_low_latency_onnx_graph_layout_is_explicit_and_six_values_shifted():
+    _, ref, q, v = setup("low_latency")
+    old = object.__new__(G1SonicRunupController)
+    old.reference = ref[0]
+    old.config = G1SonicRunupConfig(model_variant="low_latency")
+    old._variant = _VARIANTS["low_latency"]
+    state = SimpleNamespace(qpos=q[0], qvel=v[0])
+    legacy = old._encoder_observation(state, 3)
+    old.config = G1SonicRunupConfig(model_variant="low_latency", onnx_graph_encoder_layout=True)
+    graph = old._encoder_observation(state, 3)
+    np.testing.assert_array_equal(graph[:, :584], legacy[:, :584])
+    np.testing.assert_array_equal(graph[:, 584:590], 0)
+    np.testing.assert_array_equal(graph[:, 590:650], legacy[:, 584:644])
+    assert old.config.config_hash != G1SonicRunupConfig(model_variant="low_latency").config_hash
+    with pytest.raises(ValueError, match="low-latency only"):
+        G1SonicRunupConfig(model_variant="sonic_v1_1", onnx_graph_encoder_layout=True)
+
+
 def test_histories_are_private_and_lifecycle_explicit():
     tracker, _, q, v = setup()
     with pytest.raises(RuntimeError):
