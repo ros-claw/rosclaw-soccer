@@ -1,0 +1,15 @@
+{
+  "schema": "rsi_team_adaptive_intercept_search_protocol_v28",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "failed_exam_protocol_path": "docs/rsi/protocols/team-contextual-nav-fresh-exam-v25.json",
+  "failed_exam_report_path": "/data/rosclaw_overflow/rsi-team-contextual-nav-fresh-v25/report.json",
+  "failed_exam_report_hash": "sha256:d77a62a25b4cb7e6c7e0f0a2b8bf4d8423b13aa8f3af63fd9b9601bb0a87b974",
+  "parameter_seed": 20260929,
+  "candidate_count": 24,
+  "training_scene_indices": [2, 3, 6, 8, 10, 11],
+  "internal_validation_scene_indices": [0, 1, 4, 5, 7, 9],
+  "selection_rule": "Reject any candidate with an unsafe or incomplete training episode; among remaining candidates rank by useful_pass_count, then safe_contact_count, then lower mean minimum foot-ball distance, then lower candidate_index. This is development selection only; validation scenes are also already consumed by v25-v27.",
+  "interpretation": "Bounded physical parameter search for interception navigation in the frozen 3v3 world. This is training on failed scenes, not fresh promotion or a neural actor-critic."
+}

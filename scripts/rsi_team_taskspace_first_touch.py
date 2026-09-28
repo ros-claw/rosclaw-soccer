@@ -17,6 +17,7 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
     release_joint_delta,
     swing_joint_delta,
 )
+from rosclaw_soccer.rsi.team_adaptive_intercept_navigation import TeamAdaptiveInterceptNavigation
 from rosclaw_soccer.rsi.team_context_phase_navigation import TeamContextPhaseNavigation
 from rosclaw_soccer.rsi.team_contextual_nav_policy import TeamContextualNavigationMemory
 from rosclaw_soccer.rsi.team_intercept_navigation import TeamInterceptNavigation
@@ -242,7 +243,11 @@ def _run_one(
     scenario: IndependentTeamWorldScenario,
     protocol: dict[str, Any],
     navigation_policy: (
-        TeamInterceptNavigation | TeamContextPhaseNavigation | TeamContextualNavigationMemory | None
+        TeamInterceptNavigation
+        | TeamContextPhaseNavigation
+        | TeamContextualNavigationMemory
+        | TeamAdaptiveInterceptNavigation
+        | None
     ) = None,
     motor_option: TeamSwingMotor | None = None,
 ) -> dict[str, Any]:
