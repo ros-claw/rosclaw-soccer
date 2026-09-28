@@ -1,0 +1,19 @@
+{
+  "run_id": "first-touch-temporal-zero-parity-20260930-v1",
+  "purpose": "SIM_ONLY zero-parameter physical parity gate before temporal policy exploration",
+  "code_sha": "8147709",
+  "physics_source_hash": "sha256:3197ba0c571aa3a576ede1bec38dc565617eed4030bdb37894f95330c43eb133",
+  "policy_source_hash": "sha256:d04a69984e0fee5dfb01f107fede855ea7410f6f12ee80c2038949ae04020890",
+  "auditor_source_hash": "sha256:6121f485615707ef2739fdacd2dddbf7edd9965504b01a2815fcae6d3d7f367d",
+  "parent_report_hash": "sha256:78cc2ea648a9686312b459227d54ed51583b506a353bb9b58b56d5c1de51e9bd",
+  "parent_clean_foot_count": 7,
+  "candidate_manifest_hash": "sha256:aa24a6f9dfc5d47c7cf772dfc46c186aef6b740489ed182dc0e2d7f0b8569249",
+  "training_course_seed": 20260930,
+  "course_count": 16,
+  "frames": 300,
+  "weight_mode": "all zero",
+  "required": ["zero temporal applied frames and projections", "all joint targets equal frozen baseline per frame", "no loss of Parent clean-foot courses", "minimum pelvis >=0.65 m", "pre-step ball/body trace alignment audited"],
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
