@@ -17,6 +17,7 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
     release_joint_delta,
     swing_joint_delta,
 )
+from rosclaw_soccer.rsi.team_intercept_navigation import TeamInterceptNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.independent_team_world import (
     IndependentTeamWorldConfig,
@@ -173,6 +174,7 @@ def _run_one(
     fixture: Any,
     scenario: IndependentTeamWorldScenario,
     protocol: dict[str, Any],
+    navigation_policy: TeamInterceptNavigation | None = None,
 ) -> dict[str, Any]:
     enabled = mode == "candidate"
     motor = TeamSwingMotor(protocol["focal_agent_id"], enabled, protocol["candidate_action"])
@@ -185,6 +187,9 @@ def _run_one(
         goal=fixture.goal,
         config=IndependentTeamWorldConfig(simulation_duration_sec=protocol["frames"] * 0.02),
         motor_options={motor.agent_id: motor},
+        navigation_policies=(
+            {motor.agent_id: navigation_policy} if navigation_policy is not None else None
+        ),
     )
     if motor.next_frame != protocol["frames"] or motor.joint_limits is None:
         raise ValueError("incomplete paired motor episode")
@@ -245,6 +250,9 @@ def _run_one(
         "activation_ceiling": "SIM_ONLY",
         "scenario_hash": scenario.scenario_hash,
         "motor_contract_hash": motor.contract_hash,
+        "navigation_contract_hash": (
+            navigation_policy.contract_hash if navigation_policy is not None else None
+        ),
         "trace_hash": hash_bytes(physics_path.read_bytes()),
         "action_trace_hash": hash_bytes(action_path.read_bytes()),
         "trajectory_digest": trajectory_digest(trace),

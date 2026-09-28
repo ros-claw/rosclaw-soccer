@@ -1,0 +1,36 @@
+{
+  "schema": "rsi_team_intercept_navigation_search_protocol_v15",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "parent_six_course_report_hash": "sha256:4d38e09570b6ccb772d4b6eb8bfbf385502e773547a3c16806eb701fd991858a",
+  "fixture": "s199.independent.3v3",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "training_courses": [
+    {"name": "near", "scenario_id": "s199.rsi-sweep-near-v14", "ball_initial_position_m": [3.6, -0.7, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920630},
+    {"name": "far", "scenario_id": "s199.rsi-sweep-far-v14", "ball_initial_position_m": [4.0, -0.7, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920631},
+    {"name": "left", "scenario_id": "s199.rsi-sweep-left-v14", "ball_initial_position_m": [3.8, -0.6, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920632},
+    {"name": "right", "scenario_id": "s199.rsi-sweep-right-v14", "ball_initial_position_m": [3.8, -0.8, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920633}
+  ],
+  "parameter_family": [
+    {"name": "lat04", "forward_gain": 0.0, "lateral_gain": 0.4},
+    {"name": "lat08", "forward_gain": 0.0, "lateral_gain": 0.8},
+    {"name": "lat12", "forward_gain": 0.0, "lateral_gain": 1.2},
+    {"name": "front04_lat08", "forward_gain": 0.4, "lateral_gain": 0.8},
+    {"name": "back04_lat08", "forward_gain": -0.4, "lateral_gain": 0.8},
+    {"name": "negative_lat08", "forward_gain": 0.0, "lateral_gain": -0.8},
+    {"name": "front04", "forward_gain": 0.4, "lateral_gain": 0.0},
+    {"name": "back04", "forward_gain": -0.4, "lateral_gain": 0.0}
+  ],
+  "selection_metric": "maximize safe focal foot-contact count across all four training courses, then useful forward-pass count with postcontact x speed >=0.5m/s, then minimize nonfoot contacts and action magnitude; no fresh holdout is examined during selection",
+  "stop_condition": "if no candidate improves training contact over frozen motor-only baseline, stop this navigation parameter family and revisit gait phase and contact geometry",
+  "policy_intervention_authorized": false
+}
