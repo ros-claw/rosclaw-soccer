@@ -19,6 +19,8 @@ parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
+parser.add_argument("--reset-replay", action="store_true")
+parser.add_argument("--second-reset-replay", action="store_true")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -27,6 +29,7 @@ if (
     or args.output_dir.exists()
     or not 50 <= args.frames <= 400
     or not 2 <= args.env_count <= 16
+    or (args.second_reset_replay and not args.reset_replay)
 ):
     parser.error("qualified assets, 2-16 environments and new output directory required")
 launcher = AppLauncher(args)
@@ -169,75 +172,117 @@ def main() -> None:
     ball.reset()
     for contact in contacts:
         contact.reset()
-    positions = []
-    contact_forces = []
-    angular_velocities = []
-    minimum_pelvis = np.full(args.env_count, np.inf)
     pelvis_index = robot.body_names.index("pelvis")
-    for frame in range(args.frames):
-        target = robot.data.joint_pos.torch.clone()
-        for i, navigation in enumerate(navigations):
-            root_pose = (
-                robot.data.root_link_pose_w.torch[i].detach().cpu().numpy().astype(np.float64)
+
+    def rollout(current_navigations: list[G1SonicNavigation]):
+        positions = []
+        contact_forces = []
+        angular_velocities = []
+        robot_root_observations = []
+        robot_root_velocity_observations = []
+        robot_joint_observations = []
+        robot_joint_velocity_observations = []
+        robot_target_observations = []
+        minimum_pelvis = np.full(args.env_count, np.inf)
+        for frame in range(args.frames):
+            robot_root_observations.append(
+                robot.data.root_link_pose_w.torch.detach().cpu().numpy().copy()
             )
-            root_velocity = (
-                robot.data.root_link_vel_w.torch[i].detach().cpu().numpy().astype(np.float64)
+            robot_root_velocity_observations.append(
+                robot.data.root_link_vel_w.torch.detach().cpu().numpy().copy()
             )
-            joint = robot.data.joint_pos.torch[i, indices].detach().cpu().numpy().astype(np.float64)
-            velocity = (
-                robot.data.joint_vel.torch[i, indices].detach().cpu().numpy().astype(np.float64)
+            robot_joint_observations.append(
+                robot.data.joint_pos.torch[:, indices].detach().cpu().numpy().copy()
             )
-            qroot, vroot = isaac_root_to_mujoco(
-                pose_xyzw=root_pose,
-                velocity_world=root_velocity,
-                asset_quaternion_xyzw=np.asarray((0.0, 0.0, 0.0, 1.0)),
+            robot_joint_velocity_observations.append(
+                robot.data.joint_vel.torch[:, indices].detach().cpu().numpy().copy()
             )
-            qroot[1] -= lanes[i]
-            qpos = np.concatenate((qroot, joint, (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)))
-            qvel = np.concatenate((vroot, velocity, np.zeros(6)))
-            obs = TeamMotorObservation(
-                agent_id=f"vector.first_touch.{i}",
-                frame=frame,
-                time_sec=frame * 0.02,
-                intent="other",
-                prospective_owner=False,
-                qpos=tuple(float(v) for v in qpos),
-                qvel=tuple(float(v) for v in qvel),
-                target_position_m=(0.0, 0.0, 0.0),
-                navigation_command=(1.4, 0.0, 0.0),
-                navigation_envelope=navigation.navigation_envelope,
-            )
-            if frame == 0:
-                navigation.start_from_observation(obs)
-            proposal = navigation.propose(obs)
-            target[i, indices] = torch.as_tensor(proposal.target_rad, device=sim.device)
-        frame_forces_gpu = torch.zeros((args.env_count, 6), device=sim.device)
-        for _ in range(10):
-            robot.set_joint_position_target_index(target=target)
-            robot.write_data_to_sim()
-            ball.write_data_to_sim()
-            sim.step()
-            robot.update(sim.get_physics_dt())
-            ball.update(sim.get_physics_dt())
-            for i, contact in enumerate(contacts):
-                contact.update(sim.get_physics_dt())
-                matrix = contact.data.force_matrix_w
-                if matrix is None:
-                    raise ValueError("ball/body filtered contact matrix unavailable")
-                force = matrix.torch
-                if force.shape != (1, 1, 6, 3):
-                    raise ValueError(f"unexpected lane {i} force matrix {force.shape}")
-                frame_forces_gpu[i] = torch.maximum(
-                    frame_forces_gpu[i], torch.linalg.vector_norm(force[0, 0], dim=-1)
+            target = robot.data.joint_pos.torch.clone()
+            for i, navigation in enumerate(current_navigations):
+                root_pose = (
+                    robot.data.root_link_pose_w.torch[i].detach().cpu().numpy().astype(np.float64)
                 )
-        positions.append(ball.data.root_pos_w.torch.detach().cpu().numpy().copy())
-        angular_velocities.append(ball.data.root_ang_vel_w.torch.detach().cpu().numpy().copy())
-        contact_forces.append(frame_forces_gpu.detach().cpu().numpy().copy())
-        pelvis_z = robot.data.body_pos_w.torch[:, pelvis_index, 2].detach().cpu().numpy()
-        minimum_pelvis = np.minimum(minimum_pelvis, pelvis_z)
-    positions_arr = np.asarray(positions)
-    angular_arr = np.asarray(angular_velocities)
-    forces_arr = np.asarray(contact_forces)
+                root_velocity = (
+                    robot.data.root_link_vel_w.torch[i].detach().cpu().numpy().astype(np.float64)
+                )
+                joint = (
+                    robot.data.joint_pos.torch[i, indices].detach().cpu().numpy().astype(np.float64)
+                )
+                velocity = (
+                    robot.data.joint_vel.torch[i, indices].detach().cpu().numpy().astype(np.float64)
+                )
+                qroot, vroot = isaac_root_to_mujoco(
+                    pose_xyzw=root_pose,
+                    velocity_world=root_velocity,
+                    asset_quaternion_xyzw=np.asarray((0.0, 0.0, 0.0, 1.0)),
+                )
+                qroot[1] -= lanes[i]
+                qpos = np.concatenate((qroot, joint, (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)))
+                qvel = np.concatenate((vroot, velocity, np.zeros(6)))
+                obs = TeamMotorObservation(
+                    agent_id=f"vector.first_touch.{i}",
+                    frame=frame,
+                    time_sec=frame * 0.02,
+                    intent="other",
+                    prospective_owner=False,
+                    qpos=tuple(float(v) for v in qpos),
+                    qvel=tuple(float(v) for v in qvel),
+                    target_position_m=(0.0, 0.0, 0.0),
+                    navigation_command=(1.4, 0.0, 0.0),
+                    navigation_envelope=navigation.navigation_envelope,
+                )
+                if frame == 0:
+                    navigation.start_from_observation(obs)
+                proposal = navigation.propose(obs)
+                target[i, indices] = torch.as_tensor(proposal.target_rad, device=sim.device)
+            robot_target_observations.append(target[:, indices].detach().cpu().numpy().copy())
+            frame_forces_gpu = torch.zeros((args.env_count, 6), device=sim.device)
+            for _ in range(10):
+                robot.set_joint_position_target_index(target=target)
+                robot.write_data_to_sim()
+                ball.write_data_to_sim()
+                sim.step()
+                robot.update(sim.get_physics_dt())
+                ball.update(sim.get_physics_dt())
+                for i, contact in enumerate(contacts):
+                    contact.update(sim.get_physics_dt())
+                    matrix = contact.data.force_matrix_w
+                    if matrix is None:
+                        raise ValueError("ball/body filtered contact matrix unavailable")
+                    force = matrix.torch
+                    if force.shape != (1, 1, 6, 3):
+                        raise ValueError(f"unexpected lane {i} force matrix {force.shape}")
+                    frame_forces_gpu[i] = torch.maximum(
+                        frame_forces_gpu[i], torch.linalg.vector_norm(force[0, 0], dim=-1)
+                    )
+            positions.append(ball.data.root_pos_w.torch.detach().cpu().numpy().copy())
+            angular_velocities.append(ball.data.root_ang_vel_w.torch.detach().cpu().numpy().copy())
+            contact_forces.append(frame_forces_gpu.detach().cpu().numpy().copy())
+            pelvis_z = robot.data.body_pos_w.torch[:, pelvis_index, 2].detach().cpu().numpy()
+            minimum_pelvis = np.minimum(minimum_pelvis, pelvis_z)
+        return (
+            np.asarray(positions),
+            np.asarray(angular_velocities),
+            np.asarray(contact_forces),
+            minimum_pelvis,
+            np.asarray(robot_root_observations),
+            np.asarray(robot_root_velocity_observations),
+            np.asarray(robot_joint_observations),
+            np.asarray(robot_joint_velocity_observations),
+            np.asarray(robot_target_observations),
+        )
+
+    (
+        positions_arr,
+        angular_arr,
+        forces_arr,
+        minimum_pelvis,
+        root_observations,
+        root_velocity_observations,
+        joint_observations,
+        joint_velocity_observations,
+        target_observations,
+    ) = rollout(navigations)
     if (
         not np.isfinite(positions_arr).all()
         or not np.isfinite(angular_arr).all()
@@ -292,6 +337,244 @@ def main() -> None:
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print("RSI_ISAAC_VECTOR_FIRST_TOUCH=" + json.dumps(report, sort_keys=True), flush=True)
+    if args.reset_replay:
+        sim.reset(soft=False)
+        robot.write_root_pose_to_sim_index(root_pose=pose)
+        robot.write_root_velocity_to_sim_index(
+            root_velocity=robot.data.default_root_vel.torch.clone()
+        )
+        robot.write_joint_position_to_sim_index(position=initial_joint)
+        robot.write_joint_velocity_to_sim_index(velocity=robot.data.default_joint_vel.torch.clone())
+        robot.reset()
+        ball.write_root_pose_to_sim_index(root_pose=ball_pose)
+        ball.write_root_velocity_to_sim_index(root_velocity=ball_velocity)
+        ball.reset()
+        for contact in contacts:
+            contact.reset()
+        sim.forward()
+        replay_navigations = [
+            G1SonicNavigation(
+                args.model_root,
+                f"vector.first_touch.{index}",
+                SonicNavigationConfig(
+                    maximum_frames=args.frames,
+                    model_variant="low_latency",
+                    experimental_maximum_speed_mps=1.5,
+                    inference_threads=args.inference_threads,
+                ),
+            )
+            for index in range(args.env_count)
+        ]
+        if [item.contract_hash for item in replay_navigations] != [
+            item.contract_hash for item in navigations
+        ]:
+            raise ValueError("reset changed the private SONIC contract")
+        (
+            replay_position,
+            replay_spin,
+            replay_force,
+            replay_pelvis,
+            replay_root_observations,
+            replay_root_velocity_observations,
+            replay_joint_observations,
+            replay_joint_velocity_observations,
+            replay_target_observations,
+        ) = rollout(replay_navigations)
+        replay_path = args.output_dir / "reset_replay.npz"
+        np.savez_compressed(
+            replay_path,
+            ball_position_m=replay_position,
+            ball_angular_velocity_rad_s=replay_spin,
+            ball_body_contact_force_peak_n=replay_force,
+        )
+        state_probe_path = args.output_dir / "reset_state_probe.npz"
+        np.savez_compressed(
+            state_probe_path,
+            root_before=root_observations,
+            root_after=replay_root_observations,
+            root_velocity_before=root_velocity_observations,
+            root_velocity_after=replay_root_velocity_observations,
+            joint_before=joint_observations,
+            joint_after=replay_joint_observations,
+            joint_velocity_before=joint_velocity_observations,
+            joint_velocity_after=replay_joint_velocity_observations,
+            target_before=target_observations,
+            target_after=replay_target_observations,
+        )
+        first_frames = []
+        replay_first_frames = []
+        body_classes_equal = True
+        precontact_max_diff_m = 0.0
+        for index in range(args.env_count):
+            first = np.flatnonzero(np.max(forces_arr[:, index], axis=1) > 1.0)
+            replay_first = np.flatnonzero(np.max(replay_force[:, index], axis=1) > 1.0)
+            first_frames.append(int(first[0]) if len(first) else None)
+            replay_first_frames.append(int(replay_first[0]) if len(replay_first) else None)
+            body_classes_equal &= bool(
+                np.array_equal(
+                    np.max(forces_arr[:, index], axis=0) > 1.0,
+                    np.max(replay_force[:, index], axis=0) > 1.0,
+                )
+            )
+            cutoff = min(
+                first[0] if len(first) else args.frames,
+                replay_first[0] if len(replay_first) else args.frames,
+            )
+            if cutoff:
+                precontact_max_diff_m = max(
+                    precontact_max_diff_m,
+                    float(
+                        np.max(
+                            np.abs(positions_arr[:cutoff, index] - replay_position[:cutoff, index])
+                        )
+                    ),
+                )
+        reset_verified = bool(
+            body_classes_equal
+            and first_frames == replay_first_frames
+            and precontact_max_diff_m < 0.005
+            and float(np.min(replay_pelvis)) >= 0.65
+            and np.isfinite(replay_position).all()
+            and np.isfinite(replay_spin).all()
+            and np.isfinite(replay_force).all()
+        )
+        reset_report = {
+            "schema": "rsi_isaac_vector_first_touch_reset_replay_v1",
+            "activation_ceiling": "SIM_ONLY",
+            "learning_authorized": False,
+            "promotion_authorized": False,
+            "source_report_hash": report["report_hash"],
+            "replay_trace_hash": hash_bytes(replay_path.read_bytes()),
+            "state_probe_hash": hash_bytes(state_probe_path.read_bytes()),
+            "source_hash": hash_bytes(Path(__file__).read_bytes()),
+            "reset_strategy": "physx_full_reset_then_explicit_state_restore",
+            "reset_verified": reset_verified,
+            "first_contact_frames": first_frames,
+            "replay_first_contact_frames": replay_first_frames,
+            "body_classes_equal": body_classes_equal,
+            "precontact_max_ball_position_diff_m": precontact_max_diff_m,
+            "full_ball_position_max_diff_m": float(np.max(np.abs(positions_arr - replay_position))),
+            "minimum_replay_pelvis_z_m": float(np.min(replay_pelvis)),
+            "initial_root_max_diff_m": float(
+                np.max(np.abs(root_observations[0] - replay_root_observations[0]))
+            ),
+            "initial_root_velocity_max_diff_m_s": float(
+                np.max(np.abs(root_velocity_observations[0] - replay_root_velocity_observations[0]))
+            ),
+            "initial_joint_max_diff_rad": float(
+                np.max(np.abs(joint_observations[0] - replay_joint_observations[0]))
+            ),
+            "initial_joint_velocity_max_diff_rad_s": float(
+                np.max(
+                    np.abs(joint_velocity_observations[0] - replay_joint_velocity_observations[0])
+                )
+            ),
+            "initial_target_max_diff_rad": float(
+                np.max(np.abs(target_observations[0] - replay_target_observations[0]))
+            ),
+        }
+        reset_report["report_hash"] = hash_json(reset_report)
+        (args.output_dir / "reset_report.json").write_text(
+            json.dumps(reset_report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        print("RSI_ISAAC_RESET_REPLAY=" + json.dumps(reset_report, sort_keys=True), flush=True)
+        if args.second_reset_replay:
+            sim.reset(soft=False)
+            robot.write_root_pose_to_sim_index(root_pose=pose)
+            robot.write_root_velocity_to_sim_index(
+                root_velocity=robot.data.default_root_vel.torch.clone()
+            )
+            robot.write_joint_position_to_sim_index(position=initial_joint)
+            robot.write_joint_velocity_to_sim_index(
+                velocity=robot.data.default_joint_vel.torch.clone()
+            )
+            robot.reset()
+            ball.write_root_pose_to_sim_index(root_pose=ball_pose)
+            ball.write_root_velocity_to_sim_index(root_velocity=ball_velocity)
+            ball.reset()
+            for contact in contacts:
+                contact.reset()
+            sim.forward()
+            second_navigations = [
+                G1SonicNavigation(
+                    args.model_root,
+                    f"vector.first_touch.{index}",
+                    SonicNavigationConfig(
+                        maximum_frames=args.frames,
+                        model_variant="low_latency",
+                        experimental_maximum_speed_mps=1.5,
+                        inference_threads=args.inference_threads,
+                    ),
+                )
+                for index in range(args.env_count)
+            ]
+            (
+                second_position,
+                second_spin,
+                second_force,
+                second_pelvis,
+                second_root,
+                second_root_velocity,
+                second_joint,
+                second_joint_velocity,
+                second_target,
+            ) = rollout(second_navigations)
+            second_trace_path = args.output_dir / "second_reset_replay.npz"
+            np.savez_compressed(
+                second_trace_path,
+                ball_position_m=second_position,
+                ball_angular_velocity_rad_s=second_spin,
+                ball_body_contact_force_peak_n=second_force,
+            )
+            second_state_path = args.output_dir / "second_reset_state_probe.npz"
+            np.savez_compressed(
+                second_state_path,
+                root=second_root,
+                root_velocity=second_root_velocity,
+                joint=second_joint,
+                joint_velocity=second_joint_velocity,
+                target=second_target,
+            )
+            second_frames = [
+                int(active[0]) if len(active) else None
+                for index in range(args.env_count)
+                for active in [np.flatnonzero(np.max(second_force[:, index], axis=1) > 1.0)]
+            ]
+            second_bodies = [
+                np.flatnonzero(np.max(second_force[:, index], axis=0) > 1.0).tolist()
+                for index in range(args.env_count)
+            ]
+            replay_bodies = [
+                np.flatnonzero(np.max(replay_force[:, index], axis=0) > 1.0).tolist()
+                for index in range(args.env_count)
+            ]
+            second_report = {
+                "schema": "rsi_isaac_vector_first_touch_second_reset_v1",
+                "activation_ceiling": "SIM_ONLY",
+                "learning_authorized": False,
+                "promotion_authorized": False,
+                "first_reset_report_hash": reset_report["report_hash"],
+                "second_trace_hash": hash_bytes(second_trace_path.read_bytes()),
+                "second_state_hash": hash_bytes(second_state_path.read_bytes()),
+                "first_reset_contact_frames": replay_first_frames,
+                "second_reset_contact_frames": second_frames,
+                "first_reset_contact_bodies": replay_bodies,
+                "second_reset_contact_bodies": second_bodies,
+                "first_second_ball_max_diff_m": float(
+                    np.max(np.abs(replay_position - second_position))
+                ),
+                "first_second_root_max_diff_m": float(
+                    np.max(np.abs(replay_root_observations - second_root))
+                ),
+                "second_minimum_pelvis_z_m": float(np.min(second_pelvis)),
+            }
+            second_report["report_hash"] = hash_json(second_report)
+            (args.output_dir / "second_reset_report.json").write_text(
+                json.dumps(second_report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            print("RSI_ISAAC_SECOND_RESET=" + json.dumps(second_report, sort_keys=True), flush=True)
+        if not reset_verified:
+            raise ValueError("independent physics/SONIC reset replay failed")
 
 
 try:

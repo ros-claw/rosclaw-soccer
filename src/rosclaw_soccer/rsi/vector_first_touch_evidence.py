@@ -109,12 +109,147 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
     return result
 
 
+def audit_reset_replay(folder: Path) -> dict[str, Any]:
+    """Verify paired in-process reset without counting replay as new courses."""
+
+    baseline = audit_vector_first_touch(folder)
+    source = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    replay_report = json.loads((folder / "reset_report.json").read_text(encoding="utf-8"))
+    replay_trace = folder / "reset_replay.npz"
+    committed = {key: value for key, value in replay_report.items() if key != "report_hash"}
+    if (
+        replay_report.get("schema") != "rsi_isaac_vector_first_touch_reset_replay_v1"
+        or replay_report.get("activation_ceiling") != "SIM_ONLY"
+        or replay_report.get("learning_authorized") is not False
+        or replay_report.get("promotion_authorized") is not False
+        or replay_report.get("source_report_hash") != source["report_hash"]
+        or replay_report.get("source_hash") != source["source_hash"]
+        or replay_report.get("replay_trace_hash") != hash_bytes(replay_trace.read_bytes())
+        or replay_report.get("report_hash") != hash_json(committed)
+    ):
+        raise ValueError("unauthenticated in-process reset replay")
+    if "state_probe_hash" in replay_report:
+        probe_path = folder / "reset_state_probe.npz"
+        if replay_report["state_probe_hash"] != hash_bytes(probe_path.read_bytes()):
+            raise ValueError("unauthenticated reset body-state probe")
+        with np.load(probe_path, allow_pickle=False) as probe:
+            base_keys = {
+                "root_before",
+                "root_after",
+                "joint_before",
+                "joint_after",
+                "target_before",
+                "target_after",
+            }
+            velocity_keys = {
+                "root_velocity_before",
+                "root_velocity_after",
+                "joint_velocity_before",
+                "joint_velocity_after",
+            }
+            if set(probe.files) not in (base_keys, base_keys | velocity_keys) or any(
+                not np.isfinite(probe[key]).all() for key in probe.files
+            ):
+                raise ValueError("invalid reset body-state probe")
+            state_checks = [
+                ("root", 7, "initial_root_max_diff_m"),
+                ("joint", 29, "initial_joint_max_diff_rad"),
+                ("target", 29, "initial_target_max_diff_rad"),
+            ]
+            if velocity_keys <= set(probe.files):
+                state_checks.extend(
+                    [
+                        ("root_velocity", 6, "initial_root_velocity_max_diff_m_s"),
+                        ("joint_velocity", 29, "initial_joint_velocity_max_diff_rad_s"),
+                    ]
+                )
+            for name, width, report_key in state_checks:
+                before, after = probe[f"{name}_before"], probe[f"{name}_after"]
+                expected_shape = (source["frames"], len(source["environments"]), width)
+                if before.shape != expected_shape or after.shape != expected_shape:
+                    raise ValueError("reset body-state shape changed")
+                maximum = float(np.max(np.abs(before[0] - after[0])))
+                if abs(replay_report.get(report_key, -1) - maximum) > 1e-8:
+                    raise ValueError("reset initial body state disagrees with probe")
+    with (
+        np.load(folder / "trace.npz", allow_pickle=False) as original,
+        np.load(replay_trace, allow_pickle=False) as replay,
+    ):
+        if set(replay.files) != set(original.files):
+            raise ValueError("reset trace schema changed")
+        position, force = original["ball_position_m"], original["ball_body_contact_force_peak_n"]
+        replay_position, replay_force = (
+            replay["ball_position_m"],
+            replay["ball_body_contact_force_peak_n"],
+        )
+        if (
+            replay_position.shape != position.shape
+            or replay_force.shape != force.shape
+            or any(not np.isfinite(replay[key]).all() for key in replay.files)
+        ):
+            raise ValueError("invalid reset physics trajectory")
+    first_frames = []
+    replay_first_frames = []
+    body_classes_equal = True
+    precontact_max_diff = 0.0
+    for index in range(position.shape[1]):
+        first = np.flatnonzero(np.max(force[:, index], axis=1) > 1.0)
+        replay_first = np.flatnonzero(np.max(replay_force[:, index], axis=1) > 1.0)
+        first_frames.append(int(first[0]) if len(first) else None)
+        replay_first_frames.append(int(replay_first[0]) if len(replay_first) else None)
+        body_classes_equal &= bool(
+            np.array_equal(
+                np.max(force[:, index], axis=0) > 1.0,
+                np.max(replay_force[:, index], axis=0) > 1.0,
+            )
+        )
+        cutoff = min(
+            first[0] if len(first) else position.shape[0],
+            replay_first[0] if len(replay_first) else position.shape[0],
+        )
+        if cutoff:
+            precontact_max_diff = max(
+                precontact_max_diff,
+                float(np.max(np.abs(position[:cutoff, index] - replay_position[:cutoff, index]))),
+            )
+    max_diff = float(np.max(np.abs(position - replay_position)))
+    if (
+        replay_report.get("first_contact_frames") != first_frames
+        or replay_report.get("replay_first_contact_frames") != replay_first_frames
+        or replay_report.get("body_classes_equal") is not body_classes_equal
+        or abs(replay_report.get("precontact_max_ball_position_diff_m", -1) - precontact_max_diff)
+        > 1e-8
+        or abs(replay_report.get("full_ball_position_max_diff_m", -1) - max_diff) > 1e-8
+        or replay_report.get("minimum_replay_pelvis_z_m", 0) < 0.65
+        or replay_report.get("reset_verified")
+        is not bool(
+            body_classes_equal
+            and first_frames == replay_first_frames
+            and precontact_max_diff < 0.005
+        )
+    ):
+        raise ValueError("reset report disagrees with paired physics trace")
+    return {
+        "source_audit_hash": baseline["report_hash"],
+        "reset_report_hash": replay_report["report_hash"],
+        "reset_verified": replay_report["reset_verified"],
+        "independent_new_course_count": 0,
+        "precontact_max_ball_position_diff_m": precontact_max_diff,
+        "full_ball_position_max_diff_m": max_diff,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--reset-replay", action="store_true")
     args = parser.parse_args()
-    report = audit_vector_first_touch(args.folder)
+    report = (
+        audit_reset_replay(args.folder)
+        if args.reset_replay
+        else audit_vector_first_touch(args.folder)
+    )
     with args.output.open("x", encoding="utf-8") as stream:
         json.dump(report, stream, indent=2, sort_keys=True)
         stream.write("\n")
