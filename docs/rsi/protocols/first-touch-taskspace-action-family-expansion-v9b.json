@@ -1,0 +1,28 @@
+{
+  "schema": "rsi_first_touch_taskspace_action_family_expansion_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "prerequisite_protocol": "docs/rsi/protocols/first-touch-taskspace-action-family-v9.json",
+  "prerequisite_result": "Audited paired development seeds 49/50 have three distinct newly rescuable lanes under the registered action family, above the predeclared threshold of two. All individual actions regress other lanes; oracle selection is diagnostic only.",
+  "additional_consumed_development_seeds": [20260943, 20260944, 20260947, 20260948, 20260951, 20260952],
+  "additional_actions": [
+    {"name": "up", "forward_m": 0.08, "lateral_cap_m": 0.05, "vertical_offset_m": 0.04},
+    {"name": "wide", "forward_m": 0.08, "lateral_cap_m": 0.10, "vertical_offset_m": 0.0}
+  ],
+  "excluded_action": "down: no new rescue in initial paired 49/50 development and lost parent-clean lanes",
+  "selection_validation": "leave-one-entire-course-seed-out among all eight consumed development seeds; report all parent-success regressions, per-seed gains, and mean reward; no candidate may be selected using the held seed outcome",
+  "development_gate": {
+    "minimum_combined_clean_foot_gain_over_parent": 4,
+    "require_no_seed_clean_foot_regression": true,
+    "require_all_parent_successes_retained": true,
+    "require_mean_reward_above_parent": true
+  },
+  "new_sealed_holdout_seeds_if_development_gate_passes": [20260953, 20260954],
+  "holdout_gate": {
+    "minimum_combined_clean_foot_gain_over_parent": 4,
+    "require_no_seed_clean_foot_regression": true,
+    "require_all_parent_successes_retained": true,
+    "minimum_root_height_m": 0.65
+  },
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
