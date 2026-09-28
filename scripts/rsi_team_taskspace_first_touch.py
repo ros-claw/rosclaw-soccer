@@ -329,7 +329,13 @@ def _run_one(
         ],
         "taskspace_leg_joint_names": [list(row) for row in LEG_NAMES],
         "taskspace_joint_order": list(G1_DDS_JOINT_NAMES),
-        "selected_taskspace_mask": [enabled],
+        "selected_taskspace_mask": [
+            enabled
+            and (
+                motor.activation_selector is None
+                or motor.activation_selector.selected_arm is not None
+            )
+        ],
     }
     with np.load(action_path, allow_pickle=False) as action_trace:
         action_audit = audit_taskspace_swing_trace(

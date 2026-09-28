@@ -74,7 +74,11 @@ def main() -> None:
         parser.error("fresh exam output already exists")
     protocol = json.loads(args.protocol.read_text(encoding="utf-8"))
     if (
-        protocol.get("schema") != "rsi_team_foot_velocity_fresh_exam_protocol_v33"
+        protocol.get("schema")
+        not in {
+            "rsi_team_foot_velocity_fresh_exam_protocol_v33",
+            "rsi_team_foot_velocity_fresh_exam_protocol_v34",
+        }
         or protocol.get("development_only") is not True
         or protocol.get("promotion_authorized") is not False
         or protocol.get("frames") != 250
@@ -208,7 +212,11 @@ def main() -> None:
         and candidate_useful >= protocol["gate"]["minimum_useful_total"]
     )
     result = {
-        "schema": "rsi_team_foot_velocity_fresh_exam_report_v33",
+        "schema": (
+            "rsi_team_foot_velocity_fresh_exam_report_v34"
+            if protocol["schema"].endswith("v34")
+            else "rsi_team_foot_velocity_fresh_exam_report_v33"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "fresh_physical_coordinates": True,
         "protocol_hash": hash_bytes(args.protocol.read_bytes()),
