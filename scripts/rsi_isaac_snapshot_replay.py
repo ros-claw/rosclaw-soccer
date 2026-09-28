@@ -27,6 +27,10 @@ parser.add_argument("--contextual-phase-policy", type=Path)
 parser.add_argument("--local-phase-policy", type=Path)
 parser.add_argument("--phase-recovery-frames", type=int, choices=(12, 20, 30))
 parser.add_argument("--taskspace-forward-m", type=float, choices=(0.08, 0.16))
+parser.add_argument("--taskspace-lateral-cap-m", type=float, choices=(0.05, 0.10), default=0.05)
+parser.add_argument(
+    "--taskspace-vertical-offset-m", type=float, choices=(-0.04, 0.0, 0.04), default=0.0
+)
 parser.add_argument("--taskspace-gate-policy", type=Path)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -60,6 +64,14 @@ if (
     or (args.taskspace_forward_m is not None and args.local_phase_policy is None)
     or (args.taskspace_gate_policy is not None and not args.taskspace_gate_policy.is_file())
     or (args.taskspace_gate_policy is not None and args.taskspace_forward_m != 0.08)
+    or (
+        args.taskspace_gate_policy is not None
+        and (args.taskspace_lateral_cap_m != 0.05 or args.taskspace_vertical_offset_m != 0.0)
+    )
+    or (
+        args.taskspace_forward_m is None
+        and (args.taskspace_lateral_cap_m != 0.05 or args.taskspace_vertical_offset_m != 0.0)
+    )
     or (args.taskspace_forward_m is not None and args.phase_recovery_frames is not None)
     or (
         args.phase_recovery_frames is not None
@@ -793,6 +805,8 @@ def main() -> None:
                         baseline[lane, joint_ids],
                         limits[lane, joint_ids],
                         forward_cap_m=args.taskspace_forward_m,
+                        lateral_cap_m=args.taskspace_lateral_cap_m,
+                        vertical_offset_m=args.taskspace_vertical_offset_m,
                     )
                 target[lane, joint_ids] = torch.as_tensor(
                     baseline[lane, joint_ids] + delta, device=sim.device, dtype=torch.float32
@@ -944,6 +958,8 @@ def main() -> None:
         else None,
         "phase_recovery_frames": args.phase_recovery_frames,
         "taskspace_forward_m": args.taskspace_forward_m,
+        "taskspace_lateral_cap_m": args.taskspace_lateral_cap_m,
+        "taskspace_vertical_offset_m": args.taskspace_vertical_offset_m,
         "taskspace_leg_joint_names": [list(row) for row in leg_joint_names]
         if args.taskspace_forward_m is not None
         else None,

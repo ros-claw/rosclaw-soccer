@@ -9,7 +9,9 @@ import numpy as np
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.rsi.taskspace_swing_probe import (
     FORWARD_CAPS_M,
+    LATERAL_CAPS_M,
     MAX_JOINT_DELTA_RAD,
+    VERTICAL_OFFSETS_M,
     choose_swing_side,
     release_joint_delta,
     swing_joint_delta,
@@ -32,12 +34,16 @@ def audit_taskspace_swing_trace(
     count: int,
 ) -> dict[str, Any]:
     forward = report.get("taskspace_forward_m")
+    lateral = report.get("taskspace_lateral_cap_m", 0.05)
+    vertical = report.get("taskspace_vertical_offset_m", 0.0)
     order = report.get("taskspace_joint_order")
     mask_raw = report.get("selected_taskspace_mask")
     if mask_raw is None and report.get("taskspace_gate_actor_hash") is None:
         mask_raw = [True] * count
     if (
         forward not in FORWARD_CAPS_M
+        or lateral not in LATERAL_CAPS_M
+        or vertical not in VERTICAL_OFFSETS_M
         or report.get("taskspace_leg_joint_names") != [list(row) for row in LEG_NAMES]
         or not isinstance(order, list)
         or len(order) != 29
@@ -112,6 +118,8 @@ def audit_taskspace_swing_trace(
                         baseline[frame, lane, ids],
                         limits[lane, ids],
                         forward_cap_m=forward,
+                        lateral_cap_m=lateral,
+                        vertical_offset_m=vertical,
                     )
                     delta = (baseline[frame, lane, ids] + delta).astype(np.float32).astype(
                         float

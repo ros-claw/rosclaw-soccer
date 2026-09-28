@@ -7,6 +7,8 @@ from typing import Any
 import numpy as np
 
 FORWARD_CAPS_M = (0.08, 0.16)
+LATERAL_CAPS_M = (0.05, 0.10)
+VERTICAL_OFFSETS_M = (-0.04, 0.0, 0.04)
 MAX_JOINT_DELTA_RAD = 0.35
 REGULARIZATION = 0.05
 CONTACT_RELEASE_FRAMES = 20
@@ -43,6 +45,8 @@ def swing_joint_delta(
     joint_limits: np.ndarray[Any, Any],
     *,
     forward_cap_m: float,
+    lateral_cap_m: float = 0.05,
+    vertical_offset_m: float = 0.0,
 ) -> np.ndarray[Any, Any]:
     """Damped differential IK of one foot, projected into physical joint limits."""
     if (
@@ -52,6 +56,8 @@ def swing_joint_delta(
         or baseline_target.shape != (6,)
         or joint_limits.shape != (6, 2)
         or forward_cap_m not in FORWARD_CAPS_M
+        or lateral_cap_m not in LATERAL_CAPS_M
+        or vertical_offset_m not in VERTICAL_OFFSETS_M
         or not all(
             np.isfinite(array).all()
             for array in (foot_xyz, ball_xyz, linear_jacobian, baseline_target, joint_limits)
@@ -65,8 +71,8 @@ def swing_joint_delta(
     desired = np.array(
         [
             min(max(gap - 0.14, 0.0), forward_cap_m),
-            np.clip(ball_xyz[1] - foot_xyz[1], -0.05, 0.05),
-            0.0,
+            np.clip(ball_xyz[1] - foot_xyz[1], -lateral_cap_m, lateral_cap_m),
+            vertical_offset_m,
         ],
         dtype=np.float64,
     )
