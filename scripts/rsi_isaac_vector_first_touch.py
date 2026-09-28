@@ -46,10 +46,7 @@ if (
     or (
         args.training_course_seed is not None
         and (
-            args.env_count != 16
-            or args.reset_replay
-            or args.candidate_actions is not None
-            or not 0 <= args.training_course_seed < 2**32
+            args.env_count != 16 or args.reset_replay or not 0 <= args.training_course_seed < 2**32
         )
     )
 ):
@@ -193,6 +190,11 @@ def main() -> None:
             != navigations[0].backend.qualification.qualification_hash
             or parent.get("onnx_graph_encoder_layout", False) is not args.onnx_graph_encoder_layout
             or parent.get("torch_batch_plan_only", False) is not args.torch_batch_plan_only
+            or parent.get("training_course_seed") != args.training_course_seed
+            or (
+                args.training_course_seed is not None
+                and parent.get("course_catalog_hash") != hash_json(courses)
+            )
             or len(parent["environments"]) != len(courses)
             or [
                 (

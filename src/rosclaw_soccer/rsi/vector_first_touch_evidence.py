@@ -325,6 +325,17 @@ def audit_first_touch_candidate_execution(
         or report.get("torch_batch_drive", False) is not parent.get("torch_batch_drive", False)
         or report.get("torch_batch_plan_only", False)
         is not parent.get("torch_batch_plan_only", False)
+        or report.get("training_course_seed") != parent.get("training_course_seed")
+        or report.get("course_catalog_hash") != parent.get("course_catalog_hash")
+        or (
+            report.get("torch_batch_plan_only", False)
+            and (
+                type(report.get("torch_batch_max_internal_target_difference_rad"))
+                not in (int, float)
+                or not np.isfinite(report["torch_batch_max_internal_target_difference_rad"])
+                or not 0 <= report["torch_batch_max_internal_target_difference_rad"] <= 1e-3
+            )
+        )
         or report.get("candidate_action_joint_names") != list(JOINT_NAMES)
         or report.get("report_hash") != hash_json(committed)
         or report.get("trace_hash") != hash_bytes(trace_path.read_bytes())

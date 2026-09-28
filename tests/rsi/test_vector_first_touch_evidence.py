@@ -248,3 +248,10 @@ def test_candidate_audit_recomputes_foot_only_reward(tmp_path: Path) -> None:
     assert result["candidate_clean_foot_only_count"] == 1
     assert result["reward_per_course"] == [1.0, -0.5]
     assert result["fresh_opened"] is False
+    report["training_course_seed"] = 20260928
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    (folder / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="unauthenticated"):
+        audit_first_touch_candidate_execution(
+            folder, parent_folder=parent_folder, candidate_path=manifest_path
+        )
