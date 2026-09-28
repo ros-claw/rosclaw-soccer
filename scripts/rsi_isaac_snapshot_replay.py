@@ -23,6 +23,7 @@ parser.add_argument("--knee-extension-probe", action="store_true")
 parser.add_argument("--closed-loop-sonic", action="store_true")
 parser.add_argument("--shared-candidate", type=Path)
 parser.add_argument("--phase-target-frames", type=float)
+parser.add_argument("--contextual-phase-policy", type=Path)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -39,6 +40,16 @@ if (
     or (
         args.phase_target_frames is not None
         and (args.knee_extension_probe or args.shared_candidate)
+    )
+    or (args.contextual_phase_policy is not None and not args.contextual_phase_policy.is_file())
+    or (args.contextual_phase_policy is not None and not args.closed_loop_sonic)
+    or (
+        args.contextual_phase_policy is not None
+        and (
+            args.phase_target_frames is not None
+            or args.knee_extension_probe
+            or args.shared_candidate
+        )
     )
 ):
     parser.error("qualified snapshot bank, assets and fresh 2-16 lane output required")
@@ -61,6 +72,12 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
 )
 from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch  # noqa: E402
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa: E402
+from rosclaw_soccer.rsi import contextual_phase_policy as phase_policy_module  # noqa: E402
+from rosclaw_soccer.rsi.contextual_phase_policy import (  # noqa: E402
+    context_features,
+    load_phase_actor,
+    select_actions,
+)
 from rosclaw_soccer.rsi.first_touch_candidate import project_residual_target  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_snapshot_bank import audit_snapshot_bank  # noqa: E402
 from rosclaw_soccer.rsi.snapshot_shared_temporal_policy import load_candidate  # noqa: E402
@@ -125,6 +142,24 @@ def main() -> None:
         raise ValueError("snapshot selection exceeds authenticated bank")
     with np.load(args.snapshot_bank / "snapshots.npz", allow_pickle=False) as archive:
         snapshots = {key: archive[key][args.start_index : stop].copy() for key in archive.files}
+    contextual_phase_hash = None
+    selected_phase_targets = None
+    if args.contextual_phase_policy is not None:
+        contextual_phase_hash, phase_weights = load_phase_actor(args.contextual_phase_policy)
+        policy_manifest = json.loads(args.contextual_phase_policy.read_text(encoding="utf-8"))
+        if policy_manifest.get("policy_source_hash") != hash_bytes(
+            Path(phase_policy_module.__file__).read_bytes()
+        ):
+            raise ValueError("contextual phase actor source changed")
+        selected_phase_targets = select_actions(
+            context_features(
+                snapshots["root_pose_local_xyzw_m"],
+                snapshots["ball_position_local_m"],
+                snapshots["ball_linear_velocity_m_s"],
+                snapshots["foot_geometry_position_local_m"],
+            ),
+            phase_weights,
+        )
     if manifest["source_identity"][1] != hash_bytes(args.g1_usd.read_bytes()):
         raise ValueError("snapshot G1 asset hash changed")
     names = tuple(G1_DDS_JOINT_NAMES)
@@ -466,21 +501,24 @@ def main() -> None:
                     np.stack([nav.backend.reference for nav in closed_navigations]),
                     unchanged_lookahead_frames=closed_navigations[0].config.lookahead_frames,
                 )
-            phase_offset = (
-                phase_offset_frames(frame, args.phase_target_frames)
-                if args.phase_target_frames is not None
-                else None
-            )
-            if phase_offset is None:
+            if args.phase_target_frames is None and selected_phase_targets is None:
                 batch_tracker.update(absolute_frame, qpos_batch, qvel_batch)
             else:
+                targets = (
+                    selected_phase_targets
+                    if selected_phase_targets is not None
+                    else np.full(args.sample_count, args.phase_target_frames)
+                )
+                phase_offsets = np.asarray(
+                    [phase_offset_frames(frame, float(value)) for value in targets]
+                )
                 batch_tracker.update(
                     absolute_frame,
                     qpos_batch,
                     qvel_batch,
-                    phase_offsets_frames=np.full(args.sample_count, phase_offset),
+                    phase_offsets_frames=phase_offsets,
                 )
-                applied_phase_offsets.append(np.full(args.sample_count, phase_offset))
+                applied_phase_offsets.append(phase_offsets)
             for lane, navigation in enumerate(closed_navigations):
                 proposal = navigation.commit_batched_action(
                     batch_tracker.action[lane].detach().cpu().numpy()
@@ -622,7 +660,7 @@ def main() -> None:
         observed_root_pose_local_xyzw_m=observed_root_arr,
         observed_ball_body_contact_force_peak_n=observed_force_arr,
     )
-    if args.phase_target_frames is not None:
+    if args.phase_target_frames is not None or selected_phase_targets is not None:
         trace_values["applied_sonic_phase_offset_frames"] = np.asarray(applied_phase_offsets)
     np.savez_compressed(trace_path, **trace_values)
     report = {
@@ -642,7 +680,13 @@ def main() -> None:
         "knee_extension_probe": args.knee_extension_probe,
         "shared_candidate_hash": shared_candidate_hash,
         "phase_target_frames": args.phase_target_frames,
-        "phase_ramp_frames": 20 if args.phase_target_frames is not None else None,
+        "phase_ramp_frames": 20
+        if args.phase_target_frames is not None or selected_phase_targets is not None
+        else None,
+        "contextual_phase_actor_hash": contextual_phase_hash,
+        "selected_phase_targets_frames": (
+            selected_phase_targets.tolist() if selected_phase_targets is not None else None
+        ),
         "probe_joint_limits_recorded": True,
         "closed_loop_sonic": args.closed_loop_sonic,
         "warmup_max_target_error_rad": warmup_max_target_error,

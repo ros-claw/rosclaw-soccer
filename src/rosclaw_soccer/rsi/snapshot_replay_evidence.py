@@ -49,7 +49,11 @@ def projected_probe_residual(
 
 
 def audit_snapshot_replay(
-    folder: Path, *, snapshot_bank: Path, candidate_path: Path | None = None
+    folder: Path,
+    *,
+    snapshot_bank: Path,
+    candidate_path: Path | None = None,
+    phase_policy_path: Path | None = None,
 ) -> dict[str, Any]:
     bank_audit = audit_snapshot_bank(snapshot_bank)
     manifest = json.loads((snapshot_bank / "manifest.json").read_text(encoding="utf-8"))
@@ -60,7 +64,8 @@ def audit_snapshot_replay(
     shared_hash = report.get("shared_candidate_hash")
     probe = bool(report.get("knee_extension_probe", False) or shared_hash is not None)
     phase_target = report.get("phase_target_frames")
-    phase_probe = phase_target is not None
+    phase_actor_hash = report.get("contextual_phase_actor_hash")
+    phase_probe = phase_target is not None or phase_actor_hash is not None
     closed_loop = report.get("closed_loop_sonic", False)
     if (
         report.get("schema") != "rsi_isaac_first_touch_snapshot_replay_v1"
@@ -78,6 +83,8 @@ def audit_snapshot_replay(
             and (report.get("knee_extension_probe") is True or not isinstance(shared_hash, str))
         )
         or (candidate_path is None) != (shared_hash is None)
+        or (phase_policy_path is None) != (phase_actor_hash is None)
+        or (phase_actor_hash is not None and phase_target is not None)
         or (phase_probe and (probe or not closed_loop))
         or (not phase_probe and report.get("phase_ramp_frames") is not None)
         or type(closed_loop) is not bool
@@ -199,12 +206,40 @@ def audit_snapshot_replay(
 
             if report.get("phase_ramp_frames") != 20:
                 raise ValueError("snapshot phase schedule changed")
+            if phase_actor_hash is not None:
+                from rosclaw_soccer.rsi.contextual_phase_policy import (
+                    context_features,
+                    load_phase_actor,
+                    select_actions,
+                )
+
+                if phase_policy_path is None:
+                    raise ValueError("contextual phase actor missing")
+                authenticated_hash, weights = load_phase_actor(phase_policy_path)
+                if authenticated_hash != phase_actor_hash:
+                    raise ValueError("contextual phase actor changed")
+                targets = select_actions(
+                    context_features(
+                        bank["root_pose_local_xyzw_m"][start : start + count],
+                        bank["ball_position_local_m"][start : start + count],
+                        bank["ball_linear_velocity_m_s"][start : start + count],
+                        bank["foot_geometry_position_local_m"][start : start + count],
+                    ),
+                    weights,
+                )
+                if report.get("selected_phase_targets_frames") != targets.tolist():
+                    raise ValueError("contextual phase selection differs from measured context")
+            else:
+                targets = np.full(count, phase_target)
             expected_phase = np.asarray(
-                [phase_offset_frames(frame, phase_target) for frame in range(frames)]
+                [
+                    [phase_offset_frames(frame, float(target)) for target in targets]
+                    for frame in range(frames)
+                ]
             )
             if not np.allclose(
                 replay["applied_sonic_phase_offset_frames"],
-                expected_phase[:, None],
+                expected_phase,
                 atol=1e-6,
                 rtol=0,
             ):
@@ -401,6 +436,7 @@ def audit_snapshot_replay(
         "short_horizon_training_surrogate_qualified": qualified,
         "intervention_action_audited": probe or phase_probe,
         "phase_target_frames": phase_target,
+        "contextual_phase_actor_hash": phase_actor_hash,
         "shared_candidate_hash": shared_hash,
         "closed_loop_sonic": closed_loop,
         "intervention_training_qualified": False,
@@ -416,12 +452,16 @@ def main() -> None:
     parser.add_argument("folder", type=Path)
     parser.add_argument("--snapshot-bank", required=True, type=Path)
     parser.add_argument("--shared-candidate", type=Path)
+    parser.add_argument("--contextual-phase-policy", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("immutable replay audit output already exists")
     result = audit_snapshot_replay(
-        args.folder, snapshot_bank=args.snapshot_bank, candidate_path=args.shared_candidate
+        args.folder,
+        snapshot_bank=args.snapshot_bank,
+        candidate_path=args.shared_candidate,
+        phase_policy_path=args.contextual_phase_policy,
     )
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(result, sort_keys=True))
