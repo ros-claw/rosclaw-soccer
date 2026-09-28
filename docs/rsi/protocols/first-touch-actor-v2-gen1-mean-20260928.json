@@ -1,0 +1,16 @@
+{
+  "run_id": "first-touch-actor-v2-gen1-mean-20260928-v1",
+  "purpose": "SIM_ONLY deterministic learned-mean ablation without exploration noise on the consumed 16-course training seed",
+  "code_sha": "c54d21c",
+  "physics_source_hash": "sha256:ff2d8363965c3cf1abfb910a848a226b13df872cf2ca4cfc0ead62d729d8764f",
+  "parent_report_hash": "sha256:95fbaf4ce337fa9fbdf172dd0d1642276e75fe31b5225c152ee459a349ecf079",
+  "parent_clean_count": 6,
+  "actor_state_hash": "sha256:e762c732433409229fbd8b84c3b20bce2b66413a3ac7a32ba9f502abe2b07254",
+  "mean_candidate_hash": "sha256:950964a69e4545f980e6a2a2a02fc4648a4e22e029aea480fc2ae7ca9c3bfb16",
+  "course_seed": 20260928,
+  "course_count": 16,
+  "single_changed_variable": "deterministic actor mean instead of frozen zero residual Parent; no Gaussian exploration",
+  "metrics": ["clean foot-only count", "contact order", "joint-limit projection", "pelvis minimum"],
+  "acceptance": ["No safety breach", "A score on consumed training courses is not generalization", "Do not promote based on this ablation"],
+  "activation_ceiling": "SIM_ONLY"
+}

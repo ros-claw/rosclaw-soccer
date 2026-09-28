@@ -1,0 +1,16 @@
+{
+  "run_id": "first-touch-continual-newseed-parent-20260929-v1",
+  "purpose": "SIM_ONLY independent sixteen-course Parent for a new train seed before cross-course continual actor sampling",
+  "code_sha": "c54d21c",
+  "physics_source_hash": "sha256:ff2d8363965c3cf1abfb910a848a226b13df872cf2ca4cfc0ead62d729d8764f",
+  "robot_asset_hash": "sha256:cfbcca7b005c418697d35f762d81ec389d6242a0b4e73d889c25384724d879e8",
+  "foundation_qualification_hash": "sha256:06b4e67ec1761904ea6c925b26df69ca83b067cda67795e23fdaa1fa50278b14",
+  "training_seed": 20260929,
+  "training_course_catalog_hash": "sha256:a798660f59ff19fee18ae6e3f617f54b3183f299d85cbcae4c967fcaad93d73a",
+  "state_to_be_evaluated": "sha256:c7e75723b6d304251d6a78d8d9103d554ad623d3fc24a5b55805e5777a40534e",
+  "course_count": 16,
+  "split": "same train-only distribution as prior seed, but 16 new independent course tuples; sealed x=2.45/2.55 remains unopened",
+  "metrics": ["clean foot-only count", "first foot/nonfoot frame", "minimum pelvis z", "ball lane escape"],
+  "stop_rules": ["No actor update without paired candidate physical audit", "No promotion or hardware use", "Count episodes, not frames"],
+  "activation_ceiling": "SIM_ONLY"
+}
