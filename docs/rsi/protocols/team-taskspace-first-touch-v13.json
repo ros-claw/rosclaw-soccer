@@ -1,0 +1,29 @@
+{
+  "schema": "rsi_team_taskspace_first_touch_protocol_v13",
+  "activation_ceiling": "SIM_ONLY",
+  "consumed_shadow_report_hash": "sha256:2cc4a43fc9c840c882fb146e4e7d2f5c2a0cd63979e8c9e02b7e067242fb702d",
+  "motivation": "On this consumed shared-world course the ball comes within 0.236 m of red.playmaker feet but has zero robot-ball contact; the Isaac memory actor is out of support, so test only bounded task-space mechanics against an identical motor baseline.",
+  "fixture": "s199.independent.3v3",
+  "scenario": {
+    "scenario_id": "s199.rsi-late-swing-shadow-v12",
+    "ball_initial_position_m": [3.8, -0.7, 0.115],
+    "ball_initial_velocity_mps": [-0.5, 0.0, 0.0],
+    "seed": 920629
+  },
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.08,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55,
+    "maximum_joint_delta_rad": 0.35,
+    "postcontact_release_frames": 20
+  },
+  "development_only": true,
+  "primary_metric": "real red.playmaker foot-ball contact frame count and first-contact body class; no nonfoot touch, body safety, actual postcontact ball control separately reported",
+  "advance_condition": "candidate improves real foot-ball contact on this consumed course without new nonfoot contact, pelvis/joint/torque safety regression, or action-trace audit failure",
+  "actor_transfer_claim_authorized": false,
+  "promotion_authorized": false
+}
