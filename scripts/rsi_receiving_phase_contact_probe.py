@@ -23,6 +23,22 @@ from rosclaw_soccer.world.field import G1TrainingGoalSpec, build_g1_stadium_mode
 END_FRAME = 70
 LEFT_JOINTS = (0, 1, 3, 4, 5)  # hip pitch, hip roll, knee, ankle pitch, ankle roll
 LIMIT = 0.20
+LEFT_NAMES = (
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+)
+
+
+def validate_left_joint_map(model: mujoco.MjModel) -> None:
+    names = tuple(
+        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, int(model.actuator_trnid[index, 0]))
+        for index in LEFT_JOINTS
+    )
+    if names != LEFT_NAMES:
+        raise ValueError(f"receiving joint mapping mismatch: {names!r}")
 
 
 def _window(frame: int, onset: int, peak: int, end: int) -> float:
@@ -45,6 +61,8 @@ def _evaluate(
     timing: tuple[int, int, int],
     snapshot: int,
     masks: tuple[int, NDArray[np.bool_], NDArray[np.bool_]],
+    release_params: NDArray[np.float64] | None = None,
+    release_timing: tuple[int, int, int] = (34, 40, 55),
 ) -> dict[str, Any]:
     data.qpos[:] = qpos[snapshot]
     data.qvel[:] = qvel[snapshot]
@@ -58,8 +76,13 @@ def _evaluate(
     maximum_tilt = 0.0
     for frame in range(snapshot + 1, END_FRAME + 1):
         proposal = target[frame].copy()
+        release = (
+            np.zeros_like(params)
+            if release_params is None
+            else _window(frame, *release_timing) * release_params
+        )
         proposal[joints] = np.clip(
-            proposal[joints] + _window(frame, *timing) * params,
+            proposal[joints] + _window(frame, *timing) * params + release,
             limits[:, 0],
             limits[:, 1],
         )
@@ -102,13 +125,20 @@ def _evaluate(
 
 
 def probe(
-    *, asset_root: Path, captured: Path, output_dir: Path, trials: int, snapshot: int = 20
+    *,
+    asset_root: Path,
+    captured: Path,
+    output_dir: Path,
+    trials: int,
+    snapshot: int = 20,
+    two_phase: bool = False,
 ) -> dict[str, Any]:
     source = Path(__file__)
     source_hash = hash_bytes(source.read_bytes())
     if (
         not 1 <= trials <= 500
         or snapshot not in (0, 10, 20)
+        or type(two_phase) is not bool
         or output_dir.exists()
         or output_dir.resolve().is_relative_to(source.resolve().parents[1])
     ):
@@ -137,6 +167,7 @@ def probe(
     model = build_g1_stadium_model(
         asset_root, G1TrainingGoalSpec(ball_radius_m=0.115, ball_mass_kg=0.41)
     )
+    validate_left_joint_map(model)
     model.opt.timestep = 0.002
     data = mujoco.MjData(model)
     masks = _contact_masks(model)
@@ -155,11 +186,34 @@ def probe(
     for index in range(trials):
         timing = timing_choices[index % len(timing_choices)]
         amplitude = rng.uniform(-LIMIT, LIMIT, size=5)
+        release_amplitude = rng.uniform(-LIMIT, LIMIT, size=5) if two_phase else None
+        release_timing = ((33, 37, 45), (34, 40, 55), (35, 43, 62))[index % 3]
         result = _evaluate(
-            model, data, qpos, qvel, target, kp, kd, amplitude, timing, snapshot, masks
+            model,
+            data,
+            qpos,
+            qvel,
+            target,
+            kp,
+            kd,
+            amplitude,
+            timing,
+            snapshot,
+            masks,
+            release_amplitude,
+            release_timing,
         )
         rows.append(
-            {"trial": index, "timing": list(timing), "residual_rad": amplitude.tolist(), **result}
+            {
+                "trial": index,
+                "timing": list(timing),
+                "residual_rad": amplitude.tolist(),
+                "release_timing": list(release_timing) if two_phase else None,
+                "release_residual_rad": release_amplitude.tolist()
+                if release_amplitude is not None
+                else None,
+                **result,
+            }
         )
     if hash_bytes(source.read_bytes()) != source_hash:
         raise RuntimeError("probe source changed during physics")
@@ -180,6 +234,7 @@ def probe(
         "compiled_model_hash": compiled_model_hash(model),
         "seed": 20260928,
         "snapshot_frame": snapshot,
+        "two_phase": two_phase,
         "trials": trials,
         "baseline": baseline,
         "safe_clean_foot_count": sum(bool(row["safe"] and row["clean_foot"]) for row in rows),
@@ -206,6 +261,7 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--trials", required=True, type=int)
     parser.add_argument("--snapshot", type=int, default=20)
+    parser.add_argument("--two-phase", action="store_true")
     print(json.dumps(probe(**vars(parser.parse_args())), sort_keys=True))
 
 
