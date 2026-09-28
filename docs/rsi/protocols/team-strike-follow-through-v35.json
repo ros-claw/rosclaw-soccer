@@ -1,0 +1,17 @@
+{
+  "schema": "rsi_team_strike_follow_through_protocol_v35",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "reference_exam_path": "/data/rosclaw_overflow/rsi-team-foot-velocity-fresh-exam-v34/report.json",
+  "reference_exam_hash": "sha256:6b433ac2f81d963ce3da058a9ac8a27291d332194280a84160a7149e81deb92d",
+  "reference_protocol_path": "docs/rsi/protocols/team-foot-velocity-fresh-exam-v34.json",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "model_path": "/data/rosclaw_overflow/rsi-team-foot-velocity-chooser-v33/model.json",
+  "model_hash": "sha256:0e45739533122e589780bf70cbbcd07660b83445e6f1eea25736d6e3defc1cef",
+  "consumed_scene_indices": [3,4,13,16,17,20,21,23],
+  "through_offsets_m": [0.08,0.16],
+  "selection_gate": {"maximum_unsafe": 1, "minimum_useful": 3},
+  "interpretation": "Development-only motor follow-through search on eight already consumed contact scenes; no fresh claim. Require at least two more useful than frozen zero-through baseline while not adding safety regressions."
+}
