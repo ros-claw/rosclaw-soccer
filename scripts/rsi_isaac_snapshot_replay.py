@@ -27,6 +27,7 @@ parser.add_argument("--contextual-phase-policy", type=Path)
 parser.add_argument("--local-phase-policy", type=Path)
 parser.add_argument("--phase-recovery-frames", type=int, choices=(12, 20, 30))
 parser.add_argument("--taskspace-forward-m", type=float, choices=(0.08, 0.16))
+parser.add_argument("--taskspace-gate-policy", type=Path)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -57,6 +58,8 @@ if (
     or (args.local_phase_policy is not None and not args.local_phase_policy.is_file())
     or (args.local_phase_policy is not None and not args.closed_loop_sonic)
     or (args.taskspace_forward_m is not None and args.local_phase_policy is None)
+    or (args.taskspace_gate_policy is not None and not args.taskspace_gate_policy.is_file())
+    or (args.taskspace_gate_policy is not None and args.taskspace_forward_m != 0.08)
     or (args.taskspace_forward_m is not None and args.phase_recovery_frames is not None)
     or (
         args.phase_recovery_frames is not None
@@ -98,6 +101,7 @@ from rosclaw_soccer.rsi import baseline_retention_phase as guarded_phase_module 
 from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module  # noqa: E402
 from rosclaw_soccer.rsi import contextual_phase_policy as phase_policy_module  # noqa: E402
 from rosclaw_soccer.rsi import local_phase_memory as local_phase_module  # noqa: E402
+from rosclaw_soccer.rsi import taskspace_gate_memory as taskspace_gate_module  # noqa: E402
 from rosclaw_soccer.rsi.baseline_retention_phase import (  # noqa: E402
     load_guarded_phase_actor,
     select_guarded_phase,
@@ -122,6 +126,10 @@ from rosclaw_soccer.rsi.snapshot_shared_temporal_policy import load_candidate  #
 from rosclaw_soccer.rsi.sonic_phase_probe import (  # noqa: E402
     phase_offset_frames,
     recovered_phase_offset_frames,
+)
+from rosclaw_soccer.rsi.taskspace_gate_memory import (  # noqa: E402
+    load_taskspace_gate_actor,
+    select_taskspace_gate,
 )
 from rosclaw_soccer.rsi.taskspace_swing_probe import (  # noqa: E402
     choose_swing_side,
@@ -247,6 +255,37 @@ def main() -> None:
             neighbors=local_actor["neighbors"],
             confidence=local_actor["confidence"],
             **parameters,
+        )
+    taskspace_gate_hash = None
+    selected_taskspace_mask = np.ones(args.sample_count, dtype=np.bool_)
+    if args.taskspace_gate_policy is not None:
+        gate_actor = load_taskspace_gate_actor(args.taskspace_gate_policy)
+        if (
+            gate_actor.get("holdout_open_authorized") is not True
+            or gate_actor.get("frozen_phase_actor_hash") != local_phase_hash
+            or gate_actor.get("policy_source_hash")
+            != hash_bytes(Path(taskspace_gate_module.__file__).read_bytes())
+            or gate_actor.get("feature_source_hash")
+            != hash_bytes(Path(time_phase_module.__file__).read_bytes())
+        ):
+            raise ValueError("task-space gate lacks frozen source or development authorization")
+        taskspace_gate_hash = gate_actor["actor_hash"]
+        gate_raw = current_context(
+            snapshots["root_pose_local_xyzw_m"],
+            snapshots["root_velocity_world"],
+            snapshots["ball_position_local_m"],
+            snapshots["ball_linear_velocity_m_s"],
+        )
+        gate_time = predict_contact_time(gate_raw, np.asarray(gate_actor["contact_time_weights"]))
+        selected_taskspace_mask = select_taskspace_gate(
+            gait_phase_features(gate_raw, gate_time),
+            np.asarray(gate_actor["memory_features"]),
+            np.asarray(gate_actor["memory_clean"]),
+            np.asarray(gate_actor["memory_reward"]),
+            np.asarray(gate_actor["memory_groups"]),
+            neighbors=gate_actor["neighbors"],
+            confidence=gate_actor["confidence"],
+            baseline_clean_ceiling=gate_actor["baseline_clean_ceiling"],
         )
     if manifest["source_identity"][1] != hash_bytes(args.g1_usd.read_bytes()):
         raise ValueError("snapshot G1 asset hash changed")
@@ -730,6 +769,8 @@ def main() -> None:
             baseline = base_target.detach().cpu().numpy()
             frame_swing_residual = np.zeros((args.sample_count, len(robot.joint_names)))
             for lane in range(args.sample_count):
+                if not selected_taskspace_mask[lane]:
+                    continue
                 if swing_contact_frame[lane] < 0:
                     swing_side[lane] = choose_swing_side(
                         feet[lane],
@@ -907,6 +948,10 @@ def main() -> None:
         if args.taskspace_forward_m is not None
         else None,
         "taskspace_joint_order": list(robot.joint_names)
+        if args.taskspace_forward_m is not None
+        else None,
+        "taskspace_gate_actor_hash": taskspace_gate_hash,
+        "selected_taskspace_mask": selected_taskspace_mask.tolist()
         if args.taskspace_forward_m is not None
         else None,
         "contextual_phase_actor_hash": contextual_phase_hash,

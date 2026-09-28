@@ -33,14 +33,21 @@ def audit_taskspace_swing_trace(
 ) -> dict[str, Any]:
     forward = report.get("taskspace_forward_m")
     order = report.get("taskspace_joint_order")
+    mask_raw = report.get("selected_taskspace_mask")
+    if mask_raw is None and report.get("taskspace_gate_actor_hash") is None:
+        mask_raw = [True] * count
     if (
         forward not in FORWARD_CAPS_M
         or report.get("taskspace_leg_joint_names") != [list(row) for row in LEG_NAMES]
         or not isinstance(order, list)
         or len(order) != 29
         or set(order) != set(G1_DDS_JOINT_NAMES)
+        or not isinstance(mask_raw, list)
+        or len(mask_raw) != count
+        or any(type(value) is not bool for value in mask_raw)
     ):
         raise ValueError("uncommitted task-space G1 joint contract")
+    mask = np.asarray(mask_raw, dtype=np.bool_)
     shapes = {
         "pre_step_foot_link_position_w": (frames, count, 2, 3),
         "pre_step_foot_linear_jacobian_w": (frames, count, 2, 3, 6),
@@ -86,7 +93,7 @@ def audit_taskspace_swing_trace(
         for lane in range(count):
             ball_world = ball_local[frame, lane].copy()
             ball_world[1] += lane * 8.0
-            if first_contact[lane] < 0:
+            if mask[lane] and first_contact[lane] < 0:
                 side[lane] = choose_swing_side(feet[frame, lane], ball_world, int(side[lane]))
             if selected_sides[frame, lane] != side[lane]:
                 raise ValueError("task-space side used future contact or altered support leg")

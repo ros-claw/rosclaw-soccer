@@ -59,6 +59,7 @@ def audit_snapshot_replay(
     candidate_path: Path | None = None,
     phase_policy_path: Path | None = None,
     local_phase_policy_path: Path | None = None,
+    taskspace_gate_policy_path: Path | None = None,
 ) -> dict[str, Any]:
     bank_audit = audit_snapshot_bank(snapshot_bank)
     manifest = json.loads((snapshot_bank / "manifest.json").read_text(encoding="utf-8"))
@@ -72,6 +73,7 @@ def audit_snapshot_replay(
     phase_actor_hash = report.get("contextual_phase_actor_hash")
     local_phase_hash = report.get("local_phase_actor_hash")
     taskspace_probe = report.get("taskspace_forward_m") is not None
+    taskspace_gate_hash = report.get("taskspace_gate_actor_hash")
     phase_probe = (
         phase_target is not None or phase_actor_hash is not None or local_phase_hash is not None
     )
@@ -102,6 +104,8 @@ def audit_snapshot_replay(
         or (phase_probe and (probe or not closed_loop))
         or (taskspace_probe and (local_phase_hash is None or probe or not closed_loop))
         or (taskspace_probe and report.get("phase_recovery_frames") is not None)
+        or (taskspace_gate_policy_path is None) != (taskspace_gate_hash is None)
+        or (taskspace_gate_hash is not None and not taskspace_probe)
         or (not phase_probe and report.get("phase_ramp_frames") is not None)
         or (
             report.get("phase_recovery_frames") is not None
@@ -175,6 +179,55 @@ def audit_snapshot_replay(
             for key, shape in shapes.items()
         ):
             raise ValueError("invalid snapshot replay trace shape or finite values")
+        if taskspace_gate_hash is not None:
+            from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module
+            from rosclaw_soccer.rsi import taskspace_gate_memory as gate_module
+            from rosclaw_soccer.rsi.contact_time_phase_features import (
+                current_context,
+                gait_phase_features,
+                predict_contact_time,
+            )
+            from rosclaw_soccer.rsi.taskspace_gate_memory import (
+                load_taskspace_gate_actor,
+                select_taskspace_gate,
+            )
+
+            if taskspace_gate_policy_path is None:
+                raise ValueError("missing task-space gate actor")
+            gate_actor = load_taskspace_gate_actor(taskspace_gate_policy_path)
+            gate_source = gate_module.__file__
+            feature_source = time_phase_module.__file__
+            if (
+                gate_actor["actor_hash"] != taskspace_gate_hash
+                or gate_actor.get("holdout_open_authorized") is not True
+                or gate_actor.get("frozen_phase_actor_hash") != local_phase_hash
+                or gate_source is None
+                or feature_source is None
+                or gate_actor.get("policy_source_hash")
+                != hash_bytes(Path(gate_source).read_bytes())
+                or gate_actor.get("feature_source_hash")
+                != hash_bytes(Path(feature_source).read_bytes())
+            ):
+                raise ValueError("task-space gate actor or frozen source changed")
+            raw = current_context(
+                bank["root_pose_local_xyzw_m"][start : start + count],
+                bank["root_velocity_world"][start : start + count],
+                bank["ball_position_local_m"][start : start + count],
+                bank["ball_linear_velocity_m_s"][start : start + count],
+            )
+            predicted = predict_contact_time(raw, np.asarray(gate_actor["contact_time_weights"]))
+            mask = select_taskspace_gate(
+                gait_phase_features(raw, predicted),
+                np.asarray(gate_actor["memory_features"]),
+                np.asarray(gate_actor["memory_clean"]),
+                np.asarray(gate_actor["memory_reward"]),
+                np.asarray(gate_actor["memory_groups"]),
+                neighbors=gate_actor["neighbors"],
+                confidence=gate_actor["confidence"],
+                baseline_clean_ceiling=gate_actor["baseline_clean_ceiling"],
+            )
+            if report.get("selected_taskspace_mask") != mask.tolist():
+                raise ValueError("task-space gate action differs from snapshot observation")
         taskspace_audit = None
         if taskspace_probe:
             from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_trace
@@ -579,6 +632,11 @@ def audit_snapshot_replay(
     }
     if taskspace_audit is not None:
         result.update(taskspace_audit)
+    if taskspace_gate_hash is not None:
+        result["taskspace_gate_actor_hash"] = taskspace_gate_hash
+        result["taskspace_selected_lane_count"] = int(
+            np.count_nonzero(report["selected_taskspace_mask"])
+        )
     result["report_hash"] = hash_json(result)
     return result
 
@@ -590,6 +648,7 @@ def main() -> None:
     parser.add_argument("--shared-candidate", type=Path)
     parser.add_argument("--contextual-phase-policy", type=Path)
     parser.add_argument("--local-phase-policy", type=Path)
+    parser.add_argument("--taskspace-gate-policy", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.output.exists():
@@ -600,6 +659,7 @@ def main() -> None:
         candidate_path=args.shared_candidate,
         phase_policy_path=args.contextual_phase_policy,
         local_phase_policy_path=args.local_phase_policy,
+        taskspace_gate_policy_path=args.taskspace_gate_policy,
     )
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(result, sort_keys=True))
