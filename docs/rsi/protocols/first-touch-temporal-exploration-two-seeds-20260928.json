@@ -1,0 +1,22 @@
+{
+  "run_id": "first-touch-temporal-exploration-two-seeds-20260928-v1",
+  "purpose": "SIM_ONLY physical exploration of trainable right-leg proprioceptive residuals after exact zero-policy parity",
+  "physics_source_hash": "sha256:6d8d15b6b90b3a4b6ee9707c83ac6c87ead2ab104557c8f4e779a4c034e71dcb",
+  "policy_source_hash": "sha256:d04a69984e0fee5dfb01f107fede855ea7410f6f12ee80c2038949ae04020890",
+  "zero_policy_audit_hash": "sha256:9988bd6d8a2bdb366e57b977ee14a359e954d56471c8f7b8febb475bc4b6c653",
+  "training_course_seeds": [20260930, 20260931],
+  "parent_clean_counts": [7, 8],
+  "exploration_seeds": [101, 102],
+  "candidate_manifest_hashes": [
+    "sha256:77bcd49e816142d4c46ad257f4c92e853f4f0bb37309010dc19dcce8bd5c68bb",
+    "sha256:04287b6790959508d19f3f80d6c285ff12aea09a4e927dafa66284eb33492b26"
+  ],
+  "weight_noise_std": 0.5,
+  "bounded_residual_rad": 0.08,
+  "independent_episode_count": 32,
+  "primary_outcomes": ["paired foot-only delta vs frozen Parent", "newly saved/lost courses", "incoming ball knee/shin contact", "minimum pelvis", "action projection and applied frames"],
+  "learning_rule": "exploration is feedback only; no candidate or learned mean can be promoted without later deterministic multi-seed physical retention",
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
