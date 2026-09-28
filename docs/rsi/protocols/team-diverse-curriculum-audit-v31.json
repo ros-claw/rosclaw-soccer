@@ -1,0 +1,20 @@
+{
+  "schema": "rsi_team_diverse_curriculum_audit_protocol_v31",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "arm_result_root": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-v31",
+  "arm_report_hashes": {
+    "parent": "sha256:13addae89f26e5353e7f46550d8c3e1d24affa82a54df23dd762a26bd4e24fe0",
+    "adaptive_c19": "sha256:8189af3a453180f67c6b25b4669099538713412a24bc59a447060ff5fabb4640",
+    "phase_front04_positive": "sha256:70cba75cf2c63d31c7e8cb617d0e48cb317fc0135c9f013f5ad07b7f7bc5898e",
+    "phase_front04_lat12": "sha256:f4a522b8925e74f6bbe9f02a81a931122a77394747269847d1da4c0da3df3587",
+    "phase_stay_lat12": "sha256:c0ff21d19590863920652f1fbe4ff0439cfc7f3c4bc08412e3692c35f6a64221",
+    "fixed_left_negative": "sha256:e8e1a84e90616fced1d6c58412aa91f430e152dd62b4ec676acd1f71efd5f161",
+    "phase_front04_negative": "sha256:bcd71bccd109495d0465932c8a4217386784e847c4d13cb87065b1e12ff7ab83"
+  },
+  "training_indices": [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127],
+  "internal_validation_indices": [],
+  "oracle_gate": {"minimum_safe_contacts": 70, "minimum_useful_passes": 35},
+  "interpretation": "All 128 scenarios are additional training only. Per-scene offline oracle is diagnostic, never an executable policy or fresh holdout."
+}

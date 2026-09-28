@@ -1,0 +1,31 @@
+{
+  "schema": "rsi_team_contextual_neural_chooser_protocol_v32",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "training_datasets": [
+    {"path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v29/paired_outcomes.npz", "hash": "sha256:1c9a57cff503ecf756f68a4ccd15dd61d6474c9afb952c37056de6212d2ee2fb", "indices": [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47]},
+    {"path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v31/paired_outcomes.npz", "hash": "sha256:980426d578b8e5239659c5602c8f83b06486dd2b3f7c2f074ed7e2f382df8f5e", "indices": "all_128"}
+  ],
+  "internal_validation_dataset": {"path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v29/paired_outcomes.npz", "hash": "sha256:1c9a57cff503ecf756f68a4ccd15dd61d6474c9afb952c37056de6212d2ee2fb", "indices": [48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63]},
+  "eligible_arms": ["adaptive_c19", "fixed_left_negative", "phase_front04_lat12", "phase_front04_negative", "phase_front04_positive", "phase_stay_lat12"],
+  "ensemble_seeds": [11, 19, 29],
+  "mlp_width": 16,
+  "candidates": [
+    {"feature_count": 4, "epochs": 25, "safety_threshold": 0.65},
+    {"feature_count": 4, "epochs": 50, "safety_threshold": 0.65},
+    {"feature_count": 4, "epochs": 100, "safety_threshold": 0.65},
+    {"feature_count": 8, "epochs": 25, "safety_threshold": 0.65},
+    {"feature_count": 8, "epochs": 50, "safety_threshold": 0.65},
+    {"feature_count": 8, "epochs": 100, "safety_threshold": 0.65},
+    {"feature_count": 4, "epochs": 25, "safety_threshold": 0.8},
+    {"feature_count": 4, "epochs": 50, "safety_threshold": 0.8},
+    {"feature_count": 4, "epochs": 100, "safety_threshold": 0.8},
+    {"feature_count": 8, "epochs": 25, "safety_threshold": 0.8},
+    {"feature_count": 8, "epochs": 50, "safety_threshold": 0.8},
+    {"feature_count": 8, "epochs": 100, "safety_threshold": 0.8}
+  ],
+  "selection_rule": "rank by unsafe ascending, useful descending, safe_contact descending, abstained ascending, candidate index ascending",
+  "internal_gate": {"max_unsafe": 0, "minimum_useful": 4},
+  "interpretation": "v29 internal validation was already consumed by v30. This is further development, not independent holdout; new physical scenarios must judge any selected model."
+}

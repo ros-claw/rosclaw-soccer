@@ -21,14 +21,26 @@ def main() -> None:
     if args.output_dir.exists():
         parser.error("audit output already exists")
     protocol = json.loads(args.protocol.read_text(encoding="utf-8"))
+    version = protocol.get("schema")
+    scene_count = 64 if version == "rsi_team_diverse_curriculum_audit_protocol_v29" else 128
+    expected_gate = (
+        {"minimum_safe_contacts": 40, "minimum_useful_passes": 24}
+        if scene_count == 64
+        else {"minimum_safe_contacts": 70, "minimum_useful_passes": 35}
+    )
     if (
-        protocol.get("schema") != "rsi_team_diverse_curriculum_audit_protocol_v29"
+        version
+        not in {
+            "rsi_team_diverse_curriculum_audit_protocol_v29",
+            "rsi_team_diverse_curriculum_audit_protocol_v31",
+        }
         or protocol.get("development_only") is not True
         or protocol.get("promotion_authorized") is not False
-        or protocol.get("training_indices") != list(range(48))
-        or protocol.get("internal_validation_indices") != list(range(48, 64))
-        or len(protocol.get("arm_report_hashes", {})) != 8
-        or protocol.get("oracle_gate") != {"minimum_safe_contacts": 40, "minimum_useful_passes": 24}
+        or protocol.get("training_indices") != list(range(48 if scene_count == 64 else 128))
+        or protocol.get("internal_validation_indices")
+        != (list(range(48, 64)) if scene_count == 64 else [])
+        or len(protocol.get("arm_report_hashes", {})) != (8 if scene_count == 64 else 7)
+        or protocol.get("oracle_gate") != expected_gate
     ):
         raise ValueError("invalid committed physical curriculum audit")
     root = Path(protocol["arm_result_root"])
@@ -39,7 +51,7 @@ def main() -> None:
             report.get("report_hash") != expected_hash
             or hash_json({key: value for key, value in report.items() if key != "report_hash"})
             != expected_hash
-            or len(report["rows"]) != 64
+            or len(report["rows"]) != scene_count
         ):
             raise ValueError("unsealed physical curriculum arm")
         reports[name] = report
@@ -51,13 +63,13 @@ def main() -> None:
         raise ValueError("mixed physical source, body or course protocol")
     names = sorted(name for name in reports if name != "parent")
     features = []
-    safety = np.zeros((64, len(names)), dtype=np.bool_)
+    safety = np.zeros((scene_count, len(names)), dtype=np.bool_)
     contact = np.zeros_like(safety)
     useful = np.zeros_like(safety)
     entry_hashes = []
     scenarios = []
     per_scene = []
-    for index in range(64):
+    for index in range(scene_count):
         rows = {name: report["rows"][index] for name, report in reports.items()}
         if len({row["scenario_hash"] for row in rows.values()}) != 1:
             raise ValueError("unpaired physical scenario")
@@ -85,6 +97,22 @@ def main() -> None:
         scenarios.append(rows["parent"]["scenario_hash"])
         for column, name in enumerate(names):
             row = rows[name]
+            if row["status"] == "COMPLETE":
+                folder = (
+                    root / name / f"t{index:03d}" / ("parent" if name == "parent" else "candidate")
+                )
+                episode = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+                if (
+                    episode["report_hash"]
+                    != hash_json(
+                        {key: value for key, value in episode.items() if key != "report_hash"}
+                    )
+                    or episode["scenario_hash"] != row["scenario_hash"]
+                    or episode["trace_hash"] != hash_bytes((folder / "trajectory.npz").read_bytes())
+                    or episode["action_trace_hash"]
+                    != hash_bytes((folder / "taskspace_trace.npz").read_bytes())
+                ):
+                    raise ValueError("unsealed paired physical episode")
             safety[index, column] = bool(row["safe"])
             contact[index, column] = bool(row["safe"] and row["foot_contact_frames"])
             useful[index, column] = bool(row["useful_pass"])
@@ -115,16 +143,20 @@ def main() -> None:
         scenario_hashes=np.asarray(scenarios),
     )
     result = {
-        "schema": "rsi_team_diverse_curriculum_audit_report_v29",
+        "schema": (
+            "rsi_team_diverse_curriculum_audit_report_v29"
+            if scene_count == 64
+            else "rsi_team_diverse_curriculum_audit_report_v31"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "protocol_hash": hash_bytes(args.protocol.read_bytes()),
         "physical_source_hashes": reports["parent"]["source_hashes"],
         "body_hash": reports["parent"]["asset_body_hash"],
         "dataset_hash": hash_bytes(dataset_path.read_bytes()),
         "arm_names": names,
-        "scenario_count": 64,
-        "training_count": 48,
-        "internal_validation_count": 16,
+        "scenario_count": scene_count,
+        "training_count": 48 if scene_count == 64 else 128,
+        "internal_validation_count": 16 if scene_count == 64 else 0,
         "entry_parity_verified": True,
         "oracle_safe_contact_diagnostic_only": oracle_contacts,
         "oracle_useful_pass_diagnostic_only": oracle_useful,
