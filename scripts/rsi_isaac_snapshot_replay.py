@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import traceback
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
@@ -1062,6 +1064,9 @@ try:
     main()
 except Exception as exc:
     print("RSI_ISAAC_SNAPSHOT_REPLAY_FAILURE=" + repr(exc), flush=True)
-    raise
+    traceback.print_exc()
+    # Kit may convert an uncaught Python exception into process exit 0. A
+    # failed physical replay must never look successful to orchestration.
+    os._exit(1)
 else:
     simulation_app.close()

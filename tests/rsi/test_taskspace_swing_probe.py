@@ -43,6 +43,10 @@ def test_taskspace_release_is_causal_and_monotone() -> None:
     assert release_joint_delta(contact_delta, 20)[0] == 0
     with pytest.raises(ValueError):
         release_joint_delta(contact_delta, 0)
+    rounded = np.full(6, 0.35000002)
+    assert release_joint_delta(rounded, 1)[0] > 0
+    with pytest.raises(ValueError):
+        release_joint_delta(np.full(6, 0.3501), 1)
 
 
 def test_taskspace_lateral_vertical_profiles_are_bounded() -> None:

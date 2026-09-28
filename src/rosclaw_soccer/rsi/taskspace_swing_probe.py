@@ -99,7 +99,9 @@ def release_joint_delta(
     if (
         contact_delta.shape != (6,)
         or not np.isfinite(contact_delta).all()
-        or np.max(np.abs(contact_delta)) > MAX_JOINT_DELTA_RAD + 1e-8
+        # Executed targets are float32 while the audited baseline is float64.
+        # Permit only that serialization roundoff, matching trace audit tolerance.
+        or np.max(np.abs(contact_delta)) > MAX_JOINT_DELTA_RAD + 1e-5
         or type(frame_since_contact) is not int
         or frame_since_contact < 1
     ):
