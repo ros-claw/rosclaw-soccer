@@ -11,15 +11,21 @@ import numpy as np
 
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.receiving_possession import evaluate_receiving_possession
+from rosclaw_soccer.training.receiving_rollout import (
+    explain_receiving_window,
+    receiving_window,
+)
 
 
 def audit(*, evidence_dir: Path, output_dir: Path) -> dict[str, Any]:
     source = Path(__file__)
     evaluator = source.parents[1] / "src/rosclaw_soccer/training/receiving_possession.py"
+    authoritative_source = source.parents[1] / "src/rosclaw_soccer/training/receiving_rollout.py"
     source_hash, evaluator_hash = (
         hash_bytes(source.read_bytes()),
         hash_bytes(evaluator.read_bytes()),
     )
+    authoritative_hash = hash_bytes(authoritative_source.read_bytes())
     if output_dir.exists() or output_dir.resolve().is_relative_to(source.resolve().parents[1]):
         raise ValueError("new external SIM_ONLY possession-audit directory required")
     payload: dict[str, Any] = json.loads((evidence_dir / "report.json").read_text(encoding="utf-8"))
@@ -39,31 +45,55 @@ def audit(*, evidence_dir: Path, output_dir: Path) -> dict[str, Any]:
         if row["trace_hash"] != hash_bytes(path.read_bytes()):
             raise ValueError("shared-world physical trace hash mismatch")
         qualities = row["result"]["qualities"]
-        agent_code = [item["agent_id"] for item in qualities].index("red.finisher") + 1
+        agent_ids = tuple(sorted(item["agent_id"] for item in qualities))
+        agent_code = agent_ids.index("red.finisher") + 1
         with np.load(path, allow_pickle=False) as trace:
+            full_trace = {key: np.asarray(trace[key]) for key in trace.files}
             measurement = evaluate_receiving_possession(
-                ball_pose=np.asarray(trace["ball_pose"], dtype=np.float64),
-                ball_velocity=np.asarray(trace["ball_velocity"], dtype=np.float64),
-                pelvis_pose=np.asarray(trace["red_finisher_pelvis_pose"], dtype=np.float64),
-                contact_agent_code=np.asarray(trace["ball_contact_agent_code"]),
-                contact_foot_code=np.asarray(trace["ball_contact_foot_code"]),
-                nonfoot_agent_code=np.asarray(trace["ball_nonfoot_contact_agent_code"]),
+                ball_pose=np.asarray(full_trace["ball_pose"], dtype=np.float64),
+                ball_velocity=np.asarray(full_trace["ball_velocity"], dtype=np.float64),
+                pelvis_pose=np.asarray(full_trace["red_finisher_pelvis_pose"], dtype=np.float64),
+                contact_agent_code=np.asarray(full_trace["ball_contact_agent_code"]),
+                contact_foot_code=np.asarray(full_trace["ball_contact_foot_code"]),
+                nonfoot_agent_code=np.asarray(full_trace["ball_nonfoot_contact_agent_code"]),
                 agent_code=agent_code,
                 body_safe=bool(row["safe"]),
             )
+            _, authoritative = receiving_window(
+                full_trace,
+                agent_ids=agent_ids,
+                agent_id="red.finisher",
+                start=20,
+                frames=100,
+            )
+            explanation = explain_receiving_window(
+                full_trace,
+                agent_ids=agent_ids,
+                agent_id="red.finisher",
+                start=20,
+                frames=100,
+            )
         output_rows.append(
-            {"label": label, "source_trace_hash": row["trace_hash"], "measurement": measurement}
+            {
+                "label": label,
+                "source_trace_hash": row["trace_hash"],
+                "auxiliary_pelvis_relative_measurement": measurement,
+                "authoritative_receiving_window": authoritative,
+                "authoritative_explanation": explanation,
+            }
         )
     if (
         hash_bytes(source.read_bytes()) != source_hash
         or hash_bytes(evaluator.read_bytes()) != evaluator_hash
+        or hash_bytes(authoritative_source.read_bytes()) != authoritative_hash
     ):
         raise RuntimeError("possession evaluator changed during physical evidence audit")
     report: dict[str, Any] = {
-        "schema": "rosclaw_soccer.rsi.receiving_possession_audit.v1",
+        "schema": "rosclaw_soccer.rsi.receiving_possession_audit.v2",
         "activation_ceiling": "SIM_ONLY",
         "source_hash": source_hash,
         "evaluator_hash": evaluator_hash,
+        "authoritative_source_hash": authoritative_hash,
         "source_report_hash": commitment,
         "rows": output_rows,
         "fresh8_opened": False,
@@ -87,7 +117,12 @@ def main() -> None:
             {
                 "report_hash": report["report_hash"],
                 "rows": [
-                    {"label": row["label"], "measurement": row["measurement"]}
+                    {
+                        "label": row["label"],
+                        "auxiliary": row["auxiliary_pelvis_relative_measurement"],
+                        "authoritative": row["authoritative_receiving_window"],
+                        "failed_criteria": row["authoritative_explanation"]["failed_criteria"],
+                    }
                     for row in report["rows"]
                 ],
             },
