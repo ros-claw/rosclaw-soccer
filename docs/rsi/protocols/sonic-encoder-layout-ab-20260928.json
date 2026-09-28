@@ -1,0 +1,21 @@
+{
+  "run_id": "sonic-encoder-layout-ab-20260928-v1",
+  "purpose": "SIM_ONLY opt-in low-latency ONNX graph feature-layout A/B on eight fixed development first-touch courses",
+  "code_sha": "65e3808",
+  "physics_hash": "sha256:208e389474c474233bff7f128d86d3f80d853c67e1626a5d412c1651d94f059f",
+  "robot_asset_hash": "sha256:cfbcca7b005c418697d35f762d81ec389d6242a0b4e73d889c25384724d879e8",
+  "simulator": "Isaac Sim 6.0.1 / Isaac Lab / PhysX, eight independent 8 m lanes, 300 x 20 ms control frames",
+  "parent_policy": "sha256:c273a88d66344b666756fc5c051d81050d3ab9fe512fba2cebf00b937d0740ad",
+  "dataset_contract": "rolling 0.11 m ball; x=2.4/2.6 m, y=+/-0.1 m, vx=+/-0.5 m/s; no real hardware",
+  "train_split_hash": "sha256:019d1586b1d538504e2c2a9d122c3c4b0ff76f2f7e6f22d488e3e54cc1e40caa",
+  "fresh_split_hash": "sha256:aa943d40dee4202a9f388faaf5c430e74f8eaf668f235252a58f6934ecc5b086",
+  "fresh_opened": false,
+  "seeds": [20260928],
+  "trainable_modules": [],
+  "frozen_modules": ["SONIC planner", "SONIC encoder/decoder weights", "29-DoF motor gains", "ball and G1 assets"],
+  "single_changed_variable": "G1 multi-frame orientation starts at ONNX graph input index 590 instead of legacy 584",
+  "metrics": ["clean foot-only first-touch count", "first foot/nonfoot contact frame", "peak foot/nonfoot force", "minimum pelvis z", "joint-limit projection count"],
+  "promotion_rules": ["No promotion from this diagnostic A/B", "Fresh remains sealed until a learned candidate is frozen and passes development/retention gates"],
+  "stop_rules": ["Abort if source/asset/qualification differs", "Abort on nonfinite state, lane escape, invalid sensor shape or pelvis below 0.65 m", "Do not count repeated frames as independent courses"],
+  "activation_ceiling": "SIM_ONLY"
+}
