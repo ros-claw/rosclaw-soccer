@@ -81,6 +81,7 @@ def simulate_r0_receiving_course(
     sonic_ball_follow_post_touch_speed_limit_mps: float | None = None,
     research_student_handoff: bool = False,
     capture_ball_follow_targets: bool = False,
+    capture_live_motor_observations: bool = False,
     receiving_student: QualifiedReceivingStudent | None = None,
     receiving_student_probe_torque_nm: float = 0.0,
     receiving_student_hip_roll_offset_rad: float = 0.0,
@@ -166,6 +167,7 @@ def simulate_r0_receiving_course(
         or sonic_ball_follow_post_touch_target_distance_m is not None
         or sonic_ball_follow_post_touch_speed_limit_mps is not None
         or capture_ball_follow_targets
+        or capture_live_motor_observations
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
     if sonic_model_root is not None and (
@@ -224,6 +226,21 @@ def simulate_r0_receiving_course(
         )
     ):
         raise ValueError("pure measured-ball follow teacher capture required")
+    if (
+        type(capture_live_motor_observations) is not bool
+        or capture_live_motor_observations
+        and (
+            receiving_student is None
+            or research_control_frame_limit != 130
+            or sonic_ball_follow_gain != 0.75
+            or sonic_ball_follow_fast_replan
+            or sonic_ball_follow_post_touch_chase
+            or sonic_ball_follow_brake_distance_m is not None
+            or capture_ball_follow_targets
+            or capture_team_motor_targets
+        )
+    ):
+        raise ValueError("read-only live SONIC tape requires fixed 130-frame student course")
     if (
         type(research_student_handoff) is not bool
         or research_student_handoff
@@ -351,7 +368,7 @@ def simulate_r0_receiving_course(
         if sonic_ball_follow_gain is not None:
             ball_option_type = (
                 RecordingReceivingSonicBallFollowOption
-                if capture_ball_follow_targets
+                if capture_ball_follow_targets or capture_live_motor_observations
                 else ReceivingSonicBallFollowOption
             )
             motors[course.agent_id] = ball_option_type(
@@ -450,14 +467,17 @@ def simulate_r0_receiving_course(
         trace["feedback_actor_hash"] = np.asarray([actor.artifact_hash])
         trace["feedback_actor_foot_seen"] = np.asarray([feedback_motor.feedback_foot_seen])
         trace["feedback_actor_nonfoot_seen"] = np.asarray([feedback_motor.feedback_nonfoot_seen])
-    if capture_sonic_targets or capture_ball_follow_targets:
+    if capture_sonic_targets or capture_ball_follow_targets or capture_live_motor_observations:
         recording_motor = motors[course.agent_id]
         assert isinstance(
             recording_motor,
             (RecordingReceivingSonicOption, RecordingReceivingSonicBallFollowOption),
         )
         motor_records = recording_motor.recorded
-        if len(motor_records) != 300 or any(target is None for _, target in motor_records):
+        expected_records = 130 if capture_live_motor_observations else 300
+        if len(motor_records) != expected_records or any(
+            target is None for _, target in motor_records
+        ):
             raise ValueError("complete measured SONIC training trace required")
         trace["sonic_recorded_qpos"] = np.asarray(
             [observation.qpos for observation, _ in motor_records]
@@ -474,6 +494,26 @@ def simulate_r0_receiving_course(
         trace["sonic_recorded_kd"] = np.asarray(
             [target.kd for _, target in motor_records if target is not None]
         )
+        if capture_live_motor_observations:
+            if any(observation.navigation_command is None for observation, _ in motor_records):
+                raise ValueError("complete post-clearance live navigation tape required")
+            trace["sonic_recorded_navigation_command"] = np.asarray(
+                [observation.navigation_command for observation, _ in motor_records],
+                dtype=np.float64,
+            )
+            trace["sonic_recorded_target_position"] = np.asarray(
+                [observation.target_position_m for observation, _ in motor_records],
+                dtype=np.float64,
+            )
+            trace["sonic_recorded_intent"] = np.asarray(
+                [observation.intent for observation, _ in motor_records]
+            )
+            trace["sonic_recorded_prospective_owner"] = np.asarray(
+                [observation.prospective_owner for observation, _ in motor_records]
+            )
+            trace["sonic_recorded_committed_receiver"] = np.asarray(
+                [observation.committed_receiver for observation, _ in motor_records]
+            )
     if sonic_model_root is not None and sonic_command_scale_schedule is not None:
         scale_records = motors[course.agent_id].command_scale_records
         trace["sonic_command_scale_local_frames"] = np.asarray(
