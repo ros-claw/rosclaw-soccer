@@ -13,6 +13,10 @@ from rosclaw_soccer.rsi.first_touch_snapshot_bank import audit_snapshot_bank
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
+def _causal_first_foot(contact_frame: int | None, frame: int) -> int | None:
+    return contact_frame if contact_frame is not None and contact_frame < frame else None
+
+
 def projected_probe_residual(
     desired: np.ndarray[Any, Any],
     baseline_target: np.ndarray[Any, Any],
@@ -96,6 +100,10 @@ def audit_snapshot_replay(
         )
         or (phase_probe and (probe or not closed_loop))
         or (not phase_probe and report.get("phase_ramp_frames") is not None)
+        or (
+            report.get("phase_recovery_frames") is not None
+            and (not phase_probe or report["phase_recovery_frames"] not in (12, 20, 30))
+        )
         or type(closed_loop) is not bool
         or type(count) is not int
         or not 2 <= count <= 16
@@ -211,7 +219,10 @@ def audit_snapshot_replay(
         if np.any(observed_force < 0):
             raise ValueError("negative physical contact force")
         if phase_probe:
-            from rosclaw_soccer.rsi.sonic_phase_probe import phase_offset_frames
+            from rosclaw_soccer.rsi.sonic_phase_probe import (
+                phase_offset_frames,
+                recovered_phase_offset_frames,
+            )
 
             if report.get("phase_ramp_frames") != 20:
                 raise ValueError("snapshot phase schedule changed")
@@ -308,9 +319,34 @@ def audit_snapshot_replay(
                     raise ValueError("local phase selection differs from measured context")
             else:
                 targets = np.full(count, phase_target)
+            recovery_frames = report.get("phase_recovery_frames")
+            first_foot_frames: list[int | None] = []
+            observed_force = replay["observed_ball_body_contact_force_peak_n"]
+            for lane in range(count):
+                active = np.flatnonzero(np.max(observed_force[:, lane], axis=1) > 1.0)
+                if len(active):
+                    phase_first = int(active[0])
+                    bodies = set(np.flatnonzero(observed_force[phase_first, lane] > 1.0).tolist())
+                    first_foot_frames.append(phase_first if bodies and bodies <= {0, 1} else None)
+                else:
+                    first_foot_frames.append(None)
             expected_phase = np.asarray(
                 [
-                    [phase_offset_frames(frame, float(target)) for target in targets]
+                    [
+                        (
+                            phase_offset_frames(frame, float(target))
+                            if recovery_frames is None
+                            else recovered_phase_offset_frames(
+                                frame,
+                                float(target),
+                                first_foot_contact_frame=_causal_first_foot(
+                                    first_foot_frames[lane], frame
+                                ),
+                                recovery_frames=recovery_frames,
+                            )
+                        )
+                        for lane, target in enumerate(targets)
+                    ]
                     for frame in range(frames)
                 ]
             )

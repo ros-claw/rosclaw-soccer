@@ -25,6 +25,7 @@ parser.add_argument("--shared-candidate", type=Path)
 parser.add_argument("--phase-target-frames", type=float)
 parser.add_argument("--contextual-phase-policy", type=Path)
 parser.add_argument("--local-phase-policy", type=Path)
+parser.add_argument("--phase-recovery-frames", type=int, choices=(12, 20, 30))
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -54,6 +55,12 @@ if (
     )
     or (args.local_phase_policy is not None and not args.local_phase_policy.is_file())
     or (args.local_phase_policy is not None and not args.closed_loop_sonic)
+    or (
+        args.phase_recovery_frames is not None
+        and args.local_phase_policy is None
+        and args.phase_target_frames is None
+        and args.contextual_phase_policy is None
+    )
     or (
         args.local_phase_policy is not None
         and (
@@ -109,7 +116,10 @@ from rosclaw_soccer.rsi.local_phase_memory import (  # noqa: E402
     select_local_phase,
 )
 from rosclaw_soccer.rsi.snapshot_shared_temporal_policy import load_candidate  # noqa: E402
-from rosclaw_soccer.rsi.sonic_phase_probe import phase_offset_frames  # noqa: E402
+from rosclaw_soccer.rsi.sonic_phase_probe import (  # noqa: E402
+    phase_offset_frames,
+    recovered_phase_offset_frames,
+)
 from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
     JOINT_NAMES as PROBE_JOINT_NAMES,
 )
@@ -522,6 +532,7 @@ def main() -> None:
     max_parent_target_error_at_snapshot = 0.0
     probe_applied_frames = np.zeros(args.sample_count, dtype=np.int64)
     contact_seen = np.zeros(args.sample_count, dtype=np.bool_)
+    phase_first_contact_state = np.full(args.sample_count, -1, dtype=np.int64)
     probe_weights = (
         shared_weights if shared_weights is not None else knee_extension_probe_weights()[0]
     )
@@ -580,7 +591,23 @@ def main() -> None:
                     else np.full(args.sample_count, args.phase_target_frames)
                 )
                 phase_offsets = np.asarray(
-                    [phase_offset_frames(frame, float(value)) for value in targets]
+                    [
+                        (
+                            phase_offset_frames(frame, float(value))
+                            if args.phase_recovery_frames is None
+                            else recovered_phase_offset_frames(
+                                frame,
+                                float(value),
+                                first_foot_contact_frame=(
+                                    int(phase_first_contact_state[lane])
+                                    if phase_first_contact_state[lane] >= 0
+                                    else None
+                                ),
+                                recovery_frames=args.phase_recovery_frames,
+                            )
+                        )
+                        for lane, value in enumerate(targets)
+                    ]
                 )
                 batch_tracker.update(
                     absolute_frame,
@@ -670,6 +697,14 @@ def main() -> None:
                 ):
                     contact_seen[lane] = True
                     target[lane, probe_joint_indices] = base_target[lane, probe_joint_indices]
+        if args.phase_recovery_frames is not None:
+            contact_now = peak_force.detach().cpu().numpy()
+            for lane in range(args.sample_count):
+                if phase_first_contact_state[lane] != -1:
+                    continue
+                bodies = set(np.flatnonzero(contact_now[lane] > 1.0).tolist())
+                if bodies:
+                    phase_first_contact_state[lane] = frame if bodies <= {0, 1} else -2
         observed_ball.append(ball.data.root_pos_w.torch.detach().cpu().numpy().copy())
         observed_root.append(robot.data.root_link_pose_w.torch.detach().cpu().numpy().copy())
         observed_force.append(peak_force.detach().cpu().numpy().copy())
@@ -753,6 +788,7 @@ def main() -> None:
         "phase_ramp_frames": 20
         if args.phase_target_frames is not None or selected_phase_targets is not None
         else None,
+        "phase_recovery_frames": args.phase_recovery_frames,
         "contextual_phase_actor_hash": contextual_phase_hash,
         "local_phase_actor_hash": local_phase_hash,
         "selected_phase_targets_frames": (

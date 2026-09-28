@@ -1,0 +1,26 @@
+{
+  "schema": "rsi_first_touch_postcontact_phase_recovery_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "frozen_parent_actor_hash": "sha256:78349ed4999982f0e1460fdc183ceb20052e756e1eac1458d74c4c13934955a6",
+  "motivation": "some v5 lanes first touch with a foot but later collide with a knee",
+  "consumed_development_course_seeds": [20260943, 20260944],
+  "fresh_sealed_holdout_course_seeds": [20260945, 20260946],
+  "recovery_trigger": "first_contact_control_frame_contains_foot_only_and_no_knee",
+  "recovery_action": "linearly_unwind_positive_sonic_phase_offset_after_contact",
+  "candidate_recovery_frames": [12, 20, 30],
+  "development_selection": "same_lanes_paired_physics_choose_max_clean_foot_then_first_foot_then_reward",
+  "development_gate": {
+    "minimum_combined_clean_foot_gain_over_frozen_v5": 2,
+    "require_no_seed_clean_foot_regression": true,
+    "minimum_root_height_m": 0.65
+  },
+  "sealed_holdout_gate": {
+    "minimum_combined_clean_foot_gain_over_frozen_v5": 4,
+    "require_no_seed_clean_foot_regression": true,
+    "minimum_root_height_m": 0.65
+  },
+  "no_further_threshold_tuning_on_sealed_holdout": true,
+  "full_episode_and_team_match_required_for_promotion": true,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
