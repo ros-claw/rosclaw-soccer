@@ -76,6 +76,26 @@ def test_vector_audit_counts_independent_episodes(tmp_path: Path) -> None:
     assert result["imitation_training_authorized"] is False
 
 
+def test_vector_audit_requires_bounded_navigation_speed(tmp_path: Path) -> None:
+    folder = tmp_path / "case"
+    _fixture(folder)
+    report_path = folder / "report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["navigation_speed_mps"] = 1.2
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert audit_vector_first_touch(folder)["clean_foot_only_episode_count"] == 1
+    report["navigation_speed_mps"] = 1.6
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="unauthenticated"):
+        audit_vector_first_touch(folder)
+    report["navigation_speed_mps"] = float("nan")
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError):
+        audit_vector_first_touch(folder)
+
+
 def test_vector_audit_requires_bounded_batched_torch_shadow(tmp_path: Path) -> None:
     folder = tmp_path / "case"
     _fixture(folder)

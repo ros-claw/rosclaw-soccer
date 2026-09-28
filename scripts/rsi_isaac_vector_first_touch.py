@@ -19,6 +19,7 @@ parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--training-course-seed", type=int)
+parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
 parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
 parser.add_argument("--onnx-graph-encoder-layout", action="store_true")
 parser.add_argument("--torch-batch-shadow", action="store_true")
@@ -36,6 +37,7 @@ if (
     or args.output_dir.exists()
     or not 50 <= args.frames <= 400
     or not 2 <= args.env_count <= 16
+    or not 0.8 <= args.navigation_speed_mps <= 1.5
     or (args.second_reset_replay and not args.reset_replay)
     or ((args.candidate_actions is None) != (args.parent_report is None))
     or (args.candidate_actions is not None and not args.candidate_actions.is_file())
@@ -190,6 +192,7 @@ def main() -> None:
             != navigations[0].backend.qualification.qualification_hash
             or parent.get("onnx_graph_encoder_layout", False) is not args.onnx_graph_encoder_layout
             or parent.get("torch_batch_plan_only", False) is not args.torch_batch_plan_only
+            or parent.get("navigation_speed_mps", 1.4) != args.navigation_speed_mps
             or parent.get("training_course_seed") != args.training_course_seed
             or (
                 args.training_course_seed is not None
@@ -308,7 +311,7 @@ def main() -> None:
                     qpos=tuple(float(v) for v in qpos),
                     qvel=tuple(float(v) for v in qvel),
                     target_position_m=(0.0, 0.0, 0.0),
-                    navigation_command=(1.4, 0.0, 0.0),
+                    navigation_command=(args.navigation_speed_mps, 0.0, 0.0),
                     navigation_envelope=navigation.navigation_envelope,
                 )
                 if frame == 0:
@@ -492,6 +495,7 @@ def main() -> None:
         "sonic_qualification_hash": navigations[0].backend.qualification.qualification_hash,
         "trace_hash": trace_hash,
         "frames": args.frames,
+        "navigation_speed_mps": args.navigation_speed_mps,
         "inference_threads": args.inference_threads,
         "environments": entries,
     }
