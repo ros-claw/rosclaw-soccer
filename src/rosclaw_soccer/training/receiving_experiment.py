@@ -17,6 +17,7 @@ from rosclaw_soccer.providers.g1.receiving_sonic import (
     ReceivingSonicBallFollowOption,
     ReceivingSonicFeedbackOption,
     ReceivingSonicOption,
+    RecordingReceivingSonicBallFollowOption,
     RecordingReceivingSonicOption,
 )
 from rosclaw_soccer.providers.g1.sonic_command_scale import SonicCommandScaleSchedule
@@ -74,6 +75,7 @@ def simulate_r0_receiving_course(
     sonic_ball_follow_gain: float | None = None,
     sonic_ball_follow_fast_replan: bool = False,
     sonic_ball_follow_post_touch_chase: bool = False,
+    capture_ball_follow_targets: bool = False,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -147,6 +149,7 @@ def simulate_r0_receiving_course(
         or sonic_ball_follow_gain is not None
         or sonic_ball_follow_fast_replan
         or sonic_ball_follow_post_touch_chase
+        or capture_ball_follow_targets
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
     if sonic_model_root is not None and (
@@ -178,6 +181,16 @@ def simulate_r0_receiving_course(
         sonic_ball_follow_post_touch_chase and not sonic_ball_follow_fast_replan
     ):
         raise ValueError("post-touch chase requires an explicit fast-replan follow probe")
+    if type(capture_ball_follow_targets) is not bool or (
+        capture_ball_follow_targets
+        and (
+            sonic_ball_follow_gain is None
+            or sonic_ball_follow_fast_replan
+            or sonic_ball_follow_post_touch_chase
+            or capture_sonic_targets
+        )
+    ):
+        raise ValueError("pure measured-ball follow teacher capture required")
     # Validate physical launch values before allocating/loading the simulator.
     receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     fixture = collection_fixture(asset_root, keeper_preview=True)
@@ -193,7 +206,12 @@ def simulate_r0_receiving_course(
         world = replace(world, motor_idle_residual_fallback=True)
         # Instantiate a fresh backend for every simulation, never reuse its history.
         if sonic_ball_follow_gain is not None:
-            motors[course.agent_id] = ReceivingSonicBallFollowOption(
+            ball_option_type = (
+                RecordingReceivingSonicBallFollowOption
+                if capture_ball_follow_targets
+                else ReceivingSonicBallFollowOption
+            )
+            motors[course.agent_id] = ball_option_type(
                 sonic_model_root,
                 course.agent_id,
                 start_frame=sonic_start_frame,
@@ -272,9 +290,12 @@ def simulate_r0_receiving_course(
         trace["feedback_actor_hash"] = np.asarray([actor.artifact_hash])
         trace["feedback_actor_foot_seen"] = np.asarray([feedback_motor.feedback_foot_seen])
         trace["feedback_actor_nonfoot_seen"] = np.asarray([feedback_motor.feedback_nonfoot_seen])
-    if capture_sonic_targets:
+    if capture_sonic_targets or capture_ball_follow_targets:
         recording_motor = motors[course.agent_id]
-        assert isinstance(recording_motor, RecordingReceivingSonicOption)
+        assert isinstance(
+            recording_motor,
+            (RecordingReceivingSonicOption, RecordingReceivingSonicBallFollowOption),
+        )
         motor_records = recording_motor.recorded
         if len(motor_records) != 300 or any(target is None for _, target in motor_records):
             raise ValueError("complete measured SONIC training trace required")

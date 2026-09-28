@@ -314,6 +314,35 @@ class ReceivingSonicFeedbackOption(ReceivingSonicOption):
                 self.feedback_nonfoot_seen = True
 
 
+class RecordingReceivingSonicBallFollowOption(ReceivingSonicBallFollowOption):
+    """Read-only training capture of the measured-ball SONIC teacher."""
+
+    def __init__(
+        self,
+        model_root: Path,
+        agent_id: str,
+        *,
+        start_frame: int,
+        response_gain: float,
+        fast_replan: bool = False,
+        post_touch_chase: bool = False,
+    ) -> None:
+        super().__init__(
+            model_root,
+            agent_id,
+            start_frame=start_frame,
+            response_gain=response_gain,
+            fast_replan=fast_replan,
+            post_touch_chase=post_touch_chase,
+        )
+        self.recorded: list[tuple[TeamMotorObservation, TeamMotorTarget | None]] = []
+
+    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:
+        target = super().propose(observation)
+        self.recorded.append((observation, target))
+        return target
+
+
 class RecordingReceivingSonicOption(ReceivingSonicOption):
     """Read-only exact motor-observation capture for offline receiving training."""
 
