@@ -1,0 +1,19 @@
+{
+  "run_id": "first-touch-temporal-zero-parity-20260930-retry-v1",
+  "supersedes_protocol": "first-touch-temporal-zero-parity-20260930-v1",
+  "reason": "original run failed before physics with a None near-ball gap in the new temporal branch; Isaac shutdown masked the process failure status",
+  "failed_attempts": 2,
+  "failed_attempt_observation": "RSI_ISAAC_VECTOR_FAILURE=TypeError:'<=' not supported between instances of 'float' and 'NoneType'; no report or trace produced",
+  "fix_code_sha": "ddaa769",
+  "physics_source_hash": "sha256:6d8d15b6b90b3a4b6ee9707c83ac6c87ead2ab104557c8f4e779a4c034e71dcb",
+  "parent_report_hash": "sha256:78cc2ea648a9686312b459227d54ed51583b506a353bb9b58b56d5c1de51e9bd",
+  "candidate_manifest_hash": "sha256:aa24a6f9dfc5d47c7cf772dfc46c186aef6b740489ed182dc0e2d7f0b8569249",
+  "training_course_seed": 20260930,
+  "course_count": 16,
+  "frames": 300,
+  "weight_mode": "all zero",
+  "required": ["successful report and audit", "zero temporal applied frames and projections", "no loss of Parent clean-foot courses", "minimum pelvis >=0.65 m", "pre-step ball/body trace alignment audited"],
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
