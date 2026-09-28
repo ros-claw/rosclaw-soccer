@@ -23,11 +23,18 @@ def probe(
     parent_dir: Path,
     output_dir: Path,
     post_touch_chase: bool = False,
+    brake_distance_m: float | None = None,
 ) -> dict[str, Any]:
     source = Path(__file__)
     source_hash = hash_bytes(source.read_bytes())
     if type(post_touch_chase) is not bool:
         raise ValueError("explicit post-touch chase mode required")
+    if brake_distance_m is not None and (
+        type(brake_distance_m) not in (int, float)
+        or not 0.45 <= brake_distance_m <= 0.90
+        or not post_touch_chase
+    ):
+        raise ValueError("bounded brake probe requires explicit post-touch chase")
     if output_dir.exists() or output_dir.resolve().is_relative_to(source.resolve().parents[1]):
         raise ValueError("new external SIM_ONLY output required")
     prior: dict[str, Any] = json.loads((parent_dir / "report.json").read_text(encoding="utf-8"))
@@ -58,15 +65,14 @@ def probe(
         sonic_ball_follow_gain=0.75,
         sonic_ball_follow_fast_replan=True,
         sonic_ball_follow_post_touch_chase=post_touch_chase,
+        sonic_ball_follow_brake_distance_m=brake_distance_m,
     )
     numeric = {
         key: value
         for key, value in trace.items()
         if isinstance(value, np.ndarray) and value.dtype.kind in "biufU"
     }
-    trajectory_path = output_dir / (
-        "post-touch-chase.npz" if post_touch_chase else "fast-replan.npz"
-    )
+    trajectory_path = output_dir / "trajectory.npz"
     np.savez_compressed(trajectory_path, **numeric)  # type: ignore[arg-type]
     result_dict = result.to_dict()
     code = [row["agent_id"] for row in result_dict["qualities"]].index(course.agent_id) + 1
@@ -99,6 +105,7 @@ def probe(
         "trace_hash": hash_bytes(trajectory_path.read_bytes()),
         "policy_hash": policy.policy_hash,
         "post_touch_chase": post_touch_chase,
+        "brake_distance_m": brake_distance_m,
         "first_foot_frame": first,
         "nonfoot_seen": own_nonfoot,
         "clean_foot": first is not None and not own_nonfoot,
@@ -123,6 +130,7 @@ def main() -> None:
     parser.add_argument("--parent-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--post-touch-chase", action="store_true")
+    parser.add_argument("--brake-distance-m", type=float)
     print(json.dumps(probe(**vars(parser.parse_args())), sort_keys=True))
 
 

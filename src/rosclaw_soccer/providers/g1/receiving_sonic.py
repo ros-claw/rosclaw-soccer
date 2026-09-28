@@ -146,6 +146,7 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
         response_gain: float,
         fast_replan: bool = False,
         post_touch_chase: bool = False,
+        brake_distance_m: float | None = None,
     ) -> None:
         if (
             type(response_gain) not in (int, float)
@@ -159,6 +160,13 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
             or (post_touch_chase and not fast_replan)
         ):
             raise ValueError("explicit ball-follow replan and chase modes required")
+        if brake_distance_m is not None and (
+            type(brake_distance_m) not in (int, float)
+            or not math.isfinite(brake_distance_m)
+            or not 0.45 <= brake_distance_m <= 0.90
+            or not fast_replan
+        ):
+            raise ValueError("bounded early receiving brake requires fast replanning")
         super().__init__(
             model_root,
             agent_id,
@@ -168,6 +176,7 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
         self.response_gain = float(response_gain)
         self.fast_replan = fast_replan
         self.post_touch_chase = post_touch_chase
+        self.brake_distance_m = float(brake_distance_m) if brake_distance_m is not None else None
         self.contact_foot_seen = False
         self.last_physics_time_sec = -1.0
         self.contract_hash = str(
@@ -178,6 +187,7 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
                     "response_gain": self.response_gain,
                     "fast_replan": fast_replan,
                     "post_touch_chase": post_touch_chase,
+                    "brake_distance_m": self.brake_distance_m,
                     "activation_ceiling": "SIM_ONLY",
                 }
             )
@@ -205,6 +215,11 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
         if distance >= 1.2 or distance < 0.15:
             return original
         weight = self.response_gain * min(1.0, (1.2 - distance) / 0.4)
+        if self.brake_distance_m is not None and not self.contact_foot_seen:
+            weight *= max(
+                0.0,
+                min(1.0, (distance - 0.25) / (self.brake_distance_m - 0.25)),
+            )
         vx = (1.0 - weight) * original[0] + weight * observation.qvel[35]
         vy = (1.0 - weight) * original[1] + weight * observation.qvel[36]
         limit = (
@@ -326,6 +341,7 @@ class RecordingReceivingSonicBallFollowOption(ReceivingSonicBallFollowOption):
         response_gain: float,
         fast_replan: bool = False,
         post_touch_chase: bool = False,
+        brake_distance_m: float | None = None,
     ) -> None:
         super().__init__(
             model_root,
@@ -334,6 +350,7 @@ class RecordingReceivingSonicBallFollowOption(ReceivingSonicBallFollowOption):
             response_gain=response_gain,
             fast_replan=fast_replan,
             post_touch_chase=post_touch_chase,
+            brake_distance_m=brake_distance_m,
         )
         self.recorded: list[tuple[TeamMotorObservation, TeamMotorTarget | None]] = []
 

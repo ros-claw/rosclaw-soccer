@@ -75,6 +75,7 @@ def simulate_r0_receiving_course(
     sonic_ball_follow_gain: float | None = None,
     sonic_ball_follow_fast_replan: bool = False,
     sonic_ball_follow_post_touch_chase: bool = False,
+    sonic_ball_follow_brake_distance_m: float | None = None,
     capture_ball_follow_targets: bool = False,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run one frozen course with private controller state and unchanged guards.
@@ -149,6 +150,7 @@ def simulate_r0_receiving_course(
         or sonic_ball_follow_gain is not None
         or sonic_ball_follow_fast_replan
         or sonic_ball_follow_post_touch_chase
+        or sonic_ball_follow_brake_distance_m is not None
         or capture_ball_follow_targets
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
@@ -181,12 +183,20 @@ def simulate_r0_receiving_course(
         sonic_ball_follow_post_touch_chase and not sonic_ball_follow_fast_replan
     ):
         raise ValueError("post-touch chase requires an explicit fast-replan follow probe")
+    if sonic_ball_follow_brake_distance_m is not None and (
+        type(sonic_ball_follow_brake_distance_m) not in (int, float)
+        or not np.isfinite(sonic_ball_follow_brake_distance_m)
+        or not 0.45 <= sonic_ball_follow_brake_distance_m <= 0.90
+        or not sonic_ball_follow_fast_replan
+    ):
+        raise ValueError("early receiving brake requires bounded fast-replan follow probe")
     if type(capture_ball_follow_targets) is not bool or (
         capture_ball_follow_targets
         and (
             sonic_ball_follow_gain is None
             or sonic_ball_follow_fast_replan
             or sonic_ball_follow_post_touch_chase
+            or sonic_ball_follow_brake_distance_m is not None
             or capture_sonic_targets
         )
     ):
@@ -218,6 +228,7 @@ def simulate_r0_receiving_course(
                 response_gain=sonic_ball_follow_gain,
                 fast_replan=sonic_ball_follow_fast_replan,
                 post_touch_chase=sonic_ball_follow_post_touch_chase,
+                brake_distance_m=sonic_ball_follow_brake_distance_m,
             )
         else:
             option_type = (
