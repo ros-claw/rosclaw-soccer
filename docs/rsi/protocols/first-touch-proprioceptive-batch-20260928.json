@@ -1,0 +1,34 @@
+{
+  "run_id": "first-touch-proprioceptive-batch-20260928-v1",
+  "purpose": "SIM_ONLY auditable body-command trace acquisition for temporal first-touch learning",
+  "code_sha": "89e608d",
+  "physics_source_hash": "sha256:6b69ba4ae5a409929db1f996af277c379023f9e72823a732d85a4f09bd646eda",
+  "jobs": [
+    {
+      "name": "old-seed-tempo-command-replay",
+      "training_course_seed": 20260928,
+      "navigation_speed_mps": 1.4,
+      "near_ball_gap_m": 1.4,
+      "near_ball_speed_mps": 0.8,
+      "near_ball_incoming_only": true,
+      "comparison_report_hash": "sha256:a52b1747625cf5015902c55ca1c7858746fb10a1e7698f001a6ee8efd0e8eb68"
+    },
+    {
+      "name": "new-train-seed-frozen-parent",
+      "training_course_seed": 20260930,
+      "navigation_speed_mps": 1.4,
+      "near_ball_gap_m": null,
+      "near_ball_speed_mps": null,
+      "near_ball_incoming_only": false,
+      "comparison_report_hash": null
+    }
+  ],
+  "frames": 300,
+  "independent_lanes_per_job": 16,
+  "record_body_trace": true,
+  "body_fields": ["root_pose_xyzw_m", "root_velocity_world", "joint_position_rad", "joint_velocity_rad_s", "joint_target_rad", "navigation_speed_mps"],
+  "qualification_rules": ["trace hashes and shapes audited", "all body values finite", "command values constrained to committed schedule", "pelvis minimum >=0.65m"],
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
