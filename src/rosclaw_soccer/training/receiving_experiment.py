@@ -79,6 +79,7 @@ def simulate_r0_receiving_course(
     sonic_ball_follow_brake_distance_m: float | None = None,
     capture_ball_follow_targets: bool = False,
     receiving_student: QualifiedReceivingStudent | None = None,
+    research_coupled_teacher: bool = False,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -217,6 +218,24 @@ def simulate_r0_receiving_course(
         or feedback_provider is not None
     ):
         raise ValueError("qualified student requires unmixed 0.75 SONIC receiving foundation")
+    if (
+        type(research_coupled_teacher) is not bool
+        or research_coupled_teacher
+        and (
+            receiving_student is not None
+            or sonic_model_root is None
+            or sonic_ball_follow_gain != 0.75
+            or sonic_start_frame != 0
+            or sonic_ball_follow_fast_replan
+            or sonic_ball_follow_post_touch_chase
+            or sonic_ball_follow_brake_distance_m is not None
+            or capture_ball_follow_targets
+            or feedback_actor_path is not None
+            or oracle is not None
+            or feedback_provider is not None
+        )
+    ):
+        raise ValueError("privileged coupled teacher requires unmixed 0.75 SONIC training world")
     # Validate physical launch values before allocating/loading the simulator.
     receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     fixture = collection_fixture(asset_root, keeper_preview=True)
@@ -287,6 +306,7 @@ def simulate_r0_receiving_course(
         receiving_students=(
             {course.agent_id: receiving_student} if receiving_student is not None else None
         ),
+        research_coupled_teacher_agent_id=(course.agent_id if research_coupled_teacher else None),
         receiving_oracle=oracle,
         receiving_phase_reference=phase_reference,
         receiving_feedback=feedback_provider,

@@ -1044,6 +1044,7 @@ def simulate_independent_team_world(
     near_ball_exploration_agent_ids: tuple[str, ...] | None = None,
     motor_options: Mapping[str, TeamMotorOption] | None = None,
     receiving_students: Mapping[str, QualifiedReceivingStudent] | None = None,
+    research_coupled_teacher_agent_id: str | None = None,
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
     physics_evidence_consumers: Mapping[str, PhysicsEvidenceConsumer] | None = None,
@@ -1293,6 +1294,13 @@ def simulate_independent_team_world(
         )
     ):
         raise ValueError("one Fresh8-qualified receiving student requires private SONIC ownership")
+    if research_coupled_teacher_agent_id is not None and (
+        type(research_coupled_teacher_agent_id) is not str
+        or research_coupled_teacher_agent_id not in motors
+        or not isinstance(motors[research_coupled_teacher_agent_id], ReceivingSonicBallFollowOption)
+        or students
+    ):
+        raise ValueError("unmixed SIM_ONLY coupled teacher requires one private SONIC motor")
     experimental_navigation = {
         envelope.agent_id: envelope for envelope in active.experimental_navigation_envelopes
     }
@@ -1563,7 +1571,9 @@ def simulate_independent_team_world(
     }
     last_ball_contact_agent_id: str | None = None
     last_ball_contact_time_sec = -math.inf
-    student_first_foot_contact_time = {agent: None for agent in students}
+    student_first_foot_contact_time: dict[str, float | None] = {agent: None for agent in students}
+    if research_coupled_teacher_agent_id is not None:
+        student_first_foot_contact_time[research_coupled_teacher_agent_id] = None
     current_possession_agent_id: str | None = None
     controlled_possession = ContactPossession() if active.controlled_possession_retention else None
     loose_ball_chaser_agent_id: str | None = None
@@ -3274,6 +3284,8 @@ def simulate_independent_team_world(
         )
         student_frame_targets: dict[str, NDArray[np.float64]] = {}
         student_active_substeps = 0
+        research_teacher_active_substeps = 0
+        research_teacher_peak_torque_nm = 0.0
         for substep in range(_SUBSTEPS):
             frame_teacher_last_substep_valid = False
             frame_teacher_baseline = np.zeros(29, dtype=np.float64)
@@ -3356,6 +3368,13 @@ def simulate_independent_team_world(
                     and controller.cell.agent_id in motor_targets
                     and controller.cell.agent_id not in motor_faults
                 )
+                research_teacher_active = bool(
+                    controller.cell.agent_id == research_coupled_teacher_agent_id
+                    and 46 <= frame <= 100
+                    and controller.cell.agent_id in motor_targets
+                    and controller.cell.agent_id not in motor_faults
+                )
+                research_foundation_target = target
                 if student_active:
                     assert student is not None
                     local_qpos = np.r_[  # 7 root + 29 joints + 7 ball
@@ -3374,6 +3393,29 @@ def simulate_independent_team_world(
                             qvel=local_qvel,
                             foundation_target=target,
                             joint_ranges=np.asarray(model.jnt_range[controller.joint_ids]),
+                        )
+                    target = student_frame_targets[controller.cell.agent_id]
+                if research_teacher_active:
+                    if substep == 0:
+                        rotation = np.asarray(
+                            data.xmat[controller.pelvis_body], dtype=np.float64
+                        ).reshape(3, 3)
+                        pitch = -float(rotation[2, 0]) + 0.05 * float(
+                            data.qvel[controller.qvel_base + 4]
+                        )
+                        roll = float(rotation[2, 1]) + 0.05 * float(
+                            data.qvel[controller.qvel_base + 3]
+                        )
+                        correction = np.clip(
+                            0.20 * np.asarray((-pitch, -roll, pitch, roll)), -0.08, 0.08
+                        )
+                        support_indices = np.asarray((6, 7, 10, 11))
+                        support_limits = model.jnt_range[controller.joint_ids[support_indices]]
+                        student_frame_targets[controller.cell.agent_id] = target.copy()
+                        student_frame_targets[controller.cell.agent_id][support_indices] = np.clip(
+                            target[support_indices] + correction,
+                            support_limits[:, 0],
+                            support_limits[:, 1],
                         )
                     target = student_frame_targets[controller.cell.agent_id]
                 raw_torque = kp * (target - q) - kd * dq
@@ -3639,6 +3681,63 @@ def simulate_independent_team_world(
                         ),
                     )
                     student_active_substeps += 1
+                if research_teacher_active:
+                    first_time = student_first_foot_contact_time[controller.cell.agent_id]
+                    elapsed = (
+                        -1.0 if first_time is None else max(0.0, float(data.time) - first_time)
+                    )
+                    research_label = kp * (target - research_foundation_target)
+                    if first_time is None or elapsed <= 0.12:
+                        effect = locomotion_contact_teacher_effect(
+                            model=model,
+                            data=data,
+                            ankle_body_id=controller.left_ankle_body,
+                            actuated_dof_indices=controller.joint_qvel,
+                            ball_position_m=np.asarray(
+                                data.qpos[ball_qpos : ball_qpos + 3], dtype=np.float64
+                            ),
+                            ball_velocity_mps=np.asarray(
+                                data.qvel[ball_qvel : ball_qvel + 3], dtype=np.float64
+                            ),
+                            desired_ball_direction_xy=np.asarray((1.0, 0.0)),
+                            contact_mode="receive",
+                            local_lateral_sign=1.0,
+                            contact_recent=first_time is not None,
+                            config=G1LocomotionContactTeacherConfig(),
+                            receive_capture_progress=(
+                                None if first_time is None else min(1.0, elapsed / 0.12)
+                            ),
+                        )
+                        if effect.active:
+                            effect_torque = 0.25 * effect.torque_nm
+                            raw_torque += effect_torque
+                            research_label += effect_torque
+                            research_teacher_active_substeps += 1
+                            research_teacher_peak_torque_nm = max(
+                                research_teacher_peak_torque_nm,
+                                float(np.max(np.abs(effect_torque))),
+                            )
+                    trace.setdefault("research_receiving_sample_qpos", []).append(
+                        np.r_[
+                            data.qpos[controller.qpos_base : controller.qpos_base + 7],
+                            q,
+                            data.qpos[ball_qpos : ball_qpos + 7],
+                        ]
+                    )
+                    trace.setdefault("research_receiving_sample_qvel", []).append(
+                        np.r_[
+                            data.qvel[controller.qvel_base : controller.qvel_base + 6],
+                            dq,
+                            data.qvel[ball_qvel : ball_qvel + 6],
+                        ]
+                    )
+                    trace.setdefault("research_receiving_sample_has_foot", []).append(
+                        first_time is not None
+                    )
+                    trace.setdefault("research_receiving_sample_elapsed_sec", []).append(elapsed)
+                    trace.setdefault("research_receiving_sample_label_nm", []).append(
+                        research_label.copy()
+                    )
                 projected_torque = _project_joint_safe_torque(
                     joint_position=q,
                     joint_velocity=dq,
@@ -4184,6 +4283,13 @@ def simulate_independent_team_world(
             )
             trace.setdefault("receiving_student_model_hash", []).append(
                 next(iter(students.values())).model_hash
+            )
+        if research_coupled_teacher_agent_id is not None:
+            trace.setdefault("research_receiving_teacher_active_substeps", []).append(
+                research_teacher_active_substeps
+            )
+            trace.setdefault("research_receiving_teacher_peak_torque_nm", []).append(
+                research_teacher_peak_torque_nm
             )
         trace["contact_teacher_target_m"].append(frame_teacher_target_m)
         trace["option_agent_code"].append(
