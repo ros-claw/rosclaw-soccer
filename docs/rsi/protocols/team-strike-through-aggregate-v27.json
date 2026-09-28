@@ -1,0 +1,23 @@
+{
+  "schema": "rsi_team_strike_through_aggregate_protocol_v27",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "previous_recovery_report_path": "/data/rosclaw_overflow/rsi-team-fresh-failure-library-recovered-v26b/report.json",
+  "previous_recovery_report_hash": "sha256:4e1f392b85e77871209e7bb2a9658d4ed5bd7a7304fe69089bf294eb33f96509",
+  "arm_result_root": "/data/rosclaw_overflow/rsi-team-strike-through-v27",
+  "arm_report_hashes": {
+    "parent": "sha256:b3493286f190056cd6f1e859789aff8339d00f111955ec572561f04f731c758f",
+    "front_lat12_through08": "sha256:bc309938dc3b2a4139dbf7ef43dbe6778954273a9e82292c1acd01e6c6731af9",
+    "front_lat12_through16": "sha256:ea1eba06d7aad16dda8493d65791f081a13237f010bacb6bcb23d3690be55a31",
+    "stay_lat12_through08": "sha256:cff573f16da5f0582577ba43bbb5f12b8f9ba8a6fd40462236e527c15a4b1d97",
+    "stay_lat12_through16": "sha256:51c1de4e280e58176e7b23e49ef8d6620365a30bfa079f71d214bf755f185bf5",
+    "front_negative_through08": "sha256:408d1f3f02e3a1400a1a994abfb9784b8d0a54a90326803af2003916f16f7147",
+    "front_negative_through16": "sha256:9fc4f5ee77ebd38a159f146da3e15fb13a8893819a591631f8ea292d9e85558e",
+    "back_lat12_through08": "sha256:067bf264869e8846159c4ce35df89fbb0fb93426f2fe1f7c64f1d78c8d9593fb",
+    "back_lat12_through16": "sha256:1509633768fcacc2ccde1acfa0b0d45a4b706c277a74caaa8bcd87fe27442164",
+    "left_negative_through08": "sha256:f4348279d7b4334be5431cae67e4b77720d227e72d5591cd7d730c5d0e2afa7f",
+    "left_negative_through16": "sha256:d107c9787b0edc93e6fff88de529b423d75d419a4a14759ebe569a2b1eb7ef4f"
+  },
+  "interpretation": "Consumed development scenes only. A physical action-library oracle is not an online chooser; incomplete episodes are excluded."
+}
