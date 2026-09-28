@@ -1,0 +1,21 @@
+{
+  "run_id": "first-touch-continual-v3_1-newseed-candidate201-20260929-v1",
+  "purpose": "SIM_ONLY cross-course online actor test on sixteen new training courses with old-seed retention anchors",
+  "supersedes_rejected_plan": "first-touch-continual-newseed-parent-20260929-v1 expected migrated state c7e75723, rejected after deterministic mean fell 5/16 below 6/16 Parent",
+  "code_sha": "41fb651",
+  "physics_source_hash": "sha256:ff2d8363965c3cf1abfb910a848a226b13df872cf2ca4cfc0ead62d729d8764f",
+  "old_seed_parent_hash": "sha256:95fbaf4ce337fa9fbdf172dd0d1642276e75fe31b5225c152ee459a349ecf079",
+  "old_seed_parent_clean_count": 6,
+  "new_seed_parent_hash": "sha256:a124dd472f6d59ce9fcab3e5e14a32d693f39a49dbf08c94303498287911836d",
+  "new_seed_parent_clean_count": 7,
+  "actor_state_hash": "sha256:8dfa3e3edec18db006869d865156ba1b817d34bbd69207c03eaa4e0d6b39df1a",
+  "candidate_manifest_hash": "sha256:4bb5b9af6bd3420961485ce66c677dd3717b244061eb97c9297b14f263cab65d",
+  "candidate_seed": 201,
+  "new_training_course_seed": 20260929,
+  "course_count": 16,
+  "frozen_modules": ["SONIC low_latency batch encoder/decoder", "reference planner", "robot/ball assets", "motor gains"],
+  "actor_constraint": "six precontact joint residuals within +/-0.08 rad, per-generation anchor shift <=0.01 rad, cumulative anchor shift <=0.04 rad",
+  "metrics": ["new-seed pure-foot count vs 7/16 Parent", "mean reward delta", "nonfoot-contact changes", "old-seed anchor action drift", "joint-limit projections"],
+  "stop_rules": ["Do not promote from noisy training sample", "No actor update unless execution trace and manifest audit", "Fresh remains sealed; no hardware"],
+  "activation_ceiling": "SIM_ONLY"
+}
