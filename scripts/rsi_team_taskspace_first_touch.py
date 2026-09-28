@@ -35,6 +35,7 @@ from rosclaw_soccer.training.independent_team_growth import build_independent_th
 
 class TeamSwingMotor:
     needs_foot_kinematics = True
+    needs_contact_velocity = True
 
     def __init__(self, agent_id: str, enabled: bool, action: dict[str, Any]) -> None:
         self.agent_id = agent_id
@@ -64,6 +65,7 @@ class TeamSwingMotor:
         self.own_foot_force_peak_n: list[float] = []
         self.own_foot_contact_point_w: list[tuple[float, float, float]] = []
         self.own_foot_contact_normal_w: list[tuple[float, float, float]] = []
+        self.own_foot_relative_velocity_w: list[tuple[float, float, float]] = []
         self.contract_hash = hash_json(
             {
                 "schema": "rsi_team_swing_motor_v13",
@@ -86,6 +88,7 @@ class TeamSwingMotor:
         self.own_foot_force_peak_n.append(0.0)
         self.own_foot_contact_point_w.append((0.0, 0.0, 0.0))
         self.own_foot_contact_normal_w.append((0.0, 0.0, 0.0))
+        self.own_foot_relative_velocity_w.append((0.0, 0.0, 0.0))
         kinematics = observation.foot_kinematics
         if kinematics.foot_linear_velocity_world_mps is None:
             raise ValueError("measured same-frame foot velocity required")
@@ -156,15 +159,26 @@ class TeamSwingMotor:
         )
         strongest = max(own_contacts, key=lambda contact: contact.normal_force_n, default=None)
         own_force = 0.0 if strongest is None else strongest.normal_force_n
+        if own_force > 1.0 and (
+            strongest is None
+            or strongest.contact_position_world_m is None
+            or strongest.normal_ball_to_counterpart_world is None
+            or strongest.counterpart_minus_ball_velocity_world_mps is None
+        ):
+            raise ValueError("complete measured ball-foot contact kinematics required")
         if own_force > self.own_foot_force_peak_n[-1]:
             self.own_foot_force_peak_n[-1] = own_force
             if (
                 strongest is not None
                 and strongest.contact_position_world_m is not None
                 and strongest.normal_ball_to_counterpart_world is not None
+                and strongest.counterpart_minus_ball_velocity_world_mps is not None
             ):
                 self.own_foot_contact_point_w[-1] = strongest.contact_position_world_m
                 self.own_foot_contact_normal_w[-1] = strongest.normal_ball_to_counterpart_world
+                self.own_foot_relative_velocity_w[-1] = (
+                    strongest.counterpart_minus_ball_velocity_world_mps
+                )
         if self.first_contact_frame is not None:
             return
         if own_force > 1.0:
@@ -241,6 +255,9 @@ def _run_one(
         observed_own_foot_contact_normal_ball_to_foot_w=np.asarray(motor.own_foot_contact_normal_w)[
             :, None
         ],
+        observed_own_foot_counterpart_minus_ball_velocity_w=np.asarray(
+            motor.own_foot_relative_velocity_w
+        )[:, None],
         predicted_baseline_joint_target_rad=np.asarray(motor.observations["predicted_baseline"])[
             :, None
         ],

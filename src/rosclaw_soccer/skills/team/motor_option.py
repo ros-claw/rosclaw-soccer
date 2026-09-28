@@ -271,6 +271,7 @@ class TeamBallContact:
     # Optional for old aggregate-only adapters; never an actuator handle.
     contact_position_world_m: tuple[float, float, float] | None = None
     normal_ball_to_counterpart_world: tuple[float, float, float] | None = None
+    counterpart_minus_ball_velocity_world_mps: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -304,6 +305,16 @@ class TeamBallContact:
                 )
                 or abs(sum(value * value for value in self.normal_ball_to_counterpart_world) - 1)
                 > 1e-3
+            )
+            or self.counterpart_minus_ball_velocity_world_mps is not None
+            and (
+                self.contact_position_world_m is None
+                or type(self.counterpart_minus_ball_velocity_world_mps) is not tuple
+                or len(self.counterpart_minus_ball_velocity_world_mps) != 3
+                or any(
+                    type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 1000
+                    for value in self.counterpart_minus_ball_velocity_world_mps
+                )
             )
             or (self.agent_id is None) != (self.effector == "environment")
             or (

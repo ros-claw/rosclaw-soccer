@@ -108,6 +108,9 @@ def main() -> None:
             ball = np.asarray(action["pre_step_ball_position_local_m"])
             contact_position = np.asarray(action["observed_own_foot_contact_position_w"])
             contact_normal = np.asarray(action["observed_own_foot_contact_normal_ball_to_foot_w"])
+            contact_relative_velocity = np.asarray(
+                action["observed_own_foot_counterpart_minus_ball_velocity_w"]
+            )
         with np.load(folder / "candidate/trajectory.npz", allow_pickle=False) as physics:
             ball_velocity = np.asarray(physics["ball_velocity"])
             force = np.asarray(physics["ball_contact_force_n"])
@@ -118,6 +121,7 @@ def main() -> None:
             or sides.shape != (250, 1)
             or contact_position.shape != (250, 1, 3)
             or contact_normal.shape != (250, 1, 3)
+            or contact_relative_velocity.shape != (250, 1, 3)
         ):
             raise ValueError("invalid measured full-body foot velocity trace")
         frames = report["focal_foot_contact_frames"]
@@ -159,6 +163,14 @@ def main() -> None:
                 ),
                 "first_contact_normal_ball_to_foot_world": (
                     contact_normal[first, 0].tolist() if first is not None else None
+                ),
+                "first_contact_foot_minus_ball_velocity_world_mps": (
+                    contact_relative_velocity[first, 0].tolist() if first is not None else None
+                ),
+                "first_contact_signed_closing_speed_mps": (
+                    float(-np.dot(contact_relative_velocity[first, 0], contact_normal[first, 0]))
+                    if first is not None
+                    else None
                 ),
             }
         )

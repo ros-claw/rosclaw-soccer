@@ -99,7 +99,15 @@ def test_foreign_or_nonfoot_contact_does_not_release_swing() -> None:
         )
     )
     assert motor.first_contact_frame is None
-    own_foot = TeamBallContact(12, "red.playmaker", "left_foot", 6.0)
+    own_foot = TeamBallContact(
+        12,
+        "red.playmaker",
+        "left_foot",
+        6.0,
+        contact_position_world_m=(1.2, 0.0, 0.1),
+        normal_ball_to_counterpart_world=(-1.0, 0.0, 0.0),
+        counterpart_minus_ball_velocity_world_mps=(1.0, 0.0, 0.0),
+    )
     motor.observe_physics(
         TeamMotorPhysicsObservation(
             time_sec=0.64,

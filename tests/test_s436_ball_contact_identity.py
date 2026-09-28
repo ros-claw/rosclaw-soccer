@@ -46,10 +46,13 @@ def test_measured_contact_geometry_is_immutable_and_unit_normal() -> None:
         2.0,
         contact_position_world_m=(1.0, 0.2, 0.1),
         normal_ball_to_counterpart_world=(1.0, 0.0, 0.0),
+        counterpart_minus_ball_velocity_world_mps=(1.0, 0.0, 0.0),
     )
     assert contact.normal_ball_to_counterpart_world == (1.0, 0.0, 0.0)
     with pytest.raises(ValueError):
         replace(contact, normal_ball_to_counterpart_world=(2.0, 0.0, 0.0))
+    with pytest.raises(ValueError):
+        replace(contact, counterpart_minus_ball_velocity_world_mps=(float("nan"), 0.0, 0.0))
 
 
 def test_legacy_or_explicitly_complete_empty_records():

@@ -4696,7 +4696,18 @@ def _observe_team_motor_physics(
             and 1 - 2 * (pose[4] ** 2 + pose[5] ** 2) > 0.8
             and np.all(excess[limited] < 0.025)
         )
-    measured: list[tuple[int, float, tuple[float, float, float], tuple[float, float, float]]] = []
+    capture_contact_velocity = any(
+        getattr(motors[agent], "needs_contact_velocity", False) is True for agent in observed_agents
+    )
+    measured: list[
+        tuple[
+            int,
+            float,
+            tuple[float, float, float],
+            tuple[float, float, float],
+            tuple[float, float, float] | None,
+        ]
+    ] = []
     for index in range(data.ncon):
         contact = data.contact[index]
         pair = (int(contact.geom1), int(contact.geom2))
@@ -4724,6 +4735,24 @@ def _observe_team_motor_physics(
             return
         if pair[0] != ball_geom:
             normal = -normal
+        relative_velocity = None
+        if capture_contact_velocity:
+            from rosclaw_soccer.skills.team.contact_point_velocity import (
+                measure_contact_relative_velocity_world_mps,
+            )
+
+            try:
+                relative_velocity = measure_contact_relative_velocity_world_mps(
+                    model=model,
+                    data=data,
+                    ball_geom=ball_geom,
+                    counterpart_geom=other,
+                    contact_position_world_m=contact_point,
+                )
+            except (ValueError, TypeError, AttributeError):
+                faults.update(observed_agents)
+                targets.clear()
+                return
         measured.append(
             (
                 other,
@@ -4734,11 +4763,12 @@ def _observe_team_motor_physics(
                     float(contact_point[2]),
                 ),
                 (float(normal[0]), float(normal[1]), float(normal[2])),
+                relative_velocity,
             )
         )
     attributed: list[TeamBallContact] = []
     try:
-        for geom, force, contact_xyz, normal in measured:
+        for geom, force, contact_xyz, normal, relative_velocity in measured:
             owner = next(
                 (
                     c
@@ -4767,6 +4797,7 @@ def _observe_team_motor_physics(
                     normal_force_n=force,
                     contact_position_world_m=contact_xyz,
                     normal_ball_to_counterpart_world=normal,
+                    counterpart_minus_ball_velocity_world_mps=relative_velocity,
                 )
             )
     except (ValueError, TypeError):
@@ -4799,10 +4830,11 @@ def _observe_team_motor_physics(
                     qvel=tuple(float(x) for x in v),
                     world_bodies_safe=safe,
                     foot_normal_force_n=max(
-                        (force for geom, force, _, _ in measured if geom in feet), default=0.0
+                        (force for geom, force, _, _, _ in measured if geom in feet), default=0.0
                     ),
                     other_non_ground_normal_force_n=max(
-                        (force for geom, force, _, _ in measured if geom not in feet), default=0.0
+                        (force for geom, force, _, _, _ in measured if geom not in feet),
+                        default=0.0,
                     ),
                     observer_agent_id=agent,
                     contacts_complete=True,
