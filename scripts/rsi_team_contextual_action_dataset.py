@@ -29,7 +29,7 @@ def courses_from_protocol(protocol: dict[str, Any]) -> list[dict[str, Any]]:
                 courses.append(
                     {
                         "name": f"d{index:03d}",
-                        "scenario_id": f"rsi.context-action-development.d{index:03d}",
+                        "scenario_id": f"s199.rsi-context-action-development-d{index:03d}",
                         "ball_initial_position_m": [x, y, 0.115],
                         "ball_initial_velocity_mps": [vx, 0.0, 0.0],
                         "seed": grid["seed_base"] + index,
