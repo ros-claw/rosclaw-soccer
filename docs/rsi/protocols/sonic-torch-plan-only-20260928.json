@@ -1,0 +1,20 @@
+{
+  "run_id": "sonic-torch-plan-only-20260928-v1",
+  "purpose": "SIM_ONLY eight-lane PhysX A/B of two-phase SONIC planner plus frozen batched GPU decoder without per-player ONNX encoder/decoder",
+  "code_sha": "0919fc2",
+  "physics_source_hash": "sha256:e5e39a765531c60f6346fabb41a80532e49ee7f22e8d960f90118f50d6b4bedb",
+  "robot_asset_hash": "sha256:cfbcca7b005c418697d35f762d81ec389d6242a0b4e73d889c25384724d879e8",
+  "frozen_foundation_qualification_hash": "sha256:06b4e67ec1761904ea6c925b26df69ca83b067cda67795e23fdaa1fa50278b14",
+  "simulator": "Isaac Sim 6.0.1 / Isaac Lab / PhysX; eight 8 m lanes; 300 x 20 ms control frames",
+  "baseline_parent_report_hash": "sha256:c273a88d66344b666756fc5c051d81050d3ab9fe512fba2cebf00b937d0740ad",
+  "batch_drive_report_hash": "sha256:9326e4099bab7ff8c6c37917f80bed8d014263bafa4f976b0cec1db59729c1ed",
+  "saved_body_plan_only_parity_hash": "sha256:63db7b846d2367c7d1e9ded99e4e44e60655a90e81b8ffb80e00a01d489de5ec",
+  "dataset_contract": "rolling 0.11 m ball; x=2.4/2.6 m, y=+/-0.1 m, vx=+/-0.5 m/s",
+  "fresh_opened": false,
+  "trainable_modules": [],
+  "single_changed_variable": "two-phase explicit navigation commits frozen batched Torch action while CPU SONIC only updates planner reference every 20 frames",
+  "metrics": ["wall-clock stage times", "internal target consistency <=0.001 rad", "clean foot-only first-touch count", "contact body classes and frame", "minimum pelvis z", "ball trace difference against shadow and batch-drive controls"],
+  "acceptance": ["No invalid state, lane escape or pelvis below 0.65 m", "No worse than original 3/8 clean development contacts", "No policy promotion or Fresh opening from this test"],
+  "stop_rules": ["Abort on source/asset/foundation mismatch", "Abort on missed/invalid batch commit", "Never count repeated identical courses as new learning samples"],
+  "activation_ceiling": "SIM_ONLY"
+}
