@@ -1,0 +1,29 @@
+{
+  "schema": "rsi_team_context_phase_fresh_holdout_protocol_v18",
+  "activation_ceiling": "SIM_ONLY",
+  "fresh_holdout": true,
+  "promotion_authorized": false,
+  "parent_training_report_hash": "sha256:a6654dfb8e182e53b3e3aaaf2ae92a6c0be9396bfae7c78968849c3ca5091804",
+  "fixture": "s199.independent.3v3",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "courses": [
+    {"name": "h01", "scenario_id": "s199.rsi-context-fresh-h01", "ball_initial_position_m": [3.55, -0.65, 0.115], "ball_initial_velocity_mps": [-0.4, 0.0, 0.0], "seed": 920700},
+    {"name": "h02", "scenario_id": "s199.rsi-context-fresh-h02", "ball_initial_position_m": [3.65, -0.75, 0.115], "ball_initial_velocity_mps": [-0.6, 0.0, 0.0], "seed": 920701},
+    {"name": "h03", "scenario_id": "s199.rsi-context-fresh-h03", "ball_initial_position_m": [3.75, -0.65, 0.115], "ball_initial_velocity_mps": [-0.6, 0.0, 0.0], "seed": 920702},
+    {"name": "h04", "scenario_id": "s199.rsi-context-fresh-h04", "ball_initial_position_m": [3.85, -0.75, 0.115], "ball_initial_velocity_mps": [-0.4, 0.0, 0.0], "seed": 920703},
+    {"name": "h05", "scenario_id": "s199.rsi-context-fresh-h05", "ball_initial_position_m": [3.95, -0.65, 0.115], "ball_initial_velocity_mps": [-0.4, 0.0, 0.0], "seed": 920704},
+    {"name": "h06", "scenario_id": "s199.rsi-context-fresh-h06", "ball_initial_position_m": [4.05, -0.75, 0.115], "ball_initial_velocity_mps": [-0.6, 0.0, 0.0], "seed": 920705},
+    {"name": "h07", "scenario_id": "s199.rsi-context-fresh-h07", "ball_initial_position_m": [3.75, -0.85, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920706},
+    {"name": "h08", "scenario_id": "s199.rsi-context-fresh-h08", "ball_initial_position_m": [3.85, -0.55, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920707}
+  ],
+  "accept_condition": "all 8 Parent/Candidate pairs physically safe, zero Candidate nonfoot contacts or control faults, complete motor/navigation audits, Candidate safe foot contact >=6/8, useful forward return speed >=0.5m/s >=4/8, and both counts strictly exceed Parent; only contact-layer proof, never team or REAL promotion",
+  "policy_intervention_authorized": false
+}
