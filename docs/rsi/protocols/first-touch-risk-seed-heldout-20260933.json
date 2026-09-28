@@ -1,0 +1,24 @@
+{
+  "run_id": "first-touch-risk-seed-heldout-20260933-v1",
+  "purpose": "SIM_ONLY diagnostic test of whether G1 proprioception adds predictive value before ball contact",
+  "dataset_builder_source_hash": "sha256:60890ee29ce413120dc6e78a043f139128b54e7131db5727463f99e560c07d0c",
+  "risk_probe_source_hash": "sha256:8e112e512a3950728a74cfdae19c57529eff3ddf4497a2c60d9404b1344f8c63",
+  "training_seeds": [20260930, 20260931, 20260932],
+  "holdout_seed": 20260933,
+  "source_audit_hashes": [
+    "sha256:1344a58ef91cc58a1fc555bdfd8acec6a524274548909575eceebaf6830a055d",
+    "sha256:6818457ce27f7e89df9d77880435a2b610c4e2e128c02a7ecac71d2c9c2703df",
+    "sha256:d08cf7fca94596bac0238e917aec7e981dbc16c91b11922ff5b45409ebc0b32a",
+    "sha256:0c323b96535dd1f81f7ec7b2663de4ac417c9fc1a68d5b987e268a17a8179641"
+  ],
+  "episode_count": 64,
+  "observation_frame": 60,
+  "earliest_contact_frame_verified": 75,
+  "feature_ablations": ["ball_only", "ball_plus_proprio"],
+  "baseline": "positive-ball-velocity direction rule",
+  "hyperparameter_selection": "whole-seed cross-validation on training seeds only",
+  "interpretation": "risk prediction is not motor improvement; only a heldout advantage can justify testing a body-aware controller",
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
