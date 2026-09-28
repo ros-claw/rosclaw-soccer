@@ -1,0 +1,16 @@
+{
+  "run_id": "first-touch-body-dataset-seed20260932-33-v1",
+  "purpose": "SIM_ONLY independent train-only proprioceptive contact data for seed-held-out temporal learning",
+  "physics_source_hash": "sha256:6b69ba4ae5a409929db1f996af277c379023f9e72823a732d85a4f09bd646eda",
+  "training_course_seeds": [20260932, 20260933],
+  "course_count_per_seed": 16,
+  "frames": 300,
+  "navigation_speed_mps": 1.4,
+  "model": "qualified frozen SONIC low_latency batch-plan-only",
+  "record_body_trace": true,
+  "primary_failure_slice": "incoming moving balls and knee/shin contact before controlled foot contact",
+  "evaluation_rule": "learn on whole seeds 20260930-32, evaluate once on seed 20260933; correlated frames do not increase episode count",
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
