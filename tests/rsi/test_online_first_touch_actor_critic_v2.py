@@ -62,6 +62,11 @@ def test_v2_update_is_bounded_and_cannot_reconsume(
     sampled = learner.sample_candidate(tmp_path, updated, seed=102)
     assert sampled["actor_state_hash"] == updated["state_hash"]
     assert max(abs(value) for row in sampled["actions_rad"] for value in row) <= 0.08
+    mean = learner.deterministic_mean_candidate(tmp_path, updated)
+    assert mean["evaluation_mode"] == "FROZEN_ACTOR_MEAN"
+    assert mean["actor_state_hash"] == updated["state_hash"]
+    assert np.max(np.abs(mean["actions_rad"])) <= 0.04
+    assert mean["actions_rad"] != sampled["actions_rad"]
 
 
 def test_v2_rejects_relabelled_action_and_state(

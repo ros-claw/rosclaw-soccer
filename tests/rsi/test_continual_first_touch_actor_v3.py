@@ -1,0 +1,94 @@
+"""Cross-course actor must preserve a frozen domain and one-use train seeds."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from rosclaw_soccer.rsi import continual_first_touch_actor_v3 as learner
+from rosclaw_soccer.rsi import online_first_touch_actor_critic_v2 as v2
+from rosclaw_soccer.rsi.first_touch_course_catalog import sample_training_courses
+from rosclaw_soccer.sim.contracts import hash_json
+
+
+def _setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    parent_a = tmp_path / "seed_a"
+    parent_b = tmp_path / "seed_b"
+    parent_a.mkdir()
+    parent_b.mkdir()
+
+    def report(seed: int, symbol: str):
+        courses = sample_training_courses(seed)
+        return {
+            "report_hash": "sha256:" + symbol * 64,
+            "training_course_seed": seed,
+            "course_catalog_hash": hash_json(courses),
+            "asset_hash": "sha256:" + "c" * 64,
+            "sonic_qualification_hash": "sha256:" + "d" * 64,
+            "torch_batch_plan_only": True,
+            "environments": [
+                {"contact_body_indices": [4], "minimum_pelvis_z_m": 0.7} for _ in courses
+            ],
+        }, courses
+
+    parents = {parent_a: report(101, "a"), parent_b: report(102, "b")}
+    monkeypatch.setattr(v2, "_parent", lambda folder: parents[folder])
+    monkeypatch.setattr(
+        learner,
+        "audit_first_touch_candidate_execution",
+        lambda *_args, **_kwargs: {
+            "report_hash": "sha256:" + "e" * 64,
+            "reward_per_course": [1.0] * 6 + [-1.0] * 10,
+            "candidate_clean_foot_only_count": 6,
+        },
+    )
+    v2_state = v2._state(
+        parents[parent_a][0], 1, np.zeros((4, 6)), np.zeros(4), ["sha256:" + "f" * 64]
+    )
+    return parent_a, parent_b, v2_state
+
+
+def test_continual_update_accepts_new_seed_and_retains_anchors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parent_a, parent_b, v2_state = _setup(monkeypatch, tmp_path)
+    state = learner.migrate_v2(parent_a, v2_state)
+    manifest = learner.sample_candidate(parent_b, state, seed=103)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    candidate_folder = tmp_path / "candidate"
+    candidate_folder.mkdir()
+    updated, report = learner.update(parent_b, state, candidate_folder, manifest_path)
+    assert updated["consumed_training_seeds"] == [101, 102]
+    assert report["physical_episode_count"] == 16
+    assert report["maximum_per_generation_anchor_shift_rad"] <= 0.01
+    assert report["maximum_global_anchor_shift_rad"] <= 0.04
+    assert report["fresh_opened"] is False
+    with pytest.raises(ValueError, match="distinct-course"):
+        learner.sample_candidate(parent_b, updated, seed=104)
+    with pytest.raises(ValueError, match="distinct-course"):
+        learner.update(parent_b, updated, candidate_folder, manifest_path)
+
+
+def test_continual_update_rejects_relabelled_action_or_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parent_a, parent_b, v2_state = _setup(monkeypatch, tmp_path)
+    state = learner.migrate_v2(parent_a, v2_state)
+    manifest = learner.sample_candidate(parent_b, state, seed=103)
+    manifest["actions_rad"][0][0] += 0.001
+    manifest["candidate_hash"] = hash_json(
+        {key: value for key, value in manifest.items() if key != "candidate_hash"}
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    candidate_folder = tmp_path / "candidate"
+    candidate_folder.mkdir()
+    with pytest.raises(ValueError, match="differ from committed"):
+        learner.update(parent_b, state, candidate_folder, manifest_path)
+    state["actor_weights"][0][0] = 0.01
+    with pytest.raises(ValueError, match="commitment"):
+        learner.sample_candidate(parent_b, state, seed=104)
