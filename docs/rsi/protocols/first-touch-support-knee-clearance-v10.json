@@ -1,0 +1,25 @@
+{
+  "schema": "rsi_first_touch_support_knee_clearance_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "motivation": "v9c audited consumed holdout: at most two new rescues across fourteen lanes; seed54 failures mostly involve support-side knee/shank contact, while current task-space correction changes only airborne swing leg.",
+  "frozen_parent_actor_hash": "sha256:78349ed4999982f0e1460fdc183ceb20052e756e1eac1458d74c4c13934955a6",
+  "physical_control": "Keep the airborne swing-foot correction at 0.08m. Use measured support-foot and support-knee Jacobians to retract only support-knee x through the support-foot Jacobian nullspace, with per-joint target and joint-limit shields. No direct torque and no real robot.",
+  "support_knee_retract_m": [0.04, 0.08],
+  "maximum_support_joint_delta_rad": 0.18,
+  "development_course_seeds": [20260953, 20260954],
+  "additional_development_seeds_if_needed": [20260951, 20260952],
+  "diagnostic_advance_gate": {
+    "minimum_distinct_new_clean_rescues_across_development": 2,
+    "require_independent_per_frame_action_audit": true,
+    "minimum_root_height_m": 0.65
+  },
+  "fresh_sealed_holdout_seeds_if_development_gate_passes": [20260955, 20260956],
+  "holdout_gate": {
+    "minimum_combined_clean_foot_gain_over_parent": 4,
+    "require_no_seed_clean_foot_regression": true,
+    "require_all_parent_successes_retained": true,
+    "minimum_root_height_m": 0.65
+  },
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
