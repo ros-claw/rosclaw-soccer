@@ -1,0 +1,24 @@
+{
+  "schema": "rsi_team_taskspace_family_protocol_v13b",
+  "activation_ceiling": "SIM_ONLY",
+  "consumed_parent_report_hash": "sha256:61528fe0f07d04cc889b05ffbd6a53241e1daf67e27ad911403ab9894b933ee7",
+  "consumed_first_candidate_report_hash": "sha256:151d80a24e708c314965a98dbe66acf217be9328675829d6dffab4d626cadbb4",
+  "cause_hypothesis": "The first bounded swing reduced nearest foot-ball distance 0.236 to 0.182 m but left approximately 0.13 m lateral and 0.08 m vertical separation; test only the already-defined forward/lateral task-space caps, not an arbitrary joint patch.",
+  "fixture": "s199.independent.3v3",
+  "scenario": {
+    "scenario_id": "s199.rsi-late-swing-shadow-v12",
+    "ball_initial_position_m": [3.8, -0.7, 0.115],
+    "ball_initial_velocity_mps": [-0.5, 0.0, 0.0],
+    "seed": 920629
+  },
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "candidate_actions": [
+    {"name": "lateral10", "entry_frame": 30, "forward_cap_m": 0.08, "lateral_cap_m": 0.1, "vertical_offset_m": 0.04, "swing_foot_acquisition_gap_m": 0.55},
+    {"name": "forward16", "entry_frame": 30, "forward_cap_m": 0.16, "lateral_cap_m": 0.05, "vertical_offset_m": 0.04, "swing_foot_acquisition_gap_m": 0.55},
+    {"name": "combined", "entry_frame": 30, "forward_cap_m": 0.16, "lateral_cap_m": 0.1, "vertical_offset_m": 0.04, "swing_foot_acquisition_gap_m": 0.55}
+  ],
+  "advance_condition": "at least one real focal foot-ball collision, no focal nonfoot ball collision, safe whole world, complete per-frame task-space audit; development only, then learn a guarded controller on varied training scenes",
+  "stop_condition": "if no action collides with the ball, stop this bounded action family and revisit stance, reach geometry and locomotion substrate before any fresh holdout",
+  "promotion_authorized": false
+}
