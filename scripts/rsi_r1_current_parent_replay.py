@@ -66,6 +66,7 @@ def run(
     seed: int = 207_200,
     pass_speed_mps: float = 0.80,
     pass_stroke_sec: float = 0.0,
+    preferred_foot: str = "nearest",
 ) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
@@ -89,6 +90,7 @@ def run(
         default_phase_strike_teacher(),
         pass_strike_foot_speed_mps=pass_speed_mps,
         pass_stroke_duration_sec=pass_stroke_sec,
+        preferred_foot=preferred_foot,
     )
     protocol = {
         "schema": "rosclaw_soccer.rsi.r1_current_parent_replay_protocol.v1",
@@ -200,6 +202,7 @@ def run(
         and seed == 207_200
         and pass_speed_mps == 0.80
         and pass_stroke_sec == 0.0
+        and preferred_foot == "nearest"
     )
     report = {
         "schema": "rosclaw_soccer.rsi.r1_current_parent_replay.v1",
@@ -235,6 +238,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=207_200)
     parser.add_argument("--pass-speed", type=float, default=0.80)
     parser.add_argument("--pass-stroke", type=float, default=0.0)
+    parser.add_argument("--preferred-foot", choices=("nearest", "left", "right"), default="nearest")
     args = parser.parse_args()
     report = run(
         args.asset_root,
@@ -245,6 +249,7 @@ def main() -> None:
         seed=args.seed,
         pass_speed_mps=args.pass_speed,
         pass_stroke_sec=args.pass_stroke,
+        preferred_foot=args.preferred_foot,
     )
     print(
         json.dumps(
