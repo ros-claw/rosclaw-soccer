@@ -206,3 +206,38 @@ class ReceivingSonicFeedbackOption(ReceivingSonicOption):
                 self.feedback_foot_seen = True
             else:
                 self.feedback_nonfoot_seen = True
+
+
+class RecordingReceivingSonicOption(ReceivingSonicOption):
+    """Read-only exact motor-observation capture for offline receiving training."""
+
+    def __init__(
+        self,
+        model_root: Path,
+        agent_id: str,
+        *,
+        start_frame: int,
+        velocity_scale: float = 1.0,
+        planner_seed: int = 920101,
+        latent_schedule: SonicLatentSchedule | None = None,
+        command_scale_schedule: SonicCommandScaleSchedule | None = None,
+        pose_reference: SonicPoseReference | None = None,
+        experimental_command_replanning: bool = False,
+    ) -> None:
+        super().__init__(
+            model_root,
+            agent_id,
+            start_frame=start_frame,
+            velocity_scale=velocity_scale,
+            planner_seed=planner_seed,
+            latent_schedule=latent_schedule,
+            command_scale_schedule=command_scale_schedule,
+            pose_reference=pose_reference,
+            experimental_command_replanning=experimental_command_replanning,
+        )
+        self.recorded: list[tuple[TeamMotorObservation, TeamMotorTarget | None]] = []
+
+    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:
+        target = super().propose(observation)
+        self.recorded.append((observation, target))
+        return target

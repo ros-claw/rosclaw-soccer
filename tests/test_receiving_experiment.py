@@ -24,6 +24,13 @@ from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
         {"sonic_command_replanning": 1},
         {"sonic_command_replanning": True, "sonic_latent_schedule": object()},
         {"sonic_command_replanning": True, "sonic_pose_reference": object()},
+        {"capture_sonic_targets": True},
+        {"capture_sonic_targets": 1},
+        {
+            "sonic_model_root": Path("missing"),
+            "capture_sonic_targets": True,
+            "sonic_start_frame": 1,
+        },
         {"suppression": ContactTeacherSuppression("red.playmaker", 0)},
         {"suppression": ContactTeacherSuppression("blue.playmaker", 300)},
         {"sonic_model_root": Path("missing"), "sonic_start_frame": 300},

@@ -16,6 +16,7 @@ from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.providers.g1.receiving_sonic import (
     ReceivingSonicFeedbackOption,
     ReceivingSonicOption,
+    RecordingReceivingSonicOption,
 )
 from rosclaw_soccer.providers.g1.sonic_command_scale import SonicCommandScaleSchedule
 from rosclaw_soccer.providers.g1.sonic_latent import SonicLatentSchedule
@@ -68,6 +69,7 @@ def simulate_r0_receiving_course(
     sonic_pose_reference: SonicPoseReference | None = None,
     sonic_command_replanning: bool = False,
     feedback_actor_path: Path | None = None,
+    capture_sonic_targets: bool = False,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -137,12 +139,17 @@ def simulate_r0_receiving_course(
         or sonic_pose_reference is not None
         or sonic_command_replanning
         or feedback_actor_path is not None
+        or capture_sonic_targets
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
     if sonic_model_root is not None and (
         type(sonic_start_frame) is not int or not 0 <= sonic_start_frame < 300
     ):
         raise ValueError("SONIC must enter inside the reference course")
+    if type(capture_sonic_targets) is not bool or (
+        capture_sonic_targets and (feedback_actor_path is not None or sonic_start_frame != 0)
+    ):
+        raise ValueError("pure frame-zero SONIC motor recording required")
     # Validate physical launch values before allocating/loading the simulator.
     receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     fixture = collection_fixture(asset_root, keeper_preview=True)
@@ -160,6 +167,8 @@ def simulate_r0_receiving_course(
         option_type = (
             ReceivingSonicFeedbackOption
             if feedback_actor_path is not None
+            else RecordingReceivingSonicOption
+            if capture_sonic_targets
             else ReceivingSonicOption
         )
         extra = (
@@ -223,6 +232,27 @@ def simulate_r0_receiving_course(
         trace["feedback_actor_hash"] = np.asarray([actor.artifact_hash])
         trace["feedback_actor_foot_seen"] = np.asarray([feedback_motor.feedback_foot_seen])
         trace["feedback_actor_nonfoot_seen"] = np.asarray([feedback_motor.feedback_nonfoot_seen])
+    if capture_sonic_targets:
+        recording_motor = motors[course.agent_id]
+        assert isinstance(recording_motor, RecordingReceivingSonicOption)
+        motor_records = recording_motor.recorded
+        if len(motor_records) != 300 or any(target is None for _, target in motor_records):
+            raise ValueError("complete measured SONIC training trace required")
+        trace["sonic_recorded_qpos"] = np.asarray(
+            [observation.qpos for observation, _ in motor_records]
+        )
+        trace["sonic_recorded_qvel"] = np.asarray(
+            [observation.qvel for observation, _ in motor_records]
+        )
+        trace["sonic_recorded_target"] = np.asarray(
+            [target.target_rad for _, target in motor_records if target is not None]
+        )
+        trace["sonic_recorded_kp"] = np.asarray(
+            [target.kp for _, target in motor_records if target is not None]
+        )
+        trace["sonic_recorded_kd"] = np.asarray(
+            [target.kd for _, target in motor_records if target is not None]
+        )
     if sonic_model_root is not None and sonic_command_scale_schedule is not None:
         scale_records = motors[course.agent_id].command_scale_records
         trace["sonic_command_scale_local_frames"] = np.asarray(
