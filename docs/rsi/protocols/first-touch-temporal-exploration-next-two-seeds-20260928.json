@@ -1,0 +1,24 @@
+{
+  "run_id": "first-touch-temporal-exploration-next-two-seeds-20260928-v1",
+  "purpose": "SIM_ONLY independent action-intervention expansion before a shared actor update",
+  "physics_source_hash": "sha256:6d8d15b6b90b3a4b6ee9707c83ac6c87ead2ab104557c8f4e779a4c034e71dcb",
+  "training_course_seeds": [20260932, 20260933],
+  "parent_clean_counts": [7, 8],
+  "exploration_seeds": [103, 104],
+  "candidate_manifest_hashes": [
+    "sha256:56e0099af088eba57bae005b375aef2eddbad4cf8e7f01fbff3888c16b2b54d8",
+    "sha256:61a6b58ad95878a5e2d3ad129009f41c9ddcfbbf0f0db1acd39bbc00513da4f5"
+  ],
+  "weight_noise_std": 0.5,
+  "bounded_residual_rad": 0.08,
+  "new_independent_episode_count": 32,
+  "combined_independent_episode_count_after_audit": 64,
+  "previous_exploration_audit_hashes": [
+    "sha256:a2b9d7d2a47792f25c09520c33e0ebeedab13f717de2fa3c6c0f8a07d95e5aef",
+    "sha256:46a9df76071def24b45868a6db9d6c0c93dc744497ca8184b9fae2d50603b227"
+  ],
+  "qualification": "training feedback only; any shared actor update remains provisional until deterministic physical retention and independent new-seed tests",
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
