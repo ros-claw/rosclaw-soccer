@@ -1,0 +1,20 @@
+{
+  "schema": "rsi_team_lateral_foot_interception_protocol_v41",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "baseline_protocol": "docs/rsi/protocols/team-large-context-fresh-exam-v40.json",
+  "baseline_report": "/data/rosclaw_overflow/rsi-team-large-context-fresh-exam-v40/report.json",
+  "baseline_report_hash": "sha256:02a0ab6a8ea1dc0619b5f01d02d679a1a14a16dc362f0ef9d74cce08eb6685cf",
+  "candidate_variants": [
+    {"name": "lateral10_gap55", "lateral_cap_m": 0.10, "swing_foot_acquisition_gap_m": 0.55},
+    {"name": "lateral10_gap95", "lateral_cap_m": 0.10, "swing_foot_acquisition_gap_m": 0.95}
+  ],
+  "development_gate": {
+    "minimum_scenes": 48,
+    "minimum_safe_contact_gain_vs_fixed": 5,
+    "minimum_useful_gain_vs_fixed": 3,
+    "maximum_unsafe_excess_vs_fixed": 0
+  },
+  "interpretation": "Reuse all 48 consumed v40 physical states to test whether bounded lateral foot reach improves contact and useful pass without reducing safety. A passing development gate authorizes only a separately predeclared new-state exam, never promotion."
+}
