@@ -6,11 +6,13 @@ import numpy as np
 
 from rosclaw_soccer.skills.team.foot_kinematics import TeamFootKinematics
 from rosclaw_soccer.skills.team.motor_option import (
+    TeamBallContact,
     TeamMotorFoundation,
     TeamMotorObservation,
+    TeamMotorPhysicsObservation,
     TeamMotorTarget,
 )
-from scripts.rsi_team_taskspace_first_touch import TeamSwingMotor
+from scripts.rsi_team_taskspace_first_touch import TeamSwingMotor, world_contact_code
 
 ACTION = {
     "entry_frame": 30,
@@ -73,3 +75,53 @@ def test_parent_is_exact_and_candidate_is_bounded() -> None:
     assert 0 < np.max(np.abs(candidate_target[:6])) <= 0.35
     assert np.allclose(candidate_target[6:], 0)
     assert candidate.side == 0
+
+
+def test_foreign_or_nonfoot_contact_does_not_release_swing() -> None:
+    motor = TeamSwingMotor("red.playmaker", True, ACTION)
+    for frame in range(31):
+        motor.propose(_observation(frame, 2.0 if frame < 30 else 1.35))
+    q = _observation(30, 1.35).qpos
+    foreign = TeamBallContact(10, "blue.playmaker", "right_foot", 5.0)
+    own_body = TeamBallContact(11, "red.playmaker", "body", 4.0)
+    motor.observe_physics(
+        TeamMotorPhysicsObservation(
+            time_sec=0.62,
+            qpos=q,
+            qvel=(0.0,) * 41,
+            world_bodies_safe=True,
+            foot_normal_force_n=0.0,
+            other_non_ground_normal_force_n=5.0,
+            observer_agent_id="red.playmaker",
+            contacts_complete=True,
+            ball_contacts=(foreign, own_body),
+        )
+    )
+    assert motor.first_contact_frame is None
+    own_foot = TeamBallContact(12, "red.playmaker", "left_foot", 6.0)
+    motor.observe_physics(
+        TeamMotorPhysicsObservation(
+            time_sec=0.64,
+            qpos=q,
+            qvel=(0.0,) * 41,
+            world_bodies_safe=True,
+            foot_normal_force_n=6.0,
+            other_non_ground_normal_force_n=0.0,
+            observer_agent_id="red.playmaker",
+            contacts_complete=True,
+            ball_contacts=(own_foot,),
+        )
+    )
+    assert motor.first_contact_frame == 30
+
+
+def test_contact_code_uses_sorted_roster_not_fixture_layout() -> None:
+    layout = (
+        "red.goalkeeper",
+        "red.playmaker",
+        "red.finisher",
+        "blue.goalkeeper",
+        "blue.playmaker",
+        "blue.finisher",
+    )
+    assert world_contact_code("red.playmaker", layout) == 6

@@ -75,11 +75,19 @@ def main() -> None:
             scenario=scenario,
             protocol={**protocol, "candidate_action": action},
         )
+        contact_agrees = candidate["motor_first_contact_frame"] == (
+            candidate["focal_foot_contact_frames"][0]
+            if candidate["focal_foot_contact_frames"]
+            else None
+        ) and bool(candidate["motor_observed_own_foot_contact_frames"]) == bool(
+            candidate["focal_foot_contact_frames"]
+        )
         safe = bool(
             candidate["world_result"]["safe"]
             and not candidate["world_result"]["motor_fault_agents"]
             and not candidate["focal_nonfoot_contact_frames"]
             and candidate["action_audit"]["taskspace_action_audited"]
+            and contact_agrees
         )
         results.append(
             {
@@ -88,6 +96,7 @@ def main() -> None:
                 "focal_foot_contact_frames": candidate["focal_foot_contact_frames"],
                 "focal_nonfoot_contact_frames": candidate["focal_nonfoot_contact_frames"],
                 "safe": safe,
+                "contact_observers_agree": contact_agrees,
                 "mechanism_contact_found": bool(safe and candidate["focal_foot_contact_frames"]),
                 "action_audit": candidate["action_audit"],
             }

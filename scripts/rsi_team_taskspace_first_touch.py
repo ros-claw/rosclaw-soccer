@@ -58,6 +58,7 @@ class TeamSwingMotor:
         }
         self.joint_limits: np.ndarray[Any, Any] | None = None
         self.contact_event_times: list[float] = []
+        self.own_foot_force_peak_n: list[float] = []
         self.contract_hash = hash_json(
             {
                 "schema": "rsi_team_swing_motor_v13",
@@ -77,6 +78,7 @@ class TeamSwingMotor:
         ):
             raise ValueError("same-player measured foot and foundation target required")
         self.next_frame += 1
+        self.own_foot_force_peak_n.append(0.0)
         kinematics = observation.foot_kinematics
         feet = np.asarray(kinematics.foot_position_world_m, dtype=float)
         jacobian = np.asarray(kinematics.foot_linear_jacobian_world, dtype=float)
@@ -136,14 +138,31 @@ class TeamSwingMotor:
     def observe_physics(self, observation: TeamMotorPhysicsObservation) -> None:
         if observation.observer_agent_id != self.agent_id or not observation.world_bodies_safe:
             raise ValueError("unsafe or foreign physical motor observation")
+        own_force = max(
+            (
+                contact.normal_force_n
+                for contact in observation.ball_contacts
+                if contact.agent_id == self.agent_id
+                and contact.effector in {"left_foot", "right_foot"}
+            ),
+            default=0.0,
+        )
+        self.own_foot_force_peak_n[-1] = max(self.own_foot_force_peak_n[-1], own_force)
         if self.first_contact_frame is not None:
             return
-        if any(contact.normal_force_n > 1.0 for contact in observation.ball_contacts):
+        if own_force > 1.0:
             self.first_contact_frame = self.next_frame - 1
             self.contact_event_times.append(observation.time_sec)
             if self.side >= 0:
                 ids = list(range(self.side * 6, self.side * 6 + 6))
                 self.contact_delta = self.last_residual[ids].copy()
+
+
+def world_contact_code(agent_id: str, player_ids: tuple[str, ...]) -> int:
+    """Match the shared world's sorted-roster contact-code contract."""
+    if len(set(player_ids)) != len(player_ids) or agent_id not in player_ids:
+        raise ValueError("focal agent missing or duplicate player identity")
+    return sorted(player_ids).index(agent_id) + 1
 
 
 def _run_one(
@@ -174,6 +193,14 @@ def _run_one(
     physics_path = folder / "trajectory.npz"
     np.savez_compressed(physics_path, **trace)  # type: ignore[arg-type]
     force = np.asarray(trace["ball_contact_force_n"])
+    agent_codes = np.asarray(trace["ball_contact_agent_code"])
+    effectors = np.asarray(trace["ball_contact_effector_code"])
+    # Shared-world contact codes follow sorted roster IDs, not fixture layout.
+    focal_code = world_contact_code(
+        motor.agent_id, tuple(player.agent_id for player in fixture.players)
+    )
+    focal_foot = (force > 1.0) & (agent_codes == focal_code) & np.isin(effectors, (1, 2))
+    observed_own_foot_force = np.asarray(motor.own_foot_force_peak_n)
     action_path = folder / "taskspace_trace.npz"
     np.savez_compressed(
         action_path,
@@ -185,7 +212,9 @@ def _run_one(
         executed_taskspace_joint_target_rad=np.asarray(motor.observations["executed"])[:, None],
         taskspace_joint_limits_rad=motor.joint_limits[None],
         pre_step_ball_position_local_m=np.asarray(motor.observations["ball"])[:, None],
-        observed_ball_body_contact_force_peak_n=np.repeat(force[:, None, None], 6, axis=2),
+        observed_ball_body_contact_force_peak_n=np.repeat(
+            observed_own_foot_force[:, None, None], 6, axis=2
+        ),
         predicted_baseline_joint_target_rad=np.asarray(motor.observations["predicted_baseline"])[
             :, None
         ],
@@ -205,15 +234,7 @@ def _run_one(
         action_audit = audit_taskspace_swing_trace(
             action_trace, audit_report, frames=protocol["frames"], count=1
         )
-    agent_codes = np.asarray(trace["ball_contact_agent_code"])
-    effectors = np.asarray(trace["ball_contact_effector_code"])
     force_mask = force > 1.0
-    focal_code = next(
-        index + 1
-        for index, player in enumerate(fixture.players)
-        if player.agent_id == motor.agent_id
-    )
-    focal_foot = force_mask & (agent_codes == focal_code) & np.isin(effectors, (1, 2))
     focal_nonfoot = (np.asarray(trace["ball_nonfoot_contact_force_n"]) > 1.0) & (
         np.asarray(trace["ball_nonfoot_contact_agent_code"]) == focal_code
     )
@@ -232,6 +253,9 @@ def _run_one(
         "first_any_ball_contact_frame": int(contact_frames[0]) if len(contact_frames) else None,
         "ball_contact_frame_count": int(len(contact_frames)),
         "focal_foot_contact_frames": np.flatnonzero(focal_foot).tolist(),
+        "motor_observed_own_foot_contact_frames": np.flatnonzero(
+            observed_own_foot_force > 1.0
+        ).tolist(),
         "focal_nonfoot_contact_frames": np.flatnonzero(focal_nonfoot).tolist(),
         "ball_contact_agent_codes": np.unique(agent_codes[force_mask]).tolist(),
         "ball_contact_effector_codes": np.unique(effectors[force_mask]).tolist(),

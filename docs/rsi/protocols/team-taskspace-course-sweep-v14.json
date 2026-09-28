@@ -1,0 +1,28 @@
+{
+  "schema": "rsi_team_taskspace_course_sweep_protocol_v14",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "parent_mechanism_report_hash": "sha256:9e0f80d981ffba45b1386ab40199412fb2666097156581f2e2d0675b823f0f3c",
+  "fixture": "s199.independent.3v3",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "courses": [
+    {"name": "near", "scenario_id": "s199.rsi-sweep-near-v14", "ball_initial_position_m": [3.6, -0.7, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920630},
+    {"name": "far", "scenario_id": "s199.rsi-sweep-far-v14", "ball_initial_position_m": [4.0, -0.7, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920631},
+    {"name": "left", "scenario_id": "s199.rsi-sweep-left-v14", "ball_initial_position_m": [3.8, -0.6, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920632},
+    {"name": "right", "scenario_id": "s199.rsi-sweep-right-v14", "ball_initial_position_m": [3.8, -0.8, 0.115], "ball_initial_velocity_mps": [-0.5, 0.0, 0.0], "seed": 920633},
+    {"name": "slow", "scenario_id": "s199.rsi-sweep-slow-v14", "ball_initial_position_m": [3.8, -0.7, 0.115], "ball_initial_velocity_mps": [-0.3, 0.0, 0.0], "seed": 920634},
+    {"name": "fast", "scenario_id": "s199.rsi-sweep-fast-v14", "ball_initial_position_m": [3.8, -0.7, 0.115], "ball_initial_velocity_mps": [-0.7, 0.0, 0.0], "seed": 920635}
+  ],
+  "advance_condition": "paired development courses show repeatable focal foot contact without nonfoot collision or world safety regression, plus forward ball speed at least 0.5 m/s; only then design a guarded learner and fresh holdout",
+  "stop_condition": "if contact is narrow or impulse remains below useful pass speed, train stance and swing velocity on varied scenes before promotion or video",
+  "policy_intervention_authorized": false
+}

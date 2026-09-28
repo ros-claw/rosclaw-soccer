@@ -166,7 +166,11 @@ def audit_taskspace_swing_trace(
                     ) - baseline[frame, lane, ids]
                 expected[ids] = delta
             if not np.allclose(residual[frame, lane], expected, atol=2e-5, rtol=0):
-                raise ValueError("task-space residual differs from measured causal state")
+                raise ValueError(
+                    "task-space residual differs from measured causal state "
+                    f"at frame={frame} lane={lane} "
+                    f"max_delta={float(np.max(np.abs(residual[frame, lane] - expected))):.6g}"
+                )
             applied_frames += int(np.any(np.abs(expected) > 1e-6))
             if first_contact[lane] < 0 and np.any(forces[frame, lane] > 1.0):
                 first_contact[lane] = frame
