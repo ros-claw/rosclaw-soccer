@@ -84,9 +84,14 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
 )
 from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch  # noqa: E402
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa: E402
+from rosclaw_soccer.rsi import baseline_retention_phase as guarded_phase_module  # noqa: E402
 from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module  # noqa: E402
 from rosclaw_soccer.rsi import contextual_phase_policy as phase_policy_module  # noqa: E402
 from rosclaw_soccer.rsi import local_phase_memory as local_phase_module  # noqa: E402
+from rosclaw_soccer.rsi.baseline_retention_phase import (  # noqa: E402
+    load_guarded_phase_actor,
+    select_guarded_phase,
+)
 from rosclaw_soccer.rsi.contact_time_phase_features import (  # noqa: E402
     current_context,
     gait_phase_features,
@@ -185,11 +190,18 @@ def main() -> None:
             phase_weights,
         )
     if args.local_phase_policy is not None:
-        local_actor = load_local_phase_actor(args.local_phase_policy)
+        actor_schema = json.loads(args.local_phase_policy.read_text(encoding="utf-8")).get("schema")
+        guarded = actor_schema == "rsi_baseline_retention_phase_actor_v5"
+        local_actor = (
+            load_guarded_phase_actor(args.local_phase_policy)
+            if guarded
+            else load_local_phase_actor(args.local_phase_policy)
+        )
+        source_module = guarded_phase_module if guarded else local_phase_module
         if (
             local_actor.get("holdout_open_authorized") is not True
             or local_actor.get("policy_source_hash")
-            != hash_bytes(Path(local_phase_module.__file__).read_bytes())
+            != hash_bytes(Path(source_module.__file__).read_bytes())
             or local_actor.get("feature_source_hash")
             != hash_bytes(Path(time_phase_module.__file__).read_bytes())
         ):
@@ -204,7 +216,11 @@ def main() -> None:
         predicted_time = predict_contact_time(
             raw_context, np.asarray(local_actor["contact_time_weights"])
         )
-        selected_phase_targets = select_local_phase(
+        select = select_guarded_phase if guarded else select_local_phase
+        parameters = (
+            {"baseline_clean_ceiling": local_actor["baseline_clean_ceiling"]} if guarded else {}
+        )
+        selected_phase_targets = select(
             gait_phase_features(raw_context, predicted_time),
             np.asarray(local_actor["memory_features"]),
             np.asarray(local_actor["memory_clean"]),
@@ -212,6 +228,7 @@ def main() -> None:
             np.asarray(local_actor["memory_groups"]),
             neighbors=local_actor["neighbors"],
             confidence=local_actor["confidence"],
+            **parameters,
         )
     if manifest["source_identity"][1] != hash_bytes(args.g1_usd.read_bytes()):
         raise ValueError("snapshot G1 asset hash changed")

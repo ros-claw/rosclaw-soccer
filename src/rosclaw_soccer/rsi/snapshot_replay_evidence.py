@@ -239,8 +239,13 @@ def audit_snapshot_replay(
                 if report.get("selected_phase_targets_frames") != targets.tolist():
                     raise ValueError("contextual phase selection differs from measured context")
             elif local_phase_hash is not None:
+                from rosclaw_soccer.rsi import baseline_retention_phase as guarded_phase_module
                 from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module
                 from rosclaw_soccer.rsi import local_phase_memory as local_phase_module
+                from rosclaw_soccer.rsi.baseline_retention_phase import (
+                    load_guarded_phase_actor,
+                    select_guarded_phase,
+                )
                 from rosclaw_soccer.rsi.contact_time_phase_features import (
                     current_context,
                     gait_phase_features,
@@ -253,12 +258,23 @@ def audit_snapshot_replay(
 
                 if local_phase_policy_path is None:
                     raise ValueError("local phase actor missing")
-                local_actor = load_local_phase_actor(local_phase_policy_path)
+                actor_schema = json.loads(local_phase_policy_path.read_text(encoding="utf-8")).get(
+                    "schema"
+                )
+                guarded = actor_schema == "rsi_baseline_retention_phase_actor_v5"
+                local_actor = (
+                    load_guarded_phase_actor(local_phase_policy_path)
+                    if guarded
+                    else load_local_phase_actor(local_phase_policy_path)
+                )
+                source_module = guarded_phase_module if guarded else local_phase_module
+                policy_source_file = source_module.__file__
                 if (
                     local_actor["actor_hash"] != local_phase_hash
                     or local_actor.get("holdout_open_authorized") is not True
+                    or policy_source_file is None
                     or local_actor.get("policy_source_hash")
-                    != hash_bytes(Path(local_phase_module.__file__).read_bytes())
+                    != hash_bytes(Path(policy_source_file).read_bytes())
                     or local_actor.get("feature_source_hash")
                     != hash_bytes(Path(time_phase_module.__file__).read_bytes())
                 ):
@@ -272,7 +288,13 @@ def audit_snapshot_replay(
                 predicted = predict_contact_time(
                     raw, np.asarray(local_actor["contact_time_weights"])
                 )
-                targets = select_local_phase(
+                select = select_guarded_phase if guarded else select_local_phase
+                parameters = (
+                    {"baseline_clean_ceiling": local_actor["baseline_clean_ceiling"]}
+                    if guarded
+                    else {}
+                )
+                targets = select(
                     gait_phase_features(raw, predicted),
                     np.asarray(local_actor["memory_features"]),
                     np.asarray(local_actor["memory_clean"]),
@@ -280,6 +302,7 @@ def audit_snapshot_replay(
                     np.asarray(local_actor["memory_groups"]),
                     neighbors=local_actor["neighbors"],
                     confidence=local_actor["confidence"],
+                    **parameters,
                 )
                 if report.get("selected_phase_targets_frames") != targets.tolist():
                     raise ValueError("local phase selection differs from measured context")

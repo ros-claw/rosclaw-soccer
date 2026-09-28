@@ -1,0 +1,32 @@
+{
+  "schema": "rsi_first_touch_baseline_retention_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "motivation": "v4 failed fresh seed 39 because an intervention spoiled a clean parent contact",
+  "development_course_seeds": [20260930, 20260931, 20260934, 20260936, 20260937, 20260938],
+  "consumed_diagnostic_only_seeds": [20260932, 20260935, 20260939, 20260940],
+  "new_development_course_seeds_if_needed": [20260941, 20260942],
+  "fresh_sealed_holdout_course_seeds": [20260943, 20260944],
+  "candidate_actions_phase_frames": [0.0, 3.0, 6.0],
+  "policy_input": "current_ball_body_state_plus_predicted_contact_gait_phase",
+  "baseline_retention": "abstain_when_local_parent_clean_fraction_exceeds_ceiling_before_selecting_positive_gain",
+  "baseline_clean_fraction_ceilings": [0.25, 0.4, 0.5, 0.6],
+  "nearest_neighbor_counts": [5, 7, 10],
+  "confidence_multipliers": [0.5, 1.0],
+  "development_validation": "leave_one_entire_course_seed_out_with_contact_time_refit_per_fold",
+  "development_gate": {
+    "minimum_combined_clean_foot_gain": 5,
+    "require_no_seed_clean_foot_regression": true,
+    "require_mean_reward_above_parent": true,
+    "maximum_contact_time_mae_frames": 6.0
+  },
+  "sealed_holdout_gate": {
+    "minimum_combined_clean_foot_gain": 4,
+    "require_no_seed_clean_foot_regression": true,
+    "require_mean_reward_above_parent": true,
+    "minimum_root_height_m": 0.65
+  },
+  "no_reuse_of_seen_holdout_for_threshold_selection": true,
+  "full_episode_and_team_match_required_for_promotion": true,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

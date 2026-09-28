@@ -9,8 +9,13 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi import baseline_retention_phase as guard_module
 from rosclaw_soccer.rsi import contact_time_phase_features as feature_module
 from rosclaw_soccer.rsi import local_phase_memory as policy_module
+from rosclaw_soccer.rsi.baseline_retention_phase import (
+    BASELINE_CLEAN_CEILINGS,
+    select_guarded_phase,
+)
 from rosclaw_soccer.rsi.contact_time_phase_features import (
     ACTION_FEATURE_NAMES,
     current_context,
@@ -40,6 +45,7 @@ def main() -> None:
         required=True,
     )
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--baseline-retention-v5", action="store_true")
     args = parser.parse_args()
     if args.output.exists() or len(args.sets) != 5:
         parser.error("five development sets and fresh immutable output required")
@@ -109,52 +115,32 @@ def main() -> None:
     if len(raw) != 46 or len(group_names) != 6:
         raise ValueError("six independent development seeds and 46 paired contacts required")
     candidate_rows: list[dict[str, Any]] = []
-    for neighbor_count in NEIGHBOR_COUNTS:
-        for confidence in CONFIDENCE_MULTIPLIERS:
-            choices = np.zeros(len(raw), dtype=np.int64)
-            contact_error = np.zeros(len(raw))
-            for group in group_names:
-                held = group_array == group
-                time_weights = fit_contact_time(raw[~held], contact[~held])
-                train_features = gait_phase_features(
-                    raw[~held], predict_contact_time(raw[~held], time_weights)
-                )
-                held_contact = predict_contact_time(raw[held], time_weights)
-                contact_error[held] = np.abs(held_contact - contact[held])
-                held_features = gait_phase_features(raw[held], held_contact)
-                training_groups = np.asarray(
-                    [group_names.index(name) for name in group_array[~held]], dtype=np.int64
-                )
-                choices[held] = (
-                    select_local_phase(
-                        held_features,
-                        train_features,
-                        clean_outcome[~held],
-                        reward[~held],
-                        training_groups,
-                        neighbors=neighbor_count,
-                        confidence=confidence,
+    neighbor_grid: tuple[int, ...]
+    confidence_grid: tuple[float, ...]
+    if args.baseline_retention_v5:
+        neighbor_grid = guard_module.NEIGHBOR_COUNTS
+        confidence_grid = guard_module.CONFIDENCE_MULTIPLIERS
+        ceiling_grid: tuple[float | None, ...] = BASELINE_CLEAN_CEILINGS
+    else:
+        neighbor_grid = NEIGHBOR_COUNTS
+        confidence_grid = CONFIDENCE_MULTIPLIERS
+        ceiling_grid = (None,)
+    for neighbor_count in neighbor_grid:
+        for confidence in confidence_grid:
+            for ceiling in ceiling_grid:
+                candidate_rows.append(
+                    _score_candidate(
+                        raw,
+                        reward,
+                        clean_outcome,
+                        contact,
+                        group_array,
+                        group_names,
+                        neighbor_count,
+                        confidence,
+                        ceiling,
                     )
-                    / 3
-                ).astype(np.int64)
-            selected_reward = reward[np.arange(len(raw)), choices]
-            selected_clean = clean_outcome[np.arange(len(raw)), choices]
-            group_gains = [
-                int(np.count_nonzero(selected_clean[group_array == group]))
-                - int(np.count_nonzero(clean_outcome[group_array == group, 0]))
-                for group in group_names
-            ]
-            candidate_rows.append(
-                {
-                    "neighbors": neighbor_count,
-                    "confidence": confidence,
-                    "leave_source_out_mean_reward": float(np.mean(selected_reward)),
-                    "leave_source_out_clean_count": int(np.count_nonzero(selected_clean)),
-                    "leave_source_out_group_clean_gains": group_gains,
-                    "leave_source_out_contact_time_mae_frames": float(np.mean(contact_error)),
-                    "leave_source_out_action_counts": np.bincount(choices, minlength=3).tolist(),
-                }
-            )
+                )
     best = max(
         candidate_rows,
         key=lambda row: (
@@ -168,14 +154,19 @@ def main() -> None:
     parent_reward = float(np.mean(reward[:, 0]))
     holdout_open = bool(
         min(best["leave_source_out_group_clean_gains"]) >= 0
-        and best["leave_source_out_clean_count"] >= parent_count + 4
+        and best["leave_source_out_clean_count"]
+        >= parent_count + (5 if args.baseline_retention_v5 else 4)
         and best["leave_source_out_mean_reward"] > parent_reward
         and best["leave_source_out_contact_time_mae_frames"] <= 6.0
     )
     final_time_weights = fit_contact_time(raw, contact)
     final_features = gait_phase_features(raw, predict_contact_time(raw, final_time_weights))
     result = {
-        "schema": "rsi_local_contact_phase_actor_v4",
+        "schema": (
+            "rsi_baseline_retention_phase_actor_v5"
+            if args.baseline_retention_v5
+            else "rsi_local_contact_phase_actor_v4"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "action_feature_names": list(ACTION_FEATURE_NAMES),
         "phase_actions_frames": [0.0, 3.0, 6.0],
@@ -192,11 +183,20 @@ def main() -> None:
         "memory_reward": reward.tolist(),
         "memory_groups": [group_names.index(name) for name in groups],
         "trainer_source_hash": hash_bytes(Path(__file__).read_bytes()),
-        "policy_source_hash": hash_bytes(Path(policy_module.__file__).read_bytes()),
+        "policy_source_hash": hash_bytes(
+            Path(
+                guard_module.__file__ if args.baseline_retention_v5 else policy_module.__file__
+            ).read_bytes()
+        ),
         "feature_source_hash": hash_bytes(Path(feature_module.__file__).read_bytes()),
         "holdout_open_authorized": holdout_open,
         "promotion_authorized": False,
     }
+    if args.baseline_retention_v5:
+        result["baseline_clean_ceiling"] = best["baseline_clean_ceiling"]
+        result["protocol_hash"] = hash_bytes(
+            Path("docs/rsi/protocols/first-touch-baseline-retention-v5.json").read_bytes()
+        )
     result["actor_hash"] = hash_json(result)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
@@ -208,6 +208,65 @@ def main() -> None:
             }
         )
     )
+
+
+def _score_candidate(
+    raw: np.ndarray[Any, Any],
+    reward: np.ndarray[Any, Any],
+    clean_outcome: np.ndarray[Any, Any],
+    contact: np.ndarray[Any, Any],
+    group_array: np.ndarray[Any, Any],
+    group_names: list[str],
+    neighbor_count: int,
+    confidence: float,
+    ceiling: float | None,
+) -> dict[str, Any]:
+    choices = np.zeros(len(raw), dtype=np.int64)
+    contact_error = np.zeros(len(raw))
+    for group in group_names:
+        held = group_array == group
+        time_weights = fit_contact_time(raw[~held], contact[~held])
+        train_features = gait_phase_features(
+            raw[~held], predict_contact_time(raw[~held], time_weights)
+        )
+        held_contact = predict_contact_time(raw[held], time_weights)
+        contact_error[held] = np.abs(held_contact - contact[held])
+        held_features = gait_phase_features(raw[held], held_contact)
+        training_groups = np.asarray(
+            [group_names.index(name) for name in group_array[~held]], dtype=np.int64
+        )
+        select = select_local_phase if ceiling is None else select_guarded_phase
+        parameters = {} if ceiling is None else {"baseline_clean_ceiling": ceiling}
+        choices[held] = (
+            select(
+                held_features,
+                train_features,
+                clean_outcome[~held],
+                reward[~held],
+                training_groups,
+                neighbors=neighbor_count,
+                confidence=confidence,
+                **parameters,
+            )
+            / 3
+        ).astype(np.int64)
+    selected_reward = reward[np.arange(len(raw)), choices]
+    selected_clean = clean_outcome[np.arange(len(raw)), choices]
+    group_gains = [
+        int(np.count_nonzero(selected_clean[group_array == group]))
+        - int(np.count_nonzero(clean_outcome[group_array == group, 0]))
+        for group in group_names
+    ]
+    return {
+        "neighbors": neighbor_count,
+        "confidence": confidence,
+        "baseline_clean_ceiling": ceiling,
+        "leave_source_out_mean_reward": float(np.mean(selected_reward)),
+        "leave_source_out_clean_count": int(np.count_nonzero(selected_clean)),
+        "leave_source_out_group_clean_gains": group_gains,
+        "leave_source_out_contact_time_mae_frames": float(np.mean(contact_error)),
+        "leave_source_out_action_counts": np.bincount(choices, minlength=3).tolist(),
+    }
 
 
 if __name__ == "__main__":

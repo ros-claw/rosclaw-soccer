@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from rosclaw_soccer.rsi.baseline_retention_phase import load_guarded_phase_actor
 from rosclaw_soccer.rsi.first_touch_snapshot_bank import audit_snapshot_bank
 from rosclaw_soccer.rsi.local_phase_memory import load_local_phase_actor
 from rosclaw_soccer.rsi.snapshot_replay_evidence import audit_snapshot_replay
@@ -23,7 +24,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.output.exists() or len(args.sets) != 2:
         parser.error("two fresh sealed sets and immutable verdict output required")
-    actor = load_local_phase_actor(args.actor)
+    actor_schema = json.loads(args.actor.read_text(encoding="utf-8")).get("schema")
+    actor = (
+        load_guarded_phase_actor(args.actor)
+        if actor_schema == "rsi_baseline_retention_phase_actor_v5"
+        else load_local_phase_actor(args.actor)
+    )
     if actor.get("holdout_open_authorized") is not True:
         raise ValueError("development gate never opened sealed local phase holdout")
     rows = []
@@ -70,7 +76,11 @@ def main() -> None:
     actor_mean = sum(row["actor_mean_reward"] * row["sample_count"] for row in rows) / total
     pass_gate = sum(gains) >= 4 and min(gains) >= 0 and actor_mean > base_mean
     result = {
-        "schema": "rsi_local_phase_two_seed_sealed_holdout_verdict_v1",
+        "schema": (
+            "rsi_baseline_retention_two_seed_sealed_holdout_verdict_v1"
+            if actor_schema == "rsi_baseline_retention_phase_actor_v5"
+            else "rsi_local_phase_two_seed_sealed_holdout_verdict_v1"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "actor_hash": actor["actor_hash"],
         "rows": rows,
