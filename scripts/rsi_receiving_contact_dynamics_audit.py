@@ -39,6 +39,7 @@ def _run(
     weights: NDArray[np.float64],
     joint_indices: tuple[int, ...] = JOINTS,
     ball_course: tuple[float, float, float] | None = None,
+    post_touch_bias: NDArray[np.float64] | None = None,
 ) -> dict[str, Any]:
     data = mujoco.MjData(model)
     data.qpos[:] = arrays["sonic_recorded_qpos"][SNAPSHOT]
@@ -65,6 +66,10 @@ def _run(
     features = 5 + 2 * len(joint_indices)
     matrix = weights[: len(joint_indices) * features].reshape(len(joint_indices), features)
     bias = weights[len(joint_indices) * features :]
+    if post_touch_bias is not None and (
+        post_touch_bias.shape != (len(joint_indices),) or not np.isfinite(post_touch_bias).all()
+    ):
+        raise ValueError("finite post-touch bias must match authorized joints")
     first: dict[str, Any] | None = None
     first_nonfoot: dict[str, Any] | None = None
     foot_impulse = 0.0
@@ -94,7 +99,15 @@ def _run(
             )
         )
         if 0.12 < dx < 0.85:
-            residual = ACTION_LIMIT_RAD * np.tanh(matrix @ feature + bias)
+            phase_bias = (
+                post_touch_bias
+                if post_touch_bias is not None
+                and first is not None
+                and first["kind"] == "foot"
+                and first_nonfoot is None
+                else bias
+            )
+            residual = ACTION_LIMIT_RAD * np.tanh(matrix @ feature + phase_bias)
             target[index] = np.clip(target[index] + residual, limits[:, 0], limits[:, 1])
         for substep in range(10):
             data.ctrl[:] = np.clip(
