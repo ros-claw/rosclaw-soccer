@@ -185,6 +185,24 @@ def sample_candidate(parent_folder: Path, state: dict[str, Any], *, seed: int) -
     return manifest
 
 
+def deterministic_mean_candidate(parent_folder: Path, state: dict[str, Any]) -> dict[str, Any]:
+    """Probe transfer to a new train seed without exploration noise."""
+    state = load_state(state)
+    parent, courses = _new_parent(parent_folder, state)
+    mean = v2._mean(v2._features(courses), np.asarray(state["actor_weights"], dtype=np.float64))
+    manifest = candidate_manifest(
+        courses=courses,
+        parent_report_hash=parent["report_hash"],
+        actions_rad=tuple(tuple(float(value) for value in row) for row in mean),
+        seed=0,
+    )
+    manifest["actor_state_hash"] = state["state_hash"]
+    manifest["evaluation_mode"] = "FROZEN_TRANSFER_MEAN"
+    manifest.pop("candidate_hash")
+    manifest["candidate_hash"] = hash_json(manifest)
+    return manifest
+
+
 def update(
     parent_folder: Path,
     state_data: dict[str, Any],
@@ -297,6 +315,7 @@ def main() -> None:
     parser.add_argument("--candidate-folder", type=Path)
     parser.add_argument("--candidate-manifest", type=Path)
     parser.add_argument("--sample-seed", type=int)
+    parser.add_argument("--deterministic-mean", action="store_true")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--output-report", type=Path)
     args = parser.parse_args()
@@ -305,6 +324,7 @@ def main() -> None:
             args.state is not None
             or args.candidate_folder is not None
             or args.sample_seed is not None
+            or args.deterministic_mean
         ):
             parser.error("migration must be isolated")
         result = migrate_v2(
@@ -315,10 +335,16 @@ def main() -> None:
         if args.state is None:
             parser.error("sampling/updating requires a committed continual state")
         state = load_state(json.loads(args.state.read_text(encoding="utf-8")))
-        if args.sample_seed is not None:
+        if args.sample_seed is not None or args.deterministic_mean:
             if args.candidate_folder is not None or args.candidate_manifest is not None:
                 parser.error("sampling cannot consume execution evidence")
-            result = sample_candidate(args.parent_folder, state, seed=args.sample_seed)
+            if args.sample_seed is not None and args.deterministic_mean:
+                parser.error("choose stochastic sample or deterministic mean")
+            result = (
+                deterministic_mean_candidate(args.parent_folder, state)
+                if args.deterministic_mean
+                else sample_candidate(args.parent_folder, state, seed=args.sample_seed)
+            )
             report = None
         else:
             if args.candidate_folder is None or args.candidate_manifest is None:

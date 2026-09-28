@@ -57,6 +57,10 @@ def test_continual_update_accepts_new_seed_and_retains_anchors(
     parent_a, parent_b, v2_state = _setup(monkeypatch, tmp_path)
     state = learner.migrate_v2(parent_a, v2_state)
     manifest = learner.sample_candidate(parent_b, state, seed=103)
+    mean = learner.deterministic_mean_candidate(parent_b, state)
+    assert mean["evaluation_mode"] == "FROZEN_TRANSFER_MEAN"
+    assert mean["actor_state_hash"] == state["state_hash"]
+    assert np.max(np.abs(mean["actions_rad"])) <= 0.04
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     candidate_folder = tmp_path / "candidate"
