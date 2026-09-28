@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,14 @@ def _run(
     privileged_teacher_lateral_sign: float | None = None,
     privileged_teacher_torque_scale: float = 1.0,
     support_posture_gain: float | None = None,
+    sample_hook: Callable[
+        [NDArray[np.float64], NDArray[np.float64], bool, float, NDArray[np.float64]], None
+    ]
+    | None = None,
+    actor_torque_fn: Callable[
+        [NDArray[np.float64], NDArray[np.float64], bool, float], NDArray[np.float64]
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     if (
         type(receiving_leg_kp_scale) not in (float, int)
@@ -84,6 +93,10 @@ def _run(
         or privileged_teacher_lateral_sign is None
     ):
         raise ValueError("bounded SIM_ONLY coupled support posture feedback required")
+    if actor_torque_fn is not None and (
+        privileged_teacher_lateral_sign is not None or support_posture_gain is not None
+    ):
+        raise ValueError("learned actor must replace, never stack on, privileged teachers")
     data = mujoco.MjData(model)
     data.qpos[:] = arrays["sonic_recorded_qpos"][SNAPSHOT]
     data.qvel[:] = arrays["sonic_recorded_qvel"][SNAPSHOT]
@@ -187,6 +200,8 @@ def _run(
             base_target: NDArray[np.float64],
             first: dict[str, Any] | None,
             first_nonfoot: dict[str, Any] | None,
+            *,
+            with_support: bool = True,
         ) -> NDArray[np.float64]:
             target = base_target.copy()
             dx = data.qpos[36] - data.qpos[0]
@@ -226,7 +241,7 @@ def _run(
                 )
                 residual = ACTION_LIMIT_RAD * np.tanh(matrix @ feature + phase_bias + extra)
                 target[index] = np.clip(target[index] + residual, limits[:, 0], limits[:, 1])
-            if support_posture_gain is not None:
+            if support_posture_gain is not None and with_support:
                 rotation = np.asarray(data.xmat[pelvis_body], dtype=np.float64).reshape(3, 3)
                 pitch = -float(rotation[2, 0]) + 0.05 * float(data.qvel[4])
                 roll = float(rotation[2, 1]) + 0.05 * float(data.qvel[3])
@@ -244,6 +259,11 @@ def _run(
             return target
 
         target = target_at_current_state(base_target, first, first_nonfoot)
+        unassisted_target = (
+            target_at_current_state(base_target, first, first_nonfoot, with_support=False)
+            if sample_hook is not None and support_posture_gain is not None
+            else target
+        )
         if task_space_velocity_gain is not None and first is None:
             foot_point = np.asarray(data.geom_xpos[foot_geom], dtype=np.float64)
             ball_point = np.asarray(data.qpos[36:39], dtype=np.float64)
@@ -295,6 +315,16 @@ def _run(
                 kp_effective[[0, 1, 3, 4, 5]] *= receiving_leg_kp_scale
                 impedance_substeps += 1
             raw_torque = kp_effective * (target - data.qpos[7:36]) - kd * data.qvel[6:35]
+            added_torque = kp_effective * (target - unassisted_target)
+            contact_elapsed_sec = -1.0
+            if first is not None and first["kind"] == "foot":
+                contact_elapsed_sec = max(
+                    0.0,
+                    float(
+                        ((frame - int(first["frame"])) * 10 + substep - int(first["substep"]))
+                        * model.opt.timestep
+                    ),
+                )
             if teacher_config is not None and first_nonfoot is None:
                 contact_progress = None
                 teacher_window_open = first is None
@@ -321,7 +351,9 @@ def _run(
                         receive_capture_progress=contact_progress,
                     )
                     if effect.active:
-                        raw_torque += privileged_teacher_torque_scale * effect.torque_nm
+                        effect_torque = privileged_teacher_torque_scale * effect.torque_nm
+                        raw_torque += effect_torque
+                        added_torque += effect_torque
                         privileged_teacher_active_substeps += 1
                         privileged_teacher_peak_torque_nm = max(
                             privileged_teacher_peak_torque_nm,
@@ -329,6 +361,29 @@ def _run(
                                 privileged_teacher_torque_scale * np.max(np.abs(effect.torque_nm))
                             ),
                         )
+            if sample_hook is not None:
+                sample_hook(
+                    data.qpos.copy(),
+                    data.qvel.copy(),
+                    first is not None and first["kind"] == "foot",
+                    contact_elapsed_sec,
+                    added_torque.copy(),
+                )
+            if actor_torque_fn is not None:
+                actor_torque = actor_torque_fn(
+                    data.qpos.copy(),
+                    data.qvel.copy(),
+                    first is not None and first["kind"] == "foot",
+                    contact_elapsed_sec,
+                )
+                if (
+                    not isinstance(actor_torque, np.ndarray)
+                    or actor_torque.shape != (29,)
+                    or not np.isfinite(actor_torque).all()
+                    or np.max(np.abs(actor_torque)) > 14.0 + 1e-10
+                ):
+                    raise ValueError("bounded finite 29-joint learned torque residual required")
+                raw_torque += actor_torque
             data.ctrl[:] = np.clip(raw_torque, -torque_limit, torque_limit)
             mujoco.mj_step(model, data)
             minimum = min(minimum, float(data.qpos[2]))
