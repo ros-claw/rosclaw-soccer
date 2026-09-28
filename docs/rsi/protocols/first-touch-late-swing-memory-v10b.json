@@ -1,0 +1,30 @@
+{
+  "schema": "rsi_first_touch_late_swing_memory_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "prerequisite": "Audited v10a consumed seeds 53/54: gap 0.55m action rescues three new clean-foot lanes, preserves all parent-clean lanes, and meets the preregistered diagnostic threshold; gap 0.35m rescues none.",
+  "frozen_parent_actor_hash": "sha256:78349ed4999982f0e1460fdc183ceb20052e756e1eac1458d74c4c13934955a6",
+  "paired_development_course_seeds": [20260943, 20260944, 20260947, 20260948, 20260949, 20260950, 20260951, 20260952, 20260953, 20260954],
+  "candidate_action": {"forward_m": 0.08, "lateral_cap_m": 0.05, "vertical_offset_m": 0.04, "swing_acquisition_max_ball_foot_gap_m": 0.55},
+  "policy_input": "measured snapshot ball/body state and causally predicted contact gait phase",
+  "policy_action": "apply frozen late-acquisition action or retain frozen parent",
+  "training_method": "paired physical memory; leave-one-entire-course-seed-out; at least two independent memory seeds and at most two memories from one seed per decision",
+  "nearest_neighbor_counts": [3, 5, 7],
+  "confidence_multipliers": [0.0, 0.5, 1.0],
+  "baseline_clean_fraction_ceilings": [0.25, 0.4, 0.6],
+  "development_gate": {
+    "minimum_combined_clean_foot_gain_over_parent": 4,
+    "require_no_seed_clean_foot_regression": true,
+    "require_all_parent_successes_retained": true,
+    "require_mean_reward_above_parent": true
+  },
+  "fresh_sealed_holdout_course_seeds_if_development_gate_passes": [20260955, 20260956],
+  "fresh_holdout_gate": {
+    "minimum_combined_clean_foot_gain_over_parent": 4,
+    "require_no_seed_clean_foot_regression": true,
+    "require_all_parent_successes_retained": true,
+    "minimum_root_height_m": 0.65
+  },
+  "full_episode_and_team_match_required_for_promotion": true,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
