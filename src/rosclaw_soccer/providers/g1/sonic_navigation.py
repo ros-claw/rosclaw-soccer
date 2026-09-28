@@ -43,8 +43,13 @@ class SonicNavigationConfig:
     latent_schedule: SonicLatentSchedule | None = None
     pose_reference: SonicPoseReference | None = None
     experimental_command_replanning: bool = False
+    inference_threads: int | None = None
 
     def __post_init__(self) -> None:
+        if self.inference_threads is not None and (
+            type(self.inference_threads) is not int or not 1 <= self.inference_threads <= 8
+        ):
+            raise ValueError("SONIC inference threads must be 1-8")
         if type(self.experimental_command_replanning) is not bool or (
             self.experimental_command_replanning
             and (
@@ -150,10 +155,13 @@ class _StreamingBackend(G1SonicRunupController):
         self.last_planned_command = self.command
         self.events: list[dict[str, object]] = []
         self.latent_records: list[tuple[int, np.ndarray, np.ndarray]] = []
-        super().__init__(
-            model_root,
-            G1SonicRunupConfig(model_variant=config.model_variant, execution_duration_sec=4.5),
+        runup_config = G1SonicRunupConfig(
+            model_variant=config.model_variant, execution_duration_sec=4.5
         )
+        if config.inference_threads is None:
+            super().__init__(model_root, runup_config)
+        else:
+            super().__init__(model_root, runup_config, inference_threads=config.inference_threads)
 
     def _transform_token(self, token: np.ndarray, frame: int) -> np.ndarray:
         token = super()._transform_token(token, frame)
@@ -288,6 +296,8 @@ class G1SonicNavigation:
             config_record.pop("model_variant")
         if self.config.experimental_maximum_speed_mps is None:
             config_record.pop("experimental_maximum_speed_mps")
+        if self.config.inference_threads is None:
+            config_record.pop("inference_threads")
         self.contract_hash = hash_json(
             {
                 "schema": "rosclaw_soccer.g1_sonic_navigation.v1",

@@ -240,13 +240,34 @@ class G1SonicRunupConfig:
         return hash_json(value)
 
 
+def _sonic_session_kwargs(onnxruntime: object, threads: int | None) -> dict[str, object]:
+    """Bound ONNX's per-session pools for opt-in parallel simulator instances."""
+
+    if threads is None:
+        return {}
+    if type(threads) is not int or not 1 <= threads <= 8:
+        raise ValueError("SONIC inference threads must be 1-8")
+    options = onnxruntime.SessionOptions()  # type: ignore[attr-defined]
+    options.intra_op_num_threads = threads
+    options.inter_op_num_threads = threads
+    return {"sess_options": options}
+
+
 def qualify_g1_sonic(
     model_root: Path,
     model_variant: G1SonicModelVariant = "low_latency",
+    *,
+    inference_threads: int | None = None,
 ) -> G1SonicQualification:
     """Fail closed unless the public models expose the pinned tensor contract."""
 
     import onnxruntime
+
+    if inference_threads is not None and (
+        type(inference_threads) is not int or not 1 <= inference_threads <= 8
+    ):
+        raise ValueError("SONIC inference threads must be 1-8")
+    session_kwargs = _sonic_session_kwargs(onnxruntime, inference_threads)
 
     if model_variant not in _VARIANTS:
         raise ValueError("SONIC model variant is unsupported")
@@ -266,7 +287,7 @@ def qualify_g1_sonic(
     if not errors:
         try:
             planner = onnxruntime.InferenceSession(
-                str(paths["planner"]), providers=["CPUExecutionProvider"]
+                str(paths["planner"]), providers=["CPUExecutionProvider"], **session_kwargs
             )
             planner_input_count = len(planner.get_inputs())
             planner_outputs = planner.get_outputs()
@@ -279,7 +300,7 @@ def qualify_g1_sonic(
             errors.append(f"planner_load={type(exc).__name__}:{exc}")
         try:
             encoder = onnxruntime.InferenceSession(
-                str(paths["encoder"]), providers=["CPUExecutionProvider"]
+                str(paths["encoder"]), providers=["CPUExecutionProvider"], **session_kwargs
             )
             encoder_input_size = int(encoder.get_inputs()[0].shape[-1])
             encoder_output_size = int(encoder.get_outputs()[0].shape[-1])
@@ -296,7 +317,7 @@ def qualify_g1_sonic(
             errors.append(f"encoder_load={type(exc).__name__}:{exc}")
         try:
             decoder = onnxruntime.InferenceSession(
-                str(paths["decoder"]), providers=["CPUExecutionProvider"]
+                str(paths["decoder"]), providers=["CPUExecutionProvider"], **session_kwargs
             )
             decoder_input_size = int(decoder.get_inputs()[0].shape[-1])
             decoder_output_size = int(decoder.get_outputs()[0].shape[-1])
@@ -366,22 +387,31 @@ class G1SonicRunupController:
         dtype=np.float64,
     )
 
-    def __init__(self, model_root: Path, config: G1SonicRunupConfig | None = None) -> None:
+    def __init__(
+        self,
+        model_root: Path,
+        config: G1SonicRunupConfig | None = None,
+        *,
+        inference_threads: int | None = None,
+    ) -> None:
         import onnxruntime
 
         self.config = config or G1SonicRunupConfig()
         self._variant = _VARIANTS[self.config.model_variant]
-        self.qualification = qualify_g1_sonic(model_root, self.config.model_variant)
+        self.qualification = qualify_g1_sonic(
+            model_root, self.config.model_variant, inference_threads=inference_threads
+        )
         self.qualification.require_eligible()
         root = model_root.expanduser().resolve()
+        session_kwargs = _sonic_session_kwargs(onnxruntime, inference_threads)
         self._planner = onnxruntime.InferenceSession(
-            str(root / _PLANNER), providers=["CPUExecutionProvider"]
+            str(root / _PLANNER), providers=["CPUExecutionProvider"], **session_kwargs
         )
         self._encoder = onnxruntime.InferenceSession(
-            str(root / self._variant.encoder), providers=["CPUExecutionProvider"]
+            str(root / self._variant.encoder), providers=["CPUExecutionProvider"], **session_kwargs
         )
         self._decoder = onnxruntime.InferenceSession(
-            str(root / self._variant.decoder), providers=["CPUExecutionProvider"]
+            str(root / self._variant.decoder), providers=["CPUExecutionProvider"], **session_kwargs
         )
         self._history: collections.deque[tuple[np.ndarray, ...]] = collections.deque(maxlen=10)
         self.reference = np.empty((0, 36), dtype=np.float64)

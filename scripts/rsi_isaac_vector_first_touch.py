@@ -18,6 +18,7 @@ parser.add_argument("--model-root", required=True, type=Path)
 parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
+parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -61,6 +62,7 @@ def main() -> None:
                 maximum_frames=args.frames,
                 model_variant="low_latency",
                 experimental_maximum_speed_mps=1.5,
+                inference_threads=args.inference_threads,
             ),
         )
         for index in range(args.env_count)
@@ -282,6 +284,7 @@ def main() -> None:
         "sonic_qualification_hash": navigations[0].backend.qualification.qualification_hash,
         "trace_hash": trace_hash,
         "frames": args.frames,
+        "inference_threads": args.inference_threads,
         "environments": entries,
     }
     report["report_hash"] = hash_json(report)
