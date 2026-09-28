@@ -135,7 +135,33 @@ def main() -> None:
             navigation_policy=navigation,
         )
         mode = report["mode"]
-        outcome = _score(report, folder / mode / "trajectory.npz")
+        if mode == "parent":
+            contacts = report["focal_foot_contact_frames"]
+            with np.load(folder / mode / "trajectory.npz", allow_pickle=False) as physics:
+                velocity = np.asarray(physics["ball_velocity"])
+            first = contacts[0] if contacts else None
+            outgoing_vx = (
+                float(np.max(velocity[first : min(first + 5, len(velocity)), 0]))
+                if first is not None
+                else None
+            )
+            safe = bool(
+                report["world_result"]["safe"]
+                and not report["world_result"]["motor_fault_agents"]
+                and not report["focal_nonfoot_contact_frames"]
+                and report["action_audit"]["taskspace_action_audited"]
+            )
+            outcome = {
+                "report_hash": report["report_hash"],
+                "foot_contact_frames": contacts,
+                "nonfoot_contact_frames": report["focal_nonfoot_contact_frames"],
+                "outgoing_ball_vx_mps": outgoing_vx,
+                "navigation_proposed_active_frames": 0,
+                "safe": safe,
+                "useful_pass": bool(safe and outgoing_vx is not None and outgoing_vx >= 0.5),
+            }
+        else:
+            outcome = _score(report, folder / mode / "trajectory.npz")
         outcome.update(
             {
                 "course": course["name"],
