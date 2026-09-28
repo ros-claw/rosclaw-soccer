@@ -9,12 +9,14 @@ import numpy as np
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.rsi.taskspace_swing_probe import (
     FORWARD_CAPS_M,
+    JOINT_RISK_GUARD_MARGINS_RAD,
     LATERAL_CAPS_M,
     MAX_JOINT_DELTA_RAD,
     STRIKE_THROUGH_OFFSETS_M,
     SWING_ACQUISITION_MAX_GAPS_M,
     VERTICAL_OFFSETS_M,
     choose_swing_side,
+    guard_swing_joint_delta,
     release_joint_delta,
     swing_joint_delta,
 )
@@ -40,6 +42,7 @@ def audit_taskspace_swing_trace(
     vertical = report.get("taskspace_vertical_offset_m", 0.0)
     strike_through = report.get("taskspace_strike_through_m", 0.0)
     acquisition_gap = report.get("taskspace_acquisition_max_gap_m", 0.95)
+    joint_risk_margin = report.get("taskspace_joint_risk_guard_margin_rad")
     family_hash = report.get("taskspace_family_actor_hash")
     late_hash = report.get("late_swing_actor_hash")
     family_actions = report.get("selected_taskspace_actions")
@@ -67,6 +70,7 @@ def audit_taskspace_swing_trace(
         or vertical not in VERTICAL_OFFSETS_M
         or strike_through not in STRIKE_THROUGH_OFFSETS_M
         or acquisition_gap not in SWING_ACQUISITION_MAX_GAPS_M
+        or joint_risk_margin not in (None, *JOINT_RISK_GUARD_MARGINS_RAD)
         or report.get("taskspace_leg_joint_names") != [list(row) for row in LEG_NAMES]
         or not isinstance(order, list)
         or len(order) != 29
@@ -165,6 +169,26 @@ def audit_taskspace_swing_trace(
                         ),
                         strike_through_m=strike_through,
                     )
+                if joint_risk_margin is not None:
+                    if (
+                        "pre_step_focal_qpos" not in replay
+                        or replay["pre_step_focal_qpos"].shape != (frames, count, 43)
+                        or "pre_step_focal_qvel" not in replay
+                        or replay["pre_step_focal_qvel"].shape != (frames, count, 41)
+                    ):
+                        raise ValueError("missing measured joint state for swing guard audit")
+                    delta = guard_swing_joint_delta(
+                        replay["pre_step_focal_qpos"][
+                            frame, lane, 7 + int(side[lane]) * 6 : 13 + int(side[lane]) * 6
+                        ],
+                        replay["pre_step_focal_qvel"][
+                            frame, lane, 6 + int(side[lane]) * 6 : 12 + int(side[lane]) * 6
+                        ],
+                        delta,
+                        limits[lane, ids],
+                        margin_rad=joint_risk_margin,
+                    )
+                if first_contact[lane] < 0:
                     delta = (baseline[frame, lane, ids] + delta).astype(np.float32).astype(
                         float
                     ) - baseline[frame, lane, ids]

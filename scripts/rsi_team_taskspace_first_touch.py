@@ -14,6 +14,7 @@ from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.rsi.taskspace_swing_evidence import LEG_NAMES, audit_taskspace_swing_trace
 from rosclaw_soccer.rsi.taskspace_swing_probe import (
     choose_swing_side,
+    guard_swing_joint_delta,
     release_joint_delta,
     swing_joint_delta,
 )
@@ -154,6 +155,16 @@ class TeamSwingMotor:
                         lateral_cap_m=self.action["lateral_cap_m"],
                         vertical_offset_m=self.action["vertical_offset_m"],
                         strike_through_m=self.action.get("strike_through_m", 0.0),
+                    )
+                if "joint_risk_guard_margin_rad" in self.action:
+                    delta = guard_swing_joint_delta(
+                        q[7 + self.side * 6 : 13 + self.side * 6],
+                        np.asarray(observation.qvel, dtype=float)[
+                            6 + self.side * 6 : 12 + self.side * 6
+                        ],
+                        delta,
+                        limits[self.side],
+                        margin_rad=self.action["joint_risk_guard_margin_rad"],
                     )
                 target[ids] = baseline[ids] + delta
                 residual[ids] = target[ids] - baseline[ids]
@@ -330,6 +341,9 @@ def _run_one(
         "taskspace_acquisition_max_gap_m": protocol["candidate_action"][
             "swing_foot_acquisition_gap_m"
         ],
+        "taskspace_joint_risk_guard_margin_rad": protocol["candidate_action"].get(
+            "joint_risk_guard_margin_rad"
+        ),
         "taskspace_leg_joint_names": [list(row) for row in LEG_NAMES],
         "taskspace_joint_order": list(G1_DDS_JOINT_NAMES),
         "selected_taskspace_mask": [

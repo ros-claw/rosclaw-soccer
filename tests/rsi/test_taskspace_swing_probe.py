@@ -5,6 +5,7 @@ import pytest
 
 from rosclaw_soccer.rsi.taskspace_swing_probe import (
     choose_swing_side,
+    guard_swing_joint_delta,
     release_joint_delta,
     swing_joint_delta,
 )
@@ -80,3 +81,23 @@ def test_strike_through_keeps_forward_target_active_at_ball_contact() -> None:
     assert 0 < baseline[0] < through[0] <= 0.35
     with pytest.raises(ValueError):
         swing_joint_delta(*common, forward_cap_m=0.16, strike_through_m=0.2)
+
+
+def test_joint_risk_guard_only_tapers_outward_residual_near_measured_limit() -> None:
+    limits = np.tile([-1.0, 1.0], (6, 1))
+    q = np.zeros(6)
+    dq = np.zeros(6)
+    delta = np.array([0.2, -0.2, 0.2, -0.2, 0.2, -0.2])
+    q[0] = 0.9
+    q[1] = -0.9
+    q[2] = 0.9
+    q[3] = -0.9
+    dq[2] = -1.0
+    dq[3] = 1.0
+    result = guard_swing_joint_delta(q, dq, delta, limits, margin_rad=0.12)
+    np.testing.assert_allclose(result[:2], 0.0)
+    assert 0.0 < result[2] < delta[2]
+    assert delta[3] < result[3] < 0.0
+    np.testing.assert_allclose(result[4:], delta[4:])
+    with pytest.raises(ValueError):
+        guard_swing_joint_delta(q, dq, delta, limits, margin_rad=0.30)

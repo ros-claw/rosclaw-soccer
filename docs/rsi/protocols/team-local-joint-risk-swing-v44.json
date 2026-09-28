@@ -1,0 +1,28 @@
+{
+  "schema": "rsi_team_local_joint_risk_swing_protocol_v44",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "consumed_scenes_protocol": "docs/rsi/protocols/team-lateral-foot-fresh-exam-v42.json",
+  "consumed_scenes_report": "/data/rosclaw_overflow/rsi-team-lateral-foot-fresh-exam-v42/report.json",
+  "consumed_scenes_report_hash": "sha256:7514b9e5c938474ff1ebcd540d6a947be9904106ab8f8445b733a857646577d8",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.10,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55,
+    "joint_risk_guard_margin_rad": 0.12
+  },
+  "development_gate": {
+    "minimum_scenes": 48,
+    "maximum_candidate_incomplete": 0,
+    "minimum_candidate_useful": 12,
+    "minimum_useful_gain_vs_fixed": 4,
+    "minimum_safe_contact_gain_vs_fixed": 4,
+    "maximum_unsafe_excess_vs_fixed": 0
+  },
+  "interpretation": "Train/test a causal six-joint outward-residual taper at 0.12 rad on 48 consumed v42 scenes. Fixed 5 cm baseline is hash-bound and sentinel-replayed; candidate shares the exact same pre-decision physical state. Passing permits only a separate new-coordinate exam."
+}

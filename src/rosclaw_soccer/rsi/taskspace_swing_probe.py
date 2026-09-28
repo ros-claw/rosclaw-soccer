@@ -14,6 +14,8 @@ STRIKE_THROUGH_OFFSETS_M = (0.0, 0.08, 0.16)
 MAX_JOINT_DELTA_RAD = 0.35
 REGULARIZATION = 0.05
 CONTACT_RELEASE_FRAMES = 20
+JOINT_RISK_GUARD_MARGINS_RAD = (0.12,)
+JOINT_RISK_HORIZON_SEC = 0.08
 
 
 def choose_swing_side(
@@ -114,3 +116,34 @@ def release_joint_delta(
     ):
         raise ValueError("invalid causal swing release")
     return contact_delta * max(0.0, 1.0 - frame_since_contact / CONTACT_RELEASE_FRAMES)
+
+
+def guard_swing_joint_delta(
+    joint_position: np.ndarray[Any, Any],
+    joint_velocity: np.ndarray[Any, Any],
+    delta: np.ndarray[Any, Any],
+    joint_limits: np.ndarray[Any, Any],
+    *,
+    margin_rad: float,
+) -> np.ndarray[Any, Any]:
+    """Causally taper only outward swing residuals near predicted joint bounds."""
+    if (
+        joint_position.shape != (6,)
+        or joint_velocity.shape != (6,)
+        or delta.shape != (6,)
+        or joint_limits.shape != (6, 2)
+        or margin_rad not in JOINT_RISK_GUARD_MARGINS_RAD
+        or not all(
+            np.isfinite(value).all()
+            for value in (joint_position, joint_velocity, delta, joint_limits)
+        )
+        or np.any(joint_limits[:, 0] >= joint_limits[:, 1])
+        or np.max(np.abs(delta)) > MAX_JOINT_DELTA_RAD + 1e-5
+    ):
+        raise ValueError("invalid measured swing joint-boundary guard")
+    predicted = joint_position + JOINT_RISK_HORIZON_SEC * joint_velocity
+    lower_room = predicted - (joint_limits[:, 0] + margin_rad)
+    upper_room = (joint_limits[:, 1] - margin_rad) - predicted
+    outward_room = np.where(delta >= 0, upper_room, lower_room)
+    scale = np.clip(outward_room / margin_rad, 0.0, 1.0)
+    return delta * scale
