@@ -56,6 +56,14 @@ def main() -> None:
             raise ValueError("unauthenticated or mismatched physical sealed comparison")
         base_reward, base_clean = lane_outcomes(parent, count)
         actor_reward, actor_clean = lane_outcomes(candidate, count)
+        with (
+            np.load(parent / "replay.npz", allow_pickle=False) as parent_trace,
+            np.load(candidate / "replay.npz", allow_pickle=False) as actor_trace,
+        ):
+            parent_root_min = float(
+                np.min(parent_trace["observed_root_pose_local_xyzw_m"][:, :, 2])
+            )
+            actor_root_min = float(np.min(actor_trace["observed_root_pose_local_xyzw_m"][:, :, 2]))
         rows.append(
             {
                 "bank_hash": bank_audit["manifest_hash"],
@@ -66,6 +74,8 @@ def main() -> None:
                 "actor_clean_foot_count": int(np.count_nonzero(actor_clean)),
                 "parent_mean_reward": float(np.mean(base_reward)),
                 "actor_mean_reward": float(np.mean(actor_reward)),
+                "parent_minimum_root_height_m": parent_root_min,
+                "actor_minimum_root_height_m": actor_root_min,
             }
         )
     if rows[0]["bank_hash"] == rows[1]["bank_hash"]:
@@ -74,7 +84,12 @@ def main() -> None:
     total = sum(row["sample_count"] for row in rows)
     base_mean = sum(row["parent_mean_reward"] * row["sample_count"] for row in rows) / total
     actor_mean = sum(row["actor_mean_reward"] * row["sample_count"] for row in rows) / total
-    pass_gate = sum(gains) >= 4 and min(gains) >= 0 and actor_mean > base_mean
+    pass_gate = (
+        sum(gains) >= 4
+        and min(gains) >= 0
+        and actor_mean > base_mean
+        and all(row["actor_minimum_root_height_m"] >= 0.65 for row in rows)
+    )
     result = {
         "schema": (
             "rsi_baseline_retention_two_seed_sealed_holdout_verdict_v1"
