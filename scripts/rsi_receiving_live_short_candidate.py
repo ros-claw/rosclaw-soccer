@@ -30,6 +30,8 @@ def evaluate(
     left_hip_roll_offset_rad: float,
     contact_impedance_scale: float = 1.0,
     posttouch_brake_nm: float = 0.0,
+    research_handoff: bool = False,
+    research_handoff_target_distance_m: float | None = None,
 ) -> dict[str, Any]:
     source = Path(__file__)
     root = source.parents[1]
@@ -39,6 +41,7 @@ def evaluate(
         "receiving": root / "src/rosclaw_soccer/training/receiving_experiment.py",
         "student": root / "src/rosclaw_soccer/providers/g1/receiving_torque_student.py",
         "bridge": root / "src/rosclaw_soccer/providers/g1/qualified_receiving_student.py",
+        "sonic": root / "src/rosclaw_soccer/providers/g1/receiving_sonic.py",
     }
     hashes = {name: hash_bytes(path.read_bytes()) for name, path in paths.items()}
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
@@ -63,6 +66,22 @@ def evaluate(
         and (left_hip_roll_offset_rad != -0.06 or contact_impedance_scale != 1.0)
     ):
         raise ValueError("predeclared bounded post-touch brake requires fixed hip parent")
+    if (
+        type(research_handoff) is not bool
+        or research_handoff
+        and (
+            left_hip_roll_offset_rad != -0.06
+            or contact_impedance_scale != 1.0
+            or posttouch_brake_nm != 0.0
+        )
+    ):
+        raise ValueError("predeclared SIM_ONLY phase handoff requires fixed hip parent")
+    if research_handoff_target_distance_m is not None and (
+        type(research_handoff_target_distance_m) is not float
+        or research_handoff_target_distance_m not in (0.42, 0.45)
+        or not research_handoff
+    ):
+        raise ValueError("predeclared SIM_ONLY guarded chase radius required")
     gate: dict[str, Any] = json.loads(fidelity.read_text(encoding="utf-8"))
     gate_hash = gate.pop("report_hash")
     if (
@@ -87,6 +106,14 @@ def evaluate(
         sonic_model_root=sonic_model_root,
         sonic_start_frame=0,
         sonic_ball_follow_gain=0.75,
+        sonic_ball_follow_fast_replan=research_handoff,
+        sonic_ball_follow_post_touch_chase=research_handoff,
+        sonic_ball_follow_brake_distance_m=0.65 if research_handoff else None,
+        sonic_ball_follow_post_touch_target_distance_m=research_handoff_target_distance_m,
+        sonic_ball_follow_post_touch_speed_limit_mps=(
+            0.35 if research_handoff_target_distance_m is not None else None
+        ),
+        research_student_handoff=research_handoff,
         receiving_student=student,
         receiving_student_hip_roll_offset_rad=left_hip_roll_offset_rad,
         receiving_student_contact_impedance_scale=contact_impedance_scale,
@@ -138,6 +165,8 @@ def evaluate(
         "left_hip_roll_offset_rad": left_hip_roll_offset_rad,
         "contact_impedance_scale": contact_impedance_scale,
         "posttouch_brake_nm": posttouch_brake_nm,
+        "research_handoff": research_handoff,
+        "research_handoff_target_distance_m": research_handoff_target_distance_m,
         "posttouch_brake_active_substeps": (
             int(np.sum(trace["receiving_student_brake_active_substeps"]))
             if posttouch_brake_nm != 0.0
@@ -177,6 +206,8 @@ def main() -> None:
     parser.add_argument("--left-hip-roll-offset-rad", type=float, required=True)
     parser.add_argument("--contact-impedance-scale", type=float, default=1.0)
     parser.add_argument("--posttouch-brake-nm", type=float, default=0.0)
+    parser.add_argument("--research-handoff", action="store_true")
+    parser.add_argument("--research-handoff-target-distance-m", type=float)
     report = evaluate(**vars(parser.parse_args()))
     print(
         json.dumps(

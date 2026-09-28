@@ -77,6 +77,9 @@ def simulate_r0_receiving_course(
     sonic_ball_follow_fast_replan: bool = False,
     sonic_ball_follow_post_touch_chase: bool = False,
     sonic_ball_follow_brake_distance_m: float | None = None,
+    sonic_ball_follow_post_touch_target_distance_m: float | None = None,
+    sonic_ball_follow_post_touch_speed_limit_mps: float | None = None,
+    research_student_handoff: bool = False,
     capture_ball_follow_targets: bool = False,
     receiving_student: QualifiedReceivingStudent | None = None,
     receiving_student_probe_torque_nm: float = 0.0,
@@ -160,6 +163,8 @@ def simulate_r0_receiving_course(
         or sonic_ball_follow_fast_replan
         or sonic_ball_follow_post_touch_chase
         or sonic_ball_follow_brake_distance_m is not None
+        or sonic_ball_follow_post_touch_target_distance_m is not None
+        or sonic_ball_follow_post_touch_speed_limit_mps is not None
         or capture_ball_follow_targets
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
@@ -199,6 +204,15 @@ def simulate_r0_receiving_course(
         or not sonic_ball_follow_fast_replan
     ):
         raise ValueError("early receiving brake requires bounded fast-replan follow probe")
+    if (
+        sonic_ball_follow_post_touch_target_distance_m is not None
+        or sonic_ball_follow_post_touch_speed_limit_mps is not None
+    ) and (
+        not research_student_handoff
+        or sonic_ball_follow_post_touch_target_distance_m not in (0.42, 0.45)
+        or sonic_ball_follow_post_touch_speed_limit_mps != 0.35
+    ):
+        raise ValueError("predeclared SIM_ONLY guarded post-touch follow parameters required")
     if type(capture_ball_follow_targets) is not bool or (
         capture_ball_follow_targets
         and (
@@ -210,14 +224,35 @@ def simulate_r0_receiving_course(
         )
     ):
         raise ValueError("pure measured-ball follow teacher capture required")
+    if (
+        type(research_student_handoff) is not bool
+        or research_student_handoff
+        and (
+            receiving_student is None
+            or research_control_frame_limit != 130
+            or sonic_ball_follow_gain != 0.75
+            or not sonic_ball_follow_fast_replan
+            or not sonic_ball_follow_post_touch_chase
+            or sonic_ball_follow_brake_distance_m != 0.65
+            or receiving_student_hip_roll_offset_rad != -0.06
+            or receiving_student_contact_impedance_scale != 1.0
+            or receiving_student_posttouch_brake_nm != 0.0
+            or (sonic_ball_follow_post_touch_target_distance_m is None)
+            != (sonic_ball_follow_post_touch_speed_limit_mps is None)
+        )
+    ):
+        raise ValueError("bounded SIM_ONLY student handoff requires fixed live short course")
     if receiving_student is not None and (
         not isinstance(receiving_student, QualifiedReceivingStudent)
         or sonic_model_root is None
         or sonic_ball_follow_gain != 0.75
         or sonic_start_frame != 0
         or sonic_ball_follow_fast_replan
+        and not research_student_handoff
         or sonic_ball_follow_post_touch_chase
+        and not research_student_handoff
         or sonic_ball_follow_brake_distance_m is not None
+        and not research_student_handoff
         or capture_ball_follow_targets
         or feedback_actor_path is not None
         or oracle is not None
@@ -327,6 +362,12 @@ def simulate_r0_receiving_course(
                 fast_replan=sonic_ball_follow_fast_replan,
                 post_touch_chase=sonic_ball_follow_post_touch_chase,
                 brake_distance_m=sonic_ball_follow_brake_distance_m,
+                post_touch_target_distance_m=(
+                    sonic_ball_follow_post_touch_target_distance_m
+                    if sonic_ball_follow_post_touch_target_distance_m is not None
+                    else 0.30
+                ),
+                post_touch_speed_limit_mps=sonic_ball_follow_post_touch_speed_limit_mps,
             )
         else:
             option_type = (

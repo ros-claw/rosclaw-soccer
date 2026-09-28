@@ -131,7 +131,7 @@ class ReceivingSonicOption:
     def _navigation_command(self, observation: TeamMotorObservation) -> tuple[float, float, float]:
         if observation.navigation_command is None:
             raise ValueError("receiving navigation command unavailable")
-        return observation.navigation_command
+        return tuple(float(value) for value in observation.navigation_command)  # type: ignore[return-value]
 
 
 class ReceivingSonicBallFollowOption(ReceivingSonicOption):
@@ -147,6 +147,8 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
         fast_replan: bool = False,
         post_touch_chase: bool = False,
         brake_distance_m: float | None = None,
+        post_touch_target_distance_m: float = 0.30,
+        post_touch_speed_limit_mps: float | None = None,
     ) -> None:
         if (
             type(response_gain) not in (int, float)
@@ -167,6 +169,21 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
             or not fast_replan
         ):
             raise ValueError("bounded early receiving brake requires fast replanning")
+        if (
+            type(post_touch_target_distance_m) not in (int, float)
+            or not math.isfinite(post_touch_target_distance_m)
+            or not 0.30 <= post_touch_target_distance_m <= 0.50
+            or post_touch_target_distance_m != 0.30
+            and not post_touch_chase
+            or post_touch_speed_limit_mps is not None
+            and (
+                type(post_touch_speed_limit_mps) not in (int, float)
+                or not math.isfinite(post_touch_speed_limit_mps)
+                or not 0.25 <= post_touch_speed_limit_mps <= 0.70
+                or not post_touch_chase
+            )
+        ):
+            raise ValueError("bounded post-touch follow radius and speed required")
         super().__init__(
             model_root,
             agent_id,
@@ -177,6 +194,10 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
         self.fast_replan = fast_replan
         self.post_touch_chase = post_touch_chase
         self.brake_distance_m = float(brake_distance_m) if brake_distance_m is not None else None
+        self.post_touch_target_distance_m = float(post_touch_target_distance_m)
+        self.post_touch_speed_limit_mps = (
+            float(post_touch_speed_limit_mps) if post_touch_speed_limit_mps is not None else None
+        )
         self.contact_foot_seen = False
         self.last_physics_time_sec = -1.0
         self.contract_hash = str(
@@ -188,6 +209,16 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
                     "fast_replan": fast_replan,
                     "post_touch_chase": post_touch_chase,
                     "brake_distance_m": self.brake_distance_m,
+                    **(
+                        {"post_touch_target_distance_m": self.post_touch_target_distance_m}
+                        if self.post_touch_target_distance_m != 0.30
+                        else {}
+                    ),
+                    **(
+                        {"post_touch_speed_limit_mps": self.post_touch_speed_limit_mps}
+                        if self.post_touch_speed_limit_mps is not None
+                        else {}
+                    ),
                     "activation_ceiling": "SIM_ONLY",
                 }
             )
@@ -199,7 +230,7 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
         dy = observation.qpos[37] - observation.qpos[1]
         distance = math.hypot(dx, dy)
         if self.post_touch_chase and self.contact_foot_seen and distance > 0.05:
-            approach = 2.0 * (distance - 0.30) / distance
+            approach = 2.0 * (distance - self.post_touch_target_distance_m) / distance
             vx = observation.qvel[35] + approach * dx
             vy = observation.qvel[36] + approach * dy
             limit = (
@@ -207,6 +238,8 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
                 if observation.navigation_envelope is not None
                 else 0.7
             )
+            if self.post_touch_speed_limit_mps is not None:
+                limit = min(limit, self.post_touch_speed_limit_mps)
             speed = math.hypot(vx, vy)
             if speed > limit:
                 vx *= limit / speed
@@ -342,6 +375,8 @@ class RecordingReceivingSonicBallFollowOption(ReceivingSonicBallFollowOption):
         fast_replan: bool = False,
         post_touch_chase: bool = False,
         brake_distance_m: float | None = None,
+        post_touch_target_distance_m: float = 0.30,
+        post_touch_speed_limit_mps: float | None = None,
     ) -> None:
         super().__init__(
             model_root,
@@ -351,6 +386,8 @@ class RecordingReceivingSonicBallFollowOption(ReceivingSonicBallFollowOption):
             fast_replan=fast_replan,
             post_touch_chase=post_touch_chase,
             brake_distance_m=brake_distance_m,
+            post_touch_target_distance_m=post_touch_target_distance_m,
+            post_touch_speed_limit_mps=post_touch_speed_limit_mps,
         )
         self.recorded: list[tuple[TeamMotorObservation, TeamMotorTarget | None]] = []
 
