@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
@@ -854,8 +855,35 @@ def main() -> None:
         or not np.isfinite(forces_arr).all()
     ):
         raise ValueError("nonfinite vector trajectory")
-    if np.max(np.abs(positions_arr[:, :, 1] - lanes[None, :])) >= 4.0:
-        raise ValueError("ball escaped its isolated training lane")
+    lateral_excursion = np.max(np.abs(positions_arr[:, :, 1] - lanes[None, :]), axis=0)
+    if np.max(lateral_excursion) >= 4.0:
+        args.output_dir.mkdir(parents=True)
+        failure_path = args.output_dir / "lane_escape_trace.npz"
+        np.savez_compressed(
+            failure_path,
+            ball_position_m=positions_arr,
+            ball_angular_velocity_rad_s=angular_arr,
+            ball_body_contact_force_peak_n=forces_arr,
+            root_pose_xyzw_m=root_observations,
+            joint_target_rad=target_observations,
+            selected_taskspace_mask=swing_data[6],
+        )
+        failure = {
+            "schema": "rsi_isaac_vector_first_touch_lane_escape_v1",
+            "activation_ceiling": "SIM_ONLY",
+            "runner_source_hash": hash_bytes(Path(__file__).read_bytes()),
+            "parent_report_hash": parent["report_hash"] if args.parent_report else None,
+            "late_swing_actor_hash": late_actor["actor_hash"] if late_actor else None,
+            "trace_hash": hash_bytes(failure_path.read_bytes()),
+            "lateral_excursion_m": lateral_excursion.tolist(),
+            "escaped_lanes": np.flatnonzero(lateral_excursion >= 4.0).tolist(),
+            "promotion_authorized": False,
+        }
+        failure["report_hash"] = hash_json(failure)
+        (args.output_dir / "lane_escape_report.json").write_text(
+            json.dumps(failure, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        raise ValueError("ball escaped its isolated training lane; diagnostic trace preserved")
     args.output_dir.mkdir(parents=True)
     np.savez_compressed(
         args.output_dir / "trace.npz",
@@ -1290,6 +1318,6 @@ try:
     main()
 except Exception as exc:
     print(f"RSI_ISAAC_VECTOR_FAILURE={type(exc).__name__}:{exc}", flush=True)
-    raise
+    os._exit(1)
 else:
     simulation_app.close()
