@@ -1,0 +1,38 @@
+{
+  "schema": "rsi_team_lateral_foot_fresh_exam_protocol_v42",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "development_report": "/data/rosclaw_overflow/rsi-team-lateral-foot-interception-v41/report.json",
+  "development_report_hash": "sha256:f4772ed5e99e22172ad919195cffff65c05701c0e559c84e59d12ec6e04a37ad",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "coordinate_seed": 20261021,
+  "identity_seed_base": 1200000,
+  "scene_count": 48,
+  "ball_x_m": [3.4, 4.15],
+  "ball_y_m": [-0.95, -0.45],
+  "ball_vx_mps": [-0.75, -0.25],
+  "fixed_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.10,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "gate": {
+    "minimum_complete_pairs": 48,
+    "minimum_candidate_useful": 8,
+    "minimum_useful_gain_vs_fixed": 4,
+    "minimum_safe_contact_gain_vs_fixed": 4,
+    "maximum_unsafe_excess_vs_fixed": 0
+  },
+  "interpretation": "A new-state 48-pair G1 MuJoCo exam of lateral 10 cm versus frozen lateral 5 cm. Incomplete or audit-rejected episodes fail closed. Passing supports only bounded first-touch transfer, not a complete team match or hardware promotion."
+}
