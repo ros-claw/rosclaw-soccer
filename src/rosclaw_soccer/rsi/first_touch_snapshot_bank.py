@@ -66,7 +66,8 @@ def _extract(
         audit = audit_vector_first_touch(folder)
         report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
         if (
-            report.get("foot_geometry_body_names")
+            report.get("schema") != "rsi_isaac_vector_first_touch_smoke_v1"
+            or report.get("foot_geometry_body_names")
             != [
                 "left_ankle_roll_link",
                 "right_ankle_roll_link",

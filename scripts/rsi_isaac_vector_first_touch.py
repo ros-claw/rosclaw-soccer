@@ -35,6 +35,7 @@ parser.add_argument("--reset-replay", action="store_true")
 parser.add_argument("--second-reset-replay", action="store_true")
 parser.add_argument("--candidate-actions", type=Path)
 parser.add_argument("--temporal-policy-actions", type=Path)
+parser.add_argument("--late-swing-policy", type=Path)
 parser.add_argument("--temporal-followthrough-frames", type=int, default=0)
 parser.add_argument("--parent-report", type=Path)
 AppLauncher.add_app_launcher_args(parser)
@@ -56,19 +57,50 @@ if (
     or (args.near_ball_speed_mps is not None and not 0.8 <= args.near_ball_speed_mps <= 1.5)
     or (args.near_ball_incoming_only and args.near_ball_gap_m is None)
     or (args.second_reset_replay and not args.reset_replay)
-    or (args.candidate_actions is not None and args.temporal_policy_actions is not None)
+    or sum(
+        value is not None
+        for value in (args.candidate_actions, args.temporal_policy_actions, args.late_swing_policy)
+    )
+    > 1
     or (
-        (args.candidate_actions is not None or args.temporal_policy_actions is not None)
+        any(
+            value is not None
+            for value in (
+                args.candidate_actions,
+                args.temporal_policy_actions,
+                args.late_swing_policy,
+            )
+        )
         != (args.parent_report is not None)
     )
     or (args.candidate_actions is not None and not args.candidate_actions.is_file())
     or (args.temporal_policy_actions is not None and not args.temporal_policy_actions.is_file())
+    or (args.late_swing_policy is not None and not args.late_swing_policy.is_file())
+    or (
+        args.late_swing_policy is not None
+        and (
+            args.frames != 300
+            or args.env_count != 16
+            or args.training_course_seed is None
+            or not args.record_body_trace
+            or not args.record_foot_geometry
+            or not args.torch_batch_plan_only
+            or args.reset_replay
+        )
+    )
     or not 0 <= args.temporal_followthrough_frames <= 30
     or (args.temporal_followthrough_frames > 0 and args.temporal_policy_actions is None)
     or (args.record_foot_geometry and not args.record_body_trace)
     or (args.parent_report is not None and not args.parent_report.is_file())
     or (
-        (args.candidate_actions is not None or args.temporal_policy_actions is not None)
+        any(
+            value is not None
+            for value in (
+                args.candidate_actions,
+                args.temporal_policy_actions,
+                args.late_swing_policy,
+            )
+        )
         and args.reset_replay
     )
     or (
@@ -105,6 +137,14 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
 from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController  # noqa: E402
 from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch  # noqa: E402
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa: E402
+from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module  # noqa: E402
+from rosclaw_soccer.rsi import late_swing_memory as late_swing_module  # noqa: E402
+from rosclaw_soccer.rsi import taskspace_gate_memory as taskspace_gate_module  # noqa: E402
+from rosclaw_soccer.rsi.contact_time_phase_features import (  # noqa: E402
+    current_context,
+    gait_phase_features,
+    predict_contact_time,
+)
 from rosclaw_soccer.rsi.first_touch_candidate import (  # noqa: E402
     JOINT_NAMES,
     load_first_touch_candidate,
@@ -113,6 +153,14 @@ from rosclaw_soccer.rsi.first_touch_candidate import (  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_course_catalog import (  # noqa: E402
     sample_training_courses,
     static_development_courses,
+)
+from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor  # noqa: E402
+from rosclaw_soccer.rsi.taskspace_gate_memory import select_taskspace_gate  # noqa: E402
+from rosclaw_soccer.rsi.taskspace_swing_evidence import LEG_NAMES  # noqa: E402
+from rosclaw_soccer.rsi.taskspace_swing_probe import (  # noqa: E402
+    choose_swing_side,
+    release_joint_delta,
+    swing_joint_delta,
 )
 from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
     JOINT_NAMES as TEMPORAL_JOINT_NAMES,
@@ -226,8 +274,16 @@ def main() -> None:
     )
     candidate = None
     temporal_candidate = None
+    late_actor = None
     if (
-        args.candidate_actions is not None or args.temporal_policy_actions is not None
+        any(
+            value is not None
+            for value in (
+                args.candidate_actions,
+                args.temporal_policy_actions,
+                args.late_swing_policy,
+            )
+        )
     ) and args.parent_report is not None:
         parent_audit = audit_vector_first_touch(args.parent_report.parent)
         parent = json.loads(args.parent_report.read_text(encoding="utf-8"))
@@ -266,7 +322,7 @@ def main() -> None:
                 parent_report_hash=parent["report_hash"],
             )
             print("RSI_ISAAC_CANDIDATE_READY=" + candidate.candidate_hash, flush=True)
-        else:
+        elif args.temporal_policy_actions is not None:
             temporal_candidate = load_temporal_candidate(
                 args.temporal_policy_actions,
                 expected_courses=tuple(courses),
@@ -276,6 +332,18 @@ def main() -> None:
                 "RSI_ISAAC_TEMPORAL_CANDIDATE_READY=" + temporal_candidate.candidate_hash,
                 flush=True,
             )
+        else:
+            late_actor = load_late_swing_actor(args.late_swing_policy)
+            if (
+                late_actor["policy_source_hash"]
+                != hash_bytes(Path(taskspace_gate_module.__file__).read_bytes())
+                or late_actor["feature_source_hash"]
+                != hash_bytes(Path(time_phase_module.__file__).read_bytes())
+                or late_actor["loader_source_hash"]
+                != hash_bytes(Path(late_swing_module.__file__).read_bytes())
+            ):
+                raise ValueError("late-swing actor source changed")
+            print("RSI_ISAAC_LATE_SWING_READY=" + late_actor["actor_hash"], flush=True)
     candidate_joint_indices = [robot.joint_names.index(name) for name in JOINT_NAMES]
     temporal_joint_indices = [robot.joint_names.index(name) for name in TEMPORAL_JOINT_NAMES]
     pose = robot.data.default_root_pose.torch.clone()
@@ -314,6 +382,11 @@ def main() -> None:
         if args.record_foot_geometry
         else []
     )
+    leg_joint_indices = (
+        tuple(tuple(robot.joint_names.index(name) for name in row) for row in LEG_NAMES)
+        if late_actor is not None
+        else ()
+    )
 
     def rollout(current_navigations: list[G1SonicNavigation]):
         positions = []
@@ -331,6 +404,17 @@ def main() -> None:
         temporal_residual_observations = []
         foot_geometry_position_observations = []
         foot_geometry_velocity_observations = []
+        swing_foot_positions = []
+        swing_linear_jacobians = []
+        swing_selected_sides = []
+        swing_applied_residuals = []
+        swing_baseline_targets = []
+        swing_executed_targets = []
+        swing_side = np.full(args.env_count, -1, dtype=np.int64)
+        swing_contact_frame = np.full(args.env_count, -1, dtype=np.int64)
+        swing_contact_delta = np.zeros((args.env_count, 6), dtype=np.float64)
+        selected_taskspace_mask = np.zeros(args.env_count, dtype=np.bool_)
+        gate_features = None
         applied_frames = np.zeros(args.env_count, dtype=np.int64)
         projection_counts = np.zeros(args.env_count, dtype=np.int64)
         contact_seen = np.zeros(args.env_count, dtype=np.bool_)
@@ -490,6 +574,32 @@ def main() -> None:
                 if args.torch_batch_drive:
                     target[:, indices] = batch_target
             baseline_target = target.clone()
+            if late_actor is not None and frame == 30:
+                local_root = robot_root_observations[-1].copy()
+                local_ball = ball_xyz_frame.copy()
+                local_root[:, 1] -= lanes
+                local_ball[:, 1] -= lanes
+                raw = current_context(
+                    local_root,
+                    robot_root_velocity_observations[-1],
+                    local_ball,
+                    ball_velocity_frame,
+                )
+                predicted = predict_contact_time(
+                    raw, np.asarray(late_actor["contact_time_weights"])
+                )
+                gate_features = gait_phase_features(raw, predicted)
+                selected_taskspace_mask = select_taskspace_gate(
+                    gate_features,
+                    np.asarray(late_actor["memory_features"]),
+                    np.asarray(late_actor["memory_clean"]),
+                    np.asarray(late_actor["memory_reward"]),
+                    np.asarray(late_actor["memory_groups"]),
+                    neighbors=late_actor["neighbors"],
+                    confidence=late_actor["confidence"],
+                    baseline_clean_ceiling=late_actor["baseline_clean_ceiling"],
+                )
+                selected_taskspace_mask &= np.asarray([course[2] < 0 for course in courses])
             frame_temporal_residual = np.zeros((args.env_count, len(TEMPORAL_JOINT_NAMES)))
             if temporal_candidate is not None or args.record_foot_geometry:
                 temporal_ball_position_observations.append(ball_xyz_frame.copy())
@@ -562,6 +672,73 @@ def main() -> None:
                     if not contact_seen[index]:
                         contact_residuals[index] = frame_temporal_residual[index]
                     applied_frames[index] += 1
+            if late_actor is not None:
+                feet = (
+                    robot.data.body_link_pos_w.torch[:, foot_geometry_indices[:2]]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .copy()
+                )
+                full_jacobian = robot.data.body_link_jacobian_w.torch.detach().cpu().numpy()
+                jacobians = np.stack(
+                    [
+                        np.take(
+                            full_jacobian[:, body_index, :3, :],
+                            np.asarray(leg_joint_indices[side]) + 6,
+                            axis=-1,
+                        )
+                        for side, body_index in enumerate(foot_geometry_indices[:2])
+                    ],
+                    axis=1,
+                )
+                if jacobians.shape != (args.env_count, 2, 3, 6):
+                    raise ValueError("full-episode foot Jacobian shape changed")
+                limits = robot.data.joint_pos_limits.torch.detach().cpu().numpy()
+                baseline = baseline_target.detach().cpu().numpy()
+                frame_swing_residual = np.zeros((args.env_count, len(robot.joint_names)))
+                for lane in range(args.env_count):
+                    if not selected_taskspace_mask[lane]:
+                        continue
+                    if swing_contact_frame[lane] < 0:
+                        swing_side[lane] = choose_swing_side(
+                            feet[lane],
+                            ball_xyz_frame[lane],
+                            int(swing_side[lane]),
+                            acquisition_max_gap_m=0.55,
+                        )
+                    side = int(swing_side[lane])
+                    if side < 0:
+                        continue
+                    joint_ids = list(leg_joint_indices[side])
+                    if swing_contact_frame[lane] >= 0:
+                        delta = release_joint_delta(
+                            swing_contact_delta[lane], frame - int(swing_contact_frame[lane])
+                        )
+                    else:
+                        delta = swing_joint_delta(
+                            feet[lane, side],
+                            ball_xyz_frame[lane],
+                            jacobians[lane, side],
+                            baseline[lane, joint_ids],
+                            limits[lane, joint_ids],
+                            forward_cap_m=0.08,
+                            lateral_cap_m=0.05,
+                            vertical_offset_m=0.04,
+                        )
+                    target[lane, joint_ids] = torch.as_tensor(
+                        baseline[lane, joint_ids] + delta, device=sim.device, dtype=torch.float32
+                    )
+                    frame_swing_residual[lane, joint_ids] = (
+                        target[lane, joint_ids].detach().cpu().numpy() - baseline[lane, joint_ids]
+                    )
+                    applied_frames[lane] += int(np.any(np.abs(frame_swing_residual[lane]) > 1e-6))
+                swing_foot_positions.append(feet)
+                swing_linear_jacobians.append(jacobians)
+                swing_selected_sides.append(swing_side.copy())
+                swing_applied_residuals.append(frame_swing_residual)
+                swing_baseline_targets.append(baseline)
+                swing_executed_targets.append(target.detach().cpu().numpy().copy())
             robot_target_observations.append(target[:, indices].detach().cpu().numpy().copy())
             command_speed_observations.append(frame_command_speeds)
             if temporal_candidate is not None:
@@ -606,6 +783,15 @@ def main() -> None:
             positions.append(ball.data.root_pos_w.torch.detach().cpu().numpy().copy())
             angular_velocities.append(ball.data.root_ang_vel_w.torch.detach().cpu().numpy().copy())
             contact_forces.append(frame_forces_gpu.detach().cpu().numpy().copy())
+            if late_actor is not None:
+                contact_now = contact_forces[-1]
+                last_delta = swing_applied_residuals[-1]
+                for lane in range(args.env_count):
+                    if swing_contact_frame[lane] < 0 and np.any(contact_now[lane] > 1.0):
+                        swing_contact_frame[lane] = frame
+                        if swing_side[lane] >= 0:
+                            joint_ids = list(leg_joint_indices[int(swing_side[lane])])
+                            swing_contact_delta[lane] = last_delta[lane, joint_ids]
             pelvis_z = robot.data.body_pos_w.torch[:, pelvis_index, 2].detach().cpu().numpy()
             minimum_pelvis = np.minimum(minimum_pelvis, pelvis_z)
         return (
@@ -628,6 +814,16 @@ def main() -> None:
             applied_frames,
             projection_counts,
             batch_target_max_difference,
+            (
+                np.asarray(swing_foot_positions),
+                np.asarray(swing_linear_jacobians),
+                np.asarray(swing_selected_sides),
+                np.asarray(swing_applied_residuals),
+                np.asarray(swing_baseline_targets),
+                np.asarray(swing_executed_targets),
+                selected_taskspace_mask,
+                gate_features,
+            ),
         )
 
     (
@@ -650,6 +846,7 @@ def main() -> None:
         applied_frames,
         projection_counts,
         batch_target_max_difference,
+        swing_data,
     ) = rollout(navigations)
     if (
         not np.isfinite(positions_arr).all()
@@ -698,6 +895,31 @@ def main() -> None:
             )
         np.savez_compressed(body_trace_path, **body_record)
         body_trace_hash = hash_bytes(body_trace_path.read_bytes())
+    swing_trace_hash = None
+    if late_actor is not None:
+        feet, jacobians, sides, residuals, baseline, executed, selected_mask, gate_features = (
+            swing_data
+        )
+        if gate_features is None or not np.isfinite(gate_features).all():
+            raise ValueError("late-swing gate was not evaluated")
+        ball_local = np.asarray(temporal_ball_position_observations).copy()
+        ball_local[:, :, 1] -= lanes[None, :]
+        action_path = args.output_dir / "late_swing_action_trace.npz"
+        np.savez_compressed(
+            action_path,
+            pre_step_foot_link_position_w=feet,
+            pre_step_foot_linear_jacobian_w=jacobians,
+            taskspace_selected_side=sides,
+            applied_taskspace_joint_delta_rad=residuals,
+            baseline_taskspace_joint_target_rad=baseline,
+            executed_taskspace_joint_target_rad=executed,
+            taskspace_joint_limits_rad=robot.data.joint_pos_limits.torch.detach().cpu().numpy(),
+            pre_step_ball_position_local_m=ball_local,
+            observed_ball_body_contact_force_peak_n=forces_arr,
+            predicted_baseline_joint_target_rad=baseline[:, :, indices],
+            frame30_gate_features=gate_features,
+        )
+        swing_trace_hash = hash_bytes(action_path.read_bytes())
     entries = []
     for i, (x, y, vx) in enumerate(courses):
         active = np.flatnonzero(np.max(forces_arr[:, i], axis=1) > 1.0)
@@ -724,6 +946,8 @@ def main() -> None:
             if candidate is not None
             else "rsi_isaac_vector_first_touch_temporal_candidate_v1"
             if temporal_candidate is not None
+            else "rsi_isaac_vector_first_touch_late_swing_v1"
+            if late_actor is not None
             else "rsi_isaac_vector_first_touch_smoke_v1"
         ),
         "activation_ceiling": "SIM_ONLY",
@@ -776,6 +1000,21 @@ def main() -> None:
         report["temporal_policy_projection_count"] = projection_counts.tolist()
         report["temporal_followthrough_frames"] = args.temporal_followthrough_frames
         report["trained_actor"] = False
+    elif late_actor is not None:
+        report.update(
+            parent_report_hash=parent["report_hash"],
+            late_swing_actor_hash=late_actor["actor_hash"],
+            late_swing_action_trace_hash=swing_trace_hash,
+            selected_taskspace_mask=swing_data[6].tolist(),
+            taskspace_forward_m=0.08,
+            taskspace_lateral_cap_m=0.05,
+            taskspace_vertical_offset_m=0.0,
+            taskspace_acquisition_max_gap_m=0.95,
+            taskspace_leg_joint_names=[list(row) for row in LEG_NAMES],
+            taskspace_joint_order=list(robot.joint_names),
+            taskspace_applied_frames=applied_frames.tolist(),
+            trained_actor=True,
+        )
     report["report_hash"] = hash_json(report)
     (args.output_dir / "report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -835,6 +1074,7 @@ def main() -> None:
             _replay_applied_frames,
             _replay_projection_counts,
             _replay_batch_target_max_difference,
+            _replay_swing_data,
         ) = rollout(replay_navigations)
         replay_path = args.output_dir / "reset_replay.npz"
         np.savez_compressed(
@@ -986,6 +1226,7 @@ def main() -> None:
                 _second_applied_frames,
                 _second_projection_counts,
                 _second_batch_target_max_difference,
+                _second_swing_data,
             ) = rollout(second_navigations)
             second_trace_path = args.output_dir / "second_reset_replay.npz"
             np.savez_compressed(

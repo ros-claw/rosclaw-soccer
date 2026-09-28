@@ -97,7 +97,11 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
     trace_path = folder / "trace.npz"
     committed = {key: value for key, value in report.items() if key != "report_hash"}
     if (
-        report.get("schema") != "rsi_isaac_vector_first_touch_smoke_v1"
+        report.get("schema")
+        not in (
+            "rsi_isaac_vector_first_touch_smoke_v1",
+            "rsi_isaac_vector_first_touch_late_swing_v1",
+        )
         or report.get("activation_ceiling") != "SIM_ONLY"
         or report.get("learning_authorized") is not False
         or report.get("promotion_authorized") is not False
