@@ -1,0 +1,28 @@
+{
+  "schema": "rsi_first_touch_contextual_phase_learning_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "development_bank_ids": [
+    "rsi-isaac-first-touch-snapshot-bank-frame30-seed20260930-32-v1:first15_only",
+    "rsi-isaac-first-touch-snapshot-bank-frame30-seed20260934-v1:all7"
+  ],
+  "sealed_holdout_source_id": "rsi-isaac-sonic-planonly-bodytrace-holdout16-seed20260935-v1",
+  "allowed_phase_actions_frames": [0.0, 3.0, 6.0],
+  "observable_context_at_snapshot_only": [
+    "ball_minus_root_x_m",
+    "ball_minus_root_y_m",
+    "ball_vx_m_s",
+    "right_foot_minus_right_knee_x_m"
+  ],
+  "model": "regularized_linear_action_value",
+  "ridge_lambdas": [0.1, 1.0, 10.0],
+  "selection": "leave_one_source_seed_out_development_only",
+  "safety_gate": {"minimum_root_height_m": 0.65, "maximum_phase_target_frames": 6.0},
+  "holdout_gate": {
+    "minimum_clean_foot_gain_over_parent": 2,
+    "require_mean_reward_above_parent": true,
+    "require_audited_action_trace": true
+  },
+  "full_episode_required_for_skill_promotion": true,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
