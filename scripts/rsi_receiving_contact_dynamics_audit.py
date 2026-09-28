@@ -43,7 +43,14 @@ def _run(
     near_touch_bias: NDArray[np.float64] | None = None,
     precontact_pulse_weights: NDArray[np.float64] | None = None,
     substep_feedback: bool = False,
+    receiving_leg_kp_scale: float = 1.0,
 ) -> dict[str, Any]:
+    if (
+        type(receiving_leg_kp_scale) not in (float, int)
+        or not np.isfinite(receiving_leg_kp_scale)
+        or not 0.4 <= receiving_leg_kp_scale <= 1.0
+    ):
+        raise ValueError("bounded SIM_ONLY receiving-leg stiffness scale required")
     data = mujoco.MjData(model)
     data.qpos[:] = arrays["sonic_recorded_qpos"][SNAPSHOT]
     data.qvel[:] = arrays["sonic_recorded_qvel"][SNAPSHOT]
@@ -90,6 +97,7 @@ def _run(
     exam_ball_distance = None
     minimum = float(data.qpos[2])
     maximum_tilt = 0.0
+    impedance_substeps = 0
     for frame in range(SNAPSHOT + 1, 101):
         base_target = arrays["sonic_recorded_target"][frame]
         kp = arrays["sonic_recorded_kp"][frame]
@@ -144,8 +152,26 @@ def _run(
         for substep in range(10):
             if substep_feedback and substep > 0:
                 target = target_at_current_state(base_target, first, first_nonfoot)
+            kp_effective = kp
+            dx_now = float(data.qpos[36] - data.qpos[0])
+            impedance_active = (
+                receiving_leg_kp_scale < 1.0
+                and first_nonfoot is None
+                and (
+                    (first is None and 0.12 < dx_now <= 0.55)
+                    or (
+                        first is not None
+                        and first["kind"] == "foot"
+                        and frame - int(first["frame"]) <= 6
+                    )
+                )
+            )
+            if impedance_active:
+                kp_effective = kp.copy()
+                kp_effective[[0, 1, 3, 4, 5]] *= receiving_leg_kp_scale
+                impedance_substeps += 1
             data.ctrl[:] = np.clip(
-                kp * (target - data.qpos[7:36]) - kd * data.qvel[6:35],
+                kp_effective * (target - data.qpos[7:36]) - kd * data.qvel[6:35],
                 -torque_limit,
                 torque_limit,
             )
@@ -214,6 +240,7 @@ def _run(
         "exam_ball_pelvis_distance_m": exam_ball_distance,
         "minimum_pelvis_height_m": minimum,
         "maximum_tilt_rad": maximum_tilt,
+        "impedance_substeps": impedance_substeps,
     }
 
 
