@@ -1,0 +1,22 @@
+{
+  "run_id": "first-touch-gen1-transfer-seed20260930-v1",
+  "purpose": "SIM_ONLY no-noise generalization probe on a new train-only course seed before any next actor update",
+  "code_sha": "cbd3ec6",
+  "physics_source_hash": "sha256:6b69ba4ae5a409929db1f996af277c379023f9e72823a732d85a4f09bd646eda",
+  "parent_report_hash": "sha256:78cc2ea648a9686312b459227d54ed51583b506a353bb9b58b56d5c1de51e9bd",
+  "parent_audit_hash": "sha256:1344a58ef91cc58a1fc555bdfd8acec6a524274548909575eceebaf6830a055d",
+  "parent_clean_foot_count": 7,
+  "qualified_gen1_actor_hash": "sha256:1a9afb5e0f5faf9c22b25df60d33cf2dc9ad0b0f26e86f69e82f2aca331acdcf",
+  "candidate_manifest_hash": "sha256:e8aa367f53a8b006a6c10a803eb3965318811cc3584e7dcca515381542b152df",
+  "training_course_seed": 20260930,
+  "course_count": 16,
+  "frames": 300,
+  "candidate_mode": "FROZEN_TRANSFER_MEAN",
+  "exploration_noise": false,
+  "record_body_trace": true,
+  "retention_criterion": "candidate clean-foot count >= 7 and pelvis minimum >=0.65m",
+  "meaningful_progress_criterion": "candidate clean-foot count >= 9 with no new nonfoot contact on previously clean courses",
+  "fresh_opened": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
