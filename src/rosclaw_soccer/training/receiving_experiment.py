@@ -80,6 +80,7 @@ def simulate_r0_receiving_course(
     capture_ball_follow_targets: bool = False,
     receiving_student: QualifiedReceivingStudent | None = None,
     receiving_student_probe_torque_nm: float = 0.0,
+    receiving_student_hip_roll_offset_rad: float = 0.0,
     research_coupled_teacher: bool = False,
     capture_team_motor_targets: bool = False,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
@@ -229,6 +230,14 @@ def simulate_r0_receiving_course(
     ):
         raise ValueError("bounded student torque probe requires a qualified receiving student")
     if (
+        type(receiving_student_hip_roll_offset_rad) not in (int, float)
+        or not np.isfinite(receiving_student_hip_roll_offset_rad)
+        or abs(receiving_student_hip_roll_offset_rad) > 0.08
+        or receiving_student_hip_roll_offset_rad != 0.0
+        and (receiving_student is None or receiving_student_probe_torque_nm != 0.0)
+    ):
+        raise ValueError("bounded student hip probe requires an unmixed qualified actor")
+    if (
         type(research_coupled_teacher) is not bool
         or research_coupled_teacher
         and (
@@ -328,6 +337,7 @@ def simulate_r0_receiving_course(
             {course.agent_id: receiving_student} if receiving_student is not None else None
         ),
         receiving_student_probe_torque_nm=receiving_student_probe_torque_nm,
+        receiving_student_hip_roll_offset_rad=receiving_student_hip_roll_offset_rad,
         research_coupled_teacher_agent_id=(course.agent_id if research_coupled_teacher else None),
         receiving_oracle=oracle,
         receiving_phase_reference=phase_reference,

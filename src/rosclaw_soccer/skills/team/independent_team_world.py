@@ -1045,6 +1045,7 @@ def simulate_independent_team_world(
     motor_options: Mapping[str, TeamMotorOption] | None = None,
     receiving_students: Mapping[str, QualifiedReceivingStudent] | None = None,
     receiving_student_probe_torque_nm: float = 0.0,
+    receiving_student_hip_roll_offset_rad: float = 0.0,
     research_coupled_teacher_agent_id: str | None = None,
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
@@ -1314,6 +1315,14 @@ def simulate_independent_team_world(
         and len(students) != 1
     ):
         raise ValueError("bounded explicit SIM_ONLY student probe requires one qualified actor")
+    if (
+        type(receiving_student_hip_roll_offset_rad) not in (int, float)
+        or not np.isfinite(receiving_student_hip_roll_offset_rad)
+        or abs(receiving_student_hip_roll_offset_rad) > 0.08
+        or receiving_student_hip_roll_offset_rad != 0.0
+        and (len(students) != 1 or receiving_student_probe_torque_nm != 0.0)
+    ):
+        raise ValueError("bounded explicit SIM_ONLY hip probe requires one qualified actor")
     if research_coupled_teacher_agent_id is not None and (
         type(research_coupled_teacher_agent_id) is not str
         or research_coupled_teacher_agent_id not in motors
@@ -3416,6 +3425,13 @@ def simulate_independent_team_world(
                             joint_ranges=np.asarray(model.jnt_range[controller.joint_ids]),
                         )
                     target = student_frame_targets[controller.cell.agent_id]
+                    if receiving_student_hip_roll_offset_rad != 0.0 and 46 <= frame <= 61:
+                        target = target.copy()
+                        target[1] = np.clip(
+                            target[1] + receiving_student_hip_roll_offset_rad,
+                            model.jnt_range[controller.joint_ids[1], 0],
+                            model.jnt_range[controller.joint_ids[1], 1],
+                        )
                 if research_teacher_active:
                     if substep == 0:
                         rotation = np.asarray(

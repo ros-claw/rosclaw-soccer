@@ -1,4 +1,4 @@
-"""SIM_ONLY zero-intervention full-eight-G1 short-horizon replay fidelity exam."""
+"""SIM_ONLY full-eight-G1 short-horizon replay and bounded research probes."""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ def replay(
     student_bundle: QualifiedReceivingStudent | None = None,
     reference_trace: Path | None = None,
     focal_probe_nm: float = 0.0,
+    left_hip_roll_offset_rad: float = 0.0,
 ) -> dict[str, Any]:
     source = Path(__file__)
     root = source.parents[1]
@@ -55,6 +56,14 @@ def replay(
         and student_bundle is not None
     ):
         raise ValueError("bounded student-tape-only SIM_ONLY probe required")
+    if (
+        type(left_hip_roll_offset_rad) not in (int, float)
+        or not np.isfinite(left_hip_roll_offset_rad)
+        or abs(left_hip_roll_offset_rad) > 0.08
+        or left_hip_roll_offset_rad != 0.0
+        and (student_bundle is not None or focal_probe_nm != 0.0)
+    ):
+        raise ValueError("bounded independent student-tape-only hip research probe required")
     if student_bundle is not None:
         paths["student_actor"] = (
             root / "src/rosclaw_soccer/providers/g1/receiving_torque_student.py"
@@ -80,6 +89,8 @@ def replay(
         or capture["trace_hash"] != hash_bytes(trace_path.read_bytes())
         or capture["promotion_authorized"] is not False
         or focal_probe_nm != 0.0
+        and capture["schema"] != "rosclaw_soccer.rsi.receiving_team_student_motor_capture.v1"
+        or left_hip_roll_offset_rad != 0.0
         and capture["schema"] != "rosclaw_soccer.rsi.receiving_team_student_motor_capture.v1"
     ):
         raise ValueError("sealed frame-45 eight-G1 motor capture required")
@@ -146,6 +157,8 @@ def replay(
     hard = np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
     guarded = 0.85 * hard
     ball_speed = []
+    ball_vx = []
+    ball_vy = []
     ball_pelvis_distance = []
     robot_min_height = {agent: float("inf") for agent in agents}
     robot_max_tilt = {agent: 0.0 for agent in agents}
@@ -184,6 +197,13 @@ def replay(
                         )
                     assert student_frame_target is not None
                     target = student_frame_target
+                if left_hip_roll_offset_rad != 0.0 and agent == FOCAL and 46 <= frame <= 61:
+                    target = target.copy()
+                    target[1] = np.clip(
+                        target[1] + left_hip_roll_offset_rad,
+                        model.jnt_range[index["joint_ids"][1], 0],
+                        model.jnt_range[index["joint_ids"][1], 1],
+                    )
                 raw = kp * (target - q) - kd * dq + extra
                 if focal_probe_nm != 0.0 and agent == FOCAL and 55 <= frame <= 75:
                     raw[4] += focal_probe_nm
@@ -244,6 +264,8 @@ def replay(
             )
         )
         ball_speed.append(speed)
+        ball_vx.append(float(data.qvel[ball_qvel]))
+        ball_vy.append(float(data.qvel[ball_qvel + 1]))
         ball_pelvis_distance.append(distance)
     reference_speed = float(np.linalg.norm(full_reference["ball_velocity"][86, :2]))
     reference_distance = float(
@@ -277,7 +299,9 @@ def replay(
         raise RuntimeError("full-world comparison trajectory changed during short replay")
     output_dir.mkdir(parents=True)
     trajectory_path = output_dir / (
-        "short-probe.npz"
+        "short-hip-probe.npz"
+        if left_hip_roll_offset_rad != 0.0
+        else "short-probe.npz"
         if focal_probe_nm != 0.0
         else "short-student.npz"
         if student_bundle is not None
@@ -287,11 +311,15 @@ def replay(
         trajectory_path,
         frame=np.arange(START, STOP + 1),
         ball_speed_mps=np.asarray(ball_speed),
+        ball_vx_mps=np.asarray(ball_vx),
+        ball_vy_mps=np.asarray(ball_vy),
         ball_pelvis_distance_m=np.asarray(ball_pelvis_distance),
     )
     report: dict[str, Any] = {
         "schema": (
-            "rosclaw_soccer.rsi.receiving_team_short_probe.v1"
+            "rosclaw_soccer.rsi.receiving_team_short_hip_probe.v1"
+            if left_hip_roll_offset_rad != 0.0
+            else "rosclaw_soccer.rsi.receiving_team_short_probe.v1"
             if focal_probe_nm != 0.0
             else "rosclaw_soccer.rsi.receiving_team_short_student_fidelity.v1"
             if student_bundle is not None
@@ -310,6 +338,8 @@ def replay(
         "full_reference_trace_hash": reference_hash,
         "focal_probe_nm": focal_probe_nm,
         "focal_probe_frames": [55, 75] if focal_probe_nm != 0.0 else None,
+        "left_hip_roll_offset_rad": left_hip_roll_offset_rad,
+        "left_hip_roll_probe_frames": [46, 61] if left_hip_roll_offset_rad != 0.0 else None,
         "compiled_model_hash": model_hash,
         "integration_hash": capture["integration_hash"],
         "trajectory_hash": hash_bytes(trajectory_path.read_bytes()),
@@ -318,6 +348,8 @@ def replay(
         "replay_first_foot_frame": first_own_foot_frame,
         "reference_frame86_ball_speed_mps": reference_speed,
         "replay_frame86_ball_speed_mps": ball_speed[86 - START],
+        "replay_frame86_ball_vx_mps": ball_vx[86 - START],
+        "replay_frame86_ball_vy_mps": ball_vy[86 - START],
         "frame86_speed_error_mps": speed_error,
         "reference_frame86_ball_pelvis_distance_m": reference_distance,
         "replay_frame86_ball_pelvis_distance_m": ball_pelvis_distance[86 - START],
@@ -325,7 +357,9 @@ def replay(
         "own_nonfoot_seen": own_nonfoot_seen,
         "all_robot_bodies_safe": all_safe,
         "maximum_executed_torque_error_nm": maximum_executed_torque_error_nm,
-        "training_proxy_fidelity_passed": passed if focal_probe_nm == 0.0 else False,
+        "training_proxy_fidelity_passed": (
+            passed if focal_probe_nm == 0.0 and left_hip_roll_offset_rad == 0.0 else False
+        ),
         "promotion_authorized": False,
     }
     report["report_hash"] = hash_json(report)
@@ -341,6 +375,7 @@ def main() -> None:
     parser.add_argument("--captured", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--focal-probe-nm", type=float, default=0.0)
+    parser.add_argument("--left-hip-roll-offset-rad", type=float, default=0.0)
     report = replay(**vars(parser.parse_args()))
     print(
         json.dumps(

@@ -26,6 +26,7 @@ def examine(
     fresh: Path,
     output_dir: Path,
     focal_probe_nm: float = 0.75,
+    left_hip_roll_offset_rad: float = 0.0,
 ) -> dict[str, Any]:
     source = Path(__file__)
     root = source.parents[1]
@@ -42,9 +43,13 @@ def examine(
     if (
         type(focal_probe_nm) is not float
         or not np.isfinite(focal_probe_nm)
-        or not 0 < focal_probe_nm <= 1
+        or not 0 <= focal_probe_nm <= 1
+        or type(left_hip_roll_offset_rad) is not float
+        or not np.isfinite(left_hip_roll_offset_rad)
+        or abs(left_hip_roll_offset_rad) > 0.08
+        or (focal_probe_nm == 0.0) == (left_hip_roll_offset_rad == 0.0)
     ):
-        raise ValueError("bounded positive SIM_ONLY torque probe required")
+        raise ValueError("exactly one bounded SIM_ONLY probe required")
     tape = json.loads((student_tape / "report.json").read_text(encoding="utf-8"))
     tape_hash = tape.pop("report_hash")
     if (
@@ -74,6 +79,7 @@ def examine(
         sonic_ball_follow_gain=0.75,
         receiving_student=student,
         receiving_student_probe_torque_nm=focal_probe_nm,
+        receiving_student_hip_roll_offset_rad=left_hip_roll_offset_rad,
     )
     agent_ids = tuple(sorted(row["agent_id"] for row in result.to_dict()["qualities"]))
     measurement = _measurement(trace, agent_ids=agent_ids, agent_id=COURSE.agent_id)
@@ -97,13 +103,19 @@ def examine(
     if {name: hash_bytes(path.read_bytes()) for name, path in paths.items()} != source_hashes:
         raise RuntimeError("probe source changed during eight-G1 physics")
     report: dict[str, Any] = {
-        "schema": "rosclaw_soccer.rsi.receiving_team_full_probe.v1",
+        "schema": (
+            "rosclaw_soccer.rsi.receiving_team_full_hip_probe.v1"
+            if left_hip_roll_offset_rad != 0.0
+            else "rosclaw_soccer.rsi.receiving_team_full_probe.v1"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "source_hashes": source_hashes,
         "student_tape_report_hash": tape_hash,
         "student_model_hash": student.model_hash,
         "focal_probe_nm": focal_probe_nm,
-        "focal_probe_frames": [55, 75],
+        "focal_probe_frames": [55, 75] if focal_probe_nm != 0.0 else None,
+        "left_hip_roll_offset_rad": left_hip_roll_offset_rad,
+        "left_hip_roll_probe_frames": [46, 61] if left_hip_roll_offset_rad != 0.0 else None,
         "full_trace_hash": hash_bytes(trace_path.read_bytes()),
         "result": result.to_dict(),
         "measurement": measurement,
@@ -135,6 +147,7 @@ def main() -> None:
     ):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--focal-probe-nm", type=float, default=0.75)
+    parser.add_argument("--left-hip-roll-offset-rad", type=float, default=0.0)
     report = examine(**vars(parser.parse_args()))
     print(
         json.dumps(
