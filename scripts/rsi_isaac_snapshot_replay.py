@@ -32,6 +32,7 @@ parser.add_argument(
     "--taskspace-vertical-offset-m", type=float, choices=(-0.04, 0.0, 0.04), default=0.0
 )
 parser.add_argument("--taskspace-gate-policy", type=Path)
+parser.add_argument("--taskspace-family-policy", type=Path)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -63,6 +64,13 @@ if (
     or (args.local_phase_policy is not None and not args.closed_loop_sonic)
     or (args.taskspace_forward_m is not None and args.local_phase_policy is None)
     or (args.taskspace_gate_policy is not None and not args.taskspace_gate_policy.is_file())
+    or (args.taskspace_family_policy is not None and not args.taskspace_family_policy.is_file())
+    or (args.taskspace_family_policy is not None and args.taskspace_gate_policy is not None)
+    or (args.taskspace_family_policy is not None and args.taskspace_forward_m != 0.08)
+    or (
+        args.taskspace_family_policy is not None
+        and (args.taskspace_lateral_cap_m != 0.05 or args.taskspace_vertical_offset_m != 0.0)
+    )
     or (args.taskspace_gate_policy is not None and args.taskspace_forward_m != 0.08)
     or (
         args.taskspace_gate_policy is not None
@@ -113,6 +121,7 @@ from rosclaw_soccer.rsi import baseline_retention_phase as guarded_phase_module 
 from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module  # noqa: E402
 from rosclaw_soccer.rsi import contextual_phase_policy as phase_policy_module  # noqa: E402
 from rosclaw_soccer.rsi import local_phase_memory as local_phase_module  # noqa: E402
+from rosclaw_soccer.rsi import taskspace_family_memory as taskspace_family_module  # noqa: E402
 from rosclaw_soccer.rsi import taskspace_gate_memory as taskspace_gate_module  # noqa: E402
 from rosclaw_soccer.rsi.baseline_retention_phase import (  # noqa: E402
     load_guarded_phase_actor,
@@ -138,6 +147,10 @@ from rosclaw_soccer.rsi.snapshot_shared_temporal_policy import load_candidate  #
 from rosclaw_soccer.rsi.sonic_phase_probe import (  # noqa: E402
     phase_offset_frames,
     recovered_phase_offset_frames,
+)
+from rosclaw_soccer.rsi.taskspace_family_memory import (  # noqa: E402
+    load_taskspace_family_actor,
+    select_taskspace_family,
 )
 from rosclaw_soccer.rsi.taskspace_gate_memory import (  # noqa: E402
     load_taskspace_gate_actor,
@@ -269,7 +282,9 @@ def main() -> None:
             **parameters,
         )
     taskspace_gate_hash = None
+    taskspace_family_hash = None
     selected_taskspace_mask = np.ones(args.sample_count, dtype=np.bool_)
+    selected_taskspace_actions = np.zeros(args.sample_count, dtype=np.int64)
     if args.taskspace_gate_policy is not None:
         gate_actor = load_taskspace_gate_actor(args.taskspace_gate_policy)
         if (
@@ -299,6 +314,36 @@ def main() -> None:
             confidence=gate_actor["confidence"],
             baseline_clean_ceiling=gate_actor["baseline_clean_ceiling"],
         )
+    if args.taskspace_family_policy is not None:
+        family_actor = load_taskspace_family_actor(args.taskspace_family_policy)
+        if (
+            family_actor.get("frozen_phase_actor_hash") != local_phase_hash
+            or family_actor.get("policy_source_hash")
+            != hash_bytes(Path(taskspace_family_module.__file__).read_bytes())
+            or family_actor.get("feature_source_hash")
+            != hash_bytes(Path(time_phase_module.__file__).read_bytes())
+        ):
+            raise ValueError("task-space family lacks frozen source or parent")
+        taskspace_family_hash = family_actor["actor_hash"]
+        family_raw = current_context(
+            snapshots["root_pose_local_xyzw_m"],
+            snapshots["root_velocity_world"],
+            snapshots["ball_position_local_m"],
+            snapshots["ball_linear_velocity_m_s"],
+        )
+        family_time = predict_contact_time(
+            family_raw, np.asarray(family_actor["contact_time_weights"])
+        )
+        selected_taskspace_actions = select_taskspace_family(
+            gait_phase_features(family_raw, family_time),
+            np.asarray(family_actor["memory_features"]),
+            np.asarray(family_actor["memory_clean"]),
+            np.asarray(family_actor["memory_reward"]),
+            np.asarray(family_actor["memory_groups"]),
+            neighbors=family_actor["neighbors"],
+            confidence=family_actor["confidence"],
+        )
+        selected_taskspace_mask = selected_taskspace_actions != 0
     if manifest["source_identity"][1] != hash_bytes(args.g1_usd.read_bytes()):
         raise ValueError("snapshot G1 asset hash changed")
     names = tuple(G1_DDS_JOINT_NAMES)
@@ -805,8 +850,16 @@ def main() -> None:
                         baseline[lane, joint_ids],
                         limits[lane, joint_ids],
                         forward_cap_m=args.taskspace_forward_m,
-                        lateral_cap_m=args.taskspace_lateral_cap_m,
-                        vertical_offset_m=args.taskspace_vertical_offset_m,
+                        lateral_cap_m=(
+                            0.10
+                            if selected_taskspace_actions[lane] == 2
+                            else args.taskspace_lateral_cap_m
+                        ),
+                        vertical_offset_m=(
+                            0.04
+                            if selected_taskspace_actions[lane] == 1
+                            else args.taskspace_vertical_offset_m
+                        ),
                     )
                 target[lane, joint_ids] = torch.as_tensor(
                     baseline[lane, joint_ids] + delta, device=sim.device, dtype=torch.float32
@@ -967,6 +1020,10 @@ def main() -> None:
         if args.taskspace_forward_m is not None
         else None,
         "taskspace_gate_actor_hash": taskspace_gate_hash,
+        "taskspace_family_actor_hash": taskspace_family_hash,
+        "selected_taskspace_actions": selected_taskspace_actions.tolist()
+        if taskspace_family_hash is not None
+        else None,
         "selected_taskspace_mask": selected_taskspace_mask.tolist()
         if args.taskspace_forward_m is not None
         else None,

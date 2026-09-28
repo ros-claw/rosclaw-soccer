@@ -36,10 +36,21 @@ def audit_taskspace_swing_trace(
     forward = report.get("taskspace_forward_m")
     lateral = report.get("taskspace_lateral_cap_m", 0.05)
     vertical = report.get("taskspace_vertical_offset_m", 0.0)
+    family_hash = report.get("taskspace_family_actor_hash")
+    family_actions = report.get("selected_taskspace_actions")
     order = report.get("taskspace_joint_order")
     mask_raw = report.get("selected_taskspace_mask")
-    if mask_raw is None and report.get("taskspace_gate_actor_hash") is None:
+    if mask_raw is None and report.get("taskspace_gate_actor_hash") is None and family_hash is None:
         mask_raw = [True] * count
+    if family_hash is not None and (
+        not isinstance(family_actions, list)
+        or len(family_actions) != count
+        or any(type(value) is not int or value not in (0, 1, 2) for value in family_actions)
+        or mask_raw != [value != 0 for value in family_actions]
+    ):
+        raise ValueError("uncommitted per-lane task-space family action")
+    if family_hash is None and family_actions is not None:
+        raise ValueError("unbound task-space family action")
     if (
         forward not in FORWARD_CAPS_M
         or lateral not in LATERAL_CAPS_M
@@ -118,8 +129,20 @@ def audit_taskspace_swing_trace(
                         baseline[frame, lane, ids],
                         limits[lane, ids],
                         forward_cap_m=forward,
-                        lateral_cap_m=lateral,
-                        vertical_offset_m=vertical,
+                        lateral_cap_m=(
+                            0.10
+                            if family_hash is not None
+                            and family_actions is not None
+                            and family_actions[lane] == 2
+                            else lateral
+                        ),
+                        vertical_offset_m=(
+                            0.04
+                            if family_hash is not None
+                            and family_actions is not None
+                            and family_actions[lane] == 1
+                            else vertical
+                        ),
                     )
                     delta = (baseline[frame, lane, ids] + delta).astype(np.float32).astype(
                         float
