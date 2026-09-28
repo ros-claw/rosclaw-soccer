@@ -1,0 +1,18 @@
+{
+  "run_id": "first-touch-foot-geometry-replication-20260931-32-v1",
+  "purpose": "SIM_ONLY repeat read-only G1 foot/knee geometry collection and independently test the shin-first hypothesis",
+  "physics_source_hash": "sha256:56c7550d8a5ed6918b9519c4e02cc21e55a08d933311ca4b1b3c634a36401def",
+  "auditor_source_hash": "sha256:78cd0fcc2c3f1ec3a85efc49af2877b3681b3bde5b54f0e45fb943fba3217e07",
+  "course_seeds": [20260931, 20260932],
+  "reference_report_hashes": [
+    "sha256:cca816471933cc5021e313838cfe0600f58f92abec141268ba07be73a830db57",
+    "sha256:84156b2b5b72df8aeeea7661cd7812990b96ccf17c365ca73ea02d0ca47b2ef3"
+  ],
+  "reference_clean_counts": [8, 7],
+  "expected_frames_per_episode": 300,
+  "primary_measures": ["audited causal ball-foot-knee alignment", "per-lane first-contact frame and class stability", "incoming right foot minus right knee x offset at first contact", "right knee angle versus foot-forward displacement in 30 precontact frames", "minimum pelvis height"],
+  "analysis_limit": "Observational association only; simulator non-bitwise repeatability has already been observed. No motor promotion or causal claim.",
+  "learning_authorized": false,
+  "promotion_authorized": false,
+  "activation_ceiling": "SIM_ONLY"
+}
