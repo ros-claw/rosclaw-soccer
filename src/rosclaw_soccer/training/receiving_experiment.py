@@ -267,11 +267,22 @@ def simulate_r0_receiving_course(
         or sonic_ball_follow_gain != 0.75
         or sonic_start_frame != 0
         or sonic_ball_follow_fast_replan
-        and not research_student_handoff
+        and not (
+            research_student_handoff
+            or receiving_foot_capture_teacher is not None
+            and sonic_ball_follow_brake_distance_m == 0.65
+            and not sonic_ball_follow_post_touch_chase
+        )
         or sonic_ball_follow_post_touch_chase
         and not research_student_handoff
         or sonic_ball_follow_brake_distance_m is not None
-        and not research_student_handoff
+        and not (
+            research_student_handoff
+            or receiving_foot_capture_teacher is not None
+            and sonic_ball_follow_fast_replan
+            and sonic_ball_follow_brake_distance_m == 0.65
+            and not sonic_ball_follow_post_touch_chase
+        )
         or capture_ball_follow_targets
         or feedback_actor_path is not None
         or oracle is not None
@@ -288,6 +299,12 @@ def simulate_r0_receiving_course(
         or receiving_student_contact_impedance_scale != 1.0
         or receiving_student_posttouch_brake_nm != 0.0
         or research_student_handoff
+        or sonic_ball_follow_brake_distance_m is not None
+        and (
+            sonic_ball_follow_brake_distance_m != 0.65
+            or not sonic_ball_follow_fast_replan
+            or sonic_ball_follow_post_touch_chase
+        )
     ):
         raise ValueError("bounded unmixed SIM_ONLY live foot-capture probe required")
     if (

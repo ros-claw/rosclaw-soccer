@@ -65,6 +65,19 @@
       "reused_as": "external_design_reference",
       "files_reviewed": ["README.md", "LICENSE"],
       "copied_code": false
+    },
+    {
+      "name": "humanoid-soccer-agile",
+      "repository": "https://github.com/Daffan/humanoid-soccer.git",
+      "commit": "378a12ac7446cd175f973c04e32912eb9acbee10",
+      "license_file": "LICENSE",
+      "license_sha256": "e7c650725db8a696fc587cb7ec88b7685f81841f12002e2385b47d7e54e6c0d3",
+      "license_id": "Apache-2.0",
+      "weight_license": "NONE_USED",
+      "purpose": "Teacher-to-student directional soccer curriculum and constrained online adaptation design reference; Isaac Gym runtime explicitly not adopted",
+      "reused_as": "external_algorithm_reference",
+      "files_reviewed": ["README.md", "LICENSE", "configs/kick/T1_kick_adaptation_p3o.yaml", "runner/p3o.py", "envs/t1_soccerfield_cmdp.py"],
+      "copied_code": false
     }
   ],
   "pending": [
