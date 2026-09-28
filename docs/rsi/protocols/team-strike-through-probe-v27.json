@@ -1,0 +1,23 @@
+{
+  "schema": "rsi_team_strike_through_probe_protocol_v27",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "failed_exam_protocol_path": "docs/rsi/protocols/team-contextual-nav-fresh-exam-v25.json",
+  "failed_exam_report_path": "/data/rosclaw_overflow/rsi-team-contextual-nav-fresh-v25/report.json",
+  "failed_exam_report_hash": "sha256:d77a62a25b4cb7e6c7e0f0a2b8bf4d8423b13aa8f3af63fd9b9601bb0a87b974",
+  "arms": [
+    {"name": "parent", "foot_selection": "none", "forward_gain": 0.0, "lateral_gain": 0.0, "strike_through_m": 0.0},
+    {"name": "front_lat12_through08", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.08},
+    {"name": "front_lat12_through16", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.16},
+    {"name": "stay_lat12_through08", "foot_selection": "phase", "forward_gain": 0.0, "lateral_gain": 1.2, "strike_through_m": 0.08},
+    {"name": "stay_lat12_through16", "foot_selection": "phase", "forward_gain": 0.0, "lateral_gain": 1.2, "strike_through_m": 0.16},
+    {"name": "front_negative_through08", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": -0.8, "strike_through_m": 0.08},
+    {"name": "front_negative_through16", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": -0.8, "strike_through_m": 0.16},
+    {"name": "back_lat12_through08", "foot_selection": "phase", "forward_gain": -0.4, "lateral_gain": 1.2, "strike_through_m": 0.08},
+    {"name": "back_lat12_through16", "foot_selection": "phase", "forward_gain": -0.4, "lateral_gain": 1.2, "strike_through_m": 0.16},
+    {"name": "left_negative_through08", "foot_selection": "left", "forward_gain": 0.0, "lateral_gain": -0.8, "strike_through_m": 0.08},
+    {"name": "left_negative_through16", "foot_selection": "left", "forward_gain": 0.0, "lateral_gain": -0.8, "strike_through_m": 0.16}
+  ],
+  "interpretation": "All twelve failed v25 scenes are consumed. Test whether a bounded through-ball foot target increases physical exit speed and coverage, with independent joint trace audit and a zero-action parent parity check."
+}

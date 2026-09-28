@@ -66,3 +66,17 @@ def test_taskspace_lateral_vertical_profiles_are_bounded() -> None:
     for option in ({"lateral_cap_m": 0.2}, {"vertical_offset_m": 0.05}):
         with pytest.raises(ValueError):
             swing_joint_delta(*common, forward_cap_m=0.08, **option)
+
+
+def test_strike_through_keeps_forward_target_active_at_ball_contact() -> None:
+    foot = np.array([0.0, 0.0, 0.11])
+    ball = np.array([0.22, 0.0, 0.11])
+    jac = np.zeros((3, 6))
+    jac[:, :3] = np.eye(3)
+    limits = np.tile([-1.0, 1.0], (6, 1))
+    common = (foot, ball, jac, np.zeros(6), limits)
+    baseline = swing_joint_delta(*common, forward_cap_m=0.16)
+    through = swing_joint_delta(*common, forward_cap_m=0.16, strike_through_m=0.08)
+    assert 0 < baseline[0] < through[0] <= 0.35
+    with pytest.raises(ValueError):
+        swing_joint_delta(*common, forward_cap_m=0.16, strike_through_m=0.2)

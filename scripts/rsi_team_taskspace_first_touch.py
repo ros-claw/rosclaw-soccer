@@ -151,6 +151,7 @@ class TeamSwingMotor:
                         forward_cap_m=self.action["forward_cap_m"],
                         lateral_cap_m=self.action["lateral_cap_m"],
                         vertical_offset_m=self.action["vertical_offset_m"],
+                        strike_through_m=self.action.get("strike_through_m", 0.0),
                     )
                 target[ids] = baseline[ids] + delta
                 residual[ids] = target[ids] - baseline[ids]
@@ -315,6 +316,7 @@ def _run_one(
         "taskspace_forward_m": protocol["candidate_action"]["forward_cap_m"],
         "taskspace_lateral_cap_m": protocol["candidate_action"]["lateral_cap_m"],
         "taskspace_vertical_offset_m": protocol["candidate_action"]["vertical_offset_m"],
+        "taskspace_strike_through_m": protocol["candidate_action"].get("strike_through_m", 0.0),
         "taskspace_acquisition_max_gap_m": protocol["candidate_action"][
             "swing_foot_acquisition_gap_m"
         ],

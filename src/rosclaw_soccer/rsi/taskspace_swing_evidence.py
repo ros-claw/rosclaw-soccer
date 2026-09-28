@@ -11,6 +11,7 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
     FORWARD_CAPS_M,
     LATERAL_CAPS_M,
     MAX_JOINT_DELTA_RAD,
+    STRIKE_THROUGH_OFFSETS_M,
     SWING_ACQUISITION_MAX_GAPS_M,
     VERTICAL_OFFSETS_M,
     choose_swing_side,
@@ -37,6 +38,7 @@ def audit_taskspace_swing_trace(
     forward = report.get("taskspace_forward_m")
     lateral = report.get("taskspace_lateral_cap_m", 0.05)
     vertical = report.get("taskspace_vertical_offset_m", 0.0)
+    strike_through = report.get("taskspace_strike_through_m", 0.0)
     acquisition_gap = report.get("taskspace_acquisition_max_gap_m", 0.95)
     family_hash = report.get("taskspace_family_actor_hash")
     late_hash = report.get("late_swing_actor_hash")
@@ -63,6 +65,7 @@ def audit_taskspace_swing_trace(
         forward not in FORWARD_CAPS_M
         or lateral not in LATERAL_CAPS_M
         or vertical not in VERTICAL_OFFSETS_M
+        or strike_through not in STRIKE_THROUGH_OFFSETS_M
         or acquisition_gap not in SWING_ACQUISITION_MAX_GAPS_M
         or report.get("taskspace_leg_joint_names") != [list(row) for row in LEG_NAMES]
         or not isinstance(order, list)
@@ -160,6 +163,7 @@ def audit_taskspace_swing_trace(
                             or late_hash is not None
                             else vertical
                         ),
+                        strike_through_m=strike_through,
                     )
                     delta = (baseline[frame, lane, ids] + delta).astype(np.float32).astype(
                         float
