@@ -1,0 +1,19 @@
+{
+  "run_id": "first-touch-train-diversity-20260928-v1",
+  "purpose": "SIM_ONLY 16-lane physically independent moving-ball training data acquisition; no policy learning or Fresh evaluation in this run",
+  "code_sha": "d88cd2d",
+  "physics_source_hash": "sha256:cf0a9e7d3aa522210bb18f5b7cdbae7a3d604277fb65cdceeb56398849029a8f",
+  "robot_asset_hash": "sha256:cfbcca7b005c418697d35f762d81ec389d6242a0b4e73d889c25384724d879e8",
+  "foundation_qualification_hash": "sha256:06b4e67ec1761904ea6c925b26df69ca83b067cda67795e23fdaa1fa50278b14",
+  "training_seed": 20260928,
+  "training_course_catalog_hash": "sha256:8efc5f44bc76ee26787a8c74362e2f2bbcf1a2c319892b256a01d74497600b56",
+  "split": "x in [2.2,2.4] U [2.6,2.8], stratified y in [-0.16,0.16], vx magnitude [0.25,0.7]; sealed evaluation x=2.45/2.55 excluded",
+  "frozen_model": "SONIC low_latency planner plus batch Torch encoder/decoder, graph-compatible legacy G1 layout",
+  "course_count": 16,
+  "control_frames": 300,
+  "independence": "16 separate G1/ball lanes, 8 m lane spacing, one episode per course",
+  "metrics": ["any-body contact count", "clean foot-only contact count", "foot side coverage", "first contact frame", "pelvis minimum", "internal joint target difference"],
+  "stop_rules": ["Abort on nonfinite/lane escape/pelvis below 0.65 m", "No policy promotion or hardware use", "Do not treat 300 correlated frames as 300 samples"],
+  "fresh_opened": false,
+  "activation_ceiling": "SIM_ONLY"
+}
