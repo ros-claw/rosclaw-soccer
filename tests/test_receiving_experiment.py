@@ -26,6 +26,20 @@ from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
         {"sonic_command_replanning": True, "sonic_pose_reference": object()},
         {"capture_sonic_targets": True},
         {"capture_sonic_targets": 1},
+        {"sonic_ball_follow_gain": 0.5},
+        {"sonic_model_root": Path("missing"), "sonic_ball_follow_gain": 0.0},
+        {"sonic_model_root": Path("missing"), "sonic_ball_follow_gain": 1.1},
+        {"sonic_model_root": Path("missing"), "sonic_ball_follow_gain": True},
+        {
+            "sonic_model_root": Path("missing"),
+            "sonic_ball_follow_gain": 0.5,
+            "capture_sonic_targets": True,
+        },
+        {
+            "sonic_model_root": Path("missing"),
+            "sonic_ball_follow_gain": 0.5,
+            "sonic_start_frame": 1,
+        },
         {
             "sonic_model_root": Path("missing"),
             "capture_sonic_targets": True,

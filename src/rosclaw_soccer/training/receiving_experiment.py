@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.providers.g1.receiving_sonic import (
+    ReceivingSonicBallFollowOption,
     ReceivingSonicFeedbackOption,
     ReceivingSonicOption,
     RecordingReceivingSonicOption,
@@ -70,6 +71,7 @@ def simulate_r0_receiving_course(
     sonic_command_replanning: bool = False,
     feedback_actor_path: Path | None = None,
     capture_sonic_targets: bool = False,
+    sonic_ball_follow_gain: float | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -140,6 +142,7 @@ def simulate_r0_receiving_course(
         or sonic_command_replanning
         or feedback_actor_path is not None
         or capture_sonic_targets
+        or sonic_ball_follow_gain is not None
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
     if sonic_model_root is not None and (
@@ -150,6 +153,19 @@ def simulate_r0_receiving_course(
         capture_sonic_targets and (feedback_actor_path is not None or sonic_start_frame != 0)
     ):
         raise ValueError("pure frame-zero SONIC motor recording required")
+    if sonic_ball_follow_gain is not None and (
+        type(sonic_ball_follow_gain) not in (int, float)
+        or not np.isfinite(sonic_ball_follow_gain)
+        or not 0 < sonic_ball_follow_gain <= 1
+        or feedback_actor_path is not None
+        or capture_sonic_targets
+        or sonic_start_frame != 0
+        or sonic_velocity_scale != 1.0
+        or sonic_command_scale_schedule is not None
+        or sonic_latent_schedule is not None
+        or sonic_pose_reference is not None
+    ):
+        raise ValueError("unmixed frame-zero ball-follow probe required")
     # Validate physical launch values before allocating/loading the simulator.
     receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     fixture = collection_fixture(asset_root, keeper_preview=True)
@@ -160,32 +176,42 @@ def simulate_r0_receiving_course(
         course, origin=player.origin_m, radius_m=fixture.goal.ball_radius_m
     )
     world, teacher = r0_receiving_configuration()
-    motors = {}
+    motors: dict[str, ReceivingSonicOption] = {}
     if sonic_model_root is not None:
         world = replace(world, motor_idle_residual_fallback=True)
         # Instantiate a fresh backend for every simulation, never reuse its history.
-        option_type = (
-            ReceivingSonicFeedbackOption
-            if feedback_actor_path is not None
-            else RecordingReceivingSonicOption
-            if capture_sonic_targets
-            else ReceivingSonicOption
-        )
-        extra = (
-            {"feedback_actor_path": feedback_actor_path} if feedback_actor_path is not None else {}
-        )
-        motors[course.agent_id] = option_type(
-            sonic_model_root,
-            course.agent_id,
-            start_frame=sonic_start_frame,
-            velocity_scale=sonic_velocity_scale,
-            planner_seed=sonic_planner_seed,
-            latent_schedule=sonic_latent_schedule,
-            command_scale_schedule=sonic_command_scale_schedule,
-            pose_reference=sonic_pose_reference,
-            experimental_command_replanning=sonic_command_replanning,
-            **extra,
-        )
+        if sonic_ball_follow_gain is not None:
+            motors[course.agent_id] = ReceivingSonicBallFollowOption(
+                sonic_model_root,
+                course.agent_id,
+                start_frame=sonic_start_frame,
+                response_gain=sonic_ball_follow_gain,
+            )
+        else:
+            option_type = (
+                ReceivingSonicFeedbackOption
+                if feedback_actor_path is not None
+                else RecordingReceivingSonicOption
+                if capture_sonic_targets
+                else ReceivingSonicOption
+            )
+            extra = (
+                {"feedback_actor_path": feedback_actor_path}
+                if feedback_actor_path is not None
+                else {}
+            )
+            motors[course.agent_id] = option_type(
+                sonic_model_root,
+                course.agent_id,
+                start_frame=sonic_start_frame,
+                velocity_scale=sonic_velocity_scale,
+                planner_seed=sonic_planner_seed,
+                latent_schedule=sonic_latent_schedule,
+                command_scale_schedule=sonic_command_scale_schedule,
+                pose_reference=sonic_pose_reference,
+                experimental_command_replanning=sonic_command_replanning,
+                **extra,
+            )
     result, trace = simulate_independent_team_world(
         asset_root=asset_root,
         roster=fixture.roster,

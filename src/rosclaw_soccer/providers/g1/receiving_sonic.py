@@ -106,7 +106,7 @@ class ReceivingSonicOption:
                 raise ValueError("receiving navigation command unavailable")
             # No larger command is introduced. Physical collision guards and
             # evidence remain necessary; scaling is not a new clearance proof.
-            vx, vy, yaw = observation.navigation_command
+            vx, vy, yaw = self._navigation_command(observation)
             scale = self.velocity_scale
             if self.command_scale_schedule is not None:
                 scale *= self.command_scale_schedule.at(observation.frame - self.start_frame)
@@ -127,6 +127,58 @@ class ReceivingSonicOption:
         except (ValueError, TypeError, RuntimeError, FloatingPointError):
             self.faulted = True
             raise
+
+    def _navigation_command(self, observation: TeamMotorObservation) -> tuple[float, float, float]:
+        if observation.navigation_command is None:
+            raise ValueError("receiving navigation command unavailable")
+        return observation.navigation_command
+
+
+class ReceivingSonicBallFollowOption(ReceivingSonicOption):
+    """SIM-only current-ball velocity following for a measured receiving probe."""
+
+    def __init__(
+        self, model_root: Path, agent_id: str, *, start_frame: int, response_gain: float
+    ) -> None:
+        if (
+            type(response_gain) not in (int, float)
+            or not math.isfinite(response_gain)
+            or not 0 < response_gain <= 1
+        ):
+            raise ValueError("bounded ball-follow response gain required")
+        super().__init__(model_root, agent_id, start_frame=start_frame)
+        self.response_gain = float(response_gain)
+        self.contract_hash = str(
+            hash_json(
+                {
+                    "schema": "soccer.receiving_sonic_ball_follow_option.v1",
+                    "base": self.contract_hash,
+                    "response_gain": self.response_gain,
+                    "activation_ceiling": "SIM_ONLY",
+                }
+            )
+        )
+
+    def _navigation_command(self, observation: TeamMotorObservation) -> tuple[float, float, float]:
+        original = super()._navigation_command(observation)
+        dx = observation.qpos[36] - observation.qpos[0]
+        dy = observation.qpos[37] - observation.qpos[1]
+        distance = math.hypot(dx, dy)
+        if distance >= 1.2 or distance < 0.15:
+            return original
+        weight = self.response_gain * min(1.0, (1.2 - distance) / 0.4)
+        vx = (1.0 - weight) * original[0] + weight * observation.qvel[35]
+        vy = (1.0 - weight) * original[1] + weight * observation.qvel[36]
+        limit = (
+            observation.navigation_envelope.maximum_speed_mps
+            if observation.navigation_envelope is not None
+            else 0.7
+        )
+        speed = math.hypot(vx, vy)
+        if speed > limit:
+            vx *= limit / speed
+            vy *= limit / speed
+        return float(vx), float(vy), float(original[2])
 
 
 class ReceivingSonicFeedbackOption(ReceivingSonicOption):

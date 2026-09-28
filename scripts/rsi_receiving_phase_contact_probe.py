@@ -72,6 +72,10 @@ def _evaluate(
     joints = np.asarray(LEFT_JOINTS)
     limits = model.jnt_range[model.actuator_trnid[joints, 0]]
     contacts: list[tuple[int, int, str]] = []
+    foot_impulse = 0.0
+    nonfoot_impulse = 0.0
+    max_nonfoot_force = 0.0
+    first_nonfoot_geom: str | None = None
     minimum = float(data.qpos[2])
     maximum_tilt = 0.0
     for frame in range(snapshot + 1, END_FRAME + 1):
@@ -108,6 +112,18 @@ def _evaluate(
                 if robot_mask[other]:
                     kind = "foot" if foot_mask[other] else "nonfoot"
                     contacts.append((frame, substep, kind))
+                    force = np.zeros(6, dtype=np.float64)
+                    mujoco.mj_contactForce(model, data, contact_id, force)
+                    normal_impulse = max(0.0, float(force[0])) * model.opt.timestep
+                    if kind == "foot":
+                        foot_impulse += normal_impulse
+                    else:
+                        nonfoot_impulse += normal_impulse
+                        max_nonfoot_force = max(max_nonfoot_force, float(force[0]))
+                        if first_nonfoot_geom is None:
+                            first_nonfoot_geom = mujoco.mj_id2name(
+                                model, mujoco.mjtObj.mjOBJ_GEOM, other
+                            )
     foot = any(kind == "foot" for _, _, kind in contacts)
     nonfoot = any(kind == "nonfoot" for _, _, kind in contacts)
     return {
@@ -116,6 +132,10 @@ def _evaluate(
         "nonfoot_seen": nonfoot,
         "first_contact": list(contacts[0]) if contacts else None,
         "first_nonfoot": next((list(row) for row in contacts if row[2] == "nonfoot"), None),
+        "first_nonfoot_geom": first_nonfoot_geom,
+        "foot_normal_impulse_ns": foot_impulse,
+        "nonfoot_normal_impulse_ns": nonfoot_impulse,
+        "maximum_nonfoot_normal_force_n": max_nonfoot_force,
         "minimum_pelvis_height_m": minimum,
         "maximum_tilt_rad": maximum_tilt,
         "ball_x_m": float(data.qpos[36]),
