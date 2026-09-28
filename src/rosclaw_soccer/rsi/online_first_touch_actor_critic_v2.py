@@ -59,6 +59,7 @@ def _parent(folder: Path) -> tuple[dict[str, Any], tuple[tuple[float, float, flo
         audited["source_report_hash"] != report["report_hash"]
         or type(seed) is not int
         or len(report["environments"]) != 16
+        or report.get("navigation_speed_mps", 1.4) != 1.4
     ):
         raise ValueError("v2 learner requires authenticated seeded sixteen-course Parent")
     courses = sample_training_courses(seed)

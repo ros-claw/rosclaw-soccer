@@ -85,3 +85,24 @@ def test_v2_rejects_relabelled_action_and_state(
     state["actor_weights"][0][0] = 0.02
     with pytest.raises(ValueError, match="commitment"):
         learner.sample_candidate(tmp_path, state, seed=102)
+
+
+def test_v2_training_domain_rejects_changed_navigation_speed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    courses = sample_training_courses(20260928)
+    report = {
+        "report_hash": "sha256:" + "a" * 64,
+        "training_course_seed": 20260928,
+        "course_catalog_hash": hash_json(courses),
+        "navigation_speed_mps": 1.2,
+        "environments": [{} for _ in courses],
+    }
+    (tmp_path / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr(
+        learner,
+        "audit_vector_first_touch",
+        lambda _: {"source_report_hash": report["report_hash"]},
+    )
+    with pytest.raises(ValueError, match="seeded sixteen-course Parent"):
+        learner._parent(tmp_path)
