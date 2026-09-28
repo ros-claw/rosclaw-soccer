@@ -1,0 +1,18 @@
+{
+  "run_id": "sonic-torch-batch-shadow-20260928-v1",
+  "purpose": "SIM_ONLY physical-step parity of batched frozen SONIC Torch against independent ONNX on eight fixed first-touch courses",
+  "code_sha": "3a65dc0",
+  "physics_source_hash": "sha256:22bb7d1e018d1ddc5b6af3e6654e152c43c6f1ad97f3ebb620b9e9ffea1b6877",
+  "robot_asset_hash": "sha256:cfbcca7b005c418697d35f762d81ec389d6242a0b4e73d889c25384724d879e8",
+  "simulator": "Isaac Sim 6.0.1 / Isaac Lab / PhysX; eight independent 8 m lanes; 300 x 20 ms control frames",
+  "parent_policy": "sha256:c273a88d66344b666756fc5c051d81050d3ab9fe512fba2cebf00b937d0740ad",
+  "dataset_contract": "rolling 0.11 m ball; x=2.4/2.6 m, y=+/-0.1 m, vx=+/-0.5 m/s; no real hardware",
+  "fresh_opened": false,
+  "trainable_modules": [],
+  "frozen_modules": ["SONIC planner", "SONIC encoder/decoder weights", "29-DoF motor gains", "ball and G1 assets"],
+  "single_changed_variable": "batched Torch target is checked every physical control frame against original per-player ONNX; first shadow-only, then batched drive with ONNX shadow still active",
+  "metrics": ["maximum 29-joint target difference rad", "clean foot-only first-touch count", "first foot/nonfoot contact frame", "minimum pelvis z", "ball trajectory maximum difference"],
+  "acceptance": ["Target difference <=0.001 rad on all frames", "No loss of original 3/8 clean development contacts", "No nonfinite or lane escape", "No candidate policy promotion from this test"],
+  "stop_rules": ["Abort if source, asset, or qualification differs", "Abort if target parity exceeds bound", "Abort if pelvis falls below 0.65 m", "Count courses, never correlated frames, as samples"],
+  "activation_ceiling": "SIM_ONLY"
+}
