@@ -29,6 +29,20 @@ POLICY_SIGMA_RAD = 0.02
 MEAN_LIMIT_RAD = 0.04
 ACTOR_LEARNING_RATE = 0.002
 CRITIC_LEARNING_RATE = 0.05
+STATE_FIELDS = frozenset(
+    {
+        "schema",
+        "activation_ceiling",
+        "promotion_authorized",
+        "parent_report_hash",
+        "generation",
+        "actor_weights",
+        "critic_weights",
+        "sigma_rad",
+        "consumed_audit_hashes",
+        "state_hash",
+    }
+)
 
 
 def course_features(courses: tuple[tuple[float, float, float], ...]) -> np.ndarray:
@@ -73,7 +87,8 @@ def _state_body(
     sources: list[str],
 ) -> dict[str, Any]:
     if (
-        not parent_hash.startswith("sha256:")
+        len(parent_hash) != 71
+        or not parent_hash.startswith("sha256:")
         or type(generation) is not int
         or generation < 0
         or actor.shape != (4, len(JOINT_NAMES))
@@ -82,6 +97,12 @@ def _state_body(
         or not np.isfinite(critic).all()
         or np.max(np.abs(actor)) > 0.1
         or np.max(np.abs(critic)) > 10
+        or not isinstance(sources, list)
+        or len(set(sources)) != len(sources)
+        or any(
+            not isinstance(source, str) or len(source) != 71 or not source.startswith("sha256:")
+            for source in sources
+        )
     ):
         raise ValueError("invalid bounded actor-critic state")
     body = {
@@ -111,22 +132,7 @@ def initial_state(parent_hash: str) -> dict[str, Any]:
 
 def load_state(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    committed = {key: value for key, value in data.items() if key != "state_hash"}
-    if (
-        data.get("schema") != "rsi_isaac_online_first_touch_actor_critic_v1"
-        or data.get("activation_ceiling") != "SIM_ONLY"
-        or data.get("promotion_authorized") is not False
-        or data.get("sigma_rad") != POLICY_SIGMA_RAD
-        or data.get("state_hash") != hash_json(committed)
-    ):
-        raise ValueError("unauthenticated online actor-critic state")
-    return _state_body(
-        data["parent_report_hash"],
-        data["generation"],
-        np.asarray(data["actor_weights"], dtype=np.float64),
-        np.asarray(data["critic_weights"], dtype=np.float64),
-        data["consumed_audit_hashes"],
-    )
+    return load_state_from_dict(data)
 
 
 def _parent_courses(parent: dict[str, Any]) -> tuple[tuple[float, float, float], ...]:
@@ -172,15 +178,25 @@ def sample_candidate(parent_folder: Path, state: dict[str, Any], *, seed: int) -
 
 def load_state_from_dict(data: dict[str, Any]) -> dict[str, Any]:
     committed = {key: value for key, value in data.items() if key != "state_hash"}
-    if data.get("state_hash") != hash_json(committed):
-        raise ValueError("online actor state digest invalid")
-    return _state_body(
+    if (
+        set(data) != STATE_FIELDS
+        or data.get("schema") != "rsi_isaac_online_first_touch_actor_critic_v1"
+        or data.get("activation_ceiling") != "SIM_ONLY"
+        or data.get("promotion_authorized") is not False
+        or data.get("sigma_rad") != POLICY_SIGMA_RAD
+        or data.get("state_hash") != hash_json(committed)
+    ):
+        raise ValueError("online actor state digest invalid or boundary changed")
+    normalized = _state_body(
         data["parent_report_hash"],
         data["generation"],
         np.asarray(data["actor_weights"], dtype=np.float64),
         np.asarray(data["critic_weights"], dtype=np.float64),
         data["consumed_audit_hashes"],
     )
+    if normalized["state_hash"] != data["state_hash"]:
+        raise ValueError("online actor state canonical form changed")
+    return normalized
 
 
 def update_actor_critic(
