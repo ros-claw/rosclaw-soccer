@@ -138,7 +138,14 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
     """SIM-only current-ball velocity following for a measured receiving probe."""
 
     def __init__(
-        self, model_root: Path, agent_id: str, *, start_frame: int, response_gain: float
+        self,
+        model_root: Path,
+        agent_id: str,
+        *,
+        start_frame: int,
+        response_gain: float,
+        fast_replan: bool = False,
+        post_touch_chase: bool = False,
     ) -> None:
         if (
             type(response_gain) not in (int, float)
@@ -146,14 +153,31 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
             or not 0 < response_gain <= 1
         ):
             raise ValueError("bounded ball-follow response gain required")
-        super().__init__(model_root, agent_id, start_frame=start_frame)
+        if (
+            type(fast_replan) is not bool
+            or type(post_touch_chase) is not bool
+            or (post_touch_chase and not fast_replan)
+        ):
+            raise ValueError("explicit ball-follow replan and chase modes required")
+        super().__init__(
+            model_root,
+            agent_id,
+            start_frame=start_frame,
+            experimental_command_replanning=fast_replan,
+        )
         self.response_gain = float(response_gain)
+        self.fast_replan = fast_replan
+        self.post_touch_chase = post_touch_chase
+        self.contact_foot_seen = False
+        self.last_physics_time_sec = -1.0
         self.contract_hash = str(
             hash_json(
                 {
                     "schema": "soccer.receiving_sonic_ball_follow_option.v1",
                     "base": self.contract_hash,
                     "response_gain": self.response_gain,
+                    "fast_replan": fast_replan,
+                    "post_touch_chase": post_touch_chase,
                     "activation_ceiling": "SIM_ONLY",
                 }
             )
@@ -164,6 +188,20 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
         dx = observation.qpos[36] - observation.qpos[0]
         dy = observation.qpos[37] - observation.qpos[1]
         distance = math.hypot(dx, dy)
+        if self.post_touch_chase and self.contact_foot_seen and distance > 0.05:
+            approach = 2.0 * (distance - 0.30) / distance
+            vx = observation.qvel[35] + approach * dx
+            vy = observation.qvel[36] + approach * dy
+            limit = (
+                observation.navigation_envelope.maximum_speed_mps
+                if observation.navigation_envelope is not None
+                else 0.7
+            )
+            speed = math.hypot(vx, vy)
+            if speed > limit:
+                vx *= limit / speed
+                vy *= limit / speed
+            return float(vx), float(vy), float(original[2])
         if distance >= 1.2 or distance < 0.15:
             return original
         weight = self.response_gain * min(1.0, (1.2 - distance) / 0.4)
@@ -179,6 +217,22 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
             vx *= limit / speed
             vy *= limit / speed
         return float(vx), float(vy), float(original[2])
+
+    def observe_physics(self, observation: TeamMotorPhysicsObservation) -> None:
+        if (
+            self.faulted
+            or not isinstance(observation, TeamMotorPhysicsObservation)
+            or not observation.contacts_complete
+            or observation.observer_agent_id != self.agent_id
+            or observation.time_sec <= self.last_physics_time_sec
+        ):
+            self.faulted = True
+            raise ValueError("complete same-player ball-follow contact evidence required")
+        self.last_physics_time_sec = observation.time_sec
+        self.contact_foot_seen |= any(
+            contact.agent_id == self.agent_id and contact.is_foot
+            for contact in observation.ball_contacts
+        )
 
 
 class ReceivingSonicFeedbackOption(ReceivingSonicOption):

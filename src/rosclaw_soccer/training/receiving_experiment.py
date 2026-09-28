@@ -72,6 +72,8 @@ def simulate_r0_receiving_course(
     feedback_actor_path: Path | None = None,
     capture_sonic_targets: bool = False,
     sonic_ball_follow_gain: float | None = None,
+    sonic_ball_follow_fast_replan: bool = False,
+    sonic_ball_follow_post_touch_chase: bool = False,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run one frozen course with private controller state and unchanged guards.
 
@@ -143,6 +145,8 @@ def simulate_r0_receiving_course(
         or feedback_actor_path is not None
         or capture_sonic_targets
         or sonic_ball_follow_gain is not None
+        or sonic_ball_follow_fast_replan
+        or sonic_ball_follow_post_touch_chase
     ):
         raise ValueError("SONIC parameters without a frozen model are invalid")
     if sonic_model_root is not None and (
@@ -166,6 +170,14 @@ def simulate_r0_receiving_course(
         or sonic_pose_reference is not None
     ):
         raise ValueError("unmixed frame-zero ball-follow probe required")
+    if type(sonic_ball_follow_fast_replan) is not bool or (
+        sonic_ball_follow_fast_replan and sonic_ball_follow_gain is None
+    ):
+        raise ValueError("fast replan requires an explicit ball-follow probe")
+    if type(sonic_ball_follow_post_touch_chase) is not bool or (
+        sonic_ball_follow_post_touch_chase and not sonic_ball_follow_fast_replan
+    ):
+        raise ValueError("post-touch chase requires an explicit fast-replan follow probe")
     # Validate physical launch values before allocating/loading the simulator.
     receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     fixture = collection_fixture(asset_root, keeper_preview=True)
@@ -186,6 +198,8 @@ def simulate_r0_receiving_course(
                 course.agent_id,
                 start_frame=sonic_start_frame,
                 response_gain=sonic_ball_follow_gain,
+                fast_replan=sonic_ball_follow_fast_replan,
+                post_touch_chase=sonic_ball_follow_post_touch_chase,
             )
         else:
             option_type = (
