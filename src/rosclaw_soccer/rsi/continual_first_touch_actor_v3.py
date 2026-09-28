@@ -28,6 +28,7 @@ from rosclaw_soccer.rsi.vector_first_touch_evidence import (
 from rosclaw_soccer.sim.contracts import hash_json
 
 SCHEMA = "rsi_isaac_continual_first_touch_actor_v3_1"
+PROVISIONAL_SCHEMA = "rsi_isaac_continual_first_touch_provisional_v1"
 DOMAIN_HASH = hash_json(
     {
         "schema": "rsi_isaac_first_touch_train_domain_v1",
@@ -72,6 +73,7 @@ def _state(
     seeds: list[int],
     audits: list[str],
     origin_parent_hash: str,
+    qualification_hash: str | None = None,
 ) -> dict[str, Any]:
     if (
         type(generation) is not int
@@ -91,6 +93,11 @@ def _state(
         or not isinstance(origin_parent_hash, str)
         or len(origin_parent_hash) != 71
         or not origin_parent_hash.startswith("sha256:")
+        or (generation == 0 and qualification_hash is not None)
+        or (
+            qualification_hash is not None
+            and (len(qualification_hash) != 71 or not qualification_hash.startswith("sha256:"))
+        )
         or any(
             not isinstance(value, str) or len(value) != 71 or not value.startswith("sha256:")
             for value in audits
@@ -112,6 +119,8 @@ def _state(
         "consumed_training_seeds": seeds,
         "consumed_audit_hashes": audits,
     }
+    if qualification_hash is not None:
+        body["qualification_hash"] = qualification_hash
     body["state_hash"] = hash_json(body)
     return body
 
@@ -119,7 +128,8 @@ def _state(
 def load_state(data: dict[str, Any]) -> dict[str, Any]:
     committed = {key: value for key, value in data.items() if key != "state_hash"}
     if (
-        set(data) != STATE_FIELDS
+        set(data)
+        != (STATE_FIELDS if data.get("generation") == 0 else STATE_FIELDS | {"qualification_hash"})
         or data.get("schema") != SCHEMA
         or data.get("activation_ceiling") != "SIM_ONLY"
         or data.get("promotion_authorized") is not False
@@ -136,6 +146,7 @@ def load_state(data: dict[str, Any]) -> dict[str, Any]:
         data["consumed_training_seeds"],
         data["consumed_audit_hashes"],
         data["origin_parent_report_hash"],
+        data.get("qualification_hash"),
     )
     if canonical["state_hash"] != data["state_hash"]:
         raise ValueError("continual actor canonical form changed")
@@ -192,6 +203,7 @@ def migrate_v2(
         [parent["training_course_seed"]],
         verified["consumed_audit_hashes"],
         parent["report_hash"],
+        audited["report_hash"],
     )
 
 
@@ -207,6 +219,47 @@ def _new_parent(
     ):
         raise ValueError("new Parent violates frozen foundation or distinct-course contract")
     return parent, courses
+
+
+def _provisional_state(active_body: dict[str, Any], parent_state_hash: str) -> dict[str, Any]:
+    result = {
+        key: value
+        for key, value in active_body.items()
+        if key not in {"schema", "state_hash", "qualification_hash"}
+    }
+    result["schema"] = PROVISIONAL_SCHEMA
+    result["status"] = "PROVISIONAL"
+    result["parent_state_hash"] = parent_state_hash
+    result["state_hash"] = hash_json(result)
+    return result
+
+
+def load_provisional(data: dict[str, Any]) -> dict[str, Any]:
+    if (
+        set(data) != STATE_FIELDS | {"status", "parent_state_hash"}
+        or data.get("schema") != PROVISIONAL_SCHEMA
+        or data.get("status") != "PROVISIONAL"
+        or type(data.get("generation")) is not int
+        or data["generation"] < 1
+        or not isinstance(data.get("parent_state_hash"), str)
+        or len(data["parent_state_hash"]) != 71
+        or data.get("state_hash")
+        != hash_json({key: value for key, value in data.items() if key != "state_hash"})
+    ):
+        raise ValueError("provisional actor commitment invalid")
+    canonical = _state(
+        data,
+        data["generation"],
+        np.asarray(data["actor_weights"], dtype=np.float64),
+        np.asarray(data["critic_weights"], dtype=np.float64),
+        np.asarray(data["anchor_actor_weights"], dtype=np.float64),
+        data["consumed_training_seeds"],
+        data["consumed_audit_hashes"],
+        data["origin_parent_report_hash"],
+    )
+    if _provisional_state(canonical, data["parent_state_hash"])["state_hash"] != data["state_hash"]:
+        raise ValueError("provisional actor canonical form changed")
+    return data
 
 
 def sample_candidate(parent_folder: Path, state: dict[str, Any], *, seed: int) -> dict[str, Any]:
@@ -247,6 +300,117 @@ def deterministic_mean_candidate(parent_folder: Path, state: dict[str, Any]) -> 
     manifest.pop("candidate_hash")
     manifest["candidate_hash"] = hash_json(manifest)
     return manifest
+
+
+def provisional_mean_candidate(
+    parent_folder: Path, provisional_data: dict[str, Any]
+) -> dict[str, Any]:
+    """Return a no-noise physical probe, not an active policy sample."""
+    state = load_provisional(provisional_data)
+    parent, courses = v2._parent(parent_folder)
+    if (
+        parent.get("asset_hash") != state["asset_hash"]
+        or parent.get("sonic_qualification_hash") != state["sonic_qualification_hash"]
+        or parent.get("torch_batch_plan_only") is not True
+        or parent["training_course_seed"] not in state["consumed_training_seeds"]
+    ):
+        raise ValueError("provisional mean requires a consumed, same-foundation training seed")
+    mean = v2._mean(v2._features(courses), np.asarray(state["actor_weights"], dtype=np.float64))
+    manifest = candidate_manifest(
+        courses=courses,
+        parent_report_hash=parent["report_hash"],
+        actions_rad=tuple(tuple(float(value) for value in row) for row in mean),
+        seed=0,
+    )
+    manifest["actor_state_hash"] = state["state_hash"]
+    manifest["evaluation_mode"] = "PROVISIONAL_MEAN_RETENTION"
+    manifest.pop("candidate_hash")
+    manifest["candidate_hash"] = hash_json(manifest)
+    return manifest
+
+
+def qualify_provisional(
+    previous_data: dict[str, Any],
+    provisional_data: dict[str, Any],
+    *,
+    old_parent_folder: Path,
+    old_mean_folder: Path,
+    old_mean_manifest: Path,
+    new_parent_folder: Path,
+    new_mean_folder: Path,
+    new_mean_manifest: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Activate only if deterministic physical means retain both old/new Parent skill."""
+    previous = load_state(previous_data)
+    provisional = load_provisional(provisional_data)
+    old_parent, _ = v2._parent(old_parent_folder)
+    new_parent, _ = v2._parent(new_parent_folder)
+    if (
+        provisional["parent_state_hash"] != previous["state_hash"]
+        or provisional["generation"] != previous["generation"] + 1
+        or provisional["origin_parent_report_hash"] != previous["origin_parent_report_hash"]
+        or old_parent["report_hash"] != previous["origin_parent_report_hash"]
+        or provisional["consumed_training_seeds"][:-1] != previous["consumed_training_seeds"]
+        or provisional["consumed_audit_hashes"][:-1] != previous["consumed_audit_hashes"]
+        or new_parent["training_course_seed"] != provisional["consumed_training_seeds"][-1]
+    ):
+        raise ValueError("provisional lineage or retention Parent changed")
+    audit_hashes = []
+    for parent_folder, mean_folder, manifest_path in (
+        (old_parent_folder, old_mean_folder, old_mean_manifest),
+        (new_parent_folder, new_mean_folder, new_mean_manifest),
+    ):
+        expected = provisional_mean_candidate(parent_folder, provisional)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        audited = audit_first_touch_candidate_execution(
+            mean_folder, parent_folder=parent_folder, candidate_path=manifest_path
+        )
+        parent_audit = audit_vector_first_touch(parent_folder)
+        mean_report = json.loads((mean_folder / "report.json").read_text(encoding="utf-8"))
+        if (
+            manifest != expected
+            or audited["candidate_hash"] != expected["candidate_hash"]
+            or audited["candidate_clean_foot_only_count"]
+            < parent_audit["clean_foot_only_episode_count"]
+            or any(row["minimum_pelvis_z_m"] < 0.65 for row in mean_report["environments"])
+        ):
+            raise ValueError("deterministic old/new physical retention gate rejected update")
+        audit_hashes.append(audited["report_hash"])
+    qualification = hash_json(
+        {
+            "schema": "rsi_isaac_continual_actor_two_seed_qualification_v1",
+            "previous_state_hash": previous["state_hash"],
+            "provisional_state_hash": provisional["state_hash"],
+            "old_mean_audit_hash": audit_hashes[0],
+            "new_mean_audit_hash": audit_hashes[1],
+            "activation_ceiling": "SIM_ONLY",
+        }
+    )
+    active = _state(
+        provisional,
+        provisional["generation"],
+        np.asarray(provisional["actor_weights"], dtype=np.float64),
+        np.asarray(provisional["critic_weights"], dtype=np.float64),
+        np.asarray(provisional["anchor_actor_weights"], dtype=np.float64),
+        provisional["consumed_training_seeds"],
+        provisional["consumed_audit_hashes"],
+        provisional["origin_parent_report_hash"],
+        qualification,
+    )
+    report = {
+        "schema": "rsi_isaac_continual_actor_qualification_v1",
+        "activation_ceiling": "SIM_ONLY",
+        "promotion_authorized": False,
+        "previous_state_hash": previous["state_hash"],
+        "provisional_state_hash": provisional["state_hash"],
+        "qualified_state_hash": active["state_hash"],
+        "qualification_hash": qualification,
+        "old_mean_audit_hash": audit_hashes[0],
+        "new_mean_audit_hash": audit_hashes[1],
+        "fresh_opened": False,
+    }
+    report["report_hash"] = hash_json(report)
+    return active, report
 
 
 def update(
@@ -322,20 +486,24 @@ def update(
         or global_shift > MAX_GLOBAL_ANCHOR_SHIFT_RAD + 1e-9
     ):
         raise ValueError("stability-plasticity retention contract failed")
-    next_state = _state(
-        parent,
-        state["generation"] + 1,
-        next_actor,
-        np.clip(critic + v2.CRITIC_STEP * (x.T @ advantage / len(courses)), -5, 5),
-        anchor_actor,
-        [*state["consumed_training_seeds"], parent["training_course_seed"]],
-        [*state["consumed_audit_hashes"], audit["report_hash"]],
-        state["origin_parent_report_hash"],
+    next_state = _provisional_state(
+        _state(
+            parent,
+            state["generation"] + 1,
+            next_actor,
+            np.clip(critic + v2.CRITIC_STEP * (x.T @ advantage / len(courses)), -5, 5),
+            anchor_actor,
+            [*state["consumed_training_seeds"], parent["training_course_seed"]],
+            [*state["consumed_audit_hashes"], audit["report_hash"]],
+            state["origin_parent_report_hash"],
+        ),
+        state["state_hash"],
     )
     report: dict[str, Any] = {
         "schema": "rsi_isaac_continual_first_touch_update_v3",
         "activation_ceiling": "SIM_ONLY",
         "promotion_authorized": False,
+        "next_state_status": "PROVISIONAL_REQUIRES_TWO_SEED_MEAN_RETENTION",
         "before_state_hash": state["state_hash"],
         "after_state_hash": next_state["state_hash"],
         "new_training_seed": parent["training_course_seed"],
@@ -366,9 +534,29 @@ def main() -> None:
     parser.add_argument("--candidate-manifest", type=Path)
     parser.add_argument("--sample-seed", type=int)
     parser.add_argument("--deterministic-mean", action="store_true")
+    parser.add_argument("--provisional-mean", action="store_true")
+    parser.add_argument("--qualify-previous-state", type=Path)
+    parser.add_argument("--old-parent-folder", type=Path)
+    parser.add_argument("--old-mean-folder", type=Path)
+    parser.add_argument("--old-mean-manifest", type=Path)
+    parser.add_argument("--new-mean-folder", type=Path)
+    parser.add_argument("--new-mean-manifest", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--output-report", type=Path)
     args = parser.parse_args()
+    if (
+        sum(
+            bool(value)
+            for value in (
+                args.initialize,
+                args.migrate_v2 is not None,
+                args.provisional_mean,
+                args.qualify_previous_state is not None,
+            )
+        )
+        > 1
+    ):
+        parser.error("choose exactly one special actor lifecycle mode")
     if args.initialize:
         if (
             args.state is not None
@@ -376,6 +564,7 @@ def main() -> None:
             or args.candidate_folder is not None
             or args.sample_seed is not None
             or args.deterministic_mean
+            or args.provisional_mean
         ):
             parser.error("initialization must be isolated")
         result = initial_state(args.parent_folder)
@@ -386,6 +575,7 @@ def main() -> None:
             or args.candidate_folder is not None
             or args.sample_seed is not None
             or args.deterministic_mean
+            or args.provisional_mean
             or args.retention_mean_folder is None
             or args.retention_mean_manifest is None
         ):
@@ -397,6 +587,32 @@ def main() -> None:
             mean_manifest_path=args.retention_mean_manifest,
         )
         report = None
+    elif args.provisional_mean:
+        if args.state is None or args.sample_seed is not None or args.candidate_folder is not None:
+            parser.error("provisional mean requires only a committed provisional state")
+        state = load_provisional(json.loads(args.state.read_text(encoding="utf-8")))
+        result = provisional_mean_candidate(args.parent_folder, state)
+        report = None
+    elif args.qualify_previous_state is not None:
+        if (
+            args.state is None
+            or args.old_parent_folder is None
+            or args.old_mean_folder is None
+            or args.old_mean_manifest is None
+            or args.new_mean_folder is None
+            or args.new_mean_manifest is None
+        ):
+            parser.error("qualification requires previous/provisional states and two mean audits")
+        result, report = qualify_provisional(
+            json.loads(args.qualify_previous_state.read_text(encoding="utf-8")),
+            json.loads(args.state.read_text(encoding="utf-8")),
+            old_parent_folder=args.old_parent_folder,
+            old_mean_folder=args.old_mean_folder,
+            old_mean_manifest=args.old_mean_manifest,
+            new_parent_folder=args.parent_folder,
+            new_mean_folder=args.new_mean_folder,
+            new_mean_manifest=args.new_mean_manifest,
+        )
     else:
         if args.state is None:
             parser.error("sampling/updating requires a committed continual state")
