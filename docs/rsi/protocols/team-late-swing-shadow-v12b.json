@@ -1,0 +1,22 @@
+{
+  "schema": "rsi_team_late_swing_shadow_protocol_v12b",
+  "activation_ceiling": "SIM_ONLY",
+  "actor_hash": "sha256:40f710a9443dd4070950485395fd724ef27a5a5ca1dcffef6a369f1bc71ad623",
+  "consumed_prior_shadow_report_hash": "sha256:a999f98aa7b4ff089de61922c89e0ee136b3588f7d6ca1f6f286eb1e1bca0a9d",
+  "purpose": "Record raw frame-30 proprioception and reject unsupported cross-world memory queries without issuing an action.",
+  "fixture": "s199.independent.3v3",
+  "scenario": {
+    "scenario_id": "s199.rsi-late-swing-shadow-v12",
+    "ball_initial_position_m": [3.8, -0.7, 0.115],
+    "ball_initial_velocity_mps": [-0.5, 0.0, 0.0],
+    "seed": 920629
+  },
+  "shadow_agent_id": "red.playmaker",
+  "sample_frame": 30,
+  "simulation_duration_sec": 5.0,
+  "support_rule": "nearest query distance must not exceed maximum leave-one-out nearest-neighbor distance of frozen 78 training memories; radius independent of observed shadow query",
+  "shadow_motor_target_count_required": 0,
+  "cross_asset_calibration_equivalent": false,
+  "policy_intervention_authorized": false,
+  "promotion_authorized": false
+}

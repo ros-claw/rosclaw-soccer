@@ -23,8 +23,11 @@ from rosclaw_soccer.rsi.contact_time_phase_features import (
     predict_contact_time,
 )
 from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor
-from rosclaw_soccer.rsi.local_phase_memory import DISTANCE_COLUMNS
 from rosclaw_soccer.rsi.taskspace_gate_memory import select_taskspace_gate
+from rosclaw_soccer.rsi.team_memory_support import (
+    leave_one_out_support_radius,
+    query_support_distance,
+)
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.independent_team_world import (
     IndependentTeamWorldConfig,
@@ -87,8 +90,9 @@ class ReadOnlyLateSwingShadow:
         qw, qx, qy, qz = q[3:7]
         yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
         memories = np.asarray(self.actor["memory_features"])
-        columns = np.asarray(DISTANCE_COLUMNS)
-        nearest = float(np.min(np.linalg.norm(memories[:, columns] - features[:, columns], axis=1)))
+        nearest = query_support_distance(memories, features[0])
+        support_radius = leave_one_out_support_radius(memories)
+        supported = bool(nearest <= support_radius + 1e-12)
         feet = np.asarray(observation.foot_kinematics.foot_position_world_m)
         self.measurement = {
             "frame": observation.frame,
@@ -97,13 +101,22 @@ class ReadOnlyLateSwingShadow:
             "ball_position_m": ball[0].tolist(),
             "ball_velocity_m_s": ball_velocity[0].tolist(),
             "foot_position_world_m": feet.tolist(),
+            "foot_linear_jacobian_world": observation.foot_kinematics.foot_linear_jacobian_world,
+            "leg_joint_limits_rad": observation.foot_kinematics.leg_joint_limits_rad,
+            "raw_qpos": q.tolist(),
+            "raw_qvel": v.tolist(),
             "foot_ball_distance_m": np.linalg.norm(feet - ball, axis=1).tolist(),
             "features": features[0].tolist(),
             "predicted_contact_offset_frames": float(predicted[0]),
             "nearest_training_memory_distance": nearest,
+            "training_support_radius": support_radius,
+            "within_frozen_training_support": supported,
             "raw_memory_gate_selected": bool(gate[0]),
             "heading_yaw_rad": yaw,
             "course_direction_supported": bool(abs(yaw) <= 0.35 and ball_velocity[0, 0] < -0.05),
+            "effective_shadow_gate_selected": bool(
+                gate[0] and supported and abs(yaw) <= 0.35 and ball_velocity[0, 0] < -0.05
+            ),
             "policy_intervention_authorized": False,
         }
         return None
@@ -127,7 +140,7 @@ def main() -> None:
     ):
         raise ValueError("late-swing actor implementation changed")
     if (
-        protocol.get("schema") != "rsi_team_late_swing_shadow_protocol_v12"
+        protocol.get("schema") != "rsi_team_late_swing_shadow_protocol_v12b"
         or protocol.get("actor_hash") != actor["actor_hash"]
         or protocol.get("policy_intervention_authorized") is not False
         or protocol.get("shadow_motor_target_count_required") != 0
@@ -145,6 +158,7 @@ def main() -> None:
         Path(__file__).parents[1] / "src/rosclaw_soccer/skills/team/independent_team_world.py",
         Path(__file__).parents[1] / "src/rosclaw_soccer/skills/team/motor_option.py",
         Path(__file__).parents[1] / "src/rosclaw_soccer/skills/team/foot_kinematics.py",
+        Path(__file__).parents[1] / "src/rosclaw_soccer/rsi/team_memory_support.py",
     )
     source_hashes = {
         str(path.relative_to(Path(__file__).parents[1])): hash_bytes(path.read_bytes())
@@ -180,7 +194,7 @@ def main() -> None:
     trace_path = args.output_dir / "trajectory.npz"
     np.savez_compressed(trace_path, **trace)  # type: ignore[arg-type]
     report = {
-        "schema": "rsi_team_late_swing_shadow_report_v12",
+        "schema": "rsi_team_late_swing_shadow_report_v12b",
         "activation_ceiling": "SIM_ONLY",
         "protocol_hash": hash_bytes(args.protocol.read_bytes()),
         "runner_hash": hash_bytes(Path(__file__).read_bytes()),
@@ -191,6 +205,7 @@ def main() -> None:
         "fixture_hash": fixture.fixture_hash,
         "scenario_hash": scenario.scenario_hash,
         "shadow_motor_contract_hash": shadow.contract_hash,
+        "shadow_motor_target_count": shadow.motor_target_count,
         "trace_hash": hash_bytes(trace_path.read_bytes()),
         "trajectory_digest": trajectory_digest(trace),
         "sample": shadow.measurement,
