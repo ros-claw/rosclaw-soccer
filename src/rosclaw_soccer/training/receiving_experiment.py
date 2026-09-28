@@ -78,6 +78,7 @@ def simulate_r0_receiving_course(
     sonic_ball_follow_fast_replan: bool = False,
     sonic_ball_follow_post_touch_chase: bool = False,
     sonic_ball_follow_brake_distance_m: float | None = None,
+    sonic_ball_follow_brake_axis: str = "xy",
     sonic_ball_follow_post_touch_target_distance_m: float | None = None,
     sonic_ball_follow_post_touch_speed_limit_mps: float | None = None,
     research_student_handoff: bool = False,
@@ -208,6 +209,17 @@ def simulate_r0_receiving_course(
         or not sonic_ball_follow_fast_replan
     ):
         raise ValueError("early receiving brake requires bounded fast-replan follow probe")
+    if sonic_ball_follow_brake_axis not in ("xy", "x") or (
+        sonic_ball_follow_brake_axis == "x"
+        and (
+            sonic_ball_follow_brake_distance_m != 0.65
+            or receiving_foot_capture_teacher is None
+            or receiving_student is None
+            or research_control_frame_limit != 130
+            or sonic_ball_follow_post_touch_chase
+        )
+    ):
+        raise ValueError("longitudinal-only brake requires fixed SIM_ONLY foot-capture course")
     if (
         sonic_ball_follow_post_touch_target_distance_m is not None
         or sonic_ball_follow_post_touch_speed_limit_mps is not None
@@ -410,6 +422,7 @@ def simulate_r0_receiving_course(
                 fast_replan=sonic_ball_follow_fast_replan,
                 post_touch_chase=sonic_ball_follow_post_touch_chase,
                 brake_distance_m=sonic_ball_follow_brake_distance_m,
+                brake_axis=sonic_ball_follow_brake_axis,
                 post_touch_target_distance_m=(
                     sonic_ball_follow_post_touch_target_distance_m
                     if sonic_ball_follow_post_touch_target_distance_m is not None

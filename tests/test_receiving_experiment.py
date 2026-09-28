@@ -34,6 +34,8 @@ from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
         {"capture_ball_follow_targets": True},
         {"capture_ball_follow_targets": 1},
         {"sonic_ball_follow_brake_distance_m": 0.6},
+        {"sonic_ball_follow_brake_axis": "x"},
+        {"sonic_ball_follow_brake_axis": "y"},
         {
             "sonic_model_root": Path("missing"),
             "sonic_ball_follow_gain": 0.75,

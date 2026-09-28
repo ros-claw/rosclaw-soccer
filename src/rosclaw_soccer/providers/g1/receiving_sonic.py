@@ -147,6 +147,7 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
         fast_replan: bool = False,
         post_touch_chase: bool = False,
         brake_distance_m: float | None = None,
+        brake_axis: str = "xy",
         post_touch_target_distance_m: float = 0.30,
         post_touch_speed_limit_mps: float | None = None,
     ) -> None:
@@ -169,6 +170,8 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
             or not fast_replan
         ):
             raise ValueError("bounded early receiving brake requires fast replanning")
+        if brake_axis not in ("xy", "x") or (brake_axis != "xy" and brake_distance_m is None):
+            raise ValueError("explicit bounded receiving brake axis required")
         if (
             type(post_touch_target_distance_m) not in (int, float)
             or not math.isfinite(post_touch_target_distance_m)
@@ -194,6 +197,7 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
         self.fast_replan = fast_replan
         self.post_touch_chase = post_touch_chase
         self.brake_distance_m = float(brake_distance_m) if brake_distance_m is not None else None
+        self.brake_axis = brake_axis
         self.post_touch_target_distance_m = float(post_touch_target_distance_m)
         self.post_touch_speed_limit_mps = (
             float(post_touch_speed_limit_mps) if post_touch_speed_limit_mps is not None else None
@@ -209,6 +213,7 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
                     "fast_replan": fast_replan,
                     "post_touch_chase": post_touch_chase,
                     "brake_distance_m": self.brake_distance_m,
+                    **({"brake_axis": brake_axis} if brake_axis != "xy" else {}),
                     **(
                         {"post_touch_target_distance_m": self.post_touch_target_distance_m}
                         if self.post_touch_target_distance_m != 0.30
@@ -248,13 +253,17 @@ class ReceivingSonicBallFollowOption(ReceivingSonicOption):
         if distance >= 1.2 or distance < 0.15:
             return original
         weight = self.response_gain * min(1.0, (1.2 - distance) / 0.4)
+        lateral_weight = weight
         if self.brake_distance_m is not None and not self.contact_foot_seen:
-            weight *= max(
+            brake = max(
                 0.0,
                 min(1.0, (distance - 0.25) / (self.brake_distance_m - 0.25)),
             )
+            weight *= brake
+            if self.brake_axis == "xy":
+                lateral_weight *= brake
         vx = (1.0 - weight) * original[0] + weight * observation.qvel[35]
-        vy = (1.0 - weight) * original[1] + weight * observation.qvel[36]
+        vy = (1.0 - lateral_weight) * original[1] + lateral_weight * observation.qvel[36]
         limit = (
             observation.navigation_envelope.maximum_speed_mps
             if observation.navigation_envelope is not None
@@ -375,6 +384,7 @@ class RecordingReceivingSonicBallFollowOption(ReceivingSonicBallFollowOption):
         fast_replan: bool = False,
         post_touch_chase: bool = False,
         brake_distance_m: float | None = None,
+        brake_axis: str = "xy",
         post_touch_target_distance_m: float = 0.30,
         post_touch_speed_limit_mps: float | None = None,
     ) -> None:
@@ -386,6 +396,7 @@ class RecordingReceivingSonicBallFollowOption(ReceivingSonicBallFollowOption):
             fast_replan=fast_replan,
             post_touch_chase=post_touch_chase,
             brake_distance_m=brake_distance_m,
+            brake_axis=brake_axis,
             post_touch_target_distance_m=post_touch_target_distance_m,
             post_touch_speed_limit_mps=post_touch_speed_limit_mps,
         )
