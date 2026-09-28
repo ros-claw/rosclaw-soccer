@@ -1,0 +1,35 @@
+{
+  "schema": "rsi_team_motor_library_expansion_protocol_v22",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "development_protocol_path": "docs/rsi/protocols/team-contextual-action-dataset-v21.json",
+  "development_result_root": "/data/rosclaw_overflow/rsi-team-contextual-action-v21c",
+  "v21_parent_report_hash": "sha256:c2e5774d0dc6928af2ac462493237f649d4c1a35e86af2d2a4906c56fca72ba5",
+  "uncovered_development_courses": ["d000", "d001", "d004", "d005", "d010", "d011", "d017", "d019", "d021", "d022", "d023"],
+  "arms": [
+    {
+      "name": "early_acquire95",
+      "candidate_action": {"entry_frame": 30, "forward_cap_m": 0.16, "lateral_cap_m": 0.05, "vertical_offset_m": 0.04, "swing_foot_acquisition_gap_m": 0.95}
+    },
+    {
+      "name": "late_entry40",
+      "candidate_action": {"entry_frame": 40, "forward_cap_m": 0.16, "lateral_cap_m": 0.05, "vertical_offset_m": 0.04, "swing_foot_acquisition_gap_m": 0.95}
+    },
+    {
+      "name": "level_foot",
+      "candidate_action": {"entry_frame": 30, "forward_cap_m": 0.16, "lateral_cap_m": 0.05, "vertical_offset_m": 0.0, "swing_foot_acquisition_gap_m": 0.95}
+    },
+    {
+      "name": "wide_lateral10",
+      "candidate_action": {"entry_frame": 30, "forward_cap_m": 0.16, "lateral_cap_m": 0.1, "vertical_offset_m": 0.04, "swing_foot_acquisition_gap_m": 0.95}
+    },
+    {
+      "name": "short_forward08",
+      "candidate_action": {"entry_frame": 30, "forward_cap_m": 0.08, "lateral_cap_m": 0.05, "vertical_offset_m": 0.04, "swing_foot_acquisition_gap_m": 0.95}
+    }
+  ],
+  "interpretation": "Previously failed v21 development scenes only; expansion of bounded motor dynamics, not a fresh holdout or deployable policy."
+}
