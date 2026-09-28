@@ -202,7 +202,26 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
     lanes = np.asarray([row["lane_y_m"] for row in entries], dtype=np.float64)
     if not np.isfinite(lanes).all() or np.min(np.diff(lanes)) < 6.0:
         raise ValueError("training lanes are not physically isolated")
-    if np.max(np.abs(positions[:, :, 1] - lanes[None, :])) >= 4.0:
+    excursion = float(np.max(np.abs(positions[:, :, 1] - lanes[None, :])))
+    if report.get("schema") == "rsi_isaac_vector_first_touch_late_swing_v1":
+        with np.load(folder / "body_trace.npz", allow_pickle=False) as body:
+            roots = body["root_pose_xyzw_m"][:, :, :3]
+        robot_distance = np.linalg.norm(positions[:, :, None, :] - roots[:, None, :, :], axis=-1)
+        ball_distance = np.linalg.norm(positions[:, :, None, :] - positions[:, None, :, :], axis=-1)
+        diagonal = np.eye(n, dtype=np.bool_)
+        robot_distance[:, diagonal] = np.inf
+        ball_distance[:, diagonal] = np.inf
+        min_robot = float(np.min(robot_distance))
+        min_ball = float(np.min(ball_distance))
+        if (
+            excursion >= 6.0
+            or min_robot <= 2.0
+            or min_ball <= 1.0
+            or not np.isclose(report.get("minimum_cross_robot_distance_m", np.nan), min_robot)
+            or not np.isclose(report.get("minimum_cross_ball_distance_m", np.nan), min_ball)
+        ):
+            raise ValueError("late-swing lane isolation not physically verified")
+    elif excursion >= 4.0:
         raise ValueError("ball escaped its lane")
     courses = []
     training_seed = report.get("training_course_seed")

@@ -856,7 +856,29 @@ def main() -> None:
     ):
         raise ValueError("nonfinite vector trajectory")
     lateral_excursion = np.max(np.abs(positions_arr[:, :, 1] - lanes[None, :]), axis=0)
-    if np.max(lateral_excursion) >= 4.0:
+    if late_actor is not None:
+        root_xyz = root_observations[:, :, :3]
+        cross_robot_distance = np.linalg.norm(
+            positions_arr[:, :, None, :] - root_xyz[:, None, :, :], axis=-1
+        )
+        cross_ball_distance = np.linalg.norm(
+            positions_arr[:, :, None, :] - positions_arr[:, None, :, :], axis=-1
+        )
+        diagonal = np.eye(args.env_count, dtype=np.bool_)
+        cross_robot_distance[:, diagonal] = np.inf
+        cross_ball_distance[:, diagonal] = np.inf
+        minimum_cross_robot_distance = float(np.min(cross_robot_distance))
+        minimum_cross_ball_distance = float(np.min(cross_ball_distance))
+        isolated = bool(
+            np.max(lateral_excursion) < 6.0
+            and minimum_cross_robot_distance > 2.0
+            and minimum_cross_ball_distance > 1.0
+        )
+    else:
+        minimum_cross_robot_distance = None
+        minimum_cross_ball_distance = None
+        isolated = bool(np.max(lateral_excursion) < 4.0)
+    if not isolated:
         args.output_dir.mkdir(parents=True)
         failure_path = args.output_dir / "lane_escape_trace.npz"
         np.savez_compressed(
@@ -877,6 +899,8 @@ def main() -> None:
             "trace_hash": hash_bytes(failure_path.read_bytes()),
             "lateral_excursion_m": lateral_excursion.tolist(),
             "escaped_lanes": np.flatnonzero(lateral_excursion >= 4.0).tolist(),
+            "minimum_cross_robot_distance_m": minimum_cross_robot_distance,
+            "minimum_cross_ball_distance_m": minimum_cross_ball_distance,
             "promotion_authorized": False,
         }
         failure["report_hash"] = hash_json(failure)
@@ -1041,6 +1065,8 @@ def main() -> None:
             taskspace_leg_joint_names=[list(row) for row in LEG_NAMES],
             taskspace_joint_order=list(robot.joint_names),
             taskspace_applied_frames=applied_frames.tolist(),
+            minimum_cross_robot_distance_m=minimum_cross_robot_distance,
+            minimum_cross_ball_distance_m=minimum_cross_ball_distance,
             trained_actor=True,
         )
     report["report_hash"] = hash_json(report)
