@@ -1,0 +1,30 @@
+{
+  "schema": "rsi_first_touch_taskspace_swing_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "frozen_parent_actor_hash": "sha256:78349ed4999982f0e1460fdc183ceb20052e756e1eac1458d74c4c13934955a6",
+  "motivation": "phase-only and postcontact recovery fail to move the ankle ahead of the knee sufficiently",
+  "development_course_seeds": [20260943, 20260944],
+  "fresh_sealed_holdout_course_seeds": [20260947, 20260948],
+  "candidate_forward_displacement_m": [0.08, 0.16],
+  "damped_least_squares_regularization": 0.05,
+  "maximum_single_leg_joint_delta_rad": 0.35,
+  "activation_ball_ahead_of_foot_m": [0.18, 0.95],
+  "swing_leg_selection": "higher_ankle_link_by_at_least_0.02_m_else_abstain",
+  "support_leg_rule": "never_modify_support_leg_target",
+  "contact_rule": "record_first_ball_contact_and_decay_last_residual_over_20_control_frames",
+  "physical_guardrails": ["joint_position_limits", "unchanged_other_23_joint_targets", "minimum_root_height_m_0.65"],
+  "development_gate": {
+    "minimum_combined_clean_foot_gain_over_frozen_v5": 2,
+    "require_no_seed_clean_foot_regression": true,
+    "minimum_root_height_m": 0.65
+  },
+  "sealed_holdout_gate": {
+    "minimum_combined_clean_foot_gain_over_frozen_v5": 4,
+    "require_no_seed_clean_foot_regression": true,
+    "minimum_root_height_m": 0.65
+  },
+  "data_driven_actor_requires_separate_training_and_new_holdout": true,
+  "full_episode_and_team_match_required_for_promotion": true,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

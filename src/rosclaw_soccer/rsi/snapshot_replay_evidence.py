@@ -71,6 +71,7 @@ def audit_snapshot_replay(
     phase_target = report.get("phase_target_frames")
     phase_actor_hash = report.get("contextual_phase_actor_hash")
     local_phase_hash = report.get("local_phase_actor_hash")
+    taskspace_probe = report.get("taskspace_forward_m") is not None
     phase_probe = (
         phase_target is not None or phase_actor_hash is not None or local_phase_hash is not None
     )
@@ -99,6 +100,8 @@ def audit_snapshot_replay(
             and (phase_target is not None or phase_actor_hash is not None)
         )
         or (phase_probe and (probe or not closed_loop))
+        or (taskspace_probe and (local_phase_hash is None or probe or not closed_loop))
+        or (taskspace_probe and report.get("phase_recovery_frames") is not None)
         or (not phase_probe and report.get("phase_ramp_frames") is not None)
         or (
             report.get("phase_recovery_frames") is not None
@@ -155,6 +158,16 @@ def audit_snapshot_replay(
             shapes["predicted_baseline_joint_target_rad"] = (frames, count, 29)
         if phase_probe:
             shapes["applied_sonic_phase_offset_frames"] = (frames, count)
+        if taskspace_probe:
+            shapes.update(
+                pre_step_foot_link_position_w=(frames, count, 2, 3),
+                pre_step_foot_linear_jacobian_w=(frames, count, 2, 3, 6),
+                taskspace_selected_side=(frames, count),
+                applied_taskspace_joint_delta_rad=(frames, count, 29),
+                baseline_taskspace_joint_target_rad=(frames, count, 29),
+                executed_taskspace_joint_target_rad=(frames, count, 29),
+                taskspace_joint_limits_rad=(count, 29, 2),
+            )
         if report.get("probe_joint_limits_recorded") is True:
             shapes["probe_joint_position_limits_rad"] = (count, 3, 2)
         if set(replay.files) != set(shapes) or any(
@@ -162,6 +175,13 @@ def audit_snapshot_replay(
             for key, shape in shapes.items()
         ):
             raise ValueError("invalid snapshot replay trace shape or finite values")
+        taskspace_audit = None
+        if taskspace_probe:
+            from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_trace
+
+            taskspace_audit = audit_taskspace_swing_trace(
+                replay, report, frames=frames, count=count
+            )
         expected = {
             "root_pose_m": (
                 replay["initial_root_pose_local_xyzw_m"],
@@ -557,6 +577,8 @@ def audit_snapshot_replay(
         "future_parent_target_is_privileged": True,
         "promotion_authorized": False,
     }
+    if taskspace_audit is not None:
+        result.update(taskspace_audit)
     result["report_hash"] = hash_json(result)
     return result
 

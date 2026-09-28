@@ -26,6 +26,7 @@ parser.add_argument("--phase-target-frames", type=float)
 parser.add_argument("--contextual-phase-policy", type=Path)
 parser.add_argument("--local-phase-policy", type=Path)
 parser.add_argument("--phase-recovery-frames", type=int, choices=(12, 20, 30))
+parser.add_argument("--taskspace-forward-m", type=float, choices=(0.08, 0.16))
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
@@ -55,6 +56,8 @@ if (
     )
     or (args.local_phase_policy is not None and not args.local_phase_policy.is_file())
     or (args.local_phase_policy is not None and not args.closed_loop_sonic)
+    or (args.taskspace_forward_m is not None and args.local_phase_policy is None)
+    or (args.taskspace_forward_m is not None and args.phase_recovery_frames is not None)
     or (
         args.phase_recovery_frames is not None
         and args.local_phase_policy is None
@@ -119,6 +122,11 @@ from rosclaw_soccer.rsi.snapshot_shared_temporal_policy import load_candidate  #
 from rosclaw_soccer.rsi.sonic_phase_probe import (  # noqa: E402
     phase_offset_frames,
     recovered_phase_offset_frames,
+)
+from rosclaw_soccer.rsi.taskspace_swing_probe import (  # noqa: E402
+    choose_swing_side,
+    release_joint_delta,
+    swing_joint_delta,
 )
 from rosclaw_soccer.rsi.temporal_first_touch_policy import (  # noqa: E402
     JOINT_NAMES as PROBE_JOINT_NAMES,
@@ -533,6 +541,15 @@ def main() -> None:
     probe_applied_frames = np.zeros(args.sample_count, dtype=np.int64)
     contact_seen = np.zeros(args.sample_count, dtype=np.bool_)
     phase_first_contact_state = np.full(args.sample_count, -1, dtype=np.int64)
+    swing_side = np.full(args.sample_count, -1, dtype=np.int64)
+    swing_contact_frame = np.full(args.sample_count, -1, dtype=np.int64)
+    swing_contact_delta = np.zeros((args.sample_count, 6), dtype=np.float64)
+    swing_foot_positions = []
+    swing_linear_jacobians = []
+    swing_selected_sides = []
+    swing_applied_residuals = []
+    swing_baseline_targets = []
+    swing_executed_targets = []
     probe_weights = (
         shared_weights if shared_weights is not None else knee_extension_probe_weights()[0]
     )
@@ -540,6 +557,24 @@ def main() -> None:
     probe_joint_limits = (
         robot.data.joint_pos_limits.torch[:, probe_joint_indices].detach().cpu().numpy().copy()
     )
+    leg_joint_names = tuple(
+        tuple(
+            f"{side}_{part}_joint"
+            for part in ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_pitch", "ankle_roll")
+        )
+        for side in ("left", "right")
+    )
+    leg_joint_indices = tuple(
+        tuple(robot.joint_names.index(name) for name in row) for row in leg_joint_names
+    )
+    foot_body_indices = tuple(
+        robot.body_names.index(f"{side}_ankle_roll_link") for side in ("left", "right")
+    )
+    if args.taskspace_forward_m is not None and (
+        len(set(leg_joint_indices[0] + leg_joint_indices[1])) != 12
+        or robot.data.body_link_jacobian_w.torch.shape[-1] != len(robot.joint_names) + 6
+    ):
+        raise ValueError("task-space G1 Jacobian or leg joint contract invalid")
     for frame in range(manifest["window_frames"]):
         root_before = robot.data.root_link_pose_w.torch.detach().cpu().numpy().copy()
         joint_before = robot.data.joint_pos.torch[:, indices].detach().cpu().numpy().copy()
@@ -673,6 +708,63 @@ def main() -> None:
                         base_target[lane, joint_index]
                     )
                 probe_applied_frames[lane] += 1
+        if args.taskspace_forward_m is not None:
+            feet = (
+                robot.data.body_link_pos_w.torch[:, foot_body_indices].detach().cpu().numpy().copy()
+            )
+            full_jacobian = robot.data.body_link_jacobian_w.torch.detach().cpu().numpy()
+            jacobians = np.stack(
+                [
+                    np.take(
+                        full_jacobian[:, body_index, :3, :],
+                        np.asarray(leg_joint_indices[side]) + 6,
+                        axis=-1,
+                    )
+                    for side, body_index in enumerate(foot_body_indices)
+                ],
+                axis=1,
+            )
+            if jacobians.shape != (args.sample_count, 2, 3, 6):
+                raise ValueError("task-space swing Jacobian shape changed")
+            limits = robot.data.joint_pos_limits.torch.detach().cpu().numpy()
+            baseline = base_target.detach().cpu().numpy()
+            frame_swing_residual = np.zeros((args.sample_count, len(robot.joint_names)))
+            for lane in range(args.sample_count):
+                if swing_contact_frame[lane] < 0:
+                    swing_side[lane] = choose_swing_side(
+                        feet[lane],
+                        ball.data.root_pos_w.torch[lane].detach().cpu().numpy(),
+                        int(swing_side[lane]),
+                    )
+                side = int(swing_side[lane])
+                if side < 0:
+                    continue
+                joint_ids = list(leg_joint_indices[side])
+                if swing_contact_frame[lane] >= 0:
+                    delta = release_joint_delta(
+                        swing_contact_delta[lane], frame - int(swing_contact_frame[lane])
+                    )
+                else:
+                    delta = swing_joint_delta(
+                        feet[lane, side],
+                        ball.data.root_pos_w.torch[lane].detach().cpu().numpy(),
+                        jacobians[lane, side],
+                        baseline[lane, joint_ids],
+                        limits[lane, joint_ids],
+                        forward_cap_m=args.taskspace_forward_m,
+                    )
+                target[lane, joint_ids] = torch.as_tensor(
+                    baseline[lane, joint_ids] + delta, device=sim.device, dtype=torch.float32
+                )
+                frame_swing_residual[lane, joint_ids] = (
+                    target[lane, joint_ids].detach().cpu().numpy() - baseline[lane, joint_ids]
+                )
+            swing_foot_positions.append(feet)
+            swing_linear_jacobians.append(jacobians)
+            swing_selected_sides.append(swing_side.copy())
+            swing_applied_residuals.append(frame_swing_residual)
+            swing_baseline_targets.append(baseline)
+            swing_executed_targets.append(target.detach().cpu().numpy().copy())
         applied_residual.append(frame_residual)
         peak_force = torch.zeros((args.sample_count, 6), device=sim.device)
         for _ in range(10):
@@ -705,6 +797,17 @@ def main() -> None:
                 bodies = set(np.flatnonzero(contact_now[lane] > 1.0).tolist())
                 if bodies:
                     phase_first_contact_state[lane] = frame if bodies <= {0, 1} else -2
+        if args.taskspace_forward_m is not None:
+            contact_now = peak_force.detach().cpu().numpy()
+            last_delta = swing_applied_residuals[-1]
+            for lane in range(args.sample_count):
+                if swing_contact_frame[lane] >= 0:
+                    continue
+                if np.any(contact_now[lane] > 1.0):
+                    swing_contact_frame[lane] = frame
+                    if swing_side[lane] >= 0:
+                        joint_ids = list(leg_joint_indices[int(swing_side[lane])])
+                        swing_contact_delta[lane] = last_delta[lane, joint_ids]
         observed_ball.append(ball.data.root_pos_w.torch.detach().cpu().numpy().copy())
         observed_root.append(robot.data.root_link_pose_w.torch.detach().cpu().numpy().copy())
         observed_force.append(peak_force.detach().cpu().numpy().copy())
@@ -767,6 +870,16 @@ def main() -> None:
     )
     if args.phase_target_frames is not None or selected_phase_targets is not None:
         trace_values["applied_sonic_phase_offset_frames"] = np.asarray(applied_phase_offsets)
+    if args.taskspace_forward_m is not None:
+        trace_values.update(
+            pre_step_foot_link_position_w=np.asarray(swing_foot_positions),
+            pre_step_foot_linear_jacobian_w=np.asarray(swing_linear_jacobians),
+            taskspace_selected_side=np.asarray(swing_selected_sides),
+            applied_taskspace_joint_delta_rad=np.asarray(swing_applied_residuals),
+            baseline_taskspace_joint_target_rad=np.asarray(swing_baseline_targets),
+            executed_taskspace_joint_target_rad=np.asarray(swing_executed_targets),
+            taskspace_joint_limits_rad=robot.data.joint_pos_limits.torch.detach().cpu().numpy(),
+        )
     np.savez_compressed(trace_path, **trace_values)
     report = {
         "schema": "rsi_isaac_first_touch_snapshot_replay_v1",
@@ -789,6 +902,13 @@ def main() -> None:
         if args.phase_target_frames is not None or selected_phase_targets is not None
         else None,
         "phase_recovery_frames": args.phase_recovery_frames,
+        "taskspace_forward_m": args.taskspace_forward_m,
+        "taskspace_leg_joint_names": [list(row) for row in leg_joint_names]
+        if args.taskspace_forward_m is not None
+        else None,
+        "taskspace_joint_order": list(robot.joint_names)
+        if args.taskspace_forward_m is not None
+        else None,
         "contextual_phase_actor_hash": contextual_phase_hash,
         "local_phase_actor_hash": local_phase_hash,
         "selected_phase_targets_frames": (
