@@ -1,0 +1,30 @@
+{
+  "schema": "rsi_team_contextual_action_dataset_protocol_v21",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "scenario_grid": {
+    "x_m": [3.55, 3.7, 3.85, 4.0],
+    "y_m": [-0.85, -0.7, -0.55],
+    "incoming_vx_mps": [-0.6, -0.4],
+    "seed_base": 930000
+  },
+  "arms": [
+    {"name": "phase_front04_lat12", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2},
+    {"name": "phase_back04_pos08", "foot_selection": "phase", "forward_gain": -0.4, "lateral_gain": 0.8},
+    {"name": "phase_stay_pos08", "foot_selection": "phase", "forward_gain": 0.0, "lateral_gain": 0.8},
+    {"name": "phase_front04_lat04", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 0.4},
+    {"name": "phase_back04_lat12", "foot_selection": "phase", "forward_gain": -0.4, "lateral_gain": 1.2},
+    {"name": "phase_stay_lat12", "foot_selection": "phase", "forward_gain": 0.0, "lateral_gain": 1.2}
+  ],
+  "development_purpose": "Reuse v21's consumed physical 24-scene grid to diagnose whether bounded interception/phase control can close the measured foot-ball gap; not a fresh holdout."
+}
