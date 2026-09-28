@@ -27,17 +27,27 @@ class TeamFootKinematics:
     foot_position_world_m: tuple[tuple[float, ...], ...]
     foot_linear_jacobian_world: tuple[tuple[tuple[float, ...], ...], ...]
     leg_joint_limits_rad: tuple[tuple[tuple[float, ...], ...], ...]
+    foot_linear_velocity_world_mps: tuple[tuple[float, ...], ...] | None = None
 
     def __post_init__(self) -> None:
         if not (
             _plain_finite_tuple(self.foot_position_world_m, (2, 3))
             and _plain_finite_tuple(self.foot_linear_jacobian_world, (2, 3, 6))
             and _plain_finite_tuple(self.leg_joint_limits_rad, (2, 6, 2))
+            and (
+                self.foot_linear_velocity_world_mps is None
+                or _plain_finite_tuple(self.foot_linear_velocity_world_mps, (2, 3))
+            )
         ):
             raise ValueError("immutable finite foot kinematics required")
         feet = np.asarray(self.foot_position_world_m, dtype=float)
         jacobian = np.asarray(self.foot_linear_jacobian_world, dtype=float)
         limits = np.asarray(self.leg_joint_limits_rad, dtype=float)
+        velocities = (
+            None
+            if self.foot_linear_velocity_world_mps is None
+            else np.asarray(self.foot_linear_velocity_world_mps, dtype=float)
+        )
         if (
             not isinstance(self.agent_id, str)
             or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", self.agent_id) is None
@@ -49,6 +59,8 @@ class TeamFootKinematics:
             or np.any(limits[:, :, 0] >= limits[:, :, 1])
             or np.max(np.abs(feet)) > 1000
             or np.max(np.abs(jacobian)) > 1000
+            or velocities is not None
+            and (velocities.shape != (2, 3) or np.max(np.abs(velocities)) > 1000)
         ):
             raise ValueError("finite player-bound foot kinematics required")
 
@@ -74,11 +86,13 @@ def measure_team_foot_kinematics(
     ):
         raise ValueError("invalid G1 foot body or six-leg DoF mapping")
     jacobians = []
+    velocities = []
     for body_id, dofs in zip(ankle_body_ids, leg_dof_ids, strict=True):
         linear = np.zeros((3, model.nv))
         angular = np.zeros((3, model.nv))
         mujoco.mj_jacBody(model, data, linear, angular, body_id)
         jacobians.append(tuple(tuple(float(value) for value in row[list(dofs)]) for row in linear))
+        velocities.append(tuple(float(value) for value in linear @ data.qvel))
     measured = TeamFootKinematics(
         agent_id=agent_id,
         frame=frame,
@@ -87,5 +101,6 @@ def measure_team_foot_kinematics(
         ),
         foot_linear_jacobian_world=tuple(jacobians),
         leg_joint_limits_rad=leg_joint_ranges,
+        foot_linear_velocity_world_mps=tuple(velocities),
     )
     return measured

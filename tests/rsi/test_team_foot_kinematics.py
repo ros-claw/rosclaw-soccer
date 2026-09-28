@@ -66,6 +66,15 @@ def test_foot_geometry_rejects_nonfinite_or_inverted_limits() -> None:
             foot_linear_jacobian_world=original.foot_linear_jacobian_world,
             leg_joint_limits_rad=original.leg_joint_limits_rad,
         )
+    with pytest.raises(ValueError, match="immutable finite"):
+        TeamFootKinematics(
+            agent_id=original.agent_id,
+            frame=original.frame,
+            foot_position_world_m=original.foot_position_world_m,
+            foot_linear_jacobian_world=original.foot_linear_jacobian_world,
+            leg_joint_limits_rad=original.leg_joint_limits_rad,
+            foot_linear_velocity_world_mps=((float("nan"), 0.0, 0.0), (0.0, 0.0, 0.0)),
+        )
     with pytest.raises(ValueError, match="finite player-bound"):
         TeamFootKinematics(
             agent_id=original.agent_id,
@@ -88,7 +97,10 @@ def test_mujoco_jacobian_is_projected_to_own_six_leg_dofs(monkeypatch: pytest.Mo
     import mujoco
 
     model = SimpleNamespace(nbody=2, nv=20)
-    data = SimpleNamespace(xpos=np.asarray(((1.0, 0.2, 0.3), (1.0, -0.2, 0.4))))
+    data = SimpleNamespace(
+        xpos=np.asarray(((1.0, 0.2, 0.3), (1.0, -0.2, 0.4))),
+        qvel=np.full(20, 0.1),
+    )
 
     def fake_jac(_model, _data, linear, angular, body):
         linear[:] = np.arange(60).reshape(3, 20) + body * 100
@@ -107,6 +119,10 @@ def test_mujoco_jacobian_is_projected_to_own_six_leg_dofs(monkeypatch: pytest.Mo
     assert measured.foot_linear_jacobian_world[0][0] == (6, 7, 8, 9, 10, 11)
     assert measured.foot_linear_jacobian_world[1][0] == (112, 113, 114, 115, 116, 117)
     assert measured.foot_position_world_m[1] == (1.0, -0.2, 0.4)
+    assert measured.foot_linear_velocity_world_mps is not None
+    assert measured.foot_linear_velocity_world_mps[0][0] == pytest.approx(
+        np.dot(np.arange(20), np.full(20, 0.1))
+    )
 
 
 @pytest.mark.integration
@@ -152,7 +168,10 @@ def test_read_only_kinematics_request_preserves_shared_world_physics() -> None:
         traces.append(trace)
     assert observers[0].snapshots and all(value is None for value in observers[0].snapshots)
     assert observers[1].snapshots and all(
-        value is not None and value.agent_id == agent and value.frame == frame
+        value is not None
+        and value.agent_id == agent
+        and value.frame == frame
+        and value.foot_linear_velocity_world_mps is not None
         for frame, value in enumerate(observers[1].snapshots)
     )
     for key in traces[0]:
