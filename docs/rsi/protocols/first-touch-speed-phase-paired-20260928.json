@@ -1,0 +1,17 @@
+{
+  "run_id": "first-touch-speed-phase-paired-20260928-v1",
+  "purpose": "SIM_ONLY paired diagnostic of gait/contact timing, not policy promotion",
+  "code_sha": "f0c16b3",
+  "physics_source_hash": "sha256:4704d05844bff7af2fe06b68139251185e18c2fb03f28622ef50fc3d6061e1fe",
+  "training_course_seed": 20260928,
+  "course_count": 16,
+  "frames": 300,
+  "frozen_parent_report_hash": "sha256:95fbaf4ce337fa9fbdf172dd0d1642276e75fe31b5225c152ee459a349ecf079",
+  "frozen_parent_speed_mps": 1.4,
+  "probe_speeds_mps": [1.2, 1.5],
+  "controlled_variables": "same course seed, SONIC checkpoint, G1 USD, ball physics, batch-plan-only decoder, independent 16 G1 environments",
+  "outcomes": ["clean foot-only count", "knee and shin count", "first-contact frame by ball velocity sign", "minimum pelvis height"],
+  "qualifier": "speed variant is useful only if paired clean-foot rate increases without lower pelvis or cross-course regressions; diagnostic runs cannot promote a policy",
+  "fresh_opened": false,
+  "activation_ceiling": "SIM_ONLY"
+}
