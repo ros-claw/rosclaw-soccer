@@ -200,3 +200,29 @@ Parent 配对比较，不能把训练格点 3/8→4/8 当作泛化或球队宣�
 
 官方实现参照：[Isaac Lab 强化学习工作流](https://isaac-sim.github.io/IsaacLab/develop/source/concepts/reinforcement_learning.html)、
 [Isaac Lab 多 GPU 训练](https://isaac-sim.github.io/IsaacLab/main/source/features/multi_gpu.html)。
+
+## 冻结 SONIC 批量推理瓶颈（未通过）
+
+八环境在线 PPO 若仍逐机器人、逐控制帧调用 CPU ONNX，样本吞吐会很低。检查
+`low_latency` 资产得知编码器输入 `[1,1247]`、解码器输入 `[1,994]`，编码器有
+25 个 Reshape、ScatterND 等固定 batch=1 结构。实验性用 `onnx2torch` 将两者
+转成 PyTorch：**单样本**随机输入最大误差编码器 0、解码器约 `1.9e-6`；解码器
+可接收 batch=8，但编码器不能。逐样本执行转换后的 GPU 编码器约 52.6 ms/八样本，
+原 CPU ONNX 编码器约 7.5 ms/八样本，不能说 GPU 转换加速。尝试只将固定
+Reshape 的前导 1 改为动态维，八样本最大输出误差 **1.9375**；实验导出脚本按
+`1e-4` 一致性门拒绝写入新模型，没有把错误模型接入仿真。
+
+因此高吞吐训练前还必须完成以下之一：从官方结构安全取得权重并正确重导出动态
+batch 模型，或用冻结 SONIC 轨迹训练一个批量 GPU 学生模型，再经逐状态、闭环
+物理对照和 Fresh 安全门验证。不能只因“能在 GPU 上跑”就认定等价。
+
+进一步将**解码器**与编码器分开诊断：解码器无需改内部图，只把 ONNX 对外 batch
+维从固定 1 声明为动态，八样本对逐样本原模型的最大误差约 `2.86e-6`，通过
+`1e-4` 门并生成 SIM_ONLY 衍生资产。资产哈希
+`sha256:df7a15735d5efcee9d7a9a259d6d9f88afc4ac7a3b8a700d5e0f24ba530f26dd`，
+导出审计哈希
+`sha256:9ebca3e147fd3172c9d9aabc5e25a6addecc4d5f3729ee5acc2676d07ff98318`。
+同一 CPU ONNX Session 的 200 次预热后对照约 **100.3 ms/八次单样本** 对
+**18.2 ms/一次八样本批量**，仅对解码器有效；尚未接入导航/Isaac 闭环，不能
+声称整体训练已加速。下一步要用明确的双阶段 `prepare/commit` 提案接口整合，
+并验证完整八球道轨迹与原冻结 SONIC 对齐。
