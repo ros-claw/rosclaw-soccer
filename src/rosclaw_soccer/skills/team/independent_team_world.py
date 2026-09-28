@@ -106,6 +106,7 @@ from rosclaw_soccer.sim.contracts import (
     hash_json,
 )
 from rosclaw_soccer.sim.joint_braking import strengthen_outward_joint_braking
+from rosclaw_soccer.skills.team.foot_kinematics import measure_team_foot_kinematics
 from rosclaw_soccer.skills.team.motor_option import (
     TeamBallContact,
     TeamMotorFoundation,
@@ -2277,11 +2278,11 @@ def simulate_independent_team_world(
         )
         if strike_phase_config is not None and phase_controller is None:
             for controller in controllers:
-                decision = controller.decision
+                phase_decision = controller.decision
                 if (
                     controller.strike_phase.phase is StrikePhase.IDLE
-                    and decision is not None
-                    and decision.intent is TacticalIntent.PASS
+                    and phase_decision is not None
+                    and phase_decision.intent is TacticalIntent.PASS
                     and current_possession_agent_id is None
                     and assigned_ball_chaser_agent_id == controller.cell.agent_id
                     and not controller.option_active
@@ -2888,6 +2889,34 @@ def simulate_independent_team_world(
                                 Path(controller.policy.policy_path).parent.parent
                                 / "config/LocoMode.yaml"
                             ],
+                        ),
+                        foot_kinematics=(
+                            measure_team_foot_kinematics(
+                                model=model,
+                                data=data,
+                                agent_id=agent_id,
+                                frame=frame,
+                                ankle_body_ids=(
+                                    controller.left_ankle_body,
+                                    controller.right_ankle_body,
+                                ),
+                                leg_dof_ids=(
+                                    tuple(int(value) for value in controller.joint_qvel[:6]),
+                                    tuple(int(value) for value in controller.joint_qvel[6:12]),
+                                ),
+                                leg_joint_ranges=(
+                                    tuple(
+                                        tuple(float(value) for value in pair)
+                                        for pair in model.jnt_range[controller.joint_ids[:6]]
+                                    ),
+                                    tuple(
+                                        tuple(float(value) for value in pair)
+                                        for pair in model.jnt_range[controller.joint_ids[6:12]]
+                                    ),
+                                ),
+                            )
+                            if getattr(motors[agent_id], "needs_foot_kinematics", False) is True
+                            else None
                         ),
                     )
                 )

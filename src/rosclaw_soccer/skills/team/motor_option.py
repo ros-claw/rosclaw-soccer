@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from rosclaw_soccer.skills.team.foot_kinematics import TeamFootKinematics
 from rosclaw_soccer.skills.team.navigation_envelope import SimulationNavigationEnvelope
 
 
@@ -78,6 +79,7 @@ class TeamMotorObservation:
     foundation: TeamMotorFoundation | None = None
     receive_commitment: TeamReceiveCommitment | None = None
     navigation_envelope: SimulationNavigationEnvelope | None = None
+    foot_kinematics: TeamFootKinematics | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -125,6 +127,12 @@ class TeamMotorObservation:
             or self.foundation.frame != self.frame
         ):
             raise ValueError("foundation proposal belongs to another player or frame")
+        if self.foot_kinematics is not None and (
+            not isinstance(self.foot_kinematics, TeamFootKinematics)
+            or self.foot_kinematics.agent_id != self.agent_id
+            or self.foot_kinematics.frame != self.frame
+        ):
+            raise ValueError("foot kinematics belongs to another player or frame")
         if self.receive_commitment is not None:
             commitment = self.receive_commitment
             if not isinstance(commitment, TeamReceiveCommitment):
