@@ -57,6 +57,8 @@ class TeamSwingMotor:
                 "baseline",
                 "executed",
                 "ball",
+                "qpos",
+                "qvel",
                 "predicted_baseline",
             )
         }
@@ -147,6 +149,8 @@ class TeamSwingMotor:
         self.observations["baseline"].append(baseline.copy())
         self.observations["executed"].append(target.copy())
         self.observations["ball"].append(ball.copy())
+        self.observations["qpos"].append(q.copy())
+        self.observations["qvel"].append(np.asarray(observation.qvel, dtype=float).copy())
         self.observations["predicted_baseline"].append(baseline.copy())
         return TeamMotorTarget(
             tuple(float(value) for value in target),
@@ -266,6 +270,8 @@ def _run_one(
         executed_taskspace_joint_target_rad=np.asarray(motor.observations["executed"])[:, None],
         taskspace_joint_limits_rad=motor.joint_limits[None],
         pre_step_ball_position_local_m=np.asarray(motor.observations["ball"])[:, None],
+        pre_step_focal_qpos=np.asarray(motor.observations["qpos"])[:, None],
+        pre_step_focal_qvel=np.asarray(motor.observations["qvel"])[:, None],
         observed_ball_body_contact_force_peak_n=np.repeat(
             observed_own_foot_force[:, None, None], 6, axis=2
         ),
