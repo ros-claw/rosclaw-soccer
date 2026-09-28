@@ -1,0 +1,16 @@
+{
+  "schema": "rsi_first_touch_family_failure_diagnostic_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "frozen_holdout_verdict_hash": "sha256:63cc781c880f6858a1346e398894c13911febb93fca9dda5c32984fcd5851c93",
+  "consumed_course_seeds": [20260953, 20260954],
+  "diagnostic_actions": [
+    {"name": "up", "forward_m": 0.08, "lateral_cap_m": 0.05, "vertical_offset_m": 0.04},
+    {"name": "wide", "forward_m": 0.08, "lateral_cap_m": 0.10, "vertical_offset_m": 0.0}
+  ],
+  "question": "Is the frozen selector failing to find available physical rescues, or is the present action family itself insufficient on these new ball/body states?",
+  "analysis": "Audit paired physical traces; count distinct rescue lanes available to an impossible hindsight oracle, parent success regressions under each unconditional action, and compare with frozen selector. Hindsight is diagnostic only and never a deployable actor.",
+  "decision": "If oracle has at least three additional rescues beyond the frozen selector, prioritize better causal decision timing/features; otherwise prioritize new whole-body and contact-timing action support.",
+  "fresh_holdout_reuse_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
