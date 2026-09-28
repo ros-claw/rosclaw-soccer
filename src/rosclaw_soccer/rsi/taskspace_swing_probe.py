@@ -9,6 +9,7 @@ import numpy as np
 FORWARD_CAPS_M = (0.08, 0.16)
 LATERAL_CAPS_M = (0.05, 0.10)
 VERTICAL_OFFSETS_M = (-0.04, 0.0, 0.04)
+SWING_ACQUISITION_MAX_GAPS_M = (0.35, 0.55, 0.95)
 MAX_JOINT_DELTA_RAD = 0.35
 REGULARIZATION = 0.05
 CONTACT_RELEASE_FRAMES = 20
@@ -18,12 +19,15 @@ def choose_swing_side(
     feet_xyz: np.ndarray[Any, Any],
     ball_xyz: np.ndarray[Any, Any],
     previous_side: int,
+    *,
+    acquisition_max_gap_m: float = 0.95,
 ) -> int:
     """Latch an airborne swing foot; never infer one from the future collision."""
     if (
         feet_xyz.shape != (2, 3)
         or ball_xyz.shape != (3,)
         or previous_side not in (-1, 0, 1)
+        or acquisition_max_gap_m not in SWING_ACQUISITION_MAX_GAPS_M
         or not np.isfinite(feet_xyz).all()
         or not np.isfinite(ball_xyz).all()
     ):
@@ -34,7 +38,7 @@ def choose_swing_side(
     if feet_xyz[side, 2] - feet_xyz[1 - side, 2] < 0.02:
         return -1
     gap = float(ball_xyz[0] - feet_xyz[side, 0])
-    return side if 0.18 <= gap <= 0.95 else -1
+    return side if 0.18 <= gap <= acquisition_max_gap_m else -1
 
 
 def swing_joint_delta(

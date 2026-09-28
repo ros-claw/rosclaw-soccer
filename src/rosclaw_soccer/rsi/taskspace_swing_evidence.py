@@ -11,6 +11,7 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
     FORWARD_CAPS_M,
     LATERAL_CAPS_M,
     MAX_JOINT_DELTA_RAD,
+    SWING_ACQUISITION_MAX_GAPS_M,
     VERTICAL_OFFSETS_M,
     choose_swing_side,
     release_joint_delta,
@@ -36,6 +37,7 @@ def audit_taskspace_swing_trace(
     forward = report.get("taskspace_forward_m")
     lateral = report.get("taskspace_lateral_cap_m", 0.05)
     vertical = report.get("taskspace_vertical_offset_m", 0.0)
+    acquisition_gap = report.get("taskspace_acquisition_max_gap_m", 0.95)
     family_hash = report.get("taskspace_family_actor_hash")
     family_actions = report.get("selected_taskspace_actions")
     order = report.get("taskspace_joint_order")
@@ -55,6 +57,7 @@ def audit_taskspace_swing_trace(
         forward not in FORWARD_CAPS_M
         or lateral not in LATERAL_CAPS_M
         or vertical not in VERTICAL_OFFSETS_M
+        or acquisition_gap not in SWING_ACQUISITION_MAX_GAPS_M
         or report.get("taskspace_leg_joint_names") != [list(row) for row in LEG_NAMES]
         or not isinstance(order, list)
         or len(order) != 29
@@ -111,7 +114,12 @@ def audit_taskspace_swing_trace(
             ball_world = ball_local[frame, lane].copy()
             ball_world[1] += lane * 8.0
             if mask[lane] and first_contact[lane] < 0:
-                side[lane] = choose_swing_side(feet[frame, lane], ball_world, int(side[lane]))
+                side[lane] = choose_swing_side(
+                    feet[frame, lane],
+                    ball_world,
+                    int(side[lane]),
+                    acquisition_max_gap_m=acquisition_gap,
+                )
             if selected_sides[frame, lane] != side[lane]:
                 raise ValueError("task-space side used future contact or altered support leg")
             expected = np.zeros(29)

@@ -15,6 +15,7 @@ def test_taskspace_selects_airborne_leg_and_bounds_ik() -> None:
     ball = np.array([0.6, 0.1, 0.11])
     assert choose_swing_side(feet, ball, -1) == 0
     assert choose_swing_side(feet, ball, 1) == 1
+    assert choose_swing_side(feet, ball, -1, acquisition_max_gap_m=0.55) == -1
     feet[0, 2] = 0.05
     assert choose_swing_side(feet, ball, -1) == -1
     jac = np.zeros((3, 6))

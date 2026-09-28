@@ -33,6 +33,9 @@ parser.add_argument("--taskspace-lateral-cap-m", type=float, choices=(0.05, 0.10
 parser.add_argument(
     "--taskspace-vertical-offset-m", type=float, choices=(-0.04, 0.0, 0.04), default=0.0
 )
+parser.add_argument(
+    "--taskspace-acquisition-max-gap-m", type=float, choices=(0.35, 0.55, 0.95), default=0.95
+)
 parser.add_argument("--taskspace-gate-policy", type=Path)
 parser.add_argument("--taskspace-family-policy", type=Path)
 AppLauncher.add_app_launcher_args(parser)
@@ -69,11 +72,14 @@ if (
     or (args.taskspace_family_policy is not None and not args.taskspace_family_policy.is_file())
     or (args.taskspace_family_policy is not None and args.taskspace_gate_policy is not None)
     or (args.taskspace_family_policy is not None and args.taskspace_forward_m != 0.08)
+    or (args.taskspace_family_policy is not None and args.taskspace_acquisition_max_gap_m != 0.95)
     or (
         args.taskspace_family_policy is not None
         and (args.taskspace_lateral_cap_m != 0.05 or args.taskspace_vertical_offset_m != 0.0)
     )
     or (args.taskspace_gate_policy is not None and args.taskspace_forward_m != 0.08)
+    or (args.taskspace_gate_policy is not None and args.taskspace_acquisition_max_gap_m != 0.95)
+    or (args.taskspace_forward_m is None and args.taskspace_acquisition_max_gap_m != 0.95)
     or (
         args.taskspace_gate_policy is not None
         and (args.taskspace_lateral_cap_m != 0.05 or args.taskspace_vertical_offset_m != 0.0)
@@ -835,6 +841,7 @@ def main() -> None:
                         feet[lane],
                         ball.data.root_pos_w.torch[lane].detach().cpu().numpy(),
                         int(swing_side[lane]),
+                        acquisition_max_gap_m=args.taskspace_acquisition_max_gap_m,
                     )
                 side = int(swing_side[lane])
                 if side < 0:
@@ -1015,6 +1022,7 @@ def main() -> None:
         "taskspace_forward_m": args.taskspace_forward_m,
         "taskspace_lateral_cap_m": args.taskspace_lateral_cap_m,
         "taskspace_vertical_offset_m": args.taskspace_vertical_offset_m,
+        "taskspace_acquisition_max_gap_m": args.taskspace_acquisition_max_gap_m,
         "taskspace_leg_joint_names": [list(row) for row in leg_joint_names]
         if args.taskspace_forward_m is not None
         else None,
