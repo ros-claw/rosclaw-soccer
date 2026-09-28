@@ -1,0 +1,28 @@
+{
+  "schema": "rsi_team_contextual_nav_fresh_exam_protocol_v25",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "model_path": "/data/rosclaw_overflow/rsi-team-contextual-nav-model-v25/model.json",
+  "model_hash": "sha256:6a70a7ebe27dba8828fc76d7dbb6534ea7120785b31ae98d89bd52c4966c9d16",
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "fresh_grid": {
+    "x_m": [3.58, 3.82, 4.07],
+    "y_m": [-0.8, -0.6],
+    "incoming_vx_mps": [-0.55, -0.35],
+    "seed_base": 940000
+  },
+  "gate": {
+    "minimum_safe": 11,
+    "minimum_useful_passes": 6,
+    "minimum_useful_gain": 4
+  },
+  "interpretation": "One-shot physical Parent-Candidate holdout on 12 new ball/seed states. Test a frozen action chooser, not an offline oracle. Passing this narrow gate does not authorize promotion or a continuous football demo."
+}

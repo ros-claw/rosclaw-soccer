@@ -18,6 +18,7 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
     swing_joint_delta,
 )
 from rosclaw_soccer.rsi.team_context_phase_navigation import TeamContextPhaseNavigation
+from rosclaw_soccer.rsi.team_contextual_nav_policy import TeamContextualNavigationMemory
 from rosclaw_soccer.rsi.team_intercept_navigation import TeamInterceptNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.independent_team_world import (
@@ -37,10 +38,17 @@ class TeamSwingMotor:
     needs_foot_kinematics = True
     needs_contact_velocity = True
 
-    def __init__(self, agent_id: str, enabled: bool, action: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        agent_id: str,
+        enabled: bool,
+        action: dict[str, Any],
+        activation_selector: TeamContextualNavigationMemory | None = None,
+    ) -> None:
         self.agent_id = agent_id
         self.enabled = enabled
         self.action = action
+        self.activation_selector = activation_selector
         self.next_frame = 0
         self.side = -1
         self.first_contact_frame: int | None = None
@@ -77,6 +85,9 @@ class TeamSwingMotor:
                 "agent": agent_id,
                 "enabled": enabled,
                 "action": action,
+                "activation_selector_hash": (
+                    None if activation_selector is None else activation_selector.contract_hash
+                ),
                 "activation_ceiling": "SIM_ONLY",
             }
         )
@@ -113,7 +124,10 @@ class TeamSwingMotor:
         baseline = np.asarray(observation.foundation.target.target_rad, dtype=float)
         target = baseline.copy()
         residual = np.zeros(29)
-        if self.enabled and observation.frame >= self.action["entry_frame"]:
+        selected = (
+            self.activation_selector is None or self.activation_selector.selected_arm is not None
+        )
+        if self.enabled and selected and observation.frame >= self.action["entry_frame"]:
             if self.first_contact_frame is None:
                 self.side = choose_swing_side(
                     feet,
@@ -226,10 +240,17 @@ def _run_one(
     fixture: Any,
     scenario: IndependentTeamWorldScenario,
     protocol: dict[str, Any],
-    navigation_policy: TeamInterceptNavigation | TeamContextPhaseNavigation | None = None,
+    navigation_policy: (
+        TeamInterceptNavigation | TeamContextPhaseNavigation | TeamContextualNavigationMemory | None
+    ) = None,
+    motor_option: TeamSwingMotor | None = None,
 ) -> dict[str, Any]:
     enabled = mode == "candidate"
-    motor = TeamSwingMotor(protocol["focal_agent_id"], enabled, protocol["candidate_action"])
+    motor = motor_option or TeamSwingMotor(
+        protocol["focal_agent_id"], enabled, protocol["candidate_action"]
+    )
+    if motor.agent_id != protocol["focal_agent_id"] or motor.enabled != enabled:
+        raise ValueError("same-player candidate/parent motor required")
     result, trace = simulate_independent_team_world(
         asset_root=asset_root,
         roster=fixture.roster,

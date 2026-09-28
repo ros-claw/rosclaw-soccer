@@ -1,0 +1,32 @@
+{
+  "schema": "rsi_team_contextual_nav_train_protocol_v25",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "training_scenes": 24,
+  "neighbors": 3,
+  "datasets": [
+    {
+      "root": "/data/rosclaw_overflow/rsi-team-contextual-action-v21c",
+      "arm_report_hashes": {
+        "parent": "sha256:c2e5774d0dc6928af2ac462493237f649d4c1a35e86af2d2a4906c56fca72ba5",
+        "phase_front04": "sha256:1de77aee2b2c6aa79029cc519b0f206d501456c6d8f51f4a14dd2202970cdd78",
+        "phase_front04_negative": "sha256:9db47de5eeb1ce4d6d4e8ba4c6ba63672a612ba7821cfc0cff1661f98eecea09",
+        "phase_front04_positive": "sha256:278d0aed2773270d53c6923b93c40c2db9e6227ace984f6328ae588a69fdc631",
+        "fixed_left_negative": "sha256:c8bd87a4c66025d09cc301ea13916f49384e35b0c5d8a1f26069bd53994e960c"
+      }
+    },
+    {
+      "root": "/data/rosclaw_overflow/rsi-team-navigation-library-expansion-v23",
+      "arm_report_hashes": {
+        "phase_front04_lat12": "sha256:71453897b0e6439b9b59207fee2b000a333b13381256b9a1374c3ad90eedc8e1",
+        "phase_back04_pos08": "sha256:6391ebc89efb231a4c1b204e9ecc6e47e733dbd33277075c32c96c41f6dba44d",
+        "phase_stay_pos08": "sha256:c5cbc5dbb275c561b40862e4f2433786fa6d5cc6d11ab9fc55048616af48f640",
+        "phase_front04_lat04": "sha256:26abdb55dac71ffc96a1379e91fcd1dd30c5a9b68feae1c96e41b8d007c61b3d",
+        "phase_back04_lat12": "sha256:f03dc6a0b2a724307fe73dc21a590bc5045e96b06346a10b1eaae0639f623f67",
+        "phase_stay_lat12": "sha256:34be71abcd2914e581673ea10cd4cdb56bf9b53ff55df354f2df54f4cc6f2fe7"
+      }
+    }
+  ],
+  "meaning": "Freeze a safety-rejecting four-feature contextual navigation memory from all consumed v21/v23 physical development scenes; fresh scenes are kept separate."
+}
