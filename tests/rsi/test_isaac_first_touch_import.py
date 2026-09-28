@@ -36,6 +36,8 @@ def _fixture(folder: Path) -> None:
         "track_ball_contacts": True,
         "agent_count": 1,
         "forward_command_m_s": 1.4,
+        "lateral_command_m_s": 0.0,
+        "reactive_lateral_command_m_s": 0.0,
         "right_knee_contact_residual_rad": 0.0,
         "right_hip_pitch_contact_residual_rad": 0.0,
         "right_ankle_pitch_contact_residual_rad": 0.0,
@@ -85,5 +87,18 @@ def test_duplicate_and_tamper_are_rejected(tmp_path: Path) -> None:
         import_first_touch_curriculum((folder, folder))
     with (folder / "trajectory.npz").open("ab") as stream:
         stream.write(b"tamper")
+    with pytest.raises(ValueError, match="unqualified"):
+        import_first_touch_curriculum((folder,))
+
+
+def test_lateral_teacher_cannot_enter_frozen_baseline_bank(tmp_path: Path) -> None:
+    folder = tmp_path / "episode"
+    _fixture(folder)
+    path = folder / "report.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["lateral_command_m_s"] = 0.08
+    report.pop("report_hash")
+    report["report_hash"] = hash_json(report)
+    path.write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(ValueError, match="unqualified"):
         import_first_touch_curriculum((folder,))

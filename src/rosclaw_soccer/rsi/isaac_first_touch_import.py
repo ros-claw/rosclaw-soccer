@@ -29,6 +29,8 @@ def _episode(folder: Path) -> dict[str, Any]:
         or report.get("track_ball_contacts") is not True
         or report.get("agent_count") != 1
         or report.get("forward_command_m_s") != 1.4
+        or report.get("lateral_command_m_s") != 0.0
+        or report.get("reactive_lateral_command_m_s") != 0.0
         or report.get("right_knee_contact_residual_rad") != 0.0
         or report.get("right_hip_pitch_contact_residual_rad") != 0.0
         or report.get("right_ankle_pitch_contact_residual_rad") != 0.0
