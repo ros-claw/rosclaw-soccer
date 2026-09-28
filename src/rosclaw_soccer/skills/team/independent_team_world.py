@@ -1044,6 +1044,7 @@ def simulate_independent_team_world(
     near_ball_exploration_agent_ids: tuple[str, ...] | None = None,
     motor_options: Mapping[str, TeamMotorOption] | None = None,
     receiving_students: Mapping[str, QualifiedReceivingStudent] | None = None,
+    receiving_student_probe_torque_nm: float = 0.0,
     research_coupled_teacher_agent_id: str | None = None,
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
@@ -1086,11 +1087,10 @@ def simulate_independent_team_world(
         and (
             not capture_initial_physics
             or physics_checkpoint_frame != 45
-            or receiving_students
             or research_coupled_teacher_agent_id is not None
         )
     ):
-        raise ValueError("read-only eight-G1 motor capture requires frame-45 parent physics")
+        raise ValueError("read-only eight-G1 motor capture requires frame-45 physics")
     if type(capture_initial_support) is not bool or (
         capture_initial_support and not capture_initial_physics
     ):
@@ -1306,6 +1306,14 @@ def simulate_independent_team_world(
         )
     ):
         raise ValueError("one Fresh8-qualified receiving student requires private SONIC ownership")
+    if (
+        type(receiving_student_probe_torque_nm) not in (int, float)
+        or not np.isfinite(receiving_student_probe_torque_nm)
+        or abs(receiving_student_probe_torque_nm) > 1.0
+        or receiving_student_probe_torque_nm != 0.0
+        and len(students) != 1
+    ):
+        raise ValueError("bounded explicit SIM_ONLY student probe requires one qualified actor")
     if research_coupled_teacher_agent_id is not None and (
         type(research_coupled_teacher_agent_id) is not str
         or research_coupled_teacher_agent_id not in motors
@@ -3296,6 +3304,7 @@ def simulate_independent_team_world(
         )
         student_frame_targets: dict[str, NDArray[np.float64]] = {}
         student_active_substeps = 0
+        student_probe_active_substeps = 0
         research_teacher_active_substeps = 0
         research_teacher_peak_torque_nm = 0.0
         for substep in range(_SUBSTEPS):
@@ -3700,6 +3709,9 @@ def simulate_independent_team_world(
                         ),
                     )
                     student_active_substeps += 1
+                    if receiving_student_probe_torque_nm != 0.0 and 55 <= frame <= 75:
+                        raw_torque[4] += receiving_student_probe_torque_nm
+                        student_probe_active_substeps += 1
                 if research_teacher_active:
                     first_time = student_first_foot_contact_time[controller.cell.agent_id]
                     elapsed = (
@@ -4309,6 +4321,9 @@ def simulate_independent_team_world(
             )
             trace.setdefault("receiving_student_model_hash", []).append(
                 next(iter(students.values())).model_hash
+            )
+            trace.setdefault("receiving_student_probe_active_substeps", []).append(
+                student_probe_active_substeps
             )
         if research_coupled_teacher_agent_id is not None:
             trace.setdefault("research_receiving_teacher_active_substeps", []).append(

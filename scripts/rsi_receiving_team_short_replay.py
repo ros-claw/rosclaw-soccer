@@ -10,6 +10,7 @@ from typing import Any
 import mujoco
 import numpy as np
 
+from rosclaw_soccer.providers.g1.qualified_receiving_student import QualifiedReceivingStudent
 from rosclaw_soccer.sim.contracts import (
     G1_DDS_JOINT_NAMES,
     G1_HARD_TORQUE_LIMITS,
@@ -27,7 +28,15 @@ STOP = 100
 FOCAL = "red.finisher"
 
 
-def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, Any]:
+def replay(
+    *,
+    asset_root: Path,
+    captured: Path,
+    output_dir: Path,
+    student_bundle: QualifiedReceivingStudent | None = None,
+    reference_trace: Path | None = None,
+    focal_probe_nm: float = 0.0,
+) -> dict[str, Any]:
     source = Path(__file__)
     root = source.parents[1]
     paths = {
@@ -36,6 +45,23 @@ def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, A
         "checkpoint": root / "src/rosclaw_soccer/sim/physical_checkpoint.py",
         "stadium": root / "src/rosclaw_soccer/world/multi_player.py",
     }
+    if (student_bundle is None) != (reference_trace is None):
+        raise ValueError("qualified student and full-world reference must be paired")
+    if (
+        type(focal_probe_nm) not in (int, float)
+        or not np.isfinite(focal_probe_nm)
+        or abs(focal_probe_nm) > 1.0
+        or focal_probe_nm != 0.0
+        and student_bundle is not None
+    ):
+        raise ValueError("bounded student-tape-only SIM_ONLY probe required")
+    if student_bundle is not None:
+        paths["student_actor"] = (
+            root / "src/rosclaw_soccer/providers/g1/receiving_torque_student.py"
+        )
+        paths["student_bridge"] = (
+            root / "src/rosclaw_soccer/providers/g1/qualified_receiving_student.py"
+        )
     source_hashes = {name: hash_bytes(path.read_bytes()) for name, path in paths.items()}
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
         raise ValueError("new external SIM_ONLY eight-G1 replay directory required")
@@ -44,15 +70,27 @@ def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, A
     trace_path = captured / "team-motor-trace.npz"
     if (
         capture_hash != hash_json(capture)
-        or capture["schema"] != "rosclaw_soccer.rsi.receiving_team_motor_capture.v1"
+        or capture["schema"]
+        not in {
+            "rosclaw_soccer.rsi.receiving_team_motor_capture.v1",
+            "rosclaw_soccer.rsi.receiving_team_student_motor_capture.v1",
+        }
         or capture["read_only_replay_exact"] is not True
         or capture["checkpoint_frame"] != START
         or capture["trace_hash"] != hash_bytes(trace_path.read_bytes())
         or capture["promotion_authorized"] is not False
+        or focal_probe_nm != 0.0
+        and capture["schema"] != "rosclaw_soccer.rsi.receiving_team_student_motor_capture.v1"
     ):
         raise ValueError("sealed frame-45 eight-G1 motor capture required")
     with np.load(trace_path, allow_pickle=False) as payload:
         trace = {key: np.asarray(payload[key]) for key in payload.files}
+    reference_hash = None if reference_trace is None else hash_bytes(reference_trace.read_bytes())
+    if reference_trace is None:
+        full_reference = trace
+    else:
+        with np.load(reference_trace, allow_pickle=False) as payload:
+            full_reference = {key: np.asarray(payload[key]) for key in payload.files}
     fixture = collection_fixture(asset_root)
     world, _ = r0_receiving_configuration()
     model = build_g1_multi_player_stadium_model(
@@ -99,6 +137,7 @@ def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, A
             "qpos": model.jnt_qposadr[joint_ids],
             "qvel": model.jnt_dofadr[joint_ids],
             "root": int(model.jnt_qposadr[free]),
+            "root_qvel": int(model.jnt_dofadr[free]),
         }
     ball_joint = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "ball_free")
     ball_geom = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "ball_geom")
@@ -111,9 +150,11 @@ def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, A
     robot_min_height = {agent: float("inf") for agent in agents}
     robot_max_tilt = {agent: 0.0 for agent in agents}
     first_own_foot_frame = None
+    first_own_foot_time_sec: float | None = None
     own_nonfoot_seen = False
     maximum_executed_torque_error_nm = 0.0
     for frame in range(START, STOP + 1):
+        student_frame_target: np.ndarray | None = None
         for substep in range(10):
             for agent, index in agents.items():
                 key = agent.replace(".", "_")
@@ -123,7 +164,40 @@ def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, A
                 kp = trace[f"{key}_captured_pd_kp"][frame]
                 kd = trace[f"{key}_captured_pd_kd"][frame]
                 extra = trace[f"{key}_captured_extra_torque_nm"][frame * 10 + substep]
+                if student_bundle is not None and agent == FOCAL and frame >= 46:
+                    local_qpos = np.r_[
+                        data.qpos[index["root"] : index["root"] + 7],
+                        q,
+                        data.qpos[ball_qpos : ball_qpos + 7],
+                    ]
+                    local_qvel = np.r_[
+                        data.qvel[index["root_qvel"] : index["root_qvel"] + 6],
+                        dq,
+                        data.qvel[ball_qvel : ball_qvel + 6],
+                    ]
+                    if substep == 0:
+                        student_frame_target = student_bundle.motor_target(
+                            qpos=local_qpos,
+                            qvel=local_qvel,
+                            foundation_target=target,
+                            joint_ranges=np.asarray(model.jnt_range[index["joint_ids"]]),
+                        )
+                    assert student_frame_target is not None
+                    target = student_frame_target
                 raw = kp * (target - q) - kd * dq + extra
+                if focal_probe_nm != 0.0 and agent == FOCAL and 55 <= frame <= 75:
+                    raw[4] += focal_probe_nm
+                if student_bundle is not None and agent == FOCAL and frame >= 46:
+                    raw += student_bundle.torque(
+                        qpos=local_qpos,
+                        qvel=local_qvel,
+                        has_foot_contact=first_own_foot_time_sec is not None,
+                        elapsed_sec=(
+                            -1.0
+                            if first_own_foot_time_sec is None
+                            else max(0.0, float(data.time) - first_own_foot_time_sec)
+                        ),
+                    )
                 projected = _project_joint_safe_torque(
                     joint_position=q,
                     joint_velocity=dq,
@@ -159,6 +233,7 @@ def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, A
                 if "foot" in name:
                     if first_own_foot_frame is None:
                         first_own_foot_frame = frame
+                        first_own_foot_time_sec = float(data.time)
                 else:
                     own_nonfoot_seen = True
         speed = float(np.linalg.norm(data.qvel[ball_qvel : ball_qvel + 2]))
@@ -170,13 +245,16 @@ def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, A
         )
         ball_speed.append(speed)
         ball_pelvis_distance.append(distance)
-    reference_speed = float(np.linalg.norm(trace["ball_velocity"][86, :2]))
+    reference_speed = float(np.linalg.norm(full_reference["ball_velocity"][86, :2]))
     reference_distance = float(
-        np.linalg.norm(trace["ball_pose"][86, :2] - trace["red_finisher_pelvis_pose"][86, :2])
+        np.linalg.norm(
+            full_reference["ball_pose"][86, :2] - full_reference["red_finisher_pelvis_pose"][86, :2]
+        )
     )
     foot_code = capture["agent_ids"].index(FOCAL) + 1
     reference_foot = np.flatnonzero(
-        (trace["ball_contact_agent_code"] == foot_code) & (trace["ball_contact_foot_code"] > 0)
+        (full_reference["ball_contact_agent_code"] == foot_code)
+        & (full_reference["ball_contact_foot_code"] > 0)
     )
     reference_first_foot = None if not len(reference_foot) else int(reference_foot[0])
     speed_error = abs(ball_speed[86 - START] - reference_speed)
@@ -195,8 +273,16 @@ def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, A
     )
     if {name: hash_bytes(path.read_bytes()) for name, path in paths.items()} != source_hashes:
         raise RuntimeError("short eight-G1 replay source changed during physics")
+    if reference_trace is not None and hash_bytes(reference_trace.read_bytes()) != reference_hash:
+        raise RuntimeError("full-world comparison trajectory changed during short replay")
     output_dir.mkdir(parents=True)
-    trajectory_path = output_dir / "short-replay.npz"
+    trajectory_path = output_dir / (
+        "short-probe.npz"
+        if focal_probe_nm != 0.0
+        else "short-student.npz"
+        if student_bundle is not None
+        else "short-replay.npz"
+    )
     np.savez_compressed(
         trajectory_path,
         frame=np.arange(START, STOP + 1),
@@ -204,10 +290,26 @@ def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, A
         ball_pelvis_distance_m=np.asarray(ball_pelvis_distance),
     )
     report: dict[str, Any] = {
-        "schema": "rosclaw_soccer.rsi.receiving_team_short_replay.v1",
+        "schema": (
+            "rosclaw_soccer.rsi.receiving_team_short_probe.v1"
+            if focal_probe_nm != 0.0
+            else "rosclaw_soccer.rsi.receiving_team_short_student_fidelity.v1"
+            if student_bundle is not None
+            else "rosclaw_soccer.rsi.receiving_team_short_replay.v1"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "source_hashes": source_hashes,
         "capture_report_hash": capture_hash,
+        "student_model_hash": None if student_bundle is None else student_bundle.model_hash,
+        "student_training_report_hash": (
+            None if student_bundle is None else student_bundle.training_report_hash
+        ),
+        "student_fresh_report_hash": (
+            None if student_bundle is None else student_bundle.fresh_report_hash
+        ),
+        "full_reference_trace_hash": reference_hash,
+        "focal_probe_nm": focal_probe_nm,
+        "focal_probe_frames": [55, 75] if focal_probe_nm != 0.0 else None,
         "compiled_model_hash": model_hash,
         "integration_hash": capture["integration_hash"],
         "trajectory_hash": hash_bytes(trajectory_path.read_bytes()),
@@ -223,7 +325,7 @@ def replay(*, asset_root: Path, captured: Path, output_dir: Path) -> dict[str, A
         "own_nonfoot_seen": own_nonfoot_seen,
         "all_robot_bodies_safe": all_safe,
         "maximum_executed_torque_error_nm": maximum_executed_torque_error_nm,
-        "training_proxy_fidelity_passed": passed,
+        "training_proxy_fidelity_passed": passed if focal_probe_nm == 0.0 else False,
         "promotion_authorized": False,
     }
     report["report_hash"] = hash_json(report)
@@ -238,6 +340,7 @@ def main() -> None:
     parser.add_argument("--asset-root", required=True, type=Path)
     parser.add_argument("--captured", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--focal-probe-nm", type=float, default=0.0)
     report = replay(**vars(parser.parse_args()))
     print(
         json.dumps(

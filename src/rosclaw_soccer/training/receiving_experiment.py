@@ -79,6 +79,7 @@ def simulate_r0_receiving_course(
     sonic_ball_follow_brake_distance_m: float | None = None,
     capture_ball_follow_targets: bool = False,
     receiving_student: QualifiedReceivingStudent | None = None,
+    receiving_student_probe_torque_nm: float = 0.0,
     research_coupled_teacher: bool = False,
     capture_team_motor_targets: bool = False,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
@@ -220,6 +221,14 @@ def simulate_r0_receiving_course(
     ):
         raise ValueError("qualified student requires unmixed 0.75 SONIC receiving foundation")
     if (
+        type(receiving_student_probe_torque_nm) not in (int, float)
+        or not np.isfinite(receiving_student_probe_torque_nm)
+        or abs(receiving_student_probe_torque_nm) > 1.0
+        or receiving_student_probe_torque_nm != 0.0
+        and receiving_student is None
+    ):
+        raise ValueError("bounded student torque probe requires a qualified receiving student")
+    if (
         type(research_coupled_teacher) is not bool
         or research_coupled_teacher
         and (
@@ -242,13 +251,12 @@ def simulate_r0_receiving_course(
         or capture_team_motor_targets
         and (
             checkpoint_frame != 45
-            or receiving_student is not None
             or research_coupled_teacher
             or sonic_model_root is None
             or sonic_ball_follow_gain != 0.75
         )
     ):
-        raise ValueError("read-only team motor capture requires unchanged frame-45 SONIC parent")
+        raise ValueError("read-only team motor capture requires frame-45 SONIC physics")
     # Validate physical launch values before allocating/loading the simulator.
     receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     fixture = collection_fixture(asset_root, keeper_preview=True)
@@ -319,6 +327,7 @@ def simulate_r0_receiving_course(
         receiving_students=(
             {course.agent_id: receiving_student} if receiving_student is not None else None
         ),
+        receiving_student_probe_torque_nm=receiving_student_probe_torque_nm,
         research_coupled_teacher_agent_id=(course.agent_id if research_coupled_teacher else None),
         receiving_oracle=oracle,
         receiving_phase_reference=phase_reference,

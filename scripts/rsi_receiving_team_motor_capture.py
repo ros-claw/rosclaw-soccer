@@ -10,12 +10,19 @@ from typing import Any
 import numpy as np
 from rsi_receiving_student_shared_world_exam import COURSE
 
+from rosclaw_soccer.providers.g1.qualified_receiving_student import QualifiedReceivingStudent
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.training.receiving_experiment import simulate_r0_receiving_course
 
 
 def capture(
-    *, asset_root: Path, sonic_model_root: Path, captured: Path, prior: Path, output_dir: Path
+    *,
+    asset_root: Path,
+    sonic_model_root: Path,
+    captured: Path,
+    prior: Path,
+    output_dir: Path,
+    student_bundle: QualifiedReceivingStudent | None = None,
 ) -> dict[str, Any]:
     source = Path(__file__)
     root = source.parents[1]
@@ -30,13 +37,17 @@ def capture(
         raise ValueError("new external SIM_ONLY team-motor capture directory required")
     previous: dict[str, Any] = json.loads(prior.read_text(encoding="utf-8"))
     previous_hash = previous.pop("report_hash")
+    prior_index = 1 if student_bundle is not None else 0
+    prior_label = "student" if student_bundle is not None else "parent"
     if (
         previous_hash != hash_json(previous)
         or previous["schema"] != "rosclaw_soccer.rsi.receiving_student_shared_world_exam.v1"
         or previous["historical_parent_same_physics"] is not True
-        or previous["rows"][0]["label"] != "parent"
+        or previous["rows"][prior_index]["label"] != prior_label
+        or student_bundle is not None
+        and previous["model_hash"] != student_bundle.model_hash
     ):
-        raise ValueError("sealed unchanged eight-G1 parent required")
+        raise ValueError("sealed unchanged eight-G1 parent or qualified student required")
     result, trace = simulate_r0_receiving_course(
         asset_root=asset_root,
         reference_policy_path=captured / "zero-near-ball-parent.npz",
@@ -47,12 +58,13 @@ def capture(
         sonic_start_frame=0,
         sonic_ball_follow_gain=0.75,
         capture_team_motor_targets=True,
+        receiving_student=student_bundle,
     )
     result_dict = result.to_dict()
     agent_ids = tuple(sorted(row["agent_id"] for row in result_dict["qualities"]))
-    historical_path = prior.parent / "parent.npz"
-    if previous["rows"][0]["trace_hash"] != hash_bytes(historical_path.read_bytes()):
-        raise ValueError("sealed historical parent trajectory required")
+    historical_path = prior.parent / f"{prior_label}.npz"
+    if previous["rows"][prior_index]["trace_hash"] != hash_bytes(historical_path.read_bytes()):
+        raise ValueError("sealed historical eight-G1 trajectory required")
     physical_keys = (
         "time",
         "ball_pose",
@@ -106,10 +118,21 @@ def capture(
     if {name: hash_bytes(path.read_bytes()) for name, path in paths.items()} != source_hashes:
         raise RuntimeError("team motor capture source changed during eight-G1 physics")
     report: dict[str, Any] = {
-        "schema": "rosclaw_soccer.rsi.receiving_team_motor_capture.v1",
+        "schema": (
+            "rosclaw_soccer.rsi.receiving_team_student_motor_capture.v1"
+            if student_bundle is not None
+            else "rosclaw_soccer.rsi.receiving_team_motor_capture.v1"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "source_hashes": source_hashes,
         "prior_report_hash": previous_hash,
+        "student_model_hash": None if student_bundle is None else student_bundle.model_hash,
+        "student_training_report_hash": (
+            None if student_bundle is None else student_bundle.training_report_hash
+        ),
+        "student_fresh_report_hash": (
+            None if student_bundle is None else student_bundle.fresh_report_hash
+        ),
         "policy_hash": result_dict["motor_policy_hashes"][COURSE.agent_id],
         "agent_ids": list(agent_ids),
         "course": previous["course"],
