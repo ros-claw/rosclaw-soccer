@@ -20,6 +20,9 @@ parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--training-course-seed", type=int)
 parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
+parser.add_argument("--near-ball-gap-m", type=float)
+parser.add_argument("--near-ball-speed-mps", type=float)
+parser.add_argument("--near-ball-incoming-only", action="store_true")
 parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
 parser.add_argument("--onnx-graph-encoder-layout", action="store_true")
 parser.add_argument("--torch-batch-shadow", action="store_true")
@@ -38,6 +41,10 @@ if (
     or not 50 <= args.frames <= 400
     or not 2 <= args.env_count <= 16
     or not 0.8 <= args.navigation_speed_mps <= 1.5
+    or ((args.near_ball_gap_m is None) != (args.near_ball_speed_mps is None))
+    or (args.near_ball_gap_m is not None and not 0.6 <= args.near_ball_gap_m <= 1.6)
+    or (args.near_ball_speed_mps is not None and not 0.8 <= args.near_ball_speed_mps <= 1.5)
+    or (args.near_ball_incoming_only and args.near_ball_gap_m is None)
     or (args.second_reset_replay and not args.reset_replay)
     or ((args.candidate_actions is None) != (args.parent_report is None))
     or (args.candidate_actions is not None and not args.candidate_actions.is_file())
@@ -193,6 +200,9 @@ def main() -> None:
             or parent.get("onnx_graph_encoder_layout", False) is not args.onnx_graph_encoder_layout
             or parent.get("torch_batch_plan_only", False) is not args.torch_batch_plan_only
             or parent.get("navigation_speed_mps", 1.4) != args.navigation_speed_mps
+            or parent.get("near_ball_gap_m") != args.near_ball_gap_m
+            or parent.get("near_ball_speed_mps") != args.near_ball_speed_mps
+            or parent.get("near_ball_incoming_only", False) is not args.near_ball_incoming_only
             or parent.get("training_course_seed") != args.training_course_seed
             or (
                 args.training_course_seed is not None
@@ -264,6 +274,16 @@ def main() -> None:
             else None
         )
         for frame in range(args.frames):
+            ball_xyz_frame = (
+                ball.data.root_pos_w.torch.detach().cpu().numpy()
+                if args.near_ball_gap_m is not None
+                else None
+            )
+            ball_vx_frame = (
+                ball.data.root_lin_vel_w.torch[:, 0].detach().cpu().numpy()
+                if args.near_ball_incoming_only
+                else None
+            )
             robot_root_observations.append(
                 robot.data.root_link_pose_w.torch.detach().cpu().numpy().copy()
             )
@@ -302,6 +322,16 @@ def main() -> None:
                 qvel = np.concatenate((vroot, velocity, np.zeros(6)))
                 qpos_rows.append(qpos)
                 qvel_rows.append(qvel)
+                command_speed = args.navigation_speed_mps
+                if ball_xyz_frame is not None and not contact_seen[i]:
+                    gap_m = float(ball_xyz_frame[i, 0] - root_pose[0])
+                    lateral_gap_m = float(ball_xyz_frame[i, 1] - root_pose[1])
+                    if (
+                        0.15 <= gap_m <= args.near_ball_gap_m
+                        and abs(lateral_gap_m) <= 0.5
+                        and (ball_vx_frame is None or ball_vx_frame[i] < -0.05)
+                    ):
+                        command_speed = args.near_ball_speed_mps
                 obs = TeamMotorObservation(
                     agent_id=f"vector.first_touch.{i}",
                     frame=frame,
@@ -311,7 +341,7 @@ def main() -> None:
                     qpos=tuple(float(v) for v in qpos),
                     qvel=tuple(float(v) for v in qvel),
                     target_position_m=(0.0, 0.0, 0.0),
-                    navigation_command=(args.navigation_speed_mps, 0.0, 0.0),
+                    navigation_command=(command_speed, 0.0, 0.0),
                     navigation_envelope=navigation.navigation_envelope,
                 )
                 if frame == 0:
@@ -509,6 +539,10 @@ def main() -> None:
     if args.training_course_seed is not None:
         report["training_course_seed"] = args.training_course_seed
         report["course_catalog_hash"] = hash_json(courses)
+    if args.near_ball_gap_m is not None:
+        report["near_ball_gap_m"] = args.near_ball_gap_m
+        report["near_ball_speed_mps"] = args.near_ball_speed_mps
+        report["near_ball_incoming_only"] = args.near_ball_incoming_only
     if args.onnx_graph_encoder_layout:
         report["onnx_graph_encoder_layout"] = True
     if candidate is not None:

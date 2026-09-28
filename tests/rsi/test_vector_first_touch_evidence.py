@@ -96,6 +96,26 @@ def test_vector_audit_requires_bounded_navigation_speed(tmp_path: Path) -> None:
         audit_vector_first_touch(folder)
 
 
+def test_vector_audit_requires_complete_bounded_near_ball_schedule(tmp_path: Path) -> None:
+    folder = tmp_path / "case"
+    _fixture(folder)
+    report_path = folder / "report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report.update(
+        near_ball_gap_m=1.4,
+        near_ball_speed_mps=0.8,
+        near_ball_incoming_only=True,
+    )
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert audit_vector_first_touch(folder)["clean_foot_only_episode_count"] == 1
+    report["near_ball_incoming_only"] = "yes"
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="unauthenticated"):
+        audit_vector_first_touch(folder)
+
+
 def test_vector_audit_requires_bounded_batched_torch_shadow(tmp_path: Path) -> None:
     folder = tmp_path / "case"
     _fixture(folder)

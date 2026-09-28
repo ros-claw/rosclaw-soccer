@@ -27,6 +27,20 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
         or type(report.get("navigation_speed_mps", 1.4)) not in (int, float)
         or not np.isfinite(report.get("navigation_speed_mps", 1.4))
         or not 0.8 <= report.get("navigation_speed_mps", 1.4) <= 1.5
+        or (("near_ball_gap_m" in report) != ("near_ball_speed_mps" in report))
+        or (("near_ball_gap_m" in report) != ("near_ball_incoming_only" in report))
+        or (
+            "near_ball_gap_m" in report
+            and (
+                type(report["near_ball_gap_m"]) not in (int, float)
+                or not np.isfinite(report["near_ball_gap_m"])
+                or not 0.6 <= report["near_ball_gap_m"] <= 1.6
+                or type(report["near_ball_speed_mps"]) not in (int, float)
+                or not np.isfinite(report["near_ball_speed_mps"])
+                or not 0.8 <= report["near_ball_speed_mps"] <= 1.5
+                or type(report["near_ball_incoming_only"]) is not bool
+            )
+        )
         or (
             "onnx_graph_encoder_layout" in report
             and report["onnx_graph_encoder_layout"] is not True
@@ -322,6 +336,10 @@ def audit_first_touch_candidate_execution(
         or report.get("parent_report_hash") != parent["report_hash"]
         or report.get("frames") != parent.get("frames")
         or report.get("navigation_speed_mps", 1.4) != parent.get("navigation_speed_mps", 1.4)
+        or report.get("near_ball_gap_m") != parent.get("near_ball_gap_m")
+        or report.get("near_ball_speed_mps") != parent.get("near_ball_speed_mps")
+        or report.get("near_ball_incoming_only", False)
+        is not parent.get("near_ball_incoming_only", False)
         or report.get("asset_hash") != parent.get("asset_hash")
         or report.get("sonic_qualification_hash") != parent.get("sonic_qualification_hash")
         or report.get("onnx_graph_encoder_layout", False)
