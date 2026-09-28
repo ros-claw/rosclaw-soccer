@@ -1,0 +1,22 @@
+{
+  "schema": "rsi_first_touch_phase_coverage_expansion_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "development_course_seeds": [20260936, 20260937, 20260938],
+  "sealed_holdout_course_seeds": [20260939, 20260940],
+  "development_reuse": [20260930, 20260931, 20260934],
+  "excluded_seen_holdout_seeds": [20260932, 20260935],
+  "minimum_independent_incoming_development_contacts": 35,
+  "candidate_actions_phase_frames": [0.0, 3.0, 6.0],
+  "candidate_observations": ["current_ball_relative_pose", "current_ball_velocity", "current_foot_and_support_state"],
+  "development_selection": "leave_one_entire_source_seed_out",
+  "uncertainty_safeguard": "fall_back_to_zero_phase_outside_train_context_support",
+  "holdout_gate": {
+    "minimum_combined_clean_foot_gain": 4,
+    "require_mean_reward_above_parent": true,
+    "require_no_seed_clean_foot_regression": true,
+    "minimum_root_height_m": 0.65
+  },
+  "full_episode_and_team_match_required_for_promotion": true,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
