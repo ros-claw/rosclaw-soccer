@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from rosclaw_soccer.providers.g1.qualified_receiving_student import QualifiedReceivingStudent
+from rosclaw_soccer.providers.g1.receiving_foot_capture import ReceivingFootCaptureTeacher
 from rosclaw_soccer.providers.g1.receiving_phase_adapter import ReceivingPhaseAdapter
 from rosclaw_soccer.providers.g1.receiving_sonic import ReceivingSonicBallFollowOption
 from rosclaw_soccer.sim.contracts import (
@@ -46,6 +47,9 @@ def evaluate(
     left_hip_roll_offset_rad: float = 0.0,
     adapter_parameters: NDArray[np.float64] | None = None,
     foot_capture_gain: float = 0.0,
+    precontact_foot_gain: float = 0.0,
+    foot_offset_x_m: float = -0.18,
+    foot_offset_y_m: float = 0.03,
 ) -> dict[str, Any]:
     source = Path(__file__)
     root = source.parents[1]
@@ -55,6 +59,7 @@ def evaluate(
         "bridge": root / "src/rosclaw_soccer/providers/g1/qualified_receiving_student.py",
         "single_world": root / "src/rosclaw_soccer/world/field.py",
         "adapter": root / "src/rosclaw_soccer/providers/g1/receiving_phase_adapter.py",
+        "foot_teacher": root / "src/rosclaw_soccer/providers/g1/receiving_foot_capture.py",
     }
     source_hashes = {key: hash_bytes(path.read_bytes()) for key, path in paths.items()}
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
@@ -65,8 +70,14 @@ def evaluate(
         or adapter_parameters is not None
         and left_hip_roll_offset_rad != 0.0
         or type(foot_capture_gain) is not float
-        or foot_capture_gain not in (0.0, 0.3, 0.6, 1.0)
+        or not np.isfinite(foot_capture_gain)
+        or not 0.0 <= foot_capture_gain <= 1.0
         or foot_capture_gain != 0.0
+        and (left_hip_roll_offset_rad != 0.0 or adapter_parameters is not None)
+        or type(precontact_foot_gain) is not float
+        or not np.isfinite(precontact_foot_gain)
+        or not 0.0 <= precontact_foot_gain <= 1.0
+        or precontact_foot_gain != 0.0
         and (left_hip_roll_offset_rad != 0.0 or adapter_parameters is not None)
     ):
         raise ValueError("predeclared zero or known minus-0.08 hip intervention required")
@@ -75,6 +86,18 @@ def evaluate(
         if adapter_parameters is None
         else ReceivingPhaseAdapter(np.asarray(adapter_parameters, dtype=np.float64))
     )
+    foot_teacher = (
+        None
+        if foot_capture_gain == precontact_foot_gain == 0.0
+        else ReceivingFootCaptureTeacher(
+            pre_gain=precontact_foot_gain,
+            post_gain=foot_capture_gain,
+            offset_x_m=foot_offset_x_m,
+            offset_y_m=foot_offset_y_m,
+        )
+    )
+    if foot_teacher is None and (foot_offset_x_m != -0.18 or foot_offset_y_m != 0.03):
+        raise ValueError("foot offsets require an active SIM_ONLY teacher")
     commitment: dict[str, Any] = json.loads((captured / "report.json").read_text(encoding="utf-8"))
     tape_hash = commitment.pop("report_hash")
     tape_path = captured / "live-motor-tape.npz"
@@ -199,35 +222,25 @@ def evaluate(
                             else max(0.0, float(data.time) - first_foot_time)
                         ),
                     )
-                if (
-                    foot_capture_gain > 0.0
-                    and first_foot_time is not None
-                    and 0.0 <= float(data.time) - first_foot_time <= 0.50
+                if foot_teacher is not None and (
+                    first_foot_time is not None or 0.12 < float(data.qpos[36] - data.qpos[0]) < 0.85
                 ):
-                    # SIM_ONLY Cartesian capture teacher: measured ball and foot
-                    # drive a bounded left-leg IK correction; no ball state writes.
-                    measured_ball = np.asarray(data.qpos[36:39], dtype=np.float64)
-                    desired_ankle = np.asarray(
-                        (
-                            measured_ball[0] - 0.18,
-                            measured_ball[1] + 0.03,
-                            np.clip(measured_ball[2] - 0.08, 0.04, 0.08),
+                    frame_target = foot_teacher.motor_target(
+                        model=model,
+                        data=data,
+                        left_ankle_body=left_ankle_body,
+                        left_joint_dofs=np.asarray(qvel_ids[:6], dtype=np.int64),
+                        left_q=q[:6],
+                        foundation_target=foundation,
+                        current_target=frame_target,
+                        left_joint_ranges=np.asarray(model.jnt_range[joint_ids[:6]]),
+                        ball_position=np.asarray(data.qpos[36:39], dtype=np.float64),
+                        has_foot_contact=first_foot_time is not None,
+                        elapsed_sec=(
+                            -1.0
+                            if first_foot_time is None
+                            else max(0.0, float(data.time) - first_foot_time)
                         ),
-                        dtype=np.float64,
-                    )
-                    jacp = np.zeros((3, model.nv), dtype=np.float64)
-                    jacr = np.zeros((3, model.nv), dtype=np.float64)
-                    mujoco.mj_jacBody(model, data, jacp, jacr, left_ankle_body)
-                    local_jacobian = jacp[:, qvel_ids[:6]]
-                    error = np.clip(desired_ankle - data.xpos[left_ankle_body], -0.20, 0.20)
-                    step = local_jacobian.T @ np.linalg.solve(
-                        local_jacobian @ local_jacobian.T + 0.02 * np.eye(3), error
-                    )
-                    frame_target = frame_target.copy()
-                    frame_target[:6] = np.clip(
-                        q[:6] + foot_capture_gain * step,
-                        np.maximum(foundation[:6] - 0.35, model.jnt_range[joint_ids[:6], 0]),
-                        np.minimum(foundation[:6] + 0.35, model.jnt_range[joint_ids[:6], 1]),
                     )
             raw = kp * (frame_target - q) - kd * dq
             if 46 <= frame <= 100:
@@ -341,7 +354,9 @@ def evaluate(
     )
     report: dict[str, Any] = {
         "schema": (
-            "rosclaw_soccer.rsi.receiving_single_live_foot_capture.v1"
+            "rosclaw_soccer.rsi.receiving_single_live_precontact_foot.v1"
+            if precontact_foot_gain != 0.0
+            else "rosclaw_soccer.rsi.receiving_single_live_foot_capture.v1"
             if foot_capture_gain != 0.0
             else "rosclaw_soccer.rsi.receiving_single_live_sonic_adapter.v1"
             if adapter is not None
@@ -356,6 +371,10 @@ def evaluate(
         "adapter_hash": None if adapter is None else adapter.artifact_hash,
         "adapter_parameters": None if adapter is None else adapter.parameters.tolist(),
         "foot_capture_gain": foot_capture_gain,
+        "precontact_foot_gain": precontact_foot_gain,
+        "foot_offset_x_m": foot_offset_x_m,
+        "foot_offset_y_m": foot_offset_y_m,
+        "foot_teacher_hash": None if foot_teacher is None else foot_teacher.contract_hash,
         "frame_count": FRAMES,
         "trajectory_hash": hash_bytes(trajectory_path.read_bytes()),
         "maximum_foundation_target_error_rad": max(target_errors),
@@ -400,6 +419,9 @@ def main() -> None:
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--left-hip-roll-offset-rad", type=float, default=0.0)
     parser.add_argument("--foot-capture-gain", type=float, default=0.0)
+    parser.add_argument("--precontact-foot-gain", type=float, default=0.0)
+    parser.add_argument("--foot-offset-x-m", type=float, default=-0.18)
+    parser.add_argument("--foot-offset-y-m", type=float, default=0.03)
     report = evaluate(**vars(parser.parse_args()))
     print(
         json.dumps(

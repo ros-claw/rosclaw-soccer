@@ -93,6 +93,7 @@ from rosclaw_soccer.providers.g1.mujoco_primitives import (
     mirror_g1_joint_positions,
 )
 from rosclaw_soccer.providers.g1.qualified_receiving_student import QualifiedReceivingStudent
+from rosclaw_soccer.providers.g1.receiving_foot_capture import ReceivingFootCaptureTeacher
 from rosclaw_soccer.providers.g1.shared_keeper_reach import (
     SharedKeeperReach,
     SharedKeeperReachConfig,
@@ -1048,6 +1049,7 @@ def simulate_independent_team_world(
     receiving_student_hip_roll_offset_rad: float = 0.0,
     receiving_student_contact_impedance_scale: float = 1.0,
     receiving_student_posttouch_brake_nm: float = 0.0,
+    receiving_foot_capture_teacher: ReceivingFootCaptureTeacher | None = None,
     research_coupled_teacher_agent_id: str | None = None,
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
@@ -1105,6 +1107,18 @@ def simulate_independent_team_world(
         or capture_team_motor_targets
     ):
         raise ValueError("bounded SIM_ONLY live short course requires one qualified student")
+    if receiving_foot_capture_teacher is not None and (
+        not isinstance(receiving_foot_capture_teacher, ReceivingFootCaptureTeacher)
+        or research_control_frame_limit != 130
+        or receiving_students is None
+        or len(receiving_students) != 1
+        or receiving_student_probe_torque_nm != 0.0
+        or receiving_student_hip_roll_offset_rad != 0.0
+        or receiving_student_contact_impedance_scale != 1.0
+        or receiving_student_posttouch_brake_nm != 0.0
+        or research_coupled_teacher_agent_id is not None
+    ):
+        raise ValueError("bounded unmixed SIM_ONLY live foot-capture probe required")
     if type(capture_initial_support) is not bool or (
         capture_initial_support and not capture_initial_physics
     ):
@@ -3459,6 +3473,39 @@ def simulate_independent_team_world(
                             foundation_target=target,
                             joint_ranges=np.asarray(model.jnt_range[controller.joint_ids]),
                         )
+                        if receiving_foot_capture_teacher is not None:
+                            first_time = student_first_foot_contact_time[controller.cell.agent_id]
+                            if (
+                                first_time is not None
+                                or 0.12 < float(local_qpos[36] - local_qpos[0]) < 0.85
+                            ):
+                                student_frame_targets[controller.cell.agent_id] = (
+                                    receiving_foot_capture_teacher.motor_target(
+                                        model=model,
+                                        data=data,
+                                        left_ankle_body=controller.left_ankle_body,
+                                        left_joint_dofs=np.asarray(
+                                            controller.joint_qvel[:6], dtype=np.int64
+                                        ),
+                                        left_q=q[:6],
+                                        foundation_target=research_foundation_target,
+                                        current_target=student_frame_targets[
+                                            controller.cell.agent_id
+                                        ],
+                                        left_joint_ranges=np.asarray(
+                                            model.jnt_range[controller.joint_ids[:6]]
+                                        ),
+                                        ball_position=np.asarray(
+                                            data.qpos[ball_qpos : ball_qpos + 3]
+                                        ),
+                                        has_foot_contact=first_time is not None,
+                                        elapsed_sec=(
+                                            -1.0
+                                            if first_time is None
+                                            else max(0.0, float(data.time) - first_time)
+                                        ),
+                                    )
+                                )
                     target = student_frame_targets[controller.cell.agent_id]
                     if receiving_student_hip_roll_offset_rad != 0.0 and 46 <= frame <= 61:
                         target = target.copy()

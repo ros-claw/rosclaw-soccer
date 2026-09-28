@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 
 from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
 from rosclaw_soccer.providers.g1.qualified_receiving_student import QualifiedReceivingStudent
+from rosclaw_soccer.providers.g1.receiving_foot_capture import ReceivingFootCaptureTeacher
 from rosclaw_soccer.providers.g1.receiving_sonic import (
     ReceivingSonicBallFollowOption,
     ReceivingSonicFeedbackOption,
@@ -87,6 +88,7 @@ def simulate_r0_receiving_course(
     receiving_student_hip_roll_offset_rad: float = 0.0,
     receiving_student_contact_impedance_scale: float = 1.0,
     receiving_student_posttouch_brake_nm: float = 0.0,
+    receiving_foot_capture_teacher: ReceivingFootCaptureTeacher | None = None,
     research_coupled_teacher: bool = False,
     capture_team_motor_targets: bool = False,
     research_control_frame_limit: int | None = None,
@@ -276,6 +278,18 @@ def simulate_r0_receiving_course(
         or feedback_provider is not None
     ):
         raise ValueError("qualified student requires unmixed 0.75 SONIC receiving foundation")
+    if receiving_foot_capture_teacher is not None and (
+        not isinstance(receiving_foot_capture_teacher, ReceivingFootCaptureTeacher)
+        or receiving_foot_capture_teacher.activation_ceiling != "SIM_ONLY"
+        or receiving_student is None
+        or research_control_frame_limit != 130
+        or receiving_student_probe_torque_nm != 0.0
+        or receiving_student_hip_roll_offset_rad != 0.0
+        or receiving_student_contact_impedance_scale != 1.0
+        or receiving_student_posttouch_brake_nm != 0.0
+        or research_student_handoff
+    ):
+        raise ValueError("bounded unmixed SIM_ONLY live foot-capture probe required")
     if (
         type(receiving_student_probe_torque_nm) not in (int, float)
         or not np.isfinite(receiving_student_probe_torque_nm)
@@ -431,6 +445,7 @@ def simulate_r0_receiving_course(
         receiving_student_hip_roll_offset_rad=receiving_student_hip_roll_offset_rad,
         receiving_student_contact_impedance_scale=receiving_student_contact_impedance_scale,
         receiving_student_posttouch_brake_nm=receiving_student_posttouch_brake_nm,
+        receiving_foot_capture_teacher=receiving_foot_capture_teacher,
         research_coupled_teacher_agent_id=(course.agent_id if research_coupled_teacher else None),
         receiving_oracle=oracle,
         receiving_phase_reference=phase_reference,
