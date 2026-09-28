@@ -1,0 +1,35 @@
+{
+  "schema": "rsi_team_diverse_curriculum_protocol_v31",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "adaptive_model_path": "/data/rosclaw_overflow/rsi-team-adaptive-intercept-model-v28/model.json",
+  "adaptive_model_hash": "sha256:cfbf8277571d59c4d06bfb229f5757c62342241dc19f9fea2a1e2d0cd5c8bab7",
+  "curriculum": {
+    "coordinate_seed": 20261001,
+    "identity_seed_base": 960000,
+    "training_scene_count": 128,
+    "ball_x_m": [3.45, 4.1],
+    "ball_y_m": [-0.9, -0.5],
+    "ball_vx_mps": [-0.7, -0.3]
+  },
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "arms": [
+    {"name": "parent", "foot_selection": "none", "forward_gain": 0.0, "lateral_gain": 0.0, "strike_through_m": 0.0},
+    {"name": "adaptive_c19", "foot_selection": "adaptive", "forward_gain": 0.0, "lateral_gain": 0.0, "strike_through_m": 0.0},
+    {"name": "phase_front04_positive", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 0.8, "strike_through_m": 0.0},
+    {"name": "phase_front04_lat12", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0},
+    {"name": "phase_stay_lat12", "foot_selection": "phase", "forward_gain": 0.0, "lateral_gain": 1.2, "strike_through_m": 0.0},
+    {"name": "fixed_left_negative", "foot_selection": "left", "forward_gain": 0.0, "lateral_gain": -0.8, "strike_through_m": 0.0},
+    {"name": "phase_front04_negative", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": -0.8, "strike_through_m": 0.0}
+  ],
+  "interpretation": "Additional new physical x/y/vx contexts. All six navigation-only arms and Parent paired on each scene; results are TRAIN only, not fresh acceptance."
+}

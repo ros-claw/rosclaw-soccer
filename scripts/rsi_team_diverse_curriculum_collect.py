@@ -54,14 +54,20 @@ def main() -> None:
     arm = next((item for item in arms if item["name"] == args.arm), None)
     scenarios = training_courses(protocol)
     if (
-        protocol.get("schema") != "rsi_team_diverse_curriculum_protocol_v29"
+        protocol.get("schema")
+        not in {
+            "rsi_team_diverse_curriculum_protocol_v29",
+            "rsi_team_diverse_curriculum_protocol_v31",
+        }
         or protocol.get("development_only") is not True
         or protocol.get("promotion_authorized") is not False
         or protocol.get("frames") != 250
         or arm is None
-        or len(scenarios) != 64
-        or len({item["name"] for item in arms}) != 8
-        or len({(s.ball_initial_position_m, s.ball_initial_velocity_mps) for s in scenarios}) != 64
+        or len(scenarios) not in {64, 128}
+        or len({item["name"] for item in arms}) != len(arms)
+        or len(arms) not in {7, 8}
+        or len({(s.ball_initial_position_m, s.ball_initial_velocity_mps) for s in scenarios})
+        != len(scenarios)
     ):
         raise ValueError("uncommitted physically diverse SIM_ONLY training curriculum")
     adaptive_model = json.loads(Path(protocol["adaptive_model_path"]).read_text())
