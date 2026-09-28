@@ -27,6 +27,7 @@ def _extract(
     lead_frames: int = LEAD_FRAMES,
     window_frames: int = WINDOW_FRAMES,
     fixed_start_frame: int | None = None,
+    partition: str = "CONSUMED_DEV",
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     if not folders or len(set(folders)) != len(folders):
         raise ValueError("nonempty distinct audited source folders required")
@@ -34,6 +35,7 @@ def _extract(
         type(lead_frames) is not int
         or type(window_frames) is not int
         or not 15 <= lead_frames < window_frames <= 150
+        or partition not in {"CONSUMED_DEV", "SEALED_HOLDOUT"}
         or (
             fixed_start_frame is not None
             and (type(fixed_start_frame) is not int or fixed_start_frame < 1)
@@ -153,7 +155,7 @@ def _extract(
     manifest = {
         "schema": SCHEMA,
         "activation_ceiling": "SIM_ONLY",
-        "partition": "CONSUMED_DEV",
+        "partition": partition,
         "source_identity": list(next(iter(identities))),
         "lead_frames": lead_frames,
         "window_frames": window_frames,
@@ -175,6 +177,7 @@ def build_snapshot_bank(
     lead_frames: int = LEAD_FRAMES,
     window_frames: int = WINDOW_FRAMES,
     fixed_start_frame: int | None = None,
+    partition: str = "CONSUMED_DEV",
 ) -> dict[str, Any]:
     if output.exists():
         raise ValueError("immutable snapshot bank output already exists")
@@ -183,6 +186,7 @@ def build_snapshot_bank(
         lead_frames=lead_frames,
         window_frames=window_frames,
         fixed_start_frame=fixed_start_frame,
+        partition=partition,
     )
     output.mkdir(parents=True)
     archive = output / "snapshots.npz"
@@ -204,6 +208,7 @@ def audit_snapshot_bank(output: Path) -> dict[str, Any]:
         or manifest.get("learning_authorized") is not False
         or manifest.get("promotion_authorized") is not False
         or manifest.get("privileged_future_targets_diagnostic_only") is not True
+        or manifest.get("partition") not in {"CONSUMED_DEV", "SEALED_HOLDOUT"}
         or manifest.get("manifest_hash")
         != hash_json({k: v for k, v in manifest.items() if k != "manifest_hash"})
         or manifest.get("archive_hash") != hash_bytes(archive.read_bytes())
@@ -218,6 +223,7 @@ def audit_snapshot_bank(output: Path) -> dict[str, Any]:
         lead_frames=manifest["lead_frames"],
         window_frames=manifest["window_frames"],
         fixed_start_frame=manifest.get("fixed_start_frame"),
+        partition=manifest["partition"],
     )
     if any(manifest.get(key) != value for key, value in expected_manifest.items()):
         raise ValueError("snapshot source commitment changed")
@@ -244,6 +250,9 @@ def main() -> None:
     parser.add_argument("--lead-frames", type=int, default=LEAD_FRAMES)
     parser.add_argument("--window-frames", type=int, default=WINDOW_FRAMES)
     parser.add_argument("--fixed-start-frame", type=int)
+    parser.add_argument(
+        "--partition", choices=("CONSUMED_DEV", "SEALED_HOLDOUT"), default="CONSUMED_DEV"
+    )
     args = parser.parse_args()
     if args.audit_only:
         if args.folders:
@@ -256,6 +265,7 @@ def main() -> None:
             lead_frames=args.lead_frames,
             window_frames=args.window_frames,
             fixed_start_frame=args.fixed_start_frame,
+            partition=args.partition,
         )
     print(json.dumps(result, sort_keys=True))
 
