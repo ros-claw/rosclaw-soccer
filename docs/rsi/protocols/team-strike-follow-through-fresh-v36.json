@@ -1,0 +1,29 @@
+{
+  "schema": "rsi_team_strike_follow_through_fresh_protocol_v36",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "navigation_model_path": "/data/rosclaw_overflow/rsi-team-foot-velocity-chooser-v33/model.json",
+  "navigation_model_hash": "sha256:0e45739533122e589780bf70cbbcd07660b83445e6f1eea25736d6e3defc1cef",
+  "search_report_path": "/data/rosclaw_overflow/rsi-team-strike-follow-through-v35/report.json",
+  "search_report_hash": "sha256:71a6ad0b96b1cd9a2f016b98b7b589a2101a681326ab5dd8a9543e1ee43d2d14",
+  "coordinate_seed": 20261005,
+  "identity_seed_base": 990000,
+  "scene_count": 24,
+  "ball_x_m": [3.4, 4.15],
+  "ball_y_m": [-0.95, -0.45],
+  "ball_vx_mps": [-0.75, -0.25],
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "baseline_strike_through_m": 0.0,
+  "candidate_strike_through_m": 0.16,
+  "gate": {"minimum_scenes": 24, "maximum_unsafe_excess_vs_zero": 0, "minimum_useful_gain_vs_zero": 3, "minimum_candidate_useful": 5},
+  "interpretation": "New physical x/y/vx after frozen 16cm motor selection. Parent, zero-through and 16cm candidate paired per scene, same navigation model. Gate is relative to zero motor and requires absolute five useful. Passing only supports first-touch improvement."
+}
