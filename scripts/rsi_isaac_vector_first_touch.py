@@ -20,6 +20,8 @@ parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--inference-threads", type=int, choices=range(1, 9))
 parser.add_argument("--onnx-graph-encoder-layout", action="store_true")
+parser.add_argument("--torch-batch-shadow", action="store_true")
+parser.add_argument("--torch-batch-drive", action="store_true")
 parser.add_argument("--reset-replay", action="store_true")
 parser.add_argument("--second-reset-replay", action="store_true")
 parser.add_argument("--candidate-actions", type=Path)
@@ -37,6 +39,7 @@ if (
     or (args.candidate_actions is not None and not args.candidate_actions.is_file())
     or (args.parent_report is not None and not args.parent_report.is_file())
     or (args.candidate_actions is not None and args.reset_replay)
+    or (args.torch_batch_drive and not args.torch_batch_shadow)
 ):
     parser.error("qualified assets, 2-16 environments and new output directory required")
 launcher = AppLauncher(args)
@@ -57,6 +60,8 @@ from rosclaw_soccer.providers.g1.sonic_navigation import (  # noqa: E402
     SonicNavigationConfig,
 )
 from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController  # noqa: E402
+from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch  # noqa: E402
+from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa: E402
 from rosclaw_soccer.rsi.first_touch_candidate import (  # noqa: E402
     JOINT_NAMES,
     load_first_touch_candidate,
@@ -232,6 +237,13 @@ def main() -> None:
         projection_counts = np.zeros(args.env_count, dtype=np.int64)
         contact_seen = np.zeros(args.env_count, dtype=np.bool_)
         minimum_pelvis = np.full(args.env_count, np.inf)
+        batch_tracker = None
+        batch_target_max_difference = 0.0
+        batch_model = (
+            FrozenSonicG1Torch(args.model_root, variant="low_latency", device=str(sim.device))
+            if args.torch_batch_shadow
+            else None
+        )
         for frame in range(args.frames):
             robot_root_observations.append(
                 robot.data.root_link_pose_w.torch.detach().cpu().numpy().copy()
@@ -246,6 +258,8 @@ def main() -> None:
                 robot.data.joint_vel.torch[:, indices].detach().cpu().numpy().copy()
             )
             target = robot.data.joint_pos.torch.clone()
+            qpos_rows = []
+            qvel_rows = []
             for i, navigation in enumerate(current_navigations):
                 root_pose = (
                     robot.data.root_link_pose_w.torch[i].detach().cpu().numpy().astype(np.float64)
@@ -267,6 +281,8 @@ def main() -> None:
                 qroot[1] -= lanes[i]
                 qpos = np.concatenate((qroot, joint, (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)))
                 qvel = np.concatenate((vroot, velocity, np.zeros(6)))
+                qpos_rows.append(qpos)
+                qvel_rows.append(qvel)
                 obs = TeamMotorObservation(
                     agent_id=f"vector.first_touch.{i}",
                     frame=frame,
@@ -283,6 +299,39 @@ def main() -> None:
                     navigation.start_from_observation(obs)
                 proposal = navigation.propose(obs)
                 target[i, indices] = torch.as_tensor(proposal.target_rad, device=sim.device)
+            if batch_model is not None:
+                qpos_batch = np.asarray(qpos_rows)
+                qvel_batch = np.asarray(qvel_rows)
+                if batch_tracker is None:
+                    batch_tracker = BatchedSonicTracker(
+                        batch_model,
+                        np.stack(
+                            [navigation.backend.reference for navigation in current_navigations]
+                        ),
+                        low_latency_legacy_encoder_layout=not args.onnx_graph_encoder_layout,
+                    )
+                    batch_tracker.reset(qpos_batch, qvel_batch)
+                else:
+                    batch_tracker.observe(qpos_batch, qvel_batch)
+                    if frame % current_navigations[0].config.replan_frames == 0:
+                        batch_tracker.refresh_unexecuted_reference(
+                            frame,
+                            np.stack(
+                                [navigation.backend.reference for navigation in current_navigations]
+                            ),
+                            unchanged_lookahead_frames=current_navigations[
+                                0
+                            ].config.lookahead_frames,
+                        )
+                batch_target = batch_tracker.update(frame, qpos_batch, qvel_batch)
+                difference = float(
+                    torch.max(torch.abs(batch_target - target[:, indices])).detach().cpu()
+                )
+                batch_target_max_difference = max(batch_target_max_difference, difference)
+                if difference > 1e-3:
+                    raise ValueError("batched SONIC target differs from frozen ONNX shadow")
+                if args.torch_batch_drive:
+                    target[:, indices] = batch_target
             baseline_target = target.clone()
             if candidate is not None:
                 ball_xyz = ball.data.root_pos_w.torch.detach().cpu().numpy()
@@ -351,6 +400,7 @@ def main() -> None:
             np.asarray(robot_target_observations),
             applied_frames,
             projection_counts,
+            batch_target_max_difference,
         )
 
     (
@@ -365,6 +415,7 @@ def main() -> None:
         target_observations,
         applied_frames,
         projection_counts,
+        batch_target_max_difference,
     ) = rollout(navigations)
     if (
         not np.isfinite(positions_arr).all()
@@ -419,6 +470,10 @@ def main() -> None:
         "inference_threads": args.inference_threads,
         "environments": entries,
     }
+    if args.torch_batch_shadow:
+        report["torch_batch_shadow"] = True
+        report["torch_batch_drive"] = args.torch_batch_drive
+        report["torch_batch_max_target_difference_rad"] = batch_target_max_difference
     if args.onnx_graph_encoder_layout:
         report["onnx_graph_encoder_layout"] = True
     if candidate is not None:
@@ -479,6 +534,7 @@ def main() -> None:
             replay_target_observations,
             _replay_applied_frames,
             _replay_projection_counts,
+            _replay_batch_target_max_difference,
         ) = rollout(replay_navigations)
         replay_path = args.output_dir / "reset_replay.npz"
         np.savez_compressed(
@@ -621,6 +677,7 @@ def main() -> None:
                 second_target,
                 _second_applied_frames,
                 _second_projection_counts,
+                _second_batch_target_max_difference,
             ) = rollout(second_navigations)
             second_trace_path = args.output_dir / "second_reset_replay.npz"
             np.savez_compressed(

@@ -17,12 +17,22 @@ class BatchedSonicTracker:
     """Frozen full-body foundation; references are inputs, never world writes."""
 
     def __init__(
-        self, model: FrozenSonicG1Torch, reference: Any, *, native_velocity: bool = False
+        self,
+        model: FrozenSonicG1Torch,
+        reference: Any,
+        *,
+        native_velocity: bool = False,
+        low_latency_legacy_encoder_layout: bool = False,
     ) -> None:
         import torch
 
         if type(native_velocity) is not bool:
             raise ValueError("explicit reference derivative contract required")
+        if type(low_latency_legacy_encoder_layout) is not bool or (
+            low_latency_legacy_encoder_layout and getattr(model, "variant", None) != "low_latency"
+        ):
+            raise ValueError("legacy encoder layout applies only to low-latency SONIC")
+        self.low_latency_legacy_encoder_layout = low_latency_legacy_encoder_layout
         self._torch, self.model = torch, model
         self.reference = torch.as_tensor(
             reference, device=model.device, dtype=torch.float32
@@ -97,6 +107,41 @@ class BatchedSonicTracker:
         self._next_frame = 0
         self._pending_observation = False
 
+    def refresh_unexecuted_reference(
+        self, frame: int, reference: Any, *, unchanged_lookahead_frames: int = 10
+    ) -> None:
+        """Adopt an explicit replan without changing executed/current lookahead poses."""
+
+        torch = self._torch
+        if (
+            type(frame) is not int
+            or frame != self._next_frame
+            or self._pending_observation
+            or type(unchanged_lookahead_frames) is not int
+            or not 1 <= unchanged_lookahead_frames <= 50
+        ):
+            raise RuntimeError("reference refresh requires the next unexecuted frame")
+        proposed = torch.as_tensor(reference, device=self.model.device, dtype=torch.float32)
+        if (
+            proposed.shape != self.reference.shape
+            or not bool(torch.isfinite(proposed).all())
+            or not bool(
+                torch.all(
+                    torch.abs(torch.linalg.vector_norm(proposed[:, :, 3:7], dim=2) - 1) < 1e-4
+                )
+            )
+            or not bool(
+                torch.allclose(
+                    proposed[:, : frame + unchanged_lookahead_frames],
+                    self.reference[:, : frame + unchanged_lookahead_frames],
+                    atol=1e-6,
+                    rtol=0,
+                )
+            )
+        ):
+            raise ValueError("replan altered frozen or current-lookahead reference")
+        self.reference = proposed.clone()
+
     def encoder_features(self, frame: int, qpos: Any, qvel: Any) -> Any:
         torch = self._torch
         q, _ = self._state(qpos, qvel)
@@ -148,7 +193,7 @@ class BatchedSonicTracker:
             ),
             dim=2,
         )
-        return torch.cat(
+        features = torch.cat(
             (
                 positions.reshape(self.count, 290),
                 velocities.reshape(self.count, 290),
@@ -156,6 +201,19 @@ class BatchedSonicTracker:
             ),
             dim=1,
         )
+        if self.low_latency_legacy_encoder_layout:
+            # The deployed legacy controller placed orientation at 584:644,
+            # while this ONNX graph selects 590:650 for its G1 branch.
+            # Reproduce exactly the effective 54 values plus six zeros.
+            features = torch.cat(
+                (
+                    features[:, :580],
+                    features[:, 586:640],
+                    torch.zeros((self.count, 6), device=self.model.device),
+                ),
+                dim=1,
+            )
+        return features
 
     def update(self, frame: int, qpos: Any, qvel: Any) -> Any:
         if len(self._history) != 10 or self._pending_observation or frame != self._next_frame:

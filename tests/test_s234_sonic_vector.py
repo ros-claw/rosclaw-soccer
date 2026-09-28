@@ -11,7 +11,7 @@ from rosclaw_soccer.providers.g1.sonic_runup import (
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker
 
 
-def setup(variant="sonic_v1_1", native=False):
+def setup(variant="sonic_v1_1", native=False, legacy_layout=False):
     torch = pytest.importorskip("torch")
     rng = np.random.default_rng(234)
     ref = rng.normal(0, 0.1, (2, 80, 36))
@@ -21,6 +21,7 @@ def setup(variant="sonic_v1_1", native=False):
     v = rng.normal(0, 0.1, (2, 41))
     model = SimpleNamespace(
         device=torch.device("cpu"),
+        variant=variant,
         qualification=SimpleNamespace(
             reference_stride=_VARIANTS[variant].reference_stride,
             heading_normalized=_VARIANTS[variant].heading_normalized,
@@ -28,7 +29,17 @@ def setup(variant="sonic_v1_1", native=False):
         encode_g1=lambda features: features[:, :64],
         decode=lambda observation: torch.zeros((len(observation), 29)),
     )
-    return BatchedSonicTracker(model, ref, native_velocity=native), ref, q, v
+    return (
+        BatchedSonicTracker(
+            model,
+            ref,
+            native_velocity=native,
+            low_latency_legacy_encoder_layout=legacy_layout,
+        ),
+        ref,
+        q,
+        v,
+    )
 
 
 @pytest.mark.parametrize("variant", ["sonic_v1_1", "low_latency"])
@@ -62,6 +73,37 @@ def test_low_latency_onnx_graph_layout_is_explicit_and_six_values_shifted():
         G1SonicRunupConfig(model_variant="sonic_v1_1", onnx_graph_encoder_layout=True)
 
 
+def test_batched_tracker_matches_corrected_low_latency_g1_graph_features():
+    tracker, ref, q, v = setup("low_latency")
+    actual = tracker.encoder_features(3, q, v).numpy()
+    for index in range(2):
+        old = object.__new__(G1SonicRunupController)
+        old.reference = ref[index]
+        old.config = G1SonicRunupConfig(model_variant="low_latency", onnx_graph_encoder_layout=True)
+        old._variant = _VARIANTS["low_latency"]
+        raw = old._encoder_observation(SimpleNamespace(qpos=q[index], qvel=v[index]), 3)
+        expected = np.concatenate((raw[0, 4:584], raw[0, 590:650]))
+        np.testing.assert_allclose(actual[index], expected, atol=3e-6, rtol=3e-6)
+
+
+def test_batched_tracker_reproduces_legacy_low_latency_effective_graph_features():
+    tracker, ref, q, v = setup("low_latency", legacy_layout=True)
+    actual = tracker.encoder_features(3, q, v).numpy()
+    for index in range(2):
+        old = object.__new__(G1SonicRunupController)
+        old.reference = ref[index]
+        old.config = G1SonicRunupConfig(model_variant="low_latency")
+        old._variant = _VARIANTS["low_latency"]
+        raw = old._encoder_observation(SimpleNamespace(qpos=q[index], qvel=v[index]), 3)
+        expected = np.concatenate((raw[0, 4:584], raw[0, 590:650]))
+        np.testing.assert_allclose(actual[index], expected, atol=3e-6, rtol=3e-6)
+
+
+def test_legacy_layout_rejected_for_other_foundation_variant():
+    with pytest.raises(ValueError, match="low-latency"):
+        setup("sonic_v1_1", legacy_layout=True)
+
+
 def test_histories_are_private_and_lifecycle_explicit():
     tracker, _, q, v = setup()
     with pytest.raises(RuntimeError):
@@ -89,6 +131,22 @@ def test_reference_and_state_are_not_mutated():
     np.testing.assert_array_equal(ref, beforeref)
     ref[:] = 0
     assert float(tracker.reference.abs().sum()) > 0
+
+
+def test_replan_refresh_preserves_executed_and_lookahead_reference():
+    tracker, ref, q, v = setup("low_latency")
+    tracker.reset(q, v)
+    future = ref.copy()
+    future[:, 10:, 7] += 0.05
+    tracker.refresh_unexecuted_reference(0, future)
+    assert float(tracker.reference[0, 10, 7]) == pytest.approx(float(future[0, 10, 7]))
+    bad = future.copy()
+    bad[:, 9, 7] += 0.05
+    with pytest.raises(ValueError, match="lookahead"):
+        tracker.refresh_unexecuted_reference(0, bad)
+    tracker.update(0, q, v)
+    with pytest.raises(RuntimeError, match="next unexecuted"):
+        tracker.refresh_unexecuted_reference(0, future)
 
 
 def test_bad_or_incomplete_inputs_fail_closed():

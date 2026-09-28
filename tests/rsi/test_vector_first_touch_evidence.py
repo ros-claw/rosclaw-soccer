@@ -75,6 +75,24 @@ def test_vector_audit_counts_independent_episodes(tmp_path: Path) -> None:
     assert result["imitation_training_authorized"] is False
 
 
+def test_vector_audit_requires_bounded_batched_torch_shadow(tmp_path: Path) -> None:
+    folder = tmp_path / "case"
+    _fixture(folder)
+    report_path = folder / "report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["torch_batch_shadow"] = True
+    report["torch_batch_drive"] = False
+    report["torch_batch_max_target_difference_rad"] = 1e-6
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert audit_vector_first_touch(folder)["independent_physical_episode_count"] == 2
+    report["torch_batch_max_target_difference_rad"] = 0.002
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="unauthenticated"):
+        audit_vector_first_touch(folder)
+
+
 def test_vector_audit_rejects_tamper_and_duplicate(tmp_path: Path) -> None:
     folder = tmp_path / "case"
     _fixture(folder)
