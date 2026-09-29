@@ -26,6 +26,7 @@ def choose_swing_side(
     *,
     acquisition_max_gap_m: float = 0.95,
     acquisition_max_lateral_gap_m: float | None = None,
+    revalidate_swing_side: bool = False,
 ) -> int:
     """Latch an airborne swing foot; never infer one from the future collision."""
     if (
@@ -34,12 +35,25 @@ def choose_swing_side(
         or previous_side not in (-1, 0, 1)
         or acquisition_max_gap_m not in SWING_ACQUISITION_MAX_GAPS_M
         or acquisition_max_lateral_gap_m not in (None, *SWING_ACQUISITION_MAX_LATERAL_GAPS_M)
+        or type(revalidate_swing_side) is not bool
         or not np.isfinite(feet_xyz).all()
         or not np.isfinite(ball_xyz).all()
     ):
         raise ValueError("invalid live foot/ball observation")
     if previous_side >= 0:
-        return previous_side
+        if not revalidate_swing_side:
+            return previous_side
+        previous_gap = float(ball_xyz[0] - feet_xyz[previous_side, 0])
+        previous_lateral = abs(float(ball_xyz[1] - feet_xyz[previous_side, 1]))
+        if (
+            feet_xyz[previous_side, 2] - feet_xyz[1 - previous_side, 2] >= 0.02
+            and 0.18 <= previous_gap <= acquisition_max_gap_m
+            and (
+                acquisition_max_lateral_gap_m is None
+                or previous_lateral <= acquisition_max_lateral_gap_m
+            )
+        ):
+            return previous_side
     side = int(np.argmax(feet_xyz[:, 2]))
     if feet_xyz[side, 2] - feet_xyz[1 - side, 2] < 0.02:
         return -1

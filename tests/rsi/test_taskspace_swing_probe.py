@@ -78,6 +78,19 @@ def test_lateral_acquisition_waits_for_reachable_swing_foot() -> None:
         choose_swing_side(feet, ball, -1, acquisition_max_lateral_gap_m=0.5)
 
 
+def test_revalidated_swing_never_keeps_a_now_lower_foot() -> None:
+    feet = np.array([[0.0, -0.1, 0.14], [0.0, 0.1, 0.04]])
+    ball = np.array([0.45, 0.0, 0.115])
+    assert choose_swing_side(feet, ball, 0, revalidate_swing_side=True) == 0
+    feet[:, 2] = [0.04, 0.14]
+    assert choose_swing_side(feet, ball, 0) == 0
+    assert choose_swing_side(feet, ball, 0, revalidate_swing_side=True) == 1
+    feet[:, 2] = [0.04, 0.05]
+    assert choose_swing_side(feet, ball, 1, revalidate_swing_side=True) == -1
+    with pytest.raises(ValueError):
+        choose_swing_side(feet, ball, 1, revalidate_swing_side=1)
+
+
 def test_taskspace_release_is_causal_and_monotone() -> None:
     contact_delta = np.full(6, 0.2)
     assert release_joint_delta(contact_delta, 1)[0] == pytest.approx(0.19)

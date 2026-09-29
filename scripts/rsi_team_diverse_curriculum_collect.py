@@ -159,6 +159,7 @@ def main() -> None:
             "lateral_cap_m",
             "swing_foot_acquisition_gap_m",
             "swing_acquisition_max_lateral_gap_m",
+            "revalidate_swing_side",
             "joint_risk_guard_margin_rad",
         ):
             if key in arm:

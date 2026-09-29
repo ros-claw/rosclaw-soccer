@@ -1,0 +1,38 @@
+{
+  "schema": "rsi_team_diverse_curriculum_protocol_v38",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "adaptive_model_path": "/data/rosclaw_overflow/rsi-team-adaptive-intercept-model-v28/model.json",
+  "adaptive_model_hash": "sha256:cfbf8277571d59c4d06bfb229f5757c62342241dc19f9fea2a1e2d0cd5c8bab7",
+  "maximum_yaw_rate_radps": 0.40,
+  "curriculum": {
+    "coordinate_seed": 20261400,
+    "identity_seed_base": 2200000,
+    "batch_count": 1,
+    "training_scene_count": 32,
+    "ball_x_m": [3.25, 4.25],
+    "ball_y_m": [-0.85, -0.35],
+    "ball_vx_mps": [-0.90, -0.20]
+  },
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "arms": [
+    {"name": "parent", "foot_selection": "none", "forward_gain": 0.0, "lateral_gain": 0.0, "strike_through_m": 0.0},
+    {"name": "baseline", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0},
+    {"name": "gate22_cap10", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.22},
+    {"name": "gate22_revalidate", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.22, "revalidate_swing_side": true},
+    {"name": "gate22_revalidate_guard", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.22, "revalidate_swing_side": true, "joint_risk_guard_margin_rad": 0.12},
+    {"name": "gate32_revalidate", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.32, "revalidate_swing_side": true},
+    {"name": "baseline_revalidate", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "revalidate_swing_side": true}
+  ],
+  "development_gate": {"primary_arm": "gate22_revalidate", "minimum_safe_gain_over_gate22_cap10": 1, "minimum_useful_gain_over_gate22_cap10": 0, "require_primary_complete": true},
+  "interpretation": "Fresh 32-scene six-G1 development probe. Revalidate the selected swing foot against live measured foot height and ball reach each frame before first contact; original latching policy remains a paired control. No promotion or real robot."
+}
