@@ -55,3 +55,28 @@ def test_a2_zero_expert_keeps_coordinated_feedback_proposal():
     assert expert.activation_ceiling == "SIM_ONLY"
     with pytest.raises(ValueError, match="bounded bilateral"):
         replace(expert, right_weights=(float("nan"),) * 12)
+
+
+def test_a2_high_state_releases_without_entering_small_residual_history():
+    schedule = ReceivingOracleSchedule(
+        "red.finisher", "A2_body29_precontact", 0, 10, ((0.0,) * 29,)
+    )
+    cursor = ReceivingOracleCursor(schedule)
+    predecessor = np.zeros(12)
+    for frame in range(3):
+        current = cursor.step(
+            frame,
+            active=True,
+            predecessor=predecessor,
+            desired_override_rad=(0.3,) + (0.0,) * 28,
+        )
+        assert current is not None
+    assert current[0] == pytest.approx(0.18)
+    released = cursor.step(
+        3,
+        active=True,
+        predecessor=predecessor,
+        desired_override_rad=(0.0,) * 29,
+    )
+    assert released is not None
+    assert released[0] == pytest.approx(0.12)

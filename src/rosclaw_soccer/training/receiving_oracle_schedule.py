@@ -51,13 +51,19 @@ class ReceivingOracleSchedule:
     @property
     def contract_hash(self) -> str:
         high_amplitude = self.substrate == "A2_body29_precontact"
-        envelope = {
+        envelope: dict[str, float | str] = {
             "offset_rad": 0.35 if high_amplitude else 0.1,
             "smoothing": 0.5 if high_amplitude else 0.25,
             "step_rad": 0.06 if high_amplitude else 0.02,
         }
         if high_amplitude:
-            envelope.update({"small_signal_smoothing": 0.25, "small_signal_step_rad": 0.02})
+            envelope.update(
+                {
+                    "small_signal_smoothing": 0.25,
+                    "small_signal_step_rad": 0.02,
+                    "high_state_decay": "large_signal_until_filtered_state_below_0.1_rad",
+                }
+            )
         return str(
             hash_json(
                 {
@@ -141,7 +147,9 @@ class ReceivingOracleCursor:
                 desired = np.asarray(desired_override_rad, dtype=np.float64)
             if not active:
                 desired[:] = 0
-            large_signal = high_amplitude and np.any(np.abs(desired) > 0.1)
+            large_signal = high_amplitude and (
+                np.any(np.abs(desired) > 0.1) or np.any(np.abs(self.previous) > 0.1)
+            )
             smoothing = 0.5 if large_signal else 0.25
             step_limit = 0.06 if large_signal else 0.02
             self.previous += np.clip(smoothing * (desired - self.previous), -step_limit, step_limit)
