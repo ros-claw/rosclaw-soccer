@@ -77,7 +77,14 @@ def main() -> None:
         or arm is None
         or len(scenarios) not in {32, 64, 128}
         or len({item["name"] for item in arms}) != len(arms)
-        or len(arms) not in {7, 8}
+        or len(arms) not in {3, 7, 8}
+        or (
+            len(arms) == 3
+            and (
+                [item["name"] for item in arms] != ["parent", "baseline", "gate22_cap10"]
+                or protocol["curriculum"].get("batch_count") != 16
+            )
+        )
         or len({(s.ball_initial_position_m, s.ball_initial_velocity_mps) for s in scenarios})
         != len(scenarios)
     ):
@@ -116,7 +123,7 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     for index, scenario in enumerate(scenarios):
         name = f"t{index:03d}"
-        navigation = None
+        navigation: TeamAdaptiveInterceptNavigation | TeamInterceptNavigation | None = None
         if arm["name"] == "adaptive_c19":
             navigation = TeamAdaptiveInterceptNavigation(
                 agent_id=protocol["focal_agent_id"],

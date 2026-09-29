@@ -16,6 +16,25 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_team_diverse_curriculum_collect import training_courses
 
 
+def _completed(path: Path, *, batch: int, arm: str, protocol_hash: str) -> str | None:
+    report_path = path / "report.json"
+    if not report_path.is_file():
+        if path.exists():
+            raise ValueError(f"partial physical arm output requires review: {path}")
+        return None
+    report = json.loads(report_path.read_text())
+    if (
+        report.get("report_hash")
+        != hash_json({key: value for key, value in report.items() if key != "report_hash"})
+        or report.get("protocol_hash") != protocol_hash
+        or report.get("batch_index") != batch
+        or report.get("arm", {}).get("name") != arm
+        or len(report.get("rows", ())) != 32
+    ):
+        raise ValueError(f"unsealed or wrong physical arm output: {path}")
+    return str(report["report_hash"])
+
+
 def _job(protocol: Path, asset_root: Path, root: Path, batch: int, arm: str) -> dict[str, Any]:
     folder = root / f"b{batch:02d}" / arm
     env = os.environ.copy()
@@ -63,8 +82,8 @@ def main() -> None:
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--workers", type=int, default=12)
     args = parser.parse_args()
-    if args.output_root.exists() or not 1 <= args.workers <= 12:
-        parser.error("new output root and bounded 1..12 worker count required")
+    if not 1 <= args.workers <= 12:
+        parser.error("bounded 1..12 worker count required")
     protocol = json.loads(args.protocol.read_text())
     curriculum = protocol.get("curriculum", {})
     names = [arm["name"] for arm in protocol["arms"]]
@@ -75,11 +94,13 @@ def main() -> None:
         or protocol.get("development_only") is not True
         or protocol.get("promotion_authorized") is not False
         or type(batches) is not int
-        or not 1 <= batches <= 2
+        or batches not in (1, 2, 16)
         or curriculum.get("training_scene_count") != 32
-        or len(names) != 7
-        or len(set(names)) != 7
+        or len(names) not in (3, 7)
+        or len(set(names)) != len(names)
         or names[0:2] != ["parent", "baseline"]
+        or (batches == 16 and names != ["parent", "baseline", "gate22_cap10"])
+        or (batches != 16 and len(names) != 7)
         or protocol.get("frames") != 250
     ):
         raise ValueError("invalid bounded paired physical curriculum")
@@ -104,18 +125,36 @@ def main() -> None:
     source_hashes = {
         str(path.relative_to(root)): hash_bytes(path.read_bytes()) for path in source_paths
     }
-    args.output_root.mkdir(parents=True)
+    args.output_root.mkdir(parents=True, exist_ok=True)
     for batch in range(batches):
-        (args.output_root / f"b{batch:02d}").mkdir()
-    outcomes = []
+        (args.output_root / f"b{batch:02d}").mkdir(exist_ok=True)
+    protocol_hash = hash_bytes(args.protocol.read_bytes())
+    complete_jobs = {
+        (batch, arm): _completed(
+            args.output_root / f"b{batch:02d}" / arm,
+            batch=batch,
+            arm=arm,
+            protocol_hash=protocol_hash,
+        )
+        for batch in range(batches)
+        for arm in names
+    }
+    outcomes = [
+        {"batch": batch, "arm": arm, "exit_code": 0, "report_hash": commitment, "reused": True}
+        for (batch, arm), commitment in complete_jobs.items()
+        if commitment is not None
+    ]
+    tasks = [
+        (batch, arm) for (batch, arm), commitment in complete_jobs.items() if commitment is None
+    ]
+    print(f"paired physics jobs remaining={len(tasks)} of {batches * len(names)}", flush=True)
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         jobs = {
             pool.submit(_job, args.protocol, args.asset_root, args.output_root, batch, arm): (
                 batch,
                 arm,
             )
-            for batch in range(batches)
-            for arm in names
+            for batch, arm in tasks
         }
         for future in as_completed(jobs):
             value = future.result()
@@ -129,17 +168,18 @@ def main() -> None:
         str(path.relative_to(root)): hash_bytes(path.read_bytes()) for path in source_paths
     }:
         raise ValueError("physical source changed during parallel collection")
-    complete = len(outcomes) == batches * 7 and all(
+    complete = len(outcomes) == batches * len(names) and all(
         value["exit_code"] == 0 and value["report_hash"] for value in outcomes
     )
     result = {
         "schema": "rsi_team_paired_physics_orchestration_report_v1",
         "activation_ceiling": "SIM_ONLY",
         "promotion_authorized": False,
-        "protocol_hash": hash_bytes(args.protocol.read_bytes()),
+        "protocol_hash": protocol_hash,
         "source_hashes": source_hashes,
         "physical_scene_count": len(states),
-        "planned_episode_count": len(states) * 7,
+        "planned_episode_count": len(states) * len(names),
+        "reused_complete_job_count": len(complete_jobs) - len(tasks),
         "job_results": sorted(outcomes, key=lambda row: (row["batch"], names.index(row["arm"]))),
         "all_jobs_complete": complete,
     }

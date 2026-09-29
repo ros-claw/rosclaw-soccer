@@ -31,10 +31,12 @@ def main() -> None:
         or protocol.get("development_only") is not True
         or protocol.get("promotion_authorized") is not False
         or type(batches) is not int
-        or not 1 <= batches <= 2
+        or batches not in (1, 2, 16)
         or protocol["curriculum"].get("training_scene_count") != 32
-        or len(names) != 7
+        or len(names) not in (3, 7)
         or names[0:2] != ["parent", "baseline"]
+        or (batches == 16 and names != ["parent", "baseline", "gate22_cap10"])
+        or (batches != 16 and len(names) != 7)
     ):
         raise ValueError("invalid bounded physical audit curriculum")
     protocol_hash = hash_bytes(args.protocol.read_bytes())
@@ -62,7 +64,7 @@ def main() -> None:
     }
     count = batches * 32
     raw = np.zeros((count, 24), dtype=np.float64)
-    safe = np.zeros((count, 7), dtype=np.bool_)
+    safe = np.zeros((count, len(names)), dtype=np.bool_)
     contact = np.zeros_like(safe)
     useful = np.zeros_like(safe)
     scenarios: list[str] = []
@@ -159,7 +161,7 @@ def main() -> None:
             for name in names
         },
         "scene_count": count,
-        "episode_count": count * 7,
+        "episode_count": count * len(names),
         "metrics": metrics,
         "dataset_hash": hash_bytes(dataset_path.read_bytes()),
         "fresh_online_exam": False,
