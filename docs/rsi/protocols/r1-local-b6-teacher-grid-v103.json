@@ -1,0 +1,36 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_local_b6_teacher_grid_v103.protocol.v1",
+  "partition": "CONSUMED_DEV_TEACHER_SEARCH",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "teacher_is_privileged": true,
+  "source_event": "v101 verified v95 combined/s02 as a single consumed local B6 teacher event, first receiver foot frame 66 and second receiver foot frame 83. v102 accidentally changed motor entry and duration; reject that comparison and bind both explicitly here.",
+  "hypothesis": "After exact parent reproduction, bounded aim-yaw and ankle-lateral grid search may expand the safe clean local B6 event from s02 to s04.",
+  "frozen_world": {
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "motor_agent_id": "red.playmaker",
+    "motor_entry_frame": 0,
+    "duration_sec": 10.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "teacher_profile": "default",
+    "capture_profile": "none",
+    "receive_follow_through_speed_mps": 0.0,
+    "receive_cushion_depth_m": -0.12,
+    "receive_minimum_forward_target_m": 0.02
+  },
+  "training_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "aim_yaw_grid_rad": [-0.2, 0.0, 0.2],
+  "ankle_lateral_offset_grid_m": [0.12, 0.18, 0.24],
+  "candidate_count": 9,
+  "rollout_count": 18,
+  "baseline_reproduction_gate": "At yaw=0 and lateral=0.18 m, s02 must be six-body safe, clean transfer, dynamic incoming >=0.30 m/s, no nonfoot before a real later receiver foot shot >=2.0 m/s; first foot frame within 2 of historical frame 66, second event frame within 2 of frame 83. Otherwise entire grid is invalid, not a negative learning result.",
+  "local_b6_gate": "After baseline reproduction, both s02 and s04 must be six-body safe, clean physical transfer, dynamic incoming >=0.30 m/s, own second foot >=0.20 s later with outgoing speed >=2.0 m/s and no intervening nonfoot ball contact or robot collision.",
+  "selection": "Among all 2/2 passing candidates choose maximum minimum second-foot outgoing speed, tie-break smallest absolute yaw then offset nearest 0.18 m. Never select from a failed candidate.",
+  "fresh_boundary": "Only if training passes, freeze one candidate and author a separate disjoint Fresh protocol. No result here can promote privileged teacher or runtime policy."
+}

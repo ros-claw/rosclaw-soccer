@@ -20,6 +20,8 @@ def _candidate_task(
     scene: dict[str, Any],
     yaw_rad: float,
     lateral_m: float,
+    motor_entry_frame: int,
+    duration_sec: float,
 ) -> dict[str, Any]:
     run(
         asset_root,
@@ -27,6 +29,8 @@ def _candidate_task(
         enabled=True,
         preview_pass=True,
         motor_agent_id="red.playmaker",
+        motor_entry_frame=motor_entry_frame,
+        duration_sec=duration_sec,
         directed_pass_speed_mps=1.0,
         precontact_pass_standoff_m=0.35,
         handoff_profile="tracking",
@@ -47,6 +51,8 @@ def _candidate_task(
         or report["protocol_hash"] != hash_bytes(protocol_path.read_bytes())
         or report["trace_hash"] != hash_bytes(trace_path.read_bytes())
         or protocol["receive_teacher_tuning"] != [yaw_rad, lateral_m]
+        or protocol["motor_entry_frame"] != motor_entry_frame
+        or protocol["duration_sec"] != duration_sec
         or protocol["activation_ceiling"] != "SIM_ONLY"
         or protocol["promotion_authorized"] is not False
     ):
@@ -101,13 +107,15 @@ def _candidate_task(
 def train(asset_root: Path, protocol_path: Path, output: Path, workers: int = 3) -> dict[str, Any]:
     protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
     if (
-        protocol["schema"] != "rosclaw_soccer.rsi.r1_local_b6_teacher_grid_v102.protocol.v1"
+        protocol["schema"] != "rosclaw_soccer.rsi.r1_local_b6_teacher_grid_v103.protocol.v1"
         or protocol["partition"] != "CONSUMED_DEV_TEACHER_SEARCH"
         or protocol["candidate_count"] != 9
         or protocol["rollout_count"] != 18
         or protocol["aim_yaw_grid_rad"] != [-0.2, 0.0, 0.2]
         or protocol["ankle_lateral_offset_grid_m"] != [0.12, 0.18, 0.24]
         or len(protocol["training_scenes"]) != 2
+        or protocol["frozen_world"]["motor_entry_frame"] != 0
+        or protocol["frozen_world"]["duration_sec"] != 10.0
         or not 1 <= workers <= 4
         or output.exists()
     ):
@@ -138,6 +146,8 @@ def train(asset_root: Path, protocol_path: Path, output: Path, workers: int = 3)
                 scene,
                 yaw,
                 lateral,
+                protocol["frozen_world"]["motor_entry_frame"],
+                protocol["frozen_world"]["duration_sec"],
             )
             for index, (yaw, lateral) in enumerate(settings)
             for scene in protocol["training_scenes"]
@@ -169,6 +179,13 @@ def train(asset_root: Path, protocol_path: Path, output: Path, workers: int = 3)
             }
         )
     accepted = [row for row in candidates if row["training_gate_passed"]]
+    baseline = candidates[4]["scenes"][0]
+    baseline_reproduced = bool(
+        baseline["local_b6_passed"]
+        and baseline["first_receiver_foot_frame"] is not None
+        and abs(baseline["first_receiver_foot_frame"] - 66) <= 2
+        and any(abs(event["frame"] - 83) <= 2 for event in baseline["clean_second_foot_events"])
+    )
     ranked = sorted(
         accepted,
         key=lambda row: (
@@ -178,13 +195,20 @@ def train(asset_root: Path, protocol_path: Path, output: Path, workers: int = 3)
         ),
     )
     result = {
-        "schema": "rosclaw_soccer.rsi.r1_local_b6_teacher_grid_v102.result.v1",
+        "schema": "rosclaw_soccer.rsi.r1_local_b6_teacher_grid_v103.result.v1",
         "protocol_hash": hash_bytes(protocol_path.read_bytes()),
         "source_hashes": source_hashes,
         "actual_rollouts": len(rows),
         "candidates": candidates,
-        "status": "CONSUMED_TEACHER_TRAINING_PASSED" if ranked else "REJECTED_TRAINING",
-        "selected_candidate_index": ranked[0]["index"] if ranked else None,
+        "baseline_reproduced": baseline_reproduced,
+        "status": (
+            "INVALID_BASELINE_REPRODUCTION"
+            if not baseline_reproduced
+            else "CONSUMED_TEACHER_TRAINING_PASSED"
+            if ranked
+            else "REJECTED_TRAINING"
+        ),
+        "selected_candidate_index": ranked[0]["index"] if baseline_reproduced and ranked else None,
         "fresh_evaluation_run": False,
         "teacher_is_privileged": True,
         "promotion_authorized": False,
