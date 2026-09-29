@@ -114,3 +114,8 @@ def test_privileged_receive_search_rejects_out_of_contract_tuning(tmp_path: Path
             enabled=False,
             receive_teacher_tuning=tuning,
         )
+
+
+def test_bounded_pass_timing_rejects_unregistered_entry_frame(tmp_path: Path):
+    with pytest.raises(ValueError, match="bounded rolling receive curriculum"):
+        run(Path("/missing-asset"), tmp_path / "never-created", enabled=False, motor_entry_frame=7)

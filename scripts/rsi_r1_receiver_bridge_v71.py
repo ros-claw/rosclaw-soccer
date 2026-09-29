@@ -350,7 +350,7 @@ def run(
         or precontact_pass_standoff_m is not None
         and not preview_pass
         or motor_agent_id not in ("red.finisher", "red.playmaker")
-        or motor_entry_frame not in (0, 30)
+        or motor_entry_frame not in (0, 5, 10, 15, 20, 25, 30)
         or strike_through_m not in (0.0, 0.08, 0.16)
         or directed_pass_speed_mps not in (0.0, 1.0, 1.5, 2.0)
         or pass_lateral_bias_m not in (-0.40, -0.20, 0.0, 0.20, 0.40)
@@ -791,7 +791,9 @@ def main() -> None:
     parser.add_argument(
         "--motor-agent", choices=("red.finisher", "red.playmaker"), default="red.finisher"
     )
-    parser.add_argument("--motor-entry-frame", type=int, choices=(0, 30), default=30)
+    parser.add_argument(
+        "--motor-entry-frame", type=int, choices=(0, 5, 10, 15, 20, 25, 30), default=30
+    )
     parser.add_argument("--strike-through", type=float, choices=(0.0, 0.08, 0.16), default=0.0)
     parser.add_argument("--directed-pass-speed", type=float, choices=(1.0, 1.5, 2.0), default=0.0)
     parser.add_argument(

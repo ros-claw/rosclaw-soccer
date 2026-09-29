@@ -1,0 +1,29 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_gait_aware_pass_timing_v105.protocol.v1",
+  "partition": "CONSUMED_DEV_TEAM_TIMING",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "teacher_is_privileged": true,
+  "source": "v104 measured contact-point motion: in s02 the receiver foot moves with the incoming ball and a real second foot shot follows; in s04 the foot moves against a slow ball, reverses it, and the B6 chain dies. Test whether sender action timing can align arrival with a better receiver gait phase without changing ball physics or actor weights.",
+  "frozen_control": {
+    "teacher_yaw_rad": 0.0,
+    "teacher_lateral_offset_m": 0.18,
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "duration_sec": 10.0,
+    "motor_agent_id": "red.playmaker"
+  },
+  "motor_entry_frame_grid": [0, 5, 10, 15, 20, 25, 30],
+  "scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "rollout_count": 14,
+  "baseline_reproduction_gate": "Entry 0 must reproduce v103 candidate 04 local s02 B6 first-foot frame within 2 of 66 and second-foot frame within 2 of 83, with six-body safety and no intervening nonfoot collision. Otherwise course invalid.",
+  "two_scene_gate": "Both scenes must be six-body safe, clean source/receiver foot transfer, dynamic incoming speed >=0.30 m/s, no robot collision, and receiver own second foot >=0.20 s after first touch, outgoing speed >=2.0 m/s, with no intervening nonfoot ball contact.",
+  "selection": "Among 2/2 passing timings choose smallest entry frame, then highest minimum second-foot outgoing speed. No winner from failed rows. A consumed timing success is only an unqualified coordination teacher, not a learned player, full goal, or promotional video.",
+  "next_if_failed": "Use 500 Hz foot/contact state to train receiver-phase prediction and a continuous motor policy; do not keep widening static timing grid on the same consumed scenes."
+}
