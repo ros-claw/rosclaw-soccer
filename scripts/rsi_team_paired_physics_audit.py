@@ -34,9 +34,17 @@ def main() -> None:
         or batches not in (1, 2, 16)
         or protocol["curriculum"].get("training_scene_count") != 32
         or len(names) not in (3, 7)
-        or names[0:2] != ["parent", "baseline"]
-        or (batches == 16 and names != ["parent", "baseline", "gate22_cap10"])
+        or names[0] != "parent"
+        or (
+            batches == 16
+            and names
+            not in (
+                ["parent", "baseline", "gate22_cap10"],
+                ["parent", "gate22_cap10", "gate22_revalidate"],
+            )
+        )
         or (batches != 16 and len(names) != 7)
+        or (batches != 16 and names[:2] != ["parent", "baseline"])
     ):
         raise ValueError("invalid bounded physical audit curriculum")
     protocol_hash = hash_bytes(args.protocol.read_bytes())

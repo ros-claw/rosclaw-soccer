@@ -81,7 +81,11 @@ def main() -> None:
         or (
             len(arms) == 3
             and (
-                [item["name"] for item in arms] != ["parent", "baseline", "gate22_cap10"]
+                [item["name"] for item in arms]
+                not in (
+                    ["parent", "baseline", "gate22_cap10"],
+                    ["parent", "gate22_cap10", "gate22_revalidate"],
+                )
                 or protocol["curriculum"].get("batch_count") != 16
             )
         )

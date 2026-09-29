@@ -1,0 +1,36 @@
+{
+  "schema": "rsi_team_diverse_curriculum_protocol_v38",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "prior_fresh_exam_audit_report_hash": "sha256:d695949874ea80313ebb8128f884d0cdefe815b90a179cb9af41a52c78e74712",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "adaptive_model_path": "/data/rosclaw_overflow/rsi-team-adaptive-intercept-model-v28/model.json",
+  "adaptive_model_hash": "sha256:cfbf8277571d59c4d06bfb229f5757c62342241dc19f9fea2a1e2d0cd5c8bab7",
+  "maximum_yaw_rate_radps": 0.40,
+  "curriculum": {
+    "coordinate_seed": 20261600,
+    "identity_seed_base": 2400000,
+    "batch_count": 16,
+    "training_scene_count": 32,
+    "ball_x_m": [3.25, 4.25],
+    "ball_y_m": [-0.85, -0.35],
+    "ball_vx_mps": [-0.90, -0.20]
+  },
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "arms": [
+    {"name": "parent", "foot_selection": "none", "forward_gain": 0.0, "lateral_gain": 0.0, "strike_through_m": 0.0},
+    {"name": "gate22_cap10", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.22},
+    {"name": "gate22_revalidate", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.22, "revalidate_swing_side": true}
+  ],
+  "train_batches": [0,1,2,3,4,5,6,7,8,9,10,11],
+  "consumed_internal_validation_batches": [12,13,14,15],
+  "interpretation": "512 new physical scenes, paired Parent, old latched-side receiver, and causal swing-side revalidation receiver, six G1 in a full 3v3 world. First 384 train, last 128 internal validation. This corpus is not an independent promotion exam. Preserve and count every incomplete/unsafe episode."
+}

@@ -98,9 +98,17 @@ def main() -> None:
         or curriculum.get("training_scene_count") != 32
         or len(names) not in (3, 7)
         or len(set(names)) != len(names)
-        or names[0:2] != ["parent", "baseline"]
-        or (batches == 16 and names != ["parent", "baseline", "gate22_cap10"])
+        or names[0] != "parent"
+        or (
+            batches == 16
+            and names
+            not in (
+                ["parent", "baseline", "gate22_cap10"],
+                ["parent", "gate22_cap10", "gate22_revalidate"],
+            )
+        )
         or (batches != 16 and len(names) != 7)
+        or (batches != 16 and names[:2] != ["parent", "baseline"])
         or protocol.get("frames") != 250
     ):
         raise ValueError("invalid bounded paired physical curriculum")

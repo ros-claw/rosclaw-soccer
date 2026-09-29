@@ -43,3 +43,26 @@ def test_three_arm_risk_curriculum_has_512_distinct_physical_states() -> None:
         len({(scene.ball_initial_position_m, scene.ball_initial_velocity_mps) for scene in scenes})
         == 512
     )
+
+
+def test_revalidation_choice_curriculum_uses_fresh_paired_physical_states() -> None:
+    root = Path(__file__).parents[2] / "docs/rsi/protocols"
+    prior = json.loads((root / "team-paired-risk-curriculum-v56.json").read_text())
+    chosen = json.loads((root / "team-revalidation-choice-curriculum-v64.json").read_text())
+    assert [arm["name"] for arm in chosen["arms"]] == [
+        "parent",
+        "gate22_cap10",
+        "gate22_revalidate",
+    ]
+    old_states = {
+        (scene.ball_initial_position_m, scene.ball_initial_velocity_mps)
+        for batch in range(16)
+        for scene in training_courses(prior, batch)
+    }
+    new_states = {
+        (scene.ball_initial_position_m, scene.ball_initial_velocity_mps)
+        for batch in range(16)
+        for scene in training_courses(chosen, batch)
+    }
+    assert len(new_states) == 512
+    assert not old_states & new_states
