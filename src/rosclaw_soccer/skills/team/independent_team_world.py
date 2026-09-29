@@ -1758,6 +1758,21 @@ def simulate_independent_team_world(
         else None
     )
     for frame in range(total_frames):
+        if capture_oracle_authority and frame == 0:
+            trace["receiving_authority_initial_local_qpos"] = [
+                np.r_[
+                    data.qpos[focal_controller.qpos_base : focal_controller.qpos_base + 7],
+                    data.qpos[focal_controller.joint_qpos],
+                    data.qpos[ball_qpos : ball_qpos + 7],
+                ]
+            ]
+            trace["receiving_authority_initial_local_qvel"] = [
+                np.r_[
+                    data.qvel[focal_controller.qvel_base : focal_controller.qvel_base + 6],
+                    data.qvel[focal_controller.joint_qvel],
+                    data.qvel[ball_qvel : ball_qvel + 6],
+                ]
+            ]
         teacher_suppressed_agent = (
             contact_teacher_suppression.suppressed_agent(frame)
             if contact_teacher_suppression is not None
@@ -3551,6 +3566,9 @@ def simulate_independent_team_world(
                     and receiving_oracle is not None
                     and controller.cell.agent_id == receiving_oracle.agent_id
                 )
+                # Numeric, read-only teacher inputs for same-physics proxy
+                # qualification. This never changes the controller's action.
+                authority_teacher_inputs = np.zeros(17, dtype=np.float64)
                 authority_foundation = target.copy() if observe_authority else None
                 residual = residual_by_id.get(controller.cell.agent_id)
                 authority_added = np.zeros(29) if observe_authority else None
@@ -3899,6 +3917,26 @@ def simulate_independent_team_world(
                         config=effect_config,
                         strike_progress=stroke_progress,
                     )
+                    if observe_authority:
+                        authority_teacher_inputs[:] = (
+                            1.0,
+                            1.0 if use_left else 2.0,
+                            1.0 if contact_mode == "receive" else 2.0,
+                            float(effect_direction[0]),
+                            float(effect_direction[1]),
+                            float(lateral_sign),
+                            float(contact_recent),
+                            -1.0 if stroke_progress is None else float(stroke_progress),
+                            -1.0 if capture_progress is None else float(capture_progress),
+                            effect_config.strike_foot_speed_mps,
+                            effect_config.aim_yaw_bias_rad,
+                            effect_config.receive_follow_through_speed_mps,
+                            effect_config.receive_ankle_lateral_offset_m,
+                            effect_config.velocity_damping_n_per_mps,
+                            effect_config.maximum_task_force_n,
+                            effect_config.maximum_joint_residual_nm,
+                            effect_config.contact_leg_stiffness_scale,
+                        )
                     frame_teacher_mode_code = 1 if contact_mode == "receive" else 2
                     frame_teacher_foot_code = 1 if use_left else 2
                     frame_teacher_target_m = effect.ankle_target_m.copy()
@@ -4072,6 +4110,9 @@ def simulate_independent_team_world(
                     trace.setdefault(f"{key}_captured_executed_torque_nm", []).append(torque.copy())
                 if observe_authority:
                     assert authority_foundation is not None and authority_added is not None
+                    trace.setdefault("receiving_authority_teacher_inputs", []).append(
+                        authority_teacher_inputs.copy()
+                    )
                     requested = np.zeros(29)
                     if residual is not None:
                         requested[: len(residual)] = residual

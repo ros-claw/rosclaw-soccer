@@ -120,6 +120,7 @@ def capture_one(
         "joint_velocity_radps",
         "raw_torque_nm",
         "executed_torque_nm",
+        "teacher_inputs",
     )
     tape = {name: np.asarray(trace[prefix + name]) for name in tape_names}
     if (
@@ -132,6 +133,12 @@ def capture_one(
     ):
         raise ValueError("complete finite 500 Hz executed motor tape required")
     arrays = {
+        "initial_local_qpos": np.asarray(
+            trace["receiving_authority_initial_local_qpos"][0], dtype=np.float64
+        ),
+        "initial_local_qvel": np.asarray(
+            trace["receiving_authority_initial_local_qvel"][0], dtype=np.float64
+        ),
         "observation_frame": frames,
         "observation_qpos": np.asarray([o.qpos for o in observations], dtype=np.float64),
         "observation_qvel": np.asarray([o.qvel for o in observations], dtype=np.float64),
@@ -148,6 +155,13 @@ def capture_one(
         ),
         **{"motor_" + name: value for name, value in tape.items()},
     }
+    if (
+        arrays["initial_local_qpos"].shape != (43,)
+        or arrays["initial_local_qvel"].shape != (41,)
+        or not np.isfinite(arrays["initial_local_qpos"]).all()
+        or not np.isfinite(arrays["initial_local_qvel"]).all()
+    ):
+        raise ValueError("finite exact frame-zero receiving state required")
     np.savez_compressed(output, **arrays)  # type: ignore[arg-type]
     return {
         "course": vars(course),
