@@ -1,0 +1,15 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_strike_transition_v86.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v85 coarse stance arms -0.12/-0.20/-0.24 safe but missed; -0.17 scored but violated ankle; narrow transition may expose a safe-scoring arm",
+  "hypothesis": "A narrow pre-shot stance band around the safety/goal transition could retain both physical integrity and genuine foot-shot quality.",
+  "frozen_actor": "v79 directed playmaker speed 1.0, v81 tracking handoff, no safety parameter change",
+  "scene": {"ball_x_m": 2.20, "ball_y_m": -0.80, "seed": 411002, "duration_sec": 10.0},
+  "training_arms_stance_lateral_m": [-0.14, -0.15, -0.16, -0.18, -0.19],
+  "gate": "Six safe bodies with unchanged limits; clean source/receiver foot pass; real finisher foot shot; in-geometry goal crossing before ten seconds, no nonfoot intervention.",
+  "selection": "Among passing arms choose highest minimum joint margin, then earliest goal crossing. If none pass, reject the static stance family and move to feedback whole-body policy.",
+  "interpretation": "A passing arm is consumed development only. Unseen exam remains sealed until a candidate is frozen."
+}

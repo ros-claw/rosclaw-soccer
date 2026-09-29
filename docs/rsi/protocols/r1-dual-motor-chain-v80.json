@@ -1,0 +1,21 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_dual_motor_chain_v80.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v79 s01: directed playmaker speed 1.0 gave 1.58 m/s ball peak and clean receiver foot contact 1.13 s after launch, but receiver deflected ball laterally and never shot",
+  "hypothesis": "Two private motors can coordinate causally in one six-G1 world: a directed passer and a commitment-gated receiver, each retiring only after measured own-foot contact.",
+  "control": "v79 directed pass speed10, no receiver motor",
+  "candidate": {
+    "red.playmaker": {"motor": "directed velocity", "speed_mps": 1.0, "entry_frame": 0},
+    "red.finisher": {"motor": "grounded rolling", "cap_rad": 0.04, "radius_m": 0.30, "vertical_m": 0.02, "requires_receive_commitment": true, "entry_frame": 30},
+    "retired_option_ankle_braking_damping": 12.0
+  },
+  "scenes": [
+    {"id": "s00", "ball_x_m": 2.10, "ball_y_m": -0.80, "seed": 411001},
+    {"id": "s01", "ball_x_m": 2.20, "ball_y_m": -0.80, "seed": 411002}
+  ],
+  "diagnostics": ["six_body_safe", "sender_foot_contact", "receiver_foot_contact", "receiver_motor_active_frames", "post_receive_ball_velocity", "shot_option_activation", "chain_success"],
+  "interpretation": "Any success remains a seen-scene development result; promotion requires a separately frozen local Fresh exam and then continuous 4v4."
+}

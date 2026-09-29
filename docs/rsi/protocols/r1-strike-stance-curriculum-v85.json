@@ -1,0 +1,15 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_strike_stance_curriculum_v85.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v84 predictive guard cannot arrest ~14 rad/s left ankle outward velocity one frame before shot; safety torque is already saturated at 42.5 Nm. A different pre-shot stance is needed, not a relaxed safety threshold.",
+  "hypothesis": "Changing the strike approach lateral stance in the existing generic strike-phase controller may avoid the saturated outward ankle trajectory while retaining genuine pass-stop-shot-goal.",
+  "frozen_actor": "v79 directed playmaker speed 1.0, v81 tracking handoff, default physical guard",
+  "scene": {"ball_x_m": 2.20, "ball_y_m": -0.80, "seed": 411002, "duration_sec": 10.0},
+  "baseline_stance_lateral_m": -0.17,
+  "training_arms_stance_lateral_m": [-0.12, -0.20, -0.24, -0.28],
+  "selection": "Select only if six bodies safe, clean physical pass, genuine finisher foot shot and in-goal crossing; among passing arms maximize minimum joint safety margin, then minimize ball crossing time. Otherwise reject all.",
+  "interpretation": "A passing training arm remains a seen-scene curriculum result, not a learned network or promotion; freeze one before any unseen local exam."
+}

@@ -1,0 +1,18 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_pass_acquisition_v88.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v87 frozen eight-scene exam rejected 0/8; x>=2.24 m sources mostly missed, measured nearest foot-ball gap 0.35-0.60 m while motor remained active. v76 tested precontact approach without a directed source motor and was rejected; the mechanism differs here.",
+  "hypothesis": "Approaching the ball before the directed motor strikes closes the physical launch gap without changing ball state or bypassing collision; the source must show actual own-foot contact.",
+  "frozen_motor": "v79 directed playmaker speed 1.0, entry 0; v81 tracking handoff; v86 selected -0.19 strike stance",
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms_precontact_standoff_m": [0.25, 0.35, 0.45],
+  "selection": "First require six safe bodies and actual source foot launch in all three consumed scenes; then maximize clean foot-to-foot transfer count and complete chain count, tie-break by minimum joint margin. No arm passes if any body unsafe.",
+  "interpretation": "This is a failure replay, never a second Fresh exam. Any selected strategy needs a newly frozen new holdout."
+}

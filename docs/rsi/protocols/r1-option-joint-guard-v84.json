@@ -1,0 +1,19 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_option_joint_guard_v84.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v83 option-only ankle braking at 8/12/16 preserved shots but all violated left ankle limit, while v82 whole-match braking suppressed shot",
+  "hypothesis": "An earlier, bounded predictive guard during active motor options can keep the ankle within the unchanged physical limit without perturbing the pre-shot team chain.",
+  "frozen_actor": "v79 directed playmaker speed 1.0, v81 tracking handoff",
+  "scene": {"ball_x_m": 2.20, "ball_y_m": -0.80, "seed": 411002, "duration_sec": 10.0},
+  "arms": [
+    {"option_guard_margin_rad": 0.06, "option_ankle_braking": null},
+    {"option_guard_margin_rad": 0.08, "option_ankle_braking": null},
+    {"option_guard_margin_rad": 0.10, "option_ankle_braking": null},
+    {"option_guard_margin_rad": 0.08, "option_ankle_braking": 16.0}
+  ],
+  "gate": "All six safe with original hard joint limits; clean foot-to-foot pass, real finisher shot and in-geometry goal before 10 seconds, no new nonfoot ball touch.",
+  "interpretation": "Any success is consumed development only and must pass frozen unseen local exam and 4v4 continuous-match exam before video promotion."
+}

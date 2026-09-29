@@ -1,0 +1,15 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_receiver_handoff_v81.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v79 s01: physical foot-to-foot transfer but no shot option; v80 local receiver motor unsafe",
+  "hypothesis": "A role-level launched-pass commitment and incoming-ball tracking may preserve the receiver task after the first foot contact without a second local foot motor.",
+  "frozen_actor": "v79 directed red.playmaker pass motor speed 1.0 m/s, entry frame zero",
+  "scene": {"ball_x_m": 2.20, "ball_y_m": -0.80, "seed": 411002, "duration_sec": 10.0},
+  "arms": ["strict", "tracking", "committed"],
+  "paired_control": "v79 s01 legacy handoff (previously consumed)",
+  "success_gate": "Six bodies safe, clean foot-to-foot pass, receiver intent progresses to SHOOT, genuine foot shot, and in-geometry goal crossing before 10 seconds; any failure rejects promotion.",
+  "interpretation": "All arms are consumed development probes; a success needs a newly frozen unseen local exam before any team/video claim."
+}

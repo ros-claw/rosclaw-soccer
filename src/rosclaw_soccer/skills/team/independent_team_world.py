@@ -259,11 +259,14 @@ class IndependentTeamWorldConfig:
     teammate_approach_clearance_m: float = 0.0
     disjoint_motor_backends: bool = False
     motor_clearance_prediction_sec: float = 0.0
+    precontact_pass_standoff_m: float | None = None
     retire_completed_motors: bool = False
     motor_receive_commitment_context: bool = False
     cyclic_receive_motors: bool = False
     outward_waist_braking_damping: float | None = None
     outward_ankle_roll_braking_damping: float | None = None
+    option_ankle_roll_braking_damping: float | None = None
+    option_joint_guard_margin_rad: float | None = None
     retired_motor_option_ankle_braking_damping: float | None = None
     experimental_navigation_envelopes: tuple[SimulationNavigationEnvelope, ...] = ()
     rotation_equivariant_receive_heading: bool = False
@@ -311,6 +314,18 @@ class IndependentTeamWorldConfig:
             or not 6.0 <= self.outward_ankle_roll_braking_damping <= 20.0
         ):
             raise ValueError("bounded explicit outward ankle-roll braking required")
+        if self.option_ankle_roll_braking_damping is not None and (
+            type(self.option_ankle_roll_braking_damping) not in (int, float)
+            or not math.isfinite(self.option_ankle_roll_braking_damping)
+            or not 6.0 <= self.option_ankle_roll_braking_damping <= 20.0
+        ):
+            raise ValueError("bounded active-option ankle-roll braking required")
+        if self.option_joint_guard_margin_rad is not None and (
+            type(self.option_joint_guard_margin_rad) not in (int, float)
+            or not math.isfinite(self.option_joint_guard_margin_rad)
+            or not 0.04 <= self.option_joint_guard_margin_rad <= 0.12
+        ):
+            raise ValueError("bounded active-option joint guard margin required")
         if self.retired_motor_option_ankle_braking_damping is not None and (
             type(self.retired_motor_option_ankle_braking_damping) not in (int, float)
             or not math.isfinite(self.retired_motor_option_ankle_braking_damping)
@@ -318,6 +333,12 @@ class IndependentTeamWorldConfig:
             or not self.retire_completed_motors
         ):
             raise ValueError("bounded post-retirement option ankle braking required")
+        if self.precontact_pass_standoff_m is not None and (
+            type(self.precontact_pass_standoff_m) not in (int, float)
+            or not math.isfinite(self.precontact_pass_standoff_m)
+            or not 0.20 <= self.precontact_pass_standoff_m <= 0.50
+        ):
+            raise ValueError("bounded precontact pass standoff required")
         if type(self.cyclic_receive_motors) is not bool or (
             self.cyclic_receive_motors
             and not (self.motor_receive_commitment_context and self.retire_completed_motors)
@@ -558,8 +579,14 @@ class IndependentTeamWorldConfig:
             value.pop("outward_waist_braking_damping")
         if self.outward_ankle_roll_braking_damping is None:
             value.pop("outward_ankle_roll_braking_damping")
+        if self.option_ankle_roll_braking_damping is None:
+            value.pop("option_ankle_roll_braking_damping")
+        if self.option_joint_guard_margin_rad is None:
+            value.pop("option_joint_guard_margin_rad")
         if self.retired_motor_option_ankle_braking_damping is None:
             value.pop("retired_motor_option_ankle_braking_damping")
+        if self.precontact_pass_standoff_m is None:
+            value.pop("precontact_pass_standoff_m")
         if not self.cyclic_receive_motors:
             value.pop("cyclic_receive_motors")
         if not self.motor_receive_commitment_context:
@@ -3927,7 +3954,12 @@ def simulate_independent_team_world(
                     commanded_torque=raw_torque,
                     joint_ranges=np.asarray(model.jnt_range[controller.joint_ids]),
                     limited=model.jnt_limited[controller.joint_ids].astype(bool),
-                    margin_rad=active.joint_guard_margin_rad,
+                    margin_rad=(
+                        active.option_joint_guard_margin_rad
+                        if controller.option_active
+                        and active.option_joint_guard_margin_rad is not None
+                        else active.joint_guard_margin_rad
+                    ),
                 )
                 if active.outward_waist_braking_damping is not None:
                     projected_torque = strengthen_outward_joint_braking(
@@ -3941,6 +3973,12 @@ def simulate_independent_team_world(
                         margin_rad=active.joint_guard_margin_rad,
                     )
                 ankle_braking = active.outward_ankle_roll_braking_damping
+                if (
+                    ankle_braking is None
+                    and active.option_ankle_roll_braking_damping is not None
+                    and controller.option_active
+                ):
+                    ankle_braking = active.option_ankle_roll_braking_damping
                 if (
                     ankle_braking is None
                     and active.retired_motor_option_ankle_braking_damping is not None
@@ -5387,6 +5425,13 @@ def _movement_command(
         direction = destination - ball
         direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
         target = ball - 0.72 * direction
+    precontact_pass_approach = bool(
+        config.precontact_pass_standoff_m is not None
+        and prospective_contact
+        and possession_agent_id is None
+        and decision.intent is TacticalIntent.PASS
+        and not post_receive_hold
+    )
     motor_approach = bool(
         continuous_motor_approach
         and config.motor_approach_standoff_m is not None
@@ -5395,6 +5440,12 @@ def _movement_command(
         and decision.intent is TacticalIntent.SHOOT
         and not post_receive_hold
     )
+    if precontact_pass_approach:
+        destination = np.asarray(decision.target_position_m[:2], dtype=np.float64)
+        direction = destination - ball
+        direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
+        assert config.precontact_pass_standoff_m is not None
+        target = ball - config.precontact_pass_standoff_m * direction
     if motor_approach:
         # An admitted moving-handoff motor cannot be reached by the legacy
         # standing-shot target 0.72 m behind the ball. This is an explicit

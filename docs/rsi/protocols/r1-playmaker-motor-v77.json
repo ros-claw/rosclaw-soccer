@@ -1,0 +1,22 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_playmaker_motor_v77.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "hypothesis": "An independently owned, bounded playmaker foot motor may supply the missing physical pass contact in separated kickoffs; after measured own-foot touch, it retires and gives the per-player shot/pass option exclusive ownership.",
+  "control": "v75 preview arm: same ball, six bodies, no full-body motor",
+  "fixed": {"preview_pass": true, "motor_agent_id": "red.playmaker", "motor_entry_frame": 0, "duration_sec": 10.0, "ball_y_m": -0.80, "precontact_pass_standoff_m": null},
+  "scenes": [
+    {"id": "s00", "ball_x_m": 2.10, "seed": 411001},
+    {"id": "s01", "ball_x_m": 2.20, "seed": 411002},
+    {"id": "s02", "ball_x_m": 2.30, "seed": 411003},
+    {"id": "s03", "ball_x_m": 2.40, "seed": 411004}
+  ],
+  "arms": [
+    {"name": "airborne", "motor": "gate22_revalidate_recover04", "grounded": false},
+    {"name": "rolling", "motor": "commitment_gated_rolling_cap04_radius030", "grounded": true, "rolling_cap_rad": 0.04, "rolling_radius_m": 0.30, "rolling_vertical_m": 0.02, "rolling_requires_commitment": false}
+  ],
+  "diagnostics": ["motor_active_frames", "source_foot_contact_after_request", "clean_transfer", "safe", "chain_success"],
+  "interpretation": "No role-local promotion from these seen scenes; select only a safe, causal mechanism for a later Fresh exam."
+}

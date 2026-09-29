@@ -1,0 +1,19 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_lateral_pass_learning_v89.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY_TRAIN",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v88 0.35 m approach made three distant sources launch and three receivers touch safely, but contact deflected sideways and no shot option activated",
+  "policy_class": "one-parameter observation-conditioned motor target residual; bias is perpendicular to the live ball-to-teammate vector, not a world-axis or ball-state edit",
+  "frozen_context": {"precontact_pass_standoff_m": 0.35, "directed_pass_speed_mps": 1.0, "handoff_profile": "tracking", "strike_stance_lateral_m": -0.19},
+  "training_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms_lateral_bias_m": [-0.40, -0.20, 0.20, 0.40],
+  "paired_zero_bias": "v88 standoff0.35 same three consumed scenes",
+  "selection": "Hard gate: six safe bodies and clean foot-to-foot transfer in all three. Rank eligible arms by total genuine later finisher foot-shot contacts with post-contact ball speed >=2 m/s, then in-goal crossings, then minimum joint margin. If no arm improves genuine later shot contacts over zero bias, reject lateral bias as a learning direction.",
+  "interpretation": "This is direct-physics episodic policy-parameter learning on consumed scenes; it is not a neural network or a Fresh exam. Any selection must be frozen and tested on new scenes."
+}

@@ -1,0 +1,15 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_shot_ankle_stability_v82.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v81 tracking gave clean pass, genuine finisher foot shot and in-goal crossing; red.finisher left ankle roll safety margin -0.005195 rad on frames 301-303",
+  "hypothesis": "Existing outward ankle-roll damping may remove the narrow left-ankle breach without suppressing shot quality.",
+  "frozen_actor": "v79 directed playmaker speed 1.0 with v81 tracking handoff",
+  "scene": {"ball_x_m": 2.20, "ball_y_m": -0.80, "seed": 411002, "duration_sec": 10.0},
+  "paired_control": "v81 tracking, damping unset",
+  "arms": [8.0, 12.0, 16.0],
+  "gate": "All six bodies safe with original joint limits, clean foot-to-foot pass, real receiver foot shot, and in-goal crossing; comparison includes ball speed, trajectory and no new nonfoot contact.",
+  "interpretation": "Consumed-scene stabilisation only; no promotion before separately frozen unseen local exam and 4v4 match."
+}

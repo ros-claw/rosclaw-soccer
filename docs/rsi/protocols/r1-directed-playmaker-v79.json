@@ -1,0 +1,23 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_directed_playmaker_v79.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v77 s01 safe clean transfer but 0.50 m/s peak and 7.42 s receiver delay; v78 strike-through was target-clipped and physically identical",
+  "hypothesis": "Same-frame measured foot velocity and foot Jacobian can direct a bounded pass-foot target toward the teammate instead of merely reaching the ball.",
+  "control": "v77 airborne motor with desired_pass_speed_mps=0",
+  "fixed": {"preview_pass": true, "motor_agent_id": "red.playmaker", "motor_entry_frame": 0, "duration_sec": 10.0, "ball_y_m": -0.80, "precontact_pass_standoff_m": null},
+  "scenes": [
+    {"id": "s00", "ball_x_m": 2.10, "seed": 411001},
+    {"id": "s01", "ball_x_m": 2.20, "seed": 411002}
+  ],
+  "arms": [
+    {"name": "speed10", "desired_pass_foot_speed_mps": 1.0},
+    {"name": "speed15", "desired_pass_foot_speed_mps": 1.5},
+    {"name": "speed20", "desired_pass_foot_speed_mps": 2.0}
+  ],
+  "guardrails": {"max_joint_delta_rad": 0.35, "max_velocity_correction_rad": 0.20, "retire_only_after_measured_own_foot_contact": true},
+  "diagnostics": ["six_body_safe", "clean_transfer", "receiver_delay_sec", "pass_direction", "peak_ball_speed_mps", "chain_success"],
+  "interpretation": "This is a model-based teacher candidate, not learned muscle memory; unsafe or receiver-missing arms are rejected."
+}

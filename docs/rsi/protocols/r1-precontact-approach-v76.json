@@ -1,0 +1,23 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_precontact_approach_v76.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "hypothesis": "The preview PASS cell needs a ball-relative approach target closer than the old 0.72 m standing kick position before first physical touch.",
+  "control": "v75 preview arm, same scenarios and bodies, precontact_pass_standoff_m=None",
+  "fixed": {"preview_pass": true, "receiver_motor": "none", "duration_sec": 10.0, "ball_y_m": -0.80},
+  "scenes": [
+    {"id": "s00", "ball_x_m": 2.10, "seed": 411001},
+    {"id": "s01", "ball_x_m": 2.20, "seed": 411002},
+    {"id": "s02", "ball_x_m": 2.30, "seed": 411003},
+    {"id": "s03", "ball_x_m": 2.40, "seed": 411004}
+  ],
+  "arms": [
+    {"name": "standoff25", "precontact_pass_standoff_m": 0.25},
+    {"name": "standoff35", "precontact_pass_standoff_m": 0.35},
+    {"name": "standoff45", "precontact_pass_standoff_m": 0.45}
+  ],
+  "diagnostics": ["first_foot_contact", "clean_transfer", "safe", "chain_success", "robot_robot_contact"],
+  "interpretation": "Development diagnosis only. No arm may be selected for promotion from these already-consumed scenes."
+}

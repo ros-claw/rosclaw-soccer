@@ -37,21 +37,21 @@ from rosclaw_soccer.training.phase_conditioned_strike_growth import (
 )
 
 
-class RetiringReceiverMotor(TeamSwingMotor):  # type: ignore[misc]
+class RetiringReceiverMotor(TeamSwingMotor):
     """Yield only after observed own-foot contact, never by timeout."""
 
     def __init__(self, agent_id: str, enabled: bool, action: dict[str, Any]) -> None:
         super().__init__(agent_id, enabled, action)
         self.idle_frame: int | None = None
 
-    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:
+    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:  # type: ignore[override]
         if self.first_contact_frame is not None:
             if observation.agent_id != self.agent_id or observation.frame != self.next_frame:
                 raise ValueError("same-player sequential retirement required")
             self.next_frame += 1
             self.idle_frame = observation.frame
             return None
-        return super().propose(observation)  # type: ignore[no-any-return]
+        return super().propose(observation)
 
     def retirement_request(self, *, frame: int, time_sec: float) -> TeamMotorRetirement | None:
         if self.first_contact_frame is None or self.idle_frame != frame:
@@ -131,7 +131,7 @@ def rolling_receive_joint_delta(
 class GroundedRetiringReceiverMotor(RetiringReceiverMotor):
     """Bounded rolling-ball foot reach when the airborne selector is inactive."""
 
-    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:
+    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:  # type: ignore[override]
         proposed = super().propose(observation)
         if (
             proposed is None
@@ -180,6 +180,107 @@ class GroundedRetiringReceiverMotor(RetiringReceiverMotor):
         return TeamMotorTarget(tuple(float(x) for x in target), proposed.kp, proposed.kd)
 
 
+def directed_pass_joint_delta(
+    *,
+    jacobian: np.ndarray[Any, Any],
+    measured_velocity_mps: np.ndarray[Any, Any],
+    ball_xyz: np.ndarray[Any, Any],
+    receiver_target_xyz: np.ndarray[Any, Any],
+    speed_mps: float,
+) -> np.ndarray[Any, Any]:
+    """Damped, causal foot-velocity proposal toward the visible teammate target."""
+    if (
+        jacobian.shape != (3, 6)
+        or measured_velocity_mps.shape != (3,)
+        or ball_xyz.shape != (3,)
+        or receiver_target_xyz.shape != (3,)
+        or speed_mps not in (1.0, 1.5, 2.0)
+        or not all(
+            np.isfinite(a).all()
+            for a in (jacobian, measured_velocity_mps, ball_xyz, receiver_target_xyz)
+        )
+    ):
+        raise ValueError("finite bounded directed pass context required")
+    offset = receiver_target_xyz[:2] - ball_xyz[:2]
+    distance = float(np.linalg.norm(offset))
+    if distance < 0.30:
+        return np.zeros(6)
+    desired = np.array([*(speed_mps * offset / distance), 0.0])
+    gram = jacobian @ jacobian.T + 0.05**2 * np.eye(3)
+    velocity_error = desired - measured_velocity_mps
+    return np.clip(0.08 * jacobian.T @ np.linalg.solve(gram, velocity_error), -0.20, 0.20)
+
+
+def biased_pass_target(
+    ball_xyz: np.ndarray[Any, Any],
+    receiver_xyz: np.ndarray[Any, Any],
+    lateral_bias_m: float,
+) -> np.ndarray[Any, Any]:
+    """Move a visible teammate target along the pass-orthogonal axis only."""
+    if (
+        ball_xyz.shape != (3,)
+        or receiver_xyz.shape != (3,)
+        or lateral_bias_m not in (-0.40, -0.20, 0.0, 0.20, 0.40)
+        or not np.isfinite(ball_xyz).all()
+        or not np.isfinite(receiver_xyz).all()
+    ):
+        raise ValueError("finite bounded pass target required")
+    axis = receiver_xyz[:2] - ball_xyz[:2]
+    distance = float(np.linalg.norm(axis))
+    if distance < 0.30:
+        return receiver_xyz.copy()
+    axis /= distance
+    shifted = receiver_xyz.copy()
+    shifted[:2] += lateral_bias_m * np.array([-axis[1], axis[0]])
+    return shifted
+
+
+class DirectedRetiringPassMotor(RetiringReceiverMotor):
+    """A bounded velocity-directed teacher candidate, not a trained policy."""
+
+    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:  # type: ignore[override]
+        proposed = super().propose(observation)
+        if (
+            proposed is None
+            or int(getattr(self, "side", -1)) < 0
+            or self.first_contact_frame is not None
+            or observation.intent != "pass"
+        ):
+            return proposed
+        kinematics = observation.foot_kinematics
+        if kinematics is None or kinematics.foot_linear_velocity_world_mps is None:
+            raise ValueError("directed pass requires live same-frame foot velocity")
+        side = int(self.side)
+        ids = slice(side * 6, side * 6 + 6)
+        jacobian = np.asarray(kinematics.foot_linear_jacobian_world, dtype=float)[side]
+        measured = np.asarray(kinematics.foot_linear_velocity_world_mps, dtype=float)[side]
+        q = np.asarray(observation.qpos, dtype=float)
+        target = np.asarray(proposed.target_rad, dtype=float)
+        baseline = np.asarray(observation.foundation.target.target_rad, dtype=float)  # type: ignore[union-attr]
+        velocity_delta = directed_pass_joint_delta(
+            jacobian=jacobian,
+            measured_velocity_mps=measured,
+            ball_xyz=q[36:39],
+            receiver_target_xyz=biased_pass_target(
+                q[36:39],
+                np.asarray(observation.target_position_m, dtype=float),
+                self.action["pass_lateral_bias_m"],
+            ),
+            speed_mps=self.action["directed_pass_speed_mps"],
+        )
+        delta = np.clip(target[ids] - baseline[ids] + velocity_delta, -0.35, 0.35)
+        limits = np.asarray(kinematics.leg_joint_limits_rad, dtype=float)[side]
+        delta = recover_swing_joint_boundary(
+            q[7 + side * 6 : 13 + side * 6], delta, limits, cap_rad=0.04
+        )
+        target[ids] = np.clip(baseline[ids] + delta, limits[:, 0], limits[:, 1])
+        residual = target - baseline
+        self.last_residual = residual.copy()
+        self.observations["residual"][-1] = residual.copy()
+        self.observations["executed"][-1] = target.copy()
+        return TeamMotorTarget(tuple(float(x) for x in target), proposed.kp, proposed.kd)
+
+
 def run(
     asset_root: Path,
     output_dir: Path,
@@ -192,6 +293,8 @@ def run(
     rolling_vertical_m: float = 0.04,
     rolling_requires_commitment: bool = False,
     ankle_braking: float | None = None,
+    option_ankle_braking: float | None = None,
+    option_joint_guard_margin_rad: float | None = None,
     retired_ankle_braking: float | None = None,
     ball_x_m: float = 1.92,
     ball_y_m: float = -0.80,
@@ -199,6 +302,15 @@ def run(
     stance_lateral_m: float = -0.17,
     pass_speed_mps: float = 0.80,
     preview_pass: bool = False,
+    duration_sec: float = 8.70,
+    precontact_pass_standoff_m: float | None = None,
+    motor_agent_id: str = "red.finisher",
+    motor_entry_frame: int = 30,
+    strike_through_m: float = 0.0,
+    directed_pass_speed_mps: float = 0.0,
+    pass_lateral_bias_m: float = 0.0,
+    dual_receiver_motor: bool = False,
+    handoff_profile: str = "legacy",
 ) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
     if (
@@ -207,18 +319,39 @@ def run(
         or rolling_vertical_m not in (0.0, 0.02, 0.04)
         or type(rolling_requires_commitment) is not bool
         or ankle_braking not in (None, 8.0, 12.0, 16.0)
+        or option_ankle_braking not in (None, 8.0, 12.0, 16.0)
+        or option_joint_guard_margin_rad not in (None, 0.06, 0.08, 0.10)
+        or ankle_braking is not None
+        and option_ankle_braking is not None
         or retired_ankle_braking not in (None, 8.0, 12.0, 16.0)
         or ankle_braking is not None
         and retired_ankle_braking is not None
         or retired_ankle_braking is not None
         and not motor_present
-        or not 1.80 <= ball_x_m <= 2.04
+        or not 1.80 <= ball_x_m <= 2.50
         or not -0.92 <= ball_y_m <= -0.68
         or type(seed) is not int
         or not 0 <= seed < 2**32
         or not -0.30 <= stance_lateral_m <= -0.05
         or not 0.60 <= pass_speed_mps <= 1.40
         or type(preview_pass) is not bool
+        or duration_sec not in (8.70, 10.0)
+        or precontact_pass_standoff_m not in (None, 0.25, 0.35, 0.45)
+        or precontact_pass_standoff_m is not None
+        and not preview_pass
+        or motor_agent_id not in ("red.finisher", "red.playmaker")
+        or motor_entry_frame not in (0, 30)
+        or strike_through_m not in (0.0, 0.08, 0.16)
+        or directed_pass_speed_mps not in (0.0, 1.0, 1.5, 2.0)
+        or pass_lateral_bias_m not in (-0.40, -0.20, 0.0, 0.20, 0.40)
+        or pass_lateral_bias_m != 0.0
+        and directed_pass_speed_mps == 0.0
+        or directed_pass_speed_mps > 0
+        and (not enabled or motor_agent_id != "red.playmaker")
+        or type(dual_receiver_motor) is not bool
+        or dual_receiver_motor
+        and (not motor_present or directed_pass_speed_mps == 0.0)
+        or handoff_profile not in ("legacy", "strict", "tracking", "committed")
     ):
         raise ValueError("bounded rolling receive curriculum required")
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
@@ -249,11 +382,18 @@ def run(
         )
     world = replace(
         default_continuous_match_config(),
-        simulation_duration_sec=8.70,
+        simulation_duration_sec=duration_sec,
         disjoint_motor_backends=motor_present,
         retire_completed_motors=motor_present,
         outward_ankle_roll_braking_damping=ankle_braking,
+        option_ankle_roll_braking_damping=option_ankle_braking,
+        option_joint_guard_margin_rad=option_joint_guard_margin_rad,
         retired_motor_option_ankle_braking_damping=retired_ankle_braking,
+        precontact_pass_standoff_m=precontact_pass_standoff_m,
+        strict_receive_handoff=handoff_profile != "legacy",
+        receiver_commitment_priority=handoff_profile in ("tracking", "committed"),
+        preserve_launched_handoff=handoff_profile in ("tracking", "committed"),
+        pass_target_commitment=handoff_profile == "committed",
     )
     option = replace(
         default_phase_strike_option(),
@@ -274,7 +414,7 @@ def run(
         seed=seed,
     )
     action = {
-        "entry_frame": 30,
+        "entry_frame": motor_entry_frame,
         "forward_cap_m": 0.16,
         "lateral_cap_m": 0.10,
         "vertical_offset_m": 0.04,
@@ -282,6 +422,9 @@ def run(
         "swing_acquisition_max_lateral_gap_m": 0.22,
         "revalidate_swing_side": True,
         "joint_boundary_recovery_cap_rad": 0.04,
+        "strike_through_m": strike_through_m,
+        "directed_pass_speed_mps": directed_pass_speed_mps,
+        "pass_lateral_bias_m": pass_lateral_bias_m,
         "rolling_cap_rad": rolling_cap_rad,
         "rolling_radius_m": rolling_radius_m,
         "rolling_vertical_m": rolling_vertical_m,
@@ -289,9 +432,27 @@ def run(
     }
     if grounded and (not enabled or not motor_present):
         raise ValueError("grounded reach requires an enabled disjoint motor")
-    motor = (GroundedRetiringReceiverMotor if grounded else RetiringReceiverMotor)(
-        "red.finisher", enabled, action
+    motor_type = (
+        DirectedRetiringPassMotor
+        if directed_pass_speed_mps > 0
+        else GroundedRetiringReceiverMotor
+        if grounded
+        else RetiringReceiverMotor
     )
+    motor = motor_type(motor_agent_id, enabled, action)
+    receiver_motor = None
+    if dual_receiver_motor:
+        receiver_action = {
+            **action,
+            "entry_frame": 30,
+            "strike_through_m": 0.0,
+            "directed_pass_speed_mps": 0.0,
+            "rolling_cap_rad": 0.04,
+            "rolling_radius_m": 0.30,
+            "rolling_vertical_m": 0.02,
+            "rolling_requires_commitment": True,
+        }
+        receiver_motor = GroundedRetiringReceiverMotor("red.finisher", True, receiver_action)
     protocol = {
         "schema": "rosclaw_soccer.rsi.r1_receiver_bridge_v71.protocol.v1",
         "partition": "CONSUMED_DEV",
@@ -299,8 +460,15 @@ def run(
         "enabled": enabled,
         "grounded": grounded,
         "ankle_braking": ankle_braking,
+        "option_ankle_braking": option_ankle_braking,
+        "option_joint_guard_margin_rad": option_joint_guard_margin_rad,
         "retired_ankle_braking": retired_ankle_braking,
         "motor_present": motor_present,
+        "motor_agent_id": motor_agent_id,
+        "motor_entry_frame": motor_entry_frame,
+        "strike_through_m": strike_through_m,
+        "directed_pass_speed_mps": directed_pass_speed_mps,
+        "pass_lateral_bias_m": pass_lateral_bias_m,
         "scenario": asdict(scenario),
         "world_config_hash": world.config_hash,
         "option_config_hash": option.config_hash,
@@ -308,7 +476,14 @@ def run(
         "stance_lateral_m": stance_lateral_m,
         "pass_speed_mps": pass_speed_mps,
         "preview_pass": preview_pass,
+        "duration_sec": duration_sec,
+        "precontact_pass_standoff_m": precontact_pass_standoff_m,
         "motor_contract_hash": motor.contract_hash,
+        "dual_receiver_motor": dual_receiver_motor,
+        "handoff_profile": handoff_profile,
+        "receiver_motor_contract_hash": (
+            None if receiver_motor is None else receiver_motor.contract_hash
+        ),
         "source_hashes": sources,
         "promotion_authorized": False,
         "video_authorized": False,
@@ -334,7 +509,13 @@ def run(
             contact_teacher_config=teacher,
             option_bridge_config=option,
             strike_phase_config=phase,
-            motor_options={"red.finisher": motor} if motor_present else None,
+            motor_options=(
+                {motor_agent_id: motor, "red.finisher": receiver_motor}
+                if receiver_motor is not None
+                else {motor_agent_id: motor}
+                if motor_present
+                else None
+            ),
             physics_evidence_consumers={"red.playmaker": recorder},
         )
     if {name: hash_bytes((root / name).read_bytes()) for name in names} != sources:
@@ -392,6 +573,7 @@ def run(
         "trace_hash": hash_bytes(trace_path.read_bytes()),
         "result": result.to_dict(),
         "receiver": receiver,
+        "motor_agent_id": motor_agent_id if motor_present else None,
         "request_frame": request_frame,
         "request_time_sec": request_time_sec,
         "chain": chain,
@@ -412,6 +594,18 @@ def run(
         ),
         "motor_first_foot_contact_frame": motor.first_contact_frame,
         "motor_peak_own_foot_force_n": max(motor.own_foot_force_peak_n, default=0.0),
+        "receiver_motor_active_frames": (
+            0
+            if receiver_motor is None
+            else int(
+                np.count_nonzero(
+                    np.any(np.asarray(receiver_motor.observations["residual"]) != 0, axis=1)
+                )
+            )
+        ),
+        "receiver_motor_first_foot_contact_frame": (
+            None if receiver_motor is None else receiver_motor.first_contact_frame
+        ),
         "promotion_authorized": False,
         "video_authorized": False,
     }
@@ -433,6 +627,8 @@ def main() -> None:
     parser.add_argument("--rolling-vertical", type=float, choices=(0.0, 0.02, 0.04), default=0.04)
     parser.add_argument("--rolling-requires-commitment", action="store_true")
     parser.add_argument("--ankle-braking", type=float, choices=(8.0, 12.0, 16.0))
+    parser.add_argument("--option-ankle-braking", type=float, choices=(8.0, 12.0, 16.0))
+    parser.add_argument("--option-joint-guard-margin", type=float, choices=(0.06, 0.08, 0.10))
     parser.add_argument("--retired-ankle-braking", type=float, choices=(8.0, 12.0, 16.0))
     parser.add_argument("--ball-x", type=float, default=1.92)
     parser.add_argument("--ball-y", type=float, default=-0.80)
@@ -440,6 +636,23 @@ def main() -> None:
     parser.add_argument("--stance", type=float, default=-0.17)
     parser.add_argument("--pass-speed", type=float, default=0.80)
     parser.add_argument("--preview-pass", action="store_true")
+    parser.add_argument("--duration", type=float, choices=(8.70, 10.0), default=8.70)
+    parser.add_argument("--precontact-pass-standoff", type=float, choices=(0.25, 0.35, 0.45))
+    parser.add_argument(
+        "--motor-agent", choices=("red.finisher", "red.playmaker"), default="red.finisher"
+    )
+    parser.add_argument("--motor-entry-frame", type=int, choices=(0, 30), default=30)
+    parser.add_argument("--strike-through", type=float, choices=(0.0, 0.08, 0.16), default=0.0)
+    parser.add_argument("--directed-pass-speed", type=float, choices=(1.0, 1.5, 2.0), default=0.0)
+    parser.add_argument(
+        "--pass-lateral-bias", type=float, choices=(-0.40, -0.20, 0.0, 0.20, 0.40), default=0.0
+    )
+    parser.add_argument("--dual-receiver-motor", action="store_true")
+    parser.add_argument(
+        "--handoff-profile",
+        choices=("legacy", "strict", "tracking", "committed"),
+        default="legacy",
+    )
     parser.add_argument("--no-motor", action="store_true")
     args = parser.parse_args()
     report = run(
@@ -453,6 +666,8 @@ def main() -> None:
         rolling_vertical_m=args.rolling_vertical,
         rolling_requires_commitment=args.rolling_requires_commitment,
         ankle_braking=args.ankle_braking,
+        option_ankle_braking=args.option_ankle_braking,
+        option_joint_guard_margin_rad=args.option_joint_guard_margin,
         retired_ankle_braking=args.retired_ankle_braking,
         ball_x_m=args.ball_x,
         ball_y_m=args.ball_y,
@@ -460,6 +675,15 @@ def main() -> None:
         stance_lateral_m=args.stance,
         pass_speed_mps=args.pass_speed,
         preview_pass=args.preview_pass,
+        duration_sec=args.duration,
+        precontact_pass_standoff_m=args.precontact_pass_standoff,
+        motor_agent_id=args.motor_agent,
+        motor_entry_frame=args.motor_entry_frame,
+        strike_through_m=args.strike_through,
+        directed_pass_speed_mps=args.directed_pass_speed,
+        pass_lateral_bias_m=args.pass_lateral_bias,
+        dual_receiver_motor=args.dual_receiver_motor,
+        handoff_profile=args.handoff_profile,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
 

@@ -1,0 +1,20 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_playmaker_strike_through_v78.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v77 s01 produced a safe real foot-to-foot transfer but required 7.42 seconds, ball peak speed 0.50 m/s, no shot option activation",
+  "hypothesis": "Bounded forward swing-through might increase physical pass speed while retaining six-body safety and a clean receiver contact.",
+  "fixed": {"preview_pass": true, "motor_agent_id": "red.playmaker", "motor_entry_frame": 0, "duration_sec": 10.0, "receiver_motor": "none", "precontact_pass_standoff_m": null},
+  "scenes": [
+    {"id": "s00", "ball_x_m": 2.10, "ball_y_m": -0.80, "seed": 411001},
+    {"id": "s01", "ball_x_m": 2.20, "ball_y_m": -0.80, "seed": 411002}
+  ],
+  "arms": [
+    {"name": "through08", "strike_through_m": 0.08},
+    {"name": "through16", "strike_through_m": 0.16}
+  ],
+  "diagnostics": ["sender_foot_contact", "peak_ball_speed_mps", "receiver_contact_delay_sec", "clean_transfer", "safe", "chain_success"],
+  "interpretation": "A faster ball without clean transfer or safe follow-on shot is failure; no promotion from seen scenes."
+}

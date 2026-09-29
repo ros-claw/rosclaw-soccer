@@ -1,0 +1,28 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_strike_local_fresh_v87.protocol.v1",
+  "partition": "FRESH_LOCAL_HOLDOUT",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "selection_source": "v86 consumed training; -0.19 m selected by predeclared maximum minimum-joint-margin tie break after passing exact physical chain gate",
+  "frozen_candidate": {"playmaker_motor": "directed", "directed_pass_speed_mps": 1.0, "handoff_profile": "tracking", "strike_stance_lateral_m": -0.19, "pass_speed_mps": 0.8, "duration_sec": 10.0},
+  "paired_parent": {"playmaker_motor": "directed", "directed_pass_speed_mps": 1.0, "handoff_profile": "tracking", "strike_stance_lateral_m": -0.17, "pass_speed_mps": 0.8, "duration_sec": 10.0},
+  "scenes": [
+    {"id": "s00", "ball_x_m": 2.16, "ball_y_m": -0.76, "seed": 512001},
+    {"id": "s01", "ball_x_m": 2.16, "ball_y_m": -0.84, "seed": 512002},
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s03", "ball_x_m": 2.24, "ball_y_m": -0.84, "seed": 512004},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s05", "ball_x_m": 2.32, "ball_y_m": -0.84, "seed": 512006},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007},
+    {"id": "s07", "ball_x_m": 2.40, "ball_y_m": -0.84, "seed": 512008}
+  ],
+  "gate": {
+    "candidate_six_body_safe": "8/8",
+    "candidate_clean_foot_transfer_and_real_finisher_foot_shot_and_in_goal_crossing": "at_least_6/8",
+    "candidate_chain_success_vs_paired_parent": "at_least_plus_2_cases",
+    "no_parent_chain_success_lost": true,
+    "source_trace_integrity": "all reports, source and trajectory hashes present and verified"
+  },
+  "interpretation": "This exam is only a local six-G1 soccer-chain gate. Even a pass is not 4v4 match continuity or a promotional video. If rejected, do not retune on these scenes and call them fresh again."
+}

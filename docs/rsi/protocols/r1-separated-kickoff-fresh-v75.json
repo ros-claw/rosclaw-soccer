@@ -1,0 +1,36 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_separated_kickoff_fresh_v75.protocol.v1",
+  "partition": "FRESH_SCENES",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "hypothesis": "A ball initially separated from the red playmaker foot allows a real approach and a causal pass commitment before first foot contact; anticipatory tactical preview might improve this relative to the existing possession-first cell.",
+  "fixed": {
+    "duration_sec": 10.0,
+    "ball_y_m": -0.80,
+    "ball_z_m": 0.115,
+    "receiver_motor": "none",
+    "pass_speed_mps": 0.80,
+    "stance_lateral_m": -0.17,
+    "one_ball": true,
+    "six_physical_g1": true
+  },
+  "arms": [
+    {"name": "parent", "anticipatory_contact_red_playmaker": false},
+    {"name": "preview", "anticipatory_contact_red_playmaker": true}
+  ],
+  "scenes": [
+    {"id": "s00", "ball_x_m": 2.10, "seed": 411001},
+    {"id": "s01", "ball_x_m": 2.20, "seed": 411002},
+    {"id": "s02", "ball_x_m": 2.30, "seed": 411003},
+    {"id": "s03", "ball_x_m": 2.40, "seed": 411004}
+  ],
+  "frozen_gate": {
+    "require_all_complete": true,
+    "maximum_newly_unsafe": 0,
+    "minimum_preview_clean_transfer": 2,
+    "minimum_preview_chain_success": 1,
+    "minimum_clean_transfer_gain": 1
+  },
+  "interpretation": "A pass launch improvement is insufficient to promote a team unless measured foot-to-foot transfer and safe in-frame goal also improve."
+}

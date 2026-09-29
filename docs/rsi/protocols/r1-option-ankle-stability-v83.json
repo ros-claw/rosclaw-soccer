@@ -1,0 +1,14 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_option_ankle_stability_v83.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v81 tracking produced real pass-stop-shot-goal but a 3-frame left ankle limit breach; v82 whole-match ankle braking removed breach but also suppressed the genuine shot",
+  "hypothesis": "Applying the same bounded ankle braking only while a role owns an active strike option preserves causal pass/receive and prevents the contact-time ankle breach.",
+  "frozen_actor": "v79 directed playmaker speed 1.0, v81 tracking handoff",
+  "scene": {"ball_x_m": 2.20, "ball_y_m": -0.80, "seed": 411002, "duration_sec": 10.0},
+  "arms": [8.0, 12.0, 16.0],
+  "gate": "All six bodies safe under original joint limits, clean foot-to-foot transfer, real receiver foot shot, in-goal crossing, and no new nonfoot contact.",
+  "interpretation": "Consumed development. Any pass needs a newly frozen unseen local exam, then 4v4 continuity before promotional video."
+}

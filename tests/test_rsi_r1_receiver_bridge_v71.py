@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 from rsi_r1_receiver_bridge_v71 import (
     RetiringReceiverMotor,
+    biased_pass_target,
+    directed_pass_joint_delta,
     rolling_receive_joint_delta,
     select_grounded_receiver_foot,
 )
@@ -54,3 +56,45 @@ def test_rolling_receive_delta_is_direction_equivariant_and_bounded():
     assert left[0] < 0 < right[0]
     assert np.max(np.abs(left)) <= 0.08
     assert np.max(np.abs(right)) <= 0.08
+
+
+def test_directed_pass_uses_target_direction_and_measured_foot_velocity():
+    jacobian = np.eye(3, 6)
+    right = directed_pass_joint_delta(
+        jacobian=jacobian,
+        measured_velocity_mps=np.zeros(3),
+        ball_xyz=np.array([0.0, 0.0, 0.115]),
+        receiver_target_xyz=np.array([2.0, 0.0, 0.0]),
+        speed_mps=1.5,
+    )
+    left = directed_pass_joint_delta(
+        jacobian=jacobian,
+        measured_velocity_mps=np.zeros(3),
+        ball_xyz=np.array([0.0, 0.0, 0.115]),
+        receiver_target_xyz=np.array([-2.0, 0.0, 0.0]),
+        speed_mps=1.5,
+    )
+    assert left[0] < 0 < right[0]
+    assert np.max(np.abs(left)) <= 0.20 and np.max(np.abs(right)) <= 0.20
+    assert np.allclose(
+        directed_pass_joint_delta(
+            jacobian=jacobian,
+            measured_velocity_mps=np.array([1.5, 0.0, 0.0]),
+            ball_xyz=np.array([0.0, 0.0, 0.115]),
+            receiver_target_xyz=np.array([2.0, 0.0, 0.0]),
+            speed_mps=1.5,
+        ),
+        0.0,
+    )
+
+
+def test_biased_pass_target_is_rotation_equivariant_and_fails_closed():
+    ball = np.array([0.0, 0.0, 0.115])
+    receiver = np.array([2.0, 0.0, 0.0])
+    assert np.allclose(biased_pass_target(ball, receiver, 0.20), [2.0, 0.20, 0.0])
+    rotated = biased_pass_target(ball, np.array([0.0, 2.0, 0.0]), 0.20)
+    assert np.allclose(rotated, [-0.20, 2.0, 0.0])
+    with pytest.raises(ValueError):
+        biased_pass_target(ball, receiver, 0.60)
+    with pytest.raises(ValueError):
+        biased_pass_target(ball, np.array([float("nan"), 0.0, 0.0]), 0.0)
