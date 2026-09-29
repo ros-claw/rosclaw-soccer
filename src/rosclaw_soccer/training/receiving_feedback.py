@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rosclaw_soccer.providers.g1.locomotion_memory import LocomotionMemory
 from rosclaw_soccer.sim.contracts import hash_json
+from rosclaw_soccer.skills.team.foot_kinematics import TeamFootKinematics
 from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSchedule
 from rosclaw_soccer.training.receiving_scene import ReceivingSceneContext
 
@@ -136,6 +137,7 @@ class ReceivingFeedbackObservation:
     action_substrate: str = "A0_leg12"
     previous_body_residual_rad: tuple[float, ...] | None = None
     contact_history: ReceivingContactHistory | None = None
+    foot_kinematics: TeamFootKinematics | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -186,6 +188,16 @@ class ReceivingFeedbackObservation:
             self.contact_history.__post_init__()
             if abs(self.contact_history.observed_through_time_sec - self.time_sec) > 1e-9:
                 raise ValueError("contact history must cover the current observation clock")
+        if self.foot_kinematics is not None:
+            if not isinstance(self.foot_kinematics, TeamFootKinematics):
+                raise ValueError("typed same-frame foot kinematics required")
+            self.foot_kinematics.__post_init__()
+            if (
+                self.foot_kinematics.agent_id != self.agent_id
+                or self.foot_kinematics.frame != self.frame
+                or self.foot_kinematics.foot_linear_velocity_world_mps is None
+            ):
+                raise ValueError("same-player current foot positions and velocities required")
         if type(self.action_substrate) is not str or self.action_substrate not in (
             "A0_leg12",
             "A1_body29",
@@ -239,6 +251,8 @@ class ReceivingFeedbackObservation:
         value = asdict(self)
         if self.contact_history is None:
             value.pop("contact_history")
+        if self.foot_kinematics is None:
+            value.pop("foot_kinematics")
         if self.action_substrate == "A0_leg12" and self.previous_body_residual_rad is None:
             value.pop("action_substrate")
             value.pop("previous_body_residual_rad")
@@ -289,6 +303,11 @@ class ReceivingFeedbackSlot:
         self.requires_contact_history = getattr(provider, "requires_contact_history", False)
         if type(self.requires_contact_history) is not bool:
             raise ValueError("explicit completed-contact history requirement required")
+        self.requires_foot_kinematics = getattr(provider, "requires_foot_kinematics", False)
+        if type(self.requires_foot_kinematics) is not bool or (
+            self.requires_foot_kinematics and schedule.substrate != "A1_body29"
+        ):
+            raise ValueError("explicit whole-body foot-kinematics requirement required")
         self.requires_locomotion_memory = getattr(provider, "requires_locomotion_memory", False)
         if type(self.requires_locomotion_memory) is not bool:
             raise ValueError("explicit locomotion memory requirement required")
@@ -325,6 +344,10 @@ class ReceivingFeedbackSlot:
                 or getattr(self.provider, "requires_contact_history", False)
                 != self.requires_contact_history
                 or (self.requires_contact_history and observation.contact_history is None)
+                or type(getattr(self.provider, "requires_foot_kinematics", False)) is not bool
+                or getattr(self.provider, "requires_foot_kinematics", False)
+                != self.requires_foot_kinematics
+                or (self.requires_foot_kinematics and observation.foot_kinematics is None)
                 or observation.action_substrate != self.action_substrate
                 or type(getattr(self.provider, "requires_navigation_target", False)) is not bool
                 or getattr(self.provider, "requires_navigation_target", False)
@@ -376,6 +399,9 @@ class ReceivingFeedbackSlot:
                 or type(getattr(self.provider, "requires_contact_history", False)) is not bool
                 or getattr(self.provider, "requires_contact_history", False)
                 != self.requires_contact_history
+                or type(getattr(self.provider, "requires_foot_kinematics", False)) is not bool
+                or getattr(self.provider, "requires_foot_kinematics", False)
+                != self.requires_foot_kinematics
                 or getattr(self.provider, "action_substrate", "A0_leg12") != self.action_substrate
                 or self.provider.agent_id != self.agent_id
                 or self.provider.schedule_hash != self.schedule_hash

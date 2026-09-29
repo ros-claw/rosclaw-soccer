@@ -3272,6 +3272,32 @@ def simulate_independent_team_world(
                             else oracle_cursor.previous
                         )
                     )
+                feedback_foot_kinematics = None
+                if feedback_slot.requires_foot_kinematics:
+                    feedback_foot_kinematics = measure_team_foot_kinematics(
+                        model=model,
+                        data=data,
+                        agent_id=oracle_agent,
+                        frame=frame,
+                        ankle_body_ids=(
+                            focal_controller.left_ankle_body,
+                            focal_controller.right_ankle_body,
+                        ),
+                        leg_dof_ids=(
+                            tuple(int(value) for value in focal_controller.joint_qvel[:6]),
+                            tuple(int(value) for value in focal_controller.joint_qvel[6:12]),
+                        ),
+                        leg_joint_ranges=(
+                            tuple(
+                                tuple(float(value) for value in pair)
+                                for pair in model.jnt_range[focal_controller.joint_ids[:6]]
+                            ),
+                            tuple(
+                                tuple(float(value) for value in pair)
+                                for pair in model.jnt_range[focal_controller.joint_ids[6:12]]
+                            ),
+                        ),
+                    )
                 feedback_observation = ReceivingFeedbackObservation(
                     agent_id=oracle_agent,
                     frame=frame,
@@ -3314,6 +3340,7 @@ def simulate_independent_team_world(
                         if feedback_slot.requires_contact_history
                         else None
                     ),
+                    foot_kinematics=feedback_foot_kinematics,
                 )
                 feedback_desired = feedback_slot.step(feedback_observation)
                 if feedback_observation.contact_history is not None:
@@ -3328,6 +3355,16 @@ def simulate_independent_team_world(
                 if feedback_body_previous is not None:
                     trace.setdefault("receiving_feedback_previous_body_residual_rad", []).append(
                         np.asarray(feedback_body_previous)
+                    )
+                if feedback_foot_kinematics is not None:
+                    trace.setdefault("receiving_feedback_foot_position_world_m", []).append(
+                        np.asarray(feedback_foot_kinematics.foot_position_world_m)
+                    )
+                    trace.setdefault("receiving_feedback_foot_velocity_world_mps", []).append(
+                        np.asarray(feedback_foot_kinematics.foot_linear_velocity_world_mps)
+                    )
+                    trace.setdefault("receiving_feedback_foot_jacobian_world", []).append(
+                        np.asarray(feedback_foot_kinematics.foot_linear_jacobian_world)
                     )
                 if feedback_scene is not None:
                     trace.setdefault("receiving_feedback_scene_hash", []).append(

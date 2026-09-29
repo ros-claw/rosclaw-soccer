@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from rosclaw_soccer.skills.team.foot_kinematics import TeamFootKinematics
 from rosclaw_soccer.skills.team.motor_option import TeamMotorTarget
 from rosclaw_soccer.training.receiving_feedback import (
     ReceivingCaptureContext,
@@ -77,6 +78,7 @@ def test_memory_is_opt_in_bound_and_hashable():
     old_fields.pop("action_substrate")
     old_fields.pop("previous_body_residual_rad")
     old_fields.pop("contact_history")
+    old_fields.pop("foot_kinematics")
     assert old.observation_hash == hash_json(old_fields)
     new = replace(old, locomotion=locomotion())
     assert new.observation_hash != old.observation_hash
@@ -120,6 +122,34 @@ def test_memory_requirement_cannot_change_during_proposal():
     with pytest.raises(ValueError):
         slot.step(replace(observation(), locomotion=locomotion()))
     assert slot.faulted
+
+
+def test_whole_body_foot_kinematics_are_opt_in_identity_and_clock_bound():
+    source = ReceivingOracleSchedule("blue.finisher", "A1_body29", 0, 10, ((0.0,) * 29,))
+    provider = Provider(source)
+    provider.action_substrate = "A1_body29"
+    provider.requires_foot_kinematics = True
+    provider.result = (0.0,) * 29
+    feet = TeamFootKinematics(
+        "blue.finisher",
+        0,
+        ((0.0, 0.0, 0.0),) * 2,
+        (((0.0,) * 6,) * 3,) * 2,
+        (((-1.0, 1.0),) * 6,) * 2,
+        ((0.0, 0.0, 0.0),) * 2,
+    )
+    value = replace(
+        observation(),
+        action_substrate="A1_body29",
+        previous_body_residual_rad=(0.0,) * 29,
+        foot_kinematics=feet,
+    )
+    assert ReceivingFeedbackSlot(provider, source).step(value) == (0.0,) * 29
+    assert value.observation_hash != replace(value, foot_kinematics=None).observation_hash
+    with pytest.raises(ValueError, match="same-player current foot"):
+        replace(value, foot_kinematics=replace(feet, agent_id="red.finisher"))
+    with pytest.raises(ValueError):
+        ReceivingFeedbackSlot(provider, source).step(replace(value, foot_kinematics=None))
 
 
 def test_preentry_observes_without_querying_provider():
