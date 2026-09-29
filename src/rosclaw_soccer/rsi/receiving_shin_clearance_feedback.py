@@ -20,9 +20,11 @@ class ReceivingShinClearanceFeedback(ReceivingTaskspaceFeedback):
     target_clearance_m: float = 0.06
     foot_preservation: float = 1.0
     maximum_foot_shift_m: float = 0.015
+    prediction_horizon_sec: float = 0.0
     requires_shin_clearance: bool = field(init=False, default=True)
     _clearance_action_frames: int = field(init=False, default=0)
     _peak_predicted_foot_shift_m: float = field(init=False, default=0.0)
+    _previous_clearance_m: tuple[float, float] | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -31,6 +33,7 @@ class ReceivingShinClearanceFeedback(ReceivingTaskspaceFeedback):
             self.target_clearance_m,
             self.foot_preservation,
             self.maximum_foot_shift_m,
+            self.prediction_horizon_sec,
         )
         if (
             any(type(x) is not float or not math.isfinite(x) for x in values)
@@ -38,6 +41,7 @@ class ReceivingShinClearanceFeedback(ReceivingTaskspaceFeedback):
             or not 0.02 <= self.target_clearance_m <= 0.12
             or not 0 <= self.foot_preservation <= 1
             or not 0.002 <= self.maximum_foot_shift_m <= 0.03
+            or not 0 <= self.prediction_horizon_sec <= 0.15
         ):
             raise ValueError("bounded same-player shin-clearance feedback required")
         self.contract_hash = hash_json(
@@ -48,6 +52,7 @@ class ReceivingShinClearanceFeedback(ReceivingTaskspaceFeedback):
                 "target_clearance_m": self.target_clearance_m,
                 "foot_preservation": self.foot_preservation,
                 "maximum_foot_shift_m": self.maximum_foot_shift_m,
+                "prediction_horizon_sec": self.prediction_horizon_sec,
                 "requires_shin_clearance": True,
                 "activation_ceiling": "SIM_ONLY",
             }
@@ -69,6 +74,8 @@ class ReceivingShinClearanceFeedback(ReceivingTaskspaceFeedback):
         if shin.agent_id != self.agent_id or shin.frame != observation.frame:
             raise ValueError("shin differential belongs to another player or frame")
         action = np.asarray(super().propose(observation), dtype=np.float64)
+        previous_clearance = self._previous_clearance_m
+        self._previous_clearance_m = shin.clearance_m
         if self.clearance_gain == 0:
             return tuple(float(x) for x in action)
         snapshot = self.mailbox.snapshot
@@ -78,7 +85,11 @@ class ReceivingShinClearanceFeedback(ReceivingTaskspaceFeedback):
             right = snapshot.first_own_foot == "right_foot"
         side = 1 if right else 0
         gap = shin.clearance_m[side]
-        if gap >= self.target_clearance_m:
+        closing_speed = (
+            0.0 if previous_clearance is None else min((gap - previous_clearance[side]) / 0.02, 0.0)
+        )
+        predicted_gap = gap + self.prediction_horizon_sec * closing_speed
+        if predicted_gap >= self.target_clearance_m:
             return tuple(float(x) for x in action)
         feet = observation.foot_kinematics
         ball = np.asarray(observation.qpos[36:39], dtype=np.float64)
@@ -97,7 +108,9 @@ class ReceivingShinClearanceFeedback(ReceivingTaskspaceFeedback):
         norm = float(np.linalg.norm(projected))
         if norm <= 1e-9:
             return tuple(float(x) for x in action)
-        strength = self.clearance_gain * np.clip((self.target_clearance_m - gap) / 0.04, 0, 1)
+        strength = self.clearance_gain * np.clip(
+            (self.target_clearance_m - predicted_gap) / 0.04, 0, 1
+        )
         correction = 0.1 * strength * projected / norm
         predicted_shift = float(np.linalg.norm(foot_jacobian @ correction))
         if predicted_shift > self.maximum_foot_shift_m:

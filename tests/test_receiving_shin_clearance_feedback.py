@@ -54,3 +54,40 @@ def test_zero_clearance_gain_is_exact_foot_feedback_and_nonzero_is_bounded():
     assert active.peak_predicted_foot_shift_m <= 0.015
     with pytest.raises(ValueError, match="same-player current shin"):
         replace(observation, shin_clearance=replace(observation.shin_clearance, frame=19))
+
+
+def test_prediction_uses_only_prior_measured_gap():
+    schedule = ReceivingOracleSchedule("red.finisher", "A1_body29", 20, 10, ((0.0,) * 29,))
+    mailbox = ReceiveContactMailbox("red.finisher")
+    qpos = list(_observation(20).qpos)
+    qpos[2] = 0.75
+    current = replace(
+        _observation(20),
+        qpos=tuple(qpos),
+        shin_clearance=TeamShinClearance(
+            "red.finisher", 20, (0.12, 0.2), ((0.1, 0.0, 0.0, 0.2, 0.0, 0.0), (0.0,) * 6)
+        ),
+    )
+    plain = ReceivingShinClearanceFeedback(
+        "red.finisher", schedule.contract_hash, mailbox, clearance_gain=1.0
+    )
+    predictive = ReceivingShinClearanceFeedback(
+        "red.finisher",
+        schedule.contract_hash,
+        mailbox,
+        clearance_gain=1.0,
+        prediction_horizon_sec=0.1,
+    )
+    mailbox._snapshot = ReceiveContactSnapshot(0.4, None, None, None, 0)
+    assert plain.propose(current) == predictive.propose(current)
+    next_observation = replace(
+        _observation(21),
+        qpos=tuple(qpos),
+        shin_clearance=TeamShinClearance(
+            "red.finisher", 21, (0.10, 0.2), ((0.1, 0.0, 0.0, 0.2, 0.0, 0.0), (0.0,) * 6)
+        ),
+    )
+    mailbox._snapshot = ReceiveContactSnapshot(0.42, None, None, None, 0)
+    assert plain.propose(next_observation) != predictive.propose(next_observation)
+    assert plain.clearance_action_frames == 0
+    assert predictive.clearance_action_frames == 1
