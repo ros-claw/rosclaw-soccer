@@ -74,3 +74,11 @@ def test_taskspace_requires_finite_bounded_gains():
         ReceivingTaskspaceFeedback(
             "red.finisher", schedule.contract_hash, mailbox, 1.5, 0.0, 0.0, 0.0, 0.0
         )
+    with pytest.raises(ValueError, match="bounded task-space"):
+        ReceivingTaskspaceFeedback(
+            "red.finisher", schedule.contract_hash, mailbox, target_depth_m=0.01
+        )
+    with pytest.raises(ValueError, match="bounded task-space"):
+        ReceivingTaskspaceFeedback(
+            "red.finisher", schedule.contract_hash, mailbox, target_lateral_m=0.5
+        )

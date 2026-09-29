@@ -26,6 +26,8 @@ class ReceivingTaskspaceFeedback(ReceivingWholeBodyFootTap):
     velocity_horizon_sec: float = 0.0
     hip_clearance_rad: float = 0.0
     ankle_compensation_rad: float = 0.0
+    target_depth_m: float = 0.18
+    target_lateral_m: float = 0.03
     _nonzero_frames: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
@@ -36,6 +38,8 @@ class ReceivingTaskspaceFeedback(ReceivingWholeBodyFootTap):
             self.velocity_horizon_sec,
             self.hip_clearance_rad,
             self.ankle_compensation_rad,
+            self.target_depth_m,
+            self.target_lateral_m,
         )
         if (
             any(type(x) is not float or not math.isfinite(x) for x in values)
@@ -44,6 +48,8 @@ class ReceivingTaskspaceFeedback(ReceivingWholeBodyFootTap):
             or not 0 <= self.velocity_horizon_sec <= 0.15
             or not -0.1 <= self.hip_clearance_rad <= 0.1
             or not -0.1 <= self.ankle_compensation_rad <= 0.1
+            or not 0.08 <= self.target_depth_m <= 0.30
+            or not -0.08 <= self.target_lateral_m <= 0.16
         ):
             raise ValueError("bounded task-space receiving gains required")
         self.contract_hash = hash_json(
@@ -55,6 +61,8 @@ class ReceivingTaskspaceFeedback(ReceivingWholeBodyFootTap):
                 "velocity_horizon_sec": self.velocity_horizon_sec,
                 "hip_clearance_rad": self.hip_clearance_rad,
                 "ankle_compensation_rad": self.ankle_compensation_rad,
+                "target_depth_m": self.target_depth_m,
+                "target_lateral_m": self.target_lateral_m,
                 "action_substrate": "A1_body29",
                 "activation_ceiling": "SIM_ONLY",
             }
@@ -88,7 +96,13 @@ class ReceivingTaskspaceFeedback(ReceivingWholeBodyFootTap):
         foot_vel = np.asarray(feet.foot_linear_velocity_world_mps[side], dtype=np.float64)
         ball = np.asarray(observation.qpos[36:39], dtype=np.float64)
         ball_vel = np.asarray(observation.qvel[35:38], dtype=np.float64)
-        target = ball + np.asarray((-0.18, -0.03 if right else 0.03, -0.08))
+        target = ball + np.asarray(
+            (
+                -self.target_depth_m,
+                -self.target_lateral_m if right else self.target_lateral_m,
+                -0.08,
+            )
+        )
         target[2] = np.clip(target[2], 0.04, 0.08)
         error = np.clip(target - foot, -0.15, 0.15)
         relative_velocity = np.clip(ball_vel - foot_vel, -1.5, 1.5)
