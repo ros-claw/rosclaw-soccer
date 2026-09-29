@@ -28,6 +28,8 @@ class ReceivingTaskspaceMotor:
     hip_clearance_rad: float = 0.0
     ankle_compensation_rad: float = 0.0
     idle_before_first_touch: bool = False
+    target_depth_m: float = 0.18
+    target_lateral_m: float = 0.03
     activation_ceiling: str = field(init=False, default="SIM_ONLY")
     needs_foot_kinematics: bool = field(init=False, default=True)
     contract_hash: str = field(init=False)
@@ -42,6 +44,8 @@ class ReceivingTaskspaceMotor:
             self.velocity_horizon_sec,
             self.hip_clearance_rad,
             self.ankle_compensation_rad,
+            self.target_depth_m,
+            self.target_lateral_m,
         )
         if (
             not isinstance(self.mailbox, ReceiveContactMailbox)
@@ -53,6 +57,8 @@ class ReceivingTaskspaceMotor:
             or not -0.2 <= self.hip_clearance_rad <= 0.2
             or not -0.2 <= self.ankle_compensation_rad <= 0.2
             or type(self.idle_before_first_touch) is not bool
+            or not 0.08 <= self.target_depth_m <= 0.30
+            or not -0.08 <= self.target_lateral_m <= 0.16
         ):
             raise ValueError("bounded same-player SIM_ONLY receiving motor required")
         self.contract_hash = hash_json(
@@ -66,6 +72,8 @@ class ReceivingTaskspaceMotor:
                 "hip_clearance_rad": self.hip_clearance_rad,
                 "ankle_compensation_rad": self.ankle_compensation_rad,
                 "idle_before_first_touch": self.idle_before_first_touch,
+                "target_depth_m": self.target_depth_m,
+                "target_lateral_m": self.target_lateral_m,
                 "target_correction_limit_rad": 0.25,
                 "activation_ceiling": "SIM_ONLY",
             }
@@ -119,7 +127,13 @@ class ReceivingTaskspaceMotor:
         ball_velocity = np.asarray(observation.qvel[35:38], dtype=np.float64)
         if np.linalg.norm(ball - foot) > 0.85 or observation.qpos[2] < 0.55:
             return None if self.idle_before_first_touch else base
-        target_foot = ball + np.asarray((-0.18, -0.03 if right else 0.03, -0.08))
+        target_foot = ball + np.asarray(
+            (
+                -self.target_depth_m,
+                -self.target_lateral_m if right else self.target_lateral_m,
+                -0.08,
+            )
+        )
         target_foot[2] = np.clip(target_foot[2], 0.04, 0.08)
         error = np.clip(target_foot - foot, -0.2, 0.2)
         velocity_error = np.clip(ball_velocity - foot_velocity, -1.5, 1.5)

@@ -72,6 +72,10 @@ def test_motor_rejects_stale_contact_and_unbounded_gain():
     mailbox = ReceiveContactMailbox("red.finisher")
     with pytest.raises(ValueError, match="bounded same-player"):
         ReceivingTaskspaceMotor("red.finisher", mailbox, 1.1, 0.0, 0.0)
+    with pytest.raises(ValueError, match="bounded same-player"):
+        ReceivingTaskspaceMotor("red.finisher", mailbox, 0.0, 0.0, 0.0, target_depth_m=0.02)
+    with pytest.raises(ValueError, match="bounded same-player"):
+        ReceivingTaskspaceMotor("red.finisher", mailbox, 0.0, 0.0, 0.0, target_lateral_m=0.5)
     actor = ReceivingTaskspaceMotor("red.finisher", mailbox, 0.5, 0.0, 0.0)
     with pytest.raises(ValueError, match="consecutive same-player"):
         actor.propose(_observation(1))
