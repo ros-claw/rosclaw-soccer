@@ -41,7 +41,7 @@ class ReceivingWholeBodyContactTap:
                 "agent_id": self.agent_id,
                 "schedule_hash": self.schedule_hash,
                 "mailbox_hash": self.mailbox.contract_hash,
-                "action_substrate": "A1_body29",
+                "action_substrate": self.action_substrate,
                 "proposal": "ZERO_ONLY",
                 "activation_ceiling": "SIM_ONLY",
             }
@@ -54,7 +54,7 @@ class ReceivingWholeBodyContactTap:
         snapshot = self.mailbox.snapshot
         if (
             observation.agent_id != self.agent_id
-            or observation.action_substrate != "A1_body29"
+            or observation.action_substrate != self.action_substrate
             or observation.contact_history is None
             or observation.previous_body_residual_rad is None
             or (self._next_frame is not None and observation.frame != self._next_frame)

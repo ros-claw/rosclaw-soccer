@@ -63,7 +63,7 @@ class ReceivingTaskspaceFeedback(ReceivingWholeBodyFootTap):
                 "ankle_compensation_rad": self.ankle_compensation_rad,
                 "target_depth_m": self.target_depth_m,
                 "target_lateral_m": self.target_lateral_m,
-                "action_substrate": "A1_body29",
+                "action_substrate": self.action_substrate,
                 "activation_ceiling": "SIM_ONLY",
             }
         )

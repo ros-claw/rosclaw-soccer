@@ -38,7 +38,7 @@ class ReceivingCoordinatedFeedback(ReceivingTaskspaceFeedback):
                 "schema": "rosclaw_soccer.rsi.receiving_coordinated_feedback.v1",
                 "parent_contract_hash": self.contract_hash,
                 "coordination": self.coordination,
-                "action_substrate": "A1_body29",
+                "action_substrate": self.action_substrate,
                 "activation_ceiling": "SIM_ONLY",
             }
         )

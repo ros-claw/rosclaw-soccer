@@ -213,8 +213,10 @@ class ReceivingFeedbackObservation:
         if type(self.action_substrate) is not str or self.action_substrate not in (
             "A0_leg12",
             "A1_body29",
+            "A2_body29_precontact",
         ):
             raise ValueError("explicit supported feedback action substrate required")
+        action_limit = 0.35 if self.action_substrate == "A2_body29_precontact" else 0.1
         body = self.previous_body_residual_rad
         if self.action_substrate == "A0_leg12":
             if body is not None:
@@ -223,7 +225,8 @@ class ReceivingFeedbackObservation:
             type(body) is not tuple
             or len(body) != 29
             or any(
-                type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 0.1 for v in body
+                type(v) not in (int, float) or not math.isfinite(v) or abs(v) > action_limit
+                for v in body
             )
             or body[:12] != self.previous_filtered_residual_rad
         ):
@@ -233,7 +236,7 @@ class ReceivingFeedbackObservation:
             or type(self.previous_filtered_residual_rad) is not tuple
             or len(self.previous_filtered_residual_rad) != 12
             or any(
-                type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 0.1
+                type(v) not in (int, float) or not math.isfinite(v) or abs(v) > action_limit
                 for v in self.previous_filtered_residual_rad
             )
         ):
@@ -303,7 +306,7 @@ class ReceivingFeedbackSlot:
             raise ValueError("typed receiving schedule required")
         schedule.__post_init__()
         if (
-            schedule.substrate not in ("A0_leg12", "A1_body29")
+            schedule.substrate not in ("A0_leg12", "A1_body29", "A2_body29_precontact")
             or getattr(provider, "action_substrate", "A0_leg12") != schedule.substrate
             or not isinstance(provider, ReceivingFeedbackProvider)
             or provider.agent_id != schedule.agent_id
@@ -319,7 +322,8 @@ class ReceivingFeedbackSlot:
             raise ValueError("explicit completed-contact history requirement required")
         self.requires_foot_kinematics = getattr(provider, "requires_foot_kinematics", False)
         if type(self.requires_foot_kinematics) is not bool or (
-            self.requires_foot_kinematics and schedule.substrate != "A1_body29"
+            self.requires_foot_kinematics
+            and schedule.substrate not in ("A1_body29", "A2_body29_precontact")
         ):
             raise ValueError("explicit whole-body foot-kinematics requirement required")
         self.requires_shin_clearance = getattr(provider, "requires_shin_clearance", False)
@@ -445,13 +449,13 @@ class ReceivingFeedbackSlot:
                 type(proposal) is not tuple
                 or len(proposal) != self.action_dimension
                 or any(
-                    type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 0.1
+                    type(v) not in (int, float)
+                    or not math.isfinite(v)
+                    or abs(v) > (0.35 if self.action_substrate == "A2_body29_precontact" else 0.1)
                     for v in proposal
                 )
             ):
-                raise ValueError(
-                    "finite immutable action-bound desired residual limited to 0.1 rad required"
-                )
+                raise ValueError("finite immutable action-bound desired residual required")
             return proposal
         except Exception as error:
             self.faulted = True

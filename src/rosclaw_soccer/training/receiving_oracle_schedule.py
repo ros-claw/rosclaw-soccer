@@ -8,6 +8,7 @@ import re
 from dataclasses import asdict, dataclass
 
 import numpy as np
+from numpy.typing import NDArray
 
 from rosclaw_soccer.sim.contracts import hash_json
 
@@ -21,7 +22,12 @@ class ReceivingOracleSchedule:
     knots: tuple[tuple[float, ...], ...]
 
     def __post_init__(self) -> None:
-        dimensions = {"A0_leg12": 12, "A1_body29": 29, "A3_sonic_residual": 29}
+        dimensions = {
+            "A0_leg12": 12,
+            "A1_body29": 29,
+            "A2_body29_precontact": 29,
+            "A3_sonic_residual": 29,
+        }
         if (
             type(self.agent_id) is not str
             or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", self.agent_id) is None
@@ -44,14 +50,20 @@ class ReceivingOracleSchedule:
 
     @property
     def contract_hash(self) -> str:
+        high_amplitude = self.substrate == "A2_body29_precontact"
+        envelope = {
+            "offset_rad": 0.35 if high_amplitude else 0.1,
+            "smoothing": 0.5 if high_amplitude else 0.25,
+            "step_rad": 0.06 if high_amplitude else 0.02,
+        }
+        if high_amplitude:
+            envelope.update({"small_signal_smoothing": 0.25, "small_signal_step_rad": 0.02})
         return str(
             hash_json(
                 {
                     "schema": "soccer.receiving_oracle_schedule.v1",
                     **asdict(self),
-                    "offset_rad": 0.1,
-                    "smoothing": 0.25,
-                    "step_rad": 0.02,
+                    **envelope,
                 }
             )
         )
@@ -64,7 +76,7 @@ class ReceivingOracleCursor:
         schedule.__post_init__()
         self.schedule = schedule
         self.next_frame = 0
-        self.previous: np.ndarray | None = None
+        self.previous: NDArray[np.float64] | None = None
         self.faulted = False
 
     def step(
@@ -72,13 +84,15 @@ class ReceivingOracleCursor:
         frame: int,
         *,
         active: bool,
-        predecessor: np.ndarray,
+        predecessor: NDArray[np.float64],
         reference_frame: int | None = None,
         desired_override_rad: tuple[float, ...] | None = None,
-    ) -> np.ndarray | None:
+    ) -> NDArray[np.float64] | None:
         if self.faulted:
             raise ValueError("oracle cursor fault is latched")
         try:
+            high_amplitude = self.schedule.substrate == "A2_body29_precontact"
+            limit = 0.35 if high_amplitude else 0.1
             if type(frame) is not int or frame != self.next_frame or type(active) is not bool:
                 raise ValueError("consecutive oracle frames and explicit admission required")
             if reference_frame is not None and (
@@ -88,19 +102,24 @@ class ReceivingOracleCursor:
             ):
                 raise ValueError("explicit bounded post-entry reference frame required")
             if desired_override_rad is not None and (
-                self.schedule.substrate not in ("A0_leg12", "A1_body29")
+                self.schedule.substrate
+                not in (
+                    "A0_leg12",
+                    "A1_body29",
+                    "A2_body29_precontact",
+                )
                 or reference_frame is not None
                 or frame < self.schedule.start_frame
                 or type(desired_override_rad) is not tuple
                 or len(desired_override_rad) != len(self.schedule.knots[0])
                 or any(
-                    type(v) not in (int, float) or not np.isfinite(v) or abs(v) > 0.1
+                    type(v) not in (int, float) or not np.isfinite(v) or abs(v) > limit
                     for v in desired_override_rad
                 )
             ):
                 raise ValueError("bounded post-entry feedback cannot mix with phase override")
             old = np.asarray(predecessor)
-            if old.shape != (12,) or not np.isfinite(old).all() or np.any(abs(old) > 0.100000001):
+            if old.shape != (12,) or not np.isfinite(old).all() or np.any(abs(old) > limit + 1e-9):
                 raise ValueError("bounded actual predecessor required")
             self.next_frame += 1
             if frame < self.schedule.start_frame:
@@ -117,12 +136,15 @@ class ReceivingOracleCursor:
             right = min(left + 1, len(self.schedule.knots) - 1)
             fraction = min(offset - left, 1.0)
             knots = np.asarray(self.schedule.knots)
-            desired = 0.1 * ((1 - fraction) * knots[left] + fraction * knots[right])
+            desired = limit * ((1 - fraction) * knots[left] + fraction * knots[right])
             if desired_override_rad is not None:
                 desired = np.asarray(desired_override_rad, dtype=np.float64)
             if not active:
                 desired[:] = 0
-            self.previous += np.clip(0.25 * (desired - self.previous), -0.02, 0.02)
+            large_signal = high_amplitude and np.any(np.abs(desired) > 0.1)
+            smoothing = 0.5 if large_signal else 0.25
+            step_limit = 0.06 if large_signal else 0.02
+            self.previous += np.clip(smoothing * (desired - self.previous), -step_limit, step_limit)
             return self.previous.copy()
         except (ValueError, TypeError, FloatingPointError):
             self.faulted = True

@@ -3111,6 +3111,15 @@ def simulate_independent_team_world(
             if receiving_oracle is not None
             else None
         )
+        if (
+            receiving_oracle is not None
+            and receiving_oracle.substrate == "A2_body29_precontact"
+            and oracle_cursor is not None
+            and oracle_cursor.previous is not None
+        ):
+            # A2 has its own wider, SIM_ONLY cursor state. Never feed it into
+            # the unchanged 0.1 rad near-ball residual filter on the next tick.
+            oracle_predecessor = oracle_cursor.previous[:12].copy()
         if active.retire_completed_motors:
             trace.setdefault("full_body_motor_retired", []).append(
                 [c.cell.agent_id in motor_retirements for c in controllers]
@@ -3277,7 +3286,7 @@ def simulate_independent_team_world(
                         (float(capture_direction[0]), float(capture_direction[1])),
                     )
                 feedback_body_previous = None
-                if feedback_slot.action_substrate == "A1_body29":
+                if feedback_slot.action_substrate in ("A1_body29", "A2_body29_precontact"):
                     # The native predecessor only stores legs. After entry, the
                     # cursor owns all 29 filtered values, including arm decay.
                     feedback_body_previous = tuple(
@@ -3462,7 +3471,8 @@ def simulate_independent_team_world(
             elif oracle_delta is not None and oracle_agent not in motor_faults:
                 residual_by_id[oracle_agent] = oracle_delta
                 oracle_override_agent = oracle_agent
-                residual_previous[oracle_index] = oracle_delta[:12]
+                if receiving_oracle.substrate != "A2_body29_precontact":
+                    residual_previous[oracle_index] = oracle_delta[:12]
                 trace["residual_applied"][-1][oracle_index] = oracle_delta[:12]
             trace.setdefault("receiving_oracle_contract", []).append(receiving_oracle.contract_hash)
             if receiving_foundation_handoff is not None:
