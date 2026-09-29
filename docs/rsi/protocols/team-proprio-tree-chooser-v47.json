@@ -1,0 +1,22 @@
+{
+  "schema": "rsi_team_proprio_tree_chooser_protocol_v47",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "prior_train_report": "/data/rosclaw_overflow/rsi-team-full-proprio-chooser-v46/report.json",
+  "prior_train_report_hash": "sha256:3b444b88046bc444631a866723a885a584346801438267821e380064ab00cb82",
+  "prior_protocol": "docs/rsi/protocols/team-full-proprio-chooser-v46.json",
+  "feature_sets": ["relative_feet_16", "legs_48", "full_proprio_89"],
+  "max_depths": [6, 10],
+  "min_samples_leaf": [3, 8],
+  "safety_thresholds": [0.65, 0.75],
+  "estimators_per_forest": 120,
+  "ensemble_seeds": [11, 19],
+  "internal_gate": {
+    "minimum_useful": 28,
+    "minimum_safe_contact": 50,
+    "maximum_unsafe": 14,
+    "maximum_abstained": 32
+  },
+  "interpretation": "Small-sample ExtraTrees multi-output models on the existing 384 train/128 consumed validation split, with causal pre-decision G1 state only. This is offline development, not online RL, fresh exam, or team promotion. Training dependency scikit-learn is optional and not in the physical runtime."
+}
