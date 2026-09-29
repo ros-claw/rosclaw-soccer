@@ -73,6 +73,16 @@ def _read(
                 if first is None
                 else int(np.count_nonzero(trace["post_receive_capture_context"][first:stop]))
             ),
+            "post_receive_teacher_torque_frames": (
+                0
+                if first is None
+                else int(
+                    np.count_nonzero(
+                        np.any(trace["post_receive_capture_context"][first + 1 : stop], axis=1)
+                        & (trace["contact_teacher_peak_torque_nm"][first + 1 : stop] > 1.0e-6)
+                    )
+                )
+            ),
             "ball_nonfoot_contact_window_count": int(
                 np.count_nonzero(trace["ball_nonfoot_contact_agent_code"][start:stop])
             ),
@@ -88,13 +98,18 @@ def audit(evidence_root: Path, protocol_path: Path) -> dict[str, Any]:
     if schema not in (
         "rosclaw_soccer.rsi.r1_shared_postreceive_capture_v96.protocol.v1",
         "rosclaw_soccer.rsi.r1_shared_capture_activation_v97.protocol.v1",
+        "rosclaw_soccer.rsi.r1_shared_capture_authority_v98.protocol.v1",
+        "rosclaw_soccer.rsi.r1_shared_capture_stance_v99.protocol.v1",
     ):
         raise ValueError("frozen capture protocol required")
-    version = "v97" if "v97" in schema else "v96"
-    teacher_profile = "live_after_receive" if version == "v97" else "default"
-    directory_prefix = (
-        "rsi-r1-capture-activation-v97" if version == "v97" else "rsi-r1-postreceive-capture-v96"
-    )
+    version = next(value for value in ("v99", "v98", "v97", "v96") if value in schema)
+    teacher_profile = "live_after_receive" if version != "v96" else "default"
+    directory_prefix = {
+        "v96": "rsi-r1-postreceive-capture-v96",
+        "v97": "rsi-r1-capture-activation-v97",
+        "v98": "rsi-r1-capture-authority-v98",
+        "v99": "rsi-r1-capture-stance-v99",
+    }[version]
     scenes = protocol["consumed_scenes"]
     arms = protocol["arms"]
     if len(scenes) != 3 or [arm["name"] for arm in arms] != ["short", "medium", "long"]:
@@ -114,6 +129,15 @@ def audit(evidence_root: Path, protocol_path: Path) -> dict[str, Any]:
         gates = {
             "capture_actually_active": all(
                 row["post_receive_capture_context_frames"] > 0 for row in rows.values()
+            ),
+            "teacher_has_postreceive_torque": (
+                all(
+                    row["post_receive_teacher_torque_frames"]
+                    >= (5 if version == "v99" else 3)
+                    for row in rows.values()
+                )
+                if version in ("v98", "v99")
+                else True
             ),
             "all_safe_clean": all(row["safe"] and row["clean_transfer"] for row in rows.values()),
             "no_early_nonfoot_contact": all(

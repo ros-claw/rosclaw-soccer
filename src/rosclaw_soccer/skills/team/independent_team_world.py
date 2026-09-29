@@ -3659,9 +3659,11 @@ def simulate_independent_team_world(
                         strike_phase_config is None
                         or not controller.strike_phase.active
                         or controller.strike_phase.phase is StrikePhase.STRIKE
+                        or capture_contact_control and post_receive_stabilizing
                     )
                     and (
                         controller.cell.agent_id != strike_lease_agent_id
+                        or capture_contact_control and post_receive_stabilizing
                         or _strike_teacher_stance_ready(
                             controller=controller,
                             data=data,

@@ -1,0 +1,33 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_shared_capture_stance_v99.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY_POSTCONTACT_STANCE_AUTHORITY",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "teacher_is_privileged": true,
+  "source": "v98 allowed receive teacher through strike-phase gate, yet it produced torque for only 1-3 post-contact frames while capture context persisted 10-30 frames. The separate strike-lease stance-readiness gate blocks receive teacher at the ball 0.2 m from foot, below teacher distance bound.",
+  "hypothesis": "Bypassing strike stance readiness only during a measured post-receive capture window allows continuous bounded receive teacher torque and may retain the ball long enough for a true second foot shot.",
+  "frozen_other_control": {
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "navigation_profile": "none",
+    "teacher_profile": "live_after_receive",
+    "receive_teacher_profile": "default"
+  },
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "short", "hold_sec": 0.20},
+    {"name": "medium", "hold_sec": 0.40},
+    {"name": "long", "hold_sec": 0.60}
+  ],
+  "paired_parent": "v98 corresponding hold length, same consumed scenes; not Fresh",
+  "authority_gate": "3/3 receiver foot contacts, capture context active and at least 5 subsequent capture frames with nonzero contact teacher torque; zero motor/option overrides and no safety bypass.",
+  "positive_sample_gate": "Authority gate plus 3/3 six-G1 safe clean foot transfers, no early nonfoot ball contact, no robot collision, and at least 2/3 later receiver foot shots >=0.20 s after first touch with outgoing speed >=2.0 m/s. Privileged teacher data cannot be directly promoted.",
+  "interpretation": "Tests narrow control-plane authority and physical teacher reachability on consumed scenes only."
+}

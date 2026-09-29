@@ -1,0 +1,33 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_shared_capture_authority_v98.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY_CONTROL_AUTHORITY",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "teacher_is_privileged": true,
+  "source": "v97 captured post_receive_capture_context for 10/20/30 frames but contact_teacher_active became false immediately after first receiver foot collision; strike_phase.begin_capture suppresses teacher torque until STRIKE phase.",
+  "hypothesis": "While a measured receiver post-contact buffer is active, permit the bounded receive teacher through the strike-phase gate, without bypassing motor, option, joint, safety or robot-contact guards. This should produce nonzero teacher torque in capture frames and may retain the ball for a second shot.",
+  "frozen_other_control": {
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "navigation_profile": "none",
+    "teacher_profile": "live_after_receive",
+    "receive_teacher_profile": "default"
+  },
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "short", "hold_sec": 0.20},
+    {"name": "medium", "hold_sec": 0.40},
+    {"name": "long", "hold_sec": 0.60}
+  ],
+  "paired_parent": "v97 corresponding hold length, same consumed scenes; paired comparison only, not Fresh",
+  "authority_gate": "3/3 receiver first-foot contacts, post_receive_capture_context active, and nonzero measured contact_teacher_peak_torque_nm on at least 3 subsequent capture frames.",
+  "positive_sample_gate": "Authority gate plus 3/3 six-G1 safe clean foot transfers, no early nonfoot ball contact, no robot collision, and at least 2/3 later receiver foot shots >=0.20 s after first touch with outgoing speed >=2.0 m/s. Otherwise reject. Privileged teacher data cannot be directly promoted.",
+  "interpretation": "This tests control-plane priority and physical receive reachability, not learned skill."
+}
