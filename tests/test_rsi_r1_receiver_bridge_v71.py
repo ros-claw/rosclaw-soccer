@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -7,6 +8,7 @@ from rsi_r1_receiver_bridge_v71 import (
     biased_pass_target,
     directed_pass_joint_delta,
     rolling_receive_joint_delta,
+    run,
     select_grounded_receiver_foot,
 )
 
@@ -98,3 +100,17 @@ def test_biased_pass_target_is_rotation_equivariant_and_fails_closed():
         biased_pass_target(ball, receiver, 0.60)
     with pytest.raises(ValueError):
         biased_pass_target(ball, np.array([float("nan"), 0.0, 0.0]), 0.0)
+
+
+@pytest.mark.parametrize(
+    "tuning",
+    [(-0.31, 0.18), (0.31, 0.18), (0.0, 0.11), (0.0, 0.25), (float("nan"), 0.18)],
+)
+def test_privileged_receive_search_rejects_out_of_contract_tuning(tmp_path: Path, tuning):
+    with pytest.raises(ValueError, match="bounded rolling receive curriculum"):
+        run(
+            Path("/missing-asset"),
+            tmp_path / "never-created",
+            enabled=False,
+            receive_teacher_tuning=tuning,
+        )

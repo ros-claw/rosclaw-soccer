@@ -318,6 +318,7 @@ def run(
     teacher_profile: str = "default",
     receive_teacher_profile: str = "default",
     capture_profile: str = "none",
+    receive_teacher_tuning: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
     if (
@@ -378,6 +379,18 @@ def run(
         or teacher_profile not in ("default", "live_after_receive")
         or receive_teacher_profile not in ("default", "neutral", "soft", "cushion", "combined")
         or capture_profile not in ("none", "short", "medium", "long")
+        or receive_teacher_tuning is not None
+        and (
+            type(receive_teacher_tuning) is not tuple
+            or len(receive_teacher_tuning) != 2
+            or not all(
+                type(value) in (int, float) and np.isfinite(value)
+                for value in receive_teacher_tuning
+            )
+            or not -0.30 <= receive_teacher_tuning[0] <= 0.30
+            or not 0.12 <= receive_teacher_tuning[1] <= 0.24
+            or receive_teacher_profile != "default"
+        )
     ):
         raise ValueError("bounded rolling receive curriculum required")
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
@@ -481,6 +494,16 @@ def run(
             receive_cushion_depth_m=depth,
             receive_minimum_forward_target_m=minimum_forward,
         )
+    if receive_teacher_tuning is not None:
+        yaw, lateral_offset = receive_teacher_tuning
+        teacher = replace(
+            teacher,
+            committed_receive_aim_yaw_bias_rad=yaw,
+            committed_receive_ankle_lateral_offset_m=lateral_offset,
+            committed_receive_follow_through_speed_mps=0.0,
+            receive_cushion_depth_m=-0.12,
+            receive_minimum_forward_target_m=0.02,
+        )
     phase = replace(default_phase_strike_controller(), target_stance_lateral_m=stance_lateral_m)
     if phase_profile != "default":
         phase_settings = {
@@ -576,6 +599,7 @@ def run(
         "navigation_contract_hash": None if navigation is None else navigation.contract_hash,
         "teacher_profile": teacher_profile,
         "receive_teacher_profile": receive_teacher_profile,
+        "receive_teacher_tuning": receive_teacher_tuning,
         "capture_profile": capture_profile,
         "receiver_motor_contract_hash": (
             None if receiver_motor is None else receiver_motor.contract_hash

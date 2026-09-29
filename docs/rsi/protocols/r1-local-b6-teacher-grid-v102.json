@@ -1,0 +1,32 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_local_b6_teacher_grid_v102.protocol.v1",
+  "partition": "CONSUMED_DEV_TEACHER_SEARCH",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "teacher_is_privileged": true,
+  "source_event": "v101 identified exactly one clean local moving-pass receive-to-second-foot event in the consumed v95 combined/s02 trajectory; s06 is excluded from receiver training because the ball is near stationary before first receiver touch.",
+  "hypothesis": "A bounded two-parameter receive teacher (aim yaw and ankle lateral offset) around that physical B6 event may extend a clean local second-foot basin to s04 without destabilizing six G1 bodies.",
+  "frozen_world": {
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "teacher_profile": "default",
+    "capture_profile": "none",
+    "receive_follow_through_speed_mps": 0.0,
+    "receive_cushion_depth_m": -0.12,
+    "receive_minimum_forward_target_m": 0.02
+  },
+  "training_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "aim_yaw_grid_rad": [-0.2, 0.0, 0.2],
+  "ankle_lateral_offset_grid_m": [0.12, 0.18, 0.24],
+  "candidate_count": 9,
+  "rollout_count": 18,
+  "local_b6_gate": "Both scenes require six-body safe, clean physical source/receiver transfer, receiver first-touch incoming speed >=0.30 m/s, and own second foot contact >=0.20 s later with outgoing speed >=2.0 m/s and no intervening nonfoot ball contact or robot collision. If no candidate passes, reject all and do not open Fresh. A passed consumed teacher is still not a learned actor or promotional result.",
+  "selection": "Among candidates passing all hard gates, choose the highest minimum outgoing second-foot speed across both scenes; tie-break by smallest absolute yaw then closest offset to 0.18 m. No selection from failed candidates.",
+  "fresh_boundary": "If training passes, freeze one candidate and only then author a separate disjoint Fresh protocol before running any new scene. Do not reuse s02/s04 as Fresh."
+}
