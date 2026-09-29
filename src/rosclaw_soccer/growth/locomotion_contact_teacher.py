@@ -34,6 +34,7 @@ class G1LocomotionContactTeacherConfig:
     minimum_receive_ball_speed_mps: float = 0.10
     receive_follow_through_speed_mps: float = 0.0
     receive_velocity_prediction_sec: float = 0.0
+    receive_velocity_prediction_lateral_only: bool = False
     committed_receive_follow_through_speed_mps: float = 0.35
     committed_receive_velocity_damping_n_per_mps: float = 15.0
     committed_receive_maximum_task_force_n: float = 120.0
@@ -110,6 +111,9 @@ class G1LocomotionContactTeacherConfig:
             or not 0.05 <= self.minimum_receive_ball_speed_mps <= 0.50
             or not 0.0 <= self.receive_follow_through_speed_mps <= 1.0
             or self.receive_velocity_prediction_sec not in (0.0, 0.04, 0.08, 0.12)
+            or type(self.receive_velocity_prediction_lateral_only) is not bool
+            or self.receive_velocity_prediction_lateral_only
+            and self.receive_velocity_prediction_sec == 0.0
             or not 0.0 <= self.committed_receive_follow_through_speed_mps <= 1.0
             # These are copied into ordinary task-control fields during the
             # receive transition. Validate the intersecting envelope now, not
@@ -412,6 +416,8 @@ def locomotion_contact_teacher_effect(
         prediction = (
             ball_velocity[:2] - foot_velocity[:2]
         ) * config.receive_velocity_prediction_sec
+        if config.receive_velocity_prediction_lateral_only:
+            prediction = float(np.dot(prediction, lateral_xy)) * lateral_xy
         magnitude = float(np.linalg.norm(prediction))
         if magnitude > 0.06:
             prediction *= 0.06 / magnitude

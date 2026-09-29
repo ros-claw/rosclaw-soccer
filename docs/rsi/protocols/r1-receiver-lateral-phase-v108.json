@@ -1,0 +1,31 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_receiver_lateral_phase_v108.protocol.v1",
+  "partition": "CONSUMED_DEV_CONTACT_ACTION",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "hypothesis": "v107 failed by adding longitudinal foot acceleration; project the measured phase correction onto the goal-orthogonal lateral axis only. The s02 positive sample should remain intact while s04 reverse lateral contact is reduced.",
+  "frozen_control": {
+    "teacher_yaw_rad": 0.0,
+    "teacher_lateral_offset_m": 0.18,
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "duration_sec": 10.0,
+    "motor_entry_frame": 0,
+    "dual_receiver_motor": false,
+    "maximum_prediction_shift_m": 0.06
+  },
+  "prediction_sec_grid": [0.04, 0.08, 0.12],
+  "scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "rollout_count": 6,
+  "baseline_reference": "/data/rosclaw_overflow/rsi-r1-receiver-phase-prediction-v107/selection.json",
+  "baseline_gate": "Bound v107 zero horizon s02 must be safe and show own second foot at frame 83 +/-2 after first at frame 66 +/-2. Otherwise course invalid.",
+  "two_scene_gate": "Both scenes six-body safe, collision-free, clean foot transfer, incoming ball speed >=0.30m/s, and receiver second own foot >=0.20s after first with outgoing >=2m/s and no intervening nonfoot collision.",
+  "selection": "Only 2/2 passing horizon can become a consumed training teacher. No Fresh promotion or video.",
+  "next_if_failed": "Stop scalar teacher tuning. Train a support-aware sequential actor or full-body contact controller, then qualify on new physical scenes."
+}

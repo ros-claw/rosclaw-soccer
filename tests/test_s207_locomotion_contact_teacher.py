@@ -176,6 +176,44 @@ def test_receive_prediction_uses_measured_relative_velocity_without_changing_str
         G1LocomotionContactTeacherConfig(receive_velocity_prediction_sec=1.0)
 
 
+def test_lateral_prediction_ignores_longitudinal_relative_velocity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mujoco = pytest.importorskip("mujoco")
+
+    def fake_jac(model, data, jacobian, rotation, point, body_id):
+        del model, data, rotation, point, body_id
+        jacobian[:, 3:6] = np.eye(3)
+
+    monkeypatch.setattr(mujoco, "mj_jac", fake_jac)
+    data = _Data()
+    data.qvel[3:5] = [-0.5, -0.5]
+    args = dict(
+        model=_Model(),
+        data=data,
+        ankle_body_id=0,
+        actuated_dof_indices=np.arange(3, 32, dtype=np.int64),
+        ball_position_m=np.asarray((0.22, 0.0, 0.115)),
+        ball_velocity_mps=np.asarray((0.5, 0.5, 0.0)),
+        desired_ball_direction_xy=np.asarray((1.0, 0.0)),
+        contact_mode="receive",
+        local_lateral_sign=1.0,
+        contact_recent=False,
+    )
+    base = locomotion_contact_teacher_effect(**args, config=G1LocomotionContactTeacherConfig())
+    lateral = locomotion_contact_teacher_effect(
+        **args,
+        config=G1LocomotionContactTeacherConfig(
+            receive_velocity_prediction_sec=0.08,
+            receive_velocity_prediction_lateral_only=True,
+        ),
+    )
+    assert lateral.ankle_target_m[0] == pytest.approx(base.ankle_target_m[0])
+    assert lateral.ankle_target_m[1] - base.ankle_target_m[1] == pytest.approx(0.06)
+    with pytest.raises(ValueError, match="SIM-only"):
+        G1LocomotionContactTeacherConfig(receive_velocity_prediction_lateral_only=True)
+
+
 def test_rolling_option_bridge_is_training_only() -> None:
     config = G1RollingOptionBridgeConfig()
 

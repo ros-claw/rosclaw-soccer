@@ -15,7 +15,11 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
 def _candidate(
-    asset_root: Path, output: Path, scene: dict[str, Any], horizon: float
+    asset_root: Path,
+    output: Path,
+    scene: dict[str, Any],
+    horizon: float,
+    lateral_only: bool = False,
 ) -> dict[str, Any]:
     run(
         asset_root,
@@ -34,6 +38,7 @@ def _candidate(
         seed=scene["seed"],
         receive_teacher_tuning=(0.0, 0.18),
         receive_velocity_prediction_sec=horizon,
+        receive_velocity_prediction_lateral_only=lateral_only,
     )
     protocol_path, report_path, trace_path = (
         output / "protocol.json",
@@ -47,6 +52,7 @@ def _candidate(
         or report["protocol_hash"] != hash_bytes(protocol_path.read_bytes())
         or report["trace_hash"] != hash_bytes(trace_path.read_bytes())
         or protocol["receive_velocity_prediction_sec"] != horizon
+        or protocol["receive_velocity_prediction_lateral_only"] is not lateral_only
         or protocol["dual_receiver_motor"] is not False
         or protocol["activation_ceiling"] != "SIM_ONLY"
         or protocol["promotion_authorized"] is not False

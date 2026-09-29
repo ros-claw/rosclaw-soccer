@@ -358,6 +358,7 @@ def run(
     dual_receiver_motor: bool = False,
     velocity_cushion_gain: float = 0.0,
     receive_velocity_prediction_sec: float = 0.0,
+    receive_velocity_prediction_lateral_only: bool = False,
     handoff_profile: str = "legacy",
     receive_profile: str = "legacy",
     phase_profile: str = "default",
@@ -411,6 +412,9 @@ def run(
         or receive_velocity_prediction_sec not in (0.0, 0.04, 0.08, 0.12)
         or receive_velocity_prediction_sec > 0.0
         and dual_receiver_motor
+        or type(receive_velocity_prediction_lateral_only) is not bool
+        or receive_velocity_prediction_lateral_only
+        and receive_velocity_prediction_sec == 0.0
         or dual_receiver_motor
         and (not motor_present or directed_pass_speed_mps == 0.0)
         or handoff_profile not in ("legacy", "strict", "tracking", "committed")
@@ -564,7 +568,11 @@ def run(
             receive_minimum_forward_target_m=0.02,
         )
     if receive_velocity_prediction_sec > 0.0:
-        teacher = replace(teacher, receive_velocity_prediction_sec=receive_velocity_prediction_sec)
+        teacher = replace(
+            teacher,
+            receive_velocity_prediction_sec=receive_velocity_prediction_sec,
+            receive_velocity_prediction_lateral_only=receive_velocity_prediction_lateral_only,
+        )
     phase = replace(default_phase_strike_controller(), target_stance_lateral_m=stance_lateral_m)
     if phase_profile != "default":
         phase_settings = {
@@ -660,6 +668,7 @@ def run(
         "dual_receiver_motor": dual_receiver_motor,
         "velocity_cushion_gain": velocity_cushion_gain,
         "receive_velocity_prediction_sec": receive_velocity_prediction_sec,
+        "receive_velocity_prediction_lateral_only": receive_velocity_prediction_lateral_only,
         "handoff_profile": handoff_profile,
         "receive_profile": receive_profile,
         "phase_profile": phase_profile,
@@ -915,6 +924,7 @@ def main() -> None:
         choices=(0.0, 0.04, 0.08, 0.12),
         default=0.0,
     )
+    parser.add_argument("--receive-velocity-prediction-lateral-only", action="store_true")
     parser.add_argument("--no-motor", action="store_true")
     args = parser.parse_args()
     report = run(
@@ -947,6 +957,7 @@ def main() -> None:
         dual_receiver_motor=args.dual_receiver_motor,
         velocity_cushion_gain=args.velocity_cushion_gain,
         receive_velocity_prediction_sec=args.receive_velocity_prediction_sec,
+        receive_velocity_prediction_lateral_only=args.receive_velocity_prediction_lateral_only,
         handoff_profile=args.handoff_profile,
         receive_profile=args.receive_profile,
         phase_profile=args.phase_profile,
