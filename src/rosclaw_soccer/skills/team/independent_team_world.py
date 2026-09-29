@@ -1074,6 +1074,8 @@ def simulate_independent_team_world(
     goal: G1TrainingGoalSpec,
     config: IndependentTeamWorldConfig | None = None,
     contact_teacher_config: G1LocomotionContactTeacherConfig | None = None,
+    research_contact_distance_threshold_m: float | None = None,
+    research_contact_max_active_substeps: int | None = None,
     option_bridge_config: G1RollingOptionBridgeConfig | None = None,
     strike_phase_config: StrikePhaseConfig | None = None,
     strike_coordination_actor: DynamicStrikeCoordinationActor | None = None,
@@ -1116,6 +1118,21 @@ def simulate_independent_team_world(
     """
 
     active = config or IndependentTeamWorldConfig()
+    if research_contact_distance_threshold_m is not None and (
+        type(research_contact_distance_threshold_m) is not float
+        or research_contact_distance_threshold_m not in (0.18, 0.24, 0.30, 0.36)
+        or not isinstance(receiving_oracle, ReceivingOracleSchedule)
+        or receiving_oracle.substrate != "A2_body29_precontact"
+        or contact_teacher_config is None
+        or contact_teacher_config.contact_leg_stiffness_scale not in (0.4, 0.55, 0.7, 0.85, 1.0)
+    ):
+        raise ValueError("SIM_ONLY focal A2 distance-gated stiffness probe required")
+    if research_contact_max_active_substeps is not None and (
+        type(research_contact_max_active_substeps) is not int
+        or research_contact_max_active_substeps not in (0, 20, 24, 28, 32, 36, 40, 60, 100)
+        or research_contact_distance_threshold_m is None
+    ):
+        raise ValueError("SIM_ONLY focal stiffness substep budget required")
     if type(capture_locomotion_memory) is not bool or (
         capture_locomotion_memory and receiving_oracle is None
     ):
@@ -1757,6 +1774,7 @@ def simulate_independent_team_world(
         if active.training_ball_return is not None
         else None
     )
+    episode_research_stiffness_substeps = 0
     for frame in range(total_frames):
         if capture_oracle_authority and frame == 0:
             trace["receiving_authority_initial_local_qpos"] = [
@@ -3499,6 +3517,7 @@ def simulate_independent_team_world(
         frame_nonfoot_contact_agent_code = 0
         frame_nonfoot_contact_geom_id = -1
         frame_nonfoot_contact_force_n = 0.0
+        frame_research_stiffness_substeps = 0
         frame_robot_contact_count = 0
         frame_robot_contact_first_code = 0
         frame_robot_contact_second_code = 0
@@ -3956,7 +3975,30 @@ def simulate_independent_team_world(
                     teacher_effect_observed = True
                     frame_teacher_last_substep_valid = True
                     frame_teacher_baseline = raw_torque.copy()
-                    if effect.active and effect_config.contact_leg_stiffness_scale < 1:
+                    effective_stiffness_scale = effect_config.contact_leg_stiffness_scale
+                    if research_contact_distance_threshold_m is not None:
+                        effective_stiffness_scale = 1.0
+                        if (
+                            receiving_oracle is not None
+                            and controller.cell.agent_id == receiving_oracle.agent_id
+                            and contact_mode == "receive"
+                        ):
+                            ankle_position = data.xpos[
+                                controller.left_ankle_body
+                                if use_left
+                                else controller.right_ankle_body
+                            ]
+                            if float(
+                                np.linalg.norm(ankle_position - ball_position)
+                            ) <= research_contact_distance_threshold_m and (
+                                research_contact_max_active_substeps is None
+                                or episode_research_stiffness_substeps
+                                < research_contact_max_active_substeps
+                            ):
+                                effective_stiffness_scale = (
+                                    effect_config.contact_leg_stiffness_scale
+                                )
+                    if effect.active and effective_stiffness_scale < 1:
                         from rosclaw_soccer.growth.locomotion_contact_teacher import (
                             contact_tracking_adjustment,
                         )
@@ -3964,9 +4006,12 @@ def simulate_independent_team_world(
                         frame_teacher_adjustment = contact_tracking_adjustment(
                             kp * (target - q),
                             use_left=bool(use_left),
-                            scale=effect_config.contact_leg_stiffness_scale,
+                            scale=effective_stiffness_scale,
                         )
                         raw_torque += frame_teacher_adjustment
+                        if research_contact_distance_threshold_m is not None:
+                            frame_research_stiffness_substeps += 1
+                            episode_research_stiffness_substeps += 1
                     frame_teacher_residual = effect.torque_nm.copy()
                     frame_teacher_force = effect.task_force_n.copy()
                     frame_teacher_ankle = data.xpos[
@@ -4524,6 +4569,10 @@ def simulate_independent_team_world(
                 )
             )
         trace["ball_pose"].append(data.qpos[ball_qpos : ball_qpos + 7].copy())
+        if research_contact_distance_threshold_m is not None:
+            trace.setdefault("receiving_impedance_active_substeps", []).append(
+                frame_research_stiffness_substeps
+            )
         trace["ball_velocity"].append(data.qvel[ball_qvel : ball_qvel + 6].copy())
         trace["coordination_frame_index"].append(current_coordination_index)
         trace["possession_agent_code"].append(

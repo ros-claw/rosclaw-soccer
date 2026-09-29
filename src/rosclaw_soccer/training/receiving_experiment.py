@@ -70,6 +70,8 @@ def simulate_r0_receiving_course(
     feedback_provider: ReceivingFeedbackProvider | None = None,
     research_navigation_policy: TeamNavigationPolicy | None = None,
     research_contact_leg_stiffness_scale: float = 1.0,
+    research_contact_distance_threshold_m: float | None = None,
+    research_contact_max_active_substeps: int | None = None,
     research_motor_option: TeamMotorOption | None = None,
     physics_evidence_consumers: Mapping[str, PhysicsEvidenceConsumer] | None = None,
     configuration_profile: str = "R0",
@@ -146,6 +148,21 @@ def simulate_r0_receiving_course(
         )
     ):
         raise ValueError("bounded SIM_ONLY A2 contact-teacher stiffness probe required")
+    if research_contact_distance_threshold_m is not None and (
+        type(research_contact_distance_threshold_m) is not float
+        or research_contact_distance_threshold_m not in (0.18, 0.24, 0.30, 0.36)
+        or configuration_profile != "R1_CONTACT_TAP"
+        or not isinstance(oracle, ReceivingOracleSchedule)
+        or oracle.substrate != "A2_body29_precontact"
+        or feedback_provider is None
+    ):
+        raise ValueError("bounded SIM_ONLY focal contact-distance gate required")
+    if research_contact_max_active_substeps is not None and (
+        type(research_contact_max_active_substeps) is not int
+        or research_contact_max_active_substeps not in (0, 20, 24, 28, 32, 36, 40, 60, 100)
+        or research_contact_distance_threshold_m is None
+    ):
+        raise ValueError("bounded SIM_ONLY focal stiffness duration required")
     if research_motor_option is not None and (
         configuration_profile != "R1_CONTACT_TAP"
         or sonic_model_root is not None
@@ -523,6 +540,8 @@ def simulate_r0_receiving_course(
         config=world,
         near_ball_policy=policy,
         contact_teacher_config=teacher,
+        research_contact_distance_threshold_m=research_contact_distance_threshold_m,
+        research_contact_max_active_substeps=research_contact_max_active_substeps,
         near_ball_seed=course.seed,
         near_ball_explore=False,
         motor_options=(
