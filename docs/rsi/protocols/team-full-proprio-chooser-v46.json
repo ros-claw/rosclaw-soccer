@@ -1,0 +1,26 @@
+{
+  "schema": "rsi_team_full_proprio_chooser_protocol_v46",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "audit_report_path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v38/report.json",
+  "audit_report_hash": "sha256:1f726d1f89811bca803589805f947837ed7f61ddf0405a0c0cfd9c3404e70453",
+  "audit_report_file_hash": "sha256:24acbf78c6405810bec791c0505021636c92152687e52acae72078f500da2446",
+  "dataset_path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v38/paired_outcomes.npz",
+  "dataset_hash": "sha256:2a7364d2f3f2091cec344d079cc76abe94dd4a18a659635bfd841126f0c44f26",
+  "physical_root": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-v38",
+  "training_scene_count": 384,
+  "internal_validation_scene_count": 128,
+  "feature_sets": ["relative_feet_16", "legs_48", "full_proprio_89"],
+  "epochs": [25, 50, 100],
+  "safety_thresholds": [0.65, 0.75],
+  "network_width": 24,
+  "ensemble_seeds": [11, 19, 29],
+  "internal_gate": {
+    "minimum_useful": 28,
+    "minimum_safe_contact": 50,
+    "maximum_unsafe": 14,
+    "maximum_abstained": 32
+  },
+  "interpretation": "Read all 512 hash-bound parent physical entry observations; compare bilateral-foot-only against complete leg/body proprioception for 6-way navigation selection. Batches 0-11 train, 12-15 are consumed internal validation. No motor actuation, no fresh or promotion claim."
+}
