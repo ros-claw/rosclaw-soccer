@@ -17,13 +17,18 @@ from scripts.rsi_team_contextual_neural_train import tally
 
 
 def feature_table(raw: np.ndarray[Any, Any]) -> dict[str, np.ndarray[Any, Any]]:
-    if raw.shape != (512, 24) or not np.all(np.isfinite(raw)):
-        raise ValueError("finite 512-context measured entry table required")
+    if (
+        raw.ndim != 2
+        or raw.shape[1] != 24
+        or len(raw) not in (64, 512)
+        or not np.all(np.isfinite(raw))
+    ):
+        raise ValueError("finite 64- or 512-context measured entry table required")
     relative = []
     for row in raw:
         feet = (
-            tuple(float(v) for v in row[12:15]),
-            tuple(float(v) for v in row[15:18]),
+            (float(row[12]), float(row[13]), float(row[14])),
+            (float(row[15]), float(row[16]), float(row[17])),
         )
         relative.append(
             measured_entry_features(

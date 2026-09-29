@@ -24,10 +24,18 @@ def _physical_features(
     raw: np.ndarray[Any, Any],
     entry_hashes: list[str],
 ) -> dict[str, np.ndarray[Any, Any]]:
+    if (
+        raw.ndim != 2
+        or raw.shape[1] != 24
+        or len(raw) not in (64, 512)
+        or len(entry_hashes) != len(raw)
+    ):
+        raise ValueError("expected audited 64- or 512-scene causal body table")
+    batches = len(raw) // 32
     legs: list[np.ndarray[Any, Any]] = []
     full: list[np.ndarray[Any, Any]] = []
     batch_rows: dict[int, list[dict[str, Any]]] = {}
-    for batch in range(16):
+    for batch in range(batches):
         batch_report = json.loads((root / f"b{batch:02d}/parent/report.json").read_text())
         if (
             batch_report.get("report_hash")
@@ -40,7 +48,7 @@ def _physical_features(
         ):
             raise ValueError("unsealed parent physical batch")
         batch_rows[batch] = batch_report["rows"]
-    for index in range(512):
+    for index in range(len(raw)):
         batch, local = divmod(index, 32)
         episode_path = root / f"b{batch:02d}/parent/t{local:03d}/parent"
         episode = json.loads((episode_path / "report.json").read_text())
