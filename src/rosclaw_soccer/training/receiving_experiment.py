@@ -5,6 +5,7 @@ does not import historical experiment scripts, patch agent methods, update
 weights, write artifacts, or create a runtime/hardware execution path.
 """
 
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -30,12 +31,14 @@ from rosclaw_soccer.skills.team.independent_team_world import (
     IndependentTeamWorldScenario,
     simulate_independent_team_world,
 )
+from rosclaw_soccer.skills.team.physics_evidence import PhysicsEvidenceConsumer
 from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
 from rosclaw_soccer.training.contact_teacher_evidence import inspect_teacher_suppression
 from rosclaw_soccer.training.continuous_match_residual_ppo import collection_fixture
 from rosclaw_soccer.training.receiving_classroom import (
     coached_receiving_cells,
     r0_receiving_configuration,
+    r1_contact_tap_receiving_configuration,
 )
 from rosclaw_soccer.training.receiving_feedback import (
     ReceivingFeedbackProvider,
@@ -63,6 +66,8 @@ def simulate_r0_receiving_course(
     oracle: ReceivingOracleSchedule | None = None,
     phase_reference: ReceivingPhaseReference | None = None,
     feedback_provider: ReceivingFeedbackProvider | None = None,
+    physics_evidence_consumers: Mapping[str, PhysicsEvidenceConsumer] | None = None,
+    configuration_profile: str = "R0",
     suppression: ContactTeacherSuppression | None = None,
     sonic_model_root: Path | None = None,
     sonic_start_frame: int = 0,
@@ -102,6 +107,8 @@ def simulate_r0_receiving_course(
     """
     if not isinstance(course, ReceivingCourse) or course.agent_id not in ROSTER:
         raise ValueError("typed focal receiving course required")
+    if configuration_profile not in ("R0", "R1_CONTACT_TAP"):
+        raise ValueError("explicit versioned receiving classroom required")
     if type(sonic_command_replanning) is not bool or (
         sonic_command_replanning
         and (sonic_latent_schedule is not None or sonic_pose_reference is not None)
@@ -403,7 +410,11 @@ def simulate_r0_receiving_course(
     position, velocity = receiving_ball_launch(
         course, origin=player.origin_m, radius_m=fixture.goal.ball_radius_m
     )
-    world, teacher = r0_receiving_configuration()
+    world, teacher = (
+        r0_receiving_configuration()
+        if configuration_profile == "R0"
+        else r1_contact_tap_receiving_configuration()
+    )
     motors: dict[str, ReceivingSonicOption] = {}
     if sonic_model_root is not None:
         world = replace(world, motor_idle_residual_fallback=True)
@@ -480,6 +491,7 @@ def simulate_r0_receiving_course(
         receiving_oracle=oracle,
         receiving_phase_reference=phase_reference,
         receiving_feedback=feedback_provider,
+        physics_evidence_consumers=physics_evidence_consumers,
         capture_oracle_authority=capture_oracle_authority,
         capture_locomotion_memory=capture_locomotion_memory,
         contact_teacher_suppression=suppression,

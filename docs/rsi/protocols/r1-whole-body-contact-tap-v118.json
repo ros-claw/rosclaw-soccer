@@ -1,0 +1,19 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_whole_body_contact_tap_v118.protocol.v1",
+  "partition": "CONSUMED_EIGHT_G1_CONTACT_BODY_OBSERVATION",
+  "activation_ceiling": "SIM_ONLY",
+  "source_capture": "/data/rosclaw_overflow/rsi-receiving-clean-touch-trace-20260928-v1/report.json",
+  "source_capture_hash": "sha256:0d8b9af1d4e51553bf18d3afe738d558259c9b70fb4f0dcaf2a7ebd73dcecb6f",
+  "configuration_profile": "R1_CONTACT_TAP",
+  "world_config_hash": "sha256:7d213ea5bb1f94720c962f3a2b673ab7b71be636f426372846bd20efe396a1f9",
+  "teacher_config_hash": "sha256:b4645b702103e59dc11be405bdbde9fb1e5fa8a5d4f88a7b10648694855c2363",
+  "course": {"agent_id": "red.finisher", "seed": 92801, "ball_speed_mps": 1.25, "lateral_offset_m": 0.08},
+  "oracle_substrate": "A1_body29",
+  "oracle_start_frame": 20,
+  "action": "ZERO_ONLY",
+  "rollout_count": 2,
+  "gate": "A distinct 500Hz attributed contact evidence consumer and A1 body tap must record a consecutive 50Hz tape without physics or feedback faults. Physical ball, receiver, contact and safety arrays must match the unchanged no-tap eight-G1 parent bitwise, else observation is invasive. This observation-only gate does not authorize learning, promotion, hardware or video.",
+  "training_authorized": false,
+  "promotion_authorized": false,
+  "video_authorized": false
+}

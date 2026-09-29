@@ -4,17 +4,20 @@ import pytest
 
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.training.receiving_classroom import (
-    R0_TEACHER_HASH,
     R0_WORLD_HASH,
+    R1_CONTACT_TAP_TEACHER_HASH,
     coached_receiving_cells,
     r0_receiving_configuration,
+    r1_contact_tap_receiving_configuration,
 )
 
 
-def test_r0_explicit_config_includes_historical_script_changes():
-    world, teacher = r0_receiving_configuration()
+def test_old_r0_rejects_teacher_schema_drift_and_new_r1_is_explicit():
+    with pytest.raises(ValueError, match="R0 classroom configuration drift"):
+        r0_receiving_configuration()
+    world, teacher = r1_contact_tap_receiving_configuration()
     assert world.config_hash == R0_WORLD_HASH
-    assert hash_json(asdict(teacher)) == R0_TEACHER_HASH
+    assert hash_json(asdict(teacher)) == R1_CONTACT_TAP_TEACHER_HASH
     assert world.receive_pacing_ratio == 0.2
     assert world.loose_ball_capture_follow_navigation
     assert teacher.committed_receive_ankle_lateral_offset_m == 0.12
@@ -31,7 +34,7 @@ def test_drift_is_rejected_not_renamed_r0(monkeypatch):
         lambda *a: replace(original(*a), minimum_pelvis_height_m=0.56),
     )
     with pytest.raises(ValueError, match="drift"):
-        r0_receiving_configuration()
+        r1_contact_tap_receiving_configuration()
 
 
 def test_instance_coach_has_no_global_decide_patch(monkeypatch):

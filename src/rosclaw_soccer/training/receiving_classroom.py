@@ -16,16 +16,15 @@ from rosclaw_soccer.training.role_receiving_courses import ROSTER, receiving_pra
 
 R0_WORLD_HASH = "sha256:7d213ea5bb1f94720c962f3a2b673ab7b71be636f426372846bd20efe396a1f9"
 R0_TEACHER_HASH = "sha256:4f29c10c29a2076e1dec5bdf5025715857edf53ecde1f3552f75c61fda881d67"
+R1_CONTACT_TAP_TEACHER_HASH = (
+    "sha256:b4645b702103e59dc11be405bdbde9fb1e5fa8a5d4f88a7b10648694855c2363"
+)
 
 
-def r0_receiving_configuration() -> tuple[
+def _receiving_configuration() -> tuple[
     IndependentTeamWorldConfig, G1LocomotionContactTeacherConfig
 ]:
-    """Reconstruct and check the historical protocol before running physics.
-
-    Drift is a new protocol, not permission to silently redefine R0. These
-    hashes bind configuration, not checkpoint weights or full experiment code.
-    """
+    """Construct shared values; callers must bind their own protocol hash."""
     world = replace(
         collection_world(0.24, True),
         simulation_duration_sec=6.0,
@@ -44,8 +43,29 @@ def r0_receiving_configuration() -> tuple[
         committed_receive_ankle_lateral_offset_m=0.12,
         one_touch_finish_enabled=False,
     )
+    return world, teacher
+
+
+def r0_receiving_configuration() -> tuple[
+    IndependentTeamWorldConfig, G1LocomotionContactTeacherConfig
+]:
+    """Historical R0 contract; never silently absorb later teacher fields."""
+    world, teacher = _receiving_configuration()
     if world.config_hash != R0_WORLD_HASH or hash_json(asdict(teacher)) != R0_TEACHER_HASH:
         raise ValueError("R0 classroom configuration drift; define a new protocol explicitly")
+    return world, teacher
+
+
+def r1_contact_tap_receiving_configuration() -> tuple[
+    IndependentTeamWorldConfig, G1LocomotionContactTeacherConfig
+]:
+    """New explicitly versioned SIM_ONLY classroom after teacher schema growth."""
+    world, teacher = _receiving_configuration()
+    if (
+        world.config_hash != R0_WORLD_HASH
+        or hash_json(asdict(teacher)) != R1_CONTACT_TAP_TEACHER_HASH
+    ):
+        raise ValueError("R1 contact-tap classroom configuration drift")
     return world, teacher
 
 
