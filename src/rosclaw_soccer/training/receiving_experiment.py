@@ -32,6 +32,7 @@ from rosclaw_soccer.skills.team.independent_team_world import (
     simulate_independent_team_world,
 )
 from rosclaw_soccer.skills.team.motor_option import TeamMotorOption
+from rosclaw_soccer.skills.team.navigation_option import TeamNavigationPolicy
 from rosclaw_soccer.skills.team.physics_evidence import PhysicsEvidenceConsumer
 from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
 from rosclaw_soccer.training.contact_teacher_evidence import inspect_teacher_suppression
@@ -67,6 +68,7 @@ def simulate_r0_receiving_course(
     oracle: ReceivingOracleSchedule | None = None,
     phase_reference: ReceivingPhaseReference | None = None,
     feedback_provider: ReceivingFeedbackProvider | None = None,
+    research_navigation_policy: TeamNavigationPolicy | None = None,
     research_motor_option: TeamMotorOption | None = None,
     physics_evidence_consumers: Mapping[str, PhysicsEvidenceConsumer] | None = None,
     configuration_profile: str = "R0",
@@ -122,6 +124,13 @@ def simulate_r0_receiving_course(
         feedback_slot = ReceivingFeedbackSlot(feedback_provider, oracle)
         if feedback_slot.requires_locomotion_memory and capture_locomotion_memory is not True:
             raise ValueError("recurrent feedback requires explicit recorded locomotion memory")
+    if research_navigation_policy is not None and (
+        configuration_profile != "R1_CONTACT_TAP"
+        or not isinstance(research_navigation_policy, TeamNavigationPolicy)
+        or research_navigation_policy.agent_id != course.agent_id
+        or research_navigation_policy.activation_ceiling != "SIM_ONLY"
+    ):
+        raise ValueError("one focal SIM_ONLY R1 research navigation policy required")
     if research_motor_option is not None and (
         configuration_profile != "R1_CONTACT_TAP"
         or sonic_model_root is not None
@@ -503,6 +512,11 @@ def simulate_r0_receiving_course(
             {course.agent_id: research_motor_option}
             if research_motor_option is not None
             else motors
+        ),
+        navigation_policies=(
+            {course.agent_id: research_navigation_policy}
+            if research_navigation_policy is not None
+            else None
         ),
         receiving_students=(
             {course.agent_id: receiving_student} if receiving_student is not None else None

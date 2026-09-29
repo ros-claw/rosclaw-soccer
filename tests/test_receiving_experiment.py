@@ -18,6 +18,7 @@ from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
         {"capture_oracle_authority": True},
         {"capture_locomotion_memory": 1},
         {"capture_locomotion_memory": True},
+        {"research_navigation_policy": object()},
         {"sonic_start_frame": 30},
         {"sonic_velocity_scale": 0.5},
         {"sonic_command_replanning": True},
