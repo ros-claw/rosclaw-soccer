@@ -1,0 +1,23 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_receive_phase_timing_v91.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY_TRAIN",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v88 three safe clean receives but no shot; v90 existing lateral-brake/possession modules all retained clean transfer yet produced 0 later shot. Trace shows strike phase often spends seconds repositioning while ball escapes.",
+  "hypothesis": "Changing the generic receive-to-strike phase timing and future-ball horizon may make the finisher complete a physical follow-up shot before interception, with no direct ball-state edit.",
+  "frozen_source": {"precontact_pass_standoff_m": 0.35, "directed_pass_speed_mps": 1.0, "pass_lateral_bias_m": 0.0, "handoff_profile": "tracking", "strike_stance_lateral_m": -0.19, "receive_profile": "legacy"},
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "fast", "capture_duration_sec": 0.14, "strike_contact_horizon_sec": 0.60, "orient_lateral_gain_per_sec": 1.20},
+    {"name": "predictive", "capture_duration_sec": 0.22, "strike_contact_horizon_sec": 1.00, "orient_lateral_gain_per_sec": 1.50},
+    {"name": "ultra", "capture_duration_sec": 0.08, "strike_contact_horizon_sec": 0.80, "orient_lateral_gain_per_sec": 1.50}
+  ],
+  "baseline": "v88 0.35 m, default phase timing, three safe clean transfers, zero later genuine finisher foot shot",
+  "gate": "All three scenes six-body safe and clean physical transfer; at least one new later genuine finisher foot shot with post-shot speed >=2 m/s, plus no nonfoot ball contact. Full goal and generalization remain separate gates.",
+  "interpretation": "This is consumed physical phase-policy search, not a trained neural controller or unseen exam."
+}

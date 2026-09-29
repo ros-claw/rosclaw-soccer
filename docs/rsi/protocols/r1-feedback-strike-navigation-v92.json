@@ -1,0 +1,24 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_feedback_strike_navigation_v92.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY_TRAIN",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v91 fixed timing failed to produce a shot; v88 clean physical receives often leave a moving ball while the finisher spends several seconds chasing a stale stance point",
+  "policy_class": "TeamStrikeFeedbackNavigation: five finite coefficients, immutable same-frame ball/body/task observation, bounded 0.25 m/s world-frame navigation delta through existing NavigationSlot; no motor or ball-state write",
+  "frozen_source": {"precontact_pass_standoff_m": 0.35, "directed_pass_speed_mps": 1.0, "handoff_profile": "tracking", "strike_stance_lateral_m": -0.19},
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "follow", "position_gain": 0.8, "prediction_horizon_sec": 0.40, "stance_depth_m": 0.36, "stance_lateral_m": -0.19, "body_velocity_damping": 0.0},
+    {"name": "lead", "position_gain": 1.2, "prediction_horizon_sec": 0.80, "stance_depth_m": 0.36, "stance_lateral_m": -0.19, "body_velocity_damping": 0.0},
+    {"name": "damped", "position_gain": 1.2, "prediction_horizon_sec": 0.60, "stance_depth_m": 0.36, "stance_lateral_m": -0.19, "body_velocity_damping": 0.3},
+    {"name": "wide", "position_gain": 1.2, "prediction_horizon_sec": 0.80, "stance_depth_m": 0.50, "stance_lateral_m": -0.25, "body_velocity_damping": 0.2}
+  ],
+  "paired_parent": "v88 standoff0.35 same three consumed scenes without strike navigation",
+  "gate": "All three scenes six-body safe, clean physical foot-to-foot transfer and no nonfoot ball contact; at least one new genuine later finisher foot shot >=2 m/s. Rank eligible candidates by later shots, then in-goal crossings and minimum joint margin. If none, reject this policy family and do not open a Fresh exam.",
+  "interpretation": "A passing training candidate is still not a qualified neural motor, 4v4 match, or promotional video."
+}

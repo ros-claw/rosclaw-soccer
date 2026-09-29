@@ -18,6 +18,7 @@ from rsi_r1_current_parent_replay import _Recorder
 from rsi_team_taskspace_first_touch import TeamSwingMotor
 
 from rosclaw_soccer.rsi.taskspace_swing_probe import recover_swing_joint_boundary
+from rosclaw_soccer.rsi.team_strike_feedback_navigation import TeamStrikeFeedbackNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.independent_team_world import (
     IndependentTeamWorldScenario,
@@ -311,6 +312,9 @@ def run(
     pass_lateral_bias_m: float = 0.0,
     dual_receiver_motor: bool = False,
     handoff_profile: str = "legacy",
+    receive_profile: str = "legacy",
+    phase_profile: str = "default",
+    navigation_profile: str = "none",
 ) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
     if (
@@ -352,6 +356,11 @@ def run(
         or dual_receiver_motor
         and (not motor_present or directed_pass_speed_mps == 0.0)
         or handoff_profile not in ("legacy", "strict", "tracking", "committed")
+        or receive_profile not in ("legacy", "lateral", "retention", "lateral_retention")
+        or receive_profile != "legacy"
+        and handoff_profile == "legacy"
+        or phase_profile not in ("default", "fast", "predictive", "ultra")
+        or navigation_profile not in ("none", "follow", "lead", "damped", "wide")
     ):
         raise ValueError("bounded rolling receive curriculum required")
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
@@ -363,10 +372,32 @@ def run(
         "src/rosclaw_soccer/skills/team/motor_retirement.py",
         "src/rosclaw_soccer/growth/independent_agent_cell.py",
         "src/rosclaw_soccer/training/pass_contact_chain.py",
+        "src/rosclaw_soccer/rsi/team_strike_feedback_navigation.py",
     )
     sources = {name: hash_bytes((root / name).read_bytes()) for name in names}
     torch.set_num_threads(1)
     fixture = build_continuous_competitive_fixture(asset_root)
+    navigation = None
+    if navigation_profile != "none":
+        navigation_settings = {
+            "follow": (0.8, 0.40, 0.36, -0.19, 0.0),
+            "lead": (1.2, 0.80, 0.36, -0.19, 0.0),
+            "damped": (1.2, 0.60, 0.36, -0.19, 0.3),
+            "wide": (1.2, 0.80, 0.50, -0.25, 0.2),
+        }
+        gain, horizon, depth, lateral, damping = navigation_settings[navigation_profile]
+        policy_path = asset_root / "policy/loco_mode/model/policy_29dof.pt"
+        config_path = asset_root / "policy/loco_mode/config/LocoMode.yaml"
+        navigation = TeamStrikeFeedbackNavigation(
+            agent_id="red.finisher",
+            foundation_hash=hash_bytes(policy_path.read_bytes()),
+            foundation_config_hash=hash_bytes(config_path.read_bytes()),
+            position_gain=gain,
+            prediction_horizon_sec=horizon,
+            stance_depth_m=depth,
+            stance_lateral_m=lateral,
+            body_velocity_damping=damping,
+        )
     if preview_pass:
         fixture = replace(
             fixture,
@@ -394,6 +425,8 @@ def run(
         receiver_commitment_priority=handoff_profile in ("tracking", "committed"),
         preserve_launched_handoff=handoff_profile in ("tracking", "committed"),
         pass_target_commitment=handoff_profile == "committed",
+        receive_lateral_braking=receive_profile in ("lateral", "lateral_retention"),
+        controlled_possession_retention=receive_profile in ("retention", "lateral_retention"),
     )
     option = replace(
         default_phase_strike_option(),
@@ -407,6 +440,19 @@ def run(
         preferred_foot="nearest",
     )
     phase = replace(default_phase_strike_controller(), target_stance_lateral_m=stance_lateral_m)
+    if phase_profile != "default":
+        phase_settings = {
+            "fast": (0.14, 0.60, 1.20),
+            "predictive": (0.22, 1.00, 1.50),
+            "ultra": (0.08, 0.80, 1.50),
+        }
+        capture, horizon, lateral_gain = phase_settings[phase_profile]
+        phase = replace(
+            phase,
+            capture_duration_sec=capture,
+            strike_contact_horizon_sec=horizon,
+            orient_lateral_gain_per_sec=lateral_gain,
+        )
     scenario = IndependentTeamWorldScenario(
         scenario_id="s199.rsi.r1.receiver-bridge.consumed",
         ball_initial_position_m=(ball_x_m, ball_y_m, 0.115),
@@ -481,6 +527,11 @@ def run(
         "motor_contract_hash": motor.contract_hash,
         "dual_receiver_motor": dual_receiver_motor,
         "handoff_profile": handoff_profile,
+        "receive_profile": receive_profile,
+        "phase_profile": phase_profile,
+        "phase_config_hash": phase.config_hash,
+        "navigation_profile": navigation_profile,
+        "navigation_contract_hash": None if navigation is None else navigation.contract_hash,
         "receiver_motor_contract_hash": (
             None if receiver_motor is None else receiver_motor.contract_hash
         ),
@@ -516,6 +567,7 @@ def run(
                 if motor_present
                 else None
             ),
+            navigation_policies=(None if navigation is None else {navigation.agent_id: navigation}),
             physics_evidence_consumers={"red.playmaker": recorder},
         )
     if {name: hash_bytes((root / name).read_bytes()) for name in names} != sources:
@@ -653,6 +705,21 @@ def main() -> None:
         choices=("legacy", "strict", "tracking", "committed"),
         default="legacy",
     )
+    parser.add_argument(
+        "--receive-profile",
+        choices=("legacy", "lateral", "retention", "lateral_retention"),
+        default="legacy",
+    )
+    parser.add_argument(
+        "--phase-profile",
+        choices=("default", "fast", "predictive", "ultra"),
+        default="default",
+    )
+    parser.add_argument(
+        "--navigation-profile",
+        choices=("none", "follow", "lead", "damped", "wide"),
+        default="none",
+    )
     parser.add_argument("--no-motor", action="store_true")
     args = parser.parse_args()
     report = run(
@@ -684,6 +751,9 @@ def main() -> None:
         pass_lateral_bias_m=args.pass_lateral_bias,
         dual_receiver_motor=args.dual_receiver_motor,
         handoff_profile=args.handoff_profile,
+        receive_profile=args.receive_profile,
+        phase_profile=args.phase_profile,
+        navigation_profile=args.navigation_profile,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
 

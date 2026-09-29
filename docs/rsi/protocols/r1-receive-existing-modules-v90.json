@@ -1,0 +1,23 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_receive_existing_modules_v90.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v88 three distant cases achieved physical foot-to-foot transfer with 0.35 m precontact approach; v89 one-parameter pass landing bias did not produce later finisher shot",
+  "hypothesis": "Existing generic receiving navigation and measured-contact possession modules may preserve the receiver's post-touch opportunity without adding local foot patches.",
+  "frozen_source": {"precontact_pass_standoff_m": 0.35, "directed_pass_speed_mps": 1.0, "pass_lateral_bias_m": 0.0, "handoff_profile": "tracking", "strike_stance_lateral_m": -0.19},
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "lateral", "receive_lateral_braking": true, "controlled_possession_retention": false},
+    {"name": "retention", "receive_lateral_braking": false, "controlled_possession_retention": true},
+    {"name": "lateral_retention", "receive_lateral_braking": true, "controlled_possession_retention": true}
+  ],
+  "baseline": "v88 0.35 m, no receive modules; all three safe clean transfer, zero later real finisher shot",
+  "gate": "Any eligible arm must keep all three six-body scenes safe and clean-transfer; then improve genuine later receiver foot shots after first receipt and eventually ball crossing inside geometry. Any later nonfoot contact rejects that scene.",
+  "interpretation": "Read-only reused ROSClaw modules in consumed development scenes; no Fresh or promotion claim."
+}
