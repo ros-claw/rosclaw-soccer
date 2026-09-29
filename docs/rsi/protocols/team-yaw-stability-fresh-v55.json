@@ -1,0 +1,55 @@
+{
+  "schema": "rsi_team_diverse_curriculum_protocol_v38",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "prior_development_report_path": "/data/rosclaw_overflow/rsi-team-yaw-stability-audit-v54/report.json",
+  "prior_development_report_hash": "sha256:c2be3ae116088f03b4a62629aca711e239c4252fc8cbb6896e9da14aae831a95",
+  "prior_development_report_file_hash": "sha256:4aedf7ac5ca215d0da944a1033e87f4c4120ced3645468a193ee9f233560f309",
+  "prior_development_protocol_path": "docs/rsi/protocols/team-yaw-stability-development-v54.json",
+  "prior_development_protocol_file_hash": "sha256:f3368bbddc4dbb2735246087940137c0342a1db7098a628d1167ea266ae645bb",
+  "excluded_prior_curricula": [
+    {"path": "docs/rsi/protocols/team-diverse-curriculum-v49.json", "file_hash": "sha256:83f2cf19ac0a37d4758afe02b1c61cc266eda2d86b013efe5358af4663b8b3b0"},
+    {"path": "docs/rsi/protocols/team-lateral-phase-hard-y-v52.json", "file_hash": "sha256:a1c39b28a318fe90911465f693dac92fb6514f071698c82df82b15adecb9acc9"},
+    {"path": "docs/rsi/protocols/team-yaw-stability-development-v54.json", "file_hash": "sha256:f3368bbddc4dbb2735246087940137c0342a1db7098a628d1167ea266ae645bb"}
+  ],
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "adaptive_model_path": "/data/rosclaw_overflow/rsi-team-adaptive-intercept-model-v28/model.json",
+  "adaptive_model_hash": "sha256:cfbf8277571d59c4d06bfb229f5757c62342241dc19f9fea2a1e2d0cd5c8bab7",
+  "maximum_yaw_rate_radps": 0.40,
+  "curriculum": {
+    "coordinate_seed": 20261034,
+    "identity_seed_base": 1800000,
+    "batch_count": 2,
+    "training_scene_count": 32,
+    "ball_x_m": [3.25, 4.25],
+    "ball_y_m": [-0.75, -0.35],
+    "ball_vx_mps": [-0.90, -0.20]
+  },
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "arms": [
+    {"name": "parent", "foot_selection": "none", "forward_gain": 0.0, "lateral_gain": 0.0, "strike_through_m": 0.0},
+    {"name": "baseline", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0},
+    {"name": "lateral10", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10},
+    {"name": "gate22_cap05", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "swing_acquisition_max_lateral_gap_m": 0.22},
+    {"name": "gate22_cap10", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.22},
+    {"name": "gate32_cap10", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.32},
+    {"name": "gate22_cap10_guard12", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.22, "joint_risk_guard_margin_rad": 0.12}
+  ],
+  "fresh_gate": {
+    "primary_arm": "gate22_cap10",
+    "minimum_useful_gain_over_baseline": 6,
+    "minimum_safe_contact_gain_over_baseline": 10,
+    "maximum_unsafe_excess_over_baseline": 0,
+    "minimum_primary_useful": 16,
+    "require_primary_and_parent_complete": true
+  },
+  "interpretation": "Predeclared independent 64-scene six-G1 exam for phase-aware receiving plus a globally bounded 0.40 rad/s turn rate. New physical states, two 32-scene batches, all roles under the same world config. Secondary arms diagnostic only. No continuous-match or hardware promotion."
+}
