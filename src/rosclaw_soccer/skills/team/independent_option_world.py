@@ -479,6 +479,7 @@ def simulate_independent_physical_option(
                 controller=controller,
                 decision=controller.decision,
                 positions=positions,
+                model=model,
                 data=data,
                 ball_qpos=ball_qpos,
                 ball_qvel=ball_qvel,
