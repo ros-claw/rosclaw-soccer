@@ -47,6 +47,7 @@ def run_episode(
     weights: TemporalMotorWeights,
     exploration_std: float,
     exploration_seed: int,
+    exploration_correlation: float = 0.0,
 ) -> dict[str, Any]:
     schedule = ReceivingOracleSchedule(
         course.agent_id, "A2_body29_precontact", 15, 10, ((0.0,) * 29,)
@@ -66,6 +67,7 @@ def run_episode(
         policy=weights,
         exploration_std=exploration_std,
         exploration_seed=exploration_seed,
+        exploration_correlation=exploration_correlation,
     )
     navigation = TeamReceiveSideNavigation(
         course.agent_id,

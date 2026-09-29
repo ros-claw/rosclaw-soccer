@@ -56,10 +56,12 @@ class ReceivingTemporalMotorExpert(ReceivingLateralPiecewiseExpert):
     policy: TemporalMotorWeights = field(default_factory=TemporalMotorWeights)
     exploration_std: float = 0.0
     exploration_seed: int = 0
+    exploration_correlation: float = 0.0
     observed_frames: list[int] = field(init=False, default_factory=list)
     observed_features: list[tuple[float, ...]] = field(init=False, default_factory=list)
     sampled_logits: list[tuple[float, ...]] = field(init=False, default_factory=list)
     _rng: np.random.Generator = field(init=False)
+    _previous_exploration: np.ndarray | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -70,20 +72,24 @@ class ReceivingTemporalMotorExpert(ReceivingLateralPiecewiseExpert):
             or not 0 <= self.exploration_std <= 0.3
             or type(self.exploration_seed) is not int
             or not 0 <= self.exploration_seed < 2**31
+            or type(self.exploration_correlation) is not float
+            or not math.isfinite(self.exploration_correlation)
+            or not 0 <= self.exploration_correlation < 0.99
         ):
             raise ValueError("bounded SIM_ONLY temporal exploration required")
         self._rng = np.random.default_rng(self.exploration_seed)
-        self.contract_hash = hash_json(
-            {
-                "schema": "rosclaw_soccer.rsi.receiving_temporal_motor_expert.v1",
-                "parent_contract_hash": self.contract_hash,
-                "policy_hash": self.policy.contract_hash,
-                "exploration_std": self.exploration_std,
-                "exploration_seed": self.exploration_seed,
-                "observation": "current_50hz_ball_body_contact_history",
-                "activation_ceiling": "SIM_ONLY",
-            }
-        )
+        contract = {
+            "schema": "rosclaw_soccer.rsi.receiving_temporal_motor_expert.v1",
+            "parent_contract_hash": self.contract_hash,
+            "policy_hash": self.policy.contract_hash,
+            "exploration_std": self.exploration_std,
+            "exploration_seed": self.exploration_seed,
+            "observation": "current_50hz_ball_body_contact_history",
+            "activation_ceiling": "SIM_ONLY",
+        }
+        if self.exploration_correlation:
+            contract["exploration_correlation"] = self.exploration_correlation
+        self.contract_hash = hash_json(contract)
 
     @staticmethod
     def features(observation: ReceivingFeedbackObservation) -> tuple[float, ...]:
@@ -125,7 +131,19 @@ class ReceivingTemporalMotorExpert(ReceivingLateralPiecewiseExpert):
             self.policy.output_bias
         )
         if self.exploration_std:
-            logits += self._rng.normal(0.0, self.exploration_std, size=12)
+            innovation = self._rng.normal(0.0, self.exploration_std, size=12)
+            if self.exploration_correlation:
+                if self._previous_exploration is None:
+                    noise = innovation
+                else:
+                    noise = (
+                        self.exploration_correlation * self._previous_exploration
+                        + math.sqrt(1 - self.exploration_correlation**2) * innovation
+                    )
+                self._previous_exploration = noise
+                logits += noise
+            else:
+                logits += innovation
         if frame < 19:
             fraction = (frame - 15) / 4.0
         elif frame <= 50:

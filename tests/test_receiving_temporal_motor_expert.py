@@ -48,6 +48,8 @@ def test_temporal_weights_and_exploration_fail_closed() -> None:
         TemporalMotorWeights(output_bias=(float("nan"),) + (0.0,) * 11)
     with pytest.raises(ValueError, match="bounded SIM_ONLY temporal"):
         _actor(exploration_std=0.31)
+    with pytest.raises(ValueError, match="bounded SIM_ONLY temporal"):
+        _actor(exploration_correlation=1.0)
 
 
 def test_temporal_policy_tracks_50hz_observations_under_guard(
@@ -85,3 +87,26 @@ def test_fixed_noise_seed_replays_same_actions(monkeypatch: pytest.MonkeyPatch) 
     for frame in (15, 20, 25):
         assert first.propose(_observation(frame)) == second.propose(_observation(frame))
     assert first.sampled_logits == second.sampled_logits
+
+
+def test_correlated_exploration_is_replayable_and_distinct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def base(
+        self: ReceivingLateralPiecewiseExpert, observation: SimpleNamespace
+    ) -> tuple[float, ...]:
+        self._selected_side = 0
+        return (0.0,) * 29
+
+    monkeypatch.setattr(ReceivingLateralPiecewiseExpert, "propose", base)
+    first = _actor(exploration_std=0.1, exploration_seed=123, exploration_correlation=0.85)
+    replay = _actor(exploration_std=0.1, exploration_seed=123, exploration_correlation=0.85)
+    independent = _actor(exploration_std=0.1, exploration_seed=123)
+    for frame in (15, 20, 25):
+        first.propose(_observation(frame))
+        replay.propose(_observation(frame))
+        independent.propose(_observation(frame))
+    assert first.sampled_logits == replay.sampled_logits
+    assert first.sampled_logits[0] == independent.sampled_logits[0]
+    assert first.sampled_logits[1] != independent.sampled_logits[1]
+    assert first.activation_ceiling == "SIM_ONLY"
