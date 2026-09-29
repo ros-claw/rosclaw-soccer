@@ -1,0 +1,20 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_precontact_generalization_v116.protocol.v1",
+  "partition": "CONSUMED_DEV_PRECONTACT_GENERALIZATION",
+  "activation_ceiling": "SIM_ONLY",
+  "parent_postcontact_audit": "/data/rosclaw_overflow/rsi-r1-postcontact-residual-training-v115/selection-r2.json",
+  "parent_postcontact_hash": "sha256:9359ca53e711814b29476af485dcf9350863e5f43cb1e3916fb7ace0a552f1da",
+  "anchor_weights": [-0.1853410496026612, -0.2120161425477506, -0.10038265224958914, 0.1304744032562346, 0.16730409297832222],
+  "training_scenes": [
+    {"id": "anchor_s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "anchor_s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "dev_left", "ball_x_m": 2.20, "ball_y_m": -0.76, "seed": 615001},
+    {"id": "dev_right", "ball_x_m": 2.36, "ball_y_m": -0.76, "seed": 615002}
+  ],
+  "seed": 116,
+  "candidate_count": 12,
+  "rollout_count": 48,
+  "learning_rule": "Frozen SONIC and contact teacher; 50Hz same-player proprioceptive receive phase actor. Candidate 0 reproduces previous parent. Seven local and four broad seeded parameter perturbations are evaluated against real 500Hz six-G1 contact and all-body safety. Old two-scene dynamic second-foot performance is a hard retention gate. New scenes must gain at least one clean, dynamic first foot without increasing unsafe or shin-first outcomes. Sealed Fresh8 is never used for training.",
+  "promotion_authorized": false,
+  "video_authorized": false
+}

@@ -21,6 +21,11 @@ from rosclaw_soccer.rsi.b6_microphysics_observer import B6MicrophysicsObserver
 from rosclaw_soccer.rsi.b6_velocity_cushion import velocity_match_joint_delta
 from rosclaw_soccer.rsi.taskspace_swing_probe import recover_swing_joint_boundary
 from rosclaw_soccer.rsi.team_receive_body_tap import TeamReceiveBodyTap
+from rosclaw_soccer.rsi.team_receive_contact_evidence import (
+    ReceiveContactEvidence,
+    ReceiveContactMailbox,
+)
+from rosclaw_soccer.rsi.team_receive_contact_phase_actor import TeamReceiveContactPhaseActor
 from rosclaw_soccer.rsi.team_receive_phase_actor import TeamReceivePhaseActor
 from rosclaw_soccer.rsi.team_strike_feedback_navigation import TeamStrikeFeedbackNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -367,6 +372,7 @@ def run(
     phase_profile: str = "default",
     navigation_profile: str = "none",
     navigation_phase_weights: tuple[float, float, float, float, float] | None = None,
+    navigation_post_weights: tuple[float, float, float, float, float] | None = None,
     teacher_profile: str = "default",
     receive_teacher_profile: str = "default",
     capture_profile: str = "none",
@@ -431,6 +437,7 @@ def run(
             "none",
             "receive_tap",
             "receive_phase",
+            "receive_contact",
             "follow",
             "lead",
             "damped",
@@ -440,7 +447,7 @@ def run(
             "lease3",
             "lease2_damped",
         )
-        or navigation_profile == "receive_phase"
+        or navigation_profile in ("receive_phase", "receive_contact")
         and (
             type(navigation_phase_weights) is not tuple
             or len(navigation_phase_weights) != 5
@@ -449,8 +456,21 @@ def run(
                 for value in navigation_phase_weights
             )
         )
-        or navigation_profile != "receive_phase"
+        or navigation_profile not in ("receive_phase", "receive_contact")
         and navigation_phase_weights is not None
+        or navigation_profile == "receive_contact"
+        and (
+            type(navigation_post_weights) is not tuple
+            or len(navigation_post_weights) != 5
+            or any(
+                type(value) is not float or not np.isfinite(value) or abs(value) > 2.0
+                for value in navigation_post_weights
+            )
+        )
+        or navigation_profile != "receive_contact"
+        and navigation_post_weights is not None
+        or navigation_profile == "receive_contact"
+        and capture_b6_microphysics
         or teacher_profile not in ("default", "live_after_receive")
         or receive_teacher_profile not in ("default", "neutral", "soft", "cushion", "combined")
         or capture_profile not in ("none", "short", "medium", "long")
@@ -483,6 +503,8 @@ def run(
         "src/rosclaw_soccer/rsi/b6_velocity_cushion.py",
         "src/rosclaw_soccer/rsi/team_receive_body_tap.py",
         "src/rosclaw_soccer/rsi/team_receive_phase_actor.py",
+        "src/rosclaw_soccer/rsi/team_receive_contact_phase_actor.py",
+        "src/rosclaw_soccer/rsi/team_receive_contact_evidence.py",
         "src/rosclaw_soccer/skills/team/navigation_option.py",
         "src/rosclaw_soccer/growth/locomotion_contact_teacher.py",
         "src/rosclaw_soccer/skills/team/physics_evidence.py",
@@ -491,6 +513,7 @@ def run(
     torch.set_num_threads(1)
     fixture = build_continuous_competitive_fixture(asset_root)
     navigation: TeamNavigationPolicy | None = None
+    contact_evidence: ReceiveContactEvidence | None = None
     if navigation_profile != "none":
         navigation_settings = {
             "follow": (0.8, 0.40, 0.36, -0.19, 0.0, 0.0),
@@ -517,6 +540,18 @@ def run(
                 foundation_hash=hash_bytes(policy_path.read_bytes()),
                 foundation_config_hash=hash_bytes(config_path.read_bytes()),
                 weights=navigation_phase_weights,
+            )
+        elif navigation_profile == "receive_contact":
+            assert navigation_phase_weights is not None and navigation_post_weights is not None
+            mailbox = ReceiveContactMailbox("red.finisher")
+            contact_evidence = ReceiveContactEvidence(mailbox)
+            navigation = TeamReceiveContactPhaseActor(
+                agent_id="red.finisher",
+                foundation_hash=hash_bytes(policy_path.read_bytes()),
+                foundation_config_hash=hash_bytes(config_path.read_bytes()),
+                weights=navigation_phase_weights,
+                post_weights=navigation_post_weights,
+                mailbox=mailbox,
             )
         else:
             gain, horizon, depth, lateral, damping, commitment = navigation_settings[
@@ -712,6 +747,7 @@ def run(
         "phase_config_hash": phase.config_hash,
         "navigation_profile": navigation_profile,
         "navigation_phase_weights": navigation_phase_weights,
+        "navigation_post_weights": navigation_post_weights,
         "navigation_contract_hash": None if navigation is None else navigation.contract_hash,
         "teacher_profile": teacher_profile,
         "receive_teacher_profile": receive_teacher_profile,
@@ -756,7 +792,9 @@ def run(
             ),
             navigation_policies=(None if navigation is None else {navigation.agent_id: navigation}),
             physics_evidence_consumers=(
-                {"red.playmaker": recorder, "red.finisher": microphysics}
+                {"red.playmaker": recorder, "red.finisher": contact_evidence}
+                if contact_evidence is not None
+                else {"red.playmaker": recorder, "red.finisher": microphysics}
                 if microphysics is not None
                 else {"red.playmaker": recorder}
             ),
@@ -887,6 +925,24 @@ def run(
             if isinstance(navigation, TeamReceivePhaseActor)
             else None
         ),
+        "receive_contact_actor": (
+            {
+                "first_own_foot_time_sec": navigation.mailbox.snapshot.first_own_foot_time_sec,
+                "first_own_foot": navigation.mailbox.snapshot.first_own_foot,
+                "first_contact_relative_y_mps": (
+                    navigation.mailbox.snapshot.first_contact_relative_y_mps
+                ),
+                "prefoot_nonfoot_count": navigation.mailbox.snapshot.prefoot_nonfoot_count,
+                "post_active_frames": navigation.post_active_frames,
+                "contract_hash": navigation.contract_hash,
+                "mailbox_contract_hash": navigation.mailbox.contract_hash,
+                "evidence_contract_hash": contact_evidence.contract_hash,
+            }
+            if isinstance(navigation, TeamReceiveContactPhaseActor)
+            and navigation.mailbox is not None
+            and contact_evidence is not None
+            else None
+        ),
         "promotion_authorized": False,
         "video_authorized": False,
     }
@@ -952,6 +1008,7 @@ def main() -> None:
             "none",
             "receive_tap",
             "receive_phase",
+            "receive_contact",
             "follow",
             "lead",
             "damped",
@@ -976,6 +1033,7 @@ def main() -> None:
     )
     parser.add_argument("--capture-b6-microphysics", action="store_true")
     parser.add_argument("--navigation-phase-weights", type=float, nargs=5)
+    parser.add_argument("--navigation-post-weights", type=float, nargs=5)
     parser.add_argument(
         "--velocity-cushion-gain", type=float, choices=(0.0, 0.5, 1.0, 2.0), default=0.0
     )
@@ -1025,6 +1083,9 @@ def main() -> None:
         navigation_profile=args.navigation_profile,
         navigation_phase_weights=(
             None if args.navigation_phase_weights is None else tuple(args.navigation_phase_weights)
+        ),
+        navigation_post_weights=(
+            None if args.navigation_post_weights is None else tuple(args.navigation_post_weights)
         ),
         teacher_profile=args.teacher_profile,
         receive_teacher_profile=args.receive_teacher_profile,

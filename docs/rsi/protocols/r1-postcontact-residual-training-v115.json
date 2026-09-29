@@ -1,0 +1,20 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_postcontact_residual_training_v115.protocol.v1",
+  "partition": "CONSUMED_DEV_POSTCONTACT_SEARCH",
+  "activation_ceiling": "SIM_ONLY",
+  "parent_observation_audit": "/data/rosclaw_overflow/rsi-r1-contact-aware-phase-pilot-v114-r2/audit.json",
+  "parent_observation_hash": "sha256:b09e96ec087dc609b83748352682978712e4231c6c5b9cae5539c873a0d5295e",
+  "precontact_weights": [-0.1853410496026612, -0.2120161425477506, -0.10038265224958914, 0.1304744032562346, 0.16730409297832222],
+  "training_scenes": [
+    {"id": "anchor_s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "anchor_s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "dev_left", "ball_x_m": 2.20, "ball_y_m": -0.76, "seed": 615001},
+    {"id": "dev_right", "ball_x_m": 2.36, "ball_y_m": -0.76, "seed": 615002}
+  ],
+  "seed": 115,
+  "candidate_count": 9,
+  "rollout_count": 36,
+  "learning_rule": "Frozen precontact actor plus a bounded, 0.6-second residual conditioned on actual same-player foot contact. Candidate 0 is zero parent; candidates 1-4 are symmetric task-directed residuals and 5-8 are seeded perturbations. Score is physical second-foot contact and clean dynamic transfer, with hard retention of both consumed anchors. No candidate may use sealed Fresh8 scenes or promote itself.",
+  "promotion_authorized": false,
+  "video_authorized": false
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_contact_aware_phase_pilot_v114.protocol.v1",
+  "partition": "CONSUMED_CONTACT_OBSERVATION",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "parent_selection": "/data/rosclaw_overflow/rsi-r1-retention-constrained-phase-v112/selection.json",
+  "parent_selection_hash": "sha256:ee4321a90b8d02c356b17ae1cafd3053e5bdc0fd4e077ff143b9552e9a85eb73",
+  "precontact_weights": [-0.1853410496026612, -0.2120161425477506, -0.10038265224958914, 0.1304744032562346, 0.16730409297832222],
+  "postcontact_weights": [0.0, 0.0, 0.0, 0.0, 0.0],
+  "scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "rollout_count": 2,
+  "gate": "Postcontact-zero actor must receive consecutive 500Hz attributed foot contacts and produce zero postcontact navigation frames. Both ball/receiver trajectories and safety must be bitwise equal to frozen v112 selected candidate; otherwise the contact event feed is invasive or misbound and no learning is allowed."
+}
