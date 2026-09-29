@@ -36,6 +36,10 @@ class PhysicsEvidenceSlot:
         self.consumer = consumer
         self._agent_id = consumer.agent_id
         self._contract_hash = consumer.contract_hash
+        requested_velocity = getattr(consumer, "needs_contact_velocity", False)
+        if type(requested_velocity) is not bool:
+            raise ValueError("explicit read-only contact velocity subscription required")
+        self._needs_contact_velocity = requested_velocity
         self.faulted = False
         self.fault_reason: str | None = None
         self._time: float | None = None
@@ -48,10 +52,16 @@ class PhysicsEvidenceSlot:
     def contract_hash(self) -> str:
         return self._contract_hash
 
+    @property
+    def needs_contact_velocity(self) -> bool:
+        return self._needs_contact_velocity
+
     def _check_identity(self) -> None:
         if (
             self.consumer.agent_id != self.agent_id
             or self.consumer.contract_hash != self.contract_hash
+            or getattr(self.consumer, "needs_contact_velocity", False)
+            != self.needs_contact_velocity
         ):
             raise ValueError("physics evidence consumer changed its registration")
 

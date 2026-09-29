@@ -1,0 +1,33 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_b6_microphysics_observer_v104.protocol.v1",
+  "partition": "CONSUMED_B6_CONTACT_DIAGNOSIS",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "learning_authorized": false,
+  "hypothesis": "The existing read-only 500 Hz PhysicsEvidenceConsumer boundary can capture a bounded receiver-contact window with ball/root/joint state and attributed foot force without altering the six-G1 trajectory. This enables contact-normal and support diagnosis before any new time-dependent learner.",
+  "frozen_episode": {
+    "candidate": "v103 candidate 04, yaw 0, lateral 0.18 m",
+    "motor_entry_frame": 0,
+    "duration_sec": 10.0,
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "capture_profile": "none"
+  },
+  "scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "observer": {
+    "agent_id": "red.finisher",
+    "pre_steps": 75,
+    "post_steps": 250,
+    "physics_dt_sec": 0.002,
+    "trigger": "first receiver foot contact after immediately previous measured ball horizontal speed >=0.30 m/s"
+  },
+  "noninterference_gate": "For each scene, all stored 50 Hz ball pose/velocity, receiver joint position/velocity and ball-contact identity arrays must be bitwise identical to the corresponding v103 candidate 04 episode under the same thread settings; all six G1 safety results must also agree.",
+  "capture_gate": "75 preceding and 250 following consecutive 500 Hz records around a measured dynamic own-foot contact, with complete contact attribution, valid force/normal fields and no observer fault. No actor or motor proposal from observer.",
+  "interpretation": "This is observational data for a future time-dependent contact/control learner, not a successful policy or permission to promote the v95 teacher."
+}

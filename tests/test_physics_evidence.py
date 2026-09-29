@@ -147,3 +147,22 @@ def test_invalid_binding(key, value):
     setattr(c, key, value)
     with pytest.raises(ValueError):
         PhysicsEvidenceSlot(c)
+
+
+def test_contact_velocity_subscription_is_read_only_and_identity_bound():
+    c, rows = consumer()
+    c.needs_contact_velocity = True
+    slot = PhysicsEvidenceSlot(c)
+    assert slot.needs_contact_velocity is True
+    slot.observe_physics(observation())
+    assert len(rows) == 1
+    c.needs_contact_velocity = False
+    slot.observe_physics(replace(observation(), time_sec=0.004))
+    assert slot.faulted and len(rows) == 1
+
+
+def test_contact_velocity_subscription_rejects_nonboolean_value():
+    c, _ = consumer()
+    c.needs_contact_velocity = 1
+    with pytest.raises(ValueError, match="explicit read-only contact velocity"):
+        PhysicsEvidenceSlot(c)

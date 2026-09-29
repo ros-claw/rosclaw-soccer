@@ -17,6 +17,7 @@ import torch
 from rsi_r1_current_parent_replay import _Recorder
 from rsi_team_taskspace_first_touch import TeamSwingMotor
 
+from rosclaw_soccer.rsi.b6_microphysics_observer import B6MicrophysicsObserver
 from rosclaw_soccer.rsi.taskspace_swing_probe import recover_swing_joint_boundary
 from rosclaw_soccer.rsi.team_strike_feedback_navigation import TeamStrikeFeedbackNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -319,6 +320,7 @@ def run(
     receive_teacher_profile: str = "default",
     capture_profile: str = "none",
     receive_teacher_tuning: tuple[float, float] | None = None,
+    capture_b6_microphysics: bool = False,
 ) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
     if (
@@ -379,6 +381,7 @@ def run(
         or teacher_profile not in ("default", "live_after_receive")
         or receive_teacher_profile not in ("default", "neutral", "soft", "cushion", "combined")
         or capture_profile not in ("none", "short", "medium", "long")
+        or type(capture_b6_microphysics) is not bool
         or receive_teacher_tuning is not None
         and (
             type(receive_teacher_tuning) is not tuple
@@ -403,6 +406,8 @@ def run(
         "src/rosclaw_soccer/growth/independent_agent_cell.py",
         "src/rosclaw_soccer/training/pass_contact_chain.py",
         "src/rosclaw_soccer/rsi/team_strike_feedback_navigation.py",
+        "src/rosclaw_soccer/rsi/b6_microphysics_observer.py",
+        "src/rosclaw_soccer/skills/team/physics_evidence.py",
     )
     sources = {name: hash_bytes((root / name).read_bytes()) for name in names}
     torch.set_num_threads(1)
@@ -601,6 +606,7 @@ def run(
         "receive_teacher_profile": receive_teacher_profile,
         "receive_teacher_tuning": receive_teacher_tuning,
         "capture_profile": capture_profile,
+        "capture_b6_microphysics": capture_b6_microphysics,
         "receiver_motor_contract_hash": (
             None if receiver_motor is None else receiver_motor.contract_hash
         ),
@@ -613,6 +619,7 @@ def run(
         json.dumps(protocol, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     recorder = _Recorder()
+    microphysics = B6MicrophysicsObserver("red.finisher") if capture_b6_microphysics else None
     with (
         (output_dir / "simulation.log").open("x", encoding="utf-8") as log,
         redirect_stdout(log),
@@ -637,12 +644,33 @@ def run(
                 else None
             ),
             navigation_policies=(None if navigation is None else {navigation.agent_id: navigation}),
-            physics_evidence_consumers={"red.playmaker": recorder},
+            physics_evidence_consumers=(
+                {"red.playmaker": recorder, "red.finisher": microphysics}
+                if microphysics is not None
+                else {"red.playmaker": recorder}
+            ),
         )
     if {name: hash_bytes((root / name).read_bytes()) for name in names} != sources:
         raise RuntimeError("source drift during physics run")
     trace_path = output_dir / "trace.npz"
     np.savez_compressed(trace_path, **trace)  # type: ignore[arg-type]
+    microphysics_report = None
+    if microphysics is not None:
+        microphysics_report = {
+            "observer_contract_hash": microphysics.contract_hash,
+            "complete": microphysics.complete,
+            "observer_fault": "red.finisher" in result.physics_evidence_fault_agents,
+            "first_foot_time_sec": microphysics.first_foot_time_sec,
+            "incoming_ball_speed_mps": microphysics.incoming_ball_speed_mps,
+            "archive_hash": None,
+            "sample_count": 0,
+        }
+        if microphysics.complete:
+            microphysics_arrays = microphysics.arrays()
+            microphysics_path = output_dir / "b6-microphysics.npz"
+            np.savez_compressed(microphysics_path, **microphysics_arrays)  # type: ignore[arg-type]
+            microphysics_report["archive_hash"] = hash_bytes(microphysics_path.read_bytes())
+            microphysics_report["sample_count"] = len(microphysics_arrays["time_sec"])
     ids = tuple(sorted(agent.agent_id for agent in fixture.roster.agents))
     request_frames = np.flatnonzero(
         (trace["pass_source_agent_code"] > 0) & (trace["pass_target_agent_code"] > 0)
@@ -727,6 +755,7 @@ def run(
         "receiver_motor_first_foot_contact_frame": (
             None if receiver_motor is None else receiver_motor.first_contact_frame
         ),
+        "b6_microphysics": microphysics_report,
         "promotion_authorized": False,
         "video_authorized": False,
     }
@@ -810,6 +839,7 @@ def main() -> None:
     parser.add_argument(
         "--capture-profile", choices=("none", "short", "medium", "long"), default="none"
     )
+    parser.add_argument("--capture-b6-microphysics", action="store_true")
     parser.add_argument("--no-motor", action="store_true")
     args = parser.parse_args()
     report = run(
@@ -847,6 +877,7 @@ def main() -> None:
         teacher_profile=args.teacher_profile,
         receive_teacher_profile=args.receive_teacher_profile,
         capture_profile=args.capture_profile,
+        capture_b6_microphysics=args.capture_b6_microphysics,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
 
