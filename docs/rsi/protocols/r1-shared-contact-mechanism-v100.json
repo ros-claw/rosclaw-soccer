@@ -1,0 +1,26 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_shared_contact_mechanism_v100.protocol.v1",
+  "partition": "CONSUMED_FAILURE_DIAGNOSIS",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "learning_authorized": false,
+  "hypothesis": "The shared-world B6 failure is not just a missing high-level shot decision: the first receiver foot contact injects off-axis ball velocity, foot-ball distance grows, and the robot recovers too slowly. Compare authenticated trajectories with the existing generic receiving_velocity_effects diagnostic before choosing a plastic boundary.",
+  "receiver_id": "red.finisher",
+  "receiver_code": 4,
+  "scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "parent_v88", "folder_pattern": "rsi-r1-pass-acquisition-v88-{scene}-standoff0.35"},
+    {"name": "live_v94", "folder_pattern": "rsi-r1-live-foundation-v94-{scene}-live"},
+    {"name": "teacher_v95_combined", "folder_pattern": "rsi-r1-receive-teacher-v95-{scene}-combined"},
+    {"name": "capture_v97_short", "folder_pattern": "rsi-r1-capture-activation-v97-{scene}-short"},
+    {"name": "authority_v99_short", "folder_pattern": "rsi-r1-capture-stance-v99-{scene}-short"}
+  ],
+  "diagnostic_window": "First receiver foot contact through +0.30 to +0.50 seconds (relative 50 Hz frames 15:25), using existing receiving_velocity_effects. No first foot contact is an explicit failure row, never a missing-data omission.",
+  "training_priority_rule": "Choose only among off_axis_rebound, rapid_foot_separation, unsafe_support, no_receiver_foot, or successor_not_ready after authenticated physical measurements; do not train on Fresh scenes or promote any of these privileged teachers.",
+  "interpretation": "Read-only failure mining for a future role-local contact policy. This protocol does not authorize imitation labels from rejected teachers."
+}

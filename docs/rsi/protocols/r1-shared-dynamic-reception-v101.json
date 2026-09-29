@@ -1,0 +1,16 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_shared_dynamic_reception_v101.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REFINEMENT",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "learning_authorized": false,
+  "source_manifest": "r1-shared-contact-mechanism-v100.json",
+  "source_protocol": "r1-shared-contact-mechanism-v100.json",
+  "motivation": "A mere receiver foot contact can occur after a moving pass has died. Distinguish a dynamic incoming ball from a stationary re-strike, and count only a second own-foot contact with no intervening nonfoot ball contact.",
+  "dynamic_incoming_min_speed_mps": 0.30,
+  "second_foot_min_delay_sec": 0.20,
+  "second_foot_min_outgoing_speed_mps": 2.0,
+  "clean_local_interval": "from first receiver foot frame through second receiver foot frame, inclusive; no nonfoot contact by any robot in between",
+  "interpretation": "At most a consumed local B6 teacher event may be identified. It is not a learned policy, a full pass-shot-goal chain, or a Fresh generalization result. No teacher labels may be promoted based on this audit."
+}
