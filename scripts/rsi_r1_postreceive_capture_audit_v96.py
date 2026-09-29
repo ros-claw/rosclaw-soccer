@@ -132,8 +132,7 @@ def audit(evidence_root: Path, protocol_path: Path) -> dict[str, Any]:
             ),
             "teacher_has_postreceive_torque": (
                 all(
-                    row["post_receive_teacher_torque_frames"]
-                    >= (5 if version == "v99" else 3)
+                    row["post_receive_teacher_torque_frames"] >= (5 if version == "v99" else 3)
                     for row in rows.values()
                 )
                 if version in ("v98", "v99")
