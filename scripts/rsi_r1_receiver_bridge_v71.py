@@ -21,6 +21,7 @@ from rosclaw_soccer.rsi.b6_microphysics_observer import B6MicrophysicsObserver
 from rosclaw_soccer.rsi.b6_velocity_cushion import velocity_match_joint_delta
 from rosclaw_soccer.rsi.taskspace_swing_probe import recover_swing_joint_boundary
 from rosclaw_soccer.rsi.team_receive_body_tap import TeamReceiveBodyTap
+from rosclaw_soccer.rsi.team_receive_phase_actor import TeamReceivePhaseActor
 from rosclaw_soccer.rsi.team_strike_feedback_navigation import TeamStrikeFeedbackNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.independent_team_world import (
@@ -365,6 +366,7 @@ def run(
     receive_profile: str = "legacy",
     phase_profile: str = "default",
     navigation_profile: str = "none",
+    navigation_phase_weights: tuple[float, float, float, float, float] | None = None,
     teacher_profile: str = "default",
     receive_teacher_profile: str = "default",
     capture_profile: str = "none",
@@ -428,6 +430,7 @@ def run(
         not in (
             "none",
             "receive_tap",
+            "receive_phase",
             "follow",
             "lead",
             "damped",
@@ -437,6 +440,17 @@ def run(
             "lease3",
             "lease2_damped",
         )
+        or navigation_profile == "receive_phase"
+        and (
+            type(navigation_phase_weights) is not tuple
+            or len(navigation_phase_weights) != 5
+            or any(
+                type(value) is not float or not np.isfinite(value) or abs(value) > 2.0
+                for value in navigation_phase_weights
+            )
+        )
+        or navigation_profile != "receive_phase"
+        and navigation_phase_weights is not None
         or teacher_profile not in ("default", "live_after_receive")
         or receive_teacher_profile not in ("default", "neutral", "soft", "cushion", "combined")
         or capture_profile not in ("none", "short", "medium", "long")
@@ -468,6 +482,7 @@ def run(
         "src/rosclaw_soccer/rsi/b6_microphysics_observer.py",
         "src/rosclaw_soccer/rsi/b6_velocity_cushion.py",
         "src/rosclaw_soccer/rsi/team_receive_body_tap.py",
+        "src/rosclaw_soccer/rsi/team_receive_phase_actor.py",
         "src/rosclaw_soccer/skills/team/navigation_option.py",
         "src/rosclaw_soccer/growth/locomotion_contact_teacher.py",
         "src/rosclaw_soccer/skills/team/physics_evidence.py",
@@ -494,6 +509,14 @@ def run(
                 agent_id="red.finisher",
                 foundation_hash=hash_bytes(policy_path.read_bytes()),
                 foundation_config_hash=hash_bytes(config_path.read_bytes()),
+            )
+        elif navigation_profile == "receive_phase":
+            assert navigation_phase_weights is not None
+            navigation = TeamReceivePhaseActor(
+                agent_id="red.finisher",
+                foundation_hash=hash_bytes(policy_path.read_bytes()),
+                foundation_config_hash=hash_bytes(config_path.read_bytes()),
+                weights=navigation_phase_weights,
             )
         else:
             gain, horizon, depth, lateral, damping, commitment = navigation_settings[
@@ -688,6 +711,7 @@ def run(
         "phase_profile": phase_profile,
         "phase_config_hash": phase.config_hash,
         "navigation_profile": navigation_profile,
+        "navigation_phase_weights": navigation_phase_weights,
         "navigation_contract_hash": None if navigation is None else navigation.contract_hash,
         "teacher_profile": teacher_profile,
         "receive_teacher_profile": receive_teacher_profile,
@@ -854,6 +878,15 @@ def run(
         ),
         "b6_microphysics": microphysics_report,
         "receive_body_context": tap_context,
+        "receive_phase_actor": (
+            {
+                "active_frames": navigation.active_frames,
+                "peak_delta_mps": navigation.peak_delta_mps,
+                "contract_hash": navigation.contract_hash,
+            }
+            if isinstance(navigation, TeamReceivePhaseActor)
+            else None
+        ),
         "promotion_authorized": False,
         "video_authorized": False,
     }
@@ -918,6 +951,7 @@ def main() -> None:
         choices=(
             "none",
             "receive_tap",
+            "receive_phase",
             "follow",
             "lead",
             "damped",
@@ -941,6 +975,7 @@ def main() -> None:
         "--capture-profile", choices=("none", "short", "medium", "long"), default="none"
     )
     parser.add_argument("--capture-b6-microphysics", action="store_true")
+    parser.add_argument("--navigation-phase-weights", type=float, nargs=5)
     parser.add_argument(
         "--velocity-cushion-gain", type=float, choices=(0.0, 0.5, 1.0, 2.0), default=0.0
     )
@@ -988,6 +1023,9 @@ def main() -> None:
         receive_profile=args.receive_profile,
         phase_profile=args.phase_profile,
         navigation_profile=args.navigation_profile,
+        navigation_phase_weights=(
+            None if args.navigation_phase_weights is None else tuple(args.navigation_phase_weights)
+        ),
         teacher_profile=args.teacher_profile,
         receive_teacher_profile=args.receive_teacher_profile,
         capture_profile=args.capture_profile,

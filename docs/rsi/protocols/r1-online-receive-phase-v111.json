@@ -1,0 +1,35 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_online_receive_phase_v111.protocol.v1",
+  "partition": "CONSUMED_DEV_ONLINE_POLICY_SEARCH",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "policy": "Five-weight bounded recurrent receiver navigation actor reading continuous same-player body and ball state; frozen SONIC joints and contact teacher retain their authority.",
+  "training_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "parent_weights": [0.0, 0.0, 0.0, 0.0, 0.0],
+  "seed": 111,
+  "generation_0_candidates": 8,
+  "generation_0_sigma": 0.8,
+  "elite_count": 2,
+  "generation_1_candidates": 6,
+  "generation_1_sigma": 0.35,
+  "weight_absolute_cap": 2.0,
+  "rollout_count": 28,
+  "frozen_physics": {
+    "duration_sec": 10.0,
+    "motor_entry_frame": 0,
+    "directed_pass_speed_mps": 1.0,
+    "precontact_pass_standoff_m": 0.35,
+    "receive_teacher_yaw_rad": 0.0,
+    "receive_teacher_lateral_m": 0.18,
+    "receive_velocity_prediction_sec": 0.0,
+    "dual_receiver_motor": false,
+    "read_only_500hz_contact_capture": true
+  },
+  "reward": "Per scene: -10 if body unsafe or robot collision; +2 clean source-to-foot transfer; +2 dynamic receiver foot contact; +4 qualified second own foot >=0.20s later with outgoing >=2m/s and no intervening nonfoot; +4 full physical goal; -3 if receiver shin nonfoot before foot; -min(abs(first foot/ball relative lateral velocity),1) when measured. Scores are for consumed learning only, never a promotion metric.",
+  "two_scene_gate": "Candidate must be safe and collision-free on both consumed scenes, have clean dynamic transfer and qualified second own foot on both. Only then freeze for a separately committed Fresh holdout. No selected candidate from a failed gate.",
+  "next_if_failed": "Audit policy authority, shin collision and gait phase; do not claim learning success from reward changes or synthetic contact. Expand support-leg action space with physical safety and parent-retention anchors."
+}

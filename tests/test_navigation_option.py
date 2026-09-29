@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 
 from rosclaw_soccer.rsi.team_receive_body_tap import TeamReceiveBodyTap
+from rosclaw_soccer.rsi.team_receive_phase_actor import TeamReceivePhaseActor
 from rosclaw_soccer.skills.team.navigation_option import (
     NavigationDelta,
     NavigationObservation,
@@ -224,3 +225,45 @@ def test_receive_tap_records_continuous_body_context_without_action():
     assert arrays["foot_velocity"].shape == (2, 2, 3)
     assert arrays["joint_position"].shape == (2, 29)
     assert arrays["frame"].tolist() == [0.0, 1.0]
+
+
+def test_receive_phase_actor_is_bounded_stateful_and_causal():
+    actor = TeamReceivePhaseActor(
+        "red.finisher",
+        "sha256:" + "a" * 64,
+        "sha256:" + "b" * 64,
+        weights=(1.0, 0.5, 0.5, 1.0, -0.5),
+    )
+    slot = NavigationSlot(actor)
+    obs = replace(
+        observation(),
+        agent_id="red.finisher",
+        role="finisher",
+        intent="receive",
+        committed_receiver=True,
+        body_pose=(1.0, 0.0, 0.75, 1.0, 0.0, 0.0, 0.0),
+        ball_position=(0.5, -0.1, 0.115),
+        ball_velocity=(0.8, 0.2, 0.0),
+        effector_positions=(("left_foot", 1.0, 0.1, 0.1), ("right_foot", 0.9, -0.15, 0.1)),
+        effector_velocities=(("left_foot", 0.0, 0.0, 0.0), ("right_foot", 0.0, -0.3, 0.0)),
+        body_angular_velocity=(0.0, 0.0, 0.0),
+        joint_positions_rad=(0.0,) * 29,
+        joint_velocities_radps=(0.0,) * 9 + (2.0,) + (0.0,) * 19,
+    )
+    delta = slot.propose(obs)
+    assert slot.active and not slot.faulted
+    assert 0.0 < (delta[0] ** 2 + delta[1] ** 2) ** 0.5 <= 0.25
+    assert actor.active_frames == 1
+    assert slot.propose(replace(obs, frame=1, time_sec=0.02, committed_receiver=False)) == (
+        0.0,
+        0.0,
+        0.0,
+    )
+    assert not slot.active and not slot.faulted
+    with pytest.raises(ValueError):
+        TeamReceivePhaseActor(
+            "red.finisher",
+            "sha256:" + "a" * 64,
+            "sha256:" + "b" * 64,
+            weights=(float("nan"), 0.0, 0.0, 0.0, 0.0),
+        )

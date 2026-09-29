@@ -8,7 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from rosclaw_soccer.sim.contracts import hash_json
-from rosclaw_soccer.skills.team.navigation_option import NavigationObservation
+from rosclaw_soccer.skills.team.navigation_option import NavigationDelta, NavigationObservation
 
 
 @dataclass
@@ -38,7 +38,7 @@ class TeamReceiveBodyTap:
             }
         )
 
-    def propose(self, observation: NavigationObservation) -> None:
+    def propose(self, observation: NavigationObservation) -> NavigationDelta | None:
         if (
             not isinstance(observation, NavigationObservation)
             or observation.agent_id != self.agent_id
