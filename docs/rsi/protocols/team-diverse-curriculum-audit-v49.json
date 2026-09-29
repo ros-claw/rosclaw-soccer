@@ -1,0 +1,16 @@
+{
+  "schema": "rsi_team_diverse_curriculum_audit_protocol_v38",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "result_root": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-v49",
+  "collection_protocol_path": "docs/rsi/protocols/team-diverse-curriculum-v49.json",
+  "collection_protocol_hash": "sha256:83f2cf19ac0a37d4758afe02b1c61cc266eda2d86b013efe5358af4663b8b3b0",
+  "batch_count": 16,
+  "scenes_per_batch": 32,
+  "training_batches": [0,1,2,3,4,5,6,7,8,9,10,11],
+  "internal_validation_batches": [12,13,14,15],
+  "arms": ["parent","adaptive_c19","phase_front04_positive","phase_front04_lat12","phase_stay_lat12","fixed_left_negative","phase_front04_negative"],
+  "oracle_gate_diagnostic_only": {"minimum_safe_contacts": 300, "minimum_useful_passes": 180},
+  "interpretation": "Hash-check 112 arm reports and every complete MuJoCo/action trace, pair all seven arms at the same causal frame and preserve all unsafe/incomplete failures. This v49 corpus is new training data, never the future fresh acceptance set."
+}
