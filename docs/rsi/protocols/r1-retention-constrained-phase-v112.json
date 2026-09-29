@@ -1,0 +1,23 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_retention_constrained_phase_v112.protocol.v1",
+  "partition": "CONSUMED_DEV_RETENTION_SEARCH",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "parent_report": "/data/rosclaw_overflow/rsi-r1-online-receive-phase-v111/selection.json",
+  "parent_report_hash": "sha256:c54463d7330d8f802333ba2db165d934d7dc2880e400590a65d00bd81d4e5e3c",
+  "retention_anchor": {"generation": 1, "candidate_index": 4},
+  "training_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "seed": 112,
+  "first_generation_candidates": 12,
+  "first_generation_sigma": 0.18,
+  "second_generation_candidates": 8,
+  "second_generation_sigma": 0.12,
+  "rollout_count": 40,
+  "update_rule": "Two first-generation anchors are frozen zero Parent and v111 retained candidate; five bounded perturbations around each. Only candidates with safe collision-free s02 and its qualified dynamic second own foot may update the next center. Select the retained candidate with best s04 reward, then sample eight bounded perturbations. If none retain, use zero Parent. No unsafe or retention-failing candidate may steer the update.",
+  "selection_gate": "Candidate must be safe/collision-free, clean dynamic transfer and qualified own second foot in both consumed scenes. Any passing candidate still requires separate frozen Fresh holdout; no video or promotion here.",
+  "next_if_failed": "Increase action horizon to the support leg and within-contact control, using real physical reward and retention constraints; do not resume scalar teacher grids."
+}
