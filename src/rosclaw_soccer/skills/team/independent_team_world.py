@@ -136,6 +136,7 @@ from rosclaw_soccer.skills.team.navigation_option import (
     TeamNavigationPolicy,
 )
 from rosclaw_soccer.skills.team.physics_evidence import PhysicsEvidenceConsumer, PhysicsEvidenceSlot
+from rosclaw_soccer.skills.team.shin_clearance import measure_team_shin_clearance
 from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
 from rosclaw_soccer.training.receiving_feedback import (
     ReceivingCaptureContext,
@@ -3341,6 +3342,21 @@ def simulate_independent_team_world(
                         else None
                     ),
                     foot_kinematics=feedback_foot_kinematics,
+                    shin_clearance=(
+                        measure_team_shin_clearance(
+                            model=model,
+                            data=data,
+                            agent_id=oracle_agent,
+                            frame=frame,
+                            ball_geom_id=ball_geom,
+                            leg_dof_ids=(
+                                tuple(int(value) for value in focal_controller.joint_qvel[:6]),
+                                tuple(int(value) for value in focal_controller.joint_qvel[6:12]),
+                            ),
+                        )
+                        if feedback_slot.requires_shin_clearance
+                        else None
+                    ),
                 )
                 feedback_desired = feedback_slot.step(feedback_observation)
                 if feedback_observation.contact_history is not None:

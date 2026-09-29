@@ -10,6 +10,7 @@ from rosclaw_soccer.rsi.team_receive_contact_evidence import (
     ReceiveContactSnapshot,
 )
 from rosclaw_soccer.skills.team.foot_kinematics import TeamFootKinematics
+from rosclaw_soccer.skills.team.shin_clearance import TeamShinClearance
 from rosclaw_soccer.training.receiving_feedback import ReceivingContactHistory
 from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSchedule
 from tests.training.test_receiving_feedback import observation
@@ -82,3 +83,13 @@ def test_taskspace_requires_finite_bounded_gains():
         ReceivingTaskspaceFeedback(
             "red.finisher", schedule.contract_hash, mailbox, target_lateral_m=0.5
         )
+
+
+def test_shin_clearance_observation_is_same_player_and_frame():
+    baseline = _observation(20)
+    shin = TeamShinClearance("red.finisher", 20, (0.01, 0.02), ((0.0,) * 6,) * 2)
+    assert replace(baseline, shin_clearance=shin).observation_hash != baseline.observation_hash
+    with pytest.raises(ValueError, match="same-player current shin"):
+        replace(baseline, shin_clearance=replace(shin, agent_id="blue.finisher"))
+    with pytest.raises(ValueError, match="same-player current shin"):
+        replace(baseline, shin_clearance=replace(shin, frame=19))

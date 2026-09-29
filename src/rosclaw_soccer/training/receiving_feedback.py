@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from rosclaw_soccer.providers.g1.locomotion_memory import LocomotionMemory
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.skills.team.foot_kinematics import TeamFootKinematics
+from rosclaw_soccer.skills.team.shin_clearance import TeamShinClearance
 from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSchedule
 from rosclaw_soccer.training.receiving_scene import ReceivingSceneContext
 
@@ -138,6 +139,7 @@ class ReceivingFeedbackObservation:
     previous_body_residual_rad: tuple[float, ...] | None = None
     contact_history: ReceivingContactHistory | None = None
     foot_kinematics: TeamFootKinematics | None = None
+    shin_clearance: TeamShinClearance | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -198,6 +200,16 @@ class ReceivingFeedbackObservation:
                 or self.foot_kinematics.foot_linear_velocity_world_mps is None
             ):
                 raise ValueError("same-player current foot positions and velocities required")
+        if self.shin_clearance is not None:
+            if not isinstance(self.shin_clearance, TeamShinClearance):
+                raise ValueError("typed same-frame shin clearance required")
+            self.shin_clearance.__post_init__()
+            if (
+                self.shin_clearance.agent_id != self.agent_id
+                or self.shin_clearance.frame != self.frame
+                or self.foot_kinematics is None
+            ):
+                raise ValueError("same-player current shin and foot geometry required")
         if type(self.action_substrate) is not str or self.action_substrate not in (
             "A0_leg12",
             "A1_body29",
@@ -253,6 +265,8 @@ class ReceivingFeedbackObservation:
             value.pop("contact_history")
         if self.foot_kinematics is None:
             value.pop("foot_kinematics")
+        if self.shin_clearance is None:
+            value.pop("shin_clearance")
         if self.action_substrate == "A0_leg12" and self.previous_body_residual_rad is None:
             value.pop("action_substrate")
             value.pop("previous_body_residual_rad")
@@ -308,6 +322,11 @@ class ReceivingFeedbackSlot:
             self.requires_foot_kinematics and schedule.substrate != "A1_body29"
         ):
             raise ValueError("explicit whole-body foot-kinematics requirement required")
+        self.requires_shin_clearance = getattr(provider, "requires_shin_clearance", False)
+        if type(self.requires_shin_clearance) is not bool or (
+            self.requires_shin_clearance and not self.requires_foot_kinematics
+        ):
+            raise ValueError("shin clearance requires explicit current foot kinematics")
         self.requires_locomotion_memory = getattr(provider, "requires_locomotion_memory", False)
         if type(self.requires_locomotion_memory) is not bool:
             raise ValueError("explicit locomotion memory requirement required")
@@ -348,6 +367,10 @@ class ReceivingFeedbackSlot:
                 or getattr(self.provider, "requires_foot_kinematics", False)
                 != self.requires_foot_kinematics
                 or (self.requires_foot_kinematics and observation.foot_kinematics is None)
+                or type(getattr(self.provider, "requires_shin_clearance", False)) is not bool
+                or getattr(self.provider, "requires_shin_clearance", False)
+                != self.requires_shin_clearance
+                or (self.requires_shin_clearance and observation.shin_clearance is None)
                 or observation.action_substrate != self.action_substrate
                 or type(getattr(self.provider, "requires_navigation_target", False)) is not bool
                 or getattr(self.provider, "requires_navigation_target", False)
@@ -402,6 +425,9 @@ class ReceivingFeedbackSlot:
                 or type(getattr(self.provider, "requires_foot_kinematics", False)) is not bool
                 or getattr(self.provider, "requires_foot_kinematics", False)
                 != self.requires_foot_kinematics
+                or type(getattr(self.provider, "requires_shin_clearance", False)) is not bool
+                or getattr(self.provider, "requires_shin_clearance", False)
+                != self.requires_shin_clearance
                 or getattr(self.provider, "action_substrate", "A0_leg12") != self.action_substrate
                 or self.provider.agent_id != self.agent_id
                 or self.provider.schedule_hash != self.schedule_hash

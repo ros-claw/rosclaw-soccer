@@ -79,6 +79,7 @@ def test_memory_is_opt_in_bound_and_hashable():
     old_fields.pop("previous_body_residual_rad")
     old_fields.pop("contact_history")
     old_fields.pop("foot_kinematics")
+    old_fields.pop("shin_clearance")
     assert old.observation_hash == hash_json(old_fields)
     new = replace(old, locomotion=locomotion())
     assert new.observation_hash != old.observation_hash
