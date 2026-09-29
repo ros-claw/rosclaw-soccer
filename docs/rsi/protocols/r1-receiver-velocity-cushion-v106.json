@@ -1,0 +1,32 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_receiver_velocity_cushion_v106.protocol.v1",
+  "partition": "CONSUMED_DEV_CONTACT_ACTION",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "hypothesis": "Measured same-frame ball/foot velocity matching may suppress the s04 reverse impact while retaining the known s02 second-foot event. No ball state or torque may be written by the candidate.",
+  "frozen_control": {
+    "teacher_yaw_rad": 0.0,
+    "teacher_lateral_offset_m": 0.18,
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "duration_sec": 10.0,
+    "sender_motor_entry_frame": 0,
+    "receiver_motor_entry_frame": 30,
+    "receiver_rolling_cap_rad": 0.04,
+    "receiver_rolling_radius_m": 0.30,
+    "velocity_match_horizon_sec": 0.04,
+    "velocity_match_maximum_joint_delta_rad": 0.03
+  },
+  "velocity_cushion_gain_grid": [0.0, 0.5, 1.0, 2.0],
+  "scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "rollout_count": 8,
+  "gate": "Both scenes safe, collision-free, clean foot transfer, incoming dynamic ball >=0.30 m/s, finisher own second foot >=0.20s after first with outgoing >=2m/s and no intervening nonfoot ball contact. Gain >0 must execute at least one bounded nonzero receiver motor frame. Gain 0 is a dual-motor parent; if it fails the course can still report candidate comparison but may not claim a causal gain over the v103 parent.",
+  "selection": "Only a 2/2 passing gain may become a consumed contact-action teacher. This is not a learned actor, complete goal, Fresh success, or promotional evidence.",
+  "next_if_failed": "Train a support-leg and swing-leg phase-conditioned sequential actor against 500Hz contact evidence; do not widen this scalar gain grid on consumed scenes."
+}

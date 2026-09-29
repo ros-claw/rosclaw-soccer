@@ -33,6 +33,7 @@ class G1LocomotionContactTeacherConfig:
     receive_minimum_forward_target_m: float = 0.06
     minimum_receive_ball_speed_mps: float = 0.10
     receive_follow_through_speed_mps: float = 0.0
+    receive_velocity_prediction_sec: float = 0.0
     committed_receive_follow_through_speed_mps: float = 0.35
     committed_receive_velocity_damping_n_per_mps: float = 15.0
     committed_receive_maximum_task_force_n: float = 120.0
@@ -72,6 +73,7 @@ class G1LocomotionContactTeacherConfig:
             self.receive_minimum_forward_target_m,
             self.minimum_receive_ball_speed_mps,
             self.receive_follow_through_speed_mps,
+            self.receive_velocity_prediction_sec,
             self.committed_receive_follow_through_speed_mps,
             self.committed_receive_velocity_damping_n_per_mps,
             self.committed_receive_maximum_task_force_n,
@@ -107,6 +109,7 @@ class G1LocomotionContactTeacherConfig:
             or not 0.02 <= self.receive_minimum_forward_target_m <= 0.15
             or not 0.05 <= self.minimum_receive_ball_speed_mps <= 0.50
             or not 0.0 <= self.receive_follow_through_speed_mps <= 1.0
+            or self.receive_velocity_prediction_sec not in (0.0, 0.04, 0.08, 0.12)
             or not 0.0 <= self.committed_receive_follow_through_speed_mps <= 1.0
             # These are copied into ordinary task-control fields during the
             # receive transition. Validate the intersecting envelope now, not
@@ -399,6 +402,20 @@ def locomotion_contact_teacher_effect(
     rotation: NDArray[np.float64] = np.zeros((3, int(model.nv)), dtype=np.float64)
     mujoco.mj_jac(model, data, jacobian, rotation, foot, ankle_body_id)
     foot_velocity = jacobian @ np.asarray(data.qvel, dtype=np.float64)
+    if (
+        contact_mode == "receive"
+        and not contact_recent
+        and config.receive_velocity_prediction_sec > 0.0
+    ):
+        # A measured phase correction inside the existing teacher authority:
+        # no extra motor ownership, simulator-state write, or force-limit change.
+        prediction = (
+            ball_velocity[:2] - foot_velocity[:2]
+        ) * config.receive_velocity_prediction_sec
+        magnitude = float(np.linalg.norm(prediction))
+        if magnitude > 0.06:
+            prediction *= 0.06 / magnitude
+        target[:2] += prediction
     force = config.position_gain_n_per_m * (target - foot)
     desired_foot_velocity = (
         ball_velocity

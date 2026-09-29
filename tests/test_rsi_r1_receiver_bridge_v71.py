@@ -12,6 +12,7 @@ from rsi_r1_receiver_bridge_v71 import (
     select_grounded_receiver_foot,
 )
 
+from rosclaw_soccer.rsi.b6_velocity_cushion import velocity_match_joint_delta
 from rosclaw_soccer.skills.team.motor_retirement import validate_motor_retirement
 
 
@@ -119,3 +120,50 @@ def test_privileged_receive_search_rejects_out_of_contract_tuning(tmp_path: Path
 def test_bounded_pass_timing_rejects_unregistered_entry_frame(tmp_path: Path):
     with pytest.raises(ValueError, match="bounded rolling receive curriculum"):
         run(Path("/missing-asset"), tmp_path / "never-created", enabled=False, motor_entry_frame=7)
+
+
+def test_velocity_cushion_is_directional_bounded_and_fails_closed():
+    jacobian = np.eye(3, 6, dtype=np.float64)
+    stationary = np.zeros(3, dtype=np.float64)
+    ball = np.array([0.8, -0.5, 0.0], dtype=np.float64)
+    correction = velocity_match_joint_delta(
+        jacobian=jacobian,
+        foot_velocity_mps=stationary,
+        ball_velocity_mps=ball,
+        gain=1.0,
+    )
+    reverse = velocity_match_joint_delta(
+        jacobian=jacobian,
+        foot_velocity_mps=stationary,
+        ball_velocity_mps=-ball,
+        gain=1.0,
+    )
+    assert correction[0] > 0 > correction[1]
+    assert np.allclose(correction, -reverse)
+    assert np.max(np.abs(correction)) <= 0.03
+    assert np.array_equal(
+        velocity_match_joint_delta(
+            jacobian=jacobian,
+            foot_velocity_mps=ball,
+            ball_velocity_mps=ball,
+            gain=2.0,
+        ),
+        np.zeros(6),
+    )
+    with pytest.raises(ValueError):
+        velocity_match_joint_delta(
+            jacobian=jacobian,
+            foot_velocity_mps=stationary,
+            ball_velocity_mps=np.array([float("nan"), 0.0, 0.0]),
+            gain=1.0,
+        )
+
+
+def test_velocity_cushion_requires_disjoint_receiver_motor(tmp_path: Path):
+    with pytest.raises(ValueError, match="bounded rolling receive curriculum"):
+        run(
+            Path("/missing-asset"),
+            tmp_path / "never-created",
+            enabled=True,
+            velocity_cushion_gain=1.0,
+        )

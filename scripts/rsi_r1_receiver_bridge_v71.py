@@ -18,6 +18,7 @@ from rsi_r1_current_parent_replay import _Recorder
 from rsi_team_taskspace_first_touch import TeamSwingMotor
 
 from rosclaw_soccer.rsi.b6_microphysics_observer import B6MicrophysicsObserver
+from rosclaw_soccer.rsi.b6_velocity_cushion import velocity_match_joint_delta
 from rosclaw_soccer.rsi.taskspace_swing_probe import recover_swing_joint_boundary
 from rosclaw_soccer.rsi.team_strike_feedback_navigation import TeamStrikeFeedbackNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -182,6 +183,49 @@ class GroundedRetiringReceiverMotor(RetiringReceiverMotor):
         return TeamMotorTarget(tuple(float(x) for x in target), proposed.kp, proposed.kd)
 
 
+class VelocityCushionReceiverMotor(GroundedRetiringReceiverMotor):
+    """SIM_ONLY bounded contact-preparation correction on measured player state."""
+
+    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:  # type: ignore[override]
+        proposed = super().propose(observation)
+        if proposed is None or not observation.committed_receiver:
+            return proposed
+        kinematics = observation.foot_kinematics
+        if (
+            kinematics is None
+            or kinematics.foot_linear_velocity_world_mps is None
+            or observation.foundation is None
+        ):
+            raise ValueError("velocity cushion requires live same-frame kinematics and foundation")
+        ball_velocity = np.asarray(observation.qvel[35:38], dtype=float)
+        if float(np.linalg.norm(ball_velocity[:2])) < 0.30:
+            return proposed
+        ball = np.asarray(observation.qpos[36:39], dtype=float)
+        feet = np.asarray(kinematics.foot_position_world_m, dtype=float)
+        side = select_grounded_receiver_foot(feet, ball, radius_m=0.55)
+        if side < 0:
+            return proposed
+        ids = slice(side * 6, side * 6 + 6)
+        baseline = np.asarray(observation.foundation.target.target_rad, dtype=float)
+        target = np.asarray(proposed.target_rad, dtype=float)
+        limits = np.asarray(kinematics.leg_joint_limits_rad, dtype=float)[side]
+        delta = velocity_match_joint_delta(
+            jacobian=np.asarray(kinematics.foot_linear_jacobian_world, dtype=float)[side],
+            foot_velocity_mps=np.asarray(kinematics.foot_linear_velocity_world_mps, dtype=float)[
+                side
+            ],
+            ball_velocity_mps=ball_velocity,
+            gain=self.action["velocity_cushion_gain"],
+        )
+        target[ids] = np.clip(target[ids] + delta, limits[:, 0], limits[:, 1])
+        residual = target - baseline
+        self.last_residual = residual.copy()
+        self.observations["side"][-1] = np.asarray(side)
+        self.observations["residual"][-1] = residual.copy()
+        self.observations["executed"][-1] = target.copy()
+        return TeamMotorTarget(tuple(float(x) for x in target), proposed.kp, proposed.kd)
+
+
 def directed_pass_joint_delta(
     *,
     jacobian: np.ndarray[Any, Any],
@@ -312,6 +356,8 @@ def run(
     directed_pass_speed_mps: float = 0.0,
     pass_lateral_bias_m: float = 0.0,
     dual_receiver_motor: bool = False,
+    velocity_cushion_gain: float = 0.0,
+    receive_velocity_prediction_sec: float = 0.0,
     handoff_profile: str = "legacy",
     receive_profile: str = "legacy",
     phase_profile: str = "default",
@@ -359,6 +405,12 @@ def run(
         or directed_pass_speed_mps > 0
         and (not enabled or motor_agent_id != "red.playmaker")
         or type(dual_receiver_motor) is not bool
+        or velocity_cushion_gain not in (0.0, 0.5, 1.0, 2.0)
+        or velocity_cushion_gain > 0.0
+        and not dual_receiver_motor
+        or receive_velocity_prediction_sec not in (0.0, 0.04, 0.08, 0.12)
+        or receive_velocity_prediction_sec > 0.0
+        and dual_receiver_motor
         or dual_receiver_motor
         and (not motor_present or directed_pass_speed_mps == 0.0)
         or handoff_profile not in ("legacy", "strict", "tracking", "committed")
@@ -407,6 +459,8 @@ def run(
         "src/rosclaw_soccer/training/pass_contact_chain.py",
         "src/rosclaw_soccer/rsi/team_strike_feedback_navigation.py",
         "src/rosclaw_soccer/rsi/b6_microphysics_observer.py",
+        "src/rosclaw_soccer/rsi/b6_velocity_cushion.py",
+        "src/rosclaw_soccer/growth/locomotion_contact_teacher.py",
         "src/rosclaw_soccer/skills/team/physics_evidence.py",
     )
     sources = {name: hash_bytes((root / name).read_bytes()) for name in names}
@@ -509,6 +563,8 @@ def run(
             receive_cushion_depth_m=-0.12,
             receive_minimum_forward_target_m=0.02,
         )
+    if receive_velocity_prediction_sec > 0.0:
+        teacher = replace(teacher, receive_velocity_prediction_sec=receive_velocity_prediction_sec)
     phase = replace(default_phase_strike_controller(), target_stance_lateral_m=stance_lateral_m)
     if phase_profile != "default":
         phase_settings = {
@@ -567,8 +623,14 @@ def run(
             "rolling_radius_m": 0.30,
             "rolling_vertical_m": 0.02,
             "rolling_requires_commitment": True,
+            "velocity_cushion_gain": velocity_cushion_gain,
         }
-        receiver_motor = GroundedRetiringReceiverMotor("red.finisher", True, receiver_action)
+        receiver_type = (
+            VelocityCushionReceiverMotor
+            if velocity_cushion_gain > 0.0
+            else GroundedRetiringReceiverMotor
+        )
+        receiver_motor = receiver_type("red.finisher", True, receiver_action)
     protocol = {
         "schema": "rosclaw_soccer.rsi.r1_receiver_bridge_v71.protocol.v1",
         "partition": "CONSUMED_DEV",
@@ -596,6 +658,8 @@ def run(
         "precontact_pass_standoff_m": precontact_pass_standoff_m,
         "motor_contract_hash": motor.contract_hash,
         "dual_receiver_motor": dual_receiver_motor,
+        "velocity_cushion_gain": velocity_cushion_gain,
+        "receive_velocity_prediction_sec": receive_velocity_prediction_sec,
         "handoff_profile": handoff_profile,
         "receive_profile": receive_profile,
         "phase_profile": phase_profile,
@@ -842,6 +906,15 @@ def main() -> None:
         "--capture-profile", choices=("none", "short", "medium", "long"), default="none"
     )
     parser.add_argument("--capture-b6-microphysics", action="store_true")
+    parser.add_argument(
+        "--velocity-cushion-gain", type=float, choices=(0.0, 0.5, 1.0, 2.0), default=0.0
+    )
+    parser.add_argument(
+        "--receive-velocity-prediction-sec",
+        type=float,
+        choices=(0.0, 0.04, 0.08, 0.12),
+        default=0.0,
+    )
     parser.add_argument("--no-motor", action="store_true")
     args = parser.parse_args()
     report = run(
@@ -872,6 +945,8 @@ def main() -> None:
         directed_pass_speed_mps=args.directed_pass_speed,
         pass_lateral_bias_m=args.pass_lateral_bias,
         dual_receiver_motor=args.dual_receiver_motor,
+        velocity_cushion_gain=args.velocity_cushion_gain,
+        receive_velocity_prediction_sec=args.receive_velocity_prediction_sec,
         handoff_profile=args.handoff_profile,
         receive_profile=args.receive_profile,
         phase_profile=args.phase_profile,

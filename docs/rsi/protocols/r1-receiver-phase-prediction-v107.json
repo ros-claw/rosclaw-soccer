@@ -1,0 +1,30 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_receiver_phase_prediction_v107.protocol.v1",
+  "partition": "CONSUMED_DEV_CONTACT_ACTION",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "hypothesis": "Measured foot-minus-ball velocity can shift the existing precontact receive target without displacing its motor authority or changing force/torque limits.",
+  "frozen_control": {
+    "teacher_yaw_rad": 0.0,
+    "teacher_lateral_offset_m": 0.18,
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "duration_sec": 10.0,
+    "motor_entry_frame": 0,
+    "dual_receiver_motor": false,
+    "maximum_prediction_shift_m": 0.06
+  },
+  "prediction_sec_grid": [0.0, 0.04, 0.08, 0.12],
+  "scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "rollout_count": 8,
+  "baseline_reproduction_gate": "Zero prediction must reproduce v103 candidate04 first receiver foot frame within two of 66 and own second foot within two of 83; otherwise no capability inference.",
+  "two_scene_gate": "Both scenes six-body safe, collision-free, clean foot transfer, incoming ball speed >=0.30m/s, and receiver second own foot >=0.20s after first with outgoing >=2m/s and no intervening nonfoot collision.",
+  "selection": "Only a 2/2 passing prediction horizon may be retained as consumed training teacher. No Fresh promotion or video.",
+  "next_if_failed": "Do not extend this scalar grid. Train a support-aware sequential receiver actor or restore task authority after contact and obtain multi-scene full-chain data."
+}
