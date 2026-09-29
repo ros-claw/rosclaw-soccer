@@ -69,6 +69,7 @@ def simulate_r0_receiving_course(
     phase_reference: ReceivingPhaseReference | None = None,
     feedback_provider: ReceivingFeedbackProvider | None = None,
     research_navigation_policy: TeamNavigationPolicy | None = None,
+    research_contact_leg_stiffness_scale: float = 1.0,
     research_motor_option: TeamMotorOption | None = None,
     physics_evidence_consumers: Mapping[str, PhysicsEvidenceConsumer] | None = None,
     configuration_profile: str = "R0",
@@ -131,6 +132,20 @@ def simulate_r0_receiving_course(
         or research_navigation_policy.activation_ceiling != "SIM_ONLY"
     ):
         raise ValueError("one focal SIM_ONLY R1 research navigation policy required")
+    if (
+        type(research_contact_leg_stiffness_scale) is not float
+        or research_contact_leg_stiffness_scale not in (0.4, 0.55, 0.7, 0.85, 1.0)
+        or research_contact_leg_stiffness_scale != 1.0
+        and (
+            configuration_profile != "R1_CONTACT_TAP"
+            or not isinstance(oracle, ReceivingOracleSchedule)
+            or oracle.substrate != "A2_body29_precontact"
+            or feedback_provider is None
+            or research_motor_option is not None
+            or sonic_model_root is not None
+        )
+    ):
+        raise ValueError("bounded SIM_ONLY A2 contact-teacher stiffness probe required")
     if research_motor_option is not None and (
         configuration_profile != "R1_CONTACT_TAP"
         or sonic_model_root is not None
@@ -441,6 +456,8 @@ def simulate_r0_receiving_course(
         if configuration_profile == "R0"
         else r1_contact_tap_receiving_configuration()
     )
+    if research_contact_leg_stiffness_scale != 1.0:
+        teacher = replace(teacher, contact_leg_stiffness_scale=research_contact_leg_stiffness_scale)
     if research_motor_option is not None:
         # An idle motor must not preempt the frozen near-ball predecessor.
         # This is explicitly SIM_ONLY and never an implicit fallback on fault.
