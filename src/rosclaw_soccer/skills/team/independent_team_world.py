@@ -1076,6 +1076,7 @@ def simulate_independent_team_world(
     contact_teacher_config: G1LocomotionContactTeacherConfig | None = None,
     research_contact_distance_threshold_m: float | None = None,
     research_contact_max_active_substeps: int | None = None,
+    research_focal_shin_reflex_torque_nm: float | None = None,
     option_bridge_config: G1RollingOptionBridgeConfig | None = None,
     strike_phase_config: StrikePhaseConfig | None = None,
     strike_coordination_actor: DynamicStrikeCoordinationActor | None = None,
@@ -1133,6 +1134,14 @@ def simulate_independent_team_world(
         or research_contact_distance_threshold_m is None
     ):
         raise ValueError("SIM_ONLY focal stiffness substep budget required")
+    if research_focal_shin_reflex_torque_nm is not None and (
+        type(research_focal_shin_reflex_torque_nm) is not float
+        or research_focal_shin_reflex_torque_nm not in (-8.0, -4.0, -2.0, 0.0, 2.0, 4.0, 8.0)
+        or research_contact_max_active_substeps is None
+        or not isinstance(receiving_oracle, ReceivingOracleSchedule)
+        or receiving_oracle.substrate != "A2_body29_precontact"
+    ):
+        raise ValueError("SIM_ONLY focal guarded 500Hz shin reflex required")
     if type(capture_locomotion_memory) is not bool or (
         capture_locomotion_memory and receiving_oracle is None
     ):
@@ -1263,6 +1272,7 @@ def simulate_independent_team_world(
     phase_cursor = None
     feedback_slot = None
     feedback_contact_time: float | None = None
+    research_focal_first_foot_time: float | None = None
     feedback_contact_foot: int | None = None
     feedback_interruption_time: float | None = None
     if receiving_feedback is not None:
@@ -1784,6 +1794,7 @@ def simulate_independent_team_world(
         else None
     )
     episode_research_stiffness_substeps = 0
+    episode_research_shin_reflex_substeps = 0
     for frame in range(total_frames):
         if capture_oracle_authority and frame == 0:
             trace["receiving_authority_initial_local_qpos"] = [
@@ -3527,6 +3538,7 @@ def simulate_independent_team_world(
         frame_nonfoot_contact_geom_id = -1
         frame_nonfoot_contact_force_n = 0.0
         frame_research_stiffness_substeps = 0
+        frame_research_shin_reflex_substeps = 0
         frame_research_left_shin_clearance_substeps_m: list[float] = []
         frame_robot_contact_count = 0
         frame_robot_contact_first_code = 0
@@ -4113,6 +4125,24 @@ def simulate_independent_team_world(
                     trace.setdefault("research_receiving_sample_label_nm", []).append(
                         research_label.copy()
                     )
+                if (
+                    research_focal_shin_reflex_torque_nm is not None
+                    and receiving_oracle is not None
+                    and controller.cell.agent_id == receiving_oracle.agent_id
+                    and research_focal_first_foot_time is not None
+                    and 0.0 <= float(data.time) - research_focal_first_foot_time <= 0.14
+                    and episode_research_shin_reflex_substeps < 70
+                    and research_focal_left_shin_geom is not None
+                    and float(
+                        mujoco.mj_geomDistance(
+                            model, data, ball_geom, research_focal_left_shin_geom, 10.0, None
+                        )
+                    )
+                    <= 0.06
+                ):
+                    raw_torque[3] += research_focal_shin_reflex_torque_nm
+                    frame_research_shin_reflex_substeps += 1
+                    episode_research_shin_reflex_substeps += 1
                 projected_torque = _project_joint_safe_torque(
                     joint_position=q,
                     joint_velocity=dq,
@@ -4320,6 +4350,15 @@ def simulate_independent_team_world(
                     wrench: NDArray[np.float64] = np.zeros(6, dtype=np.float64)
                     mujoco.mj_contactForce(model, data, contact_index, wrench)
                     force = float(np.linalg.norm(wrench[:3]))
+                    if (
+                        research_focal_shin_reflex_torque_nm is not None
+                        and receiving_oracle is not None
+                        and controller.cell.agent_id == receiving_oracle.agent_id
+                        and research_focal_first_foot_time is None
+                        and effector_code in (1, 2)
+                        and force > 1.0
+                    ):
+                        research_focal_first_foot_time = float(data.time)
                     if (
                         controller.cell.agent_id in student_first_foot_contact_time
                         and student_first_foot_contact_time[controller.cell.agent_id] is None
@@ -4678,6 +4717,10 @@ def simulate_independent_team_world(
         if research_focal_left_shin_geom is not None:
             trace.setdefault("research_focal_left_shin_clearance_substeps_m", []).append(
                 frame_research_left_shin_clearance_substeps_m
+            )
+        if research_focal_shin_reflex_torque_nm is not None:
+            trace.setdefault("research_focal_shin_reflex_active_substeps", []).append(
+                frame_research_shin_reflex_substeps
             )
         trace["robot_robot_contact_count"].append(frame_robot_contact_count)
         trace["robot_robot_contact_first_code"].append(frame_robot_contact_first_code)
