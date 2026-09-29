@@ -140,6 +140,9 @@ class TeamSwingMotor:
                     ball,
                     self.side,
                     acquisition_max_gap_m=self.action["swing_foot_acquisition_gap_m"],
+                    acquisition_max_lateral_gap_m=self.action.get(
+                        "swing_acquisition_max_lateral_gap_m"
+                    ),
                 )
             if self.side >= 0:
                 ids = list(range(self.side * 6, self.side * 6 + 6))
@@ -345,6 +348,9 @@ def _run_one(
         "taskspace_acquisition_max_gap_m": protocol["candidate_action"][
             "swing_foot_acquisition_gap_m"
         ],
+        "taskspace_acquisition_max_lateral_gap_m": protocol["candidate_action"].get(
+            "swing_acquisition_max_lateral_gap_m"
+        ),
         "taskspace_joint_risk_guard_margin_rad": protocol["candidate_action"].get(
             "joint_risk_guard_margin_rad"
         ),

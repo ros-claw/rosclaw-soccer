@@ -39,6 +39,45 @@ def test_taskspace_selects_airborne_leg_and_bounds_ik() -> None:
         swing_joint_delta(feet[0], ball, jac, np.zeros(6), limits, forward_cap_m=0.2)
 
 
+def test_lateral_acquisition_waits_for_reachable_swing_foot() -> None:
+    feet = np.array([[0.0, -0.52, 0.05], [0.0, -0.80, 0.15]])
+    ball = np.array([0.48, -0.43, 0.115])
+    assert choose_swing_side(feet, ball, -1, acquisition_max_gap_m=0.55) == 1
+    assert (
+        choose_swing_side(
+            feet,
+            ball,
+            -1,
+            acquisition_max_gap_m=0.55,
+            acquisition_max_lateral_gap_m=0.22,
+        )
+        == -1
+    )
+    feet[:, 2] = [0.15, 0.05]
+    assert (
+        choose_swing_side(
+            feet,
+            ball,
+            -1,
+            acquisition_max_gap_m=0.55,
+            acquisition_max_lateral_gap_m=0.22,
+        )
+        == 0
+    )
+    assert (
+        choose_swing_side(
+            feet,
+            ball,
+            1,
+            acquisition_max_gap_m=0.55,
+            acquisition_max_lateral_gap_m=0.22,
+        )
+        == 1
+    )
+    with pytest.raises(ValueError):
+        choose_swing_side(feet, ball, -1, acquisition_max_lateral_gap_m=0.5)
+
+
 def test_taskspace_release_is_causal_and_monotone() -> None:
     contact_delta = np.full(6, 0.2)
     assert release_joint_delta(contact_delta, 1)[0] == pytest.approx(0.19)
