@@ -5564,7 +5564,7 @@ def _movement_command(
             ),
             effector_velocities=(
                 tuple(
-                    (name, *velocity)
+                    (name, float(velocity[0]), float(velocity[1]), float(velocity[2]))
                     for name, velocity in zip(
                         ("left_foot", "right_foot"),
                         measured_foot_motion.foot_linear_velocity_world_mps,

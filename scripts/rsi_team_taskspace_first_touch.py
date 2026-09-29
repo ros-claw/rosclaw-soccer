@@ -287,6 +287,7 @@ def _run_one(
         config=IndependentTeamWorldConfig(
             simulation_duration_sec=protocol["frames"] * 0.02,
             joint_guard_margin_rad=protocol.get("world_joint_guard_margin_rad", 0.04),
+            maximum_yaw_rate_radps=protocol.get("maximum_yaw_rate_radps", 0.80),
         ),
         motor_options={motor.agent_id: motor},
         navigation_policies=(
