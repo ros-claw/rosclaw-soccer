@@ -124,9 +124,10 @@ class ReceivingKinematicTemporalExpert(ReceivingTemporalMotorExpert):
         else:
             projected = first @ values
         hidden = np.tanh(projected + np.asarray(self.kinematic_policy.input_bias))
-        return np.asarray(self.kinematic_policy.output_matrix).reshape(
+        result: np.ndarray = np.asarray(self.kinematic_policy.output_matrix).reshape(
             12, HIDDEN_COUNT
         ) @ hidden + np.asarray(self.kinematic_policy.output_bias)
+        return result
 
 
 @dataclass

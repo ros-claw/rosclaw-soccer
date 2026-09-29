@@ -121,9 +121,10 @@ class ReceivingTemporalMotorExpert(ReceivingLateralPiecewiseExpert):
             np.asarray(self.policy.input_matrix).reshape(32, 10) @ values
             + np.asarray(self.policy.input_bias)
         )
-        return np.asarray(self.policy.output_matrix).reshape(12, 32) @ hidden + np.asarray(
-            self.policy.output_bias
-        )
+        result: np.ndarray = np.asarray(self.policy.output_matrix).reshape(
+            12, 32
+        ) @ hidden + np.asarray(self.policy.output_bias)
+        return result
 
     def propose(self, observation: ReceivingFeedbackObservation) -> tuple[float, ...]:
         base = np.asarray(super().propose(observation), dtype=np.float64)
