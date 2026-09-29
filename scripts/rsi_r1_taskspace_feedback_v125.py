@@ -1,0 +1,221 @@
+"""Eight-G1 contact/foot-velocity/Jacobian receiving feedback search, SIM_ONLY."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from rosclaw_soccer.rsi.receiving_taskspace_feedback import ReceivingTaskspaceFeedback
+from rosclaw_soccer.rsi.team_receive_contact_evidence import (
+    ReceiveContactEvidence,
+    ReceiveContactMailbox,
+)
+from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from rosclaw_soccer.training.receiving_experiment import simulate_r0_receiving_course
+from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSchedule
+from rosclaw_soccer.training.receiving_rollout import explain_receiving_window, receiving_window
+from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
+
+COURSES = (
+    ReceivingCourse("red.finisher", 92801, 1.25, 0.08),
+    ReceivingCourse("red.finisher", 92803, 1.5, -0.08),
+)
+SCHEDULE = ReceivingOracleSchedule("red.finisher", "A1_body29", 20, 10, ((0.0,) * 29,))
+PARAMETERS = (
+    (0.0, 0.0, 0.0, 0.0, 0.0),
+    (0.25, 0.0, 0.0, 0.0, 0.0),
+    (0.25, 0.25, 0.0, 0.0, 0.0),
+    (0.25, 0.5, 0.0, 0.0, 0.0),
+    (0.5, 0.5, 0.0, 0.0, 0.0),
+    (0.5, 0.5, 0.05, 0.0, 0.0),
+    (0.25, 0.5, 0.05, 0.0, 0.0),
+    (0.5, 0.75, 0.05, 0.0, 0.0),
+    (0.25, 0.5, 0.1, 0.0, 0.0),
+    (0.25, 0.5, 0.05, 0.03, -0.05),
+)
+
+
+def evaluate(
+    asset_root: Path,
+    policy: Path,
+    course: ReceivingCourse,
+    parameters: tuple[float, float, float, float, float],
+) -> dict[str, Any]:
+    mailbox = ReceiveContactMailbox(course.agent_id)
+    actor = ReceivingTaskspaceFeedback(
+        course.agent_id, SCHEDULE.contract_hash, mailbox, *parameters
+    )
+    result, trace = simulate_r0_receiving_course(
+        asset_root=asset_root,
+        reference_policy_path=policy,
+        course=course,
+        scenario_id=f"s199.rsi.r1.taskspace-feedback.{course.seed}",
+        configuration_profile="R1_CONTACT_TAP",
+        oracle=SCHEDULE,
+        feedback_provider=actor,
+        physics_evidence_consumers={course.agent_id: ReceiveContactEvidence(mailbox)},
+    )
+    info = result.to_dict()
+    ids = tuple(sorted(row["agent_id"] for row in info["qualities"]))
+    _, outcome = receiving_window(
+        trace, agent_ids=ids, agent_id=course.agent_id, start=20, frames=100
+    )
+    detail = explain_receiving_window(
+        trace, agent_ids=ids, agent_id=course.agent_id, start=20, frames=100
+    )
+    code = ids.index(course.agent_id) + 1
+    foot = np.asarray(trace["ball_contact_agent_code"])
+    effector = np.asarray(trace["ball_contact_effector_code"])
+    foot_force = np.asarray(trace["ball_contact_force_n"])
+    nonfoot = np.asarray(trace["ball_nonfoot_contact_agent_code"])
+    nonfoot_force = np.asarray(trace["ball_nonfoot_contact_force_n"])
+    first = next(
+        (
+            i
+            for i in range(20, 120)
+            if foot[i] == code and effector[i] in (1, 2) and foot_force[i] > 0
+        ),
+        None,
+    )
+    shin_frames = (
+        []
+        if first is None
+        else [i for i in range(first, 120) if nonfoot[i] == code and nonfoot_force[i] > 0]
+    )
+    applied = np.asarray(trace["receiving_oracle_delta_rad"])
+    admitted = np.asarray(trace["receiving_oracle_active"])
+    nonzero_applied = np.flatnonzero(np.any(np.abs(applied) > 1e-8, axis=1))
+    return {
+        "course": vars(course),
+        "safe": info["safe"],
+        "physics_evidence_fault_agents": info["physics_evidence_fault_agents"],
+        "result_hash": hash_json(info),
+        "control_frames": len(trace["time"]),
+        "proposal_nonzero_frames": actor.nonzero_frames,
+        "admitted_frames": int(np.count_nonzero(admitted)),
+        "first_actual_nonzero_frame": int(nonzero_applied[0]) if len(nonzero_applied) else None,
+        "peak_actual_residual_rad": float(np.max(np.abs(applied))),
+        "first_own_foot_time_sec": mailbox.snapshot.first_own_foot_time_sec,
+        "prefoot_nonfoot_count": mailbox.snapshot.prefoot_nonfoot_count,
+        "own_shin_frames": shin_frames,
+        "outcome": outcome,
+        "explanation": detail,
+    }
+
+
+def train(asset_root: Path, policy: Path, foot_audit: Path, output: Path) -> dict[str, Any]:
+    root = Path(__file__).resolve().parents[1]
+    if output.exists() or output.resolve().is_relative_to(root):
+        raise ValueError("new external SIM_ONLY evidence directory required")
+    audited = json.loads(foot_audit.read_text())
+    if (
+        audited["schema"] != "rosclaw_soccer.rsi.r1_foot_feedback_tap_v124.result.v1"
+        or audited["report_hash"]
+        != hash_json({key: value for key, value in audited.items() if key != "report_hash"})
+        or audited["status"] != "FOOT_BODY_CONTACT_OBSERVATION_QUALIFIED"
+        or audited["policy_hash"] != hash_bytes(policy.read_bytes())
+    ):
+        raise ValueError("qualified source foot observation required")
+    sources = {
+        name: hash_bytes((root / name).read_bytes())
+        for name in (
+            "scripts/rsi_r1_taskspace_feedback_v125.py",
+            "src/rosclaw_soccer/rsi/receiving_taskspace_feedback.py",
+            "src/rosclaw_soccer/rsi/receiving_whole_body_foot_tap.py",
+            "src/rosclaw_soccer/training/receiving_feedback.py",
+            "src/rosclaw_soccer/training/receiving_rollout.py",
+            "src/rosclaw_soccer/skills/team/independent_team_world.py",
+        )
+    }
+    output.mkdir(parents=True)
+    rows = []
+    for i, parameters in enumerate(PARAMETERS):
+        trials = [evaluate(asset_root, policy, course, parameters) for course in COURSES]
+        row = {
+            "candidate": i,
+            "parameters": parameters,
+            "safe": all(t["safe"] and not t["physics_evidence_fault_agents"] for t in trials),
+            "all_clean_first_foot": all(
+                t["first_own_foot_time_sec"] is not None and t["prefoot_nonfoot_count"] == 0
+                for t in trials
+            ),
+            "controlled_count": sum(t["outcome"]["controlled_reception"] for t in trials),
+            "own_shin_frame_count": sum(len(t["own_shin_frames"]) for t in trials),
+            "tail_distance_sum_m": sum(
+                t["explanation"]["tail_maximum_foot_distance_m"] for t in trials
+            ),
+            "tail_speed_sum_mps": sum(
+                t["explanation"]["tail_maximum_ball_speed_mps"] for t in trials
+            ),
+            "trials": trials,
+        }
+        rows.append(row)
+        (output / "progress.json").write_text(json.dumps(rows, indent=2) + "\n")
+        print(
+            json.dumps(
+                {
+                    "candidate": i,
+                    "safe": row["safe"],
+                    "foot": row["all_clean_first_foot"],
+                    "controlled": row["controlled_count"],
+                    "shin": row["own_shin_frame_count"],
+                    "tail_distance_sum_m": row["tail_distance_sum_m"],
+                }
+            ),
+            flush=True,
+        )
+    eligible = [r for r in rows if r["safe"] and r["all_clean_first_foot"]]
+    if not eligible:
+        raise ValueError("no safe clean-foot candidate; progress evidence retained")
+    selected = max(
+        eligible,
+        key=lambda r: (
+            r["controlled_count"],
+            -r["own_shin_frame_count"],
+            -r["tail_distance_sum_m"],
+            -r["tail_speed_sum_mps"],
+        ),
+    )
+    report = {
+        "schema": "rosclaw_soccer.rsi.r1_taskspace_feedback_v125.result.v1",
+        "partition": "CONSUMED_EIGHT_G1_DEVELOPMENT",
+        "source_hashes": sources,
+        "foot_audit_hash": audited["report_hash"],
+        "policy_hash": hash_bytes(policy.read_bytes()),
+        "schedule_hash": SCHEDULE.contract_hash,
+        "candidate_count": len(rows),
+        "rollout_count": len(rows) * len(COURSES),
+        "parent": rows[0],
+        "selected": selected,
+        "all_candidates": rows,
+        "status": "DEVELOPMENT_CONTROLLED_GAIN_UNVALIDATED"
+        if selected["controlled_count"] > rows[0]["controlled_count"]
+        else "REJECTED_NO_CONTROLLED_GAIN",
+        "promotion_authorized": False,
+        "video_authorized": False,
+        "activation_ceiling": "SIM_ONLY",
+    }
+    report["report_hash"] = hash_json(report)
+    (output / "selection.json").write_text(json.dumps(report, indent=2) + "\n")
+    if any(hash_bytes((root / name).read_bytes()) != digest for name, digest in sources.items()):
+        raise ValueError("source drift during task-space development")
+    return report
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--asset-root", type=Path, required=True)
+    parser.add_argument("--policy", type=Path, required=True)
+    parser.add_argument("--foot-audit", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    report = train(args.asset_root, args.policy, args.foot_audit, args.output)
+    print(json.dumps({"status": report["status"], "report_hash": report["report_hash"]}))
+
+
+if __name__ == "__main__":
+    main()
