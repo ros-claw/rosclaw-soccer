@@ -1,0 +1,53 @@
+{
+  "schema": "rsi_team_diverse_curriculum_protocol_v38",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "prior_development_report_path": "/data/rosclaw_overflow/rsi-team-lateral-phase-audit-v52/report.json",
+  "prior_development_report_hash": "sha256:0a91ec791d65704e924f23a7195bb1dc5c6ef2abbadd66bf43d9dab11b3aa215",
+  "prior_development_report_file_hash": "sha256:b47755c3227208b2d2d34e58e0c356b05e69d5b7dd8aa2732a691315aa9cdb5b",
+  "prior_development_protocol_path": "docs/rsi/protocols/team-lateral-phase-hard-y-v52.json",
+  "prior_development_protocol_file_hash": "sha256:a1c39b28a318fe90911465f693dac92fb6514f071698c82df82b15adecb9acc9",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "adaptive_model_path": "/data/rosclaw_overflow/rsi-team-adaptive-intercept-model-v28/model.json",
+  "adaptive_model_hash": "sha256:cfbf8277571d59c4d06bfb229f5757c62342241dc19f9fea2a1e2d0cd5c8bab7",
+  "curriculum": {
+    "coordinate_seed": 20261032,
+    "identity_seed_base": 1700000,
+    "batch_count": 1,
+    "training_scene_count": 32,
+    "ball_x_m": [3.25, 4.25],
+    "ball_y_m": [-0.70, -0.35],
+    "ball_vx_mps": [-0.90, -0.20]
+  },
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "arms": [
+    {"name": "parent", "foot_selection": "none", "forward_gain": 0.0, "lateral_gain": 0.0, "strike_through_m": 0.0},
+    {"name": "baseline", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0},
+    {"name": "lateral10", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10},
+    {"name": "gate22_cap05", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "swing_acquisition_max_lateral_gap_m": 0.22},
+    {"name": "gate22_cap10", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.22},
+    {"name": "gate32_cap10", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.32},
+    {"name": "gate22_cap10_guard12", "foot_selection": "phase", "forward_gain": 0.4, "lateral_gain": 1.2, "strike_through_m": 0.0, "lateral_cap_m": 0.10, "swing_acquisition_max_lateral_gap_m": 0.22, "joint_risk_guard_margin_rad": 0.12}
+  ],
+  "development_gate": {
+    "minimum_useful_gain_over_baseline": 3,
+    "maximum_unsafe_excess_over_baseline": 0,
+    "require_parent_complete": true
+  },
+  "fresh_gate": {
+    "primary_arm": "gate22_cap10",
+    "minimum_useful_gain_over_baseline": 3,
+    "minimum_safe_contact_gain_over_baseline": 5,
+    "maximum_unsafe_excess_over_baseline": 0,
+    "require_primary_and_parent_complete": true
+  },
+  "interpretation": "Frozen post-v52 primary candidate on 32 independent physical ball states, widened lateral range, new identity and coordinate seeds. Secondary arms are diagnostic only. The fresh gate grants no continuous-match or hardware promotion."
+}
