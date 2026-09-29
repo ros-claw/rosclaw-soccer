@@ -157,6 +157,7 @@ def main() -> None:
         action["strike_through_m"] = arm["strike_through_m"]
         for key in (
             "lateral_cap_m",
+            "swing_foot_acquisition_gap_m",
             "swing_acquisition_max_lateral_gap_m",
             "joint_risk_guard_margin_rad",
         ):
