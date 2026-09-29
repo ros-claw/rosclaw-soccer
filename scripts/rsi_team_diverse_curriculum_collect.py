@@ -164,6 +164,7 @@ def main() -> None:
             "swing_foot_acquisition_gap_m",
             "swing_acquisition_max_lateral_gap_m",
             "revalidate_swing_side",
+            "swing_side_release_height_advantage_m",
             "joint_risk_guard_margin_rad",
             "joint_boundary_recovery_cap_rad",
         ):

@@ -16,6 +16,7 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
     STRIKE_THROUGH_OFFSETS_M,
     SWING_ACQUISITION_MAX_GAPS_M,
     SWING_ACQUISITION_MAX_LATERAL_GAPS_M,
+    SWING_SIDE_RELEASE_HEIGHT_ADVANTAGES_M,
     VERTICAL_OFFSETS_M,
     choose_swing_side,
     guard_swing_joint_delta,
@@ -47,6 +48,7 @@ def audit_taskspace_swing_trace(
     acquisition_gap = report.get("taskspace_acquisition_max_gap_m", 0.95)
     acquisition_lateral_gap = report.get("taskspace_acquisition_max_lateral_gap_m")
     revalidate_swing_side = report.get("taskspace_revalidate_swing_side", False)
+    release_height_advantage = report.get("taskspace_swing_side_release_height_advantage_m", 0.02)
     joint_risk_margin = report.get("taskspace_joint_risk_guard_margin_rad")
     recovery_cap = report.get("taskspace_joint_boundary_recovery_cap_rad")
     family_hash = report.get("taskspace_family_actor_hash")
@@ -78,6 +80,8 @@ def audit_taskspace_swing_trace(
         or acquisition_gap not in SWING_ACQUISITION_MAX_GAPS_M
         or acquisition_lateral_gap not in (None, *SWING_ACQUISITION_MAX_LATERAL_GAPS_M)
         or type(revalidate_swing_side) is not bool
+        or release_height_advantage not in SWING_SIDE_RELEASE_HEIGHT_ADVANTAGES_M
+        or (not revalidate_swing_side and release_height_advantage != 0.02)
         or joint_risk_margin not in (None, *JOINT_RISK_GUARD_MARGINS_RAD)
         or recovery_cap not in (None, *JOINT_BOUNDARY_RECOVERY_CAPS_RAD)
         or report.get("taskspace_leg_joint_names") != [list(row) for row in LEG_NAMES]
@@ -143,6 +147,7 @@ def audit_taskspace_swing_trace(
                     acquisition_max_gap_m=(0.55 if late_hash is not None else acquisition_gap),
                     acquisition_max_lateral_gap_m=acquisition_lateral_gap,
                     revalidate_swing_side=revalidate_swing_side,
+                    release_height_advantage_m=release_height_advantage,
                 )
             if selected_sides[frame, lane] != side[lane]:
                 raise ValueError("task-space side used future contact or altered support leg")

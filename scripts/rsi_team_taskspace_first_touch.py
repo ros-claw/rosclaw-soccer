@@ -145,6 +145,9 @@ class TeamSwingMotor:
                         "swing_acquisition_max_lateral_gap_m"
                     ),
                     revalidate_swing_side=self.action.get("revalidate_swing_side", False),
+                    release_height_advantage_m=self.action.get(
+                        "swing_side_release_height_advantage_m", 0.02
+                    ),
                 )
             if self.side >= 0:
                 ids = list(range(self.side * 6, self.side * 6 + 6))
@@ -363,6 +366,9 @@ def _run_one(
         ),
         "taskspace_revalidate_swing_side": protocol["candidate_action"].get(
             "revalidate_swing_side", False
+        ),
+        "taskspace_swing_side_release_height_advantage_m": protocol["candidate_action"].get(
+            "swing_side_release_height_advantage_m", 0.02
         ),
         "taskspace_joint_risk_guard_margin_rad": protocol["candidate_action"].get(
             "joint_risk_guard_margin_rad"

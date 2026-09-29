@@ -19,6 +19,7 @@ JOINT_RISK_GUARD_MARGINS_RAD = (0.12,)
 JOINT_RISK_HORIZON_SEC = 0.08
 JOINT_BOUNDARY_RECOVERY_CAPS_RAD = (0.04, 0.08)
 JOINT_BOUNDARY_RECOVERY_MARGIN_RAD = 0.08
+SWING_SIDE_RELEASE_HEIGHT_ADVANTAGES_M = (-0.02, 0.0, 0.02)
 
 
 def choose_swing_side(
@@ -29,6 +30,7 @@ def choose_swing_side(
     acquisition_max_gap_m: float = 0.95,
     acquisition_max_lateral_gap_m: float | None = None,
     revalidate_swing_side: bool = False,
+    release_height_advantage_m: float = 0.02,
 ) -> int:
     """Latch an airborne swing foot; never infer one from the future collision."""
     if (
@@ -38,6 +40,8 @@ def choose_swing_side(
         or acquisition_max_gap_m not in SWING_ACQUISITION_MAX_GAPS_M
         or acquisition_max_lateral_gap_m not in (None, *SWING_ACQUISITION_MAX_LATERAL_GAPS_M)
         or type(revalidate_swing_side) is not bool
+        or release_height_advantage_m not in SWING_SIDE_RELEASE_HEIGHT_ADVANTAGES_M
+        or (not revalidate_swing_side and release_height_advantage_m != 0.02)
         or not np.isfinite(feet_xyz).all()
         or not np.isfinite(ball_xyz).all()
     ):
@@ -48,7 +52,8 @@ def choose_swing_side(
         previous_gap = float(ball_xyz[0] - feet_xyz[previous_side, 0])
         previous_lateral = abs(float(ball_xyz[1] - feet_xyz[previous_side, 1]))
         if (
-            feet_xyz[previous_side, 2] - feet_xyz[1 - previous_side, 2] >= 0.02
+            feet_xyz[previous_side, 2] - feet_xyz[1 - previous_side, 2]
+            >= release_height_advantage_m
             and 0.18 <= previous_gap <= acquisition_max_gap_m
             and (
                 acquisition_max_lateral_gap_m is None

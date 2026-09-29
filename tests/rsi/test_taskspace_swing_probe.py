@@ -92,6 +92,23 @@ def test_revalidated_swing_never_keeps_a_now_lower_foot() -> None:
         choose_swing_side(feet, ball, 1, revalidate_swing_side=1)
 
 
+def test_swing_release_hysteresis_keeps_near_level_latched_foot() -> None:
+    feet = np.array([[0.0, -0.1, 0.055], [0.0, 0.1, 0.04]])
+    ball = np.array([0.35, 0.0, 0.115])
+    assert choose_swing_side(feet, ball, 0, revalidate_swing_side=True) == -1
+    assert (
+        choose_swing_side(feet, ball, 0, revalidate_swing_side=True, release_height_advantage_m=0.0)
+        == 0
+    )
+    feet[:, 2] = [0.04, 0.07]
+    assert (
+        choose_swing_side(feet, ball, 0, revalidate_swing_side=True, release_height_advantage_m=0.0)
+        == 1
+    )
+    with pytest.raises(ValueError):
+        choose_swing_side(feet, ball, 0, release_height_advantage_m=0.0)
+
+
 def test_boundary_recovery_only_moves_measured_near_limit_joint_inward() -> None:
     limits = np.tile([-0.26, 0.26], (6, 1))
     position = np.zeros(6)
