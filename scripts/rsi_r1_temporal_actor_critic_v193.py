@@ -15,6 +15,11 @@ from rsi_r1_course_map_v190 import COURSES, _find_candidate
 from rsi_r1_middle_basis_cem_v187 import PHYSICAL_KEYS
 from rsi_r1_temporal_zero_v192 import TRAIN_COURSES
 
+from rosclaw_soccer.rsi.receiving_kinematic_temporal_expert import (
+    KinematicMotorWeights,
+    ReceivingKinematicTemporalExpert,
+    ReceivingProtectedKinematicExpert,
+)
 from rosclaw_soccer.rsi.receiving_temporal_motor_expert import (
     ReceivingTemporalMotorExpert,
     TemporalMotorWeights,
@@ -48,12 +53,23 @@ def run_episode(
     exploration_std: float,
     exploration_seed: int,
     exploration_correlation: float = 0.0,
+    kinematic_policy: KinematicMotorWeights | None = None,
+    protected_initial_features: tuple[tuple[float, ...], ...] | None = None,
 ) -> dict[str, Any]:
     schedule = ReceivingOracleSchedule(
         course.agent_id, "A2_body29_precontact", 15, 10, ((0.0,) * 29,)
     )
     mailbox = ReceiveContactMailbox(course.agent_id)
-    feedback = ReceivingTemporalMotorExpert(
+    if protected_initial_features is not None and kinematic_policy is None:
+        raise ValueError("protection requires a kinematic policy")
+    feedback_type = (
+        ReceivingProtectedKinematicExpert
+        if protected_initial_features is not None
+        else ReceivingKinematicTemporalExpert
+        if kinematic_policy is not None
+        else ReceivingTemporalMotorExpert
+    )
+    feedback = feedback_type(
         course.agent_id,
         schedule.contract_hash,
         mailbox,
@@ -68,6 +84,12 @@ def run_episode(
         exploration_std=exploration_std,
         exploration_seed=exploration_seed,
         exploration_correlation=exploration_correlation,
+        **({"kinematic_policy": kinematic_policy} if kinematic_policy is not None else {}),
+        **(
+            {"protected_initial_features": protected_initial_features}
+            if protected_initial_features is not None
+            else {}
+        ),
     )
     navigation = TeamReceiveSideNavigation(
         course.agent_id,
@@ -144,6 +166,7 @@ def run_episode(
         "physical_trace_hash": hash_json(
             {key: np.asarray(trace[key]).tolist() for key in PHYSICAL_KEYS}
         ),
+        "protected_episode": getattr(feedback, "protected_episode", None),
     }
 
 

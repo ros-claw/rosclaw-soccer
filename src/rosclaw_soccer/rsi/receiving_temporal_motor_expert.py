@@ -116,6 +116,15 @@ class ReceivingTemporalMotorExpert(ReceivingLateralPiecewiseExpert):
             raise ValueError("finite measured 50 Hz body/ball/contact state required")
         return tuple(float(value) for value in np.clip(features, -2.0, 2.0))
 
+    def _motor_logits(self, values: np.ndarray) -> np.ndarray:
+        hidden = np.tanh(
+            np.asarray(self.policy.input_matrix).reshape(32, 10) @ values
+            + np.asarray(self.policy.input_bias)
+        )
+        return np.asarray(self.policy.output_matrix).reshape(12, 32) @ hidden + np.asarray(
+            self.policy.output_bias
+        )
+
     def propose(self, observation: ReceivingFeedbackObservation) -> tuple[float, ...]:
         base = np.asarray(super().propose(observation), dtype=np.float64)
         frame = observation.frame
@@ -123,13 +132,7 @@ class ReceivingTemporalMotorExpert(ReceivingLateralPiecewiseExpert):
             return tuple(float(value) for value in base)
         features = self.features(observation)
         values = np.asarray(features, dtype=np.float64)
-        hidden = np.tanh(
-            np.asarray(self.policy.input_matrix).reshape(32, 10) @ values
-            + np.asarray(self.policy.input_bias)
-        )
-        logits = np.asarray(self.policy.output_matrix).reshape(12, 32) @ hidden + np.asarray(
-            self.policy.output_bias
-        )
+        logits = self._motor_logits(values)
         if self.exploration_std:
             innovation = self._rng.normal(0.0, self.exploration_std, size=12)
             if self.exploration_correlation:
