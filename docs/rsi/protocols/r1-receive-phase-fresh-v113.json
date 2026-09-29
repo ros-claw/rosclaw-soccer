@@ -1,0 +1,24 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_receive_phase_fresh_v113.protocol.v1",
+  "partition": "FRESH_UNSEEN_LOCAL_B6",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "training_selection_path": "/data/rosclaw_overflow/rsi-r1-retention-constrained-phase-v112/selection.json",
+  "training_selection_hash": "sha256:ee4321a90b8d02c356b17ae1cafd3053e5bdc0fd4e077ff143b9552e9a85eb73",
+  "candidate_weights": [-0.1853410496026612, -0.2120161425477506, -0.10038265224958914, 0.1304744032562346, 0.16730409297832222],
+  "parent_weights": [0.0, 0.0, 0.0, 0.0, 0.0],
+  "scenes": [
+    {"id": "f01", "ball_x_m": 2.22, "ball_y_m": -0.75, "seed": 712101},
+    {"id": "f02", "ball_x_m": 2.26, "ball_y_m": -0.77, "seed": 712102},
+    {"id": "f03", "ball_x_m": 2.30, "ball_y_m": -0.75, "seed": 712103},
+    {"id": "f04", "ball_x_m": 2.34, "ball_y_m": -0.77, "seed": 712104},
+    {"id": "f05", "ball_x_m": 2.22, "ball_y_m": -0.79, "seed": 712105},
+    {"id": "f06", "ball_x_m": 2.30, "ball_y_m": -0.71, "seed": 712106},
+    {"id": "f07", "ball_x_m": 2.26, "ball_y_m": -0.73, "seed": 712107},
+    {"id": "f08", "ball_x_m": 2.34, "ball_y_m": -0.79, "seed": 712108}
+  ],
+  "paired_rollout_count": 16,
+  "pass_gate": "Candidate must be six-body safe and collision-free in all 8 fresh episodes, achieve clean dynamic source-to-foot transfer in at least 6/8, and qualified own second foot after >=0.20s, outgoing >=2m/s with no nonfoot between in at least 4/8. It must exceed frozen Parent local B6 count by >=3. A local B6 Fresh pass does not imply full goal or video authorization.",
+  "selection_lock": "Weights fixed before any Fresh simulation; do not tune on these scenes. If rejected, retire this exam and open new training scenes, never re-label its failures as training success."
+}
