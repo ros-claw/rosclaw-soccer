@@ -1,0 +1,31 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_pass_launch_mechanism_v73.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "Frozen v72 local exam; no scenario is Fresh after this point",
+  "hypothesis": "The initial pass fails before the receiver motor can help: adjusting sender stance or strike speed may restore a physical foot launch and clean arrival.",
+  "fixed": {
+    "receiver_motor": "none",
+    "option": "per-player",
+    "ball_z_m": 0.115,
+    "duration_sec": 8.7,
+    "pass_stroke_sec": 0.0
+  },
+  "mechanism_scenes": [
+    {"id": "s00", "ball_x_m": 1.88, "ball_y_m": -0.82, "seed": 310001, "parent_failure": "no_sender_foot_contact"},
+    {"id": "s04", "ball_x_m": 1.86, "ball_y_m": -0.80, "seed": 310005, "parent_failure": "no_sender_foot_contact"},
+    {"id": "s05", "ball_x_m": 1.98, "ball_y_m": -0.80, "seed": 310006, "parent_failure": "no_sender_foot_contact"},
+    {"id": "s01", "ball_x_m": 1.96, "ball_y_m": -0.78, "seed": 310002, "parent_failure": "no_clean_receiver_arrival"},
+    {"id": "s02", "ball_x_m": 1.90, "ball_y_m": -0.76, "seed": 310003, "parent_failure": "interrupted_or_simultaneous_transfer"},
+    {"id": "s03", "ball_x_m": 1.94, "ball_y_m": -0.84, "seed": 310004, "parent_failure": "no_clean_receiver_arrival"}
+  ],
+  "arms": [
+    {"id": "stance_near", "stance_lateral_m": -0.12, "pass_speed_mps": 0.80, "scenes": ["s00", "s04", "s05"]},
+    {"id": "stance_far", "stance_lateral_m": -0.22, "pass_speed_mps": 0.80, "scenes": ["s00", "s04", "s05"]},
+    {"id": "speed_up", "stance_lateral_m": -0.17, "pass_speed_mps": 1.20, "scenes": ["s01", "s02", "s03"]}
+  ],
+  "diagnostics": ["sender_foot_contact", "clean_transfer", "safe", "chain_success"],
+  "interpretation": "Development mechanism probe only; passing any individual scene does not qualify the 3v3 or 4v4 chain."
+}

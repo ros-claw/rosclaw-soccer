@@ -1,0 +1,42 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_receiver_bridge_fresh_v72.protocol.v1",
+  "activation_ceiling": "SIM_ONLY",
+  "partition": "FRESH_LOCAL_EXAM",
+  "training_authorized": false,
+  "promotion_authorized": false,
+  "development_parent": "R1 center pass→foot-receive→in-frame goal, previously consumed",
+  "chosen_from_consumed": {
+    "rolling_cap_rad": 0.04,
+    "rolling_radius_m": 0.30,
+    "rolling_vertical_m": 0.02,
+    "rolling_requires_commitment": true,
+    "retired_motor_option_ankle_braking_damping": 12.0
+  },
+  "control": "same physical six-G1 world, same per-player option mode, no receiver motor",
+  "scenario_base": {
+    "duration_sec": 8.70,
+    "ball_z_m": 0.115,
+    "pass_speed_mps": 0.80,
+    "stance_lateral_m": -0.17,
+    "goal_plane_x_m": 7.5
+  },
+  "scenes": [
+    {"id": "s00", "ball_x_m": 1.88, "ball_y_m": -0.82, "seed": 310001},
+    {"id": "s01", "ball_x_m": 1.96, "ball_y_m": -0.78, "seed": 310002},
+    {"id": "s02", "ball_x_m": 1.90, "ball_y_m": -0.76, "seed": 310003},
+    {"id": "s03", "ball_x_m": 1.94, "ball_y_m": -0.84, "seed": 310004},
+    {"id": "s04", "ball_x_m": 1.86, "ball_y_m": -0.80, "seed": 310005},
+    {"id": "s05", "ball_x_m": 1.98, "ball_y_m": -0.80, "seed": 310006},
+    {"id": "s06", "ball_x_m": 1.92, "ball_y_m": -0.88, "seed": 310007},
+    {"id": "s07", "ball_x_m": 1.92, "ball_y_m": -0.72, "seed": 310008}
+  ],
+  "frozen_gate": {
+    "require_all_complete": true,
+    "maximum_newly_unsafe": 0,
+    "minimum_candidate_safe": 8,
+    "minimum_candidate_clean_transfer": 6,
+    "minimum_candidate_chain_success": 2,
+    "minimum_chain_gain_over_control": 2,
+    "interpretation": "Local six-G1 integration evidence only; no full-match or video promotion."
+  }
+}

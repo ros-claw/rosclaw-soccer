@@ -264,6 +264,7 @@ class IndependentTeamWorldConfig:
     cyclic_receive_motors: bool = False
     outward_waist_braking_damping: float | None = None
     outward_ankle_roll_braking_damping: float | None = None
+    retired_motor_option_ankle_braking_damping: float | None = None
     experimental_navigation_envelopes: tuple[SimulationNavigationEnvelope, ...] = ()
     rotation_equivariant_receive_heading: bool = False
     rotation_equivariant_duel_side: bool = False
@@ -310,6 +311,13 @@ class IndependentTeamWorldConfig:
             or not 6.0 <= self.outward_ankle_roll_braking_damping <= 20.0
         ):
             raise ValueError("bounded explicit outward ankle-roll braking required")
+        if self.retired_motor_option_ankle_braking_damping is not None and (
+            type(self.retired_motor_option_ankle_braking_damping) not in (int, float)
+            or not math.isfinite(self.retired_motor_option_ankle_braking_damping)
+            or not 6.0 <= self.retired_motor_option_ankle_braking_damping <= 20.0
+            or not self.retire_completed_motors
+        ):
+            raise ValueError("bounded post-retirement option ankle braking required")
         if type(self.cyclic_receive_motors) is not bool or (
             self.cyclic_receive_motors
             and not (self.motor_receive_commitment_context and self.retire_completed_motors)
@@ -550,6 +558,8 @@ class IndependentTeamWorldConfig:
             value.pop("outward_waist_braking_damping")
         if self.outward_ankle_roll_braking_damping is None:
             value.pop("outward_ankle_roll_braking_damping")
+        if self.retired_motor_option_ankle_braking_damping is None:
+            value.pop("retired_motor_option_ankle_braking_damping")
         if not self.cyclic_receive_motors:
             value.pop("cyclic_receive_motors")
         if not self.motor_receive_commitment_context:
@@ -3930,7 +3940,15 @@ def simulate_independent_team_world(
                         damping=active.outward_waist_braking_damping,
                         margin_rad=active.joint_guard_margin_rad,
                     )
-                if active.outward_ankle_roll_braking_damping is not None:
+                ankle_braking = active.outward_ankle_roll_braking_damping
+                if (
+                    ankle_braking is None
+                    and active.retired_motor_option_ankle_braking_damping is not None
+                    and controller.cell.agent_id in motor_retirements
+                    and controller.option_active
+                ):
+                    ankle_braking = active.retired_motor_option_ankle_braking_damping
+                if ankle_braking is not None:
                     projected_torque = strengthen_outward_joint_braking(
                         joint_position=q,
                         joint_velocity=dq,
@@ -3941,7 +3959,7 @@ def simulate_independent_team_world(
                             G1_DDS_JOINT_NAMES.index("left_ankle_roll_joint"),
                             G1_DDS_JOINT_NAMES.index("right_ankle_roll_joint"),
                         ),
-                        damping=active.outward_ankle_roll_braking_damping,
+                        damping=ankle_braking,
                         margin_rad=active.joint_guard_margin_rad,
                     )
                 torque = np.clip(projected_torque, -guarded_limits, guarded_limits)

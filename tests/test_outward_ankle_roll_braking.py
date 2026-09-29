@@ -39,3 +39,23 @@ def test_rejects_out_of_bounds_values():
     for bad in (0.0, 5.9, 20.1, math.inf, float("nan"), "x", True):
         with pytest.raises(ValueError):
             replace(IndependentTeamWorldConfig(), outward_ankle_roll_braking_damping=bad)
+
+
+def test_post_retirement_ankle_braking_is_opt_in_and_requires_retirement():
+    baseline = IndependentTeamWorldConfig()
+    assert baseline.retired_motor_option_ankle_braking_damping is None
+    with pytest.raises(ValueError):
+        replace(baseline, retired_motor_option_ankle_braking_damping=8.0)
+    enabled = replace(
+        baseline,
+        disjoint_motor_backends=True,
+        retire_completed_motors=True,
+        retired_motor_option_ankle_braking_damping=8.0,
+    )
+    assert (
+        enabled.config_hash
+        != replace(baseline, disjoint_motor_backends=True, retire_completed_motors=True).config_hash
+    )
+    for bad in (0.0, 5.9, 20.1, math.inf, float("nan"), "x", True):
+        with pytest.raises(ValueError):
+            replace(enabled, retired_motor_option_ankle_braking_damping=bad)

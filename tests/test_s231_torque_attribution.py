@@ -93,6 +93,7 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
         "cyclic_receive_motors",
         "outward_waist_braking_damping",
         "outward_ankle_roll_braking_damping",
+        "retired_motor_option_ankle_braking_damping",
         "experimental_navigation_envelopes",
         "rotation_equivariant_receive_heading",
         "rotation_equivariant_duel_side",

@@ -51,6 +51,29 @@ def test_clean_transfer_is_not_ready_or_training_authority():
     assert not result.successor_ready_verified and not result.training_authorized
 
 
+def test_initial_decision_boundary_uses_first_real_substep_without_fake_observation():
+    with pytest.raises(ValueError, match="stream must span"):
+        inspect_pass_contact_chain(
+            chain(), sender_id="blue.a", receiver_id="blue.b", request_time_sec=0.0
+        )
+    result = inspect_pass_contact_chain(
+        chain(),
+        sender_id="blue.a",
+        receiver_id="blue.b",
+        request_time_sec=0.0,
+        allow_initial_request_before_stream=True,
+    )
+    assert result.clean_transfer_observed
+    with pytest.raises(ValueError, match="stream must span"):
+        inspect_pass_contact_chain(
+            chain(),
+            sender_id="blue.a",
+            receiver_id="blue.b",
+            request_time_sec=0.001,
+            allow_initial_request_before_stream=True,
+        )
+
+
 @pytest.mark.parametrize(
     "contact",
     [

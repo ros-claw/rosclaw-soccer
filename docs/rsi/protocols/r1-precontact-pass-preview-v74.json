@@ -1,0 +1,19 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_precontact_pass_preview_v74.protocol.v1",
+  "partition": "CONSUMED_DEV",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "mechanism": "Enable the existing anticipatory_contact tactical proposal for red.playmaker before first ball contact; never fabricate possession or ball motion.",
+  "evidence_clock": "Request timestamp is the start of the 20 ms control frame, while trace.time is the end; same-frame 500 Hz foot contact is assessed after the decision.",
+  "control": "Frozen v72 per-player no-motor arm, no precontact preview",
+  "fixed": {"receiver_motor": "none", "pass_speed_mps": 0.8, "stance_lateral_m": -0.17},
+  "scenes": [
+    {"id": "center", "ball_x_m": 1.92, "ball_y_m": -0.80, "seed": 207200},
+    {"id": "s00", "ball_x_m": 1.88, "ball_y_m": -0.82, "seed": 310001},
+    {"id": "s04", "ball_x_m": 1.86, "ball_y_m": -0.80, "seed": 310005},
+    {"id": "s05", "ball_x_m": 1.98, "ball_y_m": -0.80, "seed": 310006}
+  ],
+  "diagnostics": ["first_pass_request_frame", "sender_foot_contact", "clean_transfer", "safe", "chain_success"],
+  "interpretation": "A preview pass is useful only if it restores measured sender foot launch and does not worsen full-chain safety."
+}

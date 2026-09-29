@@ -31,6 +31,7 @@ def inspect_pass_contact_chain(
     sender_id: str,
     receiver_id: str,
     request_time_sec: float,
+    allow_initial_request_before_stream: bool = False,
 ) -> PassContactChainResult:
     """Require an uninterrupted, complete 500 Hz stream spanning the request.
 
@@ -47,6 +48,7 @@ def inspect_pass_contact_chain(
         )
         or sender_id == receiver_id
         or type(request_time_sec) not in (int, float)
+        or type(allow_initial_request_before_stream) is not bool
         or not 0 <= request_time_sec <= 20
         or not math.isfinite(request_time_sec)
         or type(observations) is not tuple
@@ -69,7 +71,14 @@ def inspect_pass_contact_chain(
         ):
             raise ValueError("complete same-sender consecutive 500 Hz evidence required")
         previous = row.time_sec
-    if not observations[0].time_sec <= request_time_sec < observations[-1].time_sec:
+    initial_boundary = bool(
+        allow_initial_request_before_stream
+        and request_time_sec == 0.0
+        and abs(observations[0].time_sec - 0.002) <= 1e-9
+    )
+    if not (
+        observations[0].time_sec <= request_time_sec < observations[-1].time_sec or initial_boundary
+    ):
         raise ValueError("stream must span the request and its physical aftermath")
     source = arrival = interruption = None
     separated = False
