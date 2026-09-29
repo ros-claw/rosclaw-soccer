@@ -1,4 +1,5 @@
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -8,7 +9,11 @@ from rosclaw_soccer.growth.locomotion_contact_teacher import (
     G1LocomotionContactTeacherConfig,
     locomotion_contact_teacher_effect,
 )
-from rosclaw_soccer.skills.team.independent_team_world import IndependentTeamWorldConfig
+from rosclaw_soccer.growth.role_self_model import MatchRole
+from rosclaw_soccer.skills.team.independent_team_world import (
+    IndependentTeamWorldConfig,
+    simulate_independent_team_world,
+)
 
 
 def effect(monkeypatch, progress, **changes):
@@ -85,3 +90,23 @@ def test_committed_offset_rejects_runtime_incompatible_range_before_simulation()
         G1LocomotionContactTeacherConfig(committed_receive_ankle_lateral_offset_m=0.1)
     good = G1LocomotionContactTeacherConfig(committed_receive_ankle_lateral_offset_m=0.12)
     replace(good, receive_ankle_lateral_offset_m=good.committed_receive_ankle_lateral_offset_m)
+
+
+def test_capture_and_one_touch_finisher_fail_closed_before_asset_load():
+    config = replace(
+        IndependentTeamWorldConfig(),
+        strict_receive_handoff=True,
+        post_receive_contact_control=True,
+    )
+    finisher = SimpleNamespace(self_model=SimpleNamespace(primary_role=MatchRole.FINISHER))
+    with pytest.raises(ValueError, match="capture and one-touch finish are incompatible"):
+        simulate_independent_team_world(
+            asset_root=Path("/missing-assets-for-early-guard"),
+            roster=None,
+            cells=(finisher,),
+            players=(),
+            scenario=None,
+            goal=None,
+            config=config,
+            contact_teacher_config=G1LocomotionContactTeacherConfig(one_touch_finish_enabled=True),
+        )

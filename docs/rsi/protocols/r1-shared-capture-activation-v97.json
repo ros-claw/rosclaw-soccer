@@ -1,0 +1,33 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_shared_capture_activation_v97.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY_CAPTURE_ACTIVATION",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "teacher_is_privileged": true,
+  "source": "v96 opt-in post-receive capture remained false in all receiver trace frames because one_touch_finish_enabled excludes FINISHER from capture_context_agent_ids. Set teacher_profile=live_after_receive to disable that competing one-touch path; compare against existing v94 no-capture parent.",
+  "hypothesis": "With the competing one-touch path disabled, measured-contact capture becomes active after actual finisher foot contact; it may preserve the ball for a later true foot shot.",
+  "frozen_other_control": {
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "navigation_profile": "none",
+    "teacher_profile": "live_after_receive",
+    "receive_teacher_profile": "default"
+  },
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "short", "hold_sec": 0.20},
+    {"name": "medium", "hold_sec": 0.40},
+    {"name": "long", "hold_sec": 0.60}
+  ],
+  "paired_parent": "v94 live teacher without capture on same consumed scenes",
+  "activation_gate": "3/3 actual receiver foot contacts and observed post_receive_capture_context active at least one frame after contact.",
+  "positive_sample_gate": "Activation gate plus 3/3 six-G1 safe clean foot transfers, no early nonfoot ball contact, no robot collision, and at least 2/3 later receiver foot shots >=0.20 s after first touch with outgoing speed >=2.0 m/s. Otherwise reject. Even positive consumed-scene teacher data cannot be promoted.",
+  "interpretation": "This is a causal activation check plus teacher reachability test; all scenes are consumed, no generalization claim or video permission."
+}

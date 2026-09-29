@@ -1,0 +1,25 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_shared_receive_teacher_v95.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY_TEACHER_REACHABILITY",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "teacher_is_privileged": true,
+  "source": "v88 real receiver foot contact often increases ball speed (s02 about 0.86 to 1.04 m/s), followed by sideways escape; v93/v94 cannot chase it back into a second shot. Existing committed-receive teacher has -1 rad aim bias and +0.35 m/s follow-through.",
+  "hypothesis": "A receive teacher with less sideways aim, less forward follow-through and/or deeper cushion may safely produce a genuinely slower post-contact ball in the full six-G1 physics world. This is only a data-source reachability check, not a learned runtime policy.",
+  "frozen_other_control": {"precontact_pass_standoff_m": 0.35, "directed_pass_speed_mps": 1.0, "handoff_profile": "tracking", "strike_stance_lateral_m": -0.19, "navigation_profile": "none", "teacher_profile": "default"},
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "neutral", "aim_bias_rad": 0.0, "follow_through_speed_mps": 0.35, "cushion_depth_m": -0.06, "minimum_forward_m": 0.06},
+    {"name": "soft", "aim_bias_rad": -1.0, "follow_through_speed_mps": 0.0, "cushion_depth_m": -0.06, "minimum_forward_m": 0.06},
+    {"name": "cushion", "aim_bias_rad": -1.0, "follow_through_speed_mps": 0.35, "cushion_depth_m": -0.12, "minimum_forward_m": 0.02},
+    {"name": "combined", "aim_bias_rad": 0.0, "follow_through_speed_mps": 0.0, "cushion_depth_m": -0.12, "minimum_forward_m": 0.02}
+  ],
+  "paired_parent": "v88 0.35 m, default teacher, same consumed scenes",
+  "positive_sample_gate": "3/3 six-body safe, clean physical source/receiver foot transfer, no nonfoot ball contact, and 3/3 lower post-receive ball speed at first foot contact than paired parent; mean post-receive speed <=0.75 of parent, plus no new robot-robot collision. A later genuine second foot shot is separately reported.",
+  "interpretation": "Even a teacher pass cannot be promoted. Labels must be collected and a teacher-free actor must pass a new, sealed multi-agent Fresh exam before any growth claim."
+}

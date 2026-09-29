@@ -1182,6 +1182,15 @@ def simulate_independent_team_world(
         active.post_receive_contact_control or active.loose_ball_capture_control
     ) and contact_teacher_config is None:
         raise ValueError("post-receive contact control requires a bounded contact teacher")
+    if (
+        active.post_receive_contact_control
+        and contact_teacher_config is not None
+        and contact_teacher_config.one_touch_finish_enabled
+        and any(cell.self_model.primary_role is MatchRole.FINISHER for cell in cells)
+    ):
+        raise ValueError(
+            "post-receive capture and one-touch finish are incompatible for a finisher"
+        )
     cell_by_id = {cell.agent_id: cell for cell in cells}
     player_by_id = {player.agent_id: player for player in players}
     roster_ids = {agent.agent_id for agent in roster.agents}

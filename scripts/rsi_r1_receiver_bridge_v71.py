@@ -316,6 +316,8 @@ def run(
     phase_profile: str = "default",
     navigation_profile: str = "none",
     teacher_profile: str = "default",
+    receive_teacher_profile: str = "default",
+    capture_profile: str = "none",
 ) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
     if (
@@ -374,6 +376,8 @@ def run(
             "lease2_damped",
         )
         or teacher_profile not in ("default", "live_after_receive")
+        or receive_teacher_profile not in ("default", "neutral", "soft", "cushion", "combined")
+        or capture_profile not in ("none", "short", "medium", "long")
     ):
         raise ValueError("bounded rolling receive curriculum required")
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
@@ -445,6 +449,10 @@ def run(
         pass_target_commitment=handoff_profile == "committed",
         receive_lateral_braking=receive_profile in ("lateral", "lateral_retention"),
         controlled_possession_retention=receive_profile in ("retention", "lateral_retention"),
+        post_receive_contact_control=capture_profile != "none",
+        post_receive_hold_sec={"none": 0.20, "short": 0.20, "medium": 0.40, "long": 0.60}[
+            capture_profile
+        ],
     )
     option = replace(
         default_phase_strike_option(),
@@ -458,6 +466,21 @@ def run(
         preferred_foot="nearest",
         one_touch_finish_enabled=teacher_profile == "default",
     )
+    if receive_teacher_profile != "default":
+        teacher_settings = {
+            "neutral": (0.0, 0.35, -0.06, 0.06),
+            "soft": (-1.0, 0.0, -0.06, 0.06),
+            "cushion": (-1.0, 0.35, -0.12, 0.02),
+            "combined": (0.0, 0.0, -0.12, 0.02),
+        }
+        yaw, follow_speed, depth, minimum_forward = teacher_settings[receive_teacher_profile]
+        teacher = replace(
+            teacher,
+            committed_receive_aim_yaw_bias_rad=yaw,
+            committed_receive_follow_through_speed_mps=follow_speed,
+            receive_cushion_depth_m=depth,
+            receive_minimum_forward_target_m=minimum_forward,
+        )
     phase = replace(default_phase_strike_controller(), target_stance_lateral_m=stance_lateral_m)
     if phase_profile != "default":
         phase_settings = {
@@ -552,6 +575,8 @@ def run(
         "navigation_profile": navigation_profile,
         "navigation_contract_hash": None if navigation is None else navigation.contract_hash,
         "teacher_profile": teacher_profile,
+        "receive_teacher_profile": receive_teacher_profile,
+        "capture_profile": capture_profile,
         "receiver_motor_contract_hash": (
             None if receiver_motor is None else receiver_motor.contract_hash
         ),
@@ -753,6 +778,14 @@ def main() -> None:
     parser.add_argument(
         "--teacher-profile", choices=("default", "live_after_receive"), default="default"
     )
+    parser.add_argument(
+        "--receive-teacher-profile",
+        choices=("default", "neutral", "soft", "cushion", "combined"),
+        default="default",
+    )
+    parser.add_argument(
+        "--capture-profile", choices=("none", "short", "medium", "long"), default="none"
+    )
     parser.add_argument("--no-motor", action="store_true")
     args = parser.parse_args()
     report = run(
@@ -788,6 +821,8 @@ def main() -> None:
         phase_profile=args.phase_profile,
         navigation_profile=args.navigation_profile,
         teacher_profile=args.teacher_profile,
+        receive_teacher_profile=args.receive_teacher_profile,
+        capture_profile=args.capture_profile,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
 

@@ -1,0 +1,32 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_shared_postreceive_capture_v96.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY_CONTACT_REACHABILITY",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "teacher_is_privileged": true,
+  "source": "v95 pre-touch aim/foot-speed changes fail 3/3 and often create nonfoot contact. Test the already implemented measured-contact capture controller after the first receiver foot collision.",
+  "hypothesis": "Activating measured receive-contact buffering for 0.20/0.40/0.60 s in the original six-body world can retain the real ball and permit a later receiver foot shot without reducing body safety.",
+  "frozen_other_control": {
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "navigation_profile": "none",
+    "teacher_profile": "default",
+    "receive_teacher_profile": "default"
+  },
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "short", "hold_sec": 0.20},
+    {"name": "medium", "hold_sec": 0.40},
+    {"name": "long", "hold_sec": 0.60}
+  ],
+  "paired_parent": "v88 0.35 m, default receive teacher and capture disabled, same consumed scenes",
+  "positive_sample_gate": "3/3 six-G1 safe and clean physical transfers; no ball nonfoot collision from initial pass launch through receiver first touch +0.60 s; no robot-robot contact; at least 2/3 true later receiver foot shots >=0.20 s after first touch with outgoing speed >=2.0 m/s. Only then collect privileged labels; never promote without sealed Fresh teacher-free exam.",
+  "interpretation": "A positive consumed-scene reachability result is not a generalization or promotion claim. A negative result blocks distillation and prompts full-body coupled-contact teacher redesign."
+}
