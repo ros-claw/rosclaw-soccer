@@ -31,6 +31,7 @@ from rosclaw_soccer.skills.team.independent_team_world import (
     IndependentTeamWorldScenario,
     simulate_independent_team_world,
 )
+from rosclaw_soccer.skills.team.motor_option import TeamMotorOption
 from rosclaw_soccer.skills.team.physics_evidence import PhysicsEvidenceConsumer
 from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
 from rosclaw_soccer.training.contact_teacher_evidence import inspect_teacher_suppression
@@ -66,6 +67,7 @@ def simulate_r0_receiving_course(
     oracle: ReceivingOracleSchedule | None = None,
     phase_reference: ReceivingPhaseReference | None = None,
     feedback_provider: ReceivingFeedbackProvider | None = None,
+    research_motor_option: TeamMotorOption | None = None,
     physics_evidence_consumers: Mapping[str, PhysicsEvidenceConsumer] | None = None,
     configuration_profile: str = "R0",
     suppression: ContactTeacherSuppression | None = None,
@@ -120,6 +122,20 @@ def simulate_r0_receiving_course(
         feedback_slot = ReceivingFeedbackSlot(feedback_provider, oracle)
         if feedback_slot.requires_locomotion_memory and capture_locomotion_memory is not True:
             raise ValueError("recurrent feedback requires explicit recorded locomotion memory")
+    if research_motor_option is not None and (
+        configuration_profile != "R1_CONTACT_TAP"
+        or sonic_model_root is not None
+        or oracle is not None
+        or feedback_provider is not None
+        or phase_reference is not None
+        or receiving_student is not None
+        or receiving_foot_capture_teacher is not None
+        or getattr(research_motor_option, "agent_id", None) != course.agent_id
+        or getattr(research_motor_option, "activation_ceiling", None) != "SIM_ONLY"
+    ):
+        raise ValueError(
+            "one private SIM_ONLY R1 receiving motor without competing authority required"
+        )
     if phase_reference is not None:
         if not isinstance(phase_reference, ReceivingPhaseReference):
             raise ValueError("typed phase reference required")
@@ -478,7 +494,11 @@ def simulate_r0_receiving_course(
         contact_teacher_config=teacher,
         near_ball_seed=course.seed,
         near_ball_explore=False,
-        motor_options=motors,
+        motor_options=(
+            {course.agent_id: research_motor_option}
+            if research_motor_option is not None
+            else motors
+        ),
         receiving_students=(
             {course.agent_id: receiving_student} if receiving_student is not None else None
         ),
