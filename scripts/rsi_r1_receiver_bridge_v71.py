@@ -315,6 +315,7 @@ def run(
     receive_profile: str = "legacy",
     phase_profile: str = "default",
     navigation_profile: str = "none",
+    teacher_profile: str = "default",
 ) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
     if (
@@ -372,6 +373,7 @@ def run(
             "lease3",
             "lease2_damped",
         )
+        or teacher_profile not in ("default", "live_after_receive")
     ):
         raise ValueError("bounded rolling receive curriculum required")
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
@@ -454,6 +456,7 @@ def run(
         pass_strike_foot_speed_mps=pass_speed_mps,
         pass_stroke_duration_sec=0.0,
         preferred_foot="nearest",
+        one_touch_finish_enabled=teacher_profile == "default",
     )
     phase = replace(default_phase_strike_controller(), target_stance_lateral_m=stance_lateral_m)
     if phase_profile != "default":
@@ -548,6 +551,7 @@ def run(
         "phase_config_hash": phase.config_hash,
         "navigation_profile": navigation_profile,
         "navigation_contract_hash": None if navigation is None else navigation.contract_hash,
+        "teacher_profile": teacher_profile,
         "receiver_motor_contract_hash": (
             None if receiver_motor is None else receiver_motor.contract_hash
         ),
@@ -746,6 +750,9 @@ def main() -> None:
         ),
         default="none",
     )
+    parser.add_argument(
+        "--teacher-profile", choices=("default", "live_after_receive"), default="default"
+    )
     parser.add_argument("--no-motor", action="store_true")
     args = parser.parse_args()
     report = run(
@@ -780,6 +787,7 @@ def main() -> None:
         receive_profile=args.receive_profile,
         phase_profile=args.phase_profile,
         navigation_profile=args.navigation_profile,
+        teacher_profile=args.teacher_profile,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
 

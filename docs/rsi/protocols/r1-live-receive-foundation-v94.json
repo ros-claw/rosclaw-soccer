@@ -1,0 +1,22 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_live_receive_foundation_v94.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v93 kept a bounded shot task but still made no later shot. Default one-touch finisher mode holds a sampled joint pose for 0.30 seconds after contact; this may prevent the SONIC foundation from matching the moving ball.",
+  "hypothesis": "Disabling only the one-touch frozen-pose finisher continuation keeps the live locomotion foundation available after measured receive contact, possibly improving balance and second-touch mobility.",
+  "frozen_source": {"precontact_pass_standoff_m": 0.35, "directed_pass_speed_mps": 1.0, "handoff_profile": "tracking", "strike_stance_lateral_m": -0.19},
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "live", "teacher_profile": "live_after_receive", "navigation_profile": "none"},
+    {"name": "live_lease2", "teacher_profile": "live_after_receive", "navigation_profile": "lease2"}
+  ],
+  "paired_parents": ["v88 standoff0.35 default one-touch", "v93 lease2 default one-touch"],
+  "gate": "3/3 six-body safe and clean foot transfer, zero nonfoot contacts, at least one later genuine finisher foot shot >=2 m/s; if not, reject frozen-pose removal as a standalone improvement.",
+  "interpretation": "Teacher ablation is a consumed SIM_ONLY diagnostic, not a learned replacement. Any success requires a new held-out local exam and 4v4 match exam."
+}
