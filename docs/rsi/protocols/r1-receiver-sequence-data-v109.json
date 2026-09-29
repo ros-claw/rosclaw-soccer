@@ -1,0 +1,36 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_receiver_sequence_data_v109.protocol.v1",
+  "partition": "CONSUMED_DEV_DATA",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "purpose": "Collect paired 50Hz whole-body trajectories and read-only 500Hz receiver contact snapshots for support-leg/swing-leg sequence learning. No actor is trained or promoted by this course.",
+  "frozen_control": {
+    "precontact_pass_standoff_m": 0.35,
+    "directed_pass_speed_mps": 1.0,
+    "handoff_profile": "tracking",
+    "stance_lateral_m": -0.19,
+    "duration_sec": 10.0,
+    "motor_entry_frame": 0,
+    "dual_receiver_motor": false,
+    "receive_velocity_prediction_sec": 0.0
+  },
+  "teacher_settings": [
+    {"id": "parent", "yaw_rad": 0.0, "lateral_m": 0.18},
+    {"id": "inner", "yaw_rad": 0.0, "lateral_m": 0.16},
+    {"id": "left", "yaw_rad": -0.1, "lateral_m": 0.18},
+    {"id": "right", "yaw_rad": 0.1, "lateral_m": 0.18}
+  ],
+  "scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "x20", "ball_x_m": 2.20, "ball_y_m": -0.76, "seed": 600101},
+    {"id": "x28", "ball_x_m": 2.28, "ball_y_m": -0.76, "seed": 600102},
+    {"id": "y72", "ball_x_m": 2.24, "ball_y_m": -0.72, "seed": 600103},
+    {"id": "y80", "ball_x_m": 2.24, "ball_y_m": -0.80, "seed": 600104}
+  ],
+  "rollout_count": 24,
+  "data_gate": "All 24 protocol/report/trace hashes must verify; the parent-s02 row must reproduce the prior frame-66/83 event; >=20 rows must have complete identity-bound dynamic receiver contact capture, >=4 must have safe clean dynamic second-foot positives, and >=8 must have verified negatives. Otherwise no supervised sequence actor training is authorized.",
+  "split": "All 24 are consumed development data; no Fresh or promotion. Freeze future holdout scenes separately only after actor, loss, and safety gates are fixed.",
+  "next_if_sparse": "If positives are too sparse, learn contact dynamics and generate physically valid positive exemplars with broader support-leg/step controller exploration; do not label near misses as success."
+}
