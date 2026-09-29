@@ -1,0 +1,22 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_gated_receive_mixture_v117.protocol.v1",
+  "partition": "CONSUMED_DEV_STATE_GATED_MIXTURE",
+  "activation_ceiling": "SIM_ONLY",
+  "parent_precontact_report": "/data/rosclaw_overflow/rsi-r1-precontact-generalization-v116/selection.json",
+  "parent_precontact_hash": "sha256:c023b2b9f1216d0588ef6a3b3e2271a12da1b554cb17f627f03cf0fe417a005a",
+  "retained_weights": [-0.1853410496026612, -0.2120161425477506, -0.10038265224958914, 0.1304744032562346, 0.16730409297832222],
+  "alternative_candidate_indices": [1, 11],
+  "training_scenes": [
+    {"id": "anchor_s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "anchor_s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "dev_left", "ball_x_m": 2.20, "ball_y_m": -0.76, "seed": 615001},
+    {"id": "dev_right", "ball_x_m": 2.36, "ball_y_m": -0.76, "seed": 615002}
+  ],
+  "gate_biases": [-2.0, -4.0],
+  "gate_slopes": [4.0, 8.0, 12.0],
+  "candidate_count": 13,
+  "rollout_count": 52,
+  "learning_rule": "Frozen two receiving experts from prior consumed training, with only a bounded measured-state logistic gate varied. Candidate 0 is exact retained expert. Gate reads same-player body and foot plus current ball velocity, never scene ID. All old scenarios must retain clean dynamic second foot; new scenes must add clean dynamic first or second foot without shin-first contact. No use of sealed Fresh8.",
+  "promotion_authorized": false,
+  "video_authorized": false
+}

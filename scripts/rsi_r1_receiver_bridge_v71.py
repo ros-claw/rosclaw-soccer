@@ -26,6 +26,7 @@ from rosclaw_soccer.rsi.team_receive_contact_evidence import (
     ReceiveContactMailbox,
 )
 from rosclaw_soccer.rsi.team_receive_contact_phase_actor import TeamReceiveContactPhaseActor
+from rosclaw_soccer.rsi.team_receive_gated_mixture_actor import TeamReceiveGatedMixtureActor
 from rosclaw_soccer.rsi.team_receive_phase_actor import TeamReceivePhaseActor
 from rosclaw_soccer.rsi.team_strike_feedback_navigation import TeamStrikeFeedbackNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -373,6 +374,8 @@ def run(
     navigation_profile: str = "none",
     navigation_phase_weights: tuple[float, float, float, float, float] | None = None,
     navigation_post_weights: tuple[float, float, float, float, float] | None = None,
+    navigation_alternative_weights: tuple[float, float, float, float, float] | None = None,
+    navigation_gate_weights: tuple[float, float, float, float] | None = None,
     teacher_profile: str = "default",
     receive_teacher_profile: str = "default",
     capture_profile: str = "none",
@@ -438,6 +441,7 @@ def run(
             "receive_tap",
             "receive_phase",
             "receive_contact",
+            "receive_mixture",
             "follow",
             "lead",
             "damped",
@@ -447,7 +451,7 @@ def run(
             "lease3",
             "lease2_damped",
         )
-        or navigation_profile in ("receive_phase", "receive_contact")
+        or navigation_profile in ("receive_phase", "receive_contact", "receive_mixture")
         and (
             type(navigation_phase_weights) is not tuple
             or len(navigation_phase_weights) != 5
@@ -456,8 +460,25 @@ def run(
                 for value in navigation_phase_weights
             )
         )
-        or navigation_profile not in ("receive_phase", "receive_contact")
+        or navigation_profile not in ("receive_phase", "receive_contact", "receive_mixture")
         and navigation_phase_weights is not None
+        or navigation_profile == "receive_mixture"
+        and (
+            type(navigation_alternative_weights) is not tuple
+            or len(navigation_alternative_weights) != 5
+            or any(
+                type(value) is not float or not np.isfinite(value) or abs(value) > 2.0
+                for value in navigation_alternative_weights
+            )
+            or type(navigation_gate_weights) is not tuple
+            or len(navigation_gate_weights) != 4
+            or any(
+                type(value) is not float or not np.isfinite(value) or abs(value) > 12.0
+                for value in navigation_gate_weights
+            )
+        )
+        or navigation_profile != "receive_mixture"
+        and (navigation_alternative_weights is not None or navigation_gate_weights is not None)
         or navigation_profile == "receive_contact"
         and (
             type(navigation_post_weights) is not tuple
@@ -504,6 +525,7 @@ def run(
         "src/rosclaw_soccer/rsi/team_receive_body_tap.py",
         "src/rosclaw_soccer/rsi/team_receive_phase_actor.py",
         "src/rosclaw_soccer/rsi/team_receive_contact_phase_actor.py",
+        "src/rosclaw_soccer/rsi/team_receive_gated_mixture_actor.py",
         "src/rosclaw_soccer/rsi/team_receive_contact_evidence.py",
         "src/rosclaw_soccer/skills/team/navigation_option.py",
         "src/rosclaw_soccer/growth/locomotion_contact_teacher.py",
@@ -552,6 +574,20 @@ def run(
                 weights=navigation_phase_weights,
                 post_weights=navigation_post_weights,
                 mailbox=mailbox,
+            )
+        elif navigation_profile == "receive_mixture":
+            assert (
+                navigation_phase_weights is not None
+                and navigation_alternative_weights is not None
+                and navigation_gate_weights is not None
+            )
+            navigation = TeamReceiveGatedMixtureActor(
+                agent_id="red.finisher",
+                foundation_hash=hash_bytes(policy_path.read_bytes()),
+                foundation_config_hash=hash_bytes(config_path.read_bytes()),
+                weights=navigation_phase_weights,
+                alternative_weights=navigation_alternative_weights,
+                gate_weights=navigation_gate_weights,
             )
         else:
             gain, horizon, depth, lateral, damping, commitment = navigation_settings[
@@ -748,6 +784,8 @@ def run(
         "navigation_profile": navigation_profile,
         "navigation_phase_weights": navigation_phase_weights,
         "navigation_post_weights": navigation_post_weights,
+        "navigation_alternative_weights": navigation_alternative_weights,
+        "navigation_gate_weights": navigation_gate_weights,
         "navigation_contract_hash": None if navigation is None else navigation.contract_hash,
         "teacher_profile": teacher_profile,
         "receive_teacher_profile": receive_teacher_profile,
@@ -943,6 +981,15 @@ def run(
             and contact_evidence is not None
             else None
         ),
+        "receive_mixture_actor": (
+            {
+                "alternative_active_frames": navigation.alternative_active_frames,
+                "maximum_gate": navigation.maximum_gate,
+                "contract_hash": navigation.contract_hash,
+            }
+            if isinstance(navigation, TeamReceiveGatedMixtureActor)
+            else None
+        ),
         "promotion_authorized": False,
         "video_authorized": False,
     }
@@ -1009,6 +1056,7 @@ def main() -> None:
             "receive_tap",
             "receive_phase",
             "receive_contact",
+            "receive_mixture",
             "follow",
             "lead",
             "damped",
@@ -1034,6 +1082,8 @@ def main() -> None:
     parser.add_argument("--capture-b6-microphysics", action="store_true")
     parser.add_argument("--navigation-phase-weights", type=float, nargs=5)
     parser.add_argument("--navigation-post-weights", type=float, nargs=5)
+    parser.add_argument("--navigation-alternative-weights", type=float, nargs=5)
+    parser.add_argument("--navigation-gate-weights", type=float, nargs=4)
     parser.add_argument(
         "--velocity-cushion-gain", type=float, choices=(0.0, 0.5, 1.0, 2.0), default=0.0
     )
@@ -1086,6 +1136,14 @@ def main() -> None:
         ),
         navigation_post_weights=(
             None if args.navigation_post_weights is None else tuple(args.navigation_post_weights)
+        ),
+        navigation_alternative_weights=(
+            None
+            if args.navigation_alternative_weights is None
+            else tuple(args.navigation_alternative_weights)
+        ),
+        navigation_gate_weights=(
+            None if args.navigation_gate_weights is None else tuple(args.navigation_gate_weights)
         ),
         teacher_profile=args.teacher_profile,
         receive_teacher_profile=args.receive_teacher_profile,
