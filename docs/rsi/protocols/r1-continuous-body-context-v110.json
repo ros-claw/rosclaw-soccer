@@ -1,0 +1,17 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_continuous_body_context_v110.protocol.v1",
+  "partition": "CONSUMED_READ_ONLY_OBSERVATION",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "parent_evidence_root": "/data/rosclaw_overflow/rsi-r1-local-b6-teacher-grid-v103",
+  "parent_candidate": "candidate-04",
+  "scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005}
+  ],
+  "rollout_count": 2,
+  "required_context_samples_per_episode": 500,
+  "noninterference_gate": "Read-only tap must return no navigation action and copy both measured foot positions/velocities, body state and 29 joint positions/velocities on every 50Hz control frame. Ball pose/velocity, attributed contacts, finisher joint position/velocity, and six-body safety must be bitwise equal to parent in both scenes. Otherwise continuous context is not qualified for learning.",
+  "next_if_passed": "Train a bounded stateful receive policy using this causal observation contract; no direct actuator, ROS, hardware, or ball-state authority."
+}

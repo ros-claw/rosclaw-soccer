@@ -20,6 +20,7 @@ from rsi_team_taskspace_first_touch import TeamSwingMotor
 from rosclaw_soccer.rsi.b6_microphysics_observer import B6MicrophysicsObserver
 from rosclaw_soccer.rsi.b6_velocity_cushion import velocity_match_joint_delta
 from rosclaw_soccer.rsi.taskspace_swing_probe import recover_swing_joint_boundary
+from rosclaw_soccer.rsi.team_receive_body_tap import TeamReceiveBodyTap
 from rosclaw_soccer.rsi.team_strike_feedback_navigation import TeamStrikeFeedbackNavigation
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.independent_team_world import (
@@ -28,6 +29,7 @@ from rosclaw_soccer.skills.team.independent_team_world import (
 )
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation, TeamMotorTarget
 from rosclaw_soccer.skills.team.motor_retirement import TeamMotorRetirement
+from rosclaw_soccer.skills.team.navigation_option import TeamNavigationPolicy
 from rosclaw_soccer.training.continuous_competitive_match_growth import (
     build_continuous_competitive_fixture,
     default_continuous_match_config,
@@ -425,6 +427,7 @@ def run(
         or navigation_profile
         not in (
             "none",
+            "receive_tap",
             "follow",
             "lead",
             "damped",
@@ -464,13 +467,15 @@ def run(
         "src/rosclaw_soccer/rsi/team_strike_feedback_navigation.py",
         "src/rosclaw_soccer/rsi/b6_microphysics_observer.py",
         "src/rosclaw_soccer/rsi/b6_velocity_cushion.py",
+        "src/rosclaw_soccer/rsi/team_receive_body_tap.py",
+        "src/rosclaw_soccer/skills/team/navigation_option.py",
         "src/rosclaw_soccer/growth/locomotion_contact_teacher.py",
         "src/rosclaw_soccer/skills/team/physics_evidence.py",
     )
     sources = {name: hash_bytes((root / name).read_bytes()) for name in names}
     torch.set_num_threads(1)
     fixture = build_continuous_competitive_fixture(asset_root)
-    navigation = None
+    navigation: TeamNavigationPolicy | None = None
     if navigation_profile != "none":
         navigation_settings = {
             "follow": (0.8, 0.40, 0.36, -0.19, 0.0, 0.0),
@@ -482,20 +487,29 @@ def run(
             "lease3": (1.2, 0.60, 0.36, -0.19, 0.3, 3.0),
             "lease2_damped": (0.8, 0.40, 0.50, -0.25, 0.6, 2.0),
         }
-        gain, horizon, depth, lateral, damping, commitment = navigation_settings[navigation_profile]
         policy_path = asset_root / "policy/loco_mode/model/policy_29dof.pt"
         config_path = asset_root / "policy/loco_mode/config/LocoMode.yaml"
-        navigation = TeamStrikeFeedbackNavigation(
-            agent_id="red.finisher",
-            foundation_hash=hash_bytes(policy_path.read_bytes()),
-            foundation_config_hash=hash_bytes(config_path.read_bytes()),
-            position_gain=gain,
-            prediction_horizon_sec=horizon,
-            stance_depth_m=depth,
-            stance_lateral_m=lateral,
-            body_velocity_damping=damping,
-            shot_commitment_sec=commitment,
-        )
+        if navigation_profile == "receive_tap":
+            navigation = TeamReceiveBodyTap(
+                agent_id="red.finisher",
+                foundation_hash=hash_bytes(policy_path.read_bytes()),
+                foundation_config_hash=hash_bytes(config_path.read_bytes()),
+            )
+        else:
+            gain, horizon, depth, lateral, damping, commitment = navigation_settings[
+                navigation_profile
+            ]
+            navigation = TeamStrikeFeedbackNavigation(
+                agent_id="red.finisher",
+                foundation_hash=hash_bytes(policy_path.read_bytes()),
+                foundation_config_hash=hash_bytes(config_path.read_bytes()),
+                position_gain=gain,
+                prediction_horizon_sec=horizon,
+                stance_depth_m=depth,
+                stance_lateral_m=lateral,
+                body_velocity_damping=damping,
+                shot_commitment_sec=commitment,
+            )
     if preview_pass:
         fixture = replace(
             fixture,
@@ -727,6 +741,16 @@ def run(
         raise RuntimeError("source drift during physics run")
     trace_path = output_dir / "trace.npz"
     np.savez_compressed(trace_path, **trace)  # type: ignore[arg-type]
+    tap_context = None
+    if isinstance(navigation, TeamReceiveBodyTap):
+        tap_path = output_dir / "receive-body-context.npz"
+        tap_arrays = navigation.arrays()
+        np.savez_compressed(tap_path, **tap_arrays)  # type: ignore[arg-type]
+        tap_context = {
+            "archive_hash": hash_bytes(tap_path.read_bytes()),
+            "sample_count": len(tap_arrays["frame"]),
+            "contract_hash": navigation.contract_hash,
+        }
     microphysics_report = None
     if microphysics is not None:
         microphysics_report = {
@@ -829,6 +853,7 @@ def run(
             None if receiver_motor is None else receiver_motor.first_contact_frame
         ),
         "b6_microphysics": microphysics_report,
+        "receive_body_context": tap_context,
         "promotion_authorized": False,
         "video_authorized": False,
     }
@@ -892,6 +917,7 @@ def main() -> None:
         "--navigation-profile",
         choices=(
             "none",
+            "receive_tap",
             "follow",
             "lead",
             "damped",

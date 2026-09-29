@@ -24,6 +24,21 @@ def _vector(value: tuple[float, ...], size: int) -> bool:
     )
 
 
+def navigation_context_requested(policy: object, frame: int, *, kind: str) -> bool:
+    """Opt in to continuous measured context; legacy choosers keep frame-30 snapshots."""
+    if type(frame) is not int or frame < 0 or kind not in {"effector", "proprioception"}:
+        raise ValueError("valid navigation context clock and kind required")
+    continuous = getattr(policy, "needs_continuous_body_context", False)
+    required = getattr(
+        policy,
+        "needs_effector_velocities" if kind == "effector" else "needs_full_proprioception",
+        False,
+    )
+    if type(continuous) is not bool or type(required) is not bool:
+        raise ValueError("explicit boolean navigation context subscription required")
+    return required and (frame == 30 or continuous)
+
+
 @dataclass(frozen=True)
 class NavigationObservation:
     agent_id: str
@@ -170,18 +185,35 @@ class NavigationSlot:
                 not isinstance(v, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", v) is None
                 for v in (policy.foundation_hash, policy.foundation_config_hash)
             )
+            or type(getattr(policy, "needs_continuous_body_context", False)) is not bool
+            or type(getattr(policy, "needs_effector_velocities", False)) is not bool
+            or type(getattr(policy, "needs_full_proprioception", False)) is not bool
         ):
             raise ValueError("content-bound private SIM navigation policy required")
         self.policy = policy
         self.agent_id, self.contract_hash = policy.agent_id, policy.contract_hash
         self.foundation_hash = policy.foundation_hash
         self.foundation_config_hash = policy.foundation_config_hash
+        self._context_subscription = tuple(
+            getattr(policy, name, False)
+            for name in (
+                "needs_continuous_body_context",
+                "needs_effector_velocities",
+                "needs_full_proprioception",
+            )
+        )
         self.faulted = False
         self.fault_reason: str | None = None
         self.active = False
         self.delta = (0.0, 0.0, 0.0)
         self._frame: int | None = None
         self._time: float | None = None
+
+    def context_requested(self, frame: int, *, kind: str) -> bool:
+        if type(frame) is not int or frame < 0 or kind not in {"effector", "proprioception"}:
+            raise ValueError("valid navigation context clock and kind required")
+        required = self._context_subscription[1 if kind == "effector" else 2]
+        return required and (frame == 30 or self._context_subscription[0])
 
     def propose(self, observation: NavigationObservation) -> tuple[float, float, float]:
         self.active = False
@@ -197,6 +229,15 @@ class NavigationSlot:
                 or self.policy.activation_ceiling != "SIM_ONLY"
                 or self.policy.foundation_hash != self.foundation_hash
                 or self.policy.foundation_config_hash != self.foundation_config_hash
+                or tuple(
+                    getattr(self.policy, name, False)
+                    for name in (
+                        "needs_continuous_body_context",
+                        "needs_effector_velocities",
+                        "needs_full_proprioception",
+                    )
+                )
+                != self._context_subscription
                 or self._frame is not None
                 and observation.frame != self._frame + 1
                 or self._time is not None

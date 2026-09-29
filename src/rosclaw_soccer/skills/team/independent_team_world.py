@@ -5608,8 +5608,7 @@ def _movement_command(
                     ),
                 ),
             )
-            if navigation_frame == 30
-            and getattr(navigation_slot.policy, "needs_effector_velocities", False) is True
+            if navigation_slot.context_requested(navigation_frame, kind="effector")
             else None
         )
         observation = NavigationObservation(
@@ -5655,20 +5654,17 @@ def _movement_command(
             ),
             body_angular_velocity=(
                 tuple(data.qvel[controller.qvel_base + 3 : controller.qvel_base + 6].tolist())
-                if navigation_frame == 30
-                and getattr(navigation_slot.policy, "needs_full_proprioception", False) is True
+                if navigation_slot.context_requested(navigation_frame, kind="proprioception")
                 else None
             ),
             joint_positions_rad=(
                 tuple(data.qpos[controller.joint_qpos].tolist())
-                if navigation_frame == 30
-                and getattr(navigation_slot.policy, "needs_full_proprioception", False) is True
+                if navigation_slot.context_requested(navigation_frame, kind="proprioception")
                 else ()
             ),
             joint_velocities_radps=(
                 tuple(data.qvel[controller.joint_qvel].tolist())
-                if navigation_frame == 30
-                and getattr(navigation_slot.policy, "needs_full_proprioception", False) is True
+                if navigation_slot.context_requested(navigation_frame, kind="proprioception")
                 else ()
             ),
             committed_receiver=committed_receiver,

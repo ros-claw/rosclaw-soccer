@@ -2,10 +2,12 @@ from dataclasses import replace
 
 import pytest
 
+from rosclaw_soccer.rsi.team_receive_body_tap import TeamReceiveBodyTap
 from rosclaw_soccer.skills.team.navigation_option import (
     NavigationDelta,
     NavigationObservation,
     NavigationSlot,
+    navigation_context_requested,
 )
 
 
@@ -175,3 +177,50 @@ def test_tampered_effector_snapshot_faults_before_policy_is_called():
     object.__setattr__(obs, "effector_positions", (("foot", float("nan"), 0.0, 0.0),))
     assert slot.propose(obs) == (0.0, 0.0, 0.0)
     assert slot.faulted and policy.calls == 0
+
+
+def test_continuous_body_context_requires_explicit_bound_subscription():
+    policy = Policy()
+    policy.needs_effector_velocities = True
+    policy.needs_full_proprioception = True
+    assert navigation_context_requested(policy, 30, kind="effector")
+    assert not navigation_context_requested(policy, 31, kind="effector")
+    policy.needs_continuous_body_context = True
+    assert navigation_context_requested(policy, 31, kind="effector")
+    assert navigation_context_requested(policy, 31, kind="proprioception")
+    slot = NavigationSlot(policy)
+    assert slot.context_requested(31, kind="effector")
+    assert slot.propose(observation()) == (0.0, 0.0, 0.0)
+    policy.needs_continuous_body_context = False
+    assert slot.context_requested(31, kind="effector")
+    assert slot.propose(observation(1)) == (0.0, 0.0, 0.0)
+    assert slot.faulted
+    policy.needs_continuous_body_context = 1
+    with pytest.raises(ValueError):
+        navigation_context_requested(policy, 31, kind="effector")
+
+
+def test_receive_tap_records_continuous_body_context_without_action():
+    tap = TeamReceiveBodyTap("red.finisher", "sha256:" + "a" * 64, "sha256:" + "b" * 64)
+    slot = NavigationSlot(tap)
+    for frame in (0, 1):
+        obs = replace(
+            observation(frame),
+            agent_id="red.finisher",
+            role="finisher",
+            intent="receive",
+            effector_positions=(("left_foot", 0.0, -0.1, 0.1), ("right_foot", 0.0, 0.1, 0.1)),
+            effector_velocities=(
+                ("left_foot", 0.1, 0.0, 0.0),
+                ("right_foot", 0.0, 0.1, 0.0),
+            ),
+            body_angular_velocity=(0.0, 0.0, 0.0),
+            joint_positions_rad=(0.0,) * 29,
+            joint_velocities_radps=(0.0,) * 29,
+        )
+        assert slot.propose(obs) == (0.0, 0.0, 0.0)
+        assert not slot.active and not slot.faulted
+    arrays = tap.arrays()
+    assert arrays["foot_velocity"].shape == (2, 2, 3)
+    assert arrays["joint_position"].shape == (2, 29)
+    assert arrays["frame"].tolist() == [0.0, 1.0]
