@@ -1,0 +1,16 @@
+{
+  "schema": "rsi_team_temporal_persistence_protocol_v60",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "prior_protocol_path": "docs/rsi/protocols/team-temporal-nonfoot-risk-v59.json",
+  "prior_protocol_hash": "sha256:5105c90aca0fe2dc0b67329826e59ac4745ced429b1f710280d3f88212aa6c90",
+  "prior_report_path": "/data/rosclaw_overflow/rsi-team-temporal-nonfoot-risk-v59-corrected/report.json",
+  "prior_report_hash": "sha256:08acb89be09146349ad4d81257d278ac543fbb5067a61830f313d9bf8a364641",
+  "prior_report_file_hash": "sha256:9b7e3ce9f829b359366d19989a06db55fa3d24c0f6000013165f7dbbcfa7a9f0",
+  "thresholds": [0.3, 0.5, 0.7],
+  "consecutive_samples": [2, 3, 4],
+  "internal_gate": {"minimum_event_episode_recall": 10, "maximum_clean_episode_false_alerts": 12},
+  "stress_gate": {"minimum_event_episode_recall": 7, "maximum_clean_episode_false_alerts": 6},
+  "interpretation": "Consumed offline diagnostic only. Temporal persistence is evaluated on v56 internal and v55 stress using the same v59 training split and classifier; no controller activation or fresh physical exam unless both frozen gates pass."
+}
