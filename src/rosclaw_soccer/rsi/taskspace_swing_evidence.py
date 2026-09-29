@@ -9,6 +9,7 @@ import numpy as np
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.rsi.taskspace_swing_probe import (
     FORWARD_CAPS_M,
+    JOINT_BOUNDARY_RECOVERY_CAPS_RAD,
     JOINT_RISK_GUARD_MARGINS_RAD,
     LATERAL_CAPS_M,
     MAX_JOINT_DELTA_RAD,
@@ -18,6 +19,7 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
     VERTICAL_OFFSETS_M,
     choose_swing_side,
     guard_swing_joint_delta,
+    recover_swing_joint_boundary,
     release_joint_delta,
     swing_joint_delta,
 )
@@ -46,6 +48,7 @@ def audit_taskspace_swing_trace(
     acquisition_lateral_gap = report.get("taskspace_acquisition_max_lateral_gap_m")
     revalidate_swing_side = report.get("taskspace_revalidate_swing_side", False)
     joint_risk_margin = report.get("taskspace_joint_risk_guard_margin_rad")
+    recovery_cap = report.get("taskspace_joint_boundary_recovery_cap_rad")
     family_hash = report.get("taskspace_family_actor_hash")
     late_hash = report.get("late_swing_actor_hash")
     family_actions = report.get("selected_taskspace_actions")
@@ -76,6 +79,7 @@ def audit_taskspace_swing_trace(
         or acquisition_lateral_gap not in (None, *SWING_ACQUISITION_MAX_LATERAL_GAPS_M)
         or type(revalidate_swing_side) is not bool
         or joint_risk_margin not in (None, *JOINT_RISK_GUARD_MARGINS_RAD)
+        or recovery_cap not in (None, *JOINT_BOUNDARY_RECOVERY_CAPS_RAD)
         or report.get("taskspace_leg_joint_names") != [list(row) for row in LEG_NAMES]
         or not isinstance(order, list)
         or len(order) != 29
@@ -194,6 +198,19 @@ def audit_taskspace_swing_trace(
                         delta,
                         limits[lane, ids],
                         margin_rad=joint_risk_margin,
+                    )
+                if recovery_cap is not None:
+                    if "pre_step_focal_qpos" not in replay or replay[
+                        "pre_step_focal_qpos"
+                    ].shape != (frames, count, 43):
+                        raise ValueError("missing measured joint state for boundary recovery")
+                    delta = recover_swing_joint_boundary(
+                        replay["pre_step_focal_qpos"][
+                            frame, lane, 7 + int(side[lane]) * 6 : 13 + int(side[lane]) * 6
+                        ],
+                        delta,
+                        limits[lane, ids],
+                        cap_rad=recovery_cap,
                     )
                 if first_contact[lane] < 0:
                     delta = (baseline[frame, lane, ids] + delta).astype(np.float32).astype(

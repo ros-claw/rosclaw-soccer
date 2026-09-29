@@ -6,6 +6,7 @@ import pytest
 from rosclaw_soccer.rsi.taskspace_swing_probe import (
     choose_swing_side,
     guard_swing_joint_delta,
+    recover_swing_joint_boundary,
     release_joint_delta,
     swing_joint_delta,
 )
@@ -89,6 +90,19 @@ def test_revalidated_swing_never_keeps_a_now_lower_foot() -> None:
     assert choose_swing_side(feet, ball, 1, revalidate_swing_side=True) == -1
     with pytest.raises(ValueError):
         choose_swing_side(feet, ball, 1, revalidate_swing_side=1)
+
+
+def test_boundary_recovery_only_moves_measured_near_limit_joint_inward() -> None:
+    limits = np.tile([-0.26, 0.26], (6, 1))
+    position = np.zeros(6)
+    position[5] = -0.255
+    delta = recover_swing_joint_boundary(position, np.zeros(6), limits, cap_rad=0.04)
+    assert 0 < delta[5] <= 0.04
+    np.testing.assert_array_equal(delta[:5], 0.0)
+    position[5] = 0.255
+    assert recover_swing_joint_boundary(position, np.zeros(6), limits, cap_rad=0.04)[5] < 0
+    with pytest.raises(ValueError):
+        recover_swing_joint_boundary(position, np.zeros(6), limits, cap_rad=0.4)
 
 
 def test_taskspace_release_is_causal_and_monotone() -> None:

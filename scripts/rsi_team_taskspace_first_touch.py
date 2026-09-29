@@ -15,6 +15,7 @@ from rosclaw_soccer.rsi.taskspace_swing_evidence import LEG_NAMES, audit_taskspa
 from rosclaw_soccer.rsi.taskspace_swing_probe import (
     choose_swing_side,
     guard_swing_joint_delta,
+    recover_swing_joint_boundary,
     release_joint_delta,
     swing_joint_delta,
 )
@@ -172,6 +173,13 @@ class TeamSwingMotor:
                         delta,
                         limits[self.side],
                         margin_rad=self.action["joint_risk_guard_margin_rad"],
+                    )
+                if "joint_boundary_recovery_cap_rad" in self.action:
+                    delta = recover_swing_joint_boundary(
+                        q[7 + self.side * 6 : 13 + self.side * 6],
+                        delta,
+                        limits[self.side],
+                        cap_rad=self.action["joint_boundary_recovery_cap_rad"],
                     )
                 target[ids] = baseline[ids] + delta
                 residual[ids] = target[ids] - baseline[ids]
@@ -358,6 +366,9 @@ def _run_one(
         ),
         "taskspace_joint_risk_guard_margin_rad": protocol["candidate_action"].get(
             "joint_risk_guard_margin_rad"
+        ),
+        "taskspace_joint_boundary_recovery_cap_rad": protocol["candidate_action"].get(
+            "joint_boundary_recovery_cap_rad"
         ),
         "taskspace_leg_joint_names": [list(row) for row in LEG_NAMES],
         "taskspace_joint_order": list(G1_DDS_JOINT_NAMES),

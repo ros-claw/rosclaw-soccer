@@ -17,6 +17,8 @@ REGULARIZATION = 0.05
 CONTACT_RELEASE_FRAMES = 20
 JOINT_RISK_GUARD_MARGINS_RAD = (0.12,)
 JOINT_RISK_HORIZON_SEC = 0.08
+JOINT_BOUNDARY_RECOVERY_CAPS_RAD = (0.04, 0.08)
+JOINT_BOUNDARY_RECOVERY_MARGIN_RAD = 0.08
 
 
 def choose_swing_side(
@@ -170,3 +172,38 @@ def guard_swing_joint_delta(
     outward_room = np.where(delta >= 0, upper_room, lower_room)
     scale = np.clip(outward_room / margin_rad, 0.0, 1.0)
     return delta * scale
+
+
+def recover_swing_joint_boundary(
+    joint_position: np.ndarray[Any, Any],
+    delta: np.ndarray[Any, Any],
+    joint_limits: np.ndarray[Any, Any],
+    *,
+    cap_rad: float,
+) -> np.ndarray[Any, Any]:
+    """Apply only a small inward SIM_ONLY correction near measured leg bounds."""
+    if (
+        joint_position.shape != (6,)
+        or delta.shape != (6,)
+        or joint_limits.shape != (6, 2)
+        or cap_rad not in JOINT_BOUNDARY_RECOVERY_CAPS_RAD
+        or not all(np.isfinite(value).all() for value in (joint_position, delta, joint_limits))
+        or np.any(joint_limits[:, 0] >= joint_limits[:, 1])
+        or np.max(np.abs(delta)) > MAX_JOINT_DELTA_RAD + 1e-5
+    ):
+        raise ValueError("invalid measured joint-boundary recovery input")
+    lower = joint_limits[:, 0] + JOINT_BOUNDARY_RECOVERY_MARGIN_RAD
+    upper = joint_limits[:, 1] - JOINT_BOUNDARY_RECOVERY_MARGIN_RAD
+    correction = np.where(
+        joint_position < lower,
+        np.minimum(0.5 * (lower - joint_position), cap_rad),
+        np.where(
+            joint_position > upper,
+            -np.minimum(0.5 * (joint_position - upper), cap_rad),
+            0.0,
+        ),
+    )
+    return np.asarray(
+        np.clip(delta + correction, -MAX_JOINT_DELTA_RAD, MAX_JOINT_DELTA_RAD),
+        dtype=np.float64,
+    )

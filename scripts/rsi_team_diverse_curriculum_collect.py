@@ -165,6 +165,7 @@ def main() -> None:
             "swing_acquisition_max_lateral_gap_m",
             "revalidate_swing_side",
             "joint_risk_guard_margin_rad",
+            "joint_boundary_recovery_cap_rad",
         ):
             if key in arm:
                 action[key] = arm[key]
