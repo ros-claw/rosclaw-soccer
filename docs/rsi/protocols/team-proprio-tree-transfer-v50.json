@@ -1,0 +1,16 @@
+{
+  "schema": "rsi_team_proprio_tree_transfer_protocol_v50",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "scene_count": 512,
+  "audit_report_path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v49/report.json",
+  "audit_report_hash": "sha256:499f5f8082cdfdf14e68c0209a75817fb59c6826ea21882fcafd9b38e8c75a99",
+  "audit_report_file_hash": "sha256:e20d30d7b53c4c120676dcd87741994ca440dbcc7271f964e2552380380ab7f8",
+  "dataset_path": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-audit-v49/paired_outcomes.npz",
+  "dataset_hash": "sha256:af59b2f5a870ba596819def1b6722ce4ffe3e1826427e6528c16c90bc84efa1f",
+  "physical_root": "/data/rosclaw_overflow/rsi-team-diverse-curriculum-v49",
+  "frozen_model_path": "/data/rosclaw_overflow/rsi-team-proprio-tree-export-v47/model.json",
+  "frozen_model_hash": "sha256:0d6a2c99834004ea64a8429aee5b90841ccc7acb243d6f49d9cef985e9140e36",
+  "interpretation": "Evaluate the frozen v47 chooser on 512 new paired physical scenes. Abstention executes Parent and inherits Parent risk. This is a new-curriculum transfer diagnostic, not an online acceptance test or promotion."
+}
