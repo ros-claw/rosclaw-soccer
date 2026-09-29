@@ -137,12 +137,20 @@ def main() -> None:
                 if arm["foot_selection"] == "phase"
                 else TeamInterceptNavigation
             )
+            navigation_kwargs: dict[str, Any] = {}
+            if "near_ball_lateral_hold_gap_m" in arm:
+                if nav_type is not TeamPhaseInterceptNavigation:
+                    raise ValueError("near-ball lateral hold requires phase foot selection")
+                navigation_kwargs["near_ball_lateral_hold_gap_m"] = arm[
+                    "near_ball_lateral_hold_gap_m"
+                ]
             navigation = nav_type(
                 agent_id=protocol["focal_agent_id"],
                 foundation_hash=policy_hash,
                 foundation_config_hash=config_hash,
                 forward_gain=float(arm["forward_gain"]),
                 lateral_gain=float(arm["lateral_gain"]),
+                **navigation_kwargs,
             )
         episode_protocol = dict(protocol)
         action = dict(protocol["candidate_action"])

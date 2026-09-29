@@ -71,6 +71,35 @@ def test_phase_aware_navigation_uses_measured_reachable_foot() -> None:
     assert phase.contract_hash != left_only.contract_hash
 
 
+def test_phase_near_ball_lateral_hold_uses_live_gap_only() -> None:
+    held = TeamPhaseInterceptNavigation(
+        "red.playmaker",
+        "sha256:" + "1" * 64,
+        "sha256:" + "2" * 64,
+        0.4,
+        1.2,
+        near_ball_lateral_hold_gap_m=0.45,
+    )
+    normal = TeamPhaseInterceptNavigation(
+        "red.playmaker", "sha256:" + "1" * 64, "sha256:" + "2" * 64, 0.4, 1.2
+    )
+    near = replace(_observation(30), ball_position=(0.40, 0.1, 0.115))
+    assert held.propose(near).velocity_delta[1] == 0.0
+    assert normal.propose(near).velocity_delta[1] > 0.0
+    far = replace(_observation(31), ball_position=(0.80, 0.1, 0.115))
+    assert held.propose(far).velocity_delta[1] > 0.0
+    assert held.contract_hash != normal.contract_hash
+    with pytest.raises(ValueError):
+        TeamPhaseInterceptNavigation(
+            "red.playmaker",
+            "sha256:" + "1" * 64,
+            "sha256:" + "2" * 64,
+            0.4,
+            1.2,
+            near_ball_lateral_hold_gap_m=1.0,
+        )
+
+
 def test_contextual_policy_latches_only_measured_entry_gap() -> None:
     near = TeamContextPhaseNavigation("red.playmaker", "sha256:" + "1" * 64, "sha256:" + "2" * 64)
     far = TeamContextPhaseNavigation("red.playmaker", "sha256:" + "1" * 64, "sha256:" + "2" * 64)

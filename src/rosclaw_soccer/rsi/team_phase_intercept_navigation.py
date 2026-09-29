@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 from rosclaw_soccer.rsi.team_intercept_navigation import TeamInterceptNavigation
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.skills.team.navigation_option import NavigationDelta, NavigationObservation
 
 
+@dataclass
 class TeamPhaseInterceptNavigation(TeamInterceptNavigation):
     """Use the currently reachable swing-side foot, not a fixed left ankle."""
 
+    near_ball_lateral_hold_gap_m: float | None = None
+
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.near_ball_lateral_hold_gap_m not in (None, 0.45, 0.65):
+            raise ValueError("bounded near-ball lateral hold gap required")
         self.contract_hash = str(
             hash_json(
                 {
@@ -24,6 +30,7 @@ class TeamPhaseInterceptNavigation(TeamInterceptNavigation):
                     "forward_gain": self.forward_gain,
                     "lateral_gain": self.lateral_gain,
                     "foot_selection": "raised_by_0.02m_else_nearest_lateral",
+                    "near_ball_lateral_hold_gap_m": self.near_ball_lateral_hold_gap_m,
                     "activation_ceiling": self.activation_ceiling,
                 }
             )
@@ -48,6 +55,11 @@ class TeamPhaseInterceptNavigation(TeamInterceptNavigation):
         if observation.frame >= 30 and 0.2 <= x_gap <= 1.4:
             dx = max(-0.18, min(0.18, self.forward_gain * (x_gap - 0.55)))
             dy = max(-0.18, min(0.18, self.lateral_gain * y_error))
+            if (
+                self.near_ball_lateral_hold_gap_m is not None
+                and x_gap <= self.near_ball_lateral_hold_gap_m
+            ):
+                dy = 0.0
             norm = math.hypot(dx, dy)
             if norm > 0.25:
                 dx, dy = dx * 0.25 / norm, dy * 0.25 / norm
