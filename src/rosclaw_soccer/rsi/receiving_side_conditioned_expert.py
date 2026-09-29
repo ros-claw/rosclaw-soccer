@@ -26,6 +26,8 @@ class ReceivingSideConditionedExpert:
     right_weights: tuple[float, ...]
     left_post_gain: float = 0.0
     right_post_gain: float = 0.4
+    left_velocity_horizon_sec: float = 0.0
+    right_velocity_horizon_sec: float = 0.0
     left_target_depth_m: float = 0.25
     left_target_lateral_m: float = 0.12
     right_target_depth_m: float = 0.25
@@ -42,6 +44,8 @@ class ReceivingSideConditionedExpert:
         settings = (
             self.left_post_gain,
             self.right_post_gain,
+            self.left_velocity_horizon_sec,
+            self.right_velocity_horizon_sec,
             self.left_target_depth_m,
             self.left_target_lateral_m,
             self.right_target_depth_m,
@@ -53,12 +57,24 @@ class ReceivingSideConditionedExpert:
             or any(type(v) is not float or not math.isfinite(v) for v in settings)
             or not 0 <= self.left_post_gain <= 1
             or not 0 <= self.right_post_gain <= 1
+            or not 0 <= self.left_velocity_horizon_sec <= 0.15
+            or not 0 <= self.right_velocity_horizon_sec <= 0.15
         ):
             raise ValueError("finite same-player SIM_ONLY side-conditioned expert required")
         children = []
-        for gain, depth, lateral in (
-            (self.left_post_gain, self.left_target_depth_m, self.left_target_lateral_m),
-            (self.right_post_gain, self.right_target_depth_m, self.right_target_lateral_m),
+        for gain, horizon, depth, lateral in (
+            (
+                self.left_post_gain,
+                self.left_velocity_horizon_sec,
+                self.left_target_depth_m,
+                self.left_target_lateral_m,
+            ),
+            (
+                self.right_post_gain,
+                self.right_velocity_horizon_sec,
+                self.right_target_depth_m,
+                self.right_target_lateral_m,
+            ),
         ):
             children.append(
                 ReceivingPrecontactExpert(
@@ -67,7 +83,7 @@ class ReceivingSideConditionedExpert:
                     self.mailbox,
                     0.35,
                     gain,
-                    0.0,
+                    horizon,
                     target_depth_m=depth,
                     target_lateral_m=lateral,
                     coordination=self.coordination,
