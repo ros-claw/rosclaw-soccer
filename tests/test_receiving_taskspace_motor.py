@@ -75,3 +75,15 @@ def test_motor_rejects_stale_contact_and_unbounded_gain():
     actor = ReceivingTaskspaceMotor("red.finisher", mailbox, 0.5, 0.0, 0.0)
     with pytest.raises(ValueError, match="consecutive same-player"):
         actor.propose(_observation(1))
+
+
+def test_idle_motor_yields_until_completed_own_foot_touch():
+    mailbox = ReceiveContactMailbox("red.finisher")
+    actor = ReceivingTaskspaceMotor(
+        "red.finisher", mailbox, 0.0, 0.5, 0.05, idle_before_first_touch=True
+    )
+    assert actor.propose(_observation(0)) is None
+    mailbox._snapshot = ReceiveContactSnapshot(0.02, 0.018, "left_foot", 0.0, 0)
+    target = actor.propose(_observation(1))
+    assert target is not None and any(target.target_rad[:6])
+    assert actor.nonzero_target_frames == 1

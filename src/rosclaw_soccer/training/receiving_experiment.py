@@ -132,6 +132,7 @@ def simulate_r0_receiving_course(
         or receiving_foot_capture_teacher is not None
         or getattr(research_motor_option, "agent_id", None) != course.agent_id
         or getattr(research_motor_option, "activation_ceiling", None) != "SIM_ONLY"
+        or getattr(research_motor_option, "idle_before_first_touch", None) is not True
     ):
         raise ValueError(
             "one private SIM_ONLY R1 receiving motor without competing authority required"
@@ -431,6 +432,10 @@ def simulate_r0_receiving_course(
         if configuration_profile == "R0"
         else r1_contact_tap_receiving_configuration()
     )
+    if research_motor_option is not None:
+        # An idle motor must not preempt the frozen near-ball predecessor.
+        # This is explicitly SIM_ONLY and never an implicit fallback on fault.
+        world = replace(world, motor_idle_residual_fallback=True)
     motors: dict[str, ReceivingSonicOption] = {}
     if sonic_model_root is not None:
         world = replace(world, motor_idle_residual_fallback=True)

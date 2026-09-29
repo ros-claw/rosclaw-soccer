@@ -27,6 +27,7 @@ class ReceivingTaskspaceMotor:
     velocity_horizon_sec: float
     hip_clearance_rad: float = 0.0
     ankle_compensation_rad: float = 0.0
+    idle_before_first_touch: bool = False
     activation_ceiling: str = field(init=False, default="SIM_ONLY")
     needs_foot_kinematics: bool = field(init=False, default=True)
     contract_hash: str = field(init=False)
@@ -51,6 +52,7 @@ class ReceivingTaskspaceMotor:
             or not 0 <= self.velocity_horizon_sec <= 0.15
             or not -0.2 <= self.hip_clearance_rad <= 0.2
             or not -0.2 <= self.ankle_compensation_rad <= 0.2
+            or type(self.idle_before_first_touch) is not bool
         ):
             raise ValueError("bounded same-player SIM_ONLY receiving motor required")
         self.contract_hash = hash_json(
@@ -63,6 +65,7 @@ class ReceivingTaskspaceMotor:
                 "velocity_horizon_sec": self.velocity_horizon_sec,
                 "hip_clearance_rad": self.hip_clearance_rad,
                 "ankle_compensation_rad": self.ankle_compensation_rad,
+                "idle_before_first_touch": self.idle_before_first_touch,
                 "target_correction_limit_rad": 0.25,
                 "activation_ceiling": "SIM_ONLY",
             }
@@ -76,7 +79,7 @@ class ReceivingTaskspaceMotor:
     def peak_correction_rad(self) -> float:
         return self._peak_correction_rad
 
-    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget:
+    def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:
         if not isinstance(observation, TeamMotorObservation):
             raise ValueError("typed motor observation required")
         observation.__post_init__()
@@ -96,6 +99,8 @@ class ReceivingTaskspaceMotor:
         base = foundation.target
         first_time = snapshot.first_own_foot_time_sec
         if first_time is None:
+            if self.idle_before_first_touch:
+                return None
             right = observation.qpos[37] < observation.qpos[1]
             gain = self.pre_gain
             active = True
@@ -106,14 +111,14 @@ class ReceivingTaskspaceMotor:
             gain = self.post_gain
             active = observation.time_sec - first_time <= 1.2
         if not active or gain == 0 and self.hip_clearance_rad == self.ankle_compensation_rad == 0:
-            return base
+            return None if self.idle_before_first_touch else base
         side = 1 if right else 0
         foot = np.asarray(feet.foot_position_world_m[side], dtype=np.float64)
         foot_velocity = np.asarray(feet.foot_linear_velocity_world_mps[side], dtype=np.float64)
         ball = np.asarray(observation.qpos[36:39], dtype=np.float64)
         ball_velocity = np.asarray(observation.qvel[35:38], dtype=np.float64)
         if np.linalg.norm(ball - foot) > 0.85 or observation.qpos[2] < 0.55:
-            return base
+            return None if self.idle_before_first_touch else base
         target_foot = ball + np.asarray((-0.18, -0.03 if right else 0.03, -0.08))
         target_foot[2] = np.clip(target_foot[2], 0.04, 0.08)
         error = np.clip(target_foot - foot, -0.2, 0.2)
