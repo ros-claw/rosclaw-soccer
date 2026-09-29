@@ -1560,6 +1560,15 @@ def simulate_independent_team_world(
                     config=active.keeper_reach,
                 )
     ball_geom = _id(model, mujoco.mjtObj.mjOBJ_GEOM, "ball_geom")
+    research_focal_left_shin_geom = None
+    if research_contact_max_active_substeps is not None:
+        if receiving_oracle is None:
+            raise ValueError("focal research contact trace requires a receiving oracle")
+        research_focal_left_shin_geom = _id(
+            model,
+            mujoco.mjtObj.mjOBJ_GEOM,
+            f"{receiving_oracle.agent_id.replace('.', '_')}_left_shin",
+        )
     ball_joint = _id(model, mujoco.mjtObj.mjOBJ_JOINT, "ball_free")
     ball_qpos = int(model.jnt_qposadr[ball_joint])
     ball_qvel = int(model.jnt_dofadr[ball_joint])
@@ -3518,6 +3527,7 @@ def simulate_independent_team_world(
         frame_nonfoot_contact_geom_id = -1
         frame_nonfoot_contact_force_n = 0.0
         frame_research_stiffness_substeps = 0
+        frame_research_left_shin_clearance_substeps_m: list[float] = []
         frame_robot_contact_count = 0
         frame_robot_contact_first_code = 0
         frame_robot_contact_second_code = 0
@@ -4217,6 +4227,14 @@ def simulate_independent_team_world(
                     state=opposite_net_state,
                 )
             mujoco.mj_step(model, data)
+            if research_focal_left_shin_geom is not None:
+                frame_research_left_shin_clearance_substeps_m.append(
+                    float(
+                        mujoco.mj_geomDistance(
+                            model, data, ball_geom, research_focal_left_shin_geom, 10.0, None
+                        )
+                    )
+                )
             if authority_support is not None:
                 trace.setdefault("receiving_authority_completed_support_time_sec", []).append(
                     float(data.time)
@@ -4657,6 +4675,10 @@ def simulate_independent_team_world(
         trace["ball_nonfoot_contact_agent_code"].append(frame_nonfoot_contact_agent_code)
         trace["ball_nonfoot_contact_geom_id"].append(frame_nonfoot_contact_geom_id)
         trace["ball_nonfoot_contact_force_n"].append(frame_nonfoot_contact_force_n)
+        if research_focal_left_shin_geom is not None:
+            trace.setdefault("research_focal_left_shin_clearance_substeps_m", []).append(
+                frame_research_left_shin_clearance_substeps_m
+            )
         trace["robot_robot_contact_count"].append(frame_robot_contact_count)
         trace["robot_robot_contact_first_code"].append(frame_robot_contact_first_code)
         trace["robot_robot_contact_second_code"].append(frame_robot_contact_second_code)
