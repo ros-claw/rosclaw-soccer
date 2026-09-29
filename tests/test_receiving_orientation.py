@@ -37,6 +37,7 @@ def command(team, enabled, *, held=False, committed=True, duel=False, opponent=F
         controller=controller,
         decision=SimpleNamespace(intent=TacticalIntent.RECEIVE, target_position_m=(*ball, 0.0)),
         positions={cell.agent_id: root},
+        model=SimpleNamespace(),  # The optional navigation slot is inactive in this test.
         data=data,
         ball_qpos=7,
         ball_qvel=0,

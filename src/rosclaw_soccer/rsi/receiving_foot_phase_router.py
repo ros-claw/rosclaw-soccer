@@ -47,6 +47,7 @@ class ReceivingFootPhaseRouter(ReceivingMeasuredSkillRouter):
     """
 
     references: tuple[ReceivingFootPhaseReference, ...] = ()
+    corrected_experts: tuple[str, ...] = ("low", "high")
     foot_gain: float = 0.0
     post_multiplier: float = 1.0
     shin_guard_m: float = 0.0
@@ -63,6 +64,9 @@ class ReceivingFootPhaseRouter(ReceivingMeasuredSkillRouter):
             type(self.references) is not tuple
             or not 1 <= len(self.references) <= 12
             or any(not isinstance(item, ReceivingFootPhaseReference) for item in self.references)
+            or type(self.corrected_experts) is not tuple
+            or not self.corrected_experts
+            or any(name not in ("low", "high", "center") for name in self.corrected_experts)
             or type(self.foot_gain) is not float
             or not math.isfinite(self.foot_gain)
             or not 0 <= self.foot_gain <= 1
@@ -91,6 +95,7 @@ class ReceivingFootPhaseRouter(ReceivingMeasuredSkillRouter):
                     }
                     for item in self.references
                 ],
+                "corrected_experts": self.corrected_experts,
                 "foot_gain": self.foot_gain,
                 "post_multiplier": self.post_multiplier,
                 "shin_guard_m": self.shin_guard_m,
@@ -102,7 +107,7 @@ class ReceivingFootPhaseRouter(ReceivingMeasuredSkillRouter):
     def propose(self, observation: ReceivingFeedbackObservation) -> tuple[float, ...]:
         base = super().propose(observation)
         # Parent fallback and old anchor courses remain byte-for-byte unchanged.
-        if self.selected_expert == "parent" or observation.frame >= 45:
+        if self.selected_expert not in self.corrected_experts or observation.frame >= 45:
             return base
         feet = observation.foot_kinematics
         if feet is None or feet.foot_linear_velocity_world_mps is None:
