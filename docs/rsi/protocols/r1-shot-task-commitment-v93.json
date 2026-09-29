@@ -1,0 +1,25 @@
+{
+  "schema": "rosclaw_soccer.rsi.r1_shot_task_commitment_v93.protocol.v1",
+  "partition": "CONSUMED_FAILURE_REPLAY_TRAIN",
+  "activation_ceiling": "SIM_ONLY",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "source": "v92 feedback navigation acted only during a 0.2-second SHOOT intent; the finisher reverted to RECEIVE while strike phase remained active. Some aggressive arms collided with other G1s, so physical collision remains a hard gate.",
+  "hypothesis": "A private, time-bounded shot-task commitment can keep the finisher's causal feedback navigation active across temporary RECEIVE/RUN_IN_BEHIND decisions without granting persistent possession or bypassing opponent contact.",
+  "interruption": "The commitment clears immediately on any intent other than SHOOT, RECEIVE or RUN_IN_BEHIND, expires by its own maximum elapsed seconds, and acts only while the ball stays within 2.5 m. Every velocity delta remains <=0.25 m/s under the existing NavigationSlot.",
+  "frozen_source": {"precontact_pass_standoff_m": 0.35, "directed_pass_speed_mps": 1.0, "handoff_profile": "tracking", "strike_stance_lateral_m": -0.19, "receiver_nav_base": "v92 damped"},
+  "consumed_scenes": [
+    {"id": "s02", "ball_x_m": 2.24, "ball_y_m": -0.76, "seed": 512003},
+    {"id": "s04", "ball_x_m": 2.32, "ball_y_m": -0.76, "seed": 512005},
+    {"id": "s06", "ball_x_m": 2.40, "ball_y_m": -0.76, "seed": 512007}
+  ],
+  "arms": [
+    {"name": "lease1", "seconds": 1.0, "base": "damped"},
+    {"name": "lease2", "seconds": 2.0, "base": "damped"},
+    {"name": "lease3", "seconds": 3.0, "base": "damped"},
+    {"name": "lease2_damped", "seconds": 2.0, "base": "slower wider damped"}
+  ],
+  "paired_parent": "v92 damped, same three consumed scenes with zero commitment",
+  "gate": "All three six-body scenes safe, no robot-robot collision, clean real source/receiver foot transfer, no nonfoot ball contact, at least one new genuine later finisher foot shot >=2 m/s. Rank by later shot count, in-goal crossings, and joint margin; if none passes, reject this task-lease family.",
+  "interpretation": "A training pass is only an internal SIM_ONLY navigation result; requires new frozen unseen local exam, then 4v4 continuous match before video promotion."
+}

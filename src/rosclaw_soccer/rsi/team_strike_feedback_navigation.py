@@ -24,9 +24,13 @@ class TeamStrikeFeedbackNavigation:
     stance_depth_m: float
     stance_lateral_m: float
     body_velocity_damping: float
+    shot_commitment_sec: float = 0.0
     contract_hash: str = field(init=False)
     activation_ceiling: str = field(init=False, default="SIM_ONLY")
     history: list[tuple[int, float, float, float, float]] = field(init=False, default_factory=list)
+    shot_start_time_sec: float | None = field(init=False, default=None)
+    shot_target_xy: tuple[float, float] | None = field(init=False, default=None)
+    last_intent: str | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         values = (
@@ -35,6 +39,7 @@ class TeamStrikeFeedbackNavigation:
             self.stance_depth_m,
             self.stance_lateral_m,
             self.body_velocity_damping,
+            self.shot_commitment_sec,
         )
         if (
             any(type(value) is not float or not math.isfinite(value) for value in values)
@@ -43,6 +48,7 @@ class TeamStrikeFeedbackNavigation:
             or not 0.30 <= self.stance_depth_m <= 0.80
             or not -0.35 <= self.stance_lateral_m <= 0.35
             or not 0.0 <= self.body_velocity_damping <= 0.6
+            or not 0.0 <= self.shot_commitment_sec <= 3.0
         ):
             raise ValueError("finite bounded strike-navigation coefficients required")
         self.contract_hash = str(
@@ -57,6 +63,7 @@ class TeamStrikeFeedbackNavigation:
                     "stance_depth_m": self.stance_depth_m,
                     "stance_lateral_m": self.stance_lateral_m,
                     "body_velocity_damping": self.body_velocity_damping,
+                    "shot_commitment_sec": self.shot_commitment_sec,
                     "activation_ceiling": self.activation_ceiling,
                 }
             )
@@ -65,7 +72,21 @@ class TeamStrikeFeedbackNavigation:
     def propose(self, observation: NavigationObservation) -> NavigationDelta | None:
         if observation.agent_id != self.agent_id:
             raise ValueError("foreign navigation observation")
-        if observation.intent != "shoot":
+        fresh_shoot = observation.intent == "shoot" and self.last_intent != "shoot"
+        if fresh_shoot:
+            self.shot_start_time_sec = observation.time_sec
+            self.shot_target_xy = observation.task_target[:2]
+        elif observation.intent not in ("shoot", "receive", "run_in_behind"):
+            self.shot_start_time_sec = None
+            self.shot_target_xy = None
+        self.last_intent = observation.intent
+        continuing = bool(
+            self.shot_commitment_sec > 0.0
+            and self.shot_start_time_sec is not None
+            and observation.intent in ("receive", "run_in_behind")
+            and 0.0 <= observation.time_sec - self.shot_start_time_sec <= self.shot_commitment_sec
+        )
+        if observation.intent != "shoot" and not continuing:
             return None
         body = observation.body_pose
         ball = observation.ball_position
@@ -73,8 +94,13 @@ class TeamStrikeFeedbackNavigation:
             return None
         predicted_x = ball[0] + self.prediction_horizon_sec * observation.ball_velocity[0]
         predicted_y = ball[1] + self.prediction_horizon_sec * observation.ball_velocity[1]
-        direction_x = observation.task_target[0] - predicted_x
-        direction_y = observation.task_target[1] - predicted_y
+        task_target = (
+            self.shot_target_xy
+            if continuing and self.shot_target_xy is not None
+            else observation.task_target[:2]
+        )
+        direction_x = task_target[0] - predicted_x
+        direction_y = task_target[1] - predicted_y
         distance = math.hypot(direction_x, direction_y)
         if distance < 0.1:
             return None

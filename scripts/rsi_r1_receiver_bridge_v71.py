@@ -360,7 +360,18 @@ def run(
         or receive_profile != "legacy"
         and handoff_profile == "legacy"
         or phase_profile not in ("default", "fast", "predictive", "ultra")
-        or navigation_profile not in ("none", "follow", "lead", "damped", "wide")
+        or navigation_profile
+        not in (
+            "none",
+            "follow",
+            "lead",
+            "damped",
+            "wide",
+            "lease1",
+            "lease2",
+            "lease3",
+            "lease2_damped",
+        )
     ):
         raise ValueError("bounded rolling receive curriculum required")
     if output_dir.exists() or output_dir.resolve().is_relative_to(root):
@@ -380,12 +391,16 @@ def run(
     navigation = None
     if navigation_profile != "none":
         navigation_settings = {
-            "follow": (0.8, 0.40, 0.36, -0.19, 0.0),
-            "lead": (1.2, 0.80, 0.36, -0.19, 0.0),
-            "damped": (1.2, 0.60, 0.36, -0.19, 0.3),
-            "wide": (1.2, 0.80, 0.50, -0.25, 0.2),
+            "follow": (0.8, 0.40, 0.36, -0.19, 0.0, 0.0),
+            "lead": (1.2, 0.80, 0.36, -0.19, 0.0, 0.0),
+            "damped": (1.2, 0.60, 0.36, -0.19, 0.3, 0.0),
+            "wide": (1.2, 0.80, 0.50, -0.25, 0.2, 0.0),
+            "lease1": (1.2, 0.60, 0.36, -0.19, 0.3, 1.0),
+            "lease2": (1.2, 0.60, 0.36, -0.19, 0.3, 2.0),
+            "lease3": (1.2, 0.60, 0.36, -0.19, 0.3, 3.0),
+            "lease2_damped": (0.8, 0.40, 0.50, -0.25, 0.6, 2.0),
         }
-        gain, horizon, depth, lateral, damping = navigation_settings[navigation_profile]
+        gain, horizon, depth, lateral, damping, commitment = navigation_settings[navigation_profile]
         policy_path = asset_root / "policy/loco_mode/model/policy_29dof.pt"
         config_path = asset_root / "policy/loco_mode/config/LocoMode.yaml"
         navigation = TeamStrikeFeedbackNavigation(
@@ -397,6 +412,7 @@ def run(
             stance_depth_m=depth,
             stance_lateral_m=lateral,
             body_velocity_damping=damping,
+            shot_commitment_sec=commitment,
         )
     if preview_pass:
         fixture = replace(
@@ -717,7 +733,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--navigation-profile",
-        choices=("none", "follow", "lead", "damped", "wide"),
+        choices=(
+            "none",
+            "follow",
+            "lead",
+            "damped",
+            "wide",
+            "lease1",
+            "lease2",
+            "lease3",
+            "lease2_damped",
+        ),
         default="none",
     )
     parser.add_argument("--no-motor", action="store_true")

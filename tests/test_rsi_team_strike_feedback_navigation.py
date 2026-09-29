@@ -62,3 +62,22 @@ def test_strike_feedback_parameters_are_hash_bound_and_finite():
             _policy(position_gain=invalid)
     with pytest.raises(ValueError, match="foreign"):
         first.propose(replace(_observation(), agent_id="blue.finisher"))
+
+
+def test_shot_commitment_is_latched_bounded_and_interruptible():
+    policy = _policy(shot_commitment_sec=2.0)
+    assert policy.propose(_observation(intent="receive")) is None
+    assert policy.propose(_observation(intent="shoot")) is not None
+    following = replace(
+        _observation(intent="receive", target=(0.0, 7.0, 0.0)), frame=51, time_sec=1.02
+    )
+    assert policy.propose(following) is not None
+    assert policy.shot_target_xy == (7.0, 0.0)
+    assert policy.propose(replace(following, frame=52, time_sec=1.04, intent="press")) is None
+    assert policy.shot_target_xy is None
+    assert policy.propose(replace(following, frame=53, time_sec=1.06)) is None
+    expiring = _policy(shot_commitment_sec=1.0)
+    expiring.propose(_observation())
+    assert expiring.propose(replace(following, frame=151, time_sec=3.02)) is None
+    with pytest.raises(ValueError):
+        _policy(shot_commitment_sec=3.1)
