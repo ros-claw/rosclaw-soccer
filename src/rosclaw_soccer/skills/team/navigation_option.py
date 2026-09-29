@@ -47,6 +47,10 @@ class NavigationObservation:
     motor_option_retired: bool = False
     # Optional same-frame measured velocities; values only, never a world handle.
     effector_velocities: tuple[tuple[str, float, float, float], ...] = ()
+    # Optional complete proprioception is provided only to policies that ask for it.
+    body_angular_velocity: tuple[float, float, float] | None = None
+    joint_positions_rad: tuple[float, ...] = ()
+    joint_velocities_radps: tuple[float, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -87,6 +91,13 @@ class NavigationObservation:
                 type(v) is not tuple or len(v) != 4 or not _identity(v[0]) or not _vector(v[1:], 3)
                 for v in self.effector_velocities
             )
+            or self.body_angular_velocity is not None
+            and not _vector(self.body_angular_velocity, 3)
+            or self.joint_positions_rad != ()
+            and not _vector(self.joint_positions_rad, 29)
+            or self.joint_velocities_radps != ()
+            and not _vector(self.joint_velocities_radps, 29)
+            or bool(self.joint_positions_rad) != bool(self.joint_velocities_radps)
             or len(self.neighbors) > 31
             or any(
                 type(v) is not tuple

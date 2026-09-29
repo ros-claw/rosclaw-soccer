@@ -5575,6 +5575,24 @@ def _movement_command(
                 and measured_foot_motion.foot_linear_velocity_world_mps is not None
                 else ()
             ),
+            body_angular_velocity=(
+                tuple(data.qvel[controller.qvel_base + 3 : controller.qvel_base + 6].tolist())
+                if navigation_frame == 30
+                and getattr(navigation_slot.policy, "needs_full_proprioception", False) is True
+                else None
+            ),
+            joint_positions_rad=(
+                tuple(data.qpos[controller.joint_qpos].tolist())
+                if navigation_frame == 30
+                and getattr(navigation_slot.policy, "needs_full_proprioception", False) is True
+                else ()
+            ),
+            joint_velocities_radps=(
+                tuple(data.qvel[controller.joint_qvel].tolist())
+                if navigation_frame == 30
+                and getattr(navigation_slot.policy, "needs_full_proprioception", False) is True
+                else ()
+            ),
             committed_receiver=committed_receiver,
             motor_option_retired=motor_option_retired,
             neighbors=tuple(

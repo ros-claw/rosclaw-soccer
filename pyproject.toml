@@ -26,6 +26,7 @@ dev = [
   "ruff>=0.8",
 ]
 training = ["onnxruntime>=1.18"]
+tree-training = ["scikit-learn>=1.6,<2"]
 
 [project.entry-points."rosclaw.cli_extensions"]
 soccer = "rosclaw_soccer.plugin:register_cli"

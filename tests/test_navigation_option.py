@@ -128,6 +128,24 @@ def test_receive_commitment_requires_explicit_boolean():
         replace(observation(), committed_receiver=1)
 
 
+def test_optional_full_proprioception_requires_complete_finite_joint_pair():
+    value = observation()
+    complete = replace(
+        value,
+        body_angular_velocity=(0.0, 0.0, 0.0),
+        joint_positions_rad=(0.0,) * 29,
+        joint_velocities_radps=(0.0,) * 29,
+    )
+    assert len(complete.joint_positions_rad) == 29
+    for change in (
+        {"joint_positions_rad": (0.0,) * 29},
+        {"joint_velocities_radps": (0.0,) * 28},
+        {"body_angular_velocity": (float("nan"), 0.0, 0.0)},
+    ):
+        with pytest.raises(ValueError):
+            replace(value, **change)
+
+
 @pytest.mark.parametrize("value", [0, 1, None, "completed"])
 def test_motor_retirement_requires_explicit_boolean(value):
     with pytest.raises(ValueError):

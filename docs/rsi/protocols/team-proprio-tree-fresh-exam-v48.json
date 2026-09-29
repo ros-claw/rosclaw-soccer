@@ -1,0 +1,35 @@
+{
+  "schema": "rsi_team_proprio_tree_fresh_exam_protocol_v48",
+  "activation_ceiling": "SIM_ONLY",
+  "development_only": true,
+  "promotion_authorized": false,
+  "model_path": "/data/rosclaw_overflow/rsi-team-proprio-tree-export-v47/model.json",
+  "model_hash": "sha256:0d6a2c99834004ea64a8429aee5b90841ccc7acb243d6f49d9cef985e9140e36",
+  "export_report_path": "/data/rosclaw_overflow/rsi-team-proprio-tree-export-v47/export_report.json",
+  "export_report_hash": "sha256:93fbf6fdfaf1f4c370b741159813d3b3195ab87bd123226db8c078c9d38ea729",
+  "focal_agent_id": "red.playmaker",
+  "frames": 250,
+  "coordinate_seed": 20261023,
+  "identity_seed_base": 1400000,
+  "scene_count": 48,
+  "ball_x_m": [3.4, 4.15],
+  "ball_y_m": [-0.95, -0.45],
+  "ball_vx_mps": [-0.75, -0.25],
+  "candidate_action": {
+    "entry_frame": 30,
+    "forward_cap_m": 0.16,
+    "lateral_cap_m": 0.05,
+    "vertical_offset_m": 0.04,
+    "swing_foot_acquisition_gap_m": 0.55
+  },
+  "fixed_arm": "phase_front04_lat12",
+  "gate": {
+    "minimum_complete_triads": 48,
+    "minimum_learned_useful": 10,
+    "minimum_useful_gain_vs_fixed": 4,
+    "minimum_safe_contact_gain_vs_fixed": 3,
+    "maximum_unsafe_excess_vs_fixed": 0,
+    "maximum_unsafe_excess_vs_parent": 0
+  },
+  "interpretation": "48 new physical x/y/vx and identity seeds, Parent/fixed/online full-proprio tree chooser triads. All pre-decision physical states must agree; incomplete triads fail closed. Passing supports only bounded first-touch selection, not full-chain football or hardware promotion."
+}
