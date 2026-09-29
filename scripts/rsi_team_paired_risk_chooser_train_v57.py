@@ -17,7 +17,11 @@ from scripts.rsi_team_large_context_chooser_train import feature_table
 
 
 def _load_pair(
-    protocol: dict[str, Any], prefix: str, count: int
+    protocol: dict[str, Any],
+    prefix: str,
+    count: int,
+    *,
+    pair_names: tuple[str, str, str] = ("parent", "baseline", "gate22_cap10"),
 ) -> tuple[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]:
     audit_path = Path(protocol[f"{prefix}_audit_report_path"])
     dataset_path = Path(protocol[f"{prefix}_dataset_path"])
@@ -50,12 +54,13 @@ def _load_pair(
     if (
         raw.shape != (count, 24)
         or labels.shape != (count, len(names), 3)
-        or not {"parent", "baseline", "gate22_cap10"}.issubset(names)
+        or pair_names[0] != "parent"
+        or not set(pair_names).issubset(names)
         or len(set(scenarios)) != count
         or len(hashes) != count
     ):
         raise ValueError(f"{prefix} paired physical table invalid")
-    labels = labels[:, [names.index(name) for name in ("parent", "baseline", "gate22_cap10")], :]
+    labels = labels[:, [names.index(name) for name in pair_names], :]
     physical = _physical_features(
         root=Path(protocol[f"{prefix}_physical_root"]), report=report, raw=raw, entry_hashes=hashes
     )
