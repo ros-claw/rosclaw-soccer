@@ -1,0 +1,17 @@
+{
+  "schema": "soccer.rsi.stable_motor_replay_protocol.v309",
+  "activation_ceiling": "SIM_ONLY",
+  "partition": "TRAIN_CONSUMED",
+  "input_gate": "completed v308 raw feedback, neural executions and actor/critic weights independently reconstruct; bank and original neural observations bound",
+  "changed": "advantage weights normalized within identical observed states before exponentiation, preserving quality ranking under stale negative value estimates",
+  "unchanged": ["terminal reward", "physical success and safety thresholds", "13-32 encoder", "nine protected contexts", "37-parameter inference", "SONIC", "body asset", "late swing", "fresh quarantine"],
+  "temperature": 0.5,
+  "minimum_log_weight": -64,
+  "physical_episode_count": 36,
+  "source_gate": "all 12 best v308 body and ball traces reproduce byte-identically before stable actor evaluation",
+  "learning_kind": "offline replay recalibration of a physically trained online contextual actor-critic; not new online episodes until further physical feedback updates",
+  "consumed_gate": "at least 10/12 high quality with zero declared historical losses and zero prior nine-success loss",
+  "fresh_holdout_open_authorized": false,
+  "promotion_authorized": false,
+  "hardware_authorized": false
+}
