@@ -1,0 +1,16 @@
+{
+  "schema": "rsi_isaac_guarded_approach_stratified_challenge_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "source_cv_report_hash": "sha256:50e98c7810bf672d21a52cd6d33703dd729aa4e62f07757da0e4187c4ff1bd15",
+  "source_online_fresh_report_hash": "sha256:e27c927f9802b846d14ca6d74f739ef5c71830670272507654893289cb2a1ecf",
+  "selection_rule": "Before any seed 73-82 physics, use only fixed course-catalog initial state: even lane, incoming ball_vx <0, 2.0 <= ball_x <=2.55 m and -0.09<=ball_y<=-0.02 m. No physics outcome used to choose cases.",
+  "challenge_courses": [[20260973,2],[20260973,6],[20260974,0],[20260974,2],[20260975,2],[20260975,4],[20260976,4],[20260977,4],[20260978,4],[20260978,6],[20260980,4],[20260981,4],[20260982,2]],
+  "protection_courses": [[20260973,4],[20260974,4],[20260976,2],[20260976,6]],
+  "procedure": "Each of 17 preregistered courses gets independent parent+actor baseline and sealed guarded-online candidate, four A6000 workers, one G1 and one ball per process. Audit source, assets, parent, commands, physical contacts and swing action; no batched causal labels.",
+  "challenge_gate": "All 13 difficulty cases must activate the bounded candidate; baseline must have at least two >4 m out-of-play cases to make rescue measurable; candidate must rescue at least two, add at least three high-quality shots, keep total clean-foot-only contacts no lower, add no new out-of-play and improve mean measured reward by at least 0.5.",
+  "protection_gate": "All four positive-side controls must issue zero lateral command and exactly preserve baseline first-contact body, clean/high-quality classification, and 60-frame ball displacement within 0.01 m; no pelvis <0.65 m.",
+  "interpretation": "Targeted mechanism pressure test only, not a random-population generalization or team-match promotion. Any failure rejects this mechanism; even a pass requires a later broad independent exam and multiplayer chain integration.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}
