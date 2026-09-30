@@ -55,11 +55,15 @@ def _run(
     rectangle_policy: Path | None = None,
     proprio_policy: Path | None = None,
     early_switch: bool = False,
+    motor_policy: Path | None = None,
+    parent_report_override: Path | None = None,
+    resume: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     folder = root / f"seed{seed}-lane{lane}-{arm}-{kind}"
     parent_folder = root / f"seed{seed}-lane{lane}-{arm}-parent"
     log_path = root / "logs" / f"seed{seed}-lane{lane}-{arm}-{kind}.log"
-    if folder.exists():
+    existing = folder.exists()
+    if existing and (not resume or not (folder / "report.json").is_file()):
         raise ValueError(f"new output required: {folder}")
     command = [
         str(isaac_python),
@@ -103,7 +107,7 @@ def _run(
                 "--late-swing-policy",
                 str(actor),
                 "--parent-report",
-                str(parent_folder / "report.json"),
+                str(parent_report_override or parent_folder / "report.json"),
                 "--revalidate-swing-side",
                 "--late-swing-lateral-cap-m",
                 "0.15",
@@ -113,6 +117,8 @@ def _run(
                 "0.95",
             )
         )
+        if motor_policy is not None:
+            command.extend(("--contact-motor-policy", str(motor_policy)))
     env = os.environ.copy()
     env.update(
         OMNI_KIT_ACCEPT_EULA="YES",
@@ -121,17 +127,18 @@ def _run(
             [str(runner.parent.parent / "src"), "/code/rosclaw/rosclaw_test/src"]
         ),
     )
-    with log_path.open("w", encoding="utf-8") as log:
-        completed = subprocess.run(
-            command,
-            cwd=runner.parent.parent,
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-    if completed.returncode or not (folder / "report.json").is_file():
-        raise RuntimeError(f"Isaac failed; inspect {log_path}")
+    if not existing:
+        with log_path.open("w", encoding="utf-8") as log:
+            completed = subprocess.run(
+                command,
+                cwd=runner.parent.parent,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        if completed.returncode or not (folder / "report.json").is_file():
+            raise RuntimeError(f"Isaac failed; inspect {log_path}")
     report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     audit = audit_lateral_approach(folder)
     if (
@@ -142,12 +149,20 @@ def _run(
         or report.get("navigation_proprio_risk_policy_hash")
         != (load_precontact_policy(proprio_policy)[1] if proprio_policy else None)
         or report.get("navigation_lateral_early_switch", False) is not early_switch
+        or report.get("contact_motor_policy_hash")
+        != (
+            json.loads(motor_policy.read_text(encoding="utf-8"))["policy_hash"]
+            if motor_policy is not None and kind == "actor"
+            else None
+        )
         or report["training_course_seed"] != seed
         or report["single_course_lane"] != lane
     ):
         raise ValueError(f"approach arm report drift: {folder}")
     if kind == "actor":
-        parent = json.loads((parent_folder / "report.json").read_text(encoding="utf-8"))
+        parent = json.loads(
+            (parent_report_override or parent_folder / "report.json").read_text(encoding="utf-8")
+        )
         if (
             report["parent_report_hash"] != parent["report_hash"]
             or report["source_hash"] != parent["source_hash"]

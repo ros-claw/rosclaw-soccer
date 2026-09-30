@@ -46,6 +46,7 @@ parser.add_argument("--second-reset-replay", action="store_true")
 parser.add_argument("--candidate-actions", type=Path)
 parser.add_argument("--temporal-policy-actions", type=Path)
 parser.add_argument("--late-swing-policy", type=Path)
+parser.add_argument("--contact-motor-policy", type=Path)
 parser.add_argument("--revalidate-swing-side", action="store_true")
 parser.add_argument("--late-swing-lateral-cap-m", type=float, default=0.05)
 parser.add_argument("--late-swing-lateral-lead-m", type=float, default=0.0)
@@ -171,6 +172,18 @@ if (
     or (args.temporal_policy_actions is not None and not args.temporal_policy_actions.is_file())
     or (args.late_swing_policy is not None and not args.late_swing_policy.is_file())
     or (
+        args.contact_motor_policy is not None
+        and (
+            not args.contact_motor_policy.is_file()
+            or args.late_swing_policy is None
+            or args.env_count != 1
+            or args.support_knee_retract_m != 0.0
+            or args.navigation_proprio_risk_policy is not None
+            or args.navigation_rectangle_policy is not None
+            or args.navigation_lateral_early_switch
+        )
+    )
+    or (
         args.late_swing_policy is not None
         and (
             args.frames != 300
@@ -258,6 +271,15 @@ from rosclaw_soccer.rsi import late_swing_memory as late_swing_module  # noqa: E
 from rosclaw_soccer.rsi import taskspace_gate_memory as taskspace_gate_module  # noqa: E402
 from rosclaw_soccer.rsi.conservative_approach_rectangle import (  # noqa: E402
     load_guarded_approach_policy,
+)
+from rosclaw_soccer.rsi.contact_motor_primitive import (  # noqa: E402
+    JOINT_NAMES as MOTOR_JOINT_NAMES,
+)
+from rosclaw_soccer.rsi.contact_motor_primitive import (  # noqa: E402
+    load_policy as load_motor_policy,
+)
+from rosclaw_soccer.rsi.contact_motor_primitive import (  # noqa: E402
+    motor_delta,
 )
 from rosclaw_soccer.rsi.contact_time_phase_features import (  # noqa: E402
     current_context,
@@ -544,6 +566,14 @@ def main() -> None:
             print("RSI_ISAAC_LATE_SWING_READY=" + late_actor["actor_hash"], flush=True)
     candidate_joint_indices = [robot.joint_names.index(name) for name in JOINT_NAMES]
     temporal_joint_indices = [robot.joint_names.index(name) for name in TEMPORAL_JOINT_NAMES]
+    motor_policy, motor_knots = (
+        load_motor_policy(args.contact_motor_policy)
+        if args.contact_motor_policy is not None
+        else (None, None)
+    )
+    motor_joint_indices = [robot.joint_names.index(name) for name in MOTOR_JOINT_NAMES]
+    motor_pre_targets = []
+    motor_deltas = []
     pose = robot.data.default_root_pose.torch.clone()
     initial_joint = robot.data.default_joint_pos.torch.clone()
     initial_joint[:, indices] = torch.as_tensor(
@@ -616,6 +646,8 @@ def main() -> None:
         swing_side = np.full(args.env_count, -1, dtype=np.int64)
         swing_contact_frame = np.full(args.env_count, -1, dtype=np.int64)
         swing_contact_delta = np.zeros((args.env_count, 6), dtype=np.float64)
+        motor_previous = np.zeros((args.env_count, 12), dtype=np.float64)
+        motor_contact_delta = np.zeros((args.env_count, 12), dtype=np.float64)
         selected_taskspace_mask = np.zeros(args.env_count, dtype=np.bool_)
         gate_features = None
         applied_frames = np.zeros(args.env_count, dtype=np.int64)
@@ -1036,6 +1068,30 @@ def main() -> None:
                 swing_applied_residuals.append(frame_swing_residual)
                 swing_baseline_targets.append(baseline)
                 swing_executed_targets.append(target.detach().cpu().numpy().copy())
+            if motor_policy is not None:
+                motor_baseline = target[:, motor_joint_indices].detach().cpu().numpy().copy()
+                motor_limits = (
+                    robot.data.joint_pos_limits.torch[:, motor_joint_indices].detach().cpu().numpy()
+                )
+                for lane in range(args.env_count):
+                    contact_frame = int(swing_contact_frame[lane])
+                    delta = motor_delta(
+                        motor_knots,
+                        float(ball_xyz_frame[lane, 0] - robot_root_observations[-1][lane, 0]),
+                        motor_baseline[lane],
+                        motor_limits[lane],
+                        motor_previous[lane],
+                        motor_contact_delta[lane],
+                        frame - contact_frame if contact_frame >= 0 else None,
+                    )
+                    target[lane, motor_joint_indices] = torch.as_tensor(
+                        motor_baseline[lane] + delta, device=sim.device, dtype=torch.float32
+                    )
+                motor_previous = (
+                    target[:, motor_joint_indices].detach().cpu().numpy().copy() - motor_baseline
+                )
+                motor_pre_targets.append(motor_baseline)
+                motor_deltas.append(motor_previous.copy())
             robot_target_observations.append(target[:, indices].detach().cpu().numpy().copy())
             command_speed_observations.append(frame_command_speeds)
             command_lateral_speed_observations.append(frame_command_lateral_speeds)
@@ -1089,6 +1145,7 @@ def main() -> None:
                 for lane in range(args.env_count):
                     if swing_contact_frame[lane] < 0 and np.any(contact_now[lane] > 1.0):
                         swing_contact_frame[lane] = frame
+                        motor_contact_delta[lane] = motor_previous[lane]
                         if swing_side[lane] >= 0:
                             joint_ids = list(leg_joint_indices[int(swing_side[lane])])
                             swing_contact_delta[lane] = last_delta[lane, joint_ids]
@@ -1296,6 +1353,19 @@ def main() -> None:
             applied_support_knee_joint_delta_rad=support_residuals,
         )
         swing_trace_hash = hash_bytes(action_path.read_bytes())
+    motor_trace_hash = None
+    if motor_policy is not None:
+        motor_trace_path = args.output_dir / "contact_motor_trace.npz"
+        np.savez_compressed(
+            motor_trace_path,
+            baseline_joint_target_rad=np.asarray(motor_pre_targets),
+            applied_joint_delta_rad=np.asarray(motor_deltas),
+            joint_limits_rad=robot.data.joint_pos_limits.torch[:, motor_joint_indices]
+            .detach()
+            .cpu()
+            .numpy(),
+        )
+        motor_trace_hash = hash_bytes(motor_trace_path.read_bytes())
     entries = []
     for i, (x, y, vx) in enumerate(courses):
         active = np.flatnonzero(np.max(forces_arr[:, i], axis=1) > 1.0)
@@ -1344,6 +1414,10 @@ def main() -> None:
     }
     if collision_filter_contract is not None:
         report["collision_filter_contract"] = collision_filter_contract
+    if motor_policy is not None:
+        report["contact_motor_policy"] = motor_policy
+        report["contact_motor_policy_hash"] = motor_policy["policy_hash"]
+        report["contact_motor_trace_hash"] = motor_trace_hash
     if args.planner_seed != 30300:
         report["planner_seed"] = args.planner_seed
     if args.torch_batch_shadow:

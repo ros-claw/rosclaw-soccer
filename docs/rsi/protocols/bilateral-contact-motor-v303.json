@@ -1,0 +1,20 @@
+{
+  "schema": "rsi_bilateral_contact_motor_training_protocol_v303",
+  "activation_ceiling": "SIM_ONLY",
+  "partition": "TRAIN_CONSUMED",
+  "courses": [[20261227, 4], [20261446, 0], [20261095, 2]],
+  "population": 8,
+  "generations": 3,
+  "parameter_count": 36,
+  "control": "bilateral joint-target residual with measured ball/root gap phase",
+  "cap_rad": 0.16,
+  "slew_rad_per_frame": 0.012,
+  "safety_limit_projection_overrides_slew": true,
+  "frozen": ["SONIC", "late-swing actor", "assets", "courses", "navigation gain 1.2"],
+  "baseline": ["navigation gain 0.8", "navigation gain 1.2"],
+  "development_gate": "both risk cases clean-foot-only and in-play, gain case high-quality, minimum pelvis >= 0.65m, no clean-foot loss or new out relative to gain 0.8",
+  "ranking": ["safe", "gain-case retention", "negative clean-loss and new-out", "risk rescued", "high-quality count", "first-touch reward"],
+  "fresh_holdout_open_authorized": false,
+  "promotion_authorized": false,
+  "not_claimed": ["end-to-end neural actor", "actor-critic RL", "unseen-course generalization", "team match completion"]
+}

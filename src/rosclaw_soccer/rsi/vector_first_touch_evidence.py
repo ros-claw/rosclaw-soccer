@@ -349,6 +349,13 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
     if changed_command_frames is not None:
         result["recorded_body_frames"] = frames
         result["changed_navigation_command_frames"] = changed_command_frames
+    motor_keys = {"contact_motor_policy", "contact_motor_policy_hash", "contact_motor_trace_hash"}
+    if motor_keys & report.keys():
+        if not motor_keys <= report.keys():
+            raise ValueError("incomplete motor policy evidence")
+        from rosclaw_soccer.rsi.contact_motor_evidence import audit_motor_execution
+
+        result.update(audit_motor_execution(folder, report))
     result["report_hash"] = hash_json(result)
     return result
 
