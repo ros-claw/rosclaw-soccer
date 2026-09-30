@@ -1,0 +1,15 @@
+{
+  "schema": "rsi_isaac_learned_approach_rectangle_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "development_banks": [
+    "v286 11 audited courses, 44 independent physics episodes",
+    "v287 32 audited courses, 128 independent physics episodes; seeds 67-70 are consumed, not fresh again"
+  ],
+  "decision_context": "Only frame-0 measured ball forward and lateral position relative to G1; enable existing bounded gain 0.8 iff lateral is negative and inside a learned [y_min, 0) x (-inf, x_max] rectangle. No future contact or ball flight features at runtime.",
+  "training": "On each leave-one-seed-out fold, enumerate midpoints between training context coordinates. Admit a rectangle only if at least three audited active-action training courses lie inside, none loses a clean foot contact, none creates a new >4 m out-of-play, and summed first-touch reward gain is at least 1. Select the admissible rectangle maximizing summed reward gain; ties prefer fewer selected cases then smaller forward range. If none qualifies, use baseline everywhere.",
+  "development_gate": "Across all held-out-seed folds: no clean-foot contact loss, no out-of-play excess, at least two more high-quality shots, mean first-touch reward at least 0.2 above baseline, at least four strictly positive seed-fold rewards, and at least four selected interventions. Otherwise reject.",
+  "fresh_test": "Only after development gate passes, freeze fitted full-data rectangle and run seed 20260971 and 20260972 once under independent paired Isaac physics. New fresh gate must be separately preregistered before opening.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}
