@@ -1,0 +1,14 @@
+{
+  "schema": "rsi_wide_lane_batch_isolation_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "hypothesis": "A 24 m lane spacing safely isolates 16 simultaneous G1-ball Isaac courses, including balls deflected more than 4 m, and preserves independently measured course outcomes.",
+  "development_seed": 20260953,
+  "batched_env_count": 16,
+  "lane_spacing_m": 24.0,
+  "comparison": "New one-G1/one-ball frozen SONIC parent evidence for even lanes 0-14 using the exact current runner source, course seed and assets; old v274 reports are only historical context because their runner source differs. Odd lanes are not equivalence claims.",
+  "required_audits": "Same source/asset/SONIC; report and raw traces authenticated; all lane centers exact multiples of 24 m; maximum lane excursion <10 m, inter-ball distance >1 m and inter-robot distance >2 m; no collision body contamination.",
+  "equivalence_gate": "For each of eight compared even lanes, first-contact presence/body set agree, first-contact frame differs by at most one, minimum pelvis difference <=0.02 m, and 60-frame ball displacement x/y difference <=0.10 m. If any fails, batched data is not training-authorized.",
+  "training_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

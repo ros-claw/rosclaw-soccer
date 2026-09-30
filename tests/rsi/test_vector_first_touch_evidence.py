@@ -349,6 +349,28 @@ def test_seeded_sixteen_course_split_is_recomputed(tmp_path: Path) -> None:
     report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
     report_path.write_text(json.dumps(report), encoding="utf-8")
     assert audit_vector_first_touch(folder)["independent_physical_episode_count"] == 16
+    for i in range(16):
+        positions[:, i, 1] += i * 16.0
+        report["environments"][i]["lane_y_m"] = i * 24.0
+    positions[-1, 0, 1] += 5.0
+    report["environments"][0]["ball_final_local_xyz_m"][1] += 5.0
+    report["lane_spacing_m"] = 24.0
+    np.savez_compressed(
+        trace,
+        ball_position_m=positions,
+        ball_angular_velocity_rad_s=np.zeros_like(positions),
+        ball_body_contact_force_peak_n=np.zeros((50, 16, 6)),
+    )
+    report["trace_hash"] = hash_bytes(trace.read_bytes())
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert audit_vector_first_touch(folder)["independent_physical_episode_count"] == 16
+    report["environments"][1]["lane_y_m"] = 23.0
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="physically isolated"):
+        audit_vector_first_touch(folder)
+    report["environments"][1]["lane_y_m"] = 24.0
     report["environments"][0]["course"]["ball_x_m"] += 0.001
     report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
     report_path.write_text(json.dumps(report), encoding="utf-8")

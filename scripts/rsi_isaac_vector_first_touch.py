@@ -21,6 +21,7 @@ parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--training-course-seed", type=int)
 parser.add_argument("--single-course-lane", type=int)
+parser.add_argument("--lane-spacing-m", type=float, default=8.0)
 parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
 parser.add_argument("--planner-seed", type=int, default=30300)
 parser.add_argument("--near-ball-gap-m", type=float)
@@ -55,6 +56,8 @@ if (
     or args.output_dir.exists()
     or not 50 <= args.frames <= 400
     or not 1 <= args.env_count <= 16
+    or args.lane_spacing_m not in (8.0, 24.0)
+    or (args.lane_spacing_m == 24.0 and args.env_count != 16)
     or (
         (args.env_count == 1) != (args.single_course_lane is not None)
         or (
@@ -312,9 +315,8 @@ def main() -> None:
     if set(robot.joint_names) != set(names):
         raise ValueError("Isaac and SONIC joint names differ")
     indices = [robot.joint_names.index(name) for name in names]
-    # At 6 s the ball can deflect >2 m sideways; 8 m lane spacing prevents
-    # a struck ball from contaminating a neighboring G1's episode.
-    lanes = np.arange(args.env_count, dtype=np.float64) * 8.0
+    # Wide lanes are diagnostic until paired single-instance outcomes agree.
+    lanes = np.arange(args.env_count, dtype=np.float64) * args.lane_spacing_m
     full_courses = (
         sample_training_courses(args.training_course_seed, 16)
         if args.training_course_seed is not None
@@ -965,6 +967,9 @@ def main() -> None:
     ):
         raise ValueError("nonfinite vector trajectory")
     lateral_excursion = np.max(np.abs(positions_arr[:, :, 1] - lanes[None, :]), axis=0)
+    max_isolated_excursion = (
+        10.0 if args.lane_spacing_m == 24.0 else 6.0 if late_actor is not None else 4.0
+    )
     if late_actor is not None:
         root_xyz = root_observations[:, :, :3]
         if args.env_count == 1:
@@ -984,14 +989,14 @@ def main() -> None:
             minimum_cross_robot_distance = float(np.min(cross_robot_distance))
             minimum_cross_ball_distance = float(np.min(cross_ball_distance))
             isolated = bool(
-                np.max(lateral_excursion) < 6.0
+                np.max(lateral_excursion) < max_isolated_excursion
                 and minimum_cross_robot_distance > 2.0
                 and minimum_cross_ball_distance > 1.0
             )
     else:
         minimum_cross_robot_distance = None
         minimum_cross_ball_distance = None
-        isolated = bool(args.env_count == 1 or np.max(lateral_excursion) < 4.0)
+        isolated = bool(args.env_count == 1 or np.max(lateral_excursion) < max_isolated_excursion)
     if not isolated:
         args.output_dir.mkdir(parents=True)
         failure_path = args.output_dir / "lane_escape_trace.npz"
@@ -1012,7 +1017,8 @@ def main() -> None:
             "late_swing_actor_hash": late_actor["actor_hash"] if late_actor else None,
             "trace_hash": hash_bytes(failure_path.read_bytes()),
             "lateral_excursion_m": lateral_excursion.tolist(),
-            "escaped_lanes": np.flatnonzero(lateral_excursion >= 4.0).tolist(),
+            "escaped_lanes": np.flatnonzero(lateral_excursion >= max_isolated_excursion).tolist(),
+            "lane_spacing_m": args.lane_spacing_m,
             "minimum_cross_robot_distance_m": minimum_cross_robot_distance,
             "minimum_cross_ball_distance_m": minimum_cross_ball_distance,
             "promotion_authorized": False,
@@ -1137,6 +1143,7 @@ def main() -> None:
         "frames": args.frames,
         "navigation_speed_mps": args.navigation_speed_mps,
         "inference_threads": args.inference_threads,
+        "lane_spacing_m": args.lane_spacing_m,
         "environments": entries,
     }
     if args.planner_seed != 30300:

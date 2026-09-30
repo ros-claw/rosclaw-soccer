@@ -206,9 +206,23 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
         raise ValueError("invalid vector physics trace")
     changed_command_frames = audit_body_trace(folder, report, frames, n)
     lanes = np.asarray([row["lane_y_m"] for row in entries], dtype=np.float64)
-    if not np.isfinite(lanes).all() or (n > 1 and np.min(np.diff(lanes)) < 6.0):
+    lane_spacing = report.get("lane_spacing_m", 8.0)
+    if (
+        lane_spacing not in (8.0, 24.0)
+        or (lane_spacing == 24.0 and n != 16)
+        or not np.isfinite(lanes).all()
+        or not np.allclose(lanes, np.arange(n) * lane_spacing, atol=1e-6, rtol=0)
+        or (n > 1 and np.min(np.diff(lanes)) < 6.0)
+    ):
         raise ValueError("training lanes are not physically isolated")
     excursion = float(np.max(np.abs(positions[:, :, 1] - lanes[None, :])))
+    max_isolated_excursion = (
+        10.0
+        if lane_spacing == 24.0
+        else 6.0
+        if report.get("schema") == "rsi_isaac_vector_first_touch_late_swing_v1"
+        else 4.0
+    )
     if n == 1 and "single_instance_max_lateral_excursion_m" in report:
         if not np.isclose(report["single_instance_max_lateral_excursion_m"], excursion):
             raise ValueError("single-instance ball excursion disagrees with physical trace")
@@ -236,14 +250,14 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
             min_robot = float(np.min(robot_distance))
             min_ball = float(np.min(ball_distance))
             if (
-                excursion >= 6.0
+                excursion >= max_isolated_excursion
                 or min_robot <= 2.0
                 or min_ball <= 1.0
                 or not np.isclose(report.get("minimum_cross_robot_distance_m", np.nan), min_robot)
                 or not np.isclose(report.get("minimum_cross_ball_distance_m", np.nan), min_ball)
             ):
                 raise ValueError("late-swing lane isolation not physically verified")
-    elif n > 1 and excursion >= 4.0:
+    elif n > 1 and excursion >= max_isolated_excursion:
         raise ValueError("ball escaped its lane")
     courses = []
     training_seed = report.get("training_course_seed")
