@@ -69,7 +69,28 @@ def main() -> None:
         parser.error("transfer diagnostic cannot open a fresh course")
     torch.set_num_threads(1)
     scene = args.scene.resolve()
-    model = mujoco.MjModel.from_xml_path(str(scene))
+    spec = mujoco.MjSpec.from_file(str(scene))
+    model = spec.compile()
+    native_ball_added = False
+    if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ball") < 0:
+        native_ball_added = True
+        body = spec.worldbody.add_body(name="ball", pos=(2.5, 0.0, 0.13))
+        body.add_freejoint(name="ball_free")
+        body.add_geom(
+            name="ball_geom",
+            type=mujoco.mjtGeom.mjGEOM_SPHERE,
+            size=(0.11, 0.0, 0.0),
+            mass=0.43,
+            friction=(0.6, 0.005, 0.0001),
+        )
+        if not np.any(model.geom_type == mujoco.mjtGeom.mjGEOM_PLANE):
+            spec.worldbody.add_geom(
+                name="transfer_floor",
+                type=mujoco.mjtGeom.mjGEOM_PLANE,
+                size=(0.0, 0.0, 0.01),
+                friction=(1.0, 0.005, 0.0001),
+            )
+        model = spec.compile()
     data = mujoco.MjData(model)
     model.opt.timestep = 0.002
 
@@ -83,7 +104,13 @@ def main() -> None:
     joints = [identifier(mujoco.mjtObj.mjOBJ_JOINT, name) for name in names]
     qi = np.asarray([model.jnt_qposadr[j] for j in joints], dtype=int)
     vi = np.asarray([model.jnt_dofadr[j] for j in joints], dtype=int)
-    ai = np.asarray([identifier(mujoco.mjtObj.mjOBJ_ACTUATOR, n) for n in names], dtype=int)
+    actuator_ids = []
+    for joint in joints:
+        matching = np.flatnonzero(model.actuator_trnid[:, 0] == joint)
+        if len(matching) != 1:
+            raise ValueError("exactly one simulated actuator per canonical joint required")
+        actuator_ids.append(int(matching[0]))
+    ai = np.asarray(actuator_ids, dtype=int)
     if model.nu != 29 or not np.array_equal(model.actuator_trnid[ai, 0], joints):
         raise ValueError("canonical named 29-joint torque contract required")
     pelvis = identifier(mujoco.mjtObj.mjOBJ_BODY, "pelvis")
@@ -142,6 +169,8 @@ def main() -> None:
     data.qvel[bv : bv + 6] = (vx, 0, 0, 0, vx / 0.11, 0)
     mujoco.mj_forward(model, data)
     args.output_root.mkdir(parents=True, exist_ok=False)
+    model_snapshot = args.output_root / "compiled_model.mjb"
+    mujoco.mj_saveModel(model, str(model_snapshot), None)
     assets = {
         str(p.relative_to(scene.parent)): hash_bytes(p.read_bytes())
         for p in sorted(scene.parent.rglob("*"))
@@ -159,6 +188,7 @@ def main() -> None:
         late_actor_hash=late["actor_hash"],
         model_hash=neural["model_hash"] if neural else None,
         motor_policy_hash=policy["policy_hash"] if policy else None,
+        compiled_model_hash=hash_bytes(model_snapshot.read_bytes()),
         physics=dict(
             engine="MuJoCo",
             version=mujoco.__version__,
@@ -171,6 +201,7 @@ def main() -> None:
             auxiliary_box_collision_disabled=True,
             robot_xml_not_usd=True,
             contact_settings="original XML pairs retained",
+            native_ball_added=native_ball_added,
         ),
         activation_ceiling="SIM_ONLY",
         promotion_authorized=False,
@@ -195,6 +226,9 @@ def main() -> None:
             "motor_delta_rad",
             "navigation_command",
             "actual_actuator_force_nm",
+            "pelvis_z_per_substep_m",
+            "canonical_qpos",
+            "canonical_qvel",
         )
     }
     tracker = None
@@ -234,6 +268,8 @@ def main() -> None:
         )
         qpos = np.concatenate((data.qpos[:7], data.qpos[qi], data.qpos[bq : bq + 7]))
         qvel = np.concatenate((data.qvel[:6], data.qvel[vi], data.qvel[bv : bv + 6]))
+        history["canonical_qpos"].append(qpos.copy()[None])
+        history["canonical_qvel"].append(qvel.copy()[None])
         observation = TeamMotorObservation(
             agent_id=navigation.agent_id,
             frame=frame,
@@ -338,6 +374,7 @@ def main() -> None:
         forces = np.zeros(6)
         torques = []
         actual_forces = []
+        pelvis_samples = []
         for _ in range(10):
             torque = np.clip(
                 (target - data.qpos[qi]) * navigation.backend.kp
@@ -363,6 +400,7 @@ def main() -> None:
                 index = contact_bodies.index(body)
                 forces[index] = max(forces[index], float(np.linalg.norm(force[:3])))
             minimum_pelvis = min(minimum_pelvis, float(data.xpos[pelvis, 2]))
+            pelvis_samples.append(float(data.xpos[pelvis, 2]))
         if contact_frame is None and np.any(forces > 1):
             contact_frame = frame
             first_contact_frame = frame
@@ -373,6 +411,7 @@ def main() -> None:
         history["ball_position_after_step_m"].append(data.xpos[ball].copy()[None])
         history["torque_nm"].append(np.asarray(torques)[None])
         history["actual_actuator_force_nm"].append(np.asarray(actual_forces)[None])
+        history["pelvis_z_per_substep_m"].append(np.asarray(pelvis_samples)[None])
         if not np.isfinite(data.qpos).all() or not np.isfinite(data.qvel).all():
             raise ValueError("nonfinite physical MuJoCo state")
     trace = args.output_root / "physical_trace.npz"
