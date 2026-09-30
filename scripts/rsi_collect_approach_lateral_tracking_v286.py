@@ -49,6 +49,7 @@ def _run(
     arm: str,
     gain: float,
     kind: str,
+    negative_only: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     folder = root / f"seed{seed}-lane{lane}-{arm}-{kind}"
     parent_folder = root / f"seed{seed}-lane{lane}-{arm}-parent"
@@ -83,6 +84,8 @@ def _run(
         "--device",
         "cuda:0",
     ]
+    if negative_only:
+        command.append("--navigation-lateral-negative-only")
     if kind == "actor":
         command.extend(
             (
@@ -122,6 +125,7 @@ def _run(
     audit = audit_lateral_approach(folder)
     if (
         report["navigation_lateral_ball_gain"] != gain
+        or report.get("navigation_lateral_negative_only") is not negative_only
         or report["training_course_seed"] != seed
         or report["single_course_lane"] != lane
     ):

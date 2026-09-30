@@ -26,6 +26,7 @@ parser.add_argument("--lane-spacing-m", type=float, default=8.0)
 parser.add_argument("--overlap-collision-filtered", action="store_true")
 parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
 parser.add_argument("--navigation-lateral-ball-gain", type=float, default=0.0)
+parser.add_argument("--navigation-lateral-negative-only", action="store_true")
 parser.add_argument("--planner-seed", type=int, default=30300)
 parser.add_argument("--near-ball-gap-m", type=float)
 parser.add_argument("--near-ball-speed-mps", type=float)
@@ -99,6 +100,7 @@ if (
     or not 0.8 <= args.navigation_speed_mps <= 1.5
     or args.navigation_lateral_ball_gain not in (0.0, 0.8)
     or (args.navigation_lateral_ball_gain != 0.0 and args.env_count != 1)
+    or (args.navigation_lateral_negative_only and args.navigation_lateral_ball_gain != 0.8)
     or not 0 <= args.planner_seed <= 2**31 - 3000
     or (
         args.planner_seed != 30300
@@ -424,6 +426,8 @@ def main() -> None:
             or parent.get("torch_batch_plan_only", False) is not args.torch_batch_plan_only
             or parent.get("navigation_speed_mps", 1.4) != args.navigation_speed_mps
             or parent.get("navigation_lateral_ball_gain", 0.0) != args.navigation_lateral_ball_gain
+            or parent.get("navigation_lateral_negative_only", False)
+            is not args.navigation_lateral_negative_only
             or parent.get("near_ball_gap_m") != args.near_ball_gap_m
             or parent.get("near_ball_speed_mps") != args.near_ball_speed_mps
             or parent.get("near_ball_incoming_only", False) is not args.near_ball_incoming_only
@@ -552,6 +556,7 @@ def main() -> None:
         projection_counts = np.zeros(args.env_count, dtype=np.int64)
         contact_seen = np.zeros(args.env_count, dtype=np.bool_)
         navigation_contact_seen = np.zeros(args.env_count, dtype=np.bool_)
+        navigation_tracking_enabled = np.zeros(args.env_count, dtype=np.bool_)
         first_contact_frames = np.full(args.env_count, -1, dtype=np.int64)
         contact_residuals = np.zeros((args.env_count, len(TEMPORAL_JOINT_NAMES)))
         minimum_pelvis = np.full(args.env_count, np.inf)
@@ -637,7 +642,12 @@ def main() -> None:
                 qvel_rows.append(qvel)
                 command_speed = args.navigation_speed_mps
                 command_lateral_speed = 0.0
-                if args.navigation_lateral_ball_gain and not navigation_contact_seen[i]:
+                if frame == 0 and args.navigation_lateral_ball_gain:
+                    navigation_tracking_enabled[i] = bool(
+                        not args.navigation_lateral_negative_only
+                        or ball_xyz_frame[i, 1] - root_pose[1] < 0.0
+                    )
+                if navigation_tracking_enabled[i] and not navigation_contact_seen[i]:
                     gap_m = float(ball_xyz_frame[i, 0] - root_pose[0])
                     if gap_m > 0.95:
                         lateral_gap_m = float(ball_xyz_frame[i, 1] - root_pose[1])
@@ -1233,6 +1243,7 @@ def main() -> None:
         "frames": args.frames,
         "navigation_speed_mps": args.navigation_speed_mps,
         "navigation_lateral_ball_gain": args.navigation_lateral_ball_gain,
+        "navigation_lateral_negative_only": args.navigation_lateral_negative_only,
         "inference_threads": args.inference_threads,
         "lane_spacing_m": 0.0 if args.overlap_collision_filtered else args.lane_spacing_m,
         "overlap_collision_filtered_diagnostic": args.overlap_collision_filtered,

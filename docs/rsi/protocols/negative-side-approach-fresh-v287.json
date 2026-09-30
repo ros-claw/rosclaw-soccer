@@ -1,0 +1,18 @@
+{
+  "schema": "rsi_isaac_negative_side_approach_fresh_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "development_source": "v286 audited eleven-course paired intervention; no seed 20260967-70 data used to choose rule or threshold",
+  "fresh_seeds": [20260967, 20260968, 20260969, 20260970],
+  "lanes_per_seed": [0, 2, 4, 6, 8, 10, 12, 14],
+  "arms": {
+    "baseline": "SONIC + fixed 0.95 m acquisition, lateral navigation gain 0",
+    "candidate": "same motor; at frame 0 enable gain 0.8 only if measured ball_y minus root_y is strictly negative, then bound lateral command to +/-0.2 m/s until root-ball forward gap <=0.95 m or first collision"
+  },
+  "procedure": "Each of 32 fresh courses has independent parent and actor runs for each arm, 128 physical episodes total, four A6000 workers with one G1 and one ball per process. Audit physics, source, assets, command reconstruction, and swing actions. No batched counterfactual labels.",
+  "primary_gate": "Candidate high-quality shots >= baseline, >4 m out-of-play at least one fewer than baseline, mean measured first-touch reward >= baseline +0.2, and no individual seed loses more than one high-quality shot.",
+  "safety_gate": "Candidate clean-foot-only contacts >= baseline, no candidate pelvis <0.65 m, all 128 physical and command receipts valid, and zero failures.",
+  "decision": "One-shot fresh exam only. If any gate fails, reject; do not tune threshold on these seeds and call it a holdout.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}
