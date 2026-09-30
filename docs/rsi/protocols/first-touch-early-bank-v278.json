@@ -1,0 +1,14 @@
+{
+  "schema": "rsi_first_touch_early_bank_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "courses": "Seeds 20260953 and 20260954, even lanes 0 through 14; 16 independent one-G1/one-ball courses",
+  "arms": ["acquisition_055", "acquisition_095"],
+  "common_setup": "Frozen SONIC and late-swing actor, same runner/asset/parent/course, revalidate side, lateral cap 0.15 m, forward cap 0.08 m, 300 frames, independent simulator process per arm",
+  "required_audits": "Report/trace hashes, independent physical contact, per-frame task-space action replay, frame-30 precontact feature equality, and paired source/asset/actor/parent hashes",
+  "measure": "Foot-only first contact, 60-frame forward/lateral displacement, maximum lateral excursion, minimum pelvis height",
+  "out_of_play_threshold_m": 4.0,
+  "analysis": "Paired differences by seed and by course; do not hide worse lanes or infer policy improvement from a selected subset",
+  "promotion_authorized": false,
+  "fresh_holdout_authorized": false,
+  "real_robot_authorized": false
+}

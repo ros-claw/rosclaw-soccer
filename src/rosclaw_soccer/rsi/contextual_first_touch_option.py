@@ -98,7 +98,10 @@ class ContextualOptionSelector:
 
 
 def fit_contextual_option(
-    features: np.ndarray[Any, Any], rewards: np.ndarray[Any, Any]
+    features: np.ndarray[Any, Any],
+    rewards: np.ndarray[Any, Any],
+    *,
+    action_count: int = len(ACTION_NAMES),
 ) -> ContextualOptionSelector:
     """Fit only on the passed training fold; caller owns split integrity."""
     x = np.asarray(features, dtype=np.float64)
@@ -107,7 +110,9 @@ def fit_contextual_option(
         x.ndim != 2
         or x.shape[0] < NEIGHBORS
         or x.shape[1] != FEATURE_COUNT
-        or y.shape != (len(x), len(ACTION_NAMES))
+        or type(action_count) is not int
+        or action_count not in (2, len(ACTION_NAMES))
+        or y.shape != (len(x), action_count)
         or not np.isfinite(x).all()
         or not np.isfinite(y).all()
     ):

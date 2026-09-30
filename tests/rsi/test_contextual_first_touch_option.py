@@ -44,6 +44,7 @@ def test_regularized_option_uses_training_features_only_and_parent_ties() -> Non
     assert model.choose(features[0]) == 1
     assert model.choose(features[3]) == 2
     assert fit_contextual_option(features, np.zeros((4, 3))).choose(features[0]) == 0
+    assert fit_contextual_option(features, rewards[:, :2], action_count=2).choose(features[0]) == 1
     with pytest.raises(ValueError):
         model.choose(np.full(9, np.nan))
     with pytest.raises(ValueError):
