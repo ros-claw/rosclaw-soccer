@@ -1,0 +1,17 @@
+{
+  "schema": "rsi_isaac_shadow_approach_fresh_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "retrospective_teacher_hash": "sha256:74fe143a2fc03db64c0fb3d093b2776cafad8273467b9e75a3ffd6355c6f5174",
+  "fresh_seed_range_inclusive": [20260983, 20261008],
+  "challenge_rule": "All even lanes with ball_vx<0, 2.0<=ball_x<=2.55, -0.09<=ball_y<=-0.02: exactly 17 courses by initial catalog only; no outcome inspection",
+  "positive_control_rule": "First four lexicographic even lanes with ball_vx<0, 2.0<=ball_x<=2.55, +0.02<=ball_y<=+0.09: exactly four courses",
+  "arms": {
+    "baseline": "Negative-side gain 0.8 plus sealed late-swing actor",
+    "shadow_option": "Candidate gain 1.2 parent physically audited; right support-knee index 5, no contact or low pelvis vetoes to gain 0.8; otherwise gain 1.2. Choice made before candidate actor outcome. Both gains independently physically replayed for every course."
+  },
+  "procedure": "Four A6000; 21 fresh catalog courses, each with independent parent and actor for 0.8 and 1.2: 84 independent one-G1/ball physics episodes. Positive-side controls must command zero and match baseline despite 1.2 gain. Parent contact is a simulator teacher, not a deployable online sensor or real safety permit.",
+  "development_gate": "Complete 21/21 and 84/84 independent physical audits; on 17 challenges selected option vs baseline: >=2 net high-quality gains, mean reward gain >=0.1, no clean-foot loss, no new >4m out-of-play, all selected pelvis minima >=0.65m; 4 positive controls have zero candidate command, identical first contact, contact bodies, high-quality and 60-frame ball displacement within 0.01m. No fresh success claim if any condition fails.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}
