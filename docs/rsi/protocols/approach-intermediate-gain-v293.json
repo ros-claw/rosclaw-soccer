@@ -1,0 +1,16 @@
+{
+  "schema": "rsi_isaac_approach_intermediate_gain_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "source_failed_pilot_report_hash": "sha256:8172d79326422997eeb5706e7ea554a080441d292b08dbfa48180334d9f086ae",
+  "consumed_failure_courses": [[20260974,2],[20260975,2],[20260975,4],[20260977,4],[20260978,4],[20260980,4]],
+  "consumed_success_protection": [[20260976,4],[20260978,6],[20260982,2]],
+  "arms": {
+    "gain_08": "Established negative-side navigation gain 0.8, lateral speed bounded +/-0.2 m/s",
+    "gain_10": "Intermediate negative-side navigation gain 1.0, same bound and downstream actor"
+  },
+  "procedure": "Run nine consumed development courses with independent parent and actor for each arm under one frozen runner source. No seed-specific gate or parameter fit. 36 physical episodes, four A6000.",
+  "gate": "At least 3/6 failed high-quality outcomes rescued; all 3 existing high-quality successes retained; all 9 clean-foot contacts retained; zero new >4m out-of-play; all pelvis minima >=0.65m. Fail closed on missing or mismatched audit.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}

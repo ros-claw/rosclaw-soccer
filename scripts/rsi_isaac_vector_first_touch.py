@@ -99,7 +99,7 @@ if (
         )
     )
     or not 0.8 <= args.navigation_speed_mps <= 1.5
-    or args.navigation_lateral_ball_gain not in (0.0, 0.8, 1.2)
+    or args.navigation_lateral_ball_gain not in (0.0, 0.8, 1.0, 1.2)
     or (args.navigation_lateral_ball_gain != 0.0 and args.env_count != 1)
     or (args.navigation_lateral_negative_only and args.navigation_lateral_ball_gain == 0.0)
     or (
