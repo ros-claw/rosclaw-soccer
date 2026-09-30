@@ -59,8 +59,10 @@ def _run(
     parent_report_override: Path | None = None,
     resume: bool = False,
     motor_bootstrap: Path | None = None,
+    motor_online: Path | None = None,
+    core_root: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if motor_policy is not None and motor_bootstrap is not None:
+    if sum(p is not None for p in (motor_policy, motor_bootstrap, motor_online)) > 1:
         raise ValueError("one explicit motor proposal backend required")
     folder = root / f"seed{seed}-lane{lane}-{arm}-{kind}"
     parent_folder = root / f"seed{seed}-lane{lane}-{arm}-parent"
@@ -124,12 +126,17 @@ def _run(
             command.extend(("--contact-motor-policy", str(motor_policy)))
         if motor_bootstrap is not None:
             command.extend(("--contact-motor-bootstrap-model", str(motor_bootstrap)))
+        if motor_online is not None:
+            command.extend(("--contact-motor-online-model", str(motor_online)))
     env = os.environ.copy()
     env.update(
         OMNI_KIT_ACCEPT_EULA="YES",
         CUDA_VISIBLE_DEVICES=str(gpu),
         PYTHONPATH=os.pathsep.join(
-            [str(runner.parent.parent / "src"), "/code/rosclaw/rosclaw_test/src"]
+            [
+                str(runner.parent.parent / "src"),
+                str(core_root / "src") if core_root else "/code/rosclaw/rosclaw_test/src",
+            ]
         ),
     )
     if not existing:
@@ -156,6 +163,12 @@ def _run(
         proof = report.get("contact_motor_policy", {}).get("bootstrap_proof", {})
         if proof.get("model", {}).get("model_hash") != model["model_hash"]:
             raise ValueError("neural preview does not bind requested numerical model")
+        expected_motor_hash = report["contact_motor_policy"]["policy_hash"]
+    if motor_online is not None and kind == "actor":
+        model = json.loads(motor_online.read_text(encoding="utf-8"))
+        proof = report.get("contact_motor_policy", {}).get("online_motor_proof", {})
+        if proof.get("model", {}).get("model_hash") != model["model_hash"]:
+            raise ValueError("online preview does not bind requested numerical model")
         expected_motor_hash = report["contact_motor_policy"]["policy_hash"]
     if (
         report["navigation_lateral_ball_gain"] != gain

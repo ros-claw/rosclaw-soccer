@@ -48,6 +48,7 @@ parser.add_argument("--temporal-policy-actions", type=Path)
 parser.add_argument("--late-swing-policy", type=Path)
 parser.add_argument("--contact-motor-policy", type=Path)
 parser.add_argument("--contact-motor-bootstrap-model", type=Path)
+parser.add_argument("--contact-motor-online-model", type=Path)
 parser.add_argument("--revalidate-swing-side", action="store_true")
 parser.add_argument("--late-swing-lateral-cap-m", type=float, default=0.05)
 parser.add_argument("--late-swing-lateral-lead-m", type=float, default=0.0)
@@ -173,7 +174,14 @@ if (
     or (args.temporal_policy_actions is not None and not args.temporal_policy_actions.is_file())
     or (args.late_swing_policy is not None and not args.late_swing_policy.is_file())
     or (
-        (args.contact_motor_policy is not None or args.contact_motor_bootstrap_model is not None)
+        any(
+            p is not None
+            for p in (
+                args.contact_motor_policy,
+                args.contact_motor_bootstrap_model,
+                args.contact_motor_online_model,
+            )
+        )
         and (
             (args.contact_motor_policy is not None and not args.contact_motor_policy.is_file())
             or (
@@ -181,9 +189,18 @@ if (
                 and not args.contact_motor_bootstrap_model.is_file()
             )
             or (
-                args.contact_motor_policy is not None
-                and args.contact_motor_bootstrap_model is not None
+                args.contact_motor_online_model is not None
+                and not args.contact_motor_online_model.is_file()
             )
+            or sum(
+                p is not None
+                for p in (
+                    args.contact_motor_policy,
+                    args.contact_motor_bootstrap_model,
+                    args.contact_motor_online_model,
+                )
+            )
+            > 1
             or args.late_swing_policy is None
             or args.env_count != 1
             or args.support_knee_retract_m != 0.0
@@ -589,6 +606,19 @@ def main() -> None:
         validate_model(bootstrap_model)
         motor_knots = np.zeros((3, 12))
         motor_policy = make_phase_policy(motor_knots, 0.25, bootstrap_model["model_hash"])
+    online_model = None
+    if args.contact_motor_online_model is not None:
+        from rosclaw_soccer.rsi.online_motor_actor_critic import (
+            configure_preview as configure_online_preview,
+        )
+        from rosclaw_soccer.rsi.online_motor_actor_critic import (
+            validate_model as validate_online_model,
+        )
+
+        online_model = json.loads(args.contact_motor_online_model.read_text(encoding="utf-8"))
+        validate_online_model(online_model)
+        motor_knots = np.zeros((3, 12))
+        motor_policy = make_phase_policy(motor_knots, 0.25, online_model["model_hash"])
     motor_joint_indices = [robot.joint_names.index(name) for name in MOTOR_JOINT_NAMES]
     motor_pre_targets = []
     motor_deltas = []
@@ -1088,9 +1118,10 @@ def main() -> None:
                 swing_baseline_targets.append(baseline)
                 swing_executed_targets.append(target.detach().cpu().numpy().copy())
             if motor_policy is not None:
-                if bootstrap_model is not None and frame == 30:
-                    motor_policy = configure_preview(
-                        bootstrap_model,
+                if (bootstrap_model is not None or online_model is not None) and frame == 30:
+                    configure = configure_online_preview if online_model else configure_preview
+                    motor_policy = configure(
+                        online_model or bootstrap_model,
                         {
                             "root_pose_xyzw_m": robot_root_observations,
                             "root_velocity_world": robot_root_velocity_observations,
