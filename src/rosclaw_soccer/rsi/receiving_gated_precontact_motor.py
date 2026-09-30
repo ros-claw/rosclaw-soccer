@@ -37,7 +37,7 @@ class ReceivingGatedPrecontactMotor(ReceivingFootServoPhaseMotor):
                 for row in self.activation_states
             )
             or type(self.activation_radius) is not float
-            or not 0.003 <= self.activation_radius <= 0.017
+            or not 0.003 <= self.activation_radius <= 0.022
         ):
             raise ValueError("three finite measured precontact activation states required")
         self.contract_hash = hash_json(

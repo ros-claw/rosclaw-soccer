@@ -69,3 +69,12 @@ def test_gate_requires_three_finite_states() -> None:
     actor.activation_states = ((float("nan"),) + (0.0,) * 9,) * 3
     with pytest.raises(ValueError, match="three finite"):
         actor.__post_init__()
+
+
+def test_bounded_research_radius_can_expand_but_not_escape_sim_envelope() -> None:
+    actor = _actor()
+    actor.activation_radius = 0.022
+    actor.__post_init__()
+    actor.activation_radius = 0.023
+    with pytest.raises(ValueError, match="three finite"):
+        actor.__post_init__()
