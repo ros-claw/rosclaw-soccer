@@ -21,7 +21,9 @@ parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--training-course-seed", type=int)
 parser.add_argument("--single-course-lane", type=int)
+parser.add_argument("--static-single-course-lane", type=int)
 parser.add_argument("--lane-spacing-m", type=float, default=8.0)
+parser.add_argument("--overlap-collision-filtered", action="store_true")
 parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
 parser.add_argument("--planner-seed", type=int, default=30300)
 parser.add_argument("--near-ball-gap-m", type=float)
@@ -59,7 +61,30 @@ if (
     or args.lane_spacing_m not in (8.0, 24.0)
     or (args.lane_spacing_m == 24.0 and args.env_count != 16)
     or (
-        (args.env_count == 1) != (args.single_course_lane is not None)
+        args.overlap_collision_filtered
+        and (
+            args.env_count != 2
+            or args.lane_spacing_m != 8.0
+            or args.training_course_seed is not None
+            or args.late_swing_policy is not None
+            or args.candidate_actions is not None
+            or args.temporal_policy_actions is not None
+        )
+    )
+    or (
+        (args.env_count == 1)
+        != (args.single_course_lane is not None or args.static_single_course_lane is not None)
+        or (
+            args.static_single_course_lane is not None
+            and (
+                args.static_single_course_lane not in (0, 1)
+                or args.training_course_seed is not None
+                or args.single_course_lane is not None
+                or args.candidate_actions is not None
+                or args.temporal_policy_actions is not None
+                or args.late_swing_policy is not None
+            )
+        )
         or (
             args.single_course_lane is not None
             and (
@@ -170,6 +195,7 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg  # noqa: E402
+from isaaclab.cloner import filter_collisions  # noqa: E402
 from isaaclab.sensors import ContactSensor, ContactSensorCfg  # noqa: E402
 from isaaclab.sim import SimulationContext  # noqa: E402
 from isaaclab_assets.robots.unitree import G1_29DOF_CFG  # noqa: E402
@@ -309,6 +335,42 @@ def main() -> None:
                 )
             )
         )
+    collision_filter_contract = None
+    if args.overlap_collision_filtered:
+        filter_collisions(
+            stage=sim.stage,
+            physicsscene_path=sim.cfg.physics_prim_path,
+            collision_root_path="/World/diagnostic_collisions",
+            prim_paths=[f"/World/Env{index}" for index in range(args.env_count)],
+            global_paths=["/World/ground"],
+        )
+        scene_prim = sim.stage.GetPrimAtPath(sim.cfg.physics_prim_path)
+        collision_filter_contract = {
+            "physics_scene_inverted_filter": scene_prim.GetAttribute(
+                "physxScene:invertCollisionGroupFilter"
+            ).Get(),
+            "groups": [],
+        }
+        for index in range(args.env_count):
+            group_path = f"/World/diagnostic_collisions/group{index}"
+            group = sim.stage.GetPrimAtPath(group_path)
+            if not group.IsValid():
+                raise ValueError("PhysX per-environment collision groups not created")
+            includes = [
+                str(path)
+                for path in group.GetRelationship("collection:colliders:includes").GetTargets()
+            ]
+            filters = [
+                str(path) for path in group.GetRelationship("physics:filteredGroups").GetTargets()
+            ]
+            if includes != [f"/World/Env{index}"] or filters != [
+                group_path,
+                "/World/diagnostic_collisions/global_group",
+            ]:
+                raise ValueError("PhysX collision group does not isolate a G1-ball pair")
+            collision_filter_contract["groups"].append({"includes": includes, "filters": filters})
+        if collision_filter_contract["physics_scene_inverted_filter"] is not True:
+            raise ValueError("PhysX per-environment collision groups not created")
     sim.reset()
     if robot.num_instances != args.env_count or ball.num_instances != args.env_count:
         raise ValueError("G1/ball environment count mismatch")
@@ -316,7 +378,11 @@ def main() -> None:
         raise ValueError("Isaac and SONIC joint names differ")
     indices = [robot.joint_names.index(name) for name in names]
     # Wide lanes are diagnostic until paired single-instance outcomes agree.
-    lanes = np.arange(args.env_count, dtype=np.float64) * args.lane_spacing_m
+    lanes = (
+        np.zeros(args.env_count, dtype=np.float64)
+        if args.overlap_collision_filtered
+        else np.arange(args.env_count, dtype=np.float64) * args.lane_spacing_m
+    )
     full_courses = (
         sample_training_courses(args.training_course_seed, 16)
         if args.training_course_seed is not None
@@ -325,6 +391,8 @@ def main() -> None:
     courses = list(
         (full_courses[args.single_course_lane],)
         if args.single_course_lane is not None and full_courses is not None
+        else (static_development_courses(2)[args.static_single_course_lane],)
+        if args.static_single_course_lane is not None
         else static_development_courses(args.env_count)
         if full_courses is None
         else full_courses
@@ -1143,9 +1211,12 @@ def main() -> None:
         "frames": args.frames,
         "navigation_speed_mps": args.navigation_speed_mps,
         "inference_threads": args.inference_threads,
-        "lane_spacing_m": args.lane_spacing_m,
+        "lane_spacing_m": 0.0 if args.overlap_collision_filtered else args.lane_spacing_m,
+        "overlap_collision_filtered_diagnostic": args.overlap_collision_filtered,
         "environments": entries,
     }
+    if collision_filter_contract is not None:
+        report["collision_filter_contract"] = collision_filter_contract
     if args.planner_seed != 30300:
         report["planner_seed"] = args.planner_seed
     if args.torch_batch_shadow:
@@ -1160,6 +1231,9 @@ def main() -> None:
         report["course_catalog_hash"] = hash_json(full_courses)
     if args.single_course_lane is not None:
         report["single_course_lane"] = args.single_course_lane
+        report["single_instance_max_lateral_excursion_m"] = float(np.max(lateral_excursion))
+    if args.static_single_course_lane is not None:
+        report["static_single_course_lane"] = args.static_single_course_lane
         report["single_instance_max_lateral_excursion_m"] = float(np.max(lateral_excursion))
     if args.near_ball_gap_m is not None:
         report["near_ball_gap_m"] = args.near_ball_gap_m

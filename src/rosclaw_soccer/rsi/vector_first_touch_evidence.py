@@ -9,7 +9,10 @@ from typing import Any
 
 import numpy as np
 
-from rosclaw_soccer.rsi.first_touch_course_catalog import sample_training_courses
+from rosclaw_soccer.rsi.first_touch_course_catalog import (
+    sample_training_courses,
+    static_development_courses,
+)
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
@@ -170,10 +173,12 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
     entries = report.get("environments")
     frames = report.get("frames")
     single_course_lane = report.get("single_course_lane")
+    static_single_lane = report.get("static_single_course_lane")
     if (
         not isinstance(entries, list)
         or not 1 <= len(entries) <= 16
-        or (len(entries) == 1) != (single_course_lane is not None)
+        or (len(entries) == 1) != (single_course_lane is not None or static_single_lane is not None)
+        or (single_course_lane is not None and static_single_lane is not None)
         or (
             single_course_lane is not None
             and (type(single_course_lane) is not int or not 0 <= single_course_lane < 16)
@@ -318,6 +323,14 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
     )
     if training_seed is not None and tuple(courses) != expected_courses:
         raise ValueError("training courses differ from committed seed")
+    if static_single_lane is not None and (
+        type(static_single_lane) is not int
+        or static_single_lane not in (0, 1)
+        or n != 1
+        or training_seed is not None
+        or tuple(courses) != (static_development_courses(2)[static_single_lane],)
+    ):
+        raise ValueError("static single course differs from committed lane")
     result = {
         "schema": "rsi_isaac_vector_first_touch_audit_v1",
         "activation_ceiling": "SIM_ONLY",

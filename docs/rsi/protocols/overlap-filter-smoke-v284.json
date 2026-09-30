@@ -1,0 +1,11 @@
+{
+  "schema": "rsi_overlap_filter_smoke_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "reference": "Isaac Lab 3.0 official cloning guide: PhysX per-environment collision filtering",
+  "hypothesis": "Two independent G1-ball environments can share local world coordinates when PhysX collision groups filter cross-environment contacts while both retain collisions with the global ground.",
+  "smoke": "Existing two static courses, 300 frames, frozen SONIC, same source/asset/model; compare 8 m separated control and 0 m overlapping collision-filtered diagnostic.",
+  "required_checks": "Runner records collision-group contract and raw trace, both processes finish; contact presence/body set and 60-frame local ball displacement match each course within 0.10 m; pelvis >=0.65 m. No training or policy promotion even if passed.",
+  "training_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
