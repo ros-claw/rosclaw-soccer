@@ -188,6 +188,13 @@ def main() -> None:
         late_actor_hash=late["actor_hash"],
         model_hash=neural["model_hash"] if neural else None,
         motor_policy_hash=policy["policy_hash"] if policy else None,
+        taskspace_contract=dict(
+            forward_cap_m=0.08,
+            lateral_cap_m=0.15,
+            acquisition_max_gap_m=0.95,
+            revalidate_swing_side=True,
+            vertical_offset_m=0.04,
+        ),
         compiled_model_hash=hash_bytes(model_snapshot.read_bytes()),
         physics=dict(
             engine="MuJoCo",
@@ -331,8 +338,8 @@ def main() -> None:
                     data.xpos[bodies[:2]],
                     data.xpos[ball],
                     side,
-                    acquisition_max_gap_m=0.55,
-                    revalidate_swing_side=False,
+                    acquisition_max_gap_m=0.95,
+                    revalidate_swing_side=True,
                 )
             if side >= 0:
                 ids = leg_ids[side]
@@ -348,7 +355,7 @@ def main() -> None:
                         target[ids],
                         limits[ids],
                         forward_cap_m=0.08,
-                        lateral_cap_m=0.05,
+                        lateral_cap_m=0.15,
                         lateral_lead_m=0.0,
                         vertical_offset_m=0.04,
                     )
