@@ -1,0 +1,17 @@
+{
+  "schema": "rsi_isaac_shadow_approach_hard_fresh_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "source_fresh_report_hash": "sha256:eefecf2089224345a10d4b9e45f382685c71ccc16de778a6190510667fe658f8",
+  "fresh_seed_range_inclusive": [20261009, 20261160],
+  "hard_course_rule": "All even lanes with ball_vx<=-0.60 m/s, 2.2<=ball_x<=2.4 m and -0.10<=ball_y<=-0.06 m: exactly 15 courses chosen only by initial catalog, no outcomes",
+  "arms": {
+    "baseline": "Negative-side bounded gain 0.8 plus sealed late-swing actor",
+    "aggressive_diagnostic": "Negative-side bounded gain 1.2 plus same actor; not automatically promoted",
+    "shadow_choice": "Veto gain 1.2 iff its independently audited parent has no contact, low pelvis or right-knee contact index 5; choice before aggressive actor outcome"
+  },
+  "procedure": "Four A6000, 15 fresh difficult courses, each with independent parent and actor at each gain: 60 one-G1/ball physics episodes. Archive all candidate knee contacts and false vetoes. No candidate result used to select arm.",
+  "gate": "15/15 complete, 60/60 audited, selected option versus 0.8: >=3 net high-quality gains, mean reward gain >=0.3, no clean-foot loss, no new >4m out-of-play and all selected pelvis minima >=0.65m. Independently report unrestricted 1.2 diagnostics and risk-veto true/false positives; passing does not prove risk prediction without true risk cases.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}
