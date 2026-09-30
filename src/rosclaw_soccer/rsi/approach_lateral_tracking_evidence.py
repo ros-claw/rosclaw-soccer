@@ -8,8 +8,13 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.conservative_approach_rectangle import ApproachRectangle
 from rosclaw_soccer.rsi.vector_first_touch_evidence import audit_vector_first_touch
 from rosclaw_soccer.sim.contracts import hash_json
+
+SEALED_POLICY_HASH = "sha256:12b3f8fea5aec4db3cb38aa7e289a03bc3fd4d3e1d31b50ed0b70f1ae297922a"
+SEALED_X_MAX_M = 2.5524194955825807
+SEALED_Y_MIN_M = -0.09402785405516624
 
 
 def audit_lateral_approach(folder: Path) -> dict[str, Any]:
@@ -17,6 +22,15 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
     report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     gain = report.get("navigation_lateral_ball_gain")
     negative_only = report.get("navigation_lateral_negative_only", False)
+    rectangle_hash = report.get("navigation_rectangle_policy_hash")
+    if rectangle_hash is not None and (
+        rectangle_hash != SEALED_POLICY_HASH
+        or report.get("navigation_rectangle_x_max_m") != SEALED_X_MAX_M
+        or report.get("navigation_rectangle_y_min_m") != SEALED_Y_MIN_M
+        or gain != 0.8
+        or negative_only
+    ):
+        raise ValueError("unsealed learned approach policy in physical report")
     if (
         gain not in (0.0, 0.8)
         or type(negative_only) is not bool
@@ -42,6 +56,9 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
         gap = ball[:, 0, 0] - root[:, 0, 0]
         lateral = ball[:, 0, 1] - root[:, 0, 1]
         effective_gain = gain if not negative_only or lateral[0] < 0 else 0.0
+        if rectangle_hash is not None:
+            rectangle = ApproachRectangle(SEALED_X_MAX_M, SEALED_Y_MIN_M, 0, 0.0)
+            effective_gain = gain if rectangle.choose(float(gap[0]), float(lateral[0])) else 0.0
         before_contact = np.arange(300) <= (299 if first is None else first)
         expected = np.where(
             before_contact & (gap > 0.95), np.clip(effective_gain * lateral, -0.2, 0.2), 0.0
@@ -58,6 +75,7 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
         "physical_audit_hash": physical["report_hash"],
         "navigation_lateral_ball_gain": gain,
         "navigation_lateral_negative_only": negative_only,
+        "navigation_rectangle_policy_hash": rectangle_hash,
         "active_frames": active_frames,
         "maximum_abs_command_mps": maximum_command_mps,
         "maximum_reconstruction_error_mps": max_error,

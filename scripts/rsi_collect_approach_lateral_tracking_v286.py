@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.rsi.approach_lateral_tracking_evidence import audit_lateral_approach
+from rosclaw_soccer.rsi.conservative_approach_rectangle import load_guarded_approach_policy
 from rosclaw_soccer.rsi.contextual_first_touch_option import first_touch_reward
 from rosclaw_soccer.rsi.independent_first_touch_bank import post_contact_displacement
 from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_trace
@@ -50,6 +51,7 @@ def _run(
     gain: float,
     kind: str,
     negative_only: bool = False,
+    rectangle_policy: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     folder = root / f"seed{seed}-lane{lane}-{arm}-{kind}"
     parent_folder = root / f"seed{seed}-lane{lane}-{arm}-parent"
@@ -86,6 +88,8 @@ def _run(
     ]
     if negative_only:
         command.append("--navigation-lateral-negative-only")
+    if rectangle_policy is not None:
+        command.extend(("--navigation-rectangle-policy", str(rectangle_policy)))
     if kind == "actor":
         command.extend(
             (
@@ -126,6 +130,8 @@ def _run(
     if (
         report["navigation_lateral_ball_gain"] != gain
         or report.get("navigation_lateral_negative_only") is not negative_only
+        or report.get("navigation_rectangle_policy_hash")
+        != (load_guarded_approach_policy(rectangle_policy)[1] if rectangle_policy else None)
         or report["training_course_seed"] != seed
         or report["single_course_lane"] != lane
     ):
@@ -163,7 +169,11 @@ def _run(
         )
     else:
         outcome = {}
-    return report, {"command_audit_hash": audit["report_hash"], **outcome}
+    return report, {
+        "command_audit_hash": audit["report_hash"],
+        "command_active_frames": audit["active_frames"],
+        **outcome,
+    }
 
 
 def _course(

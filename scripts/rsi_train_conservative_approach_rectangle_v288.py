@@ -88,7 +88,9 @@ def load_courses(roots: dict[str, Path]) -> list[dict[str, Any]]:
     return courses
 
 
-def cross_validate(courses: list[dict[str, Any]]) -> dict[str, Any]:
+def cross_validate(
+    courses: list[dict[str, Any]], *, x_margin_m: float = 0.0, y_margin_m: float = 0.0
+) -> dict[str, Any]:
     x = np.asarray([row["frame_zero_context_m"] for row in courses], dtype=float)
     gain = np.asarray([row["candidate_reward"] - row["baseline_reward"] for row in courses])
     clean_loss = np.asarray(
@@ -100,7 +102,10 @@ def cross_validate(courses: list[dict[str, Any]]) -> dict[str, Any]:
     for seed in sorted({row["seed"] for row in courses}):
         test = np.asarray([row["seed"] == seed for row in courses])
         model = fit_approach_rectangle(x[~test], gain[~test], clean_loss[~test], new_out[~test])
-        choices = [model.choose(*x[i]) for i in np.flatnonzero(test)]
+        choices = [
+            model.choose(*x[i], x_margin_m=x_margin_m, y_margin_m=y_margin_m)
+            for i in np.flatnonzero(test)
+        ]
         selected_rows = [row for row in courses if row["seed"] == seed]
         fold_gain = sum(
             row["candidate_reward"] - row["baseline_reward"] if chosen else 0.0
@@ -155,7 +160,11 @@ def cross_validate(courses: list[dict[str, Any]]) -> dict[str, Any]:
     )
     full = fit_approach_rectangle(x, gain, clean_loss, new_out)
     result: dict[str, Any] = {
-        "schema": "rsi_isaac_learned_approach_rectangle_cv_v1",
+        "schema": (
+            "rsi_isaac_guarded_approach_margin_cv_v1"
+            if x_margin_m or y_margin_m
+            else "rsi_isaac_learned_approach_rectangle_cv_v1"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "input_report_hashes": EXPECTED,
         "episode_count": len(courses),
@@ -176,6 +185,13 @@ def cross_validate(courses: list[dict[str, Any]]) -> dict[str, Any]:
         "fresh_seed_71_72_authorized": passed,
         "promotion_authorized": False,
     }
+    if x_margin_m or y_margin_m:
+        result["x_margin_m"] = x_margin_m
+        result["y_margin_m"] = y_margin_m
+        result["effective_full_fit_rectangle"] = {
+            "x_max_m": None if full.x_max_m is None else full.x_max_m - x_margin_m,
+            "y_min_m": None if full.y_min_m is None else full.y_min_m + y_margin_m,
+        }
     result["report_hash"] = hash_json(result)
     return result
 

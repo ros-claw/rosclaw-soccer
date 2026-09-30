@@ -68,3 +68,35 @@ def test_negative_only_mode_protects_positive_initial_ball_side(tmp_path, monkey
         navigation_lateral_speed_mps=np.zeros((300, 1)),
     )
     assert evidence.audit_lateral_approach(tmp_path)["active_frames"] == 0
+
+
+def test_sealed_online_rectangle_reconstructs_only_selected_command(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(evidence, "audit_vector_first_touch", lambda _: {"report_hash": "physical"})
+    report = {
+        "frames": 300,
+        "environments": [{"first_contact_frame": 5}],
+        "navigation_lateral_ball_gain": 0.8,
+        "navigation_lateral_negative_only": False,
+        "navigation_rectangle_policy_hash": evidence.SEALED_POLICY_HASH,
+        "navigation_rectangle_x_max_m": evidence.SEALED_X_MAX_M,
+        "navigation_rectangle_y_min_m": evidence.SEALED_Y_MIN_M,
+        "report_hash": "source",
+    }
+    (tmp_path / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    root = np.zeros((300, 1, 7))
+    ball = np.zeros((300, 1, 3))
+    ball[:, 0, 0] = 2.3
+    ball[:, 0, 1] = -0.04
+    command = np.zeros((300, 1))
+    command[:6, 0] = -0.032
+    np.savez_compressed(
+        tmp_path / "body_trace.npz",
+        root_pose_xyzw_m=root,
+        ball_position_before_step_m=ball,
+        navigation_lateral_speed_mps=command,
+    )
+    assert evidence.audit_lateral_approach(tmp_path)["active_frames"] == 6
+    report["navigation_rectangle_x_max_m"] = 2.9
+    (tmp_path / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="unsealed"):
+        evidence.audit_lateral_approach(tmp_path)

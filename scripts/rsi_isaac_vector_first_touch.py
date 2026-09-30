@@ -27,6 +27,7 @@ parser.add_argument("--overlap-collision-filtered", action="store_true")
 parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
 parser.add_argument("--navigation-lateral-ball-gain", type=float, default=0.0)
 parser.add_argument("--navigation-lateral-negative-only", action="store_true")
+parser.add_argument("--navigation-rectangle-policy", type=Path)
 parser.add_argument("--planner-seed", type=int, default=30300)
 parser.add_argument("--near-ball-gap-m", type=float)
 parser.add_argument("--near-ball-speed-mps", type=float)
@@ -101,6 +102,15 @@ if (
     or args.navigation_lateral_ball_gain not in (0.0, 0.8)
     or (args.navigation_lateral_ball_gain != 0.0 and args.env_count != 1)
     or (args.navigation_lateral_negative_only and args.navigation_lateral_ball_gain != 0.8)
+    or (
+        args.navigation_rectangle_policy is not None
+        and (
+            not args.navigation_rectangle_policy.is_file()
+            or args.navigation_lateral_ball_gain != 0.8
+            or args.navigation_lateral_negative_only
+            or args.env_count != 1
+        )
+    )
     or not 0 <= args.planner_seed <= 2**31 - 3000
     or (
         args.planner_seed != 30300
@@ -216,6 +226,9 @@ from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa
 from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module  # noqa: E402
 from rosclaw_soccer.rsi import late_swing_memory as late_swing_module  # noqa: E402
 from rosclaw_soccer.rsi import taskspace_gate_memory as taskspace_gate_module  # noqa: E402
+from rosclaw_soccer.rsi.conservative_approach_rectangle import (  # noqa: E402
+    load_guarded_approach_policy,
+)
 from rosclaw_soccer.rsi.contact_time_phase_features import (  # noqa: E402
     current_context,
     gait_phase_features,
@@ -263,6 +276,11 @@ from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation  # noqa
 
 
 def main() -> None:
+    approach_rectangle, approach_policy_hash = (
+        load_guarded_approach_policy(args.navigation_rectangle_policy)
+        if args.navigation_rectangle_policy is not None
+        else (None, None)
+    )
     names = tuple(G1_DDS_JOINT_NAMES)
     navigations = [
         G1SonicNavigation(
@@ -428,6 +446,7 @@ def main() -> None:
             or parent.get("navigation_lateral_ball_gain", 0.0) != args.navigation_lateral_ball_gain
             or parent.get("navigation_lateral_negative_only", False)
             is not args.navigation_lateral_negative_only
+            or parent.get("navigation_rectangle_policy_hash") != approach_policy_hash
             or parent.get("near_ball_gap_m") != args.near_ball_gap_m
             or parent.get("near_ball_speed_mps") != args.near_ball_speed_mps
             or parent.get("near_ball_incoming_only", False) is not args.near_ball_incoming_only
@@ -644,7 +663,12 @@ def main() -> None:
                 command_lateral_speed = 0.0
                 if frame == 0 and args.navigation_lateral_ball_gain:
                     navigation_tracking_enabled[i] = bool(
-                        not args.navigation_lateral_negative_only
+                        approach_rectangle.choose(
+                            float(ball_xyz_frame[i, 0] - root_pose[0]),
+                            float(ball_xyz_frame[i, 1] - root_pose[1]),
+                        )
+                        if approach_rectangle is not None
+                        else not args.navigation_lateral_negative_only
                         or ball_xyz_frame[i, 1] - root_pose[1] < 0.0
                     )
                 if navigation_tracking_enabled[i] and not navigation_contact_seen[i]:
@@ -1273,6 +1297,10 @@ def main() -> None:
         report["near_ball_gap_m"] = args.near_ball_gap_m
         report["near_ball_speed_mps"] = args.near_ball_speed_mps
         report["near_ball_incoming_only"] = args.near_ball_incoming_only
+    if approach_rectangle is not None:
+        report["navigation_rectangle_policy_hash"] = approach_policy_hash
+        report["navigation_rectangle_x_max_m"] = approach_rectangle.x_max_m
+        report["navigation_rectangle_y_min_m"] = approach_rectangle.y_min_m
     if body_trace_hash is not None:
         report["body_trace_hash"] = body_trace_hash
     if args.record_foot_geometry:

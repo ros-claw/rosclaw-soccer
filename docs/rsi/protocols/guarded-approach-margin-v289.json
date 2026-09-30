@@ -1,0 +1,13 @@
+{
+  "schema": "rsi_isaac_guarded_approach_margin_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "parent_cv_report_hash": "sha256:49d880006733d8557e91b0b706aed4e7ae94ced952136f560b40fa075e40821f",
+  "training_data": "Same consumed v286+v287 43 audited courses; no new seeds opened for margin selection",
+  "fixed_margin": "At inference, subtract 0.05 m from the training-fold x_max and add 0.02 m to y_min; only the shrunken rectangle can activate the bounded 0.8 lateral navigation option.",
+  "model_fit": "Unchanged v288 training-only rectangle enumeration and safety constraints; do not refit or tune margins per held-out seed.",
+  "development_gate": "Same v288 grouped leave-one-seed-out gate: no foot-contact loss or new out-of-play in any fold, high-quality shot net gain >=2, mean physical reward gain >=0.2, at least four positive seed folds and four interventions.",
+  "fresh_exam": "If and only if the development gate passes, freeze the all-data rectangle with these margins and test seeds 20260971 and 20260972 once, 16 courses, independent paired parent+actor physics. Define the fresh gate before opening.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}

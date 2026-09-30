@@ -1,0 +1,14 @@
+{
+  "schema": "rsi_isaac_guarded_approach_online_fresh_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "parent_cv_report_hash": "sha256:50e98c7810bf672d21a52cd6d33703dd729aa4e62f07757da0e4187c4ff1bd15",
+  "fresh_seeds": [20260971, 20260972],
+  "lanes_per_seed": [0, 2, 4, 6, 8, 10, 12, 14],
+  "frozen_policy": "At frame 0, measured ball forward distance <=2.5524194955825807 m and measured lateral distance in [-0.09402785405516624,0) m enables bounded 0.8 lateral navigation gain; otherwise gain 0. Same SONIC and 0.95 m late-swing actor in both arms.",
+  "procedure": "For each of 16 fresh courses, run independent parent+actor baseline and independent parent+actor online-policy candidate, one G1 and ball per process, four A6000 workers. Audit report hashes, parent lineage, stage assets, physical contact, bounded command reconstruction and late-swing actions.",
+  "fresh_gate": "No candidate loss of clean-foot-only contacts, no new >4 m out-of-play, high-quality shots at least one more overall with no per-seed decrease, mean measured reward at least baseline +0.15, at least two actual policy activations. If baseline has any out-of-play course, candidate must rescue at least one.",
+  "decision": "One-shot unseen exam. On any failure reject and consume these seeds; do not re-tune against them.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}
