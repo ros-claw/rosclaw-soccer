@@ -49,6 +49,7 @@ parser.add_argument("--late-swing-policy", type=Path)
 parser.add_argument("--contact-motor-policy", type=Path)
 parser.add_argument("--contact-motor-bootstrap-model", type=Path)
 parser.add_argument("--contact-motor-online-model", type=Path)
+parser.add_argument("--contact-motor-step-model", type=Path)
 parser.add_argument("--revalidate-swing-side", action="store_true")
 parser.add_argument("--late-swing-lateral-cap-m", type=float, default=0.05)
 parser.add_argument("--late-swing-lateral-lead-m", type=float, default=0.0)
@@ -180,6 +181,7 @@ if (
                 args.contact_motor_policy,
                 args.contact_motor_bootstrap_model,
                 args.contact_motor_online_model,
+                args.contact_motor_step_model,
             )
         )
         and (
@@ -192,12 +194,17 @@ if (
                 args.contact_motor_online_model is not None
                 and not args.contact_motor_online_model.is_file()
             )
+            or (
+                args.contact_motor_step_model is not None
+                and not args.contact_motor_step_model.is_file()
+            )
             or sum(
                 p is not None
                 for p in (
                     args.contact_motor_policy,
                     args.contact_motor_bootstrap_model,
                     args.contact_motor_online_model,
+                    args.contact_motor_step_model,
                 )
             )
             > 1
@@ -629,6 +636,13 @@ def main() -> None:
         validate_online_model(online_model)
         motor_knots = np.zeros((3, 12))
         motor_policy = make_phase_policy(motor_knots, 0.25, online_model["model_hash"])
+    step_model = None
+    if args.contact_motor_step_model is not None:
+        from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
+
+        step_model = json.loads(args.contact_motor_step_model.read_text(encoding="utf-8"))
+        motor_policy = make_preview(step_model)
+        motor_knots = np.zeros((3, 12))
     motor_joint_indices = [robot.joint_names.index(name) for name in MOTOR_JOINT_NAMES]
     motor_pre_targets = []
     motor_deltas = []
@@ -1152,16 +1166,42 @@ def main() -> None:
                 )
                 for lane in range(args.env_count):
                     contact_frame = int(swing_contact_frame[lane])
-                    delta = motor_delta(
-                        motor_policy,
-                        motor_knots,
-                        float(ball_xyz_frame[lane, 0] - robot_root_observations[-1][lane, 0]),
-                        motor_baseline[lane],
-                        motor_limits[lane],
-                        motor_previous[lane],
-                        motor_contact_delta[lane],
-                        frame - contact_frame if contact_frame >= 0 else None,
-                    )
+                    if step_model is not None:
+                        delta = delta_at_frame(
+                            motor_policy,
+                            {
+                                "root_pose_xyzw_m": robot_root_observations,
+                                "root_velocity_world": robot_root_velocity_observations,
+                                "joint_position_rad": robot_joint_observations,
+                                "joint_velocity_rad_s": robot_joint_velocity_observations,
+                                "ball_position_before_step_m": temporal_ball_position_observations,
+                                "ball_linear_velocity_before_step_m_s": (
+                                    temporal_ball_velocity_observations
+                                ),
+                                "foot_geometry_position_before_step_m": (
+                                    foot_geometry_position_observations
+                                ),
+                            },
+                            frame=frame,
+                            nominal_target=target[lane, indices].detach().cpu().numpy().copy(),
+                            baseline=motor_baseline[lane],
+                            limits=motor_limits[lane],
+                            previous=motor_previous[lane],
+                            previous_contact_forces=contact_forces[-1][lane]
+                            if contact_forces
+                            else np.zeros(6),
+                        )
+                    else:
+                        delta = motor_delta(
+                            motor_policy,
+                            motor_knots,
+                            float(ball_xyz_frame[lane, 0] - robot_root_observations[-1][lane, 0]),
+                            motor_baseline[lane],
+                            motor_limits[lane],
+                            motor_previous[lane],
+                            motor_contact_delta[lane],
+                            frame - contact_frame if contact_frame >= 0 else None,
+                        )
                     target[lane, motor_joint_indices] = torch.as_tensor(
                         motor_baseline[lane] + delta, device=sim.device, dtype=torch.float32
                     )

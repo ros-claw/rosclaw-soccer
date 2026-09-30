@@ -60,9 +60,10 @@ def _run(
     resume: bool = False,
     motor_bootstrap: Path | None = None,
     motor_online: Path | None = None,
+    motor_step: Path | None = None,
     core_root: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if sum(p is not None for p in (motor_policy, motor_bootstrap, motor_online)) > 1:
+    if sum(p is not None for p in (motor_policy, motor_bootstrap, motor_online, motor_step)) > 1:
         raise ValueError("one explicit motor proposal backend required")
     folder = root / f"seed{seed}-lane{lane}-{arm}-{kind}"
     parent_folder = root / f"seed{seed}-lane{lane}-{arm}-parent"
@@ -128,6 +129,8 @@ def _run(
             command.extend(("--contact-motor-bootstrap-model", str(motor_bootstrap)))
         if motor_online is not None:
             command.extend(("--contact-motor-online-model", str(motor_online)))
+        if motor_step is not None:
+            command.extend(("--contact-motor-step-model", str(motor_step)))
     env = os.environ.copy()
     env.update(
         OMNI_KIT_ACCEPT_EULA="YES",
@@ -174,6 +177,12 @@ def _run(
         proof = report.get("contact_motor_policy", {}).get(proof_key, {})
         if proof.get("model", {}).get("model_hash") != model["model_hash"]:
             raise ValueError("online preview does not bind requested numerical model")
+        expected_motor_hash = report["contact_motor_policy"]["policy_hash"]
+    if motor_step is not None and kind == "actor":
+        model = json.loads(motor_step.read_text(encoding="utf-8"))
+        proof = report.get("contact_motor_policy", {}).get("step_motor_proof", {})
+        if proof.get("model", {}).get("model_hash") != model["model_hash"]:
+            raise ValueError("per-frame preview does not bind requested neural model")
         expected_motor_hash = report["contact_motor_policy"]["policy_hash"]
     if (
         report["navigation_lateral_ball_gain"] != gain

@@ -69,8 +69,14 @@ def audit_motor_arrays(
         audit_preview(report["contact_motor_policy"], body, force)
     online_preview = "online_motor_proof" in report["contact_motor_policy"]
     progressive_preview = "progressive_motor_proof" in report["contact_motor_policy"]
-    if sum((neural_preview, online_preview, progressive_preview)) > 1:
+    step_preview = "step_motor_proof" in report["contact_motor_policy"]
+    if sum((neural_preview, online_preview, progressive_preview, step_preview)) > 1:
         raise ValueError("ambiguous motor model backend")
+    if (
+        report["contact_motor_policy"].get("execution_profile")
+        == "causal_per_frame_neural_residual"
+    ) != step_preview:
+        raise ValueError("unbound per-frame execution profile")
     if progressive_preview:
         from rosclaw_soccer.rsi.progressive_motor_actor import audit_preview as audit_progressive
 
@@ -85,16 +91,32 @@ def audit_motor_arrays(
     contact_delta = np.zeros(12)
     contact_frame = None
     for frame in range(300):
-        expected = motor_delta(
-            report["contact_motor_policy"],
-            knots,
-            float(ball[frame, 0, 0] - root[frame, 0, 0]),
-            baseline[frame, 0],
-            limits[0],
-            previous,
-            contact_delta,
-            frame - contact_frame if contact_frame is not None else None,
-        )
+        if step_preview:
+            from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame
+
+            expected = delta_at_frame(
+                report["contact_motor_policy"],
+                body,
+                frame=frame,
+                nominal_target=swing["executed_taskspace_joint_target_rad"][
+                    frame, 0, [order.index(n) for n in G1_DDS_JOINT_NAMES]
+                ],
+                baseline=baseline[frame, 0],
+                limits=limits[0],
+                previous=previous,
+                previous_contact_forces=force[frame - 1, 0] if frame else np.zeros(6),
+            )
+        else:
+            expected = motor_delta(
+                report["contact_motor_policy"],
+                knots,
+                float(ball[frame, 0, 0] - root[frame, 0, 0]),
+                baseline[frame, 0],
+                limits[0],
+                previous,
+                contact_delta,
+                frame - contact_frame if contact_frame is not None else None,
+            )
         if (neural_preview or online_preview or progressive_preview) and frame < 30:
             expected = np.zeros(12)
         expected = (baseline[frame, 0] + expected).astype(np.float32).astype(float) - baseline[
