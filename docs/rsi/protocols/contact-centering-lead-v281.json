@@ -1,0 +1,20 @@
+{
+  "schema": "rsi_contact_centering_lead_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "hypothesis": "A bounded 4 cm lateral lead toward the ball's off-center side reduces measured ball-minus-foot y at impact and therefore lateral ball drift; both outcomes must be measured, not inferred from target commands.",
+  "development_courses": [
+    {"seed": 20260953, "lane": 0},
+    {"seed": 20260953, "lane": 12},
+    {"seed": 20260954, "lane": 2},
+    {"seed": 20260954, "lane": 6},
+    {"seed": 20260955, "lane": 0},
+    {"seed": 20260955, "lane": 2},
+    {"seed": 20260956, "lane": 0}
+  ],
+  "arms": ["lateral_lead_0_m", "lateral_lead_minus_0_04_m"],
+  "shared_setup": "Frozen SONIC, actor, asset, parent, course, acquisition gap 0.95 m, lateral cap 0.15 m, forward cap 0.08 m, revalidation true, independent physics process per arm",
+  "required_audits": "Independent first contact, per-frame action replay, same source/asset/actor/parent/course, measured ball-minus-contacting-foot y at first contact",
+  "development_gate": "No loss of foot-only contact or pelvis below 0.65 m, fewer total >4 m out-of-play courses, at least four of seven courses reduce absolute contact lateral bias and absolute 60-frame lateral displacement. Otherwise reject. No policy promotion even if passed without fresh holdout.",
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

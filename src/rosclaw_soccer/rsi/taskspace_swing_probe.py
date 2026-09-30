@@ -8,6 +8,7 @@ import numpy as np
 
 FORWARD_CAPS_M = (0.08, 0.16)
 LATERAL_CAPS_M = (0.05, 0.10, 0.15)
+LATERAL_LEADS_M = (-0.04, 0.0)
 VERTICAL_OFFSETS_M = (-0.04, 0.0, 0.04)
 SWING_ACQUISITION_MAX_GAPS_M = (0.35, 0.55, 0.95)
 SWING_ACQUISITION_MAX_LATERAL_GAPS_M = (0.22, 0.32)
@@ -83,6 +84,7 @@ def swing_joint_delta(
     *,
     forward_cap_m: float,
     lateral_cap_m: float = 0.05,
+    lateral_lead_m: float = 0.0,
     vertical_offset_m: float = 0.0,
     strike_through_m: float = 0.0,
 ) -> np.ndarray[Any, Any]:
@@ -95,6 +97,7 @@ def swing_joint_delta(
         or joint_limits.shape != (6, 2)
         or forward_cap_m not in FORWARD_CAPS_M
         or lateral_cap_m not in LATERAL_CAPS_M
+        or lateral_lead_m not in LATERAL_LEADS_M
         or vertical_offset_m not in VERTICAL_OFFSETS_M
         or strike_through_m not in STRIKE_THROUGH_OFFSETS_M
         or not all(
@@ -110,7 +113,7 @@ def swing_joint_delta(
     desired = np.array(
         [
             min(max(gap - 0.14 + strike_through_m, 0.0), forward_cap_m),
-            np.clip(ball_xyz[1] - foot_xyz[1], -lateral_cap_m, lateral_cap_m),
+            np.clip(ball_xyz[1] - foot_xyz[1] + lateral_lead_m, -lateral_cap_m, lateral_cap_m),
             vertical_offset_m,
         ],
         dtype=np.float64,

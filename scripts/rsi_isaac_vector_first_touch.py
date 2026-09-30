@@ -40,6 +40,7 @@ parser.add_argument("--temporal-policy-actions", type=Path)
 parser.add_argument("--late-swing-policy", type=Path)
 parser.add_argument("--revalidate-swing-side", action="store_true")
 parser.add_argument("--late-swing-lateral-cap-m", type=float, default=0.05)
+parser.add_argument("--late-swing-lateral-lead-m", type=float, default=0.0)
 parser.add_argument("--late-swing-forward-cap-m", type=float, default=0.08)
 parser.add_argument("--late-swing-side-acquisition-gap-m", type=float, default=0.55)
 parser.add_argument("--support-knee-retract-m", type=float, default=0.0)
@@ -115,6 +116,9 @@ if (
     or (args.support_knee_retract_m != 0.0 and args.late_swing_policy is None)
     or (args.revalidate_swing_side and args.late_swing_policy is None)
     or args.late_swing_lateral_cap_m not in (0.05, 0.10, 0.15)
+    or args.late_swing_lateral_lead_m not in (-0.04, 0.0)
+    or (args.late_swing_lateral_lead_m != 0.0 and args.late_swing_policy is None)
+    or (args.late_swing_lateral_lead_m != 0.0 and args.env_count != 1)
     or (args.late_swing_lateral_cap_m != 0.05 and args.late_swing_policy is None)
     or (args.late_swing_lateral_cap_m != 0.05 and args.env_count != 1)
     or args.late_swing_forward_cap_m not in (0.08, 0.16)
@@ -793,6 +797,7 @@ def main() -> None:
                             limits[lane, joint_ids],
                             forward_cap_m=args.late_swing_forward_cap_m,
                             lateral_cap_m=args.late_swing_lateral_cap_m,
+                            lateral_lead_m=args.late_swing_lateral_lead_m,
                             vertical_offset_m=0.04,
                         )
                     target[lane, joint_ids] = torch.as_tensor(
@@ -1186,6 +1191,7 @@ def main() -> None:
             selected_taskspace_mask=swing_data[6].tolist(),
             taskspace_forward_m=args.late_swing_forward_cap_m,
             taskspace_lateral_cap_m=args.late_swing_lateral_cap_m,
+            taskspace_lateral_lead_m=args.late_swing_lateral_lead_m,
             taskspace_vertical_offset_m=0.0,
             taskspace_acquisition_max_gap_m=0.95,
             late_swing_side_acquisition_gap_m=args.late_swing_side_acquisition_gap_m,
@@ -1199,17 +1205,20 @@ def main() -> None:
             minimum_cross_ball_distance_m=minimum_cross_ball_distance,
             trained_actor=(
                 args.late_swing_lateral_cap_m == 0.05
+                and args.late_swing_lateral_lead_m == 0.0
                 and args.late_swing_forward_cap_m == 0.08
                 and args.late_swing_side_acquisition_gap_m == 0.55
             ),
         )
         if (
             args.late_swing_lateral_cap_m != 0.05
+            or args.late_swing_lateral_lead_m != 0.0
             or args.late_swing_forward_cap_m != 0.08
             or args.late_swing_side_acquisition_gap_m != 0.55
         ):
             report["late_swing_action_override"] = (
                 f"diagnostic_lateral_{args.late_swing_lateral_cap_m:.2f}_m_"
+                f"lead_{args.late_swing_lateral_lead_m:.2f}_m_"
                 f"forward_{args.late_swing_forward_cap_m:.2f}_m_"
                 f"acquisition_{args.late_swing_side_acquisition_gap_m:.2f}_m"
             )

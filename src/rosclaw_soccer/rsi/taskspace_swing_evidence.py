@@ -43,6 +43,7 @@ def audit_taskspace_swing_trace(
 ) -> dict[str, Any]:
     forward = report.get("taskspace_forward_m")
     lateral = report.get("taskspace_lateral_cap_m", 0.05)
+    lateral_lead = report.get("taskspace_lateral_lead_m", 0.0)
     vertical = report.get("taskspace_vertical_offset_m", 0.0)
     strike_through = report.get("taskspace_strike_through_m", 0.0)
     acquisition_gap = report.get("taskspace_acquisition_max_gap_m", 0.95)
@@ -76,6 +77,8 @@ def audit_taskspace_swing_trace(
     if (
         forward not in FORWARD_CAPS_M
         or lateral not in LATERAL_CAPS_M
+        or lateral_lead not in (-0.04, 0.0)
+        or (late_hash is None and "taskspace_lateral_lead_m" in report)
         or vertical not in VERTICAL_OFFSETS_M
         or strike_through not in STRIKE_THROUGH_OFFSETS_M
         or acquisition_gap not in SWING_ACQUISITION_MAX_GAPS_M
@@ -178,6 +181,7 @@ def audit_taskspace_swing_trace(
                             and family_actions[lane] == 2
                             else lateral
                         ),
+                        lateral_lead_m=lateral_lead,
                         vertical_offset_m=(
                             0.04
                             if (
