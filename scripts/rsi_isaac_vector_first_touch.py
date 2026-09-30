@@ -29,6 +29,7 @@ parser.add_argument("--navigation-lateral-ball-gain", type=float, default=0.0)
 parser.add_argument("--navigation-lateral-negative-only", action="store_true")
 parser.add_argument("--navigation-rectangle-policy", type=Path)
 parser.add_argument("--navigation-proprio-risk-policy", type=Path)
+parser.add_argument("--navigation-lateral-early-switch", action="store_true")
 parser.add_argument("--planner-seed", type=int, default=30300)
 parser.add_argument("--near-ball-gap-m", type=float)
 parser.add_argument("--near-ball-speed-mps", type=float)
@@ -119,6 +120,20 @@ if (
             or args.navigation_lateral_ball_gain != 1.2
             or not args.navigation_lateral_negative_only
             or args.navigation_rectangle_policy is not None
+            or args.env_count != 1
+            or args.frames != 300
+            or not args.record_body_trace
+            or not args.record_foot_geometry
+            or args.reset_replay
+        )
+    )
+    or (
+        args.navigation_lateral_early_switch
+        and (
+            args.navigation_lateral_ball_gain != 1.2
+            or not args.navigation_lateral_negative_only
+            or args.navigation_rectangle_policy is not None
+            or args.navigation_proprio_risk_policy is not None
             or args.env_count != 1
             or args.frames != 300
             or not args.record_body_trace
@@ -475,6 +490,8 @@ def main() -> None:
             is not args.navigation_lateral_negative_only
             or parent.get("navigation_rectangle_policy_hash") != approach_policy_hash
             or parent.get("navigation_proprio_risk_policy_hash") != proprio_policy_hash
+            or parent.get("navigation_lateral_early_switch", False)
+            is not args.navigation_lateral_early_switch
             or parent.get("near_ball_gap_m") != args.near_ball_gap_m
             or parent.get("near_ball_speed_mps") != args.near_ball_speed_mps
             or parent.get("near_ball_incoming_only", False) is not args.near_ball_incoming_only
@@ -727,6 +744,8 @@ def main() -> None:
                             and proprio_decision_veto[i]
                             else args.navigation_lateral_ball_gain
                         )
+                        if args.navigation_lateral_early_switch and frame >= 10:
+                            gain = 0.8
                         command_lateral_speed = float(np.clip(gain * lateral_gap_m, -0.2, 0.2))
                 if (
                     args.near_ball_gap_m is not None
@@ -1358,6 +1377,8 @@ def main() -> None:
         report["navigation_proprio_risk_policy"] = proprio_policy
         report["navigation_proprio_risk_probability"] = proprio_decision_probability.tolist()
         report["navigation_proprio_risk_vetoed"] = proprio_decision_veto.tolist()
+    if args.navigation_lateral_early_switch:
+        report["navigation_lateral_early_switch"] = True
     if body_trace_hash is not None:
         report["body_trace_hash"] = body_trace_hash
     if args.record_foot_geometry:

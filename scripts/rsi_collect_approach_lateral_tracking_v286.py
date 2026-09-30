@@ -54,6 +54,7 @@ def _run(
     negative_only: bool = False,
     rectangle_policy: Path | None = None,
     proprio_policy: Path | None = None,
+    early_switch: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     folder = root / f"seed{seed}-lane{lane}-{arm}-{kind}"
     parent_folder = root / f"seed{seed}-lane{lane}-{arm}-parent"
@@ -94,6 +95,8 @@ def _run(
         command.extend(("--navigation-rectangle-policy", str(rectangle_policy)))
     if proprio_policy is not None:
         command.extend(("--navigation-proprio-risk-policy", str(proprio_policy)))
+    if early_switch:
+        command.append("--navigation-lateral-early-switch")
     if kind == "actor":
         command.extend(
             (
@@ -138,6 +141,7 @@ def _run(
         != (load_guarded_approach_policy(rectangle_policy)[1] if rectangle_policy else None)
         or report.get("navigation_proprio_risk_policy_hash")
         != (load_precontact_policy(proprio_policy)[1] if proprio_policy else None)
+        or report.get("navigation_lateral_early_switch", False) is not early_switch
         or report["training_course_seed"] != seed
         or report["single_course_lane"] != lane
     ):

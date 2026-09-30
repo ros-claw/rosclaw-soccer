@@ -1,0 +1,13 @@
+{
+  "schema": "rsi_isaac_early_approach_switch_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "data_status": "CONSUMED_MECHANISM_PROBE",
+  "source_failed_report_hash": "sha256:7f4807a285b8ac16ea31661d51d1b0ba40631c738de0bca8edd3beff3d4f4bd9",
+  "courses": [[20261227, 4], [20261446, 0], [20261095, 2]],
+  "arms": ["gain_08", "gain_12", "early_switch_10"],
+  "procedure": "Run 18 independent Isaac episodes: parent plus actor for each of three arms and courses. The early arm uses 1.2 until frame 9 and 0.8 from frame 10, regardless of outcome or learned classifier. Audit command reconstruction, parent/actor provenance and physical trajectories. Compare to same-source controls, not v301 outcomes.",
+  "mechanism_gate": "Complete all 3 courses; early switch changes root XY before first contact by >=0.02 m relative to full 1.2 on at least 2 courses; rescues >=1 of 2 preselected risk cases to clean-foot/no-out; retains high quality on the single gain case; zero new baseline-clean to nonfoot or out-of-play.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}

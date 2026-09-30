@@ -29,6 +29,7 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
     negative_only = report.get("navigation_lateral_negative_only", False)
     rectangle_hash = report.get("navigation_rectangle_policy_hash")
     proprio_hash = report.get("navigation_proprio_risk_policy_hash")
+    early_switch = report.get("navigation_lateral_early_switch", False)
     if rectangle_hash is not None and (
         rectangle_hash != SEALED_POLICY_HASH
         or report.get("navigation_rectangle_x_max_m") != SEALED_X_MAX_M
@@ -52,6 +53,16 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
         or report.get("navigation_proprio_risk_policy") is None
     ):
         raise ValueError("invalid precontact proprioceptive approach contract")
+    if type(early_switch) is not bool or (
+        early_switch
+        and (
+            gain != 1.2
+            or not negative_only
+            or rectangle_hash is not None
+            or proprio_hash is not None
+        )
+    ):
+        raise ValueError("invalid early-switch approach diagnostic")
     if proprio_hash is None and any(
         key in report
         for key in (
@@ -81,6 +92,9 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
         if rectangle_hash is not None:
             rectangle = ApproachRectangle(SEALED_X_MAX_M, SEALED_Y_MIN_M, 0, 0.0)
             effective_gain = gain if rectangle.choose(float(gap[0]), float(lateral[0])) else 0.0
+        if early_switch:
+            effective_gain = np.full(300, effective_gain, dtype=np.float64)
+            effective_gain[10:] = 0.8 if lateral[0] < 0 else 0.0
         if proprio_hash is not None:
             policy, policy_hash = validate_policy(report["navigation_proprio_risk_policy"])
             if policy_hash != proprio_hash or (first is not None and first <= 30):
@@ -134,5 +148,7 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
     }
     if proprio_hash is not None:
         result["navigation_proprio_risk_policy_hash"] = proprio_hash
+    if early_switch:
+        result["navigation_lateral_early_switch"] = True
     result["report_hash"] = hash_json(result)
     return result

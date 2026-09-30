@@ -72,6 +72,44 @@ def test_negative_only_mode_protects_positive_initial_ball_side(tmp_path, monkey
     assert evidence.audit_lateral_approach(tmp_path)["active_frames"] == 0
 
 
+def test_early_switch_diagnostic_is_reconstructed(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(evidence, "audit_vector_first_touch", lambda _: {"report_hash": "physical"})
+    report = {
+        "frames": 300,
+        "environments": [{"first_contact_frame": 40}],
+        "navigation_lateral_ball_gain": 1.2,
+        "navigation_lateral_negative_only": True,
+        "navigation_lateral_early_switch": True,
+        "report_hash": "source",
+    }
+    (tmp_path / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    root = np.zeros((300, 1, 7))
+    ball = np.zeros((300, 1, 3))
+    ball[:, 0, 0] = 2.0
+    ball[:, 0, 1] = -0.08
+    command = np.zeros((300, 1))
+    command[:10, 0] = -0.096
+    command[10:41, 0] = -0.064
+    np.savez_compressed(
+        tmp_path / "body_trace.npz",
+        root_pose_xyzw_m=root,
+        ball_position_before_step_m=ball,
+        navigation_lateral_speed_mps=command,
+    )
+    receipt = evidence.audit_lateral_approach(tmp_path)
+    assert receipt["navigation_lateral_early_switch"] is True
+    assert receipt["active_frames"] == 41
+    command[10, 0] = -0.096
+    np.savez_compressed(
+        tmp_path / "body_trace.npz",
+        root_pose_xyzw_m=root,
+        ball_position_before_step_m=ball,
+        navigation_lateral_speed_mps=command,
+    )
+    with pytest.raises(ValueError, match="diverged"):
+        evidence.audit_lateral_approach(tmp_path)
+
+
 def test_intermediate_gain_reconstructs_negative_side_feedback(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(evidence, "audit_vector_first_touch", lambda _: {"report_hash": "physical"})
     (tmp_path / "report.json").write_text(
