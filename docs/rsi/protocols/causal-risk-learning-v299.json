@@ -1,0 +1,20 @@
+{
+  "schema": "rsi_causal_approach_risk_learning_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "input_banks": {
+    "consumed_v297": "sha256:f3e74406ea3f7895981df6d1816f1d8f2197e20f95df80124b103bb6bb158499",
+    "train_v298": "sha256:b0086ab12bc84957058ea76efdc0b89e50c34ad7ae3a27f490286ef3f5a04740"
+  },
+  "feature_set": "Causal frame-0 relative ball x, y, incoming vx only; no parent future collision, actor outcome, seed identity or lane index",
+  "label": "Relative harm: 0.8 clean foot but 1.2 nonfoot, or 0.8 <=4m excursion but 1.2 >4m excursion",
+  "models": [
+    "decision tree max_depth=3 min_samples_leaf=2 class_weight={0:1,1:4} random_state=0",
+    "random forest n_estimators=100 max_depth=4 min_samples_leaf=2 class_weight={0:1,1:4} random_state=0",
+    "standardized logistic regression C=0.1 class_weight={0:1,1:4} max_iter=1000 random_state=0"
+  ],
+  "validation": "Leave-one-seed-out across all 81 consumed courses; compare true risk recall, safe vetoes, selected high-quality and clean-foot retention. A zero-false-negative CV is necessary but not sufficient; model family selection on CV consumes this validation and requires a new sealed physical exam.",
+  "gate": "No policy export or motor change if any held-out risk is missed, any held-out newly unsafe course is selected, or source/audit mismatch. Even a passing development model is only eligible for a new SIM_ONLY physical exam, never a real robot or promotional video.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}
