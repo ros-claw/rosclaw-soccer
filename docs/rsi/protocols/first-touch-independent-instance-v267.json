@@ -1,0 +1,23 @@
+{
+  "schema": "rsi_first_touch_independent_instance_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "purpose": "Establish one-G1/one-ball paired causal physics without correlated batch lanes before further action learning.",
+  "development_courses": [
+    {"training_course_seed": 20260953, "single_course_lane": 4},
+    {"training_course_seed": 20260954, "single_course_lane": 8}
+  ],
+  "source_catalog": "Original stratified sixteen-course bank; retain seed and original lane index as immutable course identity, execute one course in one isolated process.",
+  "compare": [
+    {"name": "zero_action_parent", "late_swing_actor": false, "support_knee_retract_m": 0.0},
+    {"name": "frozen_late_swing_control", "late_swing_actor": true, "support_knee_retract_m": 0.0},
+    {"name": "single_support_candidate", "late_swing_actor": true, "support_knee_retract_m": 0.04}
+  ],
+  "require_contact_and_body_trace_audit": true,
+  "require_same_source_per_paired_control_and_candidate": true,
+  "require_per_frame_action_audit": true,
+  "require_target_minimum_pelvis_height_m": 0.65,
+  "diagnostic_gate": "Both originally knee-only courses become foot-only with no safety regression; otherwise reject this action and retain independent-instance runner for future learning.",
+  "fresh_holdout_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

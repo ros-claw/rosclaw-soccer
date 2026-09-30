@@ -76,6 +76,61 @@ def test_vector_audit_counts_independent_episodes(tmp_path: Path) -> None:
     assert result["imitation_training_authorized"] is False
 
 
+def test_one_robot_course_retains_original_sixteen_lane_identity(tmp_path: Path) -> None:
+    folder = tmp_path / "single"
+    folder.mkdir()
+    course = sample_training_courses(20260953, 16)[4]
+    positions = np.tile(np.asarray(course[:2] + (0.11,)), (50, 1, 1))
+    force = np.zeros((50, 1, 6))
+    force[40, 0, 5] = 10.0
+    trace = folder / "trace.npz"
+    np.savez_compressed(
+        trace,
+        ball_position_m=positions,
+        ball_angular_velocity_rad_s=np.zeros((50, 1, 3)),
+        ball_body_contact_force_peak_n=force,
+    )
+    report = {
+        "schema": "rsi_isaac_vector_first_touch_smoke_v1",
+        "activation_ceiling": "SIM_ONLY",
+        "learning_authorized": False,
+        "promotion_authorized": False,
+        "frames": 50,
+        "source_hash": hash_json("runner"),
+        "asset_hash": hash_json("asset"),
+        "sonic_qualification_hash": hash_json("sonic"),
+        "trace_hash": hash_bytes(trace.read_bytes()),
+        "training_course_seed": 20260953,
+        "single_course_lane": 4,
+        "course_catalog_hash": hash_json(sample_training_courses(20260953, 16)),
+        "environments": [
+            {
+                "environment": 0,
+                "lane_y_m": 0.0,
+                "course": {
+                    "ball_x_m": course[0],
+                    "ball_y_local_m": course[1],
+                    "ball_vx_m_s": course[2],
+                },
+                "minimum_pelvis_z_m": 0.7,
+                "first_contact_frame": 40,
+                "contact_body_indices": [5],
+                "ball_final_local_xyz_m": [course[0], course[1], 0.11],
+            }
+        ],
+    }
+    report["report_hash"] = hash_json(report)
+    (folder / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    audited = audit_vector_first_touch(folder)
+    assert audited["independent_physical_episode_count"] == 1
+    assert audited["clean_foot_only_episode_count"] == 0
+    report["single_course_lane"] = 5
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    (folder / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="training courses differ"):
+        audit_vector_first_touch(folder)
+
+
 def test_vector_audit_requires_bounded_navigation_speed(tmp_path: Path) -> None:
     folder = tmp_path / "case"
     _fixture(folder)

@@ -169,9 +169,15 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
         raise ValueError("unauthenticated vector first-touch evidence")
     entries = report.get("environments")
     frames = report.get("frames")
+    single_course_lane = report.get("single_course_lane")
     if (
         not isinstance(entries, list)
-        or not 2 <= len(entries) <= 16
+        or not 1 <= len(entries) <= 16
+        or (len(entries) == 1) != (single_course_lane is not None)
+        or (
+            single_course_lane is not None
+            and (type(single_course_lane) is not int or not 0 <= single_course_lane < 16)
+        )
         or type(frames) is not int
         or not 50 <= frames <= 400
         or [row.get("environment") for row in entries] != list(range(len(entries)))
@@ -200,27 +206,39 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
         raise ValueError("invalid vector physics trace")
     changed_command_frames = audit_body_trace(folder, report, frames, n)
     lanes = np.asarray([row["lane_y_m"] for row in entries], dtype=np.float64)
-    if not np.isfinite(lanes).all() or np.min(np.diff(lanes)) < 6.0:
+    if not np.isfinite(lanes).all() or (n > 1 and np.min(np.diff(lanes)) < 6.0):
         raise ValueError("training lanes are not physically isolated")
     excursion = float(np.max(np.abs(positions[:, :, 1] - lanes[None, :])))
     if report.get("schema") == "rsi_isaac_vector_first_touch_late_swing_v1":
-        with np.load(folder / "body_trace.npz", allow_pickle=False) as body:
-            roots = body["root_pose_xyzw_m"][:, :, :3]
-        robot_distance = np.linalg.norm(positions[:, :, None, :] - roots[:, None, :, :], axis=-1)
-        ball_distance = np.linalg.norm(positions[:, :, None, :] - positions[:, None, :, :], axis=-1)
-        diagonal = np.eye(n, dtype=np.bool_)
-        robot_distance[:, diagonal] = np.inf
-        ball_distance[:, diagonal] = np.inf
-        min_robot = float(np.min(robot_distance))
-        min_ball = float(np.min(ball_distance))
-        if (
-            excursion >= 6.0
-            or min_robot <= 2.0
-            or min_ball <= 1.0
-            or not np.isclose(report.get("minimum_cross_robot_distance_m", np.nan), min_robot)
-            or not np.isclose(report.get("minimum_cross_ball_distance_m", np.nan), min_ball)
-        ):
-            raise ValueError("late-swing lane isolation not physically verified")
+        if n == 1:
+            if (
+                excursion >= 4.0
+                or report.get("minimum_cross_robot_distance_m") is not None
+                or report.get("minimum_cross_ball_distance_m") is not None
+            ):
+                raise ValueError("single-instance isolation contract changed")
+        else:
+            with np.load(folder / "body_trace.npz", allow_pickle=False) as body:
+                roots = body["root_pose_xyzw_m"][:, :, :3]
+            robot_distance = np.linalg.norm(
+                positions[:, :, None, :] - roots[:, None, :, :], axis=-1
+            )
+            ball_distance = np.linalg.norm(
+                positions[:, :, None, :] - positions[:, None, :, :], axis=-1
+            )
+            diagonal = np.eye(n, dtype=np.bool_)
+            robot_distance[:, diagonal] = np.inf
+            ball_distance[:, diagonal] = np.inf
+            min_robot = float(np.min(robot_distance))
+            min_ball = float(np.min(ball_distance))
+            if (
+                excursion >= 6.0
+                or min_robot <= 2.0
+                or min_ball <= 1.0
+                or not np.isclose(report.get("minimum_cross_robot_distance_m", np.nan), min_robot)
+                or not np.isclose(report.get("minimum_cross_ball_distance_m", np.nan), min_ball)
+            ):
+                raise ValueError("late-swing lane isolation not physically verified")
     elif excursion >= 4.0:
         raise ValueError("ball escaped its lane")
     courses = []
@@ -228,9 +246,10 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
     if training_seed is not None:
         if (
             type(training_seed) is not int
-            or n != 16
+            or n not in (1, 16)
             or "course_catalog_hash" not in report
-            or report["course_catalog_hash"] != hash_json(sample_training_courses(training_seed, n))
+            or report["course_catalog_hash"]
+            != hash_json(sample_training_courses(training_seed, 16))
         ):
             raise ValueError("training course split is unauthenticated")
     elif "course_catalog_hash" in report:
@@ -272,7 +291,14 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
             sides.add("left" if force[first, i, 0] >= force[first, i, 1] else "right")
     if len(set(courses)) != len(courses):
         raise ValueError("duplicate courses are not independent episodes")
-    if training_seed is not None and tuple(courses) != sample_training_courses(training_seed, n):
+    expected_courses = (
+        (sample_training_courses(training_seed, 16)[single_course_lane],)
+        if training_seed is not None and single_course_lane is not None
+        else sample_training_courses(training_seed, 16)
+        if training_seed is not None
+        else None
+    )
+    if training_seed is not None and tuple(courses) != expected_courses:
         raise ValueError("training courses differ from committed seed")
     result = {
         "schema": "rsi_isaac_vector_first_touch_audit_v1",

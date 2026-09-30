@@ -1,0 +1,21 @@
+{
+  "schema": "rsi_first_touch_cpu_lane_isolation_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "purpose": "Diagnose whether untouched-lane precontact drift under one-lane intervention is specific to batched GPU PhysX execution.",
+  "development_seed": 20260953,
+  "target_lane": 4,
+  "device": "cpu",
+  "frames": 300,
+  "env_count": 16,
+  "frozen_late_swing_actor": true,
+  "control_support_knee_retract_m": 0.0,
+  "candidate_support_knee_retract_m": 0.04,
+  "candidate_support_knee_lane": 4,
+  "require_same_runner_source": true,
+  "require_independent_contact_and_action_audits": true,
+  "compare_all_untreated_lanes_before_first_contact": true,
+  "decision": "If CPU also shows untreated precontact drift, do not attribute the leak specifically to GPU PhysX; if it does not, investigate GPU batched solver and keep both modes SIM_ONLY.",
+  "fresh_holdout_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

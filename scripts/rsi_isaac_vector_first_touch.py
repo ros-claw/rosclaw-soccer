@@ -20,6 +20,7 @@ parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--training-course-seed", type=int)
+parser.add_argument("--single-course-lane", type=int)
 parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
 parser.add_argument("--planner-seed", type=int, default=30300)
 parser.add_argument("--near-ball-gap-m", type=float)
@@ -48,7 +49,19 @@ if (
     or not args.model_root.is_dir()
     or args.output_dir.exists()
     or not 50 <= args.frames <= 400
-    or not 2 <= args.env_count <= 16
+    or not 1 <= args.env_count <= 16
+    or (
+        (args.env_count == 1) != (args.single_course_lane is not None)
+        or (
+            args.single_course_lane is not None
+            and (
+                args.training_course_seed is None
+                or not 0 <= args.single_course_lane < 16
+                or args.candidate_actions is not None
+                or args.temporal_policy_actions is not None
+            )
+        )
+    )
     or not 0.8 <= args.navigation_speed_mps <= 1.5
     or not 0 <= args.planner_seed <= 2**31 - 3000
     or (
@@ -83,7 +96,7 @@ if (
         args.late_swing_policy is not None
         and (
             args.frames != 300
-            or args.env_count != 16
+            or args.env_count not in (1, 16)
             or args.training_course_seed is None
             or not args.record_body_trace
             or not args.record_foot_geometry
@@ -121,7 +134,9 @@ if (
     or (
         args.training_course_seed is not None
         and (
-            args.env_count != 16 or args.reset_replay or not 0 <= args.training_course_seed < 2**32
+            args.env_count not in (1, 16)
+            or args.reset_replay
+            or not 0 <= args.training_course_seed < 2**32
         )
     )
 ):
@@ -282,10 +297,17 @@ def main() -> None:
     # At 6 s the ball can deflect >2 m sideways; 8 m lane spacing prevents
     # a struck ball from contaminating a neighboring G1's episode.
     lanes = np.arange(args.env_count, dtype=np.float64) * 8.0
+    full_courses = (
+        sample_training_courses(args.training_course_seed, 16)
+        if args.training_course_seed is not None
+        else None
+    )
     courses = list(
-        static_development_courses(args.env_count)
-        if args.training_course_seed is None
-        else sample_training_courses(args.training_course_seed, args.env_count)
+        (full_courses[args.single_course_lane],)
+        if args.single_course_lane is not None and full_courses is not None
+        else static_development_courses(args.env_count)
+        if full_courses is None
+        else full_courses
     )
     candidate = None
     temporal_candidate = None
@@ -314,9 +336,10 @@ def main() -> None:
             or parent.get("near_ball_speed_mps") != args.near_ball_speed_mps
             or parent.get("near_ball_incoming_only", False) is not args.near_ball_incoming_only
             or parent.get("training_course_seed") != args.training_course_seed
+            or parent.get("single_course_lane") != args.single_course_lane
             or (
                 args.training_course_seed is not None
-                and parent.get("course_catalog_hash") != hash_json(courses)
+                and parent.get("course_catalog_hash") != hash_json(full_courses)
             )
             or len(parent["environments"]) != len(courses)
             or [
@@ -924,22 +947,27 @@ def main() -> None:
     lateral_excursion = np.max(np.abs(positions_arr[:, :, 1] - lanes[None, :]), axis=0)
     if late_actor is not None:
         root_xyz = root_observations[:, :, :3]
-        cross_robot_distance = np.linalg.norm(
-            positions_arr[:, :, None, :] - root_xyz[:, None, :, :], axis=-1
-        )
-        cross_ball_distance = np.linalg.norm(
-            positions_arr[:, :, None, :] - positions_arr[:, None, :, :], axis=-1
-        )
-        diagonal = np.eye(args.env_count, dtype=np.bool_)
-        cross_robot_distance[:, diagonal] = np.inf
-        cross_ball_distance[:, diagonal] = np.inf
-        minimum_cross_robot_distance = float(np.min(cross_robot_distance))
-        minimum_cross_ball_distance = float(np.min(cross_ball_distance))
-        isolated = bool(
-            np.max(lateral_excursion) < 6.0
-            and minimum_cross_robot_distance > 2.0
-            and minimum_cross_ball_distance > 1.0
-        )
+        if args.env_count == 1:
+            minimum_cross_robot_distance = None
+            minimum_cross_ball_distance = None
+            isolated = bool(np.max(lateral_excursion) < 4.0)
+        else:
+            cross_robot_distance = np.linalg.norm(
+                positions_arr[:, :, None, :] - root_xyz[:, None, :, :], axis=-1
+            )
+            cross_ball_distance = np.linalg.norm(
+                positions_arr[:, :, None, :] - positions_arr[:, None, :, :], axis=-1
+            )
+            diagonal = np.eye(args.env_count, dtype=np.bool_)
+            cross_robot_distance[:, diagonal] = np.inf
+            cross_ball_distance[:, diagonal] = np.inf
+            minimum_cross_robot_distance = float(np.min(cross_robot_distance))
+            minimum_cross_ball_distance = float(np.min(cross_ball_distance))
+            isolated = bool(
+                np.max(lateral_excursion) < 6.0
+                and minimum_cross_robot_distance > 2.0
+                and minimum_cross_ball_distance > 1.0
+            )
     else:
         minimum_cross_robot_distance = None
         minimum_cross_ball_distance = None
@@ -1102,7 +1130,9 @@ def main() -> None:
         report["torch_batch_max_internal_target_difference_rad"] = batch_target_max_difference
     if args.training_course_seed is not None:
         report["training_course_seed"] = args.training_course_seed
-        report["course_catalog_hash"] = hash_json(courses)
+        report["course_catalog_hash"] = hash_json(full_courses)
+    if args.single_course_lane is not None:
+        report["single_course_lane"] = args.single_course_lane
     if args.near_ball_gap_m is not None:
         report["near_ball_gap_m"] = args.near_ball_gap_m
         report["near_ball_speed_mps"] = args.near_ball_speed_mps
