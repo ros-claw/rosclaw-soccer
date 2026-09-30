@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.rsi.contact_motor_primitive import CAP_RAD, make_policy
+from rosclaw_soccer.rsi.contact_motor_strike import make_policy as make_strike_policy
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
@@ -67,6 +68,7 @@ def main() -> None:
         parser.add_argument(f"--{name}", required=True, type=Path)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--phase-profile", choices=("preparation", "strike"), default="preparation")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     runner = root / "scripts/rsi_isaac_vector_first_touch.py"
@@ -74,8 +76,11 @@ def main() -> None:
     dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True).strip()
     if head != args.source_commit or dirty or (args.output_root.exists() and not args.resume):
         parser.error("clean frozen commit and fresh output, or explicit resume required")
+    version = 303 if args.phase_profile == "preparation" else 304
     protocol = json.loads(
-        (root / "docs/rsi/protocols/bilateral-contact-motor-v303.json").read_text(encoding="utf-8")
+        (root / f"docs/rsi/protocols/bilateral-contact-motor-v{version}.json").read_text(
+            encoding="utf-8"
+        )
     )
     if (
         protocol["courses"] != [list(c) for c in COURSES]
@@ -90,6 +95,7 @@ def main() -> None:
         "asset_hash": hash_bytes(args.g1_usd.read_bytes()),
         "frozen_actor_file_hash": hash_bytes(args.late_swing_policy.read_bytes()),
         "protocol_hash": hash_json(protocol),
+        "phase_profile": args.phase_profile,
         "activation_ceiling": "SIM_ONLY",
     }
     commitment_hash = hash_json(commitment)
@@ -150,7 +156,9 @@ def main() -> None:
         for index, knots in enumerate(proposals):
             write_once(
                 args.output_root / f"policies/g{generation}-c{index}.json",
-                make_policy(knots, commitment_hash),
+                (make_policy if args.phase_profile == "preparation" else make_strike_policy)(
+                    knots, commitment_hash
+                ),
             )
 
         def worker(gpu: int, generation: int = generation) -> list[dict[str, Any]]:
@@ -229,9 +237,10 @@ def main() -> None:
         and best["score"][1] == 1
         and best["score"][2] == 0
         and best["score"][3] == 2
+        and (args.phase_profile != "strike" or best["score"][4] == 3)
     )
     summary = {
-        "schema": "rsi_bilateral_contact_motor_training_v303",
+        "schema": f"rsi_bilateral_contact_motor_training_v{version}",
         "activation_ceiling": "SIM_ONLY",
         "commitment": commitment,
         "baseline_08": baseline_08,

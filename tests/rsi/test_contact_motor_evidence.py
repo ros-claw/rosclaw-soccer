@@ -4,16 +4,19 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+from rosclaw_soccer.rsi import contact_motor_strike as strike
 from rosclaw_soccer.rsi.contact_motor_evidence import audit_motor_arrays
 from rosclaw_soccer.rsi.contact_motor_primitive import JOINT_NAMES, make_policy, motor_delta
 from rosclaw_soccer.rsi.taskspace_swing_evidence import LEG_NAMES
 from rosclaw_soccer.sim.contracts import hash_json
 
 
-def evidence():
+def evidence(*, strike_profile=False):
     order = list(G1_DDS_JOINT_NAMES)
     ids = [order.index(n) for n in JOINT_NAMES]
-    policy = make_policy(np.full((3, 12), 0.08), hash_json({"train": 303}))
+    policy = (strike.make_policy if strike_profile else make_policy)(
+        np.full((3, 12), 0.08), hash_json({"train": 303})
+    )
     limits = np.tile([-1.0, 1.0], (1, 29, 1))
     baseline = np.zeros((300, 1, 29))
     force = np.zeros((300, 1, 6))
@@ -49,7 +52,7 @@ def evidence():
     previous = np.zeros(12)
     contact = previous.copy()
     for frame in range(300):
-        delta = motor_delta(
+        delta = (strike.motor_delta if strike_profile else motor_delta)(
             np.asarray(policy["knots_rad"]),
             0.8,
             np.zeros(12),
@@ -79,6 +82,12 @@ def evidence():
 
 def test_every_motor_target_and_contact_release_is_reconstructed():
     result = audit_motor_arrays(*evidence())
+    assert result["contact_motor_action_audited"]
+    assert result["contact_motor_active_frames"] > 70
+
+
+def test_explicit_strike_profile_is_reconstructed_without_legacy_reinterpretation():
+    result = audit_motor_arrays(*evidence(strike_profile=True))
     assert result["contact_motor_action_audited"]
     assert result["contact_motor_active_frames"] > 70
 

@@ -272,14 +272,14 @@ from rosclaw_soccer.rsi import taskspace_gate_memory as taskspace_gate_module  #
 from rosclaw_soccer.rsi.conservative_approach_rectangle import (  # noqa: E402
     load_guarded_approach_policy,
 )
-from rosclaw_soccer.rsi.contact_motor_primitive import (  # noqa: E402
-    JOINT_NAMES as MOTOR_JOINT_NAMES,
-)
-from rosclaw_soccer.rsi.contact_motor_primitive import (  # noqa: E402
+from rosclaw_soccer.rsi.contact_motor_contract import (  # noqa: E402
     load_policy as load_motor_policy,
 )
-from rosclaw_soccer.rsi.contact_motor_primitive import (  # noqa: E402
+from rosclaw_soccer.rsi.contact_motor_contract import (  # noqa: E402
     motor_delta,
+)
+from rosclaw_soccer.rsi.contact_motor_primitive import (  # noqa: E402
+    JOINT_NAMES as MOTOR_JOINT_NAMES,
 )
 from rosclaw_soccer.rsi.contact_time_phase_features import (  # noqa: E402
     current_context,
@@ -1076,6 +1076,7 @@ def main() -> None:
                 for lane in range(args.env_count):
                     contact_frame = int(swing_contact_frame[lane])
                     delta = motor_delta(
+                        motor_policy,
                         motor_knots,
                         float(ball_xyz_frame[lane, 0] - robot_root_observations[-1][lane, 0]),
                         motor_baseline[lane],

@@ -8,7 +8,8 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
-from rosclaw_soccer.rsi.contact_motor_primitive import JOINT_NAMES, motor_delta, validate_policy
+from rosclaw_soccer.rsi.contact_motor_contract import motor_delta, validate_policy
+from rosclaw_soccer.rsi.contact_motor_primitive import JOINT_NAMES
 from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_trace
 from rosclaw_soccer.sim.contracts import hash_bytes
 
@@ -67,6 +68,7 @@ def audit_motor_arrays(
     contact_frame = None
     for frame in range(300):
         expected = motor_delta(
+            report["contact_motor_policy"],
             knots,
             float(ball[frame, 0, 0] - root[frame, 0, 0]),
             baseline[frame, 0],
