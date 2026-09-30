@@ -37,6 +37,7 @@ def load_verified_bank(
         not in (
             [(seed, lane) for seed in (20260953, 20260954) for lane in range(0, 16, 2)],
             [(seed, lane) for seed in (20260955, 20260956) for lane in range(0, 16, 2)],
+            [(20260957, lane) for lane in range(0, 16, 2)],
         )
     ):
         raise ValueError("incomplete or unauthenticated early-acquisition bank")

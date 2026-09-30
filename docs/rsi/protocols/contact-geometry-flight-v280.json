@@ -1,0 +1,14 @@
+{
+  "schema": "rsi_contact_geometry_flight_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "hypothesis": "At first foot-only collision, ball minus contacting foot lateral center is a useful physical predictor of 60-frame lateral ball displacement.",
+  "training": "Audited independent acquisition banks v278 and v279, seeds 20260953-56; train only foot-only contacts, both action arms.",
+  "one_shot_test_seed": 20260957,
+  "test_lanes": [0, 2, 4, 6, 8, 10, 12, 14],
+  "test_procedure": "New independent SONIC parents and paired acquisition arms with source/asset/actor frozen; no model refit on test episodes.",
+  "model": "Ordinary least-squares lateral_60_m = intercept + slope * measured ball-minus-contacting-foot y at first contact; dominant measured foot force chooses side if both feet contact.",
+  "test_gate": "At least 8 clean foot-only test episodes, held-out mean absolute lateral error <=0.30 m and at least 30% lower than the frozen training-mean predictor. Otherwise reject mechanism as insufficiently predictive.",
+  "policy_input_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

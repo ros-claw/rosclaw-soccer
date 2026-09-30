@@ -121,7 +121,7 @@ def main() -> None:
     seeds = tuple(args.seeds)
     courses = [(seed, lane) for seed in seeds for lane in LANES]
     if (
-        seeds != (20260955, 20260956)
+        seeds not in ((20260955, 20260956), (20260957,))
         or not runner.is_file()
         or not args.isaac_python.is_file()
         or not args.g1_usd.is_file()
