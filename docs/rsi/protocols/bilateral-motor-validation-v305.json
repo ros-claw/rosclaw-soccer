@@ -1,0 +1,14 @@
+{
+  "schema": "rsi_bilateral_motor_consumed_validation_protocol_v305",
+  "activation_ceiling": "SIM_ONLY",
+  "partition": "CONSUMED_DEV",
+  "courses": [[20261177,0],[20261227,4],[20261282,0],[20261360,0],[20261378,0],[20261440,2],[20261446,0],[20261095,2],[20261097,2],[20261146,4],[20261148,2],[20260975,4]],
+  "source_training_report_hash": "sha256:547fffb4a192a6b4ccfe96a287a1040129780a397322e460e0cfb7dc0c170fb5",
+  "motor_policy_hash": "sha256:d170eaa06dd803ca4849d914dc01333477cd1786ec34a45897b40e7f021b734a",
+  "policy_updates_allowed": false,
+  "arms": ["gain_08", "gain_12", "gain_12_plus_frozen_learned_motor"],
+  "training_course_overlap": [[20261227,4],[20261446,0],[20261095,2]],
+  "development_gate": "high-quality count exceeds both baselines by at least two, no old high-quality loss, no loss of raw gain successes, no clean-foot loss or new out relative to 0.8, minimum pelvis >= 0.65m",
+  "fresh_holdout_open_authorized": false,
+  "promotion_authorized": false
+}

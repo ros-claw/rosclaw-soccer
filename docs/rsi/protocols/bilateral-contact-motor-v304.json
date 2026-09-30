@@ -6,6 +6,7 @@
   "population": 8,
   "generations": 3,
   "parameter_count": 36,
+  "warm_start": "completed hash-bound v303 best policy; zero-residual anchor and copied-center candidate retained; rejected predecessor is training initialization only, never deployment authority",
   "phase_profile": "strike",
   "phase_gap_start_m": 1.4,
   "phase_gap_end_m": -0.35,

@@ -15,6 +15,7 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.contact_motor_contract import load_policy as load_motor_policy
 from rosclaw_soccer.rsi.contact_motor_primitive import CAP_RAD, make_policy
 from rosclaw_soccer.rsi.contact_motor_strike import make_policy as make_strike_policy
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -62,6 +63,25 @@ def score(rows: list[dict[str, Any]], baseline: list[dict[str, Any]]) -> tuple[f
     )
 
 
+def load_warm_start(
+    policy_path: Path, summary_path: Path
+) -> tuple[dict[str, Any], np.ndarray[Any, Any], str]:
+    previous = json.loads(summary_path.read_text(encoding="utf-8"))
+    initial, knots = load_motor_policy(policy_path)
+    if (
+        previous.get("schema") != "rsi_bilateral_contact_motor_training_v303"
+        or previous.get("activation_ceiling") != "SIM_ONLY"
+        or previous.get("report_hash")
+        != hash_json({k: v for k, v in previous.items() if k != "report_hash"})
+        or Path(previous["best"]["policy"]).resolve() != policy_path.resolve()
+        or initial["training_commitment"] != hash_json(previous["commitment"])
+        or previous.get("independent_physical_episode_count") != 84
+        or previous.get("promotion_authorized") is not False
+    ):
+        raise ValueError("unbound completed predecessor training for warm start")
+    return initial, knots, str(previous["report_hash"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("output-root", "isaac-python", "g1-usd", "model-root", "late-swing-policy"):
@@ -69,6 +89,8 @@ def main() -> None:
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--phase-profile", choices=("preparation", "strike"), default="preparation")
+    parser.add_argument("--initial-policy", type=Path)
+    parser.add_argument("--initial-training-summary", type=Path)
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     runner = root / "scripts/rsi_isaac_vector_first_touch.py"
@@ -98,6 +120,17 @@ def main() -> None:
         "phase_profile": args.phase_profile,
         "activation_ceiling": "SIM_ONLY",
     }
+    initial_knots = np.zeros((3, 12))
+    if (args.initial_policy is None) != (args.initial_training_summary is None):
+        parser.error("warm start requires policy and completed training summary together")
+    if args.initial_policy is not None:
+        if args.phase_profile != "strike":
+            parser.error("warm start is registered only for explicit strike successor")
+        initial, initial_knots, previous_hash = load_warm_start(
+            args.initial_policy, args.initial_training_summary
+        )
+        commitment["initial_policy_hash"] = initial["policy_hash"]
+        commitment["initial_training_report_hash"] = previous_hash
     commitment_hash = hash_json(commitment)
     args.output_root.mkdir(parents=True, exist_ok=args.resume)
     (args.output_root / "logs").mkdir(exist_ok=args.resume)
@@ -145,14 +178,16 @@ def main() -> None:
         args.output_root / "baseline.json", {"rows": base, "commitment_hash": commitment_hash}
     )
     rng = np.random.default_rng(20261001303)
-    center = np.zeros((3, 12))
+    center = initial_knots.copy()
     all_candidates: list[dict[str, Any]] = []
     best: dict[str, Any] | None = None
     for generation, sigma in enumerate((0.04, 0.03, 0.022)):
         noise = rng.normal(size=(POPULATION // 2, 3, 12))
         proposals = np.clip(center + sigma * np.concatenate((noise, -noise)), -CAP_RAD, CAP_RAD)
         # The unmodified center is a retention anchor, not an independent sample.
-        proposals[0] = center
+        proposals[0] = np.zeros((3, 12)) if generation == 0 else center
+        if generation == 0 and args.initial_policy is not None:
+            proposals[1] = center
         for index, knots in enumerate(proposals):
             write_once(
                 args.output_root / f"policies/g{generation}-c{index}.json",
