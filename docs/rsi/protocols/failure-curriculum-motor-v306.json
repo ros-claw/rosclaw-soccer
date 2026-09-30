@@ -1,0 +1,22 @@
+{
+  "schema": "rsi_failure_curriculum_motor_protocol_v306",
+  "activation_ceiling": "SIM_ONLY",
+  "partition": "TRAIN_CONSUMED",
+  "courses": [[20261177,0],[20261227,4],[20261282,0],[20261360,0],[20261378,0],[20261440,2],[20261446,0],[20261095,2],[20261097,2],[20261146,4],[20261148,2],[20260975,4]],
+  "source_validation_hash": "sha256:df875a1d41cd33e5883d6ec9c52417aed6a2d8ca95637b7a130e6d6d8c3b8abf",
+  "initial_motor_policy_hash": "sha256:d170eaa06dd803ca4849d914dc01333477cd1786ec34a45897b40e7f021b734a",
+  "parameter_count": 37,
+  "population": 8,
+  "generations": 4,
+  "new_parameter": "learned preparation end gap, bounded [-0.35,0.25]m; exact old arithmetic at 0.25m",
+  "failed_courses": [[20261177,0],[20261227,4],[20261282,0],[20261360,0],[20261440,2]],
+  "protected_courses": [[20261378,0],[20261446,0],[20261095,2],[20261097,2],[20261146,4],[20261148,2],[20260975,4]],
+  "reproduction_gate": "all 12 frozen predecessor body and ball traces must be byte-identical across source change; initial new profile clone must also match",
+  "frozen": ["SONIC", "late-swing actor", "asset", "navigation gain 1.2", "initial good-course references"],
+  "ranking": ["pelvis-safe", "negative predecessor high-quality loss", "negative raw high-quality loss", "negative old clean-foot loss", "negative new out", "negative old high-quality loss", "high-quality count", "first-touch reward"],
+  "training_gate": "no declared safety or retention loss and at least 10/12 high-quality; fresh/CPU/long-chain qualification still missing",
+  "baseline_reuse": "old 0.8/1.2 retained numerical anchors remain historical; candidate causal comparison is against same-source reproduced frozen motor, not an unproven cross-source A/B",
+  "planned_physical_episodes": 408,
+  "fresh_holdout_open_authorized": false,
+  "promotion_authorized": false
+}

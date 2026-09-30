@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from rosclaw_soccer.rsi import contact_motor_phase as phase
 from rosclaw_soccer.rsi import contact_motor_primitive as preparation
 from rosclaw_soccer.rsi import contact_motor_strike as strike
 
@@ -17,6 +18,8 @@ def module(policy: dict[str, Any]) -> Any:
         return preparation
     if policy.get("schema") == strike.SCHEMA:
         return strike
+    if policy.get("schema") == phase.SCHEMA:
+        return phase
     raise ValueError("unsupported explicit motor policy schema")
 
 
@@ -40,6 +43,17 @@ def motor_delta(
     contact_delta: np.ndarray[Any, Any],
     frames_since_contact: int | None,
 ) -> np.ndarray[Any, Any]:
+    if policy.get("schema") == phase.SCHEMA:
+        return phase.motor_delta(
+            knots,
+            gap_m,
+            baseline,
+            limits,
+            previous,
+            contact_delta,
+            frames_since_contact,
+            end_gap_m=policy["phase_gap_end_m"],
+        )
     return cast(
         np.ndarray[Any, Any],
         module(policy).motor_delta(
