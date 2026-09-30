@@ -1,0 +1,22 @@
+{
+  "schema": "rsi_precontact_proprio_risk_learning_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "source_failed_frame0_report_hash": "sha256:21d3173eddcbe24372aba772708b12106c180b0efa5c3a8e9dc0353bafd7e2ca",
+  "source_banks": [
+    "sha256:8172d79326422997eeb5706e7ea554a080441d292b08dbfa48180334d9f086ae",
+    "sha256:eefecf2089224345a10d4b9e45f382685c71ccc16de778a6190510667fe658f8",
+    "sha256:540da31452042c69d61a1ecb598915c0f416051c422e2b637c1de19e3ea573a1",
+    "sha256:b0086ab12bc84957058ea76efdc0b89e50c34ad7ae3a27f490286ef3f5a04740"
+  ],
+  "causal_observation": "Candidate parent frame 20 and frame 30 only, both before first collision. Frame 30 is 0.6 s; no later collision, actor reward, seed or lane feature. Thirteen features: ball/root relative x and y; ball vx; root vx/vy; four body-ball distances (two ankles, two knees); two ankle heights; two knee-ball closing speeds from frames 20..30.",
+  "label": "New harm of 1.2 relative to 0.8: originally clean foot becomes nonfoot or originally <=4m ball excursion becomes >4m.",
+  "models": [
+    "standardized logistic regression C=0.1 class_weight={0:1,1:4} max_iter=1000 random_state=0",
+    "random forest 200 trees max_depth=4 min_samples_leaf=2 class_weight={0:1,1:4} random_state=0"
+  ],
+  "validation": "Leave-one-seed-out on all 81 consumed paired courses; report probability thresholds 0.2 and 0.5 with risk recall, safe vetoes and selected high-quality. Threshold comparison consumes this development bank and requires a new independent physical test. A frame-30 prediction does not prove a switch from 1.2 to 0.8 is physically safe.",
+  "gate": "No model/motor export if any held-out risk missed or if frame 30 is not strictly precontact. A passing offline model only authorizes a separate SIM_ONLY switched-control physical experiment.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}
