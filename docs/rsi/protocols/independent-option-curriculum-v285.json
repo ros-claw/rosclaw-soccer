@@ -1,0 +1,13 @@
+{
+  "schema": "rsi_independent_option_curriculum_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "training_seeds": [20260958, 20260959, 20260960, 20260961, 20260962, 20260963, 20260964, 20260965],
+  "sealed_test_seed": 20260966,
+  "lanes_per_seed": [0, 2, 4, 6, 8, 10, 12, 14],
+  "arms": ["acquisition_055", "acquisition_095", "acquisition_095_leadn004"],
+  "procedure": "For each of 64 training courses, collect one independent frozen SONIC parent and three independent SIM_ONLY action arms, all 300 frames, four A6000 workers, strict physical and action replay audits. No batched causal labels.",
+  "reward": "Measured clean first foot contact and 60-frame forward/lateral trajectory; out-of-play >4 m is a hard negative; pelvis <0.65 m is a hard negative.",
+  "model_selection": "Train regularized causal-context option-value model using frame-30 measured state only. Compare to frozen training-fold best fixed arm in eight leave-one-seed-out folds. Permit one-shot seed 20260966 only if selected mean reward exceeds fixed in at least six folds, no selected out-of-play excess, and no loss of clean foot contact. Otherwise reject and diagnose.",
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

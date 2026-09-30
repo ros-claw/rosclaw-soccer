@@ -20,6 +20,11 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 LANES = tuple(range(0, 16, 2))
 ARMS = {"acquisition_055": 0.55, "acquisition_095": 0.95}
+CURRICULUM_ARMS = {
+    "acquisition_055": (0.55, 0.0),
+    "acquisition_095": (0.95, 0.0),
+    "acquisition_095_leadn004": (0.95, -0.04),
+}
 
 
 def collect_pair(
@@ -34,13 +39,19 @@ def collect_pair(
     lane: int,
     gpu: int,
     source_hash: str,
+    include_lateral_lead: bool,
 ) -> dict[str, Any]:
-    """Run two distinct simulator processes and audit both before comparing."""
+    """Run separate simulator processes and audit each counterfactual arm."""
     parent_path = parent_root / f"seed{seed}-lane{lane}-parent" / "report.json"
     parent = json.loads(parent_path.read_text(encoding="utf-8"))
     results: dict[str, Any] = {}
     features: np.ndarray[Any, Any] | None = None
-    for arm, gap in ARMS.items():
+    profiles = (
+        CURRICULUM_ARMS
+        if include_lateral_lead
+        else {name: (gap, 0.0) for name, gap in ARMS.items()}
+    )
+    for arm, (gap, lead) in profiles.items():
         folder = root / f"seed{seed}-lane{lane}-{arm}"
         log_path = root / "logs" / f"seed{seed}-lane{lane}-{arm}.log"
         if not (folder / "report.json").is_file():
@@ -79,6 +90,8 @@ def collect_pair(
                 "0.08",
                 "--late-swing-side-acquisition-gap-m",
                 str(gap),
+                "--late-swing-lateral-lead-m",
+                str(lead),
                 "--headless",
                 "--device",
                 "cuda:0",
@@ -111,6 +124,7 @@ def collect_pair(
             or report.get("course_catalog_hash") != parent.get("course_catalog_hash")
             or report.get("parent_report_hash") != parent.get("report_hash")
             or report.get("late_swing_side_acquisition_gap_m") != gap
+            or report.get("taskspace_lateral_lead_m") != lead
             or report.get("taskspace_lateral_cap_m") != 0.15
             or report.get("taskspace_forward_m") != 0.08
             or report.get("taskspace_revalidate_swing_side") is not True
@@ -144,7 +158,7 @@ def collect_pair(
             "maximum_lateral_excursion_m": report["single_instance_max_lateral_excursion_m"],
             **displacement,
         }
-    if results["acquisition_055"]["course"] != results["acquisition_095"]["course"]:
+    if any(result["course"] != results["acquisition_055"]["course"] for result in results.values()):
         raise ValueError(f"paired courses differ: {seed}/{lane}")
     return {"seed": seed, "lane": lane, "gpu": gpu, "arms": results}
 
@@ -173,13 +187,21 @@ def main() -> None:
     parser.add_argument("--model-root", required=True, type=Path)
     parser.add_argument("--late-swing-policy", required=True, type=Path)
     parser.add_argument("--seeds", nargs="+", type=int, default=[20260953, 20260954])
+    parser.add_argument("--include-lateral-lead", action="store_true")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     runner = Path(__file__).with_name("rsi_isaac_vector_first_touch.py")
     seeds = tuple(args.seeds)
     courses = [(seed, lane) for seed in seeds for lane in LANES]
     if (
-        seeds not in ((20260953, 20260954), (20260955, 20260956), (20260957,))
+        seeds
+        not in (
+            (20260953, 20260954),
+            (20260955, 20260956),
+            (20260957,),
+            tuple(range(20260958, 20260966)),
+        )
+        or (args.include_lateral_lead is not (seeds == tuple(range(20260958, 20260966))))
         or not runner.is_file()
         or not args.isaac_python.is_file()
         or not args.g1_usd.is_file()
@@ -205,6 +227,7 @@ def main() -> None:
         model_root=args.model_root,
         actor=args.late_swing_policy,
         source_hash=source_hash,
+        include_lateral_lead=args.include_lateral_lead,
     )
     episodes: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -215,7 +238,11 @@ def main() -> None:
             episodes.extend(gpu_episodes)
             failures.extend(gpu_failures)
     summary: dict[str, Any] = {
-        "schema": "rsi_independent_early_acquisition_bank_v1",
+        "schema": (
+            "rsi_independent_first_touch_option_bank_v2"
+            if args.include_lateral_lead
+            else "rsi_independent_early_acquisition_bank_v1"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "source_hash": source_hash,
         "asset_hash": hash_bytes(args.g1_usd.read_bytes()),
