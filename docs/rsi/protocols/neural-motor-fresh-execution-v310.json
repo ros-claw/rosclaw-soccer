@@ -1,0 +1,20 @@
+{
+  "schema": "soccer.rsi.neural_fresh_execution_protocol.v310",
+  "activation_ceiling": "SIM_ONLY",
+  "quarantined_pool": "neural-motor-fresh-quarantine-v307.json",
+  "pool_changed": false,
+  "candidate_selection": "compare independently audited consumed ranks of v308 and v309; higher rank wins, tie retains v308; never observe fresh data before selection",
+  "parent": "final v306 globally selected champion",
+  "parent_policy_hash": "sha256:3a27801676052c86c3a30ed160e92a6f31d517912cb60674c746bee3947d5fe4",
+  "parent_training_report_hash": "sha256:7253adf29d89c34365b8088e9fad1ff43551cba221159c22708fe6b218084f88",
+  "physical_episode_count": 120,
+  "arms_per_course": ["unmodified physical reproduction parent", "v306 champion actor", "one frozen selected neural actor"],
+  "learning_during_exam": false,
+  "usage_ledger": "atomic one-time protocol-hash keyed allocation commitment outside source; explicit same-commitment resume only; allocated pool is permanently consumed",
+  "statistics": "20000 paired whole-seed bootstrap samples, seed 20261001310; ten independent seed clusters, not forty independent lanes",
+  "primary_gate": "absolute high-quality gain >=0.15 and 95% cluster CI lower bound >0",
+  "safety_gate": "no clean-foot regression, no newly out-of-play course and pelvis >=0.65m",
+  "promotion_requires_additionally": ["CPU MuJoCo", "reload", "retention", "continuous chain"],
+  "promotion_authorized": false,
+  "hardware_authorized": false
+}
