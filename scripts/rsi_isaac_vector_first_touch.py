@@ -616,6 +616,16 @@ def main() -> None:
         )
 
         online_model = json.loads(args.contact_motor_online_model.read_text(encoding="utf-8"))
+        if online_model.get("schema") == "soccer.rsi.progressive_contextual_actor_critic.v312":
+            from rosclaw_soccer.rsi.progressive_motor_actor import (
+                configure_preview as configure_progressive_preview,
+            )
+            from rosclaw_soccer.rsi.progressive_motor_actor import (
+                validate_model as validate_progressive_model,
+            )
+
+            configure_online_preview = configure_progressive_preview
+            validate_online_model = validate_progressive_model
         validate_online_model(online_model)
         motor_knots = np.zeros((3, 12))
         motor_policy = make_phase_policy(motor_knots, 0.25, online_model["model_hash"])

@@ -166,7 +166,12 @@ def _run(
         expected_motor_hash = report["contact_motor_policy"]["policy_hash"]
     if motor_online is not None and kind == "actor":
         model = json.loads(motor_online.read_text(encoding="utf-8"))
-        proof = report.get("contact_motor_policy", {}).get("online_motor_proof", {})
+        proof_key = (
+            "progressive_motor_proof"
+            if model.get("schema") == "soccer.rsi.progressive_contextual_actor_critic.v312"
+            else "online_motor_proof"
+        )
+        proof = report.get("contact_motor_policy", {}).get(proof_key, {})
         if proof.get("model", {}).get("model_hash") != model["model_hash"]:
             raise ValueError("online preview does not bind requested numerical model")
         expected_motor_hash = report["contact_motor_policy"]["policy_hash"]

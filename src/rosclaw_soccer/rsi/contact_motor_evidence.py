@@ -68,6 +68,13 @@ def audit_motor_arrays(
     if neural_preview:
         audit_preview(report["contact_motor_policy"], body, force)
     online_preview = "online_motor_proof" in report["contact_motor_policy"]
+    progressive_preview = "progressive_motor_proof" in report["contact_motor_policy"]
+    if sum((neural_preview, online_preview, progressive_preview)) > 1:
+        raise ValueError("ambiguous motor model backend")
+    if progressive_preview:
+        from rosclaw_soccer.rsi.progressive_motor_actor import audit_preview as audit_progressive
+
+        audit_progressive(report["contact_motor_policy"], body, force)
     if online_preview:
         from rosclaw_soccer.rsi.online_motor_actor_critic import audit_preview as audit_online
 
@@ -88,7 +95,7 @@ def audit_motor_arrays(
             contact_delta,
             frame - contact_frame if contact_frame is not None else None,
         )
-        if (neural_preview or online_preview) and frame < 30:
+        if (neural_preview or online_preview or progressive_preview) and frame < 30:
             expected = np.zeros(12)
         expected = (baseline[frame, 0] + expected).astype(np.float32).astype(float) - baseline[
             frame, 0
