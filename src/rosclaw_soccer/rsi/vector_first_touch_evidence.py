@@ -34,6 +34,10 @@ def audit_body_trace(folder: Path, report: dict[str, Any], frames: int, lanes: i
             "joint_target_rad": (frames, lanes, 29),
             "navigation_speed_mps": (frames, lanes),
         }
+        if "navigation_lateral_ball_gain" in report:
+            if report["navigation_lateral_ball_gain"] not in (0.0, 0.8):
+                raise ValueError("unbounded lateral approach gain")
+            shapes["navigation_lateral_speed_mps"] = (frames, lanes)
         temporal = report.get("schema") == "rsi_isaac_vector_first_touch_temporal_candidate_v1"
         foot_geometry = "foot_geometry_body_names" in report
         if foot_geometry:

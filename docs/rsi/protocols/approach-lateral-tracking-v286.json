@@ -1,0 +1,21 @@
+{
+  "schema": "rsi_isaac_approach_lateral_tracking_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "source": "v285 audited independent option bank; all courses are consumed development cases",
+  "courses": [[20260962, 4], [20260963, 0], [20260964, 2], [20260965, 0], [20260959, 4], [20260961, 8], [20260962, 2], [20260958, 8], [20260959, 10], [20260962, 10], [20260965, 4]],
+  "groups": {
+    "baseline_out_of_play": 4,
+    "late_acquisition_creates_out_of_play": 3,
+    "high_quality_protection": 4
+  },
+  "arms": {
+    "baseline": "frozen SONIC + fixed 0.95 m acquisition, lateral navigation gain 0",
+    "candidate": "same motor + causal proportional ball-relative lateral navigation gain 0.8 clipped to +/-0.2 m/s until root-ball forward gap <=0.95 m"
+  },
+  "procedure": "For each course and arm, rerun an independent parent and one independent late-swing episode under the same new runner and source hash. Four A6000 workers. Audit physical, command, action and source receipts; no batched causal labels.",
+  "primary_gate": "Candidate must reduce >4 m lateral out-of-play from four to at most two in baseline-out group, keep all four protection controls high quality, and not add any out-of-play in the other seven courses.",
+  "safety_gate": "Candidate must not reduce total clean foot-only contacts, must have no pelvis <0.65 m, and all traces must pass independent audit.",
+  "fresh_test_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

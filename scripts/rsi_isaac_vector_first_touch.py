@@ -25,6 +25,7 @@ parser.add_argument("--static-single-course-lane", type=int)
 parser.add_argument("--lane-spacing-m", type=float, default=8.0)
 parser.add_argument("--overlap-collision-filtered", action="store_true")
 parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
+parser.add_argument("--navigation-lateral-ball-gain", type=float, default=0.0)
 parser.add_argument("--planner-seed", type=int, default=30300)
 parser.add_argument("--near-ball-gap-m", type=float)
 parser.add_argument("--near-ball-speed-mps", type=float)
@@ -96,6 +97,8 @@ if (
         )
     )
     or not 0.8 <= args.navigation_speed_mps <= 1.5
+    or args.navigation_lateral_ball_gain not in (0.0, 0.8)
+    or (args.navigation_lateral_ball_gain != 0.0 and args.env_count != 1)
     or not 0 <= args.planner_seed <= 2**31 - 3000
     or (
         args.planner_seed != 30300
@@ -420,6 +423,7 @@ def main() -> None:
             or parent.get("onnx_graph_encoder_layout", False) is not args.onnx_graph_encoder_layout
             or parent.get("torch_batch_plan_only", False) is not args.torch_batch_plan_only
             or parent.get("navigation_speed_mps", 1.4) != args.navigation_speed_mps
+            or parent.get("navigation_lateral_ball_gain", 0.0) != args.navigation_lateral_ball_gain
             or parent.get("near_ball_gap_m") != args.near_ball_gap_m
             or parent.get("near_ball_speed_mps") != args.near_ball_speed_mps
             or parent.get("near_ball_incoming_only", False) is not args.near_ball_incoming_only
@@ -524,6 +528,7 @@ def main() -> None:
         robot_joint_velocity_observations = []
         robot_target_observations = []
         command_speed_observations = []
+        command_lateral_speed_observations = []
         temporal_ball_position_observations = []
         temporal_ball_velocity_observations = []
         temporal_baseline_target_observations = []
@@ -546,6 +551,7 @@ def main() -> None:
         applied_frames = np.zeros(args.env_count, dtype=np.int64)
         projection_counts = np.zeros(args.env_count, dtype=np.int64)
         contact_seen = np.zeros(args.env_count, dtype=np.bool_)
+        navigation_contact_seen = np.zeros(args.env_count, dtype=np.bool_)
         first_contact_frames = np.full(args.env_count, -1, dtype=np.int64)
         contact_residuals = np.zeros((args.env_count, len(TEMPORAL_JOINT_NAMES)))
         minimum_pelvis = np.full(args.env_count, np.inf)
@@ -603,6 +609,7 @@ def main() -> None:
                 )
             target = robot.data.joint_pos.torch.clone()
             frame_command_speeds = np.full(args.env_count, args.navigation_speed_mps)
+            frame_command_lateral_speeds = np.zeros(args.env_count)
             qpos_rows = []
             qvel_rows = []
             for i, navigation in enumerate(current_navigations):
@@ -629,6 +636,14 @@ def main() -> None:
                 qpos_rows.append(qpos)
                 qvel_rows.append(qvel)
                 command_speed = args.navigation_speed_mps
+                command_lateral_speed = 0.0
+                if args.navigation_lateral_ball_gain and not navigation_contact_seen[i]:
+                    gap_m = float(ball_xyz_frame[i, 0] - root_pose[0])
+                    if gap_m > 0.95:
+                        lateral_gap_m = float(ball_xyz_frame[i, 1] - root_pose[1])
+                        command_lateral_speed = float(
+                            np.clip(args.navigation_lateral_ball_gain * lateral_gap_m, -0.2, 0.2)
+                        )
                 if (
                     args.near_ball_gap_m is not None
                     and ball_xyz_frame is not None
@@ -651,10 +666,11 @@ def main() -> None:
                     qpos=tuple(float(v) for v in qpos),
                     qvel=tuple(float(v) for v in qvel),
                     target_position_m=(0.0, 0.0, 0.0),
-                    navigation_command=(command_speed, 0.0, 0.0),
+                    navigation_command=(command_speed, command_lateral_speed, 0.0),
                     navigation_envelope=navigation.navigation_envelope,
                 )
                 frame_command_speeds[i] = command_speed
+                frame_command_lateral_speeds[i] = command_lateral_speed
                 if frame == 0:
                     navigation.start_from_observation(obs)
                 if args.torch_batch_plan_only:
@@ -919,6 +935,7 @@ def main() -> None:
                 swing_executed_targets.append(target.detach().cpu().numpy().copy())
             robot_target_observations.append(target[:, indices].detach().cpu().numpy().copy())
             command_speed_observations.append(frame_command_speeds)
+            command_lateral_speed_observations.append(frame_command_lateral_speeds)
             if temporal_candidate is not None:
                 temporal_residual_observations.append(frame_temporal_residual)
             frame_forces_gpu = torch.zeros((args.env_count, 6), device=sim.device)
@@ -940,6 +957,8 @@ def main() -> None:
                     frame_forces_gpu[i] = torch.maximum(
                         frame_forces_gpu[i], torch.linalg.vector_norm(force[0, 0], dim=-1)
                     )
+                    if bool(torch.any(torch.linalg.vector_norm(force[0, 0], dim=-1) > 1.0)):
+                        navigation_contact_seen[i] = True
                     if (
                         (candidate is not None or temporal_candidate is not None)
                         and not contact_seen[i]
@@ -983,6 +1002,7 @@ def main() -> None:
             np.asarray(robot_joint_velocity_observations),
             np.asarray(robot_target_observations),
             np.asarray(command_speed_observations),
+            np.asarray(command_lateral_speed_observations),
             np.asarray(temporal_ball_position_observations),
             np.asarray(temporal_ball_velocity_observations),
             np.asarray(temporal_baseline_target_observations),
@@ -1017,6 +1037,7 @@ def main() -> None:
         joint_velocity_observations,
         target_observations,
         command_speed_observations,
+        command_lateral_speed_observations,
         temporal_ball_position_observations,
         temporal_ball_velocity_observations,
         temporal_baseline_target_observations,
@@ -1114,6 +1135,7 @@ def main() -> None:
             "joint_velocity_rad_s": joint_velocity_observations,
             "joint_target_rad": target_observations,
             "navigation_speed_mps": command_speed_observations,
+            "navigation_lateral_speed_mps": command_lateral_speed_observations,
         }
         if args.record_foot_geometry:
             body_record.update(
@@ -1210,6 +1232,7 @@ def main() -> None:
         "trace_hash": trace_hash,
         "frames": args.frames,
         "navigation_speed_mps": args.navigation_speed_mps,
+        "navigation_lateral_ball_gain": args.navigation_lateral_ball_gain,
         "inference_threads": args.inference_threads,
         "lane_spacing_m": 0.0 if args.overlap_collision_filtered else args.lane_spacing_m,
         "overlap_collision_filtered_diagnostic": args.overlap_collision_filtered,
@@ -1367,6 +1390,7 @@ def main() -> None:
             replay_joint_velocity_observations,
             replay_target_observations,
             _replay_command_speed_observations,
+            _replay_command_lateral_speed_observations,
             _replay_temporal_ball_position_observations,
             _replay_temporal_ball_velocity_observations,
             _replay_temporal_baseline_target_observations,
@@ -1519,6 +1543,7 @@ def main() -> None:
                 second_joint_velocity,
                 second_target,
                 _second_command_speed_observations,
+                _second_command_lateral_speed_observations,
                 _second_temporal_ball_position_observations,
                 _second_temporal_ball_velocity_observations,
                 _second_temporal_baseline_target_observations,
