@@ -53,6 +53,7 @@ def audit_taskspace_swing_trace(
     recovery_cap = report.get("taskspace_joint_boundary_recovery_cap_rad")
     family_hash = report.get("taskspace_family_actor_hash")
     late_hash = report.get("late_swing_actor_hash")
+    late_side_acquisition_gap = report.get("late_swing_side_acquisition_gap_m", 0.55)
     family_actions = report.get("selected_taskspace_actions")
     order = report.get("taskspace_joint_order")
     mask_raw = report.get("selected_taskspace_mask")
@@ -78,6 +79,8 @@ def audit_taskspace_swing_trace(
         or vertical not in VERTICAL_OFFSETS_M
         or strike_through not in STRIKE_THROUGH_OFFSETS_M
         or acquisition_gap not in SWING_ACQUISITION_MAX_GAPS_M
+        or (late_hash is not None and late_side_acquisition_gap not in (0.55, 0.95))
+        or (late_hash is None and "late_swing_side_acquisition_gap_m" in report)
         or acquisition_lateral_gap not in (None, *SWING_ACQUISITION_MAX_LATERAL_GAPS_M)
         or type(revalidate_swing_side) is not bool
         or release_height_advantage not in SWING_SIDE_RELEASE_HEIGHT_ADVANTAGES_M
@@ -144,7 +147,9 @@ def audit_taskspace_swing_trace(
                     feet[frame, lane],
                     ball_world,
                     int(side[lane]),
-                    acquisition_max_gap_m=(0.55 if late_hash is not None else acquisition_gap),
+                    acquisition_max_gap_m=(
+                        late_side_acquisition_gap if late_hash is not None else acquisition_gap
+                    ),
                     acquisition_max_lateral_gap_m=acquisition_lateral_gap,
                     revalidate_swing_side=revalidate_swing_side,
                     release_height_advantage_m=release_height_advantage,

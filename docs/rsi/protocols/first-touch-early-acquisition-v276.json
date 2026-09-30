@@ -1,0 +1,20 @@
+{
+  "schema": "rsi_first_touch_early_acquisition_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "hypothesis": "Causal swing-foot acquisition at 0.95 m rather than 0.55 m gives the bounded controller time to center the foot on an incoming ball, improving forward shot quality without knee contamination.",
+  "development_courses": [
+    {"training_course_seed": 20260953, "single_course_lane": 8},
+    {"training_course_seed": 20260954, "single_course_lane": 2},
+    {"training_course_seed": 20260954, "single_course_lane": 6},
+    {"training_course_seed": 20260954, "single_course_lane": 10}
+  ],
+  "shared_setup": "Frozen gate and SONIC, swing-side revalidation true, lateral cap 0.15 m, forward cap 0.08 m, one G1 and ball per process.",
+  "swing_side_acquisition_gaps_m": [0.55, 0.95],
+  "require_same_runner_asset_actor_parent_course": true,
+  "require_independent_contact_and_per_frame_action_audit": true,
+  "measure": "Foot-only first contact; 60-frame dx and |dy|/max(dx,0.01); maximum lateral excursion and minimum pelvis z.",
+  "diagnostic_gate": "No clean foot-contact loss or pelvis below 0.65 m on four; at least two of three poor courses improve dx by >=0.25 m and decrease ratio; good lane 10 remains dx>=1 m and ratio<=0.3; no new >4 m out-of-play. Otherwise reject early acquisition.",
+  "fresh_holdout_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
