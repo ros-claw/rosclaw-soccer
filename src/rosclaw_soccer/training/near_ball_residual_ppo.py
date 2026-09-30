@@ -129,10 +129,10 @@ def physical_rewards(
                 receiving_contact_adjustment,
             )
 
-            if "training_return_after_ball_velocity" not in trace:
-                raise ValueError("role receiving requires recorded pre-control ball velocity")
-            before_velocity = np.asarray(trace["training_return_after_ball_velocity"])
-            if before_velocity.shape != (count, 6):
+            if "ball_control_entry_velocity" not in trace:
+                raise ValueError("role receiving requires measured control-entry ball velocity")
+            before_velocity = np.asarray(trace["ball_control_entry_velocity"])
+            if before_velocity.shape != (count, 6) or not np.isfinite(before_velocity).all():
                 raise ValueError("role receiving requires recorded pre-control ball velocity")
             roles = np.asarray(trace[key + "_intent_code"])
             if (

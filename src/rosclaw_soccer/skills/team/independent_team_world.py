@@ -265,6 +265,7 @@ class IndependentTeamWorldConfig:
     motor_receive_commitment_context: bool = False
     cyclic_receive_motors: bool = False
     outward_waist_braking_damping: float | None = None
+    outward_ankle_pitch_braking_damping: float | None = None
     outward_ankle_roll_braking_damping: float | None = None
     option_ankle_roll_braking_damping: float | None = None
     option_joint_guard_margin_rad: float | None = None
@@ -309,6 +310,12 @@ class IndependentTeamWorldConfig:
             or not 6.0 <= self.outward_waist_braking_damping <= 20.0
         ):
             raise ValueError("bounded explicit outward waist braking required")
+        if self.outward_ankle_pitch_braking_damping is not None and (
+            type(self.outward_ankle_pitch_braking_damping) not in (int, float)
+            or not math.isfinite(self.outward_ankle_pitch_braking_damping)
+            or not 6.0 <= self.outward_ankle_pitch_braking_damping <= 20.0
+        ):
+            raise ValueError("bounded explicit outward ankle-pitch braking required")
         if self.outward_ankle_roll_braking_damping is not None and (
             type(self.outward_ankle_roll_braking_damping) not in (int, float)
             or not math.isfinite(self.outward_ankle_roll_braking_damping)
@@ -578,6 +585,8 @@ class IndependentTeamWorldConfig:
             value.pop("experimental_navigation_envelopes")
         if self.outward_waist_braking_damping is None:
             value.pop("outward_waist_braking_damping")
+        if self.outward_ankle_pitch_braking_damping is None:
+            value.pop("outward_ankle_pitch_braking_damping")
         if self.outward_ankle_roll_braking_damping is None:
             value.pop("outward_ankle_roll_braking_damping")
         if self.option_ankle_roll_braking_damping is None:
@@ -1616,6 +1625,7 @@ def simulate_independent_team_world(
     trace: dict[str, list[Any]] = {
         "time": [],
         "ball_pose": [],
+        "ball_control_entry_velocity": [],
         "ball_velocity": [],
         "coordination_frame_index": [],
         "possession_agent_code": [],
@@ -1938,6 +1948,11 @@ def simulate_independent_team_world(
                 ),
             ):
                 trace.setdefault(key, []).append(value)
+        # Measure the physical ball immediately before this control frame.
+        # This exists in ordinary play as well as explicit assisted returns;
+        # later contact rewards must not infer a pre-contact state from the
+        # post-step ball velocity or from a planner's intended pass.
+        trace["ball_control_entry_velocity"].append(data.qvel[ball_qvel : ball_qvel + 6].copy())
         fresh_preparation_handshake: PassReceiveHandshake | None = None
         for controller in controllers:
             _fill_locomotion_state(controller, data, ball_body, ball_qvel)
@@ -4165,6 +4180,20 @@ def simulate_independent_team_world(
                         limited=model.jnt_limited[controller.joint_ids].astype(bool),
                         selected_joints=(G1_DDS_JOINT_NAMES.index("waist_pitch_joint"),),
                         damping=active.outward_waist_braking_damping,
+                        margin_rad=active.joint_guard_margin_rad,
+                    )
+                if active.outward_ankle_pitch_braking_damping is not None:
+                    projected_torque = strengthen_outward_joint_braking(
+                        joint_position=q,
+                        joint_velocity=dq,
+                        projected_torque=projected_torque,
+                        joint_ranges=np.asarray(model.jnt_range[controller.joint_ids]),
+                        limited=model.jnt_limited[controller.joint_ids].astype(bool),
+                        selected_joints=(
+                            G1_DDS_JOINT_NAMES.index("left_ankle_pitch_joint"),
+                            G1_DDS_JOINT_NAMES.index("right_ankle_pitch_joint"),
+                        ),
+                        damping=active.outward_ankle_pitch_braking_damping,
                         margin_rad=active.joint_guard_margin_rad,
                     )
                 ankle_braking = active.outward_ankle_roll_braking_damping

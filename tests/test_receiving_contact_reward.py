@@ -66,8 +66,8 @@ def test_ppo_role_mode_preserves_safety_terms_and_corrects_receive_credit():
     parent = policy()
     trace = samples(parent)
     n = len(trace["time"])
-    trace["training_return_after_ball_velocity"] = np.zeros((n, 6))
-    trace["training_return_after_ball_velocity"][:, 0] = 1.0
+    trace["ball_control_entry_velocity"] = np.zeros((n, 6))
+    trace["ball_control_entry_velocity"][:, 0] = 1.0
     trace["ball_velocity"][:, 0] = 0.2
     trace["possession_agent_code"] = np.ones(n, int)
     trace["ball_contact_agent_code"][0] = 1
@@ -81,9 +81,23 @@ def test_ppo_role_mode_preserves_safety_terms_and_corrects_receive_credit():
             trace[key + suffix][:] = (0.2, 0.0, 0.0)
         trace[key + "_target_position"][:] = (-0.2, 0.0, 0.0)
     old = physical_rewards(trace, parent.agent_ids, reward_shaping="contact_safety_v1")
+    assert "training_return_after_ball_velocity" not in trace
     new = physical_rewards(trace, parent.agent_ids, reward_shaping="role_receiving_v1")
     assert new[0, 0] - old[0, 0] == pytest.approx(0.008 + 0.032 + 0.01)
     np.testing.assert_array_equal(new[:, 1:], old[:, 1:])
-    del trace["training_return_after_ball_velocity"]
+    del trace["ball_control_entry_velocity"]
+    with pytest.raises(ValueError, match="control-entry"):
+        physical_rewards(trace, parent.agent_ids, reward_shaping="role_receiving_v1")
+
+
+def test_role_reward_rejects_nonfinite_control_entry_velocity():
+    from test_s215_near_ball_residual import policy, samples
+
+    from rosclaw_soccer.training.near_ball_residual_ppo import physical_rewards
+
+    parent = policy()
+    trace = samples(parent)
+    trace["ball_control_entry_velocity"] = np.zeros((len(trace["time"]), 6))
+    trace["ball_control_entry_velocity"][0, 0] = np.nan
     with pytest.raises(ValueError, match="pre-control"):
         physical_rewards(trace, parent.agent_ids, reward_shaping="role_receiving_v1")

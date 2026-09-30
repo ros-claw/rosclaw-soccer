@@ -14,6 +14,8 @@ class ContactControlProfile:
     separation_m: float = 0.85
     stiffness_scale: float = 0.8
     guard_margin_rad: float = 0.08
+    outward_waist_braking_damping: float | None = None
+    outward_ankle_pitch_braking_damping: float | None = None
     strike_residual_enabled: bool = False
     strike_stance_lateral_m: float | None = None
     activation_ceiling: str = "SIM_ONLY"
@@ -27,6 +29,22 @@ class ContactControlProfile:
             or not 0.55 <= self.separation_m <= 1.2
             or not 0.4 <= self.stiffness_scale <= 1
             or not 0.04 <= self.guard_margin_rad <= 0.1
+            or (
+                self.outward_waist_braking_damping is not None
+                and (
+                    type(self.outward_waist_braking_damping) is not float
+                    or not math.isfinite(self.outward_waist_braking_damping)
+                    or not 6.0 <= self.outward_waist_braking_damping <= 20.0
+                )
+            )
+            or (
+                self.outward_ankle_pitch_braking_damping is not None
+                and (
+                    type(self.outward_ankle_pitch_braking_damping) is not float
+                    or not math.isfinite(self.outward_ankle_pitch_braking_damping)
+                    or not 6.0 <= self.outward_ankle_pitch_braking_damping <= 20.0
+                )
+            )
             or type(self.strike_residual_enabled) is not bool
             or (
                 self.strike_stance_lateral_m is not None
@@ -48,6 +66,8 @@ class ContactControlProfile:
                 world,
                 minimum_player_separation_m=self.separation_m,
                 joint_guard_margin_rad=self.guard_margin_rad,
+                outward_waist_braking_damping=self.outward_waist_braking_damping,
+                outward_ankle_pitch_braking_damping=self.outward_ankle_pitch_braking_damping,
                 strike_residual_enabled=self.strike_residual_enabled,
                 strike_stance_lateral_m=self.strike_stance_lateral_m,
             ),

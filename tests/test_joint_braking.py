@@ -69,6 +69,7 @@ def test_invalid_projection_contracts_rejected(fault):
 def test_world_braking_opt_in_is_content_bound_and_default_stays_disabled():
     old = IndependentTeamWorldConfig()
     assert old.outward_waist_braking_damping is None
+    assert old.outward_ankle_pitch_braking_damping is None
     assert (
         old.config_hash == "sha256:fd442bce83f737c64e2ee59ecc09dc204376100f9476a21361b41b538d8c41d1"
     )
@@ -76,6 +77,12 @@ def test_world_braking_opt_in_is_content_bound_and_default_stays_disabled():
         IndependentTeamWorldConfig(outward_waist_braking_damping=16.0).config_hash
         != old.config_hash
     )
+    assert (
+        IndependentTeamWorldConfig(outward_ankle_pitch_braking_damping=16.0).config_hash
+        != old.config_hash
+    )
     for invalid in (True, 5.0, 21.0, float("nan")):
         with pytest.raises(ValueError):
             IndependentTeamWorldConfig(outward_waist_braking_damping=invalid)
+        with pytest.raises(ValueError):
+            IndependentTeamWorldConfig(outward_ankle_pitch_braking_damping=invalid)

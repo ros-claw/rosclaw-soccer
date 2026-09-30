@@ -93,6 +93,7 @@ def test_joint_guard_margin_cannot_be_weakened_and_preserves_default_identity():
         "motor_receive_commitment_context",
         "cyclic_receive_motors",
         "outward_waist_braking_damping",
+        "outward_ankle_pitch_braking_damping",
         "outward_ankle_roll_braking_damping",
         "option_ankle_roll_braking_damping",
         "option_joint_guard_margin_rad",
@@ -122,12 +123,31 @@ def test_control_profile_keeps_contact_and_safety_contracts_separate():
     world, motor = ContactControlProfile().apply(original, teacher)
     assert world.minimum_player_separation_m == 0.85
     assert world.joint_guard_margin_rad == 0.08
+    assert world.outward_waist_braking_damping is None
+    assert world.outward_ankle_pitch_braking_damping is None
     assert world.minimum_pelvis_height_m == original.minimum_pelvis_height_m
     assert world.maximum_tilt_rad == original.maximum_tilt_rad
     assert motor.contact_leg_stiffness_scale == 0.8
     assert motor.maximum_joint_residual_nm == teacher.maximum_joint_residual_nm
     assert teacher.contact_leg_stiffness_scale == 1
-    for change in (dict(activation_ceiling="REAL"), dict(guard_margin_rad=0.01)):
+    assert (
+        ContactControlProfile(outward_waist_braking_damping=16.0)
+        .apply(original, teacher)[0]
+        .outward_waist_braking_damping
+        == 16.0
+    )
+    assert (
+        ContactControlProfile(outward_ankle_pitch_braking_damping=16.0)
+        .apply(original, teacher)[0]
+        .outward_ankle_pitch_braking_damping
+        == 16.0
+    )
+    for change in (
+        dict(activation_ceiling="REAL"),
+        dict(guard_margin_rad=0.01),
+        dict(outward_waist_braking_damping=float("nan")),
+        dict(outward_ankle_pitch_braking_damping=float("nan")),
+    ):
         with pytest.raises(ValueError):
             ContactControlProfile(**change)
 
@@ -181,6 +201,16 @@ def test_audit_binds_declared_control_profile_to_physical_parameters():
         contact_teacher_config=dict(contact_leg_stiffness_scale=0.8),
     )
     _verify_contact_profile(report, ContactControlProfile())
+    report["world_config"]["outward_waist_braking_damping"] = 16.0
+    with pytest.raises(ValueError, match="committed contact"):
+        _verify_contact_profile(report, ContactControlProfile())
+    _verify_contact_profile(report, ContactControlProfile(outward_waist_braking_damping=16.0))
+    report["world_config"].pop("outward_waist_braking_damping")
+    report["world_config"]["outward_ankle_pitch_braking_damping"] = 16.0
+    with pytest.raises(ValueError, match="committed contact"):
+        _verify_contact_profile(report, ContactControlProfile())
+    _verify_contact_profile(report, ContactControlProfile(outward_ankle_pitch_braking_damping=16.0))
+    report["world_config"].pop("outward_ankle_pitch_braking_damping")
     report["world_config"]["joint_guard_margin_rad"] = 0.04
     with pytest.raises(ValueError, match="committed contact"):
         _verify_contact_profile(report, ContactControlProfile())
