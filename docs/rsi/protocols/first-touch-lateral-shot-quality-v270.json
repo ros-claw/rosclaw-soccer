@@ -1,0 +1,17 @@
+{
+  "schema": "rsi_first_touch_lateral_shot_quality_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "hypothesis": "The revalidated right-foot swing has too little lateral task-space reach and grazes the ball, causing a large sideways impulse; 0.10 m bounded reach may center contact better than 0.05 m.",
+  "development_courses": [
+    {"training_course_seed": 20260953, "single_course_lane": 8},
+    {"training_course_seed": 20260954, "single_course_lane": 8}
+  ],
+  "shared_setup": "One G1 and one ball per independent process; same frozen late-swing gate, swing-side revalidation enabled, no support-knee action, same parent asset and SONIC.",
+  "baseline_lateral_cap_m": 0.05,
+  "candidate_lateral_cap_m": 0.10,
+  "measure": "From ball trajectory, calculate 60-frame post-first-contact forward displacement dx, absolute lateral displacement |dy|, and |dy|/max(dx,0.01). Require frame-level action and contact audit.",
+  "diagnostic_gate": "Both courses remain foot-only and safe, with ratio reduced by at least 30 percent on both courses and no negative forward displacement; otherwise reject this cap change.",
+  "fresh_holdout_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
