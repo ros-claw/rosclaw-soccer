@@ -72,6 +72,25 @@ def test_causal_support_action_replays(monkeypatch: pytest.MonkeyPatch) -> None:
     assert audit["support_knee_peak_predicted_retract_m"] > 0
 
 
+def test_support_lane_must_bind_to_existing_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        support_knee_evidence,
+        "audit_taskspace_swing_trace",
+        lambda *_args, **_kwargs: {"taskspace_action_audited": True},
+    )
+    replay, report = _fixture()
+    report["support_knee_lane"] = 0
+    assert (
+        support_knee_evidence.audit_support_knee_action_trace(replay, report, frames=1, count=1)[
+            "support_knee_applied_lane_frames"
+        ]
+        == 1
+    )
+    report["support_knee_lane"] = 1
+    with pytest.raises(ValueError, match="uncommitted"):
+        support_knee_evidence.audit_support_knee_action_trace(replay, report, frames=1, count=1)
+
+
 @pytest.mark.parametrize("tamper", ["target", "measured_knee", "contact_gate"])
 def test_tampered_support_action_is_rejected(monkeypatch: pytest.MonkeyPatch, tamper: str) -> None:
     monkeypatch.setattr(

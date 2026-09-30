@@ -1,0 +1,25 @@
+{
+  "schema": "rsi_first_touch_single_lane_intervention_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "purpose": "Distinguish target-lane support-knee action effects from batch spillover before any further learning or holdout use.",
+  "source_courses_are_consumed_development": true,
+  "paired_courses": [
+    {"seed": 20260953, "target_lane": 4, "parent_contact_body_indices": [5]},
+    {"seed": 20260954, "target_lane": 8, "parent_contact_body_indices": [5]}
+  ],
+  "zero_action_control": {"support_knee_retract_m": 0.0, "support_knee_lane": null},
+  "candidate": {"support_knee_retract_m": 0.04, "support_knee_lane": "target_lane"},
+  "same_frozen_late_swing_actor": true,
+  "same_runner_source_per_pair": true,
+  "evidence_requirements": [
+    "independent_physical_trace_audit",
+    "per_frame_support_action_reconstruction",
+    "candidate_has_zero_added_support_action_outside_target_lane",
+    "paired_untreated_precontact_drift_report",
+    "target_lane_contact_class_and_first_contact_frame",
+    "minimum_pelvis_height_at_least_0.65m"
+  ],
+  "advance_gate": "Both designated target lanes become foot-only without a fall; no causal credit is given to any other lane and no sealed holdout opens on a single-lane result.",
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

@@ -15,6 +15,7 @@ def audit_support_knee_action_trace(
 ) -> dict[str, Any]:
     """Recompute each support target from saved same-frame Jacobians and contact."""
     retreat = report.get("support_knee_retract_m")
+    support_lane = report.get("support_knee_lane")
     order = report.get("taskspace_joint_order")
     mask = report.get("selected_taskspace_mask")
     if (
@@ -26,6 +27,10 @@ def audit_support_knee_action_trace(
         or any(type(value) is not bool for value in mask)
         or frames < 1
         or count < 1
+        or (
+            support_lane is not None
+            and (type(support_lane) is not int or not 0 <= support_lane < count)
+        )
     ):
         raise ValueError("uncommitted SIM_ONLY support-knee contract")
     shapes = {
@@ -64,7 +69,12 @@ def audit_support_knee_action_trace(
             side = int(sides[frame, lane])
             if side not in (-1, 0, 1):
                 raise ValueError("invalid measured support/swing side")
-            if mask[lane] and side >= 0 and first_contact[lane] < 0:
+            if (
+                mask[lane]
+                and side >= 0
+                and first_contact[lane] < 0
+                and (support_lane is None or lane == support_lane)
+            ):
                 support = 1 - side
                 ids = list(joint_ids[support])
                 proposal = support_knee_nullspace_delta(

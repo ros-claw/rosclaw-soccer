@@ -38,6 +38,7 @@ parser.add_argument("--candidate-actions", type=Path)
 parser.add_argument("--temporal-policy-actions", type=Path)
 parser.add_argument("--late-swing-policy", type=Path)
 parser.add_argument("--support-knee-retract-m", type=float, default=0.0)
+parser.add_argument("--support-knee-lane", type=int)
 parser.add_argument("--temporal-followthrough-frames", type=int, default=0)
 parser.add_argument("--parent-report", type=Path)
 AppLauncher.add_app_launcher_args(parser)
@@ -95,6 +96,10 @@ if (
     or (args.record_foot_geometry and not args.record_body_trace)
     or args.support_knee_retract_m not in (0.0, 0.04, 0.08)
     or (args.support_knee_retract_m != 0.0 and args.late_swing_policy is None)
+    or (
+        args.support_knee_lane is not None
+        and (args.support_knee_retract_m == 0.0 or not 0 <= args.support_knee_lane < args.env_count)
+    )
     or (args.parent_report is not None and not args.parent_report.is_file())
     or (
         any(
@@ -758,7 +763,11 @@ def main() -> None:
                     frame_swing_residual[lane, joint_ids] = (
                         target[lane, joint_ids].detach().cpu().numpy() - baseline[lane, joint_ids]
                     )
-                    if args.support_knee_retract_m and swing_contact_frame[lane] < 0:
+                    if (
+                        args.support_knee_retract_m
+                        and swing_contact_frame[lane] < 0
+                        and (args.support_knee_lane is None or lane == args.support_knee_lane)
+                    ):
                         support = 1 - side
                         support_ids = list(leg_joint_indices[support])
                         support_action = support_knee_nullspace_delta(
@@ -1134,6 +1143,7 @@ def main() -> None:
             taskspace_joint_order=list(robot.joint_names),
             taskspace_applied_frames=applied_frames.tolist(),
             support_knee_retract_m=args.support_knee_retract_m,
+            support_knee_lane=args.support_knee_lane,
             minimum_cross_robot_distance_m=minimum_cross_robot_distance,
             minimum_cross_ball_distance_m=minimum_cross_ball_distance,
             trained_actor=True,
