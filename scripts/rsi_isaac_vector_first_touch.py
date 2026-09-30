@@ -37,6 +37,7 @@ parser.add_argument("--second-reset-replay", action="store_true")
 parser.add_argument("--candidate-actions", type=Path)
 parser.add_argument("--temporal-policy-actions", type=Path)
 parser.add_argument("--late-swing-policy", type=Path)
+parser.add_argument("--support-knee-retract-m", type=float, default=0.0)
 parser.add_argument("--temporal-followthrough-frames", type=int, default=0)
 parser.add_argument("--parent-report", type=Path)
 AppLauncher.add_app_launcher_args(parser)
@@ -92,6 +93,8 @@ if (
     or not 0 <= args.temporal_followthrough_frames <= 30
     or (args.temporal_followthrough_frames > 0 and args.temporal_policy_actions is None)
     or (args.record_foot_geometry and not args.record_body_trace)
+    or args.support_knee_retract_m not in (0.0, 0.04, 0.08)
+    or (args.support_knee_retract_m != 0.0 and args.late_swing_policy is None)
     or (args.parent_report is not None and not args.parent_report.is_file())
     or (
         any(
@@ -156,6 +159,12 @@ from rosclaw_soccer.rsi.first_touch_course_catalog import (  # noqa: E402
     static_development_courses,
 )
 from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor  # noqa: E402
+from rosclaw_soccer.rsi.support_knee_evidence import (  # noqa: E402
+    audit_support_knee_action_trace,
+)
+from rosclaw_soccer.rsi.support_knee_nullspace import (  # noqa: E402
+    support_knee_nullspace_delta,
+)
 from rosclaw_soccer.rsi.taskspace_gate_memory import select_taskspace_gate  # noqa: E402
 from rosclaw_soccer.rsi.taskspace_swing_evidence import LEG_NAMES  # noqa: E402
 from rosclaw_soccer.rsi.taskspace_swing_probe import (  # noqa: E402
@@ -407,6 +416,8 @@ def main() -> None:
         foot_geometry_velocity_observations = []
         swing_foot_positions = []
         swing_linear_jacobians = []
+        support_knee_jacobians = []
+        support_applied_residuals = []
         swing_selected_sides = []
         swing_applied_residuals = []
         swing_baseline_targets = []
@@ -695,9 +706,23 @@ def main() -> None:
                 )
                 if jacobians.shape != (args.env_count, 2, 3, 6):
                     raise ValueError("full-episode foot Jacobian shape changed")
+                knee_jacobians = np.stack(
+                    [
+                        np.take(
+                            full_jacobian[:, body_index, 0, :],
+                            np.asarray(leg_joint_indices[side]) + 6,
+                            axis=-1,
+                        )
+                        for side, body_index in enumerate(foot_geometry_indices[2:])
+                    ],
+                    axis=1,
+                )
+                if knee_jacobians.shape != (args.env_count, 2, 6):
+                    raise ValueError("full-episode knee Jacobian shape changed")
                 limits = robot.data.joint_pos_limits.torch.detach().cpu().numpy()
                 baseline = baseline_target.detach().cpu().numpy()
                 frame_swing_residual = np.zeros((args.env_count, len(robot.joint_names)))
+                frame_support_residual = np.zeros((args.env_count, len(robot.joint_names)))
                 for lane in range(args.env_count):
                     if not selected_taskspace_mask[lane]:
                         continue
@@ -733,9 +758,39 @@ def main() -> None:
                     frame_swing_residual[lane, joint_ids] = (
                         target[lane, joint_ids].detach().cpu().numpy() - baseline[lane, joint_ids]
                     )
+                    if args.support_knee_retract_m and swing_contact_frame[lane] < 0:
+                        support = 1 - side
+                        support_ids = list(leg_joint_indices[support])
+                        support_action = support_knee_nullspace_delta(
+                            jacobians[lane, support],
+                            knee_jacobians[lane, support],
+                            baseline[lane, support_ids],
+                            limits[lane, support_ids],
+                            retract_m=args.support_knee_retract_m,
+                            support_foot_grounded=bool(feet[lane, support, 2] < 0.10),
+                            swing_foot_airborne=bool(
+                                feet[lane, side, 2] - feet[lane, support, 2] >= 0.02
+                            ),
+                        )
+                        if not support_action.abstained:
+                            target[lane, support_ids] = torch.as_tensor(
+                                baseline[lane, support_ids]
+                                + np.asarray(support_action.joint_delta_rad),
+                                device=sim.device,
+                                dtype=torch.float32,
+                            )
+                            frame_support_residual[lane, support_ids] = (
+                                target[lane, support_ids].detach().cpu().numpy()
+                                - baseline[lane, support_ids]
+                            )
+                            frame_swing_residual[lane, support_ids] = frame_support_residual[
+                                lane, support_ids
+                            ]
                     applied_frames[lane] += int(np.any(np.abs(frame_swing_residual[lane]) > 1e-6))
                 swing_foot_positions.append(feet)
                 swing_linear_jacobians.append(jacobians)
+                support_knee_jacobians.append(knee_jacobians)
+                support_applied_residuals.append(frame_support_residual)
                 swing_selected_sides.append(swing_side.copy())
                 swing_applied_residuals.append(frame_swing_residual)
                 swing_baseline_targets.append(baseline)
@@ -824,6 +879,8 @@ def main() -> None:
                 np.asarray(swing_executed_targets),
                 selected_taskspace_mask,
                 gate_features,
+                np.asarray(support_knee_jacobians),
+                np.asarray(support_applied_residuals),
             ),
         )
 
@@ -949,9 +1006,18 @@ def main() -> None:
         body_trace_hash = hash_bytes(body_trace_path.read_bytes())
     swing_trace_hash = None
     if late_actor is not None:
-        feet, jacobians, sides, residuals, baseline, executed, selected_mask, gate_features = (
-            swing_data
-        )
+        (
+            feet,
+            jacobians,
+            sides,
+            residuals,
+            baseline,
+            executed,
+            selected_mask,
+            gate_features,
+            knee_jacobians,
+            support_residuals,
+        ) = swing_data
         if gate_features is None or not np.isfinite(gate_features).all():
             raise ValueError("late-swing gate was not evaluated")
         ball_local = np.asarray(temporal_ball_position_observations).copy()
@@ -970,6 +1036,8 @@ def main() -> None:
             observed_ball_body_contact_force_peak_n=forces_arr,
             predicted_baseline_joint_target_rad=baseline[:, :, indices],
             frame30_gate_features=gate_features,
+            pre_step_knee_x_jacobian_w=knee_jacobians,
+            applied_support_knee_joint_delta_rad=support_residuals,
         )
         swing_trace_hash = hash_bytes(action_path.read_bytes())
     entries = []
@@ -1065,10 +1133,25 @@ def main() -> None:
             taskspace_leg_joint_names=[list(row) for row in LEG_NAMES],
             taskspace_joint_order=list(robot.joint_names),
             taskspace_applied_frames=applied_frames.tolist(),
+            support_knee_retract_m=args.support_knee_retract_m,
             minimum_cross_robot_distance_m=minimum_cross_robot_distance,
             minimum_cross_ball_distance_m=minimum_cross_ball_distance,
             trained_actor=True,
         )
+        if args.support_knee_retract_m:
+            with np.load(action_path) as action_replay:
+                report["support_knee_action_audit"] = audit_support_knee_action_trace(
+                    action_replay,
+                    report,
+                    frames=args.frames,
+                    count=args.env_count,
+                )
+            report["support_knee_helper_hash"] = hash_bytes(
+                Path(support_knee_nullspace_delta.__code__.co_filename).read_bytes()
+            )
+            report["support_knee_audit_source_hash"] = hash_bytes(
+                Path(audit_support_knee_action_trace.__code__.co_filename).read_bytes()
+            )
     report["report_hash"] = hash_json(report)
     (args.output_dir / "report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
