@@ -143,9 +143,10 @@ def test_taskspace_lateral_vertical_profiles_are_bounded() -> None:
     common = (foot, ball, jac, np.zeros(6), limits)
     baseline = swing_joint_delta(*common, forward_cap_m=0.08)
     widened = swing_joint_delta(*common, forward_cap_m=0.08, lateral_cap_m=0.10)
+    widest = swing_joint_delta(*common, forward_cap_m=0.08, lateral_cap_m=0.15)
     raised = swing_joint_delta(*common, forward_cap_m=0.08, vertical_offset_m=0.04)
     lowered = swing_joint_delta(*common, forward_cap_m=0.08, vertical_offset_m=-0.04)
-    assert 0 < baseline[1] < widened[1] <= 0.35
+    assert 0 < baseline[1] < widened[1] <= widest[1] <= 0.35
     assert raised[2] > 0 > lowered[2]
     for option in ({"lateral_cap_m": 0.2}, {"vertical_offset_m": 0.05}):
         with pytest.raises(ValueError):

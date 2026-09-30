@@ -1,0 +1,17 @@
+{
+  "schema": "rsi_first_touch_lateral_grid_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "purpose": "Search a bounded lateral foot-placement coordinate on the two already consumed development courses before learning an adaptive selector from more independent episodes.",
+  "development_courses": [
+    {"training_course_seed": 20260953, "single_course_lane": 8},
+    {"training_course_seed": 20260954, "single_course_lane": 8}
+  ],
+  "lateral_caps_m": [0.05, 0.10, 0.15],
+  "same_source_all_arms": true,
+  "require_contact_and_per_frame_action_audit": true,
+  "require_minimum_pelvis_height_m": 0.65,
+  "selection_rule": "Among caps preserving foot-only contact and safety on both courses, minimize the worse 60-frame |dy|/max(dx,0.01) ratio; record dx and lateral drift separately, and reject any cap with negative dx.",
+  "fresh_holdout_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
