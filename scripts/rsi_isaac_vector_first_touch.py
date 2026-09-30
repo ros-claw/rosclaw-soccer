@@ -38,6 +38,7 @@ parser.add_argument("--second-reset-replay", action="store_true")
 parser.add_argument("--candidate-actions", type=Path)
 parser.add_argument("--temporal-policy-actions", type=Path)
 parser.add_argument("--late-swing-policy", type=Path)
+parser.add_argument("--revalidate-swing-side", action="store_true")
 parser.add_argument("--support-knee-retract-m", type=float, default=0.0)
 parser.add_argument("--support-knee-lane", type=int)
 parser.add_argument("--temporal-followthrough-frames", type=int, default=0)
@@ -109,6 +110,7 @@ if (
     or (args.record_foot_geometry and not args.record_body_trace)
     or args.support_knee_retract_m not in (0.0, 0.04, 0.08)
     or (args.support_knee_retract_m != 0.0 and args.late_swing_policy is None)
+    or (args.revalidate_swing_side and args.late_swing_policy is None)
     or (
         args.support_knee_lane is not None
         and (args.support_knee_retract_m == 0.0 or not 0 <= args.support_knee_lane < args.env_count)
@@ -760,6 +762,7 @@ def main() -> None:
                             ball_xyz_frame[lane],
                             int(swing_side[lane]),
                             acquisition_max_gap_m=0.55,
+                            revalidate_swing_side=args.revalidate_swing_side,
                         )
                     side = int(swing_side[lane])
                     if side < 0:
@@ -1169,6 +1172,7 @@ def main() -> None:
             taskspace_lateral_cap_m=0.05,
             taskspace_vertical_offset_m=0.0,
             taskspace_acquisition_max_gap_m=0.95,
+            taskspace_revalidate_swing_side=args.revalidate_swing_side,
             taskspace_leg_joint_names=[list(row) for row in LEG_NAMES],
             taskspace_joint_order=list(robot.joint_names),
             taskspace_applied_frames=applied_frames.tolist(),

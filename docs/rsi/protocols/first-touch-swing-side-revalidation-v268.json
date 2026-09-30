@@ -1,0 +1,18 @@
+{
+  "schema": "rsi_first_touch_swing_side_revalidation_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "hypothesis": "The frozen late-swing actor latches the left foot too early; when gait support changes before contact, measured revalidation can redirect the kick to the airborne right foot and avoid right-knee contact.",
+  "development_courses": [
+    {"training_course_seed": 20260953, "single_course_lane": 4},
+    {"training_course_seed": 20260954, "single_course_lane": 8}
+  ],
+  "baseline": "Independent-instance frozen late-swing actor with swing-side revalidation disabled and support-knee action disabled.",
+  "candidate": "Same frozen actor and SONIC, revalidate_swing_side=true, release_height_advantage_m=0.02; no support-knee action.",
+  "require_same_course_asset_actor_and_parent": true,
+  "require_independent_contact_and_per_frame_swing_action_audit": true,
+  "require_minimum_pelvis_height_m": 0.65,
+  "development_gate": "Both knee-only courses become foot-only, or reject the candidate; no compensating evidence from batch lanes.",
+  "fresh_holdout_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
