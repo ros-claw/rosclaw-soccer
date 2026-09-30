@@ -32,7 +32,7 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
     ):
         raise ValueError("unsealed learned approach policy in physical report")
     if (
-        gain not in (0.0, 0.8, 1.2)
+        gain not in (0.0, 0.8, 1.0, 1.2)
         or type(negative_only) is not bool
         or (negative_only and gain == 0.0)
         or report.get("frames") != 300
