@@ -1,0 +1,16 @@
+{
+  "schema": "rsi_isaac_approach_gain_pilot_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "source_challenge_report_hash": "sha256:cfb981b40a8c6500d0cf35f108cdb0d1530bca1ed173bb788d865341d70d1abf",
+  "consumed_failure_courses": [[20260974,2],[20260975,2],[20260975,4],[20260977,4],[20260978,4],[20260980,4]],
+  "consumed_success_protection": [[20260976,4],[20260978,6],[20260982,2]],
+  "arms": {
+    "gain_08": "Existing conditional negative-side lateral navigation gain 0.8, bounded +/-0.2 m/s",
+    "gain_12": "Same motor, causal condition and bound, lateral gain 1.2"
+  },
+  "procedure": "Re-run each arm with an independent parent and late-swing actor under one new frozen runner source, 36 independent one-G1/ball physical episodes. The nine courses are consumed development cases; no fresh-generalization claim.",
+  "gate": "At least three of six previous clean-but-off-target courses become high-quality, all three protection successes remain high-quality, total clean-foot contacts do not fall, zero new >4m out-of-play and zero pelvis <0.65m. Otherwise reject gain 1.2.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}
