@@ -18,8 +18,12 @@ def test_reward_keeps_safety_and_contact_quality_ahead_of_distance() -> None:
         "first_contact_frame": 85,
         "forward_60_m": 1.0,
         "lateral_60_m": 0.0,
+        "max_lateral_excursion_m": 1.0,
     }
     assert first_touch_reward(arm) == pytest.approx(3.0)
+    arm["max_lateral_excursion_m"] = 4.01
+    assert first_touch_reward(arm) == -4.0
+    arm["max_lateral_excursion_m"] = 1.0
     arm["contact_body_indices"] = [5]
     assert first_touch_reward(arm) == -2.0
     arm["first_contact_frame"] = None

@@ -76,6 +76,8 @@ def load_verified_bank(
                 or any(summary_arm[key] != value for key, value in displacement.items())
             ):
                 raise ValueError(f"bank reward labels drifted from physics: {folder}")
+            if report.get("single_instance_max_lateral_excursion_m") is None:
+                raise ValueError(f"bank out-of-play measurement missing: {folder}")
             if arm != "parent":
                 with np.load(folder / "late_swing_action_trace.npz", allow_pickle=False) as replay:
                     action = audit_taskspace_swing_trace(replay, report, frames=300, count=1)
@@ -86,7 +88,16 @@ def load_verified_bank(
                         course_features = current_features
                     elif not np.allclose(course_features, current_features, atol=1e-10, rtol=0):
                         raise ValueError("counterfactuals used different precontact body state")
-            course_rewards.append(first_touch_reward(summary_arm))
+            course_rewards.append(
+                first_touch_reward(
+                    {
+                        **summary_arm,
+                        "max_lateral_excursion_m": report[
+                            "single_instance_max_lateral_excursion_m"
+                        ],
+                    }
+                )
+            )
         if course_features is None or course_features.shape != (9,):
             raise ValueError("missing causal precontact features")
         features.append(course_features)

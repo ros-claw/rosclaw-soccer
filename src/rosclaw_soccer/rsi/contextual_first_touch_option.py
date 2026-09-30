@@ -14,6 +14,7 @@ NEIGHBORS = 3
 PRIOR_WEIGHT = 2.0
 DISTANCE_EPSILON = 0.1
 STD_FLOOR = 0.1
+MAX_IN_PLAY_LATERAL_EXCURSION_M = 4.0
 
 
 def first_touch_reward(arm: dict[str, Any]) -> float:
@@ -41,6 +42,7 @@ def first_touch_reward(arm: dict[str, Any]) -> float:
         return -2.0
     forward = arm.get("forward_60_m")
     lateral = arm.get("lateral_60_m")
+    excursion = arm.get("max_lateral_excursion_m")
     if (
         not isinstance(forward, (int, float))
         or isinstance(forward, bool)
@@ -48,8 +50,14 @@ def first_touch_reward(arm: dict[str, Any]) -> float:
         or isinstance(lateral, bool)
         or not math.isfinite(forward)
         or not math.isfinite(lateral)
+        or not isinstance(excursion, (int, float))
+        or isinstance(excursion, bool)
+        or not math.isfinite(excursion)
+        or excursion < 0
     ):
         raise ValueError("missing measured 60-frame trajectory for foot-only contact")
+    if excursion > MAX_IN_PLAY_LATERAL_EXCURSION_M:
+        return -4.0
     ratio = abs(lateral) / max(forward, 0.01)
     return (
         2.0
