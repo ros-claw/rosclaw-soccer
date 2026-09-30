@@ -957,7 +957,7 @@ def main() -> None:
         if args.env_count == 1:
             minimum_cross_robot_distance = None
             minimum_cross_ball_distance = None
-            isolated = bool(np.max(lateral_excursion) < 4.0)
+            isolated = True
         else:
             cross_robot_distance = np.linalg.norm(
                 positions_arr[:, :, None, :] - root_xyz[:, None, :, :], axis=-1
@@ -978,7 +978,7 @@ def main() -> None:
     else:
         minimum_cross_robot_distance = None
         minimum_cross_ball_distance = None
-        isolated = bool(np.max(lateral_excursion) < 4.0)
+        isolated = bool(args.env_count == 1 or np.max(lateral_excursion) < 4.0)
     if not isolated:
         args.output_dir.mkdir(parents=True)
         failure_path = args.output_dir / "lane_escape_trace.npz"
@@ -1140,6 +1140,7 @@ def main() -> None:
         report["course_catalog_hash"] = hash_json(full_courses)
     if args.single_course_lane is not None:
         report["single_course_lane"] = args.single_course_lane
+        report["single_instance_max_lateral_excursion_m"] = float(np.max(lateral_excursion))
     if args.near_ball_gap_m is not None:
         report["near_ball_gap_m"] = args.near_ball_gap_m
         report["near_ball_speed_mps"] = args.near_ball_speed_mps
@@ -1170,6 +1171,9 @@ def main() -> None:
         report.update(
             parent_report_hash=parent["report_hash"],
             late_swing_actor_hash=late_actor["actor_hash"],
+            taskspace_probe_hash=hash_bytes(
+                Path(choose_swing_side.__code__.co_filename).read_bytes()
+            ),
             late_swing_action_trace_hash=swing_trace_hash,
             selected_taskspace_mask=swing_data[6].tolist(),
             taskspace_forward_m=0.08,

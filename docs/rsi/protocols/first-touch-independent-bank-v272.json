@@ -1,0 +1,22 @@
+{
+  "schema": "rsi_first_touch_independent_bank_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "purpose": "Build a causal, auditable one-G1/one-ball action-outcome bank for training a contextual first-touch option selector rather than tuning two handpicked courses.",
+  "training_course_seeds": [20260953, 20260954],
+  "training_lanes_per_seed": [0, 2, 4, 6, 8, 10, 12, 14],
+  "episode_count": 16,
+  "arms": [
+    {"name": "parent", "late_swing_actor": false},
+    {"name": "cap005", "late_swing_actor": true, "revalidate_swing_side": true, "lateral_cap_m": 0.05},
+    {"name": "cap015", "late_swing_actor": true, "revalidate_swing_side": true, "lateral_cap_m": 0.15}
+  ],
+  "require_independent_process_per_course_and_arm": true,
+  "maximum_parallel_processes": 4,
+  "require_same_source_asset_actor_and_course_per_episode": true,
+  "require_contact_body_and_per_frame_action_audits": true,
+  "metrics": ["clean_foot_only", "first_contact_frame", "forward_displacement_60_frames_m", "lateral_displacement_60_frames_m", "minimum_pelvis_z_m", "gate_selected", "action_applied_frames"],
+  "split_rule": "These 16 episodes are development training data only. Odd lanes from the same seeds and all later seeds remain unavailable for fitting until a selector and acceptance thresholds are frozen.",
+  "fresh_holdout_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

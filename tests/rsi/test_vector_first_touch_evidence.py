@@ -124,6 +124,25 @@ def test_one_robot_course_retains_original_sixteen_lane_identity(tmp_path: Path)
     audited = audit_vector_first_touch(folder)
     assert audited["independent_physical_episode_count"] == 1
     assert audited["clean_foot_only_episode_count"] == 0
+    positions[-1, 0, 1] = 4.68
+    np.savez_compressed(
+        trace,
+        ball_position_m=positions,
+        ball_angular_velocity_rad_s=np.zeros((50, 1, 3)),
+        ball_body_contact_force_peak_n=force,
+    )
+    report["trace_hash"] = hash_bytes(trace.read_bytes())
+    report["environments"][0]["ball_final_local_xyz_m"][1] = 4.68
+    report["single_instance_max_lateral_excursion_m"] = 4.68
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    (folder / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    assert audit_vector_first_touch(folder)["independent_physical_episode_count"] == 1
+    report["single_instance_max_lateral_excursion_m"] = 4.0
+    report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
+    (folder / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="excursion disagrees"):
+        audit_vector_first_touch(folder)
+    report["single_instance_max_lateral_excursion_m"] = 4.68
     report["single_course_lane"] = 5
     report["report_hash"] = hash_json({k: v for k, v in report.items() if k != "report_hash"})
     (folder / "report.json").write_text(json.dumps(report), encoding="utf-8")

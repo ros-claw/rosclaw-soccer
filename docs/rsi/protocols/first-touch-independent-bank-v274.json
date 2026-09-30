@@ -1,0 +1,11 @@
+{
+  "schema": "rsi_first_touch_independent_bank_repair_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "reason": "v272 predeclared 16x3 bank stopped at seed 20260954 lane 2 cap015 because one ball traveled 4.680 m laterally; a single G1+ball has no neighboring lane, so the batch-lane containment test is not a valid evidence rejection rule for this mode.",
+  "repair": "Keep the no-cross-lane rule for multi-instance batches; for one-instance execution, record and independently verify lateral excursion even beyond 4 m, and treat it as shot quality/out-of-play rather than missing evidence.",
+  "rerun": "All sixteen courses and all three arms from v272, same seed/lane/actor/asset/SONIC; do not mix old and new runner source hashes.",
+  "require_complete_audited_48_episodes": true,
+  "require_same_source_per_all_arms": true,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

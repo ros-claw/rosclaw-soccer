@@ -1,0 +1,14 @@
+{
+  "schema": "rsi_first_touch_contextual_option_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "training_bank": "rsi_independent_first_touch_bank_v1, 16 independent courses, three audited counterfactual arms each",
+  "inputs": "Nine pre-contact frame-30 gait/ball features from the frozen actor action trace; never first-contact outcomes or future frames",
+  "actions": ["parent", "cap005", "cap015"],
+  "reward": "If minimum pelvis <0.65 m: -10. If no contact: -3. If any non-foot contact: -2. Otherwise: 2 + min(max(dx60,0),2) - 0.8*abs(dy60) - 0.5*min(abs(dy60)/max(dx60,0.01),5), with -1 penalty for dx60<=0.",
+  "training_method": "Per-fold feature mean/std from training eight only, std floor 0.1; Euclidean three nearest neighbors, weight=1/(0.1+distance), shrink each action value to its training-fold mean with prior weight 2. Choose highest predicted value, ties prefer parent. No hyperparameter search.",
+  "development_validation": "Two folds by seed: train all eight even-lane courses on seed 20260953 and evaluate seed 20260954, then reverse. Never use evaluation outcomes to fit that fold.",
+  "development_gate": "Positive mean held-out reward improvement over parent and best globally fixed training-fold action in both folds, no reduction in clean-foot-only episode count, at least two recovered non-foot/no-contact courses overall, no safety violation. Otherwise reject contextual selector.",
+  "fresh_holdout_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

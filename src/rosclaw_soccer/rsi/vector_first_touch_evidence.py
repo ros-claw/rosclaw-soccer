@@ -209,11 +209,15 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
     if not np.isfinite(lanes).all() or (n > 1 and np.min(np.diff(lanes)) < 6.0):
         raise ValueError("training lanes are not physically isolated")
     excursion = float(np.max(np.abs(positions[:, :, 1] - lanes[None, :])))
+    if n == 1 and "single_instance_max_lateral_excursion_m" in report:
+        if not np.isclose(report["single_instance_max_lateral_excursion_m"], excursion):
+            raise ValueError("single-instance ball excursion disagrees with physical trace")
+    elif n == 1 and excursion >= 4.0:
+        raise ValueError("unauthenticated single-instance ball excursion")
     if report.get("schema") == "rsi_isaac_vector_first_touch_late_swing_v1":
         if n == 1:
             if (
-                excursion >= 4.0
-                or report.get("minimum_cross_robot_distance_m") is not None
+                report.get("minimum_cross_robot_distance_m") is not None
                 or report.get("minimum_cross_ball_distance_m") is not None
             ):
                 raise ValueError("single-instance isolation contract changed")
@@ -239,7 +243,7 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
                 or not np.isclose(report.get("minimum_cross_ball_distance_m", np.nan), min_ball)
             ):
                 raise ValueError("late-swing lane isolation not physically verified")
-    elif excursion >= 4.0:
+    elif n > 1 and excursion >= 4.0:
         raise ValueError("ball escaped its lane")
     courses = []
     training_seed = report.get("training_course_seed")
