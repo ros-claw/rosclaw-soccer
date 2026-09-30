@@ -16,6 +16,7 @@ from rosclaw_soccer.rsi.approach_lateral_tracking_evidence import audit_lateral_
 from rosclaw_soccer.rsi.conservative_approach_rectangle import load_guarded_approach_policy
 from rosclaw_soccer.rsi.contextual_first_touch_option import first_touch_reward
 from rosclaw_soccer.rsi.independent_first_touch_bank import post_contact_displacement
+from rosclaw_soccer.rsi.precontact_proprio_policy import load_policy as load_precontact_policy
 from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_trace
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
@@ -52,6 +53,7 @@ def _run(
     kind: str,
     negative_only: bool = False,
     rectangle_policy: Path | None = None,
+    proprio_policy: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     folder = root / f"seed{seed}-lane{lane}-{arm}-{kind}"
     parent_folder = root / f"seed{seed}-lane{lane}-{arm}-parent"
@@ -90,6 +92,8 @@ def _run(
         command.append("--navigation-lateral-negative-only")
     if rectangle_policy is not None:
         command.extend(("--navigation-rectangle-policy", str(rectangle_policy)))
+    if proprio_policy is not None:
+        command.extend(("--navigation-proprio-risk-policy", str(proprio_policy)))
     if kind == "actor":
         command.extend(
             (
@@ -132,6 +136,8 @@ def _run(
         or report.get("navigation_lateral_negative_only") is not negative_only
         or report.get("navigation_rectangle_policy_hash")
         != (load_guarded_approach_policy(rectangle_policy)[1] if rectangle_policy else None)
+        or report.get("navigation_proprio_risk_policy_hash")
+        != (load_precontact_policy(proprio_policy)[1] if proprio_policy else None)
         or report["training_course_seed"] != seed
         or report["single_course_lane"] != lane
     ):

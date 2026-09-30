@@ -28,6 +28,7 @@ parser.add_argument("--navigation-speed-mps", type=float, default=1.4)
 parser.add_argument("--navigation-lateral-ball-gain", type=float, default=0.0)
 parser.add_argument("--navigation-lateral-negative-only", action="store_true")
 parser.add_argument("--navigation-rectangle-policy", type=Path)
+parser.add_argument("--navigation-proprio-risk-policy", type=Path)
 parser.add_argument("--planner-seed", type=int, default=30300)
 parser.add_argument("--near-ball-gap-m", type=float)
 parser.add_argument("--near-ball-speed-mps", type=float)
@@ -109,6 +110,20 @@ if (
             or args.navigation_lateral_ball_gain != 0.8
             or args.navigation_lateral_negative_only
             or args.env_count != 1
+        )
+    )
+    or (
+        args.navigation_proprio_risk_policy is not None
+        and (
+            not args.navigation_proprio_risk_policy.is_file()
+            or args.navigation_lateral_ball_gain != 1.2
+            or not args.navigation_lateral_negative_only
+            or args.navigation_rectangle_policy is not None
+            or args.env_count != 1
+            or args.frames != 300
+            or not args.record_body_trace
+            or not args.record_foot_geometry
+            or args.reset_replay
         )
     )
     or not 0 <= args.planner_seed <= 2**31 - 3000
@@ -244,6 +259,13 @@ from rosclaw_soccer.rsi.first_touch_course_catalog import (  # noqa: E402
     static_development_courses,
 )
 from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor  # noqa: E402
+from rosclaw_soccer.rsi.precontact_proprio_policy import (  # noqa: E402
+    load_policy as load_precontact_proprio_policy,
+)
+from rosclaw_soccer.rsi.precontact_proprio_policy import (  # noqa: E402
+    proprio_vector,
+    risk_probability,
+)
 from rosclaw_soccer.rsi.support_knee_evidence import (  # noqa: E402
     audit_support_knee_action_trace,
 )
@@ -279,6 +301,11 @@ def main() -> None:
     approach_rectangle, approach_policy_hash = (
         load_guarded_approach_policy(args.navigation_rectangle_policy)
         if args.navigation_rectangle_policy is not None
+        else (None, None)
+    )
+    proprio_policy, proprio_policy_hash = (
+        load_precontact_proprio_policy(args.navigation_proprio_risk_policy)
+        if args.navigation_proprio_risk_policy is not None
         else (None, None)
     )
     names = tuple(G1_DDS_JOINT_NAMES)
@@ -447,6 +474,7 @@ def main() -> None:
             or parent.get("navigation_lateral_negative_only", False)
             is not args.navigation_lateral_negative_only
             or parent.get("navigation_rectangle_policy_hash") != approach_policy_hash
+            or parent.get("navigation_proprio_risk_policy_hash") != proprio_policy_hash
             or parent.get("near_ball_gap_m") != args.near_ball_gap_m
             or parent.get("near_ball_speed_mps") != args.near_ball_speed_mps
             or parent.get("near_ball_incoming_only", False) is not args.near_ball_incoming_only
@@ -535,6 +563,8 @@ def main() -> None:
         if args.record_foot_geometry
         else []
     )
+    proprio_decision_probability = np.full(args.env_count, np.nan, dtype=np.float64)
+    proprio_decision_veto = np.zeros(args.env_count, dtype=np.bool_)
     leg_joint_indices = (
         tuple(tuple(robot.joint_names.index(name) for name in row) for row in LEG_NAMES)
         if late_actor is not None
@@ -671,13 +701,33 @@ def main() -> None:
                         else not args.navigation_lateral_negative_only
                         or ball_xyz_frame[i, 1] - root_pose[1] < 0.0
                     )
+                if frame == 30 and proprio_policy is not None:
+                    if navigation_contact_seen[i]:
+                        raise ValueError("precontact policy observed prior ball contact")
+                    features = proprio_vector(
+                        root_pose,
+                        root_velocity,
+                        np.asarray(temporal_ball_position_observations[20][i]),
+                        np.asarray(ball_xyz_frame[i]),
+                        np.asarray(ball_velocity_frame[i]),
+                        np.asarray(foot_geometry_position_observations[20][i]),
+                        np.asarray(foot_geometry_position_observations[30][i]),
+                    )
+                    probability = risk_probability(proprio_policy, features)
+                    proprio_decision_probability[i] = probability
+                    proprio_decision_veto[i] = probability >= proprio_policy["threshold"]
                 if navigation_tracking_enabled[i] and not navigation_contact_seen[i]:
                     gap_m = float(ball_xyz_frame[i, 0] - root_pose[0])
                     if gap_m > 0.95:
                         lateral_gap_m = float(ball_xyz_frame[i, 1] - root_pose[1])
-                        command_lateral_speed = float(
-                            np.clip(args.navigation_lateral_ball_gain * lateral_gap_m, -0.2, 0.2)
+                        gain = (
+                            proprio_policy["fallback_gain"]
+                            if proprio_policy is not None
+                            and frame >= 30
+                            and proprio_decision_veto[i]
+                            else args.navigation_lateral_ball_gain
                         )
+                        command_lateral_speed = float(np.clip(gain * lateral_gap_m, -0.2, 0.2))
                 if (
                     args.near_ball_gap_m is not None
                     and ball_xyz_frame is not None
@@ -1301,6 +1351,13 @@ def main() -> None:
         report["navigation_rectangle_policy_hash"] = approach_policy_hash
         report["navigation_rectangle_x_max_m"] = approach_rectangle.x_max_m
         report["navigation_rectangle_y_min_m"] = approach_rectangle.y_min_m
+    if proprio_policy is not None:
+        if not np.isfinite(proprio_decision_probability).all():
+            raise ValueError("precontact policy decision was not observed")
+        report["navigation_proprio_risk_policy_hash"] = proprio_policy_hash
+        report["navigation_proprio_risk_policy"] = proprio_policy
+        report["navigation_proprio_risk_probability"] = proprio_decision_probability.tolist()
+        report["navigation_proprio_risk_vetoed"] = proprio_decision_veto.tolist()
     if body_trace_hash is not None:
         report["body_trace_hash"] = body_trace_hash
     if args.record_foot_geometry:

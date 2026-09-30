@@ -1,0 +1,15 @@
+{
+  "schema": "rsi_isaac_precontact_proprio_switch_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "data_status": "TRAIN_CONSUMED_NOT_FRESH",
+  "training_report_hash": "sha256:0bace60dad016fe04ac7a1e5c0fc5c4d90b39dbbb85c08f465a8a6a402f0e2ba",
+  "policy_hash": "sha256:aa33d1fffcb073dc5d7a1a97fea5de653d182571c14b8e973f4c39c147820cfc",
+  "risk_cases": [[20261177, 0], [20261227, 4], [20261282, 0], [20261360, 0], [20261378, 0], [20261440, 2], [20261446, 0]],
+  "gain_cases": [[20261095, 2], [20261097, 2], [20261146, 4], [20261148, 2], [20260975, 4]],
+  "arms": ["gain_08", "gain_12", "proprio_switch"],
+  "procedure": "Run each arm as independent parent plus late-swing actor on each identical frozen course, 72 Isaac episodes total. Verify source/asset/actor/ball-course hashes, body trace and independently reconstructed frame-30 proprioceptive decision. No outcome-aware selection or parameter retuning during collection.",
+  "gate": "Complete 12/12 paired courses; zero baseline-clean to non-foot losses; zero new out-of-play; minimum pelvis >= 0.65m; switch high quality on >=3/5 gain cases; protect >=6/7 risk cases relative to baseline. Consumed development gate cannot authorize promotion or video.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}

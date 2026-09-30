@@ -9,6 +9,11 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.rsi.conservative_approach_rectangle import ApproachRectangle
+from rosclaw_soccer.rsi.precontact_proprio_policy import (
+    proprio_vector,
+    risk_probability,
+    validate_policy,
+)
 from rosclaw_soccer.rsi.vector_first_touch_evidence import audit_vector_first_touch
 from rosclaw_soccer.sim.contracts import hash_json
 
@@ -23,6 +28,7 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
     gain = report.get("navigation_lateral_ball_gain")
     negative_only = report.get("navigation_lateral_negative_only", False)
     rectangle_hash = report.get("navigation_rectangle_policy_hash")
+    proprio_hash = report.get("navigation_proprio_risk_policy_hash")
     if rectangle_hash is not None and (
         rectangle_hash != SEALED_POLICY_HASH
         or report.get("navigation_rectangle_x_max_m") != SEALED_X_MAX_M
@@ -39,6 +45,22 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
         or len(report["environments"]) != 1
     ):
         raise ValueError("single-instance bounded approach contract required")
+    if proprio_hash is not None and (
+        gain != 1.2
+        or negative_only is not True
+        or rectangle_hash is not None
+        or report.get("navigation_proprio_risk_policy") is None
+    ):
+        raise ValueError("invalid precontact proprioceptive approach contract")
+    if proprio_hash is None and any(
+        key in report
+        for key in (
+            "navigation_proprio_risk_policy",
+            "navigation_proprio_risk_probability",
+            "navigation_proprio_risk_vetoed",
+        )
+    ):
+        raise ValueError("unbound precontact proprioceptive decision")
     first = report["environments"][0]["first_contact_frame"]
     if first is not None and (type(first) is not int or not 0 <= first < 300):
         raise ValueError("invalid first-contact frame")
@@ -59,6 +81,35 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
         if rectangle_hash is not None:
             rectangle = ApproachRectangle(SEALED_X_MAX_M, SEALED_Y_MIN_M, 0, 0.0)
             effective_gain = gain if rectangle.choose(float(gap[0]), float(lateral[0])) else 0.0
+        if proprio_hash is not None:
+            policy, policy_hash = validate_policy(report["navigation_proprio_risk_policy"])
+            if policy_hash != proprio_hash or (first is not None and first <= 30):
+                raise ValueError("unsealed or noncausal proprioceptive decision")
+            features = proprio_vector(
+                root[30, 0],
+                trace["root_velocity_world"][30, 0],
+                ball[20, 0],
+                ball[30, 0],
+                trace["ball_linear_velocity_before_step_m_s"][30, 0],
+                trace["foot_geometry_position_before_step_m"][20, 0],
+                trace["foot_geometry_position_before_step_m"][30, 0],
+            )
+            probability = risk_probability(policy, features)
+            veto = probability >= policy["threshold"]
+            recorded_probability = report.get("navigation_proprio_risk_probability")
+            recorded_veto = report.get("navigation_proprio_risk_vetoed")
+            if (
+                not isinstance(recorded_probability, list)
+                or len(recorded_probability) != 1
+                or type(recorded_probability[0]) not in (int, float)
+                or not np.isfinite(recorded_probability[0])
+                or abs(recorded_probability[0] - probability) > 1e-7
+                or recorded_veto != [veto]
+            ):
+                raise ValueError("precontact proprioceptive decision diverged from body state")
+            effective_gain = np.full(300, effective_gain, dtype=np.float64)
+            if veto:
+                effective_gain[30:] = policy["fallback_gain"] if lateral[0] < 0 else 0.0
         before_contact = np.arange(300) <= (299 if first is None else first)
         expected = np.where(
             before_contact & (gap > 0.95), np.clip(effective_gain * lateral, -0.2, 0.2), 0.0
@@ -81,5 +132,7 @@ def audit_lateral_approach(folder: Path) -> dict[str, Any]:
         "maximum_reconstruction_error_mps": max_error,
         "promotion_authorized": False,
     }
+    if proprio_hash is not None:
+        result["navigation_proprio_risk_policy_hash"] = proprio_hash
     result["report_hash"] = hash_json(result)
     return result
