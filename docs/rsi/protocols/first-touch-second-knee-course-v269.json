@@ -1,0 +1,20 @@
+{
+  "schema": "rsi_first_touch_second_knee_course_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "purpose": "Replicate the locally positive swing-side revalidation effect on another preselected knee-only incoming course, without overriding the frozen actor gate.",
+  "selection_source": "Earlier consumed development batch seed 20260953 lane 8: pure right-knee {5} contact, selected_taskspace_mask=true; chosen before independent-instance execution.",
+  "development_course": {"training_course_seed": 20260953, "single_course_lane": 8},
+  "runs": [
+    {"name": "parent", "late_swing_actor": false},
+    {"name": "control", "late_swing_actor": true, "revalidate_swing_side": false},
+    {"name": "candidate", "late_swing_actor": true, "revalidate_swing_side": true}
+  ],
+  "require_same_runner_asset_model_course_and_parent": true,
+  "require_independent_physics_and_per_frame_action_audit": true,
+  "require_natural_gate_true_in_both_actor_runs": true,
+  "require_minimum_pelvis_height_m": 0.65,
+  "diagnostic_gate": "Parent and actor control are knee-only; candidate becomes foot-only. If not, reject generalization and retain only the seed-54 local success.",
+  "fresh_holdout_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}
