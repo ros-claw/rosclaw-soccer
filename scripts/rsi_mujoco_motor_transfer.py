@@ -47,9 +47,12 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--neural-model", type=Path)
     group.add_argument("--motor-policy", type=Path)
+    parser.add_argument("--foundation-only", action="store_true")
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--lane", type=int, required=True, choices=range(16))
     args = parser.parse_args()
+    if args.foundation_only and (args.neural_model or args.motor_policy):
+        parser.error("foundation-only cannot include a motor learning model")
     # This first diagnostic only accepts already consumed courses.
     consumed = {
         (20261177, 0),
@@ -186,6 +189,7 @@ def main() -> None:
         assets=assets,
         foundation_hash=navigation.backend.qualification.qualification_hash,
         late_actor_hash=late["actor_hash"],
+        execution_profile="foundation_only" if args.foundation_only else "taskspace_plus_motor",
         model_hash=neural["model_hash"] if neural else None,
         motor_policy_hash=policy["policy_hash"] if policy else None,
         taskspace_contract=dict(
@@ -327,6 +331,7 @@ def main() -> None:
                     baseline_clean_ceiling=late["baseline_clean_ceiling"],
                 )[0]
                 and vx < 0
+                and not args.foundation_only
             )
             if neural:
                 policy = configure_preview(neural, history, contact_frame)
