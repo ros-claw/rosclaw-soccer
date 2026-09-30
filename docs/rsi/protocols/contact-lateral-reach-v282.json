@@ -1,0 +1,17 @@
+{
+  "schema": "rsi_contact_lateral_reach_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "hypothesis": "The three out-of-play contact-centering courses saturate the 0.15 m lateral task-space target before impact. Raising only the diagnostic target cap to 0.20 m with the same -0.04 m lead may center actual contact without losing clean foot contact.",
+  "development_courses": [
+    {"seed": 20260953, "lane": 12, "purpose": "out_of_play"},
+    {"seed": 20260954, "lane": 6, "purpose": "out_of_play"},
+    {"seed": 20260955, "lane": 0, "purpose": "out_of_play"},
+    {"seed": 20260953, "lane": 0, "purpose": "good_control"},
+    {"seed": 20260954, "lane": 2, "purpose": "good_control"}
+  ],
+  "arms": ["cap_0_15_lead_minus_0_04", "cap_0_20_lead_minus_0_04"],
+  "common_setup": "Frozen SONIC/actor/asset/parent/course, 0.95 m swing acquisition, 0.08 m forward, independent one-G1/one-ball physical process per arm.",
+  "development_gate": "All three out-of-play courses move to <=4 m maximum lateral excursion; all five preserve clean foot-only contact and pelvis >=0.65 m; two good controls remain forward >=1 m and lateral ratio <=0.3. Otherwise reject.",
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

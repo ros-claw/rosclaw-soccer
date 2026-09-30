@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 FORWARD_CAPS_M = (0.08, 0.16)
-LATERAL_CAPS_M = (0.05, 0.10, 0.15)
+LATERAL_CAPS_M = (0.05, 0.10, 0.15, 0.20)
 LATERAL_LEADS_M = (-0.04, 0.0)
 VERTICAL_OFFSETS_M = (-0.04, 0.0, 0.04)
 SWING_ACQUISITION_MAX_GAPS_M = (0.35, 0.55, 0.95)

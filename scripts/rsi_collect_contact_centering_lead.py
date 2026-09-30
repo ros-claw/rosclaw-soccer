@@ -27,7 +27,9 @@ COURSES = (
     (20260955, 2),
     (20260956, 0),
 )
-ARMS = {"lead000": 0.0, "leadn004": -0.04}
+REACH_COURSES = ((20260953, 12), (20260954, 6), (20260955, 0), (20260953, 0), (20260954, 2))
+LEAD_ARMS = {"lead000": (0.15, 0.0), "leadn004": (0.15, -0.04)}
+REACH_ARMS = {"cap015": (0.15, -0.04), "cap020": (0.20, -0.04)}
 
 
 def collect_one(
@@ -44,12 +46,13 @@ def collect_one(
     model_root: Path,
     actor: Path,
     source_hash: str,
+    arms: dict[str, tuple[float, float]],
 ) -> dict[str, Any]:
     parent_root = old_parent_root if seed <= 20260954 else new_parent_root
     parent_path = parent_root / f"seed{seed}-lane{lane}-parent/report.json"
     parent = json.loads(parent_path.read_text(encoding="utf-8"))
     results: dict[str, Any] = {}
-    for arm, lead in ARMS.items():
+    for arm, (cap, lead) in arms.items():
         folder = root / f"seed{seed}-lane{lane}-{arm}"
         log_path = root / "logs" / f"seed{seed}-lane{lane}-{arm}.log"
         if not (folder / "report.json").is_file():
@@ -83,7 +86,7 @@ def collect_one(
                 str(parent_path),
                 "--revalidate-swing-side",
                 "--late-swing-lateral-cap-m",
-                "0.15",
+                str(cap),
                 "--late-swing-forward-cap-m",
                 "0.08",
                 "--late-swing-side-acquisition-gap-m",
@@ -123,7 +126,7 @@ def collect_one(
             or report.get("parent_report_hash") != parent.get("report_hash")
             or report.get("late_swing_actor_hash") != load_late_swing_actor(actor)["actor_hash"]
             or report.get("taskspace_lateral_lead_m") != lead
-            or report.get("taskspace_lateral_cap_m") != 0.15
+            or report.get("taskspace_lateral_cap_m") != cap
             or report.get("late_swing_side_acquisition_gap_m") != 0.95
             or report.get("taskspace_revalidate_swing_side") is not True
             or report.get("training_course_seed") != seed
@@ -164,7 +167,7 @@ def collect_one(
             "minimum_pelvis_z_m": entry["minimum_pelvis_z_m"],
             **displacement,
         }
-    if results["lead000"]["course"] != results["leadn004"]["course"]:
+    if results[next(iter(arms))]["course"] != results[next(reversed(arms))]["course"]:
         raise ValueError(f"course drift: {seed}/{lane}")
     return {"seed": seed, "lane": lane, "gpu": gpu, "arms": results}
 
@@ -193,8 +196,11 @@ def main() -> None:
     parser.add_argument("--g1-usd", required=True, type=Path)
     parser.add_argument("--model-root", required=True, type=Path)
     parser.add_argument("--late-swing-policy", required=True, type=Path)
+    parser.add_argument("--mode", choices=("lead", "reach"), default="lead")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
+    courses = COURSES if args.mode == "lead" else REACH_COURSES
+    arms = LEAD_ARMS if args.mode == "lead" else REACH_ARMS
     runner = Path(__file__).with_name("rsi_isaac_vector_first_touch.py")
     if (
         not all(
@@ -207,7 +213,7 @@ def main() -> None:
                 (args.old_parent_root if seed <= 20260954 else args.new_parent_root)
                 / f"seed{seed}-lane{lane}-parent/report.json"
             ).is_file()
-            for seed, lane in COURSES
+            for seed, lane in courses
         )
         or (args.output_root.exists() and not args.resume)
         or (args.resume and not args.output_root.is_dir())
@@ -226,43 +232,67 @@ def main() -> None:
         model_root=args.model_root,
         actor=args.late_swing_policy,
         source_hash=source_hash,
+        arms=arms,
     )
     episodes: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = [
-            pool.submit(collect_gpu, gpu, list(COURSES[gpu::4]), **common) for gpu in range(4)
+            pool.submit(collect_gpu, gpu, list(courses[gpu::4]), **common) for gpu in range(4)
         ]
         for future in as_completed(futures):
             found, failed = future.result()
             episodes.extend(found)
             failures.extend(failed)
     ordered = sorted(episodes, key=lambda row: (row["seed"], row["lane"]))
+    base_name, candidate_name = arms
     improved = sum(
         all(
             a[key] is not None and c[key] is not None and abs(c[key]) < abs(a[key])
             for key in ("contact_ball_minus_foot_y_m", "lateral_60_m")
         )
         for row in ordered
-        for a, c in [(row["arms"]["lead000"], row["arms"]["leadn004"])]
+        for a, c in [(row["arms"][base_name], row["arms"][candidate_name])]
     )
-    out_base = sum(row["arms"]["lead000"]["maximum_lateral_excursion_m"] > 4 for row in ordered)
+    out_base = sum(row["arms"][base_name]["maximum_lateral_excursion_m"] > 4 for row in ordered)
     out_candidate = sum(
-        row["arms"]["leadn004"]["maximum_lateral_excursion_m"] > 4 for row in ordered
+        row["arms"][candidate_name]["maximum_lateral_excursion_m"] > 4 for row in ordered
     )
-    passed = bool(
+    lead_passed = bool(
         not failures
-        and len(ordered) == len(COURSES)
+        and len(ordered) == len(courses)
         and improved >= 4
         and out_candidate < out_base
         and all(
-            row["arms"]["leadn004"]["clean_foot_only"] >= row["arms"]["lead000"]["clean_foot_only"]
-            and row["arms"]["leadn004"]["minimum_pelvis_z_m"] >= 0.65
+            row["arms"][candidate_name]["clean_foot_only"]
+            >= row["arms"][base_name]["clean_foot_only"]
+            and row["arms"][candidate_name]["minimum_pelvis_z_m"] >= 0.65
             for row in ordered
         )
     )
+    reach_passed = bool(
+        not failures
+        and len(ordered) == len(courses)
+        and out_candidate == 0
+        and all(
+            row["arms"][candidate_name]["clean_foot_only"]
+            and row["arms"][candidate_name]["minimum_pelvis_z_m"] >= 0.65
+            for row in ordered
+        )
+        and all(
+            row["arms"][candidate_name]["forward_60_m"] >= 1.0
+            and row["arms"][candidate_name]["lateral_over_forward_60"] <= 0.3
+            for row in ordered
+            if (row["seed"], row["lane"]) in ((20260953, 0), (20260954, 2))
+        )
+    )
+    passed = lead_passed if args.mode == "lead" else reach_passed
     summary: dict[str, Any] = {
-        "schema": "rsi_contact_centering_lead_bank_v1",
+        "schema": (
+            "rsi_contact_centering_lead_bank_v1"
+            if args.mode == "lead"
+            else "rsi_contact_lateral_reach_bank_v1"
+        ),
         "activation_ceiling": "SIM_ONLY",
         "source_hash": source_hash,
         "episodes": ordered,
@@ -277,7 +307,7 @@ def main() -> None:
     (args.output_root / "bank_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    if failures or len(ordered) != len(COURSES):
+    if failures or len(ordered) != len(courses):
         raise SystemExit(1)
     print(f"LEAD_BANK_COMPLETE={summary['report_hash']}", flush=True)
     print(f"DEVELOPMENT_GATE_PASSED={passed}", flush=True)

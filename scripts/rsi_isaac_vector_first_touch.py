@@ -115,7 +115,7 @@ if (
     or args.support_knee_retract_m not in (0.0, 0.04, 0.08)
     or (args.support_knee_retract_m != 0.0 and args.late_swing_policy is None)
     or (args.revalidate_swing_side and args.late_swing_policy is None)
-    or args.late_swing_lateral_cap_m not in (0.05, 0.10, 0.15)
+    or args.late_swing_lateral_cap_m not in (0.05, 0.10, 0.15, 0.20)
     or args.late_swing_lateral_lead_m not in (-0.04, 0.0)
     or (args.late_swing_lateral_lead_m != 0.0 and args.late_swing_policy is None)
     or (args.late_swing_lateral_lead_m != 0.0 and args.env_count != 1)
