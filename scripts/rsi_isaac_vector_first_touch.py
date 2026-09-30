@@ -40,6 +40,7 @@ parser.add_argument("--temporal-policy-actions", type=Path)
 parser.add_argument("--late-swing-policy", type=Path)
 parser.add_argument("--revalidate-swing-side", action="store_true")
 parser.add_argument("--late-swing-lateral-cap-m", type=float, default=0.05)
+parser.add_argument("--late-swing-forward-cap-m", type=float, default=0.08)
 parser.add_argument("--support-knee-retract-m", type=float, default=0.0)
 parser.add_argument("--support-knee-lane", type=int)
 parser.add_argument("--temporal-followthrough-frames", type=int, default=0)
@@ -115,6 +116,9 @@ if (
     or args.late_swing_lateral_cap_m not in (0.05, 0.10, 0.15)
     or (args.late_swing_lateral_cap_m != 0.05 and args.late_swing_policy is None)
     or (args.late_swing_lateral_cap_m != 0.05 and args.env_count != 1)
+    or args.late_swing_forward_cap_m not in (0.08, 0.16)
+    or (args.late_swing_forward_cap_m != 0.08 and args.late_swing_policy is None)
+    or (args.late_swing_forward_cap_m != 0.08 and args.env_count != 1)
     or (
         args.support_knee_lane is not None
         and (args.support_knee_retract_m == 0.0 or not 0 <= args.support_knee_lane < args.env_count)
@@ -783,7 +787,7 @@ def main() -> None:
                             jacobians[lane, side],
                             baseline[lane, joint_ids],
                             limits[lane, joint_ids],
-                            forward_cap_m=0.08,
+                            forward_cap_m=args.late_swing_forward_cap_m,
                             lateral_cap_m=args.late_swing_lateral_cap_m,
                             vertical_offset_m=0.04,
                         )
@@ -1176,7 +1180,7 @@ def main() -> None:
             ),
             late_swing_action_trace_hash=swing_trace_hash,
             selected_taskspace_mask=swing_data[6].tolist(),
-            taskspace_forward_m=0.08,
+            taskspace_forward_m=args.late_swing_forward_cap_m,
             taskspace_lateral_cap_m=args.late_swing_lateral_cap_m,
             taskspace_vertical_offset_m=0.0,
             taskspace_acquisition_max_gap_m=0.95,
@@ -1188,11 +1192,14 @@ def main() -> None:
             support_knee_lane=args.support_knee_lane,
             minimum_cross_robot_distance_m=minimum_cross_robot_distance,
             minimum_cross_ball_distance_m=minimum_cross_ball_distance,
-            trained_actor=args.late_swing_lateral_cap_m == 0.05,
+            trained_actor=(
+                args.late_swing_lateral_cap_m == 0.05 and args.late_swing_forward_cap_m == 0.08
+            ),
         )
-        if args.late_swing_lateral_cap_m != 0.05:
+        if args.late_swing_lateral_cap_m != 0.05 or args.late_swing_forward_cap_m != 0.08:
             report["late_swing_action_override"] = (
-                f"diagnostic_lateral_cap_{args.late_swing_lateral_cap_m:.2f}_m"
+                f"diagnostic_lateral_{args.late_swing_lateral_cap_m:.2f}_m_"
+                f"forward_{args.late_swing_forward_cap_m:.2f}_m"
             )
         if args.support_knee_retract_m:
             with np.load(action_path) as action_replay:

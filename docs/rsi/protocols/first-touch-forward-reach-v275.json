@@ -1,0 +1,20 @@
+{
+  "schema": "rsi_first_touch_forward_reach_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "hypothesis": "A larger bounded swing-foot forward task-space reach may improve weak or sideways foot contacts without sacrificing clean contact and balance.",
+  "development_courses": [
+    {"training_course_seed": 20260953, "single_course_lane": 8, "reason": "weak diagonal foot kick"},
+    {"training_course_seed": 20260954, "single_course_lane": 2, "reason": "long-horizon out-of-play foot kick"},
+    {"training_course_seed": 20260954, "single_course_lane": 6, "reason": "backward foot kick"},
+    {"training_course_seed": 20260954, "single_course_lane": 10, "reason": "good straight foot kick, retention control"}
+  ],
+  "shared_setup": "One G1 and ball per process; frozen SONIC and actor gate, swing-side revalidation true, lateral cap 0.15 m, no support-knee action.",
+  "forward_caps_m": [0.08, 0.16],
+  "require_same_source_asset_actor_parent_course": true,
+  "require_independent_contact_and_per_frame_action_audit": true,
+  "measure": "Clean foot-only first contact; 60-frame dx, |dy|/max(dx,0.01); final maximum lateral excursion and pelvis minimum.",
+  "diagnostic_gate": "No clean-contact loss or pelvis below 0.65 m on any of four; at least two of the three poor courses improve 60-frame forward displacement by 0.25 m and decrease lateral/forward ratio; retention control remains dx>=1 m, ratio<=0.3 and no >4 m lateral out-of-play. Otherwise reject 0.16 m.",
+  "fresh_holdout_authorized": false,
+  "promotion_authorized": false,
+  "real_robot_authorized": false
+}

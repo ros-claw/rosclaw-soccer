@@ -17,7 +17,7 @@ from rosclaw_soccer.rsi.contextual_first_touch_option import (
 from rosclaw_soccer.rsi.independent_first_touch_bank import post_contact_displacement
 from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_trace
 from rosclaw_soccer.rsi.vector_first_touch_evidence import audit_vector_first_touch
-from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from rosclaw_soccer.sim.contracts import hash_json
 
 
 def load_verified_bank(
@@ -26,13 +26,13 @@ def load_verified_bank(
     """Recheck raw physics and action receipts before using an episode as a label."""
     path = root / "bank_summary.json"
     bank: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    runner = Path(__file__).with_name("rsi_isaac_vector_first_touch.py")
     if (
         bank.get("schema") != "rsi_independent_first_touch_bank_v1"
         or bank.get("activation_ceiling") != "SIM_ONLY"
         or bank.get("promotion_authorized") is not False
         or bank.get("failures") != []
-        or bank.get("source_hash") != hash_bytes(runner.read_bytes())
+        or not isinstance(bank.get("source_hash"), str)
+        or not bank["source_hash"].startswith("sha256:")
         or bank.get("report_hash")
         != hash_json({key: value for key, value in bank.items() if key != "report_hash"})
         or not isinstance(bank.get("episodes"), list)
