@@ -201,6 +201,7 @@ def review_online(
         schema="soccer.rsi.independent_protected_online_review.v308",
         training_complete=complete,
         audited_physical_episode_count=audited_episodes,
+        body_hash=commitment["asset_hash"],
         complete_generation_count=len(generations),
         generations=generations,
         best_model_hash=best["model_hash"],
