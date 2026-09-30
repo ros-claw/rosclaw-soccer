@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+from rosclaw_soccer.rsi.bootstrap_motor_execution import audit_preview
 from rosclaw_soccer.rsi.contact_motor_contract import motor_delta, validate_policy
 from rosclaw_soccer.rsi.contact_motor_primitive import JOINT_NAMES
 from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_trace
@@ -63,6 +64,9 @@ def audit_motor_arrays(
     ball = body["ball_position_before_step_m"]
     if root.shape != (300, 1, 7) or ball.shape != (300, 1, 3) or force.shape != (300, 1, 6):
         raise ValueError("invalid causal motor observations")
+    neural_preview = "bootstrap_proof" in report["contact_motor_policy"]
+    if neural_preview:
+        audit_preview(report["contact_motor_policy"], body, force)
     previous = np.zeros(12)
     contact_delta = np.zeros(12)
     contact_frame = None
@@ -77,6 +81,8 @@ def audit_motor_arrays(
             contact_delta,
             frame - contact_frame if contact_frame is not None else None,
         )
+        if neural_preview and frame < 30:
+            expected = np.zeros(12)
         expected = (baseline[frame, 0] + expected).astype(np.float32).astype(float) - baseline[
             frame, 0
         ]

@@ -47,6 +47,7 @@ parser.add_argument("--candidate-actions", type=Path)
 parser.add_argument("--temporal-policy-actions", type=Path)
 parser.add_argument("--late-swing-policy", type=Path)
 parser.add_argument("--contact-motor-policy", type=Path)
+parser.add_argument("--contact-motor-bootstrap-model", type=Path)
 parser.add_argument("--revalidate-swing-side", action="store_true")
 parser.add_argument("--late-swing-lateral-cap-m", type=float, default=0.05)
 parser.add_argument("--late-swing-lateral-lead-m", type=float, default=0.0)
@@ -172,9 +173,17 @@ if (
     or (args.temporal_policy_actions is not None and not args.temporal_policy_actions.is_file())
     or (args.late_swing_policy is not None and not args.late_swing_policy.is_file())
     or (
-        args.contact_motor_policy is not None
+        (args.contact_motor_policy is not None or args.contact_motor_bootstrap_model is not None)
         and (
-            not args.contact_motor_policy.is_file()
+            (args.contact_motor_policy is not None and not args.contact_motor_policy.is_file())
+            or (
+                args.contact_motor_bootstrap_model is not None
+                and not args.contact_motor_bootstrap_model.is_file()
+            )
+            or (
+                args.contact_motor_policy is not None
+                and args.contact_motor_bootstrap_model is not None
+            )
             or args.late_swing_policy is None
             or args.env_count != 1
             or args.support_knee_retract_m != 0.0
@@ -269,6 +278,7 @@ from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker  # noqa
 from rosclaw_soccer.rsi import contact_time_phase_features as time_phase_module  # noqa: E402
 from rosclaw_soccer.rsi import late_swing_memory as late_swing_module  # noqa: E402
 from rosclaw_soccer.rsi import taskspace_gate_memory as taskspace_gate_module  # noqa: E402
+from rosclaw_soccer.rsi.bootstrap_motor_execution import configure_preview  # noqa: E402
 from rosclaw_soccer.rsi.conservative_approach_rectangle import (  # noqa: E402
     load_guarded_approach_policy,
 )
@@ -278,6 +288,7 @@ from rosclaw_soccer.rsi.contact_motor_contract import (  # noqa: E402
 from rosclaw_soccer.rsi.contact_motor_contract import (  # noqa: E402
     motor_delta,
 )
+from rosclaw_soccer.rsi.contact_motor_phase import make_policy as make_phase_policy  # noqa: E402
 from rosclaw_soccer.rsi.contact_motor_primitive import (  # noqa: E402
     JOINT_NAMES as MOTOR_JOINT_NAMES,
 )
@@ -296,6 +307,7 @@ from rosclaw_soccer.rsi.first_touch_course_catalog import (  # noqa: E402
     static_development_courses,
 )
 from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor  # noqa: E402
+from rosclaw_soccer.rsi.motor_bootstrap_network import validate_model  # noqa: E402
 from rosclaw_soccer.rsi.precontact_proprio_policy import (  # noqa: E402
     load_policy as load_precontact_proprio_policy,
 )
@@ -571,6 +583,12 @@ def main() -> None:
         if args.contact_motor_policy is not None
         else (None, None)
     )
+    bootstrap_model = None
+    if args.contact_motor_bootstrap_model is not None:
+        bootstrap_model = json.loads(args.contact_motor_bootstrap_model.read_text(encoding="utf-8"))
+        validate_model(bootstrap_model)
+        motor_knots = np.zeros((3, 12))
+        motor_policy = make_phase_policy(motor_knots, 0.25, bootstrap_model["model_hash"])
     motor_joint_indices = [robot.joint_names.index(name) for name in MOTOR_JOINT_NAMES]
     motor_pre_targets = []
     motor_deltas = []
@@ -619,6 +637,7 @@ def main() -> None:
     )
 
     def rollout(current_navigations: list[G1SonicNavigation]):
+        nonlocal motor_policy, motor_knots
         positions = []
         contact_forces = []
         angular_velocities = []
@@ -1069,6 +1088,23 @@ def main() -> None:
                 swing_baseline_targets.append(baseline)
                 swing_executed_targets.append(target.detach().cpu().numpy().copy())
             if motor_policy is not None:
+                if bootstrap_model is not None and frame == 30:
+                    motor_policy = configure_preview(
+                        bootstrap_model,
+                        {
+                            "root_pose_xyzw_m": robot_root_observations,
+                            "root_velocity_world": robot_root_velocity_observations,
+                            "ball_position_before_step_m": temporal_ball_position_observations,
+                            "ball_linear_velocity_before_step_m_s": (
+                                temporal_ball_velocity_observations
+                            ),
+                            "foot_geometry_position_before_step_m": (
+                                foot_geometry_position_observations
+                            ),
+                        },
+                        int(swing_contact_frame[0]) if swing_contact_frame[0] >= 0 else None,
+                    )
+                    motor_knots = np.asarray(motor_policy["knots_rad"], dtype=np.float64)
                 motor_baseline = target[:, motor_joint_indices].detach().cpu().numpy().copy()
                 motor_limits = (
                     robot.data.joint_pos_limits.torch[:, motor_joint_indices].detach().cpu().numpy()

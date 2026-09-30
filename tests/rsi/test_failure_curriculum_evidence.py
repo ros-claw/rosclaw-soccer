@@ -187,3 +187,29 @@ def test_initial_clone_must_match_historical_body_and_ball(review_fixture):
     _write(path, raw)
     with pytest.raises(ValueError, match="reproduction mismatch"):
         evidence.review_curriculum(root, old)
+
+
+def test_complementary_rejected_models_are_offline_donors_not_a_runtime_oracle():
+    rows, _ = fixtures()
+    candidates = []
+    for index in range(2):
+        candidate_rows = copy.deepcopy(rows)
+        for course, row in enumerate(candidate_rows):
+            row["high_quality"] = course % 2 == index
+        candidates.append(
+            {
+                "generation": 0,
+                "candidate": index,
+                "policy_hash": hash_json({"candidate": index}),
+                "rows": candidate_rows,
+                "raw_report_hashes": [
+                    hash_json({"candidate": index, "course": course}) for course in range(12)
+                ],
+            }
+        )
+    frontier = evidence.learning_frontier(candidates)
+    assert frontier["covered_course_count"] == 12
+    assert frontier["selection_uses_future_outcome_labels"] is True
+    assert frontier["runtime_selection_authorized"] is False
+    assert frontier["promotion_authorized"] is False
+    assert all(sum(row["high_quality"] for row in c["rows"]) == 6 for c in candidates)

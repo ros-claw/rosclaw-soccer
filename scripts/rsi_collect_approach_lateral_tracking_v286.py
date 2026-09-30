@@ -58,7 +58,10 @@ def _run(
     motor_policy: Path | None = None,
     parent_report_override: Path | None = None,
     resume: bool = False,
+    motor_bootstrap: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    if motor_policy is not None and motor_bootstrap is not None:
+        raise ValueError("one explicit motor proposal backend required")
     folder = root / f"seed{seed}-lane{lane}-{arm}-{kind}"
     parent_folder = root / f"seed{seed}-lane{lane}-{arm}-parent"
     log_path = root / "logs" / f"seed{seed}-lane{lane}-{arm}-{kind}.log"
@@ -119,6 +122,8 @@ def _run(
         )
         if motor_policy is not None:
             command.extend(("--contact-motor-policy", str(motor_policy)))
+        if motor_bootstrap is not None:
+            command.extend(("--contact-motor-bootstrap-model", str(motor_bootstrap)))
     env = os.environ.copy()
     env.update(
         OMNI_KIT_ACCEPT_EULA="YES",
@@ -141,6 +146,17 @@ def _run(
             raise RuntimeError(f"Isaac failed; inspect {log_path}")
     report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     audit = audit_lateral_approach(folder)
+    expected_motor_hash = (
+        json.loads(motor_policy.read_text(encoding="utf-8"))["policy_hash"]
+        if motor_policy is not None and kind == "actor"
+        else None
+    )
+    if motor_bootstrap is not None and kind == "actor":
+        model = json.loads(motor_bootstrap.read_text(encoding="utf-8"))
+        proof = report.get("contact_motor_policy", {}).get("bootstrap_proof", {})
+        if proof.get("model", {}).get("model_hash") != model["model_hash"]:
+            raise ValueError("neural preview does not bind requested numerical model")
+        expected_motor_hash = report["contact_motor_policy"]["policy_hash"]
     if (
         report["navigation_lateral_ball_gain"] != gain
         or report.get("navigation_lateral_negative_only") is not negative_only
@@ -149,12 +165,7 @@ def _run(
         or report.get("navigation_proprio_risk_policy_hash")
         != (load_precontact_policy(proprio_policy)[1] if proprio_policy else None)
         or report.get("navigation_lateral_early_switch", False) is not early_switch
-        or report.get("contact_motor_policy_hash")
-        != (
-            json.loads(motor_policy.read_text(encoding="utf-8"))["policy_hash"]
-            if motor_policy is not None and kind == "actor"
-            else None
-        )
+        or report.get("contact_motor_policy_hash") != expected_motor_hash
         or report["training_course_seed"] != seed
         or report["single_course_lane"] != lane
     ):

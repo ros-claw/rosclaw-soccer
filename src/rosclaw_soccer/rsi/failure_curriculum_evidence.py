@@ -87,6 +87,47 @@ def _sealed(path: Path) -> dict[str, Any]:
     return report
 
 
+def learning_frontier(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """Future-labelled offline teacher coverage, explicitly NOT a runtime selector."""
+    covered, uncovered = [], []
+    for index, (seed, lane) in enumerate(COURSES):
+        eligible = [
+            candidate
+            for candidate in candidates
+            if candidate["rows"][index]["high_quality"]
+            and candidate["rows"][index]["minimum_pelvis_z_m"] >= 0.65
+        ]
+        if not eligible:
+            uncovered.append([seed, lane])
+            continue
+        # A rejected global model may preserve a useful local demonstration.
+        # Reward labels are permitted ONLY for constructing future training data.
+        teacher = max(
+            eligible,
+            key=lambda r: (r["rows"][index]["reward"], -r["generation"], -r["candidate"]),
+        )
+        covered.append(
+            {
+                "course": [seed, lane],
+                "donor_policy_hash": teacher["policy_hash"],
+                "donor_generation": teacher["generation"],
+                "donor_candidate": teacher["candidate"],
+                "raw_report_hash": teacher["raw_report_hashes"][index],
+            }
+        )
+    return {
+        "schema": "soccer.rsi.offline_teacher_frontier.v1",
+        "partition": "TRAIN_CONSUMED",
+        "selection_uses_future_outcome_labels": True,
+        "runtime_selection_authorized": False,
+        "promotion_authorized": False,
+        "covered_course_count": len(covered),
+        "uncovered_courses": uncovered,
+        "demonstration_donors": covered,
+        "interpretation": "Offline teacher union, not success of any single deployed policy",
+    }
+
+
 def _outcome(folder: Path, policy_hash: str, commitment: dict[str, Any]) -> dict[str, Any]:
     report = _sealed(folder / "report.json")
     if (
@@ -233,6 +274,7 @@ def review_curriculum(root: Path, validation_root: Path) -> dict[str, Any]:
         "distinct_consumed_course_count": 12,
         "candidates": candidates,
         "best": best,
+        "offline_learning_frontier": learning_frontier(candidates),
         "consumed_training_gate_passed": complete
         and best["score"]["consumed_training_gate_passed"],
         "promotion_authorized": False,
