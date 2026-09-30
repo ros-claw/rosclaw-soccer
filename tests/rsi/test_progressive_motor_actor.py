@@ -70,6 +70,19 @@ def test_repeated_samples_do_not_become_extra_learning(model):
         update_from_physics(model, [sample, changed], "sha256:" + "e" * 64)
 
 
+def test_large_replay_reuses_exact_value_for_same_state(model):
+    records = [
+        dict(
+            observation=[0.2] * 13,
+            normalized_action=[float(i) / 100] * 37,
+            outcome=outcome(float(i) / 100),
+        )
+        for i in range(80)
+    ]
+    updated = update_from_physics(model, records, "sha256:" + "1" * 64)
+    assert updated["generation"] == 1
+
+
 @pytest.mark.parametrize(
     "field", ["promotion_authorized", "hardware_authorized", "fresh_holdout_open_authorized"]
 )

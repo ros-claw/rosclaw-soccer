@@ -194,7 +194,19 @@ def update_from_physics(
     returns = np.asarray([terminal_return(s["outcome"]) for s in records])
     critic = np.linalg.solve(x.T @ x + 1e-4 * np.eye(DIMENSION), x.T @ returns)
     observations = np.asarray([s["observation"] for s in records])
-    weights = statewise_advantage_weights(observations, returns, x @ critic, temperature=0.5)
+    # Evaluate V once per identical state. A batched BLAS reduction can differ
+    # at the last bit between repeated rows; those are not different states.
+    # Keep the Core consistency check strict rather than widening its tolerance.
+    state_values: dict[str, float] = {}
+    values = []
+    for observation, features in zip(observations, x, strict=True):
+        key = hash_json(observation.tolist())
+        if key not in state_values:
+            state_values[key] = float(features @ critic)
+        values.append(state_values[key])
+    weights = statewise_advantage_weights(
+        observations, returns, np.asarray(values), temperature=0.5
+    )
     frozen = np.stack([parent_actor(model["frozen_parent"], s["observation"]) for s in records])
     head = fit_protected_readout(
         plane,
