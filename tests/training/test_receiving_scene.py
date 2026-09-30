@@ -32,6 +32,8 @@ def test_memory_only_hash_is_unchanged():
     expected.pop("action_substrate")
     expected.pop("previous_body_residual_rad")
     expected.pop("contact_history")
+    expected.pop("foot_kinematics")
+    expected.pop("shin_clearance")
     expected["locomotion"].pop("scene")
     expected["locomotion"]["memory"] = obs.locomotion.memory.state_hash
     assert obs.observation_hash == hash_json(expected)
@@ -131,7 +133,13 @@ def test_legacy_scene_serialization_and_observation_identity_preserved():
     assert current.to_dict() == legacy
     obs = replace(observation(), locomotion=replace(locomotion(), scene=current))
     expected = asdict(obs)
-    for key in ("action_substrate", "previous_body_residual_rad", "contact_history"):
+    for key in (
+        "action_substrate",
+        "previous_body_residual_rad",
+        "contact_history",
+        "foot_kinematics",
+        "shin_clearance",
+    ):
         expected.pop(key)
     expected["locomotion"]["memory"] = obs.locomotion.memory.state_hash
     expected["locomotion"]["scene"] = legacy

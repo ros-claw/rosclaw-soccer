@@ -14,13 +14,13 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rosclaw_soccer.providers.g1.locomotion_memory import LocomotionMemory
 from rosclaw_soccer.sim.contracts import hash_json
-from rosclaw_soccer.skills.team.foot_kinematics import TeamFootKinematics
-from rosclaw_soccer.skills.team.shin_clearance import TeamShinClearance
 from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSchedule
 from rosclaw_soccer.training.receiving_scene import ReceivingSceneContext
 
 if TYPE_CHECKING:
+    from rosclaw_soccer.skills.team.foot_kinematics import TeamFootKinematics
     from rosclaw_soccer.skills.team.motor_option import TeamMotorTarget
+    from rosclaw_soccer.skills.team.shin_clearance import TeamShinClearance
 
 
 @dataclass(frozen=True)
@@ -191,6 +191,8 @@ class ReceivingFeedbackObservation:
             if abs(self.contact_history.observed_through_time_sec - self.time_sec) > 1e-9:
                 raise ValueError("contact history must cover the current observation clock")
         if self.foot_kinematics is not None:
+            from rosclaw_soccer.skills.team.foot_kinematics import TeamFootKinematics
+
             if not isinstance(self.foot_kinematics, TeamFootKinematics):
                 raise ValueError("typed same-frame foot kinematics required")
             self.foot_kinematics.__post_init__()
@@ -201,6 +203,8 @@ class ReceivingFeedbackObservation:
             ):
                 raise ValueError("same-player current foot positions and velocities required")
         if self.shin_clearance is not None:
+            from rosclaw_soccer.skills.team.shin_clearance import TeamShinClearance
+
             if not isinstance(self.shin_clearance, TeamShinClearance):
                 raise ValueError("typed same-frame shin clearance required")
             self.shin_clearance.__post_init__()
