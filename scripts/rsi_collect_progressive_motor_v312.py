@@ -87,7 +87,8 @@ def main() -> None:
             negative_only=True,
             core_root=args.core_root,
             motor_online=path,
-            parent_report_override=Path(row["parent_report"]),
+            parent_report_override=args.output_root
+            / f"seed{row['seed']}-lane{row['lane']}-reproduction-parent/report.json",
             resume=args.resume,
         )
         outcome["high_quality"] = high_quality(outcome)
@@ -110,6 +111,51 @@ def main() -> None:
             results.append(dict(index=i, report_hash=raw["report_hash"], outcome=outcome))
             print(f"PROGRESSIVE_REPRODUCED i={i}", flush=True)
         return results
+
+    def reproduce_parents(gpu: int) -> list[dict[str, Any]]:
+        results = []
+        for i in range(gpu, len(bank["courses"]), 4):
+            row = bank["courses"][i]
+            raw, _ = _run(
+                root=args.output_root,
+                runner=runner,
+                isaac_python=args.isaac_python,
+                g1_usd=args.g1_usd,
+                model_root=args.model_root,
+                actor=args.late_swing_policy,
+                seed=row["seed"],
+                lane=row["lane"],
+                gpu=gpu,
+                arm="reproduction",
+                kind="parent",
+                gain=1.2,
+                negative_only=True,
+                core_root=args.core_root,
+                resume=args.resume,
+            )
+            old = _sealed(Path(row["parent_report"]))
+            if any(
+                raw[k] != old[k]
+                for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
+            ):
+                raise ValueError(
+                    "new source changed physical parent; learning evaluation prohibited"
+                )
+            results.append(
+                dict(index=i, report_hash=raw["report_hash"], body_and_ball_byte_equal=True)
+            )
+            print(f"PROGRESSIVE_PARENT_REPRODUCED i={i}", flush=True)
+        return results
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        parents = sorted(
+            [r for batch in pool.map(reproduce_parents, range(4)) for r in batch],
+            key=lambda r: r["index"],
+        )
+    write_once(
+        args.output_root / "parent_reproduction.json",
+        dict(rows=parents, matched_course_count=len(parents)),
+    )
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         controls = sorted(
@@ -154,7 +200,7 @@ def main() -> None:
         schema="soccer.rsi.progressive_replay_physics.v312",
         commitment=commitment,
         rows=rows,
-        physical_episode_count=104,
+        physical_episode_count=156,
         distinct_consumed_contexts=52,
         high_quality_count=sum(r["high_quality"] for r in rows),
         protected_quality_loss=sum(
