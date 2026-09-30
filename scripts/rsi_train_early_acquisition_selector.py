@@ -34,7 +34,10 @@ def load_verified_bank(
         != hash_json({k: v for k, v in bank.items() if k != "report_hash"})
         or not isinstance(bank.get("episodes"), list)
         or [(row["seed"], row["lane"]) for row in bank["episodes"]]
-        != [(seed, lane) for seed in (20260953, 20260954) for lane in range(0, 16, 2)]
+        not in (
+            [(seed, lane) for seed in (20260953, 20260954) for lane in range(0, 16, 2)],
+            [(seed, lane) for seed in (20260955, 20260956) for lane in range(0, 16, 2)],
+        )
     ):
         raise ValueError("incomplete or unauthenticated early-acquisition bank")
     features = []

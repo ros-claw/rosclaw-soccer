@@ -1,0 +1,11 @@
+{
+  "schema": "rsi_first_touch_seed_expansion_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "additional_training_seeds": [20260955, 20260956],
+  "lanes": [0, 2, 4, 6, 8, 10, 12, 14],
+  "procedure": "Collect independent frozen SONIC parent per new course, then independent 0.55 m and 0.95 m acquisition arms with the same frozen actor, asset, runner and course parent. Audit all 48 new physics episodes.",
+  "analysis": "Combine with v278 development bank only after source/asset/actor hashes agree. Leave one seed out across all four seeds. Precontact-only selector must beat training-fold fixed arm on every test seed and avoid out-of-play and body-safety regressions before any fresh holdout.",
+  "promotion_authorized": false,
+  "fresh_holdout_authorized": false,
+  "real_robot_authorized": false
+}

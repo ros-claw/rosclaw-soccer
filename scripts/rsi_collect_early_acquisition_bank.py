@@ -18,7 +18,6 @@ from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_tr
 from rosclaw_soccer.rsi.vector_first_touch_evidence import audit_vector_first_touch
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
-SEEDS = (20260953, 20260954)
 LANES = tuple(range(0, 16, 2))
 ARMS = {"acquisition_055": 0.55, "acquisition_095": 0.95}
 
@@ -173,12 +172,15 @@ def main() -> None:
     parser.add_argument("--g1-usd", required=True, type=Path)
     parser.add_argument("--model-root", required=True, type=Path)
     parser.add_argument("--late-swing-policy", required=True, type=Path)
+    parser.add_argument("--seeds", nargs="+", type=int, default=[20260953, 20260954])
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     runner = Path(__file__).with_name("rsi_isaac_vector_first_touch.py")
-    courses = [(seed, lane) for seed in SEEDS for lane in LANES]
+    seeds = tuple(args.seeds)
+    courses = [(seed, lane) for seed in seeds for lane in LANES]
     if (
-        not runner.is_file()
+        seeds not in ((20260953, 20260954), (20260955, 20260956))
+        or not runner.is_file()
         or not args.isaac_python.is_file()
         or not args.g1_usd.is_file()
         or not args.model_root.is_dir()
