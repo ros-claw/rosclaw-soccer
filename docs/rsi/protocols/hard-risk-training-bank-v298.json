@@ -1,0 +1,13 @@
+{
+  "schema": "rsi_isaac_hard_risk_training_bank_protocol_v1",
+  "activation_ceiling": "SIM_ONLY",
+  "source_hard_fresh_report_hash": "sha256:540da31452042c69d61a1ecb598915c0f416051c422e2b637c1de19e3ea573a1",
+  "source_failed_distillation_report_hash": "sha256:f3e74406ea3f7895981df6d1816f1d8f2197e20f95df80124b103bb6bb158499",
+  "course_rule": "From seeds 20261161..20261699 inclusive, take the first 40 lexicographic (seed,lane) with even lane, ball_vx<=-0.60, 2.2<=ball_x<=2.4 and -0.10<=ball_y<=-0.06 using only the deterministic initial catalog; last selected seed must be 20261446. No outcome filtering.",
+  "arms": ["bounded negative-side gain 0.8", "bounded negative-side gain 1.2"],
+  "procedure": "Four A6000; each of 40 courses receives independent parent and sealed late-swing actor at both gains, 160 physical episodes. Store all contact, command, full-body and ball traces. Preserve every failure. This bank is TRAIN_CONSUMED immediately, never a Fresh exam.",
+  "output_gate": "Exactly 40 distinct catalog courses, 160/160 audited physical episodes, fixed source and asset hashes, no collector failure. This is data-quality only; no motor/policy promotion or video authorization regardless of score.",
+  "promotion_authorized": false,
+  "video_authorized": false,
+  "real_robot_authorized": false
+}
