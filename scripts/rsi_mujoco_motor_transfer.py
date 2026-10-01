@@ -185,7 +185,15 @@ def main() -> None:
     if step_model is not None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
-        if step_model.get("schema") in (
+        if step_model.get("schema") == "soccer.rsi.memory_guarded_phase_transfer.v1":
+            from rosclaw_soccer.rsi.memory_guarded_phase_transfer import CompiledMemoryPhaseMotor
+            from rosclaw_soccer.rsi.memory_guarded_phase_transfer import (
+                make_preview as memory_preview,
+            )
+
+            make_preview = memory_preview
+            delta_at_frame = CompiledMemoryPhaseMotor(make_preview(step_model)).delta_at_frame
+        elif step_model.get("schema") in (
             "soccer.rsi.kernel_guarded_step_actor_critic.v1",
             "soccer.rsi.kernel_guarded_step_sampling.v1",
         ):

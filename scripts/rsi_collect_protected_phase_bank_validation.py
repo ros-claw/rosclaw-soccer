@@ -135,7 +135,14 @@ def main() -> None:
     warm = json.loads(args.warm_model.read_text())
     candidate = json.loads(args.candidate_model.read_text())
     make_preview(warm)
-    if candidate.get("schema") == "soccer.rsi.kernel_guarded_step_actor_critic.v1":
+    if candidate.get("schema") == "soccer.rsi.memory_guarded_phase_transfer.v1":
+        from rosclaw_soccer.rsi.memory_guarded_phase_transfer import (
+            validate_model as memory_validate,
+        )
+
+        memory_validate(candidate)
+        predecessor = candidate["phase_model"]["base_model"]
+    elif candidate.get("schema") == "soccer.rsi.kernel_guarded_step_actor_critic.v1":
         from rosclaw_soccer.rsi.kernel_guarded_step_network import validate_model as kernel_validate
 
         kernel_validate(candidate)

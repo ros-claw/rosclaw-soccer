@@ -91,7 +91,13 @@ def audit_motor_arrays(
     contact_delta = np.zeros(12)
     contact_frame = None
     compiled: Any = None
-    if "kernel_motor_proof" in report["contact_motor_policy"]:
+    if "memory_phase_motor_proof" in report["contact_motor_policy"]:
+        from rosclaw_soccer.rsi.memory_guarded_phase_transfer import CompiledMemoryPhaseMotor
+
+        if not step_preview:
+            raise ValueError("unbound memory phase transfer")
+        compiled = CompiledMemoryPhaseMotor(report["contact_motor_policy"])
+    elif "kernel_motor_proof" in report["contact_motor_policy"]:
         from rosclaw_soccer.rsi.kernel_guarded_step_execution import CompiledKernelStepMotor
 
         if not step_preview:
