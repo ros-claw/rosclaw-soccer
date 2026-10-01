@@ -21,7 +21,55 @@ from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 
-def review(root: Path, bank_path: Path) -> dict[str, Any]:
+def review_course(job: dict[str, Any]) -> dict[str, Any]:
+    """Independently reconstruct one declared row; no outcome-label shortcut."""
+    root = Path(job["root"])
+    i, course, recorded, commitment = (
+        job["index"],
+        job["course"],
+        job["recorded"],
+        job["commitment"],
+    )
+    seed, lane = course["seed"], course["lane"]
+    if recorded["index"] != i or (recorded["seed"], recorded["lane"]) != (seed, lane):
+        raise ValueError("bank row identity changed")
+    parent = _sealed(root / f"seed{seed}-lane{lane}-reproduction-parent/report.json")
+    old = _sealed(Path(course["parent_report"]))
+    if (
+        parent["report_hash"] != recorded["parent_report_hash"]
+        or parent["source_hash"] != commitment["runner_hash"]
+        or any(
+            parent[k] != old[k]
+            for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
+        )
+    ):
+        raise ValueError("bank parent reproduction changed")
+    from rosclaw_soccer.rsi.approach_lateral_tracking_evidence import audit_lateral_approach
+
+    audit_lateral_approach(root / f"seed{seed}-lane{lane}-reproduction-parent")
+    measured = dict(index=i, seed=seed, lane=lane, parent_report_hash=parent["report_hash"])
+    for arm, model_key in (("warm", "warm_model_hash"), ("candidate", "model_hash")):
+        folder = root / f"seed{seed}-lane{lane}-{arm}-actor"
+        raw = _sealed(folder / "report.json")
+        outcome = _outcome(folder, raw["contact_motor_policy_hash"], commitment)["outcome"]
+        if (
+            raw["parent_report_hash"] != parent["report_hash"]
+            or raw["source_hash"] != commitment["runner_hash"]
+            or raw["contact_motor_policy"]["step_motor_proof"]["model"]["model_hash"]
+            != commitment[model_key]
+            or raw["environments"][0]["course"] != parent["environments"][0]["course"]
+        ):
+            raise ValueError("consumed candidate lost policy, source or physical binding")
+        measured[arm] = dict(report_hash=raw["report_hash"], **outcome)
+    if measured != recorded:
+        raise ValueError("bank comparison differs from independently audited physics")
+    print(f"INDEPENDENT_BANK_ROW_RECONSTRUCTED index={i} seed={seed} lane={lane}", flush=True)
+    return measured
+
+
+def review(root: Path, bank_path: Path, *, workers: int = 1) -> dict[str, Any]:
+    from scripts.rsi_audit_memory_learning_rollouts import ordered_audits
+
     summary = _sealed(root / "validation_summary.json")
     bank = _sealed(bank_path)
     commitment = summary["commitment"]
@@ -35,6 +83,8 @@ def review(root: Path, bank_path: Path) -> dict[str, Any]:
         or summary["promotion_authorized"] is not False
         or summary["hardware_authorized"] is not False
         or len(summary["rows"]) != 52
+        or len(bank["courses"]) != 52
+        or len({(c["seed"], c["lane"]) for c in bank["courses"]}) != 52
     ):
         raise ValueError("complete consumed comparison required")
     reused = "reused_baseline_summary_hash" in commitment
@@ -51,42 +101,17 @@ def review(root: Path, bank_path: Path) -> dict[str, Any]:
             for before, after in zip(old["rows"], summary["rows"], strict=True)
         ):
             raise ValueError("reused control lineage changed")
-    rows = []
-    for i, (course, recorded) in enumerate(zip(bank["courses"], summary["rows"], strict=True)):
-        seed, lane = course["seed"], course["lane"]
-        if recorded["index"] != i or (recorded["seed"], recorded["lane"]) != (seed, lane):
-            raise ValueError("bank row identity changed")
-        parent = _sealed(root / f"seed{seed}-lane{lane}-reproduction-parent/report.json")
-        old = _sealed(Path(course["parent_report"]))
-        if (
-            parent["report_hash"] != recorded["parent_report_hash"]
-            or parent["source_hash"] != commitment["runner_hash"]
-            or any(
-                parent[k] != old[k]
-                for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
-            )
-        ):
-            raise ValueError("bank parent reproduction changed")
-        from rosclaw_soccer.rsi.approach_lateral_tracking_evidence import audit_lateral_approach
-
-        audit_lateral_approach(root / f"seed{seed}-lane{lane}-reproduction-parent")
-        measured = dict(index=i, seed=seed, lane=lane, parent_report_hash=parent["report_hash"])
-        for arm, model_key in (("warm", "warm_model_hash"), ("candidate", "model_hash")):
-            folder = root / f"seed{seed}-lane{lane}-{arm}-actor"
-            raw = _sealed(folder / "report.json")
-            outcome = _outcome(folder, raw["contact_motor_policy_hash"], commitment)["outcome"]
-            if (
-                raw["parent_report_hash"] != parent["report_hash"]
-                or raw["source_hash"] != commitment["runner_hash"]
-                or raw["contact_motor_policy"]["step_motor_proof"]["model"]["model_hash"]
-                != commitment[model_key]
-                or raw["environments"][0]["course"] != parent["environments"][0]["course"]
-            ):
-                raise ValueError("consumed candidate lost policy, source or physical binding")
-            measured[arm] = dict(report_hash=raw["report_hash"], **outcome)
-        if measured != recorded:
-            raise ValueError("bank comparison differs from independently audited physics")
-        rows.append(measured)
+    jobs = [
+        dict(root=str(root), index=i, course=course, recorded=recorded, commitment=commitment)
+        for i, (course, recorded) in enumerate(zip(bank["courses"], summary["rows"], strict=True))
+    ]
+    rows = list(ordered_audits(review_course, jobs, workers))
+    if (
+        _sealed(root / "validation_summary.json")["report_hash"] != summary["report_hash"]
+        or _sealed(bank_path)["report_hash"] != bank["report_hash"]
+        or json.loads((root / "commitment.json").read_text()) != commitment
+    ):
+        raise ValueError("complete bank commitment changed during independent reconstruction")
     result = score(rows)
     if any(result[k] != summary[k] for k in result):
         raise ValueError("full bank scores do not reconstruct")
@@ -251,10 +276,11 @@ def main() -> None:
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--review-only", action="store_true")
+    parser.add_argument("--review-workers", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--reuse-baseline-root", type=Path)
     args = parser.parse_args()
     if args.review_only:
-        result = review(args.output_root, args.bank_path)
+        result = review(args.output_root, args.bank_path, workers=args.review_workers)
         write_once(args.output_root / "independent_review.json", result)
         print(json.dumps(result), flush=True)
         return
