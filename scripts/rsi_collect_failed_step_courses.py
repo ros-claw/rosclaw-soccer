@@ -19,6 +19,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
+from scripts.rsi_sampling_view_memory import bounded_views
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 
@@ -198,15 +199,16 @@ def main() -> None:
         != expected_hash
     ):
         parser.error("failure source used a different warm actor")
-    views = [
-        make_view(
-            base,
-            seed=sampling_seed(i, s, generation=warm["generation"] if arm == "candidate" else 0),
-            std=0.1,
-        )
-        for i in range(len(courses))
-        for s in range(args.samples_per_course)
-    ]
+    base_payload_hash = hash_json(base)
+    views = bounded_views(
+        make_view,
+        base,
+        (
+            sampling_seed(i, s, generation=warm["generation"] if arm == "candidate" else 0)
+            for i in range(len(courses))
+            for s in range(args.samples_per_course)
+        ),
+    )
     commitment = dict(
         schema="soccer.rsi.failure_step_exploration_commitment.v1",
         source_commit=_head(source),
@@ -224,6 +226,9 @@ def main() -> None:
         samples_per_course=args.samples_per_course,
         std_raw=0.1,
         sampling_view_hashes=[v["model_hash"] for v in views],
+        sampling_memory_helper_hash=hash_bytes(
+            (source / "scripts/rsi_sampling_view_memory.py").read_bytes()
+        ),
         execution_timeout_s=600,
         partition="TRAIN_CONSUMED",
         promotion_authorized=False,
@@ -369,7 +374,7 @@ def main() -> None:
         rows = sorted(
             [r for group in pool.map(worker, range(4)) for r in group], key=lambda r: r["index"]
         )
-    if _head(source) != commitment["source_commit"]:
+    if _head(source) != commitment["source_commit"] or hash_json(base) != base_payload_hash:
         raise ValueError("source drift invalidates exploration")
     result = dict(
         schema="soccer.rsi.smooth_memory_failure_exploration.v1"

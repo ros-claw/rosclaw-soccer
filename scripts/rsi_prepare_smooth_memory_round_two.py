@@ -25,7 +25,7 @@ def folder_bytes(path: Path) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("plan", "parent-model", "bank-root", "transport-review", "output"):
+    for name in ("plan", "parent-model", "bank-root", "transport-review", "storage-root", "output"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     args = parser.parse_args()
     plan = json.loads(args.plan.read_text())
@@ -94,7 +94,7 @@ def main() -> None:
     pilot = int(1.1 * 4 * (2 * actor_bytes + parent_bytes))
     other = 2 * 1024**3  # Fit NPZ/model, four CPU reports and logs.
     reserve = plan["system_disk_reserve_bytes"]
-    free = shutil.disk_usage(plan["storage_root"]).free
+    free = shutil.disk_usage(args.storage_root).free
     if free < reserve + collection + full_bank + pilot + other:
         raise ValueError(
             f"complete round requires {reserve + collection + full_bank + pilot + other} "
@@ -119,6 +119,7 @@ def main() -> None:
         additional_fit_and_cpu_bytes=other,
         system_reserve_bytes=reserve,
         available_storage_bytes=free,
+        storage_root=str(args.storage_root.resolve()),
         source_hash=hash_bytes(Path(__file__).read_bytes()),
         qualification="CONSUMED_ITERATION_PREFLIGHT_ONLY_NOT_LEARNING_GAIN",
         promotion_authorized=False,

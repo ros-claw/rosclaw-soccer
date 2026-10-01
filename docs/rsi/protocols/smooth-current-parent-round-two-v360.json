@@ -28,7 +28,7 @@
   "whole_trajectory_critic_crossfit_required": true,
   "comparison_reference_for_next_candidate": "ACTUAL_CURRENT_GENERATION_ONE_PARENT",
   "next_candidate_full_bank_old_high_quality_loss_allowed": 0,
-  "storage_root": "/home/dell/rosclaw_soccer_evidence/rsi-20261001-continuation",
+  "storage_root_selection": "OPERATOR_CLI_EXTERNAL_EVIDENCE_DIRECTORY",
   "system_disk_reserve_bytes": 107374182400,
   "fresh_holdout_open_authorized": false,
   "promotion_authorized": false,
