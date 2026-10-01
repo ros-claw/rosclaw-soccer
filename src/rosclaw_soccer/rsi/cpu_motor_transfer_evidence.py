@@ -1,0 +1,259 @@
+"""Replay actual CPU MuJoCo dynamics and causally reconstruct neural targets.
+
+The compiled model and actuator controls are replayed, not Isaac trajectories.
+This detects corrupt trace/report pairs but does not prove sim-to-real safety.
+The initial implementation deliberately requires the modern 43/41 state model.
+"""
+
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+from rosclaw_soccer.rsi.contact_motor_primitive import JOINT_NAMES
+from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
+from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json
+
+
+def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
+    import mujoco
+
+    report = _sealed(root / "report.json")
+    snapshot, trace_path = root / "compiled_model.mjb", root / "physical_trace.npz"
+    if (
+        report.get("source_hash") != hash_bytes(source_path.read_bytes())
+        or report.get("physical_trace_hash") != hash_bytes(trace_path.read_bytes())
+        or report.get("compiled_model_hash") != hash_bytes(snapshot.read_bytes())
+        or report.get("activation_ceiling") != "SIM_ONLY"
+        or report.get("promotion_authorized") is not False
+        or report.get("hardware_authorized") is not False
+        or report["physics"]["engine"] != "MuJoCo"
+        or report["physics"]["device"] != "cpu"
+        or report["physics"]["version"] != mujoco.__version__
+    ):
+        raise ValueError("CPU dynamics source, model, trace or authority contract changed")
+    import json
+
+    commitment = json.loads((root / "commitment.json").read_text())
+    if report["commitment_hash"] != hash_json(commitment) or any(
+        report[k] != v for k, v in commitment.items()
+    ):
+        raise ValueError("CPU commitment differs from report")
+    model = mujoco.MjModel.from_binary_path(str(snapshot))
+    if (model.nq, model.nv, model.nu) != (43, 41, 29) or model.opt.timestep != 0.002:
+        raise ValueError("modern canonical CPU transfer state required")
+    names = list(G1_DDS_JOINT_NAMES)
+    if report["physics"]["canonical_joint_names"] != names:
+        raise ValueError("canonical PD gain ordering changed")
+    kp = np.asarray(report["physics"]["canonical_pd_kp"])
+    kd = np.asarray(report["physics"]["canonical_pd_kd"])
+    if (
+        kp.shape != (29,)
+        or kd.shape != (29,)
+        or not np.isfinite(kp).all()
+        or not np.isfinite(kd).all()
+        or np.any(kp <= 0)
+        or np.any(kd < 0)
+    ):
+        raise ValueError("finite physical PD controller required")
+
+    def identifier(kind: Any, name: str) -> int:
+        index = mujoco.mj_name2id(model, kind, name)
+        if index < 0:
+            raise ValueError(f"missing CPU model element {name}")
+        return int(index)
+
+    joints = [identifier(mujoco.mjtObj.mjOBJ_JOINT, n) for n in names]
+    qi = np.asarray([model.jnt_qposadr[j] for j in joints])
+    vi = np.asarray([model.jnt_dofadr[j] for j in joints])
+    ai = []
+    for joint in joints:
+        matches = np.flatnonzero(model.actuator_trnid[:, 0] == joint)
+        if len(matches) != 1:
+            raise ValueError("one actuator for each canonical joint required")
+        ai.append(int(matches[0]))
+    pelvis = identifier(mujoco.mjtObj.mjOBJ_BODY, "pelvis")
+    ball = identifier(mujoco.mjtObj.mjOBJ_BODY, "ball")
+    bg = identifier(mujoco.mjtObj.mjOBJ_GEOM, "ball_geom")
+    bj = model.body_jntadr[ball]
+    bq, bv = model.jnt_qposadr[bj], model.jnt_dofadr[bj]
+    geometry_names = [
+        "left_ankle_roll_link",
+        "right_ankle_roll_link",
+        "left_knee_link",
+        "right_knee_link",
+    ]
+    geometry = [identifier(mujoco.mjtObj.mjOBJ_BODY, n) for n in geometry_names]
+    contacts = (
+        geometry[:2]
+        + [
+            identifier(mujoco.mjtObj.mjOBJ_BODY, n)
+            for n in ("left_ankle_pitch_link", "right_ankle_pitch_link")
+        ]
+        + geometry[2:]
+    )
+    if (
+        model.geom_size[bg, 0] != 0.11
+        or model.body_mass[ball] != 0.43
+        or np.any(model.dof_damping[bv : bv + 6] != 0)
+    ):
+        raise ValueError("physical ball dimensions or damping changed")
+    shapes = {
+        "canonical_qpos": (300, 1, 43),
+        "canonical_qvel": (300, 1, 41),
+        "joint_target_rad": (300, 1, 29),
+        "torque_nm": (300, 1, 10, 29),
+        "actual_actuator_force_nm": (300, 1, 10, 29),
+        "pelvis_z_per_substep_m": (300, 1, 10),
+        "force_n": (300, 1, 6),
+        "ball_position_after_step_m": (300, 1, 3),
+        "motor_delta_rad": (300, 1, 12),
+        "pre_motor_joint_target_rad": (300, 1, 29),
+    }
+    with np.load(trace_path, allow_pickle=False) as loaded:
+        trace = {k: loaded[k] for k in loaded.files}
+    if any(
+        trace[k].shape != shape or not np.isfinite(trace[k]).all() for k, shape in shapes.items()
+    ):
+        raise ValueError("complete finite CPU trace required")
+    data = mujoco.MjData(model)
+    data.qpos[:7] = trace["canonical_qpos"][0, 0, :7]
+    data.qpos[qi] = trace["canonical_qpos"][0, 0, 7:36]
+    data.qpos[bq : bq + 7] = trace["canonical_qpos"][0, 0, 36:43]
+    data.qvel[:6] = trace["canonical_qvel"][0, 0, :6]
+    data.qvel[vi] = trace["canonical_qvel"][0, 0, 6:35]
+    data.qvel[bv : bv + 6] = trace["canonical_qvel"][0, 0, 35:41]
+    mujoco.mj_forward(model, data)
+    replay_forces = []
+    minimum = float("inf")
+
+    def equal(actual: Any, expected: Any, name: str) -> None:
+        if not np.allclose(actual, expected, atol=1e-8, rtol=0):
+            raise ValueError(f"CPU dynamics replay differs: {name}")
+
+    for frame in range(300):
+        qpos = np.concatenate((data.qpos[:7], data.qpos[qi], data.qpos[bq : bq + 7]))
+        qvel = np.concatenate((data.qvel[:6], data.qvel[vi], data.qvel[bv : bv + 6]))
+        equal(qpos, trace["canonical_qpos"][frame, 0], "qpos")
+        equal(qvel, trace["canonical_qvel"][frame, 0], "qvel")
+        equal(data.qpos[qi], trace["joint_position_rad"][frame, 0], "joint observation")
+        equal(data.qvel[vi], trace["joint_velocity_rad_s"][frame, 0], "joint velocity")
+        equal(
+            np.concatenate((data.xpos[pelvis], data.xquat[pelvis][[1, 2, 3, 0]])),
+            trace["root_pose_xyzw_m"][frame, 0],
+            "root observation",
+        )
+        equal(data.xpos[ball], trace["ball_position_before_step_m"][frame, 0], "ball observation")
+        equal(
+            data.xpos[geometry],
+            trace["foot_geometry_position_before_step_m"][frame, 0],
+            "geometry observation",
+        )
+        root_velocity, ball_velocity = np.zeros(6), np.zeros(6)
+        mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, pelvis, root_velocity, 0)
+        mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, ball, ball_velocity, 0)
+        equal(
+            root_velocity[[3, 4, 5, 0, 1, 2]],
+            trace["root_velocity_world"][frame, 0],
+            "root velocity",
+        )
+        equal(
+            ball_velocity[3:],
+            trace["ball_linear_velocity_before_step_m_s"][frame, 0],
+            "ball velocity",
+        )
+        target = trace["joint_target_rad"][frame, 0]
+        forces = np.zeros(6)
+        for substep in range(10):
+            torque = np.clip(
+                (target - data.qpos[qi]) * kp - data.qvel[vi] * kd,
+                -np.asarray(G1_HARD_TORQUE_LIMITS),
+                np.asarray(G1_HARD_TORQUE_LIMITS),
+            )
+            equal(torque, trace["torque_nm"][frame, 0, substep], "PD torque")
+            data.ctrl[ai] = torque
+            mujoco.mj_step(model, data)
+            equal(
+                data.actuator_force[ai],
+                trace["actual_actuator_force_nm"][frame, 0, substep],
+                "actual actuator force",
+            )
+            equal(
+                data.xpos[pelvis, 2], trace["pelvis_z_per_substep_m"][frame, 0, substep], "pelvis"
+            )
+            minimum = min(minimum, float(data.xpos[pelvis, 2]))
+            for c in range(data.ncon):
+                contact = data.contact[c]
+                g1, g2 = int(contact.geom1), int(contact.geom2)
+                if bg not in (g1, g2):
+                    continue
+                other_body = int(model.geom_bodyid[g2 if g1 == bg else g1])
+                if other_body in contacts:
+                    contact_force = np.zeros(6)
+                    mujoco.mj_contactForce(model, data, c, contact_force)
+                    index = contacts.index(other_body)
+                    forces[index] = max(forces[index], float(np.linalg.norm(contact_force[:3])))
+        equal(forces, trace["force_n"][frame, 0], "physical contacts")
+        equal(data.xpos[ball], trace["ball_position_after_step_m"][frame, 0], "physical ball")
+        replay_forces.append(forces)
+    actual_forces = np.asarray(replay_forces)
+    contact_frames = np.flatnonzero(np.any(actual_forces > 1, axis=1))
+    first = int(contact_frames[0]) if len(contact_frames) else None
+    bodies = np.flatnonzero(actual_forces[first] > 1).tolist() if first is not None else []
+    clean = bool(bodies and set(bodies) <= {0, 1} and not np.any(actual_forces[:, 2:] > 1))
+    if (
+        report["first_contact_frame"] != first
+        or report["first_contact_bodies"] != bodies
+        or report["clean_foot_only"] != clean
+    ):
+        raise ValueError("CPU contact outcome differs from actual dynamics")
+    equal(minimum, report["minimum_pelvis_z_m"], "reported minimum pelvis")
+    equal(data.xpos[ball], report["final_ball_position_m"], "reported final ball")
+    if report.get("step_model_hash") is not None:
+        from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame
+
+        policy = report["executed_motor_policy"]
+        if "online_step_motor_proof" in policy:
+            from rosclaw_soccer.rsi.online_step_execution import delta_at_frame as online_delta
+
+            delta_at_frame = online_delta
+        if policy["step_motor_proof"]["model"]["model_hash"] != report["step_model_hash"]:
+            raise ValueError("CPU neural policy identity changed")
+        ids = [names.index(n) for n in JOINT_NAMES]
+        previous = np.zeros(12)
+        for frame in range(300):
+            nominal = trace["pre_motor_joint_target_rad"][frame, 0]
+            delta = delta_at_frame(
+                policy,
+                trace,
+                frame=frame,
+                nominal_target=nominal,
+                baseline=nominal[ids],
+                limits=model.jnt_range[joints][ids],
+                previous=previous,
+                previous_contact_forces=trace["force_n"][frame - 1, 0] if frame else np.zeros(6),
+            )
+            equal(delta, trace["motor_delta_rad"][frame, 0], "causal neural output")
+            composed = nominal.copy()
+            composed[ids] += delta
+            equal(composed, trace["joint_target_rad"][frame, 0], "causal composed target")
+            previous = delta
+    result = dict(
+        schema="soccer.rsi.cpu_motor_transfer_review.v1",
+        reviewed_report_hash=report["report_hash"],
+        actual_mujoco_dynamics_replayed=True,
+        actual_pd_torque_reconstructed=True,
+        neural_target_reconstructed=report.get("step_model_hash") is not None,
+        physical_substeps=3000,
+        first_contact_frame=first,
+        clean_foot_only=clean,
+        minimum_pelvis_z_m=minimum,
+        safety_passed=minimum >= 0.65,
+        qualification="CPU_DIAGNOSTIC_ONLY_NOT_PROMOTION",
+        promotion_authorized=False,
+        hardware_authorized=False,
+        source_hash=hash_bytes(Path(__file__).read_bytes()),
+    )
+    result["report_hash"] = hash_json(result)
+    return result

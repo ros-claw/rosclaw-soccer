@@ -47,11 +47,13 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--neural-model", type=Path)
     group.add_argument("--motor-policy", type=Path)
+    group.add_argument("--step-model", type=Path)
+    parser.add_argument("--consumed-bank", type=Path)
     parser.add_argument("--foundation-only", action="store_true")
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--lane", type=int, required=True, choices=range(16))
     args = parser.parse_args()
-    if args.foundation_only and (args.neural_model or args.motor_policy):
+    if args.foundation_only and (args.neural_model or args.motor_policy or args.step_model):
         parser.error("foundation-only cannot include a motor learning model")
     # This first diagnostic only accepts already consumed courses.
     consumed = {
@@ -68,6 +70,19 @@ def main() -> None:
         (20261148, 2),
         (20260975, 4),
     }
+    consumed_bank_hash = None
+    if args.consumed_bank is not None:
+        from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
+
+        bank = _sealed(args.consumed_bank)
+        if (
+            bank.get("schema") != "soccer.rsi.progressive_motor_learning_bank.v312"
+            or bank.get("partition") != "TRAIN_CONSUMED"
+            or bank.get("fresh_holdout_open_authorized") is not False
+        ):
+            parser.error("sealed consumed physical bank required for additional transfer cases")
+        consumed |= {(r["seed"], r["lane"]) for r in bank["courses"]}
+        consumed_bank_hash = bank["report_hash"]
     if (args.seed, args.lane) not in consumed:
         parser.error("transfer diagnostic cannot open a fresh course")
     torch.set_num_threads(1)
@@ -165,6 +180,19 @@ def main() -> None:
     if neural:
         validate_model(neural)
     policy, knots = load_policy(args.motor_policy) if args.motor_policy else (None, None)
+    step_model = json.loads(args.step_model.read_text()) if args.step_model else None
+    if step_model is not None:
+        from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
+
+        if step_model.get("schema") == "soccer.rsi.online_step_motor_mc_ppo.v1":
+            from rosclaw_soccer.rsi.online_step_execution import (
+                delta_at_frame as online_delta_at_frame,
+            )
+            from rosclaw_soccer.rsi.online_step_execution import make_preview as online_preview
+
+            delta_at_frame = online_delta_at_frame
+            make_preview = online_preview
+        policy = make_preview(step_model)
     x, y, vx = sample_training_courses(args.seed, 16)[args.lane]
     data.qpos[:7] = (0, 0, 0.793, 1, 0, 0, 0)
     data.qpos[qi] = navigation.backend.default_angles
@@ -191,6 +219,8 @@ def main() -> None:
         late_actor_hash=late["actor_hash"],
         execution_profile="foundation_only" if args.foundation_only else "taskspace_plus_motor",
         model_hash=neural["model_hash"] if neural else None,
+        step_model_hash=step_model["model_hash"] if step_model else None,
+        consumed_bank_hash=consumed_bank_hash,
         motor_policy_hash=policy["policy_hash"] if policy else None,
         taskspace_contract=dict(
             forward_cap_m=0.08,
@@ -213,6 +243,9 @@ def main() -> None:
             robot_xml_not_usd=True,
             contact_settings="original XML pairs retained",
             native_ball_added=native_ball_added,
+            canonical_joint_names=names,
+            canonical_pd_kp=navigation.backend.kp.tolist(),
+            canonical_pd_kd=navigation.backend.kd.tolist(),
         ),
         activation_ceiling="SIM_ONLY",
         promotion_authorized=False,
@@ -366,7 +399,21 @@ def main() -> None:
                     )
                 target[ids] += swing_delta
         history["pre_motor_joint_target_rad"].append(target.copy()[None])
-        if policy is not None:
+        if step_model is not None:
+            if policy is None:
+                raise ValueError("per-frame actor requires a sealed preview")
+            previous = delta_at_frame(
+                policy,
+                history,
+                frame=frame,
+                nominal_target=target,
+                baseline=target[motor_ids],
+                limits=limits[motor_ids],
+                previous=previous,
+                previous_contact_forces=history["force_n"][frame - 1][0] if frame else np.zeros(6),
+            )
+            target[motor_ids] += previous
+        elif policy is not None:
             if knots is None:
                 raise ValueError("motor policy requires authenticated knots")
             previous = motor_delta(
