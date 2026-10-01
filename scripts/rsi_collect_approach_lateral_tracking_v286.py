@@ -62,6 +62,7 @@ def _run(
     motor_online: Path | None = None,
     motor_step: Path | None = None,
     core_root: Path | None = None,
+    execution_timeout_s: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if sum(p is not None for p in (motor_policy, motor_bootstrap, motor_online, motor_step)) > 1:
         raise ValueError("one explicit motor proposal backend required")
@@ -151,6 +152,7 @@ def _run(
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 check=False,
+                timeout=execution_timeout_s,
             )
         if completed.returncode or not (folder / "report.json").is_file():
             raise RuntimeError(f"Isaac failed; inspect {log_path}")

@@ -209,6 +209,7 @@ def main() -> None:
                 negative_only=True,
                 core_root=args.core_root,
                 resume=args.resume,
+                execution_timeout_s=600,
             )
             preserve_failed_attempt(seed, lane, "reproduction", "parent")
             parent, _ = _run(**common, arm="reproduction", kind="parent")
