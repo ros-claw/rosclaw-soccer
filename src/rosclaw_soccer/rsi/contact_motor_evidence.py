@@ -194,4 +194,8 @@ def audit_motor_execution(folder: Path, report: dict[str, Any]) -> dict[str, Any
         np.load(folder / "late_swing_action_trace.npz", allow_pickle=False) as swing,
         np.load(folder / "trace.npz", allow_pickle=False) as physics,
     ):
-        return audit_motor_arrays(motor, body, swing, physics, report)
+        # NpzFile indexing decompresses a whole member on every access. The
+        # causal per-frame decoder repeatedly reads the same observations;
+        # materialize each numeric array once without reducing audited frames.
+        arrays = [{key: data[key] for key in data.files} for data in (motor, body, swing, physics)]
+        return audit_motor_arrays(arrays[0], arrays[1], arrays[2], arrays[3], report)

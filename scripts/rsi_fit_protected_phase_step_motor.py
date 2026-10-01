@@ -28,13 +28,16 @@ def gpu_features(folder: Path) -> tuple[Any, Any, dict[str, Any]]:
         np.load(folder / "trace.npz", allow_pickle=False) as physics,
     ):
         forces = physics["ball_body_contact_force_peak_n"][:, 0].copy()
+        body_arrays = {key: body[key] for key in body.files}
+        targets = swing["executed_taskspace_joint_target_rad"]
+        deltas = motor["applied_joint_delta_rad"]
         x = np.stack(
             [
                 features_at_frame(
-                    body,
+                    body_arrays,
                     frame=f,
-                    nominal_target=swing["executed_taskspace_joint_target_rad"][f, 0, ids],
-                    previous=motor["applied_joint_delta_rad"][f - 1, 0],
+                    nominal_target=targets[f, 0, ids],
+                    previous=deltas[f - 1, 0],
                     previous_contact_forces=forces[f - 1],
                 )
                 for f in range(30, 300)
