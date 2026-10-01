@@ -90,11 +90,24 @@ def audit_motor_arrays(
     previous = np.zeros(12)
     contact_delta = np.zeros(12)
     contact_frame = None
+    compiled = None
+    if "compiled_motor_proof" in report["contact_motor_policy"]:
+        from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
+
+        if not step_preview:
+            raise ValueError("unbound compiled motor execution")
+        compiled = CompiledStepMotor(report["contact_motor_policy"])
+    elif step_preview:
+        from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
+
+        compiled = CompiledStepMotor.from_legacy_preview(report["contact_motor_policy"])
     for frame in range(300):
         if step_preview:
             from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame
 
-            if "online_step_motor_proof" in report["contact_motor_policy"]:
+            if compiled is not None:
+                delta_at_frame = compiled.delta_at_frame
+            elif "online_step_motor_proof" in report["contact_motor_policy"]:
                 from rosclaw_soccer.rsi.online_step_execution import (
                     delta_at_frame as online_step_delta_at_frame,
                 )

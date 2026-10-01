@@ -641,7 +641,13 @@ def main() -> None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
         step_model = json.loads(args.contact_motor_step_model.read_text(encoding="utf-8"))
-        if step_model.get("schema") == "soccer.rsi.online_step_motor_mc_ppo.v1":
+        if step_model.get("schema") == "soccer.rsi.compiled_step_motor_decoder.v1":
+            from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
+            from rosclaw_soccer.rsi.compiled_step_inference import make_preview as compiled_preview
+
+            make_preview = compiled_preview
+            delta_at_frame = CompiledStepMotor(make_preview(step_model)).delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.online_step_motor_mc_ppo.v1":
             from rosclaw_soccer.rsi.online_step_execution import (
                 delta_at_frame as online_step_delta_at_frame,
             )

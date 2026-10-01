@@ -8,11 +8,12 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
 from rosclaw_soccer.rsi.contact_motor_evidence import audit_motor_execution
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _outcome, _sealed
 from rosclaw_soccer.rsi.online_motor_actor_critic import terminal_return
 from rosclaw_soccer.rsi.step_motor_ppo import fit_update
-from rosclaw_soccer.rsi.stochastic_step_execution import features_at_frame, latent_sample
+from rosclaw_soccer.rsi.stochastic_step_execution import features_at_frame
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 
@@ -65,6 +66,7 @@ def main() -> None:
                 raise ValueError("exploration physics outcome differs from sealed learning record")
             audit_motor_execution(folder, raw)
             view = raw["contact_motor_policy"]["step_motor_proof"]["model"]
+            decoder = CompiledStepMotor.from_legacy_preview(raw["contact_motor_policy"])
             if (
                 view["model_hash"] != sampled["view_hash"]
                 or view["training_sampling"]["base_model_hash"] != warm["model_hash"]
@@ -89,7 +91,7 @@ def main() -> None:
                             frame - 1, 0
                         ],
                     )
-                    z, density = latent_sample(view, x, frame)
+                    z, density = decoder.latent_sample(x, frame)
                     observations.append(x)
                     actions.append(z)
                     logp.append(density)
