@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from scripts.rsi_collect_failed_step_courses import failure_rows
+from scripts.rsi_collect_failed_step_courses import failure_rows, sampling_seed
 
 
 def bank():
@@ -37,6 +37,14 @@ def test_all_twenty_failures_are_selected_without_mutating_review():
     rows = failure_rows(summary, review)
     assert [r["index"] for r in rows] == list(range(32, 52))
     assert summary == original
+
+
+def test_all_declared_sampling_seeds_fit_actual_sampler_range_and_are_unique():
+    seeds = [sampling_seed(i, s) for i in range(52) for s in range(16)]
+    assert len(set(seeds)) == 52 * 16
+    assert all(0 <= seed <= 2**31 - 1 for seed in seeds)
+    with pytest.raises(ValueError):
+        sampling_seed(52, 0)
 
 
 @pytest.mark.parametrize(

@@ -21,6 +21,17 @@ from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 
+def sampling_seed(course: int, sample: int) -> int:
+    if (
+        type(course) is not int
+        or type(sample) is not int
+        or not 0 <= course < 52
+        or not 0 <= sample < 16
+    ):
+        raise ValueError("bounded declared curriculum/sample index required")
+    return 202610335 + course * 100 + sample
+
+
 def failure_rows(summary: dict[str, Any], review: dict[str, Any]) -> list[dict[str, Any]]:
     """Complete paired consumed review is required before automatic selection."""
     rows = summary.get("rows", [])
@@ -83,7 +94,7 @@ def main() -> None:
     if bank["commitment"]["warm_model_hash"] != warm["model_hash"]:
         parser.error("failure source used a different warm actor")
     views = [
-        make_sampling_view(base, seed=20261001335 + i * 100 + s, std=0.1)
+        make_sampling_view(base, seed=sampling_seed(i, s), std=0.1)
         for i in range(len(courses))
         for s in range(args.samples_per_course)
     ]
