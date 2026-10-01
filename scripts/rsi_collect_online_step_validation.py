@@ -18,6 +18,20 @@ from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 
+def baseline_reference_binding(pilot: dict[str, Any]) -> tuple[str, str]:
+    if (
+        pilot.get("physical_executions") != 12
+        or pilot.get("independent_contexts") != 4
+        or any(pilot.get(k) is not False for k in ("promotion_authorized", "hardware_authorized"))
+    ):
+        raise ValueError("complete consumed baseline comparison required")
+    if pilot.get("schema") == "soccer.rsi.step_motor_physical_pilot.v1":
+        return "step-neural", "neural"
+    if pilot.get("schema") == "soccer.rsi.online_step_motor_physical_validation.v1":
+        return "online", "online"
+    raise ValueError("unsupported explicit baseline comparison schema")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in (
@@ -91,8 +105,22 @@ def main() -> None:
     else:
         validate_warm(warm_base)
     pilot = _sealed(args.pilot_summary)
+    baseline_arm, baseline_key = baseline_reference_binding(pilot)
     if predecessor != warm_base or pilot["commitment"]["model_hash"] != warm_base["model_hash"]:
         parser.error("online and warm policies must share the same consumed pilot")
+    references = {}
+    for seed, lane in COURSES:
+        raw = _sealed(
+            args.pilot_summary.parent / f"seed{seed}-lane{lane}-{baseline_arm}-actor/report.json"
+        )
+        row = next(r for r in pilot["rows"] if (r["seed"], r["lane"]) == (seed, lane))
+        if (
+            raw["report_hash"] != row[baseline_key]["report_hash"]
+            or raw["contact_motor_policy"]["step_motor_proof"]["model"]["model_hash"]
+            != warm_base["model_hash"]
+        ):
+            raise ValueError("baseline reference policy or physical evidence changed")
+        references[seed, lane] = raw
     commitment = dict(
         schema="soccer.rsi.online_step_validation_commitment.v1",
         source_commit=_head(source),
@@ -169,9 +197,7 @@ def main() -> None:
             motor_step=args.step_model,
             parent_report_override=parent_path,
         )
-        old = _sealed(
-            args.pilot_summary.parent / f"seed{seed}-lane{lane}-step-neural-actor/report.json"
-        )
+        old = references[seed, lane]
         if any(
             baseline[k] != old[k]
             for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
