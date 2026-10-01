@@ -72,6 +72,22 @@ def failure_rows(
     return failures
 
 
+def qualified_memory_failure_rows(
+    summary: dict[str, Any], review: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Advance a retained SIM parent only after its entire comparison is audited."""
+    failures = failure_rows(summary, review, arm="candidate")
+    if any(obj.get("safe_pelvis") is not True for obj in (summary, review)) or any(
+        type(obj.get(k)) is not int or obj[k] != 0
+        for obj in (summary, review)
+        for k in ("old_high_quality_loss", "old_clean_foot_loss", "new_out_of_play")
+    ):
+        raise ValueError(
+            "complete retained safe current-parent bank required before next iteration"
+        )
+    return failures
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in (
@@ -147,7 +163,11 @@ def main() -> None:
         validate_model(base)
     bank = _sealed(args.bank_physics_root / "validation_summary.json")
     review = _sealed(args.bank_physics_root / "independent_review.json")
-    courses = failure_rows(bank, review, arm=arm)
+    courses = (
+        qualified_memory_failure_rows(bank, review)
+        if arm == "candidate"
+        else failure_rows(bank, review, arm=arm)
+    )
     total_failure_courses = len(courses)
     if args.first_four_courses:
         if len(courses) < 4:

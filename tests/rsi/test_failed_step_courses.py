@@ -2,7 +2,11 @@ import copy
 
 import pytest
 
-from scripts.rsi_collect_failed_step_courses import failure_rows, sampling_seed
+from scripts.rsi_collect_failed_step_courses import (
+    failure_rows,
+    qualified_memory_failure_rows,
+    sampling_seed,
+)
 
 
 def bank():
@@ -53,6 +57,31 @@ def test_later_parent_failure_selection_uses_candidate_not_initial_warm_results(
     review["candidate_high_quality"] = 32
     with pytest.raises(ValueError):
         failure_rows(summary, review, arm="candidate")
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("safe_pelvis", False),
+        ("old_high_quality_loss", 1),
+        ("old_clean_foot_loss", 1),
+        ("new_out_of_play", 1),
+        ("old_high_quality_loss", False),
+    ],
+)
+def test_next_memory_iteration_rejects_full_bank_safety_or_retention_loss(key, value):
+    summary, review = bank()
+    for row in summary["rows"]:
+        row["candidate"] = dict(high_quality=row["index"] < 35)
+    summary["candidate_high_quality"] = review["candidate_high_quality"] = 35
+    for obj in (summary, review):
+        obj.update(
+            safe_pelvis=True, old_high_quality_loss=0, old_clean_foot_loss=0, new_out_of_play=0
+        )
+    assert len(qualified_memory_failure_rows(summary, review)) == 17
+    review[key] = value
+    with pytest.raises(ValueError, match="retained safe"):
+        qualified_memory_failure_rows(summary, review)
 
 
 def test_all_declared_sampling_seeds_fit_actual_sampler_range_and_are_unique():
