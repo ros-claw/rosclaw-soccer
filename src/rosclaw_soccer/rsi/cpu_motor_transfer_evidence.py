@@ -213,17 +213,13 @@ def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
     equal(minimum, report["minimum_pelvis_z_m"], "reported minimum pelvis")
     equal(data.xpos[ball], report["final_ball_position_m"], "reported final ball")
     if report.get("step_model_hash") is not None:
-        from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame
+        from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
 
         policy = report["executed_motor_policy"]
         if "compiled_motor_proof" in policy:
-            from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
-
             delta_at_frame = CompiledStepMotor(policy).delta_at_frame
-        elif "online_step_motor_proof" in policy:
-            from rosclaw_soccer.rsi.online_step_execution import delta_at_frame as online_delta
-
-            delta_at_frame = online_delta
+        else:
+            delta_at_frame = CompiledStepMotor.from_legacy_preview(policy).delta_at_frame
         if policy["step_motor_proof"]["model"]["model_hash"] != report["step_model_hash"]:
             raise ValueError("CPU neural policy identity changed")
         ids = [names.index(n) for n in JOINT_NAMES]
