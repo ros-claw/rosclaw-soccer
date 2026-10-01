@@ -186,6 +186,15 @@ def main() -> None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
         if step_model.get("schema") in (
+            "soccer.rsi.smooth_memory_motor.v1",
+            "soccer.rsi.smooth_memory_sampling.v1",
+        ):
+            from rosclaw_soccer.rsi.smooth_memory_motor import CompiledSmoothMemoryMotor
+            from rosclaw_soccer.rsi.smooth_memory_motor import make_preview as smooth_preview
+
+            make_preview = smooth_preview
+            delta_at_frame = CompiledSmoothMemoryMotor(make_preview(step_model)).delta_at_frame
+        elif step_model.get("schema") in (
             "soccer.rsi.output_memory_step_motor.v1",
             "soccer.rsi.output_memory_step_sampling.v1",
         ):

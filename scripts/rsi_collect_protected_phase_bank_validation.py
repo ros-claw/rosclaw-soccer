@@ -156,6 +156,85 @@ def verify_baseline_reuse(
         )
 
 
+def validate_bank_models(candidate: dict[str, Any], warm: dict[str, Any]) -> None:
+    """Later learned actors must retain their current parent, not just first warm start."""
+    if candidate.get("schema") == "soccer.rsi.smooth_memory_motor.v1":
+        from rosclaw_soccer.rsi.smooth_memory_motor import validate_model as smooth_validate
+
+        smooth_validate(candidate)
+        if warm.get("schema") == "soccer.rsi.output_memory_step_motor.v1":
+            from rosclaw_soccer.rsi.output_memory_step_motor import (
+                validate_model as output_validate,
+            )
+
+            output_validate(warm)
+            aligned = candidate["frozen_parent"] == warm
+        elif warm.get("schema") == "soccer.rsi.smooth_memory_motor.v1":
+            smooth_validate(warm)
+            aligned = (
+                candidate["generation"] == warm["generation"] + 1
+                and candidate["learning_receipt"]["learner_parent_hash"] == warm["model_hash"]
+                and candidate["frozen_parent"] == warm["frozen_parent"]
+            )
+        else:
+            aligned = False
+        if not aligned:
+            raise ValueError("smooth actor requires its exact current learned parent")
+        return
+    if candidate.get("schema") == "soccer.rsi.output_memory_step_motor.v1":
+        from rosclaw_soccer.rsi.output_memory_step_motor import validate_model as output_validate
+
+        output_validate(candidate)
+        if warm.get("schema") == "soccer.rsi.kernel_guarded_step_actor_critic.v1":
+            from rosclaw_soccer.rsi.kernel_guarded_step_network import (
+                validate_model as kernel_check,
+            )
+
+            kernel_check(warm)
+            aligned = candidate["frozen_parent"] == warm
+        elif warm.get("schema") == "soccer.rsi.output_memory_step_motor.v1":
+            output_validate(warm)
+            aligned = (
+                candidate["generation"] == warm["generation"] + 1
+                and candidate["learning_receipt"]["learner_parent_hash"] == warm["model_hash"]
+                and candidate["frozen_parent"] == warm["frozen_parent"]
+                and candidate["output_memory"] == warm["output_memory"]
+            )
+        else:
+            aligned = False
+        if not aligned:
+            raise ValueError("memory actor requires its exact current learned parent")
+        return
+    make_preview(warm)
+    if candidate.get("schema") == "soccer.rsi.kernel_replay_motor.v1":
+        from rosclaw_soccer.rsi.kernel_replay_motor import validate_model as replay_validate
+
+        replay_validate(candidate)
+        predecessor = candidate["frozen_parent"]["encoder"]["base_model"]
+    elif candidate.get("schema") == "soccer.rsi.selective_phase_memory.v1":
+        from rosclaw_soccer.rsi.selective_phase_memory import validate_model as selective_validate
+
+        selective_validate(candidate)
+        predecessor = candidate["transfer_model"]["phase_model"]["base_model"]
+    elif candidate.get("schema") == "soccer.rsi.memory_guarded_phase_transfer.v1":
+        from rosclaw_soccer.rsi.memory_guarded_phase_transfer import (
+            validate_model as memory_validate,
+        )
+
+        memory_validate(candidate)
+        predecessor = candidate["phase_model"]["base_model"]
+    elif candidate.get("schema") == "soccer.rsi.kernel_guarded_step_actor_critic.v1":
+        from rosclaw_soccer.rsi.kernel_guarded_step_network import validate_model as kernel_validate
+
+        kernel_validate(candidate)
+        predecessor = candidate["encoder"]["base_model"]
+    else:
+        validate_model(candidate)
+        predecessor = candidate["base_model"]
+    if predecessor != warm["base_model"]:
+        raise ValueError("historical actor requires the same frozen compiled warm base")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in (
@@ -183,43 +262,9 @@ def main() -> None:
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
     warm = json.loads(args.warm_model.read_text())
     candidate = json.loads(args.candidate_model.read_text())
-    make_preview(warm)
-    if candidate.get("schema") == "soccer.rsi.output_memory_step_motor.v1":
-        from rosclaw_soccer.rsi.output_memory_step_motor import validate_model as output_validate
-
-        output_validate(candidate)
-        predecessor = candidate["frozen_parent"]["encoder"]["base_model"]
-    elif candidate.get("schema") == "soccer.rsi.kernel_replay_motor.v1":
-        from rosclaw_soccer.rsi.kernel_replay_motor import validate_model as replay_validate
-
-        replay_validate(candidate)
-        predecessor = candidate["frozen_parent"]["encoder"]["base_model"]
-    elif candidate.get("schema") == "soccer.rsi.selective_phase_memory.v1":
-        from rosclaw_soccer.rsi.selective_phase_memory import validate_model as selective_validate
-
-        selective_validate(candidate)
-        predecessor = candidate["transfer_model"]["phase_model"]["base_model"]
-    elif candidate.get("schema") == "soccer.rsi.memory_guarded_phase_transfer.v1":
-        from rosclaw_soccer.rsi.memory_guarded_phase_transfer import (
-            validate_model as memory_validate,
-        )
-
-        memory_validate(candidate)
-        predecessor = candidate["phase_model"]["base_model"]
-    elif candidate.get("schema") == "soccer.rsi.kernel_guarded_step_actor_critic.v1":
-        from rosclaw_soccer.rsi.kernel_guarded_step_network import validate_model as kernel_validate
-
-        kernel_validate(candidate)
-        predecessor = candidate["encoder"]["base_model"]
-    else:
-        validate_model(candidate)
-        predecessor = candidate["base_model"]
+    validate_bank_models(candidate, warm)
     bank = _sealed(args.bank_path)
-    if (
-        bank["partition"] != "TRAIN_CONSUMED"
-        or len(bank["courses"]) != 52
-        or predecessor != warm["base_model"]
-    ):
+    if bank["partition"] != "TRAIN_CONSUMED" or len(bank["courses"]) != 52:
         parser.error("frozen aligned warm actor and complete consumed bank required")
     for course in bank["courses"]:
         _sealed(Path(course["parent_report"]))

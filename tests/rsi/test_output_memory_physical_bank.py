@@ -77,3 +77,14 @@ def test_wrong_frozen_parent_is_rejected(monkeypatch):
     args[2]["commitment"]["model_hash"] = "another-parent"
     with pytest.raises(ValueError):
         fitter.checked_curriculum(*args)
+
+
+def test_next_generation_must_use_its_own_behavior_bank_not_original_parent(monkeypatch):
+    args = fixture(monkeypatch)
+    args[0]["generation"] = 1
+    with pytest.raises(ValueError):
+        fitter.checked_curriculum(*args)
+    args[2]["commitment"]["model_hash"] = "current"
+    args[4]["failure_reference_model_hash"] = "current"
+    args[1]["commitment"] = copy.deepcopy(args[4])
+    assert fitter.checked_curriculum(*args) == [[11, 0], [12, 4]]

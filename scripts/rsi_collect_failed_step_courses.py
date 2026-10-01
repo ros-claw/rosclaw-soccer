@@ -81,8 +81,11 @@ def main() -> None:
     ):
         parser.add_argument(f"--{name}", required=True, type=Path)
     parser.add_argument("--samples-per-course", type=int, default=8)
-    parser.add_argument("--behavior-kind", choices=("warm", "output-memory"), default="warm")
+    parser.add_argument(
+        "--behavior-kind", choices=("warm", "output-memory", "smooth-memory"), default="warm"
+    )
     parser.add_argument("--pilot-root", type=Path)
+    parser.add_argument("--first-four-courses", action="store_true")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     if not 4 <= args.samples_per_course <= 16:
@@ -92,15 +95,27 @@ def main() -> None:
     warm = json.loads(args.warm_model.read_text())
     arm = "warm"
     make_view: Callable[..., dict[str, Any]] = make_sampling_view
-    if args.behavior_kind == "output-memory":
+    if args.first_four_courses and args.behavior_kind != "smooth-memory":
+        parser.error("the fixed four-course ablation is only declared for smooth exploration")
+    if args.behavior_kind in ("output-memory", "smooth-memory"):
         from rosclaw_soccer.rsi.output_memory_step_motor import (
             make_sampling_view as output_sampling,
         )
         from rosclaw_soccer.rsi.output_memory_step_motor import validate_model as output_validate
 
-        output_validate(warm)
-        if warm["generation"] != 0 or args.pilot_root is None:
-            parser.error("first memory exploration requires zero-residual qualified parent")
+        if args.behavior_kind == "smooth-memory":
+            from rosclaw_soccer.rsi.smooth_memory_motor import (
+                make_sampling_view as smooth_sampling,
+            )
+            from rosclaw_soccer.rsi.smooth_memory_motor import validate_model as smooth_validate
+
+            smooth_validate(warm)
+            make_view = smooth_sampling
+        else:
+            output_validate(warm)
+            make_view = output_sampling
+        if warm["generation"] >= 32 or args.pilot_root is None:
+            parser.error("memory exploration requires a qualified bounded current parent")
         pilot = _sealed(args.pilot_root / "validation_summary.json")
         pilot_review = _sealed(args.pilot_root / "independent_review.json")
         if (
@@ -119,7 +134,6 @@ def main() -> None:
         ):
             raise ValueError("independently qualified retained current parent required")
         base = warm
-        make_view = output_sampling
         arm = "candidate"
     elif warm.get("schema") != "soccer.rsi.compiled_step_motor_decoder.v1":
         parser.error("frozen compiled warm actor required")
@@ -129,9 +143,24 @@ def main() -> None:
     bank = _sealed(args.bank_physics_root / "validation_summary.json")
     review = _sealed(args.bank_physics_root / "independent_review.json")
     courses = failure_rows(bank, review, arm=arm)
-    expected_hash = (
-        warm["frozen_parent"]["model_hash"] if arm == "candidate" else warm["model_hash"]
-    )
+    total_failure_courses = len(courses)
+    if args.first_four_courses:
+        if len(courses) < 4:
+            parser.error("four failure courses required before ablation allocation")
+        courses = courses[:4]
+    if arm == "candidate" and warm["generation"] > 0:
+        expected_hash = warm["model_hash"]
+    elif args.behavior_kind == "smooth-memory":
+        parent = warm["frozen_parent"]
+        expected_hash = (
+            parent["model_hash"]
+            if parent["generation"] > 0
+            else parent["frozen_parent"]["model_hash"]
+        )
+    else:
+        expected_hash = (
+            warm["frozen_parent"]["model_hash"] if arm == "candidate" else warm["model_hash"]
+        )
     if (
         bank["commitment"]["model_hash" if arm == "candidate" else "warm_model_hash"]
         != expected_hash
@@ -171,7 +200,21 @@ def main() -> None:
             failure_reference_arm=arm,
             pilot_hash=pilot["report_hash"],
             pilot_review_hash=pilot_review["report_hash"],
-            frozen_parent_model_hash=expected_hash,
+            frozen_parent_model_hash=warm["parent_model_hash"],
+        )
+        if warm["generation"] > 0:
+            commitment["failure_reference_model_hash"] = expected_hash
+    if args.behavior_kind == "smooth-memory":
+        commitment.update(
+            schema="soccer.rsi.smooth_memory_exploration_commitment.v1",
+            behavior_kind="OUTPUT_MEMORY_CURRENT_PARENT_AR1",
+            frozen_parent_model_hash=warm["parent_model_hash"],
+            failure_reference_model_hash=expected_hash,
+            failure_reference_total_courses=total_failure_courses,
+            course_selection="FIRST_FOUR_CURRENT_PARENT_FAILURES_IN_SEALED_ORDER"
+            if args.first_four_courses
+            else "ALL_CURRENT_PARENT_FAILURES_IN_SEALED_ORDER",
+            sampling_rho=0.9,
         )
     args.output_root.mkdir(parents=True, exist_ok=args.resume)
     for folder in ("logs", "models"):
@@ -276,7 +319,9 @@ def main() -> None:
     if _head(source) != commitment["source_commit"]:
         raise ValueError("source drift invalidates exploration")
     result = dict(
-        schema="soccer.rsi.output_memory_failure_exploration.v1"
+        schema="soccer.rsi.smooth_memory_failure_exploration.v1"
+        if args.behavior_kind == "smooth-memory"
+        else "soccer.rsi.output_memory_failure_exploration.v1"
         if arm == "candidate"
         else "soccer.rsi.failed_step_course_exploration.v1",
         commitment=commitment,

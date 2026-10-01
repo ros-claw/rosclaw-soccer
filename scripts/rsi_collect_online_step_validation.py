@@ -61,7 +61,12 @@ def main() -> None:
     if warm.get("schema") == "soccer.rsi.compiled_step_motor_decoder.v1":
         compiled_preview(warm)
         warm_base = warm["base_model"]
-    if online_base.get("schema") == "soccer.rsi.output_memory_step_motor.v1":
+    if online_base.get("schema") == "soccer.rsi.smooth_memory_motor.v1":
+        from rosclaw_soccer.rsi.smooth_memory_motor import validate_model as smooth_validate
+
+        smooth_validate(online_base)
+        predecessor = online_base["frozen_parent"]
+    elif online_base.get("schema") == "soccer.rsi.output_memory_step_motor.v1":
         from rosclaw_soccer.rsi.output_memory_step_motor import validate_model as output_validate
 
         output_validate(online_base)
@@ -98,7 +103,17 @@ def main() -> None:
     else:
         validate_model(online_base)
         predecessor = online_base["warm_start_model"]
-    if warm_base.get("schema") == "soccer.rsi.kernel_guarded_step_actor_critic.v1":
+    if warm_base.get("schema") == "soccer.rsi.output_memory_step_motor.v1":
+        from rosclaw_soccer.rsi.output_memory_step_motor import (
+            validate_model as output_parent_validate,
+        )
+
+        output_parent_validate(warm_base)
+    elif warm_base.get("schema") == "soccer.rsi.smooth_memory_motor.v1":
+        from rosclaw_soccer.rsi.smooth_memory_motor import validate_model as smooth_parent_validate
+
+        smooth_parent_validate(warm_base)
+    elif warm_base.get("schema") == "soccer.rsi.kernel_guarded_step_actor_critic.v1":
         from rosclaw_soccer.rsi.kernel_guarded_step_network import validate_model as parent_validate
 
         parent_validate(warm_base)
@@ -106,7 +121,16 @@ def main() -> None:
         validate_warm(warm_base)
     pilot = _sealed(args.pilot_summary)
     baseline_arm, baseline_key = baseline_reference_binding(pilot)
-    if predecessor != warm_base or pilot["commitment"]["model_hash"] != warm_base["model_hash"]:
+    aligned = predecessor == warm_base
+    if online_base.get("schema") in (
+        "soccer.rsi.output_memory_step_motor.v1",
+        "soccer.rsi.smooth_memory_motor.v1",
+    ):
+        from scripts.rsi_collect_protected_phase_bank_validation import validate_bank_models
+
+        validate_bank_models(online_base, warm_base)
+        aligned = True
+    if not aligned or pilot["commitment"]["model_hash"] != warm_base["model_hash"]:
         parser.error("online and warm policies must share the same consumed pilot")
     references = {}
     for seed, lane in COURSES:

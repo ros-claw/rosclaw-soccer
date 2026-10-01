@@ -1,4 +1,4 @@
-"""Reconstruct actual current-parent exploration, then train the residual MLP."""
+"""Audit actual AR(1) physical exploration and train its conditional actor."""
 
 import argparse
 import json
@@ -10,8 +10,8 @@ import numpy as np
 from rosclaw_soccer.rsi.approach_lateral_tracking_evidence import audit_lateral_approach
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _outcome, _sealed
 from rosclaw_soccer.rsi.online_motor_actor_critic import terminal_return
-from rosclaw_soccer.rsi.output_memory_motor_learning import fit_update
-from rosclaw_soccer.rsi.output_memory_step_motor import SAMPLING_SCHEMA, validate_model
+from rosclaw_soccer.rsi.smooth_memory_learning import fit_update
+from rosclaw_soccer.rsi.smooth_memory_motor import SAMPLING_SCHEMA, validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_collect_failed_step_courses import failure_rows
 from scripts.rsi_fit_protected_phase_step_motor import gpu_observations
@@ -27,19 +27,34 @@ def checked_curriculum(
 ) -> list[list[int]]:
     failures = failure_rows(bank, review, arm="candidate")
     commitment = summary["commitment"]
-    courses = [[r["seed"], r["lane"]] for r in failures]
+    selection = commitment["course_selection"]
+    if selection == "FIRST_FOUR_CURRENT_PARENT_FAILURES_IN_SEALED_ORDER":
+        if len(failures) < 4:
+            raise ValueError("four preregistered failure courses required")
+        chosen = failures[:4]
+    elif selection == "ALL_CURRENT_PARENT_FAILURES_IN_SEALED_ORDER":
+        chosen = failures
+    else:
+        raise ValueError("declared immutable failure selection required")
+    courses = [[r["seed"], r["lane"]] for r in chosen]
     samples = commitment["samples_per_course"]
     if type(samples) is not int or not 4 <= samples <= 16:
         raise ValueError("bounded declared sample count required")
     count = len(courses) * samples
-    reference_hash = (
-        model["model_hash"] if model.get("generation", 0) > 0 else model["parent_model_hash"]
-    )
+    if model.get("generation", 0) > 0:
+        reference_hash = model["model_hash"]
+    else:
+        parent = model["frozen_parent"]
+        reference_hash = (
+            parent["model_hash"]
+            if parent.get("generation", 0) > 0
+            else parent["frozen_parent"]["model_hash"]
+        )
     if (
-        summary["schema"] != "soccer.rsi.output_memory_failure_exploration.v1"
+        summary["schema"] != "soccer.rsi.smooth_memory_failure_exploration.v1"
         or commitment != declared
-        or commitment["schema"] != "soccer.rsi.output_memory_exploration_commitment.v1"
-        or commitment["behavior_kind"] != "OUTPUT_MEMORY_CURRENT_PARENT"
+        or commitment["schema"] != "soccer.rsi.smooth_memory_exploration_commitment.v1"
+        or commitment["behavior_kind"] != "OUTPUT_MEMORY_CURRENT_PARENT_AR1"
         or commitment["partition"] != "TRAIN_CONSUMED"
         or commitment["courses"] != courses
         or len(summary["rows"]) != len(courses)
@@ -49,11 +64,10 @@ def checked_curriculum(
         or commitment["warm_model_hash"] != model["model_hash"]
         or commitment["frozen_parent_model_hash"] != model["parent_model_hash"]
         or bank["commitment"]["model_hash"] != reference_hash
-        or (
-            model.get("generation", 0) > 0
-            and commitment.get("failure_reference_model_hash") != reference_hash
-        )
+        or commitment["failure_reference_model_hash"] != reference_hash
+        or commitment["failure_reference_total_courses"] != len(failures)
         or commitment["std_raw"] != 0.1
+        or commitment["sampling_rho"] != 0.9
         or len(commitment["sampling_view_hashes"]) != count
         or summary["exploration_executions"] != count
         or summary["physical_executions"] != count + 2 * len(courses)
@@ -64,7 +78,7 @@ def checked_curriculum(
             for k in ("promotion_authorized", "hardware_authorized")
         )
     ):
-        raise ValueError("complete current-parent on-policy failure curriculum required")
+        raise ValueError("complete current-parent conditional exploration bank required")
     return courses
 
 
@@ -106,7 +120,7 @@ def main() -> None:
             or [row["seed"], row["lane"]] != course
             or len(row["samples"]) != commitment["samples_per_course"]
         ):
-            raise ValueError("declared course/sample identity changed")
+            raise ValueError("course/sample identity changed")
         parent_folder = args.exploration_root / f"seed{seed}-lane{lane}-reproduction-parent"
         parent = _sealed(parent_folder / "report.json")
         audit_lateral_approach(parent_folder)
@@ -120,8 +134,8 @@ def main() -> None:
             raise ValueError("physical parent changed")
         for s, sample in enumerate(row["samples"]):
             folder = args.exploration_root / f"seed{seed}-lane{lane}-sample-{s}-actor"
-            decoded: list[Any] = []
             raw = _sealed(folder / "report.json")
+            decoded: list[Any] = []
             checked = _outcome(
                 folder, raw["contact_motor_policy_hash"], commitment, decoder_sink=decoded
             )
@@ -133,6 +147,8 @@ def main() -> None:
                 len(decoded) != 1
                 or view["schema"] != SAMPLING_SCHEMA
                 or view["mean_model"] != model
+                or view["rho"] != 0.9
+                or view["std_raw"] != 0.1
                 or view["model_hash"] != sample["view_hash"]
                 or view["model_hash"]
                 != commitment["sampling_view_hashes"][i * commitment["samples_per_course"] + s]
@@ -145,9 +161,7 @@ def main() -> None:
                 or raw["source_hash"] != commitment["runner_hash"]
                 or raw["asset_hash"] != commitment["asset_hash"]
             ):
-                raise ValueError("sample is not the current model's actual physical rollout")
-            # The complete motor, physics, swing and approach audits ran above;
-            # no rollout reward label substitutes for these measured outcomes.
+                raise ValueError("sample is not this declared physical AR policy")
             outcome = checked["outcome"]
             if any(sample[k] != v for k, v in outcome.items()):
                 raise ValueError("sample outcome differs from independently measured physics")
@@ -179,16 +193,18 @@ def main() -> None:
                     outcome=outcome,
                 )
             )
-            print(f"AUDITED_CURRENT_PARENT_ROLLOUT course={i} sample={s} group={group}", flush=True)
+            print(f"AUDITED_AR_PHYSICAL_ROLLOUT course={i} sample={s} group={group}", flush=True)
     combined = {k: np.concatenate(v) for k, v in chunks.items()}
     args.output_root.mkdir(parents=True, exist_ok=False)
     path = args.output_root / "rollouts.npz"
     np.savez_compressed(path, **combined)
     manifest = dict(
-        schema="soccer.rsi.output_memory_on_policy_bank.v1",
+        schema="soccer.rsi.smooth_memory_on_policy_bank.v1",
         partition="TRAIN_CONSUMED",
         source_summary_hash=summary["report_hash"],
         parent_model_hash=model["model_hash"],
+        sampling_rho=0.9,
+        candidate_previous_mean_required=True,
         records=records,
         physical_rollout_count=len(records),
         frame_sample_count=len(combined["observation"]),
@@ -200,12 +216,9 @@ def main() -> None:
     )
     manifest["report_hash"] = hash_json(manifest)
     write_once(args.output_root / "rollout_manifest.json", manifest)
-    learned = fit_update(model, combined, batch_hash=manifest["report_hash"])
+    learned = fit_update(model, combined, batch_hash=manifest["report_hash"], rho=0.9)
     write_once(args.output_root / "model.json", learned)
-    print(
-        json.dumps(dict(model_hash=learned["model_hash"], receipt=learned["learning_receipt"])),
-        flush=True,
-    )
+    print(json.dumps(dict(model_hash=learned["model_hash"], receipt=learned["learning_receipt"])))
 
 
 if __name__ == "__main__":
