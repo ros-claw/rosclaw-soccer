@@ -32,6 +32,9 @@ def main() -> None:
         "output-root",
     ):
         parser.add_argument(f"--{name}", type=Path, required=True)
+    parser.add_argument(
+        "--optimizer", choices=("minibatch", "full-batch-backtracking"), default="minibatch"
+    )
     args = parser.parse_args()
     summary = _sealed(args.exploration_root / "training_summary.json")
     commitment = summary["commitment"]
@@ -188,7 +191,12 @@ def main() -> None:
     )
     manifest["report_hash"] = hash_json(manifest)
     write_once(args.output_root / "rollout_manifest.json", manifest)
-    candidate = fit_update(parent, combined, batch_hash=manifest["report_hash"])
+    if args.optimizer == "full-batch-backtracking":
+        from rosclaw_soccer.rsi.kernel_full_batch_learning import fit_update as full_batch_update
+
+        candidate = full_batch_update(parent, combined, batch_hash=manifest["report_hash"])
+    else:
+        candidate = fit_update(parent, combined, batch_hash=manifest["report_hash"])
     write_once(args.output_root / "model.json", candidate)
     print(
         json.dumps(dict(model_hash=candidate["model_hash"], receipt=candidate["learning_receipt"])),
