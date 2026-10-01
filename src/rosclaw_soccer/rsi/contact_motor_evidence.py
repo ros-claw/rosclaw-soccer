@@ -16,8 +16,16 @@ from rosclaw_soccer.sim.contracts import hash_bytes
 
 
 def audit_motor_arrays(
-    motor: Any, body: Any, swing: Any, physics: Any, report: dict[str, Any]
+    motor: Any,
+    body: Any,
+    swing: Any,
+    physics: Any,
+    report: dict[str, Any],
+    *,
+    decoder_sink: list[Any] | None = None,
 ) -> dict[str, Any]:
+    if decoder_sink is not None and (type(decoder_sink) is not list or decoder_sink):
+        raise ValueError("empty decoder capture sink required")
     knots, policy_hash = validate_policy(report["contact_motor_policy"])
     order = report.get("taskspace_joint_order")
     if (
@@ -190,6 +198,12 @@ def audit_motor_arrays(
         if contact_frame is None and np.any(force[frame, 0] > 1):
             contact_frame = frame
             contact_delta = previous.copy()
+    if decoder_sink is not None:
+        if compiled is None:
+            raise ValueError("compiled causal decoder required for latent replay")
+        # Expose only the internally constructed, fully audited decoder. Its
+        # phase memory has advanced; explicit-phase latent_sample is stateless.
+        decoder_sink.append(compiled)
     return {
         "contact_motor_action_audited": True,
         "contact_motor_policy_hash": policy_hash,
@@ -200,7 +214,9 @@ def audit_motor_arrays(
     }
 
 
-def audit_motor_execution(folder: Path, report: dict[str, Any]) -> dict[str, Any]:
+def audit_motor_execution(
+    folder: Path, report: dict[str, Any], *, decoder_sink: list[Any] | None = None
+) -> dict[str, Any]:
     paths = {
         "contact_motor_trace.npz": "contact_motor_trace_hash",
         "body_trace.npz": "body_trace_hash",
@@ -222,4 +238,6 @@ def audit_motor_execution(folder: Path, report: dict[str, Any]) -> dict[str, Any
         # causal per-frame decoder repeatedly reads the same observations;
         # materialize each numeric array once without reducing audited frames.
         arrays = [{key: data[key] for key in data.files} for data in (motor, body, swing, physics)]
-        return audit_motor_arrays(arrays[0], arrays[1], arrays[2], arrays[3], report)
+        return audit_motor_arrays(
+            arrays[0], arrays[1], arrays[2], arrays[3], report, decoder_sink=decoder_sink
+        )

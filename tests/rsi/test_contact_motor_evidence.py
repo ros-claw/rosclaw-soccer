@@ -86,6 +86,13 @@ def test_every_motor_target_and_contact_release_is_reconstructed():
     assert result["contact_motor_active_frames"] > 70
 
 
+def test_latent_capture_cannot_accept_a_caller_supplied_decoder():
+    with pytest.raises(ValueError, match="empty decoder"):
+        audit_motor_arrays(*evidence(), decoder_sink=[object()])
+    with pytest.raises(ValueError, match="compiled causal"):
+        audit_motor_arrays(*evidence(), decoder_sink=[])
+
+
 def test_explicit_strike_profile_is_reconstructed_without_legacy_reinterpretation():
     result = audit_motor_arrays(*evidence(strike_profile=True))
     assert result["contact_motor_action_audited"]

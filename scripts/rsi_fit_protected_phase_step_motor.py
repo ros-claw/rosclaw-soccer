@@ -17,9 +17,14 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 
 
-def gpu_features(folder: Path) -> tuple[Any, Any, dict[str, Any]]:
+def gpu_features(
+    folder: Path, *, decoder_sink: list[Any] | None = None
+) -> tuple[Any, Any, dict[str, Any]]:
     raw = _sealed(folder / "report.json")
-    audit_motor_execution(folder, raw)
+    if decoder_sink is None:
+        audit_motor_execution(folder, raw)
+    else:
+        audit_motor_execution(folder, raw, decoder_sink=decoder_sink)
     ids = [raw["taskspace_joint_order"].index(n) for n in G1_DDS_JOINT_NAMES]
     with (
         np.load(folder / "body_trace.npz", allow_pickle=False) as body,
