@@ -13,7 +13,7 @@ from rosclaw_soccer.rsi.online_motor_actor_critic import terminal_return
 from rosclaw_soccer.rsi.smooth_memory_learning import fit_update
 from rosclaw_soccer.rsi.smooth_memory_motor import SAMPLING_SCHEMA, validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
-from scripts.rsi_collect_failed_step_courses import failure_rows
+from scripts.rsi_collect_failed_step_courses import failure_rows, sampling_seed
 from scripts.rsi_fit_protected_phase_step_motor import gpu_observations
 from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 
@@ -65,6 +65,14 @@ def checked_curriculum(
         or commitment["frozen_parent_model_hash"] != model["parent_model_hash"]
         or bank["commitment"]["model_hash"] != reference_hash
         or commitment["failure_reference_model_hash"] != reference_hash
+        or (
+            model.get("generation", 0) > 0
+            and (
+                type(commitment.get("sampling_generation")) is not int
+                or commitment.get("sampling_generation") != model["generation"]
+                or commitment.get("sampling_seed_namespace") != "GENERATION_STRIDE_100000"
+            )
+        )
         or commitment["failure_reference_total_courses"] != len(failures)
         or commitment["std_raw"] != 0.1
         or commitment["sampling_rho"] != 0.9
@@ -147,6 +155,7 @@ def main() -> None:
                 len(decoded) != 1
                 or view["schema"] != SAMPLING_SCHEMA
                 or view["mean_model"] != model
+                or view["seed"] != sampling_seed(i, s, generation=model.get("generation", 0))
                 or view["rho"] != 0.9
                 or view["std_raw"] != 0.1
                 or view["model_hash"] != sample["view_hash"]

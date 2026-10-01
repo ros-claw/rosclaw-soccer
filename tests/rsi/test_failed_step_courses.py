@@ -63,6 +63,24 @@ def test_all_declared_sampling_seeds_fit_actual_sampler_range_and_are_unique():
         sampling_seed(52, 0)
 
 
+def test_later_generations_do_not_replay_the_parents_noise_stream():
+    previous = set()
+    for generation in range(32):
+        seeds = {sampling_seed(i, s, generation=generation) for i in range(52) for s in range(16)}
+        assert len(seeds) == 52 * 16
+        assert not previous & seeds
+        assert all(0 <= seed < 2**32 for seed in seeds)
+        previous.update(seeds)
+    assert sampling_seed(0, 0) == 202610335
+    assert sampling_seed(51, 15) == 202615450
+
+
+@pytest.mark.parametrize("generation", [True, False, -1, 32, 0.5])
+def test_sampling_generation_must_be_a_bounded_integer(generation):
+    with pytest.raises(ValueError):
+        sampling_seed(0, 0, generation=generation)
+
+
 @pytest.mark.parametrize(
     "mutation", ["fresh", "truncated", "duplicate", "unreviewed", "authority", "nonboolean"]
 )

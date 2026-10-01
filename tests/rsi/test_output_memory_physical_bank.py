@@ -50,6 +50,29 @@ def test_complete_current_parent_declaration_is_required(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "key,value",
+    [
+        ("sampling_generation", 0),
+        ("sampling_generation", True),
+        ("sampling_seed_namespace", "REUSED_GENERATION_ZERO"),
+    ],
+)
+def test_next_generation_rejects_stale_exploration_namespace(monkeypatch, key, value):
+    args = fixture(monkeypatch)
+    args[0]["generation"] = 1
+    args[2]["commitment"]["model_hash"] = "current"
+    args[4].update(
+        failure_reference_model_hash="current",
+        sampling_generation=1,
+        sampling_seed_namespace="GENERATION_STRIDE_100000",
+    )
+    args[4][key] = value
+    args[1]["commitment"] = copy.deepcopy(args[4])
+    with pytest.raises(ValueError):
+        fitter.checked_curriculum(*args)
+
+
+@pytest.mark.parametrize(
     "target,key,value",
     [
         (1, "physical_executions", 8),
@@ -86,5 +109,7 @@ def test_next_generation_must_use_its_own_behavior_bank_not_original_parent(monk
         fitter.checked_curriculum(*args)
     args[2]["commitment"]["model_hash"] = "current"
     args[4]["failure_reference_model_hash"] = "current"
+    args[4]["sampling_generation"] = 1
+    args[4]["sampling_seed_namespace"] = "GENERATION_STRIDE_100000"
     args[1]["commitment"] = copy.deepcopy(args[4])
     assert fitter.checked_curriculum(*args) == [[11, 0], [12, 4]]

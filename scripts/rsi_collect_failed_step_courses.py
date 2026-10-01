@@ -22,15 +22,20 @@ from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 
-def sampling_seed(course: int, sample: int) -> int:
+def sampling_seed(course: int, sample: int, *, generation: int = 0) -> int:
     if (
         type(course) is not int
         or type(sample) is not int
         or not 0 <= course < 52
         or not 0 <= sample < 16
+        or type(generation) is not int
+        or not 0 <= generation < 32
     ):
         raise ValueError("bounded declared curriculum/sample index required")
-    return 202610335 + course * 100 + sample
+    # Keep the declared historical gen0 paired-noise ablation unchanged.
+    # Later policy iterations must not replay the random stream used to fit
+    # their parent and call that independent on-policy exploration.
+    return 202610335 + generation * 100000 + course * 100 + sample
 
 
 def failure_rows(
@@ -167,7 +172,11 @@ def main() -> None:
     ):
         parser.error("failure source used a different warm actor")
     views = [
-        make_view(base, seed=sampling_seed(i, s), std=0.1)
+        make_view(
+            base,
+            seed=sampling_seed(i, s, generation=warm["generation"] if arm == "candidate" else 0),
+            std=0.1,
+        )
         for i in range(len(courses))
         for s in range(args.samples_per_course)
     ]
@@ -204,6 +213,8 @@ def main() -> None:
         )
         if warm["generation"] > 0:
             commitment["failure_reference_model_hash"] = expected_hash
+            commitment["sampling_generation"] = warm["generation"]
+            commitment["sampling_seed_namespace"] = "GENERATION_STRIDE_100000"
     if args.behavior_kind == "smooth-memory":
         commitment.update(
             schema="soccer.rsi.smooth_memory_exploration_commitment.v1",

@@ -17,6 +17,7 @@ import numpy as np
 from rosclaw_soccer.rsi.approach_lateral_tracking_evidence import audit_lateral_approach
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _outcome, _sealed
 from rosclaw_soccer.rsi.online_motor_actor_critic import terminal_return
+from scripts.rsi_collect_failed_step_courses import sampling_seed
 from scripts.rsi_fit_protected_phase_step_motor import gpu_observations
 
 
@@ -86,6 +87,7 @@ def audit_course(job: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, A
             len(decoded) != 1
             or view["schema"] != SAMPLING_SCHEMA
             or view["mean_model"] != model
+            or view["seed"] != sampling_seed(i, s, generation=model.get("generation", 0))
             or view["model_hash"] != sample["view_hash"]
             or view["model_hash"]
             != commitment["sampling_view_hashes"][i * commitment["samples_per_course"] + s]
