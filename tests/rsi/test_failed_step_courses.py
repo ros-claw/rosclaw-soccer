@@ -3,6 +3,7 @@ import copy
 import pytest
 
 from scripts.rsi_collect_failed_step_courses import (
+    checked_exploration_stream,
     failure_rows,
     qualified_memory_failure_rows,
     sampling_model_path,
@@ -91,6 +92,42 @@ def test_all_declared_sampling_seeds_fit_actual_sampler_range_and_are_unique():
     assert all(0 <= seed <= 2**31 - 1 for seed in seeds)
     with pytest.raises(ValueError):
         sampling_seed(52, 0)
+
+
+def test_new_branch_noise_never_reuses_any_declared_old_generation_stream():
+    old = {
+        sampling_seed(i, s, generation=g) for g in range(32) for i in range(52) for s in range(16)
+    }
+    fresh = {
+        sampling_seed(i, s, generation=g, stream=1)
+        for g in range(32)
+        for i in range(52)
+        for s in range(16)
+    }
+    assert len(old) == len(fresh) == 32 * 52 * 16
+    assert not old & fresh
+    assert max(fresh) < 2**31
+    assert sampling_seed(0, 0) == 202610335
+
+
+@pytest.mark.parametrize("value", [True, -1, 32, 0.5])
+def test_invalid_stream_and_unbound_stream_are_rejected(value):
+    with pytest.raises(ValueError):
+        sampling_seed(0, 0, stream=value)
+    with pytest.raises(ValueError):
+        checked_exploration_stream(dict(exploration_stream=value))
+
+
+def test_stream_requires_explicit_namespace_and_defaults_keep_history_exact():
+    assert checked_exploration_stream({}) == 0
+    with pytest.raises(ValueError):
+        checked_exploration_stream(dict(exploration_stream=1))
+    assert (
+        checked_exploration_stream(
+            dict(exploration_stream=1, exploration_stream_namespace="STREAM_STRIDE_20000000")
+        )
+        == 1
+    )
 
 
 def test_sampling_path_storage_choice_cannot_change_model_identity(tmp_path):

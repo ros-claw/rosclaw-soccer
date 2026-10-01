@@ -7,8 +7,9 @@ promotion occurs in this collector; every sampled motor command is audited.
 
 import argparse
 import json
+import multiprocessing
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -17,13 +18,12 @@ from rosclaw_soccer.rsi.step_motor_network import validate_model
 from rosclaw_soccer.rsi.stochastic_step_execution import make_sampling_view
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
-from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
-from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
+from scripts.rsi_failure_sampling_worker import run_failure_worker
 from scripts.rsi_sampling_view_memory import bounded_views
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 
-def sampling_seed(course: int, sample: int, *, generation: int = 0) -> int:
+def sampling_seed(course: int, sample: int, *, generation: int = 0, stream: int = 0) -> int:
     if (
         type(course) is not int
         or type(sample) is not int
@@ -31,12 +31,28 @@ def sampling_seed(course: int, sample: int, *, generation: int = 0) -> int:
         or not 0 <= sample < 16
         or type(generation) is not int
         or not 0 <= generation < 32
+        or type(stream) is not int
+        or not 0 <= stream < 32
     ):
         raise ValueError("bounded declared curriculum/sample index required")
     # Keep the declared historical gen0 paired-noise ablation unchanged.
     # Later policy iterations must not replay the random stream used to fit
     # their parent and call that independent on-policy exploration.
-    return 202610335 + generation * 100000 + course * 100 + sample
+    return 202610335 + stream * 20000000 + generation * 100000 + course * 100 + sample
+
+
+def checked_exploration_stream(commitment: dict[str, Any]) -> int:
+    stream = commitment.get("exploration_stream", 0)
+    if (
+        type(stream) is not int
+        or not 0 <= stream < 32
+        or (
+            stream > 0
+            and commitment.get("exploration_stream_namespace") != "STREAM_STRIDE_20000000"
+        )
+    ):
+        raise ValueError("declared bounded independent exploration stream required")
+    return stream
 
 
 def sampling_model_path(root: Path, index: int, *, compressed: bool = False) -> Path:
@@ -115,6 +131,7 @@ def main() -> None:
     parser.add_argument("--pilot-root", type=Path)
     parser.add_argument("--first-four-courses", action="store_true")
     parser.add_argument("--compressed-sampling-models", action="store_true")
+    parser.add_argument("--exploration-stream", type=int, choices=range(32), default=0)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     if not 4 <= args.samples_per_course <= 16:
@@ -204,7 +221,12 @@ def main() -> None:
         make_view,
         base,
         (
-            sampling_seed(i, s, generation=warm["generation"] if arm == "candidate" else 0)
+            sampling_seed(
+                i,
+                s,
+                generation=warm["generation"] if arm == "candidate" else 0,
+                stream=args.exploration_stream,
+            )
             for i in range(len(courses))
             for s in range(args.samples_per_course)
         ),
@@ -229,6 +251,10 @@ def main() -> None:
         sampling_memory_helper_hash=hash_bytes(
             (source / "scripts/rsi_sampling_view_memory.py").read_bytes()
         ),
+        sampling_worker_source_hash=hash_bytes(
+            (source / "scripts/rsi_failure_sampling_worker.py").read_bytes()
+        ),
+        sampling_worker_isolation="SPAWN_ONE_CPU_AUDITOR_PER_GPU",
         execution_timeout_s=600,
         partition="TRAIN_CONSUMED",
         promotion_authorized=False,
@@ -243,6 +269,11 @@ def main() -> None:
                 (source / "scripts/rsi_atomic_artifacts.py").read_bytes()
             ),
             sampling_model_reader_hash=hash_bytes(Path(json_artifact_io.__file__).read_bytes()),
+        )
+    if args.exploration_stream:
+        commitment.update(
+            exploration_stream=args.exploration_stream,
+            exploration_stream_namespace="STREAM_STRIDE_20000000",
         )
     if arm == "candidate":
         commitment.update(
@@ -279,100 +310,23 @@ def main() -> None:
             view,
         )
 
-    def worker(gpu: int) -> list[dict[str, Any]]:
-        records = []
-        for i in range(gpu, len(courses), 4):
-            old = courses[i]
-            seed, lane = old["seed"], old["lane"]
-            common = dict(
-                root=args.output_root,
-                runner=runner,
-                isaac_python=args.isaac_python,
-                g1_usd=args.g1_usd,
-                model_root=args.model_root,
-                actor=args.late_swing_policy,
-                seed=seed,
-                lane=lane,
-                gpu=gpu,
-                gain=1.2,
-                negative_only=True,
-                core_root=args.core_root,
-                resume=args.resume,
-                execution_timeout_s=600,
-            )
-            for pending_arm, kind in [("reproduction", "parent"), ("greedy", "actor")] + [
-                (f"sample-{s}", "actor") for s in range(args.samples_per_course)
-            ]:
-                stem = f"seed{seed}-lane{lane}-{pending_arm}-{kind}"
-                if (args.output_root / "logs" / f"{stem}.log").exists() and not (
-                    args.output_root / stem / "report.json"
-                ).is_file():
-                    raise ValueError(
-                        "preserve and explicitly archive failed attempt before recovery"
-                    )
-            parent, _ = _run(**common, arm="reproduction", kind="parent")
-            parent_path = (
-                args.output_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
-            )
-            greedy, outcome = _run(
-                **common,
-                arm="greedy",
-                kind="actor",
-                motor_step=args.warm_model,
-                parent_report_override=parent_path,
-            )
-            old_folder = args.bank_physics_root / f"seed{seed}-lane{lane}-{arm}-actor"
-            old_report = _sealed(old_folder / "report.json")
-            old_parent = _sealed(
-                args.bank_physics_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
-            )
-            if old_report["report_hash"] != old[arm]["report_hash"] or any(
-                current[k] != historical[k]
-                for current, historical in ((parent, old_parent), (greedy, old_report))
-                for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
-            ):
-                raise ValueError("expanded training changed frozen warm/parent physical traces")
-            sampled = []
-            for s in range(args.samples_per_course):
-                j = i * args.samples_per_course + s
-                raw, result = _run(
-                    **common,
-                    arm=f"sample-{s}",
-                    kind="actor",
-                    motor_step=sampling_model_path(
-                        args.output_root, j, compressed=args.compressed_sampling_models
-                    ),
-                    parent_report_override=parent_path,
-                )
-                sampled.append(
-                    dict(
-                        sample=s,
-                        view_hash=views[j]["model_hash"],
-                        report_hash=raw["report_hash"],
-                        high_quality=high_quality(result),
-                        **result,
-                    )
-                )
-                print(
-                    f"FAILURE_EXPLORED course={i} sample={s} HQ={high_quality(result)}", flush=True
-                )
-            record = dict(
-                index=i,
-                seed=seed,
-                lane=lane,
-                parent_report_hash=parent["report_hash"],
-                greedy=dict(
-                    report_hash=greedy["report_hash"], high_quality=high_quality(outcome), **outcome
-                ),
-                samples=sampled,
-            )
-            write_once(args.output_root / f"row-{i}.json", record)
-            records.append(record)
-        return records
-
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    jobs = [
+        dict(
+            gpu=gpu,
+            courses=courses,
+            arm=arm,
+            runner=runner,
+            args=vars(args),
+            view_hashes=[v["model_hash"] for v in views],
+        )
+        for gpu in range(4)
+    ]
+    with ProcessPoolExecutor(
+        max_workers=4, mp_context=multiprocessing.get_context("spawn")
+    ) as pool:
         rows = sorted(
-            [r for group in pool.map(worker, range(4)) for r in group], key=lambda r: r["index"]
+            [r for group in pool.map(run_failure_worker, jobs) for r in group],
+            key=lambda r: r["index"],
         )
     if _head(source) != commitment["source_commit"] or hash_json(base) != base_payload_hash:
         raise ValueError("source drift invalidates exploration")

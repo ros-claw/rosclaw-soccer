@@ -13,7 +13,11 @@ from rosclaw_soccer.rsi.online_motor_actor_critic import terminal_return
 from rosclaw_soccer.rsi.smooth_memory_learning import fit_update
 from rosclaw_soccer.rsi.smooth_memory_motor import SAMPLING_SCHEMA, validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
-from scripts.rsi_collect_failed_step_courses import failure_rows, sampling_seed
+from scripts.rsi_collect_failed_step_courses import (
+    checked_exploration_stream,
+    failure_rows,
+    sampling_seed,
+)
 from scripts.rsi_fit_protected_phase_step_motor import gpu_observations
 from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 
@@ -27,6 +31,7 @@ def checked_curriculum(
 ) -> list[list[int]]:
     failures = failure_rows(bank, review, arm="candidate")
     commitment = summary["commitment"]
+    checked_exploration_stream(commitment)
     selection = commitment["course_selection"]
     if selection == "FIRST_FOUR_CURRENT_PARENT_FAILURES_IN_SEALED_ORDER":
         if len(failures) < 4:
@@ -155,7 +160,13 @@ def main() -> None:
                 len(decoded) != 1
                 or view["schema"] != SAMPLING_SCHEMA
                 or view["mean_model"] != model
-                or view["seed"] != sampling_seed(i, s, generation=model.get("generation", 0))
+                or view["seed"]
+                != sampling_seed(
+                    i,
+                    s,
+                    generation=model.get("generation", 0),
+                    stream=checked_exploration_stream(commitment),
+                )
                 or view["rho"] != 0.9
                 or view["std_raw"] != 0.1
                 or view["model_hash"] != sample["view_hash"]

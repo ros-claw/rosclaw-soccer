@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from rosclaw_soccer.rsi.smooth_memory_motor import initial_model
-from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
+from scripts.rsi_atomic_artifacts import write_once
 
 
 def main() -> None:

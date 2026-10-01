@@ -903,3 +903,41 @@ v365 全量回归 6200 passed、23 failed、70 skipped；失败 XML
 等待另一完整银行采集退出后再恢复，复用其已经完成的原始执行，
 补齐缺失执行，最终仍需审计全部 156 个完整报告。恢复排队不是
 成功，未完成/失败启动另行保留，不能隐藏在最终成功率中。
+
+### v367：完整结果否决与覆盖全部失败的下一条路线
+
+平滑候选完整采集得到 **35→37**，旧高质量/干净触球损失为 0、
+骨盆安全，但 **新增出界 2**，不能晋升或当作 retained parent。
+独立全银行复核仍在进行。新出界是球的横向 excursion，不是
+机器人横向位移：`20262103/6` 从 3.54434m→4.04963m，
+`20262104/2` 从 3.56771m→4.29624m。两者仍是干净左脚触球，
+但方向比例分别变为 0.60769、0.49553，均不满足 0.3 条件。
+没有把 4m 或方向阈值放宽。旧第二轮方案保持 fail-closed，不能
+因为成功数增长就绕过 retained-parent 资格。
+
+该 AR ablation 只训练了前四个失败课程；另外十三个失败课程的
+结果说明覆盖不足，而不是已证明的“持续成长”。下一路线预先
+声明在 `protocols/current-retained-parent-smooth-curriculum-v367.json`：
+只有更新力度候选的完整银行及独立复核有增益且所有保留 guardrail
+通过，才可用它作为真正当前父模型，建立**零额外残差**的 AR
+子模型；四个 actual pilot 必须父子 body/ball hash 一致，再从
+全部本代失败采集 8 样本、完整审计并学习。该父模型当前尚未完成
+恢复及资格验证；方案不是成功。不能从已被否决的 AR 候选继续
+伪装“晋升后的第二代”，也不回到更早父模型冒充当前能力。
+
+新探索使用独立 stream=1（20000000 stride），与全部历史
+stream=0 的 32 代/52 课程/16 样本噪声空间不相交；旧默认 seed
+和模型数学不变。serial/parallel 两种 fitter 都从 declared commitment
+重建该 stream，拒绝布尔、越界和未绑定 namespace。
+
+采集的完整 CPU 审计从同进程四线程改为四个 spawn 进程：不
+pickle tensor、模型或 decoder，每 GPU 一个独立任务，传递的只有
+路径、课程及 view hash。worker 保留原父子物理控制复现检查和
+全部样本、失败日志保护、声明顺序；每 course 在任何探索前均
+要求 parent/greedy 的 body/ball 与原 qualified bank 一致。新增
+helper hash 进入 commitment。此为避免 Python CPU/GIL 争用的
+工程改进，**尚未测得实际物理采集加速倍数**，不宣传 n 倍加速。
+37 项 stream/worker/retained-parent 目标测试通过，含控制 trace
+改变阻断全部探索、保留失败日志、噪声不重用，以及成功增长但
+新增出界必须拒绝。编译/ruff/targeted mypy 通过；已绑定学习器、
+编码器、运动数学和已有模型不改。
