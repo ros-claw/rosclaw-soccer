@@ -7,6 +7,7 @@ promotion occurs in this collector; every sampled motor command is audited.
 
 import argparse
 import json
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -32,11 +33,14 @@ def sampling_seed(course: int, sample: int) -> int:
     return 202610335 + course * 100 + sample
 
 
-def failure_rows(summary: dict[str, Any], review: dict[str, Any]) -> list[dict[str, Any]]:
+def failure_rows(
+    summary: dict[str, Any], review: dict[str, Any], *, arm: str = "warm"
+) -> list[dict[str, Any]]:
     """Complete paired consumed review is required before automatic selection."""
     rows = summary.get("rows", [])
     if (
-        summary.get("schema") != "soccer.rsi.protected_phase_bank_physics.v1"
+        arm not in ("warm", "candidate")
+        or summary.get("schema") != "soccer.rsi.protected_phase_bank_physics.v1"
         or summary.get("commitment", {}).get("partition") != "TRAIN_CONSUMED"
         or summary.get("physical_executions") != 156
         or summary.get("independent_contexts") != 52
@@ -52,12 +56,12 @@ def failure_rows(summary: dict[str, Any], review: dict[str, Any]) -> list[dict[s
         )
         or len({(r["seed"], r["lane"]) for r in rows}) != 52
         or [r["index"] for r in rows] != list(range(52))
-        or any(type(r["warm"].get("high_quality")) is not bool for r in rows)
-        or sum(r["warm"]["high_quality"] for r in rows) != summary["warm_high_quality"]
-        or summary["warm_high_quality"] != review["warm_high_quality"]
+        or any(type(r[arm].get("high_quality")) is not bool for r in rows)
+        or sum(r[arm]["high_quality"] for r in rows) != summary[f"{arm}_high_quality"]
+        or summary[f"{arm}_high_quality"] != review[f"{arm}_high_quality"]
     ):
         raise ValueError("complete independently reviewed consumed physics required")
-    failures = [r for r in rows if not r["warm"]["high_quality"]]
+    failures = [r for r in rows if not r[arm]["high_quality"]]
     if not failures:
         raise ValueError("no warm-actor failures to train")
     return failures
@@ -77,6 +81,8 @@ def main() -> None:
     ):
         parser.add_argument(f"--{name}", required=True, type=Path)
     parser.add_argument("--samples-per-course", type=int, default=8)
+    parser.add_argument("--behavior-kind", choices=("warm", "output-memory"), default="warm")
+    parser.add_argument("--pilot-root", type=Path)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     if not 4 <= args.samples_per_course <= 16:
@@ -84,17 +90,55 @@ def main() -> None:
     source = Path(__file__).resolve().parent.parent
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
     warm = json.loads(args.warm_model.read_text())
-    if warm.get("schema") != "soccer.rsi.compiled_step_motor_decoder.v1":
+    arm = "warm"
+    make_view: Callable[..., dict[str, Any]] = make_sampling_view
+    if args.behavior_kind == "output-memory":
+        from rosclaw_soccer.rsi.output_memory_step_motor import (
+            make_sampling_view as output_sampling,
+        )
+        from rosclaw_soccer.rsi.output_memory_step_motor import validate_model as output_validate
+
+        output_validate(warm)
+        if warm["generation"] != 0 or args.pilot_root is None:
+            parser.error("first memory exploration requires zero-residual qualified parent")
+        pilot = _sealed(args.pilot_root / "validation_summary.json")
+        pilot_review = _sealed(args.pilot_root / "independent_review.json")
+        if (
+            pilot["commitment"]["model_hash"] != warm["model_hash"]
+            or pilot_review["source_summary_hash"] != pilot["report_hash"]
+            or pilot_review["actual_reports_reviewed"] != 12
+            or pilot_review["safe_pelvis"] is not True
+            or any(
+                pilot_review[k] != 0
+                for k in ("old_high_quality_loss", "old_clean_foot_loss", "new_out_of_play")
+            )
+            or any(
+                pilot_review.get(k) is not False
+                for k in ("promotion_authorized", "hardware_authorized")
+            )
+        ):
+            raise ValueError("independently qualified retained current parent required")
+        base = warm
+        make_view = output_sampling
+        arm = "candidate"
+    elif warm.get("schema") != "soccer.rsi.compiled_step_motor_decoder.v1":
         parser.error("frozen compiled warm actor required")
-    base = warm["base_model"]
-    validate_model(base)
+    else:
+        base = warm["base_model"]
+        validate_model(base)
     bank = _sealed(args.bank_physics_root / "validation_summary.json")
     review = _sealed(args.bank_physics_root / "independent_review.json")
-    courses = failure_rows(bank, review)
-    if bank["commitment"]["warm_model_hash"] != warm["model_hash"]:
+    courses = failure_rows(bank, review, arm=arm)
+    expected_hash = (
+        warm["frozen_parent"]["model_hash"] if arm == "candidate" else warm["model_hash"]
+    )
+    if (
+        bank["commitment"]["model_hash" if arm == "candidate" else "warm_model_hash"]
+        != expected_hash
+    ):
         parser.error("failure source used a different warm actor")
     views = [
-        make_sampling_view(base, seed=sampling_seed(i, s), std=0.1)
+        make_view(base, seed=sampling_seed(i, s), std=0.1)
         for i in range(len(courses))
         for s in range(args.samples_per_course)
     ]
@@ -120,6 +164,15 @@ def main() -> None:
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if arm == "candidate":
+        commitment.update(
+            schema="soccer.rsi.output_memory_exploration_commitment.v1",
+            behavior_kind="OUTPUT_MEMORY_CURRENT_PARENT",
+            failure_reference_arm=arm,
+            pilot_hash=pilot["report_hash"],
+            pilot_review_hash=pilot_review["report_hash"],
+            frozen_parent_model_hash=expected_hash,
+        )
     args.output_root.mkdir(parents=True, exist_ok=args.resume)
     for folder in ("logs", "models"):
         (args.output_root / folder).mkdir(exist_ok=args.resume)
@@ -148,10 +201,10 @@ def main() -> None:
                 resume=args.resume,
                 execution_timeout_s=600,
             )
-            for arm, kind in [("reproduction", "parent"), ("greedy", "actor")] + [
+            for pending_arm, kind in [("reproduction", "parent"), ("greedy", "actor")] + [
                 (f"sample-{s}", "actor") for s in range(args.samples_per_course)
             ]:
-                stem = f"seed{seed}-lane{lane}-{arm}-{kind}"
+                stem = f"seed{seed}-lane{lane}-{pending_arm}-{kind}"
                 if (args.output_root / "logs" / f"{stem}.log").exists() and not (
                     args.output_root / stem / "report.json"
                 ).is_file():
@@ -169,12 +222,12 @@ def main() -> None:
                 motor_step=args.warm_model,
                 parent_report_override=parent_path,
             )
-            old_folder = args.bank_physics_root / f"seed{seed}-lane{lane}-warm-actor"
+            old_folder = args.bank_physics_root / f"seed{seed}-lane{lane}-{arm}-actor"
             old_report = _sealed(old_folder / "report.json")
             old_parent = _sealed(
                 args.bank_physics_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
             )
-            if old_report["report_hash"] != old["warm"]["report_hash"] or any(
+            if old_report["report_hash"] != old[arm]["report_hash"] or any(
                 current[k] != historical[k]
                 for current, historical in ((parent, old_parent), (greedy, old_report))
                 for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
@@ -223,7 +276,9 @@ def main() -> None:
     if _head(source) != commitment["source_commit"]:
         raise ValueError("source drift invalidates exploration")
     result = dict(
-        schema="soccer.rsi.failed_step_course_exploration.v1",
+        schema="soccer.rsi.output_memory_failure_exploration.v1"
+        if arm == "candidate"
+        else "soccer.rsi.failed_step_course_exploration.v1",
         commitment=commitment,
         rows=rows,
         independent_contexts=len(courses),

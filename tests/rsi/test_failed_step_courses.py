@@ -39,6 +39,22 @@ def test_all_twenty_failures_are_selected_without_mutating_review():
     assert summary == original
 
 
+def test_later_parent_failure_selection_uses_candidate_not_initial_warm_results():
+    summary, review = bank()
+    for row in summary["rows"]:
+        row["candidate"] = dict(high_quality=row["index"] < 35)
+    summary["candidate_high_quality"] = review["candidate_high_quality"] = 35
+    assert [r["index"] for r in failure_rows(summary, review, arm="candidate")] == list(
+        range(35, 52)
+    )
+    assert len(failure_rows(summary, review)) == 20
+    with pytest.raises(ValueError):
+        failure_rows(summary, review, arm="undeclared")
+    review["candidate_high_quality"] = 32
+    with pytest.raises(ValueError):
+        failure_rows(summary, review, arm="candidate")
+
+
 def test_all_declared_sampling_seeds_fit_actual_sampler_range_and_are_unique():
     seeds = [sampling_seed(i, s) for i in range(52) for s in range(16)]
     assert len(set(seeds)) == 52 * 16
