@@ -44,7 +44,12 @@ def main() -> None:
     if warm.get("schema") == "soccer.rsi.compiled_step_motor_decoder.v1":
         compiled_preview(warm)
         warm_base = warm["base_model"]
-    if online_base.get("schema") == "soccer.rsi.protected_phase_step_actor_critic.v1":
+    if online_base.get("schema") == "soccer.rsi.kernel_guarded_step_actor_critic.v1":
+        from rosclaw_soccer.rsi.kernel_guarded_step_network import validate_model as kernel_validate
+
+        kernel_validate(online_base)
+        predecessor = online_base["encoder"]["base_model"]
+    elif online_base.get("schema") == "soccer.rsi.protected_phase_step_actor_critic.v1":
         from rosclaw_soccer.rsi.protected_phase_step_network import (
             validate_model as protected_validate,
         )

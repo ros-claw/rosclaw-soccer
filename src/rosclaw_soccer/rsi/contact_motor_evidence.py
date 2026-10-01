@@ -91,7 +91,13 @@ def audit_motor_arrays(
     contact_delta = np.zeros(12)
     contact_frame = None
     compiled: Any = None
-    if "protected_phase_motor_proof" in report["contact_motor_policy"]:
+    if "kernel_motor_proof" in report["contact_motor_policy"]:
+        from rosclaw_soccer.rsi.kernel_guarded_step_execution import CompiledKernelStepMotor
+
+        if not step_preview:
+            raise ValueError("unbound kernel-protected motor execution")
+        compiled = CompiledKernelStepMotor(report["contact_motor_policy"])
+    elif "protected_phase_motor_proof" in report["contact_motor_policy"]:
         from rosclaw_soccer.rsi.protected_phase_step_execution import CompiledProtectedPhaseMotor
 
         if not step_preview:

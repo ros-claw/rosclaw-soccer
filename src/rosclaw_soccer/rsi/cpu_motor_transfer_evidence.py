@@ -216,7 +216,11 @@ def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
         from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
 
         policy = report["executed_motor_policy"]
-        if "protected_phase_motor_proof" in policy:
+        if "kernel_motor_proof" in policy:
+            from rosclaw_soccer.rsi.kernel_guarded_step_execution import CompiledKernelStepMotor
+
+            delta_at_frame = CompiledKernelStepMotor(policy).delta_at_frame
+        elif "protected_phase_motor_proof" in policy:
             from rosclaw_soccer.rsi.protected_phase_step_execution import (
                 CompiledProtectedPhaseMotor,
             )

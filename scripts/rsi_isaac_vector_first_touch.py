@@ -641,7 +641,20 @@ def main() -> None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
         step_model = json.loads(args.contact_motor_step_model.read_text(encoding="utf-8"))
-        if step_model.get("schema") == "soccer.rsi.protected_phase_step_actor_critic.v1":
+        if step_model.get("schema") in (
+            "soccer.rsi.kernel_guarded_step_actor_critic.v1",
+            "soccer.rsi.kernel_guarded_step_sampling.v1",
+        ):
+            from rosclaw_soccer.rsi.kernel_guarded_step_execution import (
+                CompiledKernelStepMotor,
+            )
+            from rosclaw_soccer.rsi.kernel_guarded_step_execution import (
+                make_preview as kernel_preview,
+            )
+
+            make_preview = kernel_preview
+            delta_at_frame = CompiledKernelStepMotor(make_preview(step_model)).delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.protected_phase_step_actor_critic.v1":
             from rosclaw_soccer.rsi.protected_phase_step_execution import (
                 CompiledProtectedPhaseMotor,
             )

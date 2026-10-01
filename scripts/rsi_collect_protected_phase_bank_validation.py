@@ -135,12 +135,19 @@ def main() -> None:
     warm = json.loads(args.warm_model.read_text())
     candidate = json.loads(args.candidate_model.read_text())
     make_preview(warm)
-    validate_model(candidate)
+    if candidate.get("schema") == "soccer.rsi.kernel_guarded_step_actor_critic.v1":
+        from rosclaw_soccer.rsi.kernel_guarded_step_network import validate_model as kernel_validate
+
+        kernel_validate(candidate)
+        predecessor = candidate["encoder"]["base_model"]
+    else:
+        validate_model(candidate)
+        predecessor = candidate["base_model"]
     bank = _sealed(args.bank_path)
     if (
         bank["partition"] != "TRAIN_CONSUMED"
         or len(bank["courses"]) != 52
-        or candidate["base_model"] != warm["base_model"]
+        or predecessor != warm["base_model"]
     ):
         parser.error("frozen aligned warm actor and complete consumed bank required")
     for course in bank["courses"]:
