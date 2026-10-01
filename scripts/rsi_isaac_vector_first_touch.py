@@ -641,7 +641,15 @@ def main() -> None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
         step_model = json.loads(args.contact_motor_step_model.read_text(encoding="utf-8"))
-        if "training_sampling" in step_model:
+        if step_model.get("schema") == "soccer.rsi.online_step_motor_mc_ppo.v1":
+            from rosclaw_soccer.rsi.online_step_execution import (
+                delta_at_frame as online_step_delta_at_frame,
+            )
+            from rosclaw_soccer.rsi.online_step_execution import make_preview as online_step_preview
+
+            delta_at_frame = online_step_delta_at_frame
+            make_preview = online_step_preview
+        elif "training_sampling" in step_model:
             from rosclaw_soccer.rsi.stochastic_step_execution import (
                 delta_at_frame as sampled_delta_at_frame,
             )
