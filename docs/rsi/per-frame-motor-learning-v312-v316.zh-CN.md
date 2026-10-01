@@ -710,3 +710,20 @@ KL penalty=10、160 步上限、0.05 residual cap、0.005 精确推理 KL
 实验入口要求 manifest、NPZ、旧候选、行为模型、等价报告和原审计
 代码 hash 一致，训练前写 commitment，完成后重验输入未改变。
 本节记录的是实验设计及单元验证，尚无该新候选的物理成绩。
+
+### v358：完整比较之前先过实际动力学门
+
+新增 consumed comparison preflight：必须有绑定同一模型的 12 次
+物理 pilot/2400 条独立重建动作，以及全部四个 CPU 案例的 3000
+substep 动力学、PD 力矩、神经目标重建。逐案例绑定模型、课程和
+report hash；拒绝失去旧成功/干净触球、新出界、非有限物理指标和
+安全回退。四个对照取零残差父模型的实际 CPU 证据，不用 critic
+预测代替。系统盘还须有 20GiB 完整银行预算及 100GiB 系统预留。
+这是 SIM consumed 比较前置检查，不是 promotion、fresh 开考或
+硬件 Permit。目标测试 **21 passed**，ruff/format/targeted mypy 通过。
+
+4e-4 候选训练已运行，小样本物理验证和全部四个 CPU 执行/复核已
+排队；训练完成才进入实际执行，任何失败证据仍保留。平滑策略
+完整银行的前 8 个课程中，index 4 和 6 出现 warm=False→candidate=True。
+这是部分结果，完整 52 课程、旧干净触球保留和安全尚待审计，
+不能据此宣布整个银行通过，更不能宣称 fresh 能力已扩大。
