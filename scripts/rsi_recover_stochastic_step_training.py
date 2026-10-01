@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import os
 import time
 from pathlib import Path
 
@@ -81,6 +82,7 @@ def main() -> None:
         frozen_runner_hash=commitment["runner_hash"],
         frozen_helper_hash=hash_bytes(helper.read_bytes()),
         helper_source_hash=hash_bytes(Path(__file__).read_bytes()),
+        headless_display_environment=os.environ.get("DISPLAY"),
         missing_samples=list(missing),
         failed_log_hash=hash_bytes(failed_log.read_bytes()),
         course=[seed, lane],

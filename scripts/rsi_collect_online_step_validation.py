@@ -6,7 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from rosclaw_soccer.rsi.compiled_step_inference import make_preview as compiled_preview
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
+from rosclaw_soccer.rsi.step_motor_network import validate_model as validate_warm
 from rosclaw_soccer.rsi.step_motor_ppo import validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
@@ -34,10 +36,21 @@ def main() -> None:
     source = Path(__file__).resolve().parent.parent
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
     model = json.loads(args.online_model.read_text())
-    validate_model(model)
     warm = json.loads(args.step_model.read_text())
+    online_base, warm_base = model, warm
+    if model.get("schema") == "soccer.rsi.compiled_step_motor_decoder.v1":
+        compiled_preview(model)
+        online_base = model["base_model"]
+    if warm.get("schema") == "soccer.rsi.compiled_step_motor_decoder.v1":
+        compiled_preview(warm)
+        warm_base = warm["base_model"]
+    validate_model(online_base)
+    validate_warm(warm_base)
     pilot = _sealed(args.pilot_summary)
-    if model["warm_start_model"] != warm or pilot["commitment"]["model_hash"] != warm["model_hash"]:
+    if (
+        online_base["warm_start_model"] != warm_base
+        or pilot["commitment"]["model_hash"] != warm_base["model_hash"]
+    ):
         parser.error("online and warm policies must share the same consumed pilot")
     commitment = dict(
         schema="soccer.rsi.online_step_validation_commitment.v1",
@@ -47,6 +60,8 @@ def main() -> None:
         asset_hash=hash_bytes(args.g1_usd.read_bytes()),
         model_hash=model["model_hash"],
         warm_model_hash=warm["model_hash"],
+        warm_base_model_hash=warm_base["model_hash"],
+        online_base_model_hash=online_base["model_hash"],
         pilot_hash=pilot["report_hash"],
         courses=[list(c) for c in COURSES],
         partition="CONSUMED_PILOT",
