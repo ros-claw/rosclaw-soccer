@@ -8,16 +8,26 @@ from pathlib import Path
 from typing import Any
 
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
-from rosclaw_soccer.rsi.output_memory_step_motor import validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
+from scripts.rsi_collect_protected_phase_bank_validation import validate_bank_models
 from scripts.rsi_collect_step_motor_pilot import COURSES
 
 
-def check_pilot(summary: dict[str, Any], review: dict[str, Any], model_hash: str) -> None:
+def check_pilot(
+    summary: dict[str, Any],
+    review: dict[str, Any],
+    model_hash: str,
+    *,
+    baseline_hash: str | None = None,
+) -> None:
     if (
         summary["schema"] != "soccer.rsi.online_step_motor_physical_validation.v1"
         or summary["commitment"]["model_hash"] != model_hash
+        or (
+            baseline_hash is not None
+            and summary["commitment"].get("warm_model_hash") != baseline_hash
+        )
         or review["schema"] != "soccer.rsi.step_motor_physics_independent_review.v1"
         or review["source_summary_hash"] != summary["report_hash"]
         or review["actual_reports_reviewed"] != 12
@@ -105,23 +115,37 @@ def main() -> None:
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--cpu-root", type=Path, action="append", required=True)
     parser.add_argument("--baseline-cpu-root", type=Path, action="append", required=True)
+    parser.add_argument(
+        "--cpu-review-name",
+        choices=("review.json", "independent_review.json"),
+        default="independent_review.json",
+    )
+    parser.add_argument(
+        "--baseline-cpu-review-name",
+        choices=("review.json", "independent_review.json"),
+        default="review.json",
+    )
     parser.add_argument("--storage-root", type=Path, required=True)
     args = parser.parse_args()
     if len(args.cpu_root) != 4 or len(args.baseline_cpu_root) != 4:
         parser.error("all four paired CPU courses required")
     model = json.loads(args.candidate.read_text())
     baseline = json.loads(args.baseline.read_text())
-    validate_model(model)
-    validate_model(baseline)
+    if model.get("schema") not in (
+        "soccer.rsi.output_memory_step_motor.v1",
+        "soccer.rsi.smooth_memory_motor.v1",
+    ):
+        raise ValueError("declared output/smooth-memory candidate required")
+    validate_bank_models(model, baseline)
     pilot = _sealed(args.pilot_root / "validation_summary.json")
     review = _sealed(args.pilot_root / "independent_review.json")
-    check_pilot(pilot, review, model["model_hash"])
+    check_pilot(pilot, review, model["model_hash"], baseline_hash=baseline["model_hash"])
     cpu_reviews = []
     for course, root, old_root in zip(COURSES, args.cpu_root, args.baseline_cpu_root, strict=True):
         current_report = _sealed(root / "report.json")
-        current_review = _sealed(root / "independent_review.json")
+        current_review = _sealed(root / args.cpu_review_name)
         old_report = _sealed(old_root / "report.json")
-        old_review = _sealed(old_root / "review.json")
+        old_review = _sealed(old_root / args.baseline_cpu_review_name)
         check_cpu(
             current_report,
             current_review,
@@ -138,6 +162,7 @@ def main() -> None:
     report = dict(
         schema="soccer.rsi.consumed_memory_bank_preflight.v1",
         candidate_model_hash=model["model_hash"],
+        actual_pilot_baseline_model_hash=baseline["model_hash"],
         cpu_baseline_model_hash=baseline["model_hash"],
         source_pilot_summary_hash=pilot["report_hash"],
         source_pilot_review_hash=review["report_hash"],

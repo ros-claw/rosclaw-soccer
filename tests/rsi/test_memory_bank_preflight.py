@@ -80,6 +80,20 @@ def test_retained_but_not_improved_pilot_allows_only_consumed_comparison():
     check_pilot(*pilot(), "candidate")
 
 
+def test_current_parent_is_required_not_only_an_old_good_baseline():
+    summary, review = pilot()
+    summary["commitment"]["warm_model_hash"] = "older-parent"
+    with pytest.raises(ValueError, match="consumed pilot"):
+        check_pilot(summary, review, "candidate", baseline_hash="current-parent")
+    summary["commitment"]["warm_model_hash"] = "current-parent"
+    check_pilot(summary, review, "candidate", baseline_hash="current-parent")
+
+
+def test_missing_parent_binding_is_rejected_by_current_parent_gate():
+    with pytest.raises(ValueError, match="consumed pilot"):
+        check_pilot(*pilot(), "candidate", baseline_hash="current-parent")
+
+
 @pytest.mark.parametrize(
     "key,value",
     [
