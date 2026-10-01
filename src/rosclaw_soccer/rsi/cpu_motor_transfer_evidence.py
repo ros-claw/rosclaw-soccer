@@ -259,6 +259,7 @@ def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
         neural_target_reconstructed=report.get("step_model_hash") is not None,
         physical_substeps=3000,
         first_contact_frame=first,
+        contact_body_indices=np.flatnonzero(np.max(actual_forces, axis=0) > 1).tolist(),
         clean_foot_only=clean,
         minimum_pelvis_z_m=minimum,
         maximum_lateral_excursion_m=maximum_lateral,

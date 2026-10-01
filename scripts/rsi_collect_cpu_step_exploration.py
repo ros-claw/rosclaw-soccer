@@ -122,6 +122,8 @@ def main() -> None:
         outcome = {
             k: review[k]
             for k in (
+                "first_contact_frame",
+                "contact_body_indices",
                 "clean_foot_only",
                 "minimum_pelvis_z_m",
                 "maximum_lateral_excursion_m",
