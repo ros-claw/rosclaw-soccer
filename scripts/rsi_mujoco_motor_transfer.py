@@ -185,7 +185,13 @@ def main() -> None:
     if step_model is not None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
-        if step_model.get("schema") == "soccer.rsi.memory_guarded_phase_transfer.v1":
+        if step_model.get("schema") == "soccer.rsi.selective_phase_memory.v1":
+            from rosclaw_soccer.rsi.selective_phase_memory import CompiledSelectivePhaseMemory
+            from rosclaw_soccer.rsi.selective_phase_memory import make_preview as selective_preview
+
+            make_preview = selective_preview
+            delta_at_frame = CompiledSelectivePhaseMemory(make_preview(step_model)).delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.memory_guarded_phase_transfer.v1":
             from rosclaw_soccer.rsi.memory_guarded_phase_transfer import CompiledMemoryPhaseMotor
             from rosclaw_soccer.rsi.memory_guarded_phase_transfer import (
                 make_preview as memory_preview,
