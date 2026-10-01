@@ -13,7 +13,9 @@ import numpy as np
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.rsi.contact_motor_primitive import JOINT_NAMES
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
+from rosclaw_soccer.rsi.independent_first_touch_bank import post_contact_displacement
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json
+from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
 
 
 def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
@@ -243,6 +245,16 @@ def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
             composed[ids] += delta
             equal(composed, trace["joint_target_rad"][frame, 0], "causal composed target")
             previous = delta
+    displacement = post_contact_displacement(trace["ball_position_after_step_m"][:, 0], first)
+    maximum_lateral = float(np.max(np.abs(trace["ball_position_after_step_m"][:, 0, 1])))
+    quality = high_quality(
+        dict(
+            clean_foot_only=clean,
+            minimum_pelvis_z_m=minimum,
+            maximum_lateral_excursion_m=maximum_lateral,
+            **displacement,
+        )
+    )
     result = dict(
         schema="soccer.rsi.cpu_motor_transfer_review.v1",
         reviewed_report_hash=report["report_hash"],
@@ -253,6 +265,9 @@ def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
         first_contact_frame=first,
         clean_foot_only=clean,
         minimum_pelvis_z_m=minimum,
+        maximum_lateral_excursion_m=maximum_lateral,
+        high_quality=quality,
+        **displacement,
         safety_passed=minimum >= 0.65,
         qualification="CPU_DIAGNOSTIC_ONLY_NOT_PROMOTION",
         promotion_authorized=False,
