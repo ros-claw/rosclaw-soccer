@@ -641,7 +641,16 @@ def main() -> None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
         step_model = json.loads(args.contact_motor_step_model.read_text(encoding="utf-8"))
-        if step_model.get("schema") == "soccer.rsi.kernel_replay_motor.v1":
+        if step_model.get("schema") in (
+            "soccer.rsi.output_memory_step_motor.v1",
+            "soccer.rsi.output_memory_step_sampling.v1",
+        ):
+            from rosclaw_soccer.rsi.output_memory_step_motor import CompiledOutputMemoryMotor
+            from rosclaw_soccer.rsi.output_memory_step_motor import make_preview as output_preview
+
+            make_preview = output_preview
+            delta_at_frame = CompiledOutputMemoryMotor(make_preview(step_model)).delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.kernel_replay_motor.v1":
             from rosclaw_soccer.rsi.kernel_replay_motor import CompiledReplayStepMotor
             from rosclaw_soccer.rsi.kernel_replay_motor import make_preview as replay_preview
 

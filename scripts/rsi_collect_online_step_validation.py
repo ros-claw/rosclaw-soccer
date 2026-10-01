@@ -47,7 +47,12 @@ def main() -> None:
     if warm.get("schema") == "soccer.rsi.compiled_step_motor_decoder.v1":
         compiled_preview(warm)
         warm_base = warm["base_model"]
-    if online_base.get("schema") == "soccer.rsi.kernel_replay_motor.v1":
+    if online_base.get("schema") == "soccer.rsi.output_memory_step_motor.v1":
+        from rosclaw_soccer.rsi.output_memory_step_motor import validate_model as output_validate
+
+        output_validate(online_base)
+        predecessor = online_base["frozen_parent"]
+    elif online_base.get("schema") == "soccer.rsi.kernel_replay_motor.v1":
         from rosclaw_soccer.rsi.kernel_replay_motor import validate_model as replay_validate
 
         replay_validate(online_base)
@@ -79,7 +84,12 @@ def main() -> None:
     else:
         validate_model(online_base)
         predecessor = online_base["warm_start_model"]
-    validate_warm(warm_base)
+    if warm_base.get("schema") == "soccer.rsi.kernel_guarded_step_actor_critic.v1":
+        from rosclaw_soccer.rsi.kernel_guarded_step_network import validate_model as parent_validate
+
+        parent_validate(warm_base)
+    else:
+        validate_warm(warm_base)
     pilot = _sealed(args.pilot_summary)
     if predecessor != warm_base or pilot["commitment"]["model_hash"] != warm_base["model_hash"]:
         parser.error("online and warm policies must share the same consumed pilot")

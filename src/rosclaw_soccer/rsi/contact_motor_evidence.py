@@ -91,7 +91,13 @@ def audit_motor_arrays(
     contact_delta = np.zeros(12)
     contact_frame = None
     compiled: Any = None
-    if "replay_motor_proof" in report["contact_motor_policy"]:
+    if "output_memory_motor_proof" in report["contact_motor_policy"]:
+        from rosclaw_soccer.rsi.output_memory_step_motor import CompiledOutputMemoryMotor
+
+        if not step_preview:
+            raise ValueError("unbound output-memory motor")
+        compiled = CompiledOutputMemoryMotor(report["contact_motor_policy"])
+    elif "replay_motor_proof" in report["contact_motor_policy"]:
         from rosclaw_soccer.rsi.kernel_replay_motor import CompiledReplayStepMotor
 
         if not step_preview:
