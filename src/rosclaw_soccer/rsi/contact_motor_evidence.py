@@ -94,6 +94,13 @@ def audit_motor_arrays(
         if step_preview:
             from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame
 
+            if "stochastic_motor_proof" in report["contact_motor_policy"]:
+                from rosclaw_soccer.rsi.stochastic_step_execution import (
+                    delta_at_frame as sampled_delta_at_frame,
+                )
+
+                delta_at_frame = sampled_delta_at_frame
+
             expected = delta_at_frame(
                 report["contact_motor_policy"],
                 body,

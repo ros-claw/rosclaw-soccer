@@ -641,6 +641,16 @@ def main() -> None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
         step_model = json.loads(args.contact_motor_step_model.read_text(encoding="utf-8"))
+        if "training_sampling" in step_model:
+            from rosclaw_soccer.rsi.stochastic_step_execution import (
+                delta_at_frame as sampled_delta_at_frame,
+            )
+            from rosclaw_soccer.rsi.stochastic_step_execution import (
+                make_preview as sampled_make_preview,
+            )
+
+            delta_at_frame = sampled_delta_at_frame
+            make_preview = sampled_make_preview
         motor_policy = make_preview(step_model)
         motor_knots = np.zeros((3, 12))
     motor_joint_indices = [robot.joint_names.index(name) for name in MOTOR_JOINT_NAMES]
