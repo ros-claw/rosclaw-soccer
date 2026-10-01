@@ -15,9 +15,9 @@ from rosclaw_soccer.rsi.compiled_step_inference import make_preview
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _outcome, _sealed
 from rosclaw_soccer.rsi.protected_phase_step_network import validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
-from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 

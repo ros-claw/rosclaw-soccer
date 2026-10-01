@@ -14,8 +14,8 @@ import numpy as np
 
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_audit_memory_learning_rollouts import audit_course, ordered_audits
-from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 
 
 def main() -> None:

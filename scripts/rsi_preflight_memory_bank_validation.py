@@ -10,8 +10,8 @@ from typing import Any
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
 from rosclaw_soccer.rsi.output_memory_step_motor import validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_collect_step_motor_pilot import COURSES
-from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 
 
 def check_pilot(summary: dict[str, Any], review: dict[str, Any], model_hash: str) -> None:

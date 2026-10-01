@@ -15,7 +15,7 @@ from rosclaw_soccer.rsi.online_motor_actor_critic import terminal_return
 from rosclaw_soccer.rsi.output_memory_accelerated_learning import fit_update
 from rosclaw_soccer.rsi.output_memory_step_motor import validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
-from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
+from scripts.rsi_atomic_artifacts import write_once
 
 
 def main() -> None:
