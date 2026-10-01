@@ -874,3 +874,32 @@ v363 全量回归为 6194 passed、23 failed、70 skipped，保留原始
 日志。平滑第二轮管线已排队，必须等第一轮完整父模型独立复核
 有增益且 guardrail 通过，才执行存储 preflight、全部当前失败的
 8 样本采集、完整轨迹审计及下一代 PPO。排队不计为已执行。
+
+### v366：原生启动故障保留与显式恢复
+
+v365 全量回归 6200 passed、23 failed、70 skipped；失败 XML
+与 v363 完全同集，无新增失败。待执行训练/验证的启动命令及
+进程 start ticks 已保存于外部 pending descriptor，排队不冒充执行。
+
+更新力度实验的完整银行原进程因原生 Isaac 故障退出，仍**未完成**。
+原始 driver 日志保留，发现两个无完整报告的启动尝试：
+
+- `seed20262106-lane0-reproduction-parent`：CUDA 分配
+  671088640 字节失败，DOF velocity 后端初始化失败。
+- `seed20262107-lane4-candidate-actor`：Kit 平台信息初始化
+  `getenv → libxcb → XOpenDisplay` 原生崩溃。
+
+没有证据表明是学习模型造成；也没有故障发生时的显存时间序列，
+因此不能断言由并行重叠造成。事后四卡仍各有约 38–39GiB 空闲，
+该快照不能证明故障瞬间状态。其他人的常驻 Kit/GPU 服务未停止。
+参考 NVIDIA [性能排查文档](https://docs.isaacsim.omniverse.nvidia.com/6.0.1/reference_material/sim_performance_optimization_handbook.html)，
+先检查资源和启动流程；没有借故修改物理参数或已绑定运动源码。
+
+两个失败日志逐字节 hash 校验后移动到该实验自己的
+`failed-attempts-v366`，无删除，未覆盖其他报告；归档 commitment
+`sha256:afd3979d055e89909eff530303e2ff02fb0ebc7d61e66614ff2e6307471d00be`。
+恢复前 43 个完整课程 row、131 个报告文件存在；失败尝试不是完整
+成功课程。显式恢复使用原 frozen v359，模型/课程/阈值不变，
+等待另一完整银行采集退出后再恢复，复用其已经完成的原始执行，
+补齐缺失执行，最终仍需审计全部 156 个完整报告。恢复排队不是
+成功，未完成/失败启动另行保留，不能隐藏在最终成功率中。
