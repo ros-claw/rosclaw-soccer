@@ -663,3 +663,32 @@ compileall 通过；测试覆盖 32 代、52 课程、16 样本的种子空间
 普通候选完整 52 场景比较仍在进行，不把未完成的部分结果当成绩。
 Core #615 的所有必需 CI（含 gate、macOS、ROS Docker）现在均通过，
 发布检查按 PR 规则 skipped；PR 保持开放，未擅自合并 Core。
+
+### v356：测量学习幅度，不凭感觉归因
+
+新增只读诊断入口 `rsi_diagnose_memory_learning_transfer.py`，绑定
+sealed manifest、NPZ 数据 hash、真实行为 actor 与第一代候选。
+完整重建 68 条轨迹的 18360 个状态上的行为/候选 raw mean，复核
+行为概率密度、逐轨迹物理 return、残差幅度与训练 receipt 的 KL。
+失败轨迹同样纳入，没有筛选成功样本或增加物理执行。
+
+实际报告
+`/code/rosclaw/rsi-memory-learning-transfer-diagnostic-v356.json`，
+hash `sha256:9e57fe58351f3e99fe15f163601cd441729995c0d3100cf5a6d9288284ceb6c8`：
+
+- 探索噪声 RMS **0.1002186**，学习后的 mean 变化 RMS **0.0011170**；
+- 这批失败课程上 memory gate 的全部分位数均为 **1.0**，不能把本次
+  缺乏迁移归因于记忆门控压住训练状态；
+- 精确 latent KL **0.0007486583**，与 sealed receipt 相同，低于 0.005；
+- 61.78% 的探索分量超出单个 0.05 残差 envelope，但这**不证明**必须
+  精确复制这些噪声才能成功，也不证明增大幅度一定有效。
+
+此结果支持进一步检查更新力度和终端回报信用分配，不构成因果
+归因或能力突破。相关 11 个目标测试文件 **79 passed**；新增
+诊断和实际采样种子拒绝测试共 8 项，ruff/format/targeted mypy 通过。
+
+系统盘另有约 203GB 空间，后续新证据保存在
+`/home/dell/rosclaw_soccer_evidence/rsi-20261001-continuation`，不迁移
+或删除旧数据，预留至少 100GB 系统盘空间。平滑候选的完整 52
+课程/156 次新物理执行与独立审计已启动；两种策略当前的完整
+比较都尚未完成，不能宣布通过。
