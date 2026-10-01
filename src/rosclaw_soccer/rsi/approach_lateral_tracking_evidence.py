@@ -22,8 +22,14 @@ SEALED_X_MAX_M = 2.5524194955825807
 SEALED_Y_MIN_M = -0.09402785405516624
 
 
-def audit_lateral_approach(folder: Path) -> dict[str, Any]:
-    physical = audit_vector_first_touch(folder)
+def audit_lateral_approach(
+    folder: Path, *, decoder_sink: list[Any] | None = None
+) -> dict[str, Any]:
+    physical = (
+        audit_vector_first_touch(folder)
+        if decoder_sink is None
+        else audit_vector_first_touch(folder, decoder_sink=decoder_sink)
+    )
     report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     gain = report.get("navigation_lateral_ball_gain")
     negative_only = report.get("navigation_lateral_negative_only", False)

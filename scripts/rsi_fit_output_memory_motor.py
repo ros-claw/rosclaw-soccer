@@ -7,13 +7,14 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.approach_lateral_tracking_evidence import audit_lateral_approach
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _outcome, _sealed
 from rosclaw_soccer.rsi.online_motor_actor_critic import terminal_return
 from rosclaw_soccer.rsi.output_memory_motor_learning import fit_update
 from rosclaw_soccer.rsi.output_memory_step_motor import SAMPLING_SCHEMA, validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_collect_failed_step_courses import failure_rows
-from scripts.rsi_fit_protected_phase_step_motor import gpu_features
+from scripts.rsi_fit_protected_phase_step_motor import gpu_observations
 from scripts.rsi_train_bilateral_contact_motor_v303 import write_once
 
 
@@ -99,15 +100,27 @@ def main() -> None:
             or len(row["samples"]) != commitment["samples_per_course"]
         ):
             raise ValueError("declared course/sample identity changed")
-        parent = _sealed(
-            args.exploration_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
-        )
-        if parent["report_hash"] != row["parent_report_hash"]:
+        parent_folder = args.exploration_root / f"seed{seed}-lane{lane}-reproduction-parent"
+        parent = _sealed(parent_folder / "report.json")
+        audit_lateral_approach(parent_folder)
+        if (
+            parent["report_hash"] != row["parent_report_hash"]
+            or parent["training_course_seed"] != seed
+            or parent["single_course_lane"] != lane
+            or parent["source_hash"] != commitment["runner_hash"]
+            or parent["asset_hash"] != commitment["asset_hash"]
+        ):
             raise ValueError("physical parent changed")
         for s, sample in enumerate(row["samples"]):
             folder = args.exploration_root / f"seed{seed}-lane{lane}-sample-{s}-actor"
             decoded: list[Any] = []
-            x, phase, raw = gpu_features(folder, decoder_sink=decoded)
+            raw = _sealed(folder / "report.json")
+            checked = _outcome(
+                folder, raw["contact_motor_policy_hash"], commitment, decoder_sink=decoded
+            )
+            if checked["report"] != raw:
+                raise ValueError("physical report changed during reconstruction")
+            x, phase, raw = gpu_observations(folder, raw)
             view = raw["contact_motor_policy"]["step_motor_proof"]["model"]
             if (
                 len(decoded) != 1
@@ -118,15 +131,17 @@ def main() -> None:
                 != commitment["sampling_view_hashes"][i * commitment["samples_per_course"] + s]
                 or sample["sample"] != s
                 or raw["report_hash"] != sample["report_hash"]
+                or raw["training_course_seed"] != seed
+                or raw["single_course_lane"] != lane
                 or raw["parent_report_hash"] != parent["report_hash"]
                 or raw["environments"][0]["course"] != parent["environments"][0]["course"]
                 or raw["source_hash"] != commitment["runner_hash"]
                 or raw["asset_hash"] != commitment["asset_hash"]
             ):
                 raise ValueError("sample is not the current model's actual physical rollout")
-            # Motor targets have already been reconstructed. Outcome checks use
-            # the independent physics/swing audits, not rollout reward labels.
-            outcome = _outcome(folder, raw["contact_motor_policy_hash"], commitment)["outcome"]
+            # The complete motor, physics, swing and approach audits ran above;
+            # no rollout reward label substitutes for these measured outcomes.
+            outcome = checked["outcome"]
             if any(sample[k] != v for k, v in outcome.items()):
                 raise ValueError("sample outcome differs from independently measured physics")
             draws = [

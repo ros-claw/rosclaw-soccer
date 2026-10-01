@@ -99,7 +99,9 @@ def audit_body_trace(folder: Path, report: dict[str, Any], frames: int, lanes: i
         return int(np.count_nonzero(command != base_speed))
 
 
-def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
+def audit_vector_first_touch(
+    folder: Path, *, decoder_sink: list[Any] | None = None
+) -> dict[str, Any]:
     report: dict[str, Any] = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     trace_path = folder / "trace.npz"
     committed = {key: value for key, value in report.items() if key != "report_hash"}
@@ -355,7 +357,12 @@ def audit_vector_first_touch(folder: Path) -> dict[str, Any]:
             raise ValueError("incomplete motor policy evidence")
         from rosclaw_soccer.rsi.contact_motor_evidence import audit_motor_execution
 
-        result.update(audit_motor_execution(folder, report))
+        if decoder_sink is None:
+            result.update(audit_motor_execution(folder, report))
+        else:
+            result.update(audit_motor_execution(folder, report, decoder_sink=decoder_sink))
+    elif decoder_sink is not None:
+        raise ValueError("motor evidence required for decoder capture")
     result["report_hash"] = hash_json(result)
     return result
 

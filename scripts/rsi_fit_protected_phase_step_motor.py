@@ -25,6 +25,16 @@ def gpu_features(
         audit_motor_execution(folder, raw)
     else:
         audit_motor_execution(folder, raw, decoder_sink=decoder_sink)
+    return gpu_observations(folder, raw)
+
+
+def gpu_observations(folder: Path, raw: dict[str, Any]) -> tuple[Any, Any, dict[str, Any]]:
+    """Extract observations only; caller must first audit the physical report.
+
+    This is not a replacement for gpu_features or the complete physics audit.
+    The current-parent fitter calls it after _outcome's full motor/physics
+    reconstruction, which also captures the decoder used in that audit.
+    """
     ids = [raw["taskspace_joint_order"].index(n) for n in G1_DDS_JOINT_NAMES]
     with (
         np.load(folder / "body_trace.npz", allow_pickle=False) as body,

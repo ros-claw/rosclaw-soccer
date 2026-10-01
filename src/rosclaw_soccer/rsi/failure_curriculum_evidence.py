@@ -128,7 +128,13 @@ def learning_frontier(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _outcome(folder: Path, policy_hash: str, commitment: dict[str, Any]) -> dict[str, Any]:
+def _outcome(
+    folder: Path,
+    policy_hash: str,
+    commitment: dict[str, Any],
+    *,
+    decoder_sink: list[Any] | None = None,
+) -> dict[str, Any]:
     report = _sealed(folder / "report.json")
     if (
         report.get("contact_motor_policy_hash") != policy_hash
@@ -138,7 +144,11 @@ def _outcome(folder: Path, policy_hash: str, commitment: dict[str, Any]) -> dict
         or report.get("navigation_lateral_negative_only") is not True
     ):
         raise ValueError("raw candidate provenance mismatch")
-    audit = audit_lateral_approach(folder)
+    audit = (
+        audit_lateral_approach(folder)
+        if decoder_sink is None
+        else audit_lateral_approach(folder, decoder_sink=decoder_sink)
+    )
     with np.load(folder / "late_swing_action_trace.npz", allow_pickle=False) as trace:
         action = audit_taskspace_swing_trace(trace, report, frames=300, count=1)
     observed = report["environments"][0]
