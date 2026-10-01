@@ -6,6 +6,7 @@ audited. All results, including losses, are retained. This is not a fresh exam.
 
 import argparse
 import json
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,20 @@ def review(root: Path, bank_path: Path) -> dict[str, Any]:
         or len(summary["rows"]) != 52
     ):
         raise ValueError("complete consumed comparison required")
+    reused = "reused_baseline_summary_hash" in commitment
+    if summary.get("new_physical_executions", 156) != (52 if reused else 156) or summary.get(
+        "reused_baseline_reports", 0
+    ) != (104 if reused else 0):
+        raise ValueError("reused controls cannot be counted as newly executed physics")
+    if reused:
+        old = _sealed(Path(commitment["baseline_reuse_root"]) / "validation_summary.json")
+        verify_baseline_reuse(old, bank, commitment)
+        if old["report_hash"] != commitment["reused_baseline_summary_hash"] or any(
+            (before["parent_report_hash"], before["warm"]["report_hash"])
+            != (after["parent_report_hash"], after["warm"]["report_hash"])
+            for before, after in zip(old["rows"], summary["rows"], strict=True)
+        ):
+            raise ValueError("reused control lineage changed")
     rows = []
     for i, (course, recorded) in enumerate(zip(bank["courses"], summary["rows"], strict=True)):
         seed, lane = course["seed"], course["lane"]
@@ -79,6 +94,8 @@ def review(root: Path, bank_path: Path) -> dict[str, Any]:
         schema="soccer.rsi.protected_phase_bank_review.v1",
         source_summary_hash=summary["report_hash"],
         physical_reports_reviewed=156,
+        new_physical_executions=summary.get("new_physical_executions", 156),
+        reused_baseline_reports=summary.get("reused_baseline_reports", 0),
         motor_frames_reconstructed=31200,
         **result,
         promotion_authorized=False,
@@ -108,6 +125,37 @@ def score(rows: list[dict[str, Any]]) -> dict[str, Any]:
     )
 
 
+def verify_baseline_reuse(
+    previous: dict[str, Any], bank: dict[str, Any], commitment: dict[str, Any]
+) -> None:
+    """Only complete controls under identical physical bindings are reusable."""
+    if (
+        previous.get("schema") != "soccer.rsi.protected_phase_bank_physics.v1"
+        or previous.get("physical_executions") != 156
+        or previous.get("independent_contexts") != 52
+        or len(previous.get("rows", [])) != 52
+        or any(
+            previous.get(k) is not False for k in ("promotion_authorized", "hardware_authorized")
+        )
+        or any(
+            previous["commitment"].get(k) != commitment[k]
+            for k in (
+                "runner_hash",
+                "asset_hash",
+                "core_commit",
+                "learning_bank_hash",
+                "warm_model_hash",
+                "partition",
+            )
+        )
+        or [(r["index"], r["seed"], r["lane"]) for r in previous["rows"]]
+        != [(i, c["seed"], c["lane"]) for i, c in enumerate(bank["courses"])]
+    ):
+        raise ValueError(
+            "baseline reuse requires complete identical physical bindings and course identities"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in (
@@ -124,6 +172,7 @@ def main() -> None:
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--review-only", action="store_true")
+    parser.add_argument("--reuse-baseline-root", type=Path)
     args = parser.parse_args()
     if args.review_only:
         result = review(args.output_root, args.bank_path)
@@ -177,9 +226,50 @@ def main() -> None:
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    reuse = None
+    if args.reuse_baseline_root is not None:
+        reuse = _sealed(args.reuse_baseline_root / "validation_summary.json")
+        verify_baseline_reuse(reuse, bank, commitment)
+        commitment["reused_baseline_summary_hash"] = reuse["report_hash"]
+        commitment["baseline_reuse_root"] = str(args.reuse_baseline_root.resolve())
+        commitment["baseline_reuse_is_new_physics"] = False
     args.output_root.mkdir(parents=True, exist_ok=args.resume)
     (args.output_root / "logs").mkdir(exist_ok=args.resume)
     write_once(args.output_root / "commitment.json", commitment)
+    if reuse is not None:
+        for row in reuse["rows"]:
+            seed, lane = row["seed"], row["lane"]
+            for arm, kind in (("reproduction", "parent"), ("warm", "actor")):
+                stem = f"seed{seed}-lane{lane}-{arm}-{kind}"
+                origin = args.reuse_baseline_root / stem
+                if origin.resolve().parent != args.reuse_baseline_root.resolve() or any(
+                    p.is_symlink() for p in origin.rglob("*")
+                ):
+                    raise ValueError(
+                        "baseline evidence must be a local non-symlink physical directory"
+                    )
+                raw = _sealed(origin / "report.json")
+                expected = (
+                    row["parent_report_hash"]
+                    if arm == "reproduction"
+                    else row["warm"]["report_hash"]
+                )
+                if (
+                    raw["report_hash"] != expected
+                    or raw["source_hash"] != commitment["runner_hash"]
+                    or raw["asset_hash"] != commitment["asset_hash"]
+                    or raw["trace_hash"] != hash_bytes((origin / "trace.npz").read_bytes())
+                    or raw["body_trace_hash"]
+                    != hash_bytes((origin / "body_trace.npz").read_bytes())
+                ):
+                    raise ValueError("reused control evidence changed")
+                destination = args.output_root / stem
+                if not destination.exists():
+                    shutil.copytree(origin, destination)
+                    shutil.copy2(
+                        args.reuse_baseline_root / "logs" / f"{stem}.log",
+                        args.output_root / "logs" / f"{stem}.log",
+                    )
 
     def preserve_failed_attempt(seed: int, lane: int, arm: str, kind: str) -> None:
         stem = f"seed{seed}-lane{lane}-{arm}-{kind}"
@@ -208,7 +298,7 @@ def main() -> None:
                 gain=1.2,
                 negative_only=True,
                 core_root=args.core_root,
-                resume=args.resume,
+                resume=args.resume or reuse is not None,
                 execution_timeout_s=600,
             )
             preserve_failed_attempt(seed, lane, "reproduction", "parent")
@@ -257,6 +347,8 @@ def main() -> None:
         commitment=commitment,
         rows=rows,
         physical_executions=156,
+        new_physical_executions=52 if reuse is not None else 156,
+        reused_baseline_reports=104 if reuse is not None else 0,
         independent_contexts=52,
         **score(rows),
         qualification="CONSUMED_ONLY_NOT_FRESH_NOT_PROMOTION",
