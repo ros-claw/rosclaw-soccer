@@ -1,0 +1,33 @@
+{
+  "schema": "soccer.rsi.consumed_optimizer_comparison.v1",
+  "partition": "TRAIN_CONSUMED",
+  "algorithm": "AWR_INSPIRED_TERMINAL_GAUSSIAN_REGRESSION",
+  "reference": "https://arxiv.org/abs/1910.00177",
+  "copied_external_code": false,
+  "parent_generation": 0,
+  "behavior": "FROZEN_WARM_ACTOR_ONLY",
+  "critic_crossfit_unit": "whole_rollout",
+  "critic_crossfit_folds": 4,
+  "advantage_standardized": true,
+  "temperature": 1.0,
+  "unnormalized_weight_cap": 20.0,
+  "requested_optimizer_steps": 160,
+  "learning_rate": 0.0001,
+  "kl_penalty": 10.0,
+  "maximum_exact_mean_latent_kl": 0.005,
+  "raw_head_cap": 0.05,
+  "old_success_states_frozen": true,
+  "exam_thresholds_unchanged": true,
+  "required_before_larger_validation": [
+    "actual_gradient_and_reload_test",
+    "independent_four_course_physics_review",
+    "no_old_success_loss",
+    "no_old_clean_contact_loss",
+    "no_new_out_of_play",
+    "pelvis_guardrail"
+  ],
+  "interpretation": "Offline replay comparison, not general off-policy deployment or on-policy PPO",
+  "fresh_holdout_open_authorized": false,
+  "promotion_authorized": false,
+  "hardware_authorized": false
+}
