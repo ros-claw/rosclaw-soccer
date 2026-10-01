@@ -72,11 +72,12 @@ def main() -> None:
     }
     consumed_bank_hash = None
     if args.consumed_bank is not None:
-        from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
-
-        bank = _sealed(args.consumed_bank)
+        # Artifact inspection must not import historical experiment scripts.
+        bank = json.loads(args.consumed_bank.read_text())
         if (
-            bank.get("schema") != "soccer.rsi.progressive_motor_learning_bank.v312"
+            bank.get("report_hash")
+            != hash_json({k: v for k, v in bank.items() if k != "report_hash"})
+            or bank.get("schema") != "soccer.rsi.progressive_motor_learning_bank.v312"
             or bank.get("partition") != "TRAIN_CONSUMED"
             or bank.get("fresh_holdout_open_authorized") is not False
         ):
