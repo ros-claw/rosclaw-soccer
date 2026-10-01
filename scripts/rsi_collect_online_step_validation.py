@@ -32,8 +32,11 @@ def main() -> None:
         "pilot-summary",
     ):
         parser.add_argument(f"--{name}", type=Path, required=True)
+    parser.add_argument("--execution-source", type=Path)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--archived-failure-log", type=Path)
     args = parser.parse_args()
-    source = Path(__file__).resolve().parent.parent
+    source = (args.execution_source or Path(__file__).resolve().parent.parent).resolve()
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
     model = json.loads(args.online_model.read_text())
     warm = json.loads(args.step_model.read_text())
@@ -91,8 +94,30 @@ def main() -> None:
         promotion_authorized=False,
         hardware_authorized=False,
     )
-    args.output_root.mkdir(parents=True, exist_ok=False)
-    (args.output_root / "logs").mkdir()
+    args.output_root.mkdir(parents=True, exist_ok=args.resume)
+    (args.output_root / "logs").mkdir(exist_ok=args.resume)
+    if args.resume:
+        if json.loads((args.output_root / "commitment.json").read_text()) != commitment:
+            raise ValueError("resume cannot change the original source, models or courses")
+        archived = args.archived_failure_log
+        if (
+            archived is None
+            or not archived.is_file()
+            or archived.resolve().parent != (args.output_root / "logs").resolve()
+        ):
+            raise ValueError("explicit preserved failure log inside this run is required")
+        recovery = dict(
+            schema="soccer.rsi.consumed_pilot_recovery.v1",
+            original_commitment_hash=hash_json(commitment),
+            archived_failure_log_hash=hash_bytes(archived.read_bytes()),
+            orchestration_source_hash=hash_bytes(Path(__file__).read_bytes()),
+            execution_source_commit=_head(source),
+            failed_initialization_is_policy_result=False,
+            promotion_authorized=False,
+            hardware_authorized=False,
+        )
+        recovery["report_hash"] = hash_json(recovery)
+        write_once(args.output_root / "recovery.json", recovery)
     write_once(args.output_root / "commitment.json", commitment)
 
     def worker(gpu: int) -> dict[str, Any]:
@@ -110,7 +135,16 @@ def main() -> None:
             gain=1.2,
             negative_only=True,
             core_root=args.core_root,
+            resume=args.resume,
         )
+        for arm, kind in (("reproduction", "parent"), ("warm", "actor"), ("online", "actor")):
+            stem = f"seed{seed}-lane{lane}-{arm}-{kind}"
+            if (args.output_root / "logs" / f"{stem}.log").exists() and not (
+                args.output_root / stem / "report.json"
+            ).is_file():
+                raise ValueError(
+                    "archive failed attempt explicitly before resuming; never overwrite"
+                )
         parent, _ = _run(**common, arm="reproduction", kind="parent")
         parent_path = args.output_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
         baseline, baseline_outcome = _run(
