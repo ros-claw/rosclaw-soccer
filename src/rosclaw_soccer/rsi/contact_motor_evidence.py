@@ -90,8 +90,14 @@ def audit_motor_arrays(
     previous = np.zeros(12)
     contact_delta = np.zeros(12)
     contact_frame = None
-    compiled = None
-    if "compiled_motor_proof" in report["contact_motor_policy"]:
+    compiled: Any = None
+    if "protected_phase_motor_proof" in report["contact_motor_policy"]:
+        from rosclaw_soccer.rsi.protected_phase_step_execution import CompiledProtectedPhaseMotor
+
+        if not step_preview:
+            raise ValueError("unbound protected phase motor execution")
+        compiled = CompiledProtectedPhaseMotor(report["contact_motor_policy"])
+    elif "compiled_motor_proof" in report["contact_motor_policy"]:
         from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
 
         if not step_preview:

@@ -44,13 +44,19 @@ def main() -> None:
     if warm.get("schema") == "soccer.rsi.compiled_step_motor_decoder.v1":
         compiled_preview(warm)
         warm_base = warm["base_model"]
-    validate_model(online_base)
+    if online_base.get("schema") == "soccer.rsi.protected_phase_step_actor_critic.v1":
+        from rosclaw_soccer.rsi.protected_phase_step_network import (
+            validate_model as protected_validate,
+        )
+
+        protected_validate(online_base)
+        predecessor = online_base["base_model"]
+    else:
+        validate_model(online_base)
+        predecessor = online_base["warm_start_model"]
     validate_warm(warm_base)
     pilot = _sealed(args.pilot_summary)
-    if (
-        online_base["warm_start_model"] != warm_base
-        or pilot["commitment"]["model_hash"] != warm_base["model_hash"]
-    ):
+    if predecessor != warm_base or pilot["commitment"]["model_hash"] != warm_base["model_hash"]:
         parser.error("online and warm policies must share the same consumed pilot")
     commitment = dict(
         schema="soccer.rsi.online_step_validation_commitment.v1",
