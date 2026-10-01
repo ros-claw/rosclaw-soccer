@@ -692,3 +692,21 @@ hash `sha256:9e57fe58351f3e99fe15f163601cd441729995c0d3100cf5a6d9288284ceb6c8`�
 或删除旧数据，预留至少 100GB 系统盘空间。平滑候选的完整 52
 课程/156 次新物理执行与独立审计已启动；两种策略当前的完整
 比较都尚未完成，不能宣布通过。
+
+### v357：单变量更新力度实验，先验证数学对照
+
+新增 task-neutral `bounded_residual_policy_gradient.py` 数值模块与
+独立适配器，历史 artifact-bound 优化器不修改。普通 IID PPO 的
+学习率从 1e-4 调至 4e-4；critic、完整轨迹 cross-fit、objective、
+KL penalty=10、160 步上限、0.05 residual cap、0.005 精确推理 KL
+预算全部不变。先以 1e-4 对照：新适配器的网络权重、critic、
+完整 loss 历史、backtracking 次数和精确 KL 与旧实现逐项完全相同。
+4e-4 单元试验也保留原预测 anchors，拒绝用新 actor 重用旧行为密度。
+数值模块拒绝非有限数据、越界/布尔配置与闭合 gate 下的虚假学习。
+新增 **11 passed**，ruff/format/3 文件 targeted mypy 通过。
+
+拟定一个 4e-4 候选，复用已经完成全数据等价审计的完整 68 条
+轨迹（包括失败），不新增样本、重打标签或把另一入口算成成长代数。
+实验入口要求 manifest、NPZ、旧候选、行为模型、等价报告和原审计
+代码 hash 一致，训练前写 commitment，完成后重验输入未改变。
+本节记录的是实验设计及单元验证，尚无该新候选的物理成绩。
