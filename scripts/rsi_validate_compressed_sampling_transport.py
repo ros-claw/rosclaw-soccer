@@ -14,6 +14,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
 from scripts.rsi_train_protected_online_motor_v308 import _head
+from scripts.rsi_transport_equivalence import compare_transport
 
 
 def main() -> None:
@@ -110,8 +111,14 @@ def main() -> None:
             raise ValueError("storage-only transport changed measured body or ball physics")
     folder = args.output_root / f"seed{seed}-lane{lane}-sample-0-actor"
     checked = _outcome(folder, actor["contact_motor_policy_hash"], commitment)
-    if any(row["samples"][0][k] != v for k, v in checked["outcome"].items()):
-        raise ValueError("transport changed independently measured contact outcomes")
+    old_checked = _outcome(
+        args.reference_root / f"seed{seed}-lane{lane}-sample-0-actor",
+        old_actor["contact_motor_policy_hash"],
+        {"runner_hash": old_actor["source_hash"], "asset_hash": old_actor["asset_hash"]},
+    )
+    if any(row["samples"][0][k] != v for k, v in old_checked["outcome"].items()):
+        raise ValueError("historical outcomes do not reproduce from their actual traces")
+    equality = compare_transport(actor, old_actor, checked["outcome"], old_checked["outcome"])
     if _head(source) != commitment["source_commit"] or load_json_artifact(path) != model:
         raise ValueError("source or sampling payload changed during the comparison")
     report = dict(
@@ -120,11 +127,12 @@ def main() -> None:
         reference_summary_hash=reference["report_hash"],
         complete_payload_equal=True,
         body_and_ball_trace_hashes_equal=True,
-        actual_motor_actions_reconstructed=200,
+        actual_motor_actions_reconstructed=actor["frames"],
         physical_executions_added=2,
         reference_actor_report_hash=old_actor["report_hash"],
         actor_report_hash=actor["report_hash"],
         measured_outcome=checked["outcome"],
+        physical_outcome_comparison=equality,
         model_hash=model["model_hash"],
         compressed_bytes=path.stat().st_size,
         plain_bytes=model_path.stat().st_size,
