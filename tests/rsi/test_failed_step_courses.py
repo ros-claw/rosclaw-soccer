@@ -5,6 +5,7 @@ import pytest
 from scripts.rsi_collect_failed_step_courses import (
     failure_rows,
     qualified_memory_failure_rows,
+    sampling_model_path,
     sampling_seed,
 )
 
@@ -90,6 +91,15 @@ def test_all_declared_sampling_seeds_fit_actual_sampler_range_and_are_unique():
     assert all(0 <= seed <= 2**31 - 1 for seed in seeds)
     with pytest.raises(ValueError):
         sampling_seed(52, 0)
+
+
+def test_sampling_path_storage_choice_cannot_change_model_identity(tmp_path):
+    assert sampling_model_path(tmp_path, 0).name == "sample-0.json"
+    assert sampling_model_path(tmp_path, 0, compressed=True).name == "sample-0.json.gz"
+    with pytest.raises(ValueError):
+        sampling_model_path(tmp_path, True)
+    with pytest.raises(ValueError):
+        sampling_model_path(tmp_path, 832)
 
 
 def test_later_generations_do_not_replay_the_parents_noise_stream():

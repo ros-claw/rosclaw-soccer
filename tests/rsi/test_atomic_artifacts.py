@@ -1,3 +1,4 @@
+import gzip
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -65,3 +66,25 @@ def test_nonfinite_payload_is_rejected_before_any_file_creation(tmp_path):
     with pytest.raises(ValueError):
         artifacts.write_once(tmp_path / "model.json", dict(value=float("nan")))
     assert list(tmp_path.iterdir()) == []
+
+
+def test_gzip_json_is_lossless_atomic_and_idempotent(tmp_path):
+    path = tmp_path / "model.json.gz"
+    value = dict(weights=list(range(10000)), title="完整的模型")
+    artifacts.write_once(path, value)
+    before = path.read_bytes()
+    assert artifacts.load_json_artifact(path) == value
+    assert json.loads(gzip.decompress(before)) == value
+    artifacts.write_once(path, value)
+    assert path.read_bytes() == before
+    with pytest.raises(ValueError, match="commitment differs"):
+        artifacts.write_once(path, dict(weights=[0]))
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["model.json.gz"]
+
+
+def test_gzip_bytes_are_deterministic_across_publication_paths(tmp_path):
+    first, second = tmp_path / "first.json.gz", tmp_path / "second.json.gz"
+    for p in (first, second):
+        artifacts.write_once(p, dict(weight=[0.1, 2.3]))
+    assert first.read_bytes() == second.read_bytes()

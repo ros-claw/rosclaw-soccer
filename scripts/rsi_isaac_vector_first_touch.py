@@ -638,9 +638,10 @@ def main() -> None:
         motor_policy = make_phase_policy(motor_knots, 0.25, online_model["model_hash"])
     step_model = None
     if args.contact_motor_step_model is not None:
+        from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
-        step_model = json.loads(args.contact_motor_step_model.read_text(encoding="utf-8"))
+        step_model = load_json_artifact(args.contact_motor_step_model)
         if step_model.get("schema") in (
             "soccer.rsi.smooth_memory_motor.v1",
             "soccer.rsi.smooth_memory_sampling.v1",

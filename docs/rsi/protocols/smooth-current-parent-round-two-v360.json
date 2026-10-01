@@ -18,6 +18,8 @@
   "sampling_rho": 0.9,
   "sampling_generation": 1,
   "sampling_seed_namespace": "GENERATION_STRIDE_100000",
+  "sampling_model_storage": "ATOMIC_GZIP_JSON_V1",
+  "compressed_transport_physical_equivalence_required": true,
   "sampler_seed_formula": "202610335 + generation*100000 + course_index*100 + sample_index",
   "all_successes_and_failures_in_declared_exploration_bank_required": true,
   "all_residual_layers_trainable": true,

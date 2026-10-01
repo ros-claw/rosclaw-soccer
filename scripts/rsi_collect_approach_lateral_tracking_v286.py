@@ -181,7 +181,9 @@ def _run(
             raise ValueError("online preview does not bind requested numerical model")
         expected_motor_hash = report["contact_motor_policy"]["policy_hash"]
     if motor_step is not None and kind == "actor":
-        model = json.loads(motor_step.read_text(encoding="utf-8"))
+        from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
+
+        model = load_json_artifact(motor_step)
         proof = report.get("contact_motor_policy", {}).get("step_motor_proof", {})
         if proof.get("model", {}).get("model_hash") != model["model_hash"]:
             raise ValueError("per-frame preview does not bind requested neural model")

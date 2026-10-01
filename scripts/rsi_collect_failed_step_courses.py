@@ -38,6 +38,12 @@ def sampling_seed(course: int, sample: int, *, generation: int = 0) -> int:
     return 202610335 + generation * 100000 + course * 100 + sample
 
 
+def sampling_model_path(root: Path, index: int, *, compressed: bool = False) -> Path:
+    if type(index) is not int or not 0 <= index < 52 * 16 or type(compressed) is not bool:
+        raise ValueError("bounded sampling model index and explicit storage format required")
+    return root / "models" / f"sample-{index}.json{'.gz' if compressed else ''}"
+
+
 def failure_rows(
     summary: dict[str, Any], review: dict[str, Any], *, arm: str = "warm"
 ) -> list[dict[str, Any]]:
@@ -107,6 +113,7 @@ def main() -> None:
     )
     parser.add_argument("--pilot-root", type=Path)
     parser.add_argument("--first-four-courses", action="store_true")
+    parser.add_argument("--compressed-sampling-models", action="store_true")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     if not 4 <= args.samples_per_course <= 16:
@@ -222,6 +229,16 @@ def main() -> None:
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if args.compressed_sampling_models:
+        from rosclaw_soccer.rsi import json_artifact_io
+
+        commitment.update(
+            sampling_model_storage="ATOMIC_GZIP_JSON_V1",
+            sampling_model_codec_hash=hash_bytes(
+                (source / "scripts/rsi_atomic_artifacts.py").read_bytes()
+            ),
+            sampling_model_reader_hash=hash_bytes(Path(json_artifact_io.__file__).read_bytes()),
+        )
     if arm == "candidate":
         commitment.update(
             schema="soccer.rsi.output_memory_exploration_commitment.v1",
@@ -252,7 +269,10 @@ def main() -> None:
         (args.output_root / folder).mkdir(exist_ok=args.resume)
     write_once(args.output_root / "commitment.json", commitment)
     for i, view in enumerate(views):
-        write_once(args.output_root / "models" / f"sample-{i}.json", view)
+        write_once(
+            sampling_model_path(args.output_root, i, compressed=args.compressed_sampling_models),
+            view,
+        )
 
     def worker(gpu: int) -> list[dict[str, Any]]:
         records = []
@@ -314,7 +334,9 @@ def main() -> None:
                     **common,
                     arm=f"sample-{s}",
                     kind="actor",
-                    motor_step=args.output_root / "models" / f"sample-{j}.json",
+                    motor_step=sampling_model_path(
+                        args.output_root, j, compressed=args.compressed_sampling_models
+                    ),
                     parent_report_override=parent_path,
                 )
                 sampled.append(
