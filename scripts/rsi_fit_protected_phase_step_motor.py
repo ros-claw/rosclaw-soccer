@@ -61,14 +61,17 @@ def cpu_features(folder: Path, record: dict[str, Any]) -> tuple[Any, Any, dict[s
     ):
         raise ValueError("CPU physical replay artifact changed")
     with np.load(path, allow_pickle=False) as body:
-        forces = body["force_n"][:, 0].copy()
+        # NPZ member indexing decompresses on every access. Read each numeric
+        # array once, preserving exactly the physical features and frame order.
+        body_arrays = {key: body[key] for key in body.files}
+        forces = body_arrays["force_n"][:, 0].copy()
         x = np.stack(
             [
                 features_at_frame(
-                    body,
+                    body_arrays,
                     frame=f,
-                    nominal_target=body["pre_motor_joint_target_rad"][f, 0],
-                    previous=body["motor_delta_rad"][f - 1, 0],
+                    nominal_target=body_arrays["pre_motor_joint_target_rad"][f, 0],
+                    previous=body_arrays["motor_delta_rad"][f - 1, 0],
                     previous_contact_forces=forces[f - 1],
                 )
                 for f in range(30, 300)
