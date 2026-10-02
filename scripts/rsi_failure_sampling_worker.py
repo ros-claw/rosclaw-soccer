@@ -4,6 +4,7 @@ from argparse import Namespace
 from typing import Any
 
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
+from rosclaw_soccer.rsi.physical_report_io import resolve_physical_report
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
@@ -37,16 +38,23 @@ def run_failure_worker(job: dict[str, Any]) -> list[dict[str, Any]]:
             resume=args.resume,
             execution_timeout_s=600,
         )
+        if getattr(args, "shared_sampling_models", False):
+            common.update(compressed_report=True, shared_model_report=True)
         for pending_arm, kind in [("reproduction", "parent"), ("greedy", "actor")] + [
             (f"sample-{s}", "actor") for s in range(args.samples_per_course)
         ]:
             stem = f"seed{seed}-lane{lane}-{pending_arm}-{kind}"
-            if (args.output_root / "logs" / f"{stem}.log").exists() and not (
-                args.output_root / stem / "report.json"
-            ).is_file():
-                raise ValueError("preserve and explicitly archive failed attempt before recovery")
+            if (args.output_root / "logs" / f"{stem}.log").exists():
+                folder = args.output_root / stem
+                if not any((folder / n).is_file() for n in ("report.json", "report.json.gz")):
+                    raise ValueError(
+                        "preserve and explicitly archive failed attempt before recovery"
+                    )
+                resolve_physical_report(folder / "report.json")
         parent, _ = _run(**common, arm="reproduction", kind="parent")
         parent_path = args.output_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
+        if getattr(args, "shared_sampling_models", False):
+            parent_path = resolve_physical_report(parent_path)
         greedy, outcome = _run(
             **common,
             arm="greedy",

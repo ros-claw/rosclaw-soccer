@@ -54,6 +54,15 @@ def checked_execution_parent(path: Path, *, runner: Path, asset: Path) -> dict[s
     return parent
 
 
+def checked_step_input(path: Path) -> dict[str, Any]:
+    from rosclaw_soccer.rsi.sampling_model_io import load_sampling_model
+
+    model = load_sampling_model(path)
+    if model.get("model_hash") != hash_json({k: v for k, v in model.items() if k != "model_hash"}):
+        raise ValueError("complete sealed requested step model required before allocation")
+    return model
+
+
 def _run(
     root: Path,
     runner: Path,
@@ -92,6 +101,9 @@ def _run(
         checked_execution_parent(
             parent_report_override or parent_folder / "report.json", runner=runner, asset=g1_usd
         )
+    requested_step = (
+        checked_step_input(motor_step) if kind == "actor" and motor_step is not None else None
+    )
     log_path = root / "logs" / f"seed{seed}-lane{lane}-{arm}-{kind}.log"
     existing = folder.exists()
     if existing:
@@ -219,11 +231,9 @@ def _run(
             raise ValueError("online preview does not bind requested numerical model")
         expected_motor_hash = report["contact_motor_policy"]["policy_hash"]
     if motor_step is not None and kind == "actor":
-        from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
-
-        model = load_json_artifact(motor_step)
+        model = checked_step_input(motor_step)
         proof = report.get("contact_motor_policy", {}).get("step_motor_proof", {})
-        if proof.get("model", {}).get("model_hash") != model["model_hash"]:
+        if model != requested_step or proof.get("model") != model:
             raise ValueError("per-frame preview does not bind requested neural model")
         expected_motor_hash = report["contact_motor_policy"]["policy_hash"]
     if (

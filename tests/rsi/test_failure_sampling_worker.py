@@ -87,6 +87,16 @@ def test_parent_body_identity_mismatch_blocks_every_exploratory_execution(monkey
     assert not (tmp_path / "row-0.json").exists()
 
 
+def test_shared_worker_uses_complete_compressed_reports_and_resolved_parent(monkeypatch, tmp_path):
+    job = make_job(tmp_path)
+    job["args"]["shared_sampling_models"] = True
+    calls = install_fixture(monkeypatch)
+    monkeypatch.setattr(worker, "resolve_physical_report", lambda p: p.with_name("report.json.gz"))
+    worker.run_failure_worker(job)
+    assert all(c["compressed_report"] and c["shared_model_report"] for c in calls)
+    assert all(c["parent_report_override"].name == "report.json.gz" for c in calls[1:])
+
+
 def test_failed_log_is_preserved_before_any_retry(monkeypatch, tmp_path):
     job = make_job(tmp_path)
     calls = install_fixture(monkeypatch)

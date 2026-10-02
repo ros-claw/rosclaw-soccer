@@ -1598,3 +1598,45 @@ outcome，并对历史/当前共 600 帧独立重构。必须 exact mean hash、
 完成真实比较。20 项共享/历史 reader/来源门 fixture、2 文件
 targeted mypy 和新代码 ruff/format 通过。既有 artifact-bound
 CurrentMemory/旧 smooth/旧 consolidated 数学模块完全未修改。
+
+v389 全量回归 **6363 passed / 23 failed / 70 skipped，410.85 秒**，
+XML 失败集合与 v388 精确相同；日志/XML
+`/code/rosclaw/rsi-shared-sampling-v389-regression.{log,xml}`。
+首次共享 input 物理比较的 parent/sample 两次 native 已生成完整
+trace，但 `_run` 宿主 postcheck 仍用普通 JSON reader 读 envelope，
+在取 `model_hash` 时失败。保留原目录
+`/data/rosclaw_overflow/rsi-shared-sampling-transport-v389` 与 driver，
+不把这两次失败的工程 attempt 报成通过、不算新能力。
+
+### v390：修复共享 input 宿主绑定并预声明更大独立失败探索
+
+新增 `_run.checked_step_input`：worker 分配前复原并校验完整逻辑
+模型，完成后复查 requested model 未漂移且与 report 完整模型相同。
+宿主和 native 使用同一个 sampling reader，不靠一个 envelope 字段
+冒充全模型。新 fixture 拒绝已篡改普通 view；37 项相关测试、4 文件
+targeted mypy、ruff/format 通过。会以新目录重做共享实际比较，不
+修改冻结 v389 源和旧失败记录。
+
+收集器增加显式 shared 模式（默认历史行为不变）：必须冻结 source/
+Core、声明 imported Core、完成真实共享 transport、校验其全部
+input pins，以实测完整 trace+log+whole model+每个 envelope 计算
+全部课程预算，加 25% growth、512 MiB audit scratch 及 **2 GiB 后续
+fit/validation**，再保留 1 GiB evidence/100 GiB 系统空间。
+输入持久化后再验预算和 proof，再启动 4 个独立 GPU 仿真进程；
+不能截断课程、丢失败样本或自动开启 fresh。失败日志和 ambiguous
+reports 拒绝隐式覆盖，shared 模式暂不允许 resume。
+
+下一批预声明同一合格 NN 的全部 **13 个失败课程 × 16 样本**、
+独立 `exploration_stream=2`：计划 **208 条新探索、56160 帧**，
+加 13 parent/13 greedy 对照共 **234 次新实际执行**。旧 104 条仍是
+旧经验，不能和新样本混称 312 条全新采样；所有原始奖励保持，
+当前 39 案保护继续用于候选学习/验证。此处只是计划和收集基础设施，
+尚未声称新批次完成或策略晋升。首批共享实际 proof 通过前不启动。
+
+为恢复系统保留余量，将当前无打开文件、已拒绝的旧 `26971bc…`
+模型 JSON 完整迁移到
+`/data/rosclaw_overflow/archived-rejected-models/retained-parent-curriculum-v368-model.json`，
+原路径保留 symlink，历史调用和文件内容仍可读取；文件字节 SHA
+前后均为 `f5630a26f3c293dc0daa273e430021b044c0486b68116e0be1421b449bb233a4`，
+131802081 字节。未删除模型、未移动旧 NPZ/manifest/轨迹/活动 source，
+未动用户 Isaac Streaming 后台，未降低保留线。

@@ -8,6 +8,7 @@ promotion occurs in this collector; every sampled motor command is audited.
 import argparse
 import json
 import multiprocessing
+import subprocess
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -131,12 +132,36 @@ def main() -> None:
     parser.add_argument("--pilot-root", type=Path)
     parser.add_argument("--first-four-courses", action="store_true")
     parser.add_argument("--compressed-sampling-models", action="store_true")
+    parser.add_argument("--shared-sampling-models", action="store_true")
+    parser.add_argument("--shared-transport-review", type=Path)
+    parser.add_argument("--system-reserve-path", type=Path)
     parser.add_argument("--exploration-stream", type=int, choices=range(32), default=0)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     if not 4 <= args.samples_per_course <= 16:
         parser.error("four to sixteen preregistered samples per failure required")
+    if args.shared_sampling_models and (
+        not args.compressed_sampling_models
+        or args.behavior_kind != "smooth-memory"
+        or args.shared_transport_review is None
+        or args.system_reserve_path is None
+        or args.resume
+    ):
+        parser.error("new smooth shared collection requires compressed input, proof and reserve")
     source = Path(__file__).resolve().parent.parent
+    if args.shared_sampling_models:
+        import rosclaw.growth.shared_proof_payload as shared_module
+
+        for root in (source, args.core_root):
+            if subprocess.check_output(
+                ["git", "status", "--porcelain"], cwd=root, text=True
+            ).strip():
+                raise ValueError("clean immutable shared collection sources required")
+        if (
+            Path(shared_module.__file__).resolve()
+            != (args.core_root / "src/rosclaw/growth/shared_proof_payload.py").resolve()
+        ):
+            raise ValueError("actual shared payload module must belong to declared Core")
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
     warm = json.loads(args.warm_model.read_text())
     arm = "warm"
@@ -217,6 +242,23 @@ def main() -> None:
     ):
         parser.error("failure source used a different warm actor")
     base_payload_hash = hash_json(base)
+    shared_capacity = None
+    if args.shared_sampling_models:
+        from scripts.rsi_compressed_bank_storage import capacity_check
+        from scripts.rsi_shared_sampling_capacity import shared_sampling_budget
+
+        transport = _sealed(args.shared_transport_review)
+        for filename, digest in transport["input_hashes"].items():
+            if hash_bytes(Path(filename).read_bytes()) != digest:
+                raise ValueError("pinned actual transport input drift before exploration")
+        args.output_root.parent.mkdir(parents=True, exist_ok=True)
+        budget = shared_sampling_budget(
+            transport,
+            mean_hash=base["model_hash"],
+            executions=len(courses) * (args.samples_per_course + 2),
+            views=len(courses) * args.samples_per_course,
+        )
+        shared_capacity = capacity_check(args.output_root.parent, args.system_reserve_path, budget)
     views = bounded_views(
         make_view,
         base,
@@ -270,6 +312,17 @@ def main() -> None:
             ),
             sampling_model_reader_hash=hash_bytes(Path(json_artifact_io.__file__).read_bytes()),
         )
+    if args.shared_sampling_models:
+        from rosclaw_soccer.rsi import sampling_model_io
+
+        commitment.update(
+            sampling_model_storage="FULL_MEAN_SHARED_GZIP_JSON_V1",
+            physical_report_storage="FULL_MODEL_SHARED_GZIP_JSON_V1",
+            shared_transport_review_hash=transport["report_hash"],
+            shared_transport_review_file_hash=hash_bytes(args.shared_transport_review.read_bytes()),
+            shared_sampling_reader_hash=hash_bytes(Path(sampling_model_io.__file__).read_bytes()),
+            shared_storage_capacity=shared_capacity,
+        )
     if args.exploration_stream:
         commitment.update(
             exploration_stream=args.exploration_stream,
@@ -305,10 +358,23 @@ def main() -> None:
         (args.output_root / folder).mkdir(exist_ok=args.resume)
     write_once(args.output_root / "commitment.json", commitment)
     for i, view in enumerate(views):
-        write_once(
-            sampling_model_path(args.output_root, i, compressed=args.compressed_sampling_models),
-            view,
-        )
+        path = sampling_model_path(args.output_root, i, compressed=args.compressed_sampling_models)
+        if args.shared_sampling_models:
+            from scripts.rsi_atomic_artifacts import write_shared_sampling_model
+
+            write_shared_sampling_model(path, view)
+        else:
+            write_once(path, view)
+
+    if args.shared_sampling_models:
+        # View persistence can take time; recheck rather than allocate workers
+        # against a stale system/evidence budget. Existing views are retained.
+        capacity_check(args.output_root.parent, args.system_reserve_path, budget)
+        if (
+            hash_bytes(args.shared_transport_review.read_bytes())
+            != commitment["shared_transport_review_file_hash"]
+        ):
+            raise ValueError("transport proof changed before physical worker allocation")
 
     jobs = [
         dict(
@@ -330,6 +396,12 @@ def main() -> None:
         )
     if _head(source) != commitment["source_commit"] or hash_json(base) != base_payload_hash:
         raise ValueError("source drift invalidates exploration")
+    if args.shared_sampling_models and (
+        _head(args.core_root) != commitment["core_commit"]
+        or hash_bytes(args.shared_transport_review.read_bytes())
+        != commitment["shared_transport_review_file_hash"]
+    ):
+        raise ValueError("shared exploration Core/proof drift")
     result = dict(
         schema="soccer.rsi.smooth_memory_failure_exploration.v1"
         if args.behavior_kind == "smooth-memory"

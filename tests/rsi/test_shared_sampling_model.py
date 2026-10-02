@@ -7,6 +7,7 @@ from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 from rosclaw_soccer.rsi.sampling_model_io import load_sampling_model
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_atomic_artifacts import write_once, write_shared_sampling_model
+from scripts.rsi_collect_approach_lateral_tracking_v286 import checked_step_input
 
 
 def view(seed=42):
@@ -32,6 +33,7 @@ def publish(tmp_path, seed=42):
 def test_complete_views_and_seeds_preserved_with_one_whole_mean(tmp_path):
     a, b = publish(tmp_path), publish(tmp_path, 43)
     assert load_sampling_model(a) == view()
+    assert checked_step_input(a) == view()
     assert load_sampling_model(b) == view(43)
     assert len(list((tmp_path / ".shared-models").iterdir())) == 1
     before = a.read_bytes()
@@ -78,3 +80,12 @@ def test_unsealed_view_is_not_published(tmp_path):
     with pytest.raises(ValueError, match="sealed"):
         write_shared_sampling_model(tmp_path / "models/sample-0.json.gz", value)
     assert not (tmp_path / ".shared-models").exists()
+
+
+def test_step_preflight_rejects_a_modified_plain_view_before_native_allocation(tmp_path):
+    value = view()
+    value["seed"] += 1
+    path = tmp_path / "bad-view.json"
+    write_once(path, value)
+    with pytest.raises(ValueError, match="complete sealed requested"):
+        checked_step_input(path)
