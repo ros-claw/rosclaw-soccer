@@ -68,3 +68,19 @@ def test_runtime_identity_does_not_change_reward() -> None:
     row = outcome()
     other = dict(row, seed=999, lane=12, role="keeper")
     assert risk_margin_return(row) == risk_margin_return(other)
+
+
+def test_preregistered_weight_changes_only_objective_not_measured_outcome():
+    row = outcome()
+    row["maximum_lateral_excursion_m"] = 3.5
+    original = dict(row)
+    value, margins = risk_margin_return(row, boundary_weight=32.0)
+    assert value == 3
+    assert margins["boundary_margin_penalty"] == 8
+    assert row == original
+
+
+@pytest.mark.parametrize("weight", [True, float("nan"), float("inf"), 0, 7, 33])
+def test_invalid_objective_weight_is_rejected(weight):
+    with pytest.raises(ValueError, match="preregistered"):
+        risk_margin_return(outcome(), boundary_weight=weight)

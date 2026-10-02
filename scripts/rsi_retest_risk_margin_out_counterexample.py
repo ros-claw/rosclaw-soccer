@@ -18,6 +18,7 @@ from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
 from scripts.rsi_collect_failed_step_courses import qualified_memory_failure_rows
 from scripts.rsi_compressed_bank_storage import capacity_check
 from scripts.rsi_train_protected_online_motor_v308 import _head
+from scripts.rsi_validate_physical_report_transport import check_declared_model_hash
 
 MODEL = "sha256:f4d964d0be368f8fbf4be555f00519212296514de1b8e664cf8d58967923e1d1"
 LEARNING = "sha256:cbe81f457bbf7c8729b086ecb85565b1d4b5d91d8ea6da1b79014e6908e027ae"
@@ -72,16 +73,32 @@ def main() -> None:
         "system-reserve-path",
     ):
         parser.add_argument(f"--{name}", type=Path, required=True)
+    parser.add_argument("--expected-model-hash", default=MODEL)
+    parser.add_argument("--expected-learning-hash", default=LEARNING)
     args = parser.parse_args()
     model = load_json_artifact(args.candidate)
     validate_model(model)
     learning = _sealed(args.learning_commitment)
+    check_declared_model_hash(model["model_hash"], args.expected_model_hash)
+    check_declared_model_hash(learning["report_hash"], args.expected_learning_hash)
+    expected_model_hash, expected_learning_hash = (
+        args.expected_model_hash,
+        args.expected_learning_hash,
+    )
     if (
-        model["model_hash"] != MODEL
-        or learning["report_hash"] != LEARNING
-        or model["base_model"]["learning_receipt"]["physical_batch_hash"] != LEARNING
+        model["base_model"]["learning_receipt"]["physical_batch_hash"] != expected_learning_hash
+        or learning.get("schema") != "soccer.rsi.risk_margin_reward_learning.v1"
         or learning["existing_physical_rollouts_reused"] != 104
         or learning["new_physical_executions"] != 0
+        or learning.get("all_records_used") is not True
+        or learning.get("acceptance_thresholds_unchanged") is not True
+        or learning.get("optimizer_mathematics_unchanged") is not True
+        or learning.get("partition") != "TRAIN_CONSUMED"
+        or any(
+            learning.get(k) is not False for k in ("promotion_authorized", "hardware_authorized")
+        )
+        or type(learning.get("boundary_penalty")) not in (int, float)
+        or learning["boundary_penalty"] not in (8.0, 16.0, 32.0)
     ):
         raise ValueError("exact preregistered completed risk-margin learner required")
     reference = load_json_artifact(args.reference_root / "commitment.json")
@@ -134,7 +151,8 @@ def main() -> None:
         asset_hash=reference["asset_hash"],
         execution_source_commit=_head(args.execution_source),
         core_commit=_head(args.core_root),
-        model_hash=MODEL,
+        model_hash=expected_model_hash,
+        learning_commitment_hash=expected_learning_hash,
         input_hashes=pins,
         capacity=capacity,
         parent_report_hash=parent["report_hash"],
@@ -174,13 +192,14 @@ def main() -> None:
         or _sealed(parent_path) != parent
         or _sealed(warm_folder / "report.json") != warm
         or raw["parent_report_hash"] != parent["report_hash"]
-        or raw["contact_motor_policy"]["step_motor_proof"]["model"]["model_hash"] != MODEL
+        or raw["contact_motor_policy"]["step_motor_proof"]["model"]["model_hash"]
+        != expected_model_hash
     ):
         raise ValueError("retest model/control/source drift")
     result = dict(
         schema="soccer.rsi.risk_margin_out_retest_review.v1",
         commitment_hash=hash_json(commitment),
-        model_hash=MODEL,
+        model_hash=expected_model_hash,
         course=list(COURSE),
         new_physical_executions=1,
         existing_controls_consumed=2,

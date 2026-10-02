@@ -24,8 +24,16 @@ from scripts.rsi_fit_smooth_memory_motor import checked_curriculum
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 
-def risk_margin_return(outcome: dict[str, Any]) -> tuple[float, dict[str, float]]:
+def risk_margin_return(
+    outcome: dict[str, Any], *, boundary_weight: float = 8.0
+) -> tuple[float, dict[str, float]]:
     """Finite measured margins; no course, role, frame or future runtime selector."""
+    if (
+        type(boundary_weight) not in (float, int)
+        or not np.isfinite(boundary_weight)
+        or not 8 <= boundary_weight <= 32
+    ):
+        raise ValueError("finite preregistered boundary weight between 8 and 32 required")
     baseline = terminal_return(outcome)
     forward, lateral, excursion = [
         outcome[k] for k in ("forward_60_m", "lateral_60_m", "maximum_lateral_excursion_m")
@@ -40,7 +48,7 @@ def risk_margin_return(outcome: dict[str, Any]) -> tuple[float, dict[str, float]
         raise ValueError("nonnegative measured ball excursion required")
     # Acceptance still uses original ratio <= .3, excursion <= 4, pelvis >= .65.
     # This objective encourages room BELOW those unchanged acceptance limits.
-    boundary = 8.0 * float(np.clip((excursion - 3.0) / 1.0, 0.0, 1.0)) ** 2
+    boundary = boundary_weight * float(np.clip((excursion - 3.0) / 1.0, 0.0, 1.0)) ** 2
     if missing_direction:
         # Preserve genuine misses/late contacts; no invented displacement and
         # no dropped trajectory.
@@ -68,6 +76,8 @@ def main() -> None:
         "output-root",
     ):
         parser.add_argument(f"--{name}", type=Path, required=True)
+    parser.add_argument("--boundary-weight", type=float, choices=(8.0, 16.0, 32.0), default=8.0)
+    parser.add_argument("--system-reserve-path", type=Path)
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     model = load_json_artifact(args.behavior_model)
@@ -143,7 +153,9 @@ def main() -> None:
         ids = arrays["trajectory_index"] == group
         if not np.all(arrays["terminal_return"][ids] == terminal_return(record["outcome"])):
             raise ValueError("historical measured labels changed")
-        shaped, margins = risk_margin_return(record["outcome"])
+        shaped, margins = risk_margin_return(
+            record["outcome"], boundary_weight=args.boundary_weight
+        )
         arrays["terminal_return"][ids] = shaped
         rewards.append(
             dict(
@@ -184,7 +196,7 @@ def main() -> None:
         altered_fields=["offline_terminal_return"],
         boundary_margin_m=3.0,
         boundary_scale_m=1.0,
-        boundary_penalty=8.0,
+        boundary_penalty=args.boundary_weight,
         direction_margin_ratio=0.2,
         direction_scale_ratio=0.1,
         direction_penalty=5.0,
@@ -196,6 +208,10 @@ def main() -> None:
         hardware_authorized=False,
     )
     commitment["report_hash"] = hash_json(commitment)
+    if args.system_reserve_path is not None:
+        from scripts.rsi_compressed_bank_storage import capacity_check
+
+        capacity_check(args.output_root.parent, args.system_reserve_path, 256 * 1024**2)
     args.output_root.mkdir(parents=True, exist_ok=False)
     write_once(args.output_root / "learning_commitment.json", commitment)
     learned = fit_update(model, arrays, batch_hash=commitment["report_hash"])
