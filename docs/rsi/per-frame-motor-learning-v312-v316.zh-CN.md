@@ -1454,3 +1454,27 @@ summary `25c8b4a1607ff120037d17f1ba933cbf436dad2b79c9e495b8c83e5ac2d575e4`，
 独立 review `e31e2b56168d133ab4a6d659ef8925c4ca6bca12e2d9a4f7b699daae9ebebaed`，
 原件在 `/code/rosclaw/rsi-consolidated-bank-delta-v373-recovery2`。
 这是保留/增长与边界风险的真实冲突证据，不是 full bank 或 fresh 成绩。
+
+### v386：完整回归无新增失败；两组训练正在运行，补充只读动作变化诊断
+
+v385 全量实际 **6343 passed、23 failed、70 skipped，414.06 秒**。
+完整 XML 已与 v384 比对，23 个失败身份集合相同，没有新增失败。
+日志/XML 位于 `/code/rosclaw/rsi-current-memory-v385-regression.{log,xml}`，
+临时测试材料在 `/data/rosclaw_overflow/rsi-current-memory-v385-regression.h2vSBX`。
+
+已以冻结 Soccer `46270cd`、Core `85ada636` 启动两组预声明训练：
+同一完整 104 条/28080 帧、同一原始 reward、同一当前 39 案保护，
+分别 cap .05/LR .0001（控制）和 cap .2/LR .0004（扩大塑性）。
+均是 TRAIN_CONSUMED、0 新采样，模型不得自动激活。初始承诺分别
+`38acce46be7144392d9d83e87a5d6e1cf796f2cb6bb83b5226b3c6383d42f855`
+与 `dde1ec6a1f57c4274095358e2bd364fb6dd733154f24375fe40f9befc88f2a71`。
+外部输出 `/data/rosclaw_overflow/rsi-current-memory-learning-v385-{control,expanded}`，
+截至本节提交仍在运行，未宣称新模型已学成或有物理增长。
+
+新增 `rsi_audit_current_memory_update.py`，只在完整原始 bank 中预声明
+均匀 64/128 个状态及其前一帧，重算条件概率并分触球前、触球后
+首 20 帧、后期恢复统计 raw latent 和 pre-slew .25*tanh 目标变化。
+报告明确 `physically_applied=false`；它既不是实测关节运动，也不
+证明闭环轨迹、更高扑救/射门率。完整模型/初始父/manifest/NPZ/
+诊断源码 hash 前后重验，全部授权 false，6 项 fixture 和目标
+mypy/ruff 通过。未修改在跑训练所使用的源码或既有模型。
