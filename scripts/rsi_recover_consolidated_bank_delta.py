@@ -5,6 +5,7 @@ runner/Core are reused; only missing executions are newly run on GPUs 1/2.
 """
 
 import argparse
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,29 @@ from scripts.rsi_compressed_bank_storage import capacity_check
 from scripts.rsi_prepare_smooth_memory_round_two import folder_bytes
 from scripts.rsi_train_protected_online_motor_v308 import _head
 from scripts.rsi_validate_consolidated_bank_delta import DECLARED_INDICES, selected_indices
+
+
+def native_failure_kind(log: str) -> str:
+    if "Unable to allocate memory of size 671088640" in log:
+        return "NATIVE_CONTACT_BUFFER_ALLOCATION_FAILED"
+    if "[Fatal]" in log and "libX11.so.6!XOpenDisplay" in log:
+        return "NATIVE_XDISPLAY_STARTUP_CRASH"
+    raise ValueError("explicit observed native allocation/display failure required")
+
+
+def copy_complete_control(source: Path, destination: Path, *, link: bool) -> None:
+    if (
+        type(link) is not bool
+        or source.is_symlink()
+        or any(p.is_symlink() for p in source.rglob("*"))
+    ):
+        raise ValueError("explicit local non-symlink control reuse required")
+    if link:
+        if source.stat().st_dev != destination.parent.stat().st_dev:
+            raise ValueError("hard-link reuse requires the same local evidence volume")
+        shutil.copytree(source, destination, copy_function=os.link)
+    else:
+        shutil.copytree(source, destination)
 
 
 def execute_recovery_course(job: dict[str, Any]) -> dict[str, Any]:
@@ -100,6 +124,9 @@ def main() -> None:
         "system-reserve-path",
     ):
         parser.add_argument(f"--{name}", type=Path, required=True)
+    parser.add_argument("--expected-complete-count", type=int, choices=range(1, 21), default=11)
+    parser.add_argument("--workers", type=int, choices=(1, 2), default=2)
+    parser.add_argument("--link-complete-controls", action="store_true")
     args = parser.parse_args()
     from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 
@@ -110,12 +137,12 @@ def main() -> None:
         not args.failure_log.is_file()
         or args.failure_log.is_symlink()
         or args.failure_log.resolve().parent != (args.failed_root / "logs").resolve()
-        or "Unable to allocate memory of size 671088640" not in args.failure_log.read_text()
         or (args.failed_root / args.failure_log.stem / "report.json.gz").exists()
         or (args.failed_root / "validation_summary.json").exists()
         or args.output_root.exists()
     ):
         raise ValueError("preserved incomplete native allocation failure and new root required")
+    failure_kind = native_failure_kind(args.failure_log.read_text())
     model, parent = load_json_artifact(args.model), load_json_artifact(args.parent_model)
     if (
         model["model_hash"] != original["model_hash"]
@@ -163,17 +190,41 @@ def main() -> None:
             ):
                 raise ValueError("original complete control identity changed")
             complete.append(folder)
-    if len(complete) != 11:
-        raise ValueError("exact declared 11 complete controls from initial failed run required")
+    if len(complete) != args.expected_complete_count:
+        raise ValueError("exact preregistered complete-control count required")
+    new_count = 21 - len(complete)
+    prior_failures = original.get("recovery", {}).get("original_native_failures_preserved", 0) + 1
     args.output_root.parent.mkdir(parents=True, exist_ok=True)
+    if (
+        args.link_complete_controls
+        and args.failed_root.stat().st_dev != args.output_root.parent.stat().st_dev
+    ):
+        raise ValueError("hard-link reuse requires the same local evidence volume")
     largest = max(folder_bytes(f) for f in complete)
-    budget = int(1.15 * (sum(folder_bytes(f) for f in complete) + 10 * largest)) + 512 * 1024**2
+    reused_storage = 0 if args.link_complete_controls else sum(folder_bytes(f) for f in complete)
+    budget = int(1.15 * (reused_storage + new_count * largest)) + 512 * 1024**2
+    complete_file_pins = {
+        str(p.relative_to(args.failed_root)): hash_bytes(p.read_bytes())
+        for f in complete
+        for p in f.rglob("*")
+        if p.is_file()
+    }
     capacity = capacity_check(args.output_root.parent, args.system_reserve_path, budget)
     args.output_root.mkdir()
     (args.output_root / "logs").mkdir()
     shutil.copy2(args.failure_log, args.output_root / "prior-native-failure.log")
+    if "recovery" in original:
+        inherited_log = args.failed_root / "prior-native-failure.log"
+        if (
+            hash_bytes(inherited_log.read_bytes())
+            != original["recovery"]["preserved_failure_log_hash"]
+        ):
+            raise ValueError("ancestor native failure log changed")
+        shutil.copy2(inherited_log, args.output_root / "ancestor-native-failure.log")
     for folder in complete:
-        shutil.copytree(folder, args.output_root / folder.name)
+        copy_complete_control(
+            folder, args.output_root / folder.name, link=args.link_complete_controls
+        )
         shutil.copy2(
             args.failed_root / "logs" / f"{folder.name}.log",
             args.output_root / "logs" / f"{folder.name}.log",
@@ -190,30 +241,49 @@ def main() -> None:
             original_root=str(args.failed_root.resolve()),
             preserved_failure_log_hash=hash_bytes(args.failure_log.read_bytes()),
             orchestrator_source_hash=hash_bytes(Path(__file__).read_bytes()),
-            reused_complete_physical_reports=11,
-            new_physical_executions_planned=10,
-            original_native_failures_preserved=1,
-            owned_native_gpu_schedule=[1, 2],
+            reused_complete_physical_reports=len(complete),
+            new_physical_executions_planned=new_count,
+            original_native_failures_preserved=prior_failures,
+            failure_kind=failure_kind,
+            ancestor_recovery=original.get("recovery"),
+            complete_control_file_hashes=complete_file_pins,
+            complete_control_representation=(
+                "same_volume_hard_links"
+                if args.link_complete_controls
+                else "independent_byte_copies"
+            ),
+            owned_native_gpu_schedule=list(range(1, args.workers + 1)),
             no_old_evidence_overwritten=True,
         ),
     )
     write_once(args.output_root / "commitment.json", commitment)
     rows: list[dict[str, Any]] = []
     jobs = [
-        dict(row=bank["rows"][i], args=vars(args), gpu=1 + n % 2) for n, i in enumerate(indices)
+        dict(row=bank["rows"][i], args=vars(args), gpu=1 + n % args.workers)
+        for n, i in enumerate(indices)
     ]
-    for start in range(0, len(jobs), 2):
-        rows.extend(ordered_audits(execute_recovery_course, jobs[start : start + 2], 2))
+    for start in range(0, len(jobs), args.workers):
+        rows.extend(
+            ordered_audits(
+                execute_recovery_course, jobs[start : start + args.workers], args.workers
+            )
+        )
     check_original_binding(original, runner, args.core_root)
+    if any(
+        hash_bytes((args.failed_root / p).read_bytes()) != h
+        or hash_bytes((args.output_root / p).read_bytes()) != h
+        for p, h in complete_file_pins.items()
+    ):
+        raise ValueError("reused control files changed during recovery")
     result = dict(
         schema="soccer.rsi.consolidated_bank_delta_physics.v1",
         commitment=commitment,
         rows=rows,
         physical_executions=21,
         independent_contexts=7,
-        new_physical_executions=10,
-        reused_complete_physical_reports=11,
-        prior_native_failures=1,
+        new_physical_executions=new_count,
+        reused_complete_physical_reports=len(complete),
+        prior_native_failures=prior_failures,
         **score(rows),
         qualification="ALL_AFFECTED_CONSUMED_CASES_ONLY_NOT_FULL_BANK_OR_FRESH",
         promotion_authorized=False,
