@@ -302,8 +302,10 @@ def main() -> None:
         return
     source = Path(__file__).resolve().parent.parent
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
-    warm = json.loads(args.warm_model.read_text())
-    candidate = json.loads(args.candidate_model.read_text())
+    from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
+
+    warm = load_json_artifact(args.warm_model)
+    candidate = load_json_artifact(args.candidate_model)
     validate_bank_models(candidate, warm)
     bank = _sealed(args.bank_path)
     if bank["partition"] != "TRAIN_CONSUMED" or len(bank["courses"]) != 52:

@@ -1260,3 +1260,24 @@ source/Core/权重不改。当前没有完整恢复后的七课程结论。
 物理 source/Core/body 和相同 NN 父权重。轨迹与源输入漂移拒绝。
 数值 gate 继续保留骨盆 >=0.65、无旧干净触球损失/成功损失、
 无新增出界条件，七项 fixture 及 targeted mypy/ruff 通过。
+### v379：巩固策略的 CPU 因果审计与无损模型输入补齐
+
+MuJoCo runner 原已能执行 consolidated smooth motor，独立 CPU
+审计器却缺少对应解码分支；本轮补齐此分支，仍核对 300 帧
+神经输出、组合关节目标、实际动力学和接触，不能退回基础模型
+解码或仅以录像认定通过。模型数学与模型绑定源文件没有修改。
+
+pilot/完整银行/CPU runner 统一使用已有无损 JSON/gzip-JSON
+输入，CPU 报告新增显式 `--compressed-report`，原子发布完整
+报告；默认仍为 plain。CPU 两种表示共存、权限/源/trace 漂移
+仍 fail-closed。16 项目标 fixture 通过，四个修改模块 targeted
+mypy 通过；不计作实际仿真或新技能。实际 CPU 验证尚未完成。
+
+v378 首次反例复测在容量预检中拒绝，未进入物理执行，失败
+driver 保留。一个已确认干净、没有运行的旧临时 worktree
+`/tmp/rosclaw-s2014-motor-OzAIUN` 完整迁移至
+`/code/rosclaw/archived-worktrees/rosclaw-s2014-motor-OzAIUN`，
+Git worktree repair 后仍为 `10ea18d773d3359ff06c733f5da9716bf4e9af42`
+且干净。没有删除原工作区内容或训练证据，没有降低系统盘
+100 GiB 保留线。随后新目录 `rsi-risk-margin-out-counterexample-v378-retry1`
+显式重新预检并启动，完成前不宣称反例已解决。

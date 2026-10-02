@@ -8,6 +8,7 @@ from typing import Any
 
 from rosclaw_soccer.rsi.compiled_step_inference import make_preview as compiled_preview
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
+from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 from rosclaw_soccer.rsi.physical_report_io import resolve_physical_report
 from rosclaw_soccer.rsi.step_motor_network import validate_model as validate_warm
 from rosclaw_soccer.rsi.step_motor_ppo import validate_model
@@ -57,8 +58,8 @@ def main() -> None:
         parser.error("shared proofs require explicit compressed reports")
     source = (args.execution_source or Path(__file__).resolve().parent.parent).resolve()
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
-    model = json.loads(args.online_model.read_text())
-    warm = json.loads(args.step_model.read_text())
+    model = load_json_artifact(args.online_model)
+    warm = load_json_artifact(args.step_model)
     online_base, warm_base = model, warm
     if model.get("schema") == "soccer.rsi.compiled_step_motor_decoder.v1":
         compiled_preview(model)

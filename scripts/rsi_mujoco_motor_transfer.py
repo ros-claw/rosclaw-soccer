@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from rosclaw_soccer.rsi.contact_time_phase_features import (
     predict_contact_time,
 )
 from rosclaw_soccer.rsi.first_touch_course_catalog import sample_training_courses
+from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor
 from rosclaw_soccer.rsi.online_motor_actor_critic import configure_preview, validate_model
 from rosclaw_soccer.rsi.taskspace_gate_memory import select_taskspace_gate
@@ -50,6 +52,7 @@ def main() -> None:
     group.add_argument("--step-model", type=Path)
     parser.add_argument("--consumed-bank", type=Path)
     parser.add_argument("--foundation-only", action="store_true")
+    parser.add_argument("--compressed-report", action="store_true")
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--lane", type=int, required=True, choices=range(16))
     args = parser.parse_args()
@@ -181,9 +184,12 @@ def main() -> None:
     if neural:
         validate_model(neural)
     policy, knots = load_policy(args.motor_policy) if args.motor_policy else (None, None)
-    step_model = json.loads(args.step_model.read_text()) if args.step_model else None
+    step_model = load_json_artifact(args.step_model) if args.step_model else None
     if step_model is not None:
-        from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
+        from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame
+        from rosclaw_soccer.rsi.step_motor_execution import make_preview as legacy_preview
+
+        make_preview: Callable[[dict[str, Any]], dict[str, Any]] = legacy_preview
 
         if step_model.get("schema") == "soccer.rsi.consolidated_smooth_motor.v1":
             from rosclaw_soccer.rsi.consolidated_smooth_motor import CompiledConsolidatedSmoothMotor
@@ -572,7 +578,10 @@ def main() -> None:
         qualification="UNQUALIFIED_CPU_TRANSFER_DIAGNOSTIC",
     )
     result["report_hash"] = hash_json(result)
-    (args.output_root / "report.json").write_text(json.dumps(result, indent=2, allow_nan=False))
+    from scripts.rsi_atomic_artifacts import write_once
+
+    report_name = "report.json.gz" if args.compressed_report else "report.json"
+    write_once(args.output_root / report_name, result)
     print(
         json.dumps(
             {

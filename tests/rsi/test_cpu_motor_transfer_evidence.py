@@ -5,10 +5,12 @@ import pytest
 
 from rosclaw_soccer.rsi.cpu_motor_transfer_evidence import audit_cpu_transfer
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from scripts.rsi_atomic_artifacts import write_once
 
 
 @pytest.mark.parametrize("mutation", ["authority", "trace", "source"])
-def test_cpu_replay_rejects_untrusted_evidence_before_parsing_model(tmp_path, mutation):
+@pytest.mark.parametrize("compressed", [False, True])
+def test_cpu_replay_rejects_untrusted_evidence_before_parsing_model(tmp_path, mutation, compressed):
     mujoco = pytest.importorskip("mujoco")
     source = Path(__file__)
     snapshot = tmp_path / "compiled_model.mjb"
@@ -31,6 +33,15 @@ def test_cpu_replay_rejects_untrusted_evidence_before_parsing_model(tmp_path, mu
     else:
         report["source_hash"] = hash_bytes(b"other")
     report["report_hash"] = hash_json(report)
-    (tmp_path / "report.json").write_text(json.dumps(report))
+    write_once(tmp_path / ("report.json.gz" if compressed else "report.json"), report)
     with pytest.raises(ValueError, match="authority contract"):
         audit_cpu_transfer(tmp_path, source)
+
+
+def test_cpu_replay_rejects_ambiguous_plain_and_gzip_report(tmp_path):
+    pytest.importorskip("mujoco")
+    report = {"report_hash": hash_json({})}
+    (tmp_path / "report.json").write_text(json.dumps(report))
+    write_once(tmp_path / "report.json.gz", report)
+    with pytest.raises(ValueError, match="exactly one complete physical report"):
+        audit_cpu_transfer(tmp_path, Path(__file__))
