@@ -647,7 +647,13 @@ def main() -> None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
         step_model = load_sampling_model(args.contact_motor_step_model)
-        if step_model.get("schema") == "soccer.rsi.current_memory_guarded_motor.v1":
+        if step_model.get("schema") == "soccer.rsi.advantage_memory_motor.v1":
+            from rosclaw_soccer.rsi.advantage_memory_motor import CompiledAdvantageMemoryMotor
+            from rosclaw_soccer.rsi.advantage_memory_motor import make_preview as advantage_preview
+
+            make_preview = advantage_preview
+            delta_at_frame = CompiledAdvantageMemoryMotor(make_preview(step_model)).delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.current_memory_guarded_motor.v1":
             from rosclaw_soccer.rsi.current_memory_motor import CompiledCurrentMemoryMotor
             from rosclaw_soccer.rsi.current_memory_motor import make_preview as current_preview
 

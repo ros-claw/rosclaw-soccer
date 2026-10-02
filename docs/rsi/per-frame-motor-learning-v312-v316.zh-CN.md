@@ -1640,3 +1640,69 @@ reports 拒绝隐式覆盖，shared 模式暂不允许 resume。
 前后均为 `f5630a26f3c293dc0daa273e430021b044c0486b68116e0be1421b449bb233a4`，
 131802081 字节。未删除模型、未移动旧 NPZ/manifest/轨迹/活动 source，
 未动用户 Isaac Streaming 后台，未降低保留线。
+
+### v391–v393：共享实测通过，扩展独立经验，新增通用优势回归路线
+
+v390 新目录共享物理 retake 完成，两次新 native、历史/当前共
+**600 帧**独立 motor 重构、全部身体/球/taskspace/motor 数组精确
+一致。review `b6c9a941ae84069cdb4c1ad9f91de4a2f4a5ad9d2082c31a11d14a2d82ee7237`，
+在 `/data/rosclaw_overflow/rsi-shared-sampling-transport-v390-retake`。
+这条固定历史样本本身仍为失败（dirty contact、reward -2），不把
+运输通过说成足球通过。完整 mean 模型 **38939842 B**，sampling
+envelope **592 B**，最大完整 execution **339853 B**、native log
+**9124 B**；不是把全部模型压成 592 B。原 v389 两次工程失败执行
+仍保留，故两 attempt 共 4 次实际执行，而 passing proof 覆盖新 2 次。
+
+v390 全量 **6372 passed / 23 failed / 70 skipped，412.05 秒**，XML
+失败集合与 v389 精确相同；日志/XML
+`/code/rosclaw/rsi-shared-curriculum-v390-regression.{log,xml}`。
+Soccer main 已推送 `632a505`。完整 234 次收集加后续阶段的实测预算
+**2835259055 B**，另保留 1 GiB evidence/100 GiB system。第一次收集
+启动被容量门拒绝，0 新物理、0 新样本；保留 driver log，未创建
+输出目录。空间复查满足后，以新目录
+`/data/rosclaw_overflow/rsi-current-parent-independent-exploration-v390-stream2-retake1`
+和冻结源 `632a505` 重开相同完整声明。当前仍在生成全部 208 个 view，
+尚未称新物理执行已开始或 208 条已完成，不能把随机 view 当经验。
+
+已下载作者 AWR 参考实现到外部 repos，固定
+`831442fb8d4c24bd200667cbc5e458c7657effc2`；完整阅读
+`learning/awr_agent.py`、README、MIT LICENSE，登记 reference manifest，
+没有拷贝代码、安装 TensorFlow 1 或加载外部策略权重。
+
+Core 新增通用 `bounded_advantage_regression`，不会出现足球/身体/
+course ID：用冻结优势的 clipped exponential weights 做 marginal
+动作 Gaussian 回归，不是 PPO ratio。先验核对实际 AR conditional
+behavior density，条件/边际 KL 均仍 .005、最多 160 步、冻结 baseline
+和 guard、全 accepted-step loss history；Torch 可选/lazy，CPU float64
+及 RNG/thread/determinism 恢复。进一步显式 `device=cpu`，即使 host
+default device 为 meta/CUDA 也不偷偷改设备。它是 AWR-inspired
+适配，不是作者 TD-lambda/replay 系统的完整复现；所有授权 false、
+physical_batch_verified=false、distributional retention=false。
+Core `6e919c61` 已推送原 PR #615 分支，**未合并 PR**。
+相关新旧数值测试 **33 passed**；隔离 Growth/Practice **313 passed /
+4 skipped，32.27 秒**，未改 host 的既有 migration/database。
+日志/XML `/code/rosclaw/rsi-core-advantage-v392-tests.{log,xml}`。
+
+Soccer 新增独立 `advantage_memory_motor` / `advantage_memory_learning`
+模型族，不改旧 artifact-bound CurrentMemory/PPO/consolidated 文件：
+三层 residual MLP，保护当前全部 39 案锚点，cap .2/LR .0004，冻结
+NN parent，整轨迹 cross-fit MC critic，完整来源/learner parent/
+memory/critic/loss/KL receipt。输出仍是 bounded **关节位置残差**，
+不是 direct torque、端到端小脑或持续在线 actor-critic。接入 native、
+CPU 动力学/独立审计、pilot、完整 bank、transport、continuation
+与固定反例；保持旧分支数学和门限不变。7 项模型/实际数值学习
+fixture 通过，另外 13 项 audit-only/绑定/诊断/continuation 测试通过，
+11 文件 targeted mypy、undefined-name lint 通过。测试夹具漏字段的
+一次失败已修并复测，没有改物理标签。完整新模型物理成绩尚无。
+
+fitter 增加预声明 13 案 ×8/16 支持，以及独立 regression/PPO 选择；
+默认历史 104/PPO 路线保留。新增 audit-only 会生成完整 manifest/NPZ
+而不启动旧 PPO，让新算法使用全量实际成功与失败数据。下一步
+先在旧 104 条上测不同 objective 的候选，再用独立新 208 条补强；
+旧 104 条绝不称新采样。旧成功保留、CPU/full bank/fresh 门不放宽，
+RSI-M0 未完成、fresh 80 未开启、仍不升层或制作虚假比赛宣传片。
+
+另将已拒绝、无打开文件的 A5 standalone proposal 完整保留迁移到
+`/data/rosclaw_overflow/archived-rejected-models/consolidated-smooth-proposal-v371.json`，
+原路径保留 symlink，model 内容、旧报告和全部轨迹未改；文件 SHA
+与字节数见本轮迁移日志。不移动活动收集/learning inputs，维持系统保留线。

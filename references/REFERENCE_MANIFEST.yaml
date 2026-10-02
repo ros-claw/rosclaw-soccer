@@ -2,6 +2,19 @@
   "schema": "rosclaw_soccer.reference_manifest.v1",
   "references": [
     {
+      "name": "AWR",
+      "repository": "https://github.com/xbpeng/awr.git",
+      "commit": "831442fb8d4c24bd200667cbc5e458c7657effc2",
+      "license_file": "LICENSE",
+      "license_sha256": "eb4aa4f4f1e9a18875e996e12a7aaf9dc078562ef5db372b55910c6599dbcdc5",
+      "license_id": "MIT",
+      "weight_license": "NONE_NO_EXTERNAL_WEIGHTS_USED",
+      "purpose": "Advantage-weighted action regression design reference, not full AWR reproduction",
+      "reused_as": "external_algorithm_reference",
+      "files_reviewed": ["README.md", "LICENSE", "learning/awr_agent.py"],
+      "copied_code": false
+    },
+    {
       "name": "ProtoMotions",
       "repository": "https://github.com/NVlabs/ProtoMotions.git",
       "commit": "a6df301d312dc58ac40a4d994f4f1064728d854c",

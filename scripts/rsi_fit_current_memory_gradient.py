@@ -1,4 +1,4 @@
-"""Predeclare one current-anchor-protected update on all sealed 104 rollouts.
+"""Predeclare one current-anchor-protected update on a complete 13-course bank.
 
 No new sampling, reward shaping, course routing, physical qualification or
 activation. The new zero-addition behavior is globally the same frozen NN.
@@ -41,8 +41,25 @@ def main() -> None:
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--raw-residual-cap", type=float, choices=(0.05, 0.2), default=0.2)
     parser.add_argument("--learning-rate", type=float, choices=(1e-4, 4e-4), default=4e-4)
+    parser.add_argument("--samples-per-course", type=int, choices=(8, 16), default=8)
+    parser.add_argument(
+        "--learning-kind",
+        choices=("correlated-ppo", "advantage-regression"),
+        default="correlated-ppo",
+    )
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
+    regression = args.learning_kind == "advantage-regression"
+    if regression and (args.raw_residual_cap != 0.2 or args.learning_rate != 4e-4):
+        parser.error("predeclared advantage regression uses cap .2 / LR .0004")
+    if regression:
+        import rosclaw.growth.bounded_advantage_regression as regression_module
+
+        if (
+            Path(regression_module.__file__).resolve()
+            != (args.core_root / "src/rosclaw/growth/bounded_advantage_regression.py").resolve()
+        ):
+            raise ValueError("declared actual imported regression Core required")
     if (
         Path(gradient_module.__file__).resolve()
         != (args.core_root / "src/rosclaw/growth/correlated_residual_gradient.py").resolve()
@@ -69,12 +86,15 @@ def main() -> None:
         load_json_artifact(args.exploration_root / "commitment.json"),
     )
     npz = args.learning_root / "rollouts.npz"
+    expected_rollouts = 13 * args.samples_per_course
+    if exploration["commitment"]["samples_per_course"] != args.samples_per_course:
+        raise ValueError("exact declared complete sample count required")
     if (
         manifest["schema"] != "soccer.rsi.smooth_memory_on_policy_bank.v1"
         or manifest["parent_model_hash"] != behavior["model_hash"]
         or manifest["source_summary_hash"] != exploration["report_hash"]
-        or manifest["physical_rollout_count"] != 104
-        or manifest["frame_sample_count"] != 28080
+        or manifest["physical_rollout_count"] != expected_rollouts
+        or manifest["frame_sample_count"] != expected_rollouts * 270
         or manifest["independent_contexts"] != 13
         or manifest["sampling_rho"] != 0.9
         or manifest["candidate_previous_mean_required"] is not True
@@ -87,26 +107,28 @@ def main() -> None:
         != hash_bytes(
             (args.audit_source_root / "scripts/rsi_audit_memory_learning_rollouts.py").read_bytes()
         )
-        or len(manifest["records"]) != 104
-        or [r["group"] for r in manifest["records"]] != list(range(104))
+        or len(manifest["records"]) != expected_rollouts
+        or [r["group"] for r in manifest["records"]] != list(range(expected_rollouts))
         or any(
             obj.get(k) is not False
             for obj in (manifest, exploration, bank, review)
             for k in ("promotion_authorized", "hardware_authorized")
         )
     ):
-        raise ValueError("all immutable independently reconstructed 104 physical rollouts required")
+        raise ValueError(
+            "all immutable independently reconstructed declared physical rollouts required"
+        )
     with np.load(npz, allow_pickle=False) as data:
         arrays = {k: data[k] for k in data.files}
-    if not np.array_equal(arrays["trajectory_index"], np.repeat(np.arange(104), 270)):
+    if not np.array_equal(arrays["trajectory_index"], np.repeat(np.arange(expected_rollouts), 270)):
         raise ValueError("no omitted or reordered training trajectories")
     for record in manifest["records"]:
         g = record["group"]
-        row = exploration["rows"][g // 8]
-        sample = row["samples"][g % 8]
+        row = exploration["rows"][g // args.samples_per_course]
+        sample = row["samples"][g % args.samples_per_course]
         if (
             (record["seed"], record["lane"]) != (row["seed"], row["lane"])
-            or record["sample"] != g % 8
+            or record["sample"] != g % args.samples_per_course
             or record["report_hash"] != sample["report_hash"]
             or any(record["outcome"][k] != v for k, v in sample.items() if k in record["outcome"])
             or not np.all(
@@ -129,6 +151,13 @@ def main() -> None:
         cap=args.raw_residual_cap,
         learning_rate=args.learning_rate,
     )
+    learner = fit_update
+    if regression:
+        from rosclaw_soccer.rsi.advantage_memory_learning import fit_update as regression_fit
+        from rosclaw_soccer.rsi.advantage_memory_motor import initial_model as regression_initial
+
+        model = regression_initial(model)
+        learner = regression_fit
     paths = [
         args.behavior_model,
         npz,
@@ -144,10 +173,20 @@ def main() -> None:
         source / "src/rosclaw_soccer/rsi/current_memory_learning.py",
         args.core_root / "src/rosclaw/growth/correlated_residual_gradient.py",
     ]
+    if regression:
+        paths += [
+            source / "src/rosclaw_soccer/rsi/advantage_memory_motor.py",
+            source / "src/rosclaw_soccer/rsi/advantage_memory_learning.py",
+            args.core_root / "src/rosclaw/growth/bounded_advantage_regression.py",
+        ]
     bound = {str(p.resolve()): hash_bytes(p.read_bytes()) for p in paths}
     budget = capacity_check(args.output_root.parent, args.system_reserve_path, 256 * 1024**2)
     declaration = dict(
-        schema="soccer.rsi.current_memory_gradient_commitment.v1",
+        schema=(
+            "soccer.rsi.advantage_memory_gradient_commitment.v1"
+            if regression
+            else "soccer.rsi.current_memory_gradient_commitment.v1"
+        ),
         inputs=bound,
         source_head=subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=source, text=True
@@ -159,14 +198,15 @@ def main() -> None:
         behavior_model_hash=behavior["model_hash"],
         qualified_parent_model_hash=behavior["parent_model_hash"],
         physical_batch_hash=manifest["report_hash"],
-        physical_rollout_count=104,
-        frame_sample_count=28080,
+        physical_rollout_count=expected_rollouts,
+        frame_sample_count=expected_rollouts * 270,
         new_physical_executions=0,
         rewards="UNCHANGED_ORIGINAL_MEASURED_TERMINAL_RETURN",
         protection="ALL_39_CURRENT_PARENT_SUCCESSES_DURING_TRAINING_AND_EXECUTION",
         raw_residual_cap=args.raw_residual_cap,
         learning_rate=args.learning_rate,
         rho=0.9,
+        learning_kind=args.learning_kind,
         optimizer_steps_limit=160,
         conditional_and_marginal_kl_limit=0.005,
         partition="TRAIN_CONSUMED",
@@ -180,7 +220,7 @@ def main() -> None:
     write_once(args.output_root / "commitment.json", declaration)
     write_once(args.output_root / "initial_model.json.gz", model)
     print("CURRENT_MEMORY_GRADIENT_DECLARED=" + declaration["report_hash"], flush=True)
-    learned = fit_update(model, arrays, batch_hash=manifest["report_hash"])
+    learned = learner(model, arrays, batch_hash=manifest["report_hash"])
     if any(hash_bytes(Path(p).read_bytes()) != digest for p, digest in bound.items()):
         raise ValueError("learner inputs or source changed during fitting")
     for root, expected in (
@@ -197,7 +237,11 @@ def main() -> None:
             raise ValueError("immutable learner or Core source changed during fitting")
     write_once(args.output_root / "model.json.gz", learned)
     receipt = dict(
-        schema="soccer.rsi.current_memory_gradient_learning.v1",
+        schema=(
+            "soccer.rsi.advantage_memory_gradient_learning.v1"
+            if regression
+            else "soccer.rsi.current_memory_gradient_learning.v1"
+        ),
         commitment_hash=declaration["report_hash"],
         model_hash=learned["model_hash"],
         initial_model_hash=model["model_hash"],

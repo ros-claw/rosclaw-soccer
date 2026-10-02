@@ -76,17 +76,29 @@ def main() -> None:
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     model = load_json_artifact(args.candidate)
-    validate_model(model)
+    advantage = model.get("schema") == "soccer.rsi.advantage_memory_motor.v1"
+    if advantage:
+        from rosclaw_soccer.rsi.advantage_memory_motor import validate_model as advantage_validate
+
+        advantage_validate(model)
+    else:
+        validate_model(model)
     learning = _sealed(args.learning_report)
     check_declared_model_hash(model["model_hash"], args.expected_model_hash)
     check_declared_model_hash(learning["report_hash"], args.expected_learning_hash)
     qualified_nn = load_json_artifact(args.qualified_parent_model)
+    baseline_model = model["initial_actor"]["baseline"] if advantage else model["baseline"]
+    learning_schema = (
+        "soccer.rsi.advantage_memory_gradient_learning.v1"
+        if advantage
+        else "soccer.rsi.current_memory_gradient_learning.v1"
+    )
     if (
-        learning["schema"] != "soccer.rsi.current_memory_gradient_learning.v1"
+        learning["schema"] != learning_schema
         or learning["model_hash"] != model["model_hash"]
         or learning["learning_receipt"] != model["learning_receipt"]
         or learning["new_physical_executions"] != 0
-        or model["baseline"]["base_model"]["frozen_parent"] != qualified_nn
+        or baseline_model["base_model"]["frozen_parent"] != qualified_nn
         or any(
             learning.get(k) is not False for k in ("promotion_authorized", "hardware_authorized")
         )
@@ -149,6 +161,12 @@ def main() -> None:
         source / "src/rosclaw_soccer/rsi/current_memory_motor.py",
         args.core_root / "src/rosclaw/growth/correlated_residual_gradient.py",
     ]
+    if advantage:
+        inputs += [
+            source / "src/rosclaw_soccer/rsi/advantage_memory_motor.py",
+            source / "src/rosclaw_soccer/rsi/advantage_memory_learning.py",
+            args.core_root / "src/rosclaw/growth/bounded_advantage_regression.py",
+        ]
     pins = {str(p.resolve()): hash_bytes(p.read_bytes()) for p in inputs}
     pins.update(unchanged)
     args.output_root.parent.mkdir(parents=True, exist_ok=True)

@@ -67,7 +67,12 @@ def main() -> None:
     if warm.get("schema") == "soccer.rsi.compiled_step_motor_decoder.v1":
         compiled_preview(warm)
         warm_base = warm["base_model"]
-    if online_base.get("schema") == "soccer.rsi.current_memory_guarded_motor.v1":
+    if online_base.get("schema") == "soccer.rsi.advantage_memory_motor.v1":
+        from rosclaw_soccer.rsi.advantage_memory_motor import validate_model as advantage_validate
+
+        advantage_validate(online_base)
+        predecessor = online_base["initial_actor"]["baseline"]["base_model"]["frozen_parent"]
+    elif online_base.get("schema") == "soccer.rsi.current_memory_guarded_motor.v1":
         from rosclaw_soccer.rsi.current_memory_motor import validate_model as current_validate
 
         current_validate(online_base)
@@ -141,6 +146,7 @@ def main() -> None:
     baseline_arm, baseline_key = baseline_reference_binding(pilot)
     aligned = predecessor == warm_base
     if online_base.get("schema") in (
+        "soccer.rsi.advantage_memory_motor.v1",
         "soccer.rsi.consolidated_smooth_motor.v1",
         "soccer.rsi.current_memory_guarded_motor.v1",
         "soccer.rsi.output_memory_step_motor.v1",

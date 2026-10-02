@@ -24,6 +24,7 @@ def main() -> None:
         "--behavior-kind", choices=("output-memory", "smooth-memory"), required=True
     )
     parser.add_argument("--audit-workers", type=int, default=4, choices=range(1, 5))
+    parser.add_argument("--audit-only", action="store_true")
     for name in ("exploration-root", "parent-bank-root", "model", "output-root"):
         parser.add_argument(f"--{name}", required=True, type=Path)
     args = parser.parse_args()
@@ -111,6 +112,22 @@ def main() -> None:
         manifest.update(sampling_rho=0.9, candidate_previous_mean_required=True)
     manifest["report_hash"] = hash_json(manifest)
     write_once(args.output_root / "rollout_manifest.json", manifest)
+    if args.audit_only:
+        print(
+            json.dumps(
+                dict(
+                    manifest_hash=manifest["report_hash"],
+                    physical_rollout_count=len(records),
+                    frame_sample_count=len(combined["observation"]),
+                    completed_optimizer_steps=0,
+                    new_physical_executions=0,
+                    promotion_authorized=False,
+                    hardware_authorized=False,
+                )
+            ),
+            flush=True,
+        )
+        return
     # Both existing fitters default to rho=.9 for the smooth policy. Explicit
     # conditioning still occurs in its unchanged optimizer, not this launcher.
     learned = learner(model, combined, batch_hash=manifest["report_hash"])
