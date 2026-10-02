@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import rosclaw.growth.correlated_residual_gradient as gradient_module
 
 from rosclaw_soccer.rsi.current_memory_motor import (
     CompiledCurrentMemoryMotor,
@@ -69,6 +70,12 @@ def main() -> None:
     parser.add_argument("--expected-model-hash", required=True)
     parser.add_argument("--sample-count", type=int, choices=(64, 128), default=128)
     args = parser.parse_args()
+    gradient_source = Path(gradient_module.__file__).resolve()
+    if (
+        gradient_source
+        != (args.core_root / "src/rosclaw/growth/correlated_residual_gradient.py").resolve()
+    ):
+        raise ValueError("imported numeric backend must match declared immutable Core source")
     model, initial = (load_json_artifact(p) for p in (args.candidate, args.initial_model))
     validate_model(model)
     validate_model(initial)
@@ -105,6 +112,7 @@ def main() -> None:
         args.rollout_npz,
         Path(__file__),
         source / "src/rosclaw_soccer/rsi/current_memory_motor.py",
+        gradient_source,
     ]
     pins = {str(p.resolve()): hash_bytes(p.read_bytes()) for p in paths}
     commitment = dict(
@@ -166,7 +174,11 @@ def main() -> None:
             if ids
             else dict(states=0)
         )
-    if any(hash_bytes(Path(p).read_bytes()) != digest for p, digest in pins.items()):
+    if (
+        any(hash_bytes(Path(p).read_bytes()) != digest for p, digest in pins.items())
+        or _head(source) != commitment["source_commit"]
+        or _head(args.core_root) != commitment["core_commit"]
+    ):
         raise ValueError("model/data/diagnostic source changed during read-only inference")
     result = dict(
         schema="soccer.rsi.current_memory_update_sample_review.v1",

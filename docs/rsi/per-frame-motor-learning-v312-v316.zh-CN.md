@@ -1478,3 +1478,12 @@ v385 全量实际 **6343 passed、23 failed、70 skipped，414.06 秒**。
 证明闭环轨迹、更高扑救/射门率。完整模型/初始父/manifest/NPZ/
 诊断源码 hash 前后重验，全部授权 false，6 项 fixture 和目标
 mypy/ruff 通过。未修改在跑训练所使用的源码或既有模型。
+
+诊断器补充显式校验实际 imported Core 路径及前后 source/Core HEAD，
+不能把另一 checkout 的后端冒认为声明版本；6 项测试再次通过。
+两个 9 月 16 日的干净、无运行任务临时 worktree 已整目录保留迁移：
+`/tmp/rosclaw-s2338-R60agh`、`/tmp/rosclaw-s2296-bXfIOl` →
+`/code/rosclaw/archived-worktrees/` 下同名目录。tracked 内容集合
+SHA-256 前后相同（`814e292d…`、`30cda9fd…`），Git repair 后仍为
+原 HEAD `d33226e…`、`e5e1c3d…` 且干净。没有删除源码、模型或轨迹，
+在跑训练与旧物理 evidence 路径均未移动，100 GiB 系统保留线未降低。
