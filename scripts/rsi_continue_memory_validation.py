@@ -6,7 +6,6 @@ promotion, video, hardware, retries or automatic changes of parent are allowed.
 """
 
 import argparse
-import json
 import os
 import signal
 import subprocess
@@ -16,12 +15,23 @@ from pathlib import Path
 from typing import Any
 
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
+from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_collect_protected_phase_bank_validation import validate_bank_models
 from scripts.rsi_collect_step_motor_pilot import COURSES
 from scripts.rsi_preflight_memory_bank_validation import check_pilot
 from scripts.rsi_train_protected_online_motor_v308 import _head
+
+
+def transport_flags(*, compressed: bool, shared: bool, proof: bool, reserve: bool) -> list[str]:
+    if any(type(v) is not bool for v in (compressed, shared, proof, reserve)):
+        raise ValueError("explicit boolean validation transport options required")
+    if shared and not compressed or proof != reserve or compressed != proof:
+        raise ValueError("lossless transport requires paired actual proof and system reserve")
+    return (["--compressed-reports"] if compressed else []) + (
+        ["--shared-model-reports"] if shared else []
+    )
 
 
 def run_stage(root: Path, name: str, command: list[str], *, timeout: int = 28800) -> None:
@@ -70,6 +80,10 @@ def main() -> None:
         choices=("review.json", "independent_review.json"),
         default="review.json",
     )
+    parser.add_argument("--compressed-reports", action="store_true")
+    parser.add_argument("--shared-model-reports", action="store_true")
+    parser.add_argument("--compressed-transport-review", type=Path)
+    parser.add_argument("--system-reserve-path", type=Path)
     args = parser.parse_args()
     if len(args.baseline_cpu_root) != 4:
         parser.error("four ordered actual-parent CPU reference folders required")
@@ -78,11 +92,25 @@ def main() -> None:
         ["git", "status", "--porcelain", "--untracked-files=no"], cwd=source, text=True
     ).strip():
         raise ValueError("immutable clean execution checkout required")
-    candidate = json.loads(args.candidate.read_text())
-    baseline = json.loads(args.baseline.read_text())
+    flags = transport_flags(
+        compressed=args.compressed_reports,
+        shared=args.shared_model_reports,
+        proof=args.compressed_transport_review is not None,
+        reserve=args.system_reserve_path is not None,
+    )
+    candidate = load_json_artifact(args.candidate)
+    baseline = load_json_artifact(args.baseline)
     validate_bank_models(candidate, baseline)
-    if candidate["schema"] != "soccer.rsi.smooth_memory_motor.v1":
-        raise ValueError("this continuation is declared only for smooth-memory learning")
+    if candidate["schema"] not in (
+        "soccer.rsi.smooth_memory_motor.v1",
+        "soccer.rsi.consolidated_smooth_motor.v1",
+    ):
+        raise ValueError("declared smooth or consolidated-memory learning required")
+    if (
+        candidate["schema"] == "soccer.rsi.consolidated_smooth_motor.v1"
+        and not args.shared_model_reports
+    ):
+        raise ValueError("consolidated continuation requires explicitly proved shared reports")
     root = args.output_root
     root.mkdir(parents=True, exist_ok=False)
     commitment: dict[str, Any] = dict(
@@ -105,6 +133,53 @@ def main() -> None:
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if args.compressed_reports:
+        transport = _sealed(args.compressed_transport_review)
+        if (
+            transport["schema"] != "soccer.rsi.physical_report_transport_review.v1"
+            or transport["model_hash"] != candidate["model_hash"]
+            or transport["physical_executions_added"] != 3
+            or transport["actual_motor_actions_reconstructed"] != 600
+            or transport["complete_payload_equal"] is not True
+            or transport["body_and_ball_trace_hashes_equal"] is not True
+            or transport["qualification"] != "STORAGE_EQUIVALENCE_ONLY_NOT_LEARNING_GAIN"
+            or args.shared_model_reports
+            and transport.get("physical_report_representation") != "lossless_shared_model_gzip_json"
+            or any(
+                transport.get(k) is not False
+                for k in ("promotion_authorized", "hardware_authorized")
+            )
+        ):
+            raise ValueError(
+                "bound actual shared transport equivalence required before continuation"
+            )
+        from scripts.rsi_compressed_bank_storage import capacity_check
+
+        budget = (
+            args.candidate.stat().st_size * 12 + args.baseline.stat().st_size * 2 + 512 * 1024**2
+        )
+        capacity = capacity_check(root, args.system_reserve_path, budget)
+        write_once(
+            root / "transport-preflight.json",
+            dict(
+                transport_review_hash=transport["report_hash"],
+                transport_file_hash=hash_bytes(args.compressed_transport_review.read_bytes()),
+                flags=flags,
+                capacity=capacity,
+                promotion_authorized=False,
+                hardware_authorized=False,
+            ),
+        )
+        commitment["physical_report_representation"] = (
+            "lossless_shared_model_gzip_json" if args.shared_model_reports else "lossless_gzip_json"
+        )
+        commitment["transport_review_hash"] = transport["report_hash"]
+        commitment["transport_file_hash"] = hash_bytes(
+            args.compressed_transport_review.read_bytes()
+        )
+        commitment["transport_preflight_hash"] = hash_json(
+            load_json_artifact(root / "transport-preflight.json")
+        )
     write_once(root / "commitment.json", commitment)
     common = [
         "--isaac-python",
@@ -131,6 +206,7 @@ def main() -> None:
         display
         + script("rsi_collect_online_step_validation.py")
         + common
+        + flags
         + [
             "--output-root",
             str(pilot_root),
@@ -184,7 +260,8 @@ def main() -> None:
                 str(seed),
                 "--lane",
                 str(lane),
-            ],
+            ]
+            + (["--compressed-report"] if args.compressed_reports else []),
             timeout=3600,
         )
         run_stage(
@@ -225,11 +302,19 @@ def main() -> None:
             "--baseline-cpu-root",
             str(reference),
         ]
+    if args.compressed_reports:
+        preflight += [
+            "--compressed-transport-review",
+            str(args.compressed_transport_review),
+            "--system-reserve-path",
+            str(args.system_reserve_path),
+        ]
     run_stage(root, "bank-preflight", preflight)
     bank_root = root / "bank"
     bank_command = (
         script("rsi_collect_protected_phase_bank_validation.py")
         + common
+        + flags
         + [
             "--output-root",
             str(bank_root),
@@ -244,7 +329,8 @@ def main() -> None:
     run_stage(root, "bank", display + bank_command)
     run_stage(root, "bank-review", bank_command + ["--review-only", "--review-workers", "4"])
     if (
-        _head(source) != commitment["source_commit"]
+        load_json_artifact(root / "commitment.json") != commitment
+        or _head(source) != commitment["source_commit"]
         or _head(args.core_root) != commitment["core_commit"]
         or hash_bytes(args.candidate.read_bytes()) != commitment["candidate_file_hash"]
         or hash_bytes(args.baseline.read_bytes()) != commitment["baseline_file_hash"]
@@ -257,6 +343,13 @@ def main() -> None:
         ).strip()
     ):
         raise ValueError("continuation source or policy drift")
+    if args.compressed_reports and (
+        hash_bytes(args.compressed_transport_review.read_bytes())
+        != commitment["transport_file_hash"]
+        or hash_json(load_json_artifact(root / "transport-preflight.json"))
+        != commitment["transport_preflight_hash"]
+    ):
+        raise ValueError("actual transport proof changed during continuation")
     summary = _sealed(bank_root / "validation_summary.json")
     review = _sealed(bank_root / "independent_review.json")
     result = dict(

@@ -1373,3 +1373,35 @@ dump/权限边界。当前只新增工具，未宣布测量或加速已经完成
 `/code/rosclaw/archived-worktrees/rosclaw-s2324-yoPxxr`，
 Git repair 后 HEAD 仍为 `e647d7677c4c81b6244f5ad69b5ec4d5e3745ea7`
 且干净。原内容全部保留，没有删除模型/轨迹或降低保留线。
+
+### v384：两个敏感性候选实际学习完成；后续完整链路仍逐门验证
+
+预声明权重 16 与 32 的学习均已结束，各 **160 步**，仍重用同一
+104 条/28080 帧、不计新采样。模型分别为 `e228ce612…`、
+`01d0e4960…`，学习承诺分别为 `f2269900…`、`b028fcbf…`；
+条件 KL .0008981273/.0008856642，边际 KL
+.0008922953/.0008693655，原 cap/optimizer/完整记录不变。
+精确 hash 在各 `/code/rosclaw/rsi-risk-margin-sensitivity-v381-weight{16,32}`
+的模型与学习承诺内。已启动两个固定反例的串行实际复测，结果
+将完整保存在 `/data/rosclaw_overflow/rsi-risk-margin-sensitivity-out-v381-weight{16,32}`；
+尚无通过结论，不据训练 loss/KL 选择赢家或晋升。
+
+v383 剖析实际完成：冻结解码器构建 **90.734 秒**，64 个均匀
+既有状态推理 **1.027 秒**。profile review
+`1474908402e945de09dc5e110dfd44a3c816219a3b90e8c340e32767462e9a4a`
+在 `/code/rosclaw/rsi-smooth-mean-profile-v383`。它不测训练品质，
+不代表整个 28080 帧或 optimizer 的完整耗时；支持继续分析重复
+序列化/深拷贝/构建的开销，不证明加速或球技提升已经完成。
+
+现有 pilot→CPU→bank continuation 新增显式无损共享报告路径：
+接受完整已校验巩固模型和确切模型的 **三次实际 transport/600 帧**
+等价证明，再做 12 个 pilot、4 个 CPU、156 个完整银行执行，
+合计预声明 **172**，任何先行门失败即停止扩大。缺 proof/保留线/
+共享前提拒绝，默认传统 smooth/plain 路径保留。模型/文件/源/
+transport preflight 全部绑定并在末尾重验，四个 CPU 保留门、
+pilot 保留门、完整银行和 fresh 边界不放宽。30 项相关 fixture
+与 targeted mypy/ruff 通过；此处只是工程路径，未称已经跑完。
+
+Core PR #615 的新 HEAD `25e9166586743551907fae54db140a7f19ca8979`
+已只读确认 **20 项 SUCCESS、发布 SKIPPED**，仍 OPEN，未擅自合并。
+v381/v382 的全量 XML 23 个失败身份已比对一致。
