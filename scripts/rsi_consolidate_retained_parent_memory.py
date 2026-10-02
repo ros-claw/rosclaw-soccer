@@ -144,7 +144,10 @@ def main() -> None:
     args.output_root.mkdir(parents=True, exist_ok=False)
     write_once(args.output_root / "memory.json", encoded)
     write_once(args.output_root / "manifest.json", manifest)
-    print({k: v for k, v in manifest.items() if k != "records"}, flush=True)
+    print(
+        {k: v for k, v in manifest.items() if k not in ("records", "consolidation_mapping")},
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

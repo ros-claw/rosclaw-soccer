@@ -642,7 +642,17 @@ def main() -> None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
         step_model = load_json_artifact(args.contact_motor_step_model)
-        if step_model.get("schema") in (
+        if step_model.get("schema") == "soccer.rsi.consolidated_smooth_motor.v1":
+            from rosclaw_soccer.rsi.consolidated_smooth_motor import CompiledConsolidatedSmoothMotor
+            from rosclaw_soccer.rsi.consolidated_smooth_motor import (
+                make_preview as consolidated_preview,
+            )
+
+            make_preview = consolidated_preview
+            delta_at_frame = CompiledConsolidatedSmoothMotor(
+                make_preview(step_model)
+            ).delta_at_frame
+        elif step_model.get("schema") in (
             "soccer.rsi.smooth_memory_motor.v1",
             "soccer.rsi.smooth_memory_sampling.v1",
         ):
