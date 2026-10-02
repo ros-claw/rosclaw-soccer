@@ -1,4 +1,4 @@
-"""Two actual executions: unchanged NN control, then one declared new actor.
+"""Three actual executions: same-source parent, NN control, declared new actor.
 
 The NN must reproduce ALL four historical physical/action trace arrays before
 the new actor runs. This fixed consumed counterexample is not a fresh exam.
@@ -13,6 +13,7 @@ import numpy as np
 from rosclaw_soccer.rsi.current_memory_motor import validate_model
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _outcome, _sealed
 from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
+from rosclaw_soccer.rsi.physical_report_io import resolve_physical_report
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
@@ -45,6 +46,11 @@ def check_trace_arrays(old: dict[str, Any], new: dict[str, Any]) -> None:
         )
 
 
+def check_execution_parent(report: dict[str, Any], *, runner_hash: str, asset_hash: str) -> None:
+    if report.get("source_hash") != runner_hash or report.get("asset_hash") != asset_hash:
+        raise ValueError("actor must use a same-source same-body newly executed parent")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in (
@@ -66,6 +72,7 @@ def main() -> None:
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--expected-model-hash", required=True)
     parser.add_argument("--expected-learning-hash", required=True)
+    parser.add_argument("--gpu", type=int, choices=(0, 1, 2, 3), default=3)
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     model = load_json_artifact(args.candidate)
@@ -160,7 +167,8 @@ def main() -> None:
         capacity=capacity_check(args.output_root.parent, args.system_reserve_path, 768 * 1024**2),
         parent_report_hash=parent["report_hash"],
         qualified_nn_report_hash=warm["report_hash"],
-        new_physical_executions_planned=2,
+        new_physical_executions_planned=3,
+        physical_gpu=args.gpu,
         historical_controls_consumed=2,
         promotion_authorized=False,
         hardware_authorized=False,
@@ -168,6 +176,41 @@ def main() -> None:
     args.output_root.mkdir(exist_ok=False)
     (args.output_root / "logs").mkdir()
     write_once(args.output_root / "commitment.json", commitment)
+    new_parent, _ = _run(
+        root=args.output_root,
+        runner=runner,
+        isaac_python=args.isaac_python,
+        g1_usd=args.g1_usd,
+        model_root=args.model_root,
+        actor=args.late_swing_policy,
+        seed=seed,
+        lane=lane,
+        gpu=args.gpu,
+        gain=1.2,
+        negative_only=True,
+        core_root=args.core_root,
+        arm="reproduction",
+        kind="parent",
+        compressed_report=True,
+        execution_timeout_s=900,
+    )
+    new_parent_folder = args.output_root / f"{stem}-reproduction-parent"
+    check_execution_parent(
+        new_parent, runner_hash=commitment["runner_hash"], asset_hash=commitment["asset_hash"]
+    )
+    for name in ("body_trace.npz", "trace.npz"):
+        with (
+            np.load(parent_path.parent / name, allow_pickle=False) as old,
+            np.load(new_parent_folder / name, allow_pickle=False) as new,
+        ):
+            check_trace_arrays(dict(old), dict(new))
+    if any(
+        new_parent[k] != parent[k]
+        for k in ("asset_hash", "sonic_qualification_hash", "environments")
+    ):
+        raise ValueError("same-source parent must reproduce historical physical course exactly")
+    new_parent_path = resolve_physical_report(new_parent_folder / "report.json")
+    print("CURRENT_MEMORY_PARENT_CONTROL_EXACT", flush=True)
     for arm, actor_path in (
         ("nn-control", args.qualified_parent_model),
         ("current-memory", args.candidate),
@@ -181,14 +224,14 @@ def main() -> None:
             actor=args.late_swing_policy,
             seed=seed,
             lane=lane,
-            gpu=3,
+            gpu=args.gpu,
             gain=1.2,
             negative_only=True,
             core_root=args.core_root,
             arm=arm,
             kind="actor",
             motor_step=actor_path,
-            parent_report_override=parent_path,
+            parent_report_override=new_parent_path,
             compressed_report=True,
             execution_timeout_s=900,
         )
@@ -219,7 +262,7 @@ def main() -> None:
         or _head(args.core_root) != commitment["core_commit"]
         or _sealed(parent_path) != parent
         or _sealed(warm_folder / "report.json") != warm
-        or raw["parent_report_hash"] != parent["report_hash"]
+        or raw["parent_report_hash"] != new_parent["report_hash"]
         or raw["contact_motor_policy"]["step_motor_proof"]["model"]["model_hash"]
         != model["model_hash"]
     ):
@@ -229,10 +272,12 @@ def main() -> None:
         commitment_hash=hash_json(commitment),
         model_hash=model["model_hash"],
         course=list(COURSE),
-        new_physical_executions=2,
+        new_physical_executions=3,
         historical_controls_consumed=2,
         motor_frames_reconstructed=900,
         exact_unchanged_nn_trace_equivalence=True,
+        exact_same_source_parent_trace_equivalence=True,
+        same_source_parent_report_hash=new_parent["report_hash"],
         new_nn_control_outcome=new_nn_outcome,
         reference_outcome=baseline,
         candidate_outcome=candidate_outcome,

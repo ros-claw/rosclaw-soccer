@@ -1487,3 +1487,36 @@ mypy/ruff 通过。未修改在跑训练所使用的源码或既有模型。
 SHA-256 前后相同（`814e292d…`、`30cda9fd…`），Git repair 后仍为
 原 HEAD `d33226e…`、`e5e1c3d…` 且干净。没有删除源码、模型或轨迹，
 在跑训练与旧物理 evidence 路径均未移动，100 GiB 系统保留线未降低。
+
+### v387：当前保护两组学习完成；修正同源父报告工程缺口后再做实际复测
+
+两组均完成 **160 步**，仍同一旧 104 条、0 新采样。控制模型
+`de57bd0be71933dad2865d57bc0839674b5dabdd47a1ce3e75e30dabacb9f4e6`，
+learning review `a93ba8df637669bd516b5aef6ae7eeb1ce2059601afcba8d5a75be645a721817`，
+条件/边际 KL **.000910847300963538 / .0009150317475722866**。
+扩大塑性模型 `2895e539a971a7caf82c1a217fb44258f1bfd4c1820562c3b8965fd79551a17d`，
+review `902259998770cdd8b69a4e9afb796fc9df7cc648c8dd7d78e22859be6ab4153c`，
+条件/边际 KL **.0022170343693422388 / .0017280791054416393**。
+两组都在训练及执行保护完整 **20250 行/39 案**，真实类别为离线
+权重更新，尚不构成物理增长、fresh 通过或自动激活。
+
+首次固定反例复测被 `_run` 的 actor/parent 来源门正确拒绝：新
+runner 使用了旧 runner 的 parent report；因此是工程链路缺陷，
+不是策略足球成绩。新 NN 已完成 1 次实际执行，候选 0 次；保留
+`/data/rosclaw_overflow/rsi-current-memory-counterexample-v385-control`
+及原 driver log，不覆盖/删除。只读比对四个完整 NPZ（身体、
+motor、taskspace、足球）全部数组及 dtype 与历史 NN 精确一致，
+但这不把来源被拒绝的 attempt 补签为通过。
+
+修正方式是重新生成同源 parent，再执行 NN 和 candidate：预声明
+**3 次**，先验比较 parent 的全部身体/足球数组与历史控制，再
+比较 NN 的四份完整 trace、再执行候选。新增同源同 body 前置门，
+不放宽 `_run` 和独立审计。8 项绑定/诊断 fixture、targeted
+mypy/ruff 通过；后续用全新 retake 目录，尚无候选物理通过结论。
+
+另将旧、干净、无运行任务的 Core 审查临时 worktree
+`/tmp/rosclaw-main-f05aafdb-txgOKl` 整目录保留迁移到
+`/code/rosclaw/archived-worktrees/rosclaw-main-f05aafdb-txgOKl`；tracked
+内容集合 SHA `9e928945a7e4b7948ca87db787bb00abdc8df5926f2e222853c50c377dd244fb`
+前后相同，HEAD 仍 `f05aafdb…` 且干净，没有删模型/轨迹或移动
+当前工作区/在用源快照。恢复系统保留余量，不改变实验保留线。
