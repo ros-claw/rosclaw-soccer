@@ -1733,3 +1733,37 @@ fixture views 的逐字段/hash/reader一致性、篡改拒绝。Fixture 不是
 物理成绩；增加新路径的固定旧 sample 两次实际仿真验证，通过前
 不将新缓存路径称为已物理验证。新 AWR-inspired 104 拟合仍在运行，
 不得把缓存测试/旧数据重训当作新球技。所有旧失败证据保留。
+
+### v393 AWR-inspired 完成拟合、固定反例验证启动
+
+`/data/rosclaw_overflow/rsi-advantage-memory-learning-v393-104` 的
+104 条/28080 帧旧数据拟合已完成，**0 新采样**。model hash
+`d9da4d67c0f617d72f08b977629e70a1132e774462e990d2b86e00179dd46346`，
+learning report hash
+`124a0f89dd82a15ac07013a7f7322a91eef084213a6ee40873043ce7732f2b3e`。
+6 个 accepted optimizer steps（最多160，不凑步数）；完整 loss
+6.0030592575537325 → 5.9418911019111205；conditional KL
+.0012092690472960135，marginal KL .004899497266487905。达到预声明
+KL/backtracking 限制而停止，不能把 loss 下降称足球提升。模型/初始模型
+各约66MiB，全部保留；所有授权 false，仍是离线候选。
+
+新固定反例验证运行于冻结 Soccer v393/Core v392，GPU1：
+`/data/rosclaw_overflow/rsi-advantage-memory-counterexample-v393-104`；
+同源 parent→原 NN→新 candidate 三个新实际执行，要求旧 NN 的所有
+NPZ 数组与历史完全相等，再独立重构900帧 motor。尚无结论时
+不得宣称新 candidate 通过；新学习族与旧数值文件继续冻结不改。
+
+旧 v390-stream2-retake1 在50分钟左右已开始写盘，但未启动 worker。
+操作员代理核验 PID、冻结工作目录、children 为空、logs 为空后，仅
+中断自己的构造进程，保留 commitment/模型中间文件与完整 traceback。
+最终 traceback 位于 `write_shared_sampling_model→write_once→hash_json`，
+物理执行/新轨迹 **0**。第一次停止保护检查因目录刚创建而拒绝，
+随后重新只在明确 pre-worker 状态下停止，没有停止其它程序。
+
+冻结新 Soccer v395 `0e7fd42`、Core v394 `e6fed452` 的缓存构造固定
+旧 sample 物理等价验证已启动：
+`/data/rosclaw_overflow/rsi-exact-shared-sampling-transport-v395`。
+collector 必须提供包含新 builder/Core cache 文件实际 hash 的完整
+物理 transport review，不能拿旧 proof 跳过新构造验证。新旧相关
+测试 **48 passed，30.99 秒**；一次因测试文件名不存在而零收集的
+命令失败留档，修正路径后重跑，不混进通过计数。
