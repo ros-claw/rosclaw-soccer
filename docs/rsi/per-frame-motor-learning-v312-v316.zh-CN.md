@@ -1767,3 +1767,38 @@ collector 必须提供包含新 builder/Core cache 文件实际 hash 的完整
 物理 transport review，不能拿旧 proof 跳过新构造验证。新旧相关
 测试 **48 passed，30.99 秒**；一次因测试文件名不存在而零收集的
 命令失败留档，修正路径后重跑，不混进通过计数。
+
+### v395 lossless 物理证明完成，v396 独立采样→审计→学习接续
+
+缓存构造 transport **2 新实际执行/600 motor frames** 已全部独立
+验证：完整 sampling object、所有 body/ball/taskspace/motor NPZ 数组、
+全部物理 outcome 与旧 sample bitwise 一致。review hash
+`588ca27c3f754870f4374fe64b7bd516dc1bc742596104f4a3acaa37e46e8d42`，
+commitment hash
+`75d335374ba20b44a2aa06a1b62f95e114d1b6f00a99a99848fcb95c7cb26d86`。
+旧样本仍为 dirty contact/HQ=false/reward=-2，不把 transport 成功当
+踢球成功。全部完整 mean 38939842 bytes、envelope592 bytes，不删字段。
+
+`/data/rosclaw_overflow/rsi-current-parent-independent-exploration-v395-stream2`
+已预声明完整13案×16；208 个sampling envelopes均已写盘，四个spawn
+worker开始实际仿真。计划234次新物理执行，208条/56160帧探索；
+stream2独立于旧104的stream1。完成前不得报208条真实轨迹已经得到。
+新全量回归 **6390 passed / 23 failed / 70 skipped，586.64 秒**，XML
+逐项确认失败身份与v393相同；日志/XML
+`/code/rosclaw/rsi-exact-sampling-v395-regression.{log,xml}`。
+
+新增只接续SIM数据的调度器，绑定实际collector PID/start time及
+冻结Source/Core/输入哈希；全208条成功与失败齐备sealed summary后
+才能开启完整独立motor重构、保存完整manifest/NPZ、AWR-inspired
+学习、三执行固定反例。拒绝部分数据、重复课程/view、旧stream、
+重用PID、源码/输入漂移、自动重试和授权提升；反例通过仍只是
+NEEDS_FULL_RETENTION_CPU_FRESH，绝不自动激活或跳到比赛。11项
+调度器测试通过、ruff/mypy通过。它不改变旧artifact-bound数值文件。
+
+空间保持：只完整迁移**已结束且无打开文件**的自己的测试tmp，
+保留原路径symlink；Data上v393→`/code/rosclaw/archived-test-temp-v393`，
+所有常规文件相对路径+SHA清单hash迁移前后均
+`8a4255c06ca2f509dde6d20b7a09baee04178b0d76136d98907bd4f7bf373f6d`；
+v390→`/code/rosclaw/archived-test-temp-v390`，同样清单hash均
+`5a8cb182ddd257d63eeb1da0beeee27c87f2406698d5f0f26ac9066a887c24a7`。
+不删报告、轨迹、模型，也不动用户Kit日志或降低100GiB系统保留线。
