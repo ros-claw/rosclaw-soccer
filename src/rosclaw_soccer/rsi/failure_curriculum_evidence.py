@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 
@@ -17,6 +17,8 @@ from rosclaw_soccer.rsi.approach_lateral_tracking_evidence import audit_lateral_
 from rosclaw_soccer.rsi.contact_motor_contract import load_policy
 from rosclaw_soccer.rsi.contextual_first_touch_option import first_touch_reward
 from rosclaw_soccer.rsi.independent_first_touch_bank import post_contact_displacement
+from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
+from rosclaw_soccer.rsi.physical_report_io import load_physical_report
 from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_trace
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_collect_bilateral_motor_validation_v305 import COURSES
@@ -79,7 +81,11 @@ def retention_score(rows: list[dict[str, Any]], reference: list[dict[str, Any]])
 
 
 def _sealed(path: Path) -> dict[str, Any]:
-    report = cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+    report = (
+        load_physical_report(path)
+        if path.name in ("report.json", "report.json.gz")
+        else load_json_artifact(path)
+    )
     if report.get("report_hash") != hash_json(
         {k: v for k, v in report.items() if k != "report_hash"}
     ):

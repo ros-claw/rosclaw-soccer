@@ -13,6 +13,7 @@ from rosclaw_soccer.rsi.first_touch_course_catalog import (
     sample_training_courses,
     static_development_courses,
 )
+from rosclaw_soccer.rsi.physical_report_io import load_physical_report
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
@@ -102,7 +103,7 @@ def audit_body_trace(folder: Path, report: dict[str, Any], frames: int, lanes: i
 def audit_vector_first_touch(
     folder: Path, *, decoder_sink: list[Any] | None = None
 ) -> dict[str, Any]:
-    report: dict[str, Any] = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    report = load_physical_report(folder / "report.json")
     trace_path = folder / "trace.npz"
     committed = {key: value for key, value in report.items() if key != "report_hash"}
     if (
@@ -371,7 +372,7 @@ def audit_reset_replay(folder: Path) -> dict[str, Any]:
     """Verify paired in-process reset without counting replay as new courses."""
 
     baseline = audit_vector_first_touch(folder)
-    source = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    source = load_physical_report(folder / "report.json")
     replay_report = json.loads((folder / "reset_report.json").read_text(encoding="utf-8"))
     replay_trace = folder / "reset_replay.npz"
     committed = {key: value for key, value in replay_report.items() if key != "report_hash"}
@@ -508,8 +509,8 @@ def audit_first_touch_candidate_execution(
     )
 
     parent_audit = audit_vector_first_touch(parent_folder)
-    parent = json.loads((parent_folder / "report.json").read_text(encoding="utf-8"))
-    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    parent = load_physical_report(parent_folder / "report.json")
+    report = load_physical_report(folder / "report.json")
     trace_path = folder / "trace.npz"
     committed = {key: value for key, value in report.items() if key != "report_hash"}
     if (
@@ -676,8 +677,8 @@ def audit_temporal_first_touch_execution(
     )
 
     parent_audit = audit_vector_first_touch(parent_folder)
-    parent = json.loads((parent_folder / "report.json").read_text(encoding="utf-8"))
-    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    parent = load_physical_report(parent_folder / "report.json")
+    report = load_physical_report(folder / "report.json")
     trace_path = folder / "trace.npz"
     courses = tuple(
         (

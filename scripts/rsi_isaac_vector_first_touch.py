@@ -17,6 +17,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--g1-usd", required=True, type=Path)
 parser.add_argument("--model-root", required=True, type=Path)
 parser.add_argument("--output-dir", required=True, type=Path)
+parser.add_argument("--compressed-report", action="store_true")
 parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--training-course-seed", type=int)
@@ -534,7 +535,9 @@ def main() -> None:
         )
     ) and args.parent_report is not None:
         parent_audit = audit_vector_first_touch(args.parent_report.parent)
-        parent = json.loads(args.parent_report.read_text(encoding="utf-8"))
+        from rosclaw_soccer.rsi.physical_report_io import load_physical_report
+
+        parent = load_physical_report(args.parent_report)
         if (
             parent_audit["source_report_hash"] != parent["report_hash"]
             or parent["asset_hash"] != hash_bytes(args.g1_usd.read_bytes())
@@ -1746,10 +1749,23 @@ def main() -> None:
                 Path(audit_support_knee_action_trace.__code__.co_filename).read_bytes()
             )
     report["report_hash"] = hash_json(report)
-    (args.output_dir / "report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    print("RSI_ISAAC_VECTOR_FIRST_TOUCH=" + json.dumps(report, sort_keys=True), flush=True)
+    if args.compressed_report:
+        from scripts.rsi_atomic_artifacts import write_once
+
+        report_path = args.output_dir / "report.json.gz"
+        write_once(report_path, report)
+        # The complete authoritative document remains on disk. Do not duplicate
+        # its potentially large model/proof payload into the native stdout log.
+        print(
+            "RSI_ISAAC_VECTOR_FIRST_TOUCH_ARTIFACT="
+            + json.dumps({"report_hash": report["report_hash"], "filename": report_path.name}),
+            flush=True,
+        )
+    else:
+        (args.output_dir / "report.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        print("RSI_ISAAC_VECTOR_FIRST_TOUCH=" + json.dumps(report, sort_keys=True), flush=True)
     if args.reset_replay:
         sim.reset(soft=False)
         robot.write_root_pose_to_sim_index(root_pose=pose)

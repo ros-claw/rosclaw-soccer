@@ -16,6 +16,7 @@ from rosclaw_soccer.rsi.approach_lateral_tracking_evidence import audit_lateral_
 from rosclaw_soccer.rsi.conservative_approach_rectangle import load_guarded_approach_policy
 from rosclaw_soccer.rsi.contextual_first_touch_option import first_touch_reward
 from rosclaw_soccer.rsi.independent_first_touch_bank import post_contact_displacement
+from rosclaw_soccer.rsi.physical_report_io import load_physical_report, resolve_physical_report
 from rosclaw_soccer.rsi.precontact_proprio_policy import load_policy as load_precontact_policy
 from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_trace
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -63,6 +64,7 @@ def _run(
     motor_step: Path | None = None,
     core_root: Path | None = None,
     execution_timeout_s: float | None = None,
+    compressed_report: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if sum(p is not None for p in (motor_policy, motor_bootstrap, motor_online, motor_step)) > 1:
         raise ValueError("one explicit motor proposal backend required")
@@ -70,8 +72,12 @@ def _run(
     parent_folder = root / f"seed{seed}-lane{lane}-{arm}-parent"
     log_path = root / "logs" / f"seed{seed}-lane{lane}-{arm}-{kind}.log"
     existing = folder.exists()
-    if existing and (not resume or not (folder / "report.json").is_file()):
-        raise ValueError(f"new output required: {folder}")
+    if existing:
+        if not resume:
+            raise ValueError(f"new output required: {folder}")
+        actual_report = resolve_physical_report(folder / "report.json")
+        if actual_report.name != ("report.json.gz" if compressed_report else "report.json"):
+            raise ValueError("resume report representation differs")
     command = [
         str(isaac_python),
         str(runner),
@@ -102,6 +108,8 @@ def _run(
     ]
     if negative_only:
         command.append("--navigation-lateral-negative-only")
+    if compressed_report:
+        command.append("--compressed-report")
     if rectangle_policy is not None:
         command.extend(("--navigation-rectangle-policy", str(rectangle_policy)))
     if proprio_policy is not None:
@@ -114,7 +122,9 @@ def _run(
                 "--late-swing-policy",
                 str(actor),
                 "--parent-report",
-                str(parent_report_override or parent_folder / "report.json"),
+                str(
+                    resolve_physical_report(parent_report_override or parent_folder / "report.json")
+                ),
                 "--revalidate-swing-side",
                 "--late-swing-lateral-cap-m",
                 "0.15",
@@ -138,6 +148,7 @@ def _run(
         CUDA_VISIBLE_DEVICES=str(gpu),
         PYTHONPATH=os.pathsep.join(
             [
+                str(runner.parent.parent),
                 str(runner.parent.parent / "src"),
                 str(core_root / "src") if core_root else "/code/rosclaw/rosclaw_test/src",
             ]
@@ -154,9 +165,12 @@ def _run(
                 check=False,
                 timeout=execution_timeout_s,
             )
-        if completed.returncode or not (folder / "report.json").is_file():
+        if completed.returncode:
             raise RuntimeError(f"Isaac failed; inspect {log_path}")
-    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        actual_report = resolve_physical_report(folder / "report.json")
+        if actual_report.name != ("report.json.gz" if compressed_report else "report.json"):
+            raise ValueError("producer report representation differs")
+    report = load_physical_report(folder / "report.json")
     audit = audit_lateral_approach(folder)
     expected_motor_hash = (
         json.loads(motor_policy.read_text(encoding="utf-8"))["policy_hash"]
@@ -202,9 +216,7 @@ def _run(
     ):
         raise ValueError(f"approach arm report drift: {folder}")
     if kind == "actor":
-        parent = json.loads(
-            (parent_report_override or parent_folder / "report.json").read_text(encoding="utf-8")
-        )
+        parent = load_physical_report(parent_report_override or parent_folder / "report.json")
         if (
             report["parent_report_hash"] != parent["report_hash"]
             or report["source_hash"] != parent["source_hash"]

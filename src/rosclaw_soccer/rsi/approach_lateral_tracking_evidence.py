@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from rosclaw_soccer.rsi.conservative_approach_rectangle import ApproachRectangle
+from rosclaw_soccer.rsi.physical_report_io import load_physical_report
 from rosclaw_soccer.rsi.precontact_proprio_policy import (
     proprio_vector,
     risk_probability,
@@ -30,7 +30,7 @@ def audit_lateral_approach(
         if decoder_sink is None
         else audit_vector_first_touch(folder, decoder_sink=decoder_sink)
     )
-    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    report = load_physical_report(folder / "report.json")
     gain = report.get("navigation_lateral_ball_gain")
     negative_only = report.get("navigation_lateral_negative_only", False)
     rectangle_hash = report.get("navigation_rectangle_policy_hash")
