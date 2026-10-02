@@ -12,7 +12,6 @@ import numpy as np
 import rosclaw.growth.shared_proof_payload as shared_module
 
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _outcome, _sealed
-from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 from rosclaw_soccer.rsi.physical_report_io import resolve_physical_report
 from rosclaw_soccer.rsi.sampling_model_io import load_sampling_model
 from rosclaw_soccer.rsi.smooth_memory_motor import make_preview
@@ -41,6 +40,7 @@ def main() -> None:
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--expected-mean-model-hash", required=True)
     parser.add_argument("--gpu", type=int, choices=range(4), default=0)
+    parser.add_argument("--fast-shared-sampling-build", action="store_true")
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     for root in (source, args.core_root):
@@ -101,6 +101,20 @@ def main() -> None:
         resolve_physical_report(old_parent_folder / "report.json"),
         resolve_physical_report(old_actor_folder / "report.json"),
     ]
+    if args.fast_shared_sampling_build:
+        import rosclaw.growth.frozen_payload_field as cached_module
+
+        if (
+            Path(cached_module.__file__).resolve()
+            != (args.core_root / "src/rosclaw/growth/frozen_payload_field.py").resolve()
+        ):
+            raise ValueError("actual cached field must belong to declared Core")
+        files.extend(
+            [
+                Path(cached_module.__file__),
+                source / "scripts/rsi_exact_shared_sampling_views.py",
+            ]
+        )
     pins = {str(p.resolve()): hash_bytes(p.read_bytes()) for p in files}
     capacity = capacity_check(args.output_root.parent, args.system_reserve_path, 768 * 1024**2)
     commitment = dict(
@@ -122,12 +136,20 @@ def main() -> None:
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if args.fast_shared_sampling_build:
+        commitment["sampling_construction"] = "EXACT_CACHED_COMPLETE_MEAN_V1"
     args.output_root.mkdir(exist_ok=False)
     (args.output_root / "models").mkdir()
     (args.output_root / "logs").mkdir()
     write_once(args.output_root / "commitment.json", commitment)
     path = args.output_root / "models/sample-0.json.gz"
-    write_shared_sampling_model(path, view)
+    if args.fast_shared_sampling_build:
+        from scripts.rsi_exact_shared_sampling_views import exact_shared_views, publish_shared_views
+
+        cached_views = exact_shared_views(view["mean_model"], [view["seed"]])
+        publish_shared_views(args.output_root, view["mean_model"], cached_views)
+    else:
+        write_shared_sampling_model(path, view)
     if load_sampling_model(path) != view:
         raise ValueError("whole sampling input transport changed")
     common = dict(

@@ -1706,3 +1706,30 @@ RSI-M0 未完成、fresh 80 未开启、仍不升层或制作虚假比赛宣传�
 `/data/rosclaw_overflow/archived-rejected-models/consolidated-smooth-proposal-v371.json`，
 原路径保留 symlink，model 内容、旧报告和全部轨迹未改；文件 SHA
 与字节数见本轮迁移日志。不移动活动收集/learning inputs，维持系统保留线。
+
+### v393 回归和 v394 完整载荷构造缓存（2026-10-03）
+
+v393 完整回归 **6380 passed / 23 failed / 70 skipped，556.77 秒**；
+逐项比较 XML，23 项失败身份与 v390 完全相同，没有新增失败。
+日志/XML `/code/rosclaw/rsi-advantage-memory-v393-regression.{log,xml}`。
+旧 A5 proposal 完整文件 SHA256
+`eafb41d617629a96fd92b960125d93b9991b513a20abf71dedc085ac3046df7f`，
+225599802 bytes；迁移前后逐字节一致，并保留原路径链接。
+
+独立 208 采样旧构造路径在 49 分钟后仍只在 CPU 构造 sampling views，
+输出目录未创建、没有 native worker、**0 新物理轨迹**，不可算作训练。
+原因是重复验证/深拷贝/JSON 编码同一完整 mean。Core 新纯数据
+`FrozenPayloadField` 缓存一次完整 canonical JSON 字节，仍把全部字段
+计入每个 logical hash；100 个不同 compact document 与旧 detach/restore
+完全相等。新旧合计 20 项测试通过，mypy 通过；Core `e6fed452` 已推送
+原 PR #615 分支，未合并。冻结来源
+`/code/rosclaw/rsi-core-frozen-payload-source-v394`。
+
+Soccer 新独立 exact shared builder 保留全部 208 seed、std=.1/rho=.9，
+首尾与旧权威构造器全对象相等；所有完整 logical/model/envelope seal
+验证后只存一份完整 mean。解码器、随机分布、旧数值模块不变。
+新增与既有 shared reader 测试 **19 passed，30.32 秒**，包括全部 16
+fixture views 的逐字段/hash/reader一致性、篡改拒绝。Fixture 不是
+物理成绩；增加新路径的固定旧 sample 两次实际仿真验证，通过前
+不将新缓存路径称为已物理验证。新 AWR-inspired 104 拟合仍在运行，
+不得把缓存测试/旧数据重训当作新球技。所有旧失败证据保留。

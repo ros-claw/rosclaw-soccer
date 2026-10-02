@@ -133,11 +133,14 @@ def main() -> None:
     parser.add_argument("--first-four-courses", action="store_true")
     parser.add_argument("--compressed-sampling-models", action="store_true")
     parser.add_argument("--shared-sampling-models", action="store_true")
+    parser.add_argument("--fast-shared-sampling-build", action="store_true")
     parser.add_argument("--shared-transport-review", type=Path)
     parser.add_argument("--system-reserve-path", type=Path)
     parser.add_argument("--exploration-stream", type=int, choices=range(32), default=0)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
+    if args.fast_shared_sampling_build and not args.shared_sampling_models:
+        parser.error("exact cached construction requires full shared sampling proof")
     if not 4 <= args.samples_per_course <= 16:
         parser.error("four to sixteen preregistered samples per failure required")
     if args.shared_sampling_models and (
@@ -162,6 +165,14 @@ def main() -> None:
             != (args.core_root / "src/rosclaw/growth/shared_proof_payload.py").resolve()
         ):
             raise ValueError("actual shared payload module must belong to declared Core")
+        if args.fast_shared_sampling_build:
+            import rosclaw.growth.frozen_payload_field as cached_module
+
+            if (
+                Path(cached_module.__file__).resolve()
+                != (args.core_root / "src/rosclaw/growth/frozen_payload_field.py").resolve()
+            ):
+                raise ValueError("actual cached full field must belong to declared Core")
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
     warm = json.loads(args.warm_model.read_text())
     arm = "warm"
@@ -251,6 +262,15 @@ def main() -> None:
         for filename, digest in transport["input_hashes"].items():
             if hash_bytes(Path(filename).read_bytes()) != digest:
                 raise ValueError("pinned actual transport input drift before exploration")
+        if args.fast_shared_sampling_build:
+            for path in (
+                source / "scripts/rsi_exact_shared_sampling_views.py",
+                Path(cached_module.__file__),
+            ):
+                if transport["input_hashes"].get(str(path.resolve())) != hash_bytes(
+                    path.read_bytes()
+                ):
+                    raise ValueError("actual exact cached builder transport proof required")
         args.output_root.parent.mkdir(parents=True, exist_ok=True)
         budget = shared_sampling_budget(
             transport,
@@ -259,20 +279,24 @@ def main() -> None:
             views=len(courses) * args.samples_per_course,
         )
         shared_capacity = capacity_check(args.output_root.parent, args.system_reserve_path, budget)
-    views = bounded_views(
-        make_view,
-        base,
-        (
-            sampling_seed(
-                i,
-                s,
-                generation=warm["generation"] if arm == "candidate" else 0,
-                stream=args.exploration_stream,
-            )
-            for i in range(len(courses))
-            for s in range(args.samples_per_course)
-        ),
-    )
+    seeds = [
+        sampling_seed(
+            i,
+            s,
+            generation=warm["generation"] if arm == "candidate" else 0,
+            stream=args.exploration_stream,
+        )
+        for i in range(len(courses))
+        for s in range(args.samples_per_course)
+    ]
+    if args.fast_shared_sampling_build:
+        from scripts.rsi_exact_shared_sampling_views import exact_shared_views
+
+        views = exact_shared_views(base, seeds)
+        view_hashes = [v["stripped_document"]["model_hash"] for v in views]
+    else:
+        views = bounded_views(make_view, base, seeds)
+        view_hashes = [v["model_hash"] for v in views]
     commitment = dict(
         schema="soccer.rsi.failure_step_exploration_commitment.v1",
         source_commit=_head(source),
@@ -289,7 +313,7 @@ def main() -> None:
         courses=[[r["seed"], r["lane"]] for r in courses],
         samples_per_course=args.samples_per_course,
         std_raw=0.1,
-        sampling_view_hashes=[v["model_hash"] for v in views],
+        sampling_view_hashes=view_hashes,
         sampling_memory_helper_hash=hash_bytes(
             (source / "scripts/rsi_sampling_view_memory.py").read_bytes()
         ),
@@ -328,6 +352,14 @@ def main() -> None:
             exploration_stream=args.exploration_stream,
             exploration_stream_namespace="STREAM_STRIDE_20000000",
         )
+    if args.fast_shared_sampling_build:
+        commitment.update(
+            sampling_construction="EXACT_CACHED_COMPLETE_MEAN_V1",
+            cached_sampling_helper_hash=hash_bytes(
+                (source / "scripts/rsi_exact_shared_sampling_views.py").read_bytes()
+            ),
+            core_cached_field_hash=hash_bytes(Path(cached_module.__file__).read_bytes()),
+        )
     if arm == "candidate":
         commitment.update(
             schema="soccer.rsi.output_memory_exploration_commitment.v1",
@@ -357,7 +389,11 @@ def main() -> None:
     for folder in ("logs", "models"):
         (args.output_root / folder).mkdir(exist_ok=args.resume)
     write_once(args.output_root / "commitment.json", commitment)
-    for i, view in enumerate(views):
+    if args.fast_shared_sampling_build:
+        from scripts.rsi_exact_shared_sampling_views import publish_shared_views
+
+        publish_shared_views(args.output_root, base, views)
+    for i, view in enumerate([] if args.fast_shared_sampling_build else views):
         path = sampling_model_path(args.output_root, i, compressed=args.compressed_sampling_models)
         if args.shared_sampling_models:
             from scripts.rsi_atomic_artifacts import write_shared_sampling_model
@@ -383,7 +419,7 @@ def main() -> None:
             arm=arm,
             runner=runner,
             args=vars(args),
-            view_hashes=[v["model_hash"] for v in views],
+            view_hashes=view_hashes,
         )
         for gpu in range(4)
     ]
