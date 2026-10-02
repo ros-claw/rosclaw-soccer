@@ -1352,3 +1352,24 @@ v377 recovery 第二次 native 启动在 20262106/6 candidate 失败，
 这不是独立备份，也不是新物理数据，报告分别计 reused=17/new=4；
 保留两次故障和完整祖先恢复承诺。21 项 recovery/delta fixture
 通过，targeted mypy/ruff 通过。最终七课独立复审尚未完成。
+
+### v383：只读训练准备耗时剖析与完整回归记录
+
+v382 全量实际 6326 passed、23 failed、70 skipped，274 秒。
+不将 23 个既有失败隐藏成绿色。仍保留 NN39 qualified 父，
+F4 反例否决不变；后续两档目标敏感性模型尚未完成。
+
+新增 `rsi_profile_smooth_mean_preparation.py`：以 sealed manifest
+和完整 NPZ 的 hash 绑定已消费数据，只对预声明均匀行剖析 decoder
+构建/mean 准备耗时，保存 pstats、样本索引和输出字节 hash。
+0 新物理执行、0 optimizer 步，不能把 profiler 称为训练/资格。
+原因是 read-only 附加 profiler 因系统 ptrace 权限拒绝；没有
+修改系统权限、没有重启在跑训练，改用独立同源计算伴随剖析。
+参考 [py-spy 官方说明](https://github.com/benfred/py-spy) 的
+dump/权限边界。当前只新增工具，未宣布测量或加速已经完成。
+
+另一个旧、干净、无运行任务的临时 worktree
+`/tmp/rosclaw-s2324-yoPxxr` 完整迁移到
+`/code/rosclaw/archived-worktrees/rosclaw-s2324-yoPxxr`，
+Git repair 后 HEAD 仍为 `e647d7677c4c81b6244f5ad69b5ec4d5e3745ea7`
+且干净。原内容全部保留，没有删除模型/轨迹或降低保留线。
