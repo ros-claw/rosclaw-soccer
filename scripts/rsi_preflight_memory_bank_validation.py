@@ -126,6 +126,8 @@ def main() -> None:
         default="review.json",
     )
     parser.add_argument("--storage-root", type=Path, required=True)
+    parser.add_argument("--compressed-transport-review", type=Path)
+    parser.add_argument("--system-reserve-path", type=Path)
     args = parser.parse_args()
     if len(args.cpu_root) != 4 or len(args.baseline_cpu_root) != 4:
         parser.error("all four paired CPU courses required")
@@ -134,6 +136,7 @@ def main() -> None:
     if model.get("schema") not in (
         "soccer.rsi.output_memory_step_motor.v1",
         "soccer.rsi.smooth_memory_motor.v1",
+        "soccer.rsi.consolidated_smooth_motor.v1",
     ):
         raise ValueError("declared output/smooth-memory candidate required")
     validate_bank_models(model, baseline)
@@ -157,7 +160,31 @@ def main() -> None:
         )
         cpu_reviews.append(current_review["report_hash"])
     free = shutil.disk_usage(args.storage_root).free
-    if free < 120 * 1024**3:
+    capacity = None
+    if (args.compressed_transport_review is None) != (args.system_reserve_path is None):
+        raise ValueError("transport evidence and explicit system reserve path must be paired")
+    if args.compressed_transport_review is not None:
+        from scripts.rsi_compressed_bank_storage import capacity_check, measured_bank_budget
+
+        transport = _sealed(args.compressed_transport_review)
+        if (
+            transport["schema"] != "soccer.rsi.physical_report_transport_review.v1"
+            or transport["model_hash"] != model["model_hash"]
+            or transport["complete_payload_equal"] is not True
+            or transport["body_and_ball_trace_hashes_equal"] is not True
+            or transport["actual_motor_actions_reconstructed"] != 600
+            or transport["physical_executions_added"] != 3
+            or transport["qualification"] != "STORAGE_EQUIVALENCE_ONLY_NOT_LEARNING_GAIN"
+            or any(
+                transport[k] is not False for k in ("promotion_authorized", "hardware_authorized")
+            )
+            or pilot["commitment"].get("physical_report_representation") != "lossless_gzip_json"
+        ):
+            raise ValueError("bound complete physical transport evidence required")
+        capacity = capacity_check(
+            args.storage_root, args.system_reserve_path, measured_bank_budget(args.pilot_root)
+        )
+    elif free < 120 * 1024**3:
         raise ValueError("20 GiB full-bank allowance plus 100 GiB system reserve required")
     report = dict(
         schema="soccer.rsi.consumed_memory_bank_preflight.v1",
@@ -170,12 +197,17 @@ def main() -> None:
         all_four_cpu_courses_retained=True,
         storage_available_bytes=free,
         system_reserve_bytes=100 * 1024**3,
-        full_bank_allowance_bytes=20 * 1024**3,
+        full_bank_allowance_bytes=(
+            capacity["measured_bank_budget_bytes"] if capacity else 20 * 1024**3
+        ),
         source_hash=hash_bytes(Path(__file__).read_bytes()),
         qualification="CONSUMED_SIM_COMPARISON_ONLY_NOT_PROMOTION_NOT_FRESH",
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if capacity is not None:
+        report["capacity_measurement"] = capacity
+        report["physical_transport_review_hash"] = transport["report_hash"]
     report["report_hash"] = hash_json(report)
     write_once(args.output, report)
     print(json.dumps(report), flush=True)

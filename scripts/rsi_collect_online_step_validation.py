@@ -8,6 +8,7 @@ from typing import Any
 
 from rosclaw_soccer.rsi.compiled_step_inference import make_preview as compiled_preview
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
+from rosclaw_soccer.rsi.physical_report_io import resolve_physical_report
 from rosclaw_soccer.rsi.step_motor_network import validate_model as validate_warm
 from rosclaw_soccer.rsi.step_motor_ppo import validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -49,6 +50,7 @@ def main() -> None:
     parser.add_argument("--execution-source", type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--archived-failure-log", type=Path)
+    parser.add_argument("--compressed-reports", action="store_true")
     args = parser.parse_args()
     source = (args.execution_source or Path(__file__).resolve().parent.parent).resolve()
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
@@ -61,7 +63,14 @@ def main() -> None:
     if warm.get("schema") == "soccer.rsi.compiled_step_motor_decoder.v1":
         compiled_preview(warm)
         warm_base = warm["base_model"]
-    if online_base.get("schema") == "soccer.rsi.smooth_memory_motor.v1":
+    if online_base.get("schema") == "soccer.rsi.consolidated_smooth_motor.v1":
+        from rosclaw_soccer.rsi.consolidated_smooth_motor import (
+            validate_model as consolidated_validate,
+        )
+
+        consolidated_validate(online_base)
+        predecessor = online_base["base_model"]["frozen_parent"]
+    elif online_base.get("schema") == "soccer.rsi.smooth_memory_motor.v1":
         from rosclaw_soccer.rsi.smooth_memory_motor import validate_model as smooth_validate
 
         smooth_validate(online_base)
@@ -123,6 +132,7 @@ def main() -> None:
     baseline_arm, baseline_key = baseline_reference_binding(pilot)
     aligned = predecessor == warm_base
     if online_base.get("schema") in (
+        "soccer.rsi.consolidated_smooth_motor.v1",
         "soccer.rsi.output_memory_step_motor.v1",
         "soccer.rsi.smooth_memory_motor.v1",
     ):
@@ -162,6 +172,8 @@ def main() -> None:
         hardware_authorized=False,
     )
     args.output_root.mkdir(parents=True, exist_ok=args.resume)
+    if args.compressed_reports:
+        commitment["physical_report_representation"] = "lossless_gzip_json"
     (args.output_root / "logs").mkdir(exist_ok=args.resume)
     if args.resume:
         if json.loads((args.output_root / "commitment.json").read_text()) != commitment:
@@ -203,15 +215,17 @@ def main() -> None:
             negative_only=True,
             core_root=args.core_root,
             resume=args.resume,
+            compressed_report=args.compressed_reports,
         )
         for arm, kind in (("reproduction", "parent"), ("warm", "actor"), ("online", "actor")):
             stem = f"seed{seed}-lane{lane}-{arm}-{kind}"
-            if (args.output_root / "logs" / f"{stem}.log").exists() and not (
-                args.output_root / stem / "report.json"
-            ).is_file():
-                raise ValueError(
-                    "archive failed attempt explicitly before resuming; never overwrite"
-                )
+            if (args.output_root / "logs" / f"{stem}.log").exists():
+                try:
+                    resolve_physical_report(args.output_root / stem / "report.json")
+                except ValueError as exc:
+                    raise ValueError(
+                        "archive failed attempt explicitly before resuming; never overwrite"
+                    ) from exc
         parent, _ = _run(**common, arm="reproduction", kind="parent")
         parent_path = args.output_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
         baseline, baseline_outcome = _run(

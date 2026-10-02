@@ -13,6 +13,7 @@ from typing import Any
 
 from rosclaw_soccer.rsi.compiled_step_inference import make_preview
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _outcome, _sealed
+from rosclaw_soccer.rsi.physical_report_io import resolve_physical_report
 from rosclaw_soccer.rsi.protected_phase_step_network import validate_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
@@ -183,6 +184,17 @@ def verify_baseline_reuse(
 
 def validate_bank_models(candidate: dict[str, Any], warm: dict[str, Any]) -> None:
     """Later learned actors must retain their current parent, not just first warm start."""
+    if candidate.get("schema") == "soccer.rsi.consolidated_smooth_motor.v1":
+        from rosclaw_soccer.rsi.consolidated_smooth_motor import (
+            validate_model as consolidated_validate,
+        )
+
+        consolidated_validate(candidate)
+        if candidate["base_model"]["frozen_parent"] != warm:
+            raise ValueError(
+                "consolidation requires exact qualified neural parent, not rejected AR"
+            )
+        return
     if candidate.get("schema") == "soccer.rsi.smooth_memory_motor.v1":
         from rosclaw_soccer.rsi.smooth_memory_motor import validate_model as smooth_validate
 
@@ -278,6 +290,7 @@ def main() -> None:
     parser.add_argument("--review-only", action="store_true")
     parser.add_argument("--review-workers", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--reuse-baseline-root", type=Path)
+    parser.add_argument("--compressed-reports", action="store_true")
     args = parser.parse_args()
     if args.review_only:
         result = review(args.output_root, args.bank_path, workers=args.review_workers)
@@ -308,6 +321,8 @@ def main() -> None:
         hardware_authorized=False,
     )
     reuse = None
+    if args.compressed_reports:
+        commitment["physical_report_representation"] = "lossless_gzip_json"
     if args.reuse_baseline_root is not None:
         reuse = _sealed(args.reuse_baseline_root / "validation_summary.json")
         verify_baseline_reuse(reuse, bank, commitment)
@@ -354,12 +369,13 @@ def main() -> None:
 
     def preserve_failed_attempt(seed: int, lane: int, arm: str, kind: str) -> None:
         stem = f"seed{seed}-lane{lane}-{arm}-{kind}"
-        if (args.output_root / "logs" / f"{stem}.log").exists() and not (
-            args.output_root / stem / "report.json"
-        ).is_file():
-            raise ValueError(
-                "failed attempt log requires explicit archived recovery, not overwrite"
-            )
+        if (args.output_root / "logs" / f"{stem}.log").exists():
+            try:
+                resolve_physical_report(args.output_root / stem / "report.json")
+            except ValueError as exc:
+                raise ValueError(
+                    "failed attempt log requires explicit archived recovery, not overwrite"
+                ) from exc
 
     def worker(gpu: int) -> list[dict[str, Any]]:
         records = []
@@ -381,6 +397,7 @@ def main() -> None:
                 core_root=args.core_root,
                 resume=args.resume or reuse is not None,
                 execution_timeout_s=600,
+                compressed_report=args.compressed_reports,
             )
             preserve_failed_attempt(seed, lane, "reproduction", "parent")
             parent, _ = _run(**common, arm="reproduction", kind="parent")
