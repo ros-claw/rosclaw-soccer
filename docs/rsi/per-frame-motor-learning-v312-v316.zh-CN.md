@@ -1802,3 +1802,28 @@ NEEDS_FULL_RETENTION_CPU_FRESH，绝不自动激活或跳到比赛。11项
 v390→`/code/rosclaw/archived-test-temp-v390`，同样清单hash均
 `5a8cb182ddd257d63eeb1da0beeee27c87f2406698d5f0f26ac9066a887c24a7`。
 不删报告、轨迹、模型，也不动用户Kit日志或降低100GiB系统保留线。
+
+### v393 固定反例审计完成（不是高质量射门突破）
+
+新 AWR-inspired candidate 的三次同源实际执行与900帧独立motor审计
+完成，review hash
+`177ee38f1c893514158eb557c5194e3166b9904c2d762ad948a010aac5949ac7`。
+原parent和原NN全部NPZ数组与历史一致；新candidate只脚触球、pelvis
+最低 .7060198784m、安全线保留，球最大横向3.6840412617m<4m，
+**new_out_of_play=false**。此前保护PPO两候选在此分别4.18688m/
+4.17051m被拒绝，AWR新objective消除了这一固定的新增出界退化。
+
+必须同时记录：NN control横向3.4208059311m、ratio .3702420876、
+reward3.0840916313；新candidate横向3.6840412617m、ratio .3758110562、
+reward3.0239754896；两者HQ均false。因此不能称此球更精准、更高质量
+或机器人学会了困难课程，更不能升层或对外宣传。它只是通过了
+首个反例筛查。继续新candidate自身3次lossless report transport，
+通过后才做172次pilot/CPU/全bank retention和困难能力验证。
+
+v396 接续程序已实际启动且写下自己的commitment，输出
+`/data/rosclaw_overflow/rsi-independent-motor-continuation-v396`，
+等待绑定的v395 collector结束。启动不等于208条采样/学习已完成。
+四个worker各自首个sample已经返回，全部失败也保留；继续全部
+13×16，不根据这四个样本提前删掉困难课程。Core PR #615 当前
+数值/跨平台/完整回归等CI均已完成且无失败，gate仍IN_PROGRESS；
+PR保持OPEN，没有自行合并。
