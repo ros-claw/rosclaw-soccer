@@ -5,6 +5,7 @@ physical traces must agree. This is storage engineering, not a learning gain.
 """
 
 import argparse
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,11 @@ from scripts.rsi_train_protected_online_motor_v308 import _head
 
 MODEL_HASH = "sha256:a5c3c21c3c0907d7c4be2da823d5aafaefa15844c5cf34d64718909af2017eb6"
 COURSE = (20262103, 2)
+
+
+def check_declared_model_hash(actual: str, declared: str) -> None:
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", declared) or actual != declared:
+        raise ValueError("exact preregistered transport model hash required")
 
 
 def compare_complete_reports(
@@ -48,13 +54,18 @@ def main() -> None:
     ):
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--shared-model-report", action="store_true")
+    parser.add_argument(
+        "--expected-model-hash",
+        default=MODEL_HASH,
+        help="Explicit preregistered SIM model; defaults to the original fixed transport model",
+    )
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
     model = load_json_artifact(args.model)
     validate_model(model)
-    if model["model_hash"] != MODEL_HASH:
-        raise ValueError("fixed preregistered consolidated transport model required")
+    check_declared_model_hash(model["model_hash"], args.expected_model_hash)
+    expected_model_hash = args.expected_model_hash
     if args.output_root.exists():
         raise ValueError("new external transport directory required; no automatic retries")
     args.output_root.parent.mkdir(parents=True, exist_ok=True)
@@ -89,7 +100,7 @@ def main() -> None:
         runner_hash=pins[str(runner)],
         asset_hash=pins[str(args.g1_usd)],
         input_source_hashes=pins,
-        model_hash=MODEL_HASH,
+        model_hash=expected_model_hash,
         course=list(COURSE),
         physical_executions_planned=3,
         system_reserve_bytes=system_reserve,
@@ -138,7 +149,8 @@ def main() -> None:
         if (
             checked["report"] != raw
             or raw["parent_report_hash"] != parent["report_hash"]
-            or raw["contact_motor_policy"]["step_motor_proof"]["model"]["model_hash"] != MODEL_HASH
+            or raw["contact_motor_policy"]["step_motor_proof"]["model"]["model_hash"]
+            != expected_model_hash
         ):
             raise ValueError("transport lost exact parent/model bindings")
         reports.append(raw)
@@ -155,7 +167,7 @@ def main() -> None:
     result = dict(
         schema="soccer.rsi.physical_report_transport_review.v1",
         source_commitment_hash=hash_json(commitment),
-        model_hash=MODEL_HASH,
+        model_hash=expected_model_hash,
         complete_report_hash=reports[0]["report_hash"],
         complete_payload_equal=True,
         body_and_ball_trace_hashes_equal=True,

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
+from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_collect_protected_phase_bank_validation import validate_bank_models
@@ -131,8 +132,8 @@ def main() -> None:
     args = parser.parse_args()
     if len(args.cpu_root) != 4 or len(args.baseline_cpu_root) != 4:
         parser.error("all four paired CPU courses required")
-    model = json.loads(args.candidate.read_text())
-    baseline = json.loads(args.baseline.read_text())
+    model = load_json_artifact(args.candidate)
+    baseline = load_json_artifact(args.baseline)
     if model.get("schema") not in (
         "soccer.rsi.output_memory_step_motor.v1",
         "soccer.rsi.smooth_memory_motor.v1",

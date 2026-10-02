@@ -1281,3 +1281,13 @@ Git worktree repair 后仍为 `10ea18d773d3359ff06c733f5da9716bf4e9af42`
 且干净。没有删除原工作区内容或训练证据，没有降低系统盘
 100 GiB 保留线。随后新目录 `rsi-risk-margin-out-counterexample-v378-retry1`
 显式重新预检并启动，完成前不宣称反例已解决。
+
+### v380：后续候选 transport 仍须显式预声明
+
+完整银行预检补齐 gzip 模型输入，但 pilot/四个 CPU 保留门与
+容量门不变。transport 验证原默认固定 `a5c3c21…` 不变，增加
+显式 `--expected-model-hash`，要求 canonical SHA-256 且与
+实际已校验模型完全一致；该值在首次物理执行前写入 commitment。
+不能自动根据运行结果换候选、放宽比较字段或把存储等价视为
+学习资格。42 项相关 fixture 与两个文件 targeted mypy 通过。
+此改动尚不构成新候选的实际 transport 证明。
