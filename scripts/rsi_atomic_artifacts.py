@@ -93,3 +93,33 @@ def write_shared_physical_report(path: Path, value: dict[str, Any]) -> None:
     # Publish payload first: no visible report may reference an incomplete file.
     write_once(payload_path, payload)
     write_once(path, envelope)
+
+
+def write_shared_sampling_model(path: Path, value: dict[str, Any]) -> None:
+    """Retain seed/noise/logical seal per view; share its WHOLE mean model."""
+    from rosclaw.growth.shared_proof_payload import detach_payload
+
+    if (
+        path.parent.name != "models"
+        or not path.name.endswith(".json.gz")
+        or path.parent.is_symlink()
+        or path.parent.parent.is_symlink()
+        or value.get("schema")
+        not in (
+            "soccer.rsi.smooth_memory_sampling.v1",
+            "soccer.rsi.output_memory_step_sampling.v1",
+        )
+        or value.get("model_hash")
+        != hash_json({k: v for k, v in value.items() if k != "model_hash"})
+    ):
+        raise ValueError("sealed local memory sampling model required")
+    envelope, payload = detach_payload(value, ("mean_model",))
+    store = path.parent.parent / ".shared-models"
+    if store.is_symlink():
+        raise ValueError("local sampling proof store required")
+    store.mkdir(exist_ok=True)
+    payload_path = store / f"{envelope['payload_hash'][7:]}.json.gz"
+    if payload_path.is_symlink():
+        raise ValueError("sampling mean cannot be a symlink")
+    write_once(payload_path, payload)
+    write_once(path, envelope)

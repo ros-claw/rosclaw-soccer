@@ -643,10 +643,10 @@ def main() -> None:
         motor_policy = make_phase_policy(motor_knots, 0.25, online_model["model_hash"])
     step_model = None
     if args.contact_motor_step_model is not None:
-        from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
+        from rosclaw_soccer.rsi.sampling_model_io import load_sampling_model
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame, make_preview
 
-        step_model = load_json_artifact(args.contact_motor_step_model)
+        step_model = load_sampling_model(args.contact_motor_step_model)
         if step_model.get("schema") == "soccer.rsi.current_memory_guarded_motor.v1":
             from rosclaw_soccer.rsi.current_memory_motor import CompiledCurrentMemoryMotor
             from rosclaw_soccer.rsi.current_memory_motor import make_preview as current_preview

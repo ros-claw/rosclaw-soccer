@@ -1578,3 +1578,23 @@ XML 失败标识集合与 v385 **逐项相同**、新增失败 0。相对 v385
 文件内容集合 SHA-256 前后均为
 `334017fdc582622206cf3544c48f5058efbc41ac0ddca46daa63ae694327656e`。
 没有删除数据或干预用户的 Isaac Streaming 后台，100 GiB 保留线不变。
+
+### v389：为独立新探索提供完整共享采样载荷，先验证再扩大数据
+
+新增 Soccer `sampling_model_io` 和原子共享采样写入器；只允许已封印
+memory sampling view 在本地 `models/` 读取 `mean_model` 载荷。
+每条样本保留独立 seed/rho/std/model hash，整份 mean 数字权重只存
+一次，复原由 Core 既有纯数据 `shared_proof_payload` 完成。禁止
+缺失、篡改、非法路径、symlink 和不同语义位置，不删旧样本。
+native 输入 reader 路由接入新适配器；旧普通 JSON/gzip 原样返回，
+不改 decoder、噪声、控制数学或物理接受阈值。
+
+新增固定实际比较脚本 `rsi_validate_shared_sampling_transport.py`：
+预声明原 104 条探索的第一样本（20261378/0），新 parent 与 sample
+两次物理执行，比较所有身体、球、taskspace、motor 数组和完整
+outcome，并对历史/当前共 600 帧独立重构。必须 exact mean hash、
+冻结源/Core、来源前后重验、100 GiB 系统保留线及完整证据预算。
+载荷共享仍是存储工程，不是新策略/新噪声/训练增长；提交时尚未
+完成真实比较。20 项共享/历史 reader/来源门 fixture、2 文件
+targeted mypy 和新代码 ruff/format 通过。既有 artifact-bound
+CurrentMemory/旧 smooth/旧 consolidated 数学模块完全未修改。
