@@ -1236,3 +1236,27 @@ native 故障日志，再计划补 **10** 次执行。只使用 GPU 1/2，
 v376 回归实际为 6287 passed、23 failed、70 skipped，273.11 秒，
 失败集合仍与 v374 相同。当前 shared transport 的实际校验仍在
 运行，没有提前把其小文件大小当物理等价成功。
+
+### v378：共享 proof 的实际闭环与新策略的早期反例复测
+
+shared transport 已实际完成三次执行及 600 个唯一 motor frame
+重建；完整逻辑报告、body/ball 和全部 outcome 精确相同。
+review `cb8027c6e8d9a325f5c1249b8309854f74df58d33e4158212e2183a128c7ecf0`。
+每课 compressed envelope **2671 bytes**、完整公共 payload
+**66591655 bytes**、native log **9124 bytes**。公共 payload
+必须一起保留；不是把 65 MiB 证明删掉后声称只有 2.7 KB。
+这让同一模型的后续批次只新增各自的报告和全部 trace，避免
+52 次重复存全模型。仍仅证明存储等价，不构成能力晋升。
+
+v377 显式恢复已启动；原 11 控制复制、故障日志保留，原执行
+source/Core/权重不改。当前没有完整恢复后的七课程结论。
+
+新风险余量模型 `f4d964d…` 首先复测已知 `20262104/2` 出界
+反例：复用并独立审计旧 parent/qualified NN 两个控制，计划
+只新增 **1** 次候选实际执行（GPU 3），重建 old/new 各 300
+帧。这是单反例的早期否决诊断，不替代完整资格；即使解决了
+该反例，也不宣称全银行安全、全新成功或 fresh 已通过。
+只接受固定已完成学习承诺、完整 qualified bank/review、原
+物理 source/Core/body 和相同 NN 父权重。轨迹与源输入漂移拒绝。
+数值 gate 继续保留骨盆 >=0.65、无旧干净触球损失/成功损失、
+无新增出界条件，七项 fixture 及 targeted mypy/ruff 通过。
