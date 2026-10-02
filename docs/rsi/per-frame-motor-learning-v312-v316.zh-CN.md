@@ -1566,6 +1566,12 @@ review `9c80bd2c09eea85faf131edb9f2668e16c0726ea6eb546790c35521b2030f9cd`，
 测试 20 项通过、targeted mypy/ruff 通过。它不改变运动数学。
 全量回归另行运行，结果必须和已知 23 项失败逐项比对，不称全绿。
 
+全量回归完成：**6355 passed / 23 failed / 70 skipped，401.56 秒**；
+XML 失败标识集合与 v385 **逐项相同**、新增失败 0。相对 v385
+新增的 12 项诊断/绑定/前置门 fixture 均通过，不把既有失败改签。
+日志/XML 在 `/code/rosclaw/rsi-current-memory-v388-regression.{log,xml}`，
+完整测试临时材料在 `/data/rosclaw_overflow/rsi-current-memory-v388-regression-temp`。
+
 已结束、无打开文件的本轮未隔离 Core 测试临时目录
 `/tmp/pytest-of-dell/pytest-783` 完整迁移到
 `/data/rosclaw_overflow/archived-test-temp/pytest-783-core-gradient-20261003`，
