@@ -178,7 +178,14 @@ def main() -> None:
             or any(
                 transport[k] is not False for k in ("promotion_authorized", "hardware_authorized")
             )
-            or pilot["commitment"].get("physical_report_representation") != "lossless_gzip_json"
+            or pilot["commitment"].get("physical_report_representation")
+            not in ("lossless_gzip_json", "lossless_shared_model_gzip_json")
+            or (
+                pilot["commitment"].get("physical_report_representation")
+                == "lossless_shared_model_gzip_json"
+                and transport.get("physical_report_representation")
+                != "lossless_shared_model_gzip_json"
+            )
         ):
             raise ValueError("bound complete physical transport evidence required")
         capacity = capacity_check(

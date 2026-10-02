@@ -26,6 +26,11 @@ def test_budget_includes_largest_each_arm_all_52_logs_and_scratch(tmp_path: Path
         largest[arm] = max(sizes)
     expected = (52 * sum(largest.values()) * 115 + 99) // 100 + 1024**3
     assert storage.measured_bank_budget(tmp_path) == expected
+    store = tmp_path / ".shared-models"
+    store.mkdir()
+    (store / "fixture.json.gz").write_bytes(b"shared-model" * 100)
+    expected_shared = ((52 * sum(largest.values()) + 1200) * 115 + 99) // 100 + 1024**3
+    assert storage.measured_bank_budget(tmp_path) == expected_shared
     log.unlink()
     with pytest.raises(ValueError, match="native log"):
         storage.measured_bank_budget(tmp_path)

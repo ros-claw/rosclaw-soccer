@@ -65,7 +65,10 @@ def _run(
     core_root: Path | None = None,
     execution_timeout_s: float | None = None,
     compressed_report: bool = False,
+    shared_model_report: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    if shared_model_report and not compressed_report:
+        raise ValueError("shared model report requires explicit compressed transport")
     if sum(p is not None for p in (motor_policy, motor_bootstrap, motor_online, motor_step)) > 1:
         raise ValueError("one explicit motor proposal backend required")
     folder = root / f"seed{seed}-lane{lane}-{arm}-{kind}"
@@ -110,6 +113,8 @@ def _run(
         command.append("--navigation-lateral-negative-only")
     if compressed_report:
         command.append("--compressed-report")
+    if shared_model_report:
+        command.append("--shared-model-report")
     if rectangle_policy is not None:
         command.extend(("--navigation-rectangle-policy", str(rectangle_policy)))
     if proprio_policy is not None:

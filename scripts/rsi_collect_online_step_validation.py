@@ -51,7 +51,10 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--archived-failure-log", type=Path)
     parser.add_argument("--compressed-reports", action="store_true")
+    parser.add_argument("--shared-model-reports", action="store_true")
     args = parser.parse_args()
+    if args.shared_model_reports and not args.compressed_reports:
+        parser.error("shared proofs require explicit compressed reports")
     source = (args.execution_source or Path(__file__).resolve().parent.parent).resolve()
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
     model = json.loads(args.online_model.read_text())
@@ -173,7 +176,9 @@ def main() -> None:
     )
     args.output_root.mkdir(parents=True, exist_ok=args.resume)
     if args.compressed_reports:
-        commitment["physical_report_representation"] = "lossless_gzip_json"
+        commitment["physical_report_representation"] = (
+            "lossless_shared_model_gzip_json" if args.shared_model_reports else "lossless_gzip_json"
+        )
     (args.output_root / "logs").mkdir(exist_ok=args.resume)
     if args.resume:
         if json.loads((args.output_root / "commitment.json").read_text()) != commitment:
@@ -216,6 +221,7 @@ def main() -> None:
             core_root=args.core_root,
             resume=args.resume,
             compressed_report=args.compressed_reports,
+            shared_model_report=args.shared_model_reports,
         )
         for arm, kind in (("reproduction", "parent"), ("warm", "actor"), ("online", "actor")):
             stem = f"seed{seed}-lane{lane}-{arm}-{kind}"

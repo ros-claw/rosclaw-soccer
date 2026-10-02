@@ -1165,3 +1165,41 @@ clip 到 [0,1]、平方乘 8；实际 60 帧横/前比例从 0.2 起，按
 非有限值、角色/seed 不影响奖励；targeted mypy 和 ruff 通过。
 学习脚本核验全部记录与原探索 sample/report 逐项身份及结果，
 哈希绑定原 NPZ、旧学习 manifest、旧 AR model 和审计源码。
+
+### v375–v376：实际无损等价已通过，继续学习与共享证明工程
+
+v372 三次实际 transport 执行全部完成，完整 actor 报告、独立
+600 帧动作、body/ball hash 和全部 outcome 逐项相同。review
+`d6ee3e321db9fd25e5ea07ec83b954b956710b0a3f3320b7d0d12349ea7653d8`。
+plain/gzip report 为 **269762297 / 67751412 bytes**；native
+log 为 **146565217 / 9124 bytes**。只是存储等价，不是新的
+训练成功。21 次七课程 prescreen 和风险余量 PPO 均已实际
+启动，未提前宣布训练完成或通过。旧 NN 39/52 仍为资格父。
+
+v374 完整回归实际为 6279 passed、23 failed、70 skipped，
+286.59 秒；失败 XML 集合与 v373 相同。所有失败仍明确保留。
+
+单纯 gzip 仍让每课重复约 65 MiB 同一模型证明。新增 Core
+`shared_proof_payload` 是 task-neutral 的纯 JSON split/restore：
+完整 payload 内容寻址，验证 envelope、payload 和整个恢复文档
+三层 hash；位置显式、无递归引用、非有限输入拒绝、不含执行或
+晋升 API。Core 12 项 fixture 通过；临时 home 中 Growth/Practice
+实际 280 passed、4 skipped，31.39 秒。已推至现有 PR #615，
+仍未自行合并，旧运动数学和旧运行 worktree 不修改。
+
+Soccer 新实验可显式选择共享模型 report：每个 episode 仍保留
+完整 body/ball/actions/receipt，只有完全一样的 model 证明在
+同一 run 的本地 `.shared-models` 保存一次。采样 view 的 seed、
+noise 和条件密度承诺留在各自 report，只有全量 `mean_model`
+共享，不把不同随机探索合并。读取时先完整恢复，再执行原所有
+物理/动作 audit；缺少 payload、symlink、路径逃逸、非模型
+位置、内容/hash 变更都拒绝。旧 plain/gzip 默认及旧数据不改。
+复制或打包新证据必须包含整个 run 的共享 store，不能只复制
+episode 子目录；shared 格式明确依赖带该帮助器的 Core 版本。
+
+容量预算包括完整共享 store 一次、全部 52 课 report/trace/log、
+15% 增量和 1 GiB scratch，仍另保留系统 100 GiB、独立证据卷
+1 GiB。共享存储不能绕过 pilot、CPU 或完整银行资格门。
+56 项存储/动作 audit 目标测试通过，七个目标文件 mypy 通过。
+新的共享路径尚须同一冻结 runner 的三次真实 transport 等价，
+当前不将 fixture 当为实际共享物理证明，也不提前批量启用。

@@ -18,6 +18,7 @@ parser.add_argument("--g1-usd", required=True, type=Path)
 parser.add_argument("--model-root", required=True, type=Path)
 parser.add_argument("--output-dir", required=True, type=Path)
 parser.add_argument("--compressed-report", action="store_true")
+parser.add_argument("--shared-model-report", action="store_true")
 parser.add_argument("--frames", type=int, default=120)
 parser.add_argument("--env-count", type=int, default=4)
 parser.add_argument("--training-course-seed", type=int)
@@ -64,6 +65,7 @@ AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if (
     not args.g1_usd.is_file()
+    or (args.shared_model_report and not args.compressed_report)
     or not args.model_root.is_dir()
     or args.output_dir.exists()
     or not 50 <= args.frames <= 400
@@ -1750,10 +1752,13 @@ def main() -> None:
             )
     report["report_hash"] = hash_json(report)
     if args.compressed_report:
-        from scripts.rsi_atomic_artifacts import write_once
+        from scripts.rsi_atomic_artifacts import write_once, write_shared_physical_report
 
         report_path = args.output_dir / "report.json.gz"
-        write_once(report_path, report)
+        if args.shared_model_report:
+            write_shared_physical_report(report_path, report)
+        else:
+            write_once(report_path, report)
         # The complete authoritative document remains on disk. Do not duplicate
         # its potentially large model/proof payload into the native stdout log.
         print(

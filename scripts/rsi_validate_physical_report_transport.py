@@ -47,6 +47,7 @@ def main() -> None:
         "system-reserve-path",
     ):
         parser.add_argument(f"--{name}", type=Path, required=True)
+    parser.add_argument("--shared-model-report", action="store_true")
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
@@ -76,6 +77,10 @@ def main() -> None:
         source / "scripts/rsi_atomic_artifacts.py",
         source / "src/rosclaw_soccer/rsi/physical_report_io.py",
     ]
+    if args.shared_model_report:
+        from rosclaw.growth.shared_proof_payload import detach_payload
+
+        paths.append(Path(detach_payload.__code__.co_filename))
     pins = {str(p): hash_bytes(p.read_bytes()) for p in paths}
     commitment = dict(
         schema="soccer.rsi.physical_report_transport_commitment.v1",
@@ -126,6 +131,7 @@ def main() -> None:
             motor_step=args.model,
             parent_report_override=parent_path,
             compressed_report=compressed,
+            shared_model_report=compressed and args.shared_model_report,
         )
         folder = args.output_root / f"seed{seed}-lane{lane}-{arm}-actor"
         checked = _outcome(folder, raw["contact_motor_policy_hash"], commitment)
@@ -165,6 +171,13 @@ def main() -> None:
         hardware_authorized=False,
     )
     result["report_hash"] = hash_json(result)
+    if args.shared_model_report:
+        result.pop("report_hash")
+        store = args.output_root / ".shared-models"
+        result["physical_report_representation"] = "lossless_shared_model_gzip_json"
+        result["complete_shared_payload_bytes"] = sum(p.stat().st_size for p in store.iterdir())
+        result["shared_payload_count"] = len(list(store.iterdir()))
+        result["report_hash"] = hash_json(result)
     write_once(args.output_root / "transport_review.json", result)
     print(result, flush=True)
 

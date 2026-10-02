@@ -24,7 +24,13 @@ def measured_bank_budget(pilot_root: Path) -> int:
                 raise ValueError("native log must enter measured capacity budget")
             sizes.append(folder_bytes(folder) + log.stat().st_size)
         largest[arm] = max(sizes)
-    return (52 * sum(largest.values()) * 115 + 99) // 100 + 1024**3
+    store = pilot_root / ".shared-models"
+    shared = 0
+    if store.exists():
+        if store.is_symlink() or any(p.is_symlink() for p in store.rglob("*")):
+            raise ValueError("local shared proof store required for measured budget")
+        shared = folder_bytes(store)
+    return ((52 * sum(largest.values()) + shared) * 115 + 99) // 100 + 1024**3
 
 
 def capacity_check(evidence: Path, system: Path, budget: int) -> dict[str, Any]:

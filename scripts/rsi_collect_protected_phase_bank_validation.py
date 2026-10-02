@@ -291,7 +291,10 @@ def main() -> None:
     parser.add_argument("--review-workers", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--reuse-baseline-root", type=Path)
     parser.add_argument("--compressed-reports", action="store_true")
+    parser.add_argument("--shared-model-reports", action="store_true")
     args = parser.parse_args()
+    if args.shared_model_reports and not args.compressed_reports:
+        parser.error("shared proofs require explicit compressed reports")
     if args.review_only:
         result = review(args.output_root, args.bank_path, workers=args.review_workers)
         write_once(args.output_root / "independent_review.json", result)
@@ -322,7 +325,9 @@ def main() -> None:
     )
     reuse = None
     if args.compressed_reports:
-        commitment["physical_report_representation"] = "lossless_gzip_json"
+        commitment["physical_report_representation"] = (
+            "lossless_shared_model_gzip_json" if args.shared_model_reports else "lossless_gzip_json"
+        )
     if args.reuse_baseline_root is not None:
         reuse = _sealed(args.reuse_baseline_root / "validation_summary.json")
         verify_baseline_reuse(reuse, bank, commitment)
@@ -398,6 +403,7 @@ def main() -> None:
                 resume=args.resume or reuse is not None,
                 execution_timeout_s=600,
                 compressed_report=args.compressed_reports,
+                shared_model_report=args.shared_model_reports,
             )
             preserve_failed_attempt(seed, lane, "reproduction", "parent")
             parent, _ = _run(**common, arm="reproduction", kind="parent")

@@ -61,3 +61,35 @@ def write_once(path: Path, value: dict[str, Any]) -> None:
     finally:
         # Only this invocation's exact private temporary path is removed.
         temporary.unlink(missing_ok=True)
+
+
+def write_shared_physical_report(path: Path, value: dict[str, Any]) -> None:
+    """Publish one complete model proof per run; retain every logical field.
+
+    No old artifact is converted or removed. Parent reports without a neural proof
+    remain complete ordinary gzip JSON. Readers reconstruct before normal audits.
+    """
+    from rosclaw.growth.shared_proof_payload import detach_payload
+
+    from rosclaw_soccer.rsi.physical_report_io import MEAN_MODEL_LOCATION, MODEL_LOCATION
+
+    if path.name != "report.json.gz" or path.parent.is_symlink():
+        raise ValueError("new local compressed physical report required")
+    proof = value.get("contact_motor_policy", {}).get("step_motor_proof", {}).get("model")
+    if proof is None:
+        write_once(path, value)
+        return
+    # Sampling views retain their own seed/noise/likelihood commitments in
+    # every report while sharing only the unchanged complete mean model.
+    location = MEAN_MODEL_LOCATION if type(proof.get("mean_model")) is dict else MODEL_LOCATION
+    envelope, payload = detach_payload(value, location)
+    store = path.parent.parent / ".shared-models"
+    if store.is_symlink():
+        raise ValueError("local content-addressed model store required")
+    store.mkdir(exist_ok=True)
+    payload_path = store / f"{envelope['payload_hash'][7:]}.json.gz"
+    if payload_path.is_symlink():
+        raise ValueError("shared proof cannot be a symlink")
+    # Publish payload first: no visible report may reference an incomplete file.
+    write_once(payload_path, payload)
+    write_once(path, envelope)
