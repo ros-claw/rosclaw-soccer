@@ -39,6 +39,21 @@ OUT_CASES = set(COURSES[:4])
 PROTECTION_CASES = set(COURSES[7:])
 
 
+def checked_execution_parent(path: Path, *, runner: Path, asset: Path) -> dict[str, Any]:
+    """Reject wrong-source/body controls before allocating a native worker."""
+    parent = load_physical_report(path)
+    if (
+        parent.get("report_hash")
+        != hash_json({k: v for k, v in parent.items() if k != "report_hash"})
+        or parent.get("source_hash") != hash_bytes(runner.read_bytes())
+        or parent.get("asset_hash") != hash_bytes(asset.read_bytes())
+    ):
+        raise ValueError(
+            "sealed same-source same-body execution parent required before actor allocation"
+        )
+    return parent
+
+
 def _run(
     root: Path,
     runner: Path,
@@ -73,6 +88,10 @@ def _run(
         raise ValueError("one explicit motor proposal backend required")
     folder = root / f"seed{seed}-lane{lane}-{arm}-{kind}"
     parent_folder = root / f"seed{seed}-lane{lane}-{arm}-parent"
+    if kind == "actor":
+        checked_execution_parent(
+            parent_report_override or parent_folder / "report.json", runner=runner, asset=g1_usd
+        )
     log_path = root / "logs" / f"seed{seed}-lane{lane}-{arm}-{kind}.log"
     existing = folder.exists()
     if existing:

@@ -1520,3 +1520,55 @@ mypy/ruff 通过；后续用全新 retake 目录，尚无候选物理通过结�
 内容集合 SHA `9e928945a7e4b7948ca87db787bb00abdc8df5926f2e222853c50c377dd244fb`
 前后相同，HEAD 仍 `f05aafdb…` 且干净，没有删模型/轨迹或移动
 当前工作区/在用源快照。恢复系统保留余量，不改变实验保留线。
+
+### v388：两组当前保护 PPO 均未解决出界；拒绝重复旧数据的“假增长”
+
+冻结 Soccer `98409ca` / Core `85ada636` 的两组固定反例实测均完成：
+每组 **3 次新物理执行**（同源 parent、NN、candidate）和 **900 帧**
+独立 motor 重构。两组 parent 的完整身体/球 trace 及 NN 的四份完整
+trace 与历史控制精确一致，来源改变的两个审计 receipt 均保留。
+
+| 候选 | 最大横向偏移 m | 60 帧横/前比 | 最低骨盆 m | 新出界 | 结论 |
+| --- | ---: | ---: | ---: | --- | --- |
+| 控制 cap .05 / LR .0001 | 4.186882019042969 | .47012928364548057 | .708160400390625 | true | REJECT |
+| 扩大 cap .2 / LR .0004 | 4.170510292053223 | .42222545887403945 | .707862138748169 | true | REJECT |
+
+独立 review 分别为
+`bd8aec2f1b0c26855a618e97c71364a8867a7eb4e9e06d49701cc88d6441b021`
+和 `e6246baa7c8ce506af6c36cdc398aa8b4537f35a6e5f2b256d14ac4d194aa8c4`，
+在 `/data/rosclaw_overflow/rsi-current-memory-counterexample-v387-{control,expanded}`。
+旧 NN 同案最大横偏 **3.4208059310913086 m**；两候选虽然骨盆安全且
+clean foot retained，但不可因训练 loss 降低而越过新出界门。没有启动
+不合格候选的完整 172 次验证，没有开启 fresh，也没有自动激活。
+
+只读数值复查证实：控制候选和旧 `26971bc…` 在这批实际 104 条数据
+上 **全部三层参数、critic、完整 loss history 精确相同**。因此不能
+把这一控制更新称作不同的学习突破；增加当前 39 案保护主要改变
+执行保护域，不保证旧探索状态上的优化方向发生变化。
+
+扩大模型的 128 均匀旧状态及前邻帧诊断共计算 255 状态，raw mean
+delta RMS **.001705861810751468**，pre-slew joint target delta RMS
+**.0003536972614878821 rad**、max **.0013448955497647602 rad**。
+review `9c80bd2c09eea85faf131edb9f2668e16c0726ea6eb546790c35521b2030f9cd`，
+在 `/data/rosclaw_overflow/rsi-current-memory-update-audit-v387-expanded`。
+这是 `physically_applied=false` 的旧状态反事实诊断，不是实际新关节
+位移。其 128 点没有 exact guard zero，不能据此声称测到了保护锚点。
+
+原始 104 条中，同一已知出界案有两条 HQ 探索，但所有 13 案中的
+两案完全没有 HQ 样本。仅重复旧数据、增大学习率/惩罚不能代替
+更多独立物理经验及有效动作信用分配。后续研究方向为成功经验
+加权回归及触球阶段信用诊断；参考 [AWR 原论文](https://arxiv.org/abs/1910.00177)
+和 [RUDDER 原论文](https://arxiv.org/abs/1806.07857)。尚未实现或实证
+其能改善本场景，不能称作已完成 AWR、在线 RL 或 RUDDER。
+
+本轮把通用 `_run` 的 actor/parent 来源、body 及报告 seal 检查提前
+到 worker 分配前，原完成后门保留；新增 4 项 fixture，连同相关
+测试 20 项通过、targeted mypy/ruff 通过。它不改变运动数学。
+全量回归另行运行，结果必须和已知 23 项失败逐项比对，不称全绿。
+
+已结束、无打开文件的本轮未隔离 Core 测试临时目录
+`/tmp/pytest-of-dell/pytest-783` 完整迁移到
+`/data/rosclaw_overflow/archived-test-temp/pytest-783-core-gradient-20261003`，
+文件内容集合 SHA-256 前后均为
+`334017fdc582622206cf3544c48f5058efbc41ac0ddca46daa63ae694327656e`。
+没有删除数据或干预用户的 Isaac Streaming 后台，100 GiB 保留线不变。
