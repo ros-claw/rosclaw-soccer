@@ -1405,3 +1405,52 @@ pilot 保留门、完整银行和 fresh 边界不放宽。30 项相关 fixture
 Core PR #615 的新 HEAD `25e9166586743551907fae54db140a7f19ca8979`
 已只读确认 **20 项 SUCCESS、发布 SKIPPED**，仍 OPEN，未擅自合并。
 v381/v382 的全量 XML 23 个失败身份已比对一致。
+
+### v385：惩罚权重敏感性被物理否决；改研究训练期当前记忆保护
+
+权重 16/32 的已知反例各完成一条新物理执行、两个历史控制与
+600 帧独立重建。球最大横向偏移分别 **4.515277862548828 m**、
+**4.358579158782959 m**，均超过 qualified NN 的 **3.4208059310913086 m**
+及 4 m 边界；干净触球、安全保留，但新增出界，两个候选均拒绝。
+独立 review 为 `61d39d773c37d61ab0537f2433fc09527ccf147a3f93218accfb33696a1bfd8a`
+和 `98e0b8be85a7b10cd1aaac58a436739540a9ed2bf752127c604a0b7126a20652`。
+不能继续把提高惩罚系数当成已验证改进；也没有因此启动其 172 次
+完整验证或打开 fresh80。
+
+v384 完整回归 **6333 passed、23 failed、70 skipped，270.39 秒**；
+23 个失败与 v382 XML 的完整身份集合一致，未修饰为全绿。
+
+新增单独模型族 `current_memory_guarded_motor.v1`，旧模型及数值
+模块保持不变。新的塑性残差在训练及执行都使用完整当前父成功
+状态的 guard，而不是旧 35 案训练、训练后才补新 4 案。
+初始输出仍全域逐位等于同一 NN 父；候选声明 raw latent cap .2、
+LR .0004，物理关节目标 cap .25 及 slew/边界不变。
+这不是直接输出关节力矩、端到端 locomotion 或在线持续 actor-critic。
+
+Core 新增任务无关 AR(1) 有界残差 PPO 数值引擎和整轨迹四折
+terminal critic；它不访问 robot/world/executor、不加载 checkpoint，
+`physical_batch_verified` 及所有授权为 false。原参数下与不变旧
+实现的合成迁移测试：网络/critic 权重、步数、loss history **完全相同**，
+独立 compiled KL 差 <=1e-12。新增当前记忆/训练测试共 9 项通过。
+这些测试不是新的足球成绩。
+
+随后加上完整控制轨迹身份检验，相关五组 **31 项测试通过**，
+9 个新增/接入目标文件 mypy 通过、native F821/F822 通过。
+Core Growth/Practice 在临时 ROSCLAW_HOME 下 **299 passed、4 skipped**；
+首次未隔离运行暴露宿主既有 migration 013 checksum mismatch（1 failed），
+没有修改宿主数据库或重签 migration，使用隔离测试 home 后通过。
+
+新训练脚本只消费全部已封存 104 条/28080 帧，逐条核验原始终端
+标签，绑定 NPZ/manifest/探索/qualified bank/39 案记忆及源 hash，
+预声明上述新参数，保留 TRAIN_CONSUMED 和 fresh 锁。全域 zero
+行为等价及完整条件概率必须验证后才拟合；不新增虚构采样数。
+截至本节提交，新候选训练、独立物理复测尚未完成，NN39 仍是父。
+
+旧 A5 的七个受影响开发课程补跑与独立审计现在完成：**21 份实际
+报告、4200 帧动作重建**；本次新增仅 4 次，复用 17 份、两次原生
+故障保留，不将全部 21 次说成新增。HQ **4/7→6/7**，旧 HQ/干净
+触球损失为 0、安全保留，但仍新增出界 1，故 **不能晋升**。
+summary `25c8b4a1607ff120037d17f1ba933cbf436dad2b79c9e495b8c83e5ac2d575e4`，
+独立 review `e31e2b56168d133ab4a6d659ef8925c4ca6bca12e2d9a4f7b699daae9ebebaed`，
+原件在 `/code/rosclaw/rsi-consolidated-bank-delta-v373-recovery2`。
+这是保留/增长与边界风险的真实冲突证据，不是 full bank 或 fresh 成绩。

@@ -191,7 +191,13 @@ def main() -> None:
 
         make_preview: Callable[[dict[str, Any]], dict[str, Any]] = legacy_preview
 
-        if step_model.get("schema") == "soccer.rsi.consolidated_smooth_motor.v1":
+        if step_model.get("schema") == "soccer.rsi.current_memory_guarded_motor.v1":
+            from rosclaw_soccer.rsi.current_memory_motor import CompiledCurrentMemoryMotor
+            from rosclaw_soccer.rsi.current_memory_motor import make_preview as current_preview
+
+            make_preview = current_preview
+            delta_at_frame = CompiledCurrentMemoryMotor(make_preview(step_model)).delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.consolidated_smooth_motor.v1":
             from rosclaw_soccer.rsi.consolidated_smooth_motor import CompiledConsolidatedSmoothMotor
             from rosclaw_soccer.rsi.consolidated_smooth_motor import (
                 make_preview as consolidated_preview,

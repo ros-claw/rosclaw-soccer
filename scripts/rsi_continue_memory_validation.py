@@ -104,10 +104,12 @@ def main() -> None:
     if candidate["schema"] not in (
         "soccer.rsi.smooth_memory_motor.v1",
         "soccer.rsi.consolidated_smooth_motor.v1",
+        "soccer.rsi.current_memory_guarded_motor.v1",
     ):
         raise ValueError("declared smooth or consolidated-memory learning required")
     if (
-        candidate["schema"] == "soccer.rsi.consolidated_smooth_motor.v1"
+        candidate["schema"]
+        in ("soccer.rsi.consolidated_smooth_motor.v1", "soccer.rsi.current_memory_guarded_motor.v1")
         and not args.shared_model_reports
     ):
         raise ValueError("consolidated continuation requires explicitly proved shared reports")

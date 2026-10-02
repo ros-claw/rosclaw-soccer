@@ -63,7 +63,12 @@ def main() -> None:
     source = Path(__file__).resolve().parent.parent
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
     model = load_json_artifact(args.model)
-    validate_model(model)
+    if model.get("schema") == "soccer.rsi.current_memory_guarded_motor.v1":
+        from rosclaw_soccer.rsi.current_memory_motor import validate_model as current_validate
+
+        current_validate(model)
+    else:
+        validate_model(model)
     check_declared_model_hash(model["model_hash"], args.expected_model_hash)
     expected_model_hash = args.expected_model_hash
     if args.output_root.exists():

@@ -138,6 +138,7 @@ def main() -> None:
         "soccer.rsi.output_memory_step_motor.v1",
         "soccer.rsi.smooth_memory_motor.v1",
         "soccer.rsi.consolidated_smooth_motor.v1",
+        "soccer.rsi.current_memory_guarded_motor.v1",
     ):
         raise ValueError("declared output/smooth-memory candidate required")
     validate_bank_models(model, baseline)
