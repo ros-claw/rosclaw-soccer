@@ -2227,3 +2227,43 @@ mean后再执行原preview校验，普通JSON/gzip不变。新CPU学习
 成功和失败以及触球后膝碰，不改物理参数、输出策略或门限。
 相关 **26 passed**；这是CPU采样/学习前的工程准备，不是已经
 训练了CPU新模型或增加了成功率。原Source395采样接续独立不动。
+
+#### CPU stream3课程开始：先资格，再完整学习，不能提前写成功
+
+冻结Source405 `375baa2` / Core394。外部预登记
+`rsi-cpu-current-parent-failure-training-v405-stream3/commitment.json`
+hash `57484faf16cbe41cba60b68043a25288b1f1cc47a6ac096186286f257b459f99`。
+三个已消费CPU失败课程20261177/0、20261282/0、20262102/4，
+各16个独立stream3探索；保留20262104/6为已知CPU成功保留检查。
+物理参数、奖励、NN基础策略、std0.1/rho0.9和原39成功锚均不变。
+原Source395 stream2接续继续原样运行，二者不混合或互称独立样本。
+
+前置plain/shared真实MuJoCo执行各一次，退出0；完整3000步
+动力学/PD/神经输出审计两次，物理NPZ和编译模型全SHA完全一致。
+transport review `c4f7ebd24ee22987101703a3fa183a20c971407bd29422210479d5875b1e9388`，
+采样view hash `66efa77c872dca310ca2c5feb585e781e17c7a1bf54944cf6bbcc6911ef81d8c`，
+NPZ `5114b22bb6e1db7b9baf002c7d8df183d8fe351c117bd435b144cf6a1560be37`。
+这证明新输入传输没有改变动作，不是模型学习进步。plain控制
+预先声明为额外重复，48条训练轨迹仅使用shared sample0一次。
+
+后续48条均须实际运行、完整审计、保留失败，形成12,960个决策
+帧和144,000个动力学重放子步之后，才拟合原bounded AWR算法；
+再实际复测上述4个CPU课程。完整协议预计49采样/控制执行+4
+候选复测=53次新执行；**当前仅完成前置对照及部分native样本，
+不能写成53次全部完成、新CPU模型已学习或M0通过**。
+driver `/code/rosclaw/rsi-cpu-failure-learning-v405-driver2.log`。
+第一次课程前检按错误bank键读取，退出而未建输出/启动physics；
+核对真实bank的`model_hash`后，才启动本显式协议，原失败日志保留。
+
+官方[Isaac Lab actuator说明](https://isaac-sim.github.io/IsaacLab/develop/source/concepts/actuators.html)
+区分solver内隐式drive和软件显式effort路径；
+[MuJoCo数值积分说明](https://mujoco.readthedocs.io/en/latest/computation/index.html#numerical-integration)
+说明积分实现边界。这支持“相同PD参数不代表同一执行链”的诊断
+方向，**不是此次标签差距唯一根因的实证**；没有据此改变原积分器。
+
+Source405全量回归：**6512 passed / 11 failed / 70 skipped，634.65秒**。
+JUnit逐项对比Source403，新增失败0，余11项完全相同的既有外部
+证书authority/integrity拒绝；没有放宽校验或重封这些历史证书。
+日志/XML `rsi-cpu-memory-learning-v405-regression.*`。
+其后main新增11项CPU错误provenance前置拒绝测试，相关37 passed；
+Source405仍保持冻结、不修改正在采集/审计/训练的任何源码。
