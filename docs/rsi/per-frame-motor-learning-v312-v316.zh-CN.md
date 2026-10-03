@@ -2636,3 +2636,17 @@ v426真实已训练CPU160 decoder构造profile：
 通过显式独立复制和测试防止此问题。21项descriptor/均衡/既有proposal
 测试通过，ruff/format/mypy通过。实际大模型速度仍待独立benchmark，
 不得从局部测试时间宣称加速。冻结425/418以及所有正在运行来源不改。
+
+v427大模型父哈希benchmark已完成：
+`/data/rosclaw_overflow/rsi-actual-parent-commitment-benchmark-v427.json`，
+哈希`sha256:d16d13e45fe34cbd330f4c9087139800da1acd47ba397066c2403ab113de3602`。
+完整公开构造器55.28秒；在actor已经完整验证后，等价父commitment
+计算3.96秒，canonical父哈希逐字节意义一致。范围仅是父commitment
+环节，不是整机控制、完整decoder或端到端训练加速；没有新增学习或
+物理执行。父actor与可学习层的独立所有权检查通过，21项相关测试
+在最终无内部别名的实现上再次通过。Source427冻结于
+`e1c57b931f38fd15b3e9a29fb7587e4e1f3f5208`，当前训练仍使用既定旧来源。
+
+Core PR616的Data Flywheel Gate已于2026-10-03 20:18:59 UTC完成SUCCESS，
+对应提交`673b7cc553eca51723bc04b7688984691db8d57b`。PR仍OPEN，未合并；
+没有据此变更PR615或任何学习策略的资格状态。
