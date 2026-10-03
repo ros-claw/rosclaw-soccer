@@ -2122,3 +2122,25 @@ actor、物理模型、验收值或任何历史证书。
 `IsaacLab/3.0`推测package版本。isaacsim=6.0.0.1，Isaac环境
 torch=2.11.0+cu128，numpy=2.3.1，四卡driver=595.91.07。
 metadata安装时间为2026-07-22，不能据此声称刚升级/环境被改。
+
+#### 不能把CPU保留检查当作跨域成功一致
+
+新只读汇总已有封印的GPU pilot summary/review与8份CPU
+commitment/review，核对同model hash和有序seed/lane，前后输入
+文件SHA不变；**没有新增物理执行或重新进行动力学审计**。
+结果`/data/rosclaw_overflow/rsi-consumed-domain-label-diagnostic-v403-104.json`，
+hash `d9599681fdcf85ab1ccdedd797dff4eafe9648de4a1b49e3003759a289602533`。
+
+- 冻结NN：GPU HQ 3/4，CPU HQ 1/4，标签一致2/4。
+- 新104 AWR候选：GPU HQ 4/4，CPU HQ 1/4，标签一致1/4。
+- 20262102/4的GPU新成功，在CPU仍有非足底接触，接触body index
+  包括5（CPU映射right_knee_link）；不能以方向很好忽略该失败。
+
+这是**4个已消费课程、不同物理world的诊断**，不是disjoint
+balanced agreement exam、fresh成绩、移植资格或晋升证据。
+原CPU retention通过仅表示没丢旧CPU能力，不能写成改善已迁移。
+当前GPU用PhysX implicit actuator，CPU用显式MuJoCo PD torque；
+二者都声明dt=0.002、球radius0.11/mass0.43，但并非同一碰撞/
+执行模型。这里尚未证实差距的具体根因，不修改旧物理参数/标签
+来制造一致。后续CPU困难课程与接触/控制资格分析必须继续，
+不能凭GPU局部改善跳过迁移证据；fresh80仍未打开，M0未完成。
