@@ -7,6 +7,8 @@ audited. All results, including losses, are retained. This is not a fresh exam.
 import argparse
 import json
 import shutil
+import traceback
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -298,6 +300,41 @@ def preserve_failed_attempt(root: Path, seed: int, lane: int, arm: str, kind: st
 
 
 def execute_bank_shard(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """Persist a shard exception before ordered pool collection can hide it.
+
+    Other workers are not cancelled or restarted. A failure record grants no
+    authority and does not convert partial artifacts into a passing bank.
+    """
+    try:
+        return _execute_bank_shard(job)
+    except Exception as exc:
+        root, gpu = job["args"].output_root, job["gpu"]
+        failure = dict(
+            schema="soccer.rsi.bank_shard_failure.v1",
+            gpu=gpu,
+            exception_type=f"{type(exc).__module__}.{type(exc).__qualname__}",
+            exception_message=str(exc),
+            traceback=traceback.format_exc(),
+            completed_row_indices=[
+                i for i in range(gpu, 52, 4) if (root / f"row-{i}.json").is_file()
+            ],
+            completed_paths_are_not_independent_verification=True,
+            automatic_retry=False,
+            promotion_authorized=False,
+            hardware_authorized=False,
+        )
+        failure["report_hash"] = hash_json(failure)
+        path = root / f"shard-{gpu}-failure-{uuid.uuid4().hex}.json"
+        try:
+            write_once(path, failure)
+            print(f"BANK_SHARD_FAILED gpu={gpu} evidence={path}", flush=True)
+        except Exception as journal_error:
+            exc.add_note(f"failure journal could not be written: {journal_error!r}")
+            print(f"BANK_SHARD_FAILURE_JOURNAL_FAILED gpu={gpu}: {journal_error!r}", flush=True)
+        raise
+
+
+def _execute_bank_shard(job: dict[str, Any]) -> list[dict[str, Any]]:
     args, runner, gpu, courses = job["args"], job["runner"], job["gpu"], job["courses"]
     records = []
     for i in range(gpu, 52, 4):

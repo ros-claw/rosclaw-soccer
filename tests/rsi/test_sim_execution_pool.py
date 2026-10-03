@@ -1,5 +1,8 @@
 import argparse
+import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -148,3 +151,80 @@ def test_failed_native_log_cannot_be_overwritten_by_new_worker(tmp_path):
     (logs / "seed100-lane0-candidate-actor.log").write_text("native failed")
     with pytest.raises(ValueError, match="not overwrite"):
         bank.preserve_failed_attempt(tmp_path, 100, 0, "candidate", "actor")
+
+
+def test_bank_exception_is_durable_before_ordered_pool_returns(monkeypatch, tmp_path):
+    original = TimeoutError("native lifecycle timeout; no implicit retry")
+    calls = []
+
+    def failed(job):
+        calls.append(job["gpu"])
+        raise original
+
+    monkeypatch.setattr(bank, "_execute_bank_shard", failed)
+    (tmp_path / "row-2.json").write_text("partial recorded row, not an audit")
+    job = dict(args=args(tmp_path), gpu=2)
+    for _ in range(2):
+        with pytest.raises(TimeoutError) as raised:
+            bank.execute_bank_shard(job)
+        assert raised.value is original
+    artifacts = list(tmp_path.glob("shard-2-failure-*.json"))
+    assert len(artifacts) == 2
+    assert calls == [2, 2]  # Only the explicit invocations; no retry in either.
+    for path in artifacts:
+        record = json.loads(path.read_text())
+        assert record["exception_type"] == "builtins.TimeoutError"
+        assert "native lifecycle timeout" in record["traceback"]
+        assert record["completed_row_indices"] == [2]
+        assert record["completed_paths_are_not_independent_verification"] is True
+        assert record["automatic_retry"] is False
+        assert record["promotion_authorized"] is record["hardware_authorized"] is False
+
+
+def test_journal_disk_failure_does_not_mask_original_exception(monkeypatch, tmp_path):
+    original = ValueError("original source binding failure")
+
+    def failed(job):
+        raise original
+
+    def disk_failed(*args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(bank, "_execute_bank_shard", failed)
+    monkeypatch.setattr(bank, "write_once", disk_failed)
+    with pytest.raises(ValueError) as raised:
+        bank.execute_bank_shard(dict(args=args(tmp_path), gpu=0))
+    assert raised.value is original
+    assert "disk full" in original.__notes__[0]
+
+
+def test_failed_later_shard_is_visible_while_first_shard_is_still_busy(monkeypatch, tmp_path):
+    release = threading.Event()
+    published = threading.Event()
+    original_write = bank.write_once
+
+    def work(job):
+        if job["gpu"] == 0 and not release.wait(timeout=10):
+            raise RuntimeError("fixture waiter timed out")
+        if job["gpu"] == 1:
+            raise TimeoutError("later shard failed first")
+        return []
+
+    def observe_write(path, value):
+        original_write(path, value)
+        published.set()
+
+    monkeypatch.setattr(bank, "_execute_bank_shard", work)
+    monkeypatch.setattr(bank, "write_once", observe_write)
+    jobs = [dict(args=args(tmp_path), gpu=i) for i in range(4)]
+    with ThreadPoolExecutor(max_workers=1) as coordinator:
+        result = coordinator.submit(execute_shards, bank.execute_bank_shard, jobs, spawn=False)
+        try:
+            assert published.wait(timeout=10)
+            assert not result.done()
+            record = json.loads(next(tmp_path.glob("shard-1-failure-*.json")).read_text())
+            assert record["exception_message"] == "later shard failed first"
+        finally:
+            release.set()
+        with pytest.raises(TimeoutError, match="later shard"):
+            result.result(timeout=10)
