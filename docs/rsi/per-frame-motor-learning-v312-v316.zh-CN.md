@@ -2539,3 +2539,20 @@ PD、物理参数、基础策略、接触后结果采样均未更改。
 F821/F822专项检查通过；外部runner全量风格检查仍有C408等问题，
 不是全量lint通过。已启动后不热改其脚本；结果与源哈希另行封存。
 这是扩大失败场景覆盖后的独立实验，不推断此前CPU48预算失败已解决。
+
+v421现在全部完成，结果
+`/data/rosclaw_overflow/rsi-current-kinematic-paired-cpu-v421/validation_summary.json`，
+哈希`sha256:6ed3a2c8432bedc06385701de6e3d3127e6707345c16c458ac9229286556e52d`。
+8条新原生执行、24000完整回放子步；4条cached对照的physical_trace
+逐字节保持旧结果。cached和current-kinematic均F/F/F/T，1/4 HQ。
+因此一致当前观测没有在这4个已消费场景带来增益；不能称CPU/GPU
+一致性问题已解决，也不能推断时序差异是此前失败的唯一原因。
+
+v422在物理执行前的预检中失败：原CPU48 manifest有parent_model_hash，
+新完整CPU160 manifest将behavior绑定放在原commitment里，不能套用
+旧字段。旧runner/log保留，新增物理执行与学习更新均0。改用独立
+v423 runner，显式验证manifest.commitment_hash匹配原commitment，
+再验证actor父模型匹配commitment.behavior_model_hash，不增设宽松
+fallback。v423全量runner ruff及format检查通过，运行时源保持冻结；
+独立输出为`/data/rosclaw_overflow/rsi-cpu-complete-failure-proposal-budget-grid-v423`。
+目前仍在完整数据/来源预检，未宣称拟合、物理测试或新增益完成。
