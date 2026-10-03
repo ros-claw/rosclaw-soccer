@@ -25,9 +25,9 @@ from rosclaw_soccer.rsi.contact_time_phase_features import (
     predict_contact_time,
 )
 from rosclaw_soccer.rsi.first_touch_course_catalog import sample_training_courses
-from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor
 from rosclaw_soccer.rsi.online_motor_actor_critic import configure_preview, validate_model
+from rosclaw_soccer.rsi.sampling_model_io import load_sampling_model
 from rosclaw_soccer.rsi.taskspace_gate_memory import select_taskspace_gate
 from rosclaw_soccer.rsi.taskspace_swing_evidence import LEG_NAMES
 from rosclaw_soccer.rsi.taskspace_swing_probe import (
@@ -184,7 +184,9 @@ def main() -> None:
     if neural:
         validate_model(neural)
     policy, knots = load_policy(args.motor_policy) if args.motor_policy else (None, None)
-    step_model = load_json_artifact(args.step_model) if args.step_model else None
+    # Restore the WHOLE original numerical model before preview validation.
+    # Ordinary JSON/gzip policies remain unchanged; no distribution is changed.
+    step_model = load_sampling_model(args.step_model) if args.step_model else None
     if step_model is not None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame
         from rosclaw_soccer.rsi.step_motor_execution import make_preview as legacy_preview

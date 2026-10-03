@@ -2200,3 +2200,30 @@ Source395/Core394原采样分片0的显式恢复已启动；原崩溃日志
 工具不重采、不运行学习、不授权晋升，后续仍必须完整审计208
 轨迹、56,160帧。相关合同/接续测试 **45 passed**；完整pytest
 仍沿用前述6481/11/70结果，没有声称全量全绿。
+
+#### CPU/GPU逐帧诊断与CPU学习入口
+
+新只读4课程轨迹诊断（0新physics、0新动力学重放），核对原runner
+源hash和原NPZ字节，按**canonical DDS**关节序对照。首版v404
+误把taskspace action trace的关节序用于body trace列，已单独标记
+REJECTED并保留错误artifact/源码，不使用其关节误差结论。
+修正v405：初始关节位置误差约2.96e-8rad，初始目标约2.2e-7
+至4.4e-7rad；在学习残差尚为0的frame0..29，脚部位置已偏离
+约2.9–3.4cm。case20262102/4的root偏离约2.68cm；CPU在首次
+足底触球后第88帧又发生右膝碰撞，GPU只有足底碰撞。
+说明差异早于残差输出，**不证明implicit/explicit PD是唯一根因**。
+artifact `rsi-consumed-cpu-gpu-trajectory-diagnostic-v405.json`，hash
+`f90d422fe995748ff052419e25510997ef71f4d9a91d059d127c5bbec80be1aa`。
+
+另发现GPU报告的`taskspace_vertical_offset_m=0`，但其原source
+真正调用swing函数时为0.04，与CPU源代码相同。报告元数据不能
+直接当成已执行动作差异；当前冻结GPU源码和历史证书均未改。
+此项保留为后续前瞻协议/元数据一致性问题。
+
+新CPU输入入口使用已有lossless sampling reader完整恢复共享
+mean后再执行原preview校验，普通JSON/gzip不变。新CPU学习
+数据适配器要求完整MuJoCo 3000步动力学、PD力矩和因果神经输出
+重建之后，才能提取270个motor帧；沿用同一终端reward、保留
+成功和失败以及触球后膝碰，不改物理参数、输出策略或门限。
+相关 **26 passed**；这是CPU采样/学习前的工程准备，不是已经
+训练了CPU新模型或增加了成功率。原Source395采样接续独立不动。
