@@ -1973,3 +1973,39 @@ checkout的spawn拒绝，resume不能悄悄换执行方式。
 该可选模式**尚无实际GPU提速成绩或新策略验收成绩**，未改动
 当前Source v395/v396/v397执行，也未修改任何artifact-bound数字
 模型/Core数学模块。后续实际对照须继续做原完整物理验证。
+
+### v399 全量回归、只读并行重构及v397全bank接续
+
+冻结Source v399 `a9d69fb` / Core v394全量回归结束：**6453 passed /
+23 failed / 70 skipped，665.35秒**。与v397 XML逐项比较，23个
+failure/error身份集合完全相同，没有新增或消失的失败。日志/XML
+`/code/rosclaw/rsi-spawn-execution-v399-regression.{log,xml}`。
+
+四进程只读重构原pilot四个candidate的完整1200帧motor，耗时
+307.877625秒；全部command audit hash与原summary精确相同。
+输入报告/共享模型/轨迹及RSI/Core Growth源码SHA前后复验相同，
+保留原独立review绑定，新增物理执行为0。输出
+`/data/rosclaw_overflow/rsi-stored-trace-spawn-replay-v399.json`，
+hash `805af4c3af0f8e1ac8190294277e0b3d5124278d8eb622431a742dd871da7352`。
+这是实际存量轨迹的并行审计，不是新GPU rollout或新的球技成绩；
+没有拿带cProfile开销的单案例计时计算提速倍数，也没有宣称新增
+spawn GPU执行路径已取得实际native对照成绩。
+
+v397四个CPU原轨迹已再次完整重放，review全对象与原件一致；
+四份`cpu-{0,1,2,3}-reuse-review.json`保存绑定。bank-preflight
+实际通过，已开始原冻结Source v397的全部52案156次paired实际
+执行。独立stream2采样继续（记录时114/208），尚未得到完整
+学习数据或fresh结果。两条学习/验证链均不因部分好结果提前晋升。
+
+维护性无损去重仅涉及七个**已结束且无打开文件**的自身回归测试
+目录（Data v388/v389/v395/v397/v399；Code已归档v390/v393）：
+255个大文件中218个完整SHA相同的副本，在同一文件系统内共享
+hardlink。原路径、完整内容、权限和所有报告/日志/轨迹仍保留；
+文件修改时间可能随共享inode变为规范副本的时间，原元数据在
+journal保留，未来不得复用这些目录作新的可写basetemp。
+未动用户dataset、Kit日志、已训练策略或正在执行的实验目录。
+逐文件复验全部原字节一致，journal
+`/code/rosclaw/rsi-closed-fixture-dedup-v399.journal.jsonl`。
+重复逻辑字节530,840,521（不是稀疏文件实际释放量声明）；完成
+之后Data/Code分别可用2,972,250,112/721,932,288字节，Root
+107,978,809,344字节。所有预留门限不变。
