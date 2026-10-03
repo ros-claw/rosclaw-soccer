@@ -56,6 +56,11 @@ def test_episode_state_is_not_shared_and_seed_input_cannot_mutate_bound_decoder(
     assert b._memory.last_frame == -1
     assert factory._prototype._memory.last_frame == -1
     assert a._parent._memory is not b._parent._memory
+    assert a._layers is not b._layers
+    assert a._parent._layers is not b._parent._layers
+    assert a._parent._residual_layers is not b._parent._residual_layers
+    assert a._parent._warm is not b._parent._warm
+    assert a._parent._warm.layers is not b._parent._warm.layers
     assert a._noise is not b._noise
     assert not a._noise.flags.writeable
     expected = a.latent_sample(np.zeros(134), 30, 0)
@@ -64,6 +69,18 @@ def test_episode_state_is_not_shared_and_seed_input_cannot_mutate_bound_decoder(
     observed = a.latent_sample(np.zeros(134), 30, 0)
     np.testing.assert_array_equal(expected[0], observed[0])
     assert expected[1] == observed[1]
+
+
+def test_replacing_one_decoder_layer_container_cannot_change_the_next_episode(smooth_parent):  # noqa: F811
+    factory = SmoothSamplingDecoderFactory(smooth_parent)
+    policy = make_preview(make_sampling_view(smooth_parent, seed=4, std=0.1))
+    first = factory.bind(policy)
+    expected = first.raw_mean(np.zeros(134), 1)
+    weight, bias = first._parent._warm.layers[-1]
+    first._parent._warm.layers[-1] = (np.zeros_like(weight), np.full_like(bias, 10))
+    assert not np.array_equal(first.raw_mean(np.zeros(134), 1), expected)
+    next_episode = factory.bind(policy)
+    np.testing.assert_array_equal(next_episode.raw_mean(np.zeros(134), 1), expected)
 
 
 @pytest.mark.parametrize("fault", ["policy-hash", "view-seed", "mean", "authority"])

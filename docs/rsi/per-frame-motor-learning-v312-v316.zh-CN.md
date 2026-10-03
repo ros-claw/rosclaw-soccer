@@ -2379,3 +2379,9 @@ CPU12成功保留。新candidate仍须后续GPU与均衡独立验证，不晋升
 commitment `7aed6709ba03888ddbd40303f2a56afee56d9f577650f225751c2b32fe6103c2`；
 driver `/code/rosclaw/rsi-cpu-all-failure-curriculum-v411-driver.log`，
 输出 `/data/rosclaw_overflow/rsi-cpu-all-failure-curriculum-v411-stream4`。
+
+后续main额外隔离工厂实例的layer列表和warm decoder容器，避免
+某个回合替换私有layer条目影响下一个回合。数值数组仍只读共享；
+新增容器修改隔离测试，工厂11 passed、ruff/format/mypy通过。
+Source409/410保持原样；正在采集的v411没有热更此加固，也没有任何
+回合内修改网络参数，原工厂实测证据仍只绑定其原冻结版本。

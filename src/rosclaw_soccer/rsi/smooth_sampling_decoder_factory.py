@@ -40,6 +40,11 @@ class SmoothSamplingDecoderFactory:
         # Numeric arrays and search trees are private immutable copies from the
         # original constructor. All episode-owned mutable state is fresh.
         decoder._parent = copy.copy(self._prototype._parent)
+        decoder._layers = list(self._prototype._layers)
+        decoder._parent._layers = list(self._prototype._parent._layers)
+        decoder._parent._residual_layers = list(self._prototype._parent._residual_layers)
+        decoder._parent._warm = copy.copy(self._prototype._parent._warm)
+        decoder._parent._warm.layers = list(self._prototype._parent._warm.layers)
         decoder._parent._memory = ContactPhaseMemory()
         decoder._memory = ContactPhaseMemory()
         decoder._sampling = {k: wrapped[k] for k in ("seed", "std_raw", "rho")}
