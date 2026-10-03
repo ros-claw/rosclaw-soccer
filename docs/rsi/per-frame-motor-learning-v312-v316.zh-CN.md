@@ -1827,3 +1827,38 @@ v396 接续程序已实际启动且写下自己的commitment，输出
 13×16，不根据这四个样本提前删掉困难课程。Core PR #615 当前
 数值/跨平台/完整回归等CI均已完成且无失败，gate仍IN_PROGRESS；
 PR保持OPEN，没有自行合并。
+
+### v393 四个实际CPU动力学和重放审计完成；v397 无隐式重复执行
+
+候选四个MuJoCo实际3000-substep执行及独立完整动力学/PD/neural-target
+重放审计已完成（四个case0..3，原pilot顺序），根目录
+`/data/rosclaw_overflow/rsi-advantage-memory-cpu-v393-104-case{0,1,2,3}`。
+HQ均为 F/F/F/T，clean均为 F/T/F/T，与原NN完全相同，没有旧HQ或
+clean丢失；最低pelvis .691122/.697889/.689160/.686048m，均过.65。
+球最大横向 .643483/1.849959/.827726/3.043089m，均未新增出界。
+case3结果与原NN完全相同；这不是四项新球技、不是fresh或晋升。
+review hashes依次
+`2f5024ad9bb8068588b2a25f5e5697c2d8126b7cdedbd8acd759f582a1ab8878`、
+`4f326428465ec20baa21b10a1d3472637856264ece06641eebc6d25bd10be0db`、
+`cdaf380340206b298010b6823a706616cd8fac4cdf613852dbb31bb10cb76265`、
+`06a1872876dbaf62164c30772c263742429d758592521f990611ba25003f3523`。
+
+为了不重复生成已经独立验证的同模型同课程CPU数据，continuation
+增加显式4-root选项；不是只信hash：**重新完整重放动力学/PD/神经
+命令**，结果必须与存量review全对象相同，绑定全部commitment/model/
+trace/report/review文件SHA，前后重验，preflight所有门限不变。
+启用时计划**168次新实际执行+4份已完成CPU原轨迹=172份执行证据**，
+重复重放不算新训练轨迹；默认老172次执行路线完全保留。9个新增
+拒绝/正确reuse测试及旧stage/continuation相关共30项通过，ruff/mypy
+通过。仍无fresh开启、自动promote或REAL。源数字模型模块不变。
+
+无损空间加固：12份已结束、无打开文件且逐字节相同的compiled
+MuJoCo snapshot，SHA均
+`246da475bbad8d3ced351f6ceb18e18fc3d4c2de7236cdd8c427239cecb4ff83`，
+共享**完整只读**
+`/data/rosclaw_overflow/shared-compiled-mujoco-models/246da475bbad8d3ced351f6ceb18e18fc3d4c2de7236cdd8c427239cecb4ff83.mjb`。
+原NN357四Root路径和risk379四Code路径保留symlink；本次CPU四Data
+路径保留hardlink，全部替换后SHA再次相同。只有重复的物理文件副本
+合并，没有丢失任何字节、删除报告/轨迹或改input hash；需要独立文件
+时可从共享副本恢复。Root/Code分别释放约480MiB，Data净释放约360MiB，
+不动用户正在写入的Kit日志。后续四卡完整采样与自动学习接续仍运行。

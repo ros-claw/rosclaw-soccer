@@ -24,6 +24,40 @@ from scripts.rsi_preflight_memory_bank_validation import check_pilot
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 
+def check_cpu_reuse(
+    raw: dict[str, Any],
+    stored: dict[str, Any],
+    replayed: dict[str, Any],
+    *,
+    model_hash: str,
+    course: tuple[int, int],
+) -> None:
+    """A matching hash alone is insufficient: repeat full independent replay."""
+    if (
+        replayed != stored
+        or raw.get("step_model_hash") != model_hash
+        or (raw.get("seed"), raw.get("lane")) != course
+        or stored.get("reviewed_report_hash") != raw.get("report_hash")
+        or stored.get("schema") != "soccer.rsi.cpu_motor_transfer_review.v1"
+        or stored.get("physical_substeps") != 3000
+        or type(stored.get("physical_substeps")) is not int
+        or any(
+            stored.get(k) is not True
+            for k in (
+                "actual_mujoco_dynamics_replayed",
+                "actual_pd_torque_reconstructed",
+                "neural_target_reconstructed",
+            )
+        )
+        or any(
+            obj.get(k) is not False
+            for obj in (raw, stored)
+            for k in ("promotion_authorized", "hardware_authorized")
+        )
+    ):
+        raise ValueError("exact same-model same-course full CPU replay required for reuse")
+
+
 def transport_flags(*, compressed: bool, shared: bool, proof: bool, reserve: bool) -> list[str]:
     if any(type(v) is not bool for v in (compressed, shared, proof, reserve)):
         raise ValueError("explicit boolean validation transport options required")
@@ -75,6 +109,7 @@ def main() -> None:
     ):
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--baseline-cpu-root", type=Path, action="append", required=True)
+    parser.add_argument("--verified-candidate-cpu-root", type=Path, action="append")
     parser.add_argument(
         "--baseline-cpu-review-name",
         choices=("review.json", "independent_review.json"),
@@ -87,6 +122,11 @@ def main() -> None:
     args = parser.parse_args()
     if len(args.baseline_cpu_root) != 4:
         parser.error("four ordered actual-parent CPU reference folders required")
+    if args.verified_candidate_cpu_root and (
+        len(args.verified_candidate_cpu_root) != 4
+        or len({p.resolve() for p in args.verified_candidate_cpu_root}) != 4
+    ):
+        parser.error("four distinct ordered completed candidate CPU folders required")
     source = Path(__file__).resolve().parent.parent
     if subprocess.check_output(
         ["git", "status", "--porcelain", "--untracked-files=no"], cwd=source, text=True
@@ -135,11 +175,30 @@ def main() -> None:
         bank_hash=_sealed(args.bank)["report_hash"],
         activation_ceiling="SIM_ONLY",
         partition="TRAIN_CONSUMED",
-        physical_executions_planned=172,
+        physical_executions_planned=168 if args.verified_candidate_cpu_root else 172,
         fresh_holdout_open_authorized=False,
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    cpu_reuse_pins: dict[str, str] = {}
+    if args.verified_candidate_cpu_root:
+        from rosclaw_soccer.rsi.physical_report_io import resolve_physical_report
+
+        for folder in args.verified_candidate_cpu_root:
+            for path in (
+                folder / "commitment.json",
+                folder / "compiled_model.mjb",
+                folder / "physical_trace.npz",
+                folder / "independent_review.json",
+                resolve_physical_report(folder / "report.json"),
+            ):
+                cpu_reuse_pins[str(path)] = hash_bytes(path.read_bytes())
+        commitment.update(
+            completed_candidate_cpu_references=4,
+            total_physical_execution_evidence_planned=172,
+            candidate_cpu_reuse_input_hashes=cpu_reuse_pins,
+            candidate_cpu_reuse="REPEAT_FULL_DYNAMICS_AND_MOTOR_REPLAY_NO_NEW_TRAJECTORIES",
+        )
     if args.compressed_reports:
         transport = _sealed(args.compressed_transport_review)
         if (
@@ -245,6 +304,33 @@ def main() -> None:
 
     def cpu(index: int) -> None:
         seed, lane = COURSES[index]
+        if args.verified_candidate_cpu_root:
+            from rosclaw_soccer.rsi.cpu_motor_transfer_evidence import audit_cpu_transfer
+
+            folder = args.verified_candidate_cpu_root[index]
+            stored = _sealed(folder / "independent_review.json")
+            raw = _sealed(folder / "report.json")
+            replayed = audit_cpu_transfer(folder, source / "scripts/rsi_mujoco_motor_transfer.py")
+            check_cpu_reuse(
+                raw, stored, replayed, model_hash=candidate["model_hash"], course=(seed, lane)
+            )
+            if any(hash_bytes(Path(p).read_bytes()) != h for p, h in cpu_reuse_pins.items()):
+                raise ValueError("completed CPU reuse input drift")
+            write_once(
+                root / f"cpu-{index}-reuse-review.json",
+                dict(
+                    original_root=str(folder),
+                    original_report_hash=raw["report_hash"],
+                    original_review_hash=stored["report_hash"],
+                    full_replay_equal=True,
+                    new_physical_trajectories=0,
+                    replayed_physical_substeps=3000,
+                    input_hashes=cpu_reuse_pins,
+                    promotion_authorized=False,
+                    hardware_authorized=False,
+                ),
+            )
+            return
         folder = root / f"cpu-case{index}"
         run_stage(
             root,
@@ -305,7 +391,9 @@ def main() -> None:
     for index, reference in enumerate(args.baseline_cpu_root):
         preflight += [
             "--cpu-root",
-            str(root / f"cpu-case{index}"),
+            str(args.verified_candidate_cpu_root[index])
+            if args.verified_candidate_cpu_root
+            else str(root / f"cpu-case{index}"),
             "--baseline-cpu-root",
             str(reference),
         ]
@@ -357,6 +445,8 @@ def main() -> None:
         != commitment["transport_preflight_hash"]
     ):
         raise ValueError("actual transport proof changed during continuation")
+    if any(hash_bytes(Path(p).read_bytes()) != h for p, h in cpu_reuse_pins.items()):
+        raise ValueError("completed CPU reuse inputs changed during continuation")
     summary = _sealed(bank_root / "validation_summary.json")
     review = _sealed(bank_root / "independent_review.json")
     result = dict(
