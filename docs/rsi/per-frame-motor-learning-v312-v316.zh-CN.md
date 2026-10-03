@@ -1862,3 +1862,26 @@ MuJoCo snapshot，SHA均
 合并，没有丢失任何字节、删除报告/轨迹或改input hash；需要独立文件
 时可从共享副本恢复。Root/Code分别释放约480MiB，Data净释放约360MiB，
 不动用户正在写入的Kit日志。后续四卡完整采样与自动学习接续仍运行。
+
+### v397 完整保留比较实际启动
+
+候选自身lossless report transport已完成3次实际执行、600帧独立motor
+重构，review
+`2670d6a8f976888717efc0754a068f42c28748cc5c8e144a39e5da02aa324806`，
+commitment
+`92ef532d9d3ac3d2a3217fb521e4f4e95b173635e50bdec73035b745abf9005f`。
+完整plain/shared payload和body/ball hashes相同；目录
+`/data/rosclaw_overflow/rsi-advantage-memory-report-transport-v393-104`。
+固定transport案例HQ=true只证明该案例/编码一致，**不是新增能力**。
+
+冻结Source v397 `b06fe2a` / Core v392上已经实际启动完整比较：
+`/data/rosclaw_overflow/rsi-advantage-memory-full-validation-v397-104`。
+预声明168新执行+4已完成CPU原轨迹，12次pilot→重复完整CPU重放→
+全部52案156次paired bank及独立审计；空间预检通过，当前正在pilot。
+没有绕过保留/安全门，没有启动fresh80或晋升。Source v395的独立
+208采样和Source v396的等待/审计/学习接续也继续运行。
+
+v396相关测试合计59 passed，33.16秒。v397首次全量回归错误使用
+旧Core v392（缺少新缓存模块），在collection阶段失败，无测试成绩；
+日志/XML保留。现改用正确冻结Core v394重跑完整回归，不改数字
+模型或旧artifact-bound源码，也不把命令配置错误算作23项历史失败。
