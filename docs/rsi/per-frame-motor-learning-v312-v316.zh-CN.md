@@ -2818,3 +2818,70 @@ JUnit对比v429新增失败0、解决旧失败0。v430训练commitment
 `sha256:d8a514ba43f38dd7f306a6d982228831b37518ec4f131b371954ca6e7a9a9a50`
 已写入，三档fit已真实并行启动，各initial_model已落盘；仍不能把
 拟合或协议计划计作已通过168次物理验证。
+
+### v433实际启动与完整回归；v434/v435私有检索对照
+
+Soccer `faf790f`已直接推送main。触球前lead课程v433使用独立冻结的
+Soccer v433/Core v432源码，不热改仍运行的v430；6项driver合同测试通过。
+完整CPU160、43200帧、全部事件及review哈希核验后实际封存commitment
+`sha256:2c5c29abdf5d97d895f8ed5afc08b03531f084f3f6419c45a57e068116c8c599`。
+三档0.05/0.25/0.5并行fit已实际开始；复用原160条，不虚报新增训练轨迹。
+同样每档4pilot加无条件ALL52，共168次为**计划数，尚未全部执行**。
+不改物理、奖励、因果phase、动作cap、LR，不自动开启fresh或晋升。
+
+冻结Soccer v433全量回归：6603 passed / 11 failed / 70 skipped，
+1359.88秒。JUnit逐项比较v431：新增失败0、解决旧失败0，不能称全绿。
+XML/log保存在`/data/rosclaw_overflow/rsi-first-contact-credit-v433-regression.*`。
+v430三档模型fit均已完成；第一档pilot独立复核仍F/F/F/T，未发生突破。
+其无条件ALL52验证已实际开始；这里只记录进度，不按早期案例挑结果。
+
+Core新增两个显式opt-in、任务无关的私有guard索引，没有改旧guard或
+删逻辑记忆。v434使用普通unique-coordinate双邻居索引，对同一真实
+联合bank的23490保护点和全部43200训练状态逐项比较，所有门控输出
+精确相同、逻辑序列化相同。私有坐标13770个，逻辑行仍23490。
+训练状态查询139.622→68.654秒（2.034倍）；**保护点查询0.642→15.782秒，
+反而显著变慢**。因此不能只宣传有利的训练查询结果，也没有直接采用。
+报告`sha256:1ccdb38217eef256d0f1c3e67ad9cd5c1bc3a4ac80466a313653492ae048ce03`。
+
+v435增加独立RadiusIndexedAnchorKernelGuard。其精确树查询半径为16倍
+原带宽：更远的原float64门控公式指数≤-128，已恰好舍入为1，因此
+无需寻找具体远点；半径内保持原坐标差算术、零容差与模糊并列回退。
+不改变带宽、不近似聚类、不改变保护阈值，不增加执行授权。
+43项两种索引合同测试通过，Core Growth全组251 passed，ruff/mypy通过；
+新文件format通过。全growth格式检查发现既有`contracts.py`格式问题，
+未把无关文件重格式化，也不称全目录format已绿。
+
+v435同一完整真实查询：全部43200训练状态及23490保护点门控再次精确
+相同。训练查询137.849→1.114秒，观察到123.743倍；1024均匀子集三次
+交替顺序计时的中位数比121.237倍。保护点0.715→0.767秒，接近原耗时，
+不是额外宣称保护点加速。报告
+`sha256:bdc46caa8744d11fb65bdeebf8915d791633012226ac01b1183bc8b74186af54`。
+两个比较均0次新物理、0次优化器更新；**这不是整轮训练124倍加速，
+更不是球技提升或物理保持证明**。未热升级v430/v433。
+Core两个实现提交`fd58ab4d`、`2599939a`均推送原PR616；新head远端CI
+仍须独立检查，PR未合并，不沿用旧head的绿色结果。
+
+继续参考[RUDDER原作者说明](https://ml-jku.github.io/rudder/)及
+[论文](https://arxiv.org/abs/1806.07857)：回报预测与贡献分解不同于当前
+事件窗口加权，当前方案不是RUDDER。官方索引repo
+`ml-jku/rudder`下载到`/data/rosclaw_overflow/reference-repos/rudder-20261004`，
+commit `46598b172f4f3768fab4aeb3bfec67a3921dda2d`，主要提供文档链接。
+另下载[PyTorch实践教程](https://github.com/widmi/rudder-a-practical-tutorial)
+到同目录`rudder-practical-tutorial-20261004`，commit
+`06155b48e7b0c12cd5e3452e35baa6a4f00c24bf`；未安装或运行其旧依赖。
+本地逐cell审阅发现教程损失为`mean(error)**2`，而非逐样本MSE：
+误差[1,-1]时前者0、后者1，已在本地Torch反例验证。不能未经验证照搬。
+后续序列信用学习必须另外检验预测泛化、完整轨迹分组、回报会计与
+真实策略增益，不能仅凭预测损失或事件相关性声称找到了因果动作。
+
+另新增显式offline `compile_proposal_snapshot` 数值工厂，不修改旧构造器，
+不登记模拟器或硬件executor，也不默认切换运行路径。每次先深复制
+调用方policy，再由现有public preview递归完整校验模型、回执、源码、
+bank及权限字段；只有校验通过才编译自持有、只读的数值数组。
+目标是减少继承链逐层重复构造/验证，不缓存跨调用的“已通过”结果。
+初始化与真实合成fit后的模型输出/特征、联合域bank、独立存储、
+重封hash后的源码与权限篡改拒绝共4项合同测试通过（106.05秒）。
+此前测试harness直接monkeypatch继承的`__new__`，恢复后污染了下一
+fixture，得到3 passed / 1 error；改为只patch新工厂自己的分配函数，
+重新完整运行4项，不跳过失败。尚无真实bank编译计时/动作复核证据，
+也未用于v430/v433；不能声称已取得整轮加速或新物理成绩。
