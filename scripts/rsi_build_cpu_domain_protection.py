@@ -5,6 +5,8 @@ activation. A failed audit aborts the complete bank; rows are never skipped.
 """
 
 import argparse
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_audit_memory_learning_rollouts import ordered_audits
 from scripts.rsi_compressed_bank_storage import capacity_check
+from scripts.rsi_continue_memory_validation import run_stage
 from scripts.rsi_fit_protected_phase_step_motor import cpu_features
 
 
@@ -97,7 +100,35 @@ def audit_success(job: dict[str, Any]) -> tuple[dict[str, Any], Any]:
         or (raw["seed"], raw["lane"]) != (row["seed"], row["lane"])
     ):
         raise ValueError("original parent, world and consumed course required")
-    reviewed = audit_cpu_transfer(folder, runner)
+    if "replay_source" in job:
+        source, core = Path(job["replay_source"]), Path(job["replay_core"])
+        audit_module = source / "src/rosclaw_soccer/rsi/cpu_motor_transfer_evidence.py"
+        if hash_bytes(audit_module.read_bytes()) != row["outcome"]["source_hash"]:
+            raise ValueError("historical complete audit source identity required")
+        output = Path(job["output_root"])
+        review_path = output / f"replayed-review-{row['index']}.json"
+        run_stage(
+            output,
+            f"historical-success-{row['index']}",
+            [
+                "env",
+                "OPENBLAS_NUM_THREADS=1",
+                f"PYTHONPATH={source}:{source / 'src'}:{source / 'scripts'}:{core / 'src'}",
+                sys.executable,
+                "-u",
+                str(source / "scripts/rsi_review_cpu_motor_transfer.py"),
+                "--root",
+                str(folder),
+                "--source",
+                str(runner),
+                "--output",
+                str(review_path),
+            ],
+            timeout=600,
+        )
+        reviewed = _sealed(review_path)
+    else:
+        reviewed = audit_cpu_transfer(folder, runner)
     # Audit source is part of the stored review. If it changes, this protocol
     # must be explicitly revised, not silently accept field-only equality.
     if reviewed != row["outcome"] or reviewed["high_quality"] is not True:
@@ -119,7 +150,14 @@ def audit_success(job: dict[str, Any]) -> tuple[dict[str, Any], Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("actor-container", "cpu-bank", "cpu-runner", "output-root"):
+    for name in (
+        "actor-container",
+        "cpu-bank",
+        "cpu-runner",
+        "output-root",
+        "replay-source-root",
+        "replay-core-root",
+    ):
         parser.add_argument(f"--{name}", required=True, type=Path)
     parser.add_argument("--workers", type=int, choices=range(1, 5), default=4)
     parser.add_argument("--system-volume-root", type=Path, default=Path.home())
@@ -134,6 +172,19 @@ def main() -> None:
         _sealed(args.cpu_bank / name) for name in ("validation_summary.json", "commitment.json")
     ]
     successes = checked_success_rows(summary, commitment, actor["parent_model_hash"])
+    heads = {}
+    for root in (args.replay_source_root, args.replay_core_root):
+        head = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+        ).strip()
+        dirty = subprocess.check_output(
+            ["git", "-C", str(root), "status", "--porcelain"], text=True
+        ).strip()
+        if dirty or commitment["source_heads"].get(str(root.resolve())) != head:
+            raise ValueError(
+                "clean historical source/core checkouts bound by CPU commitment required"
+            )
+        heads[str(root.resolve())] = head
     capacity = capacity_check(args.output_root.parent, args.system_volume_root, 2 * 1024**3)
     inputs = {
         str(path.resolve()): hash_bytes(path.read_bytes())
@@ -142,6 +193,8 @@ def main() -> None:
             args.cpu_runner,
             Path(__file__),
             Path(protection_module.__file__),
+            args.replay_source_root / "scripts/rsi_review_cpu_motor_transfer.py",
+            args.replay_source_root / "src/rosclaw_soccer/rsi/cpu_motor_transfer_evidence.py",
         )
     }
     declaration = dict(
@@ -152,6 +205,7 @@ def main() -> None:
         cpu_commitment_hash=commitment["report_hash"],
         ordered_success_contexts=[[r["index"], r["seed"], r["lane"]] for r in successes],
         input_file_hashes=inputs,
+        historical_replay_source_heads=heads,
         capacity=capacity,
         workers=args.workers,
         actual_physical_executions_added=0,
@@ -168,6 +222,9 @@ def main() -> None:
             runner=str(args.cpu_runner),
             parent_hash=actor["parent_model_hash"],
             world_hash=commitment["compiled_world_hash"],
+            replay_source=str(args.replay_source_root),
+            replay_core=str(args.replay_core_root),
+            output_root=str(args.output_root),
         )
         for row in successes
     ]
@@ -234,6 +291,15 @@ def main() -> None:
         or _sealed(args.cpu_bank / "validation_summary.json") != summary
     ):
         raise ValueError("immutable reconstruction input changed")
+    for root, head in heads.items():
+        if (
+            subprocess.check_output(["git", "-C", root, "rev-parse", "HEAD"], text=True).strip()
+            != head
+            or subprocess.check_output(
+                ["git", "-C", root, "status", "--porcelain"], text=True
+            ).strip()
+        ):
+            raise ValueError("historical replay checkout changed during reconstruction")
     write_once(args.output_root / "protection.json.gz", result)
     print(
         "COMPLETE_MULTI_DOMAIN_PROTECTION_RECONSTRUCTED",

@@ -145,3 +145,39 @@ def test_changed_success_review_aborts_before_state_extraction(monkeypatch, tmp_
     )
     with pytest.raises(ValueError, match="independent replay"):
         audit_success(job)
+
+
+def test_historical_audit_hash_mismatch_cannot_fall_back_to_current_source(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    module = source / "src/rosclaw_soccer/rsi/cpu_motor_transfer_evidence.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("not-the-pinned-audit-source")
+    raw = dict(
+        step_model_hash="parent", compiled_model_hash="world", report_hash="report", seed=1, lane=0
+    )
+    monkeypatch.setattr("scripts.rsi_build_cpu_domain_protection._sealed", lambda _: raw)
+    monkeypatch.setattr(
+        "scripts.rsi_build_cpu_domain_protection.run_stage",
+        lambda *_args, **_kwargs: pytest.fail("must not run an unbound source"),
+    )
+    monkeypatch.setattr(
+        "scripts.rsi_build_cpu_domain_protection.audit_cpu_transfer",
+        lambda *_: pytest.fail("must not substitute the current auditor"),
+    )
+    job = dict(
+        row=dict(
+            folder=str(tmp_path),
+            report_hash="report",
+            seed=1,
+            lane=0,
+            outcome=dict(source_hash="sha256:" + "f" * 64),
+        ),
+        runner="runner.py",
+        parent_hash="parent",
+        world_hash="world",
+        replay_source=str(source),
+        replay_core=str(tmp_path / "core"),
+        output_root=str(tmp_path / "output"),
+    )
+    with pytest.raises(ValueError, match="historical complete audit"):
+        audit_success(job)
