@@ -82,6 +82,8 @@ def test_partial_nonfinite_or_relabelled_cpu_data_rejected(fault):
         "training",
         "authority",
         "unsealed",
+        "observation-reference",
+        "observation-null",
     ],
 )
 def test_wrong_cpu_sampling_provenance_rejected_before_dynamics_replay(
@@ -130,6 +132,12 @@ def test_wrong_cpu_sampling_provenance_rejected_before_dynamics_replay(
         view["training_only"] = False
     elif fault == "authority":
         raw["hardware_authorized"] = True
+    elif fault == "observation-reference":
+        from rosclaw_soccer.sim.root_velocity_reference import root_observation_contract
+
+        raw["observation_contract"] = root_observation_contract("body-origin")
+    elif fault == "observation-null":
+        raw["observation_contract"] = None
     else:
         view["unsigned_extra"] = 1
     monkeypatch.setattr(data_module, "_sealed", lambda _: raw)

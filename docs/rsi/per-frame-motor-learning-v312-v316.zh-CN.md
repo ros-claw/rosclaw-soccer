@@ -2267,3 +2267,32 @@ JUnit逐项对比Source403，新增失败0，余11项完全相同的既有外部
 日志/XML `rsi-cpu-memory-learning-v405-regression.*`。
 其后main新增11项CPU错误provenance前置拒绝测试，相关37 passed；
 Source405仍保持冻结、不修改正在采集/审计/训练的任何源码。
+
+### 身体速度参考点与缓存阶段：可复现诊断，不是效果突破
+
+另行启动完整52课程CPU NN父策略覆盖，全部为已消费课程，四个spawn
+worker真实执行并完整审计；未完成前不以少量失败推广到全课程。
+日志 `/code/rosclaw/rsi-cpu-parent-full-bank-v405-driver.log`，
+证据 `/data/rosclaw_overflow/rsi-cpu-retained-nn-full-bank-v405`。
+不选择简单课程、不打开fresh、不替换父策略。
+
+核查发现GPU原生记录root-link速度，旧CPU则使用MuJoCo BODY的惯性
+COM速度，二者参考点不同。直接每帧restore+forward诊断v406被严格
+一致性检查拒绝，没有生成成功证书。改用原封存PD控制逐步重放v407：
+完整3000子步，记录的COM速度误差**0**，COM→body-origin刚体点变换
+独立证据最大误差2.22e-16。最大线速度差0.114202m/s，学习器开始前
+最大0.108018m/s。同一记录的当前qvel雅可比与缓存速度差0.167227，
+说明直接forward刷新改变了观察的时间阶段，不能用其错误归因。
+实际本地MuJoCo版本为**3.12.0**（以本次进程读取为准）。
+诊断hash `afa16c1c43d31052b54f96011bb343507ac14b865977b10dc0797fa5a8100802`，
+文件 `/data/rosclaw_overflow/rsi-root-velocity-sequential-diagnostic-v407.json`。
+这是1次已消费控制重放，**0条新物理轨迹**，未证明这是失败唯一根因。
+
+新代码引入显式 `--root-velocity-reference body-origin` 实验输入协议：
+保留世界坐标linear/angular顺序，不调用forward/step、不更改积分器、
+PD、球或接触参数；封存reference point及cached-stage声明，审计按
+同一声明逐步重放。默认body-com保持旧协议，不添加旧commitment字段。
+旧CPU训练提取器拒绝带新观察协议的样本，避免默默混合语义不同的数据。
+Source395/405正在运行的源码保持冻结；此变更尚非训练效果改进证据。
+参考[MuJoCo对象枚举](https://mujoco.readthedocs.io/en/latest/APIreference/APItypes.html)
+与[对象速度API](https://mujoco.readthedocs.io/en/latest/APIreference/APIfunctions.html)。

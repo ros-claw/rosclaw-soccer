@@ -36,6 +36,10 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
     swing_joint_delta,
 )
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json
+from rosclaw_soccer.sim.root_velocity_reference import (
+    root_observation_contract,
+    root_velocity_world,
+)
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation
 
 
@@ -53,6 +57,12 @@ def main() -> None:
     parser.add_argument("--consumed-bank", type=Path)
     parser.add_argument("--foundation-only", action="store_true")
     parser.add_argument("--compressed-report", action="store_true")
+    parser.add_argument(
+        "--root-velocity-reference",
+        choices=("body-com", "body-origin"),
+        default="body-com",
+        help="Explicit diagnostic input convention; default preserves historical COM observations",
+    )
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--lane", type=int, required=True, choices=range(16))
     args = parser.parse_args()
@@ -349,6 +359,9 @@ def main() -> None:
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    observation_contract = root_observation_contract(args.root_velocity_reference)
+    if observation_contract is not None:
+        commitment["observation_contract"] = observation_contract
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
     history: dict[str, list[Any]] = {
         k: []
@@ -387,9 +400,7 @@ def main() -> None:
     first_contact_bodies: list[int] = []
     for frame in range(300):
         root_pose = np.concatenate((data.xpos[pelvis], data.xquat[pelvis][[1, 2, 3, 0]]))
-        root_vel = np.zeros(6)
-        mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, pelvis, root_vel, 0)
-        root_vel = root_vel[[3, 4, 5, 0, 1, 2]]
+        root_vel = root_velocity_world(model, data, pelvis, args.root_velocity_reference)
         ball_vel = np.zeros(6)
         mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, ball, ball_vel, 0)
         for key, value in (

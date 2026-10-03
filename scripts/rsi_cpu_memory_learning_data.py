@@ -76,6 +76,7 @@ def audit_cpu_learning_rollout(
     if (
         (raw.get("seed"), raw.get("lane")) != course
         or raw.get("execution_profile") != "taskspace_plus_motor"
+        or "observation_contract" in raw
         or raw.get("source_hash") != hash_bytes(runner.read_bytes())
         or raw.get("step_model_hash") != expected_view_hash
         or view.get("model_hash") != expected_view_hash

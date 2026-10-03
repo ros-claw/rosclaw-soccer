@@ -15,6 +15,7 @@ from rosclaw_soccer.rsi.contact_motor_primitive import JOINT_NAMES
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
 from rosclaw_soccer.rsi.independent_first_touch_bank import post_contact_displacement
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json
+from rosclaw_soccer.sim.root_velocity_reference import reference_from_contract, root_velocity_world
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
 
 
@@ -42,6 +43,11 @@ def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
         report[k] != v for k, v in commitment.items()
     ):
         raise ValueError("CPU commitment differs from report")
+    if "observation_contract" in commitment and commitment["observation_contract"] is None:
+        raise ValueError("explicit null CPU observation contract is ambiguous")
+    reference = reference_from_contract(commitment.get("observation_contract"))
+    if report.get("observation_contract") != commitment.get("observation_contract"):
+        raise ValueError("CPU observation contract differs from commitment")
     model = mujoco.MjModel.from_binary_path(str(snapshot))
     if (model.nq, model.nv, model.nu) != (43, 41, 29) or model.opt.timestep != 0.002:
         raise ValueError("modern canonical CPU transfer state required")
@@ -152,11 +158,11 @@ def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
             trace["foot_geometry_position_before_step_m"][frame, 0],
             "geometry observation",
         )
-        root_velocity, ball_velocity = np.zeros(6), np.zeros(6)
-        mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, pelvis, root_velocity, 0)
+        root_velocity = root_velocity_world(model, data, pelvis, reference)
+        ball_velocity = np.zeros(6)
         mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, ball, ball_velocity, 0)
         equal(
-            root_velocity[[3, 4, 5, 0, 1, 2]],
+            root_velocity,
             trace["root_velocity_world"][frame, 0],
             "root velocity",
         )
