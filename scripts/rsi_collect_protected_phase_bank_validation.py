@@ -7,7 +7,6 @@ audited. All results, including losses, are retained. This is not a fresh exam.
 import argparse
 import json
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +18,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
+from scripts.rsi_sim_execution_pool import execute_shards
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 
@@ -286,6 +286,72 @@ def validate_bank_models(candidate: dict[str, Any], warm: dict[str, Any]) -> Non
         raise ValueError("historical actor requires the same frozen compiled warm base")
 
 
+def preserve_failed_attempt(root: Path, seed: int, lane: int, arm: str, kind: str) -> None:
+    stem = f"seed{seed}-lane{lane}-{arm}-{kind}"
+    if (root / "logs" / f"{stem}.log").exists():
+        try:
+            resolve_physical_report(root / stem / "report.json")
+        except ValueError as exc:
+            raise ValueError(
+                "failed attempt log requires explicit archived recovery, not overwrite"
+            ) from exc
+
+
+def execute_bank_shard(job: dict[str, Any]) -> list[dict[str, Any]]:
+    args, runner, gpu, courses = job["args"], job["runner"], job["gpu"], job["courses"]
+    records = []
+    for i in range(gpu, 52, 4):
+        course = courses[i]
+        seed, lane = course["seed"], course["lane"]
+        common = dict(
+            root=args.output_root,
+            runner=runner,
+            isaac_python=args.isaac_python,
+            g1_usd=args.g1_usd,
+            model_root=args.model_root,
+            actor=args.late_swing_policy,
+            seed=seed,
+            lane=lane,
+            gpu=gpu,
+            gain=1.2,
+            negative_only=True,
+            core_root=args.core_root,
+            resume=args.resume or job["reuse"],
+            execution_timeout_s=600,
+            compressed_report=args.compressed_reports,
+            shared_model_report=args.shared_model_reports,
+        )
+        preserve_failed_attempt(args.output_root, seed, lane, "reproduction", "parent")
+        parent, _ = _run(**common, arm="reproduction", kind="parent")
+        old = _sealed(Path(course["parent_report"]))
+        if any(
+            parent[k] != old[k]
+            for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
+        ):
+            raise ValueError("pinned source changed full-bank physical parent")
+        parent_path = args.output_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
+        row = dict(index=i, seed=seed, lane=lane, parent_report_hash=parent["report_hash"])
+        for arm, model_path in (("warm", args.warm_model), ("candidate", args.candidate_model)):
+            preserve_failed_attempt(args.output_root, seed, lane, arm, "actor")
+            raw, outcome = _run(
+                **common,
+                arm=arm,
+                kind="actor",
+                motor_step=model_path,
+                parent_report_override=parent_path,
+            )
+            outcome["high_quality"] = high_quality(outcome)
+            row[arm] = dict(report_hash=raw["report_hash"], **outcome)
+        records.append(row)
+        write_once(args.output_root / f"row-{i}.json", row)
+        print(
+            f"PROTECTED_BANK_EXECUTED i={i} warm={row['warm']['high_quality']} "
+            f"candidate={row['candidate']['high_quality']}",
+            flush=True,
+        )
+    return records
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in (
@@ -306,6 +372,7 @@ def main() -> None:
     parser.add_argument("--reuse-baseline-root", type=Path)
     parser.add_argument("--compressed-reports", action="store_true")
     parser.add_argument("--shared-model-reports", action="store_true")
+    parser.add_argument("--spawn-execution-workers", action="store_true")
     args = parser.parse_args()
     if args.shared_model_reports and not args.compressed_reports:
         parser.error("shared proofs require explicit compressed reports")
@@ -340,6 +407,12 @@ def main() -> None:
         hardware_authorized=False,
     )
     reuse = None
+    if args.spawn_execution_workers:
+        commitment["execution_worker_model"] = "FOUR_SPAWNED_GPU_SHARDS"
+        commitment["execution_worker_source_hash"] = hash_bytes(Path(__file__).read_bytes())
+        commitment["execution_pool_source_hash"] = hash_bytes(
+            (Path(__file__).parent / "rsi_sim_execution_pool.py").read_bytes()
+        )
     if args.compressed_reports:
         commitment["physical_report_representation"] = (
             "lossless_shared_model_gzip_json" if args.shared_model_reports else "lossless_gzip_json"
@@ -388,75 +461,26 @@ def main() -> None:
                         args.output_root / "logs" / f"{stem}.log",
                     )
 
-    def preserve_failed_attempt(seed: int, lane: int, arm: str, kind: str) -> None:
-        stem = f"seed{seed}-lane{lane}-{arm}-{kind}"
-        if (args.output_root / "logs" / f"{stem}.log").exists():
-            try:
-                resolve_physical_report(args.output_root / stem / "report.json")
-            except ValueError as exc:
-                raise ValueError(
-                    "failed attempt log requires explicit archived recovery, not overwrite"
-                ) from exc
-
-    def worker(gpu: int) -> list[dict[str, Any]]:
-        records = []
-        for i in range(gpu, 52, 4):
-            course = bank["courses"][i]
-            seed, lane = course["seed"], course["lane"]
-            common = dict(
-                root=args.output_root,
-                runner=runner,
-                isaac_python=args.isaac_python,
-                g1_usd=args.g1_usd,
-                model_root=args.model_root,
-                actor=args.late_swing_policy,
-                seed=seed,
-                lane=lane,
-                gpu=gpu,
-                gain=1.2,
-                negative_only=True,
-                core_root=args.core_root,
-                resume=args.resume or reuse is not None,
-                execution_timeout_s=600,
-                compressed_report=args.compressed_reports,
-                shared_model_report=args.shared_model_reports,
+    jobs = [
+        dict(args=args, runner=runner, gpu=gpu, courses=bank["courses"], reuse=reuse is not None)
+        for gpu in range(4)
+    ]
+    rows = sorted(
+        [
+            r
+            for group in execute_shards(
+                execute_bank_shard, jobs, spawn=args.spawn_execution_workers
             )
-            preserve_failed_attempt(seed, lane, "reproduction", "parent")
-            parent, _ = _run(**common, arm="reproduction", kind="parent")
-            old = _sealed(Path(course["parent_report"]))
-            if any(
-                parent[k] != old[k]
-                for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
-            ):
-                raise ValueError("pinned source changed full-bank physical parent")
-            parent_path = (
-                args.output_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
-            )
-            row = dict(index=i, seed=seed, lane=lane, parent_report_hash=parent["report_hash"])
-            for arm, model_path in (("warm", args.warm_model), ("candidate", args.candidate_model)):
-                preserve_failed_attempt(seed, lane, arm, "actor")
-                raw, outcome = _run(
-                    **common,
-                    arm=arm,
-                    kind="actor",
-                    motor_step=model_path,
-                    parent_report_override=parent_path,
-                )
-                outcome["high_quality"] = high_quality(outcome)
-                row[arm] = dict(report_hash=raw["report_hash"], **outcome)
-            records.append(row)
-            write_once(args.output_root / f"row-{i}.json", row)
-            print(
-                f"PROTECTED_BANK_EXECUTED i={i} warm={row['warm']['high_quality']} "
-                f"candidate={row['candidate']['high_quality']}",
-                flush=True,
-            )
-        return records
-
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        rows = sorted(
-            [r for group in pool.map(worker, range(4)) for r in group], key=lambda r: r["index"]
-        )
+            for r in group
+        ],
+        key=lambda r: r["index"],
+    )
+    if args.spawn_execution_workers and (
+        commitment["execution_worker_source_hash"] != hash_bytes(Path(__file__).read_bytes())
+        or commitment["execution_pool_source_hash"]
+        != hash_bytes((Path(__file__).parent / "rsi_sim_execution_pool.py").read_bytes())
+    ):
+        raise ValueError("spawned execution orchestration source drift")
     if (
         _head(source) != commitment["source_commit"]
         or hash_bytes(runner.read_bytes()) != commitment["runner_hash"]

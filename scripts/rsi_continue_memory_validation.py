@@ -119,6 +119,7 @@ def main() -> None:
     parser.add_argument("--shared-model-reports", action="store_true")
     parser.add_argument("--compressed-transport-review", type=Path)
     parser.add_argument("--system-reserve-path", type=Path)
+    parser.add_argument("--spawn-execution-workers", action="store_true")
     args = parser.parse_args()
     if len(args.baseline_cpu_root) != 4:
         parser.error("four ordered actual-parent CPU reference folders required")
@@ -138,6 +139,7 @@ def main() -> None:
         proof=args.compressed_transport_review is not None,
         reserve=args.system_reserve_path is not None,
     )
+    execution_flags = ["--spawn-execution-workers"] if args.spawn_execution_workers else []
     candidate = load_json_artifact(args.candidate)
     baseline = load_json_artifact(args.baseline)
     validate_bank_models(candidate, baseline)
@@ -180,6 +182,8 @@ def main() -> None:
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if args.spawn_execution_workers:
+        commitment["execution_worker_model"] = "FOUR_SPAWNED_GPU_SHARDS"
     cpu_reuse_pins: dict[str, str] = {}
     if args.verified_candidate_cpu_root:
         from rosclaw_soccer.rsi.physical_report_io import resolve_physical_report
@@ -273,6 +277,7 @@ def main() -> None:
         + script("rsi_collect_online_step_validation.py")
         + common
         + flags
+        + execution_flags
         + [
             "--output-root",
             str(pilot_root),
@@ -410,6 +415,7 @@ def main() -> None:
         script("rsi_collect_protected_phase_bank_validation.py")
         + common
         + flags
+        + execution_flags
         + [
             "--output-root",
             str(bank_root),

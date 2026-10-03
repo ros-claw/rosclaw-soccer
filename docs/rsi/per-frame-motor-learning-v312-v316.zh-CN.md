@@ -1939,3 +1939,37 @@ observation和trajectory_index形状/顺序，读取前后重验输入。
 这些是同轨迹上**重叠的观测标签，不是因果诊断**；不能据此直接
 宣称某个控制参数是根因，也不删除难例。当前208独立采样继续，
 全量审计完成后可按相同规则诊断新数据，而不拿部分样本训练。
+
+### v397 独立pilot通过；v399 可选spawn执行分片
+
+v397完整pilot独立审计已完成，review
+`c31b611816df8efa58879fb19cdcf2a8d2fc121269da9603f770a73a033d819b`。
+12份真实报告、2400帧motor动作重构与summary一致，确认3/4→4/4，
+旧HQ/clean丢失及新增出界均0，pelvis安全。接续进入原四CPU轨迹
+的完整再重放；不是四条新训练轨迹。52案bank和fresh80仍未完成。
+
+只读单案例性能测量使用同冻结Source v397/Core v392，重读pilot
+20262102/4，不启动仿真：审计hash精确相同
+`62b15c5df27bd106a71c293f6675ec5cdb5ee64d2f2479b94db5da76e05691ed`，
+profile留在
+`/code/rosclaw/rsi-advantage-pilot-review-v397-case2-profile.pstats`。
+cProfile测得总323.747秒；compiled actor构造273.699秒，JSON
+序列化295次累计229.738秒；构造之后的完整motor重构约15秒。
+**包含profiling开销，不当作正常运行耗时或训练成功率**。这说明
+当前迭代成本主要在大量重复完整模型验证，而不只在GPU物理步进。
+
+后续版本提供显式`--spawn-execution-workers`，pilot/full-bank及
+continuation透传；默认仍为旧四线程模式。每卡固定一个分片、
+声明顺序返回，全部课程/对照/失败/逐帧检查均保留，原600秒bank
+native timeout不变。子进程仅返回compact结果，不传整份权重/
+轨迹；spawn不继承父进程原生GPU状态。新增调度方式和worker/
+helper完整源码SHA进入commitment并在完成后重验；跨execution
+checkout的spawn拒绝，resume不能悄悄换执行方式。
+
+15项新增测试含真实spawn调度（**fixture、无GPU物理**）、失败
+不可跳过、四卡顺序/重复拒绝、旧warm控制不一致仍拒绝、完整52案
+分片保留13案/39臂执行及失败日志不可覆盖。相关合计78项通过，
+1.31秒；ruff/format/undefined-name检查及4个脚本mypy通过。
+该可选模式**尚无实际GPU提速成绩或新策略验收成绩**，未改动
+当前Source v395/v396/v397执行，也未修改任何artifact-bound数字
+模型/Core数学模块。后续实际对照须继续做原完整物理验证。

@@ -2,7 +2,6 @@
 
 import argparse
 import json
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +16,7 @@ from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_collect_approach_lateral_tracking_v286 import _run
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
 from scripts.rsi_collect_step_motor_pilot import COURSES
+from scripts.rsi_sim_execution_pool import execute_shards
 from scripts.rsi_train_protected_online_motor_v308 import _head
 
 
@@ -32,6 +32,72 @@ def baseline_reference_binding(pilot: dict[str, Any]) -> tuple[str, str]:
     if pilot.get("schema") == "soccer.rsi.online_step_motor_physical_validation.v1":
         return "online", "online"
     raise ValueError("unsupported explicit baseline comparison schema")
+
+
+def execute_online_course(job: dict[str, Any]) -> dict[str, Any]:
+    args, runner, gpu, old = job["args"], job["runner"], job["gpu"], job["reference"]
+    seed, lane = COURSES[gpu]
+    common = dict(
+        root=args.output_root,
+        runner=runner,
+        isaac_python=args.isaac_python,
+        g1_usd=args.g1_usd,
+        model_root=args.model_root,
+        actor=args.late_swing_policy,
+        seed=seed,
+        lane=lane,
+        gpu=gpu,
+        gain=1.2,
+        negative_only=True,
+        core_root=args.core_root,
+        resume=args.resume,
+        compressed_report=args.compressed_reports,
+        shared_model_report=args.shared_model_reports,
+    )
+    for arm, kind in (("reproduction", "parent"), ("warm", "actor"), ("online", "actor")):
+        stem = f"seed{seed}-lane{lane}-{arm}-{kind}"
+        if (args.output_root / "logs" / f"{stem}.log").exists():
+            try:
+                resolve_physical_report(args.output_root / stem / "report.json")
+            except ValueError as exc:
+                raise ValueError(
+                    "archive failed attempt explicitly before resuming; never overwrite"
+                ) from exc
+    parent, _ = _run(**common, arm="reproduction", kind="parent")
+    parent_path = args.output_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
+    baseline, baseline_outcome = _run(
+        **common,
+        arm="warm",
+        kind="actor",
+        motor_step=args.step_model,
+        parent_report_override=parent_path,
+    )
+    if any(
+        baseline[k] != old[k]
+        for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
+    ):
+        raise ValueError("online dispatcher changed frozen warm-start physical actor")
+    candidate, outcome = _run(
+        **common,
+        arm="online",
+        kind="actor",
+        motor_step=args.online_model,
+        parent_report_override=parent_path,
+    )
+    print(f"ONLINE_STEP_EXECUTED seed={seed} lane={lane} HQ={high_quality(outcome)}", flush=True)
+    return dict(
+        seed=seed,
+        lane=lane,
+        parent_report_hash=parent["report_hash"],
+        baseline=dict(
+            report_hash=baseline["report_hash"],
+            high_quality=high_quality(baseline_outcome),
+            **baseline_outcome,
+        ),
+        online=dict(
+            report_hash=candidate["report_hash"], high_quality=high_quality(outcome), **outcome
+        ),
+    )
 
 
 def main() -> None:
@@ -53,10 +119,13 @@ def main() -> None:
     parser.add_argument("--archived-failure-log", type=Path)
     parser.add_argument("--compressed-reports", action="store_true")
     parser.add_argument("--shared-model-reports", action="store_true")
+    parser.add_argument("--spawn-execution-workers", action="store_true")
     args = parser.parse_args()
     if args.shared_model_reports and not args.compressed_reports:
         parser.error("shared proofs require explicit compressed reports")
     source = (args.execution_source or Path(__file__).resolve().parent.parent).resolve()
+    if args.spawn_execution_workers and source != Path(__file__).resolve().parent.parent:
+        parser.error("spawned workers require their own pinned execution checkout")
     runner = source / "scripts/rsi_isaac_vector_first_touch.py"
     model = load_json_artifact(args.online_model)
     warm = load_json_artifact(args.step_model)
@@ -170,7 +239,10 @@ def main() -> None:
             != warm_base["model_hash"]
         ):
             raise ValueError("baseline reference policy or physical evidence changed")
-        references[seed, lane] = raw
+        references[seed, lane] = {
+            k: raw[k]
+            for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
+        }
     commitment = dict(
         schema="soccer.rsi.online_step_validation_commitment.v1",
         source_commit=_head(source),
@@ -188,6 +260,12 @@ def main() -> None:
         hardware_authorized=False,
     )
     args.output_root.mkdir(parents=True, exist_ok=args.resume)
+    if args.spawn_execution_workers:
+        commitment["execution_worker_model"] = "FOUR_SPAWNED_GPU_SHARDS"
+        commitment["execution_worker_source_hash"] = hash_bytes(Path(__file__).read_bytes())
+        commitment["execution_pool_source_hash"] = hash_bytes(
+            (Path(__file__).parent / "rsi_sim_execution_pool.py").read_bytes()
+        )
     if args.compressed_reports:
         commitment["physical_report_representation"] = (
             "lossless_shared_model_gzip_json" if args.shared_model_reports else "lossless_gzip_json"
@@ -217,75 +295,17 @@ def main() -> None:
         write_once(args.output_root / "recovery.json", recovery)
     write_once(args.output_root / "commitment.json", commitment)
 
-    def worker(gpu: int) -> dict[str, Any]:
-        seed, lane = COURSES[gpu]
-        common = dict(
-            root=args.output_root,
-            runner=runner,
-            isaac_python=args.isaac_python,
-            g1_usd=args.g1_usd,
-            model_root=args.model_root,
-            actor=args.late_swing_policy,
-            seed=seed,
-            lane=lane,
-            gpu=gpu,
-            gain=1.2,
-            negative_only=True,
-            core_root=args.core_root,
-            resume=args.resume,
-            compressed_report=args.compressed_reports,
-            shared_model_report=args.shared_model_reports,
-        )
-        for arm, kind in (("reproduction", "parent"), ("warm", "actor"), ("online", "actor")):
-            stem = f"seed{seed}-lane{lane}-{arm}-{kind}"
-            if (args.output_root / "logs" / f"{stem}.log").exists():
-                try:
-                    resolve_physical_report(args.output_root / stem / "report.json")
-                except ValueError as exc:
-                    raise ValueError(
-                        "archive failed attempt explicitly before resuming; never overwrite"
-                    ) from exc
-        parent, _ = _run(**common, arm="reproduction", kind="parent")
-        parent_path = args.output_root / f"seed{seed}-lane{lane}-reproduction-parent/report.json"
-        baseline, baseline_outcome = _run(
-            **common,
-            arm="warm",
-            kind="actor",
-            motor_step=args.step_model,
-            parent_report_override=parent_path,
-        )
-        old = references[seed, lane]
-        if any(
-            baseline[k] != old[k]
-            for k in ("body_trace_hash", "trace_hash", "asset_hash", "sonic_qualification_hash")
-        ):
-            raise ValueError("online dispatcher changed frozen warm-start physical actor")
-        candidate, outcome = _run(
-            **common,
-            arm="online",
-            kind="actor",
-            motor_step=args.online_model,
-            parent_report_override=parent_path,
-        )
-        print(
-            f"ONLINE_STEP_EXECUTED seed={seed} lane={lane} HQ={high_quality(outcome)}", flush=True
-        )
-        return dict(
-            seed=seed,
-            lane=lane,
-            parent_report_hash=parent["report_hash"],
-            baseline=dict(
-                report_hash=baseline["report_hash"],
-                high_quality=high_quality(baseline_outcome),
-                **baseline_outcome,
-            ),
-            online=dict(
-                report_hash=candidate["report_hash"], high_quality=high_quality(outcome), **outcome
-            ),
-        )
-
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        rows = list(pool.map(worker, range(4)))
+    jobs = [
+        dict(args=args, runner=runner, gpu=gpu, reference=references[COURSES[gpu]])
+        for gpu in range(4)
+    ]
+    rows = execute_shards(execute_online_course, jobs, spawn=args.spawn_execution_workers)
+    if args.spawn_execution_workers and (
+        commitment["execution_worker_source_hash"] != hash_bytes(Path(__file__).read_bytes())
+        or commitment["execution_pool_source_hash"]
+        != hash_bytes((Path(__file__).parent / "rsi_sim_execution_pool.py").read_bytes())
+    ):
+        raise ValueError("spawned execution orchestration source drift")
     if _head(source) != commitment["source_commit"]:
         raise ValueError("online motor source drift")
     summary = dict(
