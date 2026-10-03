@@ -2468,3 +2468,34 @@ PD和世界；查询索引已由v416完整轨迹和动力学审计验证。
 `/data/rosclaw_overflow/rsi-cpu-explicit-proposal-budget-grid-v418/commitment.json`，
 哈希`sha256:31d3d7cc53efffe07204255fdb08bbbe5e06740a7ca1cc1e86870792756fd2fd`。
 实验进行中，尚未记录新的足球增益；Source418/核心Source416不热更。
+
+v418两个预算的实验最终完成：0.05、0.25各4条新的CPU物理执行，
+全部完整3000子步/PD/神经目标审计。两个候选均为1/4 HQ，无旧HQ/
+clean损失、无新增出界且全部安全，但没有成功率增益；因此都未启动
+52场验收，也没有进入GPU筛选、fresh或晋升。总计8条新物理轨迹，
+复用的48条训练轨迹没有重复计作新增采样。结果：
+`/data/rosclaw_overflow/rsi-cpu-explicit-proposal-budget-grid-v418/result.json`，
+哈希`sha256:fe9923fc001f45b09927d2345a915d740cfbed39ee37eaf4d3847245666415d7`。
+0.05候选实际接受17步，marginal KL为0.048999917810797614、
+conditional KL为0.012121033132794131。这证明更新确实扩大了，
+但没有证明“更大的更新自然能解决踢球”。
+
+CPU160全部40个失败场景的4条/场采样和审计已完成，随后生成候选
+`sha256:1fa8d7cd6313aaf185e0b45fd63131e8403e82aa758a70bb0d8ae58cd2925f10`。
+其完整52场CPU原生验收已启动，当前未结束，不写最终成功率。
+
+下一项隔离诊断针对观测时序：`mj_step`后的qpos/qvel是已积分状态，
+部分Cartesian派生字段仍可能来自上一个forward阶段。原body-origin
+实验仅换参考点，没有修复此时序差异。新增通用（无G1硬编码）
+`CurrentKinematicObserver`，仅在私有MjData中运行kinematics/comPos/
+comVel，重建一致的当前位姿和速度；不调用forward动力学或step，
+不修改原MjData、模型参数、控制或接触求解。观测契约显式绑定来源
+哈希、常规body原点和previous-completed-frame力输入。默认仍保持
+原cached协议，旧训练提取器仍拒绝混入带新观测契约的轨迹。
+47项相关测试通过，含另一模型同尺寸数据拒绝、原模型/状态不变、
+不调用动力学/积分、快照不串回合、与独立forward派生结果一致。
+这些数值测试不是足球效果证据；新的固定场景对照仍必须实际执行。
+
+参考坐标语义以[MuJoCo官方说明](https://mujoco.readthedocs.io/en/stable/overview.html#floating-objects)
+为准；本机测试基于MuJoCo3.12.0。另已核对本机两侧dt均0.002、
+29个关节armature均0.01，没有通过改这些物理参数提高标签。

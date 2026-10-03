@@ -15,7 +15,11 @@ from rosclaw_soccer.rsi.contact_motor_primitive import JOINT_NAMES
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
 from rosclaw_soccer.rsi.independent_first_touch_bank import post_contact_displacement
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json
-from rosclaw_soccer.sim.root_velocity_reference import reference_from_contract, root_velocity_world
+from rosclaw_soccer.sim.current_kinematic_observation import (
+    CurrentKinematicObserver,
+    snapshot_from_contract,
+)
+from rosclaw_soccer.sim.root_velocity_reference import root_velocity_world
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
 
 if TYPE_CHECKING:
@@ -60,7 +64,7 @@ def audit_cpu_transfer(
         raise ValueError("CPU commitment differs from report")
     if "observation_contract" in commitment and commitment["observation_contract"] is None:
         raise ValueError("explicit null CPU observation contract is ambiguous")
-    reference = reference_from_contract(commitment.get("observation_contract"))
+    reference, observation_snapshot = snapshot_from_contract(commitment.get("observation_contract"))
     if report.get("observation_contract") != commitment.get("observation_contract"):
         raise ValueError("CPU observation contract differs from commitment")
     model = mujoco.MjModel.from_binary_path(str(snapshot))
@@ -155,7 +159,21 @@ def audit_cpu_transfer(
         if not np.allclose(actual, expected, atol=1e-8, rtol=0):
             raise ValueError(f"CPU dynamics replay differs: {name}")
 
+    observer = (
+        CurrentKinematicObserver(model) if observation_snapshot == "current-kinematic" else None
+    )
     for frame in range(300):
+        if observer is None:
+            positions, quaternions = data.xpos, data.xquat
+            root_velocity = root_velocity_world(model, data, pelvis, reference)
+            ball_velocity = np.zeros(6)
+            mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, ball, ball_velocity, 0)
+            ball_linear_velocity = ball_velocity[3:]
+        else:
+            current = observer.sample(data)
+            positions, quaternions = current.body_position_m, current.body_quaternion_wxyz
+            root_velocity = current.body_origin_velocity_world[pelvis]
+            ball_linear_velocity = current.body_origin_velocity_world[ball, :3]
         qpos = np.concatenate((data.qpos[:7], data.qpos[qi], data.qpos[bq : bq + 7]))
         qvel = np.concatenate((data.qvel[:6], data.qvel[vi], data.qvel[bv : bv + 6]))
         equal(qpos, trace["canonical_qpos"][frame, 0], "qpos")
@@ -163,26 +181,23 @@ def audit_cpu_transfer(
         equal(data.qpos[qi], trace["joint_position_rad"][frame, 0], "joint observation")
         equal(data.qvel[vi], trace["joint_velocity_rad_s"][frame, 0], "joint velocity")
         equal(
-            np.concatenate((data.xpos[pelvis], data.xquat[pelvis][[1, 2, 3, 0]])),
+            np.concatenate((positions[pelvis], quaternions[pelvis][[1, 2, 3, 0]])),
             trace["root_pose_xyzw_m"][frame, 0],
             "root observation",
         )
-        equal(data.xpos[ball], trace["ball_position_before_step_m"][frame, 0], "ball observation")
+        equal(positions[ball], trace["ball_position_before_step_m"][frame, 0], "ball observation")
         equal(
-            data.xpos[geometry],
+            positions[geometry],
             trace["foot_geometry_position_before_step_m"][frame, 0],
             "geometry observation",
         )
-        root_velocity = root_velocity_world(model, data, pelvis, reference)
-        ball_velocity = np.zeros(6)
-        mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, ball, ball_velocity, 0)
         equal(
             root_velocity,
             trace["root_velocity_world"][frame, 0],
             "root velocity",
         )
         equal(
-            ball_velocity[3:],
+            ball_linear_velocity,
             trace["ball_linear_velocity_before_step_m_s"][frame, 0],
             "ball velocity",
         )

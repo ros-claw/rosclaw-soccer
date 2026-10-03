@@ -36,10 +36,13 @@ from rosclaw_soccer.rsi.taskspace_swing_probe import (
     swing_joint_delta,
 )
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json
-from rosclaw_soccer.sim.root_velocity_reference import (
-    root_observation_contract,
-    root_velocity_world,
+from rosclaw_soccer.sim.current_kinematic_observation import (
+    CurrentKinematicObserver,
 )
+from rosclaw_soccer.sim.current_kinematic_observation import (
+    observation_contract as make_observation_contract,
+)
+from rosclaw_soccer.sim.root_velocity_reference import root_velocity_world
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation
 
 
@@ -63,9 +66,13 @@ def main() -> None:
         default="body-com",
         help="Explicit diagnostic input convention; default preserves historical COM observations",
     )
+    parser.add_argument(
+        "--observation-snapshot", choices=("cached", "current-kinematic"), default="cached"
+    )
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--lane", type=int, required=True, choices=range(16))
     args = parser.parse_args()
+    make_observation_contract(args.root_velocity_reference, args.observation_snapshot)
     if args.foundation_only and (args.neural_model or args.motor_policy or args.step_model):
         parser.error("foundation-only cannot include a motor learning model")
     # This first diagnostic only accepts already consumed courses.
@@ -365,7 +372,9 @@ def main() -> None:
         promotion_authorized=False,
         hardware_authorized=False,
     )
-    observation_contract = root_observation_contract(args.root_velocity_reference)
+    observation_contract = make_observation_contract(
+        args.root_velocity_reference, args.observation_snapshot
+    )
     if observation_contract is not None:
         commitment["observation_contract"] = observation_contract
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
@@ -404,22 +413,35 @@ def main() -> None:
     minimum_pelvis = float("inf")
     first_contact_frame = None
     first_contact_bodies: list[int] = []
+    observer = (
+        CurrentKinematicObserver(model)
+        if args.observation_snapshot == "current-kinematic"
+        else None
+    )
     for frame in range(300):
-        root_pose = np.concatenate((data.xpos[pelvis], data.xquat[pelvis][[1, 2, 3, 0]]))
-        root_vel = root_velocity_world(model, data, pelvis, args.root_velocity_reference)
-        ball_vel = np.zeros(6)
-        mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, ball, ball_vel, 0)
+        if observer is None:
+            positions, quaternions = data.xpos, data.xquat
+            root_vel = root_velocity_world(model, data, pelvis, args.root_velocity_reference)
+            ball_vel = np.zeros(6)
+            mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, ball, ball_vel, 0)
+            ball_linear_vel = ball_vel[3:]
+        else:
+            current = observer.sample(data)
+            positions, quaternions = current.body_position_m, current.body_quaternion_wxyz
+            root_vel = current.body_origin_velocity_world[pelvis]
+            ball_linear_vel = current.body_origin_velocity_world[ball, :3]
+        root_pose = np.concatenate((positions[pelvis], quaternions[pelvis][[1, 2, 3, 0]]))
         for key, value in (
             ("root_pose_xyzw_m", root_pose),
             ("root_velocity_world", root_vel),
-            ("ball_position_before_step_m", data.xpos[ball]),
-            ("ball_linear_velocity_before_step_m_s", ball_vel[3:]),
-            ("foot_geometry_position_before_step_m", data.xpos[bodies]),
+            ("ball_position_before_step_m", positions[ball]),
+            ("ball_linear_velocity_before_step_m_s", ball_linear_vel),
+            ("foot_geometry_position_before_step_m", positions[bodies]),
             ("joint_position_rad", data.qpos[qi]),
             ("joint_velocity_rad_s", data.qvel[vi]),
         ):
             history[key].append(value.copy()[None])
-        gap = data.xpos[ball] - data.xpos[pelvis]
+        gap = positions[ball] - positions[pelvis]
         lateral = (
             float(np.clip(1.2 * gap[1], -0.2, 0.2))
             if tracking and gap[0] > 0.95 and contact_frame is None
