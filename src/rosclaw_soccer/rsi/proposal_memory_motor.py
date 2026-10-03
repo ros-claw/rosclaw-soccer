@@ -11,6 +11,7 @@ from typing import Any
 
 import numpy as np
 import rosclaw.growth.domain_anchor_bank as domain_module
+import rosclaw.growth.event_credit_partitions as event_module
 import rosclaw.growth.indexed_anchor_output_memory as index_module
 import rosclaw.growth.proposal_advantage_regression as regression_module
 import rosclaw.growth.sample_weighting as weighting_module
@@ -26,7 +27,7 @@ from rosclaw_soccer.rsi.kernel_guarded_step_network import FLAGS
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 SCHEMA = "soccer.rsi.proposal_memory_motor.v1"
-LOSS_PROFILES = ("uniform-frame", "equal-contact-phase-mass")
+LOSS_PROFILES = ("uniform-frame", "equal-contact-phase-mass", "equal-first-contact-lead-mass")
 
 
 def validate_model(model: dict[str, Any]) -> None:
@@ -43,6 +44,8 @@ def validate_model(model: dict[str, Any]) -> None:
         or model.get("loss_weighting_profile") not in LOSS_PROFILES
         or model.get("core_domain_source_hash")
         != hash_bytes(Path(domain_module.__file__).read_bytes())
+        or model.get("core_event_source_hash")
+        != hash_bytes(Path(event_module.__file__).read_bytes())
         or "protected_domain_bank" not in model
         or model.get("memory_query_representation") != "EXACT_COORDINATE_INDEX_INTACT_LOGICAL_BANK"
         or model.get("model_hash")
@@ -171,11 +174,42 @@ def _validate_weighting_receipt(model: dict[str, Any], receipt: Any) -> None:
     ):
         raise ValueError("declared loss-weighting receipt required")
     if model["loss_weighting_profile"] == "uniform-frame":
-        if "sample_weighting" in receipt:
+        if any(
+            k in receipt
+            for k in (
+                "sample_weighting",
+                "event_label_hash",
+                "event_evidence_hash",
+                "event_partition_frame_counts",
+            )
+        ):
             raise ValueError("uniform objective cannot carry reweighting")
         return
     weighting = receipt.get("sample_weighting")
-    counts = receipt.get("phase_frame_counts")
+    event_profile = model["loss_weighting_profile"] == "equal-first-contact-lead-mass"
+    counts = receipt.get("event_partition_frame_counts" if event_profile else "phase_frame_counts")
+    if not event_profile and any(
+        k in receipt
+        for k in (
+            "event_label_hash",
+            "event_evidence_hash",
+            "event_partition_frame_counts",
+            "future_event_is_actor_observation",
+        )
+    ):
+        raise ValueError("event credit cannot migrate to a phase-balanced receipt")
+    if event_profile and (
+        receipt.get("credit_lead_frames") != 8
+        or receipt.get("credit_after_frames") != 20
+        or receipt.get("future_event_is_actor_observation") is not False
+        or receipt.get("future_event_used_only_as_offline_label") is not True
+        or receipt.get("core_event_source_hash") != model["core_event_source_hash"]
+        or any(
+            not re.fullmatch(r"sha256:[0-9a-f]{64}", receipt.get(k, ""))
+            for k in ("event_label_hash", "event_evidence_hash")
+        )
+    ):
+        raise ValueError("complete offline event-credit provenance required")
     if (
         type(weighting) is not dict
         or weighting.get("schema") != "rosclaw.growth.positive_sample_weighting.v1"
@@ -193,17 +227,19 @@ def _validate_weighting_receipt(model: dict[str, Any], receipt: Any) -> None:
         )
         or not re.fullmatch(r"sha256:[0-9a-f]{64}", weighting.get("sample_weight_hash", ""))
         or type(counts) is not list
-        or len(counts) != 3
-        or any(type(v) is not int or v < 1 for v in counts)
+        or len(counts) != (5 if event_profile else 3)
+        or any(type(v) is not int or v < (0 if event_profile else 1) for v in counts)
         or sum(counts) != receipt.get("frame_sample_count")
+        or not any(counts)
         or any(
             type(weighting.get(k)) is not float or not np.isfinite(weighting[k])
             for k in ("minimum", "maximum", "mean")
         )
         or not np.isclose(weighting["mean"], 1.0, atol=1e-12, rtol=0)
         or not 1 / 16 <= weighting["minimum"] <= weighting["maximum"] <= 16
-        or weighting["minimum"] != sum(counts) / (3 * max(counts))
-        or weighting["maximum"] != sum(counts) / (3 * min(counts))
+        or weighting["minimum"] != sum(counts) / (sum(v > 0 for v in counts) * max(counts))
+        or weighting["maximum"]
+        != sum(counts) / (sum(v > 0 for v in counts) * min(v for v in counts if v > 0))
     ):
         raise ValueError("complete positive phase-balanced weighting receipt required")
 
@@ -261,6 +297,7 @@ def _initial_descriptor(
         core_index_source_hash=hash_bytes(Path(index_module.__file__).read_bytes()),
         core_weighting_source_hash=hash_bytes(Path(weighting_module.__file__).read_bytes()),
         core_domain_source_hash=hash_bytes(Path(domain_module.__file__).read_bytes()),
+        core_event_source_hash=hash_bytes(Path(event_module.__file__).read_bytes()),
         protected_domain_bank=protected_domain_bank,
         loss_weighting_profile=loss_weighting_profile,
         memory_query_representation="EXACT_COORDINATE_INDEX_INTACT_LOGICAL_BANK",

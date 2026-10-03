@@ -11,6 +11,7 @@ from rosclaw.growth.correlated_residual_gradient import (
     conditional_means,
     terminal_crossfit_advantages,
 )
+from rosclaw.growth.event_credit_partitions import event_credit_partitions
 from rosclaw.growth.proposal_advantage_regression import fit_proposal_advantage_residual
 from rosclaw.growth.sample_weighting import balanced_partition_weights
 
@@ -23,7 +24,14 @@ from rosclaw_soccer.rsi.proposal_memory_motor import (
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
-def fit_update(model: dict[str, Any], arrays: Any, *, batch_hash: str) -> dict[str, Any]:
+def fit_update(
+    model: dict[str, Any],
+    arrays: Any,
+    *,
+    batch_hash: str,
+    measured_event_frames: Any = None,
+    event_evidence_hash: str | None = None,
+) -> dict[str, Any]:
     validate_model(model)
     if model["generation"] != 0 or not re.fullmatch(r"sha256:[0-9a-f]{64}", batch_hash):
         raise ValueError("zero-addition regression initial model and sealed batch required")
@@ -56,6 +64,34 @@ def fit_update(model: dict[str, Any], arrays: Any, *, batch_hash: str) -> dict[s
         or any(not np.all(std[groups == g] == std[groups == g][0]) for g in range(n // 270))
     ):
         raise ValueError("complete ordered physical regression trajectories required")
+    profile = model["loss_weighting_profile"]
+    partitions = None
+    events = None
+    if profile == "equal-first-contact-lead-mass":
+        events = np.asarray(measured_event_frames)
+        if (
+            events.shape != (n // 270,)
+            or events.dtype.kind not in "iu"
+            or not isinstance(event_evidence_hash, str)
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", event_evidence_hash)
+        ):
+            raise ValueError("complete independently bound offline event labels required")
+        partitions = event_credit_partitions(
+            groups,
+            np.tile(np.arange(30, 300), n // 270),
+            events,
+            lead_frames=8,
+            after_frames=20,
+        )
+        weights = balanced_partition_weights(partitions)
+    else:
+        if measured_event_frames is not None or event_evidence_hash is not None:
+            raise ValueError(
+                "event labels cannot silently alter the declared phase/uniform objective"
+            )
+        weights = (
+            balanced_partition_weights(phase) if profile == "equal-contact-phase-mass" else None
+        )
     decoder = CompiledProposalMemoryMotor(make_preview(model))
     current = np.stack([decoder.raw_mean(v, int(p)) for v, p in zip(x, phase, strict=True)])
     phi = np.stack([decoder.features(v) for v in x])
@@ -74,11 +110,7 @@ def fit_update(model: dict[str, Any], arrays: Any, *, batch_hash: str) -> dict[s
         config=regression_module.ProposalAdvantageRegressionConfig(
             maximum_mean_kl=model["maximum_mean_kl"]
         ),
-        sample_weights=(
-            balanced_partition_weights(phase)
-            if model["loss_weighting_profile"] == "equal-contact-phase-mass"
-            else None
-        ),
+        sample_weights=weights,
     )
     result = {k: copy.deepcopy(v) for k, v in model.items() if k != "model_hash"}
     result["residual_layers"] = numeric.pop("layers")
@@ -105,6 +137,22 @@ def fit_update(model: dict[str, Any], arrays: Any, *, batch_hash: str) -> dict[s
     )
     if model["loss_weighting_profile"] == "equal-contact-phase-mass":
         receipt["phase_frame_counts"] = [int(np.sum(phase == p)) for p in range(3)]
+    if partitions is not None and events is not None:
+        receipt.update(
+            event_partition_frame_counts=[int(np.sum(partitions == p)) for p in range(5)],
+            credit_lead_frames=8,
+            credit_after_frames=20,
+            future_event_is_actor_observation=False,
+            future_event_used_only_as_offline_label=True,
+            core_event_source_hash=model["core_event_source_hash"],
+            event_label_hash=hash_json(
+                {
+                    "measured_event_frames": events.tolist(),
+                    "event_evidence_hash": event_evidence_hash,
+                }
+            ),
+            event_evidence_hash=event_evidence_hash,
+        )
     result["learning_receipt"] = receipt
     result["critic_readout"] = prepared["critic_readout"].tolist()
     result["model_hash"] = hash_json(result)
