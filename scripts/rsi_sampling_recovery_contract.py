@@ -24,7 +24,9 @@ def check_recovery_job(job: dict[str, Any], commitment: dict[str, Any]) -> list[
         or type(args.get("samples_per_course")) is not int
         or args.get("shared_sampling_models") is not True
         or args.get("compressed_sampling_models") is not True
-        or commitment.get("schema") != "soccer.rsi.failure_step_exploration_commitment.v1"
+        or commitment.get("schema") != "soccer.rsi.smooth_memory_exploration_commitment.v1"
+        or commitment.get("behavior_kind") != "OUTPUT_MEMORY_CURRENT_PARENT_AR1"
+        or commitment.get("exploration_stream_namespace") != "STREAM_STRIDE_20000000"
         or commitment.get("partition") != "TRAIN_CONSUMED"
         or commitment.get("exploration_stream") != 2
         or commitment.get("sampling_rho") != 0.9

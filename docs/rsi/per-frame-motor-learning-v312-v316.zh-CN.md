@@ -2074,3 +2074,13 @@ libXau、libxcb、libX11；**这不是已证实的根因，也不是策略失败
 完整再审计但不是新轨迹、所有晋升/硬件授权false。
 合同与原worker相关 **18 passed**，ruff/format与单模块mypy通过。
 记录时尚未执行补采；不修改正在运行的Source395或Core394。
+
+首次实际只读preflight发现合同最初按通用failure schema检查，
+而当前真实smooth collection的schema为
+`soccer.rsi.smooth_memory_exploration_commitment.v1`；前检严格拒绝，
+未移动失败日志、未启动补采。修正合同及fixture为实际smooth
+schema、AR1 behavior kind和stream namespace，不放宽课程/门限。
+原完整采集预算2,835,258,763字节加Data安全余量1,073,741,824
+字节；当前Data约2.88GB，不足3,909,000,587字节。
+**不降低原预留，不清理用户日志；补采需要先恢复足够磁盘余量**。
+原其他分片和v397银行恢复继续，所有原失败日志保留。

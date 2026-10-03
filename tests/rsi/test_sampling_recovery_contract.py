@@ -13,7 +13,9 @@ def fixture(tmp_path):
     courses = [dict(seed=100 + i, lane=(i % 4) * 2) for i in range(13)]
     views = [f"fixture-{i}" for i in range(208)]
     commitment = dict(
-        schema="soccer.rsi.failure_step_exploration_commitment.v1",
+        schema="soccer.rsi.smooth_memory_exploration_commitment.v1",
+        behavior_kind="OUTPUT_MEMORY_CURRENT_PARENT_AR1",
+        exploration_stream_namespace="STREAM_STRIDE_20000000",
         partition="TRAIN_CONSUMED",
         exploration_stream=2,
         sampling_rho=0.9,
