@@ -203,7 +203,13 @@ def main() -> None:
 
         make_preview: Callable[[dict[str, Any]], dict[str, Any]] = legacy_preview
 
-        if step_model.get("schema") == "soccer.rsi.advantage_memory_motor.v1":
+        if step_model.get("schema") == "soccer.rsi.proposal_memory_motor.v1":
+            from rosclaw_soccer.rsi.proposal_memory_motor import CompiledProposalMemoryMotor
+            from rosclaw_soccer.rsi.proposal_memory_motor import make_preview as proposal_preview
+
+            make_preview = proposal_preview
+            delta_at_frame = CompiledProposalMemoryMotor(make_preview(step_model)).delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.advantage_memory_motor.v1":
             from rosclaw_soccer.rsi.advantage_memory_motor import CompiledAdvantageMemoryMotor
             from rosclaw_soccer.rsi.advantage_memory_motor import make_preview as advantage_preview
 

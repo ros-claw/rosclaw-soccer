@@ -2385,3 +2385,71 @@ driver `/code/rosclaw/rsi-cpu-all-failure-curriculum-v411-driver.log`，
 新增容器修改隔离测试，工厂11 passed、ruff/format/mypy通过。
 Source409/410保持原样；正在采集的v411没有热更此加固，也没有任何
 回合内修改网络参数，原工厂实测证据仍只绑定其原冻结版本。
+
+### 2026-10-04：完整回归与学习步幅诊断
+
+Source413（15fcac7）的全量回归结束：6545 passed、11 failed、70 skipped，
+746.25秒。与Source407的JUnit逐项比较，新增失败为0；原有11个外部
+权威/完整性相关失败没有被跳过或放宽。日志位于
+`/code/rosclaw/rsi-factory-hardening-v413-regression.log`，XML同名前缀。
+
+v414对原104条完整训练轨迹、28080个实际状态重建了学习前后的raw均值
+差异，与原学习收据的marginal KL逐项核对，结果为
+0.004899497266487905。配置允许160步，但实际仅接受6步，随后触及
+原0.0049线搜索边界；不是原配置仅设置6步。
+
+raw均值向量RMS为0.0098989871，单分量RMS为0.00285759143。
+利用原0.16动作幅度和tanh的Lipschitz界，同一固定观测下的目标关节
+角单分量RMS变化上界仅约0.00045721463rad（0.02619647度）。
+这是固定观测的期望目标变化上界，不是闭环轨迹偏移界，更不是证明
+学习效果小的唯一原因。原模型、KL验收阈值、关节幅度、slew、PD和
+物理参数均未改变。诊断收据：
+`/data/rosclaw_overflow/rsi-retained-awr-update-scale-diagnostic-v414.json`，
+哈希`sha256:01de599cf2d6d5777bb162eaaed50a678ce379b861d292acc2a8b6c1b8473093`。
+
+v415对19170行原输出记忆做只读查询分析，其中9720个精确不同坐标。
+540次冻结坐标/微扰查询中，516次由于重复近邻触发完整NumPy扫描；
+本次nearest累计2.843秒。它证明这一查询路径的额外计算开销，不证明
+整个训练的总加速比。诊断收据：
+`/data/rosclaw_overflow/rsi-duplicate-anchor-query-profile-v415.json`，
+哈希`sha256:efcec6762d5141f5fb9b3e0f4baab47d7a2ee73c718d5c9ffbb60276384cf2fb`。
+
+针对上述两项，独立ROSClaw研究分支新增任务无关的
+`ProposalAdvantageRegressionConfig`和`IndexedAnchorOutputMemory`，
+提交9fff348f。前者只能产生无执行权的数值proposal，显式声明更新
+预算；默认计算与原AWR完全相同，较大预算不意味着物理安全。
+后者仅编译精确重复坐标的查询索引，保留原全部逻辑记忆行、顺序、
+预测、证据和哈希，真正不同坐标的近邻平局仍走原NumPy参考算法。
+growth目录166项测试通过，ruff/format和新增两模块mypy通过。
+当前这些单测不代表新的足球成绩，不修改PR615或正在运行的冻结版本。
+
+v416进一步验证精确坐标索引：四条完整历史CPU物理轨迹的1200帧动作
+和1080个条件采样概率与原实现逐项完全一致，存储轨迹误差为0。
+本机这四条轨迹的motor推理耗时比为1.8816388；它不含构造、训练、
+物理采集和审计总耗时，因此不是端到端训练加速比。其后完整重放
+四条CPU轨迹的12000个动力学子步、PD力矩和神经目标，非来源证据
+字段也全部与原审计相同。没有新物理轨迹，也没有修改旧模型或旧审计。
+两项收据：
+`/data/rosclaw_overflow/rsi-indexed-memory-stored-trace-benchmark-v416.json`
+（`sha256:91d56d59afffb4a8b2d5b063702ea538ec45d3bab621e1f68a94351a2e7a943c`）和
+`/data/rosclaw_overflow/rsi-indexed-memory-full-cpu-audit-v416/validation_summary.json`
+（`sha256:f2cf05f10e38f0c710583368c03a747bd659ca46e5c9b2d4248ea1dba0097117`）。
+核心代码已提交并推送，作为独立PR616叠在仍开放的PR615上，未合并
+或修改PR615：<https://github.com/ros-claw/rosclaw/pull/616>。
+
+CPU48失败课程的完整实验也已结束：48条训练轨迹全部完整审计，
+另有1条传输对照、4条候选原生验证，总计53条新的物理执行。
+候选模型`sha256:12a6c683b5f13469da439fa4b45f8cdc446e54b668768b8a15bebee305185b36`
+在4个固定CPU场景仍为1/4 HQ，旧HQ损失0、安全通过、新增出界0。
+没有学习后成功率提升，未采用、未宣传、未打开fresh；预登记v408
+因此没有启动昂贵52场全量验收，并写入明确拒绝终态。
+完整结果位于
+`/data/rosclaw_overflow/rsi-cpu-current-parent-failure-training-v405-stream3/result.json`，
+哈希`sha256:2e7262e1f9d229bd4ec70728bf8e1e0215adb5c74da238532893f26f1a03c319`。
+
+独立的`proposal_memory_motor.v1`仅用于下一轮SIM_ONLY研究，不是
+旧`advantage_memory_motor.v1`的放宽版本。新family显式绑定学习预算、
+无runtime执行权、核心优化器和精确查询索引来源；原关节残差幅度、
+slew、PD、世界和验收指标不变。它需要Core9fff348f（PR616）的模块。
+单测14 passed，旧AWR/CPU审计/速度参考回归23 passed；未宣称新足球
+成绩。实际学习与物理验证必须用新的冻结来源和独立预登记实验。
