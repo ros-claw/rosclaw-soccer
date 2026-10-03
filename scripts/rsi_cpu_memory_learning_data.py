@@ -5,7 +5,7 @@ All 270 causal motor frames, including later knee contacts/failures, are kept.
 """
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -17,6 +17,9 @@ from rosclaw_soccer.rsi.smooth_memory_motor import CompiledSmoothMemoryMotor, ma
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_fit_protected_phase_step_motor import cpu_features
+
+if TYPE_CHECKING:
+    from rosclaw_soccer.rsi.smooth_sampling_decoder_factory import SmoothSamplingDecoderFactory
 
 
 def ordered_cpu_arrays(
@@ -70,6 +73,7 @@ def audit_cpu_learning_rollout(
     expected_sampling_seed: int,
     course: tuple[int, int],
     group: int,
+    sampling_decoder_factory: "SmoothSamplingDecoderFactory | None" = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     raw = _sealed(folder / "report.json")
     view = raw.get("executed_motor_policy", {}).get("step_motor_proof", {}).get("model", {})
@@ -91,7 +95,11 @@ def audit_cpu_learning_rollout(
         or any(raw.get(k) is not False for k in ("promotion_authorized", "hardware_authorized"))
     ):
         raise ValueError("exact declared CPU current-parent physical sampling view required")
-    review = audit_cpu_transfer(folder, runner)
+    review = (
+        audit_cpu_transfer(folder, runner)
+        if sampling_decoder_factory is None
+        else audit_cpu_transfer(folder, runner, sampling_decoder_factory=sampling_decoder_factory)
+    )
     if (
         any(
             review.get(k) is not True
@@ -114,7 +122,11 @@ def audit_cpu_learning_rollout(
     )
     if reread != raw:
         raise ValueError("CPU physical evidence changed during extraction")
-    decoder = CompiledSmoothMemoryMotor(make_preview(view))
+    decoder = (
+        CompiledSmoothMemoryMotor(make_preview(view))
+        if sampling_decoder_factory is None
+        else sampling_decoder_factory.bind(raw["executed_motor_policy"])
+    )
     draws = [
         decoder.latent_sample(v, frame, int(p))
         for frame, (v, p) in enumerate(zip(x, phase, strict=True), start=30)

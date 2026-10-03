@@ -45,3 +45,13 @@ def test_cpu_replay_rejects_ambiguous_plain_and_gzip_report(tmp_path):
     write_once(tmp_path / "report.json.gz", report)
     with pytest.raises(ValueError, match="exactly one complete physical report"):
         audit_cpu_transfer(tmp_path, Path(__file__))
+
+
+@pytest.mark.parametrize("factory", [object(), lambda _: None])
+def test_cpu_audit_does_not_accept_arbitrary_decoder_callback(tmp_path, monkeypatch, factory):
+    pytest.importorskip("mujoco")
+    from rosclaw_soccer.rsi import cpu_motor_transfer_evidence as module
+
+    monkeypatch.setattr(module, "_sealed", lambda _: {"executed_motor_policy": {}})
+    with pytest.raises(ValueError, match="verified smooth sampling factory"):
+        audit_cpu_transfer(tmp_path, Path(__file__), sampling_decoder_factory=factory)

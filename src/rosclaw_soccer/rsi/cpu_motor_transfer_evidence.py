@@ -6,7 +6,7 @@ The initial implementation deliberately requires the modern 43/41 state model.
 """
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -18,11 +18,26 @@ from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash
 from rosclaw_soccer.sim.root_velocity_reference import reference_from_contract, root_velocity_world
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
 
+if TYPE_CHECKING:
+    from rosclaw_soccer.rsi.smooth_sampling_decoder_factory import SmoothSamplingDecoderFactory
 
-def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
+
+def audit_cpu_transfer(
+    root: Path,
+    source_path: Path,
+    *,
+    sampling_decoder_factory: "SmoothSamplingDecoderFactory | None" = None,
+) -> dict[str, Any]:
     import mujoco
 
     report = _sealed(root / "report.json")
+    if sampling_decoder_factory is not None:
+        from rosclaw_soccer.rsi.smooth_sampling_decoder_factory import SmoothSamplingDecoderFactory
+
+        if type(sampling_decoder_factory) is not SmoothSamplingDecoderFactory or (
+            "smooth_memory_motor_proof" not in report.get("executed_motor_policy", {})
+        ):
+            raise ValueError("only the verified smooth sampling factory is accepted")
     snapshot, trace_path = root / "compiled_model.mjb", root / "physical_trace.npz"
     if (
         report.get("source_hash") != hash_bytes(source_path.read_bytes())
@@ -239,7 +254,12 @@ def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
         elif "smooth_memory_motor_proof" in policy:
             from rosclaw_soccer.rsi.smooth_memory_motor import CompiledSmoothMemoryMotor
 
-            delta_at_frame = CompiledSmoothMemoryMotor(policy).delta_at_frame
+            decoder = (
+                CompiledSmoothMemoryMotor(policy)
+                if sampling_decoder_factory is None
+                else sampling_decoder_factory.bind(policy)
+            )
+            delta_at_frame = decoder.delta_at_frame
         elif "output_memory_motor_proof" in policy:
             from rosclaw_soccer.rsi.output_memory_step_motor import CompiledOutputMemoryMotor
 
@@ -321,5 +341,14 @@ def audit_cpu_transfer(root: Path, source_path: Path) -> dict[str, Any]:
         hardware_authorized=False,
         source_hash=hash_bytes(Path(__file__).read_bytes()),
     )
+    if sampling_decoder_factory is not None:
+        from rosclaw_soccer.rsi import smooth_sampling_decoder_factory as factory_module
+
+        result["decoder_construction"] = {
+            "kind": "VERIFIED_SHARED_MEAN_WITH_INDEPENDENT_EPISODE_STATE",
+            "source_hash": hash_bytes(Path(factory_module.__file__).read_bytes()),
+            "complete_preview_validation_retained": True,
+            "weights_or_action_law_changed": False,
+        }
     result["report_hash"] = hash_json(result)
     return result
