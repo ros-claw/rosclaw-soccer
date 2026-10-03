@@ -23,6 +23,8 @@ from tests.rsi.test_step_motor_network import model  # noqa: F401
 
 
 def test_zero_regression_is_globally_identical_to_current_nn(current):  # noqa: F811
+    from scripts.rsi_collect_protected_phase_bank_validation import validate_bank_models
+
     initial, extra = current
     proposal = initial_model(initial, maximum_mean_kl=0.05)
     new = CompiledProposalMemoryMotor(make_preview(proposal))
@@ -33,6 +35,12 @@ def test_zero_regression_is_globally_identical_to_current_nn(current):  # noqa: 
     assert proposal["maximum_mean_kl"] == 0.05
     assert proposal["runtime_execution_authorized"] is False
     assert new._parent._output_memory.to_dict() == old._parent._output_memory.to_dict()
+    warm = initial["baseline"]["base_model"]["frozen_parent"]
+    validate_bank_models(proposal, warm)
+    forged_warm = copy.deepcopy(warm)
+    forged_warm["model_hash"] = "sha256:" + "f" * 64
+    with pytest.raises(ValueError, match="exact qualified NN parent"):
+        validate_bank_models(proposal, forged_warm)
 
 
 def test_actual_numeric_regression_changes_layers_preserves_memory_and_guard(

@@ -186,6 +186,13 @@ def verify_baseline_reuse(
 
 def validate_bank_models(candidate: dict[str, Any], warm: dict[str, Any]) -> None:
     """Later learned actors must retain their current parent, not just first warm start."""
+    if candidate.get("schema") == "soccer.rsi.proposal_memory_motor.v1":
+        from rosclaw_soccer.rsi.proposal_memory_motor import validate_model as proposal_validate
+
+        proposal_validate(candidate)
+        if candidate["initial_actor"]["baseline"]["base_model"]["frozen_parent"] != warm:
+            raise ValueError("proposal-memory requires exact qualified NN parent")
+        return
     if candidate.get("schema") == "soccer.rsi.advantage_memory_motor.v1":
         from rosclaw_soccer.rsi.advantage_memory_motor import validate_model as advantage_validate
 

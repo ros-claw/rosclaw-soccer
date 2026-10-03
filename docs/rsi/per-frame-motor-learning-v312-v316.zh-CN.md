@@ -2453,3 +2453,18 @@ CPU48失败课程的完整实验也已结束：48条训练轨迹全部完整审�
 slew、PD、世界和验收指标不变。它需要Core9fff348f（PR616）的模块。
 单测14 passed，旧AWR/CPU审计/速度参考回归23 passed；未宣称新足球
 成绩。实际学习与物理验证必须用新的冻结来源和独立预登记实验。
+
+Source418（ed1e662）的全量回归结束：6559 passed、11 failed、70 skipped，
+919.07秒。与Source413 XML比较，新增失败0、原失败消失0。
+日志/XML位于`/code/rosclaw/rsi-proposal-motor-v418-regression.*`。
+
+v418预登记同一完整CPU48训练数据的两个独立候选预算0.05、0.25，
+先各做4场原生CPU验证，只有HQ增益、无旧HQ/clean损失、无新增
+出界且全部安全才做52场完整CPU验收。此后也不会自动打开fresh、
+晋升或执行硬件。复用48条训练轨迹不是新增采样；新增物理执行
+只能统计确实完成的pilot/full场次。保持原reward、学习率、关节幅度、
+PD和世界；查询索引已由v416完整轨迹和动力学审计验证。
+承诺位于
+`/data/rosclaw_overflow/rsi-cpu-explicit-proposal-budget-grid-v418/commitment.json`，
+哈希`sha256:31d3d7cc53efffe07204255fdb08bbbe5e06740a7ca1cc1e86870792756fd2fd`。
+实验进行中，尚未记录新的足球增益；Source418/核心Source416不热更。
