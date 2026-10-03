@@ -1885,3 +1885,10 @@ v396相关测试合计59 passed，33.16秒。v397首次全量回归错误使用
 旧Core v392（缺少新缓存模块），在collection阶段失败，无测试成绩；
 日志/XML保留。现改用正确冻结Core v394重跑完整回归，不改数字
 模型或旧artifact-bound源码，也不把命令配置错误算作23项历史失败。
+
+v397正确Core v394的全量复测完成：**6410 passed / 23 failed /
+70 skipped，615.93秒**。XML逐项比较，与v395的23项失败完全同一
+身份；日志/XML
+`/code/rosclaw/rsi-completed-cpu-reuse-v397-regression-retake.{log,xml}`。
+独立采样目前仍为部分完成，完整summary/208 learning尚未生成；
+full validation当前仍为pilot，不提前标记COMPLETE或晋升。
