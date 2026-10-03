@@ -191,6 +191,7 @@ def test_pending_diagonal_receiver_keeps_negotiated_point() -> None:
         controller=controller,
         decision=decision,
         positions={"red.finisher": np.zeros(2)},
+        model=SimpleNamespace(),
         data=data,
         ball_qpos=7,
         ball_qvel=6,

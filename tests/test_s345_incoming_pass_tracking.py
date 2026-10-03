@@ -77,6 +77,7 @@ def test_near_ball_braking_keeps_only_causal_lateral_correction(enabled, active)
         controller=controller,
         decision=decision,
         positions={cell.agent_id: np.zeros(2)},
+        model=SimpleNamespace(),
         data=data,
         ball_qpos=7,
         ball_qvel=0,

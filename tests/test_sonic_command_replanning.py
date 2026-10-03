@@ -165,6 +165,8 @@ def test_legacy_contract_hash_unchanged_and_experiment_is_bound(monkeypatch):
         "latent_schedule",
         "experimental_maximum_speed_mps",
         "experimental_command_replanning",
+        "inference_threads",
+        "onnx_graph_encoder_layout",
     ):
         config.pop(key)
     expected = hash_json(

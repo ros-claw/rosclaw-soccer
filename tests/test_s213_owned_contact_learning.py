@@ -51,6 +51,7 @@ def test_learned_stance_replaces_distant_fixed_retreat():
         controller=controller,
         decision=decision,
         positions={"red.playmaker": np.array([0.5, 0.0])},
+        model=SimpleNamespace(),
         data=data,
         ball_qpos=7,
         ball_qvel=0,

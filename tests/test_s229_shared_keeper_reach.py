@@ -55,6 +55,7 @@ def test_configuration_keeps_disabled_hash_and_rejects_invalid_authority():
     previous.pop("motor_receive_commitment_context")
     previous.pop("cyclic_receive_motors")
     previous.pop("outward_waist_braking_damping")
+    previous.pop("outward_ankle_pitch_braking_damping")
     previous.pop("outward_ankle_roll_braking_damping")
     previous.pop("option_ankle_roll_braking_damping")
     previous.pop("option_joint_guard_margin_rad")

@@ -82,6 +82,7 @@ def test_world_uses_waypoint_but_keeps_velocity_guards_and_receive_hold():
         controller=controller,
         decision=decision,
         positions={cell.agent_id: np.array([-0.8, 0.0])},
+        model=SimpleNamespace(),
         data=data,
         ball_qpos=7,
         ball_qvel=0,

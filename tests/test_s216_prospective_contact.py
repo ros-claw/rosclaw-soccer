@@ -51,6 +51,7 @@ def test_prospective_near_ball_stance_advances_without_claiming_possession() -> 
         controller=controller,
         decision=SimpleNamespace(intent=TacticalIntent.PASS, target_position_m=(2.0, 0.0, 0.0)),
         positions={"red.playmaker": np.zeros(2)},
+        model=SimpleNamespace(),
         data=data,
         ball_qpos=7,
         ball_qvel=6,

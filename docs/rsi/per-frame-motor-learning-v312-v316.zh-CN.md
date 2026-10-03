@@ -2084,3 +2084,21 @@ schema、AR1 behavior kind和stream namespace，不放宽课程/门限。
 字节；当前Data约2.88GB，不足3,909,000,587字节。
 **不降低原预留，不清理用户日志；补采需要先恢复足够磁盘余量**。
 原其他分片和v397银行恢复继续，所有原失败日志保留。
+
+### 回归失败复查：只修过时fixture，不修改物理策略或旧证书
+
+复查v399全量23个失败：7个movement fixture缺当前必需的
+`model`参数；3个SONIC历史handoff fixture缺`_batch_pending`
+初始化或仍匹配旧的外层异常文字；2个disabled合同测试没有排除
+新增但默认关闭的配置字段。补齐fixture，保留历史默认world
+hash `fd442bce83f737c64e2ee59ecc09dc204376100f9476a21361b41b538d8c41d1`，
+并增加retired提案的原始cause及fault latch断言；没有修改runtime、
+actor、物理模型、验收值或任何历史证书。
+
+八个相关文件默认环境 **117 passed / 3 skipped**。
+随后显式使用本地RoboNaldo `RoboNaldo_Deploy`资产root再跑：
+**120 passed / 0 skipped，6.99秒**。首次误把上级repo当asset root，
+资格检查严格失败；改用实际部署root后通过。三个新增asset-backed
+测试是controller目标/状态不变性验证，**不是自由运动训练或
+实际守门成功率证据**。剩余旧外部报告authority/integrity失败
+没有通过放宽校验或重封历史报告“修成通过”。全量回归需另跑。

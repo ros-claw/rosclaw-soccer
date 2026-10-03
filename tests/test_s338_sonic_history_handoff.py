@@ -222,6 +222,7 @@ def navigation_fixture():
     nav._ready_from_handoff = False
     nav._ready_from_observation = False
     nav._boundary_observation_hash = None
+    nav._batch_pending = False
     return nav, c
 
 
@@ -235,8 +236,10 @@ def test_navigation_commits_final_observation_and_retires_once():
     )
     assert receipt.frame == 120 and nav._next_frame == 121 and nav._retired
     np.testing.assert_array_equal(c["destination"]._history[0][0], old_first)
-    with pytest.raises(ValueError, match="retired"):
+    with pytest.raises(ValueError, match="latched") as rejected:
         nav.propose(c["source_observation"])
+    assert "retired" in str(rejected.value.__cause__)
+    assert nav._faulted
     with pytest.raises(ValueError, match="retired"):
         nav.handoff_to(
             c["destination"],
