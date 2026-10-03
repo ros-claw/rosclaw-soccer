@@ -2650,3 +2650,22 @@ v427大模型父哈希benchmark已完成：
 Core PR616的Data Flywheel Gate已于2026-10-03 20:18:59 UTC完成SUCCESS，
 对应提交`673b7cc553eca51723bc04b7688984691db8d57b`。PR仍OPEN，未合并；
 没有据此变更PR615或任何学习策略的资格状态。
+
+GPU208候选的固定反例验证已经结束，严格拒绝：
+`/data/rosclaw_overflow/rsi-independent-motor-explicit-continuation-v404/result.json`，
+哈希`sha256:73b2b1d6e8b6f93efc648cbdab93c1303f0ce895f4bbf69dad69bbce62f218ad`。
+3条新GPU原生执行、900个motor帧独立重建，历史对照2条；不是3个
+独立新场景，也不是CPU3000子步回放。原NN对照和same-source对照
+轨迹均保持精确一致。固定20262104/2仍未解决：原NN60帧前移2.467m、
+横向比0.3702、最大横移3.4208m；候选2.357m、0.4878、4.2896m，
+发生新增出界，骨盆最低0.7059m仍安全、clean foot仍真。这说明当前
+208样本/原预算方案不仅未解决该反例，还损失了其界内保留；因此
+REJECTED_FIXED_COUNTEREXAMPLE，不进入完整bank、fresh或晋升。
+
+v425均匀训练对照已拟合，模型
+`sha256:4c8caccc97ada580ec68177d96f533f2a962c8960443e53d897a7b1ea9370fc4`。
+与v423/0.05模型的residual_layers、critic_readout、loss history完整
+比较均精确相同，layers哈希
+`sha256:7ba09dc0c7b47ae9c54047683d14efb1a26fc315c7db371a6e0bafdaeb504184`。
+模型整体哈希因明确代码/元数据来源不同而不同，不能把它们计为两个
+新训练数据批次。配对物理测试仍独立进行，phase均衡效果尚未完成。
