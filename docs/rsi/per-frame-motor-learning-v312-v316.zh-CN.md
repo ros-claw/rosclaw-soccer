@@ -2347,3 +2347,35 @@ XML比较新增失败0，余11项与405相同。没有放宽外部证书安全�
 实例；额外封存decoder construction及工厂源码SHA，不声称旧实验
 使用了新实现。相关32 passed，ruff/format和目标mypy通过。
 这是未来批次的opt-in路径，不热更当前训练，不减少原审计步骤。
+
+### 解码复用实测验证已完成；全40失败课程新批次启动
+
+Source409用4条原始完整MuJoCo轨迹对比原解码器与工厂：1,200个
+motor帧及1,080个条件likelihood全部逐元素相等；两种构建对应
+原始物理trace最大误差均0。原4次构建总耗时301.053s；包括一次
+工厂初始化的复用总耗时144.584s，构建阶段实测**2.0822倍**。
+这是构建耗时，不是整体采样速度，也不是学习进步。benchmark hash
+`dfa31e8a718c2134d8b42ef8392430fe4c72fb9def102be0bd0a35988eb04dee`。
+Source410进一步逐一完整重放4×3000子步，动力学/PD/神经/质量
+所有非源码与构建metadata字段与原审计一致，原证据未修改。
+验证hash `797b828132398531172a77a019f6a19ff1dbe379cfda4eeb57e367747a236cbb`。
+两项均为已消费证据复核，**新增物理轨迹0**。
+
+据此显式启动v411：完整CPU52基线中全部40个失败课程，每课4条
+全新stream4随机探索，std0.1/rho0.9、NN均值、奖励与物理全部不变。
+预期160条真实训练轨迹、43,200决策帧、480,000重放子步；4个spawn
+worker分别拥有私有均值工厂，不共享接触历史/噪声/策略绑定。
+native仍使用冻结Source405原代码，审计/提取使用冻结Source410；
+Source395/Core394不变。与当前stream3的48条样本不混合、不重复计数。
+
+全部160成功/失败轨迹完成之后才拟合原bounded AWR；随后必须
+真实复测全部52CPU课程，核对12个旧HQ、39个旧clean保留及新出界。
+原39个GPU成功锚只用于原训练保护；没有据此声称GPU物理保留或
+CPU12成功保留。新candidate仍须后续GPU与均衡独立验证，不晋升。
+完整计划160+52=212次新执行，**此刻只启动采样，未完成212次或训练**。
+任何worker失败写失败记录，取消排队任务而不杀正在执行的native，
+不筛除失败后继续拟合、不隐式retry、不打开fresh。
+证据容量预检预算40GiB，root100GiB/evidence1GiB保留不降低。
+commitment `7aed6709ba03888ddbd40303f2a56afee56d9f577650f225751c2b32fe6103c2`；
+driver `/code/rosclaw/rsi-cpu-all-failure-curriculum-v411-driver.log`，
+输出 `/data/rosclaw_overflow/rsi-cpu-all-failure-curriculum-v411-stream4`。
