@@ -2102,3 +2102,23 @@ actor、物理模型、验收值或任何历史证书。
 测试是controller目标/状态不变性验证，**不是自由运动训练或
 实际守门成功率证据**。剩余旧外部报告authority/integrity失败
 没有通过放宽校验或重封历史报告“修成通过”。全量回归需另跑。
+
+冻结Source v403 `2ea14c5` / Core v394的全量复跑现已结束：
+**6481 passed / 11 failed / 70 skipped，672.83秒**。
+逐项比较v399和v403 JUnit：原12个fixture失败消失，新增失败为0；
+余11个全部是先前已有的外部历史证书authority/integrity拒绝，
+没有改变这些校验器、历史证书或将失败转成skip。全量仍不是全绿。
+日志和JUnit：`/code/rosclaw/rsi-navigation-fixture-review-v403-regression.*`。
+
+#### 崩溃调研与真实环境版本复核
+
+没有找到足以证实本次libXau/getenv启动崩溃根因的同型公开issue。
+官方[headless AppLauncher](https://isaac-sim.github.io/IsaacLab/v2.2.1/_modules/isaaclab/app/app_launcher.html)
+和[telemetry文档](https://docs.isaacsim.omniverse.nvidia.com/latest/py/source/internal_extensions/isaacsim.core.telemetry/docs/index.html)
+只是说明配置边界，不是此次崩溃的修复证据；未改当前SDK/环境。
+只读查得实际editable IsaacLab repo仍clean，HEAD
+`b634245535dd7572f13a5699e0ff2fd2542b33c7`（历史已固定引用）；
+**distribution metadata isaaclab=12.0.0**，不是从用户配置目录名
+`IsaacLab/3.0`推测package版本。isaacsim=6.0.0.1，Isaac环境
+torch=2.11.0+cu128，numpy=2.3.1，四卡driver=595.91.07。
+metadata安装时间为2026-07-22，不能据此声称刚升级/环境被改。
