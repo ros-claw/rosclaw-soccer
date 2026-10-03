@@ -12,6 +12,7 @@ from rosclaw.growth.correlated_residual_gradient import (
     terminal_crossfit_advantages,
 )
 from rosclaw.growth.proposal_advantage_regression import fit_proposal_advantage_residual
+from rosclaw.growth.sample_weighting import balanced_partition_weights
 
 from rosclaw_soccer.rsi.proposal_memory_motor import (
     CompiledProposalMemoryMotor,
@@ -72,6 +73,11 @@ def fit_update(model: dict[str, Any], arrays: Any, *, batch_hash: str) -> dict[s
         config=regression_module.ProposalAdvantageRegressionConfig(
             maximum_mean_kl=model["maximum_mean_kl"]
         ),
+        sample_weights=(
+            balanced_partition_weights(phase)
+            if model["loss_weighting_profile"] == "equal-contact-phase-mass"
+            else None
+        ),
     )
     result = {k: copy.deepcopy(v) for k, v in model.items() if k != "model_hash"}
     result["residual_layers"] = numeric.pop("layers")
@@ -93,7 +99,10 @@ def fit_update(model: dict[str, Any], arrays: Any, *, batch_hash: str) -> dict[s
         critic_crossfit_folds=4,
         critic_target_mean=prepared["target_mean"],
         critic_target_scale=prepared["target_scale"],
+        loss_weighting_profile=model["loss_weighting_profile"],
     )
+    if model["loss_weighting_profile"] == "equal-contact-phase-mass":
+        receipt["phase_frame_counts"] = [int(np.sum(phase == p)) for p in range(3)]
     result["learning_receipt"] = receipt
     result["critic_readout"] = prepared["critic_readout"].tolist()
     result["model_hash"] = hash_json(result)

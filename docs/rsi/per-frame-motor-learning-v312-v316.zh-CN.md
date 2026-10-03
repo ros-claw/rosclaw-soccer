@@ -2556,3 +2556,45 @@ v423 runner，显式验证manifest.commitment_hash匹配原commitment，
 fallback。v423全量runner ruff及format检查通过，运行时源保持冻结；
 独立输出为`/data/rosclaw_overflow/rsi-cpu-complete-failure-proposal-budget-grid-v423`。
 目前仍在完整数据/来源预检，未宣称拟合、物理测试或新增益完成。
+
+### v424阶段信用分配诊断与正权重学习
+
+只读诊断完成于
+`/data/rosclaw_overflow/rsi-cpu160-credit-assignment-diagnostic-v424.json`，
+哈希`sha256:5f17b7591506d278b9d48a3bea1ce32c0590922c714981acbd12eddcb8c56079`。
+全部160条、43200帧，没有新增仿真或优化步骤：
+
+| 阶段 | 帧数 | AWR权重质量占比 | 塑性更新分量RMS | 探索偏移分量RMS |
+|---|---:|---:|---:|---:|
+| 触球前0 | 7186 | 16.05% | 0.002639 | 0.099325 |
+| 触球阶段1 | 3200 | 7.28% | 0.002780 | 0.100907 |
+| 触球后2 | 32814 | 76.67% | 0.002911 | 0.099787 |
+
+三阶段冻结guard的零权重占比均为0。此次没有证据支持“全部更新都被
+保护门挡住”；触球后帧数量占优、实际更新较小则有直接数据支持。
+它们尚不是失败的唯一因果证明。RMS是raw latent分量，不是关节角或
+力矩；向量化离线诊断不替代逐帧精确推理/完整物理证书。
+
+Core PR616新增通用正样本权重：仅整数partition/有限数值，没有G1、
+足球、仿真或硬件概念；保持全部行，权重在[1/16,16]且均值1，拒绝
+极端不平衡而不剪裁/丢样本。默认无权重、显式全1权重的优化数值
+与此前完全一致；非均匀权重也不放宽双KL约束、冻结保护门、动作cap
+或权限。185项Growth测试通过，ruff/format/mypy通过。冻结核心425
+为`673b7cc553eca51723bc04b7688984691db8d57b`；原394/416不变。
+
+Soccer增加显式`loss_weighting_profile`：默认uniform-frame，另可声明
+equal-contact-phase-mass。后者先按三个contact phase的帧数分配相等
+基础样本质量，再乘AWR advantage权重并归一化，所以**不声称最终
+advantage加权质量严格相等**。模型/学习receipt绑定profile、核心
+权重源哈希、完整样本数、phase帧数和权重哈希；无法将加权候选偷换
+为uniform父模型。14项既有proposal测试与4项新profile测试通过，
+数值、权重篡改拒绝、完整轨迹保留、未知profile拒绝、学习器父模型
+绑定均覆盖。拟开展独立同数据/预算的仿真对照，未证明足球增益。
+
+v421全量回归：6570 passed、11 failed、70 skipped，965.72秒；JUnit
+与v418逐项比较新增失败0、解决失败0，11项均为既有失败，不能称全绿。
+v423独立预算实验已通过完整来源预检并登记新承诺
+`sha256:de401316dac5e2dc4c97d59118e9d8ed05567a2d8e8058fc21d8ce81823f1faf`。
+GPU208全部复核也已完成，manifest为
+`sha256:b128f1e7990ccfed39d24cd89ff9539ce0e5ac2bebf710bcb2f18776af812644`，
+现进行原预算拟合；这些进度均不是新的确定性策略成功率。

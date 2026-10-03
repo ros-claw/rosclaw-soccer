@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 import rosclaw.growth.indexed_anchor_output_memory as index_module
 import rosclaw.growth.proposal_advantage_regression as regression_module
+import rosclaw.growth.sample_weighting as weighting_module
 from rosclaw.growth.indexed_anchor_output_memory import IndexedAnchorOutputMemory
 
 from rosclaw_soccer.rsi.contact_motor_phase import make_policy
@@ -22,6 +23,7 @@ from rosclaw_soccer.rsi.kernel_guarded_step_network import FLAGS
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 SCHEMA = "soccer.rsi.proposal_memory_motor.v1"
+LOSS_PROFILES = ("uniform-frame", "equal-contact-phase-mass")
 
 
 def validate_model(model: dict[str, Any]) -> None:
@@ -33,6 +35,9 @@ def validate_model(model: dict[str, Any]) -> None:
         != hash_bytes(Path(regression_module.__file__).read_bytes())
         or model.get("core_index_source_hash")
         != hash_bytes(Path(index_module.__file__).read_bytes())
+        or model.get("core_weighting_source_hash")
+        != hash_bytes(Path(weighting_module.__file__).read_bytes())
+        or model.get("loss_weighting_profile") not in LOSS_PROFILES
         or model.get("memory_query_representation") != "EXACT_COORDINATE_INDEX_INTACT_LOGICAL_BANK"
         or model.get("model_hash")
         != hash_json({k: v for k, v in model.items() if k != "model_hash"})
@@ -78,6 +83,7 @@ def validate_model(model: dict[str, Any]) -> None:
         if receipt is not None or model["residual_layers"] != initial["residual_layers"]:
             raise ValueError("exact zero-addition untrained regression required")
         return
+    _validate_weighting_receipt(model, receipt)
     if (
         not isinstance(receipt, dict)
         or receipt.get("algorithm") != "PROPOSAL_TRUST_REGION_ADVANTAGE_REGRESSION_V1"
@@ -131,7 +137,11 @@ def validate_model(model: dict[str, Any]) -> None:
         raise ValueError("complete bounded advantage regression receipt required")
     if (
         receipt["learner_parent_hash"]
-        != initial_model(initial, maximum_mean_kl=model["maximum_mean_kl"])["model_hash"]
+        != initial_model(
+            initial,
+            maximum_mean_kl=model["maximum_mean_kl"],
+            loss_weighting_profile=model["loss_weighting_profile"],
+        )["model_hash"]
     ):
         raise ValueError("exact zero-addition learner parent receipt required")
     history = receipt.get("full_batch_loss_history")
@@ -147,7 +157,56 @@ def validate_model(model: dict[str, Any]) -> None:
         raise ValueError("complete accepted loss history and MC critic required")
 
 
-def initial_model(actor: dict[str, Any], *, maximum_mean_kl: float) -> dict[str, Any]:
+def _validate_weighting_receipt(model: dict[str, Any], receipt: Any) -> None:
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("loss_weighting_profile") != model["loss_weighting_profile"]
+    ):
+        raise ValueError("declared loss-weighting receipt required")
+    if model["loss_weighting_profile"] == "uniform-frame":
+        if "sample_weighting" in receipt:
+            raise ValueError("uniform objective cannot carry reweighting")
+        return
+    weighting = receipt.get("sample_weighting")
+    counts = receipt.get("phase_frame_counts")
+    if (
+        type(weighting) is not dict
+        or weighting.get("schema") != "rosclaw.growth.positive_sample_weighting.v1"
+        or weighting.get("row_count") != receipt.get("frame_sample_count")
+        or type(weighting.get("row_count")) is not int
+        or weighting.get("all_numeric_rows_retained") is not True
+        or any(
+            weighting.get(k) is not False
+            for k in (
+                "physical_batch_verified",
+                "runtime_execution_authorized",
+                "promotion_authorized",
+                "hardware_authorized",
+            )
+        )
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", weighting.get("sample_weight_hash", ""))
+        or type(counts) is not list
+        or len(counts) != 3
+        or any(type(v) is not int or v < 1 for v in counts)
+        or sum(counts) != receipt.get("frame_sample_count")
+        or any(
+            type(weighting.get(k)) is not float or not np.isfinite(weighting[k])
+            for k in ("minimum", "maximum", "mean")
+        )
+        or not np.isclose(weighting["mean"], 1.0, atol=1e-12, rtol=0)
+        or not 1 / 16 <= weighting["minimum"] <= weighting["maximum"] <= 16
+        or weighting["minimum"] != sum(counts) / (3 * max(counts))
+        or weighting["maximum"] != sum(counts) / (3 * min(counts))
+    ):
+        raise ValueError("complete positive phase-balanced weighting receipt required")
+
+
+def initial_model(
+    actor: dict[str, Any],
+    *,
+    maximum_mean_kl: float,
+    loss_weighting_profile: str = "uniform-frame",
+) -> dict[str, Any]:
     validate_initial(actor)
     model = dict(
         schema=SCHEMA,
@@ -164,6 +223,8 @@ def initial_model(actor: dict[str, Any], *, maximum_mean_kl: float) -> dict[str,
         source_hash=hash_bytes(Path(__file__).read_bytes()),
         core_regression_source_hash=hash_bytes(Path(regression_module.__file__).read_bytes()),
         core_index_source_hash=hash_bytes(Path(index_module.__file__).read_bytes()),
+        core_weighting_source_hash=hash_bytes(Path(weighting_module.__file__).read_bytes()),
+        loss_weighting_profile=loss_weighting_profile,
         memory_query_representation="EXACT_COORDINATE_INDEX_INTACT_LOGICAL_BANK",
         **dict.fromkeys(FLAGS, False),
     )
