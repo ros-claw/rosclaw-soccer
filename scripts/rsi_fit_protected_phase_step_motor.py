@@ -61,9 +61,13 @@ def gpu_observations(folder: Path, raw: dict[str, Any]) -> tuple[Any, Any, dict[
     return x, phase_sequence(forces)[30:], raw
 
 
-def cpu_features(folder: Path, record: dict[str, Any]) -> tuple[Any, Any, dict[str, Any]]:
+def cpu_features(
+    folder: Path, record: dict[str, Any], *, review_path: Path | None = None
+) -> tuple[Any, Any, dict[str, Any]]:
     raw = _sealed(folder / "report.json")
-    review = _sealed(folder / "review.json")
+    # A separately reconstructed historical review may live in a new evidence
+    # directory. Its exact hash is still required; never guess a fallback name.
+    review = _sealed(folder / "review.json" if review_path is None else review_path)
     path = folder / "physical_trace.npz"
     if (
         raw["report_hash"] != record["report_hash"]

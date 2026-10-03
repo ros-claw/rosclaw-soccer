@@ -100,6 +100,7 @@ def audit_success(job: dict[str, Any]) -> tuple[dict[str, Any], Any]:
         or (raw["seed"], raw["lane"]) != (row["seed"], row["lane"])
     ):
         raise ValueError("original parent, world and consumed course required")
+    selected_review_path = None
     if "replay_source" in job:
         source, core = Path(job["replay_source"]), Path(job["replay_core"])
         audit_module = source / "src/rosclaw_soccer/rsi/cpu_motor_transfer_evidence.py"
@@ -107,6 +108,7 @@ def audit_success(job: dict[str, Any]) -> tuple[dict[str, Any], Any]:
             raise ValueError("historical complete audit source identity required")
         output = Path(job["output_root"])
         review_path = output / f"replayed-review-{row['index']}.json"
+        selected_review_path = review_path
         run_stage(
             output,
             f"historical-success-{row['index']}",
@@ -133,7 +135,7 @@ def audit_success(job: dict[str, Any]) -> tuple[dict[str, Any], Any]:
     # must be explicitly revised, not silently accept field-only equality.
     if reviewed != row["outcome"] or reviewed["high_quality"] is not True:
         raise ValueError("complete independent replay must match the original success review")
-    x, phase, reread = cpu_features(folder, row)
+    x, phase, reread = cpu_features(folder, row, review_path=selected_review_path)
     if reread != raw or x.shape != (270, 134) or phase.shape != (270,):
         raise ValueError("every causal motor frame required")
     policy = raw["executed_motor_policy"]
