@@ -135,13 +135,12 @@ def validate_model(model: dict[str, Any]) -> None:
         )
     ):
         raise ValueError("complete bounded advantage regression receipt required")
-    if (
-        receipt["learner_parent_hash"]
-        != initial_model(
+    if receipt["learner_parent_hash"] != hash_json(
+        _initial_descriptor(
             initial,
             maximum_mean_kl=model["maximum_mean_kl"],
             loss_weighting_profile=model["loss_weighting_profile"],
-        )["model_hash"]
+        )
     ):
         raise ValueError("exact zero-addition learner parent receipt required")
     history = receipt.get("full_batch_loss_history")
@@ -208,13 +207,36 @@ def initial_model(
     loss_weighting_profile: str = "uniform-frame",
 ) -> dict[str, Any]:
     validate_initial(actor)
-    model = dict(
+    model = _initial_descriptor(
+        copy.deepcopy(actor),
+        maximum_mean_kl=maximum_mean_kl,
+        loss_weighting_profile=loss_weighting_profile,
+    )
+    # The public actor and trainable layers must not share mutable containers:
+    # deepcopy of the whole descriptor would preserve that internal alias.
+    model["residual_layers"] = copy.deepcopy(model["residual_layers"])
+    model["model_hash"] = hash_json(model)
+    validate_model(model)
+    return model
+
+
+def _initial_descriptor(
+    actor: dict[str, Any], *, maximum_mean_kl: float, loss_weighting_profile: str
+) -> dict[str, Any]:
+    """Internal commitment only; caller must validate actor before using it.
+
+    No validation is cached or bypassed: validate_model already validates the
+    complete initial actor before computing its expected parent commitment.
+    Avoid recursively invoking public initial_model (which would validate the
+    same actor twice again). The public builder still owns a full deep copy.
+    """
+    return dict(
         schema=SCHEMA,
         activation_ceiling="SIM_ONLY",
         generation=0,
-        initial_actor=copy.deepcopy(actor),
+        initial_actor=actor,
         parent_model_hash=actor["parent_model_hash"],
-        residual_layers=copy.deepcopy(actor["residual_layers"]),
+        residual_layers=actor["residual_layers"],
         raw_residual_cap=0.2,
         learning_rate=0.0004,
         maximum_mean_kl=maximum_mean_kl,
@@ -228,9 +250,6 @@ def initial_model(
         memory_query_representation="EXACT_COORDINATE_INDEX_INTACT_LOGICAL_BANK",
         **dict.fromkeys(FLAGS, False),
     )
-    model["model_hash"] = hash_json(model)
-    validate_model(model)
-    return model
 
 
 def make_preview(model: dict[str, Any]) -> dict[str, Any]:

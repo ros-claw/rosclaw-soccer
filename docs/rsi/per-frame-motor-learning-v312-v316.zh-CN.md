@@ -2598,3 +2598,41 @@ v423独立预算实验已通过完整来源预检并登记新承诺
 GPU208全部复核也已完成，manifest为
 `sha256:b128f1e7990ccfed39d24cd89ff9539ce0e5ac2bebf710bcb2f18776af812644`，
 现进行原预算拟合；这些进度均不是新的确定性策略成功率。
+
+v425同预算配对实验已登记：
+`/data/rosclaw_overflow/rsi-cpu-phase-balanced-paired-proposals-v425/commitment.json`，
+哈希`sha256:d0e9633978c8d2cb4ebb9e5ac23bf1407dbb1850003701221a2f42f0b71d0964`。
+固定同一完整CPU160数据与0.05预算，uniform-frame对比phase均衡，
+计划8条pilot原生执行，只有各自pilot满足既有保留门才追加52场。
+额外34项CPU/GPU审计、root/快照测试通过。v425全量回归6574 passed、
+11 failed、70 skipped，1062.81秒；与v421比较新增失败0、解决失败0。
+
+v423的CPU160/0.05候选已完成4条pilot完整物理审计，仍F/F/F/T：
+1/4 HQ、旧HQ/clean无损失、无新增出界且全部安全，没有增益，因此
+未触发52场。模型为`sha256:9637103c557ec1193a7658d7aeedf21e2db3f55552a6d9ad6274b9dd0b0476f1`，
+实际20更新步，marginal KL 0.048999817742434414、conditional KL
+0.013731460811866198。pilot哈希
+`sha256:3bda9e0b9831a6765d10315a2e05dd42b8a6977264ab406861efe7b1fee05934`。
+另0.25预算仍未结束，不把单个预算结果当整个实验完成。
+
+GPU208原预算候选完成拟合：
+`sha256:8610195f19beab3dab2f8ecc375312c8d4f73fe61858169ce82508388705be43`，
+6个更新步，marginal KL 0.004899929423912267、conditional KL
+0.0010837922130744956。学习报告
+`sha256:3bc17f92e21088dd7a0ceb6db3944c9f35b653b5e44323c61c0f76e12dc83db0`。
+固定反例的原生验证仍在进行，未记为已有技能提升。
+
+v426真实已训练CPU160 decoder构造profile：
+`/data/rosclaw_overflow/rsi-cpu160-trained-decoder-construction-profile-v426.json`，
+哈希`sha256:d8324725a433e5ce5cc5eb014c0bf58a0076d21fba84c9fb87d7945196b10a85`。
+构造总计384.05秒，JSON编码累计275.90秒，deepcopy累计71.80秒；
+这些累计字段有包含关系，不能相加。它不是整个训练或推理速度。
+
+只在新proposal模块优化父模型commitment的构造：完整initial actor
+仍逐次校验，随后直接构造相同canonical descriptor计算期望父哈希，
+不递归调用会再次校验同一actor的公开initial_model。不是缓存许可，
+也不跳过完整父模型校验。公开构造器仍深复制actor，且可学习层必须
+另行独立深复制；整体deepcopy会保留actor/layers之间内部别名，已
+通过显式独立复制和测试防止此问题。21项descriptor/均衡/既有proposal
+测试通过，ruff/format/mypy通过。实际大模型速度仍待独立benchmark，
+不得从局部测试时间宣称加速。冻结425/418以及所有正在运行来源不改。
