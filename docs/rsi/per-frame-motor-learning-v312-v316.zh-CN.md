@@ -1909,3 +1909,33 @@ pilot物理报告已经落盘，随后仍进行完整逐帧审计；单个案例
 2,785,325,056字节，Root可用107,954,610,176字节。
 Data额外1GiB、Root额外100GiB预留门限不变；该只读预算检查
 不算作bank实际执行或完成证据，后续启动前仍必须再次检查。
+
+### v397 pilot采集完成；v398完整失败诊断
+
+v397的12次新实际pilot执行完成，sealed summary
+`142f34cbbac7bee1ea315b20cf3cb6565144ba6898985f208d121a586b025ae0`：
+原NN高质量3/4，104-data advantage候选4/4；旧HQ/clean丢失均0，
+new out为0，safe pelvis=true。改善的已见课程为20262102/4，首触
+frame76，60帧forward 2.030124m、lateral -0.127561m，球最大横向
+.201465m，最低pelvis .689372m。独立完整审计已自动启动，**尚未
+完成**；这不是fresh结果、完整52案增益或晋升。CPU参考结果也未
+被这个pilot覆盖或改写。
+
+v398 Source `72b6f19` 增加只读完整失败诊断CLI。只接受sealed
+TRAIN_CONSUMED manifest；逐课程保留全部连续sample，拒绝重复/
+缺样/错误计数/质量标签漂移/NaN/Inf，验证NPZ完整SHA以及实际
+observation和trajectory_index形状/顺序，读取前后重验输入。
+失败标签可重叠，HQ和HQ+安全分列，不能把缺失出球观测当0误差。
+不修改课程/模型，不算新实际执行，不输出晋升。新增28项测试
+通过；相关38项通过，ruff/format/mypy通过。不改正在执行的冻结
+源码或artifact-bound数字模型。
+
+已在原104条完整审计数据上实际运行，输出
+`/data/rosclaw_overflow/rsi-audited-curriculum-diagnostic-v398-old104.json`，
+诊断hash
+`cee043193fba708341ca6d7005027fae3963ef825cda641c7eb9f4535d73f80c`。
+重新统计25/104 HQ，与原manifest一致；20262106/0和20262110/0
+各0/8。各有5/8和6/8非脚触球，方向比超标均6/8，后者4/8出界。
+这些是同轨迹上**重叠的观测标签，不是因果诊断**；不能据此直接
+宣称某个控制参数是根因，也不删除难例。当前208独立采样继续，
+全量审计完成后可按相同规则诊断新数据，而不拿部分样本训练。
