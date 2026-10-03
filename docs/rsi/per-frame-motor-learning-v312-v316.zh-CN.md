@@ -2009,3 +2009,33 @@ journal保留，未来不得复用这些目录作新的可写basetemp。
 重复逻辑字节530,840,521（不是稀疏文件实际释放量声明）；完成
 之后Data/Code分别可用2,972,250,112/721,932,288字节，Root
 107,978,809,344字节。所有预留门限不变。
+
+### v397 bank部分结果的显式中断与原源恢复
+
+bank首批i=0/2/3均保留warm HQ。分片1的20261227/4报告完成后
+长时间没有row返回，该分片也无存活native子进程；其他分片继续。
+额外只读完整`_run(resume=True)`审计该candidate通过，report
+`961b601534797355418751af95b33e01ea8c4530b91848a3caa5bb511ae729fe`，
+command audit
+`c3921751cb2e8ae81444cb571f7ca5b1dcb8ac24d15a925f4a568b60fe70123f`；
+clean=true，forward 2.616567m，ratio .265024，最大横向2.600456m，
+最低pelvis .707566m，故该已有轨迹HQ=true。只读重复审计不增加
+实际轨迹。日志`/code/rosclaw/rsi-v397-bank-case1-existing-review.log`。
+
+native产出距Kit初始化日志已约603秒，原native timeout为600秒；
+怀疑process lifecycle/超时异常被按顺序等待的future延迟暴露，
+**尚未取到原future的确切异常，不能写成已证实TimeoutExpired**。
+没有更改系统ptrace限制或取得管理员权限。确认自有bank PGID
+3376821/SID/UID/源码/命令后，仅SIGTERM该bank process group；
+原continuation以SIGTERM失败，所有21份报告/部分row/日志保留。
+独立208 collector与其学习接续未停止，也不把原中断视作策略通过。
+
+`bank-owned-interruption.json`与`bank-explicit-recovery1.json`记录
+原声明和输入SHA。在**同冻结Source v397/Core v392**按原命令
+加`--resume`实际启动显式恢复，既有报告全部再完整审计；不覆盖
+日志，不改模型、课程、600秒timeout或任何验收门限。恢复driver
+`/code/rosclaw/rsi-v397-bank-explicit-recovery1-driver.log`。
+成功退出后另一个有界等待任务才执行原独立full-bank review，
+driver `/code/rosclaw/rsi-v397-bank-recovery1-postreview-driver.log`。
+恢复或review失败均不得晋升；原失败状态和复用轨迹不是新执行。
+记录时新独立采样139/208，尚无完整学习、fresh80或M0完成。
