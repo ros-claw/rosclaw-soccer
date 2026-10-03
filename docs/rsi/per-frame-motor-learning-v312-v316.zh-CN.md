@@ -2885,3 +2885,41 @@ bank及权限字段；只有校验通过才编译自持有、只读的数值数�
 fixture，得到3 passed / 1 error；改为只patch新工厂自己的分配函数，
 重新完整运行4项，不跳过失败。尚无真实bank编译计时/动作复核证据，
 也未用于v430/v433；不能声称已取得整轮加速或新物理成绩。
+
+### v436/v437完整保存状态编译对照与显式SIM入口
+
+v436冻结Soccer `2eb9d1d`，使用v433第一档真实初始化checkpoint，
+不是重新造小模型计时。预先固定原CPU160中的轨迹group0/36/72/108，
+四个不同物理上下文各完整270运动帧，共1080帧；全部特征、raw latent
+均值、AR条件密度逐项精确相同，全部联合域及legacy output bank和
+祖先policy commitment相同。原构造207.836秒，新工厂65.746秒，
+观察到3.161倍。原实际行为logp复核最大误差1.421e-14。
+报告`sha256:ebf6ff679387c553e5e88a4923efe2de4c609eb2d1a51fb55e272747c2e5aaac`。
+
+v437另使用v430第一档**实际学习后的generation1**模型，仍固定同一
+1080保存状态，完整校验其原Soccer v431模型图；数值工厂源码来自
+冻结v436，旧/新构造均值与条件密度精确相同。构造207.446→71.611秒，
+观察到2.897倍。报告
+`sha256:012bbe0011f92498c1f627031190685681f392058fbce6bd2ec6f364fdd1aa5e`。
+此学习后策略在原状态上的logp与原采样行为最大差1.04191，属策略
+已经更新，**不能称学习后策略就是旧采样行为或新的真实执行**。
+两个报告0次新物理/0次优化器更新，尚不是native轨迹验证或球技突破。
+
+因此准备下一独立SIM双路径对照，仍不热改v430/v433。MuJoCo diagnostic
+增加显式`--proposal-decoder owned_snapshot`，默认`reference`；owned
+仅接受封存proposal家族，完整校验之后编译，policy构建不再重复两次。
+非proposal或缺失step-model拒绝。选择与compiler源码哈希写入额外
+`numeric_compilation`合同；原独立review依然用原构造器重建每个动作，
+不会为了加速同时替换独立复核。缺失/显式null/多余字段、源码漂移、
+false→0的类型漂移、错误或畸形actor家族均在加载native模型前拒绝。
+27项选择/CPU证据合同测试通过；CLI实际缺step-model返回2且未创建输出。
+新选择模块mypy通过，三个目标`follow-imports=silent`检查通过；
+普通follow-imports还报告3项既有其它模块错误，同命令在冻结v436得到
+相同3项（runtime_finish_plan_actor、mjwarp_contract、goalkeeper_whole_body_reach），
+没有称完整mypy已绿或修改无关模块。
+
+后续native对照预定只取v433固定budget0.05模型，不按表现挑档：同4个
+原pilot，reference/owned各一次，共**计划8次**；物理、角色、动作、
+奖励与源输入不变，完整NPZ成员/shape/dtype/数值必须逐项一致。
+只用于验证计算表示，仍无fresh、晋升或硬件权限。这里尚未记录完成，
+不以计划数替代真实执行数。

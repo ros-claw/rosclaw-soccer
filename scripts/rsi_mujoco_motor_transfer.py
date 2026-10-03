@@ -61,6 +61,12 @@ def main() -> None:
     parser.add_argument("--foundation-only", action="store_true")
     parser.add_argument("--compressed-report", action="store_true")
     parser.add_argument(
+        "--proposal-decoder",
+        choices=("reference", "owned_snapshot"),
+        default="reference",
+        help="Opt-in owned numerical compilation; only sealed proposal models are accepted",
+    )
+    parser.add_argument(
         "--root-velocity-reference",
         choices=("body-com", "body-origin"),
         default="body-com",
@@ -75,6 +81,8 @@ def main() -> None:
     make_observation_contract(args.root_velocity_reference, args.observation_snapshot)
     if args.foundation_only and (args.neural_model or args.motor_policy or args.step_model):
         parser.error("foundation-only cannot include a motor learning model")
+    if args.proposal_decoder != "reference" and args.step_model is None:
+        parser.error("owned proposal decoder requires an explicit sealed step-model")
     # This first diagnostic only accepts already consumed courses.
     consumed = {
         (20261177, 0),
@@ -204,6 +212,10 @@ def main() -> None:
     # Restore the WHOLE original numerical model before preview validation.
     # Ordinary JSON/gzip policies remain unchanged; no distribution is changed.
     step_model = load_sampling_model(args.step_model) if args.step_model else None
+    if args.proposal_decoder != "reference" and (
+        step_model is None or step_model.get("schema") != "soccer.rsi.proposal_memory_motor.v1"
+    ):
+        raise ValueError("owned proposal decoder only accepts the sealed proposal family")
     if step_model is not None:
         from rosclaw_soccer.rsi.step_motor_execution import delta_at_frame
         from rosclaw_soccer.rsi.step_motor_execution import make_preview as legacy_preview
@@ -211,11 +223,14 @@ def main() -> None:
         make_preview: Callable[[dict[str, Any]], dict[str, Any]] = legacy_preview
 
         if step_model.get("schema") == "soccer.rsi.proposal_memory_motor.v1":
-            from rosclaw_soccer.rsi.proposal_memory_motor import CompiledProposalMemoryMotor
+            from rosclaw_soccer.rsi.proposal_decoder_selection import select_proposal_decoder
             from rosclaw_soccer.rsi.proposal_memory_motor import make_preview as proposal_preview
 
             make_preview = proposal_preview
-            delta_at_frame = CompiledProposalMemoryMotor(make_preview(step_model)).delta_at_frame
+            policy = make_preview(step_model)
+            delta_at_frame = select_proposal_decoder(
+                policy, implementation=args.proposal_decoder
+            ).delta_at_frame
         elif step_model.get("schema") == "soccer.rsi.advantage_memory_motor.v1":
             from rosclaw_soccer.rsi.advantage_memory_motor import CompiledAdvantageMemoryMotor
             from rosclaw_soccer.rsi.advantage_memory_motor import make_preview as advantage_preview
@@ -313,7 +328,8 @@ def main() -> None:
 
             delta_at_frame = online_delta_at_frame
             make_preview = online_preview
-        policy = make_preview(step_model)
+        if step_model.get("schema") != "soccer.rsi.proposal_memory_motor.v1":
+            policy = make_preview(step_model)
     x, y, vx = sample_training_courses(args.seed, 16)[args.lane]
     data.qpos[:7] = (0, 0, 0.793, 1, 0, 0, 0)
     data.qpos[qi] = navigation.backend.default_angles
@@ -375,6 +391,10 @@ def main() -> None:
     observation_contract = make_observation_contract(
         args.root_velocity_reference, args.observation_snapshot
     )
+    if args.proposal_decoder != "reference":
+        from rosclaw_soccer.rsi.proposal_decoder_selection import compilation_contract
+
+        commitment["numeric_compilation"] = compilation_contract(args.proposal_decoder)
     if observation_contract is not None:
         commitment["observation_contract"] = observation_contract
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))

@@ -62,6 +62,24 @@ def audit_cpu_transfer(
         report[k] != v for k, v in commitment.items()
     ):
         raise ValueError("CPU commitment differs from report")
+    if ("numeric_compilation" in report) != ("numeric_compilation" in commitment):
+        raise ValueError("CPU numerical compilation differs from commitment")
+    if "numeric_compilation" in commitment:
+        from rosclaw_soccer.rsi.proposal_decoder_selection import validate_compilation_contract
+
+        validate_compilation_contract(commitment["numeric_compilation"])
+        if hash_json(report["numeric_compilation"]) != hash_json(commitment["numeric_compilation"]):
+            raise ValueError("CPU numerical compilation differs from commitment")
+        executed = report.get("executed_motor_policy", {})
+        proof = executed.get("step_motor_proof") if isinstance(executed, dict) else None
+        inner = proof.get("model") if isinstance(proof, dict) else None
+        if (
+            not isinstance(executed, dict)
+            or "proposal_memory_motor_proof" not in executed
+            or not isinstance(inner, dict)
+            or inner.get("schema") != "soccer.rsi.proposal_memory_motor.v1"
+        ):
+            raise ValueError("owned compilation requires the sealed proposal motor family")
     if "observation_contract" in commitment and commitment["observation_contract"] is None:
         raise ValueError("explicit null CPU observation contract is ambiguous")
     reference, observation_snapshot = snapshot_from_contract(commitment.get("observation_contract"))
