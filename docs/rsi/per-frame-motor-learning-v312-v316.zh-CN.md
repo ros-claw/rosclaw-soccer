@@ -2296,3 +2296,47 @@ PD、球或接触参数；封存reference point及cached-stage声明，审计按
 Source395/405正在运行的源码保持冻结；此变更尚非训练效果改进证据。
 参考[MuJoCo对象枚举](https://mujoco.readthedocs.io/en/latest/APIreference/APItypes.html)
 与[对象速度API](https://mujoco.readthedocs.io/en/latest/APIreference/APIfunctions.html)。
+
+### 完整CPU基线与观察协议对照已结束
+
+Source405完整CPU52执行、52完整动力学/PD/神经审计结束：
+**HQ12/52、clean39/52、全部pelvis≥0.65m、出界6**。
+156,000个重放子步，summary
+`45423e78dd467b04a5b9eb11a16bc17f86ba75d14696c4ac5eb95b2a5d94634e`。
+与既有GPU NN39/52逐一配对：都成功10、都失败11、GPU成功CPU失败29、
+GPU失败CPU成功2。CPU失败原因可重叠：方向29、距离不足14、
+非脚触球13、出界6。比较hash
+`d49bbe30cdd20fb30d7fcaaaa0a69a769d8cac17ca1a56c007626d568758cf67`。
+这是完整已消费课程对照，**仍不是均衡独立验证，更不是迁移合格**。
+
+Source407四课程×两观察协议8条新执行、24,000重放子步结束。
+body-com旧协议4条NPZ与对应历史轨迹逐字节相同；body-origin仍是
+F/F/F/T，HQ未提高。因此不把修复输入语义宣传成模型进步。
+对照summary `0e4e9639ec73a3875a1fdb15febde067d7ba4d0686f6d6767e226ccbf743077f`。
+Source407全回归**6532 passed /11 failed /70 skipped，650.14s**；
+XML比较新增失败0，余11项与405相同。没有放宽外部证书安全校验。
+
+为正在运行的CPU48训练预注册完整后验复测接续v408：等原学习进程
+及精确启动身份退出，读取完整四课程结果；仅当有HQ增益且无旧HQ
+损失、无出界、全安全才开启52课程完整CPU复测，否则记录拒绝终态。
+完整复测须逐一核对12个旧CPU成功保留、39个旧clean保留及新增出界，
+**不能拿当前小样本或39个GPU训练锚声称保住12个CPU成功**。
+接续commitment `1d9f7f4f26e4a460e4d01be1b9e8eab24928e4e591378750281bda090a9a01a3`，
+当前仍等待，未新运行52个候选案例，未授权fresh/晋升/硬件。
+
+### 实测吞吐量瓶颈及独立回合解码工厂
+
+对旧sample0额外独立重放，结果与原审计完全相同；cProfile耗时
+107.995s，其中CompiledSmoothMemoryMotor构建94.899s，JSON编码累计
+72.048s，逐帧latent采样仅4.732s（累计时间不能相加）。
+这是1次已消费审计重放，0条新物理采样，不是训练增益。
+性能证据 `/data/rosclaw_overflow/rsi-frozen-cpu-audit-profile-v408.{json,pstats}`。
+
+新SmoothSamplingDecoderFactory把私有、已完整验证的均值网络数值
+参数用于多个独立回合。每个sampling preview仍通过原完整校验；
+仅避免再次构建相同的嵌套解码器，噪声/seed/接触历史/策略hash全都
+独立绑定。没有跳过SHA/preview检查，没有改actor、奖励或物理。
+4组seed/rho的完整300帧输出和270帧条件likelihood逐元素相等；
+验证跨回合状态隔离、输入修改无影响和篡改拒绝，相关14 passed。
+**此刻只有数值单元测试，尚未证明实际大批次吞吐量或踢球改善**；
+当前所有Source395/405训练继续使用其原冻结实现。
