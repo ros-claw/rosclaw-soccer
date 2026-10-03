@@ -484,7 +484,7 @@ def main() -> None:
         target = np.asarray(proposal.target_rad).copy()
         if frame == 30:
             raw = current_context(
-                root_pose[None], root_vel[None], data.xpos[ball][None], ball_vel[None, 3:]
+                root_pose[None], root_vel[None], positions[ball][None], ball_linear_vel[None]
             )
             features = gait_phase_features(
                 raw, predict_contact_time(raw, np.asarray(late["contact_time_weights"]))
@@ -510,8 +510,8 @@ def main() -> None:
         if gate:
             if contact_frame is None:
                 side = choose_swing_side(
-                    data.xpos[bodies[:2]],
-                    data.xpos[ball],
+                    positions[bodies[:2]],
+                    positions[ball],
                     side,
                     acquisition_max_gap_m=0.95,
                     revalidate_swing_side=True,
@@ -524,8 +524,8 @@ def main() -> None:
                     jac = np.zeros((3, model.nv))
                     mujoco.mj_jacBody(model, data, jac, None, bodies[side])
                     swing_delta = swing_joint_delta(
-                        data.xpos[bodies[side]],
-                        data.xpos[ball],
+                        positions[bodies[side]],
+                        positions[ball],
                         jac[:, vi[ids]],
                         target[ids],
                         limits[ids],

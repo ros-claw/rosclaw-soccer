@@ -2499,3 +2499,18 @@ comVel，重建一致的当前位姿和速度；不调用forward动力学或step
 参考坐标语义以[MuJoCo官方说明](https://mujoco.readthedocs.io/en/stable/overview.html#floating-objects)
 为准；本机测试基于MuJoCo3.12.0。另已核对本机两侧dt均0.002、
 29个关节armature均0.01，没有通过改这些物理参数提高标签。
+
+### v420运行失败与独立修复实验
+
+新current-kinematic分支的真实执行暴露出一个测试遗漏：frame30的
+current_context仍读取仅cached分支定义的ball_vel，引发UnboundLocalError。
+这不是完成的物理实验，也不能计入成功率。冻结Source420和日志保持
+原样，不热修，不覆盖旧承诺。修复改为读取选定快照的ball_linear_vel
+及positions；选腿与摆腿位置输入也使用同一选定快照。控制Jacobian、
+PD、物理参数、基础策略、接触后结果采样均未更改。
+
+补充3项执行实际runner AST表达式的回归测试：当前分支没有ball_vel
+也能构造上下文、毒化cached字段不会影响选定输入、摆腿位置消费选定
+快照。连同原观测测试共11项通过。这是局部回归保护，不是完整原生
+链路证书。后续用新的Source421及新承诺重跑全部4场景×2观测协议，
+严格区分旧失败、旧已完成对照和新执行；没有fresh/学习/晋升授权。
