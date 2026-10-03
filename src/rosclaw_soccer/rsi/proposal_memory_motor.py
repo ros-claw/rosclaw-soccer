@@ -10,15 +10,18 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import rosclaw.growth.domain_anchor_bank as domain_module
 import rosclaw.growth.indexed_anchor_output_memory as index_module
 import rosclaw.growth.proposal_advantage_regression as regression_module
 import rosclaw.growth.sample_weighting as weighting_module
+from rosclaw.growth.domain_anchor_bank import DomainAnchorGuard
 from rosclaw.growth.indexed_anchor_output_memory import IndexedAnchorOutputMemory
 
 from rosclaw_soccer.rsi.contact_motor_phase import make_policy
 from rosclaw_soccer.rsi.current_memory_motor import CompiledCurrentMemoryMotor
 from rosclaw_soccer.rsi.current_memory_motor import make_preview as initial_preview
 from rosclaw_soccer.rsi.current_memory_motor import validate_model as validate_initial
+from rosclaw_soccer.rsi.domain_memory_protection import protection_identity, validate_protection
 from rosclaw_soccer.rsi.kernel_guarded_step_network import FLAGS
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
@@ -38,6 +41,9 @@ def validate_model(model: dict[str, Any]) -> None:
         or model.get("core_weighting_source_hash")
         != hash_bytes(Path(weighting_module.__file__).read_bytes())
         or model.get("loss_weighting_profile") not in LOSS_PROFILES
+        or model.get("core_domain_source_hash")
+        != hash_bytes(Path(domain_module.__file__).read_bytes())
+        or "protected_domain_bank" not in model
         or model.get("memory_query_representation") != "EXACT_COORDINATE_INDEX_INTACT_LOGICAL_BANK"
         or model.get("model_hash")
         != hash_json({k: v for k, v in model.items() if k != "model_hash"})
@@ -58,6 +64,9 @@ def validate_model(model: dict[str, Any]) -> None:
         raise ValueError("proposal cannot grant runtime authority")
     initial = model["initial_actor"]
     validate_initial(initial)
+    if model["protected_domain_bank"] is not None:
+        validate_protection(model["protected_domain_bank"], initial)
+    protected_hash, protected_rows, protected_contexts = protection_identity(model)
     if (
         initial["generation"] != 0
         or initial["raw_residual_cap"] != 0.2
@@ -105,11 +114,9 @@ def validate_model(model: dict[str, Any]) -> None:
         or receipt.get("adapter_source_hash")
         != hash_bytes(Path(__file__).with_name("proposal_memory_learning.py").read_bytes())
         or receipt.get("behavior_model_hash") != initial["baseline"]["base_model"]["model_hash"]
-        or receipt.get("protected_memory_hash") != initial["baseline"]["memory"]["memory_hash"]
-        or receipt.get("protected_memory_rows")
-        != len(initial["baseline"]["memory"]["observations"])
-        or receipt.get("protected_anchor_contexts")
-        != len(initial["baseline"]["consolidation_manifest"]["records"])
+        or receipt.get("protected_memory_hash") != protected_hash
+        or receipt.get("protected_memory_rows") != protected_rows
+        or receipt.get("protected_anchor_contexts") != protected_contexts
         or receipt.get("frozen_baseline") is not True
         or receipt.get("frozen_guard") is not True
         or any(
@@ -140,6 +147,7 @@ def validate_model(model: dict[str, Any]) -> None:
             initial,
             maximum_mean_kl=model["maximum_mean_kl"],
             loss_weighting_profile=model["loss_weighting_profile"],
+            protected_domain_bank=model["protected_domain_bank"],
         )
     ):
         raise ValueError("exact zero-addition learner parent receipt required")
@@ -205,12 +213,14 @@ def initial_model(
     *,
     maximum_mean_kl: float,
     loss_weighting_profile: str = "uniform-frame",
+    protected_domain_bank: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_initial(actor)
     model = _initial_descriptor(
         copy.deepcopy(actor),
         maximum_mean_kl=maximum_mean_kl,
         loss_weighting_profile=loss_weighting_profile,
+        protected_domain_bank=copy.deepcopy(protected_domain_bank),
     )
     # The public actor and trainable layers must not share mutable containers:
     # deepcopy of the whole descriptor would preserve that internal alias.
@@ -221,7 +231,11 @@ def initial_model(
 
 
 def _initial_descriptor(
-    actor: dict[str, Any], *, maximum_mean_kl: float, loss_weighting_profile: str
+    actor: dict[str, Any],
+    *,
+    maximum_mean_kl: float,
+    loss_weighting_profile: str,
+    protected_domain_bank: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Internal commitment only; caller must validate actor before using it.
 
@@ -246,6 +260,8 @@ def _initial_descriptor(
         core_regression_source_hash=hash_bytes(Path(regression_module.__file__).read_bytes()),
         core_index_source_hash=hash_bytes(Path(index_module.__file__).read_bytes()),
         core_weighting_source_hash=hash_bytes(Path(weighting_module.__file__).read_bytes()),
+        core_domain_source_hash=hash_bytes(Path(domain_module.__file__).read_bytes()),
+        protected_domain_bank=protected_domain_bank,
         loss_weighting_profile=loss_weighting_profile,
         memory_query_representation="EXACT_COORDINATE_INDEX_INTACT_LOGICAL_BANK",
         **dict.fromkeys(FLAGS, False),
@@ -296,4 +312,6 @@ class CompiledProposalMemoryMotor(CompiledCurrentMemoryMotor):
             w.flags.writeable = b.flags.writeable = False
         self._zero = not np.any(self._layers[-1][0]) and not np.any(self._layers[-1][1])
         self._cap = 0.2
+        if model["protected_domain_bank"] is not None:
+            self._guard = DomainAnchorGuard(model["protected_domain_bank"]["bank"], bandwidth=1e-4)
         self._policy_hash = policy["policy_hash"]

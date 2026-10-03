@@ -14,6 +14,7 @@ from rosclaw.growth.correlated_residual_gradient import (
 from rosclaw.growth.proposal_advantage_regression import fit_proposal_advantage_residual
 from rosclaw.growth.sample_weighting import balanced_partition_weights
 
+from rosclaw_soccer.rsi.domain_memory_protection import protection_identity
 from rosclaw_soccer.rsi.proposal_memory_motor import (
     CompiledProposalMemoryMotor,
     make_preview,
@@ -83,6 +84,7 @@ def fit_update(model: dict[str, Any], arrays: Any, *, batch_hash: str) -> dict[s
     result["residual_layers"] = numeric.pop("layers")
     result["generation"] = 1
     initial = model["initial_actor"]
+    protected_hash, protected_rows, protected_contexts = protection_identity(model)
     receipt = dict(
         **numeric,
         physical_batch_hash=batch_hash,
@@ -92,9 +94,9 @@ def fit_update(model: dict[str, Any], arrays: Any, *, batch_hash: str) -> dict[s
         adapter_source_hash=hash_bytes(Path(__file__).read_bytes()),
         physical_rollout_count=n // 270,
         frame_sample_count=n,
-        protected_memory_hash=initial["baseline"]["memory"]["memory_hash"],
-        protected_memory_rows=len(initial["baseline"]["memory"]["observations"]),
-        protected_anchor_contexts=len(initial["baseline"]["consolidation_manifest"]["records"]),
+        protected_memory_hash=protected_hash,
+        protected_memory_rows=protected_rows,
+        protected_anchor_contexts=protected_contexts,
         critic_kind="WHOLE_TRAJECTORY_CROSSFIT_MC_NOT_TD_LAMBDA",
         critic_crossfit_folds=4,
         critic_target_mean=prepared["target_mean"],
