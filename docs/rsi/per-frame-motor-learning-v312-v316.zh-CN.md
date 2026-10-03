@@ -2144,3 +2144,27 @@ balanced agreement exam、fresh成绩、移植资格或晋升证据。
 执行模型。这里尚未证实差距的具体根因，不修改旧物理参数/标签
 来制造一致。后续CPU困难课程与接触/控制资格分析必须继续，
 不能凭GPU局部改善跳过迁移证据；fresh80仍未打开，M0未完成。
+
+### 12:09 独立采集终态：179/208，学习未启动
+
+原Source395 collector和Source396接续均实际退出 **1**。
+原异常现在确认为`RuntimeError: Isaac failed`，对应前述Kit启动
+Fatal日志。保留179条探索、11个完整course row与course8的前三条
+样本；缺course8 sample3..15和course12全部16条，即29探索，
+另缺course12 parent/greedy共2次控制执行。没有删除或替换难题。
+`training_summary.json`不存在；接续以FileNotFoundError严格失败，
+没有审计缺样本集合、没有启动新拟合或激活候选。
+
+`interrupted-collection-status-v403.json`保存两进程退出码、原完整
+日志SHA、缺失清单与容量阻塞。原崩溃日志尚未移动，恢复尚未
+启动；本地显式恢复driver
+`/code/rosclaw/rsi_recover_current_sampling_v395.py`使用原Source395
+worker/Core394与Source402前检，需原Data预算3,909,000,587字节
+及根分区100GiB预留全部满足才可运行。原进程已结束的身份/
+命令在`captured-original-collector-process-v402.json`保存并核验，
+不能跟随被复用的PID。
+
+v397原同源bank显式恢复仍在运行，已重建row0..7；其完成后的
+原独立review等待任务保持，不把这项background执行写成已通过。
+没有新宣传片、fresh80或M0完成。空间请求已发出，不擅自清理
+用户Kit日志、训练轨迹或降低原预算来继续。
