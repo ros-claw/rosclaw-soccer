@@ -2055,3 +2055,22 @@ full-bank worker 现在在自身异常发生处写入不可覆盖的唯一
 新增三个测试覆盖重复显式调用不覆盖、记录写入失败不掩盖原错、
 前序分片阻塞时后序失败立即可见；相关五组测试 **45 passed**，
 单脚本 mypy 与修改文件 ruff/format 通过。
+
+### 独立208采样的native启动崩溃与恢复前检
+
+11:19检查原完整208采集：course8（20262108/6）sample3在
+10:44发生Kit native启动崩溃，日志保留完整Fatal栈，涉及getenv、
+libXau、libxcb、libX11；**这不是已证实的根因，也不是策略失败**。
+对应episode目录/物理report不存在，该分片后续course8的sample3..15
+与course12尚未产出。其他分片继续运行，原ordered futures尚未把
+异常返回顶层。不能把不完整采样标记为208完成或跳过后继续学习。
+日志：原探索root下`logs/seed20262108-lane6-sample-3-actor.log`。
+
+新增`rsi_sampling_recovery_contract.py`只做只读前检，不启动仿真、
+不移动日志、不重封summary、无自动重试。它要求原13×16课程与
+完整208 view顺序、stream2、std0.1、rho0.9、600秒timeout不变；
+只允许归档无物理report的本分片失败日志，已有完整report不能
+作为失败覆盖。恢复声明明确原失败运行必须保留、既有报告需
+完整再审计但不是新轨迹、所有晋升/硬件授权false。
+合同与原worker相关 **18 passed**，ruff/format与单模块mypy通过。
+记录时尚未执行补采；不修改正在运行的Source395或Core394。
