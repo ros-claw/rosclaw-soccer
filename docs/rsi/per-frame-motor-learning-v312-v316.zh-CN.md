@@ -1892,3 +1892,20 @@ v397正确Core v394的全量复测完成：**6410 passed / 23 failed /
 `/code/rosclaw/rsi-completed-cpu-reuse-v397-regression-retake.{log,xml}`。
 独立采样目前仍为部分完成，完整summary/208 learning尚未生成；
 full validation当前仍为pilot，不提前标记COMPLETE或晋升。
+
+### v397 接续检查（2026-10-03，尚未完成验收）
+
+Core PR #615 再次只读检查：OPEN / CLEAN；gate已结束并SUCCESS，
+所有必需CI均SUCCESS，Release to PyPI为SKIPPED。没有自行合并。
+Soccer和Core工作树清洁，已提交代码不等于候选模型晋升。
+
+独立stream2首四个困难课程的64条采样已全部返回；其余课程继续，
+未生成完整208条summary，自动接续仍等待完整数据。v397的12份
+pilot物理报告已经落盘，随后仍进行完整逐帧审计；单个案例返回HQ
+不替代整个pilot的保留检查。未开启fresh80。
+
+按这12份完整pilot报告、轨迹、native日志和共享模型重新实测，
+完整52案预算为1,247,699,861字节；检查时Data可用
+2,785,325,056字节，Root可用107,954,610,176字节。
+Data额外1GiB、Root额外100GiB预留门限不变；该只读预算检查
+不算作bank实际执行或完成证据，后续启动前仍必须再次检查。
