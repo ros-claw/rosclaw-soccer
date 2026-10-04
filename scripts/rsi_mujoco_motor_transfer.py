@@ -61,6 +61,11 @@ def main() -> None:
     parser.add_argument("--foundation-only", action="store_true")
     parser.add_argument("--compressed-report", action="store_true")
     parser.add_argument(
+        "--shared-evidence",
+        action="store_true",
+        help="Opt-in lossless shared model/world storage for new compressed evidence only",
+    )
+    parser.add_argument(
         "--proposal-decoder",
         choices=("reference", "owned_snapshot"),
         default="reference",
@@ -83,6 +88,8 @@ def main() -> None:
         parser.error("foundation-only cannot include a motor learning model")
     if args.proposal_decoder != "reference" and args.step_model is None:
         parser.error("owned proposal decoder requires an explicit sealed step-model")
+    if args.shared_evidence and not args.compressed_report:
+        parser.error("shared evidence requires compressed-report")
     # This first diagnostic only accepts already consumed courses.
     consumed = {
         (20261177, 0),
@@ -338,7 +345,12 @@ def main() -> None:
     mujoco.mj_forward(model, data)
     args.output_root.mkdir(parents=True, exist_ok=False)
     model_snapshot = args.output_root / "compiled_model.mjb"
-    mujoco.mj_saveModel(model, str(model_snapshot), None)
+    if args.shared_evidence:
+        from rosclaw_soccer.rsi.shared_cpu_evidence import save_shared_compiled_model
+
+        save_shared_compiled_model(model, model_snapshot)
+    else:
+        mujoco.mj_saveModel(model, str(model_snapshot), None)
     assets = {
         str(p.relative_to(scene.parent)): hash_bytes(p.read_bytes())
         for p in sorted(scene.parent.rglob("*"))
@@ -651,10 +663,13 @@ def main() -> None:
         qualification="UNQUALIFIED_CPU_TRANSFER_DIAGNOSTIC",
     )
     result["report_hash"] = hash_json(result)
-    from scripts.rsi_atomic_artifacts import write_once
+    from scripts.rsi_atomic_artifacts import write_once, write_shared_physical_report
 
     report_name = "report.json.gz" if args.compressed_report else "report.json"
-    write_once(args.output_root / report_name, result)
+    if args.shared_evidence:
+        write_shared_physical_report(args.output_root / report_name, result)
+    else:
+        write_once(args.output_root / report_name, result)
     print(
         json.dumps(
             {

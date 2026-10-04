@@ -71,17 +71,41 @@ def write_shared_physical_report(path: Path, value: dict[str, Any]) -> None:
     """
     from rosclaw.growth.shared_proof_payload import detach_payload
 
-    from rosclaw_soccer.rsi.physical_report_io import MEAN_MODEL_LOCATION, MODEL_LOCATION
+    from rosclaw_soccer.rsi.physical_report_io import (
+        CPU_MEAN_MODEL_LOCATION,
+        CPU_MODEL_LOCATION,
+        MEAN_MODEL_LOCATION,
+        MODEL_LOCATION,
+    )
 
     if path.name != "report.json.gz" or path.parent.is_symlink():
         raise ValueError("new local compressed physical report required")
-    proof = value.get("contact_motor_policy", {}).get("step_motor_proof", {}).get("model")
+    keys = [
+        k for k in ("contact_motor_policy", "executed_motor_policy") if value.get(k) is not None
+    ]
+    if len(keys) > 1:
+        raise ValueError("one unambiguous physical policy proof required")
+    key = keys[0] if keys else "contact_motor_policy"
+    policy = value.get(key)
+    if policy is not None and type(policy) is not dict:
+        raise ValueError("physical policy must be a dictionary or absent")
+    step = policy.get("step_motor_proof") if policy else None
+    if step is not None and type(step) is not dict:
+        raise ValueError("physical step proof must be a dictionary or absent")
+    proof = step.get("model") if step else None
     if proof is None:
         write_once(path, value)
         return
     # Sampling views retain their own seed/noise/likelihood commitments in
     # every report while sharing only the unchanged complete mean model.
-    location = MEAN_MODEL_LOCATION if type(proof.get("mean_model")) is dict else MODEL_LOCATION
+    if type(proof) is not dict:
+        raise ValueError("complete physical model dictionary required")
+    direct, mean = (
+        (CPU_MODEL_LOCATION, CPU_MEAN_MODEL_LOCATION)
+        if key == "executed_motor_policy"
+        else (MODEL_LOCATION, MEAN_MODEL_LOCATION)
+    )
+    location = mean if type(proof.get("mean_model")) is dict else direct
     envelope, payload = detach_payload(value, location)
     store = path.parent.parent / ".shared-models"
     if store.is_symlink():

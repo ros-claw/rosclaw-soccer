@@ -125,3 +125,46 @@ def test_non_model_locations_are_not_a_physical_transport(tmp_path):
     write_once(folder / "report.json.gz", envelope)
     with pytest.raises(ValueError, match="exact content-addressed"):
         load_physical_report(folder / "report.json")
+
+
+@pytest.mark.parametrize("sampling", [False, True])
+def test_cpu_executed_policy_has_exact_lossless_shared_transport(tmp_path, sampling):
+    values = []
+    for i in range(2):
+        value = report(i)
+        value["executed_motor_policy"] = value.pop("contact_motor_policy")
+        if sampling:
+            value["executed_motor_policy"]["step_motor_proof"]["model"] = {
+                "seed": i + 42,
+                "mean_model": {"weights": [0.0, -0.0, 1.234567891e-20] * 100},
+            }
+        value.pop("report_hash")
+        value["report_hash"] = hash_json(value)
+        folder = tmp_path / f"cpu{i}"
+        folder.mkdir()
+        write_shared_physical_report(folder / "report.json.gz", value)
+        values.append(value)
+    assert len(list((tmp_path / ".shared-models").iterdir())) == 1
+    for i, value in enumerate(values):
+        assert _sealed(tmp_path / f"cpu{i}/report.json") == value
+
+
+def test_null_cpu_foundation_policy_keeps_full_report(tmp_path):
+    folder = tmp_path / "cpu"
+    folder.mkdir()
+    value = {"schema": "fixture.foundation", "executed_motor_policy": None}
+    value["report_hash"] = hash_json(value)
+    write_shared_physical_report(folder / "report.json.gz", value)
+    assert _sealed(folder / "report.json") == value
+    assert not (tmp_path / ".shared-models").exists()
+
+
+def test_ambiguous_policy_aliases_rejected_before_storage(tmp_path):
+    folder = tmp_path / "cpu"
+    folder.mkdir()
+    value = report()
+    value["executed_motor_policy"] = value["contact_motor_policy"]
+    with pytest.raises(ValueError, match="unambiguous"):
+        write_shared_physical_report(folder / "report.json.gz", value)
+    assert not (folder / "report.json.gz").exists()
+    assert not (tmp_path / ".shared-models").exists()

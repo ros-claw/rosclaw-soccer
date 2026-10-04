@@ -3015,3 +3015,39 @@ case30从脚/小腿混触、前进0.56674米，变为干净脚触、前进2.1022
 这是consumed开发上下文的局部学习增益，**仍未达到完整52例门槛、
 fresh、99%跨后端一致或比赛宣传条件**；继续全部预定模型/案例，
 不只挑成功片段发布视频，也不修改原成功门槛。
+
+### v442短窗口物理对照与下一批训练的无损存储准备
+
+v442固定原CPU基线四例index0/2/18/27，每例frame0/20/55/70/100/150/
+200/299。32个各20ms的独立scratch窗口使用原保存关节目标、原PD
+反馈公式/扭矩上限、相同原MJB和零warmstart；不是重新推理策略、
+完整episode或新的训练样本。CPU/GPU各实际320子步，全部接触数量
+一致；预定qpos分量1e-3、qvel分量1e-2、扭矩0.1Nm三阈值31/32通过。
+唯一失败是(20262102,4),frame70：qvel最大差0.0152405，qpos差
+0.000151142、扭矩差0.0215111Nm。未放宽阈值，未改solver/碰撞参数。
+报告`sha256:55b1d870afaec8d537189440975fc02ffaeec20db7abb5ab4b6b46cb429b6d25`。
+独立完整episode数0，仍未取得完整backend/99%标签资格，不能据此
+把GPU大量生成帧纳入合格训练数据。保留32个完整窗口结果与失败。
+
+检查存储成本发现：每个新CPU回合重复写同字节约120MB的MJB，
+v430 proposal完整证明gzip约95MB。没有清理/迁移旧证据。
+Core新增任务无关`growth.shared_blob_store.publish_readonly_blob`：
+调用方明确内容SHA与大小预算，只给新目标发布独立持有、只读、
+同文件系统hardlink。源文件不变，现有target一律拒绝，已有可写/
+损坏/符号链接blob拒绝且不修复，复制完成及只读模式fsync后原子发布。
+只有自身临时文件清理；无simulator、策略加载、executor或晋升权。
+15项通用合同及Core Growth全组266 passed，ruff/format/mypy通过。
+提交`778d3111`推到原PR616，新增head的远端CI还需独立检查。
+
+Soccer的新`--shared-evidence`显式开关默认关闭，要求compressed-report；
+原native路径与正在运行的v430/v433冻结源码不变。只为新回合保存
+只读共享MJB，并将已有Core lossless JSON codec用于CPU真实的
+`executed_motor_policy`路径（旧GPU为`contact_motor_policy`）。采样视图
+仍逐回合保存种子/噪声/行为密度合同，只有完整mean模型共享；读者先
+恢复全部原字段和logical report hash，再执行原独立动作/动力学复核。
+不削减bank、不量化权重、不删失败、不增加物理或策略授权。
+Soccer共享存储/原codec/CPU证据合同45 passed，新helper与目标文件
+`follow-imports=silent` mypy通过。CLI实际无compressed-report返回2，
+未创建输出目录。尚未记录真实存储双路径仿真对照或节省比例；
+后续必须把完整NPZ、native模型字节及完整逻辑报告逐项比较，不能
+仅凭单元测试称已增加训练量。

@@ -13,6 +13,8 @@ from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 
 MODEL_LOCATION = ("contact_motor_policy", "step_motor_proof", "model")
 MEAN_MODEL_LOCATION = (*MODEL_LOCATION, "mean_model")
+CPU_MODEL_LOCATION = ("executed_motor_policy", "step_motor_proof", "model")
+CPU_MEAN_MODEL_LOCATION = (*CPU_MODEL_LOCATION, "mean_model")
 SHARED_SCHEMA = "rosclaw.growth.shared_json_payload.v1"
 
 
@@ -36,7 +38,13 @@ def load_physical_report(path: Path) -> dict[str, Any]:
 
     digest = value.get("payload_hash")
     if (
-        value.get("location") not in (list(MODEL_LOCATION), list(MEAN_MODEL_LOCATION))
+        value.get("location")
+        not in (
+            list(MODEL_LOCATION),
+            list(MEAN_MODEL_LOCATION),
+            list(CPU_MODEL_LOCATION),
+            list(CPU_MEAN_MODEL_LOCATION),
+        )
         or type(digest) is not str
         or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
     ):
