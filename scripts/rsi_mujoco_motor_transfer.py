@@ -421,6 +421,11 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
             "soccer.rsi.smooth_memory_sampling.v1",
         ):
             policy = prepared_smooth_policy
+        elif step_model.get("schema") == "soccer.rsi.proposal_memory_sampling.v1":
+            # This complete preview already passed the selected constructor
+            # or source-bound factory. Recomputing it only repeats large
+            # canonical graph validation and discards the identical result.
+            policy = prepared_proposal_policy
         elif step_model.get("schema") != "soccer.rsi.proposal_memory_motor.v1":
             policy = make_preview(step_model)
     x, y, vx = sample_training_courses(args.seed, 16)[args.lane]
