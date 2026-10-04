@@ -142,3 +142,77 @@ def test_recovery_rejects_dependency_changes(monkeypatch):
     monkeypatch.setattr(body_response_guidance, "hash_bytes", lambda _: "changed")
     result = guidance.propose(**recovery_inputs())
     assert result["fallback"] and result["target_increment"] == [0.0] * 12
+
+
+def test_recovery_execution_causal_parent_protection_and_bundle(monkeypatch):
+    from types import SimpleNamespace
+
+    from rosclaw_soccer.rsi import body_response_guidance_execution as module
+    from rosclaw_soccer.sim.contracts import hash_json
+
+    parent_hash = "sha256:" + "a" * 64
+    policy = dict(
+        proposal_memory_motor_proof={},
+        step_motor_proof=dict(
+            model=dict(schema="soccer.rsi.proposal_memory_motor.v1", model_hash=parent_hash)
+        ),
+    )
+    bundle = module.make_bundle(parent_hash, recovery_models())
+    execution = module.BodyResponseGuidanceExecution(bundle, policy)
+    independent = module.BodyResponseGuidanceExecution(bundle, policy)
+    monkeypatch.setattr(module, "features_at_frame", lambda *args, **kwargs: np.zeros(134))
+    guard = SimpleNamespace(gate=lambda context: 1.0)
+    decoder = SimpleNamespace(features=lambda state: state, _guard=guard)
+    q = recovery_inputs()["qpos"]
+    body = dict(
+        canonical_qpos=np.repeat(q[None], 32, axis=0),
+        canonical_qvel=np.zeros((32, 1, 41)),
+        foundation_neural_decoder_input=np.zeros((32, 1, 994)),
+        force_n=np.zeros((32, 1, 6)),
+        ball_position_before_step_m=np.zeros((32, 1, 3)),
+        root_pose_xyzw_m=np.zeros((32, 1, 7)),
+        ball_linear_velocity_before_step_m_s=np.zeros((32, 1, 3)),
+        root_velocity_world=np.zeros((32, 1, 6)),
+    )
+    body["force_n"][0, 0, 0] = 2
+    previous = np.zeros(12)
+    for frame in range(31):
+        args = dict(
+            frame=frame,
+            nominal_target=np.zeros(29),
+            parent_delta=np.zeros(12),
+            previous_final=previous,
+            limits=np.tile([-1.0, 1.0], (12, 1)),
+        )
+        actual, status = execution.advance(decoder, body, **args)
+        expected, reference_status = independent.advance(decoder, body, **args)
+        np.testing.assert_array_equal(actual, expected)
+        assert status == reference_status
+        if frame < 30:
+            assert not status["active"] and not np.any(actual)
+        else:
+            assert status["active"] and actual[0] == -0.002
+        previous = actual
+    guard.gate = lambda context: 0.0
+    actual, status = execution.advance(
+        decoder,
+        body,
+        frame=31,
+        nominal_target=np.zeros(29),
+        parent_delta=np.zeros(12),
+        previous_final=previous,
+        limits=np.tile([-1.0, 1.0], (12, 1)),
+    )
+    assert status["protected"] and not np.any(actual)
+    for key, value in (
+        ("hardware_authorized", True),
+        ("parent_model_hash", "sha256:" + "b" * 64),
+        ("source_hash", "changed"),
+    ):
+        bad = copy.deepcopy(bundle)
+        bad[key] = value
+        bad["bundle_hash"] = hash_json({k: v for k, v in bad.items() if k != "bundle_hash"})
+        with pytest.raises(ValueError):
+            module.BodyResponseGuidanceExecution(bad, policy)
+    with pytest.raises(ValueError):
+        module.BodyResponseGuidanceExecution(bundle, dict(step_motor_proof=None))

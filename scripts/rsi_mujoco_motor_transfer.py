@@ -57,6 +57,7 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
     group.add_argument("--neural-model", type=Path)
     group.add_argument("--motor-policy", type=Path)
     group.add_argument("--step-model", type=Path)
+    parser.add_argument("--body-response-bundle", type=Path)
     parser.add_argument("--consumed-bank", type=Path)
     parser.add_argument("--foundation-only", action="store_true")
     parser.add_argument("--compressed-report", action="store_true")
@@ -93,6 +94,12 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
         parser.error("foundation-only cannot include a motor learning model")
     if args.proposal_decoder != "reference" and args.step_model is None:
         parser.error("owned proposal decoder requires an explicit sealed step-model")
+    if args.body_response_bundle and (
+        not args.step_model or not args.record_foundation_observation
+    ):
+        parser.error(
+            "body response experiment requires a proposal parent and actual foundation capture"
+        )
     if args.shared_evidence and not args.compressed_report:
         parser.error("shared evidence requires compressed-report")
     if sampling_factory is not None and (
@@ -301,9 +308,8 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
 
             make_preview = proposal_preview
             policy = make_preview(step_model)
-            delta_at_frame = select_proposal_decoder(
-                policy, implementation=args.proposal_decoder
-            ).delta_at_frame
+            proposal_decoder = select_proposal_decoder(policy, implementation=args.proposal_decoder)
+            delta_at_frame = proposal_decoder.delta_at_frame
         elif step_model.get("schema") == "soccer.rsi.advantage_memory_motor.v1":
             from rosclaw_soccer.rsi.advantage_memory_motor import CompiledAdvantageMemoryMotor
             from rosclaw_soccer.rsi.advantage_memory_motor import make_preview as advantage_preview
@@ -436,6 +442,18 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
         for p in sorted(scene.parent.rglob("*"))
         if p.is_file() and p.suffix.lower() in {".xml", ".stl", ".obj", ".png", ".jpg"}
     }
+    body_guidance = None
+    body_guidance_bundle = None
+    if args.body_response_bundle:
+        from rosclaw_soccer.rsi.body_response_guidance_execution import (
+            BodyResponseGuidanceExecution,
+        )
+        from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
+
+        if step_model is None or step_model.get("schema") != "soccer.rsi.proposal_memory_motor.v1":
+            raise ValueError("body guidance only accepts the explicit proposal mean parent")
+        body_guidance_bundle = load_json_artifact(args.body_response_bundle)
+        body_guidance = BodyResponseGuidanceExecution(body_guidance_bundle, policy)
     commitment = dict(
         schema="soccer.rsi.cpu_motor_transfer.v1",
         seed=args.seed,
@@ -495,6 +513,8 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
         from rosclaw_soccer.rsi.foundation_observation_capture import capture_contract
 
         commitment["foundation_observation_capture"] = capture_contract()
+    if body_guidance is not None:
+        commitment["body_response_guidance"] = body_guidance_bundle
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
     history: dict[str, list[Any]] = {
         k: []
@@ -523,6 +543,8 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
         from rosclaw_soccer.rsi.foundation_observation_capture import FIELDS, PREFIX
 
         history.update({PREFIX + name: [] for name in FIELDS})
+    if body_guidance is not None:
+        history.update({k: [] for k in ("body_response_applied_increment", "body_response_status")})
     tracker = None
     tracking = y < 0
     gate = False
@@ -665,6 +687,7 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
         if step_model is not None:
             if policy is None:
                 raise ValueError("per-frame actor requires a sealed preview")
+            prior_final = previous.copy()
             previous = delta_at_frame(
                 policy,
                 history,
@@ -675,6 +698,32 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
                 previous=previous,
                 previous_contact_forces=history["force_n"][frame - 1][0] if frame else np.zeros(6),
             )
+            if body_guidance is not None:
+                if not np.array_equal(motor_ids, np.arange(12)):
+                    raise ValueError("guidance requires the canonical twelve DDS leg joints")
+                previous, guidance_status = body_guidance.advance(
+                    proposal_decoder,
+                    history,
+                    frame=frame,
+                    nominal_target=target,
+                    parent_delta=previous,
+                    previous_final=prior_final,
+                    limits=limits[motor_ids],
+                )
+                history["body_response_applied_increment"].append(
+                    np.asarray(guidance_status["applied_increment"])[None]
+                )
+                history["body_response_status"].append(
+                    np.asarray(
+                        [
+                            guidance_status["contact_phase"],
+                            guidance_status["protected"],
+                            guidance_status["active"],
+                            guidance_status["fallback"],
+                        ],
+                        dtype=np.int64,
+                    )[None]
+                )
             target[motor_ids] += previous
         elif policy is not None:
             if knots is None:

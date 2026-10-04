@@ -80,6 +80,14 @@ def audit_cpu_transfer(
         raise ValueError("CPU numerical compilation differs from commitment")
     if ("numeric_sampling_compilation" in report) != ("numeric_sampling_compilation" in commitment):
         raise ValueError("CPU sampling compilation differs from commitment")
+    if ("body_response_guidance" in report) != ("body_response_guidance" in commitment):
+        raise ValueError("body response guidance differs from commitment")
+    if "body_response_guidance" in commitment and (
+        "foundation_observation_capture" not in commitment or report.get("step_model_hash") is None
+    ):
+        raise ValueError(
+            "body guidance requires actual foundation capture and explicit proposal parent"
+        )
     if "numeric_sampling_compilation" in commitment:
         from rosclaw_soccer.rsi.smooth_decoder_selection import (
             validate_sampling_compilation_contract,
@@ -343,7 +351,8 @@ def audit_cpu_transfer(
         elif "proposal_memory_motor_proof" in policy:
             from rosclaw_soccer.rsi.proposal_memory_motor import CompiledProposalMemoryMotor
 
-            delta_at_frame = CompiledProposalMemoryMotor(policy).delta_at_frame
+            mean_proposal_decoder = CompiledProposalMemoryMotor(policy)
+            delta_at_frame = mean_proposal_decoder.delta_at_frame
         elif "advantage_memory_motor_proof" in policy:
             from rosclaw_soccer.rsi.advantage_memory_motor import CompiledAdvantageMemoryMotor
 
@@ -400,6 +409,27 @@ def audit_cpu_transfer(
         if policy["step_motor_proof"]["model"]["model_hash"] != report["step_model_hash"]:
             raise ValueError("CPU neural policy identity changed")
         ids = [names.index(n) for n in JOINT_NAMES]
+        body_guidance = None
+        if "body_response_guidance" in commitment:
+            from rosclaw_soccer.rsi.body_response_guidance_execution import (
+                BodyResponseGuidanceExecution,
+            )
+
+            if "proposal_memory_motor_proof" not in policy or ids != list(range(12)):
+                raise ValueError("guidance requires the canonical proposal mean parent")
+            body_guidance = BodyResponseGuidanceExecution(
+                commitment["body_response_guidance"], policy
+            )
+            for key, width in (
+                ("body_response_applied_increment", 12),
+                ("body_response_status", 4),
+            ):
+                if (
+                    key not in trace
+                    or trace[key].shape != (300, 1, width)
+                    or not np.isfinite(trace[key]).all()
+                ):
+                    raise ValueError("complete actual body guidance trace required")
         previous = np.zeros(12)
         for frame in range(300):
             nominal = trace["pre_motor_joint_target_rad"][frame, 0]
@@ -413,6 +443,32 @@ def audit_cpu_transfer(
                 previous=previous,
                 previous_contact_forces=trace["force_n"][frame - 1, 0] if frame else np.zeros(6),
             )
+            if body_guidance is not None:
+                delta, status = body_guidance.advance(
+                    mean_proposal_decoder,
+                    trace,
+                    frame=frame,
+                    nominal_target=nominal,
+                    parent_delta=delta,
+                    previous_final=previous,
+                    limits=model.jnt_range[joints][ids],
+                )
+                equal(
+                    status["applied_increment"],
+                    trace["body_response_applied_increment"][frame, 0],
+                    "causal body guidance",
+                )
+                expected_status = np.asarray(
+                    [
+                        status["contact_phase"],
+                        status["protected"],
+                        status["active"],
+                        status["fallback"],
+                    ],
+                    dtype=np.int64,
+                )
+                if not np.array_equal(expected_status, trace["body_response_status"][frame, 0]):
+                    raise ValueError("causal body guidance status differs")
             equal(delta, trace["motor_delta_rad"][frame, 0], "causal neural output")
             composed = nominal.copy()
             composed[ids] += delta
