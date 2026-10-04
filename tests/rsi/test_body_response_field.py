@@ -7,6 +7,7 @@ import pytest
 from rosclaw.growth import context_prediction_mlp as reference
 
 from rosclaw_soccer.rsi.body_response_field import BodyResponseField
+from rosclaw_soccer.rsi.body_response_guidance import BodyResponseRecoveryProposal
 
 
 def models():
@@ -78,3 +79,66 @@ def test_exact_zero_fixed_blend_private_models_and_rejections():
             field.predict_effect(**bad)
     with pytest.raises(ValueError):
         BodyResponseField(old, new)
+
+
+def recovery_models():
+    old, new = models()
+    old["layers"][2]["weight"][0][0] = 0.0
+    old["layers"][2]["weight"][3][0] = 1.0
+    old["target_mean"][3] = 0.1
+    new["layers"][2]["bias"][0] = 0.0
+    new["layers"][2]["bias"][36] = 1.0
+    for value in (old, new):
+        value.pop("model_hash")
+        value["model_hash"] = reference._hash(value)
+    return [(copy.deepcopy(old), copy.deepcopy(new)) for _ in range(4)]
+
+
+def recovery_inputs():
+    batch = {k: v[:1].copy() for k, v in inputs().items() if k != "target_increment"}
+    return dict(**batch, previous_increment=np.zeros((1, 12)), contact_phase=2, protected=False)
+
+
+def test_recovery_proposal_bounds_protection_ownership_and_cost():
+    pairs = recovery_models()
+    guidance = BodyResponseRecoveryProposal(pairs)
+    batch = recovery_inputs()
+    before = copy.deepcopy(batch)
+    result = guidance.propose(**batch)
+    assert result["active"] and not result["fallback"]
+    assert result["target_increment"][0] == -0.002
+    assert max(abs(v) for v in result["target_increment"]) <= 0.002
+    assert result["predicted_candidate_cost"] < result["predicted_baseline_cost"]
+    assert result["runtime_execution_authorized"] is False
+    for key in (
+        "qpos",
+        "qvel",
+        "nominal_target",
+        "relative_ball",
+        "foundation_input",
+        "previous_increment",
+    ):
+        np.testing.assert_array_equal(batch[key], before[key])
+    pairs[0][0]["hardware_authorized"] = True
+    assert guidance.propose(**batch) == result
+    for phase, protected in ((0, False), (1, False), (2, True)):
+        blocked = guidance.propose(**dict(batch, contact_phase=phase, protected=protected))
+        assert blocked["target_increment"] == [0.0] * 12 and not blocked["active"]
+    for key in ("qpos", "qvel", "foundation_input", "previous_increment"):
+        bad = copy.deepcopy(batch)
+        bad[key][0, 0] = np.nan
+        rejected = guidance.propose(**bad)
+        assert rejected["fallback"] and rejected["target_increment"] == [0.0] * 12
+    with pytest.raises(ValueError):
+        guidance.propose(**dict(batch, contact_phase=True))
+    with pytest.raises(ValueError):
+        BodyResponseRecoveryProposal(pairs[:3])
+
+
+def test_recovery_rejects_dependency_changes(monkeypatch):
+    from rosclaw_soccer.rsi import body_response_guidance
+
+    guidance = BodyResponseRecoveryProposal(recovery_models())
+    monkeypatch.setattr(body_response_guidance, "hash_bytes", lambda _: "changed")
+    result = guidance.propose(**recovery_inputs())
+    assert result["fallback"] and result["target_increment"] == [0.0] * 12
