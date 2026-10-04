@@ -19,7 +19,7 @@ from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_fit_protected_phase_step_motor import cpu_features
 
 if TYPE_CHECKING:
-    from rosclaw_soccer.rsi.smooth_sampling_decoder_factory import SmoothSamplingDecoderFactory
+    pass
 
 
 def ordered_cpu_arrays(
@@ -73,7 +73,7 @@ def audit_cpu_learning_rollout(
     expected_sampling_seed: int,
     course: tuple[int, int],
     group: int,
-    sampling_decoder_factory: "SmoothSamplingDecoderFactory | None" = None,
+    sampling_decoder_factory: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     raw = _sealed(folder / "report.json")
     view = raw.get("executed_motor_policy", {}).get("step_motor_proof", {}).get("model", {})
@@ -84,7 +84,12 @@ def audit_cpu_learning_rollout(
         else "soccer.rsi.smooth_memory_sampling.v1"
     )
     if proposal_sampling and sampling_decoder_factory is not None:
-        raise ValueError("proposal sampling requires independent original reference replay")
+        from rosclaw_soccer.rsi.proposal_sampling_episode_factory import (
+            ProposalSamplingEpisodeFactory,
+        )
+
+        if type(sampling_decoder_factory) is not ProposalSamplingEpisodeFactory:
+            raise ValueError("proposal sampling requires independent original reference replay")
     if (
         (raw.get("seed"), raw.get("lane")) != course
         or raw.get("execution_profile") != "taskspace_plus_motor"
@@ -134,7 +139,11 @@ def audit_cpu_learning_rollout(
     if proposal_sampling:
         from rosclaw_soccer.rsi.proposal_sampling_motor import CompiledProposalSamplingMotor
 
-        decoder = CompiledProposalSamplingMotor(raw["executed_motor_policy"])
+        decoder = (
+            CompiledProposalSamplingMotor(raw["executed_motor_policy"])
+            if sampling_decoder_factory is None
+            else sampling_decoder_factory.bind(raw["executed_motor_policy"])
+        )
     else:
         decoder = (
             CompiledSmoothMemoryMotor(make_preview(view))

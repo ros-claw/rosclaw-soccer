@@ -229,10 +229,18 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
     # Ordinary JSON/gzip policies remain unchanged; no distribution is changed.
     step_model = load_sampling_model(args.step_model) if args.step_model else None
     sampling_compilation = None
-    if sampling_factory is not None and (
-        step_model is None or step_model.get("schema") != "soccer.rsi.smooth_memory_sampling.v1"
-    ):
-        raise ValueError("shared smooth factory cannot compile other motor families")
+    if sampling_factory is not None:
+        from rosclaw_soccer.rsi.proposal_sampling_episode_factory import (
+            ProposalSamplingEpisodeFactory,
+        )
+
+        expected_sampling_schema = (
+            "soccer.rsi.proposal_memory_sampling.v1"
+            if type(sampling_factory) is ProposalSamplingEpisodeFactory
+            else "soccer.rsi.smooth_memory_sampling.v1"
+        )
+        if step_model is None or step_model.get("schema") != expected_sampling_schema:
+            raise ValueError("shared sampling factory cannot compile other motor families")
     if args.proposal_decoder != "reference" and (
         step_model is None or step_model.get("schema") != "soccer.rsi.proposal_memory_motor.v1"
     ):
@@ -248,7 +256,22 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
             from rosclaw_soccer.rsi.proposal_sampling_motor import make_preview as sampling_preview
 
             make_preview = sampling_preview
-            delta_at_frame = CompiledProposalSamplingMotor(make_preview(step_model)).delta_at_frame
+            prepared_proposal_policy = make_preview(step_model)
+            if sampling_factory is None:
+                proposal_sampling_decoder = CompiledProposalSamplingMotor(prepared_proposal_policy)
+            else:
+                from rosclaw_soccer.rsi.proposal_sampling_episode_factory import (
+                    ProposalSamplingEpisodeFactory,
+                )
+                from rosclaw_soccer.rsi.proposal_sampling_episode_factory import (
+                    compilation_contract as proposal_sampling_contract,
+                )
+
+                if type(sampling_factory) is not ProposalSamplingEpisodeFactory:
+                    raise ValueError("only the fixed proposal sampling factory is accepted")
+                proposal_sampling_decoder = sampling_factory.bind(prepared_proposal_policy)
+                sampling_compilation = proposal_sampling_contract(prepared_proposal_policy)
+            delta_at_frame = proposal_sampling_decoder.delta_at_frame
         elif step_model.get("schema") == "soccer.rsi.proposal_memory_motor.v1":
             from rosclaw_soccer.rsi.proposal_decoder_selection import select_proposal_decoder
             from rosclaw_soccer.rsi.proposal_memory_motor import make_preview as proposal_preview

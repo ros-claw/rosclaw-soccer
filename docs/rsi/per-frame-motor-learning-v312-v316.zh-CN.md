@@ -3891,3 +3891,28 @@ TemporaryFile(/dev/shm)，原JSON读取器原样读取完整模型。
 归咎于足球滚动或据此放宽门，也尚未定位具体solver原因。
 结果`sha256:473a81970e11bb48555a69f74ceafe78a485590658320356e97df7df278eeff4`。
 只是短窗口诊断，0完整episode、0优化，GPU训练资格仍false。
+
+### 2026-10-04：采样类型绑定与独立reference回合工厂
+
+发现Python字典比较将False==0、True==1，可能接受保持旧
+hash却改变JSON字段类型的采样包装。make_preview及采样
+构造器现以规范化JSON哈希比较整份文档；类型漂移保持旧
+hash的反例被拒绝。采样+RAM原读取器2 passed/51.18秒。
+正在运行的Source513原实验不热改；其正常生成包装本身仍
+具有正确JSON类型和逻辑seal，不以新源码冒充旧验证。
+
+新增ProposalSamplingEpisodeFactory：在原完整reference构造器
+验证一个私有均值后，仅共享只读数值参数，每次bind仍做
+完整原preview校验，并新建双方接触历史、warm decoder容器、
+层列表与独立AR1噪声。不接受可变均值/任意callback，不修改
+权重、世界或默认decoder。native runner、原CPU审计器与
+数据提取器通过显式类型支持新工厂；编译合同记录源码、
+mean/view哈希及非授权字段，禁止借此授权硬件或宣称完整
+物理等价。数值0代/真实非零拟合1代两路270帧动作及密度
+逐位对照、状态隔离、不同均值拒绝与原提取/审计回归共
+40 passed/130.39秒，定向ruff/format与两文件mypy通过。
+
+尚未将新工厂用于正式大批采样；必须另跑原reference与
+工厂真实native配对后再决定采用。v528对实际97MB候选的
+原构造器进行独立cProfile计时，只创建数值对象，0物理步、
+0优化；未完成时不声称已定位CPU热点或获得加速。

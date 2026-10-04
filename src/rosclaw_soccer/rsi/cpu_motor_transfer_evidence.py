@@ -23,24 +23,33 @@ from rosclaw_soccer.sim.root_velocity_reference import root_velocity_world
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
 
 if TYPE_CHECKING:
-    from rosclaw_soccer.rsi.smooth_sampling_decoder_factory import SmoothSamplingDecoderFactory
+    pass
 
 
 def audit_cpu_transfer(
     root: Path,
     source_path: Path,
     *,
-    sampling_decoder_factory: "SmoothSamplingDecoderFactory | None" = None,
+    sampling_decoder_factory: Any = None,
 ) -> dict[str, Any]:
     import mujoco
 
     report = _sealed(root / "report.json")
     if sampling_decoder_factory is not None:
+        from rosclaw_soccer.rsi.proposal_sampling_episode_factory import (
+            ProposalSamplingEpisodeFactory,
+        )
         from rosclaw_soccer.rsi.smooth_sampling_decoder_factory import SmoothSamplingDecoderFactory
 
-        if type(sampling_decoder_factory) is not SmoothSamplingDecoderFactory or (
-            "smooth_memory_motor_proof" not in report.get("executed_motor_policy", {})
-        ):
+        family = (
+            "proposal_sampling_motor_proof"
+            if type(sampling_decoder_factory) is ProposalSamplingEpisodeFactory
+            else "smooth_memory_motor_proof"
+        )
+        if type(sampling_decoder_factory) not in (
+            SmoothSamplingDecoderFactory,
+            ProposalSamplingEpisodeFactory,
+        ) or family not in report.get("executed_motor_policy", {}):
             raise ValueError("only the verified smooth sampling factory is accepted")
     snapshot, trace_path = root / "compiled_model.mjb", root / "physical_trace.npz"
     if (
@@ -71,9 +80,21 @@ def audit_cpu_transfer(
             validate_sampling_compilation_contract,
         )
 
-        validate_sampling_compilation_contract(
-            commitment["numeric_sampling_compilation"], report.get("executed_motor_policy", {})
-        )
+        sampling_provenance = commitment["numeric_sampling_compilation"]
+        if isinstance(sampling_provenance, dict) and sampling_provenance.get("schema") == (
+            "soccer.rsi.offline_proposal_sampling_compilation.v1"
+        ):
+            from rosclaw_soccer.rsi.proposal_sampling_episode_factory import (
+                validate_compilation_contract as validate_proposal_sampling_contract,
+            )
+
+            validate_proposal_sampling_contract(
+                sampling_provenance, report.get("executed_motor_policy", {})
+            )
+        else:
+            validate_sampling_compilation_contract(
+                sampling_provenance, report.get("executed_motor_policy", {})
+            )
     if "numeric_compilation" in commitment:
         from rosclaw_soccer.rsi.proposal_decoder_selection import validate_compilation_contract
 
@@ -298,7 +319,12 @@ def audit_cpu_transfer(
         if "proposal_sampling_motor_proof" in policy:
             from rosclaw_soccer.rsi.proposal_sampling_motor import CompiledProposalSamplingMotor
 
-            delta_at_frame = CompiledProposalSamplingMotor(policy).delta_at_frame
+            proposal_decoder = (
+                CompiledProposalSamplingMotor(policy)
+                if sampling_decoder_factory is None
+                else sampling_decoder_factory.bind(policy)
+            )
+            delta_at_frame = proposal_decoder.delta_at_frame
         elif "proposal_memory_motor_proof" in policy:
             from rosclaw_soccer.rsi.proposal_memory_motor import CompiledProposalMemoryMotor
 

@@ -43,6 +43,14 @@ def test_sampling_matches_independent_stationary_noise_and_conditional_density(c
         assert logp == pytest.approx(expected_logp, abs=1e-12)
         previous_noise = offset + scale * noise
     assert not decoder._noise.flags.writeable
+    # Python dict equality treats False == 0 and True == 1; logical seals must
+    # bind their JSON types even when an attacker retains the original hash.
+    for key, value in (("hardware_authorized", 0), ("training_only", 1)):
+        forged = copy.deepcopy(view)
+        forged[key] = value
+        assert forged == view
+        with pytest.raises(ValueError):
+            make_preview(forged)
     for frame in (True, 29, 300):
         with pytest.raises(ValueError):
             decoder.latent_sample(np.zeros(134), frame, 0)

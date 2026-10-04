@@ -47,7 +47,7 @@ def make_preview(view: dict[str, Any]) -> dict[str, Any]:
     seed = view.get("seed")
     if type(seed) is not int:
         raise ValueError("bounded integer sampling seed required")
-    if make_sampling_view(model, seed=seed) != view:
+    if hash_json(make_sampling_view(model, seed=seed)) != hash_json(view):
         raise ValueError("complete sealed SIM-only proposal sampling view required")
     policy = mean_preview(model)
     policy["step_motor_proof"]["model"] = copy.deepcopy(view)
@@ -67,7 +67,7 @@ def make_preview(view: dict[str, Any]) -> dict[str, Any]:
 class CompiledProposalSamplingMotor(CompiledProposalMemoryMotor):
     def __init__(self, policy: dict[str, Any]) -> None:
         view = copy.deepcopy(policy.get("step_motor_proof", {}).get("model", {}))
-        if make_preview(view) != policy:
+        if hash_json(make_preview(view)) != hash_json(policy):
             raise ValueError("complete proposal sampling execution commitment changed")
         super().__init__(mean_preview(view["mean_model"]))
         self._sampling = {k: view[k] for k in ("seed", "std_raw", "rho")}
