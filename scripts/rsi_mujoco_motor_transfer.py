@@ -278,12 +278,18 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
             "soccer.rsi.smooth_memory_motor.v1",
             "soccer.rsi.smooth_memory_sampling.v1",
         ):
+            from rosclaw_soccer.rsi.owned_smooth_sampling_factory import OwnedSmoothSamplingFactory
             from rosclaw_soccer.rsi.smooth_decoder_selection import select_smooth_decoder
             from rosclaw_soccer.rsi.smooth_memory_motor import make_preview as smooth_preview
 
             make_preview = smooth_preview
+            prepared_smooth_policy = (
+                sampling_factory.preview(step_model)
+                if type(sampling_factory) is OwnedSmoothSamplingFactory
+                else make_preview(step_model)
+            )
             decoder, sampling_compilation = select_smooth_decoder(
-                make_preview(step_model), sampling_factory=sampling_factory
+                prepared_smooth_policy, sampling_factory=sampling_factory
             )
             delta_at_frame = decoder.delta_at_frame
         elif step_model.get("schema") in (
@@ -352,7 +358,12 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
 
             delta_at_frame = online_delta_at_frame
             make_preview = online_preview
-        if step_model.get("schema") != "soccer.rsi.proposal_memory_motor.v1":
+        if step_model.get("schema") in (
+            "soccer.rsi.smooth_memory_motor.v1",
+            "soccer.rsi.smooth_memory_sampling.v1",
+        ):
+            policy = prepared_smooth_policy
+        elif step_model.get("schema") != "soccer.rsi.proposal_memory_motor.v1":
             policy = make_preview(step_model)
     x, y, vx = sample_training_courses(args.seed, 16)[args.lane]
     data.qpos[:7] = (0, 0, 0.793, 1, 0, 0, 0)

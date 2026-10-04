@@ -3363,3 +3363,30 @@ JSON dumps23.545秒，逐帧神经delta重建4.968秒。结果hash
 `b0d907a497b916e0b0ca3495ea636c69b1f9bec311d65136a4cac7b7948387b5`。
 这是下一步降低重复验证/序列化开销的定位，不是训练或动作效果
 提升；任何新优化仍需保持原模型/概率/轨迹/安全合同的完整性。
+
+### 2026-10-04：冻结源全回归与下一版owned preview候选
+
+冻结aef6b20的完整pytest结束：6696 passed / 11 failed / 70 skipped /
+2 warnings，1794.61秒。JUnit与v447逐项比较，新增失败0、消失失败0，
+仍是同11项存量物理证书失败，不能说全绿。它不覆盖后面的新编译器。
+
+针对已定位的重复JSON与mean校验，新增显式OwnedSmoothPreview及
+OwnedSmoothSamplingFactory。原完整make_preview验证私有固定均值
+一次，并以原完整数值构造器建立prototype。每个view仍重新比对
+**实际原始canonical均值字节**（不按对象id或Python数值相等缓存），
+验证全部固定字段、有限std/rho/seed界限、条件创新下限、原始完整
+model_hash及逐字节原preview完整性。已固定rsi/core growth/contract
+源码每次检查，变动拒绝；每回合接触/噪声/层容器继续独立。
+新的合同明确`full_original_preview_validation=false`，同时声明
+original mean semantics一次、canonical mean与完整preview integrity
+每次验证；不能把它包装为仍每次重复整个原均值语义校验。缺省原
+构造器与旧完整验证factory保留。Native不再对同一已验证Smooth
+preview重复生成第二个等值对象；不是删去唯一的验证入口。
+
+owned preview/factory、原factory/selector及CPU审计组57 passed
+（193.26秒），包括300帧实际动作与conditional log-density逐值
+一致、各回合状态隔离、均值0/False别名拒绝、正确重封但不同均值
+拒绝、源码漂移拒绝、authority-zero与preview篡改拒绝。定向ruff/
+format/mypy以及最终CLI F821/F822通过。新实现还没有native吞吐/
+物理通过，必须四对完整冻结源仿真和独立原构造器审计再下结论。
+所有运行中的v446/v449/v450/v462及原始证据不热修改。
