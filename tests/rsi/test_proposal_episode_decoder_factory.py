@@ -84,3 +84,18 @@ def test_invalid_policy_rejected_before_any_episode(current):  # noqa: F811
     policy["step_motor_proof"]["promotion_authorized"] = True
     with pytest.raises(ValueError):
         ProposalEpisodeDecoderFactory(policy)
+
+
+def test_private_factory_rejects_source_changes(current, monkeypatch):  # noqa: F811
+    from rosclaw_soccer.rsi import proposal_episode_decoder_factory as module
+
+    factory = ProposalEpisodeDecoderFactory(
+        make_preview(initial_model(current[0], maximum_mean_kl=0.05))
+    )
+    contract = factory.contract()
+    assert contract["complete_original_preview_validation_at_allocation"] is True
+    assert contract["hardware_authorized"] is False
+    monkeypatch.setattr(module, "hash_bytes", lambda _: "source changed")
+    for operation in (factory.new_episode, factory.contract, lambda: factory.policy_hash):
+        with pytest.raises(ValueError, match="sources changed"):
+            operation()

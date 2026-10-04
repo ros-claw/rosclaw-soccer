@@ -57,6 +57,16 @@ def test_cpu_audit_does_not_accept_arbitrary_decoder_callback(tmp_path, monkeypa
         audit_cpu_transfer(tmp_path, Path(__file__), sampling_decoder_factory=factory)
 
 
+@pytest.mark.parametrize("factory", [object(), lambda: None])
+def test_cpu_audit_rejects_arbitrary_mean_decoder_callback(tmp_path, monkeypatch, factory):
+    pytest.importorskip("mujoco")
+    from rosclaw_soccer.rsi import cpu_motor_transfer_evidence as module
+
+    monkeypatch.setattr(module, "_sealed", lambda _: {"executed_motor_policy": {}})
+    with pytest.raises(ValueError, match="private fixed proposal mean factory"):
+        audit_cpu_transfer(tmp_path, Path(__file__), mean_decoder_factory=factory)
+
+
 @pytest.mark.parametrize(
     "fault", ["null", "compiler", "extra-report-null", "family", "malformed-family", "typed-drift"]
 )

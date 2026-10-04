@@ -31,10 +31,27 @@ def audit_cpu_transfer(
     source_path: Path,
     *,
     sampling_decoder_factory: Any = None,
+    mean_decoder_factory: Any = None,
 ) -> dict[str, Any]:
     import mujoco
 
     report = _sealed(root / "report.json")
+    if mean_decoder_factory is not None:
+        from rosclaw_soccer.rsi.proposal_episode_decoder_factory import (
+            ProposalEpisodeDecoderFactory,
+        )
+
+        policy = report.get("executed_motor_policy")
+        if (
+            type(mean_decoder_factory) is not ProposalEpisodeDecoderFactory
+            or sampling_decoder_factory is not None
+            or type(policy) is not dict
+            or "proposal_memory_motor_proof" not in policy
+            or policy.get("policy_hash") != mean_decoder_factory.policy_hash
+            or policy.get("policy_hash")
+            != hash_json({k: v for k, v in policy.items() if k != "policy_hash"})
+        ):
+            raise ValueError("source-bound private fixed proposal mean factory required")
     if sampling_decoder_factory is not None:
         from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
             OwnedProposalSamplingEpisodeFactory,
@@ -351,7 +368,11 @@ def audit_cpu_transfer(
         elif "proposal_memory_motor_proof" in policy:
             from rosclaw_soccer.rsi.proposal_memory_motor import CompiledProposalMemoryMotor
 
-            mean_proposal_decoder = CompiledProposalMemoryMotor(policy)
+            mean_proposal_decoder = (
+                CompiledProposalMemoryMotor(policy)
+                if mean_decoder_factory is None
+                else mean_decoder_factory.new_episode()
+            )
             delta_at_frame = mean_proposal_decoder.delta_at_frame
         elif "advantage_memory_motor_proof" in policy:
             from rosclaw_soccer.rsi.advantage_memory_motor import CompiledAdvantageMemoryMotor
@@ -504,6 +525,14 @@ def audit_cpu_transfer(
         hardware_authorized=False,
         source_hash=hash_bytes(Path(__file__).read_bytes()),
     )
+    if mean_decoder_factory is not None:
+        result["decoder_construction"] = dict(
+            kind="VERIFIED_PRIVATE_FIXED_MEAN_FRESH_EPISODE",
+            factory_contract=mean_decoder_factory.contract(),
+            weights_or_action_law_changed=False,
+            original_reference_constructor_used=False,
+            physics_parity_requires_external_evidence=True,
+        )
     if sampling_decoder_factory is not None:
         from rosclaw_soccer.rsi import (
             owned_proposal_sampling_factory,
