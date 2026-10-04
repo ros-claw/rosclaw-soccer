@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
-from rosclaw_soccer.rsi.sampling_frontier_diagnostics import sampling_frontier
+from rosclaw_soccer.rsi.sampling_frontier_diagnostics import contact_timeline, sampling_frontier
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts.rsi_atomic_artifacts import write_once
 
@@ -25,6 +28,7 @@ def snapshot(root: Path, output: Path) -> dict[str, Any]:
     if len(jobs) != 160 or set(jobs) != set(range(160)):
         raise ValueError("complete predeclared 160-episode collection required")
     rows, pins = [], {}
+    timelines = []
     for path in sorted(root.glob("row-*.json")):
         data = path.read_bytes()
         row = json.loads(data)
@@ -90,10 +94,21 @@ def snapshot(root: Path, output: Path) -> dict[str, Any]:
             )
         ):
             raise ValueError("all original foundation calls must be reviewed")
+        trace_path = folder / "physical_trace.npz"
+        trace_hash = hash_bytes(trace_path.read_bytes())
+        if trace_hash != foundation.get("physical_trace_hash"):
+            raise ValueError("original physical trace changed")
+        with np.load(trace_path, allow_pickle=False) as trace:
+            forces = trace["force_n"]
+            if forces.shape != (300, 1, 6):
+                raise ValueError("original single-lane force trace required")
+            timeline = contact_timeline(forces[:, 0], row["outcome"])
+        timelines.append(dict(group=group, **timeline))
         pins[str(path)] = hash_bytes(data)
         pins[str(review_path)] = hash_bytes(review_path.read_bytes())
         pins[str(frames)] = row["learning_frames_hash"]
         pins[str(foundation_path)] = hash_bytes(foundation_path.read_bytes())
+        pins[str(trace_path)] = trace_hash
         rows.append(row)
     result: dict[str, Any] = sampling_frontier(rows, expected_episodes=len(jobs))
     result.update(
@@ -101,6 +116,8 @@ def snapshot(root: Path, output: Path) -> dict[str, Any]:
         source_records_hash=hash_json(rows),
         source_file_hashes=pins,
         source_records=rows,
+        contact_timelines=timelines,
+        contact_timeline_counts=dict(sorted(Counter(t["kind"] for t in timelines).items())),
         sealed_original_reviews_checked=True,
         original_learning_bytes_checked=True,
         new_physical_executions=0,
@@ -126,7 +143,8 @@ def main() -> None:
             {
                 k: v
                 for k, v in result.items()
-                if k not in ("source_records", "source_file_hashes", "contexts")
+                if k
+                not in ("source_records", "source_file_hashes", "contexts", "contact_timelines")
             }
         )
     )

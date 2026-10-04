@@ -1,8 +1,9 @@
 import copy
 
+import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.sampling_frontier_diagnostics import sampling_frontier
+from rosclaw_soccer.rsi.sampling_frontier_diagnostics import contact_timeline, sampling_frontier
 
 
 def record(group=0, context=0):
@@ -85,3 +86,36 @@ def test_missing_contact_is_separate_from_wrong_body_contact():
     b["outcome"].update(high_quality=False, clean_foot_only=False, contact_body_indices=[2])
     result = sampling_frontier([a, b], expected_episodes=2)
     assert result["overlapping_failure_counts"] == {"no_contact": 1, "nonfoot_contact": 1}
+
+
+@pytest.mark.parametrize("delay", [0, 1, 20, 35])
+def test_nonfoot_first_and_postkick_recollision_are_distinct(delay):
+    forces = np.zeros((300, 6))
+    forces[65, 0] = 2
+    forces[65 + delay, 4] = 2
+    outcome = record()["outcome"]
+    outcome.update(clean_foot_only=False, contact_body_indices=[0, 4])
+    before = forces.copy()
+    result = contact_timeline(forces, outcome)
+    assert result["kind"] == ("first_event_nonfoot" if delay == 0 else "foot_first_then_nonfoot")
+    assert result["secondary_nonfoot_lag_frames"] == (delay or None)
+    assert result["runtime_selection_authorized"] is False
+    assert np.array_equal(before, forces)
+
+
+def test_contact_force_threshold_matches_original_strict_greater_than_one():
+    forces = np.ones((300, 6))
+    outcome = record()["outcome"]
+    outcome.update(first_contact_frame=None, clean_foot_only=False, contact_body_indices=[])
+    assert contact_timeline(forces, outcome)["kind"] == "no_contact"
+    outcome["first_contact_frame"] = 0
+    with pytest.raises(ValueError, match="contradict"):
+        contact_timeline(forces, outcome)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -1])
+def test_invalid_forces_rejected(value):
+    forces = np.zeros((300, 6))
+    forces[65, 0] = value
+    with pytest.raises(ValueError, match="finite"):
+        contact_timeline(forces, record()["outcome"])

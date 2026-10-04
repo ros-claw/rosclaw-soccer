@@ -6,7 +6,54 @@ import math
 from collections import Counter
 from typing import Any
 
+import numpy as np
+
 from rosclaw_soccer.rsi.online_motor_actor_critic import terminal_return
+
+
+def contact_timeline(forces: Any, outcome: dict[str, Any]) -> dict[str, Any]:
+    """Offline measured event labels; not future runtime observations."""
+    values = np.asarray(forces)
+    if (
+        values.shape != (300, 6)
+        or values.dtype.kind not in "fiu"
+        or not np.isfinite(values).all()
+        or np.any(values < 0)
+    ):
+        raise ValueError("complete finite 300-frame six-body force trace required")
+    touched = np.flatnonzero(np.any(values > 1, axis=1))
+    nonfoot = np.flatnonzero(np.any(values[:, 2:] > 1, axis=1))
+    first = int(touched[0]) if len(touched) else None
+    first_nonfoot = int(nonfoot[0]) if len(nonfoot) else None
+    bodies = np.flatnonzero(np.max(values, axis=0) > 1).tolist()
+    if (
+        first != outcome.get("first_contact_frame")
+        or bodies != outcome.get("contact_body_indices")
+        or type(outcome.get("clean_foot_only")) is not bool
+        or outcome["clean_foot_only"] != bool(touched.size and not nonfoot.size)
+    ):
+        raise ValueError("measured force events contradict original contact review")
+    kind = (
+        "no_contact"
+        if first is None
+        else "foot_only_all_episode"
+        if first_nonfoot is None
+        else "first_event_nonfoot"
+        if first_nonfoot == first
+        else "foot_first_then_nonfoot"
+    )
+    return dict(
+        kind=kind,
+        first_contact_frame=first,
+        first_nonfoot_frame=first_nonfoot,
+        secondary_nonfoot_lag_frames=(
+            first_nonfoot - first
+            if first_nonfoot is not None and first is not None and kind == "foot_first_then_nonfoot"
+            else None
+        ),
+        selection_uses_future_outcome_labels=True,
+        runtime_selection_authorized=False,
+    )
 
 
 def sampling_frontier(records: list[dict[str, Any]], *, expected_episodes: int) -> dict[str, Any]:

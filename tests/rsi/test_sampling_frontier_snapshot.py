@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -42,9 +43,14 @@ def fixture(root: Path, *, wrong_context=False, fresh=False, changed_frames=Fals
     write_once(folder / "review.json", review)
     row["outcome"] = {**review, "reward": 3.0}
     row["review_hash"] = review["report_hash"]
+    forces = np.zeros((300, 1, 6))
+    forces[65, 0, 0] = 2
+    trace_path = folder / "physical_trace.npz"
+    np.savez_compressed(trace_path, force_n=forces)
     foundation = sealed(
         dict(
             physical_report_hash=row["report_hash"],
+            physical_trace_hash=hash_bytes(trace_path.read_bytes()),
             recomputed_executed_calls=300,
             hardware_authorized=False,
             promotion_authorized=False,
@@ -94,7 +100,7 @@ def test_snapshot_retains_source_and_is_not_new_physics(tmp_path):
     assert result["new_physical_executions"] == 0
     assert result["sealed_original_reviews_checked"] is True
     assert result["source_physics_validated_here"] is False
-    assert len(result["source_file_hashes"]) == 4
+    assert len(result["source_file_hashes"]) == 5
     assert snapshot(tmp_path, tmp_path / "snapshot.json") == result
 
 
