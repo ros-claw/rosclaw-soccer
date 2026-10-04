@@ -8,19 +8,19 @@ from rosclaw.growth import context_prediction_mlp as reference
 from rosclaw_soccer.rsi.ball_contact_response_field import BallContactResponseField
 
 
-def model():
+def model(width=141):
     value = dict(
         schema="rosclaw.growth.context_prediction_mlp.v1",
         source_hash="sha256"
         + ":"
         + hashlib.sha256(Path(reference.__file__).read_bytes()).hexdigest(),
-        input_mean=np.zeros(141).tolist(),
-        input_scale=np.ones(141).tolist(),
+        input_mean=np.zeros(width).tolist(),
+        input_scale=np.ones(width).tolist(),
         target_mean=[5.0, 6.0, 7.0],
         target_scale=np.ones(3).tolist(),
         layers=[
             dict(weight=np.zeros((b, a)).tolist(), bias=np.zeros(b).tolist())
-            for a, b in ((141, 128), (128, 64), (64, 3))
+            for a, b in ((width, 128), (128, 64), (64, 3))
         ],
         prediction_only=True,
         activation_ceiling="SIM_ONLY",
@@ -28,7 +28,7 @@ def model():
         promotion_authorized=False,
         hardware_authorized=False,
     )
-    value["layers"][0]["weight"][0][112 + 8] = 1
+    value["layers"][0]["weight"][0][width - 29 + 8] = 1
     value["layers"][1]["weight"][0][0] = 1
     value["layers"][2]["weight"][0][0] = 1
     value["model_hash"] = reference._hash(value)
@@ -59,3 +59,21 @@ def test_action_conditioning_zero_effect_ownership_and_reference_parity():
         with pytest.raises(ValueError):
             field.predict_effect(**args, target_increment=bad)
     assert field.contract()["contact_jacobian_linearity_assumed"] is False
+
+
+def test_explicit_geometry_representation_cannot_silently_change_input_contract():
+    value = model(197)
+    with pytest.raises(ValueError):
+        BallContactResponseField(value)
+    field = BallContactResponseField(value, contact_geometry=True)
+    q, v, target = np.zeros((1, 43)), np.zeros((1, 41)), np.zeros((1, 29))
+    q[:, 3] = q[:, 39] = 1
+    args = dict(qpos=q, qvel=v, nominal_target=target, target_increment=target)
+    with pytest.raises(ValueError):
+        field.predict_effect(**args)
+    assert not np.any(field.predict_effect(**args, foot_contact_features=np.zeros((1, 56))))
+    assert field.contract()["input_dimensions"] == 197
+    with pytest.raises(ValueError):
+        BallContactResponseField(model()).predict_effect(
+            **args, foot_contact_features=np.zeros((1, 56))
+        )

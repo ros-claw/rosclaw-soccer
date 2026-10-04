@@ -21,12 +21,16 @@ class BallContactResponseField:
     This object predicts only; it neither chooses nor executes any action.
     """
 
-    def __init__(self, model: Any, *, implementation: str = "reference") -> None:
-        if implementation not in ("reference", "compiled"):
+    def __init__(
+        self, model: Any, *, implementation: str = "reference", contact_geometry: bool = False
+    ) -> None:
+        if implementation not in ("reference", "compiled") or type(contact_geometry) is not bool:
             raise ValueError("explicit ball response implementation required")
         self._model = copy.deepcopy(model)
-        if reference.predict(self._model, np.zeros((1, 141))).shape != (1, 3):
-            raise ValueError("source-bound 141-input three-channel ball model required")
+        self._contact_geometry = contact_geometry
+        self._input_dimensions = 197 if contact_geometry else 141
+        if reference.predict(self._model, np.zeros((1, self._input_dimensions))).shape != (1, 3):
+            raise ValueError("source-bound explicit three-channel ball representation required")
         self._compiled: Any = None
         if implementation == "compiled":
             from rosclaw.growth.compiled_context_prediction import CompiledContextPrediction
@@ -43,11 +47,24 @@ class BallContactResponseField:
         }
 
     def predict_effect(
-        self, *, qpos: Any, qvel: Any, nominal_target: Any, target_increment: Any
+        self,
+        *,
+        qpos: Any,
+        qvel: Any,
+        nominal_target: Any,
+        target_increment: Any,
+        foot_contact_features: Any = None,
     ) -> np.ndarray[Any, Any]:
         if any(hash_bytes(Path(p).read_bytes()) != h for p, h in self._pins.items()):
             raise ValueError("ball response dependency source changed")
         features = measured_body_ball_features(qpos, qvel, nominal_target)
+        if self._contact_geometry:
+            geometry = _matrix(foot_contact_features, 56)
+            if len(geometry) != len(features):
+                raise ValueError("aligned current measured foot collision features required")
+            features = np.concatenate((features, geometry), axis=1)
+        elif foot_contact_features is not None:
+            raise ValueError("geometry features require an explicitly geometry-trained model")
         delta = _matrix(target_increment, 29)
         if len(delta) != len(features) or np.max(np.abs(delta)) > 0.02:
             raise ValueError("aligned bounded local full29 increment required")
@@ -75,7 +92,8 @@ class BallContactResponseField:
             model_hash=self._model["model_hash"],
             source_pins={Path(p).name: h for p, h in self._pins.items()},
             implementation=self._implementation,
-            input_dimensions=141,
+            input_dimensions=self._input_dimensions,
+            current_collision_point_features=56 if self._contact_geometry else 0,
             output_dimensions=3,
             target_increment_dimensions=29,
             maximum_target_increment_rad=0.02,
