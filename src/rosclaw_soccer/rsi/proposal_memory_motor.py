@@ -151,6 +151,7 @@ def validate_model(model: dict[str, Any]) -> None:
     regression_module.ProposalAdvantageRegressionConfig(
         maximum_mean_kl=model.get("maximum_mean_kl"),
         execution_ceiling=model.get("proposal_execution_ceiling"),
+        compute_device=model.get("optimizer_compute_device", "cpu"),
     ).validate()
     if model.get("runtime_execution_authorized") is not False:
         raise ValueError("proposal cannot grant runtime authority")
@@ -247,6 +248,15 @@ def validate_model(model: dict[str, Any]) -> None:
         from rosclaw_soccer.rsi.proposal_decoder_selection import validate_compilation_contract
 
         validate_compilation_contract(receipt["numeric_preparation"])
+    device = model.get("optimizer_compute_device", "cpu")
+    if device == "cpu":
+        if any(k in receipt for k in ("compute_device", "cross_device_bit_identity_claimed")):
+            raise ValueError("CUDA receipt cannot migrate to the CPU optimizer contract")
+    elif (
+        receipt.get("compute_device") != device
+        or receipt.get("cross_device_bit_identity_claimed") is not False
+    ):
+        raise ValueError("exact non-authorizing CUDA optimizer receipt required")
     if receipt["learner_parent_hash"] != hash_json(
         _initial_descriptor(
             initial,
@@ -254,6 +264,7 @@ def validate_model(model: dict[str, Any]) -> None:
             loss_weighting_profile=model["loss_weighting_profile"],
             protected_domain_bank=model["protected_domain_bank"],
             critic_profile=model.get("critic_profile", "whole-rollout"),
+            optimizer_compute_device=model.get("optimizer_compute_device", "cpu"),
         )
     ):
         raise ValueError("exact zero-addition learner parent receipt required")
@@ -372,6 +383,7 @@ def initial_model(
     loss_weighting_profile: str = "uniform-frame",
     protected_domain_bank: dict[str, Any] | None = None,
     critic_profile: str = "whole-rollout",
+    optimizer_compute_device: str = "cpu",
 ) -> dict[str, Any]:
     validate_initial(actor)
     model = _initial_descriptor(
@@ -380,6 +392,7 @@ def initial_model(
         loss_weighting_profile=loss_weighting_profile,
         protected_domain_bank=copy.deepcopy(protected_domain_bank),
         critic_profile=critic_profile,
+        optimizer_compute_device=optimizer_compute_device,
     )
     # The public actor and trainable layers must not share mutable containers:
     # deepcopy of the whole descriptor would preserve that internal alias.
@@ -396,6 +409,7 @@ def _initial_descriptor(
     loss_weighting_profile: str,
     protected_domain_bank: dict[str, Any] | None = None,
     critic_profile: str = "whole-rollout",
+    optimizer_compute_device: str = "cpu",
 ) -> dict[str, Any]:
     """Internal commitment only; caller must validate actor before using it.
 
@@ -427,6 +441,11 @@ def _initial_descriptor(
             ),
             neural_critic_fit_results=None,
         )
+    regression_module.ProposalAdvantageRegressionConfig(
+        maximum_mean_kl=maximum_mean_kl, compute_device=optimizer_compute_device
+    ).validate()
+    if optimizer_compute_device != "cpu":
+        extra["optimizer_compute_device"] = optimizer_compute_device
     return dict(
         schema=SCHEMA,
         activation_ceiling="SIM_ONLY",

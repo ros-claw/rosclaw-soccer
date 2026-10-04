@@ -151,7 +151,8 @@ def fit_update(
         advantages=prepared["advantages"],
         old_log_probability=old_logp,
         config=regression_module.ProposalAdvantageRegressionConfig(
-            maximum_mean_kl=model["maximum_mean_kl"]
+            maximum_mean_kl=model["maximum_mean_kl"],
+            compute_device=model.get("optimizer_compute_device", "cpu"),
         ),
         sample_weights=weights,
     )

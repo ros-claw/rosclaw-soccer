@@ -3582,3 +3582,53 @@ fit不算新的优化器更新；只报告本次实际actor学习。原v449/
 v476按原冻结协议继续，后续仍须核对完整权重、loss、KL，
 且通过真实物理配对后才考虑用于后续新实验。没有运动模型
 晋升、未见场景成绩或可宣传的球队突破。
+
+### 2026-10-04：完整CPU480候选学习完成并启动全部52场物理评估
+
+v489候选学习实际完成，模型哈希
+d329fbf5a6438016fc253f73e8b2b9c1ef000b0ce30d7e72152ae0d174314773，
+学习receipt哈希df7df06223e8394929580f8db9becb0fd9c7688304a84dcf25ed74eebedb80ba。
+完整480/129600帧、40课程、23490保护行均保留；18次实际
+有效optimizer更新，conditional KL=0.013972219226000433，
+marginal KL=0.04899945401120297，loss从6.013524385320695下降
+到5.7761507967001995。仍是有界AWR-inspired候选，不是在线
+PPO/TD/29维直接力矩策略，更不代表已学会踢球。
+
+原v476也完成，模型5ce4bd464f8c00b6eb070e0d20e1dce53de98d94d8a9dd4492c1c9f3e6657be6，
+receipt 307f4beb26c5c0203d08549fbbcb2abdb2050b77d67dfc92720f17ae006fd244。
+完整读取比较initial_actor、全部residual_layers、critic_readout、
+四折neural_critic_fit_results、完整protected_domain_bank均相等；
+去除事先声明的源码/输入/父模型绑定及新增编译合同后，全部
+数字optimizer receipt逐项相等。进一步准备v492对数值字段
+的规范JSON哈希封存比较（不把正负零或bool/int混为相同）。
+这只是学习数值一致性，不凭它宣称完整物理或总训练倍速。
+
+v491对v489候选启动全部52课程，无论局部成绩如何都继续；
+native用原owned_snapshot而非新bounded_snapshot，独立审计
+继续用原参考构造器重建全部3000子步。原v477/v450及v487
+也按各自冻结协议继续。全部候选未见场景数据仍封存，门槛
+未通过前不晋升、不提前宣传。此时尚无全部52场最终成绩。
+
+### 2026-10-04：显式CUDA数值学习后端，非运动执行后端
+
+Core新增proposal回归的compute_device：默认CPU保持原数值
+及旧receipt字段；CUDA必须显式指定索引和确定性cuBLAS配置。
+仍用float64、相同有界优化器及独立NumPy KL重算，保存为JSON
+权重；CPU及所选CUDA RNG、线程与确定性配置在成功/失败后
+恢复。CUDA receipt明确不声称跨设备逐位相同，不提供运行授权。
+四张本地A6000分别实际数值拟合与CPU比较、源码协议及异常
+恢复测试共32 passed；Growth全体346 passed（11.51秒），
+无新增跳过，既有asyncio配置警告1。Core提交9db3b270推至
+原PR616，未合并。
+
+Soccer将optimizer_compute_device绑定初始候选、父commitment
+及学习receipt；拒绝设备迁移和虚假的跨设备逐位保证。实际
+GPU候选学习及CPU等价回归6 passed（114.44秒），原神经MC
+和选择回归另14 passed（84.11秒），定向ruff/mypy通过。
+这些是合成数据的集成测试，尚未完成新的全CPU480 CUDA训练
+及运动评估；不把GPU测试通过当成踢球成绩。
+
+复现边界参考[PyTorch官方说明](https://docs.pytorch.org/docs/2.14/notes/randomness.html)：
+固定seed不保证跨CPU/GPU或跨版本同结果。参考网页版本2.14，
+实际本地运行2.13.0+cu130；另检查本地fork_rng源码并做实际
+设备测试，不假定参考网页就是当前安装版本。
