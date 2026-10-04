@@ -713,7 +713,7 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
                     nominal_target=target,
                     parent_delta=previous,
                     previous_final=prior_final,
-                    limits=limits[motor_ids],
+                    limits=(limits if body_guidance.action_dimensions == 29 else limits[motor_ids]),
                 )
                 history["body_response_applied_increment"].append(
                     np.asarray(guidance_status["applied_increment"])[None]
@@ -729,7 +729,10 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
                         dtype=np.int64,
                     )[None]
                 )
-            target[motor_ids] += previous
+            if body_guidance is not None and body_guidance.action_dimensions == 29:
+                target += np.asarray(guidance_status["final_target_increment"])
+            else:
+                target[motor_ids] += previous
         elif policy is not None:
             if knots is None:
                 raise ValueError("motor policy requires authenticated knots")

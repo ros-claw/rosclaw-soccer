@@ -442,7 +442,7 @@ def audit_cpu_transfer(
                 commitment["body_response_guidance"], policy
             )
             for key, width in (
-                ("body_response_applied_increment", 12),
+                ("body_response_applied_increment", body_guidance.action_dimensions),
                 ("body_response_status", 4),
             ):
                 if (
@@ -472,7 +472,11 @@ def audit_cpu_transfer(
                     nominal_target=nominal,
                     parent_delta=delta,
                     previous_final=previous,
-                    limits=model.jnt_range[joints][ids],
+                    limits=(
+                        model.jnt_range[joints]
+                        if body_guidance.action_dimensions == 29
+                        else model.jnt_range[joints][ids]
+                    ),
                 )
                 equal(
                     status["applied_increment"],
@@ -492,7 +496,10 @@ def audit_cpu_transfer(
                     raise ValueError("causal body guidance status differs")
             equal(delta, trace["motor_delta_rad"][frame, 0], "causal neural output")
             composed = nominal.copy()
-            composed[ids] += delta
+            if body_guidance is not None and body_guidance.action_dimensions == 29:
+                composed += np.asarray(status["final_target_increment"])
+            else:
+                composed[ids] += delta
             equal(composed, trace["joint_target_rad"][frame, 0], "causal composed target")
             previous = delta
     displacement = post_contact_displacement(trace["ball_position_after_step_m"][:, 0], first)

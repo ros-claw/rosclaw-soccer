@@ -18,6 +18,7 @@ def make_bundle(
     model_pairs: Any,
     *,
     active_contact_phases: tuple[int, ...] = (2,),
+    action_dimensions: int = 12,
 ) -> dict[str, Any]:
     """Bind complete prediction models and source; grants no policy qualification."""
     if (
@@ -28,12 +29,15 @@ def make_bundle(
     ):
         raise ValueError("complete explicit parent model identity required")
     pairs = copy.deepcopy(model_pairs)
-    proposal = BodyResponseRecoveryProposal(pairs, active_contact_phases=active_contact_phases)
+    proposal = BodyResponseRecoveryProposal(
+        pairs, active_contact_phases=active_contact_phases, action_dimensions=action_dimensions
+    )
     bundle = dict(
         schema="soccer.rsi.body_response_guidance_bundle.v2",
         parent_model_hash=parent_model_hash,
         model_pairs=pairs,
         active_contact_phases=list(active_contact_phases),
+        action_dimensions=action_dimensions,
         proposal_contract=proposal.contract(),
         source_hash=hash_bytes(Path(__file__).read_bytes()),
         activation_ceiling="SIM_ONLY",
@@ -81,11 +85,18 @@ class BodyResponseGuidanceExecution:
         self._proposal = BodyResponseRecoveryProposal(
             copy.deepcopy(bundle["model_pairs"]),
             active_contact_phases=tuple(phases),
+            action_dimensions=bundle.get("action_dimensions"),
         )
         if hash_json(self._proposal.contract()) != hash_json(bundle["proposal_contract"]):
             raise ValueError("complete guidance prediction sources changed")
         self._memory = ContactPhaseMemory()
-        self._previous = np.zeros((1, 12))
+        self._dimensions = bundle["action_dimensions"]
+        self._previous = np.zeros((1, self._dimensions))
+        self._nonleg_final = np.zeros(self._dimensions - 12)
+
+    @property
+    def action_dimensions(self) -> int:
+        return int(self._dimensions)
 
     def advance(
         self,
@@ -108,7 +119,7 @@ class BodyResponseGuidanceExecution:
             nominal.shape != (29,)
             or parent.shape != (12,)
             or prior.shape != (12,)
-            or bounds.shape != (12, 2)
+            or bounds.shape != (self._dimensions, 2)
             or not all(np.isfinite(v).all() for v in (nominal, parent, prior, bounds))
         ):
             raise ValueError("complete bounded parent composition inputs required")
@@ -143,14 +154,21 @@ class BodyResponseGuidanceExecution:
             contact_phase=phase,
             protected=gate == 0 or frame < 30,
         )
-        proposed = parent + np.asarray(proposal["target_increment"])
-        lower = np.maximum(np.minimum(0, bounds[:, 0] - nominal[:12]), -CAP_RAD)
-        upper = np.minimum(np.maximum(0, bounds[:, 1] - nominal[:12]), CAP_RAD)
+        parent_all = np.concatenate((parent, np.zeros(self._dimensions - 12)))
+        prior_all = np.concatenate((prior, self._nonleg_final))
+        proposed = parent_all + np.asarray(proposal["target_increment"])
+        lower = np.maximum(np.minimum(0, bounds[:, 0] - nominal[: self._dimensions]), -CAP_RAD)
+        upper = np.minimum(np.maximum(0, bounds[:, 1] - nominal[: self._dimensions]), CAP_RAD)
         final: np.ndarray[Any, Any] = np.clip(
-            np.clip(proposed, prior - SLEW_RAD, prior + SLEW_RAD), lower, upper
+            np.clip(proposed, prior_all - SLEW_RAD, prior_all + SLEW_RAD), lower, upper
         )
         # Preserve the exact original decoder result in protected/inactive cases.
         if not proposal["active"]:
-            final = parent.copy()
-        self._previous = (final - parent)[None].copy()
-        return final, dict(proposal, applied_increment=(final - parent).tolist())
+            final = parent_all.copy()
+        self._previous = (final - parent_all)[None].copy()
+        self._nonleg_final = final[12:].copy()
+        return final[:12].copy(), dict(
+            proposal,
+            applied_increment=(final - parent_all).tolist(),
+            final_target_increment=final.tolist(),
+        )

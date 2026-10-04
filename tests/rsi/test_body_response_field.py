@@ -186,7 +186,7 @@ def test_full29_body_response_predicts_arm_intervention_without_executing_it():
         BodyResponseField(old, parts)
 
 
-def test_full29_recovery_proposal_can_use_arm_response_with_same_strict_bounds():
+def full29_recovery_models():
     old, new = recovery_models()[0]
     old["layers"][0]["weight"][0][1000] = 0.0
     old["layers"][0]["weight"][0][1026] = 1.0
@@ -202,6 +202,11 @@ def test_full29_recovery_proposal_can_use_arm_response_with_same_strict_bounds()
         value.pop("model_hash")
         value["model_hash"] = reference._hash(value)
     pairs = [(copy.deepcopy(old), copy.deepcopy(parts)) for _ in range(4)]
+    return pairs
+
+
+def test_full29_recovery_proposal_can_use_arm_response_with_same_strict_bounds():
+    pairs = full29_recovery_models()
     proposal = BodyResponseRecoveryProposal(pairs, action_dimensions=29)
     batch = recovery_inputs()
     batch["previous_increment"] = np.zeros((1, 29))
@@ -223,6 +228,65 @@ def test_full29_recovery_proposal_can_use_arm_response_with_same_strict_bounds()
             BodyResponseRecoveryProposal(pairs, action_dimensions=dimension)
     with pytest.raises(ValueError):
         BodyResponseRecoveryProposal(pairs)
+
+
+def test_full29_execution_reconstructs_nonleg_memory_and_exact_parent_fallback(monkeypatch):
+    from types import SimpleNamespace
+
+    from rosclaw_soccer.rsi import body_response_guidance_execution as module
+    from rosclaw_soccer.sim.contracts import hash_json
+
+    parent_hash = "sha256:" + "a" * 64
+    policy = dict(
+        proposal_memory_motor_proof={},
+        step_motor_proof=dict(
+            model=dict(schema="soccer.rsi.proposal_memory_motor.v1", model_hash=parent_hash)
+        ),
+    )
+    bundle = module.make_bundle(parent_hash, full29_recovery_models(), action_dimensions=29)
+    actual = module.BodyResponseGuidanceExecution(bundle, policy)
+    independent = module.BodyResponseGuidanceExecution(bundle, policy)
+    assert actual.action_dimensions == 29
+    monkeypatch.setattr(module, "features_at_frame", lambda *args, **kwargs: np.zeros(134))
+    guard = SimpleNamespace(gate=lambda context: 1.0)
+    decoder = SimpleNamespace(features=lambda state: state, _guard=guard)
+    q = recovery_inputs()["qpos"]
+    body = dict(
+        canonical_qpos=np.repeat(q[None], 34, axis=0),
+        canonical_qvel=np.zeros((34, 1, 41)),
+        foundation_neural_decoder_input=np.zeros((34, 1, 994)),
+        force_n=np.zeros((34, 1, 6)),
+        ball_position_before_step_m=np.zeros((34, 1, 3)),
+        root_pose_xyzw_m=np.zeros((34, 1, 7)),
+        ball_linear_velocity_before_step_m_s=np.zeros((34, 1, 3)),
+        root_velocity_world=np.zeros((34, 1, 6)),
+    )
+    body["force_n"][0, 0, 0] = 2
+    previous = np.zeros(12)
+    for frame in range(32):
+        args = dict(
+            frame=frame,
+            nominal_target=np.zeros(29),
+            parent_delta=np.zeros(12),
+            previous_final=previous,
+            limits=np.tile([-1.0, 1.0], (29, 1)),
+        )
+        delta, status = actual.advance(decoder, body, **args)
+        expected, check = independent.advance(decoder, body, **args)
+        np.testing.assert_array_equal(delta, expected)
+        assert status == check and len(status["applied_increment"]) == 29
+        assert not np.any(delta)
+        assert status["final_target_increment"][26] == (0 if frame < 30 else -0.002 * (frame - 29))
+        previous = delta
+    guard.gate = lambda context: 0.0
+    delta, status = actual.advance(decoder, body, **dict(args, frame=32))
+    assert not np.any(delta) and status["final_target_increment"] == [0.0] * 29
+    assert not np.any(actual._previous) and not np.any(actual._nonleg_final)
+    bad = copy.deepcopy(bundle)
+    bad["action_dimensions"] = 12
+    bad["bundle_hash"] = hash_json({k: v for k, v in bad.items() if k != "bundle_hash"})
+    with pytest.raises(ValueError):
+        module.BodyResponseGuidanceExecution(bad, policy)
 
 
 def test_recovery_execution_causal_parent_protection_and_bundle(monkeypatch):
