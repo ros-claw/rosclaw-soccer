@@ -27,9 +27,9 @@ class TorchCallAuditor:
         self._paths = [
             model_root / "low_latency" / f"model_{k}.onnx" for k in ("encoder", "decoder")
         ]
-        self._hashes = [hash_bytes(p.read_bytes()) for p in self._paths]
         if any(p.stat().st_size > 256000000 for p in self._paths):
             raise ValueError("bounded source graph required")
+        self._hashes = [hash_bytes(p.read_bytes()) for p in self._paths]
         graphs = [onnx.load(p, load_external_data=False) for p in self._paths]
         if any(
             t.data_location == onnx.TensorProto.EXTERNAL
@@ -37,8 +37,6 @@ class TorchCallAuditor:
             for t in g.graph.initializer
         ):
             raise ValueError("bounded inline source weights required")
-        if any(p.stat().st_size > 256000000 for p in self._paths):
-            raise ValueError("bounded source graph required")
         concat = [n for n in graphs[0].graph.node if n.name == "/Concat_2"]
         if len(concat) != 1 or list(concat[0].input) != [
             "/Reshape_1_output_0",
@@ -118,6 +116,8 @@ class TorchCallAuditor:
             np.asarray(arrays[PREFIX + k])
             for k in ("encoder_features", "latent_token", "decoder_input", "raw_action_isaac")
         ]
+        if features.ndim != 3:
+            raise ValueError("recorded features must have frame, lane and feature axes")
         frames, lanes = features.shape[:2]
         if not 1 <= frames <= 20000 or not 1 <= lanes <= 4096 or frames * lanes > 200000:
             raise ValueError("bounded recorded numeric calls required")
@@ -156,6 +156,8 @@ class TorchCallAuditor:
                     if not np.array_equal(tapped[0].reshape(64), original):
                         raise ValueError("instrumentation changed original quantization output")
                     continuous = tapped[1].reshape(64)
+                    if not np.isfinite(original).all() or not np.isfinite(continuous).all():
+                        raise ValueError("finite original encoder inference required")
                     error = float(np.max(np.abs(bounded.numpy()[0] - continuous)))
                     if error > 1e-4:
                         raise ValueError(
@@ -165,6 +167,8 @@ class TorchCallAuditor:
                     decoded = self._decoder.run(
                         None, {self._decoder.get_inputs()[0].name: observations[frame, lane][None]}
                     )[0].reshape(29)
+                    if not np.isfinite(decoded).all():
+                        raise ValueError("finite original decoder inference required")
                     d = float(np.max(np.abs(decoded - actions[frame, lane])))
                     if d > 1e-4:
                         raise ValueError("original decoder given recorded token differs")

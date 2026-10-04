@@ -76,7 +76,19 @@ def test_executed_arithmetic_exact_but_original_boundary_difference_is_not_hidde
 
 
 @pytest.mark.parametrize(
-    "fault", ["token", "action", "nonfinite", "instrumentation", "continuous", "threads"]
+    "fault",
+    [
+        "token",
+        "action",
+        "nonfinite",
+        "instrumentation",
+        "continuous",
+        "threads",
+        "continuous_nan",
+        "decoder_nan",
+        "encoder_inf",
+        "rank",
+    ],
 )
 def test_fail_closed_without_widening_executed_policy_tolerance(sample, fault):
     auditor, arrays = sample
@@ -91,6 +103,16 @@ def test_fail_closed_without_widening_executed_policy_tolerance(sample, fault):
     elif fault == "continuous":
         original = auditor._original.run(None, {"input": None})[0]
         auditor._instrumented = Session(lambda _: [original, np.ones((2, 32))])
+    elif fault == "continuous_nan":
+        original = auditor._original.run(None, {"input": None})[0]
+        auditor._instrumented = Session(lambda _: [original, np.full((2, 32), np.nan)])
+    elif fault == "decoder_nan":
+        auditor._decoder = Session(lambda _: [np.full((1, 29), np.nan)])
+    elif fault == "encoder_inf":
+        auditor._original = Session(lambda _: [np.full((1, 64), np.inf)])
+        auditor._instrumented = Session(lambda _: [np.full((1, 64), np.inf), np.zeros((2, 32))])
+    elif fault == "rank":
+        arrays["foundation_neural_encoder_features"] = np.zeros(640, dtype=np.float32)
     else:
         auditor._torch.set_num_threads(2)
     with pytest.raises(ValueError):
