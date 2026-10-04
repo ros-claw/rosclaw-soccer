@@ -51,6 +51,7 @@ def main(
     *,
     sampling_factory: Any = None,
     extended_factory: Any = None,
+    proposal_factory: Any = None,
 ) -> None:
     import mujoco
     import torch
@@ -95,6 +96,21 @@ def main(
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--lane", type=int, required=True, choices=range(16))
     args = parser.parse_args(argv)
+    if proposal_factory is not None:
+        from rosclaw_soccer.rsi.proposal_episode_decoder_factory import (
+            ProposalEpisodeDecoderFactory,
+        )
+
+        if (
+            type(proposal_factory) is not ProposalEpisodeDecoderFactory
+            or sampling_factory is not None
+            or extended_factory is not None
+            or args.step_model is None
+            or args.proposal_decoder != "owned_snapshot"
+            or args.cached_proposal_envelope
+            or args.body_response_bundle
+        ):
+            parser.error("fixed proposal factory requires only its explicit owned snapshot")
     if extended_factory is not None:
         from rosclaw_soccer.rsi.extended_proposal_episode_factory import (
             ExtendedProposalEpisodeFactory,
@@ -274,6 +290,10 @@ def main(
         step_model = sampling_factory.restore_envelope(load_json_artifact(args.step_model))
     else:
         step_model = load_sampling_model(args.step_model) if args.step_model else None
+    if proposal_factory is not None and (
+        step_model is None or step_model.get("schema") != "soccer.rsi.proposal_memory_motor.v1"
+    ):
+        raise ValueError("fixed proposal factory cannot bind another model family")
     if extended_factory is not None and (
         step_model is None or step_model.get("schema") != "soccer.rsi.extended_proposal_motor.v1"
     ):
@@ -369,7 +389,11 @@ def main(
 
             make_preview = proposal_preview
             policy = make_preview(step_model)
-            proposal_decoder = select_proposal_decoder(policy, implementation=args.proposal_decoder)
+            proposal_decoder = (
+                select_proposal_decoder(policy, implementation=args.proposal_decoder)
+                if proposal_factory is None
+                else proposal_factory.bind(policy)
+            )
             delta_at_frame = proposal_decoder.delta_at_frame
         elif step_model.get("schema") == "soccer.rsi.advantage_memory_motor.v1":
             from rosclaw_soccer.rsi.advantage_memory_motor import CompiledAdvantageMemoryMotor
@@ -586,6 +610,8 @@ def main(
         commitment["body_response_guidance"] = body_guidance_bundle
     if extended_factory is not None:
         commitment["extended_proposal_factory"] = extended_factory.contract()
+    if proposal_factory is not None:
+        commitment["fixed_proposal_factory"] = proposal_factory.contract()
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
     history: dict[str, list[Any]] = {
         k: []

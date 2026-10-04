@@ -104,6 +104,19 @@ def audit_cpu_transfer(
         raise ValueError("CPU commitment differs from report")
     if ("numeric_compilation" in report) != ("numeric_compilation" in commitment):
         raise ValueError("CPU numerical compilation differs from commitment")
+    if ("fixed_proposal_factory" in report) != ("fixed_proposal_factory" in commitment):
+        raise ValueError("fixed proposal factory differs from commitment")
+    if "fixed_proposal_factory" in commitment:
+        from rosclaw_soccer.rsi.proposal_episode_decoder_factory import (
+            validate_compilation_contract as validate_fixed_proposal_factory,
+        )
+
+        numeric = commitment.get("numeric_compilation")
+        if type(numeric) is not dict or numeric.get("implementation") != "owned_snapshot":
+            raise ValueError("fixed proposal factory requires original owned snapshot compilation")
+        validate_fixed_proposal_factory(
+            commitment["fixed_proposal_factory"], report.get("executed_motor_policy", {})
+        )
     if ("numeric_sampling_compilation" in report) != ("numeric_sampling_compilation" in commitment):
         raise ValueError("CPU sampling compilation differs from commitment")
     if ("body_response_guidance" in report) != ("body_response_guidance" in commitment):
@@ -576,6 +589,9 @@ def audit_cpu_transfer(
             is proposal_sampling_episode_factory.ProposalSamplingEpisodeFactory
             else factory_module
         )
+        factory_source_path = factory_source.__file__
+        if not isinstance(factory_source_path, str):
+            raise ValueError("sampling factory source file unavailable")
 
         result["decoder_construction"] = {
             "kind": (
@@ -583,7 +599,7 @@ def audit_cpu_transfer(
                 if owned
                 else "VERIFIED_SHARED_MEAN_WITH_INDEPENDENT_EPISODE_STATE"
             ),
-            "source_hash": hash_bytes(Path(factory_source.__file__).read_bytes()),
+            "source_hash": hash_bytes(Path(factory_source_path).read_bytes()),
             "complete_preview_validation_retained": not owned,
             "weights_or_action_law_changed": False,
         }

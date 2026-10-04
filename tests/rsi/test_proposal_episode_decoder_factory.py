@@ -38,6 +38,9 @@ def test_episode_parameters_exact_and_histories_independent(
     reference = CompiledProposalMemoryMotor(policy)
     factory = ProposalEpisodeDecoderFactory(policy)
     first, second = factory.new_episode(), factory.new_episode()
+    bound = factory.bind(policy)
+    assert bound._memory.last_frame == bound._parent._memory.last_frame == -1
+    assert bound._policy_hash == policy["policy_hash"]
     assert policy == before
     assert factory.policy_hash == first._policy_hash == second._policy_hash == policy["policy_hash"]
     assert first is not second and first._parent is not second._parent
@@ -54,6 +57,9 @@ def test_episode_parameters_exact_and_histories_independent(
             )
             np.testing.assert_array_equal(
                 second.raw_mean(query, phase), reference.raw_mean(query, phase)
+            )
+            np.testing.assert_array_equal(
+                bound.raw_mean(query, phase), reference.raw_mean(query, phase)
             )
     assert first._parent._output_memory.to_dict() == reference._parent._output_memory.to_dict()
     assert first._guard.to_dict() == reference._guard.to_dict()
@@ -76,6 +82,8 @@ def test_episode_parameters_exact_and_histories_independent(
     policy["step_motor_proof"]["model"]["residual_layers"][-1]["bias"][0] += 100
     query = np.zeros(134)
     np.testing.assert_array_equal(third.raw_mean(query, 0), reference.raw_mean(query, 0))
+    with pytest.raises(ValueError, match="canonical fixed"):
+        factory.bind(policy)
     assert first._sampling is first._noise is second._sampling is second._noise is None
 
 
@@ -94,6 +102,7 @@ def test_private_factory_rejects_source_changes(current, monkeypatch):  # noqa: 
     )
     contract = factory.contract()
     assert contract["complete_original_preview_validation_at_allocation"] is True
+    assert contract["complete_canonical_policy_checked_each_bind"] is True
     assert contract["hardware_authorized"] is False
     monkeypatch.setattr(module, "hash_bytes", lambda _: "source changed")
     for operation in (factory.new_episode, factory.contract, lambda: factory.policy_hash):

@@ -261,3 +261,26 @@ v665 已启动 generation2 模型的两对完整原算法/工厂采样预检，�
 - v668：等待完整 generation3 学习及前一 v652 验证结束；至少 48 GiB 可用 RAM 后用两个 worker 执行全部 52 场，计划 156,000 回放子步和 15,600 实际基础调用复算。原至少 20 高质量、零旧成功/干净触球损失、零新增出界、全部 pelvis 安全、12 个原成功 trace 精确保留的规则不变。
 
 generation2 在这里仅作为实验仿真的训练行为策略，champion 不变，fresh 不打开，不自动晋升，不升级到团队/MARL 层，更不涉及真实机器人。该链为同一 M0 层内的候选持续适配研究，不表示已满足用户期待的球队宣传效果。
+
+### v671：学到的动作变化是否足够接近成功探索
+
+用 v596 完整的 160 条已审查轨迹、原实际采样 seed/std/rho，以及 v597 的 critic feature cache，对照原 160 步与扩展 360 步模型。行为均值由实际 latent action 减去原声明的 stationary noise 恢复，全部实际 conditional log probability 在 1e−8 容差内吻合。模型、数据和源码均绑定；没有新物理、critic fits、actor 更新或 fresh 访问。缓存状态在此没有再次独立重算，向量化 float64 head 计算也不是 native 逐位等价证明。
+
+完整报告 `rsi-actor-action-reconstruction-v671.json`，`sha256:93b4845fcbdd6eedf84af58914ee74b5c7190818886a50ccdb7c03c41697ed41`。
+
+| 已有模型 | 全帧学到的 raw 均值变化 RMS | 成功轨迹探索偏移能量解释率 | 成功触球前 8 帧解释率 | 成功触球前修正方向 cosine |
+| --- | ---: | ---: | ---: | ---: |
+| 原 160 步 | 0.005023 | 0.864% | 9.378% | 0.4335 |
+| 扩展 360 步 | 0.006068 | 1.427% | 14.980% | 0.4967 |
+
+原探索 raw RMS 约 0.100，远大于学习后的均值变化。这里的“能量解释率”是 `1 − ||探索偏移 − 均值变化||² / ||探索偏移||²`，不是成功率，也不是“动作已掌握百分比”。触球前窗口标签只用于离线诊断，不进入 actor 推理。数据提示：学到的触球前修正有一定正确方向，但单批小幅更新仍未充分复现成功探索；不能据此断言 KL 是唯一瓶颈或直接扩大执行动作。全场物理考试和真正新行为采样继续，验收和执行幅度/力矩限制保持原样。
+
+另加固 Core grouped terminal credit 的 signed int64 最小值输入：先转 float64 再检查绝对值，避免整数 abs 溢出绕过回报范围校验。新增回归测试，Core Growth 合计 422 项通过，定向 ruff/format/mypy 通过；`9fbc06fb` 已推既有分支，不修改已运行的冻结 Core v662，也不宣称已合并 Core main。
+
+### 显式复用固定策略构造，不复用 episode 历史
+
+为后续均值策略的批量 native 验证接入显式 `proposal_factory`。仅接受精确的 `ProposalEpisodeDecoderFactory` 类型、原 proposal 模型和明确的 `owned_snapshot` 数值路径；拒绝混用 sampling/extended/body-guidance/foundation-only。默认调用路径不变。完整模型仍走原 preview 校验，每次 bind 重新计算完整 canonical policy seal 并绑定既有私有策略；不信任调用者提供的 hash，不替换权重，两个层级的接触历史均重新独立分配。完整工厂来源进入原 commitment/report，并由 CPU 审查校验全部来源字段，不能把声明当作实际物理等价证明。
+
+新来源/边界测试、原工厂的数值与历史隔离、既有 CPU 物理审查和 owned sampling 兼容性合计 **52 项通过（332.17 秒）**。两个修改模块的定向 mypy、所有修改 Python 文件的 ruff/format 通过；不宣称全仓 CI。静态检查曾发现一项新 nullable identity 类型问题及原 sampling source 路径的 nullable 类型问题，均已显式拒绝并修复后复测。
+
+新冻结源码计划编号 v672，完整旧来源/新工厂物理配对计划 v673：两个原已消费场景编号 0/4、一个 worker，等待前一 52 场完整结束和至少 24 GiB 可用 RAM，再进行 4 条新 native、12,000 原独立回放子步与 1,200 个实际基础策略调用复算。比较全部真实 trace 数组而非仅最终 outcome。保存一次性构造和逐场耗时，但未完成不声称 native 加速或资格通过；不修改 v598/v665/v668 等既有运行源码，不自动用于训练或晋升。
