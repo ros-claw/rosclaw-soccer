@@ -1,4 +1,5 @@
 import copy
+import json
 
 import numpy as np
 import pytest
@@ -22,6 +23,7 @@ def test_capture_is_finite_full_width_with_explicit_non_learning_boundary():
     contract, arrays = sample()
     before = {k: v.copy() for k, v in arrays.items()}
     validate_capture(contract, arrays, frames=3, lanes=2)
+    assert json.loads(json.dumps(contract, allow_nan=False)) == contract
     assert contract["optimizer_updates"] == 0
     assert not contract["foundation_recomputed_independently"]
     assert not contract["hardware_authorized"]
