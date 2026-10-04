@@ -13,7 +13,12 @@ from rosclaw_soccer.rsi.stochastic_step_execution import features_at_frame
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
-def make_bundle(parent_model_hash: str, model_pairs: Any) -> dict[str, Any]:
+def make_bundle(
+    parent_model_hash: str,
+    model_pairs: Any,
+    *,
+    active_contact_phases: tuple[int, ...] = (2,),
+) -> dict[str, Any]:
     """Bind complete prediction models and source; grants no policy qualification."""
     if (
         type(parent_model_hash) is not str
@@ -23,11 +28,12 @@ def make_bundle(parent_model_hash: str, model_pairs: Any) -> dict[str, Any]:
     ):
         raise ValueError("complete explicit parent model identity required")
     pairs = copy.deepcopy(model_pairs)
-    proposal = BodyResponseRecoveryProposal(pairs)
+    proposal = BodyResponseRecoveryProposal(pairs, active_contact_phases=active_contact_phases)
     bundle = dict(
-        schema="soccer.rsi.body_response_guidance_bundle.v1",
+        schema="soccer.rsi.body_response_guidance_bundle.v2",
         parent_model_hash=parent_model_hash,
         model_pairs=pairs,
+        active_contact_phases=list(active_contact_phases),
         proposal_contract=proposal.contract(),
         source_hash=hash_bytes(Path(__file__).read_bytes()),
         activation_ceiling="SIM_ONLY",
@@ -52,7 +58,7 @@ class BodyResponseGuidanceExecution:
         parent = proof.get("model") if type(proof) is dict else None
         if (
             type(bundle) is not dict
-            or bundle.get("schema") != "soccer.rsi.body_response_guidance_bundle.v1"
+            or bundle.get("schema") != "soccer.rsi.body_response_guidance_bundle.v2"
             or bundle.get("activation_ceiling") != "SIM_ONLY"
             or bundle.get("qualification") != "UNQUALIFIED_SIM_RECOVERY_EXPERIMENT"
             or bundle.get("promotion_authorized") is not False
@@ -69,7 +75,13 @@ class BodyResponseGuidanceExecution:
             raise ValueError(
                 "complete source-bound SIM guidance and explicit proposal parent required"
             )
-        self._proposal = BodyResponseRecoveryProposal(copy.deepcopy(bundle["model_pairs"]))
+        phases = bundle.get("active_contact_phases")
+        if type(phases) is not list:
+            raise ValueError("explicit complete contact phase configuration required")
+        self._proposal = BodyResponseRecoveryProposal(
+            copy.deepcopy(bundle["model_pairs"]),
+            active_contact_phases=tuple(phases),
+        )
         if hash_json(self._proposal.contract()) != hash_json(bundle["proposal_contract"]):
             raise ValueError("complete guidance prediction sources changed")
         self._memory = ContactPhaseMemory()

@@ -14,7 +14,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes
 
 
 class BodyResponseRecoveryProposal:
-    """Fixed four-pair ensemble, active only in externally verified phase 2.
+    """Fixed four-pair ensemble, explicit measured-contact phases only.
 
     This is a learned dynamics-guided 12-joint POSITION residual proposal,
     not a torque policy, physical safety proof, or permission to execute.
@@ -22,7 +22,21 @@ class BodyResponseRecoveryProposal:
     physics replay must be supplied by the downstream simulation executor.
     """
 
-    def __init__(self, model_pairs: list[tuple[dict[str, Any], dict[str, Any]]]) -> None:
+    def __init__(
+        self,
+        model_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+        *,
+        active_contact_phases: tuple[int, ...] = (2,),
+    ) -> None:
+        if (
+            type(active_contact_phases) is not tuple
+            or any(type(p) is not int for p in active_contact_phases)
+            or active_contact_phases not in ((2,), (1, 2))
+        ):
+            raise ValueError(
+                "explicit post-contact or contact-and-recovery proposal phases required"
+            )
+        self._active_phases = active_contact_phases
         if not isinstance(model_pairs, list) or len(model_pairs) != 4:
             raise ValueError("exactly four fixed body response model pairs required")
         self._fields = [BodyResponseField(a, b, implementation="compiled") for a, b in model_pairs]
@@ -38,14 +52,14 @@ class BodyResponseRecoveryProposal:
 
     def contract(self) -> dict[str, Any]:
         return dict(
-            schema="soccer.rsi.body_response_recovery_proposal.v1",
+            schema="soccer.rsi.body_response_recovery_proposal.v2",
             fields=[f.contract() for f in self._fields],
             source_pins=dict(self._pins),
             fixed_pair_weights=[0.25] * 4,
             maximum_increment_rad=0.02,
             maximum_increment_change_rad=0.002,
             regularization=0.05,
-            active_contact_phase=2,
+            active_contact_phases=list(self._active_phases),
             outcome_conditioned_selection=False,
             physical_validity_verified=False,
             runtime_execution_authorized=False,
@@ -82,7 +96,7 @@ class BodyResponseRecoveryProposal:
             runtime_execution_authorized=False,
             hardware_authorized=False,
         )
-        if protected or contact_phase != 2:
+        if protected or contact_phase not in self._active_phases:
             return result
         try:
             if any(hash_bytes(Path(p).read_bytes()) != h for p, h in self._pins.items()):

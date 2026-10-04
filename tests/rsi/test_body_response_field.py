@@ -144,6 +144,19 @@ def test_recovery_rejects_dependency_changes(monkeypatch):
     assert result["fallback"] and result["target_increment"] == [0.0] * 12
 
 
+def test_explicit_early_contact_profile_never_precedes_measured_contact():
+    guidance = BodyResponseRecoveryProposal(recovery_models(), active_contact_phases=(1, 2))
+    batch = recovery_inputs()
+    assert guidance.propose(**dict(batch, contact_phase=0))["active"] is False
+    for phase in (1, 2):
+        result = guidance.propose(**dict(batch, contact_phase=phase))
+        assert result["active"] and result["contact_phase"] == phase
+        assert max(abs(v) for v in result["target_increment"]) <= 0.002
+    for phases in ((0, 1, 2), (True, 2), [1, 2], (1,)):
+        with pytest.raises(ValueError):
+            BodyResponseRecoveryProposal(recovery_models(), active_contact_phases=phases)
+
+
 def test_recovery_execution_causal_parent_protection_and_bundle(monkeypatch):
     from types import SimpleNamespace
 
