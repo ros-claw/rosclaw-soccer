@@ -16,7 +16,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes
 class BodyResponseRecoveryProposal:
     """Fixed four-pair ensemble, explicit measured-contact phases only.
 
-    This is a learned dynamics-guided 12-joint POSITION residual proposal,
+    This is a learned dynamics-guided 12- or 29-joint POSITION residual proposal,
     not a torque policy, physical safety proof, or permission to execute.
     Contact memory, parent-policy protection, final limits, and independent
     physics replay must be supplied by the downstream simulation executor.
@@ -24,9 +24,10 @@ class BodyResponseRecoveryProposal:
 
     def __init__(
         self,
-        model_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+        model_pairs: list[tuple[dict[str, Any], Any]],
         *,
         active_contact_phases: tuple[int, ...] = (2,),
+        action_dimensions: int = 12,
     ) -> None:
         if (
             type(active_contact_phases) is not tuple
@@ -37,9 +38,15 @@ class BodyResponseRecoveryProposal:
                 "explicit post-contact or contact-and-recovery proposal phases required"
             )
         self._active_phases = active_contact_phases
+        if type(action_dimensions) is not int or action_dimensions not in (12, 29):
+            raise ValueError("explicit canonical leg or full-body proposal dimensions required")
+        self._dimensions = action_dimensions
         if not isinstance(model_pairs, list) or len(model_pairs) != 4:
             raise ValueError("exactly four fixed body response model pairs required")
-        self._fields = [BodyResponseField(a, b, implementation="compiled") for a, b in model_pairs]
+        self._fields = [
+            BodyResponseField(a, b, implementation="compiled", action_dimensions=action_dimensions)
+            for a, b in model_pairs
+        ]
         self._baselines = [CompiledContextPrediction(a) for a, _ in model_pairs]
         self._pins = {
             str(p): hash_bytes(p.read_bytes())
@@ -60,6 +67,7 @@ class BodyResponseRecoveryProposal:
             maximum_increment_change_rad=0.002,
             regularization=0.05,
             active_contact_phases=list(self._active_phases),
+            target_increment_dimensions=self._dimensions,
             outcome_conditioned_selection=False,
             physical_validity_verified=False,
             runtime_execution_authorized=False,
@@ -87,7 +95,7 @@ class BodyResponseRecoveryProposal:
         ):
             raise ValueError("explicit causal phase and parent protection required")
         result: dict[str, Any] = dict(
-            target_increment=[0.0] * 12,
+            target_increment=[0.0] * self._dimensions,
             active=False,
             fallback=False,
             contact_phase=contact_phase,
@@ -109,7 +117,7 @@ class BodyResponseRecoveryProposal:
                     (nominal_target, 29),
                     (relative_ball, 6),
                     (foundation_input, 994),
-                    (previous_increment, 12),
+                    (previous_increment, self._dimensions),
                 )
             )
             if (
@@ -130,14 +138,14 @@ class BodyResponseRecoveryProposal:
             weights[2] = 0.2
             weights[3:5] = 1.0
             state = dict(
-                qpos=np.repeat(q, 24, axis=0),
-                qvel=np.repeat(v, 24, axis=0),
-                nominal_target=np.repeat(target, 24, axis=0),
-                relative_ball=np.repeat(ball, 24, axis=0),
-                foundation_input=np.repeat(foundation, 24, axis=0),
+                qpos=np.repeat(q, 2 * self._dimensions, axis=0),
+                qvel=np.repeat(v, 2 * self._dimensions, axis=0),
+                nominal_target=np.repeat(target, 2 * self._dimensions, axis=0),
+                relative_ball=np.repeat(ball, 2 * self._dimensions, axis=0),
+                foundation_input=np.repeat(foundation, 2 * self._dimensions, axis=0),
             )
-            probes = np.zeros((24, 12))
-            for j in range(12):
+            probes = np.zeros((2 * self._dimensions, self._dimensions))
+            for j in range(self._dimensions):
                 probes[2 * j, j], probes[2 * j + 1, j] = -0.01, 0.01
             effects = np.mean(
                 [f.predict_effect(**state, target_increment=probes) for f in self._fields], axis=0

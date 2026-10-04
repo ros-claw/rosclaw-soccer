@@ -186,6 +186,45 @@ def test_full29_body_response_predicts_arm_intervention_without_executing_it():
         BodyResponseField(old, parts)
 
 
+def test_full29_recovery_proposal_can_use_arm_response_with_same_strict_bounds():
+    old, new = recovery_models()[0]
+    old["layers"][0]["weight"][0][1000] = 0.0
+    old["layers"][0]["weight"][0][1026] = 1.0
+    parts = [copy.deepcopy(new) for _ in range(3)]
+    for part, width in zip(parts, (12, 12, 5), strict=True):
+        part["target_mean"] = np.zeros(35 * width).tolist()
+        part["target_scale"] = np.ones(35 * width).tolist()
+        part["layers"][-1] = dict(
+            weight=np.zeros((35 * width, 64)).tolist(), bias=np.zeros(35 * width).tolist()
+        )
+    parts[2]["layers"][-1]["bias"][3 * 5 + 2] = 1.0
+    for value in (old, *parts):
+        value.pop("model_hash")
+        value["model_hash"] = reference._hash(value)
+    pairs = [(copy.deepcopy(old), copy.deepcopy(parts)) for _ in range(4)]
+    proposal = BodyResponseRecoveryProposal(pairs, action_dimensions=29)
+    batch = recovery_inputs()
+    batch["previous_increment"] = np.zeros((1, 29))
+    result = proposal.propose(**batch)
+    assert result["active"] and not result["fallback"]
+    assert len(result["target_increment"]) == 29
+    assert result["target_increment"][26] == -0.002
+    assert result["target_increment"][:12] == [0.0] * 12
+    assert result["predicted_candidate_cost"] < result["predicted_baseline_cost"]
+    assert proposal.contract()["target_increment_dimensions"] == 29
+    assert proposal.contract()["runtime_execution_authorized"] is False
+    for kwargs in (dict(contact_phase=0), dict(protected=True)):
+        blocked = proposal.propose(**dict(batch, **kwargs))
+        assert blocked["target_increment"] == [0.0] * 29 and not blocked["active"]
+    bad = dict(batch, previous_increment=np.zeros((1, 12)))
+    assert proposal.propose(**bad)["fallback"]
+    for dimension in (True, 13, 28):
+        with pytest.raises(ValueError):
+            BodyResponseRecoveryProposal(pairs, action_dimensions=dimension)
+    with pytest.raises(ValueError):
+        BodyResponseRecoveryProposal(pairs)
+
+
 def test_recovery_execution_causal_parent_protection_and_bundle(monkeypatch):
     from types import SimpleNamespace
 
