@@ -145,3 +145,28 @@ def test_private_fixed_factory_preserves_law_and_rejects_model_or_source_changes
     monkeypatch.setattr(factory, "_pins", pins)
     with pytest.raises(ValueError, match="sources"):
         factory.new_episode()
+
+
+def test_explicit_bounded_blend_factory_preserves_all_phase_output_bits(request):
+    from rosclaw_soccer.rsi.extended_proposal_episode_factory import ExtendedProposalEpisodeFactory
+
+    artifact = make_model(parent(request), maximum_inner_steps=1600)
+    old = ExtendedProposalEpisodeFactory(artifact)
+    fast = ExtendedProposalEpisodeFactory(artifact, numeric_implementation="bounded_blend")
+    a, b = old.new_episode(), fast.new_episode()
+    before = copy.deepcopy(artifact)
+    assert a._parent._output_memory.to_dict() == b._parent._output_memory.to_dict()
+    for phase in range(3):
+        for query in np.random.default_rng(658).normal(size=(8, 134)):
+            assert np.array_equal(
+                a.raw_mean(query, phase).view(np.uint64),
+                b.raw_mean(query, phase).view(np.uint64),
+            )
+    assert fast.preview(artifact) == old.preview(artifact)
+    assert fast.contract()["numeric_implementation"] == "bounded_blend"
+    assert fast.contract()["complete_physical_parity_required"] is True
+    assert fast.contract()["logical_prediction_memory_changed"] is False
+    assert artifact == before
+    for bad in (True, "unknown", None):
+        with pytest.raises(ValueError, match="implementation"):
+            ExtendedProposalEpisodeFactory(artifact, numeric_implementation=bad)

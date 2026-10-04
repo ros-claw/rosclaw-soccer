@@ -16,10 +16,23 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
 class ExtendedProposalEpisodeFactory:
-    def __init__(self, model: dict[str, Any]) -> None:
+    def __init__(self, model: dict[str, Any], *, numeric_implementation: str = "original") -> None:
+        if type(numeric_implementation) is not str or numeric_implementation not in (
+            "original",
+            "bounded_blend",
+        ):
+            raise ValueError("explicit known extended prediction-memory implementation required")
+        self._numeric_implementation = numeric_implementation
         self._policy = make_preview(copy.deepcopy(model))
         self._canonical_model_hash = hash_json(self._policy["step_motor_proof"]["model"])
         self._prototype = CompiledExtendedProposalMotor(self._policy)
+        if numeric_implementation == "bounded_blend":
+            from rosclaw.growth.bounded_blend_output_memory import BoundedBlendOutputMemory
+
+            parent = self._prototype._decoder._parent
+            parent._output_memory = BoundedBlendOutputMemory.from_dict(
+                parent._output_memory.to_dict()
+            )
         paths = list(Path(__file__).parent.glob("*.py"))
         paths += list(Path(optimizer.__file__).parent.glob("*.py"))
         paths += [Path(__file__).parents[1] / "sim/contracts.py"]
@@ -43,7 +56,7 @@ class ExtendedProposalEpisodeFactory:
 
     def contract(self) -> dict[str, Any]:
         self._stable()
-        return dict(
+        result = dict(
             schema="soccer.rsi.private_extended_proposal_factory.v1",
             policy_hash=self.policy_hash,
             complete_canonical_model_hash=self._canonical_model_hash,
@@ -56,6 +69,12 @@ class ExtendedProposalEpisodeFactory:
             promotion_authorized=False,
             hardware_authorized=False,
         )
+        if self._numeric_implementation != "original":
+            result["numeric_implementation"] = self._numeric_implementation
+            result["logical_prediction_memory_changed"] = False
+            result["actor_weights_changed"] = False
+            result["complete_physical_parity_required"] = True
+        return result
 
     def new_episode(self) -> CompiledExtendedProposalMotor:
         self._stable()
