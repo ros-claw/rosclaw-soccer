@@ -50,6 +50,11 @@ class OwnedProposalSamplingEpisodeFactory:
         result: dict[str, Any] = self._preview.preview(wrapped)
         return result
 
+    def restore_envelope(self, envelope: Any) -> dict[str, Any]:
+        """Compact input only; all complete preview and bind checks still apply."""
+        result: dict[str, Any] = self._preview.restore_envelope(envelope)
+        return result
+
     def bind(self, policy: dict[str, Any]) -> CompiledProposalSamplingMotor:
         view = self._preview.validate_preview(policy)
         prototype = self._reference._prototype

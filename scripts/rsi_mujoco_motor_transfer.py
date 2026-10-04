@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
     group.add_argument("--motor-policy", type=Path)
     group.add_argument("--step-model", type=Path)
     parser.add_argument("--body-response-bundle", type=Path)
+    parser.add_argument("--cached-proposal-envelope", action="store_true")
     parser.add_argument("--consumed-bank", type=Path)
     parser.add_argument("--foundation-only", action="store_true")
     parser.add_argument("--compressed-report", action="store_true")
@@ -89,6 +90,20 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--lane", type=int, required=True, choices=range(16))
     args = parser.parse_args(argv)
+    if args.cached_proposal_envelope:
+        from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
+            OwnedProposalSamplingEpisodeFactory,
+        )
+
+        if (
+            type(sampling_factory) is not OwnedProposalSamplingEpisodeFactory
+            or not args.step_model
+            or args.proposal_decoder != "reference"
+            or args.body_response_bundle
+        ):
+            parser.error(
+                "cached envelope requires only the exact private proposal sampling factory"
+            )
     make_observation_contract(args.root_velocity_reference, args.observation_snapshot)
     if args.foundation_only and (args.neural_model or args.motor_policy or args.step_model):
         parser.error("foundation-only cannot include a motor learning model")
@@ -234,7 +249,12 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
     policy, knots = load_policy(args.motor_policy) if args.motor_policy else (None, None)
     # Restore the WHOLE original numerical model before preview validation.
     # Ordinary JSON/gzip policies remain unchanged; no distribution is changed.
-    step_model = load_sampling_model(args.step_model) if args.step_model else None
+    if args.cached_proposal_envelope:
+        from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
+
+        step_model = sampling_factory.restore_envelope(load_json_artifact(args.step_model))
+    else:
+        step_model = load_sampling_model(args.step_model) if args.step_model else None
     sampling_compilation = None
     if sampling_factory is not None:
         from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (

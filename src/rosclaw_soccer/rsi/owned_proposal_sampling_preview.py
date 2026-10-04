@@ -7,6 +7,7 @@ The unmodified reference remains the independent qualification path.
 
 import copy
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -36,10 +37,27 @@ class OwnedProposalSamplingPreview:
         files += list(Path(correlated_exploration.__file__).parent.glob("*.py"))
         files += [Path(__file__).parents[1] / "sim/contracts.py"]
         self._pins = {str(p): hash_bytes(p.read_bytes()) for p in files}
+        self._payload_cache: Any = None
 
     def _stable(self) -> None:
         if any(hash_bytes(Path(p).read_bytes()) != h for p, h in self._pins.items()):
             raise ValueError("owned proposal preview dependency source changed")
+
+    def restore_envelope(self, envelope: Any) -> dict[str, Any]:
+        """Restore this exact private mean; normal preview validation still runs.
+
+        Compact transport grants no validation, numeric or execution privilege.
+        The complete returned ordinary model must pass preview/bind checks.
+        """
+        self._stable()
+        if self._payload_cache is None:
+            from rosclaw.growth.frozen_payload_field import FrozenPayloadField
+
+            self._payload_cache = FrozenPayloadField(json.loads(self._mean))
+        if not callable(getattr(self._payload_cache, "restore", None)):
+            raise ValueError("cached envelope restore unavailable; use ordinary full JSON")
+        result: dict[str, Any] = self._payload_cache.restore(envelope, "mean_model")
+        return result
 
     def preview(self, wrapped: dict[str, Any]) -> dict[str, Any]:
         self._stable()

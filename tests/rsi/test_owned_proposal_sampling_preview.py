@@ -3,6 +3,7 @@
 import copy
 
 import pytest
+from rosclaw.growth.frozen_payload_field import FrozenPayloadField
 
 from rosclaw_soccer.rsi.owned_proposal_sampling_preview import OwnedProposalSamplingPreview
 from rosclaw_soccer.rsi.proposal_memory_learning import fit_update
@@ -14,6 +15,31 @@ from tests.rsi.test_kernel_guarded_step_motor import candidate  # noqa: F401
 from tests.rsi.test_phase_balanced_proposal_motor import imbalanced_complete_batch
 from tests.rsi.test_smooth_memory_motor import smooth_parent  # noqa: F401
 from tests.rsi.test_step_motor_network import model  # noqa: F401
+
+
+def test_private_envelope_restoration_does_not_skip_complete_preview_validation(current):  # noqa: F811
+    mean = initial_model(current[0], maximum_mean_kl=0.05)
+    owned = OwnedProposalSamplingPreview(mean)
+    view = make_sampling_view(mean, seed=17)
+    cache = FrozenPayloadField(mean)
+    fields = {k: v for k, v in view.items() if k != "mean_model"}
+    envelope = cache.envelope(fields, "mean_model")
+    restored = owned.restore_envelope(envelope)
+    assert hash_json(restored) == hash_json(view)
+    assert hash_json(owned.preview(restored)) == hash_json(make_preview(view))
+    restored["mean_model"]["hardware_authorized"] = True
+    with pytest.raises(ValueError):
+        owned.preview(restored)
+    assert owned.restore_envelope(envelope)["mean_model"]["hardware_authorized"] is False
+    wrong = FrozenPayloadField(dict(mean, hardware_authorized=True)).envelope(fields, "mean_model")
+    with pytest.raises(ValueError):
+        owned.restore_envelope(wrong)
+    unsafe = dict(fields, hardware_authorized=0)
+    unsafe.pop("model_hash")
+    unsafe["model_hash"] = cache.document_hash(unsafe, "mean_model")
+    bad = cache.envelope(unsafe, "mean_model")
+    with pytest.raises(ValueError):
+        owned.preview(owned.restore_envelope(bad))
 
 
 @pytest.mark.parametrize("learned", [False, True])
