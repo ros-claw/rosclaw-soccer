@@ -289,6 +289,39 @@ def test_full29_execution_reconstructs_nonleg_memory_and_exact_parent_fallback(m
         module.BodyResponseGuidanceExecution(bad, policy)
 
 
+def test_receding_local_full29_queries_stay_local_while_memory_accumulates():
+    pairs = full29_recovery_models()
+    proposal = BodyResponseRecoveryProposal(
+        pairs, action_dimensions=29, maximum_accumulated_increment_rad=0.06
+    )
+    batch = recovery_inputs()
+    previous = np.zeros((1, 29))
+    for _frame in range(40):
+        result = proposal.propose(**dict(batch, previous_increment=previous))
+        assert result["active"] and not result["fallback"]
+        delta = np.asarray(result["target_increment"])[None]
+        assert np.max(np.abs(delta - previous)) <= 0.002 + 1e-15
+        assert np.max(np.abs(delta)) <= 0.06
+        assert result["predicted_candidate_cost"] <= result["predicted_baseline_cost"]
+        previous = delta
+    assert previous[0, 26] < -0.02
+    assert not np.any(previous[0, :12])
+    assert proposal.contract()["maximum_local_query_increment_rad"] == 0.02
+    assert proposal.contract()["update_rule"] == "RECEDING_LOCAL"
+    blocked = proposal.propose(**dict(batch, previous_increment=previous, protected=True))
+    assert blocked["target_increment"] == [0.0] * 29
+    bad = previous.copy()
+    bad[0, 26] = -0.061
+    assert proposal.propose(**dict(batch, previous_increment=bad))["fallback"]
+    for maximum in (0.04, 0.1, True, 0):
+        with pytest.raises(ValueError):
+            BodyResponseRecoveryProposal(
+                pairs, action_dimensions=29, maximum_accumulated_increment_rad=maximum
+            )
+    with pytest.raises(ValueError):
+        BodyResponseRecoveryProposal(recovery_models(), maximum_accumulated_increment_rad=0.06)
+
+
 def test_bundle_portable_only_across_byte_identical_source_checkouts(monkeypatch, tmp_path):
     from rosclaw_soccer.rsi import (
         body_response_features,

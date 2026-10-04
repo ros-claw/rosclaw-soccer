@@ -28,6 +28,7 @@ class BodyResponseRecoveryProposal:
         *,
         active_contact_phases: tuple[int, ...] = (2,),
         action_dimensions: int = 12,
+        maximum_accumulated_increment_rad: float = 0.02,
     ) -> None:
         if (
             type(active_contact_phases) is not tuple
@@ -41,6 +42,14 @@ class BodyResponseRecoveryProposal:
         if type(action_dimensions) is not int or action_dimensions not in (12, 29):
             raise ValueError("explicit canonical leg or full-body proposal dimensions required")
         self._dimensions = action_dimensions
+        if (
+            type(maximum_accumulated_increment_rad) is not float
+            or maximum_accumulated_increment_rad not in (0.02, 0.06)
+            or (maximum_accumulated_increment_rad != 0.02 and action_dimensions != 29)
+        ):
+            raise ValueError("explicit original or full-body receding-local bounds required")
+        self._maximum = maximum_accumulated_increment_rad
+        self._incremental = maximum_accumulated_increment_rad != 0.02
         if not isinstance(model_pairs, list) or len(model_pairs) != 4:
             raise ValueError("exactly four fixed body response model pairs required")
         self._fields = [
@@ -59,12 +68,14 @@ class BodyResponseRecoveryProposal:
 
     def contract(self) -> dict[str, Any]:
         return dict(
-            schema="soccer.rsi.body_response_recovery_proposal.v3",
+            schema="soccer.rsi.body_response_recovery_proposal.v4",
             fields=[f.contract() for f in self._fields],
             source_pins={Path(p).name: h for p, h in self._pins.items()},
             source_binding="MODULE_CONTENT_NOT_ABSOLUTE_CHECKOUT_PATH",
             fixed_pair_weights=[0.25] * 4,
-            maximum_increment_rad=0.02,
+            maximum_increment_rad=self._maximum,
+            maximum_local_query_increment_rad=0.02,
+            update_rule="RECEDING_LOCAL" if self._incremental else "ABSOLUTE",
             maximum_increment_change_rad=0.002,
             regularization=0.05,
             active_contact_phases=list(self._active_phases),
@@ -123,9 +134,13 @@ class BodyResponseRecoveryProposal:
             )
             if (
                 any(len(a) != 1 for a in (q, v, target, ball, foundation, previous))
-                or np.max(np.abs(previous)) > 0.02
+                or np.max(np.abs(previous)) > self._maximum
             ):
                 raise ValueError("one bounded current body state required")
+            if self._incremental:
+                # Query a local change around the last actually applied
+                # recovery target; never extrapolate a 0.06 local increment.
+                target = target + previous
             features = measured_response_features(q, v, target, ball)
             base = np.concatenate((foundation, ball, target, v[:, :35]), axis=1)
             next_velocity = v[0, :35] + np.mean(
@@ -159,9 +174,12 @@ class BodyResponseRecoveryProposal:
                 maximum_increment=0.02,
                 regularization=0.05,
             )
-            delta = np.clip(
-                np.asarray(proposal["target_increment"]), previous[0] - 0.002, previous[0] + 0.002
-            )
+            requested = np.asarray(proposal["target_increment"])
+            if self._incremental:
+                requested = requested + previous[0]
+            delta = np.clip(requested, previous[0] - 0.002, previous[0] + 0.002)
+            if self._incremental:
+                delta = np.clip(delta, -self._maximum, self._maximum)
             single = dict(
                 qpos=q,
                 qvel=v,
@@ -170,10 +188,20 @@ class BodyResponseRecoveryProposal:
                 foundation_input=foundation,
             )
             predicted_effect = np.mean(
-                [f.predict_effect(**single, target_increment=delta[None]) for f in self._fields],
+                [
+                    f.predict_effect(
+                        **single,
+                        target_increment=(delta - previous[0])[None]
+                        if self._incremental
+                        else delta[None],
+                    )
+                    for f in self._fields
+                ],
                 axis=0,
             )[0]
             before = float(np.sum(weights * error**2))
+            if self._incremental:
+                before += 0.05 * float(np.sum(previous[0] ** 2))
             after = float(
                 np.sum(weights * (error + predicted_effect) ** 2) + 0.05 * np.sum(delta**2)
             )

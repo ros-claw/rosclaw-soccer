@@ -19,6 +19,7 @@ def make_bundle(
     *,
     active_contact_phases: tuple[int, ...] = (2,),
     action_dimensions: int = 12,
+    maximum_accumulated_increment_rad: float = 0.02,
 ) -> dict[str, Any]:
     """Bind complete prediction models and source; grants no policy qualification."""
     if (
@@ -30,14 +31,18 @@ def make_bundle(
         raise ValueError("complete explicit parent model identity required")
     pairs = copy.deepcopy(model_pairs)
     proposal = BodyResponseRecoveryProposal(
-        pairs, active_contact_phases=active_contact_phases, action_dimensions=action_dimensions
+        pairs,
+        active_contact_phases=active_contact_phases,
+        action_dimensions=action_dimensions,
+        maximum_accumulated_increment_rad=maximum_accumulated_increment_rad,
     )
     bundle = dict(
-        schema="soccer.rsi.body_response_guidance_bundle.v2",
+        schema="soccer.rsi.body_response_guidance_bundle.v3",
         parent_model_hash=parent_model_hash,
         model_pairs=pairs,
         active_contact_phases=list(active_contact_phases),
         action_dimensions=action_dimensions,
+        maximum_accumulated_increment_rad=maximum_accumulated_increment_rad,
         proposal_contract=proposal.contract(),
         source_hash=hash_bytes(Path(__file__).read_bytes()),
         activation_ceiling="SIM_ONLY",
@@ -62,7 +67,7 @@ class BodyResponseGuidanceExecution:
         parent = proof.get("model") if type(proof) is dict else None
         if (
             type(bundle) is not dict
-            or bundle.get("schema") != "soccer.rsi.body_response_guidance_bundle.v2"
+            or bundle.get("schema") != "soccer.rsi.body_response_guidance_bundle.v3"
             or bundle.get("activation_ceiling") != "SIM_ONLY"
             or bundle.get("qualification") != "UNQUALIFIED_SIM_RECOVERY_EXPERIMENT"
             or bundle.get("promotion_authorized") is not False
@@ -82,15 +87,20 @@ class BodyResponseGuidanceExecution:
         phases = bundle.get("active_contact_phases")
         if type(phases) is not list:
             raise ValueError("explicit complete contact phase configuration required")
+        dimensions = bundle.get("action_dimensions")
+        maximum = bundle.get("maximum_accumulated_increment_rad")
+        if type(dimensions) is not int or type(maximum) is not float:
+            raise ValueError("explicit integer dimensions and float recovery bound required")
         self._proposal = BodyResponseRecoveryProposal(
             copy.deepcopy(bundle["model_pairs"]),
             active_contact_phases=tuple(phases),
-            action_dimensions=bundle.get("action_dimensions"),
+            action_dimensions=dimensions,
+            maximum_accumulated_increment_rad=maximum,
         )
         if hash_json(self._proposal.contract()) != hash_json(bundle["proposal_contract"]):
             raise ValueError("complete guidance prediction sources changed")
         self._memory = ContactPhaseMemory()
-        self._dimensions = bundle["action_dimensions"]
+        self._dimensions = dimensions
         self._previous = np.zeros((1, self._dimensions))
         self._nonleg_final = np.zeros(self._dimensions - 12)
 
