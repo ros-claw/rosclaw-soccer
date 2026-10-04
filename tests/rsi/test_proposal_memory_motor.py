@@ -62,9 +62,9 @@ def test_actual_numeric_regression_changes_layers_preserves_memory_and_guard(
     )
     assert learned["learning_receipt"]["maximum_mean_kl"] == 0.05
     assert learned["learning_receipt"]["runtime_execution_authorized"] is False
-    with pytest.raises(ValueError, match="zero-addition"):
+    with pytest.raises(ValueError, match="actual immediate behavior"):
         fit_update(
-            learned, conditional_fixture_batch(smooth_parent), batch_hash="sha256:" + "b" * 64
+            learned, conditional_fixture_batch(smooth_parent), batch_hash="sha256:" + "c" * 64
         )
     for key, value in (
         ("protected_memory_rows", 999),

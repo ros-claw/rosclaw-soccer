@@ -243,7 +243,13 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
 
         make_preview: Callable[[dict[str, Any]], dict[str, Any]] = legacy_preview
 
-        if step_model.get("schema") == "soccer.rsi.proposal_memory_motor.v1":
+        if step_model.get("schema") == "soccer.rsi.proposal_memory_sampling.v1":
+            from rosclaw_soccer.rsi.proposal_sampling_motor import CompiledProposalSamplingMotor
+            from rosclaw_soccer.rsi.proposal_sampling_motor import make_preview as sampling_preview
+
+            make_preview = sampling_preview
+            delta_at_frame = CompiledProposalSamplingMotor(make_preview(step_model)).delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.proposal_memory_motor.v1":
             from rosclaw_soccer.rsi.proposal_decoder_selection import select_proposal_decoder
             from rosclaw_soccer.rsi.proposal_memory_motor import make_preview as proposal_preview
 

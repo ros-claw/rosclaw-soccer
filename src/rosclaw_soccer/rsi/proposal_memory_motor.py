@@ -141,13 +141,37 @@ def validate_model(model: dict[str, Any]) -> None:
         != hash_json({k: v for k, v in model.items() if k != "model_hash"})
         or any(model.get(k) is not False for k in FLAGS)
         or type(model.get("generation")) is not int
-        or model["generation"] not in (0, 1)
+        or not 0 <= model["generation"] <= 8
         or model.get("raw_residual_cap") != 0.2
         or type(model["raw_residual_cap"]) is not float
         or model.get("learning_rate") != 0.0004
         or type(model["learning_rate"]) is not float
     ):
         raise ValueError("sealed bounded SIM-only proposal-memory actor required")
+    predecessor = model.get("previous_model")
+    if model["generation"] < 2:
+        if "previous_model" in model:
+            raise ValueError("initial proposal cannot carry a continued-update predecessor")
+    else:
+        if (
+            not isinstance(predecessor, dict)
+            or predecessor.get("generation") != model["generation"] - 1
+        ):
+            raise ValueError("complete immediate continued-update predecessor required")
+        validate_model(predecessor)
+        mutable = {
+            "generation",
+            "residual_layers",
+            "learning_receipt",
+            "critic_readout",
+            "neural_critic_fit_results",
+            "model_hash",
+            "previous_model",
+        }
+        if hash_json({k: v for k, v in model.items() if k not in mutable}) != hash_json(
+            {k: v for k, v in predecessor.items() if k not in mutable}
+        ):
+            raise ValueError("continued update cannot change frozen model, guards or objective")
     regression_module.ProposalAdvantageRegressionConfig(
         maximum_mean_kl=model.get("maximum_mean_kl"),
         execution_ceiling=model.get("proposal_execution_ceiling"),
@@ -216,7 +240,12 @@ def validate_model(model: dict[str, Any]) -> None:
         or receipt.get("optimizer_source_hash") != model["core_regression_source_hash"]
         or receipt.get("adapter_source_hash")
         != hash_bytes(Path(__file__).with_name("proposal_memory_learning.py").read_bytes())
-        or receipt.get("behavior_model_hash") != initial["baseline"]["base_model"]["model_hash"]
+        or receipt.get("behavior_model_hash")
+        != (
+            predecessor["model_hash"]
+            if predecessor is not None
+            else initial["baseline"]["base_model"]["model_hash"]
+        )
         or receipt.get("protected_memory_hash") != protected_hash
         or receipt.get("protected_memory_rows") != protected_rows
         or receipt.get("protected_anchor_contexts") != protected_contexts
@@ -264,18 +293,27 @@ def validate_model(model: dict[str, Any]) -> None:
         or receipt.get("cross_device_bit_identity_claimed") is not False
     ):
         raise ValueError("exact non-authorizing CUDA optimizer receipt required")
-    if receipt["learner_parent_hash"] != hash_json(
-        _initial_descriptor(
-            initial,
-            maximum_mean_kl=model["maximum_mean_kl"],
-            loss_weighting_profile=model["loss_weighting_profile"],
-            protected_domain_bank=model["protected_domain_bank"],
-            critic_profile=model.get("critic_profile", "whole-rollout"),
-            optimizer_compute_device=model.get("optimizer_compute_device", "cpu"),
-            optimizer_likelihood_profile=model.get("optimizer_likelihood_profile", "marginal"),
+    expected_parent = (
+        predecessor["model_hash"]
+        if predecessor is not None
+        else hash_json(
+            _initial_descriptor(
+                initial,
+                maximum_mean_kl=model["maximum_mean_kl"],
+                loss_weighting_profile=model["loss_weighting_profile"],
+                protected_domain_bank=model["protected_domain_bank"],
+                critic_profile=model.get("critic_profile", "whole-rollout"),
+                optimizer_compute_device=model.get("optimizer_compute_device", "cpu"),
+                optimizer_likelihood_profile=model.get("optimizer_likelihood_profile", "marginal"),
+            )
         )
-    ):
+    )
+    if receipt["learner_parent_hash"] != expected_parent:
         raise ValueError("exact zero-addition learner parent receipt required")
+    if predecessor is not None and (
+        receipt["physical_batch_hash"] == predecessor["learning_receipt"]["physical_batch_hash"]
+    ):
+        raise ValueError("new independently bound batch required for continued update")
     if model.get("critic_profile", "whole-rollout") in (
         "whole-context",
         "whole-context-neural",

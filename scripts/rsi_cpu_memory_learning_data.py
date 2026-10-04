@@ -77,6 +77,14 @@ def audit_cpu_learning_rollout(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     raw = _sealed(folder / "report.json")
     view = raw.get("executed_motor_policy", {}).get("step_motor_proof", {}).get("model", {})
+    proposal_sampling = mean_model.get("schema") == "soccer.rsi.proposal_memory_motor.v1"
+    expected_schema = (
+        "soccer.rsi.proposal_memory_sampling.v1"
+        if proposal_sampling
+        else "soccer.rsi.smooth_memory_sampling.v1"
+    )
+    if proposal_sampling and sampling_decoder_factory is not None:
+        raise ValueError("proposal sampling requires independent original reference replay")
     if (
         (raw.get("seed"), raw.get("lane")) != course
         or raw.get("execution_profile") != "taskspace_plus_motor"
@@ -85,7 +93,7 @@ def audit_cpu_learning_rollout(
         or raw.get("step_model_hash") != expected_view_hash
         or view.get("model_hash") != expected_view_hash
         or view.get("model_hash") != hash_json({k: v for k, v in view.items() if k != "model_hash"})
-        or view.get("schema") != "soccer.rsi.smooth_memory_sampling.v1"
+        or view.get("schema") != expected_schema
         or view.get("mean_model") != mean_model
         or type(view.get("seed")) is not int
         or view["seed"] != expected_sampling_seed
@@ -122,11 +130,17 @@ def audit_cpu_learning_rollout(
     )
     if reread != raw:
         raise ValueError("CPU physical evidence changed during extraction")
-    decoder = (
-        CompiledSmoothMemoryMotor(make_preview(view))
-        if sampling_decoder_factory is None
-        else sampling_decoder_factory.bind(raw["executed_motor_policy"])
-    )
+    decoder: CompiledSmoothMemoryMotor
+    if proposal_sampling:
+        from rosclaw_soccer.rsi.proposal_sampling_motor import CompiledProposalSamplingMotor
+
+        decoder = CompiledProposalSamplingMotor(raw["executed_motor_policy"])
+    else:
+        decoder = (
+            CompiledSmoothMemoryMotor(make_preview(view))
+            if sampling_decoder_factory is None
+            else sampling_decoder_factory.bind(raw["executed_motor_policy"])
+        )
     draws = [
         decoder.latent_sample(v, frame, int(p))
         for frame, (v, p) in enumerate(zip(x, phase, strict=True), start=30)

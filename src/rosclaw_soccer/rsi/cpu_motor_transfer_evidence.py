@@ -295,7 +295,11 @@ def audit_cpu_transfer(
         from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
 
         policy = report["executed_motor_policy"]
-        if "proposal_memory_motor_proof" in policy:
+        if "proposal_sampling_motor_proof" in policy:
+            from rosclaw_soccer.rsi.proposal_sampling_motor import CompiledProposalSamplingMotor
+
+            delta_at_frame = CompiledProposalSamplingMotor(policy).delta_at_frame
+        elif "proposal_memory_motor_proof" in policy:
             from rosclaw_soccer.rsi.proposal_memory_motor import CompiledProposalMemoryMotor
 
             delta_at_frame = CompiledProposalMemoryMotor(policy).delta_at_frame

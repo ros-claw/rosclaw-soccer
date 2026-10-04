@@ -39,11 +39,25 @@ def fit_update(
     context_evidence_hash: str | None = None,
     neural_critic_fit_results: Any = None,
     numeric_implementation: str = "reference",
+    behavior_model_hash: str | None = None,
 ) -> dict[str, Any]:
     numeric_contract = compilation_contract(numeric_implementation)
     validate_model(model)
-    if model["generation"] != 0 or not re.fullmatch(r"sha256:[0-9a-f]{64}", batch_hash):
-        raise ValueError("zero-addition regression initial model and sealed batch required")
+    if model["generation"] >= 8 or not re.fullmatch(r"sha256:[0-9a-f]{64}", batch_hash):
+        raise ValueError("bounded continued regression generation and sealed batch required")
+    if model["generation"] and batch_hash == model["learning_receipt"]["physical_batch_hash"]:
+        raise ValueError("new independently bound batch required for continued update")
+    expected_behavior = (
+        model["model_hash"]
+        if model["generation"]
+        else model["initial_actor"]["baseline"]["base_model"]["model_hash"]
+    )
+    if (model["generation"] and behavior_model_hash != expected_behavior) or (
+        behavior_model_hash is not None and behavior_model_hash != expected_behavior
+    ):
+        raise ValueError(
+            "actual immediate behavior model required; stale replay cannot be relabelled"
+        )
     x, phase, action, old_logp, returns, std, groups = [
         np.asarray(arrays[k])
         for k in (
@@ -103,6 +117,11 @@ def fit_update(
         )
     decoder = select_proposal_decoder(make_preview(model), implementation=numeric_implementation)
     current = np.stack([decoder.raw_mean(v, int(p)) for v, p in zip(x, phase, strict=True)])
+    frozen_base = (
+        current
+        if model["generation"] == 0
+        else np.stack([decoder._parent.raw_mean(v, int(p)) for v, p in zip(x, phase, strict=True)])
+    )
     phi = np.stack([decoder.features(v) for v in x])
     context = np.column_stack((phi[:, :134], phase))
     context_ids = None
@@ -143,7 +162,7 @@ def fit_update(
     numeric = fit_proposal_advantage_residual(
         layers=[(np.asarray(v["weight"]), np.asarray(v["bias"])) for v in model["residual_layers"]],
         context=context,
-        baseline=current,
+        baseline=frozen_base,
         gates=decoder._guard.gates(context),
         actions=action,
         marginal_std=std,
@@ -159,14 +178,15 @@ def fit_update(
     )
     result = {k: copy.deepcopy(v) for k, v in model.items() if k != "model_hash"}
     result["residual_layers"] = numeric.pop("layers")
-    result["generation"] = 1
-    initial = model["initial_actor"]
+    result["generation"] = model["generation"] + 1
+    if model["generation"]:
+        result["previous_model"] = copy.deepcopy(model)
     protected_hash, protected_rows, protected_contexts = protection_identity(model)
     receipt = dict(
         **numeric,
         physical_batch_hash=batch_hash,
         learner_parent_hash=model["model_hash"],
-        behavior_model_hash=initial["baseline"]["base_model"]["model_hash"],
+        behavior_model_hash=expected_behavior,
         optimizer_source_hash=hash_bytes(Path(regression_module.__file__).read_bytes()),
         adapter_source_hash=hash_bytes(Path(__file__).read_bytes()),
         physical_rollout_count=n // 270,
