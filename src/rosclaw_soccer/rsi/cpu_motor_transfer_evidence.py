@@ -51,6 +51,13 @@ def audit_cpu_transfer(
 
             expected_factory = ExtendedProposalEpisodeFactory
             proof_key = "extended_proposal_motor_proof"
+        elif type(policy) is dict and "verified_success_imitation_motor_proof" in policy:
+            from rosclaw_soccer.rsi.imitation_proposal_episode_factory import (
+                ImitationProposalEpisodeFactory,
+            )
+
+            expected_factory = ImitationProposalEpisodeFactory
+            proof_key = "verified_success_imitation_motor_proof"
         if (
             type(mean_decoder_factory) is not expected_factory
             or sampling_decoder_factory is not None
@@ -104,6 +111,27 @@ def audit_cpu_transfer(
         raise ValueError("CPU commitment differs from report")
     if ("numeric_compilation" in report) != ("numeric_compilation" in commitment):
         raise ValueError("CPU numerical compilation differs from commitment")
+    if ("imitation_proposal_factory" in report) != ("imitation_proposal_factory" in commitment):
+        raise ValueError("imitation factory differs from commitment")
+    if "imitation_proposal_factory" in commitment:
+        from rosclaw_soccer.rsi.imitation_proposal_episode_factory import (
+            validate_compilation_contract as validate_imitation_factory,
+        )
+
+        if any(
+            k in commitment
+            for k in (
+                "numeric_compilation",
+                "numeric_sampling_compilation",
+                "body_response_guidance",
+                "fixed_proposal_factory",
+                "extended_proposal_factory",
+            )
+        ):
+            raise ValueError("imitation factory cannot mix another compilation or guidance claim")
+        validate_imitation_factory(
+            commitment["imitation_proposal_factory"], report.get("executed_motor_policy", {})
+        )
     if ("fixed_proposal_factory" in report) != ("fixed_proposal_factory" in commitment):
         raise ValueError("fixed proposal factory differs from commitment")
     if "fixed_proposal_factory" in commitment:
@@ -387,6 +415,15 @@ def audit_cpu_transfer(
                 else sampling_decoder_factory.bind(policy)
             )
             delta_at_frame = proposal_decoder.delta_at_frame
+        elif "verified_success_imitation_motor_proof" in policy:
+            from rosclaw_soccer.rsi.imitation_proposal_motor import CompiledImitationProposalMotor
+
+            imitation_decoder = (
+                CompiledImitationProposalMotor(policy)
+                if mean_decoder_factory is None
+                else mean_decoder_factory.new_episode()
+            )
+            delta_at_frame = imitation_decoder.delta_at_frame
         elif "extended_proposal_motor_proof" in policy:
             from rosclaw_soccer.rsi.extended_proposal_motor import CompiledExtendedProposalMotor
 
