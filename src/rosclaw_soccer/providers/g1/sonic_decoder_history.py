@@ -67,7 +67,7 @@ class SonicDecoderHistory:
         )
         history = self._history + [entry] if self._history else [entry] * 10
         history = history[-10:]
-        result = np.concatenate(
+        result: np.ndarray[Any, Any] = np.concatenate(
             (
                 token,
                 *[
