@@ -61,6 +61,11 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
     parser.add_argument("--foundation-only", action="store_true")
     parser.add_argument("--compressed-report", action="store_true")
     parser.add_argument(
+        "--record-foundation-observation",
+        action="store_true",
+        help="Record actual 994-input/29-action frozen foundation calls; not a trained policy",
+    )
+    parser.add_argument(
         "--shared-evidence",
         action="store_true",
         help="Opt-in lossless shared model/world storage for new compressed evidence only",
@@ -423,6 +428,10 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
         commitment["numeric_sampling_compilation"] = sampling_compilation
     if observation_contract is not None:
         commitment["observation_contract"] = observation_contract
+    if args.record_foundation_observation:
+        from rosclaw_soccer.rsi.foundation_observation_capture import capture_contract
+
+        commitment["foundation_observation_capture"] = capture_contract()
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
     history: dict[str, list[Any]] = {
         k: []
@@ -447,6 +456,10 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
             "canonical_qvel",
         )
     }
+    if args.record_foundation_observation:
+        from rosclaw_soccer.rsi.foundation_observation_capture import FIELDS, PREFIX
+
+        history.update({PREFIX + name: [] for name in FIELDS})
     tracker = None
     tracking = y < 0
     gate = False
@@ -517,6 +530,7 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
                 foundation,
                 navigation.backend.reference[None],
                 low_latency_legacy_encoder_layout=True,
+                capture_neural_observation=args.record_foundation_observation,
             )
             tracker.reset(qpos[None], qvel[None])
         else:
@@ -526,6 +540,9 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
                     frame, navigation.backend.reference[None], unchanged_lookahead_frames=10
                 )
         tracker.update(frame, qpos[None], qvel[None])
+        if args.record_foundation_observation:
+            for name, value in tracker.neural_observation().items():
+                history[PREFIX + name].append(value.cpu().numpy().copy())
         proposal = navigation.commit_batched_action(tracker.action[0].numpy())
         target = np.asarray(proposal.target_rad).copy()
         if frame == 30:
@@ -658,6 +675,10 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
             raise ValueError("nonfinite physical MuJoCo state")
     trace = args.output_root / "physical_trace.npz"
     arrays: dict[str, Any] = {k: np.asarray(v) for k, v in history.items()}
+    if args.record_foundation_observation:
+        from rosclaw_soccer.rsi.foundation_observation_capture import validate_capture
+
+        validate_capture(commitment["foundation_observation_capture"], arrays, frames=300, lanes=1)
     np.savez_compressed(trace, **arrays)
     result = dict(
         commitment,

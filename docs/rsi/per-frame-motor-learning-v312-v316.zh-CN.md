@@ -3269,3 +3269,38 @@ format/mypy及最终CLI F821/F822通过。第一次新测试使用错误的fixtu
 并补完整重封装的不同均值拒绝与畸形合同测试后，上述39项全部通过。
 尚无该native复用路径的物理通过或吞吐结论，必须另做冻结源的四对
 完整native轨迹与独立复核。现有v446/v449/v450均继续其原冻结源。
+
+### 2026-10-04：v454数值复用闭合与全身学习输入准备
+
+上述“尚无”状态由后续冻结源cfdbb3e的v454完成结果替代，不回写旧
+证据。四对预先声明的consumed课程完成8次新native执行、24000次
+独立原构造器物理子步复核；四对全部NPZ字段/dtype/shape/value完全
+一致，逻辑报告除声明的数值构造合同外完全一致。两组HQ均FFF T。
+结果hash `d6d9d81f1c281239a545e3aa64d946e3ab300fe9326b9a4318b64cd1867046c4`。
+这是数值复用组件证明：0新训练轨迹、0更新、4个独立consumed上下文，
+不是球技成长。共享factory初次构造104.812秒，不能隐去；参考native
+总716.868秒，共享native总436.655秒，加首次构造为541.467秒。
+八次独立复核每条约104—111秒，均计入完整工作量；不宣称训练整体
+提速1.64倍。结果位于外部`rsi-persistent-native-sampling-pair-v454`。
+
+磁盘保护如实记录：旧v430最后预算的full仅12/52完成、v433第二
+预算full仅48/52完成时触发原40GiB容量预留，两个driver失败并保存
+日志，不降低100GiB系统预留、不把部分结果封成完整通过。共享存储
+v446新320条采集仍推进；v449/v450仍等待完整数据，不部分拟合。
+
+新可选`--record-foundation-observation`记录实际640维encoder输入、
+64维token、994维decoder输入、29维ISAAC序网络输出及29维MuJoCo
+序基础目标。保持既有legacy layout和动作路径，默认关闭。Tracker
+快照独立复制、reset清空、无梯度图、每lane和每次回合私有。
+报告/commitment绑定捕获器与tracker源码、尺寸、排序、布局和阶段；
+独立CPU审计检查标记完整性、finite float32、token一致，并从真实
+qpos/qvel及上一帧29维动作重建十帧本体感历史与动作到目标的映射。
+尚未独立重算planner/reference/encoder/decoder，因此明确标注
+`foundation_recomputed_independently=false`，不能冒充全身策略证明。
+这为学习29关节做数据准备：当前学习器仍是12腿关节残差；没有在
+此提交训练新29关节模型、没有直接输出关节力矩、没有激活候选。
+
+相关tracker/capture/CPU审计组68 passed（1.95秒），定向ruff/mypy
+通过。首次测试漏设本地PYTHONPATH、第二次写错hash工具导入路径，
+均在collection报错，修正后才通过；不隐藏为跳过。实际捕获开关
+还需冻结源、完整native开关对照与独立审计，不从单测推断物理通过。

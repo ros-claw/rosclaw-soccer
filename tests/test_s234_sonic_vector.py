@@ -11,7 +11,7 @@ from rosclaw_soccer.providers.g1.sonic_runup import (
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker
 
 
-def setup(variant="sonic_v1_1", native=False, legacy_layout=False):
+def setup(variant="sonic_v1_1", native=False, legacy_layout=False, capture=False):
     torch = pytest.importorskip("torch")
     rng = np.random.default_rng(234)
     ref = rng.normal(0, 0.1, (2, 80, 36))
@@ -35,11 +35,76 @@ def setup(variant="sonic_v1_1", native=False, legacy_layout=False):
             ref,
             native_velocity=native,
             low_latency_legacy_encoder_layout=legacy_layout,
+            capture_neural_observation=capture,
         ),
         ref,
         q,
         v,
     )
+
+
+@pytest.mark.parametrize("variant", ["sonic_v1_1", "low_latency"])
+def test_neural_capture_is_owned_and_actions_are_unchanged(variant):
+    torch = pytest.importorskip("torch")
+    plain, _, q, v = setup(variant)
+    recorded, _, _, _ = setup(variant, capture=True)
+
+    def decode(observation):
+        return observation[:, 64:93] * 0.01 + observation[:, -29:] * 0.02
+
+    plain.model.decode = recorded.model.decode = decode
+    trace = {"canonical_qpos": [], "canonical_qvel": []}
+    for tracker in (plain, recorded):
+        with pytest.raises(RuntimeError, match="capture"):
+            tracker.neural_observation()
+        tracker.reset(q, v)
+    for frame in range(3):
+        # Different measured states across lanes and time expose ordering errors.
+        if frame:
+            q = q.copy()
+            v = v.copy()
+            q[:, 7:36] += 0.003 * frame
+            v[0, 6:35] += 0.007 * frame
+            plain.observe(q, v)
+            recorded.observe(q, v)
+        trace["canonical_qpos"].append(q.copy())
+        trace["canonical_qvel"].append(v.copy())
+        a, b = plain.update(frame, q, v), recorded.update(frame, q, v)
+        assert torch.equal(a, b)
+        snapshot = recorded.neural_observation()
+        for key, value in snapshot.items():
+            trace.setdefault("foundation_neural_" + key, []).append(value.numpy().copy())
+        assert {k: tuple(x.shape) for k, x in snapshot.items()} == {
+            "encoder_features": (2, 640),
+            "latent_token": (2, 64),
+            "decoder_input": (2, 994),
+            "raw_action_isaac": (2, 29),
+            "joint_target_mujoco_rad": (2, 29),
+        }
+        assert torch.equal(snapshot["latent_token"], snapshot["decoder_input"][:, :64])
+        assert torch.equal(snapshot["raw_action_isaac"], decode(snapshot["decoder_input"]))
+        assert torch.equal(snapshot["joint_target_mujoco_rad"], b)
+        for value in snapshot.values():
+            value.zero_()
+        assert torch.equal(recorded.neural_observation()["joint_target_mujoco_rad"], b)
+    from rosclaw_soccer.rsi.foundation_observation_capture import validate_measured_history
+
+    arrays = {key: np.asarray(value) for key, value in trace.items()}
+    validate_measured_history(arrays)
+    arrays["foundation_neural_decoder_input"][1, 0, 64] += 0.1
+    with pytest.raises(ValueError, match="history differs"):
+        validate_measured_history(arrays)
+    with pytest.raises(RuntimeError, match="capture"):
+        plain.neural_observation()
+    recorded.reset(q, v)
+    with pytest.raises(RuntimeError, match="capture"):
+        recorded.neural_observation()
+
+
+@pytest.mark.parametrize("capture", [None, 0, 1, "true"])
+def test_neural_capture_rejects_implicit_flags(capture):
+    with pytest.raises(ValueError, match="capture flag"):
+        setup(capture=capture)
 
 
 @pytest.mark.parametrize("variant", ["sonic_v1_1", "low_latency"])

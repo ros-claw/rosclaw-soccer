@@ -23,6 +23,7 @@ class BatchedSonicTracker:
         *,
         native_velocity: bool = False,
         low_latency_legacy_encoder_layout: bool = False,
+        capture_neural_observation: bool = False,
     ) -> None:
         import torch
 
@@ -33,6 +34,10 @@ class BatchedSonicTracker:
         ):
             raise ValueError("legacy encoder layout applies only to low-latency SONIC")
         self.low_latency_legacy_encoder_layout = low_latency_legacy_encoder_layout
+        if type(capture_neural_observation) is not bool:
+            raise ValueError("explicit neural observation capture flag required")
+        self._capture_neural_observation = capture_neural_observation
+        self._neural_observation: dict[str, Any] | None = None
         self._torch, self.model = torch, model
         self.reference = torch.as_tensor(
             reference, device=model.device, dtype=torch.float32
@@ -106,6 +111,17 @@ class BatchedSonicTracker:
         self._history = [tuple(x.clone() for x in entry) for _ in range(10)]
         self._next_frame = 0
         self._pending_observation = False
+        self._neural_observation = None
+
+    def neural_observation(self) -> dict[str, Any]:
+        """Owned actual neural inputs/outputs; no motion or learning authority.
+
+        Snapshot belongs to the last completed update. Raw actions use ISAAC
+        order; targets use canonical MuJoCo order. Capture changes no layout.
+        """
+        if self._neural_observation is None:
+            raise RuntimeError("neural observation capture requires an enabled completed update")
+        return {key: value.clone() for key, value in self._neural_observation.items()}
 
     def refresh_unexecuted_reference(
         self, frame: int, reference: Any, *, unchanged_lookahead_frames: int = 10
@@ -274,12 +290,22 @@ class BatchedSonicTracker:
             torch.stack([entry[i] for entry in self._history], dim=1).reshape(self.count, -1)
             for i in range(5)
         ]
-        self.action = self.model.decode(torch.cat((token, *history), dim=1))
+        decoder_input = torch.cat((token, *history), dim=1)
+        self.action = self.model.decode(decoder_input)
         if not bool(torch.isfinite(self.action).all()):
             raise FloatingPointError("nonfinite full-body SONIC action")
         self._next_frame += 1
         self._pending_observation = True
-        return self.default + self.action[:, self._to_mujoco] * self.scale
+        target = self.default + self.action[:, self._to_mujoco] * self.scale
+        if self._capture_neural_observation:
+            self._neural_observation = {
+                "encoder_features": features.detach().clone(),
+                "latent_token": token.detach().clone(),
+                "decoder_input": decoder_input.detach().clone(),
+                "raw_action_isaac": self.action.detach().clone(),
+                "joint_target_mujoco_rad": target.detach().clone(),
+            }
+        return target
 
     def observe(self, qpos: Any, qvel: Any) -> None:
         if not self._pending_observation:

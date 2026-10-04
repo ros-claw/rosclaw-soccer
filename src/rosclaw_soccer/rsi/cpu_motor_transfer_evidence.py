@@ -168,6 +168,21 @@ def audit_cpu_transfer(
     }
     with np.load(trace_path, allow_pickle=False) as loaded:
         trace = {k: loaded[k] for k in loaded.files}
+    from rosclaw_soccer.rsi.foundation_observation_capture import (
+        PREFIX,
+        validate_capture,
+        validate_measured_history,
+    )
+
+    if ("foundation_observation_capture" in report) != (
+        "foundation_observation_capture" in commitment
+    ):
+        raise ValueError("CPU foundation capture differs from commitment")
+    if "foundation_observation_capture" in commitment:
+        validate_capture(commitment["foundation_observation_capture"], trace, frames=300, lanes=1)
+        validate_measured_history(trace)
+    elif any(name.startswith(PREFIX) for name in trace):
+        raise ValueError("CPU foundation capture requires an explicit commitment")
     if any(
         trace[k].shape != shape or not np.isfinite(trace[k]).all() for k, shape in shapes.items()
     ):
