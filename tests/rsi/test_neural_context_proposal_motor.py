@@ -21,12 +21,29 @@ from tests.rsi.test_smooth_memory_motor import smooth_parent  # noqa: F401
 from tests.rsi.test_step_motor_network import model  # noqa: F401
 
 
-def test_neural_mc_receipt_is_complete_and_cannot_grant_motion(current, smooth_parent):  # noqa: F811
+@pytest.mark.parametrize(
+    "profile,device",
+    [("equal-contact-phase-mass", "cpu"), ("equal-first-contact-lead-mass", "cuda:2")],
+)
+def test_neural_mc_receipt_is_complete_and_cannot_grant_motion(
+    current,  # noqa: F811
+    smooth_parent,  # noqa: F811
+    monkeypatch,
+    profile,
+    device,  # noqa: F811
+):
+    event_credit = profile == "equal-first-contact-lead-mass"
+    if device != "cpu":
+        torch = pytest.importorskip("torch")
+        if torch.cuda.device_count() <= 2:
+            pytest.skip("actual CUDA device 2 unavailable")
+        monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     initial = initial_model(
         current[0],
         maximum_mean_kl=0.05,
-        loss_weighting_profile="equal-contact-phase-mass",
+        loss_weighting_profile=profile,
         critic_profile="whole-context-neural",
+        optimizer_compute_device=device,
     )
     data = imbalanced_complete_batch(smooth_parent)
     decoder = CompiledProposalMemoryMotor(make_preview(initial))
@@ -47,6 +64,9 @@ def test_neural_mc_receipt_is_complete_and_cannot_grant_motion(current, smooth_p
         trajectory_context_ids=np.arange(4),
         context_evidence_hash="sha256:" + "c" * 64,
         neural_critic_fit_results=fits,
+        numeric_implementation="bounded_snapshot" if event_credit else "reference",
+        measured_event_frames=np.full(4, 59, dtype=np.int64) if event_credit else None,
+        event_evidence_hash="sha256:" + "d" * 64 if event_credit else None,
     )
     validate_model(learned)
     receipt = learned["learning_receipt"]
@@ -57,6 +77,12 @@ def test_neural_mc_receipt_is_complete_and_cannot_grant_motion(current, smooth_p
     assert receipt["runtime_execution_authorized"] is False
     assert learned["initial_actor"] == initial["initial_actor"]
     assert learned["residual_layers"] != initial["residual_layers"]
+    if event_credit:
+        assert receipt["compute_device"] == device
+        assert receipt["cross_device_bit_identity_claimed"] is False
+        assert receipt["future_event_is_actor_observation"] is False
+        assert receipt["event_partition_frame_counts"] == [84, 36, 80, 880, 0]
+        assert receipt["sample_weighting"]["all_numeric_rows_retained"] is True
     for fault in (
         "critic_hash",
         "authority",

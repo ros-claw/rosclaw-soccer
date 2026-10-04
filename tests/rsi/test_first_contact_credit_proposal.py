@@ -85,8 +85,8 @@ def test_incomplete_or_unbound_event_labels_rejected(
     )
     data = imbalanced_complete_batch(smooth_parent)
     monkeypatch.setattr(
-        "rosclaw_soccer.rsi.proposal_memory_learning.CompiledProposalMemoryMotor",
-        lambda *_: pytest.fail("must reject before decoder allocation"),
+        "rosclaw_soccer.rsi.proposal_memory_learning.select_proposal_decoder",
+        lambda *_, **__: pytest.fail("must reject before decoder allocation"),
     )
     with pytest.raises(ValueError, match="offline event labels"):
         fit_update(
