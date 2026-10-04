@@ -46,7 +46,7 @@ from rosclaw_soccer.sim.root_velocity_reference import root_velocity_world
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None:
     import mujoco
     import torch
 
@@ -82,7 +82,7 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--lane", type=int, required=True, choices=range(16))
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     make_observation_contract(args.root_velocity_reference, args.observation_snapshot)
     if args.foundation_only and (args.neural_model or args.motor_policy or args.step_model):
         parser.error("foundation-only cannot include a motor learning model")
@@ -90,6 +90,10 @@ def main() -> None:
         parser.error("owned proposal decoder requires an explicit sealed step-model")
     if args.shared_evidence and not args.compressed_report:
         parser.error("shared evidence requires compressed-report")
+    if sampling_factory is not None and (
+        args.step_model is None or args.proposal_decoder != "reference"
+    ):
+        parser.error("shared smooth factory requires only an explicit reference sampling model")
     # This first diagnostic only accepts already consumed courses.
     consumed = {
         (20261177, 0),
@@ -219,6 +223,11 @@ def main() -> None:
     # Restore the WHOLE original numerical model before preview validation.
     # Ordinary JSON/gzip policies remain unchanged; no distribution is changed.
     step_model = load_sampling_model(args.step_model) if args.step_model else None
+    sampling_compilation = None
+    if sampling_factory is not None and (
+        step_model is None or step_model.get("schema") != "soccer.rsi.smooth_memory_sampling.v1"
+    ):
+        raise ValueError("shared smooth factory cannot compile other motor families")
     if args.proposal_decoder != "reference" and (
         step_model is None or step_model.get("schema") != "soccer.rsi.proposal_memory_motor.v1"
     ):
@@ -264,11 +273,14 @@ def main() -> None:
             "soccer.rsi.smooth_memory_motor.v1",
             "soccer.rsi.smooth_memory_sampling.v1",
         ):
-            from rosclaw_soccer.rsi.smooth_memory_motor import CompiledSmoothMemoryMotor
+            from rosclaw_soccer.rsi.smooth_decoder_selection import select_smooth_decoder
             from rosclaw_soccer.rsi.smooth_memory_motor import make_preview as smooth_preview
 
             make_preview = smooth_preview
-            delta_at_frame = CompiledSmoothMemoryMotor(make_preview(step_model)).delta_at_frame
+            decoder, sampling_compilation = select_smooth_decoder(
+                make_preview(step_model), sampling_factory=sampling_factory
+            )
+            delta_at_frame = decoder.delta_at_frame
         elif step_model.get("schema") in (
             "soccer.rsi.output_memory_step_motor.v1",
             "soccer.rsi.output_memory_step_sampling.v1",
@@ -407,6 +419,8 @@ def main() -> None:
         from rosclaw_soccer.rsi.proposal_decoder_selection import compilation_contract
 
         commitment["numeric_compilation"] = compilation_contract(args.proposal_decoder)
+    if sampling_compilation is not None:
+        commitment["numeric_sampling_compilation"] = sampling_compilation
     if observation_contract is not None:
         commitment["observation_contract"] = observation_contract
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))

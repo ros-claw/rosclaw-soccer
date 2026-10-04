@@ -64,6 +64,16 @@ def audit_cpu_transfer(
         raise ValueError("CPU commitment differs from report")
     if ("numeric_compilation" in report) != ("numeric_compilation" in commitment):
         raise ValueError("CPU numerical compilation differs from commitment")
+    if ("numeric_sampling_compilation" in report) != ("numeric_sampling_compilation" in commitment):
+        raise ValueError("CPU sampling compilation differs from commitment")
+    if "numeric_sampling_compilation" in commitment:
+        from rosclaw_soccer.rsi.smooth_decoder_selection import (
+            validate_sampling_compilation_contract,
+        )
+
+        validate_sampling_compilation_contract(
+            commitment["numeric_sampling_compilation"], report.get("executed_motor_policy", {})
+        )
     if "numeric_compilation" in commitment:
         from rosclaw_soccer.rsi.proposal_decoder_selection import validate_compilation_contract
 
