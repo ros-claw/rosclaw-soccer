@@ -289,6 +289,47 @@ def test_full29_execution_reconstructs_nonleg_memory_and_exact_parent_fallback(m
         module.BodyResponseGuidanceExecution(bad, policy)
 
 
+def test_bundle_portable_only_across_byte_identical_source_checkouts(monkeypatch, tmp_path):
+    from rosclaw_soccer.rsi import (
+        body_response_features,
+        body_response_field,
+        body_response_guidance,
+        body_response_guidance_execution,
+    )
+
+    parent_hash = "sha256:" + "a" * 64
+    policy = dict(
+        proposal_memory_motor_proof={},
+        step_motor_proof=dict(
+            model=dict(schema="soccer.rsi.proposal_memory_motor.v1", model_hash=parent_hash)
+        ),
+    )
+    bundle = body_response_guidance_execution.make_bundle(parent_hash, recovery_models())
+    original = body_response_guidance_execution.BodyResponseGuidanceExecution(bundle, policy)
+    copies = {}
+    for module in (
+        body_response_features,
+        body_response_field,
+        body_response_guidance,
+        body_response_guidance_execution,
+    ):
+        path = Path(module.__file__)
+        copied = tmp_path / path.name
+        copied.write_bytes(path.read_bytes())
+        monkeypatch.setattr(module, "__file__", str(copied))
+        copies[module.__name__] = copied
+    restored = body_response_guidance_execution.BodyResponseGuidanceExecution(bundle, policy)
+    assert restored._proposal.contract() == original._proposal.contract()
+    assert restored._proposal.propose(**recovery_inputs()) == original._proposal.propose(
+        **recovery_inputs()
+    )
+    damaged = copies[body_response_guidance.__name__]
+    damaged.write_bytes(damaged.read_bytes() + b"\n# altered source\n")
+    with pytest.raises(ValueError):
+        body_response_guidance_execution.BodyResponseGuidanceExecution(bundle, policy)
+    assert restored._proposal.propose(**recovery_inputs())["fallback"]
+
+
 def test_recovery_execution_causal_parent_protection_and_bundle(monkeypatch):
     from types import SimpleNamespace
 

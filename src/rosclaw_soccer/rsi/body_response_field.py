@@ -134,7 +134,7 @@ class BodyResponseField:
 
     def contract(self) -> dict[str, Any]:
         return dict(
-            schema="soccer.rsi.body_response_field.v1",
+            schema="soccer.rsi.body_response_field.v2",
             next_velocity_model_hash=self._old["model_hash"],
             local_matrix_model_hash=(
                 self._matrix_models[0]["model_hash"]
@@ -143,7 +143,8 @@ class BodyResponseField:
             ),
             matrix_partition_action_widths=list(self._partition_widths),
             implementation=self._implementation,
-            source_pins=dict(self._pins),
+            source_pins={Path(p).name: h for p, h in self._pins.items()},
+            source_binding="MODULE_CONTENT_NOT_ABSOLUTE_CHECKOUT_PATH",
             fixed_expert_weights=[0.5, 0.5],
             target_increment_dimensions=self._action_dimensions,
             effect_dimensions=35,

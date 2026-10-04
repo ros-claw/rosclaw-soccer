@@ -59,9 +59,10 @@ class BodyResponseRecoveryProposal:
 
     def contract(self) -> dict[str, Any]:
         return dict(
-            schema="soccer.rsi.body_response_recovery_proposal.v2",
+            schema="soccer.rsi.body_response_recovery_proposal.v3",
             fields=[f.contract() for f in self._fields],
-            source_pins=dict(self._pins),
+            source_pins={Path(p).name: h for p, h in self._pins.items()},
+            source_binding="MODULE_CONTENT_NOT_ABSOLUTE_CHECKOUT_PATH",
             fixed_pair_weights=[0.25] * 4,
             maximum_increment_rad=0.02,
             maximum_increment_change_rad=0.002,
