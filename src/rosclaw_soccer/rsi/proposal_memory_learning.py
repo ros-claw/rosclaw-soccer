@@ -18,6 +18,7 @@ from rosclaw.growth.sample_weighting import balanced_partition_weights
 from rosclaw_soccer.rsi.domain_memory_protection import protection_identity
 from rosclaw_soccer.rsi.proposal_memory_motor import (
     CompiledProposalMemoryMotor,
+    critic_kind,
     make_preview,
     validate_model,
 )
@@ -33,6 +34,7 @@ def fit_update(
     event_evidence_hash: str | None = None,
     trajectory_context_ids: Any = None,
     context_evidence_hash: str | None = None,
+    neural_critic_fit_results: Any = None,
 ) -> dict[str, Any]:
     validate_model(model)
     if model["generation"] != 0 or not re.fullmatch(r"sha256:[0-9a-f]{64}", batch_hash):
@@ -99,7 +101,8 @@ def fit_update(
     phi = np.stack([decoder.features(v) for v in x])
     context = np.column_stack((phi[:, :134], phase))
     context_ids = None
-    if model.get("critic_profile", "whole-rollout") == "whole-context":
+    neural_profile = model.get("critic_profile") == "whole-context-neural"
+    if model.get("critic_profile", "whole-rollout") in ("whole-context", "whole-context-neural"):
         from rosclaw.growth.context_crossfit import context_crossfit_advantages
 
         if not isinstance(context_evidence_hash, str) or not re.fullmatch(
@@ -107,11 +110,29 @@ def fit_update(
         ):
             raise ValueError("independently bound complete context labels required")
         context_ids = np.asarray(trajectory_context_ids)
-        prepared = context_crossfit_advantages(
-            phi, phase, groups, returns, trajectory_context_ids=context_ids
-        )
+        if neural_profile:
+            from rosclaw.growth.neural_context_advantages import neural_context_advantages
+
+            prepared = neural_context_advantages(
+                phi,
+                phase,
+                groups,
+                returns,
+                trajectory_context_ids=context_ids,
+                fold_fit_results=neural_critic_fit_results,
+            )
+        else:
+            if neural_critic_fit_results is not None:
+                raise ValueError("neural fit cannot silently alter the linear critic profile")
+            prepared = context_crossfit_advantages(
+                phi, phase, groups, returns, trajectory_context_ids=context_ids
+            )
     else:
-        if trajectory_context_ids is not None or context_evidence_hash is not None:
+        if (
+            trajectory_context_ids is not None
+            or context_evidence_hash is not None
+            or neural_critic_fit_results is not None
+        ):
             raise ValueError("context labels cannot silently alter the declared critic objective")
         prepared = terminal_crossfit_advantages(phi, phase, groups, returns)
     numeric = fit_proposal_advantage_residual(
@@ -146,11 +167,7 @@ def fit_update(
         protected_memory_hash=protected_hash,
         protected_memory_rows=protected_rows,
         protected_anchor_contexts=protected_contexts,
-        critic_kind=(
-            "WHOLE_CONTEXT_CROSSFIT_MC_RAW_RETURN_NOT_TD_LAMBDA"
-            if context_ids is not None
-            else "WHOLE_TRAJECTORY_CROSSFIT_MC_NOT_TD_LAMBDA"
-        ),
+        critic_kind=critic_kind(model.get("critic_profile", "whole-rollout")),
         critic_crossfit_folds=4,
         critic_target_mean=prepared["target_mean"],
         critic_target_scale=prepared["target_scale"],
@@ -190,7 +207,16 @@ def fit_update(
             event_evidence_hash=event_evidence_hash,
         )
     result["learning_receipt"] = receipt
-    result["critic_readout"] = prepared["critic_readout"].tolist()
+    if neural_profile:
+        result["neural_critic_fit_results"] = copy.deepcopy(neural_critic_fit_results)
+        receipt.update(
+            critic_model_hashes=prepared["critic_model_hashes"],
+            core_prediction_source_hash=model["core_prediction_source_hash"],
+            critic_readout_role="LINEAR_DIAGNOSTIC_ONLY_NEURAL_USED_FOR_ADVANTAGES",
+        )
+        result["critic_readout"] = prepared["linear_diagnostic_critic_readout"].tolist()
+    else:
+        result["critic_readout"] = prepared["critic_readout"].tolist()
     result["model_hash"] = hash_json(result)
     candidate = CompiledProposalMemoryMotor(make_preview(result))
     final = np.stack([candidate.raw_mean(v, int(p)) for v, p in zip(x, phase, strict=True)])

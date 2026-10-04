@@ -28,7 +28,94 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 SCHEMA = "soccer.rsi.proposal_memory_motor.v1"
 LOSS_PROFILES = ("uniform-frame", "equal-contact-phase-mass", "equal-first-contact-lead-mass")
-CRITIC_PROFILES = ("whole-rollout", "whole-context")
+CRITIC_PROFILES = ("whole-rollout", "whole-context", "whole-context-neural")
+
+
+def critic_kind(profile: str) -> str:
+    return {
+        "whole-rollout": "WHOLE_TRAJECTORY_CROSSFIT_MC_NOT_TD_LAMBDA",
+        "whole-context": "WHOLE_CONTEXT_CROSSFIT_MC_RAW_RETURN_NOT_TD_LAMBDA",
+        "whole-context-neural": "WHOLE_CONTEXT_NEURAL_CROSSFIT_MC_NOT_TD_OR_GAE",
+    }[profile]
+
+
+def _validate_neural_critic(model: dict[str, Any]) -> None:
+    from rosclaw.growth import context_prediction_mlp, neural_context_advantages
+
+    if model.get("core_context_source_hash") != hash_bytes(
+        Path(neural_context_advantages.__file__).read_bytes()
+    ) or model.get("core_prediction_source_hash") != hash_bytes(
+        Path(context_prediction_mlp.__file__).read_bytes()
+    ):
+        raise ValueError("exact neural MC prediction and credit source commitments required")
+    fits = model.get("neural_critic_fit_results")
+    if model["generation"] == 0:
+        if fits is not None:
+            raise ValueError("untrained proposal cannot carry fitted neural critics")
+        return
+    if type(fits) is not list or len(fits) != 4:
+        raise ValueError("four complete source-bound neural critics required")
+    if type(model.get("learning_receipt")) is not dict:
+        raise ValueError("complete neural MC learning receipt required")
+    if (
+        type(model["learning_receipt"].get("frame_sample_count")) is not int
+        or not 1080 <= model["learning_receipt"]["frame_sample_count"] <= 200000
+    ):
+        raise ValueError("bounded complete neural MC physical frame count required")
+    union = set()
+    for fit in fits:
+        if type(fit) is not dict or type(fit.get("held_out_contexts")) is not list:
+            raise ValueError("complete neural critic context identities required")
+        if (
+            not fit["held_out_contexts"]
+            or any(type(v) is not int or v < 0 for v in fit["held_out_contexts"])
+            or len(set(fit["held_out_contexts"])) != len(fit["held_out_contexts"])
+        ):
+            raise ValueError("unique integer held-out physical context identities required")
+        union.update(fit["held_out_contexts"])
+    labels = sorted(union)
+    if len(labels) != model["learning_receipt"].get("independent_critic_contexts"):
+        raise ValueError("exact neural critic independent context count required")
+    hashes = []
+    for fold, fit in enumerate(fits):
+        if (
+            fit.get("held_out_contexts") != labels[fold::4]
+            or fit.get("train_contexts") != [v for v in labels if v not in labels[fold::4]]
+            or fit.get("algorithm") != "CONTEXT_DISJOINT_SUPERVISED_MLP_NOT_RL"
+            or type(fit.get("optimizer_updates")) is not int
+            or not 1 <= fit["optimizer_updates"] <= 25000000
+            or type(fit.get("train_contexts")) is not list
+            or any(type(v) is not int for v in fit["train_contexts"])
+            or type(fit.get("train_rows")) is not int
+            or type(fit.get("held_out_rows")) is not int
+            or fit["train_rows"] < 32
+            or fit["held_out_rows"] < 16
+            or fit["train_rows"] + fit["held_out_rows"]
+            != model["learning_receipt"]["frame_sample_count"]
+            or fit.get("input_normalization_training_contexts_only") is not True
+            or fit.get("hyperparameters_chosen_on_holdout") is not False
+            or type(fit.get("motor_policy_updates")) is not int
+            or fit["motor_policy_updates"] != 0
+            or any(fit.get(k) is not False for k in ("promotion_authorized", "hardware_authorized"))
+        ):
+            raise ValueError("complete disjoint non-authorizing neural critic fit required")
+        network = fit.get("model")
+        if type(network) is not dict:
+            raise ValueError("complete neural MC predictor required")
+        mean = np.asarray(network.get("input_mean"))
+        if mean.shape != (513,) or context_prediction_mlp.predict(network, mean[None]).shape != (
+            1,
+            1,
+        ):
+            raise ValueError("exact 512 state features plus phase scalar critic required")
+        hashes.append(network["model_hash"])
+    receipt = model["learning_receipt"]
+    if (
+        receipt.get("critic_model_hashes") != hashes
+        or receipt.get("core_prediction_source_hash") != model["core_prediction_source_hash"]
+        or receipt.get("critic_readout_role") != "LINEAR_DIAGNOSTIC_ONLY_NEURAL_USED_FOR_ADVANTAGES"
+    ):
+        raise ValueError("complete neural MC critic identity receipt required")
 
 
 def validate_model(model: dict[str, Any]) -> None:
@@ -74,6 +161,8 @@ def validate_model(model: dict[str, Any]) -> None:
             Path(context_module.__file__).read_bytes()
         ):
             raise ValueError("exact context critic source commitment required")
+    if model.get("critic_profile") == "whole-context-neural":
+        _validate_neural_critic(model)
     initial = model["initial_actor"]
     validate_initial(initial)
     if model["protected_domain_bank"] is not None:
@@ -116,12 +205,7 @@ def validate_model(model: dict[str, Any]) -> None:
         or receipt.get("rho") != 0.9
         or receipt.get("temperature") != 0.5
         or receipt.get("maximum_weight") != 20.0
-        or receipt.get("critic_kind")
-        != (
-            "WHOLE_CONTEXT_CROSSFIT_MC_RAW_RETURN_NOT_TD_LAMBDA"
-            if model.get("critic_profile", "whole-rollout") == "whole-context"
-            else "WHOLE_TRAJECTORY_CROSSFIT_MC_NOT_TD_LAMBDA"
-        )
+        or receipt.get("critic_kind") != critic_kind(model.get("critic_profile", "whole-rollout"))
         or receipt.get("critic_crossfit_folds") != 4
         or type(receipt.get("physical_rollout_count")) is not int
         or not 4 <= receipt["physical_rollout_count"] <= 740
@@ -169,7 +253,10 @@ def validate_model(model: dict[str, Any]) -> None:
         )
     ):
         raise ValueError("exact zero-addition learner parent receipt required")
-    if model.get("critic_profile", "whole-rollout") == "whole-context" and (
+    if model.get("critic_profile", "whole-rollout") in (
+        "whole-context",
+        "whole-context-neural",
+    ) and (
         receipt.get("critic_readout_unit") != "raw_terminal_return"
         or receipt.get("context_is_actor_observation") is not False
         or receipt.get("core_context_source_hash") != model["core_context_source_hash"]
@@ -315,13 +402,26 @@ def _initial_descriptor(
     """
     if critic_profile not in CRITIC_PROFILES:
         raise ValueError("explicit known critic profile required")
-    extra = {}
+    extra: dict[str, Any] = {}
     if critic_profile == "whole-context":
         from rosclaw.growth import context_crossfit as context_module
 
         extra = dict(
             critic_profile=critic_profile,
             core_context_source_hash=hash_bytes(Path(context_module.__file__).read_bytes()),
+        )
+    elif critic_profile == "whole-context-neural":
+        from rosclaw.growth import context_prediction_mlp, neural_context_advantages
+
+        extra = dict(
+            critic_profile=critic_profile,
+            core_context_source_hash=hash_bytes(
+                Path(neural_context_advantages.__file__).read_bytes()
+            ),
+            core_prediction_source_hash=hash_bytes(
+                Path(context_prediction_mlp.__file__).read_bytes()
+            ),
+            neural_critic_fit_results=None,
         )
     return dict(
         schema=SCHEMA,
