@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.proposal_memory_learning import fit_update
-from rosclaw_soccer.rsi.proposal_memory_motor import initial_model, validate_model
+from rosclaw_soccer.rsi.proposal_memory_motor import (
+    CompiledProposalMemoryMotor,
+    initial_model,
+    make_preview,
+    validate_model,
+)
+from rosclaw_soccer.rsi.proposal_snapshot_compilation import compile_proposal_snapshot
 from rosclaw_soccer.sim.contracts import hash_json
 from tests.rsi.test_current_memory_motor import current  # noqa: F401
 from tests.rsi.test_kernel_guarded_step_motor import candidate  # noqa: F401
@@ -39,6 +45,16 @@ def test_context_critic_receipt_is_bound_and_cannot_become_old_objective(
     assert receipt["context_is_actor_observation"] is False
     assert receipt["critic_readout_unit"] == "raw_terminal_return"
     assert receipt["physical_batch_verified"] is False
+    policy = make_preview(learned)
+    reference = CompiledProposalMemoryMotor(policy)
+    snapshot = compile_proposal_snapshot(policy)
+    for phase, observation in enumerate(np.random.default_rng(449).normal(size=(3, 134))):
+        np.testing.assert_array_equal(
+            reference.features(observation), snapshot.features(observation)
+        )
+        np.testing.assert_array_equal(
+            reference.raw_mean(observation, phase), snapshot.raw_mean(observation, phase)
+        )
     for field, value in (
         ("context_is_actor_observation", True),
         ("overlapping_context_count", False),
