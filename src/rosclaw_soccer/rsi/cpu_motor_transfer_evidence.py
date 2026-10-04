@@ -42,11 +42,20 @@ def audit_cpu_transfer(
         )
 
         policy = report.get("executed_motor_policy")
+        expected_factory: Any = ProposalEpisodeDecoderFactory
+        proof_key = "proposal_memory_motor_proof"
+        if type(policy) is dict and "extended_proposal_motor_proof" in policy:
+            from rosclaw_soccer.rsi.extended_proposal_episode_factory import (
+                ExtendedProposalEpisodeFactory,
+            )
+
+            expected_factory = ExtendedProposalEpisodeFactory
+            proof_key = "extended_proposal_motor_proof"
         if (
-            type(mean_decoder_factory) is not ProposalEpisodeDecoderFactory
+            type(mean_decoder_factory) is not expected_factory
             or sampling_decoder_factory is not None
             or type(policy) is not dict
-            or "proposal_memory_motor_proof" not in policy
+            or proof_key not in policy
             or policy.get("policy_hash") != mean_decoder_factory.policy_hash
             or policy.get("policy_hash")
             != hash_json({k: v for k, v in policy.items() if k != "policy_hash"})
@@ -365,6 +374,15 @@ def audit_cpu_transfer(
                 else sampling_decoder_factory.bind(policy)
             )
             delta_at_frame = proposal_decoder.delta_at_frame
+        elif "extended_proposal_motor_proof" in policy:
+            from rosclaw_soccer.rsi.extended_proposal_motor import CompiledExtendedProposalMotor
+
+            extended_decoder = (
+                CompiledExtendedProposalMotor(policy)
+                if mean_decoder_factory is None
+                else mean_decoder_factory.new_episode()
+            )
+            delta_at_frame = extended_decoder.delta_at_frame
         elif "proposal_memory_motor_proof" in policy:
             from rosclaw_soccer.rsi.proposal_memory_motor import CompiledProposalMemoryMotor
 

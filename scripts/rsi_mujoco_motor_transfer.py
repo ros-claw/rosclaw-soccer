@@ -46,7 +46,12 @@ from rosclaw_soccer.sim.root_velocity_reference import root_velocity_world
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation
 
 
-def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None:
+def main(
+    argv: list[str] | None = None,
+    *,
+    sampling_factory: Any = None,
+    extended_factory: Any = None,
+) -> None:
     import mujoco
     import torch
 
@@ -90,6 +95,20 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--lane", type=int, required=True, choices=range(16))
     args = parser.parse_args(argv)
+    if extended_factory is not None:
+        from rosclaw_soccer.rsi.extended_proposal_episode_factory import (
+            ExtendedProposalEpisodeFactory,
+        )
+
+        if (
+            type(extended_factory) is not ExtendedProposalEpisodeFactory
+            or sampling_factory is not None
+            or args.step_model is None
+            or args.proposal_decoder != "reference"
+            or args.cached_proposal_envelope
+            or args.body_response_bundle
+        ):
+            parser.error("extended factory accepts only its explicit fixed SIM proposal")
     if args.cached_proposal_envelope:
         from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
             OwnedProposalSamplingEpisodeFactory,
@@ -255,6 +274,10 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
         step_model = sampling_factory.restore_envelope(load_json_artifact(args.step_model))
     else:
         step_model = load_sampling_model(args.step_model) if args.step_model else None
+    if extended_factory is not None and (
+        step_model is None or step_model.get("schema") != "soccer.rsi.extended_proposal_motor.v1"
+    ):
+        raise ValueError("fixed extended factory cannot bind another model family")
     sampling_compilation = None
     if sampling_factory is not None:
         from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
@@ -322,6 +345,24 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
                 else:
                     sampling_compilation = proposal_sampling_contract(prepared_proposal_policy)
             delta_at_frame = proposal_sampling_decoder.delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.extended_proposal_motor.v1":
+            from rosclaw_soccer.rsi.extended_proposal_motor import CompiledExtendedProposalMotor
+            from rosclaw_soccer.rsi.extended_proposal_motor import make_preview as extended_preview
+
+            if args.proposal_decoder != "reference" or sampling_factory is not None:
+                raise ValueError("extended proposal requires its explicit original bounded law")
+            make_preview = extended_preview
+            policy = (
+                make_preview(step_model)
+                if extended_factory is None
+                else extended_factory.preview(step_model)
+            )
+            extended_decoder = (
+                CompiledExtendedProposalMotor(policy)
+                if extended_factory is None
+                else extended_factory.new_episode()
+            )
+            delta_at_frame = extended_decoder.delta_at_frame
         elif step_model.get("schema") == "soccer.rsi.proposal_memory_motor.v1":
             from rosclaw_soccer.rsi.proposal_decoder_selection import select_proposal_decoder
             from rosclaw_soccer.rsi.proposal_memory_motor import make_preview as proposal_preview
@@ -446,7 +487,10 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
             # or source-bound factory. Recomputing it only repeats large
             # canonical graph validation and discards the identical result.
             policy = prepared_proposal_policy
-        elif step_model.get("schema") != "soccer.rsi.proposal_memory_motor.v1":
+        elif step_model.get("schema") not in (
+            "soccer.rsi.proposal_memory_motor.v1",
+            "soccer.rsi.extended_proposal_motor.v1",
+        ):
             policy = make_preview(step_model)
     x, y, vx = sample_training_courses(args.seed, 16)[args.lane]
     data.qpos[:7] = (0, 0, 0.793, 1, 0, 0, 0)
@@ -540,6 +584,8 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
         commitment["foundation_observation_capture"] = capture_contract()
     if body_guidance is not None:
         commitment["body_response_guidance"] = body_guidance_bundle
+    if extended_factory is not None:
+        commitment["extended_proposal_factory"] = extended_factory.contract()
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
     history: dict[str, list[Any]] = {
         k: []
