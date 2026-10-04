@@ -50,7 +50,7 @@ def measured_response_features(
 
 
 def central_response_labels(
-    actual_effects: Any, coordinates: Any, *, increment_rad: float
+    actual_effects: Any, coordinates: Any, *, increment_rad: float, action_dimensions: int = 12
 ) -> np.ndarray[Any, Any]:
     effects = _matrix(actual_effects, 35)
     coords = np.asarray(coordinates)
@@ -58,13 +58,17 @@ def central_response_labels(
         type(increment_rad) is not float
         or not np.isfinite(increment_rad)
         or not 0.001 <= increment_rad <= 0.05
-        or len(effects) % 24
+        or type(action_dimensions) is not int
+        or action_dimensions not in (12, 29)
+        or len(effects) % (2 * action_dimensions)
         or coords.shape != (len(effects), 3)
         or coords.dtype.kind not in "iu"
     ):
         raise ValueError("complete bounded signed joint intervention pairs required")
-    frames = coords[::24, 0]
-    expected = np.asarray([(f, j, s) for f in frames for j in range(12) for s in (-1, 1)])
+    frames = coords[:: 2 * action_dimensions, 0]
+    expected = np.asarray(
+        [(f, j, s) for f in frames for j in range(action_dimensions) for s in (-1, 1)]
+    )
     if (
         not np.array_equal(coords, expected)
         or len(set(frames.tolist())) != len(frames)
@@ -72,23 +76,35 @@ def central_response_labels(
         or np.any(frames >= 20000)
     ):
         raise ValueError("unique ordered paired response coordinates required")
-    paired = effects.reshape(-1, 12, 2, 35)
+    paired = effects.reshape(-1, action_dimensions, 2, 35)
     result: np.ndarray[Any, Any] = (
         (paired[:, :, 1] - paired[:, :, 0]) / (2 * increment_rad)
     ).transpose(0, 2, 1)
-    result = result.reshape(-1, 420).astype(np.float32)
+    result = result.reshape(-1, 35 * action_dimensions).astype(np.float32)
     if not np.isfinite(result).all():
         raise ValueError("finite local central-response labels required")
     result.flags.writeable = False
     return result
 
 
-def local_velocity_response(jacobians: Any, target_increment: Any) -> np.ndarray[Any, Any]:
+def local_velocity_response(
+    jacobians: Any,
+    target_increment: Any,
+    *,
+    action_dimensions: int = 12,
+) -> np.ndarray[Any, Any]:
     """Local linear proposal only; exact zero by construction at zero increment."""
-    jac, delta = _matrix(jacobians, 420), _matrix(target_increment, 12)
+    if type(action_dimensions) is not int or action_dimensions not in (12, 29):
+        raise ValueError("explicit canonical leg or full-body response dimensions required")
+    jac, delta = (
+        _matrix(jacobians, 35 * action_dimensions),
+        _matrix(target_increment, action_dimensions),
+    )
     if len(jac) != len(delta) or np.max(np.abs(delta)) > 0.02:
         raise ValueError("aligned small local target increments required")
-    result: np.ndarray[Any, Any] = np.einsum("nij,nj->ni", jac.reshape(-1, 35, 12), delta)
+    result: np.ndarray[Any, Any] = np.einsum(
+        "nij,nj->ni", jac.reshape(-1, 35, action_dimensions), delta
+    )
     if not np.isfinite(result).all():
         raise ValueError("finite local velocity proposal required")
     result.flags.writeable = False

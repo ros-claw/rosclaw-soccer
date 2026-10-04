@@ -51,3 +51,27 @@ def test_type_range_order_and_nonfinite_fail_closed():
     q = np.zeros((1, 43))
     with pytest.raises(ValueError):
         measured_response_features(q, np.zeros((1, 41)), np.zeros((1, 29)), np.zeros((1, 6)))
+
+
+def test_full29_response_labels_include_waist_and_arms_and_reject_mixed_dimensions():
+    jac = np.arange(1015).reshape(35, 29) / 1000
+    coords = np.asarray([(50, j, s) for j in range(29) for s in (-1, 1)])
+    effects = np.asarray([s * 0.01 * jac[:, j] for _, j, s in coords])
+    labels = central_response_labels(effects, coords, increment_rad=0.01, action_dimensions=29)
+    assert labels.shape == (1, 1015)
+    delta = np.zeros((1, 29))
+    delta[0, 26] = 0.02
+    np.testing.assert_allclose(
+        local_velocity_response(labels, delta, action_dimensions=29),
+        jac[:, 26][None] * 0.02,
+        atol=1e-9,
+        rtol=0,
+    )
+    assert not labels.flags.writeable
+    with pytest.raises(ValueError):
+        local_velocity_response(labels, delta)
+    for dimensions in (True, 28, 30):
+        with pytest.raises(ValueError):
+            central_response_labels(
+                effects, coords, increment_rad=0.01, action_dimensions=dimensions
+            )

@@ -157,6 +157,35 @@ def test_explicit_early_contact_profile_never_precedes_measured_contact():
             BodyResponseRecoveryProposal(recovery_models(), active_contact_phases=phases)
 
 
+def test_full29_body_response_predicts_arm_intervention_without_executing_it():
+    old, new = models()
+    old["layers"][0]["weight"][0][1000] = 0.0
+    old["layers"][0]["weight"][0][1026] = 1.0
+    parts = [copy.deepcopy(new) for _ in range(3)]
+    for p, n in zip(parts, (12, 12, 5), strict=True):
+        p["target_mean"] = np.zeros(35 * n).tolist()
+        p["target_scale"] = np.ones(35 * n).tolist()
+        p["layers"][-1] = dict(
+            weight=np.zeros((35 * n, 64)).tolist(), bias=np.zeros(35 * n).tolist()
+        )
+    parts[2]["layers"][-1]["bias"][2] = 1.0
+    for value in (old, *parts):
+        value.pop("model_hash")
+        value["model_hash"] = reference._hash(value)
+    field = BodyResponseField(old, parts, implementation="compiled", action_dimensions=29)
+    batch = inputs()
+    batch["target_increment"] = np.zeros((2, 29))
+    assert not np.any(field.predict_effect(**batch))
+    batch["target_increment"][:, 26] = 0.01
+    result = field.predict_effect(**batch)
+    expected = 0.5 * float(np.tanh(np.tanh(np.float32(0.01)))) + 0.005
+    np.testing.assert_allclose(result[:, 0], expected, atol=1e-9, rtol=0)
+    assert field.contract()["target_increment_dimensions"] == 29
+    assert field.contract()["motor_policy"] is False
+    with pytest.raises(ValueError):
+        BodyResponseField(old, parts)
+
+
 def test_recovery_execution_causal_parent_protection_and_bundle(monkeypatch):
     from types import SimpleNamespace
 
