@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
     )
     parser.add_argument(
         "--proposal-decoder",
-        choices=("reference", "owned_snapshot"),
+        choices=("reference", "owned_snapshot", "bounded_snapshot"),
         default="reference",
         help="Opt-in owned numerical compilation; only sealed proposal models are accepted",
     )

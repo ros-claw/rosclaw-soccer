@@ -55,3 +55,22 @@ def test_full_compiler_contract_rejects_resealed_drift(fault):
         bad["unbound"] = True
     with pytest.raises(ValueError, match="compilation contract"):
         selection.validate_compilation_contract(bad)
+
+
+def test_bounded_selection_pins_core_and_preserves_default_contract(monkeypatch):
+    from rosclaw_soccer.rsi import bounded_query_proposal_compilation as bounded
+
+    policy = {"sealed_fixture": True}
+    monkeypatch.setattr(bounded, "compile_bounded_query_proposal", lambda p: p)
+    assert selection.select_proposal_decoder(policy, implementation="bounded_snapshot") is policy
+    value = selection.compilation_contract("bounded_snapshot")
+    assert value["complete_logical_anchor_banks_retained"] is True
+    assert value["physical_parity_requires_separate_evidence"] is True
+    assert value["actor_weights_changed"] is value["hardware_authorized"] is False
+    selection.validate_compilation_contract(value)
+    assert "core_query_source_hash" not in selection.compilation_contract("owned_snapshot")
+    for key in ("core_query_source_hash", "original_snapshot_compiler_source_hash"):
+        forged = copy.deepcopy(value)
+        forged[key] = "sha256:" + "f" * 64
+        with pytest.raises(ValueError, match="compilation contract"):
+            selection.validate_compilation_contract(forged)
