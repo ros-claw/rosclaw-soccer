@@ -3066,3 +3066,49 @@ v443无损存储八条实物理双路径对照已预注册启动，承诺
 `sha256:8f025347ab0dd6ebf850da2858f820fcaadf659d3696f111eef143c1eb93308a`。
 这是8条计划执行，不是8条已完成；没有新训练轨迹或技能提升声明。
 Soccer已推main `6bfabee`；冻结源全量回归另行运行，未提前声称通过。
+
+### v444失败保留、v445完整球位隔离critic信号诊断
+
+Core新增显式、任务无关的`growth.context_crossfit`，不改历史
+whole-rollout函数；同一context的所有回合全放同一折，每相位/折
+支持不足就拒绝。折内ridge用raw return，避免置于求解前的全局
+归一化通过受正则的截距泄漏保留折回报。组件合同11 passed，
+Core Growth全组277 passed（Soccer环境存在一条asyncio_mode配置警告），
+定向ruff/format/mypy通过。`1b9c2859`已推原Core PR616，未合并。
+
+v444诊断因调用时传model而非preview在构造阶段返回KeyError
+`step_motor_proof`，0新物理、0更新；原脚本与失败log保留不改写。
+新v445先用原`make_preview`生成完整证明，在新冻结Core下诊断原CPU160
+全43200帧，结果
+`sha256:e15ff35d94f8b823be179b977e5e4adab8a642571a6b63c8b15a0045d908f2e7`。
+原whole-rollout四折各有40个重叠球位，新whole-context各为0。
+原raw return预测MSE162.02075，新为177.88468；更严格切分的误差
+更大，**不是学习或球技提升证明**。原/新AWR原始有效权重帧约13858/13878，
+后期相位权重质量76.67%/72.96%，仍需显式信号与物理对照。
+这是已消耗的40个开发球位的诊断，不是fresh考试、TD或RUDDER。
+
+v446准备全40个旧CPU失败球位x8条新stream5采样，计划320条/
+86400帧，保留所有成功与失败，逐条完整动作/力/动力学回放。
+这不增加独立球位数，不将一帧计成一回合。新收集仅数据收集，
+0计划optimizer更新；不激活拒绝候选、不打开fresh。准备脚本合同5 passed，
+最终展开源ruff与F821/F822通过。launcher在v443完整存储对照结果
+出现前不分配新workers，之后收集器仍需完整结果校验通过才执行。
+系统100GiB保留与Data容量门不降低，不清理或迁移旧证据。
+
+v448补充三路学习信号对照，区分raw return单位和球位隔离两项变化，
+原脚本不改写。原归一化whole-rollout MSE162.020748，raw-return但仍
+whole-rollout控制组MSE162.020943，同样raw-return的whole-context
+MSE177.884677；控制组仍每折40个重叠球位，球位隔离组为0。
+人工唯一context标签只用于诊断控制组，不是新球位数。结果
+`sha256:0d566cdc08176fd1956f04a60a9ec0877c9a762e757c7e29760570dd42eff640`，
+0新执行/0更新。这确认更严格切分下信号更难，不确认新critic更优。
+
+Soccer显式新建`critic_profile="whole-context"`的拟合入口，原
+whole-rollout仍为默认；完整context标签及证据hash必须绑定新学习
+收据，raw-return单位、源hash、零重叠及非actor输入语义必须通过校验。
+旧目标不能静默接受context标签，新收据不能冒充旧目标；原残差上限、
+KL、更新量、数据处理算法和硬件权限边界不变。新旧相关组35 passed；
+格式修整后新入口最终6 passed，定向ruff/format/mypy通过。
+测试使用显式冻结Core `1b9c2859`，不假设远端PR已合并；该head远端
+CI仍IN_PROGRESS。这些是合同和合成数据拟合测试，不是足球物理改善。
+历史模型仍与历史源绑定；所有在跑实验继续用原冻结源，不改写收据。

@@ -28,6 +28,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 SCHEMA = "soccer.rsi.proposal_memory_motor.v1"
 LOSS_PROFILES = ("uniform-frame", "equal-contact-phase-mass", "equal-first-contact-lead-mass")
+CRITIC_PROFILES = ("whole-rollout", "whole-context")
 
 
 def validate_model(model: dict[str, Any]) -> None:
@@ -42,6 +43,7 @@ def validate_model(model: dict[str, Any]) -> None:
         or model.get("core_weighting_source_hash")
         != hash_bytes(Path(weighting_module.__file__).read_bytes())
         or model.get("loss_weighting_profile") not in LOSS_PROFILES
+        or model.get("critic_profile", "whole-rollout") not in CRITIC_PROFILES
         or model.get("core_domain_source_hash")
         != hash_bytes(Path(domain_module.__file__).read_bytes())
         or model.get("core_event_source_hash")
@@ -65,6 +67,13 @@ def validate_model(model: dict[str, Any]) -> None:
     ).validate()
     if model.get("runtime_execution_authorized") is not False:
         raise ValueError("proposal cannot grant runtime authority")
+    if model.get("critic_profile", "whole-rollout") == "whole-context":
+        from rosclaw.growth import context_crossfit as context_module
+
+        if model.get("core_context_source_hash") != hash_bytes(
+            Path(context_module.__file__).read_bytes()
+        ):
+            raise ValueError("exact context critic source commitment required")
     initial = model["initial_actor"]
     validate_initial(initial)
     if model["protected_domain_bank"] is not None:
@@ -107,7 +116,12 @@ def validate_model(model: dict[str, Any]) -> None:
         or receipt.get("rho") != 0.9
         or receipt.get("temperature") != 0.5
         or receipt.get("maximum_weight") != 20.0
-        or receipt.get("critic_kind") != "WHOLE_TRAJECTORY_CROSSFIT_MC_NOT_TD_LAMBDA"
+        or receipt.get("critic_kind")
+        != (
+            "WHOLE_CONTEXT_CROSSFIT_MC_RAW_RETURN_NOT_TD_LAMBDA"
+            if model.get("critic_profile", "whole-rollout") == "whole-context"
+            else "WHOLE_TRAJECTORY_CROSSFIT_MC_NOT_TD_LAMBDA"
+        )
         or receipt.get("critic_crossfit_folds") != 4
         or type(receipt.get("physical_rollout_count")) is not int
         or not 4 <= receipt["physical_rollout_count"] <= 740
@@ -151,9 +165,25 @@ def validate_model(model: dict[str, Any]) -> None:
             maximum_mean_kl=model["maximum_mean_kl"],
             loss_weighting_profile=model["loss_weighting_profile"],
             protected_domain_bank=model["protected_domain_bank"],
+            critic_profile=model.get("critic_profile", "whole-rollout"),
         )
     ):
         raise ValueError("exact zero-addition learner parent receipt required")
+    if model.get("critic_profile", "whole-rollout") == "whole-context" and (
+        receipt.get("critic_readout_unit") != "raw_terminal_return"
+        or receipt.get("context_is_actor_observation") is not False
+        or receipt.get("core_context_source_hash") != model["core_context_source_hash"]
+        or type(receipt.get("independent_critic_contexts")) is not int
+        or not 4 <= receipt["independent_critic_contexts"] <= receipt["physical_rollout_count"]
+        or receipt.get("overlapping_context_count") != 0
+        or type(receipt.get("overlapping_context_count")) is not int
+        or any(
+            not isinstance(receipt.get(k), str)
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", receipt[k])
+            for k in ("context_labels_hash", "context_evidence_hash")
+        )
+    ):
+        raise ValueError("complete context-disjoint critic provenance required")
     history = receipt.get("full_batch_loss_history")
     critic = np.asarray(model.get("critic_readout"))
     if (
@@ -250,6 +280,7 @@ def initial_model(
     maximum_mean_kl: float,
     loss_weighting_profile: str = "uniform-frame",
     protected_domain_bank: dict[str, Any] | None = None,
+    critic_profile: str = "whole-rollout",
 ) -> dict[str, Any]:
     validate_initial(actor)
     model = _initial_descriptor(
@@ -257,6 +288,7 @@ def initial_model(
         maximum_mean_kl=maximum_mean_kl,
         loss_weighting_profile=loss_weighting_profile,
         protected_domain_bank=copy.deepcopy(protected_domain_bank),
+        critic_profile=critic_profile,
     )
     # The public actor and trainable layers must not share mutable containers:
     # deepcopy of the whole descriptor would preserve that internal alias.
@@ -272,6 +304,7 @@ def _initial_descriptor(
     maximum_mean_kl: float,
     loss_weighting_profile: str,
     protected_domain_bank: dict[str, Any] | None = None,
+    critic_profile: str = "whole-rollout",
 ) -> dict[str, Any]:
     """Internal commitment only; caller must validate actor before using it.
 
@@ -280,6 +313,16 @@ def _initial_descriptor(
     Avoid recursively invoking public initial_model (which would validate the
     same actor twice again). The public builder still owns a full deep copy.
     """
+    if critic_profile not in CRITIC_PROFILES:
+        raise ValueError("explicit known critic profile required")
+    extra = {}
+    if critic_profile == "whole-context":
+        from rosclaw.growth import context_crossfit as context_module
+
+        extra = dict(
+            critic_profile=critic_profile,
+            core_context_source_hash=hash_bytes(Path(context_module.__file__).read_bytes()),
+        )
     return dict(
         schema=SCHEMA,
         activation_ceiling="SIM_ONLY",
@@ -302,6 +345,7 @@ def _initial_descriptor(
         loss_weighting_profile=loss_weighting_profile,
         memory_query_representation="EXACT_COORDINATE_INDEX_INTACT_LOGICAL_BANK",
         **dict.fromkeys(FLAGS, False),
+        **extra,
     )
 
 

@@ -31,6 +31,8 @@ def fit_update(
     batch_hash: str,
     measured_event_frames: Any = None,
     event_evidence_hash: str | None = None,
+    trajectory_context_ids: Any = None,
+    context_evidence_hash: str | None = None,
 ) -> dict[str, Any]:
     validate_model(model)
     if model["generation"] != 0 or not re.fullmatch(r"sha256:[0-9a-f]{64}", batch_hash):
@@ -96,7 +98,22 @@ def fit_update(
     current = np.stack([decoder.raw_mean(v, int(p)) for v, p in zip(x, phase, strict=True)])
     phi = np.stack([decoder.features(v) for v in x])
     context = np.column_stack((phi[:, :134], phase))
-    prepared = terminal_crossfit_advantages(phi, phase, groups, returns)
+    context_ids = None
+    if model.get("critic_profile", "whole-rollout") == "whole-context":
+        from rosclaw.growth.context_crossfit import context_crossfit_advantages
+
+        if not isinstance(context_evidence_hash, str) or not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", context_evidence_hash
+        ):
+            raise ValueError("independently bound complete context labels required")
+        context_ids = np.asarray(trajectory_context_ids)
+        prepared = context_crossfit_advantages(
+            phi, phase, groups, returns, trajectory_context_ids=context_ids
+        )
+    else:
+        if trajectory_context_ids is not None or context_evidence_hash is not None:
+            raise ValueError("context labels cannot silently alter the declared critic objective")
+        prepared = terminal_crossfit_advantages(phi, phase, groups, returns)
     numeric = fit_proposal_advantage_residual(
         layers=[(np.asarray(v["weight"]), np.asarray(v["bias"])) for v in model["residual_layers"]],
         context=context,
@@ -129,12 +146,31 @@ def fit_update(
         protected_memory_hash=protected_hash,
         protected_memory_rows=protected_rows,
         protected_anchor_contexts=protected_contexts,
-        critic_kind="WHOLE_TRAJECTORY_CROSSFIT_MC_NOT_TD_LAMBDA",
+        critic_kind=(
+            "WHOLE_CONTEXT_CROSSFIT_MC_RAW_RETURN_NOT_TD_LAMBDA"
+            if context_ids is not None
+            else "WHOLE_TRAJECTORY_CROSSFIT_MC_NOT_TD_LAMBDA"
+        ),
         critic_crossfit_folds=4,
         critic_target_mean=prepared["target_mean"],
         critic_target_scale=prepared["target_scale"],
         loss_weighting_profile=model["loss_weighting_profile"],
     )
+    if context_ids is not None:
+        receipt.update(
+            core_context_source_hash=model["core_context_source_hash"],
+            context_labels_hash=hash_json(
+                {
+                    "trajectory_context_ids": context_ids.tolist(),
+                    "context_evidence_hash": context_evidence_hash,
+                }
+            ),
+            context_evidence_hash=context_evidence_hash,
+            independent_critic_contexts=len(np.unique(context_ids)),
+            overlapping_context_count=0,
+            context_is_actor_observation=False,
+            critic_readout_unit="raw_terminal_return",
+        )
     if model["loss_weighting_profile"] == "equal-contact-phase-mass":
         receipt["phase_frame_counts"] = [int(np.sum(phase == p)) for p in range(3)]
     if partitions is not None and events is not None:
