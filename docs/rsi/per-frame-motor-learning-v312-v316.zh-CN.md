@@ -3310,3 +3310,13 @@ np.int64，不能写入JSON。v456冻结源b99c71b保持原样并保留运行日
 main改用tolist并加入真实JSON往返断言，重新测试，不热修冻结源。
 修正后的新物理验证使用另一冻结源及独立证据目录；不能沿用v456
 作为捕获通过证据。
+
+进一步增加原始ONNX逐帧重算审计：qualified low_latency encoder
+1247->64和decoder 994->29，以CPUExecutionProvider、每次1lane
+1frame重新推理。Encoder输入按已声明G1 graph布局重打包，token
+要求逐值完全一致，decoder差异沿用原资格检查的1e-4，不能事后放宽。
+记录源/输入/物理报告/权重hash，并再次验证本体感历史。该审计只
+证明实际网络调用及本体感历史，不独立重建planner/reference，
+不证明新策略、学习提升或球队表现。四个相关组74 passed（2.11秒），
+独立定向ruff/format/mypy通过。actual ONNX在v459记录完整后运行；
+v459自身仍使用源42639c0与独立原构造器复核，不能热换审计模块。
