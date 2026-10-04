@@ -3719,3 +3719,36 @@ loss末值虽与CPU相同，中间数值及conditional KL已有浮点差异，
 位置残差，不是29关节端到端力矩策略、在线PPO或TD。候选
 尚未通过52场物理/fresh；v502在资源队列中，v500新目标学习
 已接续，不把训练成功当成运动成功。
+
+### 2026-10-04：事件平衡480候选v500已实际训练
+
+v500实际接受22个actor优化步骤，复用同一批完整数据与四折
+critic，不新增critic拟合。loss 5.9676559407→5.7284764793，
+conditional KL=0.014150828422214528，marginal KL=0.048999733841548876。
+五段行数17305/4320/9600/98375/0，总计129600，所有行保留。
+模型哈希`sha256:b6113166797941777cf0e659121e9dbbd74c695c78d9b36ec676eb1f281b06ea`。
+尚无其完整物理成绩，仍为未资格化候选，v503按资源队列等待。
+
+### 2026-10-04：明确区分边缘与AR1条件似然学习目标
+
+Core新增显式likelihood_profile：默认marginal保持原数学目标
+和receipt格式；conditional-ar1使用原记录的上一动作及创新
+噪声尺度，重置帧不跨episode。保留原双KL门、完整behavior
+似然输入检查、全帧正权重、参数边界和非授权合同。这是新的
+离线proposal目标对照，不是在线PPO、TD、直接电机策略或
+对旧边缘目标的安全缺陷判定。
+
+独立重算条件loss、rho=0与旧目标完全一致、真实CUDA1对照、
+非法目标拒绝及旧回归共41 passed；Growth全体355 passed/
+15.24秒，既有asyncio配置警告1。Core CI配置的定向mypy及
+follow-imports=normal均通过，ruff/format通过。d4f8d55f推至
+原PR616分支，尚未合并。
+
+Soccer将optimizer_likelihood_profile同时绑定模型、初始父
+commitment和学习receipt；拒绝把条件目标伪装成边缘目标。
+CPU神经MC、CUDA事件神经MC、CUDA条件事件神经MC及原
+CUDA学习共4 passed/283.52秒；正式项目配置下的两文件mypy
+及定向ruff/format通过。额外将完整Core源码注入Soccer严格
+检查会产生26项跨仓库导入/类型诊断，follow-imports=skip还
+会使本地基类成为Any；这些探索检查未通过，不声称全仓库
+严格类型检查绿色。未修改正在执行的冻结源码或旧证据。

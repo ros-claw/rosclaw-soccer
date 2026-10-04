@@ -153,6 +153,7 @@ def fit_update(
         config=regression_module.ProposalAdvantageRegressionConfig(
             maximum_mean_kl=model["maximum_mean_kl"],
             compute_device=model.get("optimizer_compute_device", "cpu"),
+            likelihood_profile=model.get("optimizer_likelihood_profile", "marginal"),
         ),
         sample_weights=weights,
     )

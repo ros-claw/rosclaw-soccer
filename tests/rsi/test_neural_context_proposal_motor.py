@@ -22,8 +22,12 @@ from tests.rsi.test_step_motor_network import model  # noqa: F401
 
 
 @pytest.mark.parametrize(
-    "profile,device",
-    [("equal-contact-phase-mass", "cpu"), ("equal-first-contact-lead-mass", "cuda:2")],
+    "profile,device,likelihood",
+    [
+        ("equal-contact-phase-mass", "cpu", "marginal"),
+        ("equal-first-contact-lead-mass", "cuda:2", "marginal"),
+        ("equal-first-contact-lead-mass", "cuda:1", "conditional-ar1"),
+    ],
 )
 def test_neural_mc_receipt_is_complete_and_cannot_grant_motion(
     current,  # noqa: F811
@@ -31,6 +35,7 @@ def test_neural_mc_receipt_is_complete_and_cannot_grant_motion(
     monkeypatch,
     profile,
     device,  # noqa: F811
+    likelihood,
 ):
     event_credit = profile == "equal-first-contact-lead-mass"
     if device != "cpu":
@@ -44,6 +49,7 @@ def test_neural_mc_receipt_is_complete_and_cannot_grant_motion(
         loss_weighting_profile=profile,
         critic_profile="whole-context-neural",
         optimizer_compute_device=device,
+        optimizer_likelihood_profile=likelihood,
     )
     data = imbalanced_complete_batch(smooth_parent)
     decoder = CompiledProposalMemoryMotor(make_preview(initial))
@@ -77,6 +83,9 @@ def test_neural_mc_receipt_is_complete_and_cannot_grant_motion(
     assert receipt["runtime_execution_authorized"] is False
     assert learned["initial_actor"] == initial["initial_actor"]
     assert learned["residual_layers"] != initial["residual_layers"]
+    if likelihood == "conditional-ar1":
+        assert receipt["likelihood_profile"] == likelihood
+        assert learned["optimizer_likelihood_profile"] == likelihood
     if event_credit:
         assert receipt["compute_device"] == device
         assert receipt["cross_device_bit_identity_claimed"] is False
@@ -91,6 +100,7 @@ def test_neural_mc_receipt_is_complete_and_cannot_grant_motion(
         "source",
         "readout_role",
         "no_update",
+        "likelihood",
     ):
         bad = copy.deepcopy(learned)
         if fault == "critic_hash":
@@ -105,6 +115,11 @@ def test_neural_mc_receipt_is_complete_and_cannot_grant_motion(
             bad["core_prediction_source_hash"] = "sha256:" + "0" * 64
         elif fault == "no_update":
             bad["neural_critic_fit_results"][0]["optimizer_updates"] = 0
+        elif fault == "likelihood":
+            if likelihood == "marginal":
+                bad["learning_receipt"]["likelihood_profile"] = "conditional-ar1"
+            else:
+                bad["optimizer_likelihood_profile"] = "marginal"
         else:
             bad["learning_receipt"]["critic_readout_role"] = "USED_FOR_ACTUAL_VALUE"
         bad.pop("model_hash")

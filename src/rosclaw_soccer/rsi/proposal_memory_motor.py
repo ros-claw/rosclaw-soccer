@@ -152,6 +152,7 @@ def validate_model(model: dict[str, Any]) -> None:
         maximum_mean_kl=model.get("maximum_mean_kl"),
         execution_ceiling=model.get("proposal_execution_ceiling"),
         compute_device=model.get("optimizer_compute_device", "cpu"),
+        likelihood_profile=model.get("optimizer_likelihood_profile", "marginal"),
     ).validate()
     if model.get("runtime_execution_authorized") is not False:
         raise ValueError("proposal cannot grant runtime authority")
@@ -248,6 +249,12 @@ def validate_model(model: dict[str, Any]) -> None:
         from rosclaw_soccer.rsi.proposal_decoder_selection import validate_compilation_contract
 
         validate_compilation_contract(receipt["numeric_preparation"])
+    likelihood = model.get("optimizer_likelihood_profile", "marginal")
+    if likelihood == "marginal":
+        if "likelihood_profile" in receipt:
+            raise ValueError("conditional likelihood cannot migrate to marginal receipt")
+    elif receipt.get("likelihood_profile") != likelihood:
+        raise ValueError("exact conditional likelihood receipt required")
     device = model.get("optimizer_compute_device", "cpu")
     if device == "cpu":
         if any(k in receipt for k in ("compute_device", "cross_device_bit_identity_claimed")):
@@ -265,6 +272,7 @@ def validate_model(model: dict[str, Any]) -> None:
             protected_domain_bank=model["protected_domain_bank"],
             critic_profile=model.get("critic_profile", "whole-rollout"),
             optimizer_compute_device=model.get("optimizer_compute_device", "cpu"),
+            optimizer_likelihood_profile=model.get("optimizer_likelihood_profile", "marginal"),
         )
     ):
         raise ValueError("exact zero-addition learner parent receipt required")
@@ -384,6 +392,7 @@ def initial_model(
     protected_domain_bank: dict[str, Any] | None = None,
     critic_profile: str = "whole-rollout",
     optimizer_compute_device: str = "cpu",
+    optimizer_likelihood_profile: str = "marginal",
 ) -> dict[str, Any]:
     validate_initial(actor)
     model = _initial_descriptor(
@@ -393,6 +402,7 @@ def initial_model(
         protected_domain_bank=copy.deepcopy(protected_domain_bank),
         critic_profile=critic_profile,
         optimizer_compute_device=optimizer_compute_device,
+        optimizer_likelihood_profile=optimizer_likelihood_profile,
     )
     # The public actor and trainable layers must not share mutable containers:
     # deepcopy of the whole descriptor would preserve that internal alias.
@@ -410,6 +420,7 @@ def _initial_descriptor(
     protected_domain_bank: dict[str, Any] | None = None,
     critic_profile: str = "whole-rollout",
     optimizer_compute_device: str = "cpu",
+    optimizer_likelihood_profile: str = "marginal",
 ) -> dict[str, Any]:
     """Internal commitment only; caller must validate actor before using it.
 
@@ -442,10 +453,14 @@ def _initial_descriptor(
             neural_critic_fit_results=None,
         )
     regression_module.ProposalAdvantageRegressionConfig(
-        maximum_mean_kl=maximum_mean_kl, compute_device=optimizer_compute_device
+        maximum_mean_kl=maximum_mean_kl,
+        compute_device=optimizer_compute_device,
+        likelihood_profile=optimizer_likelihood_profile,
     ).validate()
     if optimizer_compute_device != "cpu":
         extra["optimizer_compute_device"] = optimizer_compute_device
+    if optimizer_likelihood_profile != "marginal":
+        extra["optimizer_likelihood_profile"] = optimizer_likelihood_profile
     return dict(
         schema=SCHEMA,
         activation_ceiling="SIM_ONLY",
