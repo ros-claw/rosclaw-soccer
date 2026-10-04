@@ -27,7 +27,7 @@ def reframe_low_latency_prior(
 ) -> np.ndarray[Any, Any]:
     """Owned one-lane 640-vector; frozen joints, current relative rotations.
 
-    The source stores two rotation rows for nine references; the third row is
+    The source stores two rotation columns for nine references; the third is
     their cross product. This geometric reconstruction has float32 roundoff,
     not universal encoder/quantizer parity. Identical roots preserve all bits.
     Only low_latency, non-heading-normalized legacy layout is supported.
@@ -45,18 +45,19 @@ def reframe_low_latency_prior(
     ):
         raise ValueError("complete finite low-latency legacy prior and unit roots required")
     stored = values[580:634].astype(np.float64).reshape(9, 6)
-    rows = np.stack((stored[:, [0, 1, 4]], stored[:, [2, 3, 5]]), axis=1)
+    columns = np.stack((stored[:, [0, 2, 4]], stored[:, [1, 3, 5]]), axis=2)
     if (
-        np.max(np.abs(np.linalg.norm(rows, axis=2) - 1)) > 1e-3
-        or np.max(np.abs(np.sum(rows[:, 0] * rows[:, 1], axis=1))) > 1e-3
+        np.max(np.abs(np.linalg.norm(columns, axis=1) - 1)) > 1e-3
+        or np.max(np.abs(np.sum(columns[:, :, 0] * columns[:, :, 1], axis=1))) > 1e-3
     ):
-        raise ValueError("stored reference rotation rows are not orthonormal")
+        raise ValueError("stored reference rotation columns are not orthonormal")
     result: np.ndarray[Any, Any] = values.copy()
     if not np.array_equal(old, new) and not np.array_equal(old, -new):
-        relative = np.concatenate((rows, np.cross(rows[:, 0], rows[:, 1])[:, None]), axis=1)
+        third = np.cross(columns[:, :, 0], columns[:, :, 1])[:, :, None]
+        relative = np.concatenate((columns, third), axis=2)
         updated = np.einsum("ij,njk->nik", _rotation(new).T @ _rotation(old), relative)
         result[580:634] = (
-            updated[:, [0, 0, 1, 1, 0, 1], [0, 1, 0, 1, 2, 2]].reshape(54).astype(np.float32)
+            updated[:, [0, 0, 1, 1, 2, 2], [0, 1, 0, 1, 0, 1]].reshape(54).astype(np.float32)
         )
     result.flags.writeable = False
     return result

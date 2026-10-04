@@ -1,14 +1,43 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
 from rosclaw_soccer.providers.g1.sonic_prior_reframing import _rotation, reframe_low_latency_prior
 
 
+def test_matches_actual_legacy_tracker_encoder_features():
+    pytest.importorskip("torch")
+    from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker
+
+    rng = np.random.default_rng(637)
+    reference = rng.normal(size=(1, 20, 36)).astype(np.float32)
+    reference[:, :, 3:7] /= np.linalg.norm(reference[:, :, 3:7], axis=2)[:, :, None]
+    model = SimpleNamespace(
+        device="cpu",
+        variant="low_latency",
+        qualification=SimpleNamespace(reference_stride=1, heading_normalized=False),
+    )
+    tracker = BatchedSonicTracker(model, reference, low_latency_legacy_encoder_layout=True)
+    old_q = np.zeros((1, 43), dtype=np.float32)
+    old_q[0, 3:7] = rng.normal(size=4)
+    old_q[0, 3:7] /= np.linalg.norm(old_q[0, 3:7])
+    new_q = old_q.copy()
+    new_q[0, 3:7] = rng.normal(size=4)
+    new_q[0, 3:7] /= np.linalg.norm(new_q[0, 3:7])
+    velocity = np.zeros((1, 41), dtype=np.float32)
+    original = tracker.encoder_features(0, old_q, velocity).numpy()[0]
+    expected = tracker.encoder_features(0, new_q, velocity).numpy()[0]
+    actual = reframe_low_latency_prior(original, old_q[0, 3:7], new_q[0, 3:7])
+    assert np.array_equal(actual[:580], expected[:580])
+    assert np.allclose(actual[580:], expected[580:], atol=5e-7, rtol=0)
+
+
 def prior(root, futures):
     result = np.zeros(640, dtype=np.float32)
     result[:580] = np.linspace(-0.1, 0.1, 580)
     relative = np.stack([_rotation(root).T @ _rotation(q) for q in futures])
-    result[580:634] = relative[:, [0, 0, 1, 1, 0, 1], [0, 1, 0, 1, 2, 2]].reshape(54)
+    result[580:634] = relative[:, [0, 0, 1, 1, 2, 2], [0, 1, 0, 1, 0, 1]].reshape(54)
     return result
 
 
