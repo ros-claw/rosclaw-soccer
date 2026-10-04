@@ -16,8 +16,11 @@ from rosclaw.growth.proposal_advantage_regression import fit_proposal_advantage_
 from rosclaw.growth.sample_weighting import balanced_partition_weights
 
 from rosclaw_soccer.rsi.domain_memory_protection import protection_identity
+from rosclaw_soccer.rsi.proposal_decoder_selection import (
+    compilation_contract,
+    select_proposal_decoder,
+)
 from rosclaw_soccer.rsi.proposal_memory_motor import (
-    CompiledProposalMemoryMotor,
     critic_kind,
     make_preview,
     validate_model,
@@ -35,7 +38,9 @@ def fit_update(
     trajectory_context_ids: Any = None,
     context_evidence_hash: str | None = None,
     neural_critic_fit_results: Any = None,
+    numeric_implementation: str = "reference",
 ) -> dict[str, Any]:
+    numeric_contract = compilation_contract(numeric_implementation)
     validate_model(model)
     if model["generation"] != 0 or not re.fullmatch(r"sha256:[0-9a-f]{64}", batch_hash):
         raise ValueError("zero-addition regression initial model and sealed batch required")
@@ -96,7 +101,7 @@ def fit_update(
         weights = (
             balanced_partition_weights(phase) if profile == "equal-contact-phase-mass" else None
         )
-    decoder = CompiledProposalMemoryMotor(make_preview(model))
+    decoder = select_proposal_decoder(make_preview(model), implementation=numeric_implementation)
     current = np.stack([decoder.raw_mean(v, int(p)) for v, p in zip(x, phase, strict=True)])
     phi = np.stack([decoder.features(v) for v in x])
     context = np.column_stack((phi[:, :134], phase))
@@ -188,6 +193,8 @@ def fit_update(
             context_is_actor_observation=False,
             critic_readout_unit="raw_terminal_return",
         )
+    if numeric_contract is not None:
+        receipt["numeric_preparation"] = numeric_contract
     if model["loss_weighting_profile"] == "equal-contact-phase-mass":
         receipt["phase_frame_counts"] = [int(np.sum(phase == p)) for p in range(3)]
     if partitions is not None and events is not None:
@@ -218,7 +225,7 @@ def fit_update(
     else:
         result["critic_readout"] = prepared["critic_readout"].tolist()
     result["model_hash"] = hash_json(result)
-    candidate = CompiledProposalMemoryMotor(make_preview(result))
+    candidate = select_proposal_decoder(make_preview(result), implementation=numeric_implementation)
     final = np.stack([candidate.raw_mean(v, int(p)) for v, p in zip(x, phase, strict=True)])
     first = np.arange(n) % 270 == 0
     innovation = std * np.where(first, 1, np.sqrt(1 - 0.9**2))

@@ -243,6 +243,10 @@ def validate_model(model: dict[str, Any]) -> None:
         )
     ):
         raise ValueError("complete bounded advantage regression receipt required")
+    if "numeric_preparation" in receipt:
+        from rosclaw_soccer.rsi.proposal_decoder_selection import validate_compilation_contract
+
+        validate_compilation_contract(receipt["numeric_preparation"])
     if receipt["learner_parent_hash"] != hash_json(
         _initial_descriptor(
             initial,
