@@ -3390,3 +3390,21 @@ owned preview/factory、原factory/selector及CPU审计组57 passed
 format/mypy以及最终CLI F821/F822通过。新实现还没有native吞吐/
 物理通过，必须四对完整冻结源仿真和独立原构造器审计再下结论。
 所有运行中的v446/v449/v450/v462及原始证据不热修改。
+
+为下一阶段身体预测模型整理causal transition适配器：每条身体
+轨迹T帧只导出T-1个真实next-state pair，不虚构最后未记录的
+terminal body state。输入1000维由实际994维网络输入及已观察
+相对球位/速度组成；应用控制用最终合成29维virtual PD target，
+不是冻结foundation输出，也不是实际关节姿态。标签使用下一帧
+native body qvel6+29，以及独立保存的10子步实际actuator force。
+原始数据不改动，导出数组独立且只读。明确记录root位置与COM
+速度的既有缓存时序，不悄悄改观察点或刷新物理。
+
+该纯数据函数只检查内部对齐/完整性，不自己重放外部receipt；
+调用方必须先验证完整physical/ONNX/source证明。标记
+`source_receipts_replayed_by_this_function=false`与
+`policy_gradient_ready=false`：当前12维探索不能当成29维密度。
+transition/capture/ONNX/tracker四组64 passed（2.14秒），定向
+ruff/format/mypy通过。尚未训练或激活新的运动策略，也未改变
+实际机器人的动作/平衡。新native owned-preview四对物理对照
+在冻结7f9fd1d上继续，不把单条速度或完成部分视为完整通过。
