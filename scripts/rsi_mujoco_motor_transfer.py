@@ -230,13 +230,17 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
     step_model = load_sampling_model(args.step_model) if args.step_model else None
     sampling_compilation = None
     if sampling_factory is not None:
+        from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
+            OwnedProposalSamplingEpisodeFactory,
+        )
         from rosclaw_soccer.rsi.proposal_sampling_episode_factory import (
             ProposalSamplingEpisodeFactory,
         )
 
         expected_sampling_schema = (
             "soccer.rsi.proposal_memory_sampling.v1"
-            if type(sampling_factory) is ProposalSamplingEpisodeFactory
+            if type(sampling_factory)
+            in (ProposalSamplingEpisodeFactory, OwnedProposalSamplingEpisodeFactory)
             else "soccer.rsi.smooth_memory_sampling.v1"
         )
         if step_model is None or step_model.get("schema") != expected_sampling_schema:
@@ -252,11 +256,18 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
         make_preview: Callable[[dict[str, Any]], dict[str, Any]] = legacy_preview
 
         if step_model.get("schema") == "soccer.rsi.proposal_memory_sampling.v1":
+            from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
+                OwnedProposalSamplingEpisodeFactory,
+            )
             from rosclaw_soccer.rsi.proposal_sampling_motor import CompiledProposalSamplingMotor
             from rosclaw_soccer.rsi.proposal_sampling_motor import make_preview as sampling_preview
 
             make_preview = sampling_preview
-            prepared_proposal_policy = make_preview(step_model)
+            prepared_proposal_policy = (
+                sampling_factory.preview(step_model)
+                if type(sampling_factory) is OwnedProposalSamplingEpisodeFactory
+                else make_preview(step_model)
+            )
             if sampling_factory is None:
                 proposal_sampling_decoder = CompiledProposalSamplingMotor(prepared_proposal_policy)
             else:
@@ -267,10 +278,22 @@ def main(argv: list[str] | None = None, *, sampling_factory: Any = None) -> None
                     compilation_contract as proposal_sampling_contract,
                 )
 
-                if type(sampling_factory) is not ProposalSamplingEpisodeFactory:
+                if type(sampling_factory) not in (
+                    ProposalSamplingEpisodeFactory,
+                    OwnedProposalSamplingEpisodeFactory,
+                ):
                     raise ValueError("only the fixed proposal sampling factory is accepted")
                 proposal_sampling_decoder = sampling_factory.bind(prepared_proposal_policy)
-                sampling_compilation = proposal_sampling_contract(prepared_proposal_policy)
+                if type(sampling_factory) is OwnedProposalSamplingEpisodeFactory:
+                    from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
+                        compilation_contract as owned_proposal_sampling_contract,
+                    )
+
+                    sampling_compilation = owned_proposal_sampling_contract(
+                        prepared_proposal_policy
+                    )
+                else:
+                    sampling_compilation = proposal_sampling_contract(prepared_proposal_policy)
             delta_at_frame = proposal_sampling_decoder.delta_at_frame
         elif step_model.get("schema") == "soccer.rsi.proposal_memory_motor.v1":
             from rosclaw_soccer.rsi.proposal_decoder_selection import select_proposal_decoder

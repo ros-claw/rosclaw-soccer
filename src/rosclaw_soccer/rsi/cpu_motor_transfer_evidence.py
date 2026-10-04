@@ -36,6 +36,9 @@ def audit_cpu_transfer(
 
     report = _sealed(root / "report.json")
     if sampling_decoder_factory is not None:
+        from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
+            OwnedProposalSamplingEpisodeFactory,
+        )
         from rosclaw_soccer.rsi.proposal_sampling_episode_factory import (
             ProposalSamplingEpisodeFactory,
         )
@@ -43,12 +46,14 @@ def audit_cpu_transfer(
 
         family = (
             "proposal_sampling_motor_proof"
-            if type(sampling_decoder_factory) is ProposalSamplingEpisodeFactory
+            if type(sampling_decoder_factory)
+            in (ProposalSamplingEpisodeFactory, OwnedProposalSamplingEpisodeFactory)
             else "smooth_memory_motor_proof"
         )
         if type(sampling_decoder_factory) not in (
             SmoothSamplingDecoderFactory,
             ProposalSamplingEpisodeFactory,
+            OwnedProposalSamplingEpisodeFactory,
         ) or family not in report.get("executed_motor_policy", {}):
             raise ValueError("only the verified smooth sampling factory is accepted")
     snapshot, trace_path = root / "compiled_model.mjb", root / "physical_trace.npz"
@@ -82,6 +87,16 @@ def audit_cpu_transfer(
 
         sampling_provenance = commitment["numeric_sampling_compilation"]
         if isinstance(sampling_provenance, dict) and sampling_provenance.get("schema") == (
+            "soccer.rsi.owned_proposal_sampling_compilation.v1"
+        ):
+            from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
+                validate_compilation_contract as validate_owned_proposal_sampling_contract,
+            )
+
+            validate_owned_proposal_sampling_contract(
+                sampling_provenance, report.get("executed_motor_policy", {})
+            )
+        elif isinstance(sampling_provenance, dict) and sampling_provenance.get("schema") == (
             "soccer.rsi.offline_proposal_sampling_compilation.v1"
         ):
             from rosclaw_soccer.rsi.proposal_sampling_episode_factory import (
@@ -434,13 +449,35 @@ def audit_cpu_transfer(
         source_hash=hash_bytes(Path(__file__).read_bytes()),
     )
     if sampling_decoder_factory is not None:
+        from rosclaw_soccer.rsi import (
+            owned_proposal_sampling_factory,
+            proposal_sampling_episode_factory,
+        )
         from rosclaw_soccer.rsi import smooth_sampling_decoder_factory as factory_module
 
+        owned = type(sampling_decoder_factory) is (
+            owned_proposal_sampling_factory.OwnedProposalSamplingEpisodeFactory
+        )
+        factory_source = (
+            owned_proposal_sampling_factory
+            if owned
+            else proposal_sampling_episode_factory
+            if type(sampling_decoder_factory)
+            is proposal_sampling_episode_factory.ProposalSamplingEpisodeFactory
+            else factory_module
+        )
+
         result["decoder_construction"] = {
-            "kind": "VERIFIED_SHARED_MEAN_WITH_INDEPENDENT_EPISODE_STATE",
-            "source_hash": hash_bytes(Path(factory_module.__file__).read_bytes()),
-            "complete_preview_validation_retained": True,
+            "kind": (
+                "SOURCE_PINNED_ORIGINAL_NUMERIC_FRESH_EPISODE"
+                if owned
+                else "VERIFIED_SHARED_MEAN_WITH_INDEPENDENT_EPISODE_STATE"
+            ),
+            "source_hash": hash_bytes(Path(factory_source.__file__).read_bytes()),
+            "complete_preview_validation_retained": not owned,
             "weights_or_action_law_changed": False,
         }
+        if owned:
+            result["decoder_construction"]["canonical_preview_integrity_checked"] = True
     result["report_hash"] = hash_json(result)
     return result

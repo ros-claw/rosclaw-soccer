@@ -84,11 +84,17 @@ def audit_cpu_learning_rollout(
         else "soccer.rsi.smooth_memory_sampling.v1"
     )
     if proposal_sampling and sampling_decoder_factory is not None:
+        from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
+            OwnedProposalSamplingEpisodeFactory,
+        )
         from rosclaw_soccer.rsi.proposal_sampling_episode_factory import (
             ProposalSamplingEpisodeFactory,
         )
 
-        if type(sampling_decoder_factory) is not ProposalSamplingEpisodeFactory:
+        if type(sampling_decoder_factory) not in (
+            ProposalSamplingEpisodeFactory,
+            OwnedProposalSamplingEpisodeFactory,
+        ):
             raise ValueError("proposal sampling requires independent original reference replay")
     if (
         (raw.get("seed"), raw.get("lane")) != course
