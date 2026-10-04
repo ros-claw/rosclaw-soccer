@@ -39,6 +39,23 @@ def test_complete_failed_cpu_trajectory_kept_with_unchanged_terminal_objective()
     assert arrays["phase_index"][0] == 0
 
 
+def test_wider_measured_density_requires_explicit_matching_declaration():
+    x, p, draws = values()
+    with pytest.raises(ValueError):
+        ordered_cpu_arrays(x, p, draws, outcome=outcome(), std=0.15, group=2)
+    result = ordered_cpu_arrays(
+        x, p, draws, outcome=outcome(), std=0.15, group=2, exploration_profile="wider_bounded"
+    )
+    np.testing.assert_array_equal(result["std_raw"], np.full(270, 0.15))
+    np.testing.assert_array_equal(
+        result["terminal_return"], np.full(270, terminal_return(outcome()))
+    )
+    with pytest.raises(ValueError):
+        ordered_cpu_arrays(
+            x, p, draws, outcome=outcome(), std=0.1, group=2, exploration_profile="wider_bounded"
+        )
+
+
 @pytest.mark.parametrize(
     "fault", ["short", "nan", "phase", "phase_float", "draws", "latent", "logp", "std", "group"]
 )

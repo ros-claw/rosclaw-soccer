@@ -25,10 +25,12 @@ from tests.rsi.test_step_motor_network import model  # noqa: F401
 
 
 @pytest.mark.parametrize("learned", [False, True])
+@pytest.mark.parametrize("profile", ["nominal", "wider_bounded"])
 def test_original_mean_and_noise_exact_with_private_episode_histories(
     current,  # noqa: F811
     smooth_parent,  # noqa: F811
     learned,
+    profile,
 ):
     mean = initial_model(current[0], maximum_mean_kl=0.05)
     if learned:
@@ -39,7 +41,7 @@ def test_original_mean_and_noise_exact_with_private_episode_histories(
             numeric_implementation="bounded_snapshot",
         )
     factory = OwnedProposalSamplingEpisodeFactory(mean)
-    policy = make_preview(make_sampling_view(mean, seed=17))
+    policy = make_preview(make_sampling_view(mean, seed=17, exploration_profile=profile))
     original = CompiledProposalSamplingMotor(policy)
     left, right = factory.bind(policy), factory.bind(policy)
     provenance = compilation_contract(policy)

@@ -6,6 +6,7 @@ constructor remains the independent reference; no old mean is relabelled.
 
 import copy
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import rosclaw.growth.correlated_exploration as exploration
@@ -16,17 +17,23 @@ from rosclaw_soccer.rsi.proposal_memory_motor import make_preview as mean_previe
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 SCHEMA = "soccer.rsi.proposal_memory_sampling.v1"
+EXPLORATION_PROFILES = MappingProxyType({"nominal": 0.1, "wider_bounded": 0.15})
 
 
-def make_sampling_view(model: dict[str, Any], *, seed: int) -> dict[str, Any]:
+def make_sampling_view(
+    model: dict[str, Any], *, seed: int, exploration_profile: str = "nominal"
+) -> dict[str, Any]:
     validate_model(model)
     if type(seed) is not int or not 0 <= seed < 2**32:
         raise ValueError("bounded integer sampling seed required")
+    if type(exploration_profile) is not str or exploration_profile not in EXPLORATION_PROFILES:
+        raise ValueError("explicit bounded exploration profile required")
     result = dict(
         schema=SCHEMA,
         mean_model=copy.deepcopy(model),
         seed=seed,
-        std_raw=0.1,
+        std_raw=EXPLORATION_PROFILES[exploration_profile],
+        exploration_profile=exploration_profile,
         rho=0.9,
         activation_ceiling="SIM_ONLY",
         training_only=True,
@@ -47,9 +54,14 @@ def make_preview(view: dict[str, Any]) -> dict[str, Any]:
     seed = view.get("seed")
     if type(seed) is not int:
         raise ValueError("bounded integer sampling seed required")
-    if hash_json(make_sampling_view(model, seed=seed)) != hash_json(view):
+    profile = view.get("exploration_profile")
+    if not isinstance(profile, str):
+        raise ValueError("explicit bounded exploration profile required")
+    if hash_json(make_sampling_view(model, seed=seed, exploration_profile=profile)) != hash_json(
+        view
+    ):
         raise ValueError("complete sealed SIM-only proposal sampling view required")
-    policy = mean_preview(model)
+    policy: dict[str, Any] = mean_preview(model)
     policy["step_motor_proof"]["model"] = copy.deepcopy(view)
     policy["step_motor_proof"]["execution_source_hash"] = view["source_hash"]
     policy["step_motor_proof"]["schema"] = "soccer.rsi.proposal_sampling_preview.v1"

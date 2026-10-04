@@ -42,6 +42,30 @@ def test_private_envelope_restoration_does_not_skip_complete_preview_validation(
         owned.preview(owned.restore_envelope(bad))
 
 
+def test_wider_profile_is_explicit_and_cannot_be_resealed_to_arbitrary_noise(current):  # noqa: F811
+    mean = initial_model(current[0], maximum_mean_kl=0.05)
+    owned = OwnedProposalSamplingPreview(mean)
+    view = make_sampling_view(mean, seed=19, exploration_profile="wider_bounded")
+    assert view["std_raw"] == 0.15
+    assert hash_json(owned.preview(view)) == hash_json(make_preview(view))
+    for key, value in (
+        ("exploration_profile", "nominal"),
+        ("exploration_profile", True),
+        ("exploration_profile", "unbounded"),
+        ("std_raw", 0.150001),
+        ("std_raw", 0.25),
+        ("rho", 0.99),
+    ):
+        bad = copy.deepcopy(view)
+        bad[key] = value
+        bad["model_hash"] = hash_json({k: v for k, v in bad.items() if k != "model_hash"})
+        for preview in (owned.preview, make_preview):
+            with pytest.raises(ValueError):
+                preview(bad)
+    with pytest.raises(ValueError):
+        make_sampling_view(mean, seed=19, exploration_profile="unbounded")
+
+
 @pytest.mark.parametrize("learned", [False, True])
 def test_owned_preview_exact_and_resealed_faults_rejected(
     current,  # noqa: F811

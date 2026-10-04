@@ -28,7 +28,9 @@ class OwnedProposalSamplingPreview:
         view = original["step_motor_proof"]["model"]
         self._mean = _json(view["mean_model"])
         self._static = {
-            k: v for k, v in view.items() if k not in ("mean_model", "seed", "model_hash")
+            k: v
+            for k, v in view.items()
+            if k not in ("mean_model", "seed", "model_hash", "std_raw", "exploration_profile")
         }
         self._template = copy.deepcopy({k: v for k, v in original.items() if k != "policy_hash"})
         self._template["step_motor_proof"].pop("model")
@@ -65,12 +67,22 @@ class OwnedProposalSamplingPreview:
             "mean_model",
             "seed",
             "model_hash",
+            "std_raw",
+            "exploration_profile",
         }:
             raise ValueError("complete exact owned proposal sampling document required")
         # Canonical equality distinguishes false/0, true/1, signed zero, and
         # float/int. An unchanged caller-supplied hash grants no trust.
         if _json({k: wrapped[k] for k in self._static}) != _json(self._static):
             raise ValueError("owned proposal sampling fields/source/authority differ")
+        profile = wrapped["exploration_profile"]
+        if (
+            type(profile) is not str
+            or profile not in proposal_sampling_motor.EXPLORATION_PROFILES
+            or type(wrapped["std_raw"]) is not float
+            or wrapped["std_raw"] != proposal_sampling_motor.EXPLORATION_PROFILES[profile]
+        ):
+            raise ValueError("complete declared exploration profile and scale required")
         seed = wrapped["seed"]
         if type(seed) is not int or not 0 <= seed < 2**32:
             raise ValueError("bounded integer sampling seed required")
