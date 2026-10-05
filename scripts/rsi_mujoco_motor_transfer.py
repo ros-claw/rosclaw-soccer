@@ -319,6 +319,7 @@ def main(
     ):
         raise ValueError("fixed extended factory cannot bind another model family")
     sampling_compilation = None
+    recurrent_decoder: Any = None
     if sampling_factory is not None:
         from rosclaw_soccer.rsi.owned_proposal_sampling_factory import (
             OwnedProposalSamplingEpisodeFactory,
@@ -345,7 +346,33 @@ def main(
 
         make_preview: Callable[[dict[str, Any]], dict[str, Any]] = legacy_preview
 
-        if step_model.get("schema") == "soccer.rsi.verified_success_imitation_motor.v1":
+        if step_model.get("schema") == "soccer.rsi.recurrent_success_imitation_motor.v1":
+            from rosclaw_soccer.rsi.recurrent_success_motor import (
+                CompiledRecurrentSuccessMotor,
+            )
+            from rosclaw_soccer.rsi.recurrent_success_motor import (
+                make_preview as recurrent_preview,
+            )
+
+            if (
+                args.proposal_decoder != "reference"
+                or any(
+                    factory is not None
+                    for factory in (
+                        sampling_factory,
+                        extended_factory,
+                        proposal_factory,
+                        imitation_factory,
+                    )
+                )
+                or args.body_response_bundle
+            ):
+                raise ValueError("sequence candidate requires its original bounded execution law")
+            make_preview = recurrent_preview
+            policy = make_preview(step_model)
+            recurrent_decoder = CompiledRecurrentSuccessMotor(policy)
+            delta_at_frame = recurrent_decoder.delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.verified_success_imitation_motor.v1":
             from rosclaw_soccer.rsi.imitation_proposal_motor import CompiledImitationProposalMotor
             from rosclaw_soccer.rsi.imitation_proposal_motor import (
                 make_preview as imitation_preview,
@@ -559,6 +586,7 @@ def main(
             "soccer.rsi.proposal_memory_motor.v1",
             "soccer.rsi.extended_proposal_motor.v1",
             "soccer.rsi.verified_success_imitation_motor.v1",
+            "soccer.rsi.recurrent_success_imitation_motor.v1",
         ):
             policy = make_preview(step_model)
     x, y, vx = sample_training_courses(args.seed, 16)[args.lane]
@@ -683,6 +711,10 @@ def main(
             "canonical_qvel",
         )
     }
+    if recurrent_decoder is not None:
+        from rosclaw_soccer.rsi.recurrent_success_motor import STATE_FIELD
+
+        history[STATE_FIELD] = []
     if args.record_foundation_observation:
         from rosclaw_soccer.rsi.foundation_observation_capture import FIELDS, PREFIX
 
@@ -886,6 +918,8 @@ def main(
                 frame - contact_frame if contact_frame is not None else None,
             )
             target[motor_ids] += previous
+        if recurrent_decoder is not None:
+            history[STATE_FIELD].append(recurrent_decoder.hidden_state[None])
         history["motor_delta_rad"].append(previous.copy()[None])
         history["navigation_command"].append(np.asarray((1.4, lateral, 0.0))[None])
         history["joint_target_rad"].append(target[None].copy())

@@ -279,6 +279,24 @@ def audit_cpu_transfer(
     }
     with np.load(trace_path, allow_pickle=False) as loaded:
         trace = {k: loaded[k] for k in loaded.files}
+    # Keep optional sequence-learning dependencies out of legacy replay paths.
+    state_field = "recurrent_residual_hidden_state"
+    recurrent_policy = "recurrent_success_motor_proof" in report.get("executed_motor_policy", {})
+    if (state_field in trace) != recurrent_policy:
+        raise ValueError("recurrent state trace must match the executed motor family")
+    if recurrent_policy:
+        from rosclaw_soccer.rsi.recurrent_success_motor import HIDDEN_DIMENSION
+
+        state = trace[state_field]
+        if (
+            report.get("step_model_hash") is None
+            or state.shape != (300, 1, HIDDEN_DIMENSION)
+            or state.dtype != np.float64
+            or not np.isfinite(state).all()
+            or np.any(np.abs(state) > 1)
+        ):
+            raise ValueError("complete finite bounded causal recurrent state trace required")
+    recurrent_decoder: Any = None
     from rosclaw_soccer.rsi.foundation_observation_capture import (
         PREFIX,
         validate_capture,
@@ -406,7 +424,14 @@ def audit_cpu_transfer(
         from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
 
         policy = report["executed_motor_policy"]
-        if "proposal_sampling_motor_proof" in policy:
+        if "recurrent_success_motor_proof" in policy:
+            from rosclaw_soccer.rsi.recurrent_success_motor import CompiledRecurrentSuccessMotor
+
+            if sampling_decoder_factory is not None or mean_decoder_factory is not None:
+                raise ValueError("recurrent review requires an independent original constructor")
+            recurrent_decoder = CompiledRecurrentSuccessMotor(policy)
+            delta_at_frame = recurrent_decoder.delta_at_frame
+        elif "proposal_sampling_motor_proof" in policy:
             from rosclaw_soccer.rsi.proposal_sampling_motor import CompiledProposalSamplingMotor
 
             proposal_decoder = (
@@ -562,6 +587,10 @@ def audit_cpu_transfer(
                 )
                 if not np.array_equal(expected_status, trace["body_response_status"][frame, 0]):
                     raise ValueError("causal body guidance status differs")
+            if recurrent_decoder is not None and not np.array_equal(
+                recurrent_decoder.hidden_state, trace[state_field][frame, 0]
+            ):
+                raise ValueError("independently reconstructed causal recurrent state differs")
             equal(delta, trace["motor_delta_rad"][frame, 0], "causal neural output")
             composed = nominal.copy()
             if body_guidance is not None and body_guidance.action_dimensions == 29:
@@ -600,6 +629,9 @@ def audit_cpu_transfer(
         hardware_authorized=False,
         source_hash=hash_bytes(Path(__file__).read_bytes()),
     )
+    if recurrent_decoder is not None:
+        result["causal_recurrent_state_reconstructed"] = True
+        result["recurrent_state_frames_reconstructed"] = 300
     if mean_decoder_factory is not None:
         result["decoder_construction"] = dict(
             kind="VERIFIED_PRIVATE_FIXED_MEAN_FRESH_EPISODE",
