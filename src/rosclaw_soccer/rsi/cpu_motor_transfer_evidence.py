@@ -310,7 +310,31 @@ def audit_cpu_transfer(
         trace = {k: loaded[k] for k in loaded.files}
     # Keep optional sequence-learning dependencies out of legacy replay paths.
     state_field = "recurrent_residual_hidden_state"
-    recurrent_policy = "recurrent_success_motor_proof" in report.get("executed_motor_policy", {})
+    executed_policy = report.get("executed_motor_policy", {})
+    recurrent_sampling = "recurrent_sampling_motor_proof" in executed_policy
+    recurrent_policy = "recurrent_success_motor_proof" in executed_policy or recurrent_sampling
+    if recurrent_sampling and "recurrent_success_motor_proof" in executed_policy:
+        raise ValueError("ambiguous recurrent execution family")
+    sampling_fields = (
+        "recurrent_sampling_raw_mean",
+        "recurrent_sampling_latent_action",
+        "recurrent_sampling_conditional_log_probability",
+        "recurrent_sampling_performed",
+    )
+    present_sampling = {k for k in trace if k.startswith("recurrent_sampling_")}
+    if present_sampling != (set(sampling_fields) if recurrent_sampling else set()):
+        raise ValueError("actual sampling trace fields must match the executed motor family")
+    if recurrent_sampling:
+        for name, dimension in zip(sampling_fields, (12, 12, 1, 1), strict=True):
+            expected_dtype = np.bool_ if name == sampling_fields[-1] else np.float64
+            if (
+                trace[name].shape != (300, 1, dimension)
+                or trace[name].dtype != expected_dtype
+                or not np.isfinite(trace[name]).all()
+            ):
+                raise ValueError("complete finite typed actual recurrent sampling trace required")
+        if trace[sampling_fields[-1]][:30].any() or not trace[sampling_fields[-1]][30:].all():
+            raise ValueError("exact decision-start exploration mask required")
     if (state_field in trace) != recurrent_policy:
         raise ValueError("recurrent state trace must match the executed motor family")
     if recurrent_policy:
@@ -453,7 +477,16 @@ def audit_cpu_transfer(
         from rosclaw_soccer.rsi.compiled_step_inference import CompiledStepMotor
 
         policy = report["executed_motor_policy"]
-        if "recurrent_success_motor_proof" in policy:
+        if "recurrent_sampling_motor_proof" in policy:
+            from rosclaw_soccer.rsi.recurrent_sampling_motor import (
+                CompiledRecurrentSamplingMotor,
+            )
+
+            if sampling_decoder_factory is not None or mean_decoder_factory is not None:
+                raise ValueError("recurrent sampling review requires the independent reference")
+            recurrent_decoder = CompiledRecurrentSamplingMotor(policy)
+            delta_at_frame = recurrent_decoder.delta_at_frame
+        elif "recurrent_success_motor_proof" in policy:
             from rosclaw_soccer.rsi.recurrent_success_motor import CompiledRecurrentSuccessMotor
 
             if sampling_decoder_factory is not None:
@@ -624,6 +657,12 @@ def audit_cpu_transfer(
                 recurrent_decoder.hidden_state, trace[state_field][frame, 0]
             ):
                 raise ValueError("independently reconstructed causal recurrent state differs")
+            if recurrent_sampling:
+                for name, value in recurrent_decoder.sampled_transition.items():
+                    if not np.array_equal(value, trace[name][frame, 0]):
+                        raise ValueError(
+                            "independently reconstructed recurrent draw or likelihood differs"
+                        )
             equal(delta, trace["motor_delta_rad"][frame, 0], "causal neural output")
             composed = nominal.copy()
             if body_guidance is not None and body_guidance.action_dimensions == 29:
@@ -665,6 +704,10 @@ def audit_cpu_transfer(
     if recurrent_decoder is not None:
         result["causal_recurrent_state_reconstructed"] = True
         result["recurrent_state_frames_reconstructed"] = 300
+        if recurrent_sampling:
+            result["actual_recurrent_sampling_draws_reconstructed"] = 270
+            result["conditional_latent_log_probabilities_reconstructed"] = 270
+            result["projected_action_likelihood_claimed"] = False
     if mean_decoder_factory is not None:
         result["decoder_construction"] = dict(
             kind="VERIFIED_PRIVATE_FIXED_MEAN_FRESH_EPISODE",
