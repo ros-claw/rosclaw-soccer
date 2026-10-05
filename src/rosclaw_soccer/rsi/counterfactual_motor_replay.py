@@ -26,10 +26,17 @@ def intervention_actions(
     ):
         raise ValueError("finite declared twelve-joint intervention box required")
     actual, previous, nominal, limits = [np.array(v, dtype=np.float64, copy=True) for v in arrays]
-    low = np.maximum(np.maximum(-0.16, previous - 0.012), limits[:, 0] - nominal)
-    high = np.minimum(np.minimum(0.16, previous + 0.012), limits[:, 1] - nominal)
+    # Match the original controller: slew first, then the final joint/cap
+    # shield. A moving nominal target can make final deltas differ by more
+    # than the pre-shield slew. Do not force a bad Foundation baseline into
+    # range: zero remains allowed, as in the unchanged source controller.
+    final_low = np.maximum(-0.16, np.minimum(0.0, limits[:, 0] - nominal))
+    final_high = np.minimum(0.16, np.maximum(0.0, limits[:, 1] - nominal))
+    low = np.clip(previous - 0.012, final_low, final_high)
+    high = np.clip(previous + 0.012, final_low, final_high)
     if (
         np.any(limits[:, 0] >= limits[:, 1])
+        or np.any(np.abs(previous) > 0.1600000001)
         or np.any(low > high)
         or np.any(actual < low - 1e-10)
         or np.any(actual > high + 1e-10)
@@ -273,6 +280,7 @@ class CounterfactualMotorReplay:
             horizon_sec=0.02,
             new_foundation_calls=0,
             duplicate_projected_actions_not_independent=True,
+            slew_is_pre_final_joint_shield_not_final_delta_guarantee=True,
             activation_ceiling="SIM_ONLY",
             promotion_authorized=False,
             hardware_authorized=False,

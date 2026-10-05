@@ -75,3 +75,21 @@ def test_shape_and_boolean_arrays_rejected():
     values[0] = np.zeros(12, dtype=bool)
     with pytest.raises(ValueError):
         intervention_actions(*values)
+
+
+def test_moving_nominal_joint_shield_can_override_final_delta_slew():
+    actual, previous, nominal, limits = inputs()
+    previous[0] = -0.13
+    nominal[0] = -0.895
+    actual[0] = limits[0, 0] - nominal[0]
+    result = intervention_actions(actual, previous, nominal, limits)
+    np.testing.assert_array_equal(result[:, 0], np.full(25, actual[0]))
+    assert abs(result[0, 0] - previous[0]) > 0.012
+
+
+def test_existing_foundation_limit_violation_not_forced_in_range():
+    actual, previous, nominal, limits = inputs()
+    nominal[0] = 1.2
+    result = intervention_actions(actual, previous, nominal, limits)
+    assert result[:, 0].max() == 0
+    assert result[:, 0].min() == -0.003
