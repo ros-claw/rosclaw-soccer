@@ -49,11 +49,14 @@ def sequence_teacher_weights(
     for index, (row, keep, context) in enumerate(zip(records, eligible, contexts, strict=True)):
         if not keep:
             continue
-        weights[index] = 1.0 / counts[context]
+        weights[index] = 1.0
         if profile == "balanced_contact8_recovery20":
             first = row["first_contact_frame"]
             window = (frames >= first - 8) & (frames < first + 20)
             weights[index, window] *= 8.0
+        # A clipped event window at either episode boundary must not silently
+        # change the total mass assigned to that teacher's context.
+        weights[index] /= weights[index].mean() * counts[context]
     # Core normalizes positive weights again. Keep a canonical local scale for
     # inspection: equal-context teachers, not extra independent trajectories.
     weights /= weights[weights > 0].mean()

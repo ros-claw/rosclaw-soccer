@@ -39,6 +39,29 @@ def test_offline_event_focus_is_exactly_eight_before_twenty_after():
     np.testing.assert_array_equal(w[4:], np.zeros((2, 270)))
 
 
+def test_clipped_contact_windows_still_balance_whole_context_mass():
+    records = rows()
+    records[0]["first_contact_frame"] = 0
+    records[1]["first_contact_frame"] = 299
+    records[2]["first_contact_frame"] = 30
+    records[3]["seed"] = 8
+    w = sequence_teacher_weights(records, profile="balanced_contact8_recovery20")
+    np.testing.assert_allclose(w[0].sum() + w[1].sum(), w[2].sum(), rtol=1e-14)
+    np.testing.assert_allclose(w[2].sum(), w[3].sum(), rtol=1e-14)
+    np.testing.assert_allclose(w[0], np.full(270, w[0, 0]), rtol=0, atol=0)
+    assert w[1, -1] / w[1, 0] == 8
+
+
+def test_returned_weights_owned_and_failed_missing_contact_allowed():
+    records = rows()
+    records[-1]["first_contact_frame"] = None
+    first = sequence_teacher_weights(records, profile="balanced_success")
+    first[:] = 100
+    second = sequence_teacher_weights(records, profile="balanced_success")
+    assert second[0, 0] != 100
+    np.testing.assert_array_equal(second[4:], np.zeros((2, 270)))
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
