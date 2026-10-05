@@ -53,6 +53,7 @@ def main(
     extended_factory: Any = None,
     proposal_factory: Any = None,
     imitation_factory: Any = None,
+    recurrent_factory: Any = None,
 ) -> None:
     import mujoco
     import torch
@@ -97,6 +98,28 @@ def main(
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--lane", type=int, required=True, choices=range(16))
     args = parser.parse_args(argv)
+    if recurrent_factory is not None:
+        from rosclaw_soccer.rsi.recurrent_success_episode_factory import (
+            RecurrentSuccessEpisodeFactory,
+        )
+
+        if (
+            type(recurrent_factory) is not RecurrentSuccessEpisodeFactory
+            or any(
+                factory is not None
+                for factory in (
+                    sampling_factory,
+                    extended_factory,
+                    proposal_factory,
+                    imitation_factory,
+                )
+            )
+            or args.step_model is None
+            or args.proposal_decoder != "reference"
+            or args.cached_proposal_envelope
+            or args.body_response_bundle
+        ):
+            parser.error("sequence factory requires only its explicit fixed SIM candidate")
     if imitation_factory is not None:
         from rosclaw_soccer.rsi.imitation_proposal_episode_factory import (
             ImitationProposalEpisodeFactory,
@@ -318,6 +341,11 @@ def main(
         step_model is None or step_model.get("schema") != "soccer.rsi.extended_proposal_motor.v1"
     ):
         raise ValueError("fixed extended factory cannot bind another model family")
+    if recurrent_factory is not None and (
+        step_model is None
+        or step_model.get("schema") != "soccer.rsi.recurrent_success_imitation_motor.v1"
+    ):
+        raise ValueError("fixed sequence factory cannot bind another model family")
     sampling_compilation = None
     recurrent_decoder: Any = None
     if sampling_factory is not None:
@@ -369,8 +397,16 @@ def main(
             ):
                 raise ValueError("sequence candidate requires its original bounded execution law")
             make_preview = recurrent_preview
-            policy = make_preview(step_model)
-            recurrent_decoder = CompiledRecurrentSuccessMotor(policy)
+            policy = (
+                make_preview(step_model)
+                if recurrent_factory is None
+                else recurrent_factory.preview(step_model)
+            )
+            recurrent_decoder = (
+                CompiledRecurrentSuccessMotor(policy)
+                if recurrent_factory is None
+                else recurrent_factory.new_episode()
+            )
             delta_at_frame = recurrent_decoder.delta_at_frame
         elif step_model.get("schema") == "soccer.rsi.verified_success_imitation_motor.v1":
             from rosclaw_soccer.rsi.imitation_proposal_motor import CompiledImitationProposalMotor
@@ -687,6 +723,8 @@ def main(
         commitment["fixed_proposal_factory"] = proposal_factory.contract()
     if imitation_factory is not None:
         commitment["imitation_proposal_factory"] = imitation_factory.contract()
+    if recurrent_factory is not None:
+        commitment["recurrent_success_factory"] = recurrent_factory.contract()
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
     history: dict[str, list[Any]] = {
         k: []

@@ -137,10 +137,8 @@ def test_source_and_parent_identity_cannot_be_resealed(imitation_parent):  # noq
         validate_model(reseal(value))
 
 
-def test_actual_sequence_fit_receipt_is_bound_but_not_physical_evidence(imitation_parent):  # noqa: F811
-    original = select_proposal_decoder(
-        parent_preview(imitation_parent), implementation="bounded_snapshot"
-    )
+def fitted_synthetic_model(parent):
+    original = select_proposal_decoder(parent_preview(parent), implementation="bounded_snapshot")
     query = np.zeros(134)
     context = np.concatenate((original.features(query)[:134], [0]))
     x = np.broadcast_to(context, (4, 270, 135)).copy()
@@ -158,7 +156,7 @@ def test_actual_sequence_fit_receipt_is_bound_but_not_physical_evidence(imitatio
     )
     receipt = {k: v for k, v in result.items() if k != "parameters"}
     receipt.update(
-        behavior_model_hash=imitation_parent["model_hash"],
+        behavior_model_hash=parent["model_hash"],
         physical_batch_hash="sha256:" + "b" * 64,
         teacher_selection_hash="sha256:" + "c" * 64,
         teacher_selection_offline=True,
@@ -167,11 +165,16 @@ def test_actual_sequence_fit_receipt_is_bound_but_not_physical_evidence(imitatio
         private_fresh_accessed=False,
     )
     value = make_model(
-        imitation_parent,
+        parent,
         initial_seed=19,
         parameters=result["parameters"],
         learning_receipt=receipt,
     )
+    return value
+
+
+def test_actual_sequence_fit_receipt_is_bound_but_not_physical_evidence(imitation_parent):  # noqa: F811
+    value = fitted_synthetic_model(imitation_parent)
     assert value["learning_receipt"]["physical_batch_verified"] is False
     assert value["learning_receipt"]["input_feature_causality_verified"] is False
     assert value["promotion_authorized"] is False

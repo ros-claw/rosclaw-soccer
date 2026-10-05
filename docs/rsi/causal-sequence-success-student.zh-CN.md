@@ -79,3 +79,24 @@ v693 已排队零初始化真实对照：两个固定球位共计划 4 条新 na
 
 额外原 imitation 与 fixed/extended native 边界回归 28 项通过，因此
 本次接入的三个测试执行合计 67 项通过，未宣称全仓 CI。
+
+## 固定时序权重的多 episode 构造
+
+`RecurrentSuccessEpisodeFactory` 仅接受一个完整校验并深拷贝拥有的
+候选。每次显式使用时检查来源和完整模型哈希，不能在 episode 边界
+替换权重。只共享原有只读数值层和不可变查询结构；新 episode 拥有
+独立 GRU、contact memory、父 decoder、warm decoder 和层容器。
+默认构造器及已有候选模型的 source hash 不改变。
+
+native 只有在显式传入这一个固定类型 factory 时才选择该路径，不
+接受任意 callback，也不能混用采样、别的 factory、cached envelope
+或 body-response guidance。收据绑定完整模型、policy 和来源集合。
+CPU 审查可使用另行分配的独立 factory，但必须注明没有使用默认
+构造器；逐帧内部状态、目标、PD 与真实动力学重建要求保持不变。
+
+未训练与实际合成训练的完整 36 帧边界输出和隐藏状态均与默认类
+逐元素精确一致，检查 episode 隔离、源变更拒绝、输入变更拒绝及混合
+native 路径。最新定向回归 68 项通过（253.81 秒），3 个实现文件
+mypy 和 5 个文件 ruff/format 通过。此前的 67 项与本次存在重叠，
+不能相加当作独立新增测试数。该 factory 的真实 native 等价资格尚未
+执行，不用于热改已有实验，也不以单元测试宣称物理通过。

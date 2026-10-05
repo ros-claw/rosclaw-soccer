@@ -58,6 +58,13 @@ def audit_cpu_transfer(
 
             expected_factory = ImitationProposalEpisodeFactory
             proof_key = "verified_success_imitation_motor_proof"
+        elif type(policy) is dict and "recurrent_success_motor_proof" in policy:
+            from rosclaw_soccer.rsi.recurrent_success_episode_factory import (
+                RecurrentSuccessEpisodeFactory,
+            )
+
+            expected_factory = RecurrentSuccessEpisodeFactory
+            proof_key = "recurrent_success_motor_proof"
         if (
             type(mean_decoder_factory) is not expected_factory
             or sampling_decoder_factory is not None
@@ -111,6 +118,28 @@ def audit_cpu_transfer(
         raise ValueError("CPU commitment differs from report")
     if ("numeric_compilation" in report) != ("numeric_compilation" in commitment):
         raise ValueError("CPU numerical compilation differs from commitment")
+    if ("recurrent_success_factory" in report) != ("recurrent_success_factory" in commitment):
+        raise ValueError("sequence factory presence differs from commitment")
+    if "recurrent_success_factory" in commitment:
+        from rosclaw_soccer.rsi.recurrent_success_episode_factory import (
+            validate_compilation_contract as validate_recurrent_factory,
+        )
+
+        if any(
+            key in commitment
+            for key in (
+                "numeric_compilation",
+                "numeric_sampling_compilation",
+                "body_response_guidance",
+                "fixed_proposal_factory",
+                "extended_proposal_factory",
+                "imitation_proposal_factory",
+            )
+        ):
+            raise ValueError("sequence factory cannot mix compilation or body guidance")
+        validate_recurrent_factory(
+            commitment["recurrent_success_factory"], report.get("executed_motor_policy", {})
+        )
     if ("imitation_proposal_factory" in report) != ("imitation_proposal_factory" in commitment):
         raise ValueError("imitation factory differs from commitment")
     if "imitation_proposal_factory" in commitment:
@@ -427,9 +456,13 @@ def audit_cpu_transfer(
         if "recurrent_success_motor_proof" in policy:
             from rosclaw_soccer.rsi.recurrent_success_motor import CompiledRecurrentSuccessMotor
 
-            if sampling_decoder_factory is not None or mean_decoder_factory is not None:
-                raise ValueError("recurrent review requires an independent original constructor")
-            recurrent_decoder = CompiledRecurrentSuccessMotor(policy)
+            if sampling_decoder_factory is not None:
+                raise ValueError("sequence review cannot use a sampling factory")
+            recurrent_decoder = (
+                CompiledRecurrentSuccessMotor(policy)
+                if mean_decoder_factory is None
+                else mean_decoder_factory.new_episode()
+            )
             delta_at_frame = recurrent_decoder.delta_at_frame
         elif "proposal_sampling_motor_proof" in policy:
             from rosclaw_soccer.rsi.proposal_sampling_motor import CompiledProposalSamplingMotor
