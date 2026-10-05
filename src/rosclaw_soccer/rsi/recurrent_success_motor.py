@@ -68,6 +68,62 @@ def validate_model(model: Any) -> None:
         return
     if type(receipt) is not dict or type(receipt.get("config")) is not dict:
         raise ValueError("complete causal sequence fit receipt required")
+    if "executed_action_objective" in receipt:
+        import rosclaw.growth.staged_action_projection as projection_module
+
+        objective = receipt["executed_action_objective"]
+        if (
+            type(objective) is not dict
+            or set(objective)
+            != {
+                "schema",
+                "data_hash",
+                "projection_source_hash",
+                "cap",
+                "slew",
+                "raw_loss_weight",
+                "order",
+                "all_original_rows_validated",
+                "teacher_actions_reconstructed",
+                "teacher_forced_previous_actions_not_closed_loop_rollout",
+                "projection_labels_are_recurrent_inputs",
+                "physical_batch_verified",
+                "promotion_authorized",
+                "hardware_authorized",
+            }
+            or objective["schema"] != "rosclaw.growth.recurrent_executed_action_objective.v1"
+            or type(objective["cap"]) is not float
+            or objective["cap"] != 0.16
+            or type(objective["slew"]) is not float
+            or objective["slew"] != 0.012
+            or type(objective["raw_loss_weight"]) is not float
+            or not np.isfinite(objective["raw_loss_weight"])
+            or not 0.001 <= objective["raw_loss_weight"] <= 1.0
+            or objective["order"] != "CAP_TANH_THEN_SLEW_THEN_FINAL_BOX"
+            or type(objective["all_original_rows_validated"]) is not int
+            or objective["all_original_rows_validated"] != receipt.get("original_input_rows")
+            or objective["projection_source_hash"]
+            != hash_bytes(Path(projection_module.__file__).read_bytes())
+            or type(objective["data_hash"]) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", objective["data_hash"]) is None
+            or any(
+                objective[k] is not True
+                for k in (
+                    "teacher_actions_reconstructed",
+                    "teacher_forced_previous_actions_not_closed_loop_rollout",
+                )
+            )
+            or any(
+                objective[k] is not False
+                for k in (
+                    "projection_labels_are_recurrent_inputs",
+                    "physical_batch_verified",
+                    "promotion_authorized",
+                    "hardware_authorized",
+                )
+            )
+        ):
+            raise ValueError("complete source-bound original executed-action objective required")
     config = receipt["config"]
     try:
         learner.RecurrentResidualImitationConfig(**config).validate()

@@ -137,7 +137,7 @@ def test_source_and_parent_identity_cannot_be_resealed(imitation_parent):  # noq
         validate_model(reseal(value))
 
 
-def fitted_synthetic_model(parent):
+def fitted_synthetic_model(parent, *, projected=False):
     original = select_proposal_decoder(parent_preview(parent), implementation="bounded_snapshot")
     query = np.zeros(134)
     context = np.concatenate((original.features(query)[:134], [0]))
@@ -145,6 +145,23 @@ def fitted_synthetic_model(parent):
     base = np.broadcast_to(original.raw_mean(query, 0), (4, 270, 12)).copy()
     gates = np.full((4, 270), original._guard.gate(context))
     assert gates[0, 0] > 0
+    projection = None
+    if projected:
+        from rosclaw.growth.staged_action_projection import staged_action_projection
+
+        prior = np.zeros_like(base)
+        lower, upper = np.full_like(base, -0.16), np.full_like(base, 0.16)
+        projection = {
+            "previous": prior,
+            "lower": lower,
+            "upper": upper,
+            "executed_targets": staged_action_projection(
+                base + 0.01, prior, lower, upper, cap=0.16, slew=0.012
+            ),
+            "cap": 0.16,
+            "slew": 0.012,
+            "raw_loss_weight": 0.05,
+        }
     result = fit_recurrent_residual_imitation(
         parameters=initial_parameters(135, 12, hidden_dimension=64, seed=19),
         context=x,
@@ -153,6 +170,7 @@ def fitted_synthetic_model(parent):
         targets=base + 0.01,
         training_weights=np.ones((4, 270)),
         config=RecurrentResidualImitationConfig(steps=4, seed=19),
+        action_projection=projection,
     )
     receipt = {k: v for k, v in result.items() if k != "parameters"}
     receipt.update(
@@ -190,3 +208,34 @@ def test_actual_sequence_fit_receipt_is_bound_but_not_physical_evidence(imitatio
         changed["learning_receipt"][fault] = True if fault.endswith("verified") else "bad"
         with pytest.raises(ValueError, match="receipt"):
             validate_model(reseal(changed))
+
+
+def test_projected_fit_objective_is_source_bound_not_authority(imitation_parent):  # noqa: F811
+    value = fitted_synthetic_model(imitation_parent, projected=True)
+    objective = value["learning_receipt"]["executed_action_objective"]
+    assert objective["cap"] == 0.16 and objective["slew"] == 0.012
+    assert objective["physical_batch_verified"] is objective["hardware_authorized"] is False
+    validate_model(value)
+    for key, fault in (
+        ("cap", 0.2),
+        ("cap", True),
+        ("slew", 0.02),
+        ("raw_loss_weight", float("inf")),
+        ("data_hash", "unbound"),
+        ("projection_source_hash", "sha256:" + "f" * 64),
+        ("all_original_rows_validated", 1079),
+        ("projection_labels_are_recurrent_inputs", True),
+        ("physical_batch_verified", True),
+        ("promotion_authorized", True),
+        ("hardware_authorized", True),
+        ("order", "FINAL_BOX_THEN_SLEW"),
+    ):
+        changed = copy.deepcopy(value)
+        changed["learning_receipt"]["executed_action_objective"][key] = fault
+        if key == "raw_loss_weight":
+            with pytest.raises(ValueError):
+                # Non-finite data cannot even obtain a canonical model seal.
+                reseal(changed)
+        else:
+            with pytest.raises(ValueError, match="executed-action"):
+                validate_model(reseal(changed))
