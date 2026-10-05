@@ -403,6 +403,33 @@ def main(
             recurrent_decoder = CompiledRecurrentSamplingMotor(policy)
             recurrent_sampling = True
             delta_at_frame = recurrent_decoder.delta_at_frame
+        elif step_model.get("schema") == "soccer.rsi.recurrent_clipped_mc_motor.v1":
+            from rosclaw_soccer.rsi.recurrent_clipped_motor import (
+                CompiledRecurrentClippedMotor,
+            )
+            from rosclaw_soccer.rsi.recurrent_clipped_motor import (
+                make_preview as clipped_preview,
+            )
+
+            if (
+                args.proposal_decoder != "reference"
+                or any(
+                    factory is not None
+                    for factory in (
+                        sampling_factory,
+                        proposal_factory,
+                        extended_factory,
+                        imitation_factory,
+                        recurrent_factory,
+                    )
+                )
+                or args.body_response_bundle
+            ):
+                raise ValueError("clipped recurrent motor requires the independent reference law")
+            make_preview = clipped_preview
+            policy = make_preview(step_model)
+            recurrent_decoder = CompiledRecurrentClippedMotor(policy)
+            delta_at_frame = recurrent_decoder.delta_at_frame
         elif step_model.get("schema") == "soccer.rsi.recurrent_success_imitation_motor.v1":
             from rosclaw_soccer.rsi.recurrent_success_motor import (
                 CompiledRecurrentSuccessMotor,
@@ -653,6 +680,7 @@ def main(
             "soccer.rsi.verified_success_imitation_motor.v1",
             "soccer.rsi.recurrent_success_imitation_motor.v1",
             "soccer.rsi.recurrent_motor_sampling.v1",
+            "soccer.rsi.recurrent_clipped_mc_motor.v1",
         ):
             policy = make_preview(step_model)
     x, y, vx = sample_training_courses(args.seed, 16)[args.lane]

@@ -15,10 +15,15 @@ import rosclaw.growth.correlated_exploration as exploration
 from rosclaw_soccer.rsi.recurrent_success_motor import (
     FLAGS,
     CompiledRecurrentSuccessMotor,
-    validate_model,
 )
 from rosclaw_soccer.rsi.recurrent_success_motor import (
-    make_preview as mean_preview,
+    SCHEMA as IMITATION_SCHEMA,
+)
+from rosclaw_soccer.rsi.recurrent_success_motor import (
+    make_preview as imitation_preview,
+)
+from rosclaw_soccer.rsi.recurrent_success_motor import (
+    validate_model as validate_imitation,
 )
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
@@ -31,8 +36,20 @@ TRACE_FIELDS = (
 )
 
 
+def mean_preview(model: dict[str, Any]) -> dict[str, Any]:
+    if model.get("schema") == IMITATION_SCHEMA:
+        validate_imitation(model)
+        return imitation_preview(model)
+    from rosclaw_soccer.rsi.recurrent_clipped_motor import SCHEMA as CLIPPED_SCHEMA
+    from rosclaw_soccer.rsi.recurrent_clipped_motor import make_preview as clipped_preview
+
+    if model.get("schema") == CLIPPED_SCHEMA:
+        return clipped_preview(model)
+    raise ValueError("allowlisted actual causal mean model required")
+
+
 def make_sampling_view(model: dict[str, Any], *, seed: int) -> dict[str, Any]:
-    validate_model(model)
+    mean_preview(model)
     if type(seed) is not int or not 0 <= seed < 2**32:
         raise ValueError("bounded integer recurrent sampling seed required")
     value = dict(
@@ -65,7 +82,12 @@ def make_preview(view: dict[str, Any]) -> dict[str, Any]:
     policy["step_motor_proof"]["schema"] = "soccer.rsi.recurrent_sampling_preview.v1"
     policy["step_motor_proof"]["execution_source_hash"] = view["source_hash"]
     policy["step_motor_proof"]["qualification"] = "UNQUALIFIED_SIM_TRAINING"
-    policy["recurrent_sampling_motor_proof"] = policy.pop("recurrent_success_motor_proof")
+    proof_key = (
+        "recurrent_success_motor_proof"
+        if view["mean_model"]["schema"] == IMITATION_SCHEMA
+        else "recurrent_clipped_motor_proof"
+    )
+    policy["recurrent_sampling_motor_proof"] = policy.pop(proof_key)
     policy["recurrent_sampling_motor_proof"].update(
         actual_behavior_model_hash=view["mean_model"]["model_hash"],
         sampling_model_hash=view["model_hash"],
@@ -83,7 +105,15 @@ class CompiledRecurrentSamplingMotor(CompiledRecurrentSuccessMotor):
         view = copy.deepcopy(policy.get("step_motor_proof", {}).get("model", {}))
         if make_preview(view) != policy:
             raise ValueError("complete recurrent sampling execution commitment required")
-        super().__init__(mean_preview(view["mean_model"]))
+        if view["mean_model"]["schema"] == IMITATION_SCHEMA:
+            super().__init__(mean_preview(view["mean_model"]))
+        else:
+            from rosclaw_soccer.rsi.recurrent_clipped_motor import CompiledRecurrentClippedMotor
+
+            # A fresh allowlisted reference owns every copied runtime object;
+            # no user-provided factory, driver, or recursive past model graph.
+            compiled = CompiledRecurrentClippedMotor(mean_preview(view["mean_model"]))
+            self.__dict__.update(compiled.__dict__)
         self._sampling = {k: view[k] for k in ("seed", "std_raw", "rho")}
         self._noise = exploration.stationary_noise(
             seed=view["seed"], rho=view["rho"], count=270, dimension=12, first_frame=30

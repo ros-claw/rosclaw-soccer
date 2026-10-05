@@ -312,8 +312,16 @@ def audit_cpu_transfer(
     state_field = "recurrent_residual_hidden_state"
     executed_policy = report.get("executed_motor_policy", {})
     recurrent_sampling = "recurrent_sampling_motor_proof" in executed_policy
-    recurrent_policy = "recurrent_success_motor_proof" in executed_policy or recurrent_sampling
-    if recurrent_sampling and "recurrent_success_motor_proof" in executed_policy:
+    recurrent_families = sum(
+        k in executed_policy
+        for k in (
+            "recurrent_success_motor_proof",
+            "recurrent_sampling_motor_proof",
+            "recurrent_clipped_motor_proof",
+        )
+    )
+    recurrent_policy = recurrent_families > 0
+    if recurrent_families > 1:
         raise ValueError("ambiguous recurrent execution family")
     sampling_fields = (
         "recurrent_sampling_raw_mean",
@@ -485,6 +493,13 @@ def audit_cpu_transfer(
             if sampling_decoder_factory is not None or mean_decoder_factory is not None:
                 raise ValueError("recurrent sampling review requires the independent reference")
             recurrent_decoder = CompiledRecurrentSamplingMotor(policy)
+            delta_at_frame = recurrent_decoder.delta_at_frame
+        elif "recurrent_clipped_motor_proof" in policy:
+            from rosclaw_soccer.rsi.recurrent_clipped_motor import CompiledRecurrentClippedMotor
+
+            if sampling_decoder_factory is not None or mean_decoder_factory is not None:
+                raise ValueError("clipped sequence review requires the independent reference")
+            recurrent_decoder = CompiledRecurrentClippedMotor(policy)
             delta_at_frame = recurrent_decoder.delta_at_frame
         elif "recurrent_success_motor_proof" in policy:
             from rosclaw_soccer.rsi.recurrent_success_motor import CompiledRecurrentSuccessMotor
