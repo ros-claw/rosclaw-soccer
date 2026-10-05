@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import rosclaw.growth.causal_residual_memory as memory_module
+from rosclaw.growth.canonical_json_snapshot import CanonicalJSONSnapshot
 
 from rosclaw_soccer.rsi.recurrent_success_motor import CompiledRecurrentSuccessMotor, make_preview
 from rosclaw_soccer.rsi.step_motor_phase_context import ContactPhaseMemory
@@ -49,10 +50,14 @@ def validate_compilation_contract(value: Any, policy: dict[str, Any]) -> None:
 
 class RecurrentSuccessEpisodeFactory:
     def __init__(self, model: dict[str, Any]) -> None:
-        self._policy = make_preview(copy.deepcopy(model))
-        self._prototype = CompiledRecurrentSuccessMotor(self._policy)
-        self._canonical_model_hash = hash_json(self._policy["step_motor_proof"]["model"])
-        self._pins = compilation_contract(self._policy)["source_pins"]
+        policy = make_preview(copy.deepcopy(model))
+        self._prototype = CompiledRecurrentSuccessMotor(policy)
+        self._canonical_model_hash = hash_json(policy["step_motor_proof"]["model"])
+        contract = compilation_contract(policy)
+        self._pins = contract["source_pins"]
+        self._policy_snapshot = CanonicalJSONSnapshot(policy)
+        self._contract_snapshot = CanonicalJSONSnapshot(contract)
+        self._policy_hash = str(policy["policy_hash"])
 
     def _stable(self) -> None:
         if any(hash_bytes(Path(p).read_bytes()) != h for p, h in self._pins.items()):
@@ -61,18 +66,20 @@ class RecurrentSuccessEpisodeFactory:
     @property
     def policy_hash(self) -> str:
         self._stable()
-        return str(self._policy["policy_hash"])
+        self._policy_snapshot.verify()
+        return self._policy_hash
 
     def preview(self, model: dict[str, Any]) -> dict[str, Any]:
         self._stable()
         if hash_json(model) != self._canonical_model_hash:
             raise ValueError("complete canonical sequence model changed")
-        result: dict[str, Any] = copy.deepcopy(self._policy)
+        result: dict[str, Any] = self._policy_snapshot.restore()
         return result
 
     def contract(self) -> dict[str, Any]:
         self._stable()
-        result = compilation_contract(self._policy)
+        self._policy_snapshot.verify()
+        result: dict[str, Any] = self._contract_snapshot.restore()
         if (
             result["source_pins"] != self._pins
             or result["policy_hash"] != self._prototype._policy_hash
@@ -83,6 +90,7 @@ class RecurrentSuccessEpisodeFactory:
 
     def new_episode(self) -> CompiledRecurrentSuccessMotor:
         self._stable()
+        self._policy_snapshot.verify()
         result = copy.copy(self._prototype)
         behavior = copy.copy(self._prototype._behavior)
         behavior._layers = list(self._prototype._behavior._layers)

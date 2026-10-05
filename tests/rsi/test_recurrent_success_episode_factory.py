@@ -67,6 +67,17 @@ def test_changed_factory_source_rejected(imitation_parent, monkeypatch):  # noqa
             action()
 
 
+def test_snapshot_owned_contract_and_corruption(imitation_parent):  # noqa: F811
+    factory = RecurrentSuccessEpisodeFactory(make_model(imitation_parent))
+    contract = factory.contract()
+    contract["source_pins"].clear()
+    assert factory.contract()["source_pins"]
+    object.__setattr__(factory._policy_snapshot, "_data", b"{}")
+    for action in (factory.contract, factory.new_episode, lambda: factory.policy_hash):
+        with pytest.raises(ValueError, match="snapshot changed"):
+            action()
+
+
 @pytest.mark.parametrize(
     "options,foreign,other",
     [
