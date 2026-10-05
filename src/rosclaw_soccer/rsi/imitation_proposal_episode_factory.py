@@ -6,7 +6,8 @@ from typing import Any
 
 import rosclaw.growth.bounded_residual_imitation as learner
 
-from rosclaw_soccer.rsi.imitation_proposal_motor import CompiledImitationProposalMotor, make_preview
+from rosclaw_soccer.rsi.imitation_proposal_motor import CompiledImitationProposalMotor
+from rosclaw_soccer.rsi.imitation_proposal_snapshot_compilation import compile_imitation_snapshot
 from rosclaw_soccer.rsi.step_motor_phase_context import ContactPhaseMemory
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
@@ -48,9 +49,8 @@ def validate_compilation_contract(value: Any, policy: dict[str, Any]) -> None:
 
 class ImitationProposalEpisodeFactory:
     def __init__(self, model: dict[str, Any]) -> None:
-        self._policy = make_preview(copy.deepcopy(model))
+        self._policy, self._prototype = compile_imitation_snapshot(model)
         self._canonical_model_hash = hash_json(self._policy["step_motor_proof"]["model"])
-        self._prototype = CompiledImitationProposalMotor(self._policy)
         paths = list(Path(__file__).parent.glob("*.py"))
         paths += list(Path(learner.__file__).parent.glob("*.py"))
         paths += [Path(__file__).parents[1] / "sim/contracts.py"]

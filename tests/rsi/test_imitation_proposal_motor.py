@@ -15,6 +15,7 @@ from rosclaw_soccer.rsi.imitation_proposal_motor import (
     make_preview,
     validate_model,
 )
+from rosclaw_soccer.rsi.imitation_proposal_snapshot_compilation import compile_imitation_snapshot
 from rosclaw_soccer.rsi.proposal_decoder_selection import select_proposal_decoder
 from rosclaw_soccer.rsi.proposal_memory_motor import initial_model
 from rosclaw_soccer.rsi.proposal_memory_motor import make_preview as parent_preview
@@ -43,15 +44,23 @@ def test_initial_copy_exact_and_histories_independent(imitation_parent):
         parent_preview(imitation_parent), implementation="bounded_snapshot"
     )
     a, b = [CompiledImitationProposalMotor(make_preview(value)) for _ in range(2)]
+    snapshot_policy, snapshot = compile_imitation_snapshot(value)
+    assert snapshot_policy == make_preview(value)
     for query in np.random.default_rng(674).normal(size=(5, 134)):
         for phase in range(3):
             np.testing.assert_array_equal(a.raw_mean(query, phase), original.raw_mean(query, phase))
+            np.testing.assert_array_equal(snapshot.raw_mean(query, phase), a.raw_mean(query, phase))
+        np.testing.assert_array_equal(snapshot.features(query), a.features(query))
     assert a._memory is not b._memory
     assert a._parent._memory is not b._parent._memory
     assert a._parent._output_memory.to_dict() == original._parent._output_memory.to_dict()
     assert value == before
+    assert snapshot._parent._output_memory.to_dict() == a._parent._output_memory.to_dict()
+    value["residual_layers"][-1]["bias"][0] += 1
+    assert snapshot_policy["step_motor_proof"]["model"] == before
+    assert snapshot._layers[-1][1][0] == before["residual_layers"][-1]["bias"][0]
     assert (
-        make_preview(value)["step_motor_proof"]["qualification"]
+        snapshot_policy["step_motor_proof"]["qualification"]
         == "UNQUALIFIED_SIM_SUPERVISED_IMITATION_NOT_PPO"
     )
 
@@ -79,6 +88,25 @@ def test_unreceipted_change_rejected(imitation_parent):
     layers[-1]["bias"][0] += 0.01
     with pytest.raises(ValueError, match="unreceipted"):
         make_model(imitation_parent, residual_layers=layers)
+
+
+def test_snapshot_rejects_resealed_parent_before_numeric_allocation(imitation_parent, monkeypatch):
+    from rosclaw_soccer.rsi import imitation_proposal_snapshot_compilation as compiler
+
+    value = make_model(imitation_parent)
+    value["frozen_parent"]["runtime_execution_authorized"] = True
+    value["parent_model_hash"] = reseal(value["frozen_parent"])["model_hash"]
+    reseal(value)
+    allocations = []
+
+    def forbidden(values):
+        allocations.append(values)
+        raise AssertionError("invalid ancestor reached numeric allocation")
+
+    monkeypatch.setattr(compiler, "_layers", forbidden)
+    with pytest.raises(ValueError):
+        compiler.compile_imitation_snapshot(value)
+    assert allocations == []
 
 
 def test_private_factory_preserves_law_and_independent_contact_state(imitation_parent):
@@ -162,8 +190,10 @@ def test_actual_supervised_parameters_bounded_and_receipt_bound(imitation_parent
     )
     trained_model = make_model(imitation_parent, residual_layers=fitted, learning_receipt=result)
     actor = CompiledImitationProposalMotor(make_preview(trained_model))
+    _, snapshot = compile_imitation_snapshot(trained_model)
     for query in x[:8]:
         for p in range(3):
+            np.testing.assert_array_equal(snapshot.raw_mean(query, p), actor.raw_mean(query, p))
             assert (
                 np.max(np.abs(actor.raw_mean(query, p) - actor._parent.raw_mean(query, p))) <= 0.2
             )
