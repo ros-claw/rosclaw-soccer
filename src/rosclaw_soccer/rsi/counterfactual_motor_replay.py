@@ -209,6 +209,8 @@ class CounterfactualMotorReplay:
                 if body in self._contacts:
                     value = np.zeros(6)
                     mujoco.mj_contactForce(self._model, data, i, value)
+                    if not np.isfinite(value).all():
+                        raise ValueError("nonfinite physical contact force")
                     j = self._contacts.index(body)
                     force[j] = max(force[j], float(np.linalg.norm(value[:3])))
         q, v = self._canonical(data)
@@ -233,6 +235,13 @@ class CounterfactualMotorReplay:
             "ball_position_after_step_m",
         ):
             self._equal(result[k], self._trace[k][self._frame])
+        if self._frame < 299:
+            self._equal(
+                result["canonical_qpos_after"], self._trace["canonical_qpos"][self._frame + 1]
+            )
+            self._equal(
+                result["canonical_qvel_after"], self._trace["canonical_qvel"][self._frame + 1]
+            )
 
     def advance_recorded(self) -> None:
         if self._frame >= 300:

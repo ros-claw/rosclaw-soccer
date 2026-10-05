@@ -93,3 +93,20 @@ def test_existing_foundation_limit_violation_not_forced_in_range():
     result = intervention_actions(actual, previous, nominal, limits)
     assert result[:, 0].max() == 0
     assert result[:, 0].min() == -0.003
+
+
+def test_randomized_reachable_image_matches_original_ordered_shield():
+    rng = np.random.default_rng(721)
+    for _ in range(200):
+        previous = rng.uniform(-0.16, 0.16, 12)
+        nominal = rng.uniform(-1.2, 1.2, 12)
+        limits = np.tile([-1.0, 1.0], (12, 1))
+        low = np.maximum(np.minimum(0.0, limits[:, 0] - nominal), -0.16)
+        high = np.minimum(np.maximum(0.0, limits[:, 1] - nominal), 0.16)
+        desired = 0.16 * np.tanh(rng.normal(size=12))
+        actual = np.clip(previous + np.clip(desired - previous, -0.012, 0.012), low, high)
+        result = intervention_actions(actual, previous, nominal, limits)
+        np.testing.assert_array_equal(result[0], actual)
+        assert np.all(result >= np.clip(previous - 0.012, low, high))
+        assert np.all(result <= np.clip(previous + 0.012, low, high))
+        assert np.max(np.abs(result)) <= 0.16
