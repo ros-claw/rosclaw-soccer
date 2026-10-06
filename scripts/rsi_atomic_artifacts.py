@@ -132,11 +132,16 @@ def write_shared_sampling_model(path: Path, value: dict[str, Any]) -> None:
         not in (
             "soccer.rsi.smooth_memory_sampling.v1",
             "soccer.rsi.output_memory_step_sampling.v1",
+            "soccer.rsi.recurrent_motor_sampling.v1",
         )
         or value.get("model_hash")
         != hash_json({k: v for k, v in value.items() if k != "model_hash"})
     ):
         raise ValueError("sealed local memory sampling model required")
+    if value.get("schema") == "soccer.rsi.recurrent_motor_sampling.v1":
+        from rosclaw_soccer.rsi.recurrent_sampling_motor import make_preview
+
+        make_preview(value)
     envelope, payload = detach_payload(value, ("mean_model",))
     store = path.parent.parent / ".shared-models"
     if store.is_symlink():

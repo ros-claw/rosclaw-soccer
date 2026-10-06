@@ -14,6 +14,10 @@ from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 def load_sampling_model(path: Path) -> dict[str, Any]:
     value = load_json_artifact(path)
     if value.get("schema") != "rosclaw.growth.shared_json_payload.v1":
+        if value.get("schema") == "soccer.rsi.recurrent_motor_sampling.v1":
+            from rosclaw_soccer.rsi.recurrent_sampling_motor import make_preview
+
+            make_preview(value)
         return value
     from rosclaw.growth.shared_proof_payload import restore_payload
 
@@ -40,6 +44,11 @@ def load_sampling_model(path: Path) -> dict[str, Any]:
     if result.get("schema") not in (
         "soccer.rsi.smooth_memory_sampling.v1",
         "soccer.rsi.output_memory_step_sampling.v1",
+        "soccer.rsi.recurrent_motor_sampling.v1",
     ):
         raise ValueError("declared memory sampling view required")
+    if result.get("schema") == "soccer.rsi.recurrent_motor_sampling.v1":
+        from rosclaw_soccer.rsi.recurrent_sampling_motor import make_preview
+
+        make_preview(result)
     return result
