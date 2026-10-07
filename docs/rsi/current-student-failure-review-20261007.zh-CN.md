@@ -652,3 +652,53 @@ v806 第二条 fresh native 已输出报告，完整审计仍在进行；它与
 完整数组的严格对照和全部源/input pin。仅首条通过不宣布整体
 资格通过。v808 读取对照也仍运行；这轮没有新增 actor/critic
 更新或足球能力提升证据，团队/宣传目标仍未完成。
+
+## 20:48 两项工程实验完成，新读取路径原生资格继续运行
+
+v806 已完整结束，结果 seal：
+`sha256:7c8f089109ba7a7f28c2ba024f3df7876bd7df5be56d84cb1fdbba088254fefc`。
+全部 result/commitment/allocation/三条 row、独立 review、Foundation
+绑定和最终 867 输入 pin，以及冻结源码 HEAD/clean，再核验通过。
+三条 native trace 的全部 28 个数组均与原控制严格同 dtype、shape、
+值；两个新增回合共用一个 factory，独立回合状态隔离通过。
+
+计数严格区分：**新增 native 2、采用旧 native 1**，不是三次新增。
+本实验原完整 decoder 独立重放共 9,000 子步、Foundation 重算
+900 次、GRU 900 帧、810 次抽样/密度重建；这包含此前已记录的
+部分审计，不再额外重复计数。只有一个已消费控制场景，同一
+seed；三次仍 dirty/非 HQ。该资格证明 Source v802 的工程等价，
+**没有 actor/critic 拟合、Fresh 开启、晋升或球技提升**，也不能
+直接替代后续 Source v807 新 reader 路径的原生验证。
+
+v808 已完整结束，结果 seal：
+`sha256:cd1362e8957f14d357fed6041c2ec7dd5799bb655e4f717153259ab832607dd1`。
+全部 result/commitment/两条 row、266 输入 pin 和冻结源码再次
+验证一致。实际 flat/shared 两个完整输入，原读取分别 149.204、
+159.492 秒（合计 308.696 秒），可选读取分别 33.337、44.994 秒
+（合计 78.331 秒）。冷完整 factory 分配 642.419 秒；**冷分配加
+两次可选读取共 720.750 秒，反而比两次原读取更慢**。热路径
+合计比值 3.941 不能当作整个训练流水线速度提升；仅一个固定
+顺序周期，没有随机多次性能研究。完整文档/mean 严格相同，
+没有新增物理执行、Foundation 或学习更新。
+
+基于上述原资格和完整读取对照，v809 已用冻结 Source v807
+`18ae79afd9eebdf01f1f5badbbd2bd3fec65bc66`、Core v797
+`6e1cdb8528b8f67a3b6bfd1b6e3f30751f20a87a` 启动。独立
+SID/PPID1 进程 584848 仍实际运行；预声明 seal：
+`sha256:3922bfd72966c5f5877a3d1c0496350190ddffb26511dcf69ef39ef237ce01db`。
+全 1,597 输入 pin 和声明源码 HEAD/clean 已独立只读复核。
+runner 自身、原 helper、两项前置结果和完整依赖均在 pin 范围。
+证据目录：
+`/home/dell/rosclaw_evidence/rsi-recurrent-private-reader-native-v809`。
+
+v809 预声明两个新 native、原完整 decoder 独立重放 6,000 子步、
+Foundation 重算 600 次，要求所有原生数组匹配原参考，并验证
+同一 factory 两个独立回合。不改原独立审计器，不计尚未完成的
+执行，不提前宣布资格。固定课程/学生/World/采样法不变，仍
+SIM_ONLY；没有新训练、Fresh、晋升或硬件权限。
+
+主 v792–v795 链持续运行，完整封存学习 row 仍 **58/160**，
+失败样本保留。没有热替换当前 worker、读取路径、课程或模型；
+完整 manifest 到齐才开始原四卡拟合，之后按原物理门槛考试。
+下一轮实际收益必须体现为新学生运动/足球质量提升，不是只做
+缓存、工程等价或挑选演示。球队自主连续比赛目标尚未完成。
