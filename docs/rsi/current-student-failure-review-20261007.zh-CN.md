@@ -621,3 +621,34 @@ v806 新 repeat-1 原生回合已产生报告，日志原报告 seal 与原控�
 不要仅凭报告日志计为审计完成，当前完整资格仍未通过。主采集
 仍由原两个 worker 执行，未更换读取路径或 worker 数量；完整
 学习记录仍 56/160，候选、奖励、课程及 Fresh 边界保持不变。
+
+## 20:26 第 56、57 条核验完成，新 native 首条审计通过
+
+两条新增完整 row 的独立只读复核检查原 job、完整 report seal、
+World/MJB、trace、执行 commitment、独立 review、Foundation、
+学习文件 hash 和六个有限 float64 学习数组/原 MC 标签，均一致：
+
+- 56：`sha256:6eafe2e68ba78a0e2e917ae05b66910fd0144559893231cb72ff1991cb2c3388`，
+  HQ/clean，原 MC 13.400160562663688。
+- 57：`sha256:009c6084eb47af71466cbb1b2f3ac538565b757472c309457d710a0b6386c0ba`，
+  dirty/非 HQ，原 MC -10。
+
+完整学习记录 **58/160，HQ 8、clean 38**；第 14 场景只有两个
+抽样完成，不能当作第 15 个完整四抽样场景。两条来自同一个
+冻结学生，不是新拟合的成绩；失败保留。原新增采集已经独立
+重放 6,000 子步并重算 Foundation 600 次，本次只读复核不重计。
+全部 160 完成前，不用部分数据提前开展本轮 actor/critic 拟合。
+
+v806 新 repeat-1 的完整 row seal
+`sha256:c5f3c84490f32673d39c546e098551fd3b1b3ec96f5d40004961d456a3ea64be`，
+绑定到原独立 review、Foundation、执行 report/trace/World、
+源 commitment 及固定 job，再核验通过。原完整 decoder 审计
+用时 422.501 秒，实际新增 native 1、原独立重放 3,000 子步、
+Foundation 重算 300 次、300 hidden frames 与 270 draw/density。
+此前采用旧 native 的 row-0 另计，不能把旧执行记作新执行。
+
+v806 第二条 fresh native 已输出报告，完整审计仍在进行；它与
+第一条 fresh 共用一个 factory，最终仍必须检查回合隔离、两个
+完整数组的严格对照和全部源/input pin。仅首条通过不宣布整体
+资格通过。v808 读取对照也仍运行；这轮没有新增 actor/critic
+更新或足球能力提升证据，团队/宣传目标仍未完成。
