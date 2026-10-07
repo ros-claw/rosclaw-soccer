@@ -29,7 +29,12 @@ BODY_FIELDS = {
 
 
 def extract_sequence(
-    view: dict[str, Any], trace: Any, *, motor_limits: Any, terminal_mc_return: float
+    view: dict[str, Any],
+    trace: Any,
+    *,
+    motor_limits: Any,
+    terminal_mc_return: float,
+    episode_factory: Any = None,
 ) -> dict[str, np.ndarray[Any, Any]]:
     """Reconstruct one full actual student's sampled sequence before learning.
 
@@ -37,7 +42,21 @@ def extract_sequence(
     and Foundation reviews. This function verifies numeric execution, not those
     external identities. Returns are labels only; future rewards never enter
     context, baseline, gates or state. No failed sequence is filtered out.
+
+    An explicitly supplied private factory avoids repeated numeric compilation,
+    not the full view identity or the 300-frame reconstruction. It provides no
+    physical provenance: the independent dynamics auditor stays on the original
+    decoder. Existing callers retain the original full compilation path.
     """
+    if episode_factory is not None:
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+
+        if type(episode_factory) is not RecurrentSamplingEpisodeFactory:
+            raise ValueError(
+                "only the exact private recurrent sampling episode factory is accepted"
+            )
     if type(trace) is not dict:
         raise ValueError("complete current-student numeric trace required")
     shapes = {
@@ -72,8 +91,12 @@ def extract_sequence(
     ):
         raise ValueError("explicit finite actual motor limits and frozen MC label required")
     limits = np.array(limits, dtype=np.float64, copy=True)
-    policy = make_preview(view)
-    decoder = CompiledRecurrentSamplingMotor(policy)
+    policy = make_preview(view) if episode_factory is None else episode_factory.preview(view)
+    decoder = (
+        CompiledRecurrentSamplingMotor(policy)
+        if episode_factory is None
+        else episode_factory.bind(policy)
+    )
     phases = phase_sequence(owned["force_n"][:, 0])
     context, baseline, gates = [], [], []
     previous = np.zeros(12)

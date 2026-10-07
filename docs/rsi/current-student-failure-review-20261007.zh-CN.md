@@ -430,3 +430,26 @@ cached envelope、body-response 等入口。原默认执行路径不变。
 计划 2 次执行、6,000 子步审计、600 次 Foundation 计为实际完成。
 采集 v792 的两个 worker 与 v793–v795 等待链正常，源码、课程、
 候选及门控保持不变。
+
+## 19:36 学习数据提取增加显式工厂路径，默认参考路径不变
+
+新增 `extract_sequence(..., episode_factory=...)`，仅接受准确类型
+的私有 recurrent sampling 工厂；普通调用仍使用原完整 preview
+和原完整 decoder。完整输入数组、类型、shape、有限性、抽样
+边界、joint limits 及 MC 标签检查保持不变；每次仍对完整原
+view 身份核验，并完整复算 300 帧动作、隐藏状态、draw/density。
+返回的 context、baseline、gates、latent actions、behavior
+probabilities、returns 六个学习数组全部独立拥有，不筛掉失败。
+
+这是减少已审计数据提取重复分配的数值入口，不是审计入口，
+不提供物理来源证明。独立动力学审计保持原 decoder；没有接入
+任何正在运行的采集、拟合、资格或考试作业。
+
+合成回归 **8 passed / 300.21 秒**，含原四项测试和新四项检查。
+新检查对照原提取器全部六个 typed 学习数组，并覆盖三个接触
+阶段、连续不同 MC 标签不得影响 actor 输入、新回合不污染原型、
+返回值/输入 ownership，以及实际 action、hidden、draw/density
+或完整 critic 变化的拒绝；外部对象/callback 在解析轨迹前拒绝。
+局部 lint、格式和 mypy 通过。合成检查不能证明实际 G1 数据或
+新物理资格，下一步固定复算已有第 0、50、52 组学习数据，对照
+原已经落盘、完整审计的数组。v803 物理资格仍在运行，未通过。
