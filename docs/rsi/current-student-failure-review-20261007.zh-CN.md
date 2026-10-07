@@ -886,3 +886,37 @@ worker。此时新封存学习 row 仍 **0/160**，不能把初始化或控制
 磁盘约 138 GiB 可用，联合预算与原 100 GiB 系统保留量保持。
 后续重点是让完整采集真实推进到学习和原物理裁决，不再追加
 工程资格分支；M0 和自主连续球队宣传目标仍未完成。
+
+## 22:33 首条四 worker 新流学习轨迹完整核验，失败照常保留
+
+原批次新增 64、65 两条，原 v792 完整只读复核均通过：
+
+- 64：`sha256:7a24bc07dd56e7af4e07abb8ddfeb9b59af67245fb436a3ae87063e7000e4153`，
+  dirty/非 HQ，MC -10，最低骨盆约 0.691035 m。
+- 65：`sha256:47f63b826a0f0d4b2f5fc6b55fbb22d71223e2ca16720705c567d60396569d67`，
+  dirty/非 HQ，MC -10，最低骨盆约 0.682548 m。
+
+原批次累计 **66/160、HQ 12、clean 43**；第 16 场景仅前两抽样
+完成。两个失败没有删除或改标签，当前冻结学生并未新拟合。
+
+v810 首条新学习轨迹 row-0 已完成完整原生执行、原独立重放和
+Foundation 重算，row seal：
+`sha256:f5ed8350f2c76fe2d5c4cb2f0784dc778cdf521ce0e0a64875213525e6ba6354`。
+context 0/sample 0，sampling seed **482610335**，仍绑定原固定
+学生。dirty/非 HQ，MC **-10**，最低骨盆约 **0.690040 m**。
+不因第一条失败重选 seed、奖励或候选，也不隐去这个结果。
+
+独立只读复核涵盖完整 job/report/执行 commitment、World/trace、
+原独立 review、Foundation 和学习文件 hash；六个数组均有限
+float64：context (270,135)、baseline/latent_actions (270,12)、
+gates/behavior_log_probabilities/returns (270,)。原 MC 标签、
+全部 source/input pin 和冻结 HEAD/clean 也一致。此次复核未
+新增物理执行，不重复计作另外 3,000 子步或 300 Foundation。
+
+v810 当前 **1/160、HQ 0、clean 0**；另有前置控制 1 条，不能
+混入学习数。两个已完成回合累计独立重放 6,000 子步、Foundation
+600 次，包含已记录的控制，不能再重复相加。新四 worker 已
+全部完成首次工厂分配并实际运行，22:32 各占用约一个 CPU；
+并不是四个 GPU 正在拟合。原两 worker 和两套完整数据学习/
+资格/考试等待器均继续运行；尚未完成任何本轮 actor/critic
+更新、完整物理考试或球技提升证明。
