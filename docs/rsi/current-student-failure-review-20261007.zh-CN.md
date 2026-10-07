@@ -602,3 +602,22 @@ view 与完整 mean 的 canonical equality，并实际分别测量原
 reader/可选 reader 时间。源码冻结、输入和 runner pin 后再运行。
 不接入 v792–v795，也不改变 v806 的冻结源码。v806 原分配已经
 落盘，仍实际运行新 native 回合；当前资格和全训练目标未完成。
+
+## 20:14 v808 实际读取对照启动，v806 新原生回合已产生报告
+
+读取路径代码已推送 `18ae79afd9eebdf01f1f5badbbd2bd3fec65bc66`，
+冻结到 v807 worktree。v808 expanded runner 的 F821/F822 和
+冻结 namespace 导入预检均通过；独立 SID/PPID1 进程 540802
+实际运行。预声明 seal
+`sha256:7e056802233ff23e6999aff06897cc1bae29ee66d26eb483cea7df1ef85348c5`，
+全部 266 输入 pin 再核验一致。固定 cold factory→每个输入的
+reference→private 顺序，不是随机性能研究。证据目录：
+`/home/dell/rosclaw_evidence/rsi-recurrent-factory-view-reader-benchmark-v808`。
+当前尚在首次完整分配，没有完成结果；不能提前计速度或资格。
+
+v806 新 repeat-1 原生回合已产生报告，日志原报告 seal 与原控制
+相同，仍待 reader/原独立审计/Foundation 的完整绑定核验。这
+是原冻结学生/同一原控制的执行，不是新拟合学生或球技提升。
+不要仅凭报告日志计为审计完成，当前完整资格仍未通过。主采集
+仍由原两个 worker 执行，未更换读取路径或 worker 数量；完整
+学习记录仍 56/160，候选、奖励、课程及 Fresh 边界保持不变。
