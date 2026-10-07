@@ -11,13 +11,35 @@ from typing import Any, cast
 from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
 
 
-def load_sampling_model(path: Path) -> dict[str, Any]:
-    value = load_json_artifact(path)
-    if value.get("schema") != "rosclaw.growth.shared_json_payload.v1":
-        if value.get("schema") == "soccer.rsi.recurrent_motor_sampling.v1":
+def load_sampling_model(path: Path, *, recurrent_sampling_factory: Any = None) -> dict[str, Any]:
+    """Restore the full document, with explicit fixed-mean validation only.
+
+    Ordinary callers retain original reference validation. A private factory
+    checks the same complete view through its already validated canonical mean;
+    it never skips payload restoration or accepts an external validator callback.
+    This function grants no physical qualification or execution authority.
+    """
+    if recurrent_sampling_factory is not None:
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+
+        if type(recurrent_sampling_factory) is not RecurrentSamplingEpisodeFactory:
+            raise ValueError("only the exact private recurrent sampling factory is accepted")
+
+    def validate_recurrent(value: dict[str, Any]) -> None:
+        if recurrent_sampling_factory is not None:
+            if value.get("schema") != "soccer.rsi.recurrent_motor_sampling.v1":
+                raise ValueError("fixed recurrent factory cannot validate another sampling family")
+            recurrent_sampling_factory.preview(value)
+        elif value.get("schema") == "soccer.rsi.recurrent_motor_sampling.v1":
             from rosclaw_soccer.rsi.recurrent_sampling_motor import make_preview
 
             make_preview(value)
+
+    value = load_json_artifact(path)
+    if value.get("schema") != "rosclaw.growth.shared_json_payload.v1":
+        validate_recurrent(value)
         return value
     from rosclaw.growth.shared_proof_payload import restore_payload
 
@@ -47,8 +69,5 @@ def load_sampling_model(path: Path) -> dict[str, Any]:
         "soccer.rsi.recurrent_motor_sampling.v1",
     ):
         raise ValueError("declared memory sampling view required")
-    if result.get("schema") == "soccer.rsi.recurrent_motor_sampling.v1":
-        from rosclaw_soccer.rsi.recurrent_sampling_motor import make_preview
-
-        make_preview(result)
+    validate_recurrent(result)
     return result

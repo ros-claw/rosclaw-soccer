@@ -353,7 +353,17 @@ def main(
 
         step_model = sampling_factory.restore_envelope(load_json_artifact(args.step_model))
     else:
-        step_model = load_sampling_model(args.step_model) if args.step_model else None
+        step_model = (
+            (
+                load_sampling_model(args.step_model)
+                if recurrent_sampling_factory is None
+                else load_sampling_model(
+                    args.step_model, recurrent_sampling_factory=recurrent_sampling_factory
+                )
+            )
+            if args.step_model
+            else None
+        )
     if imitation_factory is not None and (
         step_model is None
         or step_model.get("schema") != "soccer.rsi.verified_success_imitation_motor.v1"

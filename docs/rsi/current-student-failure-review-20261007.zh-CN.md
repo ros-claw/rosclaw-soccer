@@ -571,3 +571,34 @@ native 执行为 0，不重计旧执行。审计写在 v806 新目录，v803
 接下来原完整 factory 重新分配，再两个新 native 回合及原独立
 审计，证明同一工厂连续回合的状态隔离。完整资格尚未完成；
 不提前计余下执行/审计，也不接入当前 160 轨迹采集或更新门控。
+
+## 20:10 显式工厂路径完整读取验证，默认路径保持原参考行为
+
+发现显式工厂 native 路径仍在 `load_sampling_model` 内调用一次
+原完整 preview，随后再经工厂做完整 preview/bind。新增明确
+指定 recurrent_sampling_factory 的可选读取路径，仅准确类型
+的私有工厂可选；没有外部 validator callback。普通调用和
+native 默认调用仍执行原参考验证，不自动选择工厂。
+
+可选路径仍完整读取普通 JSON/gzip，或用原 restore_payload
+恢复共享的完整 mean；包括 actor、critic、历史 parent，没有
+省略字段或改噪声。然后通过工厂已经原完整验证、源码固定的
+canonical mean 对整个 view 验证；仍拒绝完整 mean、采样规则、
+权限布尔类型或模型 family 的变化。共享 payload 的路径、hash、
+文件存在性及 non-symlink 约束不变。native 随后还做原完整
+工厂 preview/bind，独立审计仍不选这个读取捷径。
+
+传输和入口组合回归 **28 passed / 243.90 秒**。新五项检查覆盖
+普通 JSON/gzip/shared 与原完整 reader 的 canonical equality、
+完整 critic 保留/返回 ownership、重封 noise/seed/authority/family
+和 critic 变化拒绝、共享 payload 缺失/符号链接及外部 callback
+在 I/O 前拒绝；另外运行原 shared/recurrent shared/native admission
+回归。局部 lint、格式及两个实现文件 mypy 通过。这是软件检查，
+**不证明运行速度提升、物理资格或更好球技**。
+
+下一步 v808 固定两个实际大模型输入（原 flat sampling view 与
+已完成第 50 组 shared view），预声明固定测量顺序，验证完整
+view 与完整 mean 的 canonical equality，并实际分别测量原
+reader/可选 reader 时间。源码冻结、输入和 runner pin 后再运行。
+不接入 v792–v795，也不改变 v806 的冻结源码。v806 原分配已经
+落盘，仍实际运行新 native 回合；当前资格和全训练目标未完成。
