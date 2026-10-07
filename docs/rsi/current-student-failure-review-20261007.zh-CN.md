@@ -412,3 +412,21 @@ cached envelope、body-response 等入口。原默认执行路径不变。
 样本。实际完整学习记录 **54/160，HQ 7、clean 37**。本次只读
 核验不重计原物理重放或 Foundation 次数；全部 160 条完成之前
 不提前开始本轮 actor/critic 更新。目标仍未完成。
+
+## 19:27 v803 新的物理资格作业已实际启动
+
+入口及测试推送到 main `8d8f2e680fbe88c0e7ce28bd538e496be7fa130c`，
+冻结到独立 worktree v802。v803 runner 的 undefined-name 检查和
+冻结 namespace 导入预检通过，随后实际独立 SID/PPID1 进程
+472371 启动。原 result/commitment/qualification 链及两条原
+物理审计/Foundation 绑定在执行前检查，不能只凭日志采用。
+
+实际预声明已落盘，seal
+`sha256:d85abac900565fd3cca98830e020f9b06a6b52eb74a9e6748c05bd545b9977c2`；
+只读核验全部 **853 个输入文件 pin** 与 seal 通过。证据位于
+`/home/dell/rosclaw_evidence/rsi-recurrent-sampling-factory-native-v803`，
+日志为同父目录 `rsi_recurrent_sampling_factory_native_v803.log`。
+当前仍在原完整数值分配阶段，尚无通过结果；不能把预声明中的
+计划 2 次执行、6,000 子步审计、600 次 Foundation 计为实际完成。
+采集 v792 的两个 worker 与 v793–v795 等待链正常，源码、课程、
+候选及门控保持不变。
