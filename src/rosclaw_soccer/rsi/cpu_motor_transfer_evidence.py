@@ -120,6 +120,37 @@ def audit_cpu_transfer(
         raise ValueError("CPU numerical compilation differs from commitment")
     if ("recurrent_success_factory" in report) != ("recurrent_success_factory" in commitment):
         raise ValueError("sequence factory presence differs from commitment")
+    if ("recurrent_sampling_factory" in report) != ("recurrent_sampling_factory" in commitment):
+        raise ValueError("recurrent sampling factory presence differs from commitment")
+    if "recurrent_sampling_factory" in commitment:
+        if hash_json(report["recurrent_sampling_factory"]) != hash_json(
+            commitment["recurrent_sampling_factory"]
+        ):
+            raise ValueError("recurrent sampling declaration differs from commitment")
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            validate_compilation_contract as validate_sampling_episode_contract,
+        )
+
+        if (
+            sampling_decoder_factory is not None
+            or mean_decoder_factory is not None
+            or any(
+                key in commitment
+                for key in (
+                    "numeric_compilation",
+                    "numeric_sampling_compilation",
+                    "body_response_guidance",
+                    "fixed_proposal_factory",
+                    "extended_proposal_factory",
+                    "imitation_proposal_factory",
+                    "recurrent_success_factory",
+                )
+            )
+        ):
+            raise ValueError("recurrent sampling factory must use independent reference review")
+        validate_sampling_episode_contract(
+            commitment["recurrent_sampling_factory"], report.get("executed_motor_policy", {})
+        )
     if "recurrent_success_factory" in commitment:
         from rosclaw_soccer.rsi.recurrent_success_episode_factory import (
             validate_compilation_contract as validate_recurrent_factory,

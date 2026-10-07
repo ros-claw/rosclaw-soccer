@@ -6,15 +6,70 @@ fresh. This factory is NOT selected by any existing collector or native CLI.
 """
 
 import copy
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import rosclaw.growth.canonical_json_snapshot as snapshot_module
 from rosclaw.growth.correlated_exploration import stationary_noise
 
 from rosclaw_soccer.rsi.owned_recurrent_sampling_preview import OwnedRecurrentSamplingPreview
 from rosclaw_soccer.rsi.recurrent_sampling_motor import CompiledRecurrentSamplingMotor
 from rosclaw_soccer.rsi.step_motor_phase_context import ContactPhaseMemory
-from rosclaw_soccer.sim.contracts import hash_json
+from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+
+
+def _contract(mean_hash: str, pins: dict[str, str]) -> dict[str, Any]:
+    return dict(
+        schema="soccer.rsi.private_recurrent_sampling_episode_factory.v1",
+        complete_canonical_mean_hash=mean_hash,
+        source_pins=dict(pins),
+        complete_original_model_and_decoder_validation_at_allocation=True,
+        complete_original_preview_verification_at_each_bind=True,
+        independent_contact_history=True,
+        independent_recurrent_hidden_state=True,
+        independent_stationary_ar_draws=True,
+        actor_or_critic_weights_changed=False,
+        physical_action_bounds_changed=False,
+        physics_parity_requires_external_evidence=True,
+        native_transport_qualification_performed=False,
+        activation_ceiling="SIM_ONLY",
+        runtime_execution_authorized=False,
+        promotion_authorized=False,
+        hardware_authorized=False,
+    )
+
+
+def validate_compilation_contract(value: Any, policy: dict[str, Any]) -> None:
+    """Fixed source/identity declaration only; never physical or policy approval.
+
+    The independent auditor must still use the original complete decoder and
+    reconstruct every frame and the actual World/actuator-control dynamics.
+    Never follow caller-provided paths when checking this declaration.
+    """
+    if (
+        type(value) is not dict
+        or type(policy) is not dict
+        or type(policy.get("step_motor_proof")) is not dict
+        or type(policy["step_motor_proof"].get("model")) is not dict
+    ):
+        raise ValueError("complete recurrent sampling compilation identity required")
+    view = policy["step_motor_proof"]["model"]
+    if (
+        view.get("schema") != "soccer.rsi.recurrent_motor_sampling.v1"
+        or type(view.get("mean_model")) is not dict
+        or "recurrent_sampling_motor_proof" not in policy
+        or policy.get("policy_hash")
+        != hash_json({k: v for k, v in policy.items() if k != "policy_hash"})
+    ):
+        raise ValueError("complete original recurrent sampling preview identity required")
+    paths = list(Path(__file__).parent.glob("*.py"))
+    paths += list(Path(snapshot_module.__file__).parent.glob("*.py"))
+    paths += [Path(__file__).parents[1] / "sim/contracts.py"]
+    pins = {str(p): hash_bytes(p.read_bytes()) for p in paths}
+    expected = _contract(hash_json(view["mean_model"]), pins)
+    if hash_json(value) != hash_json(expected):
+        raise ValueError("complete fixed mean/source/non-authorizing compilation contract required")
 
 
 class RecurrentSamplingEpisodeFactory:
@@ -82,21 +137,4 @@ class RecurrentSamplingEpisodeFactory:
             or self._mean_hash != self._preview._mean_hash
         ):
             raise ValueError("fixed original recurrent prototype commitment changed")
-        return dict(
-            schema="soccer.rsi.private_recurrent_sampling_episode_factory.v1",
-            complete_canonical_mean_hash=self._mean_hash,
-            source_pins=dict(self._preview._pins),
-            complete_original_model_and_decoder_validation_at_allocation=True,
-            complete_original_preview_verification_at_each_bind=True,
-            independent_contact_history=True,
-            independent_recurrent_hidden_state=True,
-            independent_stationary_ar_draws=True,
-            actor_or_critic_weights_changed=False,
-            physical_action_bounds_changed=False,
-            physics_parity_requires_external_evidence=True,
-            native_transport_qualification_performed=False,
-            activation_ceiling="SIM_ONLY",
-            runtime_execution_authorized=False,
-            promotion_authorized=False,
-            hardware_authorized=False,
-        )
+        return _contract(self._mean_hash, self._preview._pins)

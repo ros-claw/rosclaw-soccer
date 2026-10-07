@@ -364,3 +364,51 @@ commitment、独立 review、Foundation、学习文件和六个 float64
 相同。它们是已有仿真轨迹，不是真机；不重做物理步骤、Foundation
 或拟合，也不构成新的 native 输运资格。**v801 结果尚未完成**。
 采集及等待链继续用原冻结源码，未接入工厂或修改考试。
+
+## 19:25 工厂实际轨迹复算完成，显式 native 入口与独立审计加固
+
+v801 已完成，结果 seal 为
+`sha256:970336902c4329bb2a66366036d7b9b1c4deca21729af75b2bdca89b93eb0fe9`。
+再次只读核验 commitment、result、两条 row 的 seal/绑定及全部
+343 个输入文件 pin，均一致。原完整 decoder 首次分配 626.734 秒；
+两次完整 preview/bind 为 65.516、66.088 秒，实际 300 帧扫描分别
+0.565、0.570 秒。两次已有 MuJoCo G1 轨迹共 600 帧动作、隐藏
+状态和 540 次抽样/条件概率，与原实际数组严格相同。
+
+这是同一原场景、同一原 seed 的重复控制，不是两个独立足球场景；
+**新增物理执行、Foundation 重算及 actor/critic 拟合均为 0**。
+不能宣布 native 资格、学习提升或宣传级效果。
+
+新增默认不选择的显式 Python native 入口，只接受准确类型的
+RecurrentSamplingEpisodeFactory、原 reference proposal 路径和
+完整 recurrent sampling 模型；拒绝混合工厂、外部 callback、
+cached envelope、body-response 等入口。原默认执行路径不变。
+工厂声明绑定完整 mean、固定本地源码及全部 non-authorizing
+布尔类型；不跟随调用方给出的源码路径。物理报告/commitment
+中声明的存在性和规范化哈希必须一致。
+
+复查测试复现了普通 Python 字典比较将 False 与 0 视为相等的
+边界，已补规范化哈希比较并验证先拒绝该类型漂移。独立审计
+不接收这个工厂，而继续分配原完整 CompiledRecurrentSamplingMotor
+并逐帧复算，再检查原 World/动力学，避免生产端和审计端共用
+同一数值捷径而掩盖错误。
+
+新增入口及工厂/接触历史回归 **16 passed / 219.24 秒**；审计
+拒绝路径 **21 passed / 0.42 秒**，合计 37 项。局部 lint、格式、
+3 个实现文件 mypy 通过；初次测试 namespace 配置不足导致导入
+失败，已用明确 main/Core PYTHONPATH 重跑，未当作成功。
+
+下一步 v803 固定原 v773 学生、原 seed/course/World，在新冻结
+源码上实际执行两回合，各自用原审计器重放 3,000 子步并独立
+重算 300 次 Foundation，要求所有 native 数组的 dtype、shape
+和数值均与原控制完全一致。预声明及失败收据保留；任何不一致
+停止，不改阈值、不替换正在运行的 v792–v795、不打开 Fresh。
+目前该物理资格尚未启动/通过，不能提前计数。
+
+采集新增 52、53 完整证据再核验通过，row seal 分别为
+`sha256:3010d9912b66825cd1f423b11bf5ab23c714d600e53a4ed47c17b590ec473d3d`、
+`sha256:bf19bb522fc1b7a32b30c35df034dfe0cce0bc47572d5a8fcabc22bf5a0f6ede`。
+两条均 dirty、非 HQ，原 MC 标签均 -10；保留失败，不筛选成功
+样本。实际完整学习记录 **54/160，HQ 7、clean 37**。本次只读
+核验不重计原物理重放或 Foundation 次数；全部 160 条完成之前
+不提前开始本轮 actor/critic 更新。目标仍未完成。
