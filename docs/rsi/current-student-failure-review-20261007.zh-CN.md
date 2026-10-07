@@ -1488,3 +1488,92 @@ head 为 `6e1cdb8528b8f67a3b6bfd1b6e3f30751f20a87a`；没有自行
 34,893/35,807/36,139/35,408 MiB。
 六采集 worker、两套完整训练/资格/原考试链继续存活；仍未
 部分拟合、开放 Fresh、晋升或宣称连续球队宣传目标完成。
+
+## 2026-10-08 02:20 新流 45%、原流一半；全量回归终态及失败定位
+
+新流 row 64–71 全部通过原检查器全绑定只读核验、六字段有限
+float64/原 MC 标签检查及最终全部 input/source HEAD pin 检查：
+
+| row | row seal（sha256） | HQ/clean | MC return | 最低骨盆 m |
+| --- | --- | --- | --- | --- |
+| 64 | c46ae99f52a3cceb6b36558e3341081942d30665cec287b5e0e243405ffafc34 | 否/否 | -10 | 0.6903865498937606 |
+| 65 | 728f6987277fce5ae07795bda520e87b103d62777d166c23cea4c497479802ae | 否/否 | -10 | 0.6844970222675332 |
+| 66 | 653a593360883d2b7734f701922e9efd7f20405a7d21a0c141751ca9d60c4ef8 | 否/否 | -11 | 0.684954874744975 |
+| 67 | 2a7df2f3da00a60646e7c62e0d1cd28109e46c7c3a4763ef0e4617225b2ed19f | 否/否 | -10 | 0.6956357102433807 |
+| 68 | 111a59d423f875dbb94225de46001a0141c939725db6f0ffb4c48c4c1e6d4ffb | 否/是 | 3.2399951443899475 | 0.6838694940336366 |
+| 69 | ae196321de3ad1d729e18ecf5dc3316346b49845dc647993331c8bbcc16e4c71 | 否/否 | -10 | 0.6855423443716776 |
+| 70 | bf96136b1d118317a41b05f2486d2caab9d8a36bbbd593c9ca622d3b697ce303 | 否/否 | -10 | 0.6891417875161705 |
+| 71 | 05d6f547fe9494685ec6ddf3fb7184ef677db583f288a1dc5c183cf4d3549fbb | 否/是 | 3.336865501274507 | 0.6844221318113797 |
+
+第十七场景三条含膝部接触，row 66 没有任何触球，不能把其
+`clean_foot_only=false` 简化为脏触球。第十八场景两条脏触球，
+两条 clean，但 row 68/71 横纵比例为 0.357662/0.314713，仍超过
+原 0.3，均非 HQ。八条安全门通过、未越界，均保留，不提高
+容忍阈值。新流完整核验 **72/160、18 个固定场景、HQ 17、clean 40、
+安全失败 1**；学习执行 72/原独立重放 216,000/Foundation 21,600，
+额外控制单列 1/3,000/300。row 72 已封存，下一组观察器已开始
+逐编号核验，未计入上述完整批次。
+
+原流 row 78/79 全绑定核验及最终 source/input pin 检查通过，seal：
+
+- `sha256:a2eda8c947bd1d3e8ad71f41929c1a3478b03109d19596e1d91341eb3351fd82`。
+- `sha256:bb45efd95ea10579f197d80c677d8f24bd385cbe02bcbcba7262ea46bc0c988d`。
+
+两条 clean、安全、未越界，但横纵比 0.372628/0.556611，均非 HQ；
+MC 为 3.119163460150647/2.316996727768777。原流完整核验
+**80/160、20 个固定场景、HQ 12、clean 46、安全失败 0**。两条
+采集流共享同一固定 40 场景，不能合算成新的独立场景数量，
+更不能把冻结策略随机探索比例当作更新后模型增益。
+
+### 软件回归失败不隐瞒，不借改门控制造通过
+
+main 上全量 pytest（session 15527）终态：**11 failed、7057 passed、
+70 skipped、1 warning，5494.15 s，exit 1**。首次省略 scripts 路径
+导致的收集错误已经先前记录；本次正式终态来自修正路径后的
+完整运行，未将外部资产/集成环境未满足的 skip 解释为通过。
+原检查开始于 `32a7174`，之后仅追加本文档；没有可执行代码修改。
+
+同一训练 Python/PYTHONPATH/单线程环境 `pytest --lf -q --tb=short
+-r f` 再次得到 **11 failed、3 deselected、4.86 s、exit 1**。失败 XML：
+`/home/dell/rosclaw_evidence/soccer-main-check-failures-20261008-0210.xml`，
+字节 SHA256 `bf1adc7adaaee5e435a189590d5e047ee0ff2a838dd9b7309978df751f26ff4f`。
+
+逐项只读定位（不执行新物理、不重新签名历史证据）：
+
+| 失败测试 | 已确认导致拒绝的历史绑定不匹配 |
+| --- | --- |
+| S104 save-to-ready | implementation hash：历史 a89acfea…，当前 07aaed84… |
+| S105 recovery integration | 历史 9dc26bcf…，当前 abe1a4d4… |
+| S107 continuous second save | 历史 314a96bf…，当前 2fb7dd17… |
+| S108 second striker | 历史 c5079b73…，当前 c2097c6c… |
+| S78 shot-save league | 历史 d5acda44…，当前 fe0756cb… |
+| S79 shot-save population | 历史 29f57618…，当前 5bab2ec4… |
+| S80 aerial curriculum | 历史 2cdc9e44…，当前 737c44c9… |
+| S94 S93 phase ledger | 历史 1974e468…，当前 281cab4c… |
+| S113 role-isolated probe | recorded closure 023bc837…，当前按校验器完整依赖集重建 54b732aa…，不一致 |
+| S113 video | 引用同一个 S113 holdout evidence，被上述证据校验拒绝 |
+| S114 qualification | 先调用 failure-update evidence 校验；其 closure 历史 486de72c…，当前 860466e7…，不一致 |
+
+前七个 implementation-hash 报告及 S113/S114 嵌套 failure-update
+报告的自身 report hash 均仍有效。S94 的旧格式没有 report_hash，
+仅核对其确实参与拒绝条件的 implementation_hash，不能补称其
+完整内容 seal 已通过。S113 复现记录使用的足球源树为 233 个
+Python 文件，当前其定位目录为 384 个；内核从 6.8.0-134 变为
+6.8.0-138，线程环境由 unset 变为 1，MuJoCo 从 3.11.0 变为
+3.12.0。S114 failure-update 同样有足球源树和进程环境差异。
+S113 初次诊断误用只有 numpy 的依赖集；随后按实际校验器
+`mujoco,numpy,onnxruntime` 重建并记录上述正确当前 closure，
+没有把初次诊断当作最终证明。
+
+这些不匹配足以解释本次 fail-closed，**不等价于旧物理实验从未
+有效，也不证明所有剩余语义检查都通过，更不证明当前技能
+回退或提升**。历史可变目录证据不能直接晋升为当前版本证据；
+不删除证据、不覆盖 hash、不关闭测试、不放宽 authority/closure。
+后续若需要当前版本的这些能力证明，应在冻结来源和声明环境
+下重新开展相应实验，而不是修改历史记录。当前优先完整 M0
+自有失败数据学习与原考试，未另开旧展示重跑分支。
+
+上述诊断结束时 main HEAD `e8e3836` 与 clean 工作树保持不变。
+两套完整采集→四卡拟合→原资格→原考试链全部存活，证据分区
+约 138 GiB 可用；仍未全量拟合、打开 Fresh、晋升或录制新的
+连续球队宣传片，也没有用软件通过数替代物理成绩。
