@@ -518,3 +518,39 @@ extraction 62.815 秒，row seal
 `sha256:023502252b222f48687b8fd107f4c2ab1c1158d7ddf736bc41129e9c0755b1a9`。
 这是原已有 300 帧/270 学习行的数值复算，新增物理/拟合为 0。
 第 50、52 组仍运行，完整 v805 结果尚未完成。主采集仍 54/160。
+
+## 19:54 v805 完整学习数组复算通过，物理恢复仍未完成
+
+最终结果 seal
+`sha256:fd14caa2606357e91fc501dab3ceee2f5e3ee6aeadfec7579cf8370708ab4052`。
+再次独立只读核验 commitment/result/三条 row 的 seal 和绑定、
+全部 353 个输入 pin 及两个冻结源码 HEAD/clean state，全部一致。
+原完整 factory 首次分配 644.607 秒；第 0、50、52 组 extraction
+分别 62.815、63.325、62.854 秒。共 900 原实际帧及 810 原学习
+行，完整 context/baseline/gates/latent actions/behavior densities/
+MC returns 六个 typed 数组均与原 extractor 存档严格相同。
+
+这里同时覆盖 clean-out、HQ-clean、dirty 的已有记录，不挑选
+全成功轨迹。但仅三个已公开 consumed 样本，**不证明完整 160
+课程、Fresh、足球能力提升或新物理资格**。没有重新测量原
+extractor 的运行时间，不据此计算整体 speedup 或训练吞吐增益。
+新增物理、Foundation、actor/critic 拟合均为 0，不重计学习样本。
+这为后续减少学习数据提取重复分配提供数值依据；当前采集及
+拟合等待链仍不接入新工厂。
+
+v806 进程 505444 仍实际活跃，正在补首回合原 decoder 的独立
+审计，尚无完整通过收据。主采集第 54 条再核验绑定、World、
+trace、原审计、Foundation、六个有限 float64 学习数组及 MC
+标签一致，row seal
+`sha256:b01bc66182b483b6bd10eddd252e24d5e2a37bbb3d5e48ada2f029ed066037c4`。
+该条 dirty、非 HQ，原 MC -10。第 55 条也已输出完成日志，
+正在补核验，不能只凭日志宣布复核通过。完整学习和球队目标
+仍未完成。
+
+19:54 第 55 条完整绑定复核也通过，row seal
+`sha256:e1453deb5abe8ce290ae6793b2596374ba59d1d14c905d7e945cfb69a209c4c7`，
+dirty、非 HQ，原 MC -10。完整学习记录为 **56/160，14 个完整
+四抽样场景，HQ 7、clean 37**，剩余 104 条。第 52–55 条对应
+同一场景的四个失败抽样，原标签均 -10，不丢弃；该场景本身
+没有 LOO actor 优势差异，但仍是真实失败/critic 学习数据，不能
+据此给它制造成功标签或将 270 重复标签当作 270 独立成功经验。
