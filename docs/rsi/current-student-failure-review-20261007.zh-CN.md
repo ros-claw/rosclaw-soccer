@@ -453,3 +453,23 @@ probabilities、returns 六个学习数组全部独立拥有，不筛掉失败�
 局部 lint、格式和 mypy 通过。合成检查不能证明实际 G1 数据或
 新物理资格，下一步固定复算已有第 0、50、52 组学习数据，对照
 原已经落盘、完整审计的数组。v803 物理资格仍在运行，未通过。
+
+## 19:38 实际学习数据复算 v805 已运行，v803 进入原生回合
+
+提取器代码推送 main `dab2a5b9ef44b95744850e615d7b5b9c73ba99f8`，
+冻结到独立 v804 worktree。v805 expanded runner 的 F821/F822 和
+冻结 namespace 导入预检均通过；独立 SID/PPID1 进程 489242
+实际运行。预声明 seal
+`sha256:d24ec5952a440705e29d62b714e7eea4632653f63b50e30108346381e681a846`，
+全部 353 个输入 pin 再核验通过。固定对照已有第 0、50、52 组
+原学习数组，含成功与失败证据；不是新课程，不改变当前学习。
+结果尚未完成。证据目录：
+`/home/dell/rosclaw_evidence/rsi-recurrent-sequence-factory-real-data-v805`。
+
+v803 完整原 decoder 分配已结束，630.460 秒；allocation seal
+`sha256:8e5223092916c5ad7c8baed4737289fdfe3cf34517fe54d06bf5300677a08c84`
+核验通过，完整 sampling model 已落盘。进程仍实际运行，进入
+第一回合 native 执行；尚无完整独立审计/通过结果，不能计为
+资格通过。ONNX Runtime 的 GPU discovery 警告不代表通过或
+失败，当前路径明确使用 CPU，必须以实际终态收据为准。
+当前学习完整记录仍 54/160；采集、等待链继续原冻结协议。
