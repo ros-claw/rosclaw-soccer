@@ -98,6 +98,24 @@ class OwnedRecurrentSamplingPreview:
         self._stable()
         return policy
 
+    def sampling_view(self, *, seed: int) -> dict[str, Any]:
+        """Fresh COMPLETE seed view from the fully validated private mean.
+
+        No changed sampling law or caller-supplied model is accepted here.
+        The original whole view hash includes the full actor/critic/parent.
+        """
+        self._stable()
+        if type(seed) is not int or not 0 <= seed < 2**32:
+            raise ValueError("bounded integer recurrent sampling seed required")
+        result: dict[str, Any] = self._static.restore()
+        result.update(seed=seed, mean_model=self._mean.restore())
+        result["model_hash"] = (
+            "sha256:"
+            + hashlib.sha256(_with_mean(result, (), ("mean_model",), self._mean._data)).hexdigest()
+        )
+        self._stable()
+        return result
+
     def validate_preview(self, policy: dict[str, Any]) -> dict[str, Any]:
         if type(policy) is not dict or type(policy.get("step_motor_proof")) is not dict:
             raise ValueError("complete ordinary recurrent sampling preview required")

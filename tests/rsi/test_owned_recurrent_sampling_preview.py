@@ -33,6 +33,7 @@ def test_original_imitation_and_learned_actor_critic_preview_parity(learned):  #
         compiler = OwnedRecurrentSamplingPreview(mean)
         for seed in (0, 778, 2**32 - 1):
             view = make_sampling_view(mean, seed=seed)
+            assert compiler.sampling_view(seed=seed) == view
             original = make_preview(view)
             actual = compiler.preview(view)
             assert hash_json(actual) == hash_json(original)
