@@ -473,3 +473,48 @@ v803 完整原 decoder 分配已结束，630.460 秒；allocation seal
 资格通过。ONNX Runtime 的 GPU discovery 警告不代表通过或
 失败，当前路径明确使用 CPU，必须以实际终态收据为准。
 当前学习完整记录仍 54/160；采集、等待链继续原冻结协议。
+
+## 19:50 v803 编排失败保留，v806 恢复审计；学习信号只读诊断
+
+v803 已实际产生第一回合 World/trace/压缩报告，报告 seal
+`sha256:b451ff173bb47157bdda946b9c393fb644d85432c8fefdc8cfc974838c1468aa`。
+随后 runner 错误地用普通 JSON loader 读取 `report.json`，没有
+走已有 compressed/shared physical reader，导致 FileNotFoundError。
+PID 已消失，终态失败 seal
+`sha256:02d52e6821d593cb86bb49764020c6b4b3f3645c80972d6b7a9056a548bcf1d0`。
+这是编排失败，不是通过；当时尚无独立审计/Foundation 重算，
+不得将计划 2 回合/6,000 子步/600 次计为完成。旧 runner、失败
+收据和实际轨迹均原样保留，没有修改旧源码或覆盖报告。
+
+首回合实际 28 个 trace 数组的集合、dtype、shape 与数值只读
+对照原 v773 repeat-0 全部相同。此检查不重放物理，不计为审计
+完成。v806 用新冻结 namespace 恢复作业，先独立审计保存的
+首回合，并把新审计写到新 evidence root；不重做/重计这个执行。
+之后新建同一工厂完成两个 fresh native 回合，验证复用工厂的
+episode state 隔离。明确计划 **采用旧执行 1、新执行 2、总独立
+执行 3**，新原审计 9,000 子步、新 Foundation 重算 900 次；只
+有一个原 consumed 场景，不当作三个独立足球场景或学习样本。
+
+恢复 runner pin 原 terminal helper 的完整字节哈希，导入前检查；
+F821/F822 与冻结 namespace 预检通过，独立 SID/PPID1 进程
+505444 已实际运行。预声明 seal
+`sha256:e8934380aad939310de35f9e2e0a0ed182019ea3004ed15f9e12e2ce04825f72`，
+全部 863 输入 pin 再核验通过。证据：
+`/home/dell/rosclaw_evidence/rsi-recurrent-sampling-factory-native-resume-v806`。
+当前尚未通过；独立审计仍使用原完整 decoder，没有工厂参数。
+
+对已有 54 条 seal/学习文件哈希核对后做只读信号检查：所有记录
+中 gate==0 的比例均为 0（包括触球前区间），不能把当前失败
+归因于门控全程关闭；latent 的 abs>2 比例均为 0，不能归因于
+检查范围内的严重 tanh 饱和。前 13 个完整四抽样场景共 52 条，
+原 LOO 优势为 positive-clean 24、negative-clean 13、
+positive-dirty 3、negative-dirty 12，没有零优势。这证明当前
+部分数据有数值学习信号，不证明优化后能提高足球成绩。存在
+3 条 dirty 正优势也提醒：scalar reward 不是安全/HQ 真值，仍
+须通过原物理门控。没有据此改奖励、拟合、筛样或打开 Fresh。
+
+v805 第 0 组实际六个 typed 学习数组已与原落盘数组完全一致，
+extraction 62.815 秒，row seal
+`sha256:023502252b222f48687b8fd107f4c2ab1c1158d7ddf736bc41129e9c0755b1a9`。
+这是原已有 300 帧/270 学习行的数值复算，新增物理/拟合为 0。
+第 50、52 组仍运行，完整 v805 结果尚未完成。主采集仍 54/160。
