@@ -4870,3 +4870,42 @@ native/fit/Fresh为0。此刻runner已生成且lint通过，**未启动、
 四A6000可见但有其它工作负载，未停止或占用它们。871使用CPU
 MuJoCo并保留48GiB RAM/100GiB磁盘 admission。没有测量整条
 训练提速倍数，更没有新球技/球队比赛/可宣传视频达成的证据。
+
+### 19:59 CST 启动与审查边界补充（资格尚未终结）
+
+实现已提交推送 main `a4e4ad9d03448cf51d9ef07a875f391acf791a3f`。
+独立不可变Source871保持该HEAD/clean：
+`/home/dell/rosclaw_evidence/rsi-sampling-reference-audit-soccer-source-v871`。
+871 handle30112、owner2602041，实际cwd与快照一致；runner
+`/home/dell/rosclaw_evidence/rsi_sampling_reference_audit_qualification_v871.py`，
+bytes `df9f422fdcacd9621de09fccc25b91eb8c13845ceb5ce0dbf10fb192c68eb80a`。
+predeclaration seal
+`8c566a7b292d6be7cc4bf28792f728dc1cfe2bb0e6a46353fa271a134929d9b2`。
+
+另启动872同代码的clipped sampling家族资格：使用原841的两个
+固定repeat，不选最佳表现。完整mean为839 primary0 `82c1f9db…`，
+两条原policy同为 `c4b869dd…`、seed773；**不声称不同种子的
+clipped物理资格**。runner
+`/home/dell/rosclaw_evidence/rsi_clipped_sampling_reference_audit_qualification_v872.py`，
+bytes `703ef9ddc124ebc5a3dc290668593c67069e6eb9c1ef5bf1caea244145a3ca2b`；
+handle17163、owner2607234，Source/cwd仍是独立Source871。
+predeclaration seal
+`a0d053dec1194bfc828fe3f1f2d4cf510aac72909baf6a84c48b0aba71149b38`。
+完整展开runner及helper F821/F822、普通ruff/format分别exit0；
+实际来源在项目import前绑定，完成时将再次验证。两任务各计划
+6000新replay、600新GRU、540 draw/logp重建，**当前均只见
+predeclaration，不计计划为已完成**，native/Foundation/optimizer
+新增0。未改正在运行的853或原库792/考试842。
+
+main另外新增有效compiler的missing/mismatched executed model
+binding及混入其他三类factory反例；五个拒绝分支都必须发生在
+打开物理文件之前。单独测试 **1 passed/10 deselected in32.63s**
+（handle35849 exit0），ruff/format各自exit0；此前56通过仍是
+前一次完整相关组，不冒称新增测试后又全量重跑57。只改main
+测试文件，没有编辑活动任务使用的Source871。
+
+下一代加速采样必须新建完整协议/种子流，先通过原始控制轨迹
+资格与完整上游终态，再保留全160轨迹、40情境、所有失败及独立
+物理/基础模型审查。不热替换当前collector，不因为吞吐优化
+更改动作门、KL/奖励、晋升阈值或Fresh访问。更多workers需按
+实际峰值RAM/磁盘重新admit，不能仅因GPU空闲就宣称可用。

@@ -139,3 +139,27 @@ def test_external_sampling_reference_callbacks_rejected_before_physics(tmp_path,
 def test_other_families_rejected(value):
     with pytest.raises(ValueError, match="complete recurrent sampling"):
         SamplingReferenceAuditCompiler(value)
+
+
+def test_valid_compiler_requires_executed_model_binding_and_no_other_factories(learned, tmp_path):  # noqa: F811
+    policy = make_preview(make_sampling_view(learned[-1], seed=771))
+    compiler = SamplingReferenceAuditCompiler(policy)
+    model_hash = policy["step_motor_proof"]["model"]["model_hash"]
+    cases = [
+        (None, {}),
+        ("unbound-model", {}),
+        (model_hash, {"sampling_decoder_factory": object()}),
+        (model_hash, {"mean_decoder_factory": object()}),
+        (model_hash, {"recurrent_reference_compiler": object()}),
+    ]
+    for executed_hash, extra in cases:
+        report = {"executed_motor_policy": policy, "step_model_hash": executed_hash}
+        report["report_hash"] = hash_json(report)
+        (tmp_path / "report.json").write_text(json.dumps(report))
+        with pytest.raises(ValueError, match="exact independent source-bound"):
+            audit_cpu_transfer(
+                tmp_path,
+                tmp_path / "unopened.py",
+                sampling_reference_compiler=compiler,
+                **extra,
+            )
