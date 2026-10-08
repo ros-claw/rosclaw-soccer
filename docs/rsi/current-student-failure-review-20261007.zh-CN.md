@@ -3611,3 +3611,55 @@ pins已由只读检查核验 exit0。commitment seal
 逐项完整见证观察器v832已启动（ruff及展开依赖原协议的F821/F822
 检查通过）；尚无52项完整成绩，计数不得把planned当actual。
 v830仍等待原物理考试终态；所有当前源固定，保持Fresh/晋升关闭。
+
+## 2026-10-08 13:20 CST：交叉拟合时序 credit 从实验脚本落入通用 Core
+
+本轮新增 Core `growth.cross_fitted_value_advantages`，提交
+**9edf1d37df8730dbf77a87f0125daefad86a6c67**，已推送至现有
+[PR616](https://github.com/ros-claw/rosclaw/pull/616)，未自行合并。
+该模块不依赖G1、足球或电机；将已完成的独立 value fits 接入时序
+MC目标的数值 credit，支持预声明2–10折、完整轨迹 context_id%K。
+旧 `context_crossfit`/`neural_context_advantages` 接口及旧joint v1 learner
+不变；本次补齐的是支持每帧不同 return-to-go 的独立价值拟合接入。
+
+它拒绝空折、场景跨折/声明顺序变化、完整数据fit冒充留出fit、
+训练输入hash不符、统计量/参数/source/count/config不符、非有限数据
+及权威字段伪装。重算训练MSE，只预测该fit排除的场景；保留所有
+输入目标和成功/失败样本。仅计算 target−value 和全局归一化，
+不重算奖励、不拟合critic、不更新actor、不读取Fresh、不打开设备。
+结果数组私有只读，并提供每个fit receipt/parameter hash和上下文
+排除关系。检查的是数值一致性，不能证明caller给的context实际独立、
+optimizer执行历史或初始critic此前从未见过该场景；caller仍需绑定
+真实物理数据和已执行学习回执。不得将它描述为在线RL或新运动策略。
+
+新增 **49项测试通过**，`tests/growth`整组 **708 passed，1环境
+asyncio_mode配置warning**；新文件ruff/format/compile通过，focused
+mypy1文件通过。原独立value module byte `b48d0a37...101bace` 和旧
+joint learner `76dcbb6b...5a96fc2` 不变。新头完整CI
+[run37731294617](https://github.com/ros-claw/rosclaw/actions/runs/37731294617)
+仍in_progress；此前6e232cfe的8488 passed不冒充9edf1d37全量回归。
+
+随后在新冻结 Core9edf1d37 上用完整实际160轨迹、40contexts、
+43200样本和原五个1024步fit做 v833 接入一致性实验。声明/input/
+源在导入前固定，原回执全部重查，最终源/input pins重查 exit0。
+新模块的四个完整数组：predictions/raw_advantages/advantages/fold_ids
+与v824 **逐项、dtype EXACT**；其余六个原训练数组也保持 EXACT。
+outfold MSE115.60717632026248，和原115.60717632026244仅浮点聚合
+尾数差异，不能称为进一步校准改善。新actor/critic fits均0，新物理0。
+另一次独立只读检查重读实际保存NPZ、原v824数组、五个sealed fits，
+重算原MC目标与归一化关系、全部回执绑定及最终pins，exit0。
+
+结果 `/home/dell/rosclaw_evidence/rsi-core-crossfit-credit-parity-v833/result.json`
+seal `24cf92bb73dcd7d1da1a44e304ff949bf35b474882bd7b1d242238fdd761b8b3`，
+runner byte `adb7b377250c5d178d7c773216d171eb9af0180546e698ef2c46394c15bbf215`，
+Core module byte `a4e652b2c09ee5cfb861923b46b2173e8a597f30c6ac849c2950641e667fb73c`。
+这是真实数据上的可复用学习接入，不是新模型物理收益。后续新批次
+可通过同一Core模块接入，不必再次手工复制v824的优势计算逻辑。
+
+固定v827考试仍运行；case0–3均有完整动力学/GRU/Foundation见证，
+只读观察已逐项核验完整绑定。四项分别最低高度0.6969945025141505、
+0.693178995666201、0.6912411178450495、0.6926089172313323m，均safe；
+case0 dirty，1/2/3 clean，均非HQ。尚无52项完整结果和最终所有pins
+闭合，不能外推成功率，也不能把这些最先完成的场景看作随机样本。
+原160流保持采集，120–123观察未闭合，正式统计仍以120/160为界。
+当前阶段 M0 NOT COMPLETE；下一步继续原考试及失败反馈，不降门槛。
