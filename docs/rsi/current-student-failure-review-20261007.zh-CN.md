@@ -6022,3 +6022,38 @@ manifest再进入已排队的value/actor训练，并完成固定主候选全52
 考试；不依据本局部有序快照调奖励、增大动作限幅或挑选结果。
 本轮两组考试观察到24/52（HQ4）和10/52（HQ1），终态均未生成；
 这些是进行中计数，不是学习提升率，更不证明连续球队比赛就绪。
+
+### 采样等待中的内存占用与恢复限制
+
+906对正在等待的853/874做只读资源与封存记录盘点，不导入大模型、
+不修改运行源、不发进程信号。5秒前后以cmdline及/proc start_ticks
+绑定同一活跃进程，六个采样worker均为hrtimer_nanosleep且CPU ticks
+未增长；合计Private_Clean+Private_Dirty为28.2929039001GiB。
+这不是GPU显存，也不是系统MemAvailable的可直接回收保证。
+当时MemAvailable约38–40GiB，低于原48GiB逐任务准入；两组考试
+的四个worker仍计算，新增采样不是被误判为退出后重复启动。
+
+853的20份row及874的58份row均匹配原160个预声明job中的字段；
+检查完整row/review/Foundation seals、报告关联、trace及learning
+文件bytes、原3000物理子步/300 Foundation调用记录和270学习帧。
+分别140和102个待执行group未产生sample目录或学习文件，当前
+无partial group。这里没有重建完整数值policy、重新验证全部
+动力学或授予checkpoint adoption；不能把这份盘点直接用作恢复
+执行的完整证明。transport-control也未增加采样episode计数。
+
+906 source hash及结果seal见Git外
+`rsi-resource-checkpoint-inventory-v906/result.json`；handle67429
+自然退出exit0，结果seal为
+`7d19cfe5afaad73d151c032b7542673ccf090c08cf7d5add611dd04a871f4902`。
+另行复验395项固定输入bytes、seal、group分区及进程身份均通过。
+runner E/F/I lint最初使用88列而formatter遵循项目100列，触发
+E501；按项目100列重新完整检查E/F/I通过，format及F821/F822也
+通过。不是把实际未定义名称或其他代码错误跳过后运行。
+
+856/875下游等待器明确绑定2321775/2650274 PID及原collector
+cmdline，终止旧owner再换新PID会导致等待器失败。因此没有为
+释放28GiB而直接杀掉采样pool，保留既有完整学习链；后续若做
+checkpointed资源重排，须先具备逐条完整恢复证明，以及整条
+下游对经过验证的successor owner的显式接续，不能热改旧等待器。
+本次只诊断调度代价，native/replay/Foundation/optimizer新增均0，
+暂停/终止/恢复授权、Fresh、promotion、hardware均false。
