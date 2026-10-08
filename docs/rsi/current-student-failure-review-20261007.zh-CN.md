@@ -5890,3 +5890,43 @@ stdin重现），全仓format有68个既有未格式化文件；全仓mypy
 检查887个source，11个错误/8个文件、exit1，均不在本次修改
 的source文件中。未用局部绿灯冒充全仓通过，也未顺手重写
 与本次训练优化无关的大批文件。
+
+### 902新冻结源的完整回放资格队列与896首批封存考试
+
+将公开优化commit `a46185b90b917a8bb52c89fad5f8ca6793aa16be`
+冻结为Git外独立902 worktree；未更改901/896的冻结源。902
+资格runner source hash为
+`99f20d5e8f6e30505d1797712f3dc2f382cc2b374193487c873921cb88a7a19a`。
+普通ruff、format和最终完整展开F821/F822均exit0后启动，
+PID3284669、handle24402。queue seal：
+`0fe2c5e4a4795958785c2b1da0e93c367121091e6916bd73c17e01a4645b5287`；
+全1380项输入bytes及冻结heads/clean另行复验exit0。
+
+902先等待901完整资格终态，再加载/编译；继续保留原48GiB
+加载前和加载后准入，避免两个资格审查同时分配大模型。绑定
+同一固定890主模型59f358…、同一895的两份完整归档，仍重放
+6000子步并逐字段比较全部原审查，只有source_hash/report_hash
+及原先明确的decoder_construction元数据不参加同值比较。
+旧901的所有输入pins、heads及终态/预声明也纳入新证明。
+当前仅排队，ROOT902未创建；没有宣称新快速路径物理资格或
+实测加速完成，也没有把新回放当作新native、Foundation或
+optimizer更新。原同一seed重复不能证明variable-seed物理资格。
+
+896正式考试前两场完成独立审查，均安全、HQ均false：
+
+| case | clean | forward60(m) | abs(lateral)/forward | min pelvis(m) |
+| --- | --- | --- | --- | --- |
+| 0 | false | 1.8702871590 | 0.2472994147 | 0.7055945750 |
+| 1 | true | 0.8181405659 | 0.9898237129 | 0.6937687068 |
+
+case0审查seal `da8bbf6d8815988bacd5eaa202533f2eae9b998773f4f8ddea2e8f0198cad0aa`；
+case1 `3ac54f61d9728b14bfbb6016200ce43c49c2d1dc569224dd3a0266dea88eeead`。
+说明仍须同时改善干净触球、力度和方向，不能只奖励某一个指标。
+继续完成原52场，不根据前两场早停、删场景或换固定主候选。
+原采样bank853/874分别已有21/59份独立审查（HQ0/6、安全21/58），
+均尚无全160终态；不能从这些进行中的计数推断完整学习收益。
+
+随后handle1031自然退出exit0，三个preview/factory/contact-history
+回归文件共28 passed、590.57s，与前述reference模块13项为不重叠
+测试文件，本次合成数值/合同回归合计41 passed、0 failed。
+这不增加任何G1原生执行、动力学回放或学习更新计数。
