@@ -2830,3 +2830,53 @@ MC 1.2979142044759326、clean、安全、未越界但非 HQ。前向
 0.44064142050280597 m、比例 1.3404218272217872、最低高度
 0.6888036469266628 m。仍待 105–107 和最终 pins，完整累计
 保持此前 104/160；不以干净接触替代踢球任务成功。
+
+## 2026-10-08 09:00 两遍资格完整结束，原安全门正式拒绝候选
+
+v812 两遍 native/独立审计/Foundation 全部完成，父进程及
+worker 已正常收尾。最终 source-pinned 只读全量绑定检查
+exit 0，复算两遍完整 28 数组的 dtype/shape/数值完全一致；
+逐遍核对 native commitment、原报告、trace/MJB bytes、
+独立 review、Foundation、资格 row、总 result 与全部
+source/input pins，未重新执行任何物理。
+
+- 最终 result seal：
+  `bc11f80161c70ed44dd85e40c8ba5cc5c8c2697c2cdf103bc351f836c9bd284e`。
+- sampling qualification seal：
+  `3447a4af16dc6671ba6103ea76bf889c6cc7c8e5686c7197e7052ed243db7d8e`。
+- 实际 2 native、6,000 独立重放 substeps、Foundation 600；
+  两遍 GRU 合计 600 帧、540 draw/conditional density。
+  只有 **1 个 consumed course**，不是两条独立课程或 Fresh。
+- 两遍原报告、trace、review、Foundation seal 均分别与首遍
+  完全相等，最低高度均 0.6476452646754882 m，HQ/clean/
+  safety 均 false。是可复现退步，不是训练完成后的新成绩。
+
+v813 按原 0.65 m 安全门自动写出 rejection 并正常收尾：
+
+- 原 guard predeclaration seal：
+  `429bfe2cfd371f7a86e51c2a637b047e63f701d9b485c10483e29ea2d05cd3d8`。
+- rejection seal：
+  `bab5f8073155c56903d8cd2a34f8d7a591836598c7853c643f61c2c96800ed39`。
+- 独立检查 rejection 对最终 result 的绑定、两遍 review/hash/
+  unsafe height、原 wrapper hash、predeclared primary 0 与
+  threshold 均相等，exit 0；新 full52 根目录和考试声明均
+  **实际不存在**，不只依赖 `not_started=true` 自述。
+- `candidate_rejected_not_activated=true`；原 52 场未启动，
+  本安全门零新增物理，Fresh/晋升/硬件均 false。
+
+本轮状态是“自有数据学习实际完成、模型重载和物理证据链
+通过完整核验、动作安全与任务成绩失败、机器拒绝成功执行”。
+不能用证据链通过替代物理成功，RSI-M0 仍未完成。原流
+采集及其原学习/资格/考试依赖链保持运行，不重启、不合并
+两个噪声流或训练后换另一个 GPU 的学生来绕过当前拒绝。
+
+下一步排查时序 credit：现有 actor 使用每条 270 帧恒定的
+终局 leave-one-out advantage，MC critic 虽实际持续拟合，
+却没有进入这个 advantage 的构造。这个事实不是已证明的
+唯一失败原因；新时序学习目标须另行声明、保留全部失败与
+奖励定义，继续原物理安全/retention 考试，不能事后改标签
+来让本轮通过。已检查本地 RSL-RL rollout storage 的时序
+估计实现，参考 [GAE 原论文](https://arxiv.org/html/1506.02438v6)
+与 [CPO 原论文](https://arxiv.org/abs/1705.10528)：前者提供
+值函数辅助的时序优势估计，后者区分收益优化与约束满足；
+采用这些思想不自动带来我们的身体安全保证。
