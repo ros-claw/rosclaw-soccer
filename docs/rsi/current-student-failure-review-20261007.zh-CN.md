@@ -3713,3 +3713,36 @@ runner byte `5f05c1be5175c7739128f1d6c439f2785e245e826bc3ef70491429d5705fef02`�
 Core9edf1d37 CI仍运行：Gate A/B通过，Gate C进行中；没有新头
 全量绿灯。v830新候选factory数值一致性仍等待固定物理考试终态，
 不争抢验收内存、不偷换物理路径。M0及球队目标均未完成。
+
+13:53 CST补记：只读v834已核验case8/9，均clean/safe但非HQ，
+最低高度0.6951250847631647和0.6893771718040255m。完整52验收仍
+运行，不能把这十项前缀当作完整成功率。v835声明的全部input/source
+pins、既有124边界、36条剩余顺序及live owner另经独立检查 exit0；
+新增cohort尚未闭合，正式采集计数仍124。
+
+前八项接触反馈 v836首次离线诊断退出1：模板误要求资格测试的
+28个随机采样数组，而正式考试是确定性策略，实际只有24个字段，
+不存在4个recurrent_sampling字段。保留v836原runner和声明，不
+修改物理trace/考试源码；此退出没有停止物理owner。新v837按完整
+24个确定性原生字段的显式集合检验，全部数组有限，并额外复验
+Foundation capture/测量历史。首次v837展开前flight失败发生在
+物理/诊断输出分配前（动态wrapper符号未被lint识别）；修复执行
+namespace后完整ruff及展开F821/F822通过，再正式执行离线诊断。
+没有将失败preflight称为通过，没有减少原动力学/GRU见证要求。
+
+v837按预声明有序case0–7全量读取真实report/trace/World/job/model/
+Foundation绑定，最终全部pins核验 exit0。另一独立只读检查不调用
+contact_timeline函数，直接从完整force数组重算48个body的首/末/
+峰力/活跃帧数、八条高度及最终pins，exit0。没有新物理或optimizer。
+结果 `/home/dell/rosclaw_evidence/rsi-full52-prefix-contact-feedback-v837/result.json`
+seal `16221c04aa227f5f094cf8df0895c228e87d4fd1f6e18357be4b25b5a8129084`；
+runner byte `f3662b0c104b00a14e423288580ae93fafffa9d80f983881268b99fb82d50a8e`。
+
+case0和5都是脚在69帧首触，非脚分别在86/87帧开始，间隔17/18
+控制帧（0.34/0.36s）。case0左踝pitch及左膝86帧触球，右膝89帧；
+case5左膝87帧、右膝88帧。case1/2/3/4/6/7全程只有脚接触；除
+原HQ case4外其余五项仍非HQ。因而该前缀同时暴露踢后非脚再触
+和干净触球后的质量问题。下一轮要按完整考试分桶考虑收腿避球与
+方向/距离，不仅仅改变首触姿态。此前同一资格场景的“膝先触”
+诊断仍有效，但不能泛化为所有场景的首要失败原因。这些是已有
+轨迹的相关性观察，尚非干预训练的因果收益，不据此更改考试门。
