@@ -12,7 +12,13 @@ from rosclaw_soccer.rsi.online_motor_actor_critic import terminal_return
 
 
 def contact_timeline(forces: Any, outcome: dict[str, Any]) -> dict[str, Any]:
-    """Offline measured event labels; not future runtime observations."""
+    """Offline measured event labels; not future runtime observations.
+
+    Each input is the maximum force norm during a control frame, not a
+    substep force integral. Counts therefore describe active control frames,
+    never contact duration or impulse. Caller must verify the archived trace
+    and independent physical review before using these diagnostic labels.
+    """
     values = np.asarray(forces)
     if (
         values.shape != (300, 6)
@@ -42,6 +48,20 @@ def contact_timeline(forces: Any, outcome: dict[str, Any]) -> dict[str, Any]:
         if first_nonfoot == first
         else "foot_first_then_nonfoot"
     )
+    body_rows = []
+    for body in range(6):
+        active = np.flatnonzero(values[:, body] > 1)
+        peak = int(np.argmax(values[:, body]))
+        body_rows.append(
+            dict(
+                body_index=body,
+                first_contact_frame=int(active[0]) if active.size else None,
+                last_contact_frame=int(active[-1]) if active.size else None,
+                active_control_frames=int(active.size),
+                peak_frame_force_norm_n=float(values[peak, body]),
+                peak_force_frame=peak if values[peak, body] > 0 else None,
+            )
+        )
     return dict(
         kind=kind,
         first_contact_frame=first,
@@ -51,8 +71,15 @@ def contact_timeline(forces: Any, outcome: dict[str, Any]) -> dict[str, Any]:
             if first_nonfoot is not None and first is not None and kind == "foot_first_then_nonfoot"
             else None
         ),
+        per_body=body_rows,
+        original_contact_threshold_n=1.0,
+        active_frames_are_not_contact_duration=True,
+        force_impulse_reconstructed=False,
+        source_physics_validated_here=False,
         selection_uses_future_outcome_labels=True,
         runtime_selection_authorized=False,
+        promotion_authorized=False,
+        hardware_authorized=False,
     )
 
 
@@ -119,7 +146,7 @@ def sampling_frontier(records: list[dict[str, Any]], *, expected_episodes: int) 
             if abs(lateral) / max(forward, 0.01) > 0.3:
                 reasons["direction_error"] += 1
         contexts.setdefault(context, []).append(record)
-    rows = []
+    rows: list[dict[str, Any]] = []
     for context, samples in sorted(contexts.items()):
         successful = [r for r in samples if r["outcome"]["high_quality"]]
         rows.append(

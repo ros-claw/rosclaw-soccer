@@ -119,3 +119,52 @@ def test_invalid_forces_rejected(value):
     forces[65, 0] = value
     with pytest.raises(ValueError, match="finite"):
         contact_timeline(forces, record()["outcome"])
+
+
+def test_per_body_events_keep_distant_recontacts_not_contiguous_duration():
+    forces = np.zeros((300, 6))
+    forces[65, 0] = 2
+    forces[70, 4] = 5
+    forces[299, 4] = 4
+    # Equality with the original threshold is not a contact.
+    forces[10, 5] = 1
+    outcome = record()["outcome"]
+    outcome.update(clean_foot_only=False, contact_body_indices=[0, 4])
+    before = forces.copy()
+    result = contact_timeline(forces, outcome)
+    knee = result["per_body"][4]
+    assert knee == dict(
+        body_index=4,
+        first_contact_frame=70,
+        last_contact_frame=299,
+        active_control_frames=2,
+        peak_frame_force_norm_n=5.0,
+        peak_force_frame=70,
+    )
+    assert result["per_body"][5]["first_contact_frame"] is None
+    assert result["per_body"][5]["active_control_frames"] == 0
+    assert result["per_body"][5]["peak_frame_force_norm_n"] == 1
+    assert result["per_body"][5]["peak_force_frame"] == 10
+    assert result["per_body"][3]["peak_force_frame"] is None
+    assert result["secondary_nonfoot_lag_frames"] == 5
+    assert result["active_frames_are_not_contact_duration"] is True
+    for key in (
+        "force_impulse_reconstructed",
+        "source_physics_validated_here",
+        "runtime_selection_authorized",
+        "promotion_authorized",
+        "hardware_authorized",
+    ):
+        assert result[key] is False
+    np.testing.assert_array_equal(forces, before)
+
+
+def test_no_contact_timeline_keeps_all_six_body_rows_without_fabrication():
+    outcome = record()["outcome"]
+    outcome.update(first_contact_frame=None, clean_foot_only=False, contact_body_indices=[])
+    result = contact_timeline(np.zeros((300, 6)), outcome)
+    assert len(result["per_body"]) == 6
+    for index, row in enumerate(result["per_body"]):
+        assert row["body_index"] == index
+        assert row["first_contact_frame"] is None and row["last_contact_frame"] is None
+        assert row["active_control_frames"] == 0 and row["peak_force_frame"] is None
