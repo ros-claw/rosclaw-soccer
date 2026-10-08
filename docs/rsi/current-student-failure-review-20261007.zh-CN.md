@@ -3190,3 +3190,30 @@ v816 PID1692545 CPU01:06:31，仍在完整 prepare，未宣称GPU
 80,860,696KiB、系统盘free145,111,437,312bytes；保留原资源
 门，未停止其他作业。原112–115观察、v817/v818及本核验均
 接在现有链路上等待，未重启原实验或修改其源码/参数。
+
+## 2026-10-08 10:57 CST：完整prepare通过，四GPU拟合worker启动
+
+v816 已生成 commitment seal
+`11c54172c222e9ac27bb6ca5b4190f7e3a25360ac3cb93cfdbf0d2c671a5e08e`。
+原完整160物理/Foundation/model/density检查保留，随后新labels
+绑定通过；160 episodes/40 contexts/43,200 rows，行为density
+最大重建误差2.3092638912203256e-14，所有失败与实际旧actor/
+critic保留，terminal score不变。前序prepare CPU约79分43秒。
+
+四个实际worker PID1808108/1808111/1808112/1808113已启动，
+PPID1692545；四GPU各出现一个约446MiB的主要分配，另有
+GPU0的默认上下文分配。是四独立拟合，不是DDP或四rank同步。
+worker CPU时间增长至约4分40秒以上，但**尚无四fit完整回执，
+不计为4个已完成fit，不宣称optimizer步数或物理能力提升**。
+v817/v818与v820校准检查仍等待完整learning.json。
+
+原流112 row
+`f1ad16557b35c3308a64d6d058e2bf28c5bc0b7ac060b7a800f01b3d6bee1b41`，
+clean/HQ/safe，forward1.3225984526307233m、横向比例
+0.14280179090729578、最低pelvis0.6847248306849684m。
+113 row
+`5845aa70c1d3de233bab341b16b28b24e1af2feb6482f3182a2fd936a7631cf3`，
+clean/safe，forward1.5994864177329517m、横向比例
+0.30754808020540436>0.3，仍非HQ；最低pelvis0.6924297800933262m。
+两条完整核验通过，但114–115及整组最终pins尚待完成；总量
+仍仅正式确认112/160。这些是原行为采集样本，不是新候选提升。
