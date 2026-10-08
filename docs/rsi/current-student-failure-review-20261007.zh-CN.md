@@ -4196,3 +4196,60 @@ fit→849独立复核→850原两遍资格→851原52。链上任一失败即保
 进程身份检查所有新增owner真实live；系统约132GiB磁盘/67GiB RAM
 available，/data仅4.3GiB，因此新产物继续放/home证据区，保留原
 100GiB系统容量门，不删除旧证据或停止无关任务。
+
+## 2026-10-08 16:28 CST：执行门控假设被完整真实训练数据排除
+
+新增Soccer适配模块`rsi.sampling_action_opportunity`，只读诊断完整
+30–299帧训练gate与latent动作；复用已有完整顺序、失败保留、原HQ/
+reward一致性检查，按相同失败族和真实first-contact时间分层。严格
+要求float64、E×270及E×270×12、gate∈[0,1]和finite/bounded latent。
+不训练、不改变奖励、不允许未来outcome成为actor输入、不授权执行。
+模块明确区分：latent tanh导数**不是**实际joint-target/torque/接触
+动力学Jacobian，也不证明下游projection或关节限幅没有影响。
+
+新17项测试覆盖失败与饱和样本保留、contact完整partition、no-contact
+与空成功层、dtype/shape/NaN/Inf/gate越界、失败删行/重排、episode上限。
+与既有credit/frontier合跑**47 passed /0.36s**；ruff/format、focused
+mypy（1文件）通过。代码提交`38c06bc24630da8127a3cc267789849793807dc7`。
+这不是全仓测试通过，既有全仓问题仍保留。
+
+外部852诊断在该精确clean source上完成，绑定完整原844 inventory、
+839实际learning与dataset、810完整manifest及原844全部byte pins，
+采用已完成物理见证，不重新执行物理。结果：
+
+- 实际160episodes/40contexts，**43200帧、518400 latent coordinates**；
+- gate min=max=mean=1，zero/低于0.01/低于0.1全部0；
+- latent绝对值大于2的coordinate为0；
+- latent tanh导数min **0.14057106536**，mean **0.81330312963**，
+  小于0.01的coordinate为0；
+- 各失败/成功族和pre-contact/post-contact/no-contact层都完整保留，
+  未用这种诊断改变原失败标签或打开Fresh。
+
+结果`/home/dell/rosclaw_evidence/rsi-actual-action-opportunity-v852.json`，
+seal `6b765ba6cbe85fe3dcc72447ded302e7540bfe8dee8c52e1caf44d9e907b866a`。
+独立未导入诊断模块的NumPy检查重算全160 gate/导数、每个保存分层、
+真实contact partition、sealed报告、source HEAD与全部初末pins，exit0。
+852首轮发现诊断调用方漏配Core PYTHONPATH，在import处失败，尚未
+创建结果/执行物理；补正确Core命名空间后完成。其初次ruff C408
+意见也在完成前修正并独立复查，未把后续成功命令当作首次通过。
+
+本次证据改变了下一步判断：对**这批实际训练数据**，“动作被gate
+普遍关闭”不成立；latent普遍严重tanh饱和也不成立。不因此删除
+guard或提高residual上限。下游物理敏感性仍需单独测量。
+
+另由已独立重算的840实际四模型marginal KL可直接推出：固定12维、
+std=0.1的每coordinate raw-mean RMS更新为
+`sqrt(2*0.1^2*KL/12)`。primary0约**0.0057678925**，原KL≤0.02
+给出的上限约0.0057735027。这是proposal空间数值，不是关节rad、
+速度、扭矩或足球落点误差。说明同一固定行为批上的更新幅度已有
+明确边界：更多同批steps不会无限扩大policy改变。不能据此放宽KL，
+应在实际资格/考试终结后评估**隔离SIM训练支线中的新policy自己
+采样→重新学习**，始终保持Champion、原retention/Fresh门不变。
+目前没有实现/启动这条新的候选on-policy采样支线，不能称在线RL
+持续闭环已完成；845–851仍是第二批D3行为数据的已启动接续。
+
+原827观察器新增完整case40 clean非HQ、41旧HQ保留，当前42/52，
+无新增HQ。原788 row134已完整验证clean/nonHQ/safe，正式cohort
+仍132，等135完成再闭合136。不把零散prefix升级成完整测试结论。
+总纲§§72–73的M0 Fresh能力扩张与晋升仍未证明，球队/联赛目标更
+没有达成；当前不制作可宣传成果视频。
