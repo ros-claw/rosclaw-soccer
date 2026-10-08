@@ -3603,3 +3603,11 @@ seal `551b666ba35d81a4d1d2556ec279e485133ae87c9101224a62aa27d6a5caaadc`；
 runner byte `f8c368290be2ae6151b90fccf2567f396d7d89ba058ecf1cdc50deb119dcc8a9`。
 新增诊断物理执行0、optimizer0，未选择或激活策略。模块和测试已
 直接commit/push main；不影响正在运行的v815冻结物理源码。
+
+13:01 CST补记：v827原52项正式启动，两个原CPU物理workers运行，
+完整52个原有有序jobs、固定新主模型、两遍资格、声明/source/input
+pins已由只读检查核验 exit0。commitment seal
+`85fa60c311408d75ec1d5ee5adb02e16063cb606935518596e3b381e5ac03e40`。
+逐项完整见证观察器v832已启动（ruff及展开依赖原协议的F821/F822
+检查通过）；尚无52项完整成绩，计数不得把planned当actual。
+v830仍等待原物理考试终态；所有当前源固定，保持Fresh/晋升关闭。
