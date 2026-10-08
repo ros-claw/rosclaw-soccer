@@ -3787,3 +3787,54 @@ Core module byte `e3b92127c21c97809a93b6e7968685dd5cc3526d84ed03029721a1ac01230e
 完整绑定已校验，126/127待完成；cohort最终pins尚未闭合，正式
 统计保持124/160，不提前加两个新行。所有原owner/学习待机链/
 两条只读观察器均核验live；继续完整原实验。M0 NOT COMPLETE。
+
+## 2026-10-08 14:16 CST：四卡增加实际离线训练预算，不替换原考试
+
+针对“训练量不足”的可检验假设，新增v839固定四组离线拟合，
+从原已收集自身动作的d3行为策略及原critic出发，**不是从尚未
+完成验收的v825子策略继续或激活它**。完整160轨迹/40contexts/
+43200帧保留，actor advantage实际从通用Core v838保存的输出
+读取，并逐项验证与原sealed v824 labels EXACT。重复使用旧数据
+不增加轨迹数、独立样本数或新物理执行数。
+
+四组每组上限由256改为1024步，总joint optimizer尝试预算4096。
+学习率仍[5e−5,5e−5,1e−4,1e−4]，seed仍[7890,7891,7890,7891]，
+batch8/std0.1/rho0.9/residual cap0.2、clip0.2和完整batch KL≤0.02
+均不变；主候选固定0，禁止根据训练回报或考试从另外三组挑最好。
+预算是上限，KL拒绝/回滚必须扣除，不能提前称“完成4096步”。
+这仍是固定自采样本的离线actor+critic拟合，不是在线RL、持续
+optimizer checkpoint或新策略已经拥有物理改善。
+
+v839原完整v825/816/789协议及labeler导入前固定；新wrapper和
+完整展开F821/F822分别通过，--preflight exit0，无物理分配。
+声明封存后完整adopt旧prepare/动力学/Foundation/density见证，
+全部source/input pins检查，不重做160场物理。新增Core output
+包含全部五个fit及src绑定，输入身份冲突拒绝而非覆盖。
+
+声明 `/home/dell/rosclaw_evidence/rsi-extended-crossfit-actor-learning-predeclaration-v839.json`
+seal `00fce685a516cf11edfa0f2e2f7a40751e183d2cb37f67bca1506ff981315512`；
+commitment `9e1d528d5d7afeb0b45b386c0049ff8f28de9ab2580750addc0900c00f20e96e`；
+runner byte `b06314f01d6a50b65f3aeb4dc700d9211184c1fd9f9dbd38a849cb376ef4700b`。
+声明的固定预算/主候选/KL/source pins/live owner另经独立只读
+检查 exit0。parent2093787及四个workers2101174/2101177/2101178/
+2101179当前live，nvidia-smi确认四张A6000均有新worker计算上下文。
+这是四次独立单卡fit，不是DDP。CUDA初始化还在GPU0留下部分
+worker的小上下文；不能把那解释为四组都只训练GPU0。Torch设备
+UUID查询确认设备0–3对应四个不同GPU。没有停止其它GPU任务。
+
+本轮尚无student/learning终态回执，因此实际accepted/rejected步数、
+最终模型hash、全部最终pins及训练MSE尚未报告。物理执行新增0，
+Fresh/晋升/hardware授权均false。原v827 fixed52的owner/模型/
+输入不变；声明要求其终态后才能给v839分配新物理资格/验收任务。
+目前没有为v839创建新的native/exam owner，不偷跑后续考试。
+
+准备阶段还观察到约4分钟时parent累计rchar约126GB，read_bytes0
+（主要命中缓存），CPU持续运行；约5分钟后才分配四个fit workers。
+这反映重复历史hash校验的实际开销，不是GPU训练计时，也不证明
+磁盘物理读了126GB。当前不hot-edit该协议，后续优化重复核验仍
+需保持导入前和终态的全量内容绑定，不用mtime替代内容完整性。
+
+原固定考试已完成0–13；case12 dirty/safe/nonHQ，最低0.6820736929596198m；
+13 clean/safe/nonHQ，最低0.6861955054325076m。原数据新124/125已
+逐条核验，126/127尚未封存，完整cohort边界仍124。Core1186b67e
+CI A/B通过、C运行中；M0及连续自主球队宣传目标均未完成。
