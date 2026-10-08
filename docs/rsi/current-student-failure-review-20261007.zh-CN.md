@@ -2928,3 +2928,100 @@ MC 2.3616433130497034，clean/安全、未越界但非 HQ，前向
 0.6818379054251917 m。待 106/107 与最终 pins，完整累计
 仍 104/160。原 collector、两 worker 与原三段依赖父进程
 均已重新确认 live；没有重复执行已完成轨迹。
+
+## 2026-10-08 09:35 足球时序奖励接通全部自有数据，新学习轮已启动
+
+Soccer commit `005828debe5c934354d4490350d3d6c056536400` 已推送
+main，新增 `rsi.temporal_contact_rewards` 与测试。它只处理
+离线实际 force/pelvis/ball 历史，不增加 controller、物理捷径
+或未来 actor 输入。触球后进度先记临时分数，在原 +60 帧
+窗口确认质量；后来的脏接触/出界撤回之前的质量分，失稳
+在真实首次越线帧改变原 base 与 -100 代价。没有接触的
+失败在原任务终点确认，绝不虚构触球；全部原始帧保留。
+
+原 `high_quality` 判据和身体安全是两个独立量：前者检查
+clean、前向、比例与出界，安全另外检查最低高度。新模块
+按实际旧代码保留这个区分，不悄悄给 HQ 加/删安全条件。
+最终总评分仍由原 `first_touch_reward` + `terminal_return`
+核对；新的是训练中的时间分配，而不是修改考试或重签旧证据。
+
+- 35 项专项测试 PASS；原 reward、轨迹测量、MC learner 与
+  sequence extraction 相关五组 **49 passed、198.98 s、exit 0**。
+- 新两文件 ruff check/format-check、diff-check exit 0；新模块
+  mypy（follow-imports=silent）1 file、0 issues、exit 0。
+  不是 Soccer 全量回归通过；此前 11 项历史证据闭包失败仍保留。
+- 测试还覆盖未来失败不改早期 reward、精确 1 N/.65 m/4 m
+  边界、bool 不能冒充 body 0、全帧非有限/负 force 拒绝、
+  缺失 +60 窗口拒绝，不裁剪/补造 late-contact 测量。
+
+### v815 全量实际标签验证 COMPLETE（零学习/零新物理）
+
+新冻结 Soccer 源码 `005828...`、Core `8b2fe0...`，不替换
+原运行中的 Core775/Soccer788，也不改旧 Core797/Soccer807。
+外部完整 v815 runner source byte hash：
+`1c8ed9f7383875d4f6185e637653a24e19e0662fab05005d5c4c588c678a31f6`。
+在进口前核对冻结 HEAD/source pins，F821/F822 exit 0。
+
+完整 stream14 的 160 episodes / 40 consumed contexts 全部
+参与，保留 48,000 原物理帧、43,200 actor-window rows。
+逐条匹配 sealed row/manifest、trace bytes、实际 latent action/
+density、原 MC 标签；原全量学习的全部物理/Foundation/模型
+witness pins 前后重新核对，采用存量审计，不重新执行物理。
+冻结 critic 的完整 hash `ff584ac65ed5594473a943033d9cb8a097aa4089a3b906cfd0cae508e4e04247`
+与行为父模型一致。原拒绝结果也绑定新标签 provenance。
+
+- predeclaration seal：
+  `63bea33b6a2884a1b6b5e41857ec9c7c897611c17b60bf72300d9389a4826981`。
+- result seal：
+  `62a80a2eef876f01f611268288339dd9e60428bf8f2f4d8a4cc36d3cbb368a0e`。
+- 新 numeric dataset byte hash：
+  `7281452044ed8673274c52c772aed43bcb7b806b566779e83a6edf34fdcc720e`。
+- temporal labels byte hash：
+  `9a5345a135c0a2ef5f8143475c5a2a385c848d406529e6ebd6e159fa2c115a4c`。
+- 全部终局回报保持原值；此批控制前成本 episodes 0。
+  gamma=1/lambda=1 的完整 reward-to-go 复算最大误差
+  `8.526512829121202e-14`，raw advantage std
+  `10.929415091384755`。不是旧 270 帧恒定 LOO advantage。
+- actor 的 context/baseline/gate/latent action/log probability
+  未改，critic 预测只参与离线优势构造。有限接触任务在原
+  frame 299 终止；不能将该声明泛化到未记录 next observation
+  的无限控制/time-limit episode。此轮是 MC reward-to-go 的
+  GAE 特例，**不是已启用短期 TD 或 lambda<1 在线学习**。
+
+### v816 固定四 fit 已启动，尚在分配前的原完整证据检查
+
+PID **1692545** 已确认 live、PPID 1、CPU 时间增长；log 已
+输出原完整 160 数据检查启动，尚无 commitment/训练 GPU
+分配，不把“计划四卡”写成“实际四 fit 已完成”。
+
+- runner byte hash：
+  `abb18f155bc024cc7fbe3ee35e18f3fb825781a405477ef643fd517cb2722486`。
+- 新学习 predeclaration seal：
+  `a2bd77f88d5f8ae11e8638b2d3febbe73c0cd63299512af50a989a1460bb5a5e`。
+- 原完整 helper v789 在进口前按 `c9c698...` 校验；expanded
+  v789/v815/v816 F821/F822 exit 0。**原 prepare 的每条物理/
+  Foundation/模型/数据/density 检查完整保留**，通过后才用
+  v815 RTG/critic-baseline labels 替换旧 MC/LOO 学习标签。
+- actor/critic 从原行为模型 `d3be39...` 连续更新，保留全量
+  模型与旧参数，不从已拒绝的 `c85e19...` 候选或训练成绩
+  较好的另一张卡偷换 parent。四配置仍 steps256/batch8，
+  LR [5e-5,5e-5,1e-4,1e-4]、seed [7890,7891,7890,7891]，
+  primary0 固定，原 latent std/rho/cap/mean KL 边界不变。
+- 新目标已事先声明，critic 现在实际参与 actor advantage。
+  老 critic 未声称已针对 RTG 校准，因此先 gamma/lambda=1；
+  label/准备通过也不保证改善物理能力。仍要求相同原 native
+  资格、安全拒绝与 full52 gates，Fresh/晋升保持未打开。
+- 容量保留系统 100 GiB、原流未来 28 GiB、新学习 1 GiB；
+  四 GPU/RAM 门先检查再分配。已接续每阶段 5400 s、内部
+  20 s 的只读观察，观察不触发拟合或额外物理执行。
+
+原流 104–107 四条完整核验及最终 pins exit 0，重数确认
+**108/160、HQ17、clean69、安全失败0**（27 contexts、108
+native、324,000 replay substeps、Foundation32,400）。
+106 row `02d799df55a1273f29be808b51594ed77cb289c5ccb346ee8718cb71c0993860`，
+MC1.9588617186804593、前向0.8481929081734372 m、比例
+0.7545949893585472；107 row
+`6dcee8326b3f04614803148760017ebfca6ec191111f0ed711d28937d80eaea3`，
+MC-10、接触含 knee5，前向1.1351661307694234 m/比例
+0.14907816504219998 也不能算 HQ。已接续原108–111的只读
+完整核验，不重复采样，不将两个噪声流合并或改变原依赖链。
