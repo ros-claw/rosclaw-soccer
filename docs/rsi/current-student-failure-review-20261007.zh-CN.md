@@ -2880,3 +2880,51 @@ v813 按原 0.65 m 安全门自动写出 rejection 并正常收尾：
 与 [CPO 原论文](https://arxiv.org/abs/1705.10528)：前者提供
 值函数辅助的时序优势估计，后者区分收益优化与约束满足；
 采用这些思想不自动带来我们的身体安全保证。
+
+## 2026-10-08 09:08 开始通用时序学习改造：Core 数值模块已测试并推送
+
+完整两遍资格/拒绝闭环结束后，实施通用
+`rosclaw.growth.temporal_advantages.generalized_advantage_targets`。
+它只接受已绑定轨迹的 reward/frozen value/actual next value 与
+明确的 episode-end/termination 布尔数组，输出只读 GAE
+advantage、value target、TD residual。没有 G1/足球规则、
+没有 optimizer、无 Torch 依赖、无控制器/硬件/策略激活入口。
+现有 `event_credit_partitions` 仅标记事件分区，不替代此估计；
+没有再实现 MAPPO、切换模拟器或接战术视频包装。
+
+核心语义：真实终止不 bootstrap；时间截断使用真实最终状态
+的 value，但停止跨 reset 的 advantage 传播；不丢弃、归一化
+或改写 reward。截断后的 next value 不得来自自动 reset 的
+新状态，现有轨迹如缺该观测就不能伪造它。数据 provenance
+仍由外部调用方独立验证，纯数值通过不证明 rollout 安全。
+
+- Core commit：`8b2fe0daa47411bddb442710f0595223ffad4d77`，已
+  推送 `agent/proposal-trust-region-growth`，更新现有
+  [PR #616](https://github.com/ros-claw/rosclaw/pull/616)，不自合并。
+- 新模块 38 项专项测试 PASS；Core `tests/growth` 全组
+  **620 passed / 0 failed，13.72 s，exit 0**。训练 Python
+  环境有一条 `Unknown config option: asyncio_mode` 配置警告，
+  不隐去，不把这个分组称作 Core 全量测试。
+- 新增两文件 ruff check、format 与 diff-check exit 0；新增
+  模块 mypy 检查 1 source file、0 issues、exit 0，不扩称全库。
+- 覆盖真实终止/截断/内部 episode boundary/批次截止、
+  lambda 0/1、discount 0、样本完整性与输入不变、只读输出、
+  NaN/Inf/越界/形状错误/溢出拒绝。没有 G1 新训练或物理。
+
+正在运行的原流仍使用独立冻结 Core775/Soccer788；本流
+历史证据绑定 Core797 `6e1cdb...`、Soccer807 `18ae79...`，
+冻结目录未编辑。新源码不会替换已加载实验模块或旧证据。
+
+下一阶段必须接通实际逐时刻奖励/代价、冻结 critic 预测与
+actor 更新，而非停在通用辅助函数。足球 reward 适配及新的
+训练目标/终止语义需事先声明；保留所有成功和失败轨迹，
+继续相同安全、retention、Fresh 隔离与晋升门。当前仍不能
+声称在线 TD/GAE 已训练 G1、控制已改善或 RSI-M0 完成。
+
+原流 105 已逐项核验，row seal
+`fe03a3b1ec038048e818744921fc10b1d5838c683de05189d1c8496dd667058b`；
+MC 2.3616433130497034，clean/安全、未越界但非 HQ，前向
+0.9888813096118823 m、比例 0.4858148434046096、最低高度
+0.6818379054251917 m。待 106/107 与最终 pins，完整累计
+仍 104/160。原 collector、两 worker 与原三段依赖父进程
+均已重新确认 live；没有重复执行已完成轨迹。
