@@ -6361,3 +6361,39 @@ source SHA256 `95c6782d4689919ba08e18088dcc01aa282a0b074df6b8c6ddf1a0fdc1cd4b09`
 Core新head a5a21e5c的CI run37848271828现已completed/success，
 gate job成功。PR616仍OPEN且无reviewDecision，未自行合并；
 不能引用旧head CI来替代这次检查，也不能把CI成功等同球技提升。
+
+### 本轮current actor四个fits与独立数值审计均已闭合；旧完整52正式拒绝
+
+914实际四个fits分别accepted754/785/849/704，各有1次越界更新
+回滚，合计3092次accepted joint更新、4次rejected尝试、1000步
+未尝试预算；另6个value fits实际6144步。完整terminal seal为
+`sha256:7759eb03cf8209fc932c95b3ecf167ce20907198e80e9fef15b14c4450ee707a`，
+handle71836 exit0。没有把4096最大joint预算记成实际训练量。
+
+916在独立进程完成四份参数及每份21060帧的NumPy重算，最大
+behavior density误差2.4868995751603507e-14；四份marginal KL
+.019989039710868656/.019997168541690334/.01998567633218152/
+.01997831273268541，conditional KL分别.0074601661361882446/
+.007342864622585769/.007440319450057643/.007183250150119282，
+均保持原<=.02要求。actor和critic真实参数hash、全部完整输入、
+accepted/rejected计数与原terminal一致；所有learning/review
+固定输入bytes再独立核验通过。review seal为
+`sha256:878050a7fd1c5bc79b959d9739982bfb0376e5f260573576a07f1d4d7d628475`，
+handle85078 exit0。没有完整candidate policy/新物理收益声明；
+primary仍固定0，完整导出919继续等待原912和原48GiB准入。
+919同一owner25秒观察CPU仅增加5 ticks；这是等待开销观察，
+不是端到端physics加速benchmark或模型导出完成证明。
+
+与此同时旧795的完整52终态已经封存：HQ12→12，旧HQ/clean
+损失均0，全部safe，producer retention exact count12，新增
+出界2，原gate明确false，Fresh/promotion/hardware均false。
+terminal seal `sha256:9a17788b8b4d26436a3866f31a3e0fe12f3977077fb799b49d2a4f9b5496f09c`，
+summary seal `sha256:521e6bba31cae5352819c30e75b508f4f543ad57418711d330bfb33d33794933`。
+921重新验证全部52项独立review/Foundation/trace bindings，
+固定原baseline、课程关联及score，得到相同拒绝结论；没有新
+物理执行，也没有重新比对retention trace arrays。921 seal为
+`sha256:ca70cacca85fd810a832aa171cbd388582e5789904a38fe2de197ff45dbc6af4`。
+新增出界case25为clean foot但方向比.9298，case51为dirty foot，
+侧向/前向比.4758、最大Y4.3316188961m（baseline1.0493731247m）。
+这进一步说明需要改善脚球交互及方向精度，不能只用平衡稳定或
+训练步数来解释成功。此旧候选不是本轮914的新候选，结果不混算。
