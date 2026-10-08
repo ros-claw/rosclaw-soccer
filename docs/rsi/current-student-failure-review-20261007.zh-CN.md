@@ -6193,3 +6193,46 @@ CPU轨迹资格须在独立冻结版本中完成；现有795/896、853/874、
 901/902及其下游保持原源码和原队列，不热改或强行接管。
 目前仅代码/数学和合成控制回归通过，不是新的optimizer、
 native、Foundation、Fresh、policy_gain或promotion成果。
+
+### 新不同seed真实轨迹资格已排队；原两组候选已触发拒绝条件
+
+嵌套缓存审计代码commit `3db9c7cb7fd7c818e45dd41cd677749f753c96dd`
+已推送Soccer main并冻结为911，匹配冻结Core910（a5a21e5c）。
+Git外runner `rsi_nested_variable_seed_reference_qualification_v912.py`
+SHA256为`439d1e11d7cb5ec19d89c032ba996543965acd95a6e0e96d999ea8b456801037`。
+完整E/F/I（100列）、format、F821/F822及不导入项目/不分配模型
+的preflight通过。使用单进程回放，不分配spawn worker。源hash
+在等待和加载前绑定，并在执行及完成后重复检查，运行中未改源。
+
+912 owner3484485、handle57852为实际活跃等待任务，约22MiB RSS；
+未加载完整模型，输出root尚未创建。queue seal为
+`sha256:6c4ae48c568b80aa8924f8e061d80273ef04328b33af3a2c871666bb93d2339d`，
+独立复验seal及全部3042项输入bytes通过。固定原874的job0/1，
+采样seed522610335/522610336，两份原row逐字段匹配完整160-job
+预声明，原mean82c1f9…；两条不同seed仍只对应1个独立课程，
+并非2个独立场景，均为原失败案例，没有按成功结果挑选。计划
+6000实际CPU replay子步、600 GRU帧及540 draw/logp重构；原
+600 Foundation调用只采用已封存证明，不宣称重新执行。
+
+等待902完整资格通过及owner退出后，再按原48GiB导入前/后
+准入加载；未削减内存保护。既有采样pool及其他应用未终止。
+资格比较除source/report hash及decoder_construction元数据外
+保留全部原物理/接触/GRU/采样字段；即使通过也只证明这两份
+不同seed档案的一致性，不证明全160、全52、速度提升或球技
+增长。新增模型cache内存成本仍需真实测量。
+
+进一步复验原757 score_rows（gate要求HQ>=20且new_out_of_play=0）
+和两份原52基线seal/commitment输入hash，按相同index/seed/lane
+逐个比较已封存review。截止05:49原795为44/52、HQ11：即使
+剩余8项全部HQ，总计至多19；另有新增出界case25，Y最大
+4.2851967506m（parent3.7497003322m），clean foot为true，但
+侧向/前向比0.9297773338，不是只有身体失稳造成失败。
+896为30/52、HQ7，也有新增出界case21，Y最大4.2305959482m
+（parent1.3808363811m），clean foot为false，侧向/前向比
+0.9187028290。两组已完成案例旧HQ/clean损失均0，却都已经
+违反必要门控条件，不能寄望剩余案例将其改成通过。
+
+这是基于完整已封存部分结果的提前拒绝判定，不是正式完整52
+终态，也没有写造假result或丢弃未完成case。两组继续原考试
+收集完整失败证据；不能进入Fresh/晋升。下一轮需基于新的
+行为采样更新，不能把原完整旧数据反复拟合的这两组当作突破。
