@@ -3270,3 +3270,66 @@ course0/seed773/default native；日志有headless ORT设备发现
 warning，不将warning直接当作完成或任务失败。尚无两遍完整
 qualification结果或新物理能力结论。v818仍待完整资格结果，
 Fresh/晋升/硬件权限均未打开，目标仍未完成。
+
+## 2026-10-08 11:22 CST：冻结特征诊断与后续 critic 方案
+
+追加 v821 离线诊断，不触碰 v817/v818 的候选、考试或冻结源码。
+本地脚本 `/home/dell/rosclaw_evidence/rsi_temporal_frozen_feature_probe_v821.py`
+byte `e8ec7c83f5d233b0d1b2a0ad8750d6c9a7c2304b54266c49847012f586e2d3b6`；
+声明 seal `e9c99ed90b38bdfcfdf4bdd5540d7bedb275f44ae90c9711ed1e16685c501238`；
+结果 `/home/dell/rosclaw_evidence/rsi-temporal-frozen-feature-probe-v821.json`
+seal `d6808951c806a1b9c5a72c36e2839af36d7dc7134d8740eeed7858a7825044c2`。
+
+声明固定 `context_id % 5` 五折，完整 40 场景、每场景四条轨迹，
+不把同场景不同帧或不同噪声抽样分到训练和验证两侧。
+每折 32 场景/128 轨迹/34560 帧训练，8 场景/32 轨迹/8640 帧留出。
+使用父模型不变的 64 维 tanh 隐层特征加截距，固定
+`lstsq(rcond=1e-8)`；共 **5 次线性探针拟合**，不是零拟合，
+但 actor-critic optimizer 更新、新物理执行均为 0。
+不导出探针参数、不形成策略、不回填本轮 advantage。
+
+| fold | 留出 MSE | 仅用该折训练集均值的留出 MSE |
+| --- | --- | --- |
+| 0 | 219.07141028336315 | 221.30575436165694 |
+| 1 | 76.17637962497216 | 84.70251034521131 |
+| 2 | 95.58612891752516 | 111.66713192570342 |
+| 3 | 89.27431564078738 | 88.00357130619072 |
+| 4 | 91.30529206411894 | 93.12226111953676 |
+
+完整留出预测 MSE **114.28270530615336**，对应训练均值基准
+**119.7602458116598**，约降低 4.57%；五折中四折改善，一折退步。
+每折有效秩 65；未删除困难、出界或不安全轨迹。
+执行最终全部输入/source pins 核验 exit0；另一个独立只读检查
+核验结果 seal、声明绑定、全部 pins、场景覆盖/不交叉及聚合算术 exit0。
+后者未独立重算五次最小二乘，不夸大为第二遍完整模型训练核验。
+
+解释：冻结特征存在有限可用预测信号，当前优化不足是值得检验的
+假设；这不证明特征已经充分、不证明唯一物理失败原因，且留出
+仍是已消费场景，不是 private Fresh，也不是踢球/平衡能力提升。
+v820 的全训练集恒定均值基准与本处按折训练均值基准定义不同，
+不可混用为同一对照。不得因这些数字更好更换固定 primary0。
+
+同步研究 [PopArt 原论文](https://arxiv.org/abs/1602.07714) 与
+[多任务 actor-critic 扩展](https://arxiv.org/abs/1809.04474)：
+它们提供在更新收益统计量时保持未归一化 value 输出不变的方法，
+可以改善收益尺度处理；论文的 Atari/DmLab 结果不是 G1 物理证据。
+两 PDF 已下载至
+`/code/rosclaw/rosclaw_football/repos/popart_value_research_20261008`，
+分别 19/12 页，byte
+`859cf1049948563f6de5dd9f470e1b05a7426d12a1781f596c2a9edc7fee5f08` /
+`909a80cf8cb7208d74c6ae2fe2ef57d19962899306c0d65f62f7d70bec6892f6`。
+已读方法相关章节，未声称已逐页读完全文。
+
+本地 AMP_mjlab 参考 HEAD
+`6c7a2947fccc973e4af8e6d90e550400f1b6fcfc`，干净；
+`rsl_rl/algorithms/ppo.py` byte
+`8841fab25951585fddbf827ad56873f3fc8c66a9cc32721b98433f0f38a2d29b`。
+其默认单一 Adam learning_rate=1e-3，并非现成独立 critic optimizer。
+当前 Core v1 则是 actor/critic 同一 Adam、同一学习率和联合梯度裁剪，
+actor KL 回滚也回滚 critic；不能直接提高全局学习率冒险。
+
+后续方案须版本化实现并先测试：actor 保持小步/KL 安全边界；critic
+独立预算和优化器；收益归一化必须保留原单位预测、统计量及其模型
+绑定；完整成功/失败数据不裁剪，原考试门槛不改。仅校准常数 bias
+无法改变全局中心化 advantage，不能将该类 MSE 改善包装成 RSI。
+此处是方案，不是已实现新 learner。本轮先完成 v817/v818 原链路。
