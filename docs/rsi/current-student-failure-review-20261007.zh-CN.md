@@ -4253,3 +4253,74 @@ std=0.1的每coordinate raw-mean RMS更新为
 仍132，等135完成再闭合136。不把零散prefix升级成完整测试结论。
 总纲§§72–73的M0 Fresh能力扩张与晋升仍未证明，球队/联赛目标更
 没有达成；当前不制作可宣传成果视频。
+
+## 2026-10-08 16:42 CST：候选自身数据支线与排队工作目录修复
+
+复查发现850/851的真实`/proc/PID/cwd`为主工作目录，而原773/774
+物理入口要求冻结815 source目录。此前preflight不执行物理入口，
+因此未覆盖这一启动缺陷：若不修复，未来完整训练完成时会被拒绝，
+并非真正可执行闭环。没有把这个问题描述为正常等待或实验成功。
+
+确认两个owner的exact cmd、cwd及两个物理output root均不存在后，
+只对自有等待owner2277634/2278442发送SIGTERM，原handle确认143退出。
+没有终止旧827、788、841/842、任何GPU任务；没有修改850/851文件，
+原851 safety declaration仍保留。新854/855接续同一848/849固定候选，
+原资格与原52协议不变，并新增**在等待/声明/worker分配前**的精确
+source cwd检查。错误cwd负向启动两个runner均被拒绝，output不存在；
+原13项terminal guard fixture在新854上重跑**13 passed /1.39s**。
+完整expanded F821/F822、preflight、ruff/format分别通过。
+
+新854 owner2321410/session40578，byte
+`cf9bd67497aff27e3e1d03f11bc11cb2169f26161b8b63501b62f5df5f232c9d`。
+新855 owner2321694/session17501，byte
+`59c5fc93afb1103bb0999f57135eb29570dd8c921946ece1ce32ea10dde34210`。
+二者实际cwd已独立确认冻结815 source；原850/851 owner已不存在。
+当前物理输出仍不存在，没有新执行计数。
+
+另外实现并启动**853隔离候选自身数据采样支线**。它不是继续用D3
+反复拟合同批数据；行为固定为已实际训练并经840独立复核的839
+primary0，model `82c1f9db...`，完整model bytes `8b90d8f5...`。
+不是换Champion、不自动Promotion、不用Fresh、不按52表现挑其它
+模型，也没有在本采样器中执行optimizer。
+
+支线首先等待原788完整160数据且owner退出，和842完整52且owner
+退出。要求842与839实际model/learning来源相同、全部52按原0.65m
+安全门通过；若841/842失败或unsafe，拒绝整条支线，不剪掉坏case。
+HQ gate失败但安全的候选允许作为**隔离SIM研究行为策略**产生自己的
+学习轨迹，绝不因此拥有Champion、正式能力或真实硬件地位。
+
+复用原788全部40contexts×4draws协议，stream15与13/14固定draws
+预检不重合，课程/物理World/尺寸/动作限幅/std0.1/rho0.9不改变。
+保留全160成功与失败、全部300-frame GRU/draw/density、原CPU动力学
+replay和Foundation每次300call复算。使用冻结815的私有episode
+factory复用已验证数值对象；每个spawn worker状态、GRU与contact
+history独立。**先执行额外transport control**，新路径必须与841
+原完整native trace的全部数组、dtype、shape EXACT；任何差异即
+停止，不开始160学习rollout。原785不同行为cached资格只保留为
+历史参考，声明字段改名且明确不是839新候选物理证据。
+
+未来计划161native（1control+160学习）、483000独立substeps、48300
+Foundation复算、43200frame rows；这都是**计划，当前新增计数0**。
+2workers、48GiB RAM门、8GiB完整证据预算，在未来资格终态上计算
+固定未压缩数组/全部qualifier unique bytes/metadata/atomic-write
+余量的保守完整上界，超过则拒绝。先等原bank终态才释放其未完成
+预算，仍保留100GiB系统容量门，不截断数据以适应容量。
+
+853完整expanded与原helper预检通过，40×4新draws覆盖检查通过；
+首次ruff F401/E402/C408意见在启动前处理，未忽略F821/F822。
+owner2321775/session87709，source byte
+`d9c4dd4bb88516beb94051b5941121322539bd857217770c43d07eb516ea5e33`，
+queue seal `2a0a8996a34f65709ab64b16c842861ba4f67b7d3755c28ad4f9033ec5107ed0`。
+独立检查重算queue seal、全部fixed input pins、固定model/stream/预算/
+计数/授权false及三个新增owner真实cwd/cmd，exit0。853output不存在，
+没有借原160条数据冒充新policy数据，也没有说完整on-policy RL已跑通。
+下一步仍需将**完成后的候选自身轨迹**绑定其实际actor和persistent
+critic，再学习新actor，独立复核、原retention和Fresh门保持不变。
+
+原835刚闭合**136/160、34contexts、HQ28/clean90/unsafe0**。132/133/
+135 HQ，134 clean非HQ，全safe。cohort seal
+`cdbafb48779aa6649726f618d94807e903640111e891831ead56f975f2ebc4e1`。
+独立136row seal/计数与全部cohort源heads/artifact bytes复核exit0；
+408000substeps/40800Foundation为已执行见证采用，不是观察器重跑。
+旧827目前独立验证0–45，共46/52；42/44/45 clean非HQ，43 dirty
+非HQ，41旧HQ保留，仍无新增HQ。M0与连续球队宣传片均NOT COMPLETE。
