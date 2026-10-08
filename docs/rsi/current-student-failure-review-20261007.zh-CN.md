@@ -4069,3 +4069,73 @@ episodic AWR-inspired及成功序列模仿资产，不能只换名称声称新�
 均safe/nonHQ；131待完成，正式cohort边界仍128/160（不是131）。
 磁盘系统盘约132GiB可用，原实验安全reserve保持，不删除证据。
 当前阶段为新数据链已条件接续与原物理验证持续运行，M0仍未通过。
+
+## 2026-10-08 15:43 CST：完整第二流已接到通用Core信用分配与下一轮四卡学习
+
+新增并实际启动两个条件等待owner，延续845/846，不重启它们：
+
+- **v847**等第二流全部六个value fit终态，绑定完整原temporal
+  result/decl/dataset、六个固定fit回执和source pins，再调用冻结
+  Core838的`cross_fitted_value_advantages`。只使用排除被预测场景
+  的五个fit，fit0绝不成为actor baseline；完整保留160×270行，
+  只替换advantages，其余六个temporal训练数组及dtype必须EXACT。
+  校验实际reward-to-go、原origin critic及非退化credit。它不是
+  再做六个fit，不执行物理，不用私有Fresh。
+- **v848**等完整v847 result，再按原825四组协议与v839的1024步
+  上限，使用**第二流**实际数据学习actor和persistent MC critic。
+  主候选0，LR5e−5/5e−5/1e−4/1e−4，seed7890/7891/7890/7891，
+  KL≤0.02、std0.1、rho0.9、residual cap0.2全部不变。四组4096
+  为未来最大预算，不保证或宣称实际完成4096。首次KL拒绝后依旧
+  回滚并停止该组，不提高KL，不挑表现好的其它候选，不启用策略。
+
+这里修正了一个接续中容易混淆的合同：原cache789/793保存的是
+**每帧恒定terminal MC targets**，845/847则是实际逐帧temporal MC
+reward-to-go。不能假装二者returns EXACT，也不能简单跳过return
+检查。新848仅把五个行为数组与cache作EXACT；把new returns与
+845真实保存的temporal数组作EXACT，并独立重算后缀reward累加。
+同时要求完整300帧reward总和等于旧constant MC terminal return。
+旧cache、旧reward、源文件均不覆盖；状态继承仍为实际行为D3/
+critic ff584...，不是未经晋升的839/793 child。
+
+另一个只读检查对**既有完整810流**的旧811与815数组验证了该
+transition：五个行为数组EXACT；constant MC广播检查、全300帧
+总reward与原terminal return、30–299帧后缀targets均一致，41711
+条returns值确实不同。原完整文件hash对应原回执，末尾byte pins
+复查通过。此项是既有数据上的数值转移检查，**不是第二流结果
+或新物理证据**；新848仍必须等待第二流完整数据作自己的检查。
+
+848合并继承的cache/temporal/credit pins及source heads时逐项
+拒绝冲突，并在准备与終态核验；完整原数据、origin模型、物理/
+Foundation/density见证仍采用原793已完成且全部bytes不变的检查，
+不把采用旧见证描述成新replay。新source统计明确标记constant→
+temporal target transition和actual generic Core output来源。
+
+两runner各自ruff、format、完整F821/F822、--preflight通过，且
+848包含原816/789/新847完整namespace检查。当前其output目录
+均不存在，actor/value/physics新增计数仍0；它们只有queue已封存。
+独立检查重算两个queue seal、全部源pins/冻结heads、160/40/43200
+计数、固定config/LR/seed/primary0及授权false，exit0。
+
+v847 owner **2224163**（session99937），byte
+`9d1488773e12d275bbe3bb5349941051d248013565d8861c0c05c112884a3cb6`，
+queue seal `05fccfd127ca6179659498d7153c53c9156a1731e2ec351090388f81ca8dbd9c`。
+v848 owner **2233571**（session29929），byte
+`315630506e865d8767d5afc109a6d280606c0095c6084153d07cfdfa6b06f898`，
+queue seal `2fd8ae3ec9880d1e4e9e90fce8572f8d01c5ffc202cb69aa067aaa1318fa0bb5`。
+二者及原845/846、827/834/835的PID/cmd均再次确认live，未因观察
+工具等待超时重启owner。新actor将来仍须独立数值核验、原两遍
+物理资格和原52验收；当前没有为848分配这些新物理任务。
+
+原788的128–131四条完整cohort已闭合，正式边界
+**132/160、33contexts、HQ25、clean86、unsafe0**。新增四项均非HQ，
+130 clean，其余dirty。独立复查完整132个原row seal/正式计数及
+cohort全部artifact/source bytes，通过exit0；cohort seal
+`9947d96b60ca98f95d248fb81bfd09237259eb4b32fd91d6b0f4cc1384d1608a`。
+396000substeps/39600 Foundation为原执行见证采用，不在观察器
+或此独立复查中重做。835已自动等132–135，160仍未完成。
+
+旧827 observer确认0–31，共32项。新30 dirty/safe/nonHQ、31 clean/
+safe/nonHQ；旧30本来就dirty，不是新增clean loss。4/16/19/22/24/
+27/29为旧HQ保留，仍无新增HQ。case28前向1.578909m，但方向ratio
+0.3097395略超**原0.3**，仍按失败保存，未放宽阈值。不能把这个
+“接近阈值”称为合格射门或Fresh提升。M0仍NOT COMPLETE。
