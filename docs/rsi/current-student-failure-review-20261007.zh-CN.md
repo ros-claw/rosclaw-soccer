@@ -5561,3 +5561,76 @@ NPZ bytes/shape/有限性/全部原MC标签，exit0；这些检查本身没有
 索引也单独核验。该对照表明这批真实探索存在可学习的回报差异，
 不是新权重改善、Fresh泛化或M0完成的证明；不选择成功噪声seed
 作冠军，不删除失败序列，不以这个案例单独制作宣传成果。
+
+### 2026-10-09 02:05 CST：完整学习结果、独立信用复核和容量恢复链
+
+原793正常退出，789整批学习结果已封存。完整160 episodes、40个
+课程context、43200 actor frames全部进入四个独立A6000拟合：每个
+256步，合计1024 accepted optimizer steps、0 rejected。不是DDP，
+不是四卡同步梯度，也不是已经通过物理验证的球技提升。固定主候选
+仍为index0，不按拟合误差或演示效果临时选择其他模型。
+
+- commitment seal：`1b2ec5415b3a2345ecc9fba5880ff1239264b57cde648bcc304329317e53d6ab`。
+- learning seal：`34e1b3ce5c69d8697aeec5b5fc142304c3e9f3d0832efae7bad7c4a9e7f0f82a`。
+- 主模型hash：`d9a0e349adbceffc5dcf0248b3e4f13184dab5cd3d8f495a096ac512ad1ca87f`。
+- 四个fit的conditional KL约为0.003295、0.003430、0.005744、
+  0.006003；均低于原声明0.02，不能由此推导物理能力改善。
+
+独立只读进程核查2310项原输入字节、源码head/clean状态、终态与
+声明seal、四份参数receipt的哈希/有限性/256条历史、配置和CUDA
+设备。此次没有在该独立检查中重建789全部四个大模型或重算全部
+actor KL，不能把参数receipt检查描述为完整模型独立认证。
+
+后续845/846/847也正常完成；它们仍绑定原D3行为策略，不是把
+789新模型的更新步数继续叠加。845保留全部160条时序Monte Carlo
+回报（gamma=lambda=1、terminal frame299），终态目标未改写。
+846实际执行6个critic-only拟合，每个1024步，共6144 value steps，
+没有actor更新或电机策略安装。五折以context排除，每折128 train/
+32 held-out episodes，不能称作未接触过的私人Fresh考试。
+
+独立NumPy复核全部六个网络预测、训练目标均值、MSE及五折预测：
+OOF MSE约66.11784，对照训练均值baseline约77.29261；full-fit训练
+MSE约49.64438。847由排除当前context的预测生成advantage，
+26547正/16653负行，raw scale约8.12616。其余行为/回报数组与845
+逐元素一致；原奖励反向累加、预测、raw和标准化advantage全部
+独立重算。1762项合并输入pins、三套冻结heads、六个fit与三阶段
+结果seal均核查。这是信用估计/数据链证据，不是新物理成功率。
+
+| 阶段 | result seal |
+| --- | --- |
+| 845 temporal labels | `18fca357233d22954dca8fe5ded429955f38be2c17b1c2a950647f3eb2976881` |
+| 846 value training | `aac68af1a0a30538845370e3407e28128554fa887e7e0a3253893d6d5efb3b1c` |
+| 847 crossfit credit | `6537a2d38e9613f325d097dfc7861c606ef5d7fedacf5df510a4c3ab9bdc558e` |
+
+原848 handle29929 exit1：`complete bank exceeds evidence/system reserve;
+no truncated bank`。失败发生在输出root创建和四卡拟合之前，
+实际optimizer为0，848没有新权重；旧source/queue/predeclaration
+及下游等待记录全部保留，不覆写失败运行。
+
+另行创建890容量恢复协议：完整已关闭789拟合产物实测564923450
+bytes，3倍仍小于2 GiB学习预算；另为完整共享物理银行保留8 GiB，
+绑定已资格验证的874协议文件。总预算由原29 GiB重新声明为10 GiB，
+**100 GiB系统最低预留不变**。全部测量产物文件、原失败声明及
+源码哈希进入新承诺；没有删旧数据、删失败轨迹、降低物理门槛，
+没有截断160 episodes/43200行，学习率/seed/动作范围均不变。
+
+890完整展开F821/F822检查、普通ruff与format检查通过，资源函数
+的正例与错误预算/路径/声明/降低系统预留等负例检查exit0，检查
+本身未分配GPU或物理worker。源hash固定为
+`bf2768fa389f33926c7c6fa31c7236575a837a79c6c596627f829d67d3faa80e`；
+新resource plan seal为
+`965492bd16d5f6ad2526f6c4f61030c2e95f3d7ef73c5e94039c0361c0202563`。
+890已启动（PID3146448、handle24138），当前仍做完整输入验证，
+**尚无890完成学习结果**。
+
+后继891独立四模型/密度/KL重建审查、892原两次原生重复验证、893
+原安全门控与完整52场考试已接续排队。三份展开preflight全部exit0、
+NO_PHYSICS；普通ruff也通过。独立审查没有optimizer或动力学。
+物理阶段只在原条件通过后运行，固定候选0，unsafe则阻断52场，
+没有自动Fresh、晋升或硬件授权；旧失败链没有被伪装为已通过。
+
+02:05采样快照：853封存13条，HQ0、安全13；874封存40条，HQ3、
+安全39（已有1条unsafe，必须保留并学习）。这是进行中的row计数，
+未完成160条，不能称为整批成功率；此次计数不是再次执行动力学。
+两条采样owner仍存活、无failure/最终manifest。M0、Fresh和球队
+宣传成果仍未完成；继续以完整后继物理考试判断是否实际进步。
