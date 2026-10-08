@@ -2584,3 +2584,61 @@ clean、安全、未越界但非 HQ；100 比例 0.9314520802050129，
 当前确证的是全量自有数据入库通过与四卡拟合启动，尚未
 确认拟合完成或默认策略物理成绩；Fresh/晋升仍未打开，
 不把软件检查通过、GPU 占用或训练帧数当成 RSI-M0 完成。
+
+## 2026-10-08 08:17 全部四卡拟合完成，固定 primary 0 转入默认物理资格
+
+v811 最终输出 `CURRENT_OWN_DATA_ACTOR_CRITIC_LEARNING_COMPLETE`，
+学习父进程和四 worker 已收尾。只读观察完成四 fit 报告/数据/
+模型绑定和最终全部 input/冻结 HEAD pins，exit 0。完成结果：
+
+- learning seal：
+  `7665122322140d81d40bc60b800a5df870b281db4349ea8e4ea0ac3361cc5e23`。
+- **实际四 fit、联合接受更新 1,024（每 fit 256）、回滚 0**；
+  原最大步数/配置未改，不是仅声明训练或 GPU 占用。
+- primary 仍为预先固定的 **0**，不是因训练损失或考试择优。
+- 零新增 physical executions；`physical_policy_gain_verified=false`，
+  Fresh/晋升/硬件授权均 false。
+
+| 学生 / device | LR / seed | 接受/回滚 | marginal mean KL | conditional mean KL | 最终 MC value MSE |
+| --- | --- | --- | --- | --- | --- |
+| 0 / cuda:0 | 0.00005 / 7890 | 256/0 | 0.008502464485265614 | 0.0031022249238114165 | 299.9998987690929 |
+| 1 / cuda:1 | 0.00005 / 7891 | 256/0 | 0.008350489253499408 | 0.0030444090006630153 | 300.01970496786805 |
+| 2 / cuda:2 | 0.0001 / 7890 | 256/0 | 0.016992532805933044 | 0.005870277949162845 | 298.1081036468679 |
+| 3 / cuda:3 | 0.0001 / 7891 | 256/0 | 0.016747925249095994 | 0.005813490457059654 | 298.1983411082488 |
+
+另一次精简只读复查 exit 0：四 config 与原 predeclaration
+逐项相等、各 actor/critic 完整数值 hash 复算相等、256 条
+accepted history 与计数相等、每一 accepted update 的两种
+全量 KL 都不超过原 0.02。四个 actor 都实际改变；四个 critic
+的完整 hash 都从原 `ff584ac65ed5594473a943033d9cb8a097aa4089a3b906cfd0cae508e4e04247`
+改变，是真实持续参数更新，不是 actor 未变的 value-only 训练。
+最终 MC value MSE 是训练数据上的数值，未用同批原 critic
+做比较，不据此声称小脑、触球或稳定性提高；算法仍非 TD/GAE。
+
+| 学生 | 完整 model hash（sha256） | sealed fit report hash（sha256） |
+| --- | --- | --- |
+| 0 | c85e197eea2f801ccf5d43aa02db84c6b8c7571b76439d5c67ec625e7ed65483 | 897f28b75f1172e70e9aac9ed0719177055f448aecb2fd0ba6cc50bc2b6fa3b8 |
+| 1 | 223e99295377d228e6f532a88bf2e55f49204c5e8997d031a27448c8f03d7147 | 142f5dc80f73e6c661863de27e6456e1ea445eeb20bd829f262944ca2d95de3d |
+| 2 | 1919c3e3e3d5efa2ad63765184d4c3c80ea17cd87b7babb22e5c379bf32f5c62 | f212dceacc97eabf5793c8f3651414d60b2a0a9039c9d32854730cd0539c2840 |
+| 3 | 6205812a11c199fcb6050750dcedfe0a599e214fd1e797ce26c538a2ca6495a0 | 1811ea8ba70b3ede6454ae44331ebce67f08a61d6307514e0e416748a67d250d |
+
+primary 0 的原 actor hash
+`3fb7425fa99182503554d7fba6704de424f2d4436b5b4e20b265e2f75c2009b6`
+变为 `cbacf90111f1c0e61b4184b783c54fda0a1ec6db18b656b28a6f0ea9f4a0c492`；
+critic 变为 `90a69b0578b38d46846de3ea7ba80353230f037fb5fbac7ca572f170ee8fefa8`。
+四 fit 的 canonical numeric input hash 均为
+`fc3a55cdc3b926321cccf49ed883aacd882de51c7d32bfc74e8124410e9b450e`，
+与 NPZ transport byte hash 是不同定义，不将两者混用。
+
+v812 PID 680223 已转为 RUNNING、CPU 时间增长，进入原 primary 0
+reload/绑定/资格前检查；完整源码复核仍执行原两次默认 native、
+同一 consumed course 0、seed 773、原 28 字段 exact repeat、
+原独立 6,000 substeps 与 Foundation 600。不是新 factory
+替代默认解码，也不是 HQ 比较或晋升。08:16 尚无资格 worker，
+不能声称新物理执行已完成。已接续 source-pinned 只读资格
+commitment/result 观察，每阶段 3600 秒；观察不触发额外物理。
+v813 仍等这两次原资格的完整安全门，之后才可原 52 场考试。
+
+原流 100/101 已逐项核验，仍待 102/103 与最终 pins；完整
+统计仍 100/160。160 新流全部成功与失败学习结束，但更新
+模型的物理成绩还没有出来，不能写成 RSI-M0 或球队宣传成功。
