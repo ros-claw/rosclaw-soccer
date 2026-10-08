@@ -9,6 +9,61 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.rsi.online_motor_actor_critic import terminal_return
+from rosclaw_soccer.rsi.step_motor_features import FEATURE_NAMES
+
+
+def motor_observation_boundaries(context: Any) -> dict[str, Any]:
+    """Profile the original normalized135 observation, not a new input law.
+
+    Exact values at +/-8 are recorded boundary hits, not proof that the raw
+    values exceeded the limit. Caller authenticates the recorded learning
+    sequence and its source normalizer; this function does not reconstruct
+    normalization, physical dynamics, or information lost before clipping.
+    """
+    values = np.asarray(context)
+    if (
+        values.shape != (270, 135)
+        or values.dtype != np.float64
+        or not np.isfinite(values).all()
+        or np.any(np.abs(values[:, :134]) > 8)
+        or not np.isin(values[:, 134], (0, 1, 2)).all()
+        or np.any(np.diff(values[:, 134]) < 0)
+    ):
+        raise ValueError("complete original finite normalized270x135 sequence required")
+    rows = []
+    for index, name in enumerate(FEATURE_NAMES):
+        column = values[:, index]
+        rows.append(
+            {
+                "feature_name": name,
+                "positive_bound_frames": int(np.count_nonzero(column == 8)),
+                "negative_bound_frames": int(np.count_nonzero(column == -8)),
+                "minimum_recorded_value": float(np.min(column)),
+                "maximum_recorded_value": float(np.max(column)),
+            }
+        )
+    return {
+        "schema": "soccer.rsi.offline_motor_observation_boundaries.v1",
+        "feature_names": list(FEATURE_NAMES),
+        "normalized_feature_count": 134,
+        "control_frames": 270,
+        "feature_coordinate_rows": 270 * 134,
+        "recorded_bound": 8.0,
+        "frames_with_any_boundary": int(
+            np.count_nonzero(np.any(np.abs(values[:, :134]) == 8, axis=1))
+        ),
+        "features": rows,
+        "contact_phase_counts": {
+            str(p): int(np.count_nonzero(values[:, 134] == p)) for p in range(3)
+        },
+        "raw_normalization_reconstructed": False,
+        "clipped_information_loss_proven": False,
+        "source_physics_validated_here": False,
+        "runtime_selection_authorized": False,
+        "training_authorized": False,
+        "promotion_authorized": False,
+        "hardware_authorized": False,
+    }
 
 
 def contact_timeline(forces: Any, outcome: dict[str, Any]) -> dict[str, Any]:
