@@ -5110,3 +5110,51 @@ handle99169 exit0。所有runner/test/raw在外部evidence根，未
 当前没有新训练能力增益、Fresh通过、球队自主比赛突破或新
 宣传片。下一步是等待原完整前置闭合，核验真实学习/物理终态，
 按失败证据继续课程迭代，而非拿排队数或测试数代替球技成长。
+
+## 2026-10-08 21:43 CST：156/160完整cohort闭合，计数边界纠正
+
+原788/792实验的`cohort-through-155.json`已经封存，并用只读
+`rsi_verify_fast_chain_admission_v885.py`独立核验whole seal、全部
+input bytes及冻结source heads；handle34239 exit0。证书seal：
+`29b3a1973efe42f1cc4afe25592b71d23c313c5932b742b45e1101bf9d1ee5e3`。
+
+实际结果为156/160完整采样行，HQ34、clean101、unsafe0；相对
+152证书，新增四条均未达到HQ，其中三条clean，四条safe。
+这是失败样本的真实积累，**不是新模型或能力增益**。468000
+归档物理子步、46800归档Foundation调用属于原实验，验证器只
+采用、未重跑；此处新增physics/optimizer均0。仍缺最后四条
+及整个160 manifest/owner退出，不能提前训练缺失完整前置的链路。
+
+进度跟踪曾用目录glob数计行，发现根目录还有`row--1.json`和
+`transport-control/foundation_review.json`各一条控制复现。因此
+“156个行文件”不一定是156条训练轨迹；当时实际是155条非负
+采样行加控制行。已及时纠正中途说明，未将此数写入cohort或
+任何训练/晋升门。控制复现既不能算新课程，也不能算学习样本。
+正确采样文件观察必须限定声明的非负编号，例如：
+
+```bash
+rg --files /EXACT_BANK -g 'row-*.json' | rg '/row-[0-9]+\.json$' | wc -l
+rg --files /EXACT_BANK -g foundation_review.json | rg '/sample-[0-9]+/foundation_review\.json$' | wc -l
+```
+
+这些仅是文件观察，不验证内容/完整性；最终采样数仍来自所有
+输入核验通过的sealed cohort/manifest，而不是glob或名称本身。
+
+只读检查原788`collect`的代码顺序可见，物理及Foundation审查
+文件写入后，仍须执行完整`extract_sequence`、保存训练数组及
+行封存。Source788默认路径会做原采样preview/decoder构造和
+全部300帧数值复现，因此中间文件齐全不等于行已经完成。这是
+代码顺序解释，非外部stack profiler测得的当前热点或加速倍数。
+未有py-spy可用，没有向worker发送调试信号或改运行代码。
+新874已在原独立reference审查之外，为**生产端**序列提取显式
+绑定private episode factory；该优化仍等待控制/完整新bank实际
+执行验证，不能用旧日志称新端到端提速成立。
+
+842实际考试已输出到case46，即47条审查完成记录，仍无完整
+52终态；这不是47条内容独立汇总成绩，不做partial筛选。原
+788/842/835和新879/881/882/883当前确切owner全部确认live。
+885另核验新队列完整输入及四进程原始cmdline/cwd/PYTHONPATH，
+并确认废弃880owner已退出。885 bytes：
+`c4152bed84e21e77062ecf919784c4a35aa174d4eeccfa7024bc09065efae287`。
+下一步仍等待原160及52完整闭合，按既定候选和完整成绩继续
+学习/拒绝闭环；未访问Fresh、未晋升、未产出宣传效果声明。
