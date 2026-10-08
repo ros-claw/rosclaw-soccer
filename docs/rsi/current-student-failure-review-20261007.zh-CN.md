@@ -6236,3 +6236,78 @@ SHA256为`439d1e11d7cb5ec19d89c032ba996543965acd95a6e0e96d999ea8b456801037`。
 终态，也没有写造假result或丢弃未完成case。两组继续原考试
 收集完整失败证据；不能进入Fresh/晋升。下一轮需基于新的
 行为采样更新，不能把原完整旧数据反复拟合的这两组当作突破。
+
+### 2026-10-09：当前行为 actor 的独立78轨迹补充训练已打通数值准备
+
+原853/874的完整160轨迹实验及其所有下游不变。本轮另行预声明
+一个补充pilot：只采用906固定库存中的853的20条和874的58条，
+共78条完整轨迹、15个已消耗课程、21060个学习帧。没有等同为
+78个独立场景，没有接入Fresh，也没有把未完成完整bank默认为通过。
+数据质量检查促使本轮同时报告课程重复粒度、数值内容重复和各课程
+样本数；不按成功、失败或安全结果过滤。样本含6个HQ、77个safe，
+即包含原1个不安全样本。原课程0–4各8条，5–13各4条，14为2条；
+这是不均衡的已消耗课程pilot，不是完整40课程实验或泛化证据。
+
+关键改进是避免为纯数值拟合加载完整425MB JSON策略：839的
+小型student回执已保存真实actor/critic参数，且可与原learning
+seal、固定student0和mean82c1f9…关联。913只采用这些实际参数，
+不重新初始化actor，也不再拿原D3行为数据重复拟合。逐条核对原
+完整job、row、独立physics review、Foundation、trace和learning
+NPZ绑定；全部270帧current actor raw mean与原trace完全一致，
+最大误差0，条件行为log-density最大误差2.4868995751603507e-14。
+原6个NPZ字段和constant terminal returns保留，另加完整实测历史
+重分配后的逐时MC targets；终局奖励不改、gamma=1、有限任务
+terminal frame299，没有声称TD/GAE或持续在线控制。
+
+913闭合result seal：
+`sha256:dfa399bd4a12463f2365f2ad85f4ba7d504751ca72c2d313fc24e950a4429da5`。
+所有667项原bytes再次独立核对通过；完整数值数组hash（shape、
+dtype、各字段C-order bytes，不是NPZ zip时间戳）未发现重复。
+该过程没有新物理执行或完整parent model重构，不能代替native资格。
+runner SHA256为`23ae2672c79ac5a71eece8f7d75ce059f464e141738a55582ed29485f186e96f`。
+数据和所有训练产物均在Git外`rsi-current-actor-supplemental-*`目录。
+
+914固定训练方案：5个context_id modulo5的排除课程value fits，
+另1个full-data value fit（不提供actor baseline），每fit1024步；
+排除课程critic使用fresh numeric initializer seed913，不继承曾
+接触这些课程的历史critic。随后4个独立current839 actor/critic
+fits各最多1024步，actor和joint critic从真实839 student0持续更新，
+固定primary0，不按训练误差或考试结果重新选候选。保持原std=.1、
+rho=.9、residual_cap=.2、全数据marginal/conditional KL<=.02、
+拒绝更新回滚和停止逻辑。单进程顺序使用cuda0–3，不是4-rank DDP。
+数值任务只加载小参数和约30MB数组，独立8GiB host/每卡4GiB free
+准入；没有降低完整策略/物理worker的原48GiB准入，也没有停止
+其它GPU应用或已有采样pool。
+
+914源SHA256 `833ba8007757e924847368137d824e4629402a27c8a74ae7b9497f474f30d237`，
+预声明seal `sha256:eee7cdabd56093b58bbcfe59ab84e212540eb8ec7bb0f0abe49746defc666197`。
+owner3512535/start_ticks217528722/handle71836。六个value fits已
+完成实际6144步。915在独立进程用NumPy重新计算全部训练MSE、
+排除课程预测、raw/normalized advantages及fold数组，与保存的
+完整数组逐元素bit-exact。915 seal为
+`sha256:58f5cb48d90c6894bb54aeec8cfc3766e47fb4fd7a438cd705c642ed1fbc892f`。
+OOF MSE140.05631296055822，训练集均值baseline139.3718973230574，
+反而略差，因此没有声称critic校准或泛化提升。没有重新执行优化器。
+
+actor/critic阶段仍在真实运行，尚无完整terminal或新完整模型。
+预声明primary0已保存真实754次accepted更新和1次回滚拒绝，
+还有269步从未尝试，不能计成1024步完成。actor参数hash由
+970ffc68…变为0f19562e…；回执marginal KL=.019989039710868663，
+conditional KL=.0074601661361882446，MC value MSE=146.88080798997632。
+student0 seal为`sha256:0efafa06998ccb8c15935ad67fbba578b6766e5ccb984afe0d37160897e05615`。
+这是实际学习的producer回执，尚未通过独立916完整数值审计，
+也不是踢球质量改善证据；其余三个fits继续原预算。
+独立916审计已排队，owner3519707/handle85078，在原914 owner退出
+且完整terminal封存后逐个验证全部21060行density、causal mean、
+KL和critic MSE、四份真实参数及全部accepted/rejected计数；不把
+拒绝后未尝试的预算计成实际optimizer steps。queue seal为
+`sha256:9833bc2db2e41d5bf545ecbe7f8046afcc7e091a18e491e8091867ba042d68ee`，
+runner SHA256 `c22aa86763ba64ed6662f5113ff4ce69275d17c73d4d7c07b8d8cc60f0f82f6b`。
+913–916最终源码各自E/F/I（100列）与F821/F822通过；格式检查前
+发现的import排序/行长问题在运行前修复，运行中未改源。没有spawn
+worker，因而未冒称做过不存在的spawn bootstrap验证。
+
+下一阶段仍须完整parent关联/模型导出、native资格、原完整52考试、
+retention/safety和晋升门；这些尚未完成。旧795/896的必要门控失败
+结论不变。本轮是实际current行为数据到学习的数值链路进展，不是
+球技突破、Fresh收益、M0完成或可宣传球队成果。
