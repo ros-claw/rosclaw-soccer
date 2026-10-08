@@ -5158,3 +5158,64 @@ rg --files /EXACT_BANK -g foundation_review.json | rg '/sample-[0-9]+/foundation
 `c4152bed84e21e77062ecf919784c4a35aa174d4eeccfa7024bc09065efae287`。
 下一步仍等待原160及52完整闭合，按既定候选和完整成绩继续
 学习/拒绝闭环；未访问Fresh、未晋升、未产出宣传效果声明。
+
+## 2026-10-08 22:22 CST：839固定候选的完整52考试拒绝，失败定位
+
+原842实验完整结束，handle85834 exit0，owner2159594及两个
+worker退出。结果`rsi-recurrent-parallel-student-full52-v842/result.json`
+seal为`8efe330eb5fd79d622bb32484945a03a2ace02569639890b226ec945763274d5`。
+这是原160/40/43200流810训练得到、提前指定的839 primary0：
+模型`82c1f9db…`，不是从其它三个保存模型中按考试成绩挑出的。
+
+| 原始完整52门控指标 | 结果 |
+| --- | --- |
+| baseline HQ / candidate HQ | 12 / 13 |
+| old HQ loss / old clean-foot loss | 0 / 0 |
+| new out-of-play | 2 |
+| safe pelvis | true |
+| retained success exact original trace | 12 |
+| 原consumed candidate gate | **false** |
+
+全部52个原案例完成；原实验实际52次native、156000独立物理
+回放子步、15600次Foundation重算、15600个recurrent state frame
+重建。这些属于原实验的真实执行，不是本轮只读复核新增执行。
+13未达到原20条HQ门槛，且新增出界必须为0，两项都不达标；
+即使安全/保留没有退化，也不能晋升。自动Fresh和Fresh授权
+仍false，未激活该候选。质量仅增加一条，不能称突破或宣传级。
+
+完整summary与baseline按原52顺序配对后：新增HQ是index30
+（seed20262105/lane4）；新增出界是index42
+（seed20262108/lane4，baseline最大侧向3.475624559m、candidate
+4.068915922m）和index50（seed20262110/lane4，3.980397571m→
+4.457315395m）。两者clean-foot均true，说明不能把所有失败都
+归结为膝盖误触；在这两例中，干净触球仍没有满足场内方向约束。
+
+额外直接检查**该候选实际训练的810 commitment**所声明40个
+`(seed,lane)`，并与788当前训练声明交叉检查：30、42、50都在
+训练情境中。不能声称是遗漏情境或未见课程导致，也不能把
+“补这两个情境”当作已证实的解决方法。存在同情境不同采样
+轨迹、策略更新后的闭环状态分布和学到的方向控制不足等可能
+因素，当前成员关系检查不能证明其中哪项是因果原因。
+
+下一步继续既定的候选自身真实采样→完整时间奖励→排除情境
+cross-fit value/credit→actor/critic更新→原门控完整考试。当前
+874–883新流和853–863旧流都未热改；失败不能成为缩小考试、
+选择其它保存模型或绕开Fresh隔离的理由。新OoP案例将保留为
+后续失败分析与训练效果核验的锚点，而非额外成绩筛选机会。
+
+另新增只读完整终态复核器`rsi_review_complete_original52_v886.py`：
+Source815/Core815精确导入路径和全部src/scripts/Growth bytes/
+heads在import前核验；各案例绑定原report、review、Foundation、
+trace、MJB、execution commitment及原52summary；验证观测
+capture/measured history，重新比较原成功案例的全部原trace字段
+（按原695规则只允许既定Foundation和GRU附加字段），从byte-
+pinned757的**原**score_rows函数重算门控。只读，不进行新的
+物理/ Foundation重跑、优化或晋升。初次普通ruff有I001/C408，
+已在运行前修复；最终ruff/format/F821/F822分别通过。
+
+886 bytes为`7988b2e75a43fb578f2cc9cd4fa868ec78d95d6c798b9d6b9b27dffe2fc55b72`，
+handle72000/owner2804881在22:22仍活跃（CPU约100%、RSS约1.2GiB），
+**尚未输出独立完整review，不能记录为独立复核通过**。
+原采样788/792仍活跃，当前可见158条非负采样行；整批独立
+证书仍以已核验156/160为准，未有完整160 manifest。Goal仍为
+RSI闭环能力扩张及最终连续球队展示，当前两者均未完成。
