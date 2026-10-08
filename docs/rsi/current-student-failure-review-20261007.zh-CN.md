@@ -3117,3 +3117,27 @@ v816 PID1692545 的 CPU 已至00:48:53，仍在原完整 prepare，
 没有取得栈、改变系统权限或暂停/重启实验，不声称已定位热点。
 Core PR616 在线 GateA/B已通过、GateC全量回归仍运行，余项未
 完成；不是全套CI通过，更不是物理突破。目标仍未达成。
+
+## 2026-10-08 10:27 CST：原流112/160整组确认，观察接续
+
+原108–111四条完整 verify_record 与最终 source/input pins
+exit0。111 row
+`eba73f3233e66e0f8294e69d66a9a6b39bf2860dc4385cce5452e75e13b7de87`，
+MC1.6580984642029588、clean/safe、最低 pelvis0.6962775769342697m；
+前向0.6957070332497273m/横向比例0.9820578513291022，非HQ。
+本 context四draw为HQ1、clean3、unsafe0，所有失败保留。
+
+重新读回0–111全部 sealed rows，检查原commitment/resumption
+绑定、全部 row bytes 与 source/input pins 后，总计确认
+**112/160、28 contexts、HQ18、clean72、安全失败0**。
+相应采集计数112 native、336,000 audit substeps、Foundation
+33,600 calls；只读核验不另加执行数，也不混入另一噪声流。
+
+已接续112–115只读观察，使用原完整 verify_record，返回的
+新 artifact pins纳入整组最终检查；单行观察 horizon3600s
+仅限制观察，不限制或重启采集，内部20s检查。观察到期不是
+真实实验终止，必须复查原PID。原两个worker及parent存活。
+
+v816 PID1692545 CPU00:54:20，仍在完整 prepare，尚无本轮
+学习 commitment/四fit完成结果；v817/818仍正常等待。本轮
+没有新增物理考试或 Fresh 数据访问，没有可宣传的球队突破。
