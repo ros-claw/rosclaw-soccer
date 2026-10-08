@@ -6397,3 +6397,44 @@ summary seal `sha256:521e6bba31cae5352819c30e75b508f4f543ad57418711d330bfb33d337
 侧向/前向比.4758、最大Y4.3316188961m（baseline1.0493731247m）。
 这进一步说明需要改善脚球交互及方向精度，不能只用平衡稳定或
 训练步数来解释成功。此旧候选不是本轮914的新候选，结果不混算。
+
+### 新current actor的原生资格闭环已固定并启动等待
+
+922采用原772的`worker(job)`函数原体，不复制或修改其物理、
+独立审计和Foundation逻辑。固定baseline课程0、sampling seed773、
+primary0，顺序执行两次native；每次3000 replay子步、300个真实
+Foundation调用、300个GRU状态帧、270个draw/log-density重建。
+全部两次轨迹字段、shape、dtype和数值逐数组exact比对。两次
+重复仍只代表1个独立课程，不代表球技提升、完整52、Fresh或晋升。
+
+原773前端要求旧格式`learning.json`及四个完整model的hash列表，
+本轮只有四份真实数值fits和固定primary0的完整导出，不能凭空
+伪造旧格式学习manifest。因此922使用新的明确queue/export
+绑定前端，原worker和后续52门不变；验证完整919 export seal、
+model bytes及实际model hash后，才构建当前策略sampling view。
+旧完整worker的前端`main()`没有调用，不会冒称新manifest满足
+未执行的旧前端检查。它自身执行原完整资格的全部物理证明。
+
+最终922源SHA256为
+`13f6dcc4b26d47cc64583cc27161faf0dd1b4e772b97c98d7fa4db2dc56ac4d5`。
+source/input preflight实际通过且没有项目导入、模型分配或物理
+执行；E/F/I、format、compile及922和实际772 helper的F821/F822
+分别通过。未使用字符串展开/动态生成新的worker逻辑。资格采用
+single-process serial，不分配multiprocessing worker，不能声称
+做过不存在的spawn bootstrap。原完整模型48GiB及8GiB disk
+free准入保留，且全量数据校验后重新检查内存再加载模型。
+
+queue seal为
+`sha256:179b3b7c27772c6636c1f33538214af46c0f118c77d965353003210798205d62`，
+全部410项初始bytes及queue seal又在独立进程核验通过。真实
+owner3553917/start_ticks217684983/handle22953仍活跃，模型root
+尚不存在，正在等待919完整导出和原owner退出，没有新physics。
+没有停掉既有896、901/902/912、bank和其他应用。
+
+922由独立py-spy进程3553915以`--nonblocking --rate 10`启动，
+不附加到旧仿真、不改变主机ptrace设置、不设置会提前结束采样的
+duration；预留Git外raw profile输出，待原资格子进程结束后分析。
+profiling binary SHA256为
+`e7c2de2dc54449ec88c086f1859555b4e34e63ccdcf3f8804496f9306cd44de6`。
+目前没有最终profile或热点/加速结论；最终是否资格通过必须看
+真实worker终态及证据，不凭profiler exit或此queue判断。
