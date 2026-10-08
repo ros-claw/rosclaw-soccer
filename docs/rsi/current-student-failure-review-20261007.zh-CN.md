@@ -2731,3 +2731,57 @@ minimum 在 frame 99/substep 5，共 **15 个子步**低于安全线
 不是永久倒地，也不能因为随后恢复就当作通过。具体时间点
 有助于后续复盘，但未证明单一因果或完整控制器改进。
 不因这条诊断改动当前加载源码、奖励、探索配置或考试门槛。
+
+## 2026-10-08 08:40 首遍独立证据通过绑定检查，动作成绩失败
+
+原 worker 已完成首遍独立 MuJoCo/PD 重放与 Foundation 核验。
+额外 source-pinned 只读完整检查 exit 0：报告/commitment/
+trace/MJB byte hash、review 对原报告绑定、Foundation 对原
+报告与 trace 的绑定、28 字段、原 capture/measured history、
+前后全部 source/input pins 均一致。只读检查不再执行物理。
+
+- independent review seal：
+  `949c715dfdf093e3770fac93c0539ccd543e787dbb5c85afe80a49d084e1b7c4`。
+- Foundation review seal：
+  `e3f135950b75682cfd874fd3baa2089fe37f6aa6105b89786d854f6c3e678d4c`。
+- 首遍实际 native 1、独立重放 3,000 substeps、Foundation
+  300 次；GRU 300 帧、实际 draw 与 conditional likelihood
+  各 270，`projected_action_likelihood_claimed=false`。
+- `high_quality=false`、`clean_foot_only=false`、
+  `safety_passed=false`；前向 0.7122730488413738 m、横向
+  0.05932769314612438 m、比例 0.08329346904621812，前向
+  未达 1 m。全部接触 body `[0,1,2,4,5]`，不是干净脚触球。
+- Foundation 只证明实际执行的 CPU Torch encoder/decoder
+  核验；`planner_reference_reconstructed=false`，不扩大为
+  所有原 ONNX 编码器/规划器通用一致性或控制器提升。
+
+第二遍仍在运行，尚未最终两遍 qualification/result；v813
+仍等原门。没有重启 worker，没有因已见失败而换 primary。
+
+### 同一 consumed 场景的更新前/后诊断（不是 Fresh）
+
+只读比较本流原 transport control 与当前首遍。更新前行为
+模型是 `d3be39f29b6ef987b100902cf8ec427ecbe10aea9ec0e3f02af3408706f201b6`，
+不是用这个单一场景代替原 R1 parent 的 52 场 retention 考试。
+control row seal `bd2554bda1b5bf0a0de161c7e864c3274b8de6b5df8609e451df0926602ee6d4`；
+review seal `d087bad5f9ecd0657629c792d0c49dd4e6b07603194a43803e431d583a2a81ee`。
+再核验原 control 的报告、trace/MJB bytes、Foundation/review
+绑定及首尾 input/source pins，exit 0，零新增物理。
+
+| 指标 | 更新前行为模型 control | 当前更新后 primary 0 |
+| --- | --- | --- |
+| 最低骨盆高度 m | 0.6676617811619728 | 0.6476452646754882 |
+| 前向 60 帧位移 m | 0.8421998045597352 | 0.7122730488413738 |
+| HQ / clean | false / false | false / false |
+| 安全 | true | false |
+
+同一 World、seed 20261177、lane 0、sampling seed 773；
+完整 28 字段在采样前 30 帧 dtype/shape/数值完全相等。
+实际 residual/target/torque 从 frame 30 分叉，qpos/qvel 与
+身体观测从 frame 31 分叉；说明更新后的控制实际参与物理，
+不是权重文件变化但动作未生效。此场景最低高度下降
+0.020016516486484615 m、前向下降 0.12992675571836143 m，
+是退步证据，不能写成学习成功。conditional likelihood 与
+sampling performed 字段两次完全相等，不等于 actor 相同：
+实际 raw mean、latent action 和控制轨迹已变化。
+该比较只有一个已使用课程，不推断整个成功盆或 Fresh 表现。
