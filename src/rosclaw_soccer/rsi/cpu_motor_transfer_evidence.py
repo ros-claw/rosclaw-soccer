@@ -32,10 +32,32 @@ def audit_cpu_transfer(
     *,
     sampling_decoder_factory: Any = None,
     mean_decoder_factory: Any = None,
+    recurrent_reference_compiler: Any = None,
 ) -> dict[str, Any]:
     import mujoco
 
     report = _sealed(root / "report.json")
+    if recurrent_reference_compiler is not None:
+        from rosclaw_soccer.rsi.fixed_recurrent_reference_audit import (
+            FixedRecurrentReferenceAuditCompiler,
+        )
+
+        policy = report.get("executed_motor_policy")
+        if (
+            type(recurrent_reference_compiler) is not FixedRecurrentReferenceAuditCompiler
+            or sampling_decoder_factory is not None
+            or mean_decoder_factory is not None
+            or type(policy) is not dict
+            or "recurrent_clipped_motor_proof" not in policy
+            or "recurrent_sampling_motor_proof" in policy
+            or type(policy.get("step_motor_proof")) is not dict
+            or type(policy["step_motor_proof"].get("model")) is not dict
+            or report.get("step_model_hash")
+            != policy["step_motor_proof"]["model"].get("model_hash")
+            or report.get("step_model_hash") is None
+        ):
+            raise ValueError("exact fixed independent deterministic reference compiler required")
+        recurrent_reference_compiler.verify_policy(policy)
     if mean_decoder_factory is not None:
         from rosclaw_soccer.rsi.proposal_episode_decoder_factory import (
             ProposalEpisodeDecoderFactory,
@@ -530,7 +552,11 @@ def audit_cpu_transfer(
 
             if sampling_decoder_factory is not None or mean_decoder_factory is not None:
                 raise ValueError("clipped sequence review requires the independent reference")
-            recurrent_decoder = CompiledRecurrentClippedMotor(policy)
+            recurrent_decoder = (
+                CompiledRecurrentClippedMotor(policy)
+                if recurrent_reference_compiler is None
+                else recurrent_reference_compiler.new_episode()
+            )
             delta_at_frame = recurrent_decoder.delta_at_frame
         elif "recurrent_success_motor_proof" in policy:
             from rosclaw_soccer.rsi.recurrent_success_motor import CompiledRecurrentSuccessMotor
@@ -762,6 +788,15 @@ def audit_cpu_transfer(
             original_reference_constructor_used=False,
             physics_parity_requires_external_evidence=True,
         )
+    if recurrent_reference_compiler is not None:
+        result["decoder_construction"] = {
+            "kind": "FIXED_ORIGINAL_REFERENCE_COMPILATION_FRESH_DEEP_EPISODE",
+            "compiler_contract": recurrent_reference_compiler.contract(),
+            "weights_or_action_law_changed": False,
+            "producer_factory_reused": False,
+            "original_per_episode_constructor_used": False,
+            "physics_parity_requires_external_evidence": True,
+        }
     if sampling_decoder_factory is not None:
         from rosclaw_soccer.rsi import (
             owned_proposal_sampling_factory,
