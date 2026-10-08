@@ -5315,3 +5315,73 @@ temporal reward本来就包含完整时域出界惩罚；后续自身采样
 与cross-fit更新须用新完整考试验证是否真正改善，不能仅据
 这两例修改奖励阈值、剪掉末段或改选839其它模型。原训练
 汇总父进程仍活跃，manifest未完成；其它原队列继续等待。
+
+## 2026-10-08 23:40 CST：通用完整共享JSON恢复优化及真实归档对照
+
+等待原汇总期间，在**非运行实验源码**中增强Core已有的
+`CompiledSharedMetadata`，没有另建一套缓存协议：新增`restore`
+接口，从已拥有的完整canonical payload bytes恢复全部原JSON
+字段，同时验证原envelope、完整payload、全逻辑文档哈希及
+可选root seal；返回独立拥有的数据，调用方仍须绑定并复核
+实际来源文件bytes。constructor拒绝会被JSON隐式改变的整数
+键/tuple等Python载荷。默认原`restore_payload`没有改动。
+
+这是通用Core数据/证据基础设施，不包含G1、足球参数、策略
+选择、奖励或执行授权；恢复原文档中的caller flags也不构成
+新的Permit、晋升或物理证明。完整恢复不是仅返回marker元数据。
+
+Core提交`6e21c780eeb8bd9a25a53332a2dedb23fbe7b14a`已推送到
+原PR616，未自行合并；冻结只读Core888供本次归档对照使用。
+Source815/Core815、Core838及正在运行的采样/训练队列均未热改。
+
+验证范围与结果：
+
+- 首轮相关JSON测试68 passed（0.23s）。
+- CPU Growth全组746 passed、6 skipped（禁用CUDA的这次运行，
+  复跑`-rs`为12.98s；重复测试不累加为独立样本）。
+- 上述6个跳过均为实际CUDA不可见；另用S2环境在本机四张卡
+  运行两个相关小规模数值测试文件，22 passed、0 skipped
+  （4.49s），包含四卡CPU/GPU数值对照和RNG恢复。存在一个
+  `asyncio_mode`配置警告；这是数值fixture测试，不是足球训练。
+- Growth源码/测试ruff与F821/F822通过；mypy 46个Growth文件
+  通过。本次两个文件format check通过；广域format check为
+  93文件通过、1个原有未改动`growth/contracts.py`会被重排，
+  exit1，保留该结果及原文件，不能称全仓格式绿色。
+- 当前head的Data Flywheel Gate run37801402724仍IN_PROGRESS，
+  不以旧head的CI成功冒充本次完整CI通过。
+
+归档对照888在读数据前固定原842的**case0、case1**，不按
+效果或耗时挑案例；完整冻结源码/HEAD和导入路径在import前
+绑定，比较旧`_sealed`全读取和新完整恢复。编译器需要实际
+完整payload，每次缓存恢复前后仍检查原report及payload文件
+bytes；最终再验证全部输入。结果包含原字段完整相等、全
+canonical哈希相等及清空一次返回值后再次恢复不受影响。
+
+| 固定归档案例 | 旧完整sealed读取 | 新缓存完整恢复及来源bytes检查 |
+| --- | --- | --- |
+| case0 | 28.328889s | 4.824423s |
+| case1 | 28.424974s | 4.723184s |
+
+另有一次冷加载/编译20.778355s。新列使用预加载的小envelope，
+冷开销和对照验值耗时分别在测量之外记录；这是局部读取原语
+对照，不能宣称整个仿真、训练或循环已经提速约6倍。现有
+运行队列没有接入这个新接口，不能用此证明它们已提速。
+
+888脚本bytes `645f514f080fe3efa6f58a62c66a77a9a1f87f0cb98ab7535d453c277387c1c3`。
+初次普通ruff报E402/I001：保留必须源码准入后才import的顺序，
+加明确E402说明并整理imports；最终lint/format/F821/F822与
+preflight分别通过，运行前修复，运行期间未改代码。
+外部`rsi-shared-full-restoration-qualification-v888/result.json`
+seal `a962d9c0ba85ffad5e4f83de6171c223dc00f3e15bd3b268ca652ea7fe9b1bce`，
+predeclaration seal
+`9c8400cc10d73f16dee2df988f1729a75e1a36e08f68510e6f38b27255a2a04b`。
+handle73068 exit0、owner2931282退出。另一个只读进程复验这两
+份seal、1375个全部输入bytes、冻结HEAD/clean及owner退出，
+exit0。新物理、新Foundation、新optimizer执行均0，未访问
+Fresh、未晋升；归档恢复对照不是重新独立验证动力学或球技。
+
+后续只有在独立新协议中完成实际来源绑定和集成验证，才会
+把此优化用于下一轮完整数据/物理报告读取。当前原258747
+汇总owner仍在执行完整160逐行核验，manifest尚未完成；
+853/874及学习队列继续原条件等待。M0学习能力扩张与最终
+连续球队展示目标仍未完成。
