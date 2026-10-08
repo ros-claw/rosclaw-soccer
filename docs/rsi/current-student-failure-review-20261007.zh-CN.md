@@ -5536,3 +5536,28 @@ snapshot shared temporal policy。进程handle49330 exit0，**79 passed，
 独立review及Foundation review，后续训练序列提取仍在执行。两条
 银行均无failure.json、无最终manifest；原793仍在完整prepare。
 进程未停，尚不能声称新整批完成或新权重已经产生。
+
+### 01:02 CST：同一课程出现可用于学习的成功/失败对照
+
+874已封存7条训练row，其中1条HQ、7条安全；853已封存3条，
+HQ为0、3条安全。均为局部采样计数，不是完整批次成功率。
+原793仍在全160 prepare，无新学习root/权重结果；三个原owner
+均经实际PID及CPU计数确认存活，无采样failure.json。
+
+874的group4/5来自相同context1、seed20261227、lane4，分别是
+原声明sample_index0/1，非临时选定的另一课程：
+
+- group4：非纯脚触球、HQ=false、安全，terminal MC return=-10；
+  row seal `360c35ac6e42e0251a7d99b8be20f63026992bbd998388f74adaf06a2700c90a`。
+- group5：纯脚触球、HQ=true、安全，terminal MC return=
+  13.582360549477249；first contact70、minimum pelvis z约0.70253m、
+  maximum lateral excursion约1.63113m；row seal
+  `1c0bcd2c5021baea980c7714451dc0707a9a0c095cdeadd38fb4d73b758d771b`。
+
+group5经另一个只读进程复验row/job、review及Foundation seal与
+引用、3000回放子步及300次重算计数、实际行为模型绑定、训练
+NPZ bytes/shape/有限性/全部原MC标签，exit0；这些检查本身没有
+再执行动力学、Foundation或optimizer。两条同课程及独立sample
+索引也单独核验。该对照表明这批真实探索存在可学习的回报差异，
+不是新权重改善、Fresh泛化或M0完成的证明；不选择成功噪声seed
+作冠军，不删除失败序列，不以这个案例单独制作宣传成果。
