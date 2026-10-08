@@ -3663,3 +3663,53 @@ case0 dirty，1/2/3 clean，均非HQ。尚无52项完整结果和最终所有pin
 闭合，不能外推成功率，也不能把这些最先完成的场景看作随机样本。
 原160流保持采集，120–123观察未闭合，正式统计仍以120/160为界。
 当前阶段 M0 NOT COMPLETE；下一步继续原考试及失败反馈，不降门槛。
+
+## 2026-10-08 13:46 CST：原考试连续推进，剩余数据校验自动接续
+
+固定v827原52项物理考试继续运行，不换策略、不重开已完成场景。
+截至本次记录，case0–7均完成原动力学/recurrent/Foundation见证，
+只读观察逐项核验绑定。case4保留原有HQ，完整旧/新轨迹 EXACT
+核验通过；这是保留能力，不是新增成功。case5 dirty且非HQ；
+case6/7 clean但非HQ，最低高度分别0.7039909052494759和
+0.6967102256769446m。八项均safe，尚无完整52项结论和最终全量pins。
+剩余场景必须跑完，不能由顺序前缀外推学习收益或开启Fresh。
+
+原v832只读观察器在case4读取保护场景的历史报告时退出1：
+`PhysicalReportMetadataReader`要求新共享报告格式，而v405保存的是
+普通完整gzip报告。物理owner和两个workers没有停止，不重启考试。
+新v834保留已失败观察器原字节，导入前绑定其hash并检查展开源码
+F821/F822。仅将旧保护报告的读取换回原完整sealed读取器，核验
+压缩报告读取前/后byte、原baseline summary/seed/lane/World绑定，
+保留原全量trace_equal；新候选仍使用严格共享报告读取器。没有扩展
+共享格式allowlist、跳过轨迹比对、改旧证书或降低保护门。
+v834已重新核验case0–7，仍运行等待下一项；其完整终态尚未发生。
+新runner byte `007b034482188457ad1dbcc6eebd81926473e6dd56d0a2e9871db3ad78b0b4d9`。
+
+原stream13的120–123完整新行核验及最终所有source/artifact pins
+已闭合 exit0，正式边界推进至 **124/160、31contexts、HQ22、clean82、
+unsafe0**。总372000动力学复演子步和37200 Foundation调用为采集
+过程中已执行见证，不是观察器再次执行。120 HQ；121/122/123非HQ，
+四条均clean/safe。122最大横向偏移4.0418981023m，保留失败及原
+MC return−24，不因触球干净丢掉越界失败。此流仍使用原d3行为策略，
+不混入v825/827新候选，不称新模型增益。
+
+新增独立v835持续只读观察器，已绑定原792/788 helper、原声明/
+resumption/source，重查124个既有sealed行及统计边界后正式启动。
+剩余124–159的36条按原有序jobs等待，每条调用原完整verify_record，
+验证原report/trace/MJB/commitment、GRU300、draw/density270、
+Foundation300、MC label及完整六字段NPZ，不调用collect/replay/fit。
+每满原四条context重查全部累计pins并保存不可覆盖cohort见证，
+可直接接续剩余九个context，无需每批人工重开观察。
+collector失败、原PID/cmd消失、输入变化即退出，绝不自动重启或
+重新执行旧样本；72h观察期限亦不构成停止collector的授权。
+
+观察声明 `/home/dell/rosclaw_evidence/rsi-complete-bank-remaining-observer-v835/declaration.json`
+seal `c40f8c295fe46c742356d74a12dc944febac610feb5e9e17abc4f2b163fd86b5`；
+runner byte `5f05c1be5175c7739128f1d6c439f2785e245e826bc3ef70491429d5705fef02`。
+完整runner ruff通过。仅新36条重读完整档案，旧124条采用此前完整
+见证并检查行/源保持不变，不将这一观察描述为重做124条物理复演。
+还未得到下一批完整cohort，不将计划36条计作完成。
+
+Core9edf1d37 CI仍运行：Gate A/B通过，Gate C进行中；没有新头
+全量绿灯。v830新候选factory数值一致性仍等待固定物理考试终态，
+不争抢验收内存、不偷换物理路径。M0及球队目标均未完成。
