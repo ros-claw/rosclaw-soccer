@@ -2642,3 +2642,25 @@ v813 仍等这两次原资格的完整安全门，之后才可原 52 场考试�
 原流 100/101 已逐项核验，仍待 102/103 与最终 pins；完整
 统计仍 100/160。160 新流全部成功与失败学习结束，但更新
 模型的物理成绩还没有出来，不能写成 RSI-M0 或球队宣传成功。
+
+08:18 接续确认：v812 sealed commitment 已落盘、资格 worker
+PID 1581665（PPID 680223）RUNNING。原完整 773 helper 在
+分配前重载/validate 模型并核对参数、critic、完整 receipt 与
+primary fit 完全相等，已经实际通过该入口，不是仅存在权重文件。
+尚未完成任一次默认 native/audit，不预先填写物理成绩。
+
+- 资格 commitment seal：
+  `870b7e8b506c72319cae9f41823fe289561ad25620eebb1d977c3216def176bb`。
+- 原资格 predeclaration seal：
+  `4c67372d6b4171e3227cf928904838b32565955c5369454b27cdd7345b5a0488`。
+- sampling view hash：
+  `b8cc64b25d9717bc0dbebc3bebba2f98a98928058485f0806f30c5d435953858`，
+  mean model 固定 `c85e197eea2f801ccf5d43aa02db84c6b8c7571b76439d5c67ec625e7ed65483`。
+- consumed course index 0，环境 seed 20261177、lane 0，sampling
+  seed 773，绑定本流 learning `7665122322140d81d40bc60b800a5df870b281db4349ea8e4ea0ac3361cc5e23`
+  和 primary fit `897f28b75f1172e70e9aac9ed0719177055f448aecb2fd0ba6cc50bc2b6fa3b8`。
+- 原流 102 已逐项核验，row seal
+  `cb8236b5e408459b8de1f665ce1a90c8509abb0b0c9d001c3c3e2b0a8fec7fcd`，
+  MC 3.0670692789538854、clean、安全、未越界；前向
+  2.3641943719657714 m、比例 0.3901263204040975 超原 0.3，
+  仍非 HQ。待 103 与最终 pins，完整统计不提前增加。
