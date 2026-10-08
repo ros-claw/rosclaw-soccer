@@ -4378,3 +4378,60 @@ review `b115828704e196e76d1d03e7e19b9d05dddd2bd0d1537c79fa3f391308962432`。
 完整HQ总门。继续保留并跑完52以验证其它retention/safety项，不能
 把一个新增HQ包装为晋升或为它放宽门槛。此物理进步值得留下作为
 后续训练事实，但M0与连续自主球队宣传片均仍NOT COMPLETE。
+
+## 2026-10-08 17:05 CST：候选自身数据的temporal/value/crossfit接续
+
+新增857–859并启动等待，当前三个output目录均不存在，**未产生新
+labels、value fits、actor更新或物理执行**。不是把排队6144步当成
+已经完成的训练。853完整候选数据和856独立cache仍是先决条件。
+
+857保留原815全部300-frame reward redistribution、原terminal MC
+总分、30–299 actor窗口、gamma=lambda=1、299终止、实际chronological
+reward-to-go重算与五个行为数组。只改变数据来源为853/856和origin
+839。用实际856 origin-student中critic parameters及其canonical hash，
+不复用D3的ff584...。完整cache/manifest/critic/model bytes/commitment
+绑定后才执行；原813历史拒绝不再冒充本候选拒绝，改绑定其实际842
+完整consumed考试。128MiB labels预算和8GiB隔离bank预留/100GiB系统
+reserve保持，不放宽门槛、不剪失败。
+
+858复用原823六组normalized value fitting与冻结Core838：1全量fit
+加5组完整context modulo5排除fit，1024步、batch8、LR0.001、seed8230，
+GPU[0,1,2,3,0,1]；48GiB可用RAM、每GPU至少4GiB free，既有16MiB
+输出预算不变。这里critic初始化也必须来自**856新候选自己的**
+origin-student，不是模块helper默认指向的D3。实际展开namespace检查
+确认ROOT/BANK/PARENT均正确，source-parent标识固定82c1f9...，完整
+expanded F821/F822通过。6144 critic steps只是未来预算，0 actor/physics。
+
+859复用已合格通用Core `cross_fitted_value_advantages`（e3b921...）：
+等待全部六fit完整回执、metadata/参数/源/归一化统计/MSE检查，再
+仅用五组未看过被预测context的模型形成credit。全量fit0不能用于
+actor baseline；全160×270保留，只改advantages，其余六数组与原
+857数据及dtype EXACT，actual temporal MC suffix重算不变。该模块
+不训练、不激活、不执行物理；8GiB bank预留与128MiB credit输出。
+传入的initial critic同样来自856实际候选，未恢复旧critic。
+
+857 source `4f3b1ab35526e1b955165ce99255e26322712a6433a21002fe9471ed869b7aa2`，
+owner2348066/session1172，queue
+`4db16019b7020eeb23d9bb049746fd1359b6ddcb387d182bb14cdfbfbecf5d4e`。
+858 source `4cdd3dec7c0e6f62198c9905bae7df08cf4e9b689b5245b7e9bc7881d60001ef`，
+owner2350207/session3068，queue
+`cbb5a86de8f9e331e0564e5255f9da26ef06eaba85148e59e8dee78131f1e35a`。
+859 source `c2afb4e1d9804ec18b298f39588330a479908ce7b4ee8a94aa2012bcd026a773`，
+owner2355225/session85673，queue
+`1f109347724d83673c9b685320fdf92892c96b8dfc99b9df8402d152fc0ad93b`。
+857/858的ruff、格式及完整expanded预检分别通过；C408意见在启动前
+机械处理。859完整F821/F822和format通过；一般ruff仍有一个SIM117
+嵌套with风格意见（自动修复未处理它），**该检查FAIL**。已启动的
+sealed source不热改，未将该纯风格问题称作全量ruff通过，也不把
+其它成功命令覆盖该失败；本轮无新增物理分配。
+
+独立检查三个queue canonical seal及完整byte pins、固定config/数据
+计数/authorization false；实际PID/cmd/cwd全确认live且位于冻结815
+source，exit0。旧owner和已封存生产者均未改写。后续还需真正执行
+完整数据→六value fits→credit→actor-critic fit→独立数值复核→原
+物理验收，当前只把前三个后续处理接上，不能说持续RL循环已完成。
+
+旧827已独立核验0–49，共50/52；48 dirty/nonHQ/safe，49为旧HQ
+protected保留。原835又验证136/137为HQ/clean/safe，但138–139未
+闭合，正式边界仍136/160，不能提前称140完成。既有case47物理
+进步事实保留；M0、Fresh能力扩张、完整球队与宣传片目标仍未完成。
