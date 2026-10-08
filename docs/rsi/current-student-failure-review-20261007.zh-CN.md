@@ -4667,3 +4667,30 @@ clean=False、safe=True，但142/143尚未闭合，不能写成144完整cohort�
 140 seal `ad496caabde3fdd68cd8380dbe7cef3491feb8eac630fc7dd349c8c10e5249ea`；
 141 seal `e967925edcb947d17dab877a971714c87bc81c1f03f9fb28702283eba9fe9b2f`。
 842完整52仍无终态；球队/连续比赛/可宣传视频目标均未完成。
+
+### 18:30 CST 追加：原始候选编译路径的独立性能剖析已启动
+
+868不修改任何live producer、原始validator或动作边界；固定841
+已完整资格的839候选，顺序测量原始make_preview和原始decoder
+constructor。同进程独立thread只读自身主线程stack，要求50ms间隔，
+不读取locals/密钥、不操作别的进程；这不是均匀CPU采样，不能把
+sample比例当作耗时百分比或因果证明。尤其C实现持有GIL会少采样。
+
+root `/home/dell/rosclaw_evidence/rsi-candidate-compilation-profile-v868`，
+runner `/home/dell/rosclaw_evidence/rsi_candidate_compilation_profile_v868.py`，
+bytes `1cf68d7336c9669191b156ed726640ccc045a49d959ae537323afc58facb4b98`。
+predeclaration seal
+`99e6073005013580abe231b87334de81f7b9dc91d910ba7a2a022429f2046ca2`；
+所有输入bytes、source heads、SIM_ONLY/0physics/0optimizer字段
+和Source815 cwd另外核验exit0。PID2473562/session84693活跃。
+初次ruff有5项未通过，启动前机械修复再独立检查ruff/format及
+868+867展开执行命名空间F821/F822，各exit0，没有热改runner。
+四项sampler fixture通过：即时返回、可观察返回、保留原异常、
+观察器失败拒绝；不落盘、不导入实际decoder、不泄漏线程。
+
+原始preview阶段已真实结束：137.604869s、397个非均匀stack样本，
+常见叶栈为deepcopy、JSON encoder和hash_json，父栈包含多级
+validate_model。原始decoder阶段仍在进行，尚无完整profile终态，
+不能宣称已加速。该测量是一次封存候选的组件诊断，不是随机多次
+性能实验，不新增采样轨迹、物理重放、训练或球技进步。
+后续仅在保持完整校验与独立动态重放的前提下优化批量吞吐。
