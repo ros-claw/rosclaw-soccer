@@ -2785,3 +2785,48 @@ review seal `d087bad5f9ecd0657629c792d0c49dd4e6b07603194a43803e431d583a2a81ee`�
 sampling performed 字段两次完全相等，不等于 actor 相同：
 实际 raw mean、latent action 和控制轨迹已变化。
 该比较只有一个已使用课程，不推断整个成功盆或 Fresh 表现。
+
+## 2026-10-08 08:48 只读 KL 定位：未发现整条轨迹的巨大策略漂移
+
+针对首遍物理退步，新增外部只读诊断脚本
+`rsi_recurrent_primary_kl_readonly_diagnostic_v814.py`，不调用
+optimizer/native/audit/推理控制循环，不更改当前模型或奖励。
+展开名检查 F821/F822 exit 0。完整脚本 byte hash
+`b7b9be6d282e9549838a776d3f856f2ad0bd34b054477f89b26abf73db629451`
+在后续明确 source-pinned 执行前核对，并从已核对的 bytes
+编译执行；执行完成再核对相同 source hash，exit 0。两次
+只读数值复算输出一致，均零物理、零 optimizer updates。
+
+检查固定 primary 0 的 sealed fit、完整 160 条 manifest、
+原 numeric dataset byte hash；逐条 trace byte hash 与 latent
+action/conditional density 和学习数据精确对应。用实际留档
+raw mean 重建原 AR conditional density（原 1e-8 容差），
+按原 Torch float64 GRU 方程与整段 causal history 重算更新后
+logged-state mean。全部 source/input pins 前后检查通过。
+全量 marginal/conditional KL 与 fit receipt 相差小于 1e-10，
+不是另一个模型、换 teacher 或替代真实物理重放。
+
+| 只读统计 | 数值 |
+| --- | --- |
+| 全量 marginal mean KL | 0.008502464485265612 |
+| 全量 conditional mean KL | 0.0031022249238114156 |
+| episode marginal mean KL 最小/中位/最大 | 0.006629257475986597 / 0.00840271839625293 / 0.01275852996215378 |
+| episode marginal mean KL 大于原 0.02 的条数 | 0/160 |
+| 单帧 marginal KL 大于 0.02 的数量 | 52/43200 |
+| 最大单帧 marginal / conditional KL | 0.022267793019921246 / 0.04021410729504658 |
+| 资格课程所属 context 0 mean marginal / conditional KL | 0.008398754960463804 / 0.0034911526931581407 |
+
+因此，“平均约束掩盖少数整条轨迹巨大漂移”这个具体猜测
+**没有得到本数据支持**。单帧约束并非原训练承诺，原 mean
+KL 检查没有违反；个别帧超过 0.02 也不是已证实的失稳原因。
+更重要的是 mean KL 是 logged-state 分布约束，不是闭环接触
+成功或身体安全保证。不能只看到 KL 合格就宣传稳定性提高，
+也不能仅凭这次定位宣称更紧 KL 必然能修好。当前仍执行
+原两遍资格与原拒绝门；后续算法修改须另立事先声明。
+
+原流 104 已逐项核验，row seal
+`6624b565b947720d6b1581348461643b7fe1d4be93908f983c0ace4a2114500c`；
+MC 1.2979142044759326、clean、安全、未越界但非 HQ。前向
+0.44064142050280597 m、比例 1.3404218272217872、最低高度
+0.6888036469266628 m。仍待 105–107 和最终 pins，完整累计
+保持此前 104/160；不以干净接触替代踢球任务成功。
