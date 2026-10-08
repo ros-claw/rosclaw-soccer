@@ -5385,3 +5385,95 @@ Fresh、未晋升；归档恢复对照不是重新独立验证动力学或球技
 汇总owner仍在执行完整160逐行核验，manifest尚未完成；
 853/874及学习队列继续原条件等待。M0学习能力扩张与最终
 连续球队展示目标仍未完成。
+
+## 2026-10-09 00:20 CST：完整160训练数据封存及下一阶段实际启动
+
+原788/792最终产生完整`rollout_manifest.json`及`sequences.npz`，
+owner258747退出。manifest seal：
+`5d9a116a2fe65880a24cea2d5633562d4c061ff6f4457ec57c88fbb32b9da976`；
+训练数组文件hash：
+`9712516548c8f8e377809c46bdbf8b71bd20943de19ae2f22b3c4a45b7c6dd4a`。
+
+独立只读命令核验manifest/commitment/resumption/cohort160的
+完整seal、所有声明来源bytes及冻结HEAD/clean、原owner退出；
+160个精确job与逐条sealed row绑定、40个(seed,lane)、160个row
+hash与835完整cohort对应。还对**全部六类汇总数组**与160条
+原训练NPZ逐元素及dtype比较，不只比较一个总hash，exit0：
+
+| 数组 | 完整shape |
+| --- | --- |
+| context | (160,270,135) |
+| baseline / latent_actions | (160,270,12) |
+| gates / behavior_log_probabilities / returns | (160,270) |
+
+总43200训练帧完整且有限，成功与失败全保留。原采样执行计数
+仍为161次native（160训练轨迹+1不入训练的控制复现）、483000
+独立回放子步、48300次Foundation重算；本次汇总检查新增物理
+与optimizer均0。这是原D3行为模型自己的完整采样银行，不是
+839候选的成绩或Fresh泛化证据。
+
+原793学习owner263850已从等待进入**完整数据prepare**，CPU
+活跃，尚无学习root/最终learning.json，不能称已完成权重更新。
+845/846后续标签与价值学习继续等待793原结果，未改其前置。
+
+853与874采样owner都进入执行，完整160采样模型及commitment
+已写出，固定行为模型均为839 primary0 `82c1f9db…`：
+
+- 853 commitment seal
+  `5f5168466584dcbcf36b9a0a70248ae5a6ad6ddc7905ae9947e7e1a556ab2c9a`，
+  原Source815/Core815，后续stream15、2 workers。
+- 874 commitment seal
+  `f98e5a0d5f1ce55755eab5e092da6dc13b0f1a9d3f11e61b49413e13afdf5520`，
+  原Source871/Core838，后续stream16、4 workers。
+
+两份commitment自身canonical seal已核验，明确区分这些已执行
+准备与尚未完成的控制/采样成绩。当前各自一个控制worker
+2978879/2980434活跃；还没有非负新采样行，必须先原控制全数组
+复现通过才能开展160新轨迹，不把161个模型描述文件算作轨迹。
+没有修改两条运行源，也没有把新读取接口热注入这些进程。
+
+## 2026-10-09 00:20 CST：实际文件绑定的完整恢复入口
+
+在已有`PhysicalReportMetadataReader`上增加显式`restore(path)`，
+共用原缓存和来源绑定；`read(path)`仍只返回紧凑元数据，默认
+`load_physical_report`没有改动。完整恢复不添加字段、不改原
+report seal。增加验证后payload bytes复查、软链接/完整文件
+复查，source pins补入实际hash helper的contracts模块，拒绝
+缓存命中时文件被改写、替换或来源变化；Core旧版本缺完整
+恢复入口时在载荷分配前明确拒绝，而不是无声降级。
+
+Soccer提交`b917671d3fe9fc1a2a3a7ad01d456ee1b9d6a96d`已直接
+推送main。最终相关四个测试文件47 passed（0.51s），普通ruff、
+format、F821/F822与单文件mypy通过。此前测试扩展过程中
+43/45 passed是旧子集结果，不叠加为更多独立样本；初次E501
+在运行源码冻结前通过格式整理修复。
+
+以冻结Soccer889/Core888继续固定原842 case0/1对照，实际导入
+文件路径显式检查；新方法内部的完整来源绑定参与实际读取，
+并合并其全部`input_file_hashes()`，没有只测裸Core接口：
+
+| 固定归档案例 | 原完整sealed读取 | 文件绑定完整恢复（含额外外层byte检查） |
+| --- | --- | --- |
+| case0 | 28.407606s | 5.008165s |
+| case1 | 28.270331s | 5.210063s |
+
+冷启动加首次完整恢复25.923640s。全部数值字段、全canonical
+哈希、返回数据隔离均一致；同样是预加载小envelope的局部
+读取对照，不证明训练/仿真全链路已获得对应倍数的提速。
+
+889脚本bytes
+`dd5da0ec1b90b4ef5f01b983b4dd01b0fb7c5fd7acd7071cf8504e829e53f246`，
+初次I001/B007已在运行前修复，最终普通lint/format/F821/F822
+与preflight分别通过；运行中未改脚本或冻结源。
+外部`rsi-pinned-full-report-reader-qualification-v889/result.json`
+seal `1b530c2ce8172c12302eb956a065fb2cbaa8adbcb8095f58fe88696d1ddf6991`，
+declaration seal
+`b067c5696e391e0e18f65f5a53b8202259e546ec8ede4b7b843b22fa244d1608`。
+handle36620 exit0、owner2992376退出；另一个只读进程复验两份
+seal、1380个全部输入bytes、冻结HEAD/clean和owner退出，exit0。
+新物理、Foundation、optimizer均0。Core PR616 head6e21的CI
+run37801402724仍in_progress，未宣称完整CI通过。
+
+技能边界使本轮读取优化保持纯数据/SIM验证、原运行源冻结、
+实际来源绑定和失败证据保留。它是为后续更快进行完整训练与
+审查准备的基础设施，不是新的球技、M0晋升或宣传视频成果。
