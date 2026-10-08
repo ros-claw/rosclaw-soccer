@@ -4794,3 +4794,10 @@ B910 passed/23 skipped/10 deselected，C8566 passed/120 skipped/
 11 skipped、F6通过。PR616仍OPEN/CLEAN，未自行合并。是软件
 边界验证，不是新球技或多智能体比赛证据；842完整52及160采样
 仍未闭合，M0/Fresh/球队/可宣传连续比赛目标均未通过。
+
+19:22 CST验证状态补充：870 owner2552184为Rs，handle77641仍
+活跃；尚只有predeclaration。其seal
+`13a464461c7ffa2dbe00060656b1266b9590f11c8d45ad8ca1b4450af219e646`、
+所有输入bytes/source heads与实际cwd另行核验exit0（handle9716）。
+不能将计划6000 replay substeps计为已完成。原788/842 owner仍
+活跃，853/860仍等待其完整前置结果；没有因为观察超时重启它们。
