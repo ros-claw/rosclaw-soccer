@@ -5035,3 +5035,78 @@ ruff通过；只读复核全部queue seals/input bytes/source heads exit0
 原队列继续执行。下一步衔接新流actor更新、独立学习审查、实际
 native控制与原完整52考试；没有这些成绩就不能晋升M0，更不能
 宣称球队/连续比赛宣传目标完成。
+
+## 2026-10-08 21:05 CST：新流 actor→独立审查→native→52 考试衔接
+
+本轮完成的是 stream16 后半段的**协议实施和拒绝路径验证**，
+不是新策略能力提升。原788采样、842物理考试和所有旧训练队列
+继续运行，未热改、未截断、未删除失败证据。
+
+879 actor 更新以完整874/875/876/878输出为前置：160轨迹、40
+情境、43200行；保留83实际actor和critic，不回退D3来源。固定
+四组配置、每组最多1024联合更新、总上限4096、primary0提前
+指定；不能按成绩选择其它模型。完整展开预检通过，已有17项
+数据/信用/奖励设置拒绝与配置测试通过（0.29s）。owner2695128/
+handle92995仍等待，实际新fit/optimizer/physics为0。
+
+881独立审查保留原840/849完整NumPy核验：所有四个保存模型须
+从参数receipt重建；全部43200行为density、GRU均值、marginal/
+conditional KL和critic MC MSE独立计算，KL上限仍0.02。等879
+完整终态且原owner退出后才分配模型。实际源为Source871和
+Core838，不给旧Source815贴标签。owner2704947/handle65289
+等待；尚未产生独立数值审查终态。
+
+中途880第一次启动漏传PYTHONPATH，在等待阶段被发现；只停止
+该自建owner2703328（SIGTERM，handle17119 exit143），当时没有
+模型/物理分配，没有完成审查。其queue/runner保留，不能称通过。
+881替代它，新编号不覆盖旧记录，并在启动前强制精确导入路径；
+后续882/883同样加此检查。旧880未再启动。实现过程的字符串
+匹配保护数次在文件写入前拒绝；未运行物理。882第一次普通
+ruff有I001导入格式错误，已在启动前修复；各检查独立判exit。
+
+882 native qualification沿用完整773/772原协议：固定primary0，
+一个原consumed course、两个重复native执行，全部数组逐项一致，
+每次3000物理子步、300实际Foundation调用独立重算；重复不算
+两个独立课程。须等881完整审查及旧842、旧863物理链路终态和
+owner退出，不能绕过已有实验或抢占资源。新源码全部src/scripts/
+Growth bytes与heads在import前及稳定性门绑定；实际driver来源
+明确为Source871/Core838。完整递归展开预检通过。owner2711481/
+handle16816等待全部四fit，未创建native结果；实际新增native0。
+
+883保留原774/695/757完整52案例与原安全门，不引入放宽的“演示
+考试”。两次native witness须完整、最低骨盆高度0.65m且安全；
+失败则sealed拒绝，不启动52。不开放Fresh、不授权晋升。通过
+安全门才运行全部52、156000独立回放子步和15600Foundation重算，
+此处都是**计划**而非已执行。owner2711537/handle9929等待882，
+已有sealed安全预声明；尚无52考试结果。
+
+新882前置完整终态拒绝测试最初17passed/1.06s；追加启动路径
+拒绝、实际冻结namespace和883/881路径拒绝后，合并测试
+**21passed/1.29s**（handle71543 exit0）。这不是额外21次物理。
+各runner的普通ruff、format和完整展开F821/F822最终通过。
+
+| Stage | Runner bytes SHA256 | Queue / safety seal SHA256 |
+| --- | --- | --- |
+| 879 | `9a105fe196602f20e38bc8d732a688c55be08c589435f456f1850b134dc9e6f0` | `da34c016a42ffa5efcc9142b658718a04953b66c75b367602a02b6485db8dd78` |
+| 881 | `d9a4137eabf31b0584f1d081931436deb2c25046f0dc4509c4bdb8c29954a362` | `823d04ec0bf61fece379d74decc9c06d3d9797e4f6cee565cec856e52f54f105` |
+| 882 | `a3ec5a8f1cbd251cb150a8b62294a39610a418bcdd30b72645fb53c3f7000685` | 无native预声明/结果；等待完整学习前置 |
+| 883 | `19a990f35f6bbe66f592bd8a9436d418b3a4c186c75db750666855f38ac0f699` | `5d55d8fbd45f26287be046ef7ffb36cfef97e1cd8b4f210797c91c30a6c2ff39` |
+
+原始788最新152/160完整cohort已独立检查全部input bytes/冻结
+heads和whole seal，证书`cohort-through-151.json`的seal为
+`f30349eb0bf9e1dd4551e8745d664285990bec65ea44c3ec7838118fcda14b28`：
+HQ34、clean98、unsafe0；456000归档子步和45600归档Foundation
+调用是原实验已执行证据，本轮只采用，不重复计新增。
+842在21:03可见38条Foundation完成归档；这是文件数量检查，
+不是38个案例全字段审查成绩，更不是完整52终态。
+
+只读校验器`rsi_verify_fast_chain_admission_v884.py`检查879/881
+完整queue输入、883安全whole seal、152 cohort所有输入/heads，
+并检查四live进程的确切cmdline/cwd/PYTHONPATH、880已退出；
+handle99169 exit0。所有runner/test/raw在外部evidence根，未
+将机器特定脚本、数据或模型上传Git。根盘131GiB可用，RAM
+66GiB可用；未停止无关GPU进程、未降低原容量门。
+
+当前没有新训练能力增益、Fresh通过、球队自主比赛突破或新
+宣传片。下一步是等待原完整前置闭合，核验真实学习/物理终态，
+按失败证据继续课程迭代，而非拿排队数或测试数代替球技成长。
