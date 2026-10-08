@@ -4951,3 +4951,87 @@ Foundation归档且owner仍live；后者只是归档数，不是完整52通过�
 旧853/860队列继续等原完整前置，未热替换。下一步是将已通过的
 独立审查复用接到**新的**完整候选自有采样协议，原控制轨迹
 全数组一致性必须先通过，样本/失败/完整考试与资源门不变。
+
+### 2026-10-08 20:45 CST：独立采样审查接入新完整流16
+
+前轮分类为progress：代码/测试及四条完整新CPU replay已终结，
+不是只复述状态。本轮新建874–878协议，**没有热改**原792/
+842、旧853–863或不可变Source；没有新权重/能力晋升/视频。
+执行来源仍固定Source871 HEAD `a4e4ad9d03448cf51d9ef07a875f391acf791a3f`，
+Core838 HEAD `1186b67ea3c144a48dee75b0e6a79862766660da`。
+
+874完整候选自有采样：固定839 primary0 `82c1f9db…`，新的
+stream16与原13/14及已排队15逐集合核验不交叉。40情境×4draw、
+160轨迹/43200决策帧、全部失败保留。计划161次native（含原
+841全数组控制对照）、483000独立动态子步、48300 Foundation
+重建调用；**目前新增均0**。等原788全160、842全52及owner退出，
+全52必须原安全判据通过；不要求该研究候选先获晋升，但不改变
+Champion或访问Fresh。
+
+四worker分别持有原生产factory和**另一个**独立referencecompiler。
+参考首次用原841 seed773完整policy构造，whole contract必须与
+已完成872完全一致，每回合深拷贝原始初态，只有seed/三个派生
+hash能变化；producer不充当reference。control全数组必须与原
+841相同后才采160。完整871/872资格全部输入/heads在分配前与
+完成时复核，运行期source/资格文件继续绑定。
+
+父进程分配前RAM须72GiB（为四worker预留24GiB并保留原48GiB
+底线）；worker每回合仍查48GiB。不能把72GiB也用作已分配后的
+每worker门而自锁。磁盘完整bank上界8GiB按未压缩trace/数值数组
+与原资格文件计，不按成功率或有利压缩率估计；原system100GiB
+底线保留。实现没有测端到端倍数，不声称四倍或其它加速率。
+
+预检一次因`workers=2`同时匹配`max_workers=2`拒绝，发生在
+protocol import/工厂/物理分配前，新增native0；改为精确declaration
+匹配后完整展开F821/F822通过。普通ruff/format分开通过；没有
+让后一个成功命令掩盖首次失败。874最终preflight handle95498
+exit0；随后sealed queue并运行handle62820/owner2650274，实际cwd
+为Source871，当前Ss等待原完整前置。
+
+875完整数据复核：等874全160及owner退出；保留实际actor **和**
+critic，原完整prepare复核每轨迹物理/Foundation/行为density，
+控制轨迹采用原792完整数组核验，不是把D3参考当新候选证明。
+额外要求全部161条review绑定Source871审查bytes及精确872
+compiler contract，不只检查若干“通过”字段；原全部六数组、
+160×270完整density、actor/critic来源保留。中间经验advantage
+不是最终训练credit。首次format check失败已格式化，最终ruff/
+format及完整展开preflight分别exit0。handle31000/owner2665486
+等待；prepare/physics/fit新增0。
+
+876完整时间奖励：原任务总分不变、gamma=lambda=1、terminal299，
+用全部成功/失败形成完整MC reward-to-go；不宣称在线短视TD。
+等875完整及owner退出。handle22975/owner2668920等待。
+
+877六个1024步normalized value拟合已预定而未执行：一个full fit、
+五个context_id modulo5排除fit；训练统计只能来自训练情境，
+固定GPU[0,1,2,3,0,1]、4GiB/卡及48GiB RAM门。不替换旧critic为
+D3。实际import前绑定Source871/Core838，再把旧helper的namespace/
+source pins显式绑定**实际加载来源**，避免只给旧Source815贴标签。
+等876完整及owner退出。handle50392/owner2675813等待，实际fit0。
+
+878采用Core838原generic cross_fitted_value_advantages模块
+`e3b92127…`，五排除fit提供actor baseline，full fit不得参与baseline；
+所有160/40/43200行保留。等877六fit完整及owner退出，采用
+receipt前核验全部输入与来源。handle57700/owner2677956等待，
+credit计算/optimizer/physics新增0。874–878各自完整展开预检和
+ruff通过；只读复核全部queue seals/input bytes/source heads exit0
+（handle f87283为已完成命令chunk，不是活跃session）。
+
+| Stage | Runner bytes | Queue seal |
+| --- | --- | --- |
+| 874 | `940c12c2a95ce28c9e2e8e928e61ab96c266d1ed96b3812778726e978e69afc1` | `6b1570db290f1c20f07db87c3e72f3bf43a2f91794f2d4bab513e7a9f7796c73` |
+| 875 | `3839cac3fd30dae913b97d1c6e42662328d98f026b23a5109a4266fd3502f05a` | `d63670a69ac586ebb04dcb9ad50cd1130812cb9eed29ccf134a82ddc9b62bc11` |
+| 876 | `c93df5df71972a6132d80ec7d88f4dd34c07f930acf0ef51a94b453326dbed04` | `92bf34fbd2e93dda2d962c1c3fce9c71d0c472e11885b66848594108034a1022` |
+| 877 | `763988847b3d59e454b6fdeeb12aa359ffa1a5b2db547a7d1082054bef8a2fba` | `1d8e72fd5501f1d5a41fd0c17ffafeaf0ba654a8e1f812000b7b02ccbd4f9825` |
+| 878 | `d58bb68ecb23dbb1b36f739f54c868c9822e04cd8a34f403ae6eaffe3aa816a6` | `a3231ee221401c431f33007f4fa3f806341ffee27069b9051c87c0047630d82c` |
+
+上述runner均在`/home/dell/rosclaw_evidence`，raw/model/dataset不入Git。
+前两者文件名前缀为`rsi_fast_sandbox_primary_resampling_v874.py`、
+`rsi_fast_sandbox_owned_data_cache_v875.py`；其余为
+`rsi_fast_sandbox_temporal_labels_v876.py`、
+`rsi_fast_sandbox_candidate_value_training_v877.py`、
+`rsi_fast_sandbox_candidate_crossfit_credit_v878.py`。
+排队不是终态，不计计划为实际训练/采样。788/842当前仍确认live，
+原队列继续执行。下一步衔接新流actor更新、独立学习审查、实际
+native控制与原完整52考试；没有这些成绩就不能晋升M0，更不能
+宣称球队/连续比赛宣传目标完成。
