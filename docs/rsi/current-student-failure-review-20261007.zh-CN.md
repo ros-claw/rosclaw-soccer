@@ -5634,3 +5634,45 @@ NO_PHYSICS；普通ruff也通过。独立审查没有optimizer或动力学。
 未完成160条，不能称为整批成功率；此次计数不是再次执行动力学。
 两条采样owner仍存活、无failure/最终manifest。M0、Fresh和球队
 宣传成果仍未完成；继续以完整后继物理考试判断是否实际进步。
+
+### 02:21 CST：890完整四卡训练正常结束，3770项输入独立核验
+
+890 handle24138 **exit0**，四个模型和四份student receipt齐全。
+learning seal：
+`f650fe302596f00ea8faa55f6600e35f7ffcb1082feda996de087c4a6375cef3`；
+commitment seal：
+`61f94faeaccffe1f7bd3ec5147cb3a43e9b5aae48ba1c10e22adadfb1453951b`。
+
+| fit | CUDA | accepted updates | rejected/rolled back | marginal KL | conditional KL |
+| --- | --- | --- | --- | --- | --- |
+| 0（固定主候选） | 0 | 869 | 1 | 0.019989505 | 0.006842859 |
+| 1 | 1 | 828 | 1 | 0.019987402 | 0.006776351 |
+| 2 | 2 | 387 | 1 | 0.019989032 | 0.006610594 |
+| 3 | 3 | 423 | 1 | 0.019986386 | 0.006853695 |
+
+合计**2507 accepted、4 rejected/rolled back、1585未尝试步数**。
+每个fit在更新超出原0.02信赖域时回滚并停止，未为了凑4096上限
+放松KL、重启optimizer、扩大动作范围或选其他模型。固定主模型
+hash为`59f358f7d5f39530e90963f4f93a339e80063edb0efcfa1a02ab4c95726177a3`。
+四个A6000都有实际worker/训练显存记录；这是独立拟合，不是DDP。
+
+另一个只读检查handle37958 **exit0**：终态/commitment/声明seal与
+配置绑定、七个完整数据数组与847逐元素/dtype/有限性一致、四个
+receipt seal与参数哈希/实际CUDA/seed/rate/accepted历史计数、两种
+KL上限、步数汇总、全部**3770 input file bytes**及冻结heads/clean
+逐项验证。临时前一检查误用了不存在的参数hash字段名而exit1；
+按实际receipt的`fitted_actor_parameters_hash`和
+`fitted_critic_parameters_hash`纠正后完整重跑通过，没有修改训练
+源、数据或已封存receipt。此检查没有加载/重建全部完整模型、没有
+重算全部行为密度与KL，没有新增动力学或optimizer。
+
+891完整模型重建和全行为密度/KL审查已从等待转为实际执行，PID
+3148606；当前**未封存独立完整模型审查结果**。892（PID3150326）
+等待审查，893（PID3151772）等待完整两重复验证；暂不能称作原生
+验证通过、52场通过、Fresh改善、晋升或球队宣传成果。
+
+恢复检查点保存在Git外
+`rsi-capacity-recovery-resume-checkpoint-v890.json`，记录四阶段source
+hash、会话句柄、输出与替代拒绝终态、恢复注意事项；该文件只是
+时间快照，不能取代当前进程身份检查或封存终态证据。保留原848
+的失败与全部旧链数据，不重跑已有输出目录。
