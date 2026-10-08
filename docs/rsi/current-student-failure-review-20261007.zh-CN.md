@@ -2690,3 +2690,31 @@ worker CPU 时间已从约 4 分钟增长到 10 分钟；v813 保持等待。
 尚无两次默认 native/audit 的最终 qualification/result，不能
 填入成绩、宣称稳定性提高或提前打开原 52 场考试。
 四卡更新完成与真实物理成绩分开记录，Fresh/晋升保持关闭。
+
+## 2026-10-08 08:32 主模型首遍 native 已归档：安全线以下，尚待独立核验
+
+v812 `repeat-0` 已生成原始 native 报告、完整轨迹、compiled
+World 与原 commitment。source-pinned 只读检查 exit 0，确认
+报告 seal、模型/view、seed/lane、轨迹 byte hash、MJB byte
+hash、原 commitment hash、全部 input/冻结 HEAD pins 相等。
+这是 **首遍原始执行归档检查，不是独立重放通过**，也不是
+最终两遍资格结论；worker 1581665 仍在运行。
+
+- 原报告 seal：
+  `fed35cc838daba3b1da58dde43e144c4e4d57359f5fa4ade635a4023678274bb`。
+- 轨迹 byte hash：
+  `81c3ef2e3216ef6f365fdc0d6e09c40ead2147b4b1f751c777760a99b6ef9bbe`。
+- step view：
+  `b8cc64b25d9717bc0dbebc3bebba2f98a98928058485f0806f30c5d435953858`；
+  原 World `246da475bbad8d3ced351f6ceb18e18fc3d4c2de7236cdd8c427239cecb4ff83`。
+- 环境 seed 20261177、lane 0、原 sampling seed 773；首接触
+  frame 68，`clean_foot_only=false`。
+- 原报告最低骨盆高度 **0.6476452646754882 m**，低于原
+  0.65 m 安全线。即使只差约 2.35 mm 也不豁免、四舍五入
+  或放宽门槛；暂不拿原始报告替代独立 review 的安全结论。
+
+截至本检查：1 次 native 已归档，独立审计/Foundation 完成
+数量及最终资格尚未确认，不提前记成 2/6000/600；v813 仍等待。
+保持失败和所有原始证据，继续原两遍独立核验与原安全拒绝门。
+此前四卡 1,024 接受更新只证明参数学习发生，当前首遍观察
+不能支持“已改善身体稳定性”或任何 RSI-M0 通过结论。
