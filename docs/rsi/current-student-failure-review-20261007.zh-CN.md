@@ -3391,3 +3391,73 @@ Core 新提交 **6e232cfe101662153549a022d0df6adf57bce11a** 新增通用
 再决定如何版本化接入actor；目前仅合成学习测试，不声称真实G1提升。
 之前8449 passed的完整CI属于8b2fe0头，新6e232cfe尚需它自己的CI，
 不得挪用旧CI当作新头全量回归或 Soccer 全绿。Fresh/晋升仍关闭。
+
+## 2026-10-08 11:44 CST：本轮资格正式拒绝，六次实际 critic 学习闭合
+
+v817 原两遍资格执行完整结束，result seal
+`8fc84a6680b66e8911a27031a483d447c90e7ed2db2753417ad6f0316ce88c4e`，
+qualification seal
+`2d29fc994981718cbbd13c2dcf78e70b7c8e1c62c353573e42bcf305bf587566`。
+实际2 native/6000独立动力学substeps/600 Foundation calls；
+两遍28数组全长、dtype逐项EXACT，完整独立观察最终pins核验 exit0。
+两遍均复现最低高度0.12161157242144012m的严重失稳。
+是同一已消费场景的重复，不是两独立场景。
+
+v818 正式 sealed REJECTED
+`4c9b10fe906448c495d8a2489ad8309d5ea31779a8d1954fcbf9d834ac36123b`，
+绑定上述result与两个unsafe witness，候选未激活。
+另一次只读核验检查结果/资格/commitment/拒绝绑定及源pins，确认
+原full52 root和predeclaration均不存在，exit0。
+v817/v818父进程和worker已正常结束，不重启、不换卡补考、不换候选。
+本輪full52执行0，Fresh0，晋升0；没有物理突破或可宣传成绩。
+
+随后使用新冻结 Core6e232cfe（路径
+`/home/dell/rosclaw_evidence/rsi-independent-value-core-source-v823`）
+实训新独立 value 模块。完整 v815 数据和原 critic 不变，6个固定任务：
+一个完整160轨迹fit + 五个按 `context_id%5` 留出场景fit。
+每fit1024步骤/batch8/LR0.001/seed8230；设备固定 cuda0/1/2/3/0/1，
+并非DDP；5折的收益统计量只用该折训练场景，避免统计量泄漏。
+full fit保留所有成功和失败轨迹，所有6fit都必须完成，没有挑选。
+
+runner `/home/dell/rosclaw_evidence/rsi_independent_value_training_v823.py`
+byte `53b11d460c611ab31e40432a95e55eac5982501383d039c4e5d8e7b547dd5a1d`，
+声明 seal `116db8296962036faaffb01a785dc8dac47a7413991dc591834ebed772e07c2d`，
+结果 `/home/dell/rosclaw_evidence/rsi-independent-value-training-v823/result.json`
+seal `bc0a5485f2d549b77b2d1633b4b973e5878f5b2f0a452b5944f451f4594eb765`。
+**实际6独立神经critic fits、6144 value optimizer updates，actor更新0，
+新物理执行0。** 参数存在对应fit-0至fit-5回执内，但未安装进电机策略。
+
+| fit | 训练 MSE | 整场景留出 MSE | 训练均值基准的留出 MSE |
+| --- | --- | --- | --- |
+| 完整数据0 | 78.31861765222452 | 不适用 | 不适用 |
+| fold0 | 51.28189371666346 | 243.3024962939232 | 221.30575436165694 |
+| fold1 | 78.74786565362268 | 70.01745640821818 | 84.70251034521131 |
+| fold2 | 77.7182389511668 | 81.48133879896947 | 111.66713192570342 |
+| fold3 | 70.29142406797601 | 92.11512701865625 | 88.00357130619072 |
+| fold4 | 76.00651147171882 | 91.11946308154513 | 93.12226111953676 |
+
+完整训练误差较父critic的125.3619412880769明显下降，value std
+由近零提升到5.712420259296188；value mean-1.8093247362389253，
+范围[-55.84055374107537,20.459657983230706]。
+但整场景留出平均 MSE **115.60717632026244**，均值基准
+119.76024581165981，仅约降低3.47%，五折3改善/2退步，且略差于
+v821线性探针114.28270530615336。不能拿训练78代替留出115。
+完整fit在唯一unsafe训练轨迹row20上的MSE仍达3477.2774852219964；
+难例仍是短板，不意味着大预算已经解决平衡问题。
+
+独立只读验证器逐个核验6个seal/声明/配置/源与参数hash/原critic，
+从真实选定训练子集重算input numeric hash、统计量、初始MSE、最终
+训练与留出预测/MSE、预测hash、**实际6144**更新聚合及最终全部
+input/source/artifact pins，exit0。没有重放6次optimizer，也不冒称
+第二遍独立训练；所有fit均未给actor或硬件授权。
+
+Core PR616 当前 OPEN、头6e232cfe；新CI
+[run37723295477](https://github.com/ros-claw/rosclaw/actions/runs/37723295477)
+仍in_progress，未自行合并。Soccer docs已直接main commit/push。
+
+下一阶段需把失败的真实运动状态纳入复盘，区分 critic 校准、状态
+泛化和actor闭环稳定性。若采用交叉拟合baseline，必须整场景排除
+该轨迹自身未来收益标签、保留原分数与全部失败数据，并显式绑定
+各fold critic来源；不能直接用过拟合全量critic制造好看的advantage。
+新actor仍需版本化、完整模型与原物理门控；本阶段未实现该接入，
+不得把新增critic训练称作球队或小脑运动能力已提升。
