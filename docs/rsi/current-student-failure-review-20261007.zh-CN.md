@@ -4722,3 +4722,75 @@ EXACT相等后通过，没有修改封存输出或运行代码。不重复执行
 这是待实施方向，不是已开发、已加速或已被live链采用的事实。
 原788/842及853→863均保持原协议和未改动源码；正式采样仍140，
 842无完整52终态，Core fdae84b4 CI仍进行中，球技/球队目标未通过。
+
+### 19:16 CST 追加：独立确定性审查编译复用已开发，真实规模失败修复中
+
+Soccer main提交并推送ac46662及69e3851：新增
+`fixed_recurrent_reference_audit.FixedRecurrentReferenceAuditCompiler`，
+`audit_cpu_transfer(..., recurrent_reference_compiler=...)`为显式可选项，
+默认调用方仍走原逐回合完整constructor。只接受同一个完整的
+deterministic clipped policy，不允许更换seed或采样family，也不复用
+producer的factory；首先调用原完整reference constructor，之后对
+未推进的整个初始对象深拷贝，复核原型/全策略/source身份及别名。
+每次300帧GRU/动作与3000动态子步审查均保留。新选项未接入原
+788/842或已排队的853–863，不能声称整条采样链已加速。
+
+对象完整性绑定包括数值数组、可变历史、完整普通JSON内容以及
+空间索引数据/排列/所有节点拓扑；SciPy native库也进入compiler
+contract pins。查阅[官方cKDTree文档](https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.cKDTree.html)，
+本地SciPy1.18.1的实际node属性另行检查。不能pickle或以任意repr/
+外部factory callback代替检查；原model/actor/critic/parent/动作门
+完整validator未被删减。JSON内部的Python别名不是逻辑模型内容，
+compiled object/array别名仍绑定；每次deepcopy隔离可变状态。
+
+初次新测试3失败/7通过：原型含cKDTree，普通对象遍历明确拒绝，
+未发生物理执行。加入完整索引绑定后10通过；补充“有效compiler但
+执行模型缺失/错绑拒绝”和索引clone/漂移，相关45通过。另一次
+focused mypy发现2项外部SciPy无stub及1项tuple长度推断，修正
+限定foreign import注释及显式tuple类型后2源码文件通过。随后加入
+大JSON规模/type/NaN反例、紧凑完整拓扑绑定，**最终46通过
+108.87s**，ruff/format及focused mypy2file/diff各自通过。不宣称
+Soccer全量历史测试/静态问题已全部修好。
+
+869真实规模验证normal exit1（handle13929、owner2523671退出）：
+原始constructor结束后，初始对象图的完整遍历超过65536 token门，
+在调用任何新audit前ValueError拒绝。只有predeclaration，没有
+case/result；新增physical replay0、native0、Foundation0、fit0。
+原目录/snapshot/runner均保留且不热改；全部输入pins/source heads
+再次只读核验exit0（handle91383），没有把失败删除或算成通过。
+predeclaration seal
+`2d3f329a7fde4be80f65c680e766ad59b3681725a85601da9cab8f5f251680cf`；
+runner bytes `20fc96d67163cb6f67ad12d236f930abf2c83e2bbd6a10de3c9feea991b0b7a0`。
+
+修复不放宽token/深度/256MiB存储门：完整JSON子树做准确typed
+content hash，索引所有节点压紧为完整拓扑矩阵并检查每个节点的
+原排列切片一致性，避免重复展开百万级JSON标量与节点字典。
+不是截断、漏字段、只比较actor或缩小真实archive。
+
+870采用新不可变Source
+`/home/dell/rosclaw_evidence/rsi-fixed-reference-audit-soccer-source-v870`，
+HEAD `69e3851dddc37d5578ddfbf28d0f87820c4c706b`；
+runner `/home/dell/rosclaw_evidence/rsi_fixed_reference_audit_qualification_v870.py`，
+bytes `58387dfd303065721087b7dcdcc4f02a2e0cc0d095af7b83154b9a4d76080b11`。
+所有Source rsi/scripts、Core838 Growth及实际867/870执行命名空间
+F821/F822通过后启动，普通ruff/format分别exit0；额外在import前
+绑定SciPy native文件。handle77641活跃，尚无资格终态。
+预先固定842已闭合的case0/1（不是选最好案例）、同一6d0e4d…
+完整确定性policy/839 primary0/原World；计划新CPU replay6000，
+new native0、Foundation新增0（原600只采用，不重复计新）。
+比较原审查全部物理/接触/GRU结果，只排除新审查source/report hash
+和明确新增的compiler provenance metadata。原reference审查采用
+封存报告，不冒充本轮再执行；不是完整52、采样family或能力晋升。
+
+835正式cohort已144/160（36个已消费情境），HQ32/clean94/unsafe0，
+新增140–143全部非HQ/非clean但safe；并非成功率提升。
+seal `92a778cd1178c4121ce635810d1490501e5c33a0469fdb219f7b1ad4ea69cc43`。
+全部输入bytes/source heads另外复核exit0（handle56346）。432000
+归档子步/43200 Foundation采用原采样见证，不是这轮重做。
+
+Core fdae84b4 exact-head CI37760335304已COMPLETED SUCCESS：
+B910 passed/23 skipped/10 deselected，C8566 passed/120 skipped/
+101 deselected，Druff及mypy1362源码文件通过，E4、G16 passed/
+11 skipped、F6通过。PR616仍OPEN/CLEAN，未自行合并。是软件
+边界验证，不是新球技或多智能体比赛证据；842完整52及160采样
+仍未闭合，M0/Fresh/球队/可宣传连续比赛目标均未通过。
