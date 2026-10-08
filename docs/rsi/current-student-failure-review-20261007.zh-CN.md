@@ -5930,3 +5930,52 @@ case1 `3ac54f61d9728b14bfbb6016200ce43c49c2d1dc569224dd3a0266dea88eeead`。
 回归文件共28 passed、590.57s，与前述reference模块13项为不重叠
 测试文件，本次合成数值/合同回归合计41 passed、0 failed。
 这不增加任何G1原生执行、动力学回放或学习更新计数。
+
+### 已封存采样的投影诊断：不是把动作范围放大就能解决
+
+903初版诊断误把metadata reader的包装响应当作顶层物理report，
+在第一次读取后的`report_hash`键处失败，handle57452 exit1；
+原source/预声明保留，没有产生最终诊断、native、动力学回放或
+学习更新。904另用未使用输出，按真实
+`metadata_with_payload_marker`响应合同读取，明确要求完整root
+seal通过、完整数值policy未返回。没有修改903或在跑采样源码。
+904 source bytes hash：
+`b23eb7c728b169a24caba756b8cea2add9a46641258bdb4606fb64e94fa8d566`；
+普通ruff、format及最终完整展开F821/F822均exit0后运行。
+
+904 handle70984自然退出exit0，result seal：
+`39b91540a8150e9399474e7fa7e313a26710ab0d412001eeb289dcb2e4d4fb5d`。
+在冻结902 Soccer/888 Core上，用完整seal/共享payload byte检查的
+metadata、原审查及Foundation seals、实际MJB joint bounds和
+trace hash，检查固定到达快照的**58个采样episode**。
+全部300帧的12关节投影与已记录delta逐元素精确匹配；控制段
+共187920个关节—帧。该步骤仅复算数值投影，不是新物理审查、
+新的策略权重验证、反事实动力学或球技改善。
+
+| 区间 | 变化率约束改变的关节—帧占比 | 关节位置约束占比 |
+| --- | --- | --- |
+| 全控制段 | 27.6102% | 2.0200% |
+| 首次触球前 | 29.6103% | 2.4495% |
+| 首次触球至+60帧 | 30.5634% | 2.1929% |
+| 此后 | 26.0435% | 1.8514% |
+
+HQ6个episode的全控制段slew占比26.9959%，其余52个为27.6810%。
+这是有序到达的局部快照、存在课程相关性，**不是独立随机抽样
+或因果结论**；无法据此证明约束相同、更不能认定放宽约束会
+改善扑救/射门。下一轮仍保持cap0.16rad、slew0.012rad/frame，
+不以取消保护换取表面动作更大。独立只读审核handle99226 exit0：
+复验1226项输入bytes、所有seals/heads/clean，并不导入诊断函数，
+直接用NumPy从58份NPZ与实际MJB重算投影、区间计数和总数，
+与保存结果全部相等。新增native/动力学回放/Foundation/optimizer
+均0，Fresh/promotion/hardware均false。
+
+补充粒度核查（数据质量技能作为本次证据检查的辅助）：此前
+递归统计为审查文件数，不应读成独立采样episode或原课程数。
+853的21份审查=20个采样episode+1个transport-control；874的
+59份=58个采样episode+1个transport-control。904只选择直接
+`sample-*/independent_review.json`，sample ID全部唯一，辅助控制
+实验未进入该统计。58个episode对应原commitment中15个不同
+课程；完整声明为40课程×4采样=160 episode。
+快照缺少sample57是未到达，而非删除失败；仍等待全部声明。
+此核查纠正进度口径，不表示现有完整manifest/学习记录污染；
+原collector以声明jobs生成采样records，控制实验单独留档。
