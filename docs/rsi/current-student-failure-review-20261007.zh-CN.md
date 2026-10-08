@@ -3746,3 +3746,44 @@ case5左膝87帧、右膝88帧。case1/2/3/4/6/7全程只有脚接触；除
 方向/距离，不仅仅改变首触姿态。此前同一资格场景的“膝先触”
 诊断仍有效，但不能泛化为所有场景的首要失败原因。这些是已有
 轨迹的相关性观察，尚非干预训练的因果收益，不据此更改考试门。
+
+## 2026-10-08 14:00 CST：大批次离线价值计算内存加固，真实数据 EXACT
+
+复查发现通用Core credit虽限制输入元素数量，但低维、大行数输入
+仍会一次分配过大的64维隐藏数组。本轮仅将预测按完整episode
+分批，单批最多65536 chronological frames，不改变每条轨迹的
+矩阵乘法、帧顺序、原目标、统计量或critic参数。单个float64
+隐藏数组最多32MiB；输入/输出、mask、矩阵临时对象和JSON回执
+仍占额外内存，这不是总进程内存上限。没有改actor/reward/考试。
+
+Core提交 **1186b67ea3c144a48dee75b0e6a79862766660da** 已推送至
+既有PR616，未自行合并。新增五项测试，验证强制分批时全部credit
+和receipt EXACT，以及真实17×4096×2低维预测的隐藏批次上限。
+`tests/growth` **713 passed、1环境asyncio_mode配置warning**；
+相关文件ruff/format、focused mypy1文件通过。新头CI run
+37734941025进行中，不借用任何旧头的全量绿灯。
+
+新冻结Core1186b67e上的v838沿用完整v833真实数据验证，导入前
+绑定原runner、全部source/input及五个原留出fit。原160条轨迹、
+40contexts、43200帧，默认65536帧预算与强制4096帧预算的四个
+数组、dtype、全部fold receipts和统计量 EXACT；与原v824的四个
+数组及另外六个训练数组亦EXACT。最终所有pins核验 exit0。
+另一独立读取保存NPZ、原v833完整数组，重算MC−value及归一化，
+检查五个sealed fit的receipt/parameter/exclusion绑定和最终pins，
+exit0。初次独立检查用了不存在的fit_receipt_hash键退出1；更正
+为既有契约value_fit_receipt_hash后重新执行全部检查，没有改回执。
+
+结果 `/home/dell/rosclaw_evidence/rsi-bounded-crossfit-credit-parity-v838/result.json`
+seal `64992c4cfdfe3c9362746011103ca545d1b36f917a0ee4782e23e309de71bc34`；
+runner byte `7ca7a9c858c8c029de614a052590eb9f54da6fe84be7bc1b14b217a7a90c073e`；
+Core module byte `e3b92127c21c97809a93b6e7968685dd5cc3526d84ed03029721a1ac01230ef0`。
+新fit/物理/optimizer均0。该改动降低大批次临时内存风险，不是新
+射门能力，旧v833冻结源码/档案及正在执行的物理来源均未修改。
+
+固定v827物理验收已完成case0–11，其完整绑定经v834逐项核验。
+10/11 clean/safe但非HQ，最低高度0.6875359108543251和
+0.6821863815585779m；前缀仅保留原case4的HQ，没有新增HQ证明。
+原stream13新增124为HQ/clean/safe、125 dirty/nonHQ/safe，逐条
+完整绑定已校验，126/127待完成；cohort最终pins尚未闭合，正式
+统计保持124/160，不提前加两个新行。所有原owner/学习待机链/
+两条只读观察器均核验live；继续完整原实验。M0 NOT COMPLETE。
