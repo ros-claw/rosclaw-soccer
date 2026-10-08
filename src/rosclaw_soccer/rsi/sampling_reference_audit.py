@@ -71,6 +71,14 @@ class SamplingReferenceAuditCompiler:
         seed = document["step_motor_proof"]["model"].get("seed")
         if type(seed) is not int or not 0 <= seed < 2**32:
             raise ValueError("bounded integer reference sampling seed required")
+        # The complete owned canonical document already authenticates all
+        # fields, not just the caller's policy_hash or the mean-model hash.
+        # Exact repeats need no seed substitution / additional JSON encoding.
+        # Keep both source/prototype stability checks, including the immutable
+        # snapshot's byte digest; changed seeds still take the original path.
+        if owned.content_hash == self._policy.content_hash:
+            self._stable()
+            return seed, self._initial_policy_hash
         expected = self._policy.restore()
         view = expected["step_motor_proof"]["model"]
         view["seed"] = seed

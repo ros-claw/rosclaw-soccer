@@ -5857,3 +5857,36 @@ PID3263538、handle38781；当前仅等待资源，未宣称复用资格完成�
 的已封存审查数**，不是全160终态，也不是候选与parent的成对
 提升率。874的失败/不安全轨迹保持留档；不删除困难样本、不访问
 Fresh、不制作掩盖整体不足的宣传片。
+
+### 03:30 CST：完整相同策略审查的冗余编码优化
+
+针对899实际测到的JSON编码瓶颈，在公开Soccer源码的
+`SamplingReferenceAuditCompiler._verified_policy`增加一个严格窄域
+快速路径：完整caller文档先经原CanonicalJSONSnapshot独立持有、
+有限值/无损JSON检查和完整内容hash计算；种子仍严格校验int及
+范围；仅当这个**全字段内容hash**等于已完整验证的初始策略时，
+才跳过seed替换以及三个冗余canonical编码。前后两次source、
+snapshot bytes及完整prototype数值图稳定性检查均保留。
+不同seed及任何内容变化继续走原完整对比路径。
+
+没有把caller自报policy_hash、mean_model_hash或对象地址当作
+完整身份，也没有改变训练目标、物理模型、动作范围、噪声法则、
+独立episode状态或晋升权限。新代码只在可选审查compiler生效；
+没有更换serializer、删字段或修改运行中895/896/853/874/901的
+冻结源。901仍资格审查旧871版本，不能冒充此新增快速路径的
+原生物理资格；后续需新冻结源上的完整归档回放资格才能采用。
+
+针对该模块的13项测试全部通过，handle29292 exit0，292.92s。
+其中包括原有不同seed/原始decoder的全部300帧动作、GRU状态和
+采样字段逐元素一致，以及新加的完整策略独立copy快速路径、
+冗余hash调用拒绝计数、bytes篡改、伪造hash、额外字段、改变
+权重及NaN拒绝测试。这是**合成数值/合同证据**，不是G1物理
+提升或整条流水线加速比例。其他preview/factory/contact-history
+回归组handle1031仍在运行，尚未计入通过数。
+
+变更文件ruff、format、F821/F822、单文件mypy及src/tests
+compileall均exit0。全仓ruff仍有两个既有F811（已用HEAD原文件
+stdin重现），全仓format有68个既有未格式化文件；全仓mypy
+检查887个source，11个错误/8个文件、exit1，均不在本次修改
+的source文件中。未用局部绿灯冒充全仓通过，也未顺手重写
+与本次训练优化无关的大批文件。

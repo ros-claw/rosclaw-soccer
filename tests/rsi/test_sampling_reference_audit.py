@@ -6,6 +6,7 @@ import json
 import numpy as np
 import pytest
 
+import rosclaw_soccer.rsi.sampling_reference_audit as reference_module
 from rosclaw_soccer.rsi.cpu_motor_transfer_evidence import audit_cpu_transfer
 from rosclaw_soccer.rsi.recurrent_sampling_motor import (
     TRACE_FIELDS,
@@ -111,6 +112,47 @@ def test_caller_mutation_during_clone_cannot_change_verified_policy_hash(learned
     episode = compiler.new_episode(policy)
     assert policy["policy_hash"] != verified_hash
     assert episode._policy_hash == verified_hash
+
+
+def test_exact_complete_repeat_skips_only_redundant_hashes(learned, monkeypatch):  # noqa: F811
+    policy = make_preview(make_sampling_view(learned[-1], seed=771))
+    compiler = SamplingReferenceAuditCompiler(policy)
+    independently_owned = copy.deepcopy(policy)
+    verified_hash = policy["policy_hash"]
+
+    def unnecessary_hash(_value):
+        raise AssertionError("exact whole policy must not re-encode seed-derived hashes")
+
+    monkeypatch.setattr(reference_module, "hash_json", unnecessary_hash)
+    compiler.verify_policy(independently_owned)
+    episode = compiler.new_episode(independently_owned)
+    assert episode._policy_hash == verified_hash
+    assert episode._sampling["seed"] == 771
+    assert episode._memory is not compiler._prototype._memory
+    assert not np.shares_memory(episode.hidden_state, compiler._prototype.hidden_state)
+    # Identity still depends on immutable bytes and the original prototype.
+    object.__setattr__(compiler._policy, "_data", b"{}")
+    with pytest.raises(ValueError, match="snapshot"):
+        compiler.verify_policy(independently_owned)
+
+
+def test_exact_repeat_never_trusts_only_callers_claimed_policy_hash(learned):  # noqa: F811
+    policy = make_preview(make_sampling_view(learned[-1], seed=771))
+    compiler = SamplingReferenceAuditCompiler(policy)
+    for field, value in (("policy_hash", "forged"), ("unexpected_field", True)):
+        changed = copy.deepcopy(policy)
+        changed[field] = value
+        with pytest.raises(ValueError, match="mean, template"):
+            compiler.verify_policy(changed)
+    changed = copy.deepcopy(policy)
+    changed["step_motor_proof"]["model"]["mean_model"]["parameters"]["head_bias"][0] += 0.01
+    # Deliberately keep the original claimed policy/model hashes.
+    with pytest.raises(ValueError, match="mean, template"):
+        compiler.new_episode(changed)
+    changed = copy.deepcopy(policy)
+    changed["unexpected_field"] = float("nan")
+    with pytest.raises(ValueError):
+        compiler.verify_policy(changed)
 
 
 def test_source_drift_and_caller_ownership(learned, monkeypatch):  # noqa: F811
