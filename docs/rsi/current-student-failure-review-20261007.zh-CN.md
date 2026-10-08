@@ -4435,3 +4435,30 @@ source，exit0。旧owner和已封存生产者均未改写。后续还需真正�
 protected保留。原835又验证136/137为HQ/clean/safe，但138–139未
 闭合，正式边界仍136/160，不能提前称140完成。既有case47物理
 进步事实保留；M0、Fresh能力扩张、完整球队与宣传片目标仍未完成。
+
+### 17:10 CST 追加：原827完整52终态已关闭，明确REJECTED
+
+原owner1918112正常结束；834独立观察器完成全部52完整物理、GRU、
+Foundation及原门重算，handle exit0。最终result seal
+`8c89e2391d386b13783e042f63eb1530dd3d28fed8643bbd90db09d423696ec2`，
+summary seal `6c242198add4ffcb9567f922699e033412cdc63ba00e7b7708506848a18750fa`。
+完整52native/156000独立substeps/15600 Foundation见证，而不是prefix。
+这些计数来自原执行，追加检查不重新做物理。
+
+正式结果：baseline HQ12→candidate HQ13；oldHQ loss0、oldclean loss0、
+12个protected完整trace EXACT、所有pelvis安全；**new out-of-play3**。
+原gate=False，候选不晋升，无自动Fresh或active policy改变。
+局部case47提升是真实的，但不抵消整体回退或HQ总数仍小于20。
+
+完整同seed/lane paired rows另行检查：新增出界为case30、42、50。
+其max lateral excursion旧→新分别为1.073546→5.328988m、
+3.475625→4.353203m、3.980398→5.241140m；均按原4m上限失败。
+旧出界8/9/17被修复回场内，因此只看“出界总数差不多”会掩盖
+**新损伤**；retention门按新损伤拒绝是必要的。终态result/summary/
+commitment seal、完整52row配对、执行计数与3个新出界重算检查exit0。
+
+下一实际事件也已发生：841从等待进入原773资格处理，830进入
+归档factory数值核验，两个exact owner均确认运行（Rs）。没有因
+观察等待超时重启它们。后续839自己的资格/52仍需实测，不能拿
+825/b5这份终态冒充839或848的能力证明。853候选自身数据采样
+依然以839真实完整安全考试为前置，当前没有开始。
