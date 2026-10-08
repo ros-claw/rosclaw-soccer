@@ -4909,3 +4909,45 @@ binding及混入其他三类factory反例；五个拒绝分支都必须发生在
 物理/基础模型审查。不热替换当前collector，不因为吞吐优化
 更改动作门、KL/奖励、晋升阈值或Fresh访问。更多workers需按
 实际峰值RAM/磁盘重新admit，不能仅因GPU空闲就宣称可用。
+
+### 20:13 CST：871/872四个真实归档终态全部通过
+
+两任务均正常exit0（871 handle30112/owner2602041；872 handle17163/
+owner2607234），owner已退出，未编辑其Source或runner。871 result
+seal `dfc0a18a3152603593be36d2f1cd3af2744aef0e66e0cab4e292123b7677e6c5`；
+872 result seal
+`acbed31d1a771e91ef7a1fbe9f15fa5101b40353275ffbf9baf0c25c718c96da`。
+
+871原完整sampling constructor编译408.977851619944s；两次
+完整审查124.89857050590217s、124.27663304982707s。stage seals：
+`e8b65c468c50966af30bef08b22c537add424982e6c30f6dce705897cc65588f`、
+`bfd58f10fb7b2da0df944f41435d40912d9975ca76ca6f5386a268e86146c69b`。
+872原完整clipped sampling编译410.83323251688853s；两次完整
+审查124.6675145230256s、124.5122632868588s。stage seals：
+`94f0b6701f0a31180e520585f38d099eee0576c94817391c938e99f6aa93f915`、
+`531611ef525b7f15c5f7dd42c21c2d69dc6b5b54cf9eb225590b90c882d9cadd`。
+
+合计**新增实际CPU动态重放12000子步、GRU重建1200帧、实际
+采样/条件logp重建1080次**。新增native0、Foundation0、optimizer0；
+原1200 Foundation见证仅采用而非重算。四条每项原物理、接触、
+状态、动作和采样审查结果EXACT，只有预声明的source/report hash
+与新增compiler construction metadata例外，没有挑选通过字段。
+871为两个不同种子的D3真实物理资格；872为同一seed773的完整
+clipped候选两个原repeat资格，不能夸称clipped不同种子已重放。
+
+另行独立只读核验两组终态（handle38072正常exit0）：全部嵌套
+result/stage/audit seals、两组所有输入bytes/source heads、compiler
+contract与source pins一致、每项原审查字段EXACT、原Foundation
+绑定、计数和owner退出。该核验未再次执行12000子步，不能重复
+计数。871还先单独核验一次（handle25196 exit0），也不重复计数。
+核验器
+`/home/dell/rosclaw_evidence/rsi_verify_sampling_reference_qualifications_v871_v872.py`，
+bytes `8d6536977ccb5b7047cff3f47128f9fa867bafd4fd3a58bf4db1468255bfd5ca`。
+
+这是独立sampling参考审查复用的限定工程资格；尚未新建或执行
+下一代加速160完整采样协议，没有训练新权重、测量端到端提速或
+达到 consumed/Fresh/M0/球队门。原788仍148/160、842已有28条
+Foundation归档且owner仍live；后者只是归档数，不是完整52通过。
+旧853/860队列继续等原完整前置，未热替换。下一步是将已通过的
+独立审查复用接到**新的**完整候选自有采样协议，原控制轨迹
+全数组一致性必须先通过，样本/失败/完整考试与资源门不变。
