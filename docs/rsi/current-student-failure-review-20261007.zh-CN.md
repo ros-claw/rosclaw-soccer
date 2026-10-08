@@ -5477,3 +5477,48 @@ run37801402724仍in_progress，未宣称完整CI通过。
 技能边界使本轮读取优化保持纯数据/SIM验证、原运行源冻结、
 实际来源绑定和失败证据保留。它是为后续更快进行完整训练与
 审查准备的基础设施，不是新的球技、M0晋升或宣传视频成果。
+
+## 2026-10-09 00:35 CST：六个采样worker进入新采集，Core最新CI通过
+
+本轮继续按总纲§72–74推进M0，不将归档读取优化解释为球队能力。
+Soccer `d7cdb6d`已确认推送main，工作树干净。
+
+分别独立复查853/874启动commitment的canonical seal、全部1030/
+1649个输入文件bytes、冻结HEAD及clean状态、160项固定job和行为
+模型`82c1f9db…`，exit0。这是启动来源准入，不是完整160采样完成。
+
+两条控制复现均已封存，随后进入原声明的2/4 worker新轨迹采集。
+只读复核进程再次检查控制row、review、Foundation各seal及引用、
+原commitment control job、trace bytes，并比较与841原repeat-0的
+全部28类数组的dtype和逐元素值，均完全一致，exit0：
+
+- 853控制row seal：
+  `2e8343ab66ec13b349dda0282ac7ef936cf180ff4bc5047cf8d5c79da1cd9f83`。
+- 874控制row seal：
+  `f631b6ffa2bf0f88408beb589db5004d44c2567003ace950df221904bb3b19d3`。
+
+每个控制原执行包含1次native、3000个独立回放子步、300次
+Foundation重算；本轮只读复核新增这些执行均0。两个控制都HQ=false，
+只是正确复现原first-contact frame68及非clean-foot表现，不是
+技能提升，也不进入160训练轨迹。00:32检查尚无非负sealed训练row；
+采样进程继续运行，未把新模型描述文件或未审查的轨迹算作完整样本。
+原793仍执行全160数据prepare，未产生最终学习结果。
+
+Core PR616 head `6e21c780eeb8bd9a25a53332a2dedb23fbe7b14a`
+自动CI run `37801402724`于00:20:58 CST完成，conclusion=success：
+
+| CI检查 | 实际结果 |
+| --- | --- |
+| A import/contract | success |
+| B focused | 910 passed, 23 skipped, 10 deselected |
+| C full regression | 8581 passed, 120 skipped, 101 deselected |
+| D static | ruff通过，mypy 1362文件通过 |
+| E embedded acceptance / harness | 验收通过 / 4 passed |
+| G SeekDB matrix | 16 passed, 11 skipped |
+| F Golden Flywheel | 6 passed |
+
+这些skip/deselect未算作通过，CI结果未算作足球成绩。Core PR没有
+自行合并，也没有调用含发布副作用的workflow_dispatch。另起Soccer
+十个相关测试文件联合回归仍在运行，暂不写通过计数。
+两条采样链的Fresh、晋升及hardware授权均false；M0与最终球队
+宣传成果仍未完成。
