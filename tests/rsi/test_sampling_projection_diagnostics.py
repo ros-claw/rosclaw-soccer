@@ -53,6 +53,21 @@ def test_slew_and_joint_bounds_separate():
     assert ordinary["runtime_execution_authorized"] is False
 
 
+def test_floating_cancellation_is_not_slew_activation():
+    values = fixture()
+    values[0][:] = 0
+    values[0][30:, 0] = 0.002 * np.sin(np.arange(270))
+    values[2][:] = 0
+    previous = np.zeros(12)
+    for frame in range(30, 300):
+        desired = 0.16 * np.tanh(values[0][frame])
+        values[2][frame] = previous + np.clip(desired - previous, -0.012, 0.012)
+        previous = values[2][frame]
+    r = run(values)
+    assert r["full_controlled"]["slew_changed_coordinate_rows"] == 0
+    assert r["full_controlled"]["joint_limit_changed_coordinate_rows"] == 0
+
+
 @pytest.mark.parametrize("index,value", [(0, np.nan), (1, np.inf), (2, np.nan), (3, np.inf)])
 def test_nonfinite_rejected(index, value):
     values = fixture()

@@ -66,8 +66,10 @@ def projection_diagnostics(
         replay_error = max(replay_error, error)
         if not np.array_equal(actual, measured[frame]):
             raise ValueError("actual motor deltas do not EXACTLY replay the original projection")
-        slew_changed[frame] = proposed != desired[frame]
-        limits_changed[frame] = actual != proposed
+        # Floating cancellation in previous + (desired - previous) is not
+        # evidence that a constraint activated. Inspect the original bounds.
+        slew_changed[frame] = np.abs(desired[frame] - previous) > slew_rad
+        limits_changed[frame] = (proposed < lower) | (proposed > upper)
         transport_error[frame] = actual - desired[frame]
         previous = actual
 
