@@ -3333,3 +3333,61 @@ actor KL 回滚也回滚 critic；不能直接提高全局学习率冒险。
 绑定；完整成功/失败数据不裁剪，原考试门槛不改。仅校准常数 bias
 无法改变全局中心化 advantage，不能将该类 MSE 改善包装成 RSI。
 此处是方案，不是已实现新 learner。本轮先完成 v817/v818 原链路。
+
+## 2026-10-08 11:34 CST：首遍严重失稳，开发独立 value 学习能力
+
+v817 **首遍**完整 raw/独立动力学/Foundation 绑定通过；第二遍
+尚未完成，不把第一遍写成两遍资格结论或 v818 已拒绝。
+raw logical report `dffc703bb40d08e23517911bd9bef857cbef25a26add9c351076ac50a1729554`，
+独立 review `41480039ec4339372ff7a102b63ab6459cb5b4e76844ab9782403e21f387d28a`，
+Foundation `2005de467387fc631f845b60c51641db165f844ebfb49edcce6f7f19ab855679`。
+首触球 frame68，接触部位[0,1,2,4,5]，非干净、非HQ；
+forward1.3600504514944773m、横向比例0.205985229990457，
+最低 pelvis **0.12161157242144012m**，明确 unsafe。
+这不是仅短暂低于安全线的波动，不能晋升或包装成展示成绩。
+
+v822 保留完整首遍与父模型同原 course0/seed20261177/lane0/World
+的既有 transport-control；两原始逻辑 report 均经 `_sealed` 读取，
+World相同。新只读时间线不重新执行动力学、也不独立重算 Foundation。
+全部28 trace arrays 的前30帧逐项 EXACT，首次目标/姿态/球轨迹差异
+分别为 frame30/31/61；不据此断言失稳的唯一因果机制。
+
+父模型最低 pelvis0.6676617811619728m，无低于0.65m的 substep，
+末帧0.7316674718773232m。新模型首个 unsafe 为 frame138/substep6，
+即2.774s；最低点 frame179/substep6，即3.594s，末帧仅
+0.17561939842927182m；共1614 unsafe substeps，累计采样时长3.228s
+（不假定连续）。首触球为1.36s附近，较长的踢后阶段失稳值得重点分析。
+这仍只是同一个已消费场景，不外推整个52考试的失败率。
+
+时间线脚本 byte
+`7f1f489187c93f690492d73c39a2480c0cd778ce258fdd7d77b2db12d8bf1138`，
+声明 seal `cfdfddf45b3638db7b72f8f211e25cb7e5b08aee5f297f40b0a26a8cae0efff0`，
+结果 `/home/dell/rosclaw_evidence/rsi-temporal-failure-timeline-v822.json`
+seal `4891997720f7fc102ac0a45eb0c143f94c2021bdc7741bd66274f4787610adfe`。
+最终全部输入/source pins通过；独立只读检查重算 flattened substep
+的安全数量、首个unsafe、最低/最终高度并再次核验seal/pins，exit0。
+
+原流112–115整组最终全部pins核验 exit0，正式累计 **116/160**，
+29contexts、HQ20/clean76/unsafe0，116 native/348000 audit substeps /
+34800 Foundation calls。这是旧行为的数据采集统计，不是 M0 consumed52
+成绩。114 clean/safe但 forward0.11596137870101075m、ratio1.1140448482355405，
+非HQ；115 clean/HQ/safe，forward1.5028744793881463m、ratio0.022940229045395295。
+115 row `92e12967e3b5a184bfb50a906abaf6c2d9d2208c4d3b751b215c74358e9b7e55`；
+下一116–119的只读完整证据观察已接续，原采集进程没有重启。
+
+Core 新提交 **6e232cfe101662153549a022d0df6adf57bce11a** 新增通用
+`growth.normalized_value_regression`，与G1、足球、电机无耦合。
+独立 value optimizer/预算、完整目标固定 mean/scale 归一化，
+开始时保留原单位预测，结束时折回原单位参数；返回完整源/输入/
+参数绑定、统计量和实际更新数。它是固定归一化离线 critic regression，
+**不是自适应在线PopArt、不是新actor学习器，也没有连续优化器checkpoint**。
+不接收actor参数、不输出电机动作，不自动生成下一轮优势或晋升策略。
+新增39测试通过；整组 `tests/growth` **659 passed,1环境配置warning**，
+新代码 ruff/format/compile/mypy通过。Core旧v1 learner byte
+`76dcbb6b9c2ae5a3be571f16d56e82ec704afae47e612b0d314d4d3395a96fc2`
+保持不变，当前v815冻源和v817/v818未热修改。
+
+下一步在新冻结源码和预声明下用完整实际数据检验该 value learner，
+再决定如何版本化接入actor；目前仅合成学习测试，不声称真实G1提升。
+之前8449 passed的完整CI属于8b2fe0头，新6e232cfe尚需它自己的CI，
+不得挪用旧CI当作新头全量回归或 Soccer 全绿。Fresh/晋升仍关闭。
