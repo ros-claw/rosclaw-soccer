@@ -4620,3 +4620,50 @@ safe=True/HQ=False。qualification/result/commitment seals、原839
 842 exact owner2159594现为Rs、原handle85834仍活跃，进入原52
 处理；尚无完整52结果。前一节“资格未完成”为其17:52观察时点，
 以这次实际终态为新边界。没有重新启动或改动旧producer。
+
+### 18:17 CST 追加：完整160轨迹的参数更新传递测量
+
+Core PR616新增通用离线模块 `growth/action_update_transport.py`，提交
+`fdae84b4d53759d1ec1b706fa7c701d227d60c43`，已推送，未自行合并。
+模块不依赖G1、足球、Torch、模拟器或硬件；对相同观测、相同实际
+previous residual，计算学习前后latent更新经tanh/cap、slew、关节
+target bound后的传递，必须EXACT重建原实测residual。只返回诊断，
+不返回可执行动作；有限输入、尺寸/数量上限、完整输入哈希和零更新
+语义均有测试。24项新测试、Core Growth全737项通过，ruff/format、
+focused mypy1file和diff检查分别通过。新head CI37760335304在
+18:17仍运行：A/B通过，C进行中；不是宣称新head全CI已通过。
+
+867完成原810完整160条轨迹、40个已消费情境、43200控制帧。
+全部成功/失败均保留，固定839 primary0（82c1f9…），不挑候选。
+完整重建两套GRU：旧mean及原latent在所有帧EXACT匹配归档；新
+latent保持旧AR噪声offset，投影对比共享原实际previous residual。
+这不是新策略的反事实动态轨迹，不能把同观测诊断当作真实踢球成绩。
+
+| 范围 | 控制坐标数 | 更新完全被挡坐标 | intended RMS(rad) | transmitted RMS(rad) | L2传递比 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 全270控制帧×160 | 518400 | 144474 (27.8692%) | 0.000757865810 | 0.000616697788 | 0.813729529 |
+| 首次触球前 | 92844 | 27836 (29.9815%) | 0.000830510071 | 0.000674249898 | 0.811850358 |
+
+触球前传递RMS约0.038632°。约81.2%的预期更新L2范数仍传到
+target，因此不能归咎于“限速把更新全部挡住”；这一代平均动作变化
+很小。但小变化导致失败、放宽限制会更好，都尚未被物理实验证明。
+不能据此放宽KL/slew、安全门或Fresh访问。已有853→860→863链
+将使用839候选自身新数据继续学习，仍须原完整物理考试。
+
+输出 `/home/dell/rosclaw_evidence/rsi-actual-action-update-transport-v867`，
+result seal `a6d6b3319083e10e29bcd8f1247658e7ee2e7f1b803b608e56e0f53ade198a6a`；
+runner bytes `070993620cec4c3753b10bc29c118e59292c3f76b20f5eef09b12550373cc7cd`；
+不可变Core snapshot `rsi-action-update-transport-core-source-v867` 同
+fdae84b4，模块bytes
+`b7ec952e9fc5f706320faaa47b5aad11ce24cfc6c3f44cb2696515de2e3815ea`。
+867正常exit0。另行核验全部160顺序、predeclaration/result seals、
+所有输入bytes/source heads、各条完整投影声明，并由每条统计按
+坐标数独立复算加权RMS/L2比和mask数量（exit0）。该独立复核
+不是第二次重算所有GRU；旧原始学习数字另有840完整独立审查。
+本轮增加物理执行0、optimizer steps0、Fresh0、晋升/硬件授权0。
+
+835正式cohort仍140/160。新增单条140/141已核验，均HQ=False、
+clean=False、safe=True，但142/143尚未闭合，不能写成144完整cohort。
+140 seal `ad496caabde3fdd68cd8380dbe7cef3491feb8eac630fc7dd349c8c10e5249ea`；
+141 seal `e967925edcb947d17dab877a971714c87bc81c1f03f9fb28702283eba9fe9b2f`。
+842完整52仍无终态；球队/连续比赛/可宣传视频目标均未完成。
