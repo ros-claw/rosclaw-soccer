@@ -4546,3 +4546,64 @@ substeps，首次contact frame68，clean_foot_only=False、最低pelvis
 139尚未闭合，正式cohort仍136/160。完整球队、Fresh扩张和宣传片
 目标都未达成；下一动作是实际学习/资格/52结果复核与失败学习，
 而不是用更多等待队列或门禁fixture数量作为球技成绩。
+
+### 17:52 CST 追加：实际接触顺序与下游投影诊断，不再仅排后续队列
+
+835正式闭合140/160（35个已消费情境），HQ32/clean94/unsafe0，
+cohort seal `e599b8f7bcb91c05d3d651b84e38d52e659026d5d6fca608d241029aec333aff`。
+新增136–139全部HQ/clean/safe；cohort seal/source heads/所有bound
+输入另行只读核验exit0。420000 substeps/42000 Foundation是原采样
+执行的完整归档见证计数，不是这轮重复物理，也不是35个新Fresh情境。
+
+864完整复用831 witness验证，加入841 repeat0，四段同seed/lane、
+同compiled World完整300帧/28数组的归档。报告seal
+`a90299a707a5c2dfe9d2ddf054a3964f3f3255b6cc0084eb9956d1ee0d88b1e3`，
+root `/home/dell/rosclaw_evidence/rsi-extended-candidate-contact-timeline-v864`。
+全部source/raw/trace/model/审查/Foundation pins、seal及接触事件再
+独立核验exit0，追加新physics0/fit0。**这个单一课程**的D3、817、
+826、841全部右膝（body5）第68帧先碰球，左脚（body0）第69帧才碰。
+当前841随后左踝pitch body2第79帧、左膝body4第80帧再碰，右脚
+body1全程没有有效contact。因此不是仅仅踢后的恢复或第二次触球
+问题；这个课程的首次接触尚未被新策略修正。接触阈值仍原1N，
+frame峰值不是冲量/真实接触持续时间，不把相关性说成因果证明。
+
+新增足球实际target-envelope适配诊断
+`src/rosclaw_soccer/rsi/sampling_projection_diagnostics.py`：完整重算
+raw latent→.16*tanh→.012 rad/frame slew→compiled joint bound→
+实际motor_delta，必须全部数值EXACT；分触球前、触球+60、其后统计。
+不输出runtime动作、不做新dynamics、不改变cap/slew/Joint边界。
+提交6488770，复查后0acaf17修正一个计数细节：浮点加减微差不
+等于constraint激活，必须直接检查原bound。测试补上该反例，以及
+第0帧触球的真实+60窗口，不能人为向后平移窗口。
+
+新模块22项、相关action/credit回归共52项通过（0.51s），ruff、
+format、focused mypy1file各自exit0。一次组合pytest曾因漏Core
+PYTHONPATH在collection失败，补齐后重跑，不掩盖成首次成功。
+不据此宣称全Soccer历史套件全绿。
+
+866采用新不可变snapshot与原864完整证据，全部12960个控制坐标
+投影EXACT、error0。result seal
+`afd9f5d3f64f6341fe414ee7a0ba274cefeedae8b5462944c578a7f784bbe571`，
+root `/home/dell/rosclaw_evidence/rsi-actual-projection-diagnostics-v866`。
+原865封存保留；其“浮点数值改变”计数不再解释为真实constraint。
+865一般ruff有3个C408样式警告，未热改封存producer；866 wrapper
+ruff/全展开F821均通过，不冒充865一般ruff已通过。
+
+| 同一课程归档策略 | 全270帧slew激活 /3240坐标 | joint bound激活 | 触球前slew /456坐标 | 触球前joint bound |
+| --- | ---: | ---: | ---: | ---: |
+| D3 transport control | 933 | 54 | 130 | 21 |
+| 817旧失败策略 | 1212 | 59 | 130 | 21 |
+| 826/b5策略 | 947 | 63 | 130 | 21 |
+| 841/839新策略 | 919 | 54 | 131 | 21 |
+
+当前841触球前desired→actual RMS0.00754336rad，全控制RMS
+0.00697841rad；相同观测投影诊断显示下游确实常限速，但**不证明
+新参数变化恰被这些坐标挡住、也不证明放宽限速会改善比赛**。
+所有seal/source pins和四条完整投影、各阶段mask由独立vectorized
+NumPy表达式复算；追加新物理/优化器0。不得因此放宽原安全边界。
+
+下一步已有860→861→862→863自身数据学习/验收链继续等待真实
+完整上游；后续应测量参数更新在触球前实际可控制方向的传递，
+结合失败样本改善credit与课程，不把“增加迭代”当作接触顺序已学会。
+841两次资格和其原52仍未完成，140采样库仍未完成160，M0、Fresh
+扩张、完整球队、可宣传连续比赛视频均未完成。
