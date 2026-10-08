@@ -4506,3 +4506,43 @@ pins/source heads和计数另外只读检查exit0。**这不是新native transpo
 
 当前没有Fresh/晋升/active策略改变/球队或宣传片突破。接续fit之后
 仍需真实原native资格、安全判定及完整52考试，当前M0未完成。
+
+### 17:35 CST 追加：自身数据接续策略的原物理验收已排入执行链
+
+862承接860/861固定primary0，完整复用原817→773→772的两次
+native/6000独立substeps/600 Foundation资格，不降低动作/身体门。
+其额外前置是855的完整终态（原52或原安全拒绝）及真实owner退出，
+核验qualification、commitment、模型、执行计数、SIM_ONLY和源pins；
+不因“有终态文件”就让两个大物理链并发分配，也不终止旧owner。
+此前842的完整证据仍保留。862 actual新物理0，当前等待860全四fit。
+PID2397327，handle25455，正确Source815 cwd已从/proc独立核验。
+runner `/home/dell/rosclaw_evidence/rsi_sandbox_candidate_student_native_v862.py`，
+bytes `a3bd5fa848595180c013616b8e61bba38efa336692349d2765b0d60784b5e820`。
+
+863完整复用原818→774→695/757的安全检查和完整52：两次资格的
+完整trace/模型/审查/Foundation绑定后，最低pelvis=.65门；不安全则
+写拒绝且不做52，否则继续原HQ≥20/旧HQ与clean无损/新增出界0/
+protected原完整trace EXACT门。没有自动Fresh、activation或硬件。
+安全predeclaration seal
+`f67fd50033ef579650dca217f672663c4a0f4f9af9939e96a75157c42df80f84`，
+源hash和全部安全字段另行只读核验exit0。PID2397370，handle88580，
+正确Source815 cwd已核验，actual新物理0。runner
+`/home/dell/rosclaw_evidence/rsi_sandbox_candidate_student_exam_v863.py`，
+bytes `d0ce5231cc9c9b7953079b38bf45c1c284ce2fcf08fc51b9810407b19a0b0bdd`。
+
+17项前置终态fixture通过（最新0.98s），拒绝部分资格、51/52前缀、
+执行计数/模型/终态错绑、Fresh及硬件授权字段；同时覆盖原774的
+Fresh字段在commitment而不在result的原schema，防止兼容性崩溃。
+源码/全展开F821/F822/ruff/format检查独立通过。862/863错误cwd
+实际负向启动均在等待/分配前ValueError拒绝（exit1是预期拒绝），
+未影响正确cwd的原两个owner。没有改动任何live runner。
+
+这轮出现了实际新物理数据：841 repeat0原独立审查已写入，3000
+substeps，首次contact frame68，clean_foot_only=False、最低pelvis
+0.6832132680864138m。身体高度未跌破门，但不是干净踢球成功；
+两次资格整体尚未完成，不能做成功率或新模型能力通过结论。
+835又独立核验138为HQ/clean/safe，row seal
+`e04a57dd81b6bd8b0f5f31f540bb8a4175068df99350ea65c32f45f4088cd398`；
+139尚未闭合，正式cohort仍136/160。完整球队、Fresh扩张和宣传片
+目标都未达成；下一动作是实际学习/资格/52结果复核与失败学习，
+而不是用更多等待队列或门禁fixture数量作为球技成绩。
