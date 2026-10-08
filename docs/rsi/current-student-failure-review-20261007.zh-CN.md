@@ -3141,3 +3141,24 @@ MC1.6580984642029588、clean/safe、最低 pelvis0.6962775769342697m；
 v816 PID1692545 CPU00:54:20，仍在完整 prepare，尚无本轮
 学习 commitment/四fit完成结果；v817/818仍正常等待。本轮
 没有新增物理考试或 Fresh 数据访问，没有可宣传的球队突破。
+
+## 2026-10-08 10:30 CST：Core8b2fe0在线Gate完整成功
+
+已重新读取 GitHub run37711195523 的最终状态与实际 log，
+headSha **8b2fe0daa47411bddb442710f0595223ffad4d77**，status
+completed/conclusion success，job结束于10:01:55 CST。
+[在线流水线](https://github.com/ros-claw/rosclaw/actions/runs/37711195523)。
+
+- GateA import/contract success。
+- GateB：910 passed、23 skipped、10 deselected、25 warnings，311.11s。
+- GateC 配置的全量回归范围：**8449 passed、120 skipped、
+  101 deselected、68 warnings**，2813.33s；不隐去 skip/deselect。
+- GateD：ruff通过，mypy **1359 source files/no issues**。
+- GateE embedded live acceptance输出passed=true；harness4 passed。
+- GateG：16 passed、11 skipped、1 warning（12.55s）。
+- GateF GoldenFlywheel：6 passed（18.35s），job其余步骤全部success。
+
+相同 head 的 PR616仍OPEN、reviewDecision为空，未自行合并。
+上述是 Core 软件CI证据，不包含本轮候选的 G1 native考试，
+不能据此声称 RSI-M0 或连续球队比赛完成。v816/817/818与原
+采集流仍在执行/等待，冻结源码不因CI通过而修改。
