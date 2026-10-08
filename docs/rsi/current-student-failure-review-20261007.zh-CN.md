@@ -5979,3 +5979,46 @@ HQ6个episode的全控制段slew占比26.9959%，其余52个为27.6810%。
 快照缺少sample57是未到达，而非删除失败；仍等待全部声明。
 此核查纠正进度口径，不表示现有完整manifest/学习记录污染；
 原collector以声明jobs生成采样records，控制实验单独留档。
+
+### 固定58份归档的接触时序：不能把所有失败都叫“没踢准”
+
+905使用904已封存的同一58个sample ID，不选择新到达结果，不删
+失败，也不把辅助transport-control算成训练episode。冻结902 Soccer
+和888 Core全部源及原1226项输入，另绑定904结果与905 runner；
+加载前和完成后复核输入bytes、heads和clean。runner source hash：
+`a065e99c88fe2d964f0bb412b9019407307868abd0fa42cd727c0f93cf74b669`。
+普通ruff、format及F821/F822检查均exit0后执行；handle4030自然退出
+exit0。Git外结果目录为`rsi-fixed-contact-timeline-review-v905`，
+result seal：
+`5df137908ff6430dbb2d4e74c7bf18c21d4a8644ff8e1ab8dd9eada1ef52223f`。
+
+| 完整300帧接触类别 | episode数 | 训练问题假设，尚非因果证明 |
+| --- | --- | --- |
+| 第一次接触已包含非脚部 | 19 | 首次触球几何/摆腿控制 |
+| 先脚部接触，随后非脚部接触 | 11 | 跟随动作及触球后的腿部避让 |
+| 全程仅脚部接触 | 28 | 继续区分方向、力度及出界 |
+
+11个后续污染的间隔分别为20、11、12、9、9、1、6、20、2、13、18
+个控制帧，中位数11帧（50Hz下为0.22秒的帧间隔）。该时间不是
+接触持续时间；force_n是每控制帧内最大力范数，不是积分冲量。
+28个干净触球中HQ6、非HQ22；这22个均有方向误差，另外9个
+出界、7个前向不足，失败类别互相重叠，不能把总和当episode数。
+非脚部接触的episode计数：右knee_link23、左knee_link13、左
+ankle_pitch_link3、右ankle_pitch_link1；左右可能同时发生。
+这里“脚部”仍严格沿用原审查body索引0/1（ankle_roll_link），
+不为好看而把ankle_pitch或knee接触重新算成干净触球。
+
+独立只读审查handle61113自然退出exit0：不导入contact_timeline，
+直接从58个NPZ重算>1N事件、六个body逐项首末接触帧/活跃帧数/
+峰值力及峰值帧，全部等于保存结果；另验1228项输入bytes、
+预声明/结果/原审查/Foundation seals、报告关联、heads和clean。
+现有诊断及snapshot两个测试文件21 passed、0.39s。没有新动力学
+回放、native、Foundation执行或optimizer更新；Fresh、部署、
+promotion、hardware和policy_gain均false。
+
+后续课程分析应分别跟踪首次污染和跟随污染，且不能只优化干净
+触球率：干净但方向错的22个同样需要纠正。仍等待全160完整采样
+manifest再进入已排队的value/actor训练，并完成固定主候选全52
+考试；不依据本局部有序快照调奖励、增大动作限幅或挑选结果。
+本轮两组考试观察到24/52（HQ4）和10/52（HQ1），终态均未生成；
+这些是进行中计数，不是学习提升率，更不证明连续球队比赛就绪。
