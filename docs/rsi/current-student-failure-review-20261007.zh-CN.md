@@ -3838,3 +3838,89 @@ Fresh/晋升/hardware授权均false。原v827 fixed52的owner/模型/
 13 clean/safe/nonHQ，最低0.6861955054325076m。原数据新124/125已
 逐条核验，126/127尚未封存，完整cohort边界仍124。Core1186b67e
 CI A/B通过、C运行中；M0及连续自主球队宣传目标均未完成。
+
+## 2026-10-08 14:51 CST：扩展四卡训练闭合，后续物理链已条件接续
+
+v839 owner正常完成 exit0，四个worker正常结束，未停止其它GPU
+任务。完整学习回执 seal
+`99121fc0b250a94a86c530a3ab69de11703fa81b36d90f1833dc01950ec04c0f`。
+实际 **2097 accepted joint optimizer steps、4 rejected/rolled-back**。
+4096是四组预算上限；首次拒绝后该组立即停止，实际尝试2101，
+剩余1995未尝试，不能计作1995次回滚或完成4096步。
+早先即时说明“其余尝试被回滚”不准确，已依据终态回执和原
+learner的break控制流纠正。原KL≤0.02上限没有提高。
+
+| 固定候选 | accepted | rejected | marginal KL | MC value MSE |
+| --- | ---: | ---: | ---: | ---: |
+| 0（唯一主候选） | 723 | 1 | 0.01996115043464306 | 123.07977879469149 |
+| 1 | 702 | 1 | 0.0199975069581079 | 123.15840954200614 |
+| 2 | 347 | 1 | 0.01997416169613564 | 123.22703822010347 |
+| 3 | 325 | 1 | 0.019969895302702816 | 123.43125065859152 |
+
+主候选hash
+`82c1f9db8388e60c73fc7a92b9eeeb136fe1c7d53464548c58dd92b672251d73`。
+其conditional KL0.006318901438425529。相较v825主候选256步，
+本轮增加了有效更新，但独立critic仍只是joint MC拟合，误差仅从
+124.85206126643644降到123.07977879469149，不能称价值学习突破。
+四组均先触及固定trust region边界；这直接说明不能靠无限增大
+同一批次steps解决问题，后续须依据物理失败和新数据继续迭代，
+不能简单放宽KL。尚无本候选的物理资格/考试结果。
+
+v840独立只读核验完成 exit0：导入前核对全部原helper/module源
+及冻结heads；读取完整七个真实训练数组、原origin，重算全部
+43200行行为density。四个完整保存模型逐一validate并从原origin+
+实际fit receipt完整重建，全部原/新actor及critic参数hash、数字
+input hash、固定config/seed/device/count/history/结果列表绑定均
+核对。另用纯NumPy逐帧重算五套GRU（原行为及四个拟合策略），
+得到所有样本上的marginal/conditional KL和完整critic MSE，与
+GPU回执一致（固定1e−9数值容差）；不是重新执行优化器。
+原和新actor参数均被保存，可重载，但不授权策略激活。
+末尾再次验证全部输入/模型/source pins。
+
+独立核验 `/home/dell/rosclaw_evidence/rsi-extended-learning-independent-review-v840.json`
+seal `41dab68c4017bb4678dfc7656baf1d8b24a602b61ae43fb68f915e99368860e8`；
+runner byte `77353dc2d808be08a704038065d262057dae5d65029de6ad20e3be1e3dd05146`。
+另一检查确认已保存七数组与v825逐项/dtype EXACT，数据byte
+`4c75e0bde64dedb499e96002c60b9c0f83e8f9ffe1a3a5ea3fa824c89f897b14`，
+且绑定实际Core输出v838，不增加采样/独立context/物理计数。
+补充真实输入检查：135维context最大abs8、各维std范围
+0.05443184535501228–2.3302820760513074、近常量维0。不能无证据
+归因成“未经约束的百倍大数输入”；尚未证明缩放是物理瓶颈。
+
+新v841已live等待原v827完整52项result和原owner退出后，再给
+固定82c主候选分配原两遍资格。必须绑定v840 seal、learning991...、
+固定主模型以及原52完整终态执行数；旧考试失败/owner身份改变/
+72h期限即不分配，不重启旧实验。原1GiB/24GiB资格预算、两遍
+6000 audit/600 Foundation、seed773及源不变。新v842 live等待
+v841终态，再走原完整安全门：两遍完整数组EXACT、独立见证、
+最低高度≥0.65；拒绝即留下rejection，绝不启动52；通过才使用
+原固定52/原分数门/原2-worker预算。主候选0不选择，Fresh不自动
+开启。整个新链目前物理执行 **0**，不能把queued当executed。
+
+两runner的独立ruff及完整展开F821/F822、--preflight均通过。
+v841初次wrapper ruff F401失败（os仅被展开的wait使用），在任何
+新物理/声明分配前加精准说明后重查通过，未称第一次绿色。
+v841 byte `4b8e7aaae7467cc8278772f66153862da14b2074059e5af25689eda28d8f0a2c`；
+v842 byte `c8376de11b4ebdcd4386def9b242b110adddd88839faa402aa83bc3dd490a4a5`。
+841 owner2151291 live，尚无841物理output；842仅封存安全声明。
+
+原stream13的124–127完整cohort final pins已闭合，正式边界
+**128/160、32contexts、HQ25、clean85、unsafe0**。384000审计
+substeps/38400 Foundation为原已执行见证，不在观察器中重做。
+124/126/127 HQ，125 dirty/nonHQ，成功与失败均保存。cohort seal
+`7da7c82817d63ea4ac0692211e80d12b2a4458374b06a09ee2f54f462d74932f`；
+另一只读检查重查全部新artifact/source pins和正式计数，exit0。
+v835已自动等待128–131，不需要人工开下一批；原160尚未完整。
+
+原固定v827考试0–21已逐项绑定核验，4/16/19为保留旧HQ，尚无
+新增HQ；17 clean、18 dirty、20/21 dirty，均safe/nonHQ。原考试
+尚未完整，不能把前缀外推为成功率。新离线训练不替换该模型。
+
+Core1186b67e完整CI
+[run37734941025](https://github.com/ros-claw/rosclaw/actions/runs/37734941025)
+已completed/success：GateB910 passed/23 skipped/10 deselected；
+GateC **8542 passed/120 skipped/101 deselected、67 warnings**；
+ruff通过，mypy1361源文件通过；harness4 passed、SeekDB16 passed/
+11 skipped、Golden Flywheel6 passed。embedded/测试double验收
+不替代本G1物理考试。Core PR616仍待合并，不自行合并；Soccer
+报告直接main提交推送。M0仍NOT COMPLETE，更未完成宣传球队目标。
