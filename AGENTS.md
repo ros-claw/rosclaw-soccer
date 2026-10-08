@@ -46,6 +46,14 @@ absolute paths in source or committed manifests.
   immutable checkout, and verify those hashes again on completion. Do not edit
   code used by a running experiment. A completion-time file hash alone does not
   identify the module that a long-lived Python process actually loaded.
+- Expanded lint is not a multiprocessing bootstrap test. Before allocating a
+  `spawn` worker, exercise the exact pinned simulation runner's `__mp_main__`
+  import in an isolated process and round-trip the designated worker through
+  pickle without calling it. Confirm its module is registered and no physical
+  output was created. Initialization needed by children must not be hidden
+  behind `if __name__ == "__main__"`; retain that guard on execution/allocation.
+  If a queued runner fails this check, preserve it and use a separately pinned
+  unused recovery runner; never hot-edit a running process's source.
 - Pass potentially negative scientific-notation numbers as `--key=value`.
 - A regulation-sized goal does not prove regulation ball dimensions. Inspect
   the compiled ball's size and body mass with `physics.native_ball_dimensions`.
