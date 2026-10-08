@@ -67,18 +67,26 @@ class SamplingReferenceAuditCompiler:
         ):
             raise ValueError("complete original sampling policy required")
         owned = CanonicalJSONSnapshot(policy)
+        # The complete owned canonical document already authenticates all
+        # fields, not just the caller's policy_hash or the mean-model hash.
+        # Exact repeats need no extra full restore, seed substitution or hash
+        # encoding. Read the seed from the fully validated, graph-bound private
+        # prototype, never from the caller's potentially mutable dictionary.
+        # Keep both source/prototype stability checks, including the immutable
+        # snapshot's byte digest; changed seeds still take the original path.
+        if owned.content_hash == self._policy.content_hash:
+            sampling = self._prototype._sampling
+            if sampling is None:
+                raise ValueError("original sampling reference law missing")
+            seed = sampling.get("seed")
+            if type(seed) is not int or not 0 <= seed < 2**32:
+                raise ValueError("bounded integer reference sampling seed required")
+            self._stable()
+            return seed, self._initial_policy_hash
         document = owned.restore()
         seed = document["step_motor_proof"]["model"].get("seed")
         if type(seed) is not int or not 0 <= seed < 2**32:
             raise ValueError("bounded integer reference sampling seed required")
-        # The complete owned canonical document already authenticates all
-        # fields, not just the caller's policy_hash or the mean-model hash.
-        # Exact repeats need no seed substitution / additional JSON encoding.
-        # Keep both source/prototype stability checks, including the immutable
-        # snapshot's byte digest; changed seeds still take the original path.
-        if owned.content_hash == self._policy.content_hash:
-            self._stable()
-            return seed, self._initial_policy_hash
         expected = self._policy.restore()
         view = expected["step_motor_proof"]["model"]
         view["seed"] = seed

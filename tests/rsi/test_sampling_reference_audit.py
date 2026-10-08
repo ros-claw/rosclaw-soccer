@@ -123,7 +123,11 @@ def test_exact_complete_repeat_skips_only_redundant_hashes(learned, monkeypatch)
     def unnecessary_hash(_value):
         raise AssertionError("exact whole policy must not re-encode seed-derived hashes")
 
+    def unnecessary_restore(_snapshot):
+        raise AssertionError("exact whole policy must not allocate another decoded full model")
+
     monkeypatch.setattr(reference_module, "hash_json", unnecessary_hash)
+    monkeypatch.setattr(reference_module.CanonicalJSONSnapshot, "restore", unnecessary_restore)
     compiler.verify_policy(independently_owned)
     episode = compiler.new_episode(independently_owned)
     assert episode._policy_hash == verified_hash
@@ -134,6 +138,34 @@ def test_exact_complete_repeat_skips_only_redundant_hashes(learned, monkeypatch)
     object.__setattr__(compiler._policy, "_data", b"{}")
     with pytest.raises(ValueError, match="snapshot"):
         compiler.verify_policy(independently_owned)
+
+
+def test_exact_repeat_still_rejects_private_sampling_seed_mutation(learned):  # noqa: F811
+    policy = make_preview(make_sampling_view(learned[-1], seed=771))
+    compiler = SamplingReferenceAuditCompiler(policy)
+    assert compiler._prototype._sampling is not None
+    compiler._prototype._sampling["seed"] = 772
+    with pytest.raises(ValueError, match="prototype"):
+        compiler.new_episode(copy.deepcopy(policy))
+
+
+def test_changed_seed_still_restores_both_owned_complete_documents(learned, monkeypatch):  # noqa: F811
+    initial = make_preview(make_sampling_view(learned[-1], seed=771))
+    compiler = SamplingReferenceAuditCompiler(initial)
+    changed = make_preview(make_sampling_view(learned[-1], seed=772))
+    original_restore = reference_module.CanonicalJSONSnapshot.restore
+    restored_hashes = []
+
+    def tracked_restore(snapshot):
+        restored_hashes.append(snapshot.content_hash)
+        return original_restore(snapshot)
+
+    monkeypatch.setattr(reference_module.CanonicalJSONSnapshot, "restore", tracked_restore)
+    compiler.verify_policy(changed)
+    assert restored_hashes == [
+        reference_module.CanonicalJSONSnapshot(changed).content_hash,
+        compiler._policy.content_hash,
+    ]
 
 
 def test_exact_repeat_never_trusts_only_callers_claimed_policy_hash(learned):  # noqa: F811

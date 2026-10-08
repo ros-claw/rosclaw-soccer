@@ -6112,3 +6112,41 @@ raw normalizer参数和所有源动力学未在此重新构造；没有因果
 模型部署、policy_gain、promotion或hardware授权。两组考试本轮
 已推进到36/52（HQ8、安全36）和22/52（HQ3、安全22），仍无
 终态；未因局部结果修改通过标准，也没有宣称球队比赛已就绪。
+
+### 精确重复审计：避免额外展开完整模型，而不改变控制律
+
+2026-10-09继续原完整考试，未重新启动或热改795/896及853/874。
+以/proc cmdline和start_ticks确认同一owner与四个实际计算worker，
+CPU ticks持续增长；独立复验各已完成review的完整seal、两份
+commitment seal及冻结source heads/clean。截止本轮检查为
+40/52（HQ10、安全40）和26/52（HQ5、安全26），均无终态。
+这些是原考试进度，不是新课程、Fresh通过或连续球队比赛证明。
+
+`SamplingReferenceAuditCompiler`的精确重复路径原本仍会调用
+`owned.restore()`，额外展开一次完整模型。现在先比较完整、
+独立拥有的canonical内容hash；确认为原完整策略时，从已经由
+原constructor验证、并由完整numeric graph绑定的私有prototype
+读取采样seed，保留前后全部source/snapshot/prototype稳定性
+校验，再返回原policy hash。不从调用方可变dict读取已验证seed。
+不同seed仍恢复调用方owned及原template两份完整文档，走原
+三个派生hash及完整内容校验。未移除任何model字段、权限字段
+或边界检查，没有更改actor、探索分布、motor cap/slew或考试。
+
+快路径仍进行完整canonical序列化和无损检查；snapshot构造内
+仍解析JSON，不能说“不再解析模型”或“全部hash开销已消除”。
+测试通过禁止额外restore/hash调用验证精确路径；新增测试确认
+私有prototype seed被修改会拒绝，以及不同seed仍逐项恢复两份
+完整文档。原不同seed的300帧逐数组、GRU状态和采样密度一致性
+测试仍通过。主回归batch 14 passed、307.44s；另行新增的更换
+seed恢复测试1 passed、34.78s，合计15项不同测试。相关观测/
+frontier/snapshot回归另35 passed、0.45s。changed-file ruff、
+format、F821/F822、compileall、diff检查及单文件mypy均通过。
+这不是全仓pytest/mypy通过，也不是当前425MB真实模型的
+端到端耗时/峰值内存测量或物理资格证明。
+
+当前运行和排队任务继续使用原冻结版本，默认auditor没有启用
+这一选项。后续在独立冻结源上完成真实轨迹一致性资格后，才能
+考虑用于新的采样/回放任务；不热改现有链路。本次新增native、
+动力学回放、Foundation、optimizer均0，Fresh、部署、policy_gain、
+promotion及hardware授权均false。Core PR616仍OPEN，CI gate
+SUCCESS，但无人审查结论，未自行合并。
