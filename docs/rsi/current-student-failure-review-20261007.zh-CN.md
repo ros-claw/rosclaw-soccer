@@ -6499,3 +6499,79 @@ runner SHA256为
 完整失败分组，影响了本轮诊断。下一轮仍先完成当前真实物理
 考试，再决定是否以新的预声明实验验证更好的时序信用分配；
 不能热改914/919/922/923，也不放宽原门或提前开启Fresh。
+
+### 剩余时间价值实验与真正的动作更新幅度（925–927）
+
+研究参考：[Time Limits in Reinforcement Learning](https://proceedings.mlr.press/v80/pardo18a.html)。论文区分任务本身
+有限时域与仅为采样截断的时间限制；前者需要已知剩余时间来
+避免状态混淆。本任务原协议固定300帧/6秒，所以测试critic的
+剩余时间输入是合理假设，不等于已证明当前失败由此造成。
+
+925只给离线value context新增第136维`(300-frame)/300`，
+frame30–299；保留全部原135维及targets。初始化与914的
+seed913/135维critic逐参数相同，新时间列权重为0。仍按原
+context_id modulo5划分，每个fold采用914原封的config、seed、
+batch、1024步和GPU；所有重复课程留在同一fold，未重新挑
+超参或排除失败。没有actor更新、完整policy导出或物理执行。
+这不是让已部署actor偷看未来终止，也不是GAE/在线PopArt。
+
+源SHA256为
+`584bf5e75688eaf5ae6e14929124fbcece827b46bbe8012caf4a57bc7aa14d8d`；
+全部686项固定输入及clean frozen Core HEAD在导入前、每fold
+和结束时核验。预声明seal为
+`sha256:4054d10fc29729d4e07053063ade58720227de964a74c644e1cce1276c1f568c`。
+实际5份fit共5120 value optimizer steps完成，handle89250 exit0；
+terminal seal为
+`sha256:8a2e01840346a5277dc6d5b0ba103d0c769a8f0685059d67c3924df2dba67764`。
+
+926用独立NumPy重新构造初始参数和clock，核对全部paired fold
+config、完整train numeric hash、所有实际参数与MSE，再重建
+21060个OOF prediction/raw advantage/normalized advantage，
+与原数组全部bit exact，handle71959 exit0。该review未重跑
+optimizer，也不是物理审计。源SHA256为
+`2648b947c776b4590b13584b812cf7851f4b0f1e8d2b5f863e61644ea65ef97e`，
+seal为
+`sha256:74f4a4077b891b1c90a1ec80eaba26cda1ff880ad238d6ee0c8915b2eb5e9ea9`。
+
+| 完整固定数据比较 | 原critic | 加剩余时间critic |
+| --- | ---: | ---: |
+| frame加权OOF MSE | 140.056313 | 139.532699 |
+| context等权OOF MSE | 155.343569 | 154.953728 |
+| 帧30–119 MSE | 238.972393 | 239.214407 |
+| 帧120–209 MSE | 93.880884 | 93.328499 |
+| 帧210–299 MSE | 87.315662 | 86.055190 |
+
+总误差仅下降约0.37%，前段反而略退步，frame加权结果仍落后
+全局均值139.371897及时间均值135.093862。没有把这点离线
+改善宣称为突破，未据此更换actor或增加新的物理候选。本轮
+实验暂不支持“只补时间就能解决信用分配”的充分性假设。
+
+927进一步检查914真实primary0的动作更新幅度：在全部78条
+原body history上，逐episode重置GRU，分别重建839原actor和
+914新actor的所有21060帧raw mean；baseline、gate与输入均
+固定不变。得到marginal KL .019989039710868656，与916全量
+独立审计一致。随后只应用原`0.16*tanh(raw_mean)`，保存两个
+mean和两个requested delta的全部252720关节坐标，不把它当
+最终slew/joint-box投影，更不当作新闭环物理历史。
+
+raw mean差异RMS为.005771920494；pre-slew requested delta
+差异RMS仅.000776815925rad，即约.0445083度；中位绝对差
+.000512329319rad、p99 .002108418781rad、最大.003869340923rad。
+最大差在episode53/frame99/right_hip_pitch_joint，原row绑定
+保留。可见此次更新确实改变了提案，但幅度很小；不能据此
+推断球落点位移或归咎整个失败，仍须看完整物理考试。
+
+927源SHA256为
+`c7ace2d84da52778d71162ae66d590fb11a4980cee0c05d5ab009ab6d6451f8a`，
+结果seal为
+`sha256:88005f8a580781b05512d39b957879d4eda9cdc6783408d355529cf2d253a062`，
+handle52016 exit0。独立进程重载全部4数组、dtype/shape、tanh
+映射、primary KL、逐joint RMS/max及全部输入bytes核验通过；
+此重载没有再执行GRU或physics。925/926/927的lint、format、
+compile预检分别通过。既有896仍在执行，最后核验44/52、HQ11、
+safe44，尚无terminal；919/922/923仍等待，各自源码没有修改。
+
+下一步要验证的是当前候选的真实脚球动作，而不是扩大离线
+MSE声明。若需要累积更大改变，应从候选本身重新采样、保留
+新的实际行为density并做下一代学习，不能将旧839数据伪装成
+914的on-policy数据，也不能为“肉眼更动”放宽原物理边界。
