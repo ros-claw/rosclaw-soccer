@@ -4462,3 +4462,47 @@ commitment seal、完整52row配对、执行计数与3个新出界重算检查ex
 观察等待超时重启它们。后续839自己的资格/52仍需实测，不能拿
 825/b5这份终态冒充839或848的能力证明。853候选自身数据采样
 依然以839真实完整安全考试为前置，当前没有开始。
+
+### 17:26 CST 追加：候选自身数据接到真正的接续学习，830归档核验已完成
+
+新860接在859之后，采用853的stream15、160完整episode/40已消费
+情境/43200帧。起点固定839 primary0（`82c1f9db…`），**actor与critic
+两套参数一起保留**，不重置D3；保留失败轨迹、不筛选成功样本。
+856是完整数据cache，不伪造其具有四个新fit的learning.json。
+860独立核验cache、逐帧MC及Core跨情境credit的终态/输入/source pins；
+五个行为数组与cache EXACT、六个非adv数组与857 EXACT，核验300帧
+原总回报不变，30–299的returns为实际reward suffix MC。
+
+四张GPU各自固定fit：每项最多1024步（总上限4096）、原LR和seed，
+std=.1/rho=.9/residual cap=.2/clip=.2/KL=.02；达到KL门仍回滚并停止。
+不是DDP，不改变动作界限，不直接输出关节力矩。资源门仍48GiB可用
+内存、每卡至少3072MiB空闲，原磁盘门保留。860已经以正确Source815
+cwd启动（PID2383856，handle72844），**仅等待完整859，实际fit0**。
+队列seal `36eddb204d517f2162a6a495dc2aad138ffe83d20d0cb9e6f7c9207368e6845a`；
+runner `/home/dell/rosclaw_evidence/rsi_sandbox_candidate_actor_learning_v860.py`，
+bytes `26d14d73662f259181c375cfa1e75871360f8ab098d417f4b8dc966615ea7709`。
+
+新增门禁fixture17项通过（0.19s），拒绝不完整cache、终态不匹配、
+回报改变、非跨情境baseline、非完整Core输出。全部展开F821/F822、
+ruff及format检查通过；不是GPU学习效果或物理考试通过。
+861已接续原840/849完整四模型独立数值审核：重算43200行为概率、
+全量NumPy GRU/KL/MSE、模型重建与actor/critic源参数、fit receipt及
+全部输入pins。等待860终态（handle32191），没有新优化器或物理。
+runner `/home/dell/rosclaw_evidence/rsi_sandbox_candidate_learning_review_v861.py`，
+bytes `e9239c57a5741b3bba5fef72ec4f7248b1ffdaef68f1f53ca1dd32d3abb81092`。
+完整展开preflight/ruff/format均通过；错误cwd负向检查在admission前拒绝。
+早期展开审核有静态namespace缺失，已在启动前补齐并重新检查；没有
+修改任何已运行或已封存producer。861还没有实际完成审核。
+
+830原owner正常exit0，result seal
+`76e8461532d573b5334c77fa9df543884877836952cbb90822ef3e444dbb5f9d`。
+两个原826归档300帧全部数值EXACT（合计600帧/540实际随机draw及
+条件概率重建），Foundation重算0/新物理0/新fit0。cold原解码器
+allocation实测633.877s；两次bind各66.429/66.425s。分别记录测量，
+不混合不同操作声称整体训练倍速。result/commitment seal、全部input
+pins/source heads和计数另外只读检查exit0。**这不是新native transport
+资格**，不能代替853的真实新control。841仍在原资格处理，788正式
+已封存边界仍136/160，不能将136/137单行通过冒充下一组已闭合。
+
+当前没有Fresh/晋升/active策略改变/球队或宣传片突破。接续fit之后
+仍需真实原native资格、安全判定及完整52考试，当前M0未完成。
