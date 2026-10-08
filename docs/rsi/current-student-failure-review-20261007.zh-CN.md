@@ -5754,3 +5754,66 @@ worker；仍没有两重复result/完整轨迹审查，**暂不计完成物理�
 均无最终manifest或failure，两个owner仍存活。unsafe继续保留。
 目前模型训练与审查链已跑通；物理考试、Fresh改善和最终连续
 比赛/宣传片目标均尚未完成，目标仍保持active。
+
+### 03:06 CST：第一次真实审查、准备开销剖析及当前模型复用资格队列
+
+895原生worker3200535仍存活，第一次repeat-0已产生实际轨迹及
+独立审查，第二次尚未封存。第一次并非高质量触球：
+
+| 已审查指标 | repeat-0结果 |
+| --- | --- |
+| first contact | frame68 |
+| clean foot only / HQ | false / false |
+| minimum pelvis z（全部物理子步） | 0.6625354877470749m |
+| safety passed | true（原门槛0.65m不变） |
+| maximum lateral excursion | 0.34818423990563685m |
+| 独立动力学回放 | 3000 substeps |
+| 实际Foundation调用重算 | 300 calls |
+
+review seal：`a7f6cce7e7de7f588056bfcdeb67219134789e5ef5fe54bda604e67f1887d271`；
+Foundation seal：`f59aef6226ac5336c990aede176f97497cf8b04d61620b31511f60d7a1ebff49`；
+report seal：`0fda204ea4442798f02f11f1559a2f8527a40ff0df89688a6e12af363e0cc309`；
+trace bytes hash：`01d97e4336c2e756ade6daf0d40ff05f9110d0ff9b315ec6883b1ea12035cca6`。
+两份review seal已另行核查。不能把单个采样重复、安全通过或
+未完成两次的资格验证当作完整52场、Fresh或球技改善。
+
+性能诊断没有重启这个worker，也没有减少物理步数或复核：
+`py-spy 0.4.2`普通用户读取运行进程的栈被ptrace权限拒绝，exit1；
+没有更改系统ptrace权限、提权或注入代码。改用其自有子进程接口，
+只测同一固定采样view的模型准备，不执行动作/动力学。用法参考
+[py-spy官方文档](https://github.com/benfred/py-spy)。
+
+899准备诊断handle77816 **exit0**，源hash
+`b82caeab697f25d80358c8dde9d5326877da69d65310dbcbff4a3e773e7c685e`；
+结果seal `de98bc1b021fd146741b625eb877963a842c75db1ca3c59dae7b425965b9520e`。
+在冻结815 source/core、与正式895相同view上量到：
+
+| 准备阶段 | 实测秒数 |
+| --- | --- |
+| gzip/JSON模型加载 | 11.7818 |
+| 完整原始make_preview | 137.6354 |
+| 完整原始sampling decoder编译 | 392.4294 |
+
+该诊断全部1371项输入文件、结果seal及冻结heads/clean状态另行
+复验exit0，新增native/回放/Foundation/optimizer均0。原始profile
+为Git外`rsi-sampling-cold-prepare-profile-v899.raw.txt`，bytes hash
+`86b1f53ec67779bf83d9d9b5aac81921acb6a7511eb08ca97f566d916e3c6bdc`。
+非阻塞20Hz采样共10914 stacks、2个读取错误；80.69%的leaf samples
+落在JSON iterencode，deepcopy inclusive约8.34%。这提供准备阶段
+的优化方向，不是CPU耗时的精确分账，也不是整条训练流水线的
+加速实证。尝试结束诊断时发现其已自然退出，未发送任何终止信号；
+完整结果和profile均保留，正式895继续运行。
+
+针对这个实际瓶颈，继续使用已开发的完整编译复用机制，而不直接
+把JSON换成会改变浮点canonical bytes/哈希的实现或删掉验证。
+另建900当前模型reference reuse资格队列：固定890主模型59f358…，
+必须等895两重复全部完成，仍以同一完整原872协议重算6000 CPU
+回放子步和540 draws/likelihoods，与原审查所有物理/状态字段比较；
+不新增native/Foundation/optimizer、不访问Fresh、不晋升。
+
+900普通ruff和最终展开F821/F822 preflight exit0，最终源hash
+`e1bcabe628356313480c89de04db4017286c20f667f0867f769e6f7a8c21ac6c`；
+在冻结871 source/838 core目录启动，PID3242795、handle27875。
+保留原48 GiB资格审查RAM条件，目前**仅等待**895完整终态，没有
+宣称新模型复用资格通过或已获得加速；旧839模型的资格不能冒充
+当前890模型的资格。896仍等待两次安全验证，未先运行52场。
