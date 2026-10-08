@@ -6575,3 +6575,61 @@ safe44，尚无terminal；919/922/923仍等待，各自源码没有修改。
 MSE声明。若需要累积更大改变，应从候选本身重新采样、保留
 新的实际行为density并做下一代学习，不能将旧839数据伪装成
 914的on-policy数据，也不能为“肉眼更动”放宽原物理边界。
+
+### 新候选自身的完整采样已接续（928，当前仅等待）
+
+为落实上一节的下一步，928从完整原160/40 consumed manifest
+派生stream17，仍是40个课程、每课4次独立draw，共160条学习
+轨迹。全部seed/lane/baseline_course_index逐项对应原52 baseline，
+不新增未校验launch参数，不读取成功标签来挑课程或丢失败。
+这不是将78条旧839数据重新命名为新914的行为数据。
+
+只有923完整52、922原生重复资格和919完整primary0导出均终态
+一致，原52 owner退出，且全部52 safe时，才允许准备模型。
+逐项绑定52条independent review、Foundation和完整trace bytes。
+consumed gate如因方向/HQ等拒绝，但全部safe，仍可在明确的
+未晋升SIM实验里采样其失败；不会更换Champion、打开Fresh或
+给失败候选授权。若资格/考试缺失、失败、unsafe，整批不分配。
+
+新控制器采用标准Python exec的cold child：一次准备子进程，
+随后一次transport-control及160个serial episode子进程；每个
+子进程结束后才进入下一项。等待父进程不导入项目、不分配完整
+policy。每次模型分配前仍检查48GiB，原853/874的队列与准入
+完全不变。新整批磁盘预算8GiB，继承既有同类压缩采样预算及
+100GiB系统reserve；没有宣称新整批容量已经实测。当前旧874
+目录约404MiB、853约282MiB；同world的compiled_model.mjb为
+120MiB hard-linked，sample0的trace约2.4MiB。上述只作存储
+现状观察，不代表新160条已经完成或新的最终容量验收。
+
+实际案例执行调用原788 `collect(job)`函数原体；frontend不是
+旧788 `main()`，不伪造其旧learning manifest。通过明确typed
+RecurrentSamplingEpisodeFactory绑定新完整mean，仅复用同一个
+数值模型。shared/native transport必须在首个control对照922
+原plain witness的全部轨迹字段exact后，才能收集学习数据。
+每项仍有3000 replay子步、300 Foundation调用、300 recurrent
+state帧、270 draw/log-density重建。额外control不计入学习集。
+
+最终runner SHA256为
+`ba235e36d98a9354c67e3b5429d38f32d4e49322d9221309901f493517130589`。
+整段928/922/原788 expanded F821/F822通过；lint、format、
+compile分别通过。补安全检查时曾引入缩进错误，实际预检抓到，
+在未启动任何模型/physics前修复，最终检查重新通过。
+实际标准exec子进程与原worker import测试exit0，验证完整
+namespace能导入且ROOT/queue仍未创建；未构建factory/model，
+没有physics。没有multiprocessing spawn，因此不冒称做过
+不存在的`__mp_main__`/pickle bootstrap。这些预检也不证明
+尚未执行的真实模型重载、原生transport parity或内存加速。
+
+queue seal为
+`sha256:16e3d05f98b1673cc6735f6b7a205a4218e708db851a2bcbdf5b3d0560e36780`，
+独立核验queue seal和全部416项输入bytes通过。真实owner
+3628531/start_ticks217938026/handle57802活跃，约24.7MiB RSS，
+ROOT不存在，仍在等待923原owner3567291，实际新增physics为0。
+计划为161 native/483000 replay子步/48300 Foundation调用，
+不能把这些planned计数当结果。最终所有160项完成并逐条核验
+后才写整批manifest；audit失败或子进程错误保留全部partial，
+不输出完成声明，也不自动训练下一代。
+
+这是让候选有自己的新行为数据的实际接续，不是球员、球队或
+宣传视频达标。M0/Fresh/promotion仍未通过，持续比赛的最终
+目标保持不变；下一代actor学习仍需这批真实数据和独立审计。
