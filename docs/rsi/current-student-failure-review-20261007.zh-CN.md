@@ -5522,3 +5522,17 @@ Core PR616 head `6e21c780eeb8bd9a25a53332a2dedb23fbe7b14a`
 十个相关测试文件联合回归仍在运行，暂不写通过计数。
 两条采样链的Fresh、晋升及hardware授权均false；M0与最终球队
 宣传成果仍未完成。
+
+### 00:38 CST：联合回归完成
+
+以Soccer当前源码及冻结Core888运行十个相关文件：physical report
+metadata/shared/io/transport、sampling reference audit、recurrent sampling
+factory/factory transport、transport equivalence、shared CPU evidence、
+snapshot shared temporal policy。进程handle49330 exit0，**79 passed，
+522.63s**。这是包含前述47测试的联合回归，不能累加成126项独立
+检查；合成策略及传输检查也不是新增G1训练轨迹或球技提升。
+
+00:38新采样仍未封存非负row，874 sample-0已经写出原始物理轨迹、
+独立review及Foundation review，后续训练序列提取仍在执行。两条
+银行均无failure.json、无最终manifest；原793仍在完整prepare。
+进程未停，尚不能声称新整批完成或新权重已经产生。
