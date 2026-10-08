@@ -4607,3 +4607,16 @@ NumPy表达式复算；追加新物理/优化器0。不得因此放宽原安全�
 结合失败样本改善credit与课程，不把“增加迭代”当作接触顺序已学会。
 841两次资格和其原52仍未完成，140采样库仍未完成160，M0、Fresh
 扩张、完整球队、可宣传连续比赛视频均未完成。
+
+### 17:55 CST 终态追加：841两次资格完成，842进入原完整52
+
+841 exact handle47847正常exit0、原owner2151291已退出。终态seal
+`8a14f184338aa7717bbfef38e448fb6856383917e8df964e94a006b8575ae027`。
+实际2 native/6000独立substeps/600 Foundation、两段完整数组EXACT；
+两次均同一第68帧dirty contact、pelvis min0.6832132680864138、
+safe=True/HQ=False。qualification/result/commitment seals、原839
+模型/learning身份、执行计数、全部source pins和两个审查/Foundation
+终态另外只读核验。通过的是重复执行资格，不是高质量踢球。
+842 exact owner2159594现为Rs、原handle85834仍活跃，进入原52
+处理；尚无完整52结果。前一节“资格未完成”为其17:52观察时点，
+以这次实际终态为新边界。没有重新启动或改动旧producer。
