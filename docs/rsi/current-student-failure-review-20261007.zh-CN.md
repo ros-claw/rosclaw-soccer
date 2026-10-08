@@ -3569,3 +3569,37 @@ ruff均通过。先等待v827原始物理考试终态，再等独立64GiB可用�
 才分配工厂；不与当前物理workers抢内存、不替代原考试。
 固定新主候选0、相同773噪声，两遍各300帧重构原动作/GRU/latent draws/
 条件密度。未完成前不报一致性、提速或物理收益。
+
+### 2026-10-08 12:57 CST：两遍资格正式闭合与首触球失败定位
+
+v826已完整结束，result seal
+`f14f28e8c3e30f76823ec620674a14f4c3866ccfa573d76ebdf038db77e3d931`，
+qualification seal
+`3b2201e35a4f5b6956bc77d5cbca50b6917bcec0bdccf9a751b48ea3f86e7b1a`。
+实际2 native、6000独立动力学substeps、600 Foundation calls；两遍
+28全长数组、dtype EXACT，均safe/非clean/非HQ。只读观察器逐遍完整
+source/World/course/model/report/trace/见证及终态绑定、最终全部pins
+核验 exit0，不是又执行两场独立物理实验。原父/worker正常结束；
+v827已越过等待并进入原full52准备，尚不报告52场执行或成绩。
+
+新反馈模块在冻结 Soccer **aa3e9c339dcc004084bbd04d058b41d64df9a0ed**
+上，用父策略、v817失败候选、v826新候选的同一场景完整原始轨迹
+进行离线诊断。v831保持完整原报告/World/commitment/Foundation/
+review/trace绑定，并在结束时核验全部pins，exit0。另一次独立只读
+检查直接从真实force数组重算18个body的首/末/峰值/帧数、三条高度
+轨迹和最终pins，exit0，没有调用被检验的contact_timeline重算函数。
+
+三者都是 **第68帧右膝（body5）先触球，左脚（body0）第69帧才触球**，
+不是仅有“踢完以后再碰球”。新候选右膝仅在68–69帧超过1N、峰值
+27.942489134107976N，但仍超过原门，必须算dirty。左膝body4在79–105
+帧间有19个活跃控制帧，峰值259.7948196936261N；左踝pitch body2
+在79–84共6帧超过门。改善站稳并不等于正确的脚部触球技术。
+该诊断支持后续同时检查接近/首触姿态和踢后恢复，而非只惩罚后退；
+尚不能由三条相关轨迹证明其反事实因果原因，也不能据此改考试。
+帧内最大力不是冲量；“19帧”不是连续接触0.38秒的证据。
+
+结果 `/home/dell/rosclaw_evidence/rsi-cross-fitted-contact-timeline-v831/result.json`
+seal `551b666ba35d81a4d1d2556ec279e485133ae87c9101224a62aa27d6a5caaadc`；
+runner byte `f8c368290be2ae6151b90fccf2567f396d7d89ba058ecf1cdc50deb119dcc8a9`。
+新增诊断物理执行0、optimizer0，未选择或激活策略。模块和测试已
+直接commit/push main；不影响正在运行的v815冻结物理源码。
