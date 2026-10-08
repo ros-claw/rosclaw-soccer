@@ -5709,3 +5709,48 @@ handle2727/97658均exit143；原源码、893安全声明及等待记录保留，
 为历史快照。本次教训已加入Soccer AGENTS的实验约定：完整展开
 lint之外必须检查spawn导入注册，且不得调用worker或把检查当作
 物理完成证明。当前仍无M0/Fresh/晋升/球队宣传成绩。
+
+### 02:37 CST：完整模型审查通过，修复后原生worker实际启动
+
+上一目标轮属于实质进展：890训练与完整输入核验结束，发现并
+修复下游spawn启动缺口。本轮继续检查真实终态和存活进程，没有
+因为观察超时重启实验，也没有将等待状态当作完成。
+
+891 handle10279 **exit0**，四个完整保存模型均从原参数receipt
+重建，全部原行为密度和四个actor的marginal/conditional KL、critic
+MC MSE独立NumPy重算；结果seal：
+`ff96f80148823584d7fe2bddf3620d9d516b6e2845b66932704966c887de6ca0`。
+顺序model hash与890四模型完全一致，learning hash绑定890终态。
+独立重算的两种KL与receipt一致；主候选MSE约78.07872，其他为
+78.23233/78.45589/78.19447。这不是球技提升指标，也不能与不同
+目标定义的旧MSE直接相减解释为能力成长。
+
+又用独立只读进程handle38959 **exit0**核验891 seal、四模型对应、
+原学习结果绑定、全部**3786项文件bytes**及冻结heads/clean状态。
+该检查没有新增optimizer或动力学；891本身也没有重跑optimizer，
+物理增益/Fresh/晋升/硬件授权均false。
+
+追加897实际spawn bootstrap探针：新建子进程以895/896原脚本为
+真实`init_main_from_path`，target只有标准库`pickle.loads`，还原
+worker引用但不调用worker。两份脚本的子进程均exit0，探针父进程
+handle68189 exit0；两次探针前后物理root均不存在。执行源hash为
+`4960d95ec851524497ce3d5945e9dd84fd01beea54a07bb7b19e714763c62a54`。
+注意：897普通ruff曾报B023（循环闭包未显式绑定runner），不能
+将普通lint写成通过；该顺序探针在每轮child join之后才进入下一轮，
+实际启动检查通过，F821/F822另检exit0。保留执行源，不覆写证据。
+另建898将closure显式绑定runner，普通ruff及最终展开
+F821/F822/B023 preflight exit0；仅运行`--preflight`，没有在已开始
+原生验证后重新启动bootstrap探针。898不算另一次物理或启动成功。
+
+895已越过等待和完整依赖核验，封存native commitment：
+`fae644f0fd0719a6915ed629e57faa006d85d29fc77c6ef79d64e4d0b5ef3fe1`。
+其中固定behavior model为890主候选，course index0、seed20261177、
+lane0、sampling seed773；不是挑另一个成功课程。原native spawn
+worker PID3200535已真实启动并存活（parent3188629），不是探针
+worker；仍没有两重复result/完整轨迹审查，**暂不计完成物理执行**。
+896继续等待895两次原生验证及安全门控，没有先跑完整52场。
+
+同期部分采样计数853=17条/HQ0/安全17；874=54条/HQ5/安全53，
+均无最终manifest或failure，两个owner仍存活。unsafe继续保留。
+目前模型训练与审查链已跑通；物理考试、Fresh改善和最终连续
+比赛/宣传片目标均尚未完成，目标仍保持active。
