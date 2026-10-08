@@ -6633,3 +6633,94 @@ ROOT不存在，仍在等待923原owner3567291，实际新增physics为0。
 这是让候选有自己的新行为数据的实际接续，不是球员、球队或
 宣传视频达标。M0/Fresh/promotion仍未通过，持续比赛的最终
 目标保持不变；下一代actor学习仍需这批真实数据和独立审计。
+
+### 完整考试896已闭环；资格链导入故障已暴露并开始恢复
+
+896原owner3188670/handle10359已正常exit0。原完整52案例结果
+seal为`sha256:fb09ed76f7d808a889c6c519e689e91d176c6a880a3a72d9452f82b964a01268`，
+summary为`sha256:1d0e44f0eceeb55b18198a9871ad04c28b42b1e68bbd3de00fd60314ef5f7c79`。
+实际52 native、156000独立CPU replay子步、15600 Foundation
+重算和15600 recurrent state帧完成，不再是局部计数。
+
+原门槛结果是拒绝：HQ12→12，旧HQ丢失0、旧clean丢失0、
+safe52/52，producer记录的retention exact12，但新增出界2。
+没有达到HQ≥20且新增出界0，也没有授权Fresh或promotion。
+两项新增出界分别为：case21，dirty，最大横移4.230596m
+（baseline1.380836m），lateral/forward0.918703；case50，
+clean，最大横移4.028374m（baseline3.980398m），ratio0.876532。
+后一项超过4m不多，仍按原门槛计算失败，没有改阈值。
+
+930复用原921完整独立评分函数，绑定全部52 review、Foundation、
+trace文件以及原baseline，重新算分与producer逐项一致。
+930 runner为`047bdd433df648e061d88b344498d394ad41fd746b9c786c1b1824ab4fb9d9cc`，
+结果seal为`sha256:89d1336757c6c2d7915023af9f26197e2cd438bf606ecfa2bbfb1044cb00567b`。
+另一个读进程核验结果seal与全部162项input bytes通过。
+此复核没有新增physics，也没有重新比较retention trace数组；
+不能将producer的retention字段冒称为再次独立重放的证据。
+
+新增通用到足球课程层的数据准入模块`current_behavior_bank.py`，
+要求完整160有序记录、40个不同物理课程、每课4个独立draw，
+每项绑定同一个actual current mean及自己的sampling view。
+拒绝缺失/乱序、旧actor混入、重复seed、课程错配、bool冒充
+整数、错误授权标记及缺失/非hex view哈希。HQ和safe仅用于
+计数：failed和unsafe draw仍保留，不筛成功样本。该模块不
+验证动力学或density，不授予training、Fresh或promotion。
+它属于Soccer的课程数据适配，未将足球规则塞入Core。
+
+新增15项结构测试，与原course planner/credit diagnostics
+合计34 passed；变化模块mypy单文件、ruff、format和compile
+通过。首个组合测试因为缺少Core PYTHONPATH而collection
+失败，显式使用固定Core910后重新运行通过；不是把错误skip。
+这不是全仓库测试，也不是真实球技验证。
+
+929为完整采样后的数值数据消费者，绑定实际914 primary0
+actor与persistent critic，不再初始化为旧839 actor。它要求928
+全部160/40终态，逐项重建270帧GRU means、条件AR density、
+不变的terminal return和chronological MC targets，比较整批
+stacked arrays与每条原npz exact，保留全部失败轨迹。
+不分配完整policy、不执行physics/optimizer，不把43200帧说成
+43200个独立课程。新消费者的8GiB数值内存准入不更改任何
+完整policy或原bank的48GiB边界。
+
+929 source为`5b0bf32d142dcad22de206b428828a0aa7139192e73336890465468826dda528`，
+expanded929/913/准入模块F821/F822、lint、format、compile及
+无模型source preflight通过。真实queue seal为
+`sha256:36ae19f7d074aba099feaee241280aee3ede1aa64aea8ae3e679fd75aab11655`，
+全部423项input bytes独立核验通过。当时owner3654471/
+start218024000/handle67911已启动，但不能说数据已就绪。
+
+随后896释放内存，资格链901开始实际导入，暴露此前source
+preflight未覆盖的`ModuleNotFoundError: scripts`。902等待原
+901 owner退出后报ProcessLookupError；912正确拒绝无终态的
+902，继而919/922/923/928/929全部fail-closed。对应失败记录
+保留，旧source/queue没有热改。929 exit1；这些任务没有导出
+新policy、完成新考试或产生新bank。922的py-spy父进程exit0
+仅表示采样器退出，真实native子进程exit1；48 samples/3 errors
+也只覆盖失败导入/等待，绝不拿它宣称控制器热点或加速。
+
+931用独立新输出修复实际import入口：明确固定Source871/src、
+Core838/src和Source871根目录，使`src`模块及`scripts`包都
+能解析。继续使用原901/900/872完整原资格流程，不跳过
+两条真实CPU replay或改变比较字段、48GiB准入。实际helper867
+import preflight一开始也暴露只有root、没有src的路径错误；
+在未启动正式任务时修复，最终真实helper+scripts导入exit0，
+确认`_sealed`来自固定Source871，未构建完整policy或运行physics。
+expanded预检也补入完整中间901 expansion以消除F821，最终
+通过后才启动。这里没有multiprocessing spawn，不声称pickle
+或`__mp_main__`测试。
+
+931 source为`f19631cda42bf915d0d1efc704800fe661b2b5df51c9d7a35cee138d57cdba4a`，
+queue为`sha256:a71a799e55f91f27f6ff270e6d35404abb1c9113bed5fd1dff7b46d0e5856a8e`，
+独立核验完整seal及全部1380项input bytes通过。真实owner
+3663866/start218057149/handle82669已启动，核验时ROOT尚未
+创建。资格重放的最终结果仍需等待，不能计planned6000为实测。
+后续必须以独立恢复版本接续失败的902/912及导出、考试、采样
+和训练消费者，不能向旧目录伪造成功文件或复活旧owner身份。
+
+原853/874的队列始终未改。最后实测853已有22条学习轨迹，
+HQ1/safe22；874已有63条，HQ9/safe62，均尚未完成160。
+这些仅是未完成的采样计数，不是相对baseline的效果增益，
+也不代替原完整bank。这轮完成了896考试闭环和训练入口加固，
+但候选方向/HQ仍未突破；M0、Fresh、球队比赛及宣传目标仍未
+达成。当前真正接续的是导入故障恢复，不是假称新一代训练
+已经获得更高球技。
