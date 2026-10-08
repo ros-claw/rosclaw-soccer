@@ -4801,3 +4801,32 @@ B910 passed/23 skipped/10 deselected，C8566 passed/120 skipped/
 所有输入bytes/source heads与实际cwd另行核验exit0（handle9716）。
 不能将计划6000 replay substeps计为已完成。原788/842 owner仍
 活跃，853/860仍等待其完整前置结果；没有因为观察超时重启它们。
+
+### 19:28 CST 终态追加：870两个真实归档完整动态重放通过
+
+870 handle77641正常exit0，owner2552184已退出。result seal
+`e18aa2bae845ef5fb58509c24c4cf1c7a5c200658fc3f5503de469cbf73f323c`。
+原完整reference constructor首次编译212.25202264403924s；复用
+后两次**完整审查**分别51.2467835447751s、51.47762757213786s，
+包括每条全3000动态子步/300帧GRU与原trace动作校验。case0 seal
+`4d6a79648aca9d500ea75017b6c3a917584deddc246aff1acfb90630d6c17c22`；
+case1 seal `1bb396fae3ad4c2853be2c02d3f2464e183f2312eba18551e9dd3b3ccfa5343c`。
+
+新增实际CPU replay6000、GRU重建600帧；native执行新增0、
+Foundation新增0（原600采用而非重算）、optimizer新增0。两条
+原审查所有物理/接触/状态结果EXACT，除预声明source/report hash
+及新compiler metadata，没有更换判据或选择通过字段。
+原失败869依然保留；870不是对原目录重试覆盖。
+
+另行只读独立核验（handle65333正常exit0）全部嵌套result/stage/
+new review seals、两条原审查字段EXACT、计数汇总、compiler contract
+一致、所有输入bytes/source heads和原owner退出。独立核验本身
+不重复6000子步，不能把封存报告的核验又加计为物理执行。
+
+这是完整固定**确定性审查侧**编译复用在两个指定归档的物理
+资格证据。没有重测baseline端到端时间，不能用212/51直接宣称
+整条训练链加速倍数；更不是52场通过、采样family资格或球技提高。
+默认/live路径均未改。后续可为新一代完整52协议显式采用并保持
+完整独立动态验证；采样/训练提速仍需自己的隔离设计与完整资格。
+原788/842仍live，正式cohort144，853/860继续等待完整上游。
+球队持续学习、真实能力盆扩张与可宣传连续比赛视频尚未达成。
