@@ -3162,3 +3162,31 @@ completed/conclusion success，job结束于10:01:55 CST。
 上述是 Core 软件CI证据，不包含本轮候选的 G1 native考试，
 不能据此声称 RSI-M0 或连续球队比赛完成。v816/817/818与原
 采集流仍在执行/等待，冻结源码不因CI通过而修改。
+
+## 2026-10-08 10:39 CST：拟合后critic校准核验已预声明并接续
+
+新增只读 v820，ruff exit0，runner byte
+`e5ccff77429723a14c62249cc2ac5aea40d48c228644be5abbd6600ba98639f3`。
+predeclaration seal
+`d8505d6bdc11f0b81b152daee10221770d810a57158d0f7980deac489f7d313f`；
+观察已输出 WAIT_COMPLETE_FOUR_FITS，未生成最终校准结果。
+
+事先固定检查全部四个 student，不按误差另选候选。完整 v816
+learning/commitment seal与source/input pins通过后，检查各
+student的report/model/dataset/旧critic及拟合critic参数hash
+绑定，重算全部160×270状态上的RTG MSE，并要求与实际 fit
+回执的final_mc_value_mse一致（绝对误差<1e-8）。实际训练的
+全部NPZ数组还需与封存 v815 numeric labels逐项相等，最后
+再次检查输入与源码。输出为外部sealed report，不写源树。
+
+这只是**training-state calibration**，不证明Fresh泛化、
+physical gain、完整 actor/model重载或motor安全；完整模型
+验证由原学习器和独立拟合观察承担。新critic不是采集时的旧
+critic，也不用于回填旧行为记录。本核验无新增fit/物理执行，
+不参与候选选择，Fresh/晋升/硬件权限全部false。
+
+v816 PID1692545 CPU01:06:31，仍在完整 prepare，未宣称GPU
+拟合启动。检查时四GPU free约35–36GiB/卡、MemAvailable
+80,860,696KiB、系统盘free145,111,437,312bytes；保留原资源
+门，未停止其他作业。原112–115观察、v817/v818及本核验均
+接在现有链路上等待，未重启原实验或修改其源码/参数。
