@@ -5817,3 +5817,43 @@ trace bytes hash：`01d97e4336c2e756ade6daf0d40ff05f9110d0ff9b315ec6883b1ea12035
 保留原48 GiB资格审查RAM条件，目前**仅等待**895完整终态，没有
 宣称新模型复用资格通过或已获得加速；旧839模型的资格不能冒充
 当前890模型的资格。896仍等待两次安全验证，未先运行52场。
+
+### 03:22 CST：895完整封存；896进入原考试；900准入失败及901恢复
+
+895 handle90656自然退出exit0；两次真实执行均完成，各自3000
+独立CPU回放子步和300次Foundation重算，总计6000/600。
+terminal seal为
+`8bb4845673aee82587497e54f9b4d71fb7fee132812eba890b48cea3ceda0ac9`；
+两重复资格seal为
+`21c2d7f5f11a6f3acba17552975d915bd52857af79c988359bc3d9bb6ed1010d`。
+另行只读复验exit0：417项commitment输入bytes、冻结heads/clean、
+terminal/commitment/资格/两份独立审查/两份Foundation seals，
+以及全部28组NPZ数组的形状、有限性和逐元素相等。
+
+必须强调：这是**同一课程、同一seed的两次复现**，不是两个独立
+测试场景，更不是学习效果提升。两次HQ和clean foot均false；
+安全均true，最低pelvis0.6625354877470749m。原0.65m安全门未降低。
+896依据原规则通过两次安全准入，开始准备固定主候选0的原52场
+考试；截至本节尚没有封存52场成绩、Fresh或promotion。
+
+900 handle27875退出exit1：外层等待时MemAvailable曾满足48GiB，
+原完整872模块加载后，再次检查降到门槛以下，抛出
+`original48GiB memory admission required`。ROOT900未创建，新增
+CPU回放/native/Foundation/optimizer均0。没有把此失败写成跳过或
+通过，也没有编辑900、895、896或运行中的采样worker。
+
+改用独立、尚未使用的901 wrapper：保留900原始hash和全部原872
+物理/模型/字段对比协议；在**原模块加载后、创建ROOT和编译前**
+对相同48GiB条件有界等待，满足后再次检查完整输入稳定性。
+原48GiB门槛、6000回放、全部字段比较和SIM_ONLY上限不变。
+901 source bytes hash：
+`a10b86532254ae93b4f42c2738a07a6beef96fec36267293144be3659d1984f6`；
+普通ruff、format check、最终展开F821/F822均exit0后才启动。
+PID3263538、handle38781；当前仅等待资源，未宣称复用资格完成。
+900和901 queue seals及全部1378/1379项source pins另行复验exit0。
+
+原完整采样银行继续运行，未截断课程：853已有19份独立审查
+（HQ0、安全19），874已有56份（HQ5、安全55）。这些是**进行中
+的已封存审查数**，不是全160终态，也不是候选与parent的成对
+提升率。874的失败/不安全轨迹保持留档；不删除困难样本、不访问
+Fresh、不制作掩盖整体不足的宣传片。
