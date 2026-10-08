@@ -5219,3 +5219,27 @@ handle72000/owner2804881在22:22仍活跃（CPU约100%、RSS约1.2GiB），
 原采样788/792仍活跃，当前可见158条非负采样行；整批独立
 证书仍以已核验156/160为准，未有完整160 manifest。Goal仍为
 RSI闭环能力扩张及最终连续球队展示，当前两者均未完成。
+
+## 2026-10-08 22:37 CST：完整52归档独立复核完成，拒绝结论不变
+
+886 handle72000以exit0完成，owner2804881已退出。输出为外部
+`rsi-complete-original52-independent-review-v886.json`，seal：
+`8621acf65cad0a06d359088ce894d73ff6497aace422bf0108c954738b4c1673`。
+完成后另一个只读进程重新核验该JSON的canonical seal、全部
+1833个声明输入文件的实际bytes、两个冻结源码HEAD及clean
+状态、review owner退出，以及SIM_ONLY/no-Fresh/no-promotion
+字段，全部通过。该验证命令exit0。
+
+复核完整52个归档案例，重新比较12条原成功轨迹的原字段，
+重算原757门控，仍为HQ12→13、新增出界2、旧HQ/clean-foot
+损失0、safe pelvis true、原成功exact trace保留12，gate false。
+这里新增物理执行和optimizer step都是0；没有再次进行52场
+物理或Foundation重跑，不能重复计入原实验执行量或训练量。
+这是对原完整结果及证据绑定的独立只读复核，不是能力突破。
+
+原788/792仍活跃，已可见159条非负采样行文件，未有完整160
+manifest；最近完整独立cohort仍为156/160。159是文件观察，
+不是整批内容验收。853和874仍等待原批次终态和owner退出，
+没有额外启动重复采样器、没有热改运行中协议。874保留72GiB
+父进程可用内存门、原48GiB worker门和完整批次磁盘预算；
+容量不足时按既定协议等待，不停掉无关GPU任务或降低门槛。
