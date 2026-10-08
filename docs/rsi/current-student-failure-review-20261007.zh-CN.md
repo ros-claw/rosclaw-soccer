@@ -3025,3 +3025,42 @@ MC1.9588617186804593、前向0.8481929081734372 m、比例
 MC-10、接触含 knee5，前向1.1351661307694234 m/比例
 0.14907816504219998 也不能算 HQ。已接续原108–111的只读
 完整核验，不重复采样，不将两个噪声流合并或改变原依赖链。
+
+## 2026-10-08 09:46 CST：接通 temporal 学习后的原物理考试链
+
+新 v816 仍在完整 160 条数据 prepare，PID1692545 的 CPU 时间
+由 00:06:06 增至 00:14:04，尚未产生学习 commitment 或 GPU
+fit 完成结果。没有因等待而重启、截短检查或改动运行中的源码。
+
+新增的两个独立 wrapper 已启动，等待前序完成后自动继续：
+
+- v817 PID1712952：完整采用原 v773/default native；固定
+  primary0、原 course0/seed773、两遍实际 native、独立 replay
+  6000 substeps、Foundation600 calls、所有重复数组逐项相等。
+  script byte `8f1aae5ef258a51fb6d7944b5465cbeb203e093df898e4602aaa5241ffa24e40`。
+- v818 PID1712953：完整保留 v813 安全拒绝逻辑和原 v774
+  full52。两遍证据完整、每遍 safety=true 且 pelvis>=0.65 m
+  才可开始原52；不按训练分数另选卡，不改变 HQ/保留/出界门，
+  Fresh、晋升、硬件权限仍关闭。script byte
+  `4a6c041ce66f16f954a1bacdd27e876f4c5b1747ae1c71cb0cae759f041a21ec`。
+
+源命名空间为已冻结的 Soccer005828/Core8b2fe0，学习根为 v816。
+旧完整 wrapper/helper 均先验 byte 校验后才导入，旧 wrapper
+也加入稳定性检查。只改命名空间和新输出路径，不改考试实现。
+两个展开的 helper+wrapper F821/F822 preflight exit0，三个新增
+runner 的独立 ruff check exit0。启动器仅允许未使用的 log，并
+校验 runner bytes；启动器 byte
+`fb52673ee57aedd653a2daf209ef1bcaa20d72b66bd1e050effc44b53d63c4b7`。
+
+额外用**旧 v812 的两遍真实 unsafe 全量证据**执行新 v818
+拒绝路径测试：保留实际 sealed artifacts、source/file pins、
+trace/MJB/Review/Foundation 绑定检查，仅拦截输出 seal 到内存，
+把 full52 入口替换为必抛异常的哨兵。测试 exit0，明确拒绝两遍
+min pelvis0.6476452646754882，full52 哨兵未调用，未创建声明或
+拒绝文件，也没有新物理执行。这证明拒绝路径保留，不证明新
+候选安全或运动改善。测试后正式 v818 才建立自己的预声明。
+
+实际状态：v817 log 已输出 WAIT_COMPLETE_FOUR_FIXED_FITS；
+v818 预检通过并等待 v817 原完整结果。当前仍无本轮新增 native、
+无本轮 full52、无可宣传的球队成果。原108–111只读观察及原
+两 worker 继续正常运行；原流计数仍仅确认108/160。
