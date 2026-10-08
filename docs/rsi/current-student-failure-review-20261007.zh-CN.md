@@ -6311,3 +6311,53 @@ worker，因而未冒称做过不存在的spawn bootstrap验证。
 retention/safety和晋升门；这些尚未完成。旧795/896的必要门控失败
 结论不变。本轮是实际current行为数据到学习的数值链路进展，不是
 球技突破、Fresh收益、M0完成或可宣传球队成果。
+
+### 完整候选导出闭环已排队；消除等待阶段的历史数据重复读取
+
+914前三个真实fits分别接受754、785、849次joint更新，各拒绝并
+回滚1次；第四个仍在训练。没有重新选择primary0，也没有把新
+权重直接装到比赛角色上。完整导出使用原`make_model`和
+`validate_model`：从真实完整839 parent构建flat continuation，
+核对small student参数与完整parent、固定mean82c1f9…的关联，
+保留冻结proposal parent、动作边界和protected memory；保存
+完整gzip model后重新加载并验证。数值审计不代替该完整模型环节。
+
+917原导出队列成功绑定3586项source/input文件（合计
+21663702316 bytes，其中Python源码18260647 bytes），但等待
+循环每次调用全量stable，会反复读取约21.66GB历史证据。
+已经观察到该等待进程较高CPU使用，不能将其算作物理/训练进展。
+旧917源、queue和全部历史数据原样保留。920仅在确认原
+owner3527389/start_ticks217586668、完整model root不存在、
+914完整terminal尚未出现时，向这个我方未分配模型的等待任务
+发送SIGTERM并确认退出；没有停止训练、仿真、bank或其他应用。
+原handle52820 exit143；替换receipt seal为
+`sha256:6a2ce7cb3b7195bfaebfb07ec139d09b1451118c4ce3d9df0d32e71df65a943d`。
+
+919为独立新源，没有热改917。等待时只复核固定Python源码
+bytes和全部冻结HEAD/clean状态，不能在此阶段采用数据；初始
+完整输入校验、项目导入前、完整模型分配前、构建后和保存重载后
+仍检查全部原bytes，原48GiB准入及8GiB disk free要求不变。
+全量检查耗时后还重新检查可用内存，再分配完整parent。独立
+不导入项目/不分配模型的行为检查确认：source-only wait不读取
+伪造数据文件；修改源码时拒绝等待；完整stable确实检测并拒绝
+数据变化。未声称真实模型导出或端到端加速已经完成。
+
+919 owner3536819/handle16675；初始3586项全量核验完成、queue
+已封存，model root尚未创建。queue seal为
+`sha256:7f640a0a428e7ff6c853740a5bfcb0b30f6fc10b49b16253b4f25f2f73b244a5`，
+source SHA256 `95c6782d4689919ba08e18088dcc01aa282a0b074df6b8c6ddf1a0fdc1cd4b09`。
+等待914及独立916完整终态，并串行等待既有912物理资格owner
+退出，避免与完整模型重放抢内存。912等待只是资源串行化，不是
+新候选的物理证明；919自身不执行native、optimizer、Fresh或晋升。
+917/919/920最终E/F/I、F821/F822、format和compile检查通过。
+
+另外单独安装了py-spy0.4.1到Git外profiling-tools-v918，未修改
+训练venv及正在运行源码。只读非阻塞attach原worker被系统拒绝
+（ptrace_scope=1，无免密sudo），未更改主机安全设置；随后新建
+子进程4秒采样得到99 samples、0 errors，profiler exit0。该smoke
+不是仿真热点证据，不能据此认定瓶颈或加速。[官方说明](https://github.com/benfred/py-spy)
+明确区分attach权限和child profiling，后续独立诊断须保留这种边界。
+
+Core新head a5a21e5c的CI run37848271828现已completed/success，
+gate job成功。PR616仍OPEN且无reviewDecision，未自行合并；
+不能引用旧head CI来替代这次检查，也不能把CI成功等同球技提升。
