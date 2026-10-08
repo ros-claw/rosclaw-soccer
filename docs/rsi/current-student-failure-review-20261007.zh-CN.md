@@ -3461,3 +3461,93 @@ Core PR616 当前 OPEN、头6e232cfe；新CI
 各fold critic来源；不能直接用过拟合全量critic制造好看的advantage。
 新actor仍需版本化、完整模型与原物理门控；本阶段未实现该接入，
 不得把新增critic训练称作球队或小脑运动能力已提升。
+
+## 2026-10-08 12:49 CST：交叉拟合优势接入四次真实 actor 学习，首遍稳定但触球仍未合格
+
+在 v823 的五个场景留出 critic 上完成 v824 标签重构：40 contexts、
+160完整轨迹、43200控制样本，成功和失败全部保留。每条轨迹只使用
+未训练过该场景的 `context_id%5` critic；全量 fit0 不作为 actor baseline。
+独立检查逐折重算预测、核验训练场景排除、所有输出和最终源/input pins，
+exit0。原 returns 和其余六个训练数组逐项、dtype EXACT；只有 advantages
+改变。原时序奖励不变，gamma=lambda=1，仍是完整 MC，而非在线 TD/GAE。
+新优势全局归一化后25370正/17830负，不能从符号比例推断物理改善。
+
+v824 runner byte
+`ab538c9fdcba41ca6cfa6483887f23ca922a6892f472ffb50def0c7240d4a1ea`，
+结果 `/home/dell/rosclaw_evidence/rsi-cross-fitted-temporal-labels-v824/result.json`
+seal `53cc187e9f0539095af01cceb7106df3a2abcaea3752fb00b69e8af60bf5df81`。
+静态检查披露：该外部离线脚本最后一次修改引入 SIM117 风格问题，
+一次未 fail-fast 的命令链使后续纯标签计算仍执行；不得声称全量 ruff
+通过。另行 F821/F822 检查通过，没有物理 worker 分配。已完成 producer
+被后继证据绑定，保持原字节，不通过事后修改伪造当时 preflight。
+
+v825 随后实际完成四个固定 actor+joint-critic fits，每个256 accepted
+steps，合计1024 accepted/0 rollback，actor参数均改变。四GPU分别承载
+独立任务，不是DDP；LR/seed/batch/动作界/KL门与 v816 一致。预声明
+primary0，不按结果挑选另外三个。原160轨迹完整 prepare 与证据采用
+已完成且所有输入仍匹配的 v816 回执，明确是 adopted、不是重新执行
+160次物理回放。新数据仅替换预声明的交叉拟合 advantages。
+
+| 候选 | marginal KL | conditional KL | joint critic MSE |
+| --- | --- | --- | --- |
+| 0（固定主候选） | 0.007914898604926906 | 0.002491761073730673 | 124.85206126643644 |
+| 1 | 0.00803065618178906 | 0.0025808544019712163 | 124.85378889218151 |
+| 2 | 0.016296119933257483 | 0.004932306752714854 | 124.00067445923361 |
+| 3 | 0.01681785770802265 | 0.005141579162786936 | 124.03344639380458 |
+
+独立核验四个完整原始模型、实际参数/学习回执/数据/source/声明绑定，
+1024步聚合及全部最终 pins，exit0；没有独立重放optimizer。
+主模型逻辑 hash
+`b5d485a62d6084770bdd03cc0720621932dedb6c3d17c4a26a070d5bd6a5547f`。
+v825 learning seal
+`1b0c3d923668ba94cf738a56a055d45143781095ba8df80550ef44fe0d6130f1`，
+路径 `/home/dell/rosclaw_evidence/rsi-cross-fitted-actor-learning-v825/learning.json`。
+仍用旧 v1 joint learner；独立 critic 的78训练MSE没有安装进该 joint
+critic，不能声称已解决持续部署价值模型的校准。
+
+新 v826 使用完整原773/772两遍协议，只有模型/产物路径变化和附加
+template绑定；最终展开 namespace 的 F821/F822 preflight exit0。
+首遍已执行，并具备完整独立动力学/当前GRU/270 draws与条件密度/
+300 Foundation calls证据；另一只读观察器已核验首遍完整报告、World、
+轨迹和见证绑定。最低高度 **0.6927048386511937m**、末帧约0.7275m，
+超过原0.65m安全线；forward1.7667642354857438m、ratio0.07027578934031904，
+max lateral0.4108295536341222m。但接触body `[0,1,2,4,5]`，仍非clean，
+**HQ=false**。它比 v817 在该已消费场景的严重失稳更稳定，但不是
+同一actor的控制变量因果实验，也不是52场景能力改善或Fresh突破。
+首遍 review seal
+`9f41335217e04214d54e01783bf2c4d884d839e3793a44a34168dc9be78b944f`，
+Foundation seal
+`ff78b8c8a781479ef1ac1ec286a787c429ae72f5874ffbfaf9e1419c55216417`。
+此刻第二遍尚未闭合，不能报2次完整资格；v827自动安全门仍等待，
+只有两遍见证完整且安全才允许原52项执行。原World/球尺寸/安全线/
+HQ门/保护轨迹均未修改，Fresh与晋升仍关闭，不制作宣传成绩。
+
+原 stream13 四轨迹整组116–119的最后全部pins检查已完成，正式累计
+**120/160、30contexts、HQ21/clean78/unsafe0**，120 native/
+360000独立动力学substeps/36000 Foundation calls。这是旧行为采集
+统计，不是新候选或M0的52项成绩。原采集不中断、不重启、不混流，
+120–123的完整证据观察正在接续。
+
+v828 纯数值构建 profiling 完整结束：load11.36s、validate44.97s、
+view93.08s、preview198.38s、compile539.28s。均为 cProfile 插桩耗时，
+不是生产延迟或物理吞吐率。累计 JSON编码约529.06s，deepcopy约299.85s，
+两者含不同调用层级，不能直接相加或计算无重叠占比。完整历史模型在
+多层 validate/preview中重复序列化、复制，是值得优化的准备成本。
+结果 `/home/dell/rosclaw_evidence/rsi-preview-construction-profile-v828/result.json`
+seal `4bb8d32533562f194282a595a9676e9054ebd11af086789bdeb02a89f36fae12`；
+owner最终pins通过；独立只读核验重查声明/结果/profile seal、全部
+input/source/artifact pins已通过，exit0。新物理/optimizer均0。
+后续共享只读编译结果必须针对新模型保留逐帧状态/噪声/动作/密度一致，
+不能用工厂捷径替换正在执行的原始资格协议。
+
+Core头 **6e232cfe101662153549a022d0df6adf57bce11a** 的新完整CI
+[run37723295477](https://github.com/ros-claw/rosclaw/actions/runs/37723295477)
+已于12:25 CST完成 SUCCESS：GateB910 passed/23 skipped/10 deselected，
+GateC8488 passed/120 skipped/101 deselected，ruff通过，mypy1360文件
+无问题，GateG16 passed/11 skipped；各gate最终状态success。嵌入式
+确定性测试仍不是G1物理证据。PR616未自行合并；Soccer历史全量仍有
+11项外部provenance失败，不能借Core绿色宣称Soccer全绿。
+
+整体 **RSI-M0 NOT COMPLETE**。当前只学到一个更稳定但仍dirty的
+首遍运动例，接下来以完整两遍与固定52项结果决定后续学习，不将
+训练误差、软件CI、标签审计或性能分析当作球队自主演化验收。
