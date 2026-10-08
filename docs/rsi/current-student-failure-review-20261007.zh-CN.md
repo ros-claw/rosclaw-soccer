@@ -4830,3 +4830,43 @@ new review seals、两条原审查字段EXACT、计数汇总、compiler contract
 完整独立动态验证；采样/训练提速仍需自己的隔离设计与完整资格。
 原788/842仍live，正式cohort144，853/860继续等待完整上游。
 球队持续学习、真实能力盆扩张与可宣传连续比赛视频尚未达成。
+
+### 2026-10-08 19:49 CST：独立采样参考审查与新资格协议
+
+新增可选 `SamplingReferenceAuditCompiler`：首次仍用原始完整
+sampling constructor 验证全策略；之后只准采样种子及原算法派生
+的三个哈希变化，完整 actor/critic/parent、来源、动作约束和
+采样分布均固定。每回合深拷贝未推进的完整初始参考对象，重建
+原始 AR 噪声，不复用 producer factory/preview；默认路径不变。
+
+验证请求先拥有完整策略快照，再返回已验证的 seed/hash；不能在
+clone 期间重新读取调用方可变 policy_hash。新增回归在复制时改写
+调用方哈希，确认返回 episode 仍绑定原已验证哈希。另覆盖两个
+mean family、两个不同种子、每条完整300帧动作/GRU/四项采样
+trace EXACT、初态独立、噪声只读、全模型/分布/来源漂移拒绝。
+
+相关四组测试 **56 passed in 312.35s**（handle90080 exit0）；
+ruff、format、focused mypy两个源码文件、diff check分别exit0。
+不宣称Soccer全量历史失败已解决，合成测试不是G1物理资格。
+
+新871协议预定788原库sample0/1（不是选最优）：原完整D3 mean
+`d3be39f2…`，真实种子462610335/462610336；原始policy分别
+`3beaa41b…`/`2b51f1f7…`，没有producer factory声明。原本体/
+World、原3000子步/300GRU/270draw及条件概率审查、Foundation
+绑定都需验证；计划新增独立CPU动态重放6000子步、GRU600帧、
+采样及概率重建540次。原600 Foundation采用而非重算；新增
+native/fit/Fresh为0。此刻runner已生成且lint通过，**未启动、
+没有资格终态**。完整物理与接触结果逐项比较，只排除预声明
+新source/report hash及明确增加的compiler metadata。
+
+835正式见证已148/160、HQ34、clean98、unsafe0，seal
+`f628905701c94fb909e76ddd530c8e755b346f88fd2a4a495909a6b9f148fad6`。
+另行只读核验全部输入bytes/source heads/证书seal exit0
+（handle71081）；444000归档子步及44400 Foundation采用原证据，
+不是本轮新增执行。842已有22条Foundation归档，owner仍活跃，
+不是完整52或终态通过；853/860仍等完整前置，不热改旧runner。
+
+资源检查：root131GiB可用、/data4.3GiB、RAM约65GiB available；
+四A6000可见但有其它工作负载，未停止或占用它们。871使用CPU
+MuJoCo并保留48GiB RAM/100GiB磁盘 admission。没有测量整条
+训练提速倍数，更没有新球技/球队比赛/可宣传视频达成的证据。
