@@ -4324,3 +4324,57 @@ critic，再学习新actor，独立复核、原retention和Fresh门保持不变�
 408000substeps/40800Foundation为已执行见证采用，不是观察器重跑。
 旧827目前独立验证0–45，共46/52；42/44/45 clean非HQ，43 dirty
 非HQ，41旧HQ保留，仍无新增HQ。M0与连续球队宣传片均NOT COMPLETE。
+
+## 2026-10-08 16:52 CST：自身数据actor/critic接续缓存；首个新增HQ案例
+
+新增并启动856，等待853**完整160候选自身轨迹**，不是把既有D3
+轨迹重新命名。采用完整原789 `prepare`：全部row/job、raw report/
+compiled World/physical trace、独立动力学与Foundation回执、六数组
+逐条与aggregate EXACT；全部43200行为density独立重算。origin明确
+来自839 primary0，完整actor和persistent critic均与839原student
+回执逐项相等，并保存两者各自canonical hash与完整origin artifacts。
+不能只接上新actor而把critic悄悄恢复成旧ff584...。
+
+缓存额外采用原792完整archived control verifier，复查853新factory
+control的report/compiled model/trace/Foundation以及与841原native
+完整数组EXACT。老785其它行为参考不是这里的新候选证据。全部
+依赖首次读入和完成都按原source/byte pins检查，source815/Core815
+冻结不变。完整NPZ必须为7字段float64，160×270×135 context、
+160×270×12 baseline/actions与160×270其余字段。
+
+856**不执行训练**。原prepare计算的LOO empirical advantages只作为
+中间缓存、明确不是最终temporal credit；后续需要重建候选自身的
+逐帧reward-to-go、context排除value拟合与crossfit credit，然后才能
+继续actor-critic更新。没有制造含“4个新fit”的假learning.json；
+仅写独立cache result，原839四fit回执作为源见证保留。
+48GiB available-memory门、128MiB完整cache预算及原100GiB系统容量
+门，超预算保留failure不裁剪。无新physics/optimizer/Fresh/晋升。
+
+完整original789+wrapper的F821/F822预检通过；ruff通过。首次格式化
+及4个C408机械转换发生在启动前。新增control verifier后启动，随后
+format --check提示仍有一处需格式化，**此项FAIL且未隐藏**；因为
+runner已被queue pin且owner live，不热改它，仅保留格式问题待该
+runner终态之后处理。不是物理或数值验收失败，也不是全仓green。
+
+856 owner2336660/session19268，byte
+`ca31fb98edebc973ce715d76f625fb87f49f738522aef8f7dae915e329329a8a`。
+queue seal `9e2e3688e30c63fbb793eade0d5a7b91ef1ba47cf24e93175c1011e22029b6a1`。
+独立queue seal、固定sources、zero执行及授权false检查exit0；当前
+缓存目录尚未生成，owner真实live，不能称候选自身学习已完成。
+
+原827独立观察器现确认0–47，共48/52。**case47首次新增HQ**：
+同seed/lane/World，原sealed baseline405该case clean但nonHQ，
+forward 2.285382m、lateral/forward 0.3833608；本次clean/HQ，
+forward **2.565626m**、ratio **0.2980135**、max lateral 2.864449m、
+min pelvis 0.695493m，按**原ratio≤0.3**判定，未改阈值。
+raw report `07c18878c7f4332527a76131088114f5efaad091d0b133f29ea3b44f7efe4c63`，
+review `b115828704e196e76d1d03e7e19b9d05dddd2bd0d1537c79fa3f391308962432`。
+完整observer已核验其3000独立substeps/300 Foundation/300 GRU及全部
+见证；额外核对baseline405完整seal与同course identity，确认旧case47
+确为nonHQ。这是**已消费课程上的单案例进步**，不是Fresh或团队突破。
+
+48项HQ为[4,16,19,22,24,27,29,34,38,39,41,47]，共12。即使剩余4项
+全部HQ，最终最多16，仍低于原门**20**；因此本候选不可能满足原
+完整HQ总门。继续保留并跑完52以验证其它retention/safety项，不能
+把一个新增HQ包装为晋升或为它放宽门槛。此物理进步值得留下作为
+后续训练事实，但M0与连续自主球队宣传片均仍NOT COMPLETE。
