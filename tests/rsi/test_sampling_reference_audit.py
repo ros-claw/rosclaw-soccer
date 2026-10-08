@@ -120,14 +120,13 @@ def test_exact_complete_repeat_skips_only_redundant_hashes(learned, monkeypatch)
     independently_owned = copy.deepcopy(policy)
     verified_hash = policy["policy_hash"]
 
-    def unnecessary_hash(_value):
-        raise AssertionError("exact whole policy must not re-encode seed-derived hashes")
+    original_restore = reference_module.CanonicalJSONSnapshot.restore
 
-    def unnecessary_restore(_snapshot):
-        raise AssertionError("exact whole policy must not allocate another decoded full model")
+    def compact_restore_only(snapshot):
+        assert snapshot.content_hash != compiler._policy.content_hash
+        return original_restore(snapshot)
 
-    monkeypatch.setattr(reference_module, "hash_json", unnecessary_hash)
-    monkeypatch.setattr(reference_module.CanonicalJSONSnapshot, "restore", unnecessary_restore)
+    monkeypatch.setattr(reference_module.CanonicalJSONSnapshot, "restore", compact_restore_only)
     compiler.verify_policy(independently_owned)
     episode = compiler.new_episode(independently_owned)
     assert episode._policy_hash == verified_hash
@@ -149,23 +148,54 @@ def test_exact_repeat_still_rejects_private_sampling_seed_mutation(learned):  # 
         compiler.new_episode(copy.deepcopy(policy))
 
 
-def test_changed_seed_still_restores_both_owned_complete_documents(learned, monkeypatch):  # noqa: F811
+def test_changed_seed_hashes_full_payload_without_restoring_full_documents(learned, monkeypatch):  # noqa: F811
     initial = make_preview(make_sampling_view(learned[-1], seed=771))
     compiler = SamplingReferenceAuditCompiler(initial)
     changed = make_preview(make_sampling_view(learned[-1], seed=772))
     original_restore = reference_module.CanonicalJSONSnapshot.restore
-    restored_hashes = []
+    forbidden = {
+        compiler._policy.content_hash,
+        reference_module.CanonicalJSONSnapshot(changed).content_hash,
+    }
 
     def tracked_restore(snapshot):
-        restored_hashes.append(snapshot.content_hash)
+        assert snapshot.content_hash not in forbidden
         return original_restore(snapshot)
 
     monkeypatch.setattr(reference_module.CanonicalJSONSnapshot, "restore", tracked_restore)
     compiler.verify_policy(changed)
-    assert restored_hashes == [
-        reference_module.CanonicalJSONSnapshot(changed).content_hash,
-        compiler._policy.content_hash,
-    ]
+    assert compiler.new_episode(changed)._policy_hash == changed["policy_hash"]
+
+
+def test_cached_mean_payload_and_small_template_tampering_refused(learned):  # noqa: F811
+    policy = make_preview(make_sampling_view(learned[-1], seed=771))
+    compiler = SamplingReferenceAuditCompiler(policy)
+    compiler._mean_payload._payload_bytes = b"{}"
+    with pytest.raises(ValueError, match="unchanged"):
+        compiler.verify_policy(policy)
+    compiler = SamplingReferenceAuditCompiler(policy)
+    fields = compiler._template.restore()
+    fields["step_motor_proof"]["model"]["rho"] = 0.8
+    compiler._template = reference_module.CanonicalJSONSnapshot(fields)
+    with pytest.raises(ValueError, match="template"):
+        compiler.verify_policy(policy)
+
+
+def test_caller_seed_change_during_capture_cannot_authorize_wrong_seed(learned, monkeypatch):  # noqa: F811
+    policy = make_preview(make_sampling_view(learned[-1], seed=771))
+    compiler = SamplingReferenceAuditCompiler(policy)
+    original_snapshot = reference_module.CanonicalJSONSnapshot
+
+    def capture_then_mutate(value):
+        owned = original_snapshot(value)
+        if value is policy:
+            policy["step_motor_proof"]["model"]["seed"] = 772
+        return owned
+
+    monkeypatch.setattr(reference_module, "CanonicalJSONSnapshot", capture_then_mutate)
+    episode = compiler.new_episode(policy)
+    assert episode._sampling["seed"] == 771
+    assert policy["step_motor_proof"]["model"]["seed"] == 772
 
 
 def test_exact_repeat_never_trusts_only_callers_claimed_policy_hash(learned):  # noqa: F811
@@ -213,6 +243,17 @@ def test_external_sampling_reference_callbacks_rejected_before_physics(tmp_path,
 def test_other_families_rejected(value):
     with pytest.raises(ValueError, match="complete recurrent sampling"):
         SamplingReferenceAuditCompiler(value)
+
+
+def test_missing_core_hashing_capability_refused_before_model_allocation(monkeypatch):
+    monkeypatch.delattr(reference_module.FrozenPayloadField, "document_hash_at_path")
+
+    def unopened(_policy):
+        raise AssertionError("missing Core capability must reject before full reference allocation")
+
+    monkeypatch.setattr(reference_module, "CompiledRecurrentSamplingMotor", unopened)
+    with pytest.raises(ValueError, match="before allocation"):
+        SamplingReferenceAuditCompiler({"recurrent_sampling_motor_proof": {}})
 
 
 def test_valid_compiler_requires_executed_model_binding_and_no_other_factories(learned, tmp_path):  # noqa: F811

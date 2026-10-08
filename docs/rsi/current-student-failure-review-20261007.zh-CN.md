@@ -6150,3 +6150,46 @@ format、F821/F822、compileall、diff检查及单文件mypy均通过。
 动力学回放、Foundation、optimizer均0，Fresh、部署、policy_gain、
 promotion及hardware授权均false。Core PR616仍OPEN，CI gate
 SUCCESS，但无人审查结论，未自行合并。
+
+### 不同seed审计：完整嵌套payload的流式hash，而非省略模型
+
+Core新增`FrozenPayloadField.document_hash_at_path`，只接受1–16层
+显式dictionary路径；中间dict必须存在，最终payload key必须缺失。
+逐字节流式拼接原完整payload及全部其他字段，所得hash等于普通
+完整canonical JSON的SHA256，不使用marker/hash替代模型内容。
+先独立拥有小字段并检查无损JSON，拒绝不合法路径、NaN/Inf、
+有损Python结构及缓存bytes篡改。Unicode、负零、深层路径、
+原payload被调用方修改等均有对照测试。40项相关测试通过，已
+包含在整个Growth组781 passed（18.72s）中，不相加重复计数。
+使用Soccer环境执行该纯同步组时有1项asyncio_mode配置警告，
+没有被跳过的失败测试。第一次使用工作树不存在的.venv命令
+exit127，未执行检查；换用已有环境后才得到真实上述结果。
+Core commit `a5a21e5cd03e8531419a6ceec374ed96f5ff8feb`已推送
+PR616；新head的CI gate为IN_PROGRESS，不能沿用旧head SUCCESS。
+
+Soccer审计compiler仍先用原完整constructor验证原policy和
+prototype，再缓存完整mean payload及独立拥有的小字段template。
+不同seed重新构造原三个派生hash及完整policy内容hash，所有
+payload bytes仍参与每次hash；调用方seed只是临时值，只有
+完整owned输入与独立重构内容相等后才有效。前后稳定性检查
+还重构原完整template hash，绑定payload缓存、小字段及原
+prototype。不能仅凭调用方policy_hash、mean_model hash或seed
+获取接受。缺少新Core capability时在完整模型分配前明确拒绝。
+
+17项完整审计回归377.28s通过，含两种实际探索seed的300帧
+动作/GRU/draw/logp逐数组一致性、缓存/template/private seed
+篡改、调用方capture期间seed变化；新增缺失Core capability
+测试与原35项诊断回归合跑36 passed、0.48s。不同seed测试
+禁止恢复两份完整大模型，而仍核对原完整policy hash；旧17项
+检查之后新增的依赖检查用独立测试覆盖，没有把未运行的测试
+算进17项。changed-file mypy、ruff、format、compileall和diff
+检查通过；新增依赖错误消息曾触发101列E501/format检查，
+按项目formatter修复后重新检查通过。
+
+这一缓存保留另一份完整payload bytes，可能增加持久内存；
+没有声称已降低峰值内存或测得真实端到端加速。原48GiB准入、
+课程/奖励/动作边界/学习参数/晋升门均未修改。真实不同seed的
+CPU轨迹资格须在独立冻结版本中完成；现有795/896、853/874、
+901/902及其下游保持原源码和原队列，不热改或强行接管。
+目前仅代码/数学和合成控制回归通过，不是新的optimizer、
+native、Foundation、Fresh、policy_gain或promotion成果。

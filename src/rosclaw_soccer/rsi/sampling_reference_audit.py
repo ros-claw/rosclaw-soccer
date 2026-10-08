@@ -14,10 +14,13 @@ from typing import Any
 import rosclaw.growth.canonical_json_snapshot as snapshot_module
 from rosclaw.growth.canonical_json_snapshot import CanonicalJSONSnapshot
 from rosclaw.growth.correlated_exploration import stationary_noise
+from rosclaw.growth.frozen_payload_field import FrozenPayloadField
 
 from rosclaw_soccer.rsi.fixed_recurrent_reference_audit import _numeric_graph_hash
 from rosclaw_soccer.rsi.recurrent_sampling_motor import CompiledRecurrentSamplingMotor
-from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+from rosclaw_soccer.sim.contracts import hash_bytes
+
+_PAYLOAD_PATH = ("step_motor_proof", "model", "mean_model")
 
 
 class SamplingReferenceAuditCompiler:
@@ -32,13 +35,21 @@ class SamplingReferenceAuditCompiler:
     def __init__(self, policy: dict[str, Any]) -> None:
         if type(policy) is not dict or "recurrent_sampling_motor_proof" not in policy:
             raise ValueError("original complete recurrent sampling policy required")
+        if not callable(getattr(FrozenPayloadField, "document_hash_at_path", None)):
+            raise ValueError(
+                "complete nested payload hashing capability required before allocation"
+            )
         self._policy = CanonicalJSONSnapshot(policy)
         paths = list(Path(__file__).parent.glob("*.py"))
         paths += list(Path(snapshot_module.__file__).parent.glob("*.py"))
         paths += [Path(__file__).parents[1] / "sim/contracts.py"]
         self._pins = {str(path): hash_bytes(path.read_bytes()) for path in paths}
-        self._prototype = CompiledRecurrentSamplingMotor(self._policy.restore())
+        original = self._policy.restore()
+        self._prototype = CompiledRecurrentSamplingMotor(original)
         self._prototype_hash = _numeric_graph_hash(self._prototype)
+        payload = original["step_motor_proof"]["model"].pop("mean_model")
+        self._mean_payload = FrozenPayloadField(payload)
+        self._template = CanonicalJSONSnapshot(original)
         spatial_module = sys.modules.get("scipy.spatial._ckdtree")
         if spatial_module is not None:
             path = Path(str(spatial_module.__file__))
@@ -55,6 +66,8 @@ class SamplingReferenceAuditCompiler:
             or self._policy.verify() != self._policy.content_hash
             or self._prototype._policy_hash != self._initial_policy_hash
             or _numeric_graph_hash(self._prototype) != self._prototype_hash
+            or self._mean_payload.document_hash_at_path(self._template.restore(), _PAYLOAD_PATH)
+            != self._policy.content_hash
         ):
             raise ValueError("original sampling reference source, template or prototype changed")
 
@@ -66,6 +79,12 @@ class SamplingReferenceAuditCompiler:
             or type(policy["step_motor_proof"].get("model")) is not dict
         ):
             raise ValueError("complete original sampling policy required")
+        # This scalar is provisional until the WHOLE owned input matches the
+        # independently reconstructed full policy below. Concurrent caller
+        # mutation cannot authorize a different seed or mean by itself.
+        proposed_seed = policy["step_motor_proof"]["model"].get("seed")
+        if type(proposed_seed) is not int or not 0 <= proposed_seed < 2**32:
+            raise ValueError("bounded integer reference sampling seed required")
         owned = CanonicalJSONSnapshot(policy)
         # The complete owned canonical document already authenticates all
         # fields, not just the caller's policy_hash or the mean-model hash.
@@ -73,7 +92,8 @@ class SamplingReferenceAuditCompiler:
         # encoding. Read the seed from the fully validated, graph-bound private
         # prototype, never from the caller's potentially mutable dictionary.
         # Keep both source/prototype stability checks, including the immutable
-        # snapshot's byte digest; changed seeds still take the original path.
+        # snapshot's byte digest. Changed seeds reconstruct all original hashes
+        # from the complete frozen payload, without re-encoding that payload.
         if owned.content_hash == self._policy.content_hash:
             sampling = self._prototype._sampling
             if sampling is None:
@@ -83,19 +103,18 @@ class SamplingReferenceAuditCompiler:
                 raise ValueError("bounded integer reference sampling seed required")
             self._stable()
             return seed, self._initial_policy_hash
-        document = owned.restore()
-        seed = document["step_motor_proof"]["model"].get("seed")
-        if type(seed) is not int or not 0 <= seed < 2**32:
-            raise ValueError("bounded integer reference sampling seed required")
-        expected = self._policy.restore()
+        seed = proposed_seed
+        expected = self._template.restore()
         view = expected["step_motor_proof"]["model"]
         view["seed"] = seed
-        view["model_hash"] = hash_json({k: v for k, v in view.items() if k != "model_hash"})
-        expected["recurrent_sampling_motor_proof"]["sampling_model_hash"] = view["model_hash"]
-        expected["policy_hash"] = hash_json(
-            {k: v for k, v in expected.items() if k != "policy_hash"}
+        view["model_hash"] = self._mean_payload.document_hash(
+            {k: v for k, v in view.items() if k != "model_hash"}, "mean_model"
         )
-        if owned.content_hash != CanonicalJSONSnapshot(expected).content_hash:
+        expected["recurrent_sampling_motor_proof"]["sampling_model_hash"] = view["model_hash"]
+        expected["policy_hash"] = self._mean_payload.document_hash_at_path(
+            {k: v for k, v in expected.items() if k != "policy_hash"}, _PAYLOAD_PATH
+        )
+        if owned.content_hash != self._mean_payload.document_hash_at_path(expected, _PAYLOAD_PATH):
             raise ValueError("complete sampling mean, template, law or source changed")
         self._stable()
         return seed, str(expected["policy_hash"])
