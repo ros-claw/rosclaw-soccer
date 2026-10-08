@@ -4694,3 +4694,31 @@ validate_model。原始decoder阶段仍在进行，尚无完整profile终态，
 不能宣称已加速。该测量是一次封存候选的组件诊断，不是随机多次
 性能实验，不新增采样轨迹、物理重放、训练或球技进步。
 后续仅在保持完整校验与独立动态重放的前提下优化批量吞吐。
+
+### 18:35 CST 终态追加：868完整原始编译剖析与独立复核
+
+868 exact handle84693正常exit0、owner2473562退出。result seal
+`1928a414a1ca5e501e42576262d32ac0691e14b0f5363411853addca5c01fb58`。
+original-preview 137.6048691868782s /397非均匀样本；
+original-decoder 387.66113789519295s /1111非均匀样本；
+两组件合计525.2660070820712s（约8.75分钟），不含所有加载/审查
+前后环节，不是端到端采样耗时或可直接相加的多worker收益估计。
+decoder阶段采到recurrent clipped preview/constructor、多级parent
+validator、bounded/snapshot compilation、deepcopy和hash_json。
+这支持优先研究完整固定策略的重复编译成本；不是物理solver或
+GPU训练已被证明为唯一瓶颈，也不是这些栈的CPU耗时比例。
+
+独立复核result/predeclaration与两阶段seal、完整stage对象绑定、
+所有输入bytes/source heads、0physics/0optimizer及各权限false，
+exit0（handle90460）。第一次独立核验因误认为阶段对象不含其
+report_hash而assert失败；修正核验器为与原sealed stage完整对象
+EXACT相等后通过，没有修改封存输出或运行代码。不重复执行编译。
+
+下一工程方向是**独立审查侧**的可选固定编译复用，不把producer
+自己的factory直接拿来证明producer：原完整reference decoder首次
+编译、每回合fresh GRU/contact/noise历史、完整模型与源码身份检查、
+全部300帧/3000物理子步及动作密度重建均保留。先做隔离测试及
+原真实归档的全数组/完整动态重放对比，再考虑新预声明协议选用。
+这是待实施方向，不是已开发、已加速或已被live链采用的事实。
+原788/842及853→863均保持原协议和未改动源码；正式采样仍140，
+842无完整52终态，Core fdae84b4 CI仍进行中，球技/球队目标未通过。
