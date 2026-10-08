@@ -4002,3 +4002,70 @@ v835已逐条核验新128/129均dirty/safe/nonHQ；130/131尚未完成，
 v827/v834/v835和条件等待841/842的原PID、cmd均再次确认live，
 没有重启、替换或hot-edit这些owner。M0及连续自主球队宣传目标
 仍未通过；继续真实物理闭环，不用视频替代训练和验收。
+
+## 2026-10-08 15:27 CST：第二批完整自身经验已接续 temporal/value 学习准备
+
+本轮继续保持§72 RSI-M0优先，不在单体学习尚未通过时堆团队视频
+或新MARL。复核原collector792、learner793、qualifier794、exam795
+均live，仍按原160完整课程和原origin执行；没有重启/截断/替换它们。
+已新建并实际启动两个**条件等待**owner：
+
+1. **v845完整第二流temporal labels**：等原793完整learning终态，
+   核对完整788 manifest、160episodes/40contexts/43200actor rows、
+   原D3 origin、四个原fit回执和resumption标识，再采用原整批物理/
+   模型/Foundation/density见证。逐条绑定raw trace及原reward，
+   使用原815的reward redistribution与γ=λ=1，task terminal299不变。
+   不丢任何失败，不改变原terminal score，不把源793候选装入actor。
+   核对72h期限及原owner PID/cmd；缺失/失败即拒绝，不重启原owner。
+2. **v846第二流独立价值训练**：等完整v845 result，才可执行原823
+   的六个固定fit（全批1个＋context_id%5排除场景的5个）。配置仍
+   steps1024/batch8/LR0.001/seed8230，device0/1/2/3/0/1；6144只是
+   **未来预算**，当前实际新fit/optimizer/physics均0。fit0不供actor
+   baseline，不按训练指标选择fit，不安装critic到电机。保持原
+   28GiB bank reserve＋16MiB输出预算；新增48GiB可用RAM、每GPU
+   4GiB空闲的等待门，不停止其它GPU任务。
+
+v845 owner **2205020**，工具session36604；v846 owner **2208942**，
+session24734。PID/cmd均独立再次确认live，stdout明确WAIT。
+截至本轮，两个实际output目录均不存在，仅queue声明已封存，
+不把queued描述成已完成labels、6144steps或新的候选。
+这两阶段之后尚需完整cross-fit credit与新的actor/资格/原考试链，
+本轮未跳过那些阶段、未开启Fresh、未取得新物理提升。
+
+v845 byte `9def9def5de0c7f381c80e30de507fe98b47476b33c7488fa0e57aa7ed93d92f`，
+queue seal `8916e4242692d1511b2c049d7d41849123ee0b254ae31aa02bb5ca2b261c2a56`。
+v846 byte `783ecab66b754475f6bbf6e4d986258b985d012140a4307c301a493c949fec9c`，
+queue seal `4f193e41f5896bb949e9dc042b52e5844ff640a8f2c3a6bf06638165a24aa9de`。
+原823/815/789/792/793模板均在导入/展开之前按既定byte核对，源
+冻结heads在queue启动和独立复查时均匹配、worktrees clean。
+v846使用冻结Core838（1186b67e），其normalized value模块仍为
+b48d...、原actor-critic参数合同仍76dc...；不是修改当前物理worker源。
+
+v845 wrapper ruff、完整展开F821/F822、--preflight分别通过。
+v846首次wrapper ruff暴露18个动态exec namespace的F821；完整
+展开检查当时已通过，但不能据此称wrapper绿色。在任何queue/
+fit分配之前，改为显式从展开globals解析运行对象，重新检查
+wrapper ruff及完整展开--preflight均通过，无F821 suppress。
+两个queue随后由独立只读检查重算seal、全部source/helper字节
+pins、冻结heads、完整计数和授权false，exit0。
+
+原815中旧813 rejection在v845中**仅作为另一流的历史参考绑定**，
+字段明确改为historical_other_stream_rejection_hash，queue也注明
+它不代表第二流的拒绝结果。第二流原793/794/795尚未终态，不能
+借旧rejection宣称其安全或失败。旧seal和旧实验均未修改。
+
+另外查阅两篇主来源用于后续算法选择：
+[Self-Imitation Learning（ICML 2018）](https://proceedings.mlr.press/v80/oh18b.html)
+讨论学习智能体过去较好的决策；
+[AWR（2019，§3）](https://arxiv.org/html/1910.00177)
+用价值回归与优势加权动作拟合利用经验数据。当前已有早期
+episodic AWR-inspired及成功序列模仿资产，不能只换名称声称新方法。
+是否为当前逐帧GRU加入受限辅助模仿，仍须实际对照试验；本轮
+**未实现/训练新的SIL或AWR变体**，更不从论文推断G1必然获益。
+
+原v827完整observer834最新确认0–29，共30项；4/16/19/22/24/27/29
+为旧HQ保留，尚无新增HQ。最低高度均过原安全门，仍非整批成绩。
+原788 observer835确认128–130，128/129 dirty，130 clean，三项
+均safe/nonHQ；131待完成，正式cohort边界仍128/160（不是131）。
+磁盘系统盘约132GiB可用，原实验安全reserve保持，不删除证据。
+当前阶段为新数据链已条件接续与原物理验证持续运行，M0仍未通过。
