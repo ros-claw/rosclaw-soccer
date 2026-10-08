@@ -144,3 +144,20 @@ def test_spatial_index_full_tree_clone_identity_and_numeric_drift():
     cloned.data[0, 0] += 1
     assert _numeric_graph_hash(cloned) != before
     assert _numeric_graph_hash(tree) == before
+
+
+def test_complete_large_json_subtree_binding_is_compact_and_type_sensitive():
+    value = {"schema": "fixture.large_model.v1", "weights": [[0.1] * 1024 for _ in range(128)]}
+    before = _numeric_graph_hash(value)
+    changed = copy.deepcopy(value)
+    changed["weights"][-1][-1] += 0.0001
+    assert _numeric_graph_hash(changed) != before
+    assert _numeric_graph_hash(copy.deepcopy(value)) == before
+    assert _numeric_graph_hash({"schema": "fixture", "value": [1]}) != _numeric_graph_hash(
+        {"schema": "fixture", "value": [1.0]}
+    )
+    assert _numeric_graph_hash({"schema": "fixture", "value": [True]}) != _numeric_graph_hash(
+        {"schema": "fixture", "value": [1]}
+    )
+    with pytest.raises(ValueError):
+        _numeric_graph_hash({"schema": "fixture", "value": [float("nan")]})

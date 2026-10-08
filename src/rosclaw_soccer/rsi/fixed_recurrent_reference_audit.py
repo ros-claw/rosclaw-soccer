@@ -71,6 +71,23 @@ def _numeric_graph_hash(root: Any) -> str:
         elif type(value) is dict:
             if any(type(key) is not str for key in value):
                 raise ValueError("ordinary reference object keys required")
+            # Serialized model/receipt subtrees are complete ordinary JSON.
+            # Bind their EXACT typed content compactly instead of expanding
+            # millions of scalar tokens. Object/array aliases remain bound;
+            # aliases internal to JSON are not semantic model content.
+            if type(value.get("schema")) is str:
+                try:
+                    encoded = json.dumps(
+                        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+                    ).encode()
+                except TypeError:
+                    pass  # Numeric reference objects still use explicit traversal.
+                else:
+                    byte_count += len(encoded)
+                    if byte_count > 256 * 1024**2:
+                        raise ValueError("bounded reference numeric/byte storage required")
+                    tokens.append(["whole-json", len(encoded), hashlib.sha256(encoded).hexdigest()])
+                    return
             tokens.append(["dict", sorted(value)])
             for key in sorted(value):
                 visit(value[key], depth + 1)
@@ -80,6 +97,35 @@ def _numeric_graph_hash(root: Any) -> str:
 
             names: tuple[str, ...]
             if type(value) is cKDTree:
+                # Complete topology in a bounded dense representation, not
+                # thousands of repeatedly expanded Python node dictionaries.
+                nodes = [value.tree]
+                rows = []
+                for node in nodes:
+                    if len(nodes) > 65536:
+                        raise ValueError("bounded complete reference spatial tree required")
+                    if not np.array_equal(
+                        node.indices, value.indices[node.start_idx : node.end_idx]
+                    ):
+                        raise ValueError("complete reference node permutation differs")
+                    child_ids = []
+                    for child in (node.lesser, node.greater):
+                        child_ids.append(-1 if child is None else len(nodes))
+                        if child is not None:
+                            nodes.append(child)
+                    rows.append(
+                        [
+                            node.children,
+                            node.start_idx,
+                            node.end_idx,
+                            node.level,
+                            node.split,
+                            node.split_dim,
+                            *child_ids,
+                        ]
+                    )
+                if len(nodes) != value.size:
+                    raise ValueError("whole reference spatial topology required")
                 names = (
                     "data",
                     "indices",
@@ -90,8 +136,12 @@ def _numeric_graph_hash(root: Any) -> str:
                     "m",
                     "n",
                     "size",
-                    "tree",
                 )
+                fields = {name: getattr(value, name) for name in names}
+                fields["complete_node_topology"] = np.asarray(rows, dtype=np.float64)
+                tokens.append(["spatial-index", type(value).__qualname__])
+                visit(fields, depth + 1)
+                return
             elif type(value) is cKDTreeNode:
                 names = (
                     "children",
