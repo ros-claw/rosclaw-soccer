@@ -4139,3 +4139,60 @@ safe/nonHQ；旧30本来就dirty，不是新增clean loss。4/16/19/22/24/
 27/29为旧HQ保留，仍无新增HQ。case28前向1.578909m，但方向ratio
 0.3097395略超**原0.3**，仍按失败保存，未放宽阈值。不能把这个
 “接近阈值”称为合格射门或Fresh提升。M0仍NOT COMPLETE。
+
+## 2026-10-08 16:14 CST：第二流固定主候选接上独立复核与原物理考试
+
+本阶段新增的是可执行接续与拒绝边界，不是球技提升结果。
+v845–848仍在等待原788完整160条数据。新增v849、850、851已运行，
+但当前没有第二流新fit、新物理执行或晋升。不能把等待中的计划
+预算累计到训练成绩。
+
+- **v849**采用原840完整四模型独立NumPy复核，等待848完整终态。
+  绑定原848 queue、未来完整decl/commitment/learning，而不是把第一流
+  commitment冒充第二流。独立重算全部行为density、完整GRU帧、两种KL、
+  critic MSE，并由fit回执重建完整保存参数；KL仍≤0.02。要求48GiB
+  可用内存，不执行optimizer或物理。owner2253742/session17745，
+  source byte `b46aff6aecdecd021f81a763718a13e7162d9a4408f05e9ed7b1e0f04e8e3b4b`，
+  queue seal `4fb0d6e34882c8f34992b960e205ad88622bfa9caede8a2a20b4d3b2345501b5`。
+- **v850**采用原817/773/772完整两遍资格协议，固定848主候选0。
+  等待849独立复核，并等前一条842物理链完整终态且owner2159594退出，
+  不与旧考试抢占物理worker。若旧839候选被原安全门拒绝，只有完整
+  qualification与实际unsafe review能证明这条旧链终结；该拒绝不
+  代表不同的848候选也被拒绝。若旧链完成52，则要求全部执行计数、
+  qualification/model/source绑定和未打开Fresh。两条终态冲突则拒绝。
+  新模型的四份独立model hash必须按顺序对应实际848 learning。
+  源与终态依赖在原资格的初末稳定性检查中持续绑定。
+  owner2277634/session97397，source byte
+  `1addcf3c1e739d0f198ce284cfc5f7d6f47293beb061734ae131880a8525517c`。
+- **v851**采用原818/774/695/757安全与52考试。850实际两遍全部独立
+  见证齐全，重复数组EXACT且pelvis≥0.65后才能开展52；若unsafe，
+  按原协议保留拒绝并不执行52。52原HQ、retention、direction、clean、
+  out及protected trace门不变，没有自动Fresh或策略激活。
+  owner2278442/session93709，source byte
+  `529008021ff3d8034441210b7a8b9c145055d1c9ad0f646b0e9e31acc5378797`。
+
+849的完整expanded预检此前捕获动态commitment名未声明，修正后才
+运行；850初次ruff捕获仅expanded函数使用的os导入，添加解释性
+scoped F401注释后通过。850/851原完整expanded F821/F822及各自
+--preflight均exit0、NO_PHYSICS，单独ruff和format检查通过。
+新850 guard另外有**13项fixture测试**：正常完整旧52、旧unsafe拒绝
+两类终态、部分计数、Fresh授权、错误资格关联、主候选变化、伪学习
+关联、缺失density复核及意外optimizer计数；冲突都不进入原物理
+入口。这是调度合同测试，不是独立物理replay或守门/射门成功证据。
+测试源为外部`test_resumed_native_terminal_v850.py`。初次测试ruff的
+13个C408格式意见已机械修正并复查；测试执行13 passed。
+
+原827/834独立观察器目前确认**0–39，共40/52项**。32/33/35/37
+clean非HQ，36 dirty非HQ；34/38/39为旧HQ保留，至今无新增HQ。
+仍未出完整52终态，因此不计算整场通过率或宣布学习突破。
+原788/835正式闭合边界仍132/160；132、133已分别完整验证为HQ/
+clean/safe，但134–135未闭合，不能把两条零散结果升级成正式136
+cohort。M0与球队目标均仍NOT COMPLETE。
+
+实际后续路径：原788完成→原793全缓存与四fit见证完成→845 temporal
+labels→846六value fit→847通用Core crossfit credit→848四actor-critic
+fit→849独立复核→850原两遍资格→851原52。链上任一失败即保留失败，
+不热改runner、不裁剪失败数据、不放松门槛、不据视频晋升。16:14
+进程身份检查所有新增owner真实live；系统约132GiB磁盘/67GiB RAM
+available，/data仅4.3GiB，因此新产物继续放/home证据区，保留原
+100GiB系统容量门，不删除旧证据或停止无关任务。
