@@ -3924,3 +3924,81 @@ ruff通过，mypy1361源文件通过；harness4 passed、SeekDB16 passed/
 11 skipped、Golden Flywheel6 passed。embedded/测试double验收
 不替代本G1物理考试。Core PR616仍待合并，不自行合并；Soccer
 报告直接main提交推送。M0仍NOT COMPLETE，更未完成宣传球队目标。
+
+## 2026-10-08 15:10 CST：按失败类型盘点实际学习信号，而非继续盲加步数
+
+新增足球适配诊断 `rsi.sampling_credit_diagnostics.sampling_credit_inventory`，
+在**完整、固定顺序、包含全部失败**的30–299帧训练数组上，统计各
+失败类型及触球前后的正/负优势信号。复用原sampling_frontier的
+物理HQ、clean及reward检查，未修改训练奖励、策略、KL或物理门。
+拒绝漏行、重复、乱序、非float64、非有限值和求和溢出；不激活课程。
+失败类型可重叠，触球时段则必须分割全部样本。该能力是足球域
+诊断适配，不向Core塞入G1专属条件，也不把未来结果给运行时actor。
+
+新增13个测试；连同原frontier、snapshot相关测试，**34 passed，
+exit0**。新增文件ruff通过，format首检1文件需格式化，格式化后
+复查通过；focused mypy **1 source file通过**。不称Soccer全量绿色。
+源提交 `4ef91ad41263e8e4da6a91ef41f3aadfa485e97e`。
+
+v844已用真实v839的全部43200条cross-fitted advantage完成盘点，
+绑定learning991...、独立review840的41dab...、原完整bank810 manifest
+和每条完整原物理review byte及seal。原review不含reward；原manifest
+额外保存了派生reward，故先用原first_touch_reward重算该字段，再
+核对整条outcome和terminal_mc_return。没有更改原sealed review。
+首次v843错误地要求“raw review ==含派生reward的outcome”，在分配
+输出目录前拒绝；保留843源码，新增844显式检查派生reward后通过。
+两runner各自ruff，844完整展开F821/F822通过。
+
+正式结果：`/home/dell/rosclaw_evidence/rsi-actual-crossfit-credit-inventory-v844/result.json`，
+seal `d4bcf7cdd315da34ffb482add3673bdb36620674b4f63d1e296a59ed6209b724`。
+另一个无项目诊断函数导入的只读检查，重新计算全部已保存分层的
+正/负/零计数、credit sum、全43200行触球时段分割及全部末尾pins，
+exit0。采用此前完整物理见证，不重跑物理或优化器；新增物理0、
+optimizer0、Fresh/晋升/hardware均false。
+
+| 实际训练分层 | episodes | positive frame rows | negative frame rows | mean advantage |
+| --- | ---: | ---: | ---: | ---: |
+| HQ | 47 | 9304 | 3386 | 0.45307549287046084 |
+| nonHQ | 113 | 16066 | 14444 | -0.18844732889302346 |
+| clean方向不足 | 47 | 8185 | 4505 | -0.08721122936036184 |
+| clean前向距离不足 | 12 | 2576 | 664 | 0.3198983572719223 |
+| 非脚部触球 | 63 | 7868 | 9142 | -0.23054107282245 |
+| 出界 | 22 | 861 | 5079 | -1.3817950957601264 |
+| 无触球 | 3 | 13 | 797 | -0.8905109323867657 |
+| unsafe | 1 | 0 | 270 | -5.249383119491259 |
+
+47 HQ是**原完整810训练流**的已采样结果，不是v827的确定性考试
+通过数，也不是正在采集的788流。40contexts中26曾出现HQ，
+14尚无HQ示范：5/7/8/9/10/14/18/20/21/43/46/48/50/51。
+这只是离线teacher覆盖上限，不能部署为“26/40成功策略”。
+正25370/负17830、总mean0与既有824真实数字完全一致。
+触球前6927行、触球起及之后35463行、无触球810行，共43200；
+每帧高度相关，不能当43200个独立实验。
+
+重要解释：失败轨迹的正advantage不一定错误，它是相对于价值
+baseline的优势，失败中的较好尝试也可能是正值。但距离不足分层
+约79.5%的frame credit为正，加上方向失败的覆盖，说明需要把
+“relative policy objective改善”和“达到绝对足球要求”分开观察。
+这不是价值函数错误或因果归因的证明；不据此直接翻转advantages，
+不丢弃失败，不重标原奖励，不放宽考试。
+
+下一轮学习重点因此具体化为：保持旧HQ/clean保护，利用可用成功
+轨迹训练方向和有效前向输出，同时对照触球后回收；无成功示范的
+14contexts须继续物理探索，不只对已有160条无限增加steps。正在
+收集的788完成后才可整批采用；两个流重复的context不能计成新的
+独立context，重复轨迹也不能计作新physics。v839仍需实际资格/
+固定52验收，诊断不能取代它。本轮未提前启动下一代优化器。
+
+旧v827已独立核验到case25（前26项）：4/16/19/22/24为旧HQ保留，
+尚无新增HQ。只读封存对照0–23，旧HQ/clean loss均0；case8/9/17
+由旧出界改善为不出界，但方向仍未达标；case23本来就出界，
+目前仍出界。case0等前向输出也有明显退步，所以不能以“不出界
+有改善”概括为能力成长。这些是前缀诊断，旧完整考试仍继续。
+一次临时对照脚本用错`forward_displacement_m`字段失败，按原
+`forward_60_m`字段修正后完整封存对照和末尾50个pins检查通过。
+
+v835已逐条核验新128/129均dirty/safe/nonHQ；130/131尚未完成，
+正式完整cohort边界仍**128/160**，不把部分下一cohort算为完整。
+v827/v834/v835和条件等待841/842的原PID、cmd均再次确认live，
+没有重启、替换或hot-edit这些owner。M0及连续自主球队宣传目标
+仍未通过；继续真实物理闭环，不用视频替代训练和验收。
