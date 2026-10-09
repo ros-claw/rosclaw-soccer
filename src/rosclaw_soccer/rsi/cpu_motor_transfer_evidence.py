@@ -24,6 +24,7 @@ from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
 
 if TYPE_CHECKING:
     from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
+    from rosclaw_soccer.rsi.native_first_touch_initial_state import NativeFirstTouchInitialState
 
 
 def audit_cpu_transfer(
@@ -37,9 +38,15 @@ def audit_cpu_transfer(
     sampling_factory_source_roots: tuple[Path, Path] | None = None,
     physical_payload_reader: "FixedPhysicalPayloadReader | None" = None,
     allocate_sampling_reference_once: bool = False,
+    initial_state_reference: "NativeFirstTouchInitialState | None" = None,
 ) -> dict[str, Any]:
     import mujoco
 
+    if initial_state_reference is not None:
+        from rosclaw_soccer.rsi.native_first_touch_initial_state import NativeFirstTouchInitialState
+
+        if type(initial_state_reference) is not NativeFirstTouchInitialState:
+            raise ValueError("exact independent native initial-state reference required")
     if type(allocate_sampling_reference_once) is not bool or (
         allocate_sampling_reference_once and sampling_reference_compiler is None
     ):
@@ -484,6 +491,12 @@ def audit_cpu_transfer(
         trace[k].shape != shape or not np.isfinite(trace[k]).all() for k, shape in shapes.items()
     ):
         raise ValueError("complete finite CPU trace required")
+    if initial_state_reference is not None:
+        initial_state_reference.verify(
+            commitment.get("course"),
+            trace["canonical_qpos"][0, 0],
+            trace["canonical_qvel"][0, 0],
+        )
     data = mujoco.MjData(model)
     data.qpos[:7] = trace["canonical_qpos"][0, 0, :7]
     data.qpos[qi] = trace["canonical_qpos"][0, 0, 7:36]
@@ -834,6 +847,8 @@ def audit_cpu_transfer(
         hardware_authorized=False,
         source_hash=hash_bytes(Path(__file__).read_bytes()),
     )
+    if initial_state_reference is not None:
+        result["independent_initial_state"] = initial_state_reference.contract()
     if recurrent_decoder is not None:
         result["causal_recurrent_state_reconstructed"] = True
         result["recurrent_state_frames_reconstructed"] = 300
