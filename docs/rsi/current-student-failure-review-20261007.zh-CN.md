@@ -7367,3 +7367,20 @@ pin，违反预检source不变纪律；即使该预检输出成功，也不作�
 当前没有新晋升、Fresh成绩或球技增益，没有制作新宣传视频；
 M0/自主4v4能力仍未完成。继续以实际物理资格、完整课程数据、
 独立审查和后续真实学习推进，而不是把基础设施加固当突破。
+
+上述25-test采样原型修复已提交推送main `03a2300`，工作树clean。
+962重新完成两个原档案binding preflight并退出0，随后stdlib
+preflight和F821/F822再次通过；启动前后source digest都是
+`3225fe15fbc122de6ccfc6d9e0f747bdd7ec057e6993c8f2acf4cdc9a38f58c0`。
+之后才实际启动formal reviewer，PID3997767/start219225842，
+handle78548。queue seal
+`3814d35923700d2fc931de9d3d5801b0f515740070abde43fdd6fd951963fa3b`，
+全部5344项input bytes又经独立stdlib遍历核对一致，不是只验
+摘要seal。当前在等待960 exact owner结束；无producer/compiler
+导入，无新native/replay/学习，不将等待状态当review通过。
+
+960现在已写出case0完整compiled_model、physical_trace与
+shared physical report，继续该case的独立CPU/Foundation
+审查。两个固定课程的完整qualification尚未结束。945及
+947/948/949/952原完整考试→采样→dataset→paired learning
+队列仍按原协议保持运行/等待，没有改硬编码输入或自动激活。
