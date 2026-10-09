@@ -40,12 +40,20 @@ def _contract(mean_hash: str, pins: dict[str, str]) -> dict[str, Any]:
     )
 
 
-def validate_compilation_contract(value: Any, policy: dict[str, Any]) -> None:
+def validate_compilation_contract(
+    value: Any,
+    policy: dict[str, Any],
+    *,
+    source_roots: tuple[Path, Path] | None = None,
+) -> None:
     """Fixed source/identity declaration only; never physical or policy approval.
 
     The independent auditor must still use the original complete decoder and
     reconstruct every frame and the actual World/actuator-control dynamics.
-    Never follow caller-provided paths when checking this declaration.
+    Never follow declaration-provided paths when checking this declaration.
+    An offline reviewer may explicitly select independently pinned producer
+    Soccer/Core roots for a historical archive. This validates producer
+    provenance, not the currently loaded independent decoder or physics.
     """
     if (
         type(value) is not dict
@@ -63,9 +71,25 @@ def validate_compilation_contract(value: Any, policy: dict[str, Any]) -> None:
         != hash_json({k: v for k, v in policy.items() if k != "policy_hash"})
     ):
         raise ValueError("complete original recurrent sampling preview identity required")
-    paths = list(Path(__file__).parent.glob("*.py"))
-    paths += list(Path(snapshot_module.__file__).parent.glob("*.py"))
-    paths += [Path(__file__).parents[1] / "sim/contracts.py"]
+    if source_roots is None:
+        paths = list(Path(__file__).parent.glob("*.py"))
+        paths += list(Path(snapshot_module.__file__).parent.glob("*.py"))
+        paths += [Path(__file__).parents[1] / "sim/contracts.py"]
+    else:
+        if (
+            type(source_roots) is not tuple
+            or len(source_roots) != 2
+            or any(not isinstance(root, Path) or not root.is_absolute() for root in source_roots)
+        ):
+            raise ValueError("two explicit absolute reviewer-selected source roots required")
+        soccer, core = source_roots
+        folders = (soccer / "src/rosclaw_soccer/rsi", core / "src/rosclaw/growth")
+        if any(not folder.is_dir() or folder.is_symlink() for folder in folders):
+            raise ValueError("complete independently pinned producer source folders required")
+        paths = [path for folder in folders for path in folder.glob("*.py")]
+        paths += [soccer / "src/rosclaw_soccer/sim/contracts.py"]
+        if any(not path.is_file() or path.is_symlink() for path in paths):
+            raise ValueError("ordinary complete producer source files required")
     pins = {str(p): hash_bytes(p.read_bytes()) for p in paths}
     expected = _contract(hash_json(view["mean_model"]), pins)
     if hash_json(value) != hash_json(expected):

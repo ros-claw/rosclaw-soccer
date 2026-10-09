@@ -34,10 +34,15 @@ def audit_cpu_transfer(
     mean_decoder_factory: Any = None,
     recurrent_reference_compiler: Any = None,
     sampling_reference_compiler: Any = None,
+    sampling_factory_source_roots: tuple[Path, Path] | None = None,
 ) -> dict[str, Any]:
     import mujoco
 
+    if sampling_factory_source_roots is not None and sampling_reference_compiler is None:
+        raise ValueError("historical producer provenance requires independent sampling reference")
     report = _sealed(root / "report.json")
+    if sampling_factory_source_roots is not None and "recurrent_sampling_factory" not in report:
+        raise ValueError("historical producer provenance requires original factory declaration")
     if sampling_reference_compiler is not None:
         from rosclaw_soccer.rsi.sampling_reference_audit import SamplingReferenceAuditCompiler
 
@@ -190,7 +195,9 @@ def audit_cpu_transfer(
         ):
             raise ValueError("recurrent sampling factory must use independent reference review")
         validate_sampling_episode_contract(
-            commitment["recurrent_sampling_factory"], report.get("executed_motor_policy", {})
+            commitment["recurrent_sampling_factory"],
+            report.get("executed_motor_policy", {}),
+            source_roots=sampling_factory_source_roots,
         )
     if "recurrent_success_factory" in commitment:
         from rosclaw_soccer.rsi.recurrent_success_episode_factory import (

@@ -6827,3 +6827,54 @@ bytes也独立检查通过（各自411/416/418/426/429 pins），不同
 新策略的原生动作、完整52、160新数据及939学习仍未完成。
 本恢复分支不能超越896完整考试拒绝的证据上限。M0/Fresh/
 promotion及最终连续自主4v4宣传视频均未达标，目标不缩小。
+
+### 2026-10-09：历史生成来源与审计来源分离；记忆 critic 配对实验拒绝
+
+重新检查实际终态，933已失败，错误为
+`complete fixed mean/source/non-authorizing compilation contract required`。
+934—939因缺少上游完整通过证据依次拒绝；没有完整模型导出、
+新原生动作、完整52、新160数据或939优化器更新。不得沿用上段
+“排队中”的时态，失败源、队列和错误文件全部保留。
+
+根因不是 MuJoCo 不支持，而是跨版本生产/审计来源混淆：874归档
+生成器的268个pins属于冻结Soccer871/Core838，新审计器运行于
+Soccer911/Core910。默认校验却要求producer contract等于当前
+reviewer源码的contract，必然不等。离线轻量复核对固定sample0/1
+的原contract逐字段比较，均与871/838重新枚举和哈希的完整268
+项源码完全一致；未加载完整模型，未执行physics。这只是定位
+来源问题，不等于新版本审计已完成物理回放。
+
+修复保持默认严格当前来源行为，增加由审计者显式选择两个完整
+历史source roots的路径；从固定目录枚举并哈希源码，不跟随归档
+声明提供的任意路径，不复用producer解码器。CPU audit的历史来源
+选项必须同时使用独立sampling reference compiler及原factory
+声明。完整mean/policy/字段/权限/源码hash比较没有删减，默认
+调用和旧归档没有修改。新增11项测试覆盖旧来源/当前来源区分、
+源码漂移、symlink、来源遗漏/多余/伪造、权限修改、非法root及
+无独立reference时拒绝。固定归档仍须新物理回放后才能称资格通过。
+
+同时完成940配对critic-only实验：在原913固定78条/15个课程、
+21060个决策帧上，135维原body context追加实际839行为策略的
+64维before-action GRU状态，得到199维输入。每条轨迹从零reset，
+所有重建hidden state与原physical trace误差严格0。无未来outcome
+特征，原critic135维初始化前缀逐元素不变，新增列初始为0；
+五个原914 fold配置、种子、1024步预算、target/reward和留出课程
+划分完全不变。实际5120次value更新，actor更新0，physics0。
+
+941使用独立NumPy GRU公式、价值网络前向及OOF重组，未导入生产
+GRU/value helpers、未重跑优化器。全部21060个历史状态、扩展
+特征、预测及advantage逐元素一致，完整训练MSE/输入绑定复核
+通过。940 result seal为
+`98770414253045d609f23a58bee349e3cd0e3065014854233e46a586759d66ac`；
+941独立review seal为
+`221e7f37628254bc33aa40cd70e9c130e31810dd8614ffed476d6a84be24ec38`。
+
+结果：原135 critic frame-weighted held-out MSE为140.0563，追加
+GRU记忆后141.0584，约恶化0.72%；排除held-out课程的global mean
+为139.3719，time-only mean为135.0939。故拒绝采用940 credit
+更新actor；没有把低训练MSE当留出改善。该固定已消费诊断集
+不是完整160，不是Fresh，也没有证明小脑或球技提升。
+
+当前优先任务仍是恢复实际当前策略的完整物理考试与自身采样
+闭环，而不是扩大不可靠credit训练量或录制新的宣传片。853/874
+旧完整采样仍运行，未修改它们的冻结代码或资源门槛。
