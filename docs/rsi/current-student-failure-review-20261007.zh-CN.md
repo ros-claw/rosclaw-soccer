@@ -7195,3 +7195,81 @@ held-out MSE从950的131.343229恶化至180.169147；equal-context
 修好首次触球”，但未识别唯一病因，更不是“任何大规模RL
 无效”的结论。后续仍要靠新40课程实际物理数据、原始链耗时
 定位及严格配对候选考试，不把数值诊断替代M0能力盆扩张。
+
+### 原始审查瓶颈定位与确定性执行缓存开发
+
+上轮为实质进展（实际944完成、955/956训练及独立反证），本轮
+重查main和活跃PID后继续推进，没有重启或修改原945/947/948/
+949/952。Soccer/Core frozen942/910及用户dirty工作区均不动。
+
+953已真实exit0：原始审查whole review连同seal与944 repeat0
+完全相等，新增3000 CPU重放，没有新native/Foundation/optimizer。
+profile result seal
+`9b000bb0acf3aef73048e32d62cdc916182b671ddc3145cfdf9a377143168a53`；
+全部3971项input bytes另行独立核对。cProfile观察wall589.991407s、
+656056126 calls；原始`CompiledRecurrentSamplingMotor.__init__`
+cumulative557.276s，约占94.45%。JSON iterencode self354.145s；
+deepcopy cumulative191.933s。cumulative调用树有包含关系，不能
+把这些数字相加；profiler改变耗时，这也不是普通部署wall基准。
+这将主要瓶颈定位到完整祖先模型/preview/decoder反复校验、
+序列化及复制，而非把全部耗时笼统归因给CPU MuJoCo步进。
+
+957以原48GiB入场、1GiB诊断预算、100GiB系统储备，按精确
+PID3860293/start218740481等待953真实完成并退出；source/hash
+预检通过后正式运行。source digest
+`dfad19ee516d815fbeb60c59304782c036bc5d8678ec959d86347bffbc4d7ffa`，
+queue seal
+`754369faed2b15d9a37efa2b4200282e5e182f2d8f9d6f2faf385e0a76fd5b26`。
+实际PID3890289/start218841733、handle53319，现已exit0。
+
+957独立编译器采用原始完整constructor，不重用producer；当前
+actual914 full mean为adbee3d...，不是此前942的旧839 mean。
+编译一次cProfile wall579.955061s，随后两个完整原始档案审查
+73.373103s/75.293564s，分别新增3000 CPU、300 GRU、270 draw/
+log-prob重建。除了新增decoder construction元数据及重新seal，
+原所有字段（包括source hash、实际物理/接触/身体稳定性）完全
+相同；另行全字段独立比较及3983项输入字节核对通过。
+result seal
+`7b0120cd7c919fbb8071bc74ac6c1b26f1269ad7adeb097b7a5f4248c35356e5`。
+原600 Foundation调用采用已封闭证据，这里新Foundation为0，
+新native0、optimizer0。两个是同一消耗课程同seed773的repeat，
+不能宣传成两个独立课程、variable-seed资格或完整52/160；本
+结果也尚未优化生产collector或证明端到端吞吐提升。
+
+945已完成并独立审查case0：3000 CPU及300 Foundation，当前
+确定性mean first contact69、forward60=1.772241m、pelvis min
+0.696399m，safe true；contact[0,1,4,5]，clean/HQ false。
+这与944 sampled结果不是同一个动作分布，不据此宣称新代
+球技提升。仍继续完整52，不截断/选好课程/提前启用Fresh。
+
+基于实际瓶颈补齐可复用Soccer模块
+`RecurrentClippedEpisodeFactory`：确定性clipped完整actor/critic/
+父代及原decoder一次校验，私有canonical policy，固定原始
+numeric graph在每次分配前检查。复用既有success decoder的
+fresh-state实现，保持原class、contact memory、parent/warm
+state及GRU每个episode独立；不是换一种动作生成器，不是
+学习或执行授权。保留SIM_ONLY、runtime/promotion/hardware
+false，原始独立审查器不能使用producer factory。
+
+native脚本新增显式可选typed参数，默认None路径不变；拒绝
+foreign对象、subclass、混合其它6类factory、错误decoder、
+缺model、cached envelope、body response及foundation-only
+组合。仅接受clipped模型，commit/report记录非授权工厂合同。
+CPU审查先验证该合同，保留原始完整参考decoder，并检查其
+与commit的存在/字段一致性。不是把producer输出当审查真相。
+没有改原有motor bounds、PD、solver、scene、维度或HQ/safe门。
+
+锁定最终源码后的相关回归49 passed/211.89s，以及原CPU重放/
+sequence/sampling transport回归30 passed/236.58s，共79 tests。
+新测试含300帧原decoder输出/GRU逐元素一致、untouched原型、
+独立parent/contact/hidden state、完整critic mutation拒绝、
+source/prototype/snapshot/policy drift拒绝、17项准入/伪声明
+拒绝。先前factory单测6项不代替最终集成后重测。五个改动
+文件ruff/format、compile、mypy两个模块通过；非全库测试。
+
+新执行缓存默认未启用，**还没有该模块的真实native输运资格**。
+下一步须冻结新源码，使用当前实际mean做至少完整原生控制/
+多课程比对、独立动力学及Foundation复算，再进入新完整银行；
+不能热改原考试或因为synthetic tests就替换947的数据生产。
+当前已有经过实证的审查缓存收益及新执行模块，但M0、Fresh
+能力盆扩张、持续自主4v4和可宣传视频仍未达标。

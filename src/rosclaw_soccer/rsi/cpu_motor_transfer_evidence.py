@@ -41,6 +41,15 @@ def audit_cpu_transfer(
     if sampling_factory_source_roots is not None and sampling_reference_compiler is None:
         raise ValueError("historical producer provenance requires independent sampling reference")
     report = _sealed(root / "report.json")
+    if "recurrent_clipped_factory" in report:
+        from rosclaw_soccer.rsi.recurrent_clipped_episode_factory import (
+            validate_compilation_contract as validate_clipped_episode_contract,
+        )
+
+        policy = report.get("executed_motor_policy")
+        if type(policy) is not dict:
+            raise ValueError("original clipped policy required for producer provenance")
+        validate_clipped_episode_contract(report["recurrent_clipped_factory"], policy)
     if sampling_factory_source_roots is not None and "recurrent_sampling_factory" not in report:
         raise ValueError("historical producer provenance requires original factory declaration")
     if sampling_reference_compiler is not None:
@@ -168,6 +177,8 @@ def audit_cpu_transfer(
         raise ValueError("sequence factory presence differs from commitment")
     if ("recurrent_sampling_factory" in report) != ("recurrent_sampling_factory" in commitment):
         raise ValueError("recurrent sampling factory presence differs from commitment")
+    if ("recurrent_clipped_factory" in report) != ("recurrent_clipped_factory" in commitment):
+        raise ValueError("clipped factory presence differs from commitment")
     if "recurrent_sampling_factory" in commitment:
         if hash_json(report["recurrent_sampling_factory"]) != hash_json(
             commitment["recurrent_sampling_factory"]
