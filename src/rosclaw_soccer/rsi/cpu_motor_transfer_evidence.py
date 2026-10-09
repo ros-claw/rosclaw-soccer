@@ -23,7 +23,7 @@ from rosclaw_soccer.sim.root_velocity_reference import root_velocity_world
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
 
 if TYPE_CHECKING:
-    pass
+    from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
 
 
 def audit_cpu_transfer(
@@ -35,12 +35,17 @@ def audit_cpu_transfer(
     recurrent_reference_compiler: Any = None,
     sampling_reference_compiler: Any = None,
     sampling_factory_source_roots: tuple[Path, Path] | None = None,
+    physical_payload_reader: "FixedPhysicalPayloadReader | None" = None,
 ) -> dict[str, Any]:
     import mujoco
 
     if sampling_factory_source_roots is not None and sampling_reference_compiler is None:
         raise ValueError("historical producer provenance requires independent sampling reference")
-    report = _sealed(root / "report.json")
+    report = (
+        _sealed(root / "report.json")
+        if physical_payload_reader is None
+        else _sealed(root / "report.json", physical_payload_reader=physical_payload_reader)
+    )
     if "recurrent_clipped_factory" in report:
         from rosclaw_soccer.rsi.recurrent_clipped_episode_factory import (
             validate_compilation_contract as validate_clipped_episode_contract,

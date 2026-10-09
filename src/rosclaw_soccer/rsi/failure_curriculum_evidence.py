@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -23,6 +23,9 @@ from rosclaw_soccer.rsi.taskspace_swing_evidence import audit_taskspace_swing_tr
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_collect_bilateral_motor_validation_v305 import COURSES
 from scripts.rsi_collect_negative_side_approach_fresh_v287 import high_quality
+
+if TYPE_CHECKING:
+    from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
 
 
 def retention_score(rows: list[dict[str, Any]], reference: list[dict[str, Any]]) -> dict[str, Any]:
@@ -80,7 +83,18 @@ def retention_score(rows: list[dict[str, Any]], reference: list[dict[str, Any]])
     }
 
 
-def _sealed(path: Path) -> dict[str, Any]:
+def _sealed(
+    path: Path, *, physical_payload_reader: FixedPhysicalPayloadReader | None = None
+) -> dict[str, Any]:
+    if physical_payload_reader is not None:
+        from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
+
+        if type(physical_payload_reader) is not FixedPhysicalPayloadReader or path.name not in (
+            "report.json",
+            "report.json.gz",
+        ):
+            raise ValueError("exact opt-in fixed physical payload reader required")
+        return physical_payload_reader.load_sealed(path)
     report = (
         load_physical_report(path)
         if path.name in ("report.json", "report.json.gz")
