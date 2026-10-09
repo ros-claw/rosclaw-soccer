@@ -7643,3 +7643,64 @@ Torch learner或生产task-state helper。975仍在启动前整理、
 静态检查阶段，不将该计划写成review通过或学习完成。下一步
 必须把该reference固定到新immutable source，完整展开预检
 通过后才启动，不在运行中换成main源码。
+
+## 2026-10-09：两组全量独立复核正式排队，以及完整策略导出入口
+
+上段975“仍在准备”的状态已被本段替代：975完成展开后的
+E/F/I、F821/F822静态检查及source-only预检，再正式启动。
+PID4167271/start219769383，handle46794；source bytes
+`c571aef9f74d37782ed13d1a8c073576885f3fc4879d725a0e76b0583cbd645b`，
+queue seal
+`726bf4299667a375931af4299db43b7d354b189f149021e7add7e91cd48e3ed0`。
+另一个只读进程重新计算queue seal，并逐个流式核对全部6734项
+input bytes，全部一致。没有导入Torch learner或分配full policy。
+
+复核不能成为链路终点。本轮新增外部冻结runner976，将两组
+预先指定primary0接回真正完整的recurrent motor model，而非
+仅保存actor参数或导出可视化代理。它等待975 exact PID退出及
+两个完整review结果，必须核对两组全部43200行已审、12个value
+fit及8个actor fit；逐个绑定learning终态、credit review、actor
+review、student0参数与seal。特别将actor-review/result.json
+本身的文件bytes加入pin，不只继承975的输入列表。
+
+共同parent是实际943完整模型adbee3d6…，其actor和critic还要
+逐项匹配原914 student0；不能退回旧839 parent，也不能使用
+factory prototype代替完整模型。两组均保留actor/critic135，
+974的额外6维只属于credit估计器。调用冻结977的make_model和
+validate_model，保留原frozen_parent、previous mean、motor
+bounds及protected memory；每个完整gzip必须保存后重新加载
+并完整校验才允许写终态。不得依照物理成绩挑两组中的赢家。
+
+976不运行physics/optimizer/Fresh或promotion。它保留48GiB
+可用内存准入，以及3GiB输出预算之外的100GiB磁盘reserve；
+输入、import后、构建前和完成时均复查。出现异常保留部分
+文件并写失败记录，不把一个成功导出冒充两组完成。
+
+976初始isolated E501检查失败（7个排版项）；正式预检和启动
+之前改用isolated88格式化，随后E/F/I全通过。完整source-only
+预检exit0；独立只读测试验证同值pin可合并、冲突不能覆盖、
+更改/缺失seal被拒、exact975 owner识别；实际导入冻结977的
+model builder/validator/atomic writer并核对co_filename，确认
+没有加载Torch/full model、没有输出目录或物理分配。所有修改
+发生在正式进程启动之前，没有修改运行/等待中的源码。
+
+976 source bytes
+`f31a72c596a4f6b9accb4bd6be322c1fd22c00f20aa0d609db4a79c2d2b6327c`；
+PID4187145/start219816937，handle56450，queue seal
+`1f59170678ab8f1ec48bbd73daee4c5536e2f23b2743eac7bc5028f00fbc4c86`。
+正式进程已建立声明并等待975，而不是宣称已导出新权重。
+另一个只读进程独立重算976 queue seal，并逐项流式核对全部
+6963项input bytes，全部一致。
+复跑independent contact、current behavior bank、current parent
+binding、causal state、temporal rewards五组：第一次未显式
+指定源码路径，旧S2环境收集失败（5项ModuleNotFoundError），
+未修改或安装live环境；对单次命令设置main/src与冻结Core910
+的PYTHONPATH后，93 passed/0 skipped/0.72s。该93项与上段
+103项的测试选择不同，不混为新增196项或全库通过。
+
+记录时963完成row0–19（20/52），whole terminal尚不存在。
+这不是20个HQ，也不是20个独立成功；不得外推全量成绩。
+965/971/972/973/974/975/976仍按完整上游和exact owner串联。
+本轮新增optimizer、native与Fresh均0，新模型仍未产生。
+后续任何新mean还必须重新验证cold/warm native parity，不能
+继承只针对adbee旧mean的960资格；完整52及Fresh晋升门不变。
