@@ -6878,3 +6878,38 @@ GRU记忆后141.0584，约恶化0.72%；排除held-out课程的global mean
 当前优先任务仍是恢复实际当前策略的完整物理考试与自身采样
 闭环，而不是扩大不可靠credit训练量或录制新的宣传片。853/874
 旧完整采样仍运行，未修改它们的冻结代码或资源门槛。
+
+后续实际恢复已启动，均使用独立新输出目录，未热改933—939：
+冻结Soccer942为`7aee8062bea6e9131b26c0b72a05100e72d8edf2`，
+加载Core910；历史producer仍是871/838。942 expanded F821/F822、
+实际compiler/hash/helper import预检通过后正式执行；两条固定
+874归档、不同种子、原奖励/actor/动作边界和所有原物理字段
+比较不变。source digest为
+`2eff40bcf7ad3d25c2bcffedadc14bddfbe0041d645016c1fbcb305a8bdf8539`，
+queue seal为
+`12c01694fa67d7b244fbebb283477e2f85c3067913cbf3fdedb1d83331f8b01c`。
+3046项queue输入bytes已经另行全部独立哈希检查通过；此处仍
+没有完整terminal，不能声称6000 replay或资格完成。
+
+943完整current914 primary0导出按实际942 owner及start绑定等待，
+只有942完整terminal且进程退出后才允许模型分配。原48GiB资源
+门槛、完整参数/受保护parent/重载检查保留；预检真实验证了全部
+输入、未import模型或执行physics。source digest为
+`31e58016a6c0dce23207e3f688cdd427db8467b7f2922a6238fc9193bca97588`；
+实际queue seal为
+`a8075432c6f989c375a5cee3dd762230dc6e9615d80c3864f93a811153fc2e50`，
+3812项输入。不是旧934 queue的复用。
+
+944已通过实际原772 worker导入预检，没有auditor/full model/
+physics分配，随后正式启动等待实际943完整导出与退出。其source
+digest为
+`32579c79a12b6bfd8c129af7fbced3547a64a8476080556896bbc31d8fc39f32`。
+保持原两次repeat、6000 CPU独立replay/600 Foundation复核预算；
+没有提前记为执行完成。新未启动源码预检时修正wrapper完整展开
+lint覆盖范围；944的CLI-only预检入口另有`__main__`guard，避免
+历史935父argv泄漏问题再传递给后续消费者。未修改运行中的935。
+
+已通过检查：新增11 tests、修改两source的mypy、ruff与compile；
+包含原factory/compiler/CPU evidence的较长回归组仍在实际执行，
+不提前写成全量通过。后续完整52/160/下一代学习尚未恢复执行，
+应等944真实终态后再依次声明，而非用旧失败队列冒充新一代。
