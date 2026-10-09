@@ -7887,3 +7887,79 @@ diagnostic，不是自主策略，更没有进入任何学习银行。
 下一项GPU资格必须检验自身观测/recurrent state驱动的完整神经
 策略闭环和分离的平衡label agreement。CPU考试和当前学习链
 继续，M0/Fresh/球队自主比赛/宣传视频仍未完成。
+
+## 2026-10-09：固定共享载荷读取组件与真实归档对照
+
+前几轮为VERIFIED WAIT：反复确认同一963 handle89547和八个
+exact owners仍存活，完整考试从30继续推进到42例以上；没有
+观察超时重启、删除失败、热改运行/排队源码或提前评分。本轮
+为PROGRESS：增加显式opt-in读取组件，测试、提交推送并完成
+两个真实归档的独立数据对照。没有新的球技训练增益结论。
+
+首先只读复核953/957封存的performance profiles及各自seal/
+profile bytes。957两次热采样审计73.24/75.17s的profile self
+time中，JSON iterencode分别44.17/46.54s。它是已存在profile
+的复核，不是新的physics，也不是963完整流水线的性能测量。
+perf对现有进程的只读采样被系统perf_event_paranoid=4拒绝，
+没有改变系统权限或改用特权命令。未重复分配新的profile模型。
+
+新增`rsi/fixed_physical_payload_reader.py`及显式可选的
+`_sealed(..., physical_payload_reader=...)`、
+`audit_cpu_transfer(..., physical_payload_reader=...)`参数。
+默认调用原样保留，不自动启用任何缓存。组件只接受一个外部
+pin file hash绑定的固定本地共享载荷文件；每次读取前后重算
+源文件字节hash，拒绝symlink、目录迁移、模糊report表示和
+非标准envelope。缓存canonical bytes而非可变模型dictionary，
+将全部payload bytes流入完整logical document及原report两个
+canonical hash，不能以payload hash/marker替代数值内容。
+返回独立JSON对象，最终解码前再次核对缓存bytes。它不授予
+任何执行、训练、Fresh或promotion权限。
+
+最初测试命令未设置开发源码PYTHONPATH，三组收集失败；修正
+仅该命令的导入路径，未安装或更改运行环境。初次ruff import/
+format问题及单模块mypy的Any return均已修复。九组相关回归
+125 passed/814.56s，exit0；没有在测试运行时更改源码。
+随后基于真实gzip标记的403100026 bytes未压缩载荷，将存储
+限制拆分为compressed256MiB、decompressed512MiB、canonical
+256MiB，并新增限制/最后hash之后缓存篡改测试。最终五组
+受影响回归84 passed/3.09s；四个变更文件ruff/format、单个
+新模块mypy通过。两次测试不是可相加的独立计数，也不声称
+最终整库pytest/mypy通过。已直接提交并推送Soccer main
+`8f643bf4c2b0f6ec29c120f7678e09b83fc2be9d`，当前队列未改。
+新模块bytes
+`d4f31d904ac6668372fe50360a140bf378e8aa5ec55a0cd88caef2ed5cf7cfa3`。
+
+另建989冻结源码（同8f643bf HEAD），外部988固定两个已完成
+的consumed归档963 case34/35（正/负均保留），不挑选新的成功
+子集、不把读取当新课程。旧读取器实际来自958，新组件实际
+来自989，Core来自910；逐项绑定actual import co_filename。
+标准库与实际导入预检分别exit0、彻底结束后才启动formal。
+预检前四处runner E501已修复；没有任何运行中runner改写。
+988 source bytes
+`9ddec1fdf21908cbe76af2a9ac1b8f9085372deb50e24fa1333b9ccfb761f8dd`。
+固定48GiB memory reserve保持；actual native/physics/Foundation/
+optimizer全部0，原完整52考试仍独立运行。
+
+988正式exit0：两个完整原始logical dictionaries及完整canonical
+hash完全一致，report→independent review linkage一致；对第一
+份返回值进行调用方修改，不污染再次读取的独立对象。实际缓存
+canonical payload210437279 bytes，首次构造11.66296s；
+case34旧读取28.65967s、新读取4.72320s；case35旧29.32200s、
+新4.66611s。这里只测报告读取，不测native执行、独立physics
+审计、Foundation重算或端到端训练；不将约6倍的组件读取比值
+宣传为整体训练加速，也不推断两个样本外的普遍性能。
+
+result seal
+`367dc4571eb286c324b0cc5e3448b5646e53bcfa94d44e3c029f782e406a3214`，
+queue seal
+`ba1bd2d97b83f49aa5e226f4a6e8313c00ab8bba58cb6bf5bf2f6a278d60ce4d`。
+另一个只读进程独立重算result/queue seals、全部5611输入文件
+hash、所有clean source HEAD、两归档完整验证字段、所有零
+计数及False caps，exit0。原始evidence在外部
+`rsi-fixed-payload-reader-qualification-v988/`，不提交大数据。
+
+后续若新一代native实验采用989或此读取器，仍需它自己的
+full causal native/reference资格；988不是完整审计/物理资格，
+旧960也不能替新权重背书。现有963→965→971→972→973/974→
+975→976保持原源码、参数、owner及顺序。M0、Fresh增益、
+4v4自主连续比赛和可宣传视频均仍未完成。
