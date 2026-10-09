@@ -7471,3 +7471,44 @@ test及1项缺qualified G1 assets测试，并非GPU测试已通过。
 本次全库format也实际复查，仍68个既有文件不合格式；单模块
 mypy检查报告既有`wp.init()` untyped-call，不能写成该模块
 type-check已通过。类型检查结果与物理诊断、pytest结果分开。
+
+### 后续隔离build失败与warm160采集准备
+
+入口修复及上述阶段证据已直接提交推送main `4726a04`，没有
+自动晋升policy。完整mypy最终exit1：37 errors/18 files，checked
+891 source files；其中包含既有Warp typing、dm_control stub及
+既有源类型问题，不把早期截取输出当最终错误总数。
+
+968另建隔离环境固定MuJoCo3.12.0/MJWarp3.15.0/Warp1.18.0/
+NumPy2.3.5，未更新966或S2。969源冻结使用source970/4726a04，
+hash `3f536023aa083604f6de6c9896eaf60ea1c198df1e02557fb35b3512ad64dd07`。
+stdlib package/source preflight及expanded F821/F822通过，但正式
+import exit1：MJWarp types.IntegratorType读取
+`mujoco.mjtIntegrator.mjINT_DISCRETE`，该MuJoCo build没有此枚举。
+failure发生在创建output root之前，native/GPU steps、policy
+rollouts和updates全部0，没有正式result或物理资格证明。虽然
+官方依赖声明MuJoCo>=3.12，实际组合不兼容；不能凭metadata或
+“更新”宣称支持。源和环境保留；不动态伪造枚举或覆盖旧环境。
+
+新增独立971 whole40x4 warm collector，source仍采用已资格检查
+中的964/f3f61ae，原788 collect函数不改body。固定复用947整套
+160-job stream17、同一实际914 actor/critic及全部负样本；这是
+同课程/同draw的受控吞吐比较，不是新的160独立课程。固定mean
+shared payload正常读取，完整view/native/extract都使用类型限定
+factory；独立CPU auditor另从旧944 raw policy构建reference，
+绝不从producer初始化。所有Foundation重算、GRU/draw/logp、
+3000CPU/300calls每课程和原48GiB/8GiB bank/100GiB reserve
+保持；serial single process避免再复制一套大模型。另有773
+transport control逐个原native数组对照，不进入学习dataset。
+
+971 formal runner hash
+`6583757791dd1a0ecc13462922d71e1773af8efa7c3b990b9d2b67cc09d4f7cb`。
+最终E/F/I、展开original788 F821/F822、stdlib preflight及actual
+original788 worker/native import路径检查全部exit0；两个预检
+进程结束后source hash与启动前相同，没有在预检中修改源码。
+已启动controller，先等965四个完整native资格及整套结果字节
+绑定，才分配whole bank。计划161新native（160学习+1 control）、
+483000 CPU及48300 Foundation，不写成当前已完成采集。旧
+947及948/949/952消费者未改、未取消；新的warm bank还没有
+接入新学习消费者。当前963 row0–7已独立审查，whole52仍待
+完成。仍无新的Fresh增益或球队宣传突破。
