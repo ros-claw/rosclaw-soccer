@@ -6724,3 +6724,106 @@ HQ1/safe22；874已有63条，HQ9/safe62，均尚未完成160。
 但候选方向/HQ仍未突破；M0、Fresh、球队比赛及宣传目标仍未
 达成。当前真正接续的是导入故障恢复，不是假称新一代训练
 已经获得更高球技。
+
+### 恢复链重新接通到下一代学习（932—939）
+
+931和932均已真实exit0，不再只是排队。931结果seal为
+`sha256:4a8683f36e6ee068adf1cf0ab209dbbec8e106b542ebf722d7ed26d8971f8430`，
+独立读进程检查完整seal及全部4265项input bytes通过。
+932结果seal为
+`sha256:d0b75e8baad04ddd5d35242c47d68ee23bdeb5301260e1971f16a584dcae0a00`，
+完整seal及全部5600项input bytes独立检查通过。
+每项资格均实际重放两条原895归档、6000 CPU子步、600 GRU帧、
+540 draw/log-density，全部原测量结果字段exact；原Foundation
+600调用是绑定并采用，不是新增重算。两项都没有新增native、
+优化器更新或球技增益声明。
+
+931冷编译414.930s，两次warm full audit125.961/126.174s；
+932在原固定exact-source902优化实现上冷编译420.234s，
+warm audit74.787/74.814s。这里只记录两个顺序运行的墙钟时间，
+不是受控端到端速度或峰值内存实验，不给当前策略/球队性能
+附加增益。尤其不把Source902的工具优化说成踢球变强。
+
+恢复任务均使用独立输出，不重写失败900/901/902/912/919/922/
+923/928/929。932修复root/src导入，并用PID+start_ticks+
+command绑定真实931 owner；终态存在后的进程退出正常采用，
+无终态的退出或PID复用拒绝。真实live owner检查以及7个
+合成退出/僵尸/复用/缺失分支通过；合成测试没有physics。
+初版expanded lint未包含完整中间expansion，抓到F821，修复
+后再预检通过，才启动。932 actual module import也确认来源
+是固定Source902，未构造compiler/model。
+
+当前接续为以下队列。状态是最后实际检查，不是预期成功。
+
+| 阶段 | 内容 | 最后实际状态 | handle / owner |
+|---|---|---|---|
+| 933 | 两个不同采样seed的完整缓存路径资格 | ROOT已创建、0条终态sample、无result | 11822 / 3674813 |
+| 934 | 当前914 primary0完整模型导出和重载 | 等待933、无新模型 | 28258 / 3680231 |
+| 935 | 原772 worker的两次原生重复及完整独立审计 | 等待934、无新native | 71461 / child3690522 |
+| 936 | 原695 worker及原757门槛的完整52考试 | 等待935、无新考试 | 26687 / 3698018 |
+| 937 | 当前914自身全部40×4轨迹+一个transport control | 等待936、无新bank | 80967 / 3705010 |
+| 938 | 全部160轨迹、实际GRU均值/density/MC认证 | 等待937、无认证数据集 | 87103 / 3712215 |
+| 939 | 当前914 actor/critic的下一代数值学习 | 等待938、实际更新0 | 79576 / 3718921 |
+
+935的py-spy父进程为3690515，真实native owner是child3690522，
+不是把采样器状态当子任务成功。新的raw profile仍需等待，
+不从waiting样本推断native热点。
+
+全部恢复保留原物理世界、采样课程、原actor配置和安全门槛。
+933仍是固定原874 archive0/1的两个不同seed，不是Fresh，也
+不是新增两个物理课程；仍要求932完整终态并退出才重放。
+934仍固定primary0，不选其他student；原48GiB完整policy准入
+和before/after whole-input检查保留。935仍原772 worker原体，
+936仍原695 worker/原757 score原体，serial、不运行旧spawn main。
+937仍原788 collect原体、独立cold exec子进程，失败和unsafe
+draw保留，原stream17未执行的失败旧队列不伪装成新数据。
+938仍绑定实际当前914参数，不将839轨迹重新标为on-policy。
+
+933/934/935/936/937/938/939各自的完整expanded F821/F822、
+lint、format和compile分别预检通过。933实际Core frozen-field、
+compiler和scripts导入通过；935实际原772 worker导入通过；
+936实际原695 worker导入通过；937实际原788 collector导入
+通过。以上均没有构造完整policy、auditor或执行physics。
+936初次实际导入失败抓到父CLI标志串入被导入935模块。
+未热改已经运行的935，只在未启动的936预检入口隔离argv；
+937也在namespace导入时隔离并finally恢复argv。最终重新
+预检通过后才启动。没有multiprocessing spawn，不声称做过
+不存在的pickle/`__mp_main__`验收。
+
+939复用原914数值拟合函数体，只有完整数据规模160/40及本轮
+fit seeds改变；实际初始化从938认证的914 actor/persistent
+critic继续，不回到839/D3。critic credit仍按context_id mod5
+隔离课程，fresh value initializer seed913、不采用历史泄漏
+critic；6次value fit各1024、4次独立actor/critic fit最大各1024。
+四张GPU分别承载独立fit，不宣称DDP梯度同步。原KL/概率配置、
+奖励和motor边界不变，primary0预先固定，学习后仍须独立
+数值审查、完整模型重载、原生资格、完整考试及最终Fresh。
+没有从学习消费者直接激活policy或自动制作宣传视频。
+
+939还对实际generated fitting body做了完整160结构调度测试：
+每个OOF fold128条训练轨迹/32个课程、8个held-out课程，
+全量value fit160条，4个actor fit均初始化指定当前参数；
+在内存合成数组上使用mock优化器，实际更新0、无写出文件、
+无physics。该检查也覆盖从旧78扩展后全量fold的mask长度；
+它不是新一代训练完成或收益证明。
+
+新source SHA256：932 `db687406b2e6d9011ed1d3eb32809e979bea33aa9beadb71e156447639be8c7a`；
+933 `5b0a0c09a2f64d95d52fce13a85438b0148ec889ecca0a9dfbfcc02cf2fc2432`；
+934 `782f0a20ddc6c580434f10f081062b7f4e357947d200d43cf987e7bd2ab2f0c1`；
+935 `72a83725781c4384d02a927811770c63b04868eaa67b9cf4d8d95c5c913aab93`；
+936 `4eccb28d4cadf3f71a7006e67b1a0ca91fb0bc855a51625106e6b99f016d91fe`；
+937 `b87bee1e40b0bf677cd31790f7bb336797c064c78baa154c31c689029d03ce65`；
+938 `5b639bdd39c9566da7bc8bfd275cdff183dafdc27a06dd5b6620a33ba8e631e4`；
+939 `65e59bc4b4c321f9954a519f8a99207ee9505deff43371591c4ffb233f7cc728`。
+
+932/933/934 queue seal及全部1382/3043/3587项bytes分别独立
+检查通过。935—939的全部五个queue seal及共同433项union
+bytes也独立检查通过（各自411/416/418/426/429 pins），不同
+队列共有路径无hash冲突。原853/874未改、未取消，最后实测
+分别28条HQ2/safe28及83条HQ11/safe82；仍不以部分结果代替
+完整160，也不把不同课程进度的HQ计数当学习提升。
+
+本轮完成的物理证据是工具路径的两项完整资格复核；当前914
+新策略的原生动作、完整52、160新数据及939学习仍未完成。
+本恢复分支不能超越896完整考试拒绝的证据上限。M0/Fresh/
+promotion及最终连续自主4v4宣传视频均未达标，目标不缩小。
