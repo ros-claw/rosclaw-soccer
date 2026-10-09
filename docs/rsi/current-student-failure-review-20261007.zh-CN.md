@@ -7864,3 +7864,26 @@ exit0证明捕获“silently changed option tolerance”，在forward、
 MjData、policy/Torch导入和任何physics step之前拒绝；原CPU
 tolerance仍1e-8，前后源码hash一致。这里的PASS是拒绝不合格
 转换的负向证据，GPU足球训练资格仍NOT QUALIFIED。
+
+## 2026-10-09：保留native tolerance的完整反事实实验
+
+上一goal turn为PROGRESS：实际完成980/981/983 GPU diagnostics，
+加固silent solver option转换门、147 tests通过并推送fc1e630。
+本轮先确认963/965/971/972/973/974/975/976 exact owners存活，
+963从25继续推进到28例，未因stdout观察超时重启或删掉失败。
+
+下载官方MJWarp v3.13.0（d1a55b6d…），独立984 source/986env
+仅保留原native tolerance并使用明确local version，固定提交
+c077b820…；没有放宽CPU/world/guard或替换既有环境。新985
+完成24000 GPU/3000 CPU steps及全量独立复核，10项转换参数
+与原CPU一致，但球最大位置分量误差仍8.8208m、sampled pelvis
+最低0.05974m，不能取得backend资格。它是teacher-forced PD
+diagnostic，不是自主策略，更没有进入任何学习银行。
+
+实验、全部8副本结果、来源、安装/预检错误与恢复、独立核对、
+可重放研究补丁见
+[MuJoCo/MJWarp容差与反馈对照](mjwarp-native-tolerance-ablation-20261009.zh-CN.md)。
+这排除了“只恢复容差就足够”的简单路线；不推断唯一分叉原因，
+下一项GPU资格必须检验自身观测/recurrent state驱动的完整神经
+策略闭环和分离的平衡label agreement。CPU考试和当前学习链
+继续，M0/Fresh/球队自主比赛/宣传视频仍未完成。
