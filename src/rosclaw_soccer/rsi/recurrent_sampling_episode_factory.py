@@ -13,6 +13,7 @@ import numpy as np
 import rosclaw.growth.canonical_json_snapshot as snapshot_module
 from rosclaw.growth.correlated_exploration import stationary_noise
 
+from rosclaw_soccer.rsi.fixed_recurrent_reference_audit import _numeric_graph_hash
 from rosclaw_soccer.rsi.owned_recurrent_sampling_preview import OwnedRecurrentSamplingPreview
 from rosclaw_soccer.rsi.recurrent_sampling_motor import CompiledRecurrentSamplingMotor
 from rosclaw_soccer.rsi.step_motor_phase_context import ContactPhaseMemory
@@ -106,23 +107,35 @@ class RecurrentSamplingEpisodeFactory:
         # The original decoder checks the entire original preview and builds
         # the original allowlisted numeric objects, not an external callback.
         self._prototype = CompiledRecurrentSamplingMotor(policy)
+        self._prototype_hash = _numeric_graph_hash(self._prototype)
         self._mean_hash = hash_json(view["mean_model"])
         self._initial_policy_hash = str(policy["policy_hash"])
+        self._stable()
+
+    def _stable(self) -> None:
         self._preview._stable()
-
-    def preview(self, view: dict[str, Any]) -> dict[str, Any]:
-        return self._preview.preview(view)
-
-    def sampling_view(self, *, seed: int) -> dict[str, Any]:
-        return self._preview.sampling_view(seed=seed)
-
-    def bind(self, policy: dict[str, Any]) -> CompiledRecurrentSamplingMotor:
-        view = self._preview.validate_preview(policy)
         if (
             self._prototype._policy_hash != self._initial_policy_hash
             or self._mean_hash != self._preview._mean_hash
+            or _numeric_graph_hash(self._prototype) != self._prototype_hash
         ):
             raise ValueError("fixed original recurrent prototype commitment changed")
+
+    def preview(self, view: dict[str, Any]) -> dict[str, Any]:
+        self._stable()
+        result = self._preview.preview(view)
+        self._stable()
+        return result
+
+    def sampling_view(self, *, seed: int) -> dict[str, Any]:
+        self._stable()
+        result = self._preview.sampling_view(seed=seed)
+        self._stable()
+        return result
+
+    def bind(self, policy: dict[str, Any]) -> CompiledRecurrentSamplingMotor:
+        self._stable()
+        view = self._preview.validate_preview(policy)
         decoder = copy.copy(self._prototype)
         behavior = copy.copy(self._prototype._behavior)
         behavior._layers = list(self._prototype._behavior._layers)
@@ -151,14 +164,9 @@ class RecurrentSamplingEpisodeFactory:
         decoder._last_draw = np.zeros(12)
         decoder._last_log_probability = 0.0
         decoder._last_sampled = False
-        self._preview._stable()
+        self._stable()
         return decoder
 
     def contract(self) -> dict[str, Any]:
-        self._preview._stable()
-        if (
-            self._prototype._policy_hash != self._initial_policy_hash
-            or self._mean_hash != self._preview._mean_hash
-        ):
-            raise ValueError("fixed original recurrent prototype commitment changed")
+        self._stable()
         return _contract(self._mean_hash, self._preview._pins)

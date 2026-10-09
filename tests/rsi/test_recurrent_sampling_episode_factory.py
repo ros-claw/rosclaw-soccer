@@ -100,3 +100,29 @@ def test_seed_law_ownership_and_source_drift(learned, monkeypatch):  # noqa: F81
     monkeypatch.setitem(factory._preview._pins, path, "sha256:" + "f" * 64)
     with pytest.raises(ValueError, match="dependency"):
         factory.bind(factory.preview(second_view))
+
+
+@pytest.mark.parametrize("mutation", ["hidden", "progress", "draw", "weights"])
+def test_cached_numeric_prototype_drift_refused(learned, mutation):  # noqa: F811
+    factory = RecurrentSamplingEpisodeFactory(learned[-1])
+    policy = factory.preview(factory.sampling_view(seed=773))
+    prototype = factory._prototype
+    if mutation == "hidden":
+        prototype._recurrent._state[0] = 0.1
+    elif mutation == "progress":
+        prototype._active_frame = 30
+    elif mutation == "draw":
+        prototype._last_draw[0] = 0.1
+    else:
+        # Replacing a read-only parameter array must not bypass integrity.
+        layer = prototype._behavior._layers[0]
+        layer[0].flags.writeable = True
+        layer[0].flat[0] += 0.1
+    for action in (
+        lambda: factory.bind(policy),
+        factory.contract,
+        lambda: factory.preview(policy["step_motor_proof"]["model"]),
+        lambda: factory.sampling_view(seed=774),
+    ):
+        with pytest.raises(ValueError, match="prototype"):
+            action()

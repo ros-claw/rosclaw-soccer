@@ -7314,3 +7314,56 @@ reference只从原945 archive编译，绝不从新producer preview/
 prototype初始化。当前ROOT未创建、真实native资格尚未完成，
 不能把queue写成“缓存已用于新完整采样”。原945已有0–3行
 审查完成并继续运行；其它原队列不改，完整52成绩尚未结束。
+
+#### 接续：采样原型完整性加固与独立资格审查（2026-10-09）
+
+原main `0e0f104`已推送，fetch后与origin/main为0/0；用户的
+Core及其它workspace改动不动，Core PR616没有由Agent自行合并。
+960原48GiB admission已满足并进入实际模型/缓存构造阶段，
+ROOT与完整model.json.gz已出现，正式runner仍运行。945已
+独立关闭最前5个case，完整52尚未结束；不统计成整代成绩。
+
+为加大量产前查验采样路径，新增回归先明确复现了私有缓存
+原型完整性缺口：改变原型GRU hidden state后，旧bind没有
+拒绝（1 failed/32.67s）。这不是发现既有物理档案已污染；
+但policy hash及mean identity的检查不能代替固定数值图检查。
+
+`RecurrentSamplingEpisodeFactory`现在绑定原型的完整typed
+numeric graph，preview、sampling_view、bind及contract都
+检查source/mean/policy/prototype一致性；包含GRU状态、执行
+进度、上次draw及共享参数数组。每回合仍由原方法重置contact/
+parent/warm/GRU和AR噪声，未修改采样律、动作bounds或actor/
+critic。该缓存仍是显式可选SIM模块，不自动切换旧生产队列。
+
+锁定源码后相关4组共25 passed/463.60s：两类mean/两个seed的
+完整300帧原decoder delta、GRU、draw/logp一致，接触前/中/后
+因果历史、fresh/untouched状态独立、参数/hidden/progress/draw
+漂移拒绝及factory准入回归。两文件ruff/format、diff check、
+全src/tests compileall通过；该模块单独mypy通过。全库检查
+没有写成通过：ruff有2项既有F811（未改动的advantage memory
+测试），format有68个既有文件差异，mypy src有11项错误/
+8文件（891 source files）；不以单模块成功掩盖全库失败，
+也未为本改动批量改写历史源。没有运行或宣称全量pytest。
+
+为960结果接上单独审查，编写了只读archive verifier：不导入
+producer factory或任何motor/compiler，不生成新physics，
+等待exact PID/start退出后，再核对terminal、每个input byte、
+source heads、两个原课程的每个native数组及dtype/shape、
+row/raw/commitment/review/Foundation链。raw有shared payload时
+使用冻结的纯数据reader恢复完整逻辑报告再验seal；原commitment
+并不self-seal，其canonical digest必须由完整raw report绑定。
+
+961初始预检查出了错误self-seal/shared-envelope假设，未生成
+formal queue。另一次binding preflight在运行中被添加后续字段
+pin，违反预检source不变纪律；即使该预检输出成功，也不作为
+最终source资格证据。961源保留不用于正式执行；等待该进程
+退出后，另建未使用962，所有修改及格式化在启动前完成，
+独立E/F/I已通过，source digest
+`3225fe15fbc122de6ccfc6d9e0f747bdd7ec057e6993c8f2acf4cdc9a38f58c0`。
+962正重新验证原课程binding，结束后还须复查source digest并
+执行正式只读审查。该审查只adopt960真实执行的6000 CPU/
+600 Foundation，不重复计数为新采集或学习。
+
+当前没有新晋升、Fresh成绩或球技增益，没有制作新宣传视频；
+M0/自主4v4能力仍未完成。继续以实际物理资格、完整课程数据、
+独立审查和后续真实学习推进，而不是把基础设施加固当突破。
