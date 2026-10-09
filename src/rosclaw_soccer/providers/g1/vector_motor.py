@@ -102,7 +102,10 @@ class G1VectorMotorBatch:
             raise RuntimeError("Warp physics device binding differs")
         self.cpu_model = build_g1_stadium_model(asset_root, spec=goal)
         self.cpu_model.opt.timestep = 0.002
-        from rosclaw_soccer.sim.mjwarp_contract import qualify_mjwarp_damping
+        from rosclaw_soccer.sim.mjwarp_contract import (
+            _put_model_checked,
+            qualify_mjwarp_damping,
+        )
 
         self.damping_qualification = qualify_mjwarp_damping(
             self.cpu_model, device=self.config.device
@@ -121,7 +124,7 @@ class G1VectorMotorBatch:
             raise ValueError("G1 motor/joint transmission identity differs")
         initial = mujoco.MjData(self.cpu_model)
         mujoco.mj_forward(self.cpu_model, initial)
-        self._model = mjw.put_model(self.cpu_model)
+        self._model = _put_model_checked(mjw, self.cpu_model)
         self._data = mjw.put_data(
             self.cpu_model, initial, nworld=self.config.environment_count, nconmax=256, njmax=1024
         )

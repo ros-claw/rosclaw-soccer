@@ -7512,3 +7512,16 @@ original788 worker/native import路径检查全部exit0；两个预检
 947及948/949/952消费者未改、未取消；新的warm bank还没有
 接入新学习消费者。当前963 row0–7已独立审查，whole52仍待
 完成。仍无新的Fresh增益或球队宣传突破。
+
+971 formal controller已写出完整queue并进入前置资格等待：
+PID4095469/start219567317，handle73066，queue seal
+`95f14f9a1534fe85185d06dc21dabedd376440ccaa7ee83fd876716caba5df12`。
+独立stdlib逐个核对全部6692项input bytes一致，160个jobs与原
+947完整catalog逐项相同；没有采集output root或学习更新。
+
+转换warning拒绝也接到vector_motor和goalkeeper_mjwarp实际
+分配episode model的第二次put_model调用，避免只保护阻尼
+scratch model。未更改任何冻结的964/942/970或运行中的runner。
+两个相关测试组再次35 passed/6 skipped；上述skip不作为正式
+GPU学习证据。改变文件ruff、全src/tests compileall和diff check
+通过；既有全库format/mypy问题不因这次小改动被写成已解决。

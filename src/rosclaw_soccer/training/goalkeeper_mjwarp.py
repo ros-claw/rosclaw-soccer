@@ -630,7 +630,10 @@ class GoalkeeperMJWarpBatch:
         import torch
         import warp as wp
 
-        from rosclaw_soccer.sim.mjwarp_contract import qualify_mjwarp_damping
+        from rosclaw_soccer.sim.mjwarp_contract import (
+            _put_model_checked,
+            qualify_mjwarp_damping,
+        )
         from rosclaw_soccer.world.field import build_g1_stadium_model
 
         self.torch = torch
@@ -662,7 +665,7 @@ class GoalkeeperMJWarpBatch:
             )
             cpu_data = mujoco.MjData(self.cpu_model)
             mujoco.mj_forward(self.cpu_model, cpu_data)
-            self.model = mjw.put_model(self.cpu_model)
+            self.model = _put_model_checked(mjw, self.cpu_model)
             self.data = mjw.put_data(
                 self.cpu_model,
                 cpu_data,
