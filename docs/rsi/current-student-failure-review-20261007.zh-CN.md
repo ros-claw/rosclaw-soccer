@@ -6988,3 +6988,96 @@ pins。所有新实验使用独立输出路径，不伪造旧失败终态。
 最终连续自主4v4比赛视频均未达标。后续应优先审查当前策略
 真实考试、积累自身rollout；如优化吞吐，须单独证明固定完整
 parent/payload缓存与原物理/动作/概率逐字段一致，不能减少审计。
+
+### 2026-10-09：完整当前模型落盘；因果任务历史改善离线credit，新增配对分支
+
+943现已退出0、完整export闭环结束。terminal seal
+`a7157d24fa4b6ea38860d31ba9151dc5734f211e96f5365cf0a973b5a9c7a4da`；
+当前914 primary0完整mean hash
+`adbee3d6c304919e65af3514cb037eef56f59934ae1db80c021f7a8a06d1d7a4`；
+gzip artifact digest
+`e9afe78d4429e118c9407156d6ad062914583c462a652a9ea1e44fc2053d64d9`。
+原parent/candidate完整validation及完整saved candidate重载通过。
+result seal及全部3816项input bytes另行独立检查通过。这里没有
+新物理执行、训练更新或physical gain。944随后实际进入原生
+执行，repeat0的MJB/trace/report已出现，仍没有完整两遍终态；
+945/947/948/949仍按原依赖等待，不能声称完整考试/160采样完成。
+
+回顾credit问题时，先检查既有Core `grouped_terminal_credit`，
+没有重复实现或把旧LOO路线包装为新突破。只读固定78诊断中，
+按同课程OTHER draws逐时计算LOO baseline，frame MSE111.5511，
+但唯一unsafe轨迹positive advantage比例68.15%，更不理想；
+而且这种baseline使用同课程其它实际return，不是context-held-out
+critic预测，信息条件不同，不作OOD优越性比较。未更新actor。
+历史v812/v813的恒定终局LOO actor已有可复现unsafe拒绝，不能
+因数字更低就恢复这一旧路线。
+
+新开发Soccer离线适配器`causal_contact_task_state`，不是Core中的
+足球规则，也不是硬件安全证书。针对固定300帧contact任务，
+构造六个before-action特征：已知remaining deadline、此前触球
+是否发生、距离此前first contact的elapsed time、此前dirty/
+越界/height violation是否已经发生。frame f严格只观察截至f-1
+的完成测量，含actor开始前的teacher历史；不使用当前动作结果、
+未来接触、未来outcome标签或实际未来终止时间。原135维中已有
+粗粒度ContactPhaseMemory，本新增是任务历史状态，不宣称原
+系统完全没有记忆，更不宣称实现意识。actor输入不变。
+
+新17 tests及原temporal_contact_rewards组共52 passed，0.60秒；
+覆盖事件严格阈值、不会清除的past latch、frame0/30/79/200/299
+当前及未来修改不影响当前特征、完整300帧、NaN/Inf/negative/
+shape/dtype/mapping拒绝、输入不变及只读输出。ruff、compile和
+模块mypy通过。source digest
+`bab07f946f5e69e6803d6b9d7e5223dbae72b6f5476dcfd7cf37d9bfcb8a3863`；
+代码/tests commit `6e9069f`已推送。
+
+950为原925协议的明确配对critic-only实验：固定913的78条、15
+课程、21060决策帧，输入135+6=141；原135初始化prefix逐元素
+不变，新增列0，五fold的原914 seed/config及1024步预算不变，
+全部target/reward/轨迹保留，无actor输入或参数改变。实际value
+optimizer5120 steps，actor0、physics0，不是在线更新。
+result seal
+`5c906ef167b079d13092c4947472fd09a01e8f5ffb2e9f8af6428883bbcfa4f7`。
+951完全独立NumPy使用前缀累积、严格shift-one-frame重建全部
+六个状态，未导入生产task-state/value函数；所有21060状态、
+扩展特征、预测、raw/normalized advantage逐元素完全一致，
+完整训练MSE重算误差0，采用5120 steps但未重执行优化器。
+951 result seal
+`2d017e4905a1059ab336f0498c0e63112c3528cf6cfd8ec74b71dd0b6cdb10f6`；
+全部701项input bytes也另行独立检查通过。
+
+frame-weighted held-out MSE：原135 critic140.0563，950为131.3432，
+降低约6.22%；excluded global mean139.3719、time-only135.0939。
+equal-context MSE：155.3436降至146.5390。HQ mean advantage
+约0.886，唯一unsafe约-2.018，但unsafe仍有42.22%正值，不能
+解释为安全或动作因果证明。三个90-frame窗口为237.5104/
+87.9548/68.5645：主要改善中后期；前期仍差于time-only228.7624，
+不宣称跑动到first contact问题已被解决。该数据已消费，非
+完整新160、非Fresh、非物理球技收益。
+
+952将该诊断转化为明确的下一代配对学习分支，原949不修改。
+仍仅在948完整160/40当前914物理数据及密度认证之后拟合。
+offline OOF credit critic使用141维task history、原135 initializer
+加六列0；joint actor及persistent auxiliary critic继续实际914
+参数及原135输入。因此没有改变部署actor观测、全模型critic
+schema或运动参数维度，不需要让value141渗入电机控制。value
+fit seeds9490+fold及actor seeds94900+index与949对应分支完全
+相同；奖励、预算、动作/KL/rollback及primary0规则保持一致。
+需要后续独立数值审查、完整export、native/full52/Fresh才能
+评价物理改善，不能因为950较好就激活策略。
+
+952真实generated函数预检及内存完整160调度通过；最终测试还
+使用实际新adapter处理160份合成raw trace，验证value141、
+actor/joint critic135、原initializer零新增列、当前参数初始化、
+全部6 value/4 joint调用及feature报告绑定到terminal。mock只做
+I/O/优化器/OOF，不分配实际full model、不写物理或数值文件，
+实际更新0；这不是训练完成。初次source预检发现路径全局替换
+误改原939模板名，在任何queue/ROOT创建前拒绝；修正未启动的
+952、重新预检后才启动等待。最终source digest
+`754c9138621fd06cefcc78b8d772098ed53e2a32eb1d2c821ee76a71ef78aa6f`。
+950/951 source digests分别
+`101913f3009b3c6d5958427f964f3055b301822a12a3573ad6567734e371c774`/
+`0ab2f2b7cfe74459f354e136d9b22a6a43de503cd3ab2cbb40c5d8c5d65d0e70`。
+
+本轮有经过复查的数值学习信号改善，但还没有运动成绩提升。
+M0、真正连续自主4v4及宣传视频仍未达标；继续以当前身体
+原生验证、完整考试、自有新数据和候选物理收益为下一阶段。
