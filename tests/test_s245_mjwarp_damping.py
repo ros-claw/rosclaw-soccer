@@ -1,13 +1,49 @@
 import os
+import warnings
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from rosclaw_soccer.sim.mjwarp_contract import (
+    _put_model_checked,
     qualify_mjwarp_damping,
     validate_damping_forces,
 )
+
+
+@pytest.mark.parametrize("category", [UserWarning, RuntimeWarning, DeprecationWarning])
+def test_model_conversion_warning_cannot_be_silently_qualified(category):
+    sentinel = object()
+
+    def degraded(model):
+        assert model is sentinel
+        warnings.warn("MULTICCD: At most 1 contact will be generated", category, stacklevel=2)
+        return object()
+
+    # Even an operator's pre-existing ignore filter cannot hide degradation.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(ValueError, match="At most 1 contact"):
+            _put_model_checked(SimpleNamespace(put_model=degraded), sentinel)
+
+
+def test_warning_free_conversion_preserves_exact_model_and_exception():
+    model = object()
+    converted = object()
+
+    def convert(candidate):
+        assert candidate is model
+        return converted
+
+    assert _put_model_checked(SimpleNamespace(put_model=convert), model) is converted
+
+    def reject(candidate):
+        raise RuntimeError("unsupported model")
+
+    with pytest.raises(RuntimeError, match="unsupported model"):
+        _put_model_checked(SimpleNamespace(put_model=reject), model)
 
 
 def test_uniform_scalar_shortcut_cannot_pass_anisotropic_force_contract():

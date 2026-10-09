@@ -7384,3 +7384,90 @@ shared physical report，继续该case的独立CPU/Foundation
 审查。两个固定课程的完整qualification尚未结束。945及
 947/948/949/952原完整考试→采样→dataset→paired learning
 队列仍按原协议保持运行/等待，没有改硬编码输入或自动激活。
+
+## 2026-10-09：960/962闭合，完整52课程推进，GPU碰撞语义拒绝
+
+960已exit0：两个固定原课程实际6000 CPU steps、600 Foundation
+调用及600 GRU frames，24项native数组各自dtype/shape/value与
+原945完全一致。原constructor一次299.2799s，来自旧945原始档案
+的独立reference constructor一次210.7247s；两个完整native+
+CPU/Foundation case分别233.8364s和187.3960s。这证明缓存没有
+改变这两个课程，不是学习增益或完整考试通过。terminal seal
+`341b268bd62726b9e8d3c04283dc8d118662d750ddd0ecf6e5e4b5a7c27cd227`，
+全部5343项input bytes独立复核一致。
+
+962独立archive reviewer已exit0：没有producer/compiler导入，
+5362项input bytes、两课程全部数组、row/raw/commitment/
+review/Foundation链独立核对一致。result seal
+`bc34177ec84b2df5255a3fa50bc1dc80895d20bcc89f10267c2d076a7748f1d8`。
+只adopt960已有执行；新增physics/updates均0，不重复计算采集量。
+原失败959/不合格961保持原样，不改写其失败历史。
+
+另行固定963整套原52课程，producer缓存和独立reference分离，
+原695 native/audit worker及757 score函数保持不变，catalog、
+baseline、bounds、48GiB RAM和100GiB磁盘reserve不降低。
+runner hash `28def29aa9a437d6af5500757f5c34ba7e8f53828d5f15956130082768bb3775`，
+queue seal `d6c4cc98b62b83f468f545edc6b191a8011e5e67c1e38451485044c880fa9189`，
+5346项queue input bytes全部独立核对。PID4015214/start219284137
+仍在执行，case0–4已完成独立审查；没有whole52 verdict，不据此
+推断最终成功率或激活候选。原945/947/948/949/952队列未修改。
+
+965固定最新原型完整性修复的source964/f3f61ae，等待963 exact
+owner结束及完整52课程安全审查。计划两个预定seed各两repeat，
+原772 worker不变，4 native/12000 CPU/1200 Foundation；只有
+一个课程、两个seed，不虚报四个独立课程。seed773须与旧944
+全部28数组一致；独立reference只从旧raw初始化，另seed须产生
+不同draw。runner hash
+`21d327deb327f2c169b67f632222ad038de33ffb0ea82abaa165962befbab2c5`，
+queue seal `cd356d84a04fe6d00a6d2cb09bcf6d43bf61617e3a3c92f098250bf14c212633`；
+6682项queue input bytes核对一致。尚未执行这四个native，不将
+预检/排队写成采集完成。未实现或宣称新的warm160完整bank。
+
+为解决物理采集吞吐瓶颈，966另建隔离环境，不修改运行中的S2
+或历史Isaac环境。固定MuJoCo3.12.0/MJWarp3.12.0/Warp1.15.0/
+NumPy2.3.5；CPU libmujoco与S2逐字节相同。967在物理GPU2
+（逻辑cuda:0）实际完成8 worlds×100 torque steps和100 CPU
+steps，原世界246da475不改collider、质量、solver或MULTICCD。
+CPU前10帧重建与原档案完全一致；GPU最大qpos差
+6.915703797e-6、qvel差1.295640192e-4，三组实际阻尼force
+最大差3.058463331e-10。result seal
+`3e1f52613154c40a21a604c14a9aa8552e4f78e01cd724cdbff124a292e7b165`，
+2157项input bytes及两个primitive文件hash独立复核一致。
+外部原始证据：`rsi-mjwarp-native-screen-probe-v967`。
+
+**967只是诊断，不是训练后端通过**：它没有完整300帧、足球触球
+标签或因果policy rollout，没有actor/critic update。put_model
+实际警告Cylinder/Cylinder、Cylinder/Box、Cylinder/Mesh在该
+build不支持MULTICCD多接触点、最多1 contact。不能从短轨迹
+小差异或阻尼通过推断整套碰撞等价，更不能用它直接生成正式
+RL学习样本。警告未记录在旧967 result字段中，因此本段明确
+保存该限制，不能只引用其result成功标记。
+
+本轮把这一真实问题转为可复用入口加固：现有
+`qualify_mjwarp_damping`调用严格model conversion helper，捕获
+全部conversion warning（即使外部filter=ignore），在forward/
+policy加载/学习之前拒绝；无隐式warning allowlist。无warning
+返回原对象，原异常继续传播。需要调查后端兼容性而不是自动
+关闭MULTICCD或改机器人碰撞形状。实际用同一compiled MJB和
+966 build复现：新helper拒绝上述警告，physics/policy loads/
+updates=0，原模型damping和flags不变，执行前后source hash
+`35e458695d996d2407e0da676f01777a535d178a5544980f24dc6af7980f4720`
+一致。此拒绝不证明历史档案污染，不回写旧证书。
+
+相关35 tests passed/6 skipped/1.99s；skip为5项explicit GPU
+test及1项缺qualified G1 assets测试，并非GPU测试已通过。
+最初未设正确Soccer/Core PYTHONPATH导致collection失败，已修正
+调用路径重新运行，未安装或修改live依赖。改变文件ruff/format
+和全src/tests compileall通过；全库ruff仍2项既有F811，未宣称
+全库检查通过或全量pytest完成。
+
+后续研究依据官方[MJWarp文档](https://mujoco.readthedocs.io/en/stable/mjwarp/)
+和[项目依赖](https://github.com/google-deepmind/mujoco_warp/blob/main/pyproject.toml)：
+新build是待检验的替代，不是“更新版本必然物理正确”。后续应
+另建隔离版本，先原模型转换、阻尼和完整接触标签资格，再考虑
+批量学习。CPU strict replay继续作为最终物理依据。M0、Fresh
+增益、promotion和自主4v4宣传成果依然未达成。
+
+本次全库format也实际复查，仍68个既有文件不合格式；单模块
+mypy检查报告既有`wp.init()` untyped-call，不能写成该模块
+type-check已通过。类型检查结果与物理诊断、pytest结果分开。

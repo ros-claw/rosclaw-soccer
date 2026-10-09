@@ -8,12 +8,34 @@ forces against native MuJoCo, without changing the model or taking a step.
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+
+
+def _put_model_checked(backend: Any, cpu_model: Any) -> Any:
+    """Reject model-conversion warnings rather than silently qualifying degradation.
+
+    This strict admission rule deliberately has no warning allowlist. A backend
+    that drops multicontact support must be investigated in an isolated build;
+    matching passive forces cannot establish matching collision semantics.
+    """
+    with warnings.catch_warnings(record=True) as observed:
+        warnings.simplefilter("always")
+        model = backend.put_model(cpu_model)
+    if observed:
+        details = "; ".join(
+            f"{warning.category.__name__}: {warning.message}" for warning in observed
+        )
+        raise ValueError(
+            f"MJWarp model conversion emitted warnings: {details}; "
+            "do not train on this backend; qualify an isolated compatible build"
+        )
+    return model
 
 
 def validate_damping_forces(expected: Any, measured: Any) -> float:
@@ -51,7 +73,7 @@ def qualify_mjwarp_damping(cpu_model: Any, *, device: str) -> dict[str, Any]:
 
     wp.init()
     with wp.ScopedDevice(device):
-        gm = mjw.put_model(cpu_model)
+        gm = _put_model_checked(mjw, cpu_model)
         native = mujoco.MjData(cpu_model)
         mujoco.mj_forward(cpu_model, native)
         gpu = mjw.put_data(cpu_model, native, nworld=1, nconmax=256, njmax=1024)
@@ -72,6 +94,7 @@ def qualify_mjwarp_damping(cpu_model: Any, *, device: str) -> dict[str, Any]:
         "mujoco_version": mujoco.__version__,
         "warp_version": wp.__version__,
         "device": device,
+        "model_conversion_warnings": [],
         "passive_kernel_hash": hash_bytes(kernel_path.read_bytes()),
         "dof_damping_hash": hash_bytes(np.asarray(cpu_model.dof_damping).tobytes()),
         "expected_force_hash": hash_bytes(expected_array.tobytes()),
