@@ -7149,3 +7149,49 @@ Soccer/Core src，重新运行全部5组通过；没有把最初失败藏作skip
 外部953/954的ruff E/F/I分别以明确120/150行长检查通过，原88
 行长检查曾拒绝长行，格式化后用独立明确配置复检；不是全库
 lint通过。没有新视频或运动成绩突破，继续M0物理闭环。
+
+#### 本轮后续实际闭环：944完成，增加预算的955被否定
+
+944已真实exit0：两个native、6000 CPU重放、600 Foundation复算、
+540 draws/log probability重建完整结束。terminal seal
+`8ccdcab5fc680fd7b35c5cd0fdd59ee426d485f508d917f102479be940a295f5`，
+qualification seal
+`cfcf916075dddd430396ccb9b9e3236d8aff7007b54b85c22ab1fe3431ecd512`。
+另行逐元素核对所有28个重复native数组：字段、dtype、shape及
+所有数值完全相同；两次review相同，都是安全true/HQ false。
+全部3962项commit输入字节再次独立检查通过。这个结果证明
+实际当前914 candidate执行与探索可重现，不是足球收益。945
+已退出944等待、推进后续完整52准备；未见完整52 ROOT或成绩，
+不报告已完成首项考试。953也已获得原48GiB入场资源并实际
+进入原始完整审查剖析，不再仅排队；终态仍未产生。
+
+为回答“是否只需更大训练量”，实施955明确预算消融：沿用
+950固定78/15、同141维因果状态、相同seed/initializer/target/
+reward/网络及其它配置，仅将五fold每fit从1024改为4096。
+明确声明original config不再完全不变，而仅steps变化；实际
+20480 value optimizer更新、actor0、native0，未输出或选用
+部署模型。source预检最初因嵌套模板变量名未进入ruff命名空间
+拒绝，发生于任何ROOT/分配前；补充明确绑定后重新检查完整
+展开源并正式运行，没有编辑在途或已开始的fit代码。
+
+955真实result seal
+`37d5d48f77530a6539ae5d8a2240773785c6fabf43038f1833aab8f3f21d6cc8`。
+held-out MSE从950的131.343229恶化至180.169147；equal-context
+为196.768649。按954固定事件mask直接从955原始预测重算：
+首次触球及以前MSE395.751599，equal-context468.855433，均更差。
+这条实验被否定，不根据更低训练损失挑选模型；不替换949/952，
+不修改现有新160训练的seed、奖励或预算。
+
+956使用原951独立NumPy方法验证同一4096配置：全部21060
+因果状态/特征、OOF predictions、raw/normalized advantages及
+五fold完整训练MSE逐值重建，maximum MSE error0。20480 steps
+是采用真实fit receipt，不是重新执行优化器。review seal
+`d9ebb682a3703b2850ae8d14dc944f73496ddff763ab732a77af0a7761176a13`，
+全部703项input bytes再次独立通过。955/956源digest分别
+`e5ba147cedbc72da3a42e275f609bca58cbd92a7ce217599cfed83112c1294ce`/
+`bbb2da0fe53e0b67bbdbc15db303a85e836746dfb84a7940b11083d83c894ce9`。
+
+本消融支持“固定这批消费数据单纯扩大critic拟合预算不足以
+修好首次触球”，但未识别唯一病因，更不是“任何大规模RL
+无效”的结论。后续仍要靠新40课程实际物理数据、原始链耗时
+定位及严格配对候选考试，不把数值诊断替代M0能力盆扩张。
