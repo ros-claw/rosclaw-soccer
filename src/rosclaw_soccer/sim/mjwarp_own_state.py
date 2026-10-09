@@ -22,7 +22,9 @@ class MjWarpOwnStateDiagnostic:
     Subsequently read observations from that same host object and call step.
     CPU mj_objectVelocity/mj_jacBody/mj_contactForce may read the exported GPU
     intermediates, but CPU mj_forward/mj_step must not be called on the mirror.
-    Constraint overflow is rejected *before* the backend's clamping exporter.
+    Every backend overflow/convergence flag and constraint overflow is rejected
+    *before* the backend's clamping exporter. No warning flag is cleared or
+    silently allowlisted, including solver/line-search iteration exhaustion.
     A failure permanently invalidates this instance; no implicit retry/reset.
     """
 
@@ -57,6 +59,17 @@ class MjWarpOwnStateDiagnostic:
 
     def _export(self) -> None:
         gpu = self._gpu
+        try:
+            overflow = np.asarray(gpu.overflow.numpy())
+        except (AttributeError, TypeError, ValueError) as error:
+            raise FloatingPointError("complete GPU overflow bitmask required; no export") from error
+        if overflow.shape != (1,) or overflow.dtype.kind not in "iu":
+            raise FloatingPointError("GPU overflow/convergence flag or invalid bitmask; no export")
+        if np.any(overflow != 0):
+            raise FloatingPointError(
+                f"GPU overflow/convergence bitmask={int(overflow[0])} "
+                f"after {self.physics_steps} steps; no export"
+            )
         for name, capacity in (("nacon", gpu.naconmax), ("nefc", gpu.njmax)):
             count = np.asarray(getattr(gpu, name).numpy())
             if (

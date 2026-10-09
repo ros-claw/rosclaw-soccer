@@ -39,7 +39,12 @@ def bridge():
     ):
         setattr(instance._host, name, np.zeros(2))
     instance._gpu = SimpleNamespace(
-        nacon=Array([0]), nefc=Array([0]), naconmax=8, njmax=16, ctrl=Array([[0.0, 0.0]])
+        nacon=Array([0]),
+        nefc=Array([0]),
+        naconmax=8,
+        njmax=16,
+        ctrl=Array([[0.0, 0.0]]),
+        overflow=Array([0]),
     )
     calls = []
 
@@ -97,6 +102,40 @@ def test_overflow_rejected_before_export(bridge, field, count):
     with pytest.raises(FloatingPointError, match="no truncated export"):
         instance.step(instance._model, instance._host)
     assert len(calls) == 1  # GPU stepped; overflowing state never exported.
+    assert not instance._valid
+
+
+@pytest.mark.parametrize("flag", [1 << bit for bit in range(31)])
+def test_any_backend_overflow_flag_rejected_even_with_small_counts(bridge, flag):
+    instance, calls = bridge
+    instance._gpu.overflow = Array([flag])
+    # Contact and constraint counts remain zero. Counts alone cannot detect
+    # broadphase, CCD, line-search or main-solver failures.
+    with pytest.raises(FloatingPointError, match="overflow/convergence"):
+        instance.step(instance._model, instance._host)
+    assert len(calls) == 1 and calls[0][0] == "gpu_step"
+    assert not instance._valid
+    assert instance._gpu.overflow.numpy()[0] == flag  # Never clear evidence.
+    with pytest.raises(RuntimeError, match="invalid"):
+        instance.step(instance._model, instance._host)
+
+
+@pytest.mark.parametrize("value", [[], [[0]], [0, 0], [0.0], [True], [-1], [float("nan")]])
+def test_malformed_overflow_field_rejected_before_export(bridge, value):
+    instance, calls = bridge
+    instance._gpu.overflow = Array(value)
+    with pytest.raises(FloatingPointError, match="bitmask"):
+        instance.step(instance._model, instance._host)
+    assert len(calls) == 1
+    assert not instance._valid
+
+
+def test_missing_backend_overflow_capability_rejected(bridge):
+    instance, calls = bridge
+    del instance._gpu.overflow
+    with pytest.raises(FloatingPointError, match="complete GPU overflow"):
+        instance.step(instance._model, instance._host)
+    assert len(calls) == 1
     assert not instance._valid
 
 
