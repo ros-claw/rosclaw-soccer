@@ -7602,3 +7602,44 @@ exit0；974初始有两个E501，预检已退出后才改字符串排版，
 仍0，没有新的full model/Fresh/晋升/视频。旧947/948/949/952
 未取消、未改输入；同stream17的warm/cold受控重跑不虚报为
 不同课程，未来亦不得混合计数成320独立课程。
+
+## 2026-10-09：独立因果历史参考实现与训练后复核准备
+
+上一turn为PROGRESS：实际启动972完整数据准入与973/974下一
+代学习controller，逐个核对全部queue输入byte，并验证原数值
+body一致；80相关测试通过。此轮再次确认963/965/971/972/
+973/974各exact PID live，仍不把等待或预检当训练。963已有
+完整row0–15，whole52尚未完成，没有新晋升或Fresh增益。
+
+为训练后独立复核添加可复用football参考模块
+`rsi/independent_contact_task_state.py`：不导入生产state helper，
+使用cumulative event arrays与明确的一帧shift，重建完整300×6
+before-action状态。严格float64/完整shape/finite/非负force，
+输出read-only；该模块只证明数据语义，不授权control/physics/
+learning/promotion，也不冒充通用机器人安全证书。没有改动
+已冻结964/BAB或运行中的producer。
+
+新增23项测试覆盖6个随机histories、事件发生在0/29/30/69/
+298/299帧时的因果截止、精确1N/4m/0.65m阈值、无事件、
+输入不变、NaN/Inf、负force、缺字段、dtype和shape错误。
+新模块+相关旧四组共103 passed/0 skipped/0.68s；改变文件
+ruff/format、单模块mypy通过。最初format check指出新文件
+排版差异，已格式化后复查通过；不宣称全库检查通过。
+
+另外只读加载两份完整真实留档，每份300×6全部state与生产
+循环逐项bit exact，输入trajectory执行前后hash未变：
+
+- 944 repeat0，trace bytes
+  `b01a30267ecc0d7b62afc84a62aa3144a6a07e76a4162843ed16913d04401a6a`。
+- 963 case13，trace bytes
+  `d51168a9589a9e82186678e588ffe3929d4315577de9d1ed041a3a789c0e7372`。
+
+这是adopted archives上的component parity；没有新增native、
+optimizer或独立课程。它将接入新975 paired reviewer，独立
+重算973/974全部43200帧的OOF credit、conditional density、
+四个actor/critic参数/KL/MSE绑定。原915/916 numeric review
+算法作为冻结参考，160/40及949 seed是显式扩展；不导入
+Torch learner或生产task-state helper。975仍在启动前整理、
+静态检查阶段，不将该计划写成review通过或学习完成。下一步
+必须把该reference固定到新immutable source，完整展开预检
+通过后才启动，不在运行中换成main源码。
