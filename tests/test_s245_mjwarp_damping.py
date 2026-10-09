@@ -9,8 +9,64 @@ import pytest
 from rosclaw_soccer.sim.mjwarp_contract import (
     _put_model_checked,
     qualify_mjwarp_damping,
+    validate_converted_options,
     validate_damping_forces,
 )
+
+
+def option_model(**updates):
+    values = dict(
+        timestep=0.002,
+        tolerance=1e-8,
+        ls_tolerance=0.01,
+        integrator=0,
+        solver=2,
+        iterations=100,
+        ls_iterations=50,
+        cone=0,
+        disableflags=0,
+        enableflags=0,
+    )
+    values.update(updates)
+    return SimpleNamespace(opt=SimpleNamespace(**values))
+
+
+def test_silent_float32_solver_tolerance_floor_is_rejected_without_mutation():
+    native, gpu = option_model(), option_model(tolerance=np.array([1e-6], dtype=np.float32))
+    with pytest.raises(ValueError, match="silently changed option tolerance"):
+        _put_model_checked(SimpleNamespace(put_model=lambda _: gpu), native)
+    assert native.opt.tolerance == 1e-8
+    assert gpu.opt.tolerance[0] == np.float32(1e-6)
+
+
+def test_exact_float32_option_representation_is_allowed_and_recorded():
+    native = option_model()
+    gpu = option_model(
+        **{
+            key: np.array([np.float32(getattr(native.opt, key))])
+            for key in ("timestep", "tolerance", "ls_tolerance")
+        }
+    )
+    result = validate_converted_options(native, gpu)
+    assert result["tolerance"] == float(np.float32(1e-8))
+    assert result["iterations"] == 100
+
+
+@pytest.mark.parametrize("field", tuple(vars(option_model().opt)))
+def test_every_silent_changed_or_missing_option_fails_closed(field):
+    native, gpu = option_model(), option_model()
+    setattr(gpu.opt, field, getattr(gpu.opt, field) + 1)
+    with pytest.raises(ValueError, match=f"silently changed option {field}"):
+        validate_converted_options(native, gpu)
+    delattr(gpu.opt, field)
+    with pytest.raises(ValueError, match=f"converted option {field}"):
+        validate_converted_options(native, gpu)
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf, [], [[1e-8]], [1e-8, 1e-8], True])
+def test_nonfinite_or_ambiguous_option_cannot_pass(bad):
+    with pytest.raises(ValueError, match="converted option tolerance"):
+        validate_converted_options(option_model(), option_model(tolerance=bad))
 
 
 @pytest.mark.parametrize("category", [UserWarning, RuntimeWarning, DeprecationWarning])
@@ -30,8 +86,8 @@ def test_model_conversion_warning_cannot_be_silently_qualified(category):
 
 
 def test_warning_free_conversion_preserves_exact_model_and_exception():
-    model = object()
-    converted = object()
+    model = option_model()
+    converted = option_model()
 
     def convert(candidate):
         assert candidate is model
@@ -81,6 +137,9 @@ def test_actual_passive_kernel_preserves_each_compiled_dof(joint, disabled):
         f'<joint type="{joint}"/><geom type="sphere" size=".1" mass=".4"/>'
         "</body></worldbody></mujoco>"
     )
+    # This new primitive fixture declares the backend's precision-domain
+    # tolerance explicitly; never rewrite an existing G1 scene to pass.
+    model.opt.tolerance = 1e-6
     # First DOF zero must not mask later nonzero damping, including nonlinear terms.
     model.dof_damping[:] = np.linspace(0.0, 0.02, model.nv)
     model.dof_dampingpoly[:, 0] = np.linspace(0.0, 0.003, model.nv)

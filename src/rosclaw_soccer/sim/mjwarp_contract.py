@@ -9,16 +9,71 @@ from __future__ import annotations
 
 import re
 import warnings
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
+def validate_converted_options(cpu_model: Any, gpu_model: Any) -> dict[str, float | int]:
+    """Reject silent solver changes; only exact float32 representation is allowed.
+
+    Conversion without warnings is insufficient: MJWarp releases may clamp
+    native tolerance to a float32-oriented floor. Do not repair either model
+    here. This component check is not contact or closed-loop policy parity.
+    """
+    floating = ("timestep", "tolerance", "ls_tolerance")
+    discrete = (
+        "integrator",
+        "solver",
+        "iterations",
+        "ls_iterations",
+        "cone",
+        "disableflags",
+        "enableflags",
+    )
+    values: dict[str, float | int] = {}
+    for field in (*floating, *discrete):
+        pair = []
+        for model in (cpu_model, gpu_model):
+            try:
+                value = getattr(model.opt, field)
+                if callable(getattr(value, "numpy", None)):
+                    value = value.numpy()
+                array = np.asarray(value)
+                if array.shape not in ((), (1,)) or array.dtype.kind not in "fiu":
+                    raise ValueError("one finite numeric option required")
+                number = array.reshape(-1)[0].item()
+                if not np.isfinite(number):
+                    raise ValueError("one finite numeric option required")
+                pair.append(number)
+            except (AttributeError, TypeError, ValueError, OverflowError) as error:
+                raise ValueError(f"complete finite converted option {field} required") from error
+        expected, measured = pair
+        if field in floating:
+            if (
+                expected < 0
+                or (field == "timestep" and expected == 0)
+                or (measured != expected and measured != float(np.float32(expected)))
+            ):
+                raise ValueError(
+                    f"MJWarp silently changed option {field}; do not train on this backend"
+                )
+            values[field] = float(measured)
+        else:
+            if expected != int(expected) or measured != expected:
+                raise ValueError(
+                    f"MJWarp silently changed option {field}; do not train on this backend"
+                )
+            values[field] = int(measured)
+    return values
+
+
 def _put_model_checked(backend: Any, cpu_model: Any) -> Any:
-    """Reject model-conversion warnings rather than silently qualifying degradation.
+    """Reject warnings and silent solver changes rather than qualify degradation.
 
     This strict admission rule deliberately has no warning allowlist. A backend
     that drops multicontact support must be investigated in an isolated build;
@@ -35,6 +90,7 @@ def _put_model_checked(backend: Any, cpu_model: Any) -> Any:
             f"MJWarp model conversion emitted warnings: {details}; "
             "do not train on this backend; qualify an isolated compatible build"
         )
+    validate_converted_options(cpu_model, model)
     return model
 
 
@@ -71,7 +127,7 @@ def qualify_mjwarp_damping(cpu_model: Any, *, device: str) -> dict[str, Any]:
     import warp as wp
     from mujoco_warp._src import passive
 
-    wp.init()
+    cast(Callable[[], None], wp.init)()
     with wp.ScopedDevice(device):
         gm = _put_model_checked(mjw, cpu_model)
         native = mujoco.MjData(cpu_model)
@@ -95,6 +151,7 @@ def qualify_mjwarp_damping(cpu_model: Any, *, device: str) -> dict[str, Any]:
         "warp_version": wp.__version__,
         "device": device,
         "model_conversion_warnings": [],
+        "converted_options": validate_converted_options(cpu_model, gm),
         "passive_kernel_hash": hash_bytes(kernel_path.read_bytes()),
         "dof_damping_hash": hash_bytes(np.asarray(cpu_model.dof_damping).tobytes()),
         "expected_force_hash": hash_bytes(expected_array.tobytes()),

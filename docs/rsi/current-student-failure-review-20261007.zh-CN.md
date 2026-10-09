@@ -7704,3 +7704,163 @@ binding、causal state、temporal rewards五组：第一次未显式
 本轮新增optimizer、native与Fresh均0，新模型仍未产生。
 后续任何新mean还必须重新验证cold/warm native parity，不能
 继承只针对adbee旧mean的960资格；完整52及Fresh晋升门不变。
+
+## 2026-10-09：MJWarp中间版本实际步进，不再绕过接触警告
+
+为排除969的import失败与966的圆柱MULTICCD缺口，本轮另建
+未使用的979环境：MuJoCo3.12.0、MJWarp3.13.0、Warp1.18.0、
+NumPy2.3.5。没有修改966/968/S2或任何运行中的环境。
+MuJoCo动态库bytes仍是
+`bd3f702ace8a31e1046f746880387858a981d11b01772a55ebef48ffd55ea5b8`，
+与原CPU truth一致；不升级CPU世界或重建有利的新碰撞体。
+
+先核对官方[包版本元数据](https://pypi.org/pypi/mujoco-warp/3.13.0/json)
+和[项目依赖声明](https://github.com/google-deepmind/mujoco_warp/blob/main/pyproject.toml)，
+再实际安装、导入，并用原960 case0的完整MJB进行严格转换。
+最初根据rg命中误读3.13 io.py中的圆柱tuple为“不支持项”；
+随后展开完整上下文，发现它属于已支持的排除表，已及时纠正。
+文档或版本号不是资格：实际970 `_put_model_checked` 仍捕获
+所有Python conversion warnings，无allowlist，没有关闭MULTICCD。
+旧969 import失败、967未经资格的短screen记录继续保留。
+
+新980是969完整source的机械重执行，只改unused ID及3.15→
+3.13声明，不改world、solver、damping、force tolerance或torque。
+F821/F822及实际source/package preflight exit0，完成后再启动
+formal。物理GPU2映射logical cuda0，8个相同世界并行；初次
+CUDA编译约数分钟，没有通过减少碰撞类型来加速。
+
+980正式exit0，actual GPU world steps800、CPU steps100，
+原CPU初始及随后10帧完全重建，conversion warnings为空；
+damping max error3.058463330686545e-10，qpos max error
+7.39440360038833e-6，qvel max error1.3862392520980205e-4。
+source bytes
+`c73bba8b30c3cba5c6ff36f20e6a727d00eba5838c587ca7738c07f954c30614`，
+result seal
+`96b126b3517e3844ddcb18983b54cd25d8c4446cfa662cfb03af603da63df7c2`。
+另一个只读进程独立重算seal、全部2210项input bytes及两个
+primitive NPZ hashes，全部一致。8副本仍只是一门课程；
+没有actor、learning trajectory、optimizer或physical skill gain。
+
+特别注意前100步仅为0.2s，不能涵盖触球。因此在980完整退出
+后正式启动新的981（handle6106），同样8副本重放原始全部
+3000个torque substeps/6s。新source预检与F821/F822通过后才
+启动；原CPU初始及随后299帧逐项exact，最后after300状态在
+原归档中没有对应项，报告明确保留这一边界，不虚报第301帧
+truth。只扩展episode长度，不改变原torque或policy；保存
+完整300帧对比，遇到失败保留证据。记录时981尚未有终态。
+
+980/981都是open-loop torque playback component diagnostics，
+不是causal learned-policy GPU rollout，也不是平衡/足球labels
+资格，更不是online RL或完整四GPU训练。即使981全程走完，
+仍需闭环policy、分离且平衡的课程label agreement及CPU终审。
+正式结果明确full_episode_backend_qualified=false，不能因为
+解决import/转换缺口就把GPU轨迹送进当前971/972学习银行。
+
+### 完整回放结果：短时小误差不能外推，诊断执行不等于准入通过
+
+981已exit0完成全部24000 GPU world steps及3000 CPU steps，
+但这只是预声明diagnostic执行完成，**不是backend资格通过**。
+CPU原轨迹初始+299帧exact；GPU全程finite但严重分叉，混合
+qpos最大误差15.899287225927722，混合qvel最大误差
+209.77547299751038（混合量包含线性和角度维度，不统称米）。
+source bytes
+`bed77a4b3fa7f1f18d3f48e0c5f2463f164f58aa2176fd182877d285a6d6beca`，
+result seal
+`a7e3de681247464c7473669183c4165ca03a33dd0b1b089ff66509f97a970ea4`。
+独立只读核对完整seal、全部2210项inputs、两个NPZ hashes和
+全部300×8状态的原始max误差，全部一致。
+
+按每个控制帧之后的状态分析（第f帧时间f×0.02s）：
+
+- 关节角最大误差超过0.001/0.01/0.1rad，首次为27/35/42帧。
+- root translation超过0.001/0.01/0.1m，首次为38/44/60帧。
+- ball translation超过0.001/0.01/0.1m，首次为63/64/65帧。
+- 所保存50Hz帧中CPU pelvis最低0.6966016048365932m，GPU最低
+  0.060860827565193176m；不能把这些GPU轨迹用于稳定性训练。
+- 最后CPU球位置约[9.603,-0.547,0.110]m，GPU world0约
+  [-6.296,1.402,0.110]m；8副本自身也并非bit exact。
+
+误差在触球前已经增长。一个待验证解释是固定CPU torque的
+open-loop playback切掉了原来500Hz PD feedback，而不是已经
+证明“3.13所有闭环控制都错误”。不能因为这个实验失败就直接
+改碰撞体、放宽安全阈值，也不能忽略结果并开始大规模GPU RL。
+
+### PD feedback受控对照（不是自主policy学习）
+
+因此另做原始joint target固定、原始kp/kd/torque limits固定，
+但每个GPU世界按自己当前qpos/qvel重新计算PD的对照。每个
+CPU substep还必须逐项重建原3000份torque及原299帧state。
+记录所有真正应用的float32 GPU commands、targets与gains。
+明确archived_joint_targets_teacher_forced=true以及
+teacher_forced_replay_eligible_for_learning=false；不把归档目标
+当做causal neural policy、不往学习银行添加teacher-forced数据。
+
+首个982的实际imports/binding预检exit1：错误地从joint_contract
+导入G1_HARD_TORQUE_LIMITS，该常量实际属于sim.contracts。
+同一编排调用没有在这个失败后中断，误启动的formal也exit1，
+尚未mkdir/step。记录这一预检链路错误；982未修改、未重用，
+source bytes
+`93f8e2112e283d1ca107a1e8b065c4baa3eccc7f032197a016dc01ad474aaa16`。
+
+新983独立恢复：修正import，pin原982失败source并在启动/完成
+复查。E/F/I通过；实际imports、committed gain/order、report/
+trace linkage、首份CPU PD torque exact预检exit0，随后完整
+source/package预检exit0。此次编排显式对各exit code抛出异常
+以保证fail-fast；两个预检结束后才单独启动formal（handle29917）。
+source bytes
+`fea0b3b20686f3b85ed2a92cb7fe2e99b5a0de3d7de9a7c049c3238876c25201`。
+记录时983尚未完成，所有旧队列、guard、world和critic保持不变。
+
+### PD对照完成及静默求解参数变更的产品级加固
+
+983后来exit0，24000 GPU/3000 CPU steps完成，原CPU全部3000
+PD torque及299个next-state exact。result seal
+`0bbd86c3ef478a057e138424a15c0415e26e40fda599dbf86ebbc70a9053afa8`。
+PD反馈后root误差首次超过0.1m从60帧推迟到127帧；关节误差
+首次超过0.1rad从42帧推迟到106帧，球误差首次超过0.1m从65帧
+推迟到104帧。但全程仍不合格：50Hz sampled pelvis最低
+0.07429452240467072m，ball最大误差8.807701112951648m；
+仅world3/7末球x约9.63m，其余6副本约0.80m，不能挑2副本
+宣传，也不能把teacher-forced反馈当自主球技或“8门课程”。
+
+独立复核第一次误把第1个after-action状态当initial，PD重算
+assert失败；随后明确使用原始raw canonical initial，所有
+300×8 frame-start commands bit exact。最终独立复核exit0：
+完整seal、2213项inputs、三个primitive hashes、全量maxima、
+2400份frame-start commands和24000份GPU torque vectors的
+原始bounds全通过；不代表physics admission。未改983源码。
+
+进一步检查发现3.13 io.py会静默将opt.tolerance下限设为1e-6，
+而原MJB是1e-8；此前warning gate没有发现它。这是实际协议
+差异，但不能仅凭该差异断言它是所有轨迹分叉的唯一原因。
+没有把GPU option改回或把CPU/world tolerance放宽来强行通过。
+
+将教训落实到产品的`sim/mjwarp_contract.py`：新
+validate_converted_options在put_model后、forward/data/policy
+之前检查3个浮点选项（dt、solver tolerance、line-search
+tolerance）及7个离散选项（integrator、solver、两种迭代数、
+cone、enable/disable flags）。浮点仅允许原值或准确的float32
+表示值，不用宽松rtol吞掉实际配置变化；字段缺失、非有限、
+空或多元素值、bool、静默改变均fail-closed。qualification
+receipt增加actual converted options，但这10项检查不冒充
+所有物理字段或完整contact/policy parity。旧frozen source和
+已有回执没有重写，所有运行/等待任务保持原代码。
+
+新增19项测试覆盖1e-8→1e-6 silent clamp、精确float32转换、
+全部10字段变化/缺失以及异常值。更新primitive GPU fixture
+时仅显式声明新fixture的tolerance=1e-6，不修改原G1世界；
+该fixture不能替代原world资格。两组相关测试54 passed/6
+skipped，连同原五组最终147 passed/6 skipped/2.54s。
+skip明确为5项opt-in GPU tests和1项缺G1 assets；没有把skip
+记为真实GPU通过。
+
+改变文件ruff/format通过；单模块mypy第一次报告原有wp.init
+缺类型调用，使用明确零参Callable cast后通过（初次Callable
+import的UP035也已修正复查）。这不证明全库mypy/pytest通过。
+最终源码bytes
+`97d1126a796fd4dea2330bed00e8cef6ed20c41adc4474cf54830eaec28d7d73`。
+另外实际用979环境、原始MJB、物理GPU2检查最终guard：
+exit0证明捕获“silently changed option tolerance”，在forward、
+MjData、policy/Torch导入和任何physics step之前拒绝；原CPU
+tolerance仍1e-8，前后源码hash一致。这里的PASS是拒绝不合格
+转换的负向证据，GPU足球训练资格仍NOT QUALIFIED。
