@@ -36,9 +36,18 @@ def audit_cpu_transfer(
     sampling_reference_compiler: Any = None,
     sampling_factory_source_roots: tuple[Path, Path] | None = None,
     physical_payload_reader: "FixedPhysicalPayloadReader | None" = None,
+    allocate_sampling_reference_once: bool = False,
 ) -> dict[str, Any]:
     import mujoco
 
+    if type(allocate_sampling_reference_once) is not bool or (
+        allocate_sampling_reference_once and sampling_reference_compiler is None
+    ):
+        raise ValueError("single reference allocation requires an explicit sampling compiler")
+    # Opt-in only: validate and deeply own ONE independent reference before
+    # physics. Keep it local to this audit; never cache an episode across calls.
+    # Default historical audit order and all per-frame arithmetic stay intact.
+    allocated_sampling_reference = None
     if sampling_factory_source_roots is not None and sampling_reference_compiler is None:
         raise ValueError("historical producer provenance requires independent sampling reference")
     report = (
@@ -74,7 +83,10 @@ def audit_cpu_transfer(
             or report["step_model_hash"] != policy["step_motor_proof"]["model"].get("model_hash")
         ):
             raise ValueError("exact independent source-bound sampling reference compiler required")
-        sampling_reference_compiler.verify_policy(policy)
+        if allocate_sampling_reference_once:
+            allocated_sampling_reference = sampling_reference_compiler.new_episode(policy)
+        else:
+            sampling_reference_compiler.verify_policy(policy)
     if recurrent_reference_compiler is not None:
         from rosclaw_soccer.rsi.fixed_recurrent_reference_audit import (
             FixedRecurrentReferenceAuditCompiler,
@@ -587,11 +599,14 @@ def audit_cpu_transfer(
 
             if sampling_decoder_factory is not None or mean_decoder_factory is not None:
                 raise ValueError("recurrent sampling review requires the independent reference")
-            recurrent_decoder = (
-                CompiledRecurrentSamplingMotor(policy)
-                if sampling_reference_compiler is None
-                else sampling_reference_compiler.new_episode(policy)
-            )
+            if allocated_sampling_reference is not None:
+                recurrent_decoder = allocated_sampling_reference
+            else:
+                recurrent_decoder = (
+                    CompiledRecurrentSamplingMotor(policy)
+                    if sampling_reference_compiler is None
+                    else sampling_reference_compiler.new_episode(policy)
+                )
             delta_at_frame = recurrent_decoder.delta_at_frame
         elif "recurrent_clipped_motor_proof" in policy:
             from rosclaw_soccer.rsi.recurrent_clipped_motor import CompiledRecurrentClippedMotor
