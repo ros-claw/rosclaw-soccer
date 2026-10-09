@@ -7525,3 +7525,80 @@ scratch model。未更改任何冻结的964/942/970或运行中的runner。
 两个相关测试组再次35 passed/6 skipped；上述skip不作为正式
 GPU学习证据。改变文件ruff、全src/tests compileall和diff check
 通过；既有全库format/mypy问题不因这次小改动被写成已解决。
+
+## 2026-10-09：接通warm160→独立数据准入→下一代配对学习
+
+上一goal turn属于PROGRESS：960/962真实物理资格及独立复核
+闭合，967实际GPU/CPU诊断完成并发现碰撞退化，新入口修复
+测试后提交推送；不是把排队或状态重述当学习增益。本轮原
+963/965/971 exact owners均由live PID与handle再确认，未因为
+观察超时重启或改写任何source。963现已完成row0–12独立审查，
+仍没有完整52课程成绩；965/971依次等前置资格，不将等待写成
+训练。M0/Fresh/自主4v4宣传仍未完成。
+
+补上独立972 whole-bank consumer：必须等971 exact PID/start
+退出并留下整个160 manifest，任何failure或缺失terminal都拒绝。
+采用冻结964的完整银行结构准入，绑定同一943 export与914
+primary0 actor/critic结果；逐一绑定161个raw/commitment/MJB/
+trajectory/review/Foundation和160 learning sequence，success/
+failure/unsafe全部保留。producer不能覆盖reviewer已独立固定的
+输入byte pin或source head，冲突直接失败（两类相同值允许、
+冲突拒绝、旧值保持及无NumPy/Torch导入检查实际通过）。
+
+完整numeric reconstruction直接提取冻结原929的shapes赋值到
+函数末尾，不改逐回合算法：current actor mean、条件AR密度、
+每条完整数组与stacked一致、终帧299的chronological MC target
+及原terminal return全部检查。独立AST逐节点对比确认整个原
+numeric body一致，generated source byte hash
+`49e5aaad5c75ac1b887eeea2e0745fa8f6743eaae694a814c22a6edb3a137254`。
+该检查没有NumPy/Torch/model/physics/fit分配，不等于数据准入
+已通过。仍保留8GiB numeric RAM、1GiB dataset预算及100GiB
+system disk reserve；不降低161 native采集的48GiB门槛。
+
+972 runner hash
+`c630be3307cf9de9a1b58fdb33215bf2a8045bbb275fb1e07728dba46fcc54d3`，
+stdlib及展开F821/F822均exit0，source在预检结束后未变化。
+正式PID4111593/start219624219，handle81449，queue seal
+`1d2932afb873109f8a21a704c4d25bc0c533b38df8db090819ec5bf71683bad5`；
+全部6695项input bytes由另一个stdlib过程逐项核对一致。
+还没有numeric_dataset或parameters结果，不宣称43200学习
+样本已经就绪。972只adopt971执行，不新增physics或optimizer。
+
+新增973 baseline135与974 task-credit141两个配对学习入口，
+都先等972完整准入及same914参数/density/hash绑定。973复用
+原949数值拟合，974复用原952；另一个独立进程实际确认两套
+**完整generated numeric body逐字节分别相同**：
+
+- 973/949：`b967780b3df2e9cc07b64aea3bcc3e26d06fa8d6f55cbdad67f8dc480df688b9`。
+- 974/952：`04ed7961b8e9d625ba490dc75a07b81faa2bffd6740492e4bccb023e5b2265a0`。
+
+每条路径仍5课程分组OOF+1 full value fit、每fit1024步，
+四个独立actor/critic fit各最多1024步；seed9490/94900系列、
+预算、原actor/current persistent critic初始化、配置及primary0
+规则完全相同。不按结果挑四个candidate中的最好者。974只有
+离线credit value输入141，6列零初始化，actual actor及joint
+critic仍135；六维因果历史来自冻结964/BAB模块，不再依赖
+可变main路径。没有改reward、target、动作bounds或考试门槛。
+旧950试验before-contact误差未改善、955加预算恶化的失败
+结论继续保留，不能用这两个新queue宣称新特征有效。
+
+973 source hash
+`e2f3203c62b990ea19d29812a52de3f4f5fe5d6c542893e2b43903fc2fff11ae`；
+PID4116446/start219639160，handle70299，queue seal
+`2ec15a9de856d99c71417852fc016f673d02e24013709ddcec628061aeccd9d3`，
+全部6699项input bytes独立一致。974最终source hash
+`b19a9031e8022e353eaa4229d2f579a3009e66def290bf0be289ac73f1bed6bb`；
+PID4122071/start219653797，handle97794，queue seal
+`c214c08a36ed6adb4a5aa21216771fdd83b116e5fc202fccd1ce7ac7b996ec00`，
+全部6730项input bytes独立一致。两者E/F/I与完整展开预检
+exit0；974初始有两个E501，预检已退出后才改字符串排版，
+重新检查完整数值body一致并重新预检通过才启动正式controller，
+没有在运行/预检中修改source。
+
+相关课程声明、银行完整性、因果task state和temporal reward
+四组原测试实际80 passed/0 skipped/0.60s。这个测试数只覆盖
+上述模块，不等于完整训练链路、全量pytest或物理考试通过。
+当前两学习controller只等待完整数据，actor/critic新增updates
+仍0，没有新的full model/Fresh/晋升/视频。旧947/948/949/952
+未取消、未改输入；同stream17的warm/cold受控重跑不虚报为
+不同课程，未来亦不得混合计数成320独立课程。
