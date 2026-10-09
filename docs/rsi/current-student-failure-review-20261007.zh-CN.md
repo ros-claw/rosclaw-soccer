@@ -7273,3 +7273,44 @@ source/prototype/snapshot/policy drift拒绝、17项准入/伪声明
 不能热改原考试或因为synthetic tests就替换947的数据生产。
 当前已有经过实证的审查缓存收益及新执行模块，但M0、Fresh
 能力盆扩张、持续自主4v4和可宣传视频仍未达标。
+
+#### 新执行缓存的物理资格流程已接续
+
+上述模块/准入/审查集成为`c3cce330d2d0b6ca2d69f331c6153ac942b6dc6b`，
+已直接推送main。另建clean detached frozen958工作树，Core仍为
+frozen910/a5a21e5；不让后续文档提交影响正在运行的源。
+
+959尝试在任何queue/ROOT/模型分配前拒绝：原695 `row-i.json`
+没有自身`report_hash`封印字段，row内的report_hash指向物理
+报告；正确链是raw report、independent review、Foundation
+seals及row file bytes。959误把索引当self-sealed报告，不是
+原物理结果损坏，也不是应该跳过完整验证。失败source保留
+digest
+`04a31e4db73556263c62691eec66c10fd3d624b073b09dd3d52a862a2907a3c4`，
+未在原959位置重跑或写假成功文件。
+
+960独立恢复，保持整个original695 worker body、固定当前914
+mean、旧945最前两个预先声明的课程0/1，而不按HQ或safe选课。
+显式核对原row/outcome、review seal/report binding、Foundation
+seal/raw report/physical trace binding、所有3000 CPU及300
+Foundation/GRU计数；row文件本身逐字节进入input pins，不要求
+不存在的自封印。该修正不是放宽physical report的seal要求。
+
+完整展开F821/F822和E/F/I通过，actual original-worker import
+预检通过（原695 co_filename、新typed factory和独立compiler
+都解析到精确frozen源码，未分配model/physics）；最终预检
+结束后才正式运行。第一次import排序lint失败与导入预检成功
+分别检查，在预检退出后修正未启动source并重新完整检查，
+没有用导入成功掩盖lint失败。source digest
+`72d6fb415b0e659543d9975bd5bb590e93f4ae72307af7b679ee1fe2026f12d5`。
+
+960 queue seal
+`228132383dfd70f199751d69c7cbd74b7181dc1d7c5c3ec2fa23c55f05a32fa7`，
+全部5342项input bytes另行独立核对通过。实际PID3958599/
+start219086496、handle42884，已完成导入、继续原48GiB资源
+等待。计划2 new native、6000 CPU、600 Foundation复算和每个
+原生数组bit-exact current945比较。producer单独构造；独立
+reference只从原945 archive编译，绝不从新producer preview/
+prototype初始化。当前ROOT未创建、真实native资格尚未完成，
+不能把queue写成“缓存已用于新完整采样”。原945已有0–3行
+审查完成并继续运行；其它原队列不改，完整52成绩尚未结束。
