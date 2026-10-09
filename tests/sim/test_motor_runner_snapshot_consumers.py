@@ -12,8 +12,35 @@ import pytest
 
 
 def runner_tree():
-    source = Path(__file__).resolve().parents[2] / "scripts/rsi_mujoco_motor_transfer.py"
+    source = (
+        Path(__file__).resolve().parents[2] / "src/rosclaw_soccer/rsi/native_first_touch_episode.py"
+    )
     return ast.parse(source.read_text())
+
+
+def test_legacy_entry_routes_to_the_inspected_native_kernel():
+    root = Path(__file__).resolve().parents[2]
+    tree = ast.parse((root / "scripts/rsi_mujoco_motor_transfer.py").read_text())
+    imports = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "rosclaw_soccer.rsi.native_first_touch_episode"
+    ]
+    assert len(imports) == 1
+    assert [(n.name, n.asname) for n in imports[0].names] == [
+        ("run_native_first_touch_episode", None)
+    ]
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_native_first_touch_episode"
+    ]
+    assert len(calls) == 1
+    assert ast.unparse(calls[0].args[0]) == "args"
+    assert {k.arg for k in calls[0].keywords} >= {"course", "partition", "entry_source_path"}
 
 
 @pytest.mark.parametrize("snapshot", ["cached", "current-kinematic"])

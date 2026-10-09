@@ -27,6 +27,46 @@ if TYPE_CHECKING:
     from rosclaw_soccer.rsi.native_first_touch_initial_state import NativeFirstTouchInitialState
 
 
+def _execution_policy(report: dict[str, Any]) -> dict[str, Any]:
+    """Recognize explicit foundation-only null policy, never malformed learners.
+
+    Native foundation-only reports intentionally serialize a null motor policy.
+    Keep legacy absent-policy fixtures unchanged; learned-policy and factory
+    contracts still require their original dictionaries and independent replay.
+    """
+    policy = report.get("executed_motor_policy", {})
+    if policy is None:
+        if (
+            report.get("execution_profile") != "foundation_only"
+            or any(
+                key not in report or report[key] is not None
+                for key in ("model_hash", "step_model_hash", "motor_policy_hash")
+            )
+            or report.get("taskspace_gate_selected") is not False
+            or any(
+                key in report
+                for key in (
+                    "body_response_guidance",
+                    "numeric_compilation",
+                    "numeric_sampling_compilation",
+                    "recurrent_success_factory",
+                    "recurrent_sampling_factory",
+                    "recurrent_clipped_factory",
+                    "fixed_proposal_factory",
+                    "extended_proposal_factory",
+                    "imitation_proposal_factory",
+                )
+            )
+        ):
+            raise ValueError("null motor policy requires an explicit pure foundation-only report")
+        return {}
+    if type(policy) is not dict:
+        raise ValueError(
+            "motor execution policy must be a dictionary or explicit foundation-only null"
+        )
+    return policy
+
+
 def audit_cpu_transfer(
     root: Path,
     source_path: Path,
@@ -62,6 +102,7 @@ def audit_cpu_transfer(
         if physical_payload_reader is None
         else _sealed(root / "report.json", physical_payload_reader=physical_payload_reader)
     )
+    executed_policy = _execution_policy(report)
     if "recurrent_clipped_factory" in report:
         from rosclaw_soccer.rsi.recurrent_clipped_episode_factory import (
             validate_compilation_contract as validate_clipped_episode_contract,
@@ -424,7 +465,6 @@ def audit_cpu_transfer(
         trace = {k: loaded[k] for k in loaded.files}
     # Keep optional sequence-learning dependencies out of legacy replay paths.
     state_field = "recurrent_residual_hidden_state"
-    executed_policy = report.get("executed_motor_policy", {})
     recurrent_sampling = "recurrent_sampling_motor_proof" in executed_policy
     recurrent_families = sum(
         k in executed_policy
