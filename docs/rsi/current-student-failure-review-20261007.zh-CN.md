@@ -6913,3 +6913,78 @@ lint覆盖范围；944的CLI-only预检入口另有`__main__`guard，避免
 包含原factory/compiler/CPU evidence的较长回归组仍在实际执行，
 不提前写成全量通过。后续完整52/160/下一代学习尚未恢复执行，
 应等944真实终态后再依次声明，而非用旧失败队列冒充新一代。
+
+### 2026-10-09：942真实回放资格闭环，完整考试与下一代训练链恢复排队
+
+942现已正式退出0，result seal为
+`b2ec77b7d3899811a5da2e5ca04d9b7852d1dbc70354398a1026c4a280def5c1`。
+固定874 sample0/1、seed522610335/522610336，两份原始review
+除原先声明的metadata项外逐字段完全一致；新实际CPU MuJoCo
+replay6000 substeps、GRU600 frames、draw/conditional density540。
+原Foundation600 calls来自原独立review并经原绑定检查采用，
+此轮没有重执行Foundation，没有新native rollout，没有优化器。
+terminal seal和全部3048项input bytes另行独立哈希通过。
+两条warm完整audit分别83.3030/84.8885秒；不是完整训练吞吐
+benchmark，不据此宣称端到端加速或球技提高。两份archive是
+同一已消费课程的两个draw，不冒充两个独立新课程或Fresh。
+
+较长回归组实际完成：原recurrent sampling factory、独立sampling
+compiler、CPU evidence及新增历史来源测试合计53 passed，耗时
+550.14秒；修改两source的mypy再次通过。默认当前source绑定
+以及历史producer/source漂移拒绝均覆盖，不以11个新增测试
+代表完整回归。不是全仓库pytest完成声明。
+
+943已通过942终态和owner退出条件，实际开始完整parent/student
+加载、模型构建及输出；随后仍须完整gzip重载、参数/来源复查。
+其后新945/947/948/949是严格等待链，不提前计入物理或训练完成。
+945 actual原695 worker import通过后启动完整52考试队列；原757
+HQ20、旧HQ/clean无损、新OOP0、所有pelvis>=0.65及retention12
+门槛没有变化。只有944两次原生资格、安全检查全部通过才分配。
+原936进程与源码未修改。
+
+947 actual原788 collector import通过后启动完整160冷启动队列，
+同一固定40x4 consumed课程和stream17、当前914 primary0均不变，
+每个episode严格original physical audit和Foundation证明；保留
+所有成功/失败，不能用前几条替代完整160。946因错误调用不存在
+的`--collector-import-preflight`退出1、无模型/physics输出；其独立
+failure记录保留，947用正确`--worker-import-preflight`预检后才
+启动，未覆盖946记录。947没有复用失败946 queue。
+
+948完整数据消费者和949学习消费者已分别预检并启动等待。
+前者验证完整160/40、全部raw/review/Foundation、堆叠数组逐元素
+一致、当前actor的causal均值/实际density及完整MC targets；
+后者从实际914 primary0 actor/persistent critic继续，而不是839。
+949仍为6x1024 value预算、4x最大1024 actor-critic预算；四GPU
+独立fit，不宣称DDP、在线持续电机更新或端到端力矩策略。
+critic输入135，拒绝的940记忆特征没有偷偷加入。新fit seeds为
+9490+fold/94900+index；奖励、动作边界、KL/rollback保持原值。
+
+对949的实际generated160函数体另做内存合成调度检查：五OOF
+fold各128条/32课程训练、8课程留出，全量fold160条，4次actor
+调用确实初始化当前914参数；mock只替换优化器、credit及I/O。
+实际优化器更新0、未写任何物理/数值输出、未创建949 ROOT。
+第一次诊断进程缺少Core PYTHONPATH在导入前退出，补正确冻结
+Core路径后整个generated函数调度检查通过。这不是实际学习收益。
+
+945 source digest:
+`6cdabe93f511efd686884b74f24af547ac39e79ebee4b4a5b0362707d1009fd1`；
+947 source digest:
+`7c4fc7d5307cbe8b47b2de43f8dbd01aa0b5183b7178cbc8f441750214aaa984`；
+948 source digest:
+`cfaa939a290888567660efbaf0acea35539e641520c756f43bbb33694f74a7f4`；
+949 source digest:
+`cc468246549e0cb4e764b55ac6b54401e974eadef5746a308667b198a2dafbba`。
+944/945/947/948/949 queue seals及共同440项union input bytes已
+另行全部独立检查，无共有路径hash冲突；各自414/420/422/431/435
+pins。所有新实验使用独立输出路径，不伪造旧失败终态。
+
+旧853/874继续实际运行，最后已封闭33条(HQ6/safe33)和101条
+(HQ24/safe100)；失败和unsafe轨迹保留。它们仍是839行为，不能
+冒充914当前行为，也不能把不同课程进度HQ计数当策略提升。
+
+当前的实质完成是跨版本物理复核恢复，尚不是运动技能晋升。
+943完整export、944原生、945完整52、947完整160、948实际数据、
+949实际优化器均仍须各自真实terminal。M0/Fresh/promotion及
+最终连续自主4v4比赛视频均未达标。后续应优先审查当前策略
+真实考试、积累自身rollout；如优化吞吐，须单独证明固定完整
+parent/payload缓存与原物理/动作/概率逐字段一致，不能减少审计。
