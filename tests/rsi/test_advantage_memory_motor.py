@@ -35,8 +35,9 @@ def test_zero_regression_is_globally_identical_to_current_nn(current):  # noqa: 
 
 
 def test_actual_numeric_regression_changes_layers_preserves_memory_and_guard(
-    current, smooth_parent
-):  # noqa: F811
+    current,  # noqa: F811
+    smooth_parent,  # noqa: F811
+):
     initial, extra = current
     proposal = initial_model(initial)
     learned = fit_update(

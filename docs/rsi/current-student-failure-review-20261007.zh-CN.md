@@ -7963,3 +7963,103 @@ full causal native/reference资格；988不是完整审计/物理资格，
 旧960也不能替新权重背书。现有963→965→971→972→973/974→
 975→976保持原源码、参数、owner及顺序。M0、Fresh增益、
 4v4自主连续比赛和可宣传视频均仍未完成。
+
+## 2026-10-09：完整52例终判、采样资格与整仓复查
+
+本阶段有实际进展，但没有达到M0或宣传条件。963完整考试已
+exit0，不再把进行中的部分样本当成绩；全部52例consumed考试
+baseline HQ12、candidate HQ14，旧HQ/clean损失均0，新增越界0，
+pelvis安全条件满足。门槛要求至少20例，最终仍REJECTED。
+新增HQ为case36/42，仅属于已经消费的考试域，不是Fresh增益。
+156000 CPU replay substeps、15600 Foundation frames全部完成。
+result seal
+`3329852265212da1bdb64d4ec9c2e8b367116348dd7f82a997d70d78dc691e3f`。
+
+另一个独立990审阅程序从全部52份primitive arrays重算首次
+大于1N接触、全程clean-foot、500Hz最低高度/最大横向边界、
+首次接触后60帧的前进与侧向位移及HQ判定，不复用原评分函数。
+逐例核对完整report/review/Foundation/source/model/world链接；
+12个保留的旧HQ与原父策略所有原始数组dtype/shape/value完全
+相同。最终独立门控同样REJECTED，5988个输入文件pins及冻结
+HEAD由另一个只读进程再次核对。990没有新physics或训练更新。
+独立审阅seal
+`86b149d7acda2a3ab3cf16de84c3e22b6e570f4cec0dc4409f622bedcee7daec`。
+按既定优先级，失败为12例非足部接触、10例前进不足、16例
+侧向过大，另14例HQ；不是“全局都没有碰到球”。
+
+965完整采样传输资格也已exit0：两个固定seed各两次，共4次
+native执行、12000 CPU replay substeps、1200 Foundation/GRU
+frames、1080 draw-density frames。773逐数组等同原944；每个
+seed两次全部28个native arrays完全相同，不同seed latent draws
+不同。所有4例HQ仍False，这是采样/审计等价资格而非球技增益。
+另一个只读进程核对全部6707输入pins、HEAD、完整seals及计数。
+965 result seal
+`0bf58e3f65b3f5a4047558e855b94bab4bc6634a5ac39c2bf077d455dbcbd1c0`。
+
+971已通过该资格，transport-control全流程审计完成，并由独立
+进程验证3000 CPU replay/300 Foundation frames及全部28数组
+与旧944完全相同；control不计入学习样本。首条学习样本0也已
+完成物理审计且HQ False，失败保留。完整计划仍为40个consumed
+独立情境×4次draw，即160条轨迹，不是160个独立情境；全量
+manifest尚未完成。972等待完整数据，973/974等待972，975等待
+两支数值学习，976等待975；没有提前优化器更新或挑选成功集。
+尚未导出新权重，旧960不能替未来新权重背书。
+
+991是旧913的78条consumed序列/15个情境上的数值诊断，不是
+新的物理实验或晋升证明。独立GRU计算与生产实现序列0全部
+270帧输出误差小于1e-12；父策略和914策略的guard全1、head
+均未全局饱和，hidden绝对值大于0.99的比例约2.03%/2.24%。
+这不支持“整个GRU都饱和或guard全关”的简单解释，也不排除
+局部饱和、价值估计或新分布问题。没有因此放大motor caps、
+改归一化或宣称模型机制已解决。诊断为手动转录已完成数值
+探针输出的外部JSON，明确不是机器promotion certificate。
+
+### 全量软件检查：结果完整保留，不放宽旧证据门
+
+固定Soccer HEAD `341820c6ef51047995bfc5008d76cab566f21755`
+期间全量pytest结束：**7351 passed、11 failed、70 skipped、
+2 warnings，6077.10s，exit1**。JUnit在Git外
+`rsi-soccer-main-tests-341820c-20261009-r2.xml`。首轮遗漏scripts
+导入路径导致16项collection errors；第二轮仅纠正PYTHONPATH
+为Soccer src、固定Core提案src、Soccer根和scripts，未删测试。
+
+11项失败均发生于现存历史外部证据与当前执行源的合同检查：
+S104、S105的S106集成证据、S107、S108、S78、S79、S80共7份
+report的原始canonical seal仍完整，但implementation hash均与
+当前共享世界/代码依赖不同。S94所读S93旧schema无report_hash，
+其implementation hash同样不符；不能套新schema伪造seal。
+S113、S113 video、S114对应S116请求的Soccer source closure
+记录233个py文件，而mutable S2源当前384个，closure不符；
+holdout请求MuJoCo3.11.0与当前3.12.0也不同。其余三个绑定源
+closure仍匹配。这是源码/依赖元数据审计，未读取封存holdout
+案例行用于训练，也没有将holdout结果提供给候选生成。
+
+未重写旧hash、迁移/删除旧证据、放宽validator、增加xfail或
+把失败转换成skip。历史证据只能保留为旧实现域记录，不能
+视作当前实现通过；若要重新取得资格，应在新的冻结源码和
+环境下重跑相应考试，而不是修改它的旧证书。70项现有skip
+包含资产路径、缺少Warp/GPU、缺少成对资格证据等，均不是
+已通过；不能为消除skip向现有运行中的S2环境安装依赖。
+
+全仓ruff的两项F811已定位为imported pytest fixtures的参数
+shadow，不是重复测试。仅把原有noqa移到两个参数行，函数
+AST与原HEAD完全相同；该文件7 passed/154.90s，全仓ruff
+再次exit0、该文件format通过。全仓format仍68个文件待格式化，
+未作无关批量重写。提交前diff检查exit0。裸`python`命令因
+PATH无该别名exit127，随后用固定S2 venv Python执行完整
+src/tests compileall、exit0；没有安装或修改实验环境。
+
+类型检查区分环境与代码结果：给工具环境额外设置Soccer/Core
+MYPYPATH时，mypy展开Core依赖，报告56 errors/43 files并在
+mcap双重模块命名处exit2，不能当作Soccer独立检查的计数。
+按本仓AGENTS的原命令、无该额外MYPYPATH，Core工具环境
+`mypy src`实际为36 errors/17 files、893 source files、exit1；
+包含3项scripts导入错误，与前次33项不是同一完整结果。
+全仓mypy尚未通过，不因新读取组件局部绿灯声称全库绿色。
+
+当前学习链采用独立冻结源码，整仓检查期间没有热改实验源或
+环境。主仓代码复查修正只涉及fixture lint注释；没有更改物理
+世界、策略权重、奖励、晋升门槛或运行中队列。Core PR616仍
+OPEN，base为agent/protected-latent-learning，DataFlywheelGate
+已SUCCESS；未擅自合并/改base。M0、Fresh、自主4v4和可宣传
+连续比赛仍未实现，接下来首先完成当前数据驱动的M0链路。
