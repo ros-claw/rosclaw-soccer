@@ -128,10 +128,32 @@ def test_extracted_physics_body_matches_original_frozen_ast():
     )
     nodes = function.body[start:]
     for node in nodes:
+        if isinstance(node, ast.For) and ast.unparse(node.target) == "frame":
+            lateral = next(
+                n
+                for n in node.body
+                if isinstance(n, ast.Assign) and ast.unparse(n.targets[0]) == "lateral"
+            )
+            expected_call = ast.parse(
+                "lateral = native_lateral_command(gap_x=float(gap[0]), gap_y=float(gap[1]), "
+                "tracking=tracking, before_contact=contact_frame is None, mode=approach_mode)"
+            ).body[0]
+            assert ast.dump(lateral, include_attributes=False) == ast.dump(
+                expected_call, include_attributes=False
+            )
+            lateral.value = ast.parse(
+                "float(np.clip(1.2 * gap[1], -0.2, 0.2)) "
+                "if tracking and gap[0] > 0.95 and contact_frame is None else 0.0",
+                mode="eval",
+            ).body
         if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "(x, y, vx)":
             node.value = ast.Name(id="INDEPENDENT_COURSE", ctx=ast.Load())
         if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "commitment":
-            node.value.keywords = [k for k in node.value.keywords if k.arg != "entry_source_hash"]
+            node.value.keywords = [
+                k
+                for k in node.value.keywords
+                if k.arg not in ("entry_source_hash", "approach_mode")
+            ]
             for keyword in node.value.keywords:
                 if keyword.arg == "partition":
                     keyword.value = ast.Name(id="EXPLICIT_PARTITION", ctx=ast.Load())

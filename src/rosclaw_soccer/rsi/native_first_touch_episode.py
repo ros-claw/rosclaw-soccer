@@ -62,8 +62,14 @@ def run_native_first_touch_episode(
     recurrent_factory: Any = None,
     recurrent_sampling_factory: Any = None,
     recurrent_clipped_factory: Any = None,
+    approach_mode: str = "legacy",
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
+    if type(approach_mode) is not str or approach_mode not in (
+        "legacy",
+        "continuous_lateral_diagnostic",
+    ):
+        raise ValueError("explicit SIM approach diagnostic mode required")
     if type(partition) is not str or partition not in (
         "CONSUMED_TRANSFER_DIAGNOSTIC",
         "DECLARED_DEVELOPMENT_DIAGNOSTIC",
@@ -79,6 +85,8 @@ def run_native_first_touch_episode(
         raise ValueError("pinned native diagnostic entry source required")
     import mujoco
     import torch
+
+    from rosclaw_soccer.rsi.native_lateral_experiment import native_lateral_command
 
     torch.set_num_threads(1)
     scene = args.scene.resolve()
@@ -609,6 +617,7 @@ def run_native_first_touch_episode(
         lane=args.lane,
         course=[x, y, vx],
         partition=partition,
+        approach_mode=approach_mode,
         entry_source_hash=hash_bytes(entry_source_path.read_bytes()),
         source_hash=hash_bytes(Path(__file__).read_bytes()),
         assets=assets,
@@ -756,10 +765,12 @@ def run_native_first_touch_episode(
         ):
             history[key].append(value.copy()[None])
         gap = positions[ball] - positions[pelvis]
-        lateral = (
-            float(np.clip(1.2 * gap[1], -0.2, 0.2))
-            if tracking and gap[0] > 0.95 and contact_frame is None
-            else 0.0
+        lateral = native_lateral_command(
+            gap_x=float(gap[0]),
+            gap_y=float(gap[1]),
+            tracking=tracking,
+            before_contact=contact_frame is None,
+            mode=approach_mode,
         )
         qpos = np.concatenate((data.qpos[:7], data.qpos[qi], data.qpos[bq : bq + 7]))
         qvel = np.concatenate((data.qvel[:6], data.qvel[vi], data.qvel[bv : bv + 6]))
