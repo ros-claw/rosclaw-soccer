@@ -146,13 +146,49 @@ def test_extracted_physics_body_matches_original_frozen_ast():
                 "if tracking and gap[0] > 0.95 and contact_frame is None else 0.0",
                 mode="eval",
             ).body
+            conditional = next(
+                n
+                for n in node.body
+                if isinstance(n, ast.If) and ast.unparse(n.test) == "frame == 30"
+            )
+            gate = next(
+                n
+                for n in conditional.body
+                if isinstance(n, ast.Assign) and ast.unparse(n.targets[0]) == "gate"
+            )
+            expected_gate = ast.parse(
+                "native_swing_eligible(memory_gate=bool(select_taskspace_gate(features, "
+                "np.asarray(late['memory_features']), np.asarray(late['memory_clean']), "
+                "np.asarray(late['memory_reward']), np.asarray(late['memory_groups']), "
+                "neighbors=late['neighbors'], confidence=late['confidence'], "
+                "baseline_clean_ceiling=late['baseline_clean_ceiling'])[0]), "
+                "initial_vx=float(vx), foundation_only=args.foundation_only, mode=swing_mode)",
+                mode="eval",
+            ).body
+            assert ast.dump(gate.value, include_attributes=False) == ast.dump(
+                expected_gate, include_attributes=False
+            )
+            gate.value = ast.Call(
+                func=ast.Name(id="bool", ctx=ast.Load()),
+                args=[
+                    ast.BoolOp(
+                        op=ast.And(),
+                        values=[
+                            gate.value.keywords[0].value.args[0],
+                            ast.parse("vx < 0", mode="eval").body,
+                            ast.parse("not args.foundation_only", mode="eval").body,
+                        ],
+                    )
+                ],
+                keywords=[],
+            )
         if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "(x, y, vx)":
             node.value = ast.Name(id="INDEPENDENT_COURSE", ctx=ast.Load())
         if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "commitment":
             node.value.keywords = [
                 k
                 for k in node.value.keywords
-                if k.arg not in ("entry_source_hash", "approach_mode")
+                if k.arg not in ("entry_source_hash", "approach_mode", "swing_mode")
             ]
             for keyword in node.value.keywords:
                 if keyword.arg == "partition":

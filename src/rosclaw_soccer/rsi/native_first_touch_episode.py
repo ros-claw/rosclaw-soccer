@@ -63,8 +63,14 @@ def run_native_first_touch_episode(
     recurrent_sampling_factory: Any = None,
     recurrent_clipped_factory: Any = None,
     approach_mode: str = "legacy",
+    swing_mode: str = "legacy",
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
+    if type(swing_mode) is not str or swing_mode not in (
+        "legacy",
+        "memory_gate_both_directions_diagnostic",
+    ):
+        raise ValueError("explicit SIM swing eligibility diagnostic mode required")
     if type(approach_mode) is not str or approach_mode not in (
         "legacy",
         "continuous_lateral_diagnostic",
@@ -87,6 +93,7 @@ def run_native_first_touch_episode(
     import torch
 
     from rosclaw_soccer.rsi.native_lateral_experiment import native_lateral_command
+    from rosclaw_soccer.rsi.native_swing_experiment import native_swing_eligible
 
     torch.set_num_threads(1)
     scene = args.scene.resolve()
@@ -624,6 +631,7 @@ def run_native_first_touch_episode(
         foundation_hash=navigation.backend.qualification.qualification_hash,
         late_actor_hash=late["actor_hash"],
         execution_profile="foundation_only" if args.foundation_only else "taskspace_plus_motor",
+        swing_mode=swing_mode,
         model_hash=neural["model_hash"] if neural else None,
         step_model_hash=step_model["model_hash"] if step_model else None,
         consumed_bank_hash=consumed_bank_hash,
@@ -818,19 +826,22 @@ def run_native_first_touch_episode(
             features = gait_phase_features(
                 raw, predict_contact_time(raw, np.asarray(late["contact_time_weights"]))
             )
-            gate = bool(
-                select_taskspace_gate(
-                    features,
-                    np.asarray(late["memory_features"]),
-                    np.asarray(late["memory_clean"]),
-                    np.asarray(late["memory_reward"]),
-                    np.asarray(late["memory_groups"]),
-                    neighbors=late["neighbors"],
-                    confidence=late["confidence"],
-                    baseline_clean_ceiling=late["baseline_clean_ceiling"],
-                )[0]
-                and vx < 0
-                and not args.foundation_only
+            gate = native_swing_eligible(
+                memory_gate=bool(
+                    select_taskspace_gate(
+                        features,
+                        np.asarray(late["memory_features"]),
+                        np.asarray(late["memory_clean"]),
+                        np.asarray(late["memory_reward"]),
+                        np.asarray(late["memory_groups"]),
+                        neighbors=late["neighbors"],
+                        confidence=late["confidence"],
+                        baseline_clean_ceiling=late["baseline_clean_ceiling"],
+                    )[0]
+                ),
+                initial_vx=float(vx),
+                foundation_only=args.foundation_only,
+                mode=swing_mode,
             )
             if neural:
                 policy = configure_preview(neural, history, contact_frame)
