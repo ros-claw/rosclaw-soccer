@@ -127,6 +127,20 @@ def test_extracted_physics_body_matches_original_frozen_ast():
         and ast.unparse(node.value.func) == "torch.set_num_threads"
     )
     nodes = function.body[start:]
+    declaration_check = next(
+        n
+        for n in nodes
+        if isinstance(n, ast.If) and ast.unparse(n.test) == "training_plan is not None"
+    )
+    expected_check = ast.parse(
+        "if training_plan is not None:\n"
+        "    training_plan.require_sampling_view(training_plan.require_draw("
+        "group=training_group, seed=args.seed, lane=args.lane, course=course), step_model)\n"
+    ).body[0]
+    assert ast.dump(declaration_check, include_attributes=False) == ast.dump(
+        expected_check, include_attributes=False
+    )
+    nodes.remove(declaration_check)
     for node in nodes:
         if isinstance(node, ast.For) and ast.unparse(node.target) == "frame":
             lateral = next(
@@ -188,7 +202,13 @@ def test_extracted_physics_body_matches_original_frozen_ast():
             node.value.keywords = [
                 k
                 for k in node.value.keywords
-                if k.arg not in ("entry_source_hash", "approach_mode", "swing_mode")
+                if k.arg
+                not in (
+                    "entry_source_hash",
+                    "approach_mode",
+                    "swing_mode",
+                    "public_training_declaration",
+                )
             ]
             for keyword in node.value.keywords:
                 if keyword.arg == "partition":

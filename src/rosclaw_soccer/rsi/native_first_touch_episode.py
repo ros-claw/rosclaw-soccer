@@ -1,7 +1,7 @@
 """Native CPU first-touch physics kernel, separate from exam admission.
 
-Only consumed/development diagnostic partitions are accepted. This module
-cannot open a private Fresh pool or authorize promotion. Its caller must pin
+Consumed/development diagnostics and explicitly declared public training are
+accepted. This module cannot open a private Fresh pool or authorize promotion. Its caller must pin
 and validate entry arguments, source and policy factories before allocation.
 The legacy CLI retains its original consumed-course guard.
 """
@@ -29,6 +29,7 @@ from rosclaw_soccer.rsi.contact_time_phase_features import (
 )
 from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor
 from rosclaw_soccer.rsi.online_motor_actor_critic import configure_preview, validate_model
+from rosclaw_soccer.rsi.public_first_touch_training_plan import PublicFirstTouchTrainingPlan
 from rosclaw_soccer.rsi.sampling_model_io import load_sampling_model
 from rosclaw_soccer.rsi.taskspace_gate_memory import select_taskspace_gate
 from rosclaw_soccer.rsi.taskspace_swing_evidence import LEG_NAMES
@@ -64,6 +65,8 @@ def run_native_first_touch_episode(
     recurrent_clipped_factory: Any = None,
     approach_mode: str = "legacy",
     swing_mode: str = "legacy",
+    training_plan: PublicFirstTouchTrainingPlan | None = None,
+    training_group: int | None = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     if type(swing_mode) is not str or swing_mode not in (
@@ -79,6 +82,7 @@ def run_native_first_touch_episode(
     if type(partition) is not str or partition not in (
         "CONSUMED_TRANSFER_DIAGNOSTIC",
         "DECLARED_DEVELOPMENT_DIAGNOSTIC",
+        "DECLARED_PUBLIC_TRAINING",
     ):
         raise ValueError("native kernel cannot open or authorize a private Fresh exam")
     if (
@@ -89,6 +93,42 @@ def run_native_first_touch_episode(
         raise ValueError("explicit finite three-float native course required")
     if not isinstance(entry_source_path, Path) or not entry_source_path.is_file():
         raise ValueError("pinned native diagnostic entry source required")
+    if partition == "DECLARED_PUBLIC_TRAINING":
+        if (
+            type(training_plan) is not PublicFirstTouchTrainingPlan
+            or approach_mode != "legacy"
+            or swing_mode != "legacy"
+            or consumed_bank_hash is not None
+            or any(
+                factory is not None
+                for factory in (
+                    sampling_factory,
+                    extended_factory,
+                    proposal_factory,
+                    imitation_factory,
+                    recurrent_factory,
+                    recurrent_clipped_factory,
+                )
+            )
+            or any(
+                getattr(args, key, None) is not None
+                for key in (
+                    "neural_model",
+                    "motor_policy",
+                    "body_response_bundle",
+                )
+            )
+            or getattr(args, "foundation_only", None) is not False
+            or getattr(args, "cached_proposal_envelope", None) is not False
+        ):
+            raise ValueError("explicit unmixed public training declaration required")
+        training_plan.require_draw(
+            group=training_group, seed=args.seed, lane=args.lane, course=course
+        )
+    elif training_plan is not None or training_group is not None:
+        raise ValueError(
+            "training declarations cannot be attached to diagnostic or exam partitions"
+        )
     import mujoco
     import torch
 
@@ -207,6 +247,13 @@ def run_native_first_touch_episode(
             )
             if args.step_model
             else None
+        )
+    if training_plan is not None:
+        training_plan.require_sampling_view(
+            training_plan.require_draw(
+                group=training_group, seed=args.seed, lane=args.lane, course=course
+            ),
+            step_model,
         )
     if imitation_factory is not None and (
         step_model is None
@@ -632,6 +679,7 @@ def run_native_first_touch_episode(
         late_actor_hash=late["actor_hash"],
         execution_profile="foundation_only" if args.foundation_only else "taskspace_plus_motor",
         swing_mode=swing_mode,
+        public_training_declaration=training_plan.contract() if training_plan is not None else None,
         model_hash=neural["model_hash"] if neural else None,
         step_model_hash=step_model["model_hash"] if step_model else None,
         consumed_bank_hash=consumed_bank_hash,
