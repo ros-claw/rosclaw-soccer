@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from rosclaw_soccer.rsi.first_touch_recovery import WITNESSES, FirstTouchRecoveryLedger
+from rosclaw_soccer.rsi.first_touch_recovery import (
+    WITNESSES,
+    FirstTouchRecoveryLedger,
+    fork_verified_collection,
+)
 from rosclaw_soccer.rsi.public_first_touch_training_plan import PublicFirstTouchTrainingPlan
 
 
@@ -118,3 +122,37 @@ def test_witness_and_declaration_tampering_rejected(tmp_path: Path) -> None:
     (root / "declaration.json").write_text("{}")
     with pytest.raises(ValueError):
         ledger.status()
+
+
+def test_explicit_successor_preserves_fatal_predecessor(tmp_path: Path) -> None:
+    files = artifacts(tmp_path)
+    root, successor = tmp_path / "old", tmp_path / "new"
+    old = FirstTouchRecoveryLedger(root, plan())
+    old.record_episode(0, files)
+    old.failure("serialization comparison false positive", fatal=True)
+    original = (root / "journal.jsonl").read_bytes()
+    new = fork_verified_collection(root, successor, plan(), reason="reviewed serialization defect")
+    assert new.status()["completed_groups"] == [0]
+    assert new.status()["pending_groups"] == list(range(1, 16))
+    assert old.status()["state"] == "FATAL_CONTRACT_VIOLATION"
+    assert (root / "journal.jsonl").read_bytes() == original
+    assert (
+        fork_verified_collection(
+            root, successor, plan(), reason="reviewed serialization defect"
+        ).status()
+        == new.status()
+    )
+    with pytest.raises(ValueError):
+        fork_verified_collection(root, successor, plan(), reason="changed explanation")
+    with pytest.raises(ValueError):
+        fork_verified_collection(root, root, plan(), reason="must not reset")
+    files["trace"].write_text("changed")
+    with pytest.raises(ValueError):
+        fork_verified_collection(root, tmp_path / "third", plan(), reason="cannot bless tampering")
+
+
+def test_successor_rejects_nonfatal_predecessor(tmp_path: Path) -> None:
+    root = tmp_path / "old"
+    FirstTouchRecoveryLedger(root, plan())
+    with pytest.raises(ValueError):
+        fork_verified_collection(root, tmp_path / "new", plan(), reason="not an incident")

@@ -227,3 +227,58 @@ class FirstTouchRecoveryLedger:
             self._append(
                 events, "FATAL_CONTRACT_VIOLATION" if fatal else "RESUMABLE_FAILURE", reason=reason
             )
+
+
+def fork_verified_collection(
+    source: Path, destination: Path, plan: PublicFirstTouchTrainingPlan, *, reason: str
+) -> FirstTouchRecoveryLedger:
+    """Explicit successor after incident review; never unfreeze the failed ledger.
+
+    Reuses only previously committed, reverified witnesses. An uncommitted raw
+    episode still needs independent physics review in the successor campaign.
+    The reason is a provenance annotation, not a permission or safety bypass.
+    """
+    if type(reason) is not str or not 1 <= len(reason) <= 1024:
+        raise ValueError("bounded incident-review reason required")
+    if source.resolve() == destination.resolve():
+        raise ValueError("failed campaign must remain immutable")
+    old = FirstTouchRecoveryLedger(source, plan)
+    status = old.status()
+    if status["state"] != "FATAL_CONTRACT_VIOLATION":
+        raise ValueError("explicit failed predecessor required")
+    with old._lock():
+        episodes = [event["episode"] for event in old._read() if event.get("episode")]
+    lineage = dict(
+        schema="soccer.rsi.first_touch_collection_successor.v1",
+        predecessor=str(source.resolve()),
+        predecessor_head=status["head_hash"],
+        predecessor_journal_hash=file_hash(source / "journal.jsonl"),
+        predecessor_declaration_hash=status["declaration_hash"],
+        reason=reason,
+        adopted_groups=status["completed_groups"],
+        training_authorized=False,
+        promotion_authorized=False,
+        hardware_authorized=False,
+    )
+    result = FirstTouchRecoveryLedger(destination, plan)
+    with result._lock():
+        path = destination / "predecessor.json"
+        if path.exists():
+            if path.is_symlink() or hash_json(json.loads(path.read_bytes())) != hash_json(lineage):
+                raise ValueError("successor lineage cannot be replaced")
+        else:
+            if result._read():
+                raise ValueError("existing collection cannot acquire a new predecessor")
+            with path.open("x") as stream:
+                json.dump(lineage, stream, sort_keys=True, allow_nan=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            result._sync_root()
+    for episode in episodes:
+        result.record_episode(
+            episode["group"],
+            {key: Path(value["path"]) for key, value in episode["witnesses"].items()},
+        )
+    if old.status() != status:
+        raise ValueError("predecessor changed during explicit recovery")
+    return result
