@@ -2,6 +2,7 @@ import pytest
 
 from rosclaw_soccer.rsi.first_touch_mechanism_expansion import (
     declare_expansion,
+    select_pilot_mechanism,
     validate_public_course,
 )
 from rosclaw_soccer.rsi.public_first_touch_training_plan import PublicFirstTouchTrainingPlan
@@ -51,3 +52,46 @@ def test_invalid_course_rejects_before_allocation(course):
 def test_invalid_generator_identity(seed):
     with pytest.raises(ValueError):
         declare_expansion(plan(), seed=seed)
+
+
+def pilot():
+    rows = []
+    for arm in ("lateral", "direction", "combined"):
+        for group in range(16):
+            rows.append(
+                dict(
+                    group=group,
+                    arm=arm,
+                    baseline_outcome=dict(task_pass=group < 4, safe=True),
+                    outcome=dict(
+                        task_pass=group < (6 if arm == "combined" else 5),
+                        safe=not (arm != "direction" and group in (8, 9, 10)),
+                    ),
+                )
+            )
+    return rows
+
+
+def test_safety_veto_overrides_larger_task_gain():
+    result = select_pilot_mechanism(pilot())
+    assert result["chosen_mechanism"] == "direction"
+    assert result["summaries"]["combined"]["net_rescue"] == 2
+    assert result["summaries"]["combined"]["safety_regression"] == 3
+    assert result["summaries"]["combined"]["eligible_for_expansion"] is False
+    assert result["training_authorized"] is False
+
+
+def test_no_eligible_arm_means_pivot_not_automatic_repeat():
+    rows = pilot()
+    for row in rows:
+        row["outcome"]["safe"] = False
+    assert select_pilot_mechanism(rows)["chosen_mechanism"] is None
+
+
+def test_incomplete_or_mismatched_baseline_cannot_select():
+    with pytest.raises(ValueError):
+        select_pilot_mechanism(pilot()[:-1])
+    rows = pilot()
+    rows[-1]["baseline_outcome"]["safe"] = False
+    with pytest.raises(ValueError):
+        select_pilot_mechanism(rows)

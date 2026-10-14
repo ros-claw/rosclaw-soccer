@@ -68,7 +68,7 @@ def declare_expansion(plan: PublicFirstTouchTrainingPlan, *, seed: int) -> dict[
         public_training_plan_hash=plan.contract()["plan_hash"],
         records=records,
         strata_counts=strata,
-        planned_new_base_combined_episodes=24,
+        planned_new_base_candidate_episodes=24,
         planned_perturbed_paired_episodes=80,
         planned_exact_control_episodes=1,
         planned_new_native_executions=105,
@@ -77,6 +77,67 @@ def declare_expansion(plan: PublicFirstTouchTrainingPlan, *, seed: int) -> dict[
         private_fresh_accessed=False,
         clustered_original_contexts=40,
         independent_scenarios_claimed=40,
+        privileged_teacher_proven=False,
+        training_authorized=False,
+        promotion_authorized=False,
+        hardware_authorized=False,
+    )
+    return dict(result, report_hash=hash_json(result))
+
+
+def select_pilot_mechanism(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Choose a research expansion, never a teacher or promotion, from primitives.
+
+    Safety regression is a veto even when task success increases. Caller must
+    independently authenticate/review these physical records first.
+    """
+    summaries = {}
+    identities = None
+    baselines: dict[int, str] = {}
+    for arm in ("lateral", "direction", "combined"):
+        rows = [r for r in records if r.get("arm") == arm]
+        groups = [r.get("group") for r in rows]
+        if (
+            len(rows) != 16
+            or any(type(g) is not int for g in groups)
+            or len(set(groups)) != 16
+            or (identities is not None and set(groups) != identities)
+        ):
+            raise ValueError("complete paired16 public states required for every arm")
+        identities = set(groups)
+        for row in rows:
+            for name in ("baseline_outcome", "outcome"):
+                if type(row.get(name)) is not dict or any(
+                    type(row[name].get(k)) is not bool for k in ("task_pass", "safe")
+                ):
+                    raise ValueError("explicit primitive boolean outcomes required")
+            group = row["group"]
+            baseline_hash = hash_json(row["baseline_outcome"])
+            if group in baselines and baselines[group] != baseline_hash:
+                raise ValueError("all arms must share the exact same per-state baseline")
+            baselines[group] = baseline_hash
+        rescue = sum(
+            r["outcome"]["task_pass"] and not r["baseline_outcome"]["task_pass"] for r in rows
+        )
+        regression = sum(
+            not r["outcome"]["task_pass"] and r["baseline_outcome"]["task_pass"] for r in rows
+        )
+        safety = sum(r["baseline_outcome"]["safe"] and not r["outcome"]["safe"] for r in rows)
+        summaries[arm] = dict(
+            rescue=rescue,
+            regression=regression,
+            safety_regression=safety,
+            net_rescue=rescue - regression,
+            eligible_for_expansion=rescue > regression and safety == 0,
+        )
+    eligible = [a for a in summaries if summaries[a]["eligible_for_expansion"]]
+    chosen = max(eligible, key=lambda a: summaries[a]["net_rescue"]) if eligible else None
+    result = dict(
+        schema="soccer.rsi.public_pilot_mechanism_decision.v1",
+        summaries=summaries,
+        chosen_mechanism=chosen,
+        decision="EXPAND_PUBLIC_MECHANISM" if chosen else "PIVOT_ACTION_INTERFACE",
+        safety_veto_overrides_task_gain=True,
         privileged_teacher_proven=False,
         training_authorized=False,
         promotion_authorized=False,
