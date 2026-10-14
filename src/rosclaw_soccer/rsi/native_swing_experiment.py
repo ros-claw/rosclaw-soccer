@@ -18,11 +18,11 @@ def native_swing_eligible(
         or type(initial_vx) is not float
         or not math.isfinite(initial_vx)
         or type(mode) is not str
-        or mode not in ("legacy", "memory_gate_both_directions_diagnostic")
+        or mode
+        not in ("legacy", "memory_gate_both_directions_diagnostic", "bounded_contact_diagnostic")
     ):
         raise ValueError("explicit finite SIM swing eligibility diagnostic required")
-    return (
-        memory_gate
-        and not foundation_only
-        and (initial_vx < 0 or mode == "memory_gate_both_directions_diagnostic")
+    return not foundation_only and (
+        mode == "bounded_contact_diagnostic"
+        or (memory_gate and (initial_vx < 0 or mode == "memory_gate_both_directions_diagnostic"))
     )

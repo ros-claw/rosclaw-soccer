@@ -108,6 +108,73 @@ def test_entry_source_required_before_allocation(tmp_path):
         )
 
 
+def specialize_legacy_profile(function):
+    """Specialize only explicit profile=None branches, retaining frozen hash.
+
+    This does not erase new arithmetic. Scalar aliases are inlined from their
+    actual expressions, so a change to gains/caps/torque still changes the hash.
+    A real native control additionally checks bit parity of every old array.
+    """
+    import copy
+
+    class ProfileNone(ast.NodeTransformer):
+        def visit_If(self, node):
+            test = ast.unparse(node.test)
+            if (
+                isinstance(node.test, ast.BoolOp)
+                and isinstance(node.test.op, ast.And)
+                and any(ast.unparse(v) == "control_profile is not None" for v in node.test.values)
+            ):
+                return [self.visit(n) for n in node.orelse]
+            if test in ("control_profile is None", "control_profile is not None"):
+                selected = node.body if test == "control_profile is None" else node.orelse
+                return [self.visit(n) for n in selected]
+            return self.generic_visit(node)
+
+        def visit_IfExp(self, node):
+            if ast.unparse(node.test) == "control_profile is None":
+                return self.visit(node.body)
+            return self.generic_visit(node)
+
+    function = ProfileNone().visit(function)
+    names = {
+        "foot_forward_cap",
+        "foot_lateral_cap",
+        "foot_vertical_offset",
+        "navigation_command",
+        "requested_torque",
+    }
+    assignments = [
+        n
+        for n in ast.walk(function)
+        if isinstance(n, ast.Assign)
+        and len(n.targets) == 1
+        and isinstance(n.targets[0], ast.Name)
+        and n.targets[0].id in names
+    ]
+    assert len(assignments) == len(names)
+    aliases = {n.targets[0].id: n.value for n in assignments}
+    assert set(aliases) == names
+
+    class Inline(ast.NodeTransformer):
+        def visit_Name(self, node):
+            if isinstance(node.ctx, ast.Load) and node.id in aliases:
+                return copy.deepcopy(aliases[node.id])
+            return node
+
+        def visit_Assign(self, node):
+            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                name = node.targets[0].id
+                if name in aliases:
+                    return None
+                if name == "requested_torques":
+                    assert ast.dump(node.value) == ast.dump(ast.List(elts=[], ctx=ast.Load()))
+                    return None
+            return self.generic_visit(node)
+
+    return Inline().visit(function)
+
+
 def test_extracted_physics_body_matches_original_frozen_ast():
     # Original native source SHA3278a076... was independently archived before
     # extraction. Normalize ONLY explicit course, partition and added entry
@@ -119,6 +186,7 @@ def test_extracted_physics_body_matches_original_frozen_ast():
         for n in tree.body
         if isinstance(n, ast.FunctionDef) and n.name == "run_native_first_touch_episode"
     )
+    function = specialize_legacy_profile(function)
     start = next(
         i
         for i, node in enumerate(function.body)

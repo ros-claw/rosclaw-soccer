@@ -461,6 +461,19 @@ def audit_cpu_transfer(
         "motor_delta_rad": (300, 1, 12),
         "pre_motor_joint_target_rad": (300, 1, 29),
     }
+    if "bounded_control_profile" in commitment:
+        from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
+
+        profile = BoundedFirstTouchControl(**commitment["bounded_control_profile"]["parameters"])
+        if profile.contract() != commitment["bounded_control_profile"]:
+            raise ValueError("bounded interface parameters or source contract changed")
+        shapes.update(
+            approach_requested_navigation_command=(300, 1, 3),
+            foundation_navigation_joint_target_rad=(300, 1, 29),
+            taskspace_joint_increment_rad=(300, 1, 29),
+            motor_pre_projection_requested_rad=(300, 1, 12),
+            pd_requested_torque_nm=(300, 1, 10, 29),
+        )
     with np.load(trace_path, allow_pickle=False) as loaded:
         trace = {k: loaded[k] for k in loaded.files}
     # Keep optional sequence-learning dependencies out of legacy replay paths.
@@ -597,6 +610,12 @@ def audit_cpu_transfer(
         target = trace["joint_target_rad"][frame, 0]
         forces = np.zeros(6)
         for substep in range(10):
+            if "bounded_control_profile" in commitment:
+                equal(
+                    (target - data.qpos[qi]) * kp - data.qvel[vi] * kd,
+                    trace["pd_requested_torque_nm"][frame, 0, substep],
+                    "bounded interface independently reconstructed preclip PD torque",
+                )
             torque = np.clip(
                 (target - data.qpos[qi]) * kp - data.qvel[vi] * kd,
                 -np.asarray(G1_HARD_TORQUE_LIMITS),

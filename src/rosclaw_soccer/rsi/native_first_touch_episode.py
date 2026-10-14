@@ -21,6 +21,7 @@ from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.providers.g1.sonic_navigation import G1SonicNavigation, SonicNavigationConfig
 from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker
+from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.contact_motor_contract import load_policy, motor_delta
 from rosclaw_soccer.rsi.contact_time_phase_features import (
     current_context,
@@ -67,16 +68,19 @@ def run_native_first_touch_episode(
     swing_mode: str = "legacy",
     training_plan: PublicFirstTouchTrainingPlan | None = None,
     training_group: int | None = None,
+    control_profile: BoundedFirstTouchControl | None = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     if type(swing_mode) is not str or swing_mode not in (
         "legacy",
         "memory_gate_both_directions_diagnostic",
+        "bounded_contact_diagnostic",
     ):
         raise ValueError("explicit SIM swing eligibility diagnostic mode required")
     if type(approach_mode) is not str or approach_mode not in (
         "legacy",
         "continuous_lateral_diagnostic",
+        "bounded_approach_diagnostic",
     ):
         raise ValueError("explicit SIM approach diagnostic mode required")
     if type(partition) is not str or partition not in (
@@ -85,6 +89,19 @@ def run_native_first_touch_episode(
         "DECLARED_PUBLIC_TRAINING",
     ):
         raise ValueError("native kernel cannot open or authorize a private Fresh exam")
+    if control_profile is not None:
+        if (
+            type(control_profile) is not BoundedFirstTouchControl
+            or approach_mode != "bounded_approach_diagnostic"
+            or partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
+            or recurrent_sampling_factory is None
+        ):
+            raise ValueError("explicit bounded SIM diagnostic and recurrent sampler required")
+        control_profile.__post_init__()
+    elif (
+        approach_mode == "bounded_approach_diagnostic" or swing_mode == "bounded_contact_diagnostic"
+    ):
+        raise ValueError("bounded interface requires a complete declared control profile")
     if (
         type(course) is not tuple
         or len(course) != 3
@@ -665,6 +682,11 @@ def run_native_first_touch_episode(
             raise ValueError("body guidance only accepts the explicit proposal mean parent")
         body_guidance_bundle = load_json_artifact(args.body_response_bundle)
         body_guidance = BodyResponseGuidanceExecution(body_guidance_bundle, policy)
+    foot_forward_cap = 0.08 if control_profile is None else control_profile.foot_forward_cap_m
+    foot_lateral_cap = 0.15 if control_profile is None else control_profile.foot_lateral_cap_m
+    foot_vertical_offset = (
+        0.04 if control_profile is None else control_profile.foot_vertical_offset_m
+    )
     commitment = dict(
         schema="soccer.rsi.cpu_motor_transfer.v1",
         seed=args.seed,
@@ -685,11 +707,11 @@ def run_native_first_touch_episode(
         consumed_bank_hash=consumed_bank_hash,
         motor_policy_hash=policy["policy_hash"] if policy else None,
         taskspace_contract=dict(
-            forward_cap_m=0.08,
-            lateral_cap_m=0.15,
+            forward_cap_m=foot_forward_cap,
+            lateral_cap_m=foot_lateral_cap,
             acquisition_max_gap_m=0.95,
             revalidate_swing_side=True,
-            vertical_offset_m=0.04,
+            vertical_offset_m=foot_vertical_offset,
         ),
         compiled_model_hash=hash_bytes(model_snapshot.read_bytes()),
         physics=dict(
@@ -742,6 +764,8 @@ def run_native_first_touch_episode(
         commitment["recurrent_sampling_factory"] = recurrent_sampling_factory.contract()
     if recurrent_clipped_factory is not None:
         commitment["recurrent_clipped_factory"] = recurrent_clipped_factory.contract()
+    if control_profile is not None:
+        commitment["bounded_control_profile"] = control_profile.contract()
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
     history: dict[str, list[Any]] = {
         k: []
@@ -781,6 +805,21 @@ def run_native_first_touch_episode(
     if body_guidance is not None:
         history.update({k: [] for k in ("body_response_applied_increment", "body_response_status")})
     tracker = None
+    if control_profile is not None:
+        if recurrent_decoder is None or not recurrent_sampling:
+            raise ValueError("bounded teacher capture requires actual recurrent sampling")
+        history.update(
+            {
+                k: []
+                for k in (
+                    "approach_requested_navigation_command",
+                    "foundation_navigation_joint_target_rad",
+                    "taskspace_joint_increment_rad",
+                    "motor_pre_projection_requested_rad",
+                    "pd_requested_torque_nm",
+                )
+            }
+        )
     tracking = y < 0
     gate = False
     side, contact_frame = -1, None
@@ -821,13 +860,25 @@ def run_native_first_touch_episode(
         ):
             history[key].append(value.copy()[None])
         gap = positions[ball] - positions[pelvis]
-        lateral = native_lateral_command(
-            gap_x=float(gap[0]),
-            gap_y=float(gap[1]),
-            tracking=tracking,
-            before_contact=contact_frame is None,
-            mode=approach_mode,
-        )
+        if control_profile is None:
+            lateral = native_lateral_command(
+                gap_x=float(gap[0]),
+                gap_y=float(gap[1]),
+                tracking=tracking,
+                before_contact=contact_frame is None,
+                mode=approach_mode,
+            )
+            navigation_command = (1.4, lateral, 0.0)
+        else:
+            requested_navigation, navigation_command = control_profile.navigation(
+                gap_x=float(gap[0]),
+                gap_y=float(gap[1]),
+                ball_vx=float(ball_linear_vel[0]),
+                before_contact=contact_frame is None,
+            )
+            history["approach_requested_navigation_command"].append(
+                np.asarray(requested_navigation)[None]
+            )
         qpos = np.concatenate((data.qpos[:7], data.qpos[qi], data.qpos[bq : bq + 7]))
         qvel = np.concatenate((data.qvel[:6], data.qvel[vi], data.qvel[bv : bv + 6]))
         history["canonical_qpos"].append(qpos.copy()[None])
@@ -841,7 +892,7 @@ def run_native_first_touch_episode(
             qpos=tuple(float(v) for v in qpos),
             qvel=tuple(float(v) for v in qvel),
             target_position_m=(0.0, 0.0, 0.0),
-            navigation_command=(1.4, lateral, 0.0),
+            navigation_command=navigation_command,
             navigation_envelope=navigation.navigation_envelope,
         )
         if frame == 0:
@@ -867,6 +918,9 @@ def run_native_first_touch_episode(
                 history[PREFIX + name].append(value.cpu().numpy().copy())
         proposal = navigation.commit_batched_action(tracker.action[0].numpy())
         target = np.asarray(proposal.target_rad).copy()
+        if control_profile is not None:
+            navigation_target = target.copy()
+            history["foundation_navigation_joint_target_rad"].append(navigation_target[None])
         if frame == 30:
             raw = current_context(
                 root_pose[None], root_vel[None], positions[ball][None], ball_linear_vel[None]
@@ -917,13 +971,15 @@ def run_native_first_touch_episode(
                         jac[:, vi[ids]],
                         target[ids],
                         limits[ids],
-                        forward_cap_m=0.08,
-                        lateral_cap_m=0.15,
+                        forward_cap_m=foot_forward_cap,
+                        lateral_cap_m=foot_lateral_cap,
                         lateral_lead_m=0.0,
-                        vertical_offset_m=0.04,
+                        vertical_offset_m=foot_vertical_offset,
                     )
                 target[ids] += swing_delta
         history["pre_motor_joint_target_rad"].append(target.copy()[None])
+        if control_profile is not None:
+            history["taskspace_joint_increment_rad"].append((target - navigation_target)[None])
         if step_model is not None:
             if policy is None:
                 raise ValueError("per-frame actor requires a sealed preview")
@@ -988,21 +1044,36 @@ def run_native_first_touch_episode(
                 for name, value in recurrent_decoder.sampled_transition.items():
                     history[name].append(value[None])
         history["motor_delta_rad"].append(previous.copy()[None])
-        history["navigation_command"].append(np.asarray((1.4, lateral, 0.0))[None])
+        history["navigation_command"].append(np.asarray(navigation_command)[None])
+        if control_profile is not None:
+            from rosclaw_soccer.rsi.contact_motor_primitive import CAP_RAD
+
+            raw_motor = (
+                np.zeros(12)
+                if frame < 30
+                else CAP_RAD
+                * np.tanh(recurrent_decoder.sampled_transition["recurrent_sampling_latent_action"])
+            )
+            history["motor_pre_projection_requested_rad"].append(raw_motor[None])
         history["joint_target_rad"].append(target[None].copy())
         forces = np.zeros(6)
         torques = []
+        requested_torques = []
         actual_forces = []
         pelvis_samples = []
         for _ in range(10):
+            requested_torque = (target - data.qpos[qi]) * navigation.backend.kp - data.qvel[
+                vi
+            ] * navigation.backend.kd
             torque = np.clip(
-                (target - data.qpos[qi]) * navigation.backend.kp
-                - data.qvel[vi] * navigation.backend.kd,
+                requested_torque,
                 -np.asarray(G1_HARD_TORQUE_LIMITS),
                 np.asarray(G1_HARD_TORQUE_LIMITS),
             )
             data.ctrl[ai] = torque
             torques.append(torque.copy())
+            if control_profile is not None:
+                requested_torques.append(requested_torque.copy())
             mujoco.mj_step(model, data)
             actual_forces.append(data.actuator_force[ai].copy())
             for c in range(data.ncon):
@@ -1026,6 +1097,8 @@ def run_native_first_touch_episode(
             first_contact_bodies = np.flatnonzero(forces > 1).tolist()
             swing_contact_delta = swing_delta.copy()
             motor_contact_delta = previous.copy()
+        if control_profile is not None:
+            history["pd_requested_torque_nm"].append(np.asarray(requested_torques)[None])
         history["force_n"].append(forces[None])
         history["ball_position_after_step_m"].append(data.xpos[ball].copy()[None])
         history["torque_nm"].append(np.asarray(torques)[None])
@@ -1033,6 +1106,11 @@ def run_native_first_touch_episode(
         history["pelvis_z_per_substep_m"].append(np.asarray(pelvis_samples)[None])
         if not np.isfinite(data.qpos).all() or not np.isfinite(data.qvel).all():
             raise ValueError("nonfinite physical MuJoCo state")
+    if (
+        control_profile is not None
+        and control_profile.contract() != commitment["bounded_control_profile"]
+    ):
+        raise ValueError("bounded control profile changed during the episode")
     trace = args.output_root / "physical_trace.npz"
     arrays: dict[str, Any] = {k: np.asarray(v) for k, v in history.items()}
     if args.record_foundation_observation:
