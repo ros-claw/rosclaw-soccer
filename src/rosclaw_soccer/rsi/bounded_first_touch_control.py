@@ -76,7 +76,7 @@ class BoundedFirstTouchControl:
         value = dict(
             schema="soccer.rsi.bounded_first_touch_control.v1",
             parameters=asdict(self),
-            bounds=BOUNDS,
+            bounds={name: list(bounds) for name, bounds in BOUNDS.items()},
             source_hash=hash_bytes(Path(__file__).read_bytes()),
             coordinate_frame="world",
             teacher_privileged_current_state=True,

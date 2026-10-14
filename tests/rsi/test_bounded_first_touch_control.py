@@ -1,4 +1,5 @@
 import argparse
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -8,6 +9,15 @@ import pytest
 from rosclaw_soccer.rsi.bounded_first_touch_control import BOUNDS, BoundedFirstTouchControl
 from rosclaw_soccer.rsi.native_first_touch_episode import run_native_first_touch_episode
 from rosclaw_soccer.rsi.native_swing_experiment import native_swing_eligible
+
+
+def test_contract_round_trips_without_tuple_drift_or_mutable_aliases():
+    policy = BoundedFirstTouchControl()
+    persisted = json.loads(json.dumps(policy.contract(), allow_nan=False))
+    restored = BoundedFirstTouchControl(**persisted["parameters"])
+    assert restored.contract() == persisted
+    persisted["bounds"]["forward_cap_m_s"][1] = 99.0
+    assert policy.contract()["bounds"]["forward_cap_m_s"][1] == 1.48
 
 
 def test_commands_keep_requests_and_project_without_exceeding_envelope():
