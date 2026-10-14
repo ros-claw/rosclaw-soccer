@@ -77,7 +77,7 @@ def curate_collection(ledger: FirstTouchRecoveryLedger) -> dict[str, Any]:
         bucket["safe_foot_contact"] += int(
             label["safe"] is True and label["first_foot_contact_frame"] is not None
         )
-        bucket["high_quality"] += int(label["task_pass"])
+        bucket["high_quality"] += int(label["task_pass"] is True)
         records.append(
             dict(
                 draw=asdict(draw),
