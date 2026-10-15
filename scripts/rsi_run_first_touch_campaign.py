@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -20,7 +21,7 @@ def main() -> None:
 
     try:
         run(args.config.resolve(), preflight=args.preflight)
-    except (ValueError, TypeError, KeyError, FileNotFoundError):
+    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
         # A contract violation is not a transient crash: systemd must not
         # retry it into apparent success. Full traceback remains in the log.
         import traceback

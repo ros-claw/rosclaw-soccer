@@ -9,9 +9,15 @@ import pytest
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.first_touch_campaign import (
     FirstTouchCampaign,
+    load_verified_predecessor,
     summarize_first_touch_candidate,
 )
-from rosclaw_soccer.rsi.first_touch_campaign_worker import prepare, propose_next
+from rosclaw_soccer.rsi.first_touch_campaign_worker import (
+    disk_admission,
+    prepare,
+    propose_next,
+    require_same_action_functions,
+)
 from rosclaw_soccer.sim.contracts import hash_bytes
 
 
@@ -202,3 +208,87 @@ def test_non_sim_configuration_rejected_before_importing_preparation(tmp_path):
     path.write_text(json.dumps(dict(mode="REAL", hardware_authorized=True)))
     with pytest.raises(ValueError, match="SIM-only"):
         prepare(path)
+
+
+def stopped_predecessor(tmp_path, phase="STOPPED_OPERATOR_REQUEST"):
+    root = tmp_path / "old"
+    old = FirstTouchCampaign(root, declaration())
+    old.begin("already-verified")
+    old.complete("already-verified", dict(receipt(root), evaluation_identity="same-state"))
+    old.state["populations"] = [
+        [dict(parameters=asdict(BoundedFirstTouchControl()), swing="legacy")]
+    ]
+    old.state["phase"] = phase
+    old.record("STOPPED_TEST_FIXTURE")
+    tip, commitment = old.tip, old.state["declaration_hash"]
+    old.db.close()
+    path = root / "campaign.sqlite"
+    return dict(
+        ledger_path=str(path),
+        ledger_hash=hash_bytes(path.read_bytes()),
+        ledger_tip=tip,
+        declaration_hash=commitment,
+        evidence_root=str(root),
+    )
+
+
+def test_explicit_successor_adopts_completed_work_and_attempt_budget(tmp_path):
+    predecessor = stopped_predecessor(tmp_path)
+    successor_declaration = dict(declaration(), predecessor=predecessor, reserved_disk_gib=0)
+    campaign = FirstTouchCampaign(tmp_path / "new", successor_declaration)
+    campaign.adopt_predecessor()
+    assert campaign.state["attempts"] == 1
+    assert len(campaign.state["completed"]) == 1
+    assert len(campaign.state["populations"]) == 1
+    assert campaign.state["adopted_predecessor_tip"] == predecessor["ledger_tip"]
+    assert campaign.begin("next") == 1
+    campaign.db.close()
+    restarted = FirstTouchCampaign(tmp_path / "new", successor_declaration)
+    restarted.adopt_predecessor()  # idempotent, never overwrite the next attempt
+    assert restarted.state["attempts"] == 2
+    assert restarted.state["active"]["job"] == "next"
+
+
+@pytest.mark.parametrize(
+    "phase", ["FATAL_CONTRACT_VIOLATION", "PLATEAU_RESEARCH_REQUIRED", "WAITING_RESOURCES"]
+)
+def test_successor_cannot_unfreeze_fatal_or_live_predecessor(tmp_path, phase):
+    with pytest.raises(ValueError, match="quiescent"):
+        load_verified_predecessor(stopped_predecessor(tmp_path, phase))
+
+
+@pytest.mark.parametrize("fault", ["digest", "tip", "declaration", "witness"])
+def test_successor_refuses_changed_predecessor_or_evidence(tmp_path, fault):
+    predecessor = stopped_predecessor(tmp_path)
+    if fault == "witness":
+        (tmp_path / "old/fixture.bin").write_bytes(b"changed")
+    else:
+        key = {"digest": "ledger_hash", "tip": "ledger_tip", "declaration": "declaration_hash"}[
+            fault
+        ]
+        predecessor[key] = "sha256:" + "0" * 64
+    campaign = FirstTouchCampaign(tmp_path / "new", dict(declaration(), predecessor=predecessor))
+    with pytest.raises(ValueError):
+        campaign.adopt_predecessor()
+    assert campaign.state["completed"] == {}
+
+
+def test_disk_capacity_policy_can_be_explicitly_disabled():
+    assert disk_admission(free_bytes=0, reserved_gib=0)
+    assert disk_admission(free_bytes=100 * 1024**3, reserved_gib=0)
+    assert not disk_admission(free_bytes=100 * 1024**3, reserved_gib=101)
+    with pytest.raises(ValueError):
+        disk_admission(free_bytes=0, reserved_gib=-1)
+    with pytest.raises(ValueError):
+        disk_admission(free_bytes=0, reserved_gib=False)
+
+
+def test_operational_migration_must_not_change_physics_or_search_functions(tmp_path):
+    previous, current = tmp_path / "previous.py", tmp_path / "current.py"
+    source = "def qualified_episode():\n    return 300\ndef propose_next():\n    return 4\n"
+    previous.write_text(source)
+    current.write_text("import sqlite3\n" + source)
+    require_same_action_functions(previous, current)
+    current.write_text(source.replace("return 300", "return 600"))
+    with pytest.raises(ValueError, match="arithmetic"):
+        require_same_action_functions(previous, current)

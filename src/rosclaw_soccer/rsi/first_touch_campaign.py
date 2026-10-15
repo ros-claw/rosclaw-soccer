@@ -27,6 +27,44 @@ TERMINAL_PHASES = frozenset(
 )
 
 
+def load_verified_predecessor(specification: dict[str, Any]) -> dict[str, Any]:
+    """Read a stopped, explicitly pinned predecessor without rewriting it."""
+    path = Path(specification["ledger_path"])
+    if (
+        not path.is_absolute()
+        or path.resolve().parent != Path(specification["evidence_root"]).resolve()
+    ):
+        raise ValueError("explicit predecessor-owned ledger required")
+    wal = Path(str(path) + "-wal")
+    if wal.exists() and wal.stat().st_size:
+        raise ValueError("predecessor must be stopped and checkpointed before adoption")
+    with path.open("rb") as stream:
+        digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
+    if digest != specification["ledger_hash"]:
+        raise ValueError("predecessor ledger bytes changed")
+    previous = "GENESIS"
+    state: dict[str, Any] = {}
+    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro&immutable=1", uri=True) as db:
+        for seq, link, body, digest in db.execute("SELECT * FROM events ORDER BY seq"):
+            document = json.loads(body)
+            if link != previous or digest != hash_json(dict(seq=seq, previous=link, body=document)):
+                raise ValueError("predecessor event integrity violation")
+            state = document["state"]
+            previous = digest
+    if (
+        previous != specification["ledger_tip"]
+        or state.get("declaration_hash") != specification["declaration_hash"]
+        or state.get("active") is not None
+        or state.get("phase") != "STOPPED_OPERATOR_REQUEST"
+        or state.get("hardware_authorized") is not False
+        or state.get("promotion_authorized") is not False
+    ):
+        raise ValueError(
+            "explicit quiescent predecessor required; fatal or terminal states cannot migrate"
+        )
+    return state
+
+
 class FirstTouchCampaign:
     """Append-only transactional event ledger with source-bound restart state."""
 
@@ -99,12 +137,38 @@ class FirstTouchCampaign:
             raise ValueError("complete immutable physical witnesses required")
         for witness in witnesses.values():
             path = Path(witness["path"])
-            if not path.is_absolute() or not path.resolve().is_relative_to(self.root):
+            roots = [self.root]
+            predecessor = self.declaration.get("predecessor")
+            if predecessor is not None:
+                roots.append(Path(predecessor["evidence_root"]).resolve())
+            if not path.is_absolute() or not any(
+                path.resolve().is_relative_to(root) for root in roots
+            ):
                 raise ValueError("campaign-owned evidence path required")
             with path.open("rb") as stream:
                 actual = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
             if actual != witness["sha256"]:
                 raise ValueError("completed campaign witness bytes changed")
+
+    def adopt_predecessor(self) -> None:
+        specification = self.declaration.get("predecessor")
+        if specification is None:
+            return
+        if self.state.get("adopted_predecessor_tip") == specification["ledger_tip"]:
+            return
+        if self.state["attempts"] or self.state["completed"] or self.state["generations"]:
+            raise ValueError("predecessor can only initialize an unused successor")
+        previous = load_verified_predecessor(specification)
+        if previous["attempts"] > self.declaration["max_attempts"]:
+            raise ValueError("inherited attempts cannot exceed the existing budget")
+        for receipt in previous["completed"].values():
+            self.verify_receipt(receipt)
+        for key in ("attempts", "completed", "generations", "no_gain_generations", "populations"):
+            if key in previous:
+                self.state[key] = previous[key]
+        self.state["adopted_predecessor_tip"] = specification["ledger_tip"]
+        self.state["phase"] = "READY_FOR_NEXT_JOB"
+        self.record("EXPLICIT_OPERATIONAL_SUCCESSOR_ADOPTED_NO_PHYSICS_RERUN")
 
     def record(self, event: str) -> None:
         self.db.execute("BEGIN IMMEDIATE")

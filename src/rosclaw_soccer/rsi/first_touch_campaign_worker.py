@@ -1,6 +1,7 @@
 """Persistent first-touch SIM pilot: qualified episodes, feedback, next round."""
 
 import argparse
+import ast
 import fcntl
 import gc
 import importlib.util
@@ -21,6 +22,7 @@ from rosclaw_soccer.rsi.bounded_first_touch_control import BOUNDS, BoundedFirstT
 from rosclaw_soccer.rsi.bounded_first_touch_search import initial_population
 from rosclaw_soccer.rsi.first_touch_campaign import (
     FirstTouchCampaign,
+    load_verified_predecessor,
     summarize_first_touch_candidate,
 )
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -36,6 +38,33 @@ def atomic_status(root: Path, name: str, value: dict[str, Any]) -> None:
     os.replace(temporary, target)
 
 
+def disk_admission(*, free_bytes: int, reserved_gib: int) -> bool:
+    """Zero explicitly disables capacity gating, not evidence write checks."""
+    if type(reserved_gib) is not int or reserved_gib < 0:
+        raise ValueError("explicit nonnegative disk reservation required")
+    if type(free_bytes) is not int or free_bytes < 0:
+        raise ValueError("nonnegative observed disk capacity required")
+    return reserved_gib == 0 or free_bytes >= reserved_gib * 1024**3
+
+
+def require_same_action_functions(previous: Path, current: Path) -> None:
+    names = {"qualified_episode", "propose_next"}
+
+    def extract(path: Path) -> dict[str, str]:
+        tree = ast.parse(path.read_text())
+        result = {
+            n.name: ast.dump(n, include_attributes=False)
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name in names
+        }
+        if set(result) != names:
+            raise ValueError("complete original action and search functions required")
+        return result
+
+    if extract(previous) != extract(current):
+        raise ValueError("operational succession cannot change action or search arithmetic")
+
+
 def prepare(config_path: Path) -> tuple[Any, Any, dict[str, Any], dict[str, Any]]:
     config = json.loads(config_path.read_text())
     if (
@@ -45,6 +74,7 @@ def prepare(config_path: Path) -> tuple[Any, Any, dict[str, Any], dict[str, Any]
         or config.get("private_fresh_accessed") is not False
     ):
         raise ValueError("SIM-only public research configuration required")
+    disk_admission(free_bytes=0, reserved_gib=config.get("reserved_disk_gib", 101))
     helper = Path(config["qualified_preparation_path"])
     if hash_bytes(helper.read_bytes()) != config["qualified_preparation_hash"]:
         raise ValueError("exact independently qualified preparation required")
@@ -60,6 +90,53 @@ def prepare(config_path: Path) -> tuple[Any, Any, dict[str, Any], dict[str, Any]
     p.HEADS[str(source)] = config["source_head"]
     for folder in (source / "src", source / "scripts"):
         p.add_pins({str(path): p.digest(path) for path in folder.rglob("*.py")})
+    predecessor = config.get("predecessor")
+    if predecessor is not None:
+        old_config_path = Path(predecessor["configuration_path"])
+        if p.digest(old_config_path) != predecessor["configuration_hash"]:
+            raise ValueError("original predecessor configuration required")
+        old_config = json.loads(old_config_path.read_text())
+        allowed_changes = {
+            "source_root",
+            "source_head",
+            "output_root",
+            "reserved_disk_gib",
+            "predecessor",
+        }
+        if {k: v for k, v in old_config.items() if k not in allowed_changes} != {
+            k: v for k, v in config.items() if k not in allowed_changes
+        }:
+            raise ValueError("operational succession cannot change scientific contract or budgets")
+        old_source = Path(old_config["source_root"])
+        if (
+            Path(old_config["output_root"]).resolve()
+            != Path(predecessor["evidence_root"]).resolve()
+        ):
+            raise ValueError("predecessor evidence must belong to the original declaration")
+        p.HEADS[str(old_source)] = old_config["source_head"]
+        allowed_source_changes = {
+            "src/rosclaw_soccer/rsi/first_touch_campaign.py",
+            "src/rosclaw_soccer/rsi/first_touch_campaign_worker.py",
+            "scripts/rsi_run_first_touch_campaign.py",
+        }
+
+        def scientific_sources(base: Path) -> dict[str, str]:
+            return {
+                str(path.relative_to(base)): p.digest(path)
+                for folder in (base / "src", base / "scripts")
+                for path in folder.rglob("*.py")
+                if str(path.relative_to(base)) not in allowed_source_changes
+            }
+
+        if scientific_sources(source) != scientific_sources(old_source):
+            raise ValueError(
+                "scientific control, scoring or learning sources changed during succession"
+            )
+        relative_worker = "src/rosclaw_soccer/rsi/first_touch_campaign_worker.py"
+        require_same_action_functions(old_source / relative_worker, source / relative_worker)
+        load_verified_predecessor(predecessor)
+        for path in (old_config_path, Path(predecessor["ledger_path"])):
+            p.add_pins({str(path): p.digest(path)})
     p.add_pins({str(config_path): p.digest(config_path)})
     result_path = Path(config["interface_result"])
     result = p.sealed(result_path)
@@ -147,6 +224,7 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     declaration = dict(config, input_file_hashes=dict(p.PINS), source_heads=p.HEADS)
     campaign = FirstTouchCampaign(root, declaration)
+    campaign.adopt_predecessor()
     if campaign.state["phase"] == "FATAL_CONTRACT_VIOLATION":
         raise ValueError("fatal campaign requires incident review and an explicit successor")
     if campaign.state["phase"] in {
@@ -206,7 +284,13 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
                 if (root / "PAUSE").exists()
                 else (
                     "WAITING_RESOURCES"
-                    if ram < 48 * 1024**3 or shutil.disk_usage(root).free < 101 * 1024**3
+                    if ram < 48 * 1024**3
+                    or not disk_admission(
+                        free_bytes=0
+                        if config.get("reserved_disk_gib", 101) == 0
+                        else shutil.disk_usage(root).free,
+                        reserved_gib=config.get("reserved_disk_gib", 101),
+                    )
                     else "READY_FOR_NEXT_JOB"
                 )
             )
