@@ -208,7 +208,7 @@ def audit_locomotion_reference(
     if type(mode) is not int or type(events) is not list:
         raise ValueError("explicit planner mode and complete event list required")
     _inputs(trace, events, mode, height)
-    binding = dict(
+    binding: dict[str, Any] = dict(
         schema="rosclaw_soccer.g1_sonic_navigation.v1",
         agent_id="cpu.first_touch.0",
         config=dict(
