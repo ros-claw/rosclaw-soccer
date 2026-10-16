@@ -30,6 +30,7 @@ from rosclaw_soccer.rsi.contact_time_phase_features import (
 )
 from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor
 from rosclaw_soccer.rsi.online_motor_actor_critic import configure_preview, validate_model
+from rosclaw_soccer.rsi.postcontact_navigation_probe import PostcontactNavigationProbe
 from rosclaw_soccer.rsi.public_first_touch_training_plan import PublicFirstTouchTrainingPlan
 from rosclaw_soccer.rsi.sampling_model_io import load_sampling_model
 from rosclaw_soccer.rsi.taskspace_gate_memory import select_taskspace_gate
@@ -70,6 +71,7 @@ def run_native_first_touch_episode(
     training_plan: PublicFirstTouchTrainingPlan | None = None,
     training_group: int | None = None,
     control_profile: BoundedFirstTouchControl | None = None,
+    postcontact_profile: PostcontactNavigationProbe | None = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     if type(swing_mode) is not str or swing_mode not in (
@@ -99,10 +101,16 @@ def run_native_first_touch_episode(
         ):
             raise ValueError("explicit bounded SIM diagnostic and recurrent sampler required")
         control_profile.__post_init__()
+        if postcontact_profile is not None:
+            if type(postcontact_profile) is not PostcontactNavigationProbe:
+                raise ValueError("typed SIM postcontact diagnostic required")
+            postcontact_profile.__post_init__()
     elif (
         approach_mode == "bounded_approach_diagnostic" or swing_mode == "bounded_contact_diagnostic"
     ):
         raise ValueError("bounded interface requires a complete declared control profile")
+    if control_profile is None and postcontact_profile is not None:
+        raise ValueError("postcontact probe requires bounded SIM control profile")
     if (
         type(course) is not tuple
         or len(course) != 3
@@ -767,6 +775,8 @@ def run_native_first_touch_episode(
         commitment["recurrent_clipped_factory"] = recurrent_clipped_factory.contract()
     if control_profile is not None:
         commitment["bounded_control_profile"] = control_profile.contract()
+        if postcontact_profile is not None:
+            commitment["postcontact_navigation_probe"] = postcontact_profile.contract()
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
     history: dict[str, list[Any]] = {
         k: []
@@ -821,6 +831,7 @@ def run_native_first_touch_episode(
                 )
             }
         )
+        previous_navigation_forward = 0.0
     tracking = y < 0
     gate = False
     side, contact_frame = -1, None
@@ -877,6 +888,16 @@ def run_native_first_touch_episode(
                 ball_vx=float(ball_linear_vel[0]),
                 before_contact=contact_frame is None,
             )
+            if postcontact_profile is not None and contact_frame is not None:
+                raw_forward, actual_forward = postcontact_profile.navigation(
+                    previous_forward=previous_navigation_forward,
+                    gap_x=float(gap[0]),
+                    ball_vx=float(ball_linear_vel[0]),
+                    forward_cap=control_profile.forward_cap_m_s,
+                )
+                requested_navigation = (raw_forward, 0.0, 0.0)
+                navigation_command = (actual_forward, 0.0, 0.0)
+            previous_navigation_forward = navigation_command[0]
             history["approach_requested_navigation_command"].append(
                 np.asarray(requested_navigation)[None]
             )

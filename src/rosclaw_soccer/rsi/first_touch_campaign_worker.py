@@ -575,6 +575,7 @@ def qualified_episode(
     factory: Any,
     compiler: Any,
     auditor: Any,
+    entry_source_path: Path | None = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController
@@ -597,6 +598,11 @@ def qualified_episode(
         raise ValueError("same declared public state required")
     profile = None if candidate is None else BoundedFirstTouchControl(**candidate["parameters"])
     swing = "legacy" if candidate is None else candidate["swing"]
+    postcontact = None
+    if candidate is not None and "postcontact" in candidate:
+        from rosclaw_soccer.rsi.postcontact_navigation_probe import PostcontactNavigationProbe
+
+        postcontact = PostcontactNavigationProbe(**candidate["postcontact"])
     args = argparse.Namespace(
         scene=assets.SCENE,
         model_root=assets.SONIC,
@@ -621,12 +627,15 @@ def qualified_episode(
         args,
         course=draw.course,
         partition="DECLARED_DEVELOPMENT_DIAGNOSTIC",
-        entry_source_path=source / "scripts/rsi_run_first_touch_campaign.py",
+        entry_source_path=source / "scripts/rsi_run_first_touch_campaign.py"
+        if entry_source_path is None
+        else entry_source_path,
         consumed_bank_hash=None,
         recurrent_sampling_factory=factory,
         control_profile=profile,
         approach_mode="legacy" if profile is None else "bounded_approach_diagnostic",
         swing_mode=swing,
+        postcontact_profile=postcontact,
     )
     report = _sealed(folder / "report.json")
     if report["compiled_model_hash"] != assets.WORLD or report["course"] != list(draw.course):
@@ -682,6 +691,11 @@ def qualified_episode(
                 )
             else:
                 forward, lateral = profile.forward_cap_m_s, 0.0
+                if postcontact is not None:
+                    forward = float(trace["ball_linear_velocity_before_step_m_s"][frame, 0, 0]) + (
+                        postcontact.separation_gain_s_inv
+                        * (float(gap[0]) - postcontact.target_gap_m)
+                    )
             if not np.array_equal(
                 np.asarray([forward, lateral, 0.0]),
                 trace["approach_requested_navigation_command"][frame, 0],
@@ -690,6 +704,10 @@ def qualified_episode(
             command = np.asarray(
                 [np.clip(forward, 0.0, profile.forward_cap_m_s), np.clip(lateral, -0.2, 0.2), 0.0]
             )
+            if not before and postcontact is not None:
+                prior = float(trace["navigation_command"][frame - 1, 0, 0])
+                step = postcontact.reference_slew_m_s2 * 0.02
+                command[0] = min(prior + step, max(prior - step, float(command[0])))
             if not np.array_equal(command, trace["navigation_command"][frame, 0]):
                 raise ValueError("projected navigation law mismatch")
         if not np.allclose(
@@ -705,6 +723,11 @@ def qualified_episode(
         if not np.array_equal(raw_motor, trace["motor_pre_projection_requested_rad"]):
             raise ValueError("raw residual differs from actual original sampled latent action")
     commitment = load_json_artifact(folder / "commitment.json")
+    if (
+        postcontact is not None
+        and commitment.get("postcontact_navigation_probe") != postcontact.contract()
+    ):
+        raise ValueError("declared postcontact intervention commitment required")
     validate_capture(commitment["foundation_observation_capture"], trace, frames=300, lanes=1)
     validate_measured_history(trace)
     foundation = auditor.recompute(trace)

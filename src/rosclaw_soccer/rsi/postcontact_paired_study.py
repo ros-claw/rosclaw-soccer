@@ -1,0 +1,227 @@
+"""Same initial state, stochastic draws and swing; only follow-through differs."""
+
+import fcntl
+import gc
+import os
+import signal
+import threading
+import time
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
+from rosclaw_soccer.rsi.first_touch_campaign import TERMINAL_PHASES, FirstTouchCampaign
+from rosclaw_soccer.rsi.first_touch_campaign_worker import atomic_status, prepare, qualified_episode
+from rosclaw_soccer.rsi.postcontact_navigation_probe import PostcontactNavigationProbe
+
+
+def require_declaration(config: dict[str, Any]) -> None:
+    if (
+        config.get("postcontact_study_groups") != [4, 12, 32, 52]
+        or config.get("max_attempts") != 10
+        or config.get("predecessor") is not None
+        or config.get("neural_training_authorized") is not False
+        or config.get("teacher_auto_admission") is not False
+        or config.get("postcontact_probe") != asdict(PostcontactNavigationProbe())
+    ):
+        raise ValueError("fixed four-state failure-directed paired declaration required")
+    # Exercise real forward-reference computation before neural allocation.
+    probe = PostcontactNavigationProbe(**config["postcontact_probe"])
+    for previous in (0.0, 0.7, 1.4):
+        for gap in (-0.2, 0.1, 0.55, 1.0):
+            raw, actual = probe.navigation(
+                previous_forward=previous, gap_x=gap, ball_vx=0.0, forward_cap=1.4
+            )
+            if not np.isfinite(raw) or not 0.0 <= actual <= 1.4:
+                raise ValueError("postcontact reference interface preflight failed")
+
+
+def verify_precontact_pair(baseline: dict[str, Any], probe: dict[str, Any]) -> None:
+    first = baseline["outcome"]["first_foot_contact_frame"]
+    # The intervention begins after ANY contact, not just qualifying foot contact.
+    with (
+        np.load(baseline["witnesses"]["trace"]["path"], allow_pickle=False) as a,
+        np.load(probe["witnesses"]["trace"]["path"], allow_pickle=False) as b,
+    ):
+        if set(a.files) != set(b.files):
+            raise ValueError("paired trace fields changed")
+        contacts = np.flatnonzero(np.any(a["force_n"][:, 0] > 1.0, axis=1))
+        stop = int(contacts[0]) + 1 if len(contacts) else 300
+        if first is not None and first < stop - 1:
+            raise ValueError("invalid first-contact ordering")
+        for key in a.files:
+            if a[key].shape != b[key].shape or a[key].dtype != b[key].dtype:
+                raise ValueError("paired trace layout changed")
+            if not np.array_equal(a[key][:stop], b[key][:stop]):
+                raise ValueError(f"pre-intervention paired observations changed: {key}")
+
+
+def run(config_path: Path, *, preflight: bool = False) -> None:
+    p, assets, manifest, config = prepare(config_path)
+    require_declaration(config)
+    if preflight:
+        print("POSTCONTACT_PAIRED_PREFLIGHT_NO_NEURAL_OR_PHYSICS_ALLOCATION", flush=True)
+        return
+    root, source, core = (Path(config[k]) for k in ("output_root", "source_root", "core_root"))
+    root.mkdir(parents=True, exist_ok=True)
+    lock = (root / "owner.lock").open("a")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    campaign = FirstTouchCampaign(
+        root, dict(config, input_file_hashes=dict(p.PINS), source_heads=p.HEADS)
+    )
+    if campaign.state["phase"] in TERMINAL_PHASES:
+        campaign.db.close()
+        lock.close()
+        return
+    campaign.recover_interrupted_attempt()
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    signal.signal(signal.SIGINT, lambda *_: stop.set())
+
+    def heartbeat() -> None:
+        while not stop.is_set():
+            atomic_status(
+                root,
+                "heartbeat.json",
+                dict(
+                    pid=os.getpid(),
+                    time_unix=time.time(),
+                    phase=campaign.state["phase"],
+                    active=campaign.state["active"],
+                    completed=len(campaign.state["completed"]),
+                    neural_optimizer_updates=0,
+                    promotion_authorized=False,
+                    hardware_authorized=False,
+                ),
+            )
+            stop.wait(15)
+
+    thread = threading.Thread(target=heartbeat, daemon=True)
+    thread.start()
+
+    def resources() -> bool:
+        while not stop.is_set():
+            if time.time() > config["deadline_unix"]:
+                campaign.state["phase"] = "WALLTIME_BUDGET_EXHAUSTED"
+                campaign.record("WALLTIME_LIMIT")
+                return False
+            ram = next(
+                int(line.split()[1]) * 1024
+                for line in Path("/proc/meminfo").read_text().splitlines()
+                if line.startswith("MemAvailable:")
+            )
+            if ram >= 48 * 1024**3:
+                return True
+            if campaign.state["phase"] != "WAITING_RESOURCES":
+                campaign.state["phase"] = "WAITING_RESOURCES"
+                campaign.record("WAITING_RESOURCES")
+            stop.wait(10)
+        return False
+
+    try:
+        if not resources():
+            return
+        campaign.state["phase"] = "INITIALIZING_FULL_FROZEN_MODEL"
+        campaign.record("INITIALIZATION_STARTED")
+        import torch
+
+        from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
+        from rosclaw_soccer.rsi.foundation_torch_capture_audit import TorchCallAuditor
+        from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
+        from rosclaw_soccer.rsi.public_first_touch_training_plan import PublicFirstTouchTrainingPlan
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+        from rosclaw_soccer.rsi.sampling_reference_audit import SamplingReferenceAuditCompiler
+
+        torch.set_num_threads(1)
+        plan = PublicFirstTouchTrainingPlan(tuple(range(20261060, 20261070)), assets.MEAN, 18)
+        model = load_json_artifact(assets.EXPORT / "model-0.json.gz")
+        if model["model_hash"] != assets.MEAN:
+            raise ValueError("complete frozen parent identity required")
+        factory = RecurrentSamplingEpisodeFactory(model)
+        del model
+        old = _sealed(
+            Path(manifest["records"][0]["witnesses"]["trace"]["path"]).parent / "report.json"
+        )
+        compiler = SamplingReferenceAuditCompiler(old["executed_motor_policy"])
+        del old
+        gc.collect()
+        auditor = TorchCallAuditor(assets.SONIC)
+        for group in config["postcontact_study_groups"]:
+            for arm in ("baseline", "probe"):
+                job = f"postcontact-{group}-{arm}"
+                if job in campaign.state["completed"]:
+                    continue
+                if stop.is_set():
+                    return
+                if campaign.state["attempts"] >= config["max_attempts"]:
+                    campaign.state["phase"] = "ATTEMPT_BUDGET_EXHAUSTED"
+                    campaign.record("ATTEMPT_LIMIT")
+                    return
+                if not resources():
+                    return
+                p.stable()
+                candidate = dict(
+                    parameters=asdict(BoundedFirstTouchControl()),
+                    swing="bounded_contact_diagnostic",
+                )
+                if arm == "probe":
+                    candidate["postcontact"] = config["postcontact_probe"]
+                attempt = campaign.begin(job)
+                receipt = qualified_episode(
+                    root / f"attempt-{attempt:04d}-{job}",
+                    group,
+                    candidate,
+                    plan=plan,
+                    manifest=manifest,
+                    assets=assets,
+                    source=source,
+                    core=core,
+                    factory=factory,
+                    compiler=compiler,
+                    auditor=auditor,
+                    entry_source_path=source / "scripts/rsi_run_postcontact_paired_study.py",
+                )
+                p.stable()
+                campaign.complete(job, receipt)
+                print(f"POSTCONTACT_EPISODE_VERIFIED {job} {receipt['outcome']}", flush=True)
+                gc.collect()
+            verify_precontact_pair(
+                campaign.state["completed"][f"postcontact-{group}-baseline"],
+                campaign.state["completed"][f"postcontact-{group}-probe"],
+            )
+            campaign.record("PRECONTACT_PAIR_BIT_PARITY_VERIFIED")
+        campaign.state["phase"] = "PILOT_COMPLETE_EXPANDED_VALIDATION_REQUIRED"
+        campaign.record("FAILURE_DIRECTED_DIAGNOSTIC_COMPLETE_NOT_TEACHER_ADMISSION")
+    except BaseException as error:
+        campaign.state["phase"] = "FATAL_CONTRACT_VIOLATION"
+        campaign.state["fatal_error"] = dict(type=type(error).__name__, message=str(error))
+        campaign.record("FATAL_DO_NOT_AUTO_UNFREEZE")
+        raise
+    finally:
+        if stop.is_set() and campaign.state["phase"] not in TERMINAL_PHASES:
+            campaign.state["phase"] = "STOPPED_OPERATOR_REQUEST"
+            campaign.record("GRACEFUL_STOP_CHECKPOINTED")
+        stop.set()
+        thread.join(timeout=20)
+        atomic_status(root, "status.json", dict(campaign.state, ledger_tip=campaign.tip))
+        atomic_status(
+            root,
+            "heartbeat.json",
+            dict(
+                pid=os.getpid(),
+                time_unix=time.time(),
+                phase=campaign.state["phase"],
+                worker_exiting=True,
+                completed=len(campaign.state["completed"]),
+                neural_optimizer_updates=0,
+                promotion_authorized=False,
+                hardware_authorized=False,
+            ),
+        )
+        campaign.db.close()
+        lock.close()
