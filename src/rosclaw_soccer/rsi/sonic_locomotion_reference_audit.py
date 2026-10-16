@@ -6,6 +6,7 @@ actual CPU physics and Foundation qualification remain separate requirements.
 """
 
 import math
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -51,10 +52,17 @@ def _inputs(trace: dict[str, Any], events: Any, mode: int) -> tuple[np.ndarray, 
 
 
 def replay_locomotion_segments(
-    session: Any, trace: dict[str, Any], events: list[dict[str, Any]], mode: int
+    session: Any,
+    trace: dict[str, Any],
+    events: list[dict[str, Any]],
+    mode: int,
+    *,
+    reference_observer: Callable[[int, np.ndarray], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Pure segment replay over a supplied session; caller authenticates assets."""
     qpos, commands = _inputs(trace, events, mode)
+    if reference_observer is not None and not callable(reference_observer):
+        raise ValueError("optional reference observer must be callable")
     reference = None
     results = []
     for index, event in enumerate(events):
@@ -137,6 +145,9 @@ def replay_locomotion_segments(
             length = min(len(resampled), len(reference) - start)
             reference[start : start + length] = resampled[:length]
             reference[start + length :] = resampled[length - 1]
+        if reference_observer is not None:
+            # A diagnostic cannot mutate the independently reconstructed history.
+            reference_observer(frame, reference.copy())
         results.append(
             dict(frame=frame, planner_mode=expected_mode, reference_hash=event["reference_hash"])
         )
