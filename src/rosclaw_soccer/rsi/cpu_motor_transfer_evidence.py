@@ -27,6 +27,42 @@ if TYPE_CHECKING:
     from rosclaw_soccer.rsi.native_first_touch_initial_state import NativeFirstTouchInitialState
 
 
+def validate_cpu_foundation_capture(
+    report: dict[str, Any], commitment: dict[str, Any], trace: dict[str, Any]
+) -> None:
+    """Keep ordinary captured policies independent of the optional null-policy ablation."""
+    from rosclaw_soccer.rsi.foundation_observation_capture import (
+        PREFIX,
+        validate_capture,
+        validate_measured_history,
+    )
+
+    if ("foundation_observation_capture" in report) != (
+        "foundation_observation_capture" in commitment
+    ):
+        raise ValueError("CPU foundation capture differs from commitment")
+    if "foundation_observation_capture" in commitment:
+        validate_capture(commitment["foundation_observation_capture"], trace, frames=300, lanes=1)
+        validate_measured_history(trace)
+    elif any(name.startswith(PREFIX) for name in trace):
+        raise ValueError("CPU foundation capture requires an explicit commitment")
+    if "foundation_approach_ablation" in commitment:
+        from rosclaw_soccer.rsi.foundation_only_action_audit import require_foundation_only_actions
+
+        ablation = commitment["foundation_approach_ablation"]
+        if (
+            ablation.get("schema") != "soccer.rsi.foundation_only_bounded_approach_ablation.v1"
+            or ablation.get("motor_residual_enabled") is not False
+            or ablation.get("taskspace_ik_enabled") is not False
+            or report.get("execution_profile") != "foundation_only"
+            or report.get("executed_motor_policy") is not None
+            or "foundation_observation_capture" not in commitment
+            or "bounded_control_profile" not in commitment
+        ):
+            raise ValueError("captured pure foundation approach ablation required")
+        require_foundation_only_actions(trace)
+
+
 def _execution_policy(report: dict[str, Any]) -> dict[str, Any]:
     """Recognize explicit foundation-only null policy, never malformed learners.
 
@@ -525,36 +561,7 @@ def audit_cpu_transfer(
         ):
             raise ValueError("complete finite bounded causal recurrent state trace required")
     recurrent_decoder: Any = None
-    from rosclaw_soccer.rsi.foundation_observation_capture import (
-        PREFIX,
-        validate_capture,
-        validate_measured_history,
-    )
-
-    if ("foundation_observation_capture" in report) != (
-        "foundation_observation_capture" in commitment
-    ):
-        raise ValueError("CPU foundation capture differs from commitment")
-    if "foundation_observation_capture" in commitment:
-        validate_capture(commitment["foundation_observation_capture"], trace, frames=300, lanes=1)
-        validate_measured_history(trace)
-    if "foundation_approach_ablation" in commitment:
-        from rosclaw_soccer.rsi.foundation_only_action_audit import require_foundation_only_actions
-
-        ablation = commitment["foundation_approach_ablation"]
-        if (
-            ablation.get("schema") != "soccer.rsi.foundation_only_bounded_approach_ablation.v1"
-            or ablation.get("motor_residual_enabled") is not False
-            or ablation.get("taskspace_ik_enabled") is not False
-            or report.get("execution_profile") != "foundation_only"
-            or report.get("executed_motor_policy") is not None
-            or "foundation_observation_capture" not in commitment
-            or "bounded_control_profile" not in commitment
-        ):
-            raise ValueError("captured pure foundation approach ablation required")
-        require_foundation_only_actions(trace)
-    elif any(name.startswith(PREFIX) for name in trace):
-        raise ValueError("CPU foundation capture requires an explicit commitment")
+    validate_cpu_foundation_capture(report, commitment, trace)
     if any(
         trace[k].shape != shape or not np.isfinite(trace[k]).all() for k, shape in shapes.items()
     ):
