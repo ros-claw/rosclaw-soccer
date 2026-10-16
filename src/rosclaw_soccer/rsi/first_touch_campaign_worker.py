@@ -586,6 +586,7 @@ def qualified_episode(
     auditor: Any,
     entry_source_path: Path | None = None,
     physical_payload_reader: "FixedPhysicalPayloadReader | None" = None,
+    locomotion_mode_probe: int | None = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -655,6 +656,7 @@ def qualified_episode(
         approach_mode="legacy" if profile is None else "bounded_approach_diagnostic",
         swing_mode=swing,
         postcontact_profile=postcontact,
+        locomotion_mode_probe=locomotion_mode_probe,
     )
     report = (
         _sealed(folder / "report.json")
@@ -782,7 +784,7 @@ def qualified_episode(
     envelope = load_json_artifact(folder / "report.json.gz")
     payload_hash = envelope["payload_hash"]
     paths["proof_payload"] = folder.parent / ".shared-models" / f"{payload_hash[7:]}.json.gz"
-    return dict(
+    receipt = dict(
         physical_substeps=3000,
         foundation_calls=300,
         sampling_draws=270,
@@ -802,3 +804,21 @@ def qualified_episode(
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if locomotion_mode_probe is not None:
+        from rosclaw_soccer.rsi.sonic_locomotion_reference_audit import audit_locomotion_reference
+
+        if (
+            commitment.get("locomotion_mode_probe", {}).get("high_speed_planner_mode")
+            != locomotion_mode_probe
+        ):
+            raise ValueError("requested locomotion mode must bind actual commitment")
+        reference_review = audit_locomotion_reference(
+            report, trace, assets.SONIC / "planner_sonic.onnx"
+        )
+        path = folder / "locomotion-reference-review.json"
+        write_once(path, reference_review)
+        receipt["locomotion_mode_probe"] = locomotion_mode_probe
+        receipt["locomotion_reference_witness"] = dict(
+            path=str(path), sha256=hash_bytes(path.read_bytes())
+        )
+    return receipt

@@ -43,10 +43,23 @@ class SonicNavigationConfig:
     latent_schedule: SonicLatentSchedule | None = None
     pose_reference: SonicPoseReference | None = None
     experimental_command_replanning: bool = False
+    experimental_locomotion_mode: int | None = None
     inference_threads: int | None = None
     onnx_graph_encoder_layout: bool = False
 
     def __post_init__(self) -> None:
+        if self.experimental_locomotion_mode is not None and (
+            type(self.experimental_locomotion_mode) is not int
+            or self.experimental_locomotion_mode not in (2, 3)
+            or (
+                self.model_variant != "low_latency"
+                or self.experimental_maximum_speed_mps != 1.5
+                or self.latent_schedule is not None
+                or self.pose_reference is not None
+                or self.experimental_command_replanning
+            )
+        ):
+            raise ValueError("mode 2/3 probe requires unmixed low-latency SIM envelope 1.5")
         if self.inference_threads is not None and (
             type(self.inference_threads) is not int or not 1 <= self.inference_threads <= 8
         ):
@@ -206,6 +219,10 @@ class _StreamingBackend(G1SonicRunupController):
             ),
             "height": np.asarray([-1.0], dtype=np.float32),
         }
+        if self.navigation.experimental_locomotion_mode is not None and speed > 0.8:
+            feed["mode"] = np.asarray(
+                [self.navigation.experimental_locomotion_mode], dtype=np.int64
+            )
         output, count = self._planner.run(None, feed)
         count_array = np.asarray(count)
         if (
@@ -231,6 +248,8 @@ class _StreamingBackend(G1SonicRunupController):
                 "reference_hash": hash_bytes(segment.tobytes()),
             }
         )
+        if self.navigation.experimental_locomotion_mode is not None:
+            self.events[-1]["planner_mode"] = int(np.asarray(feed["mode"])[0])
         self.planner_calls += 1
         self.last_planned_frame = frame
         self.last_planned_command = self.command
@@ -295,6 +314,8 @@ class G1SonicNavigation:
         self.config = config or SonicNavigationConfig()
         self.backend = _StreamingBackend(model_root, self.config)
         config_record = asdict(self.config)
+        if self.config.experimental_locomotion_mode is None:
+            config_record.pop("experimental_locomotion_mode")
         if not self.config.experimental_command_replanning:
             config_record.pop("experimental_command_replanning")
         config_record.pop("pose_reference")

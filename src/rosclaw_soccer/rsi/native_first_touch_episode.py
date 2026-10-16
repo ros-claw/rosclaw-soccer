@@ -72,8 +72,16 @@ def run_native_first_touch_episode(
     training_group: int | None = None,
     control_profile: BoundedFirstTouchControl | None = None,
     postcontact_profile: PostcontactNavigationProbe | None = None,
+    locomotion_mode_probe: int | None = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
+    if locomotion_mode_probe is not None and (
+        type(locomotion_mode_probe) is not int
+        or locomotion_mode_probe not in (2, 3)
+        or control_profile is None
+        or postcontact_profile is not None
+    ):
+        raise ValueError("run-mode probe requires an unmixed bounded SIM control profile")
     if type(swing_mode) is not str or swing_mode not in (
         "legacy",
         "memory_gate_both_directions_diagnostic",
@@ -249,6 +257,19 @@ def run_native_first_touch_episode(
             inference_threads=1,
         ),
     )
+    if control_profile is not None and locomotion_mode_probe is not None:
+        navigation = G1SonicNavigation(
+            args.model_root,
+            "cpu.first_touch.0",
+            SonicNavigationConfig(
+                maximum_frames=300,
+                planner_seed=30300,
+                model_variant="low_latency",
+                experimental_maximum_speed_mps=1.5,
+                inference_threads=1,
+                experimental_locomotion_mode=locomotion_mode_probe,
+            ),
+        )
     navigation.backend.qualification.require_eligible()
     foundation = FrozenSonicG1Torch(args.model_root, variant="low_latency", device="cpu")
     late = load_late_swing_actor(args.late_swing_policy)
@@ -775,6 +796,21 @@ def run_native_first_touch_episode(
         commitment["recurrent_clipped_factory"] = recurrent_clipped_factory.contract()
     if control_profile is not None:
         commitment["bounded_control_profile"] = control_profile.contract()
+        if locomotion_mode_probe is not None:
+            commitment["locomotion_mode_probe"] = dict(
+                schema="soccer.rsi.sonic_locomotion_mode_probe.v1",
+                navigation_contract_hash=navigation.contract_hash,
+                planner_hash=navigation.backend.qualification.planner_hash,
+                planner_seed=30300,
+                maximum_navigation_speed_m_s=1.5,
+                high_speed_threshold_m_s=0.8,
+                high_speed_planner_mode=locomotion_mode_probe,
+                low_speed_modes_unchanged=True,
+                physical_joint_and_torque_limits_unchanged=True,
+                teacher_qualified=False,
+                promotion_authorized=False,
+                hardware_authorized=False,
+            )
         if postcontact_profile is not None:
             commitment["postcontact_navigation_probe"] = postcontact_profile.contract()
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
@@ -1169,6 +1205,8 @@ def run_native_first_touch_episode(
         executed_motor_policy=policy,
         qualification="UNQUALIFIED_CPU_TRANSFER_DIAGNOSTIC",
     )
+    if control_profile is not None and locomotion_mode_probe is not None:
+        result["locomotion_mode_planner_events"] = navigation.backend.events
     result["report_hash"] = hash_json(result)
     from scripts.rsi_atomic_artifacts import write_once, write_shared_physical_report
 

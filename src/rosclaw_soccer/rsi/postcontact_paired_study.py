@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 
 CLOSING_PROFILE = "closing_gain_single_factor_eleven"
 CLOSING_GROUPS = [0, 4, 8, 20, 24, 28, 36, 40, 44, 56, 60]
+LOCOMOTION_PROFILE = "walk_run_mode_paired_sixteen"
+LOCOMOTION_GROUPS = list(range(0, 64, 4))
 
 
 def require_declaration(config: dict[str, Any]) -> None:
@@ -43,6 +45,7 @@ def require_declaration(config: dict[str, Any]) -> None:
         "balanced_public_sixteen_retention": (list(range(0, 64, 4)), 34),
         CLOSING_PROFILE: (CLOSING_GROUPS, 24),
         PORTFOLIO_PROFILE: (PORTFOLIO_GROUPS, 42),
+        LOCOMOTION_PROFILE: (LOCOMOTION_GROUPS, 34),
     }
     profile = config.get("postcontact_study_profile", "failure_directed_four")
     if type(profile) is not str or profile not in profiles:
@@ -79,6 +82,23 @@ def require_declaration(config: dict[str, Any]) -> None:
                 "fixed supported model, complete arms and explicit portfolio reader mode required"
             )
         return
+    if profile == LOCOMOTION_PROFILE:
+        if (
+            "postcontact_probe" in config
+            or "closing_gain_probe_s_inv" in config
+            or config.get("groups") != LOCOMOTION_GROUPS
+            or config.get("max_generations") != 1
+            or config.get("plateau_generations") != 1
+            or type(config.get("deadline_unix")) is not int
+            or config["deadline_unix"] <= 0
+            or config.get("physical_payload_reader_mode") != "fixed_after_first_qualified"
+            or any(
+                type(config.get(k)) is not str or not config[k]
+                for k in ("locomotion_baseline_report_path", "locomotion_baseline_report_hash")
+            )
+        ):
+            raise ValueError("unmixed walk/run study with complete frozen C baseline required")
+        return
     if profile == CLOSING_PROFILE:
         if (
             "postcontact_probe" in config
@@ -114,7 +134,7 @@ def paired_candidate(config: dict[str, Any], arm: str) -> dict[str, Any]:
     if arm == "probe":
         if config.get("postcontact_study_profile") == CLOSING_PROFILE:
             parameters["closing_gain_s_inv"] = config["closing_gain_probe_s_inv"]
-        else:
+        elif config.get("postcontact_study_profile") != LOCOMOTION_PROFILE:
             candidate["postcontact"] = config["postcontact_probe"]
     return candidate
 
@@ -150,6 +170,18 @@ def verify_initial_pair(baseline: dict[str, Any], probe: dict[str, Any]) -> None
                 raise ValueError(f"initial paired physical state changed: {key}")
 
 
+def verify_archived_locomotion_baseline(receipt: dict[str, Any], archived: dict[str, Any]) -> None:
+    """Explicit mode2 must preserve all archived default-C numeric arrays."""
+    with (
+        np.load(receipt["witnesses"]["trace"]["path"], allow_pickle=False) as new,
+        np.load(archived["witnesses"]["trace"]["path"], allow_pickle=False) as old,
+    ):
+        if set(new.files) != set(old.files) or any(
+            new[k].dtype != old[k].dtype or not np.array_equal(new[k], old[k]) for k in new.files
+        ):
+            raise ValueError("explicit mode2 changed frozen C baseline physical arrays")
+
+
 def verify_precontact_pair(baseline: dict[str, Any], probe: dict[str, Any]) -> None:
     first = baseline["outcome"]["first_foot_contact_frame"]
     # The intervention begins after ANY contact, not just qualifying foot contact.
@@ -173,11 +205,48 @@ def verify_precontact_pair(baseline: dict[str, Any], probe: dict[str, Any]) -> N
 def run(config_path: Path, *, preflight: bool = False) -> None:
     p, assets, manifest, config = prepare(config_path)
     require_declaration(config)
+    locomotion = config.get("postcontact_study_profile") == LOCOMOTION_PROFILE
+    locomotion_baselines = {}
     portfolio = (
         prepare_portfolio(p, manifest, config)
         if config.get("postcontact_study_profile") == PORTFOLIO_PROFILE
         else None
     )
+    if locomotion:
+        path = Path(config["locomotion_baseline_report_path"])
+        prior = p.sealed(path)
+        if (
+            prior.get("report_hash") != config["locomotion_baseline_report_hash"]
+            or prior.get("schema") != "soccer.rsi.qualified_balanced_postcontact_study.v1"
+            or prior.get("source_physical_executions") != 32
+            or prior.get("source_independent_physical_substeps") != 96000
+            or prior.get("source_foundation_recomputed_calls") != 9600
+            or prior.get("source_sampling_draws_reconstructed") != 8640
+            or prior.get("teacher_qualified") is not False
+            or prior.get("promotion_authorized") is not False
+            or prior.get("hardware_authorized") is not False
+            or [r["group"] for r in prior.get("records", [])] != LOCOMOTION_GROUPS
+        ):
+            raise ValueError("complete qualified sixteen-state C baseline archive required")
+        pins = {str(path): p.digest(path)}
+        for row in prior["records"]:
+            if type(row["group"]) is not int or set(row["baseline_receipt"]["witnesses"]) != {
+                "trace",
+                "report",
+                "independent_review",
+                "foundation_review",
+                "commitment",
+                "world",
+                "proof_payload",
+            }:
+                raise ValueError("complete original C baseline witness contract required")
+            locomotion_baselines[row["group"]] = row["baseline_receipt"]
+            for witness in row["baseline_receipt"]["witnesses"].values():
+                if p.digest(Path(witness["path"])) != witness["sha256"]:
+                    raise ValueError("archived C baseline witness changed")
+                pins[witness["path"]] = witness["sha256"]
+        p.add_pins(pins)
+        p.stable()
     if config.get("postcontact_study_profile") == "balanced_public_sixteen_retention":
         prior_path = Path(config["prior_study_report_path"])
         prior_digest = p.digest(prior_path)
@@ -209,6 +278,8 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
     if portfolio is not None:
         declaration["portfolio_queries"] = [portfolio.queries[g] for g in PORTFOLIO_GROUPS]
         declaration["required_receipt_witnesses"] = ["portfolio_selection_witness"]
+    if locomotion:
+        declaration["required_receipt_witnesses"] = ["locomotion_reference_witness"]
     campaign = FirstTouchCampaign(root, declaration)
     if campaign.state["phase"] in TERMINAL_PHASES:
         campaign.db.close()
@@ -290,7 +361,15 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
         gc.collect()
         auditor = TorchCallAuditor(assets.SONIC)
         closing = config.get("postcontact_study_profile") == CLOSING_PROFILE
-        prefix = "portfolio" if portfolio is not None else "closing" if closing else "postcontact"
+        prefix = (
+            "portfolio"
+            if portfolio is not None
+            else "locomotion"
+            if locomotion
+            else "closing"
+            if closing
+            else "postcontact"
+        )
         physical_reader: FixedPhysicalPayloadReader | None = None
         for group in config["postcontact_study_groups"]:
             for arm in ("selected",) if portfolio is not None else ("baseline", "probe"):
@@ -339,19 +418,20 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
                     auditor=auditor,
                     entry_source_path=source / "scripts/rsi_run_postcontact_paired_study.py",
                     physical_payload_reader=physical_reader,
+                    locomotion_mode_probe=(2 if arm == "baseline" else 3) if locomotion else None,
                 )
                 if portfolio is not None:
                     receipt["portfolio_selection_witness"] = selection_witness
                     verify_selected_receipt(receipt, portfolio.queries[group], portfolio, root)
-                    if physical_reader is None:
-                        from rosclaw_soccer.rsi.fixed_physical_payload_reader import (
-                            FixedPhysicalPayloadReader,
-                        )
+                if (portfolio is not None or locomotion) and physical_reader is None:
+                    from rosclaw_soccer.rsi.fixed_physical_payload_reader import (
+                        FixedPhysicalPayloadReader,
+                    )
 
-                        witness = receipt["witnesses"]["proof_payload"]
-                        physical_reader = FixedPhysicalPayloadReader(
-                            Path(witness["path"]), expected_file_hash=witness["sha256"]
-                        )
+                    witness = receipt["witnesses"]["proof_payload"]
+                    physical_reader = FixedPhysicalPayloadReader(
+                        Path(witness["path"]), expected_file_hash=witness["sha256"]
+                    )
                 p.stable()
                 campaign.complete(job, receipt)
                 print(f"{prefix.upper()}_EPISODE_VERIFIED {job} {receipt['outcome']}", flush=True)
@@ -369,14 +449,20 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
                 )
                 campaign.record("PORTFOLIO_QUERY_AND_INITIAL_STATE_VERIFIED")
                 continue
-            pair_check = verify_initial_pair if closing else verify_precontact_pair
+            if locomotion:
+                verify_archived_locomotion_baseline(
+                    campaign.state["completed"][f"{prefix}-{group}-baseline"],
+                    locomotion_baselines[group],
+                )
+                campaign.record("MODE2_ARCHIVED_C_FULL_ARRAY_PARITY_VERIFIED")
+            pair_check = verify_initial_pair if closing or locomotion else verify_precontact_pair
             pair_check(
                 campaign.state["completed"][f"{prefix}-{group}-baseline"],
                 campaign.state["completed"][f"{prefix}-{group}-probe"],
             )
             campaign.record(
                 "INITIAL_PAIR_BIT_PARITY_VERIFIED"
-                if closing
+                if closing or locomotion
                 else "PRECONTACT_PAIR_BIT_PARITY_VERIFIED"
             )
         campaign.state["phase"] = "PILOT_COMPLETE_EXPANDED_VALIDATION_REQUIRED"
