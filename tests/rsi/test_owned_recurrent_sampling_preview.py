@@ -36,6 +36,9 @@ def test_original_imitation_and_learned_actor_critic_preview_parity(learned):  #
             assert compiler.sampling_view(seed=seed) == view
             original = make_preview(view)
             actual = compiler.preview(view)
+            generated = compiler.preview_from_seed(seed=seed)
+            assert generated == original
+            assert hash_json(generated) == hash_json(original)
             assert hash_json(actual) == hash_json(original)
             assert actual == original
             assert compiler.validate_preview(actual) == view
@@ -47,6 +50,44 @@ def test_original_imitation_and_learned_actor_critic_preview_parity(learned):  #
             actual["step_motor_proof"]["model"]["mean_model"]["parameters"]["head_bias"][0] = 123
             assert compiler.preview(view) == original
             assert view["mean_model"]["parameters"]["head_bias"][0] != 123
+
+
+@pytest.mark.parametrize("seed", [True, -1, 2**32, 0.0, None, []])
+def test_generated_preview_rejects_invalid_seed(imitation_parent, seed):  # noqa: F811
+    compiler = OwnedRecurrentSamplingPreview(make_model(imitation_parent))
+    with pytest.raises(ValueError, match="integer"):
+        compiler.preview_from_seed(seed=seed)
+
+
+def test_generated_preview_owns_complete_model_and_has_no_external_view_input(learned):  # noqa: F811
+    mean = learned[-1]
+    compiler = OwnedRecurrentSamplingPreview(mean)
+    first = compiler.preview_from_seed(seed=77)
+    expected = copy.deepcopy(first)
+    for key in (
+        "parameters",
+        "critic_parameters",
+        "previous_actor_parameters",
+        "previous_critic_parameters",
+    ):
+        parameters = first["step_motor_proof"]["model"]["mean_model"][key]
+        field = "head_bias" if "head_bias" in parameters else "bias_1"
+        parameters[field][0] += 1
+    assert compiler.preview_from_seed(seed=77) == expected
+    with pytest.raises(TypeError):
+        compiler.preview_from_seed(seed=77, view=first)
+
+
+def test_generated_preview_checks_private_bytes_and_source(imitation_parent, monkeypatch):  # noqa: F811
+    mean = make_model(imitation_parent)
+    compiler = OwnedRecurrentSamplingPreview(mean)
+    object.__setattr__(compiler._mean, "_data", b"{}")
+    with pytest.raises(ValueError):
+        compiler.preview_from_seed(seed=77)
+    compiler = OwnedRecurrentSamplingPreview(mean)
+    monkeypatch.setitem(compiler._pins, next(iter(compiler._pins)), "sha256:" + "f" * 64)
+    with pytest.raises(ValueError):
+        compiler.preview_from_seed(seed=77)
 
 
 @pytest.mark.parametrize(

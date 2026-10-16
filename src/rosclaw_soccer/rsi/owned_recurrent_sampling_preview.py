@@ -86,17 +86,35 @@ class OwnedRecurrentSamplingPreview:
         )
         if type(owned["model_hash"]) is not str or owned["model_hash"] != digest:
             raise ValueError("complete original recurrent sampling model seal changed")
+        return self._assemble_owned_policy(owned, digest)
+
+    def _assemble_owned_policy(self, owned: dict[str, Any], digest: str) -> dict[str, Any]:
+        """Internal materialization; external documents must go through preview()."""
         policy: dict[str, Any] = self._template.restore()
         policy["step_motor_proof"]["model"] = owned
         policy["recurrent_sampling_motor_proof"]["sampling_model_hash"] = digest
         policy["policy_hash"] = (
             "sha256:"
             + hashlib.sha256(
-                _with_mean(policy, (), ("step_motor_proof", "model", "mean_model"), mean_bytes)
+                _with_mean(
+                    policy, (), ("step_motor_proof", "model", "mean_model"), self._mean._data
+                )
             ).hexdigest()
         )
         self._stable()
         return policy
+
+    def preview_from_seed(self, *, seed: int) -> dict[str, Any]:
+        """Generate the COMPLETE original preview from the private frozen mean.
+
+        Only an integer seed crosses this boundary. No caller model, sampling
+        law or authority document is accepted, so there is no external mean to
+        serialize/copy/check a second time. Allocation's whole-model validation,
+        private byte/source checks and original downstream bind audit remain.
+        The returned ordinary dictionary is freshly owned, not a shared view.
+        """
+        owned = self.sampling_view(seed=seed)
+        return self._assemble_owned_policy(owned, owned["model_hash"])
 
     def sampling_view(self, *, seed: int) -> dict[str, Any]:
         """Fresh COMPLETE seed view from the fully validated private mean.

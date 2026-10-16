@@ -133,6 +133,13 @@ class RecurrentSamplingEpisodeFactory:
         self._stable()
         return result
 
+    def preview_from_seed(self, *, seed: int) -> dict[str, Any]:
+        """Owned seed-only generation; bind still validates the whole preview."""
+        self._stable()
+        result = self._preview.preview_from_seed(seed=seed)
+        self._stable()
+        return result
+
     def bind(self, policy: dict[str, Any]) -> CompiledRecurrentSamplingMotor:
         self._stable()
         view = self._preview.validate_preview(policy)
