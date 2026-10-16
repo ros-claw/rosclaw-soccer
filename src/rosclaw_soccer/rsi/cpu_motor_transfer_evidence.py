@@ -500,7 +500,19 @@ def audit_cpu_transfer(
     if "bounded_control_profile" in commitment:
         from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 
-        profile = BoundedFirstTouchControl(**commitment["bounded_control_profile"]["parameters"])
+        if (
+            commitment["bounded_control_profile"].get("schema")
+            == "soccer.rsi.fast_intercept_control.v1"
+        ):
+            from rosclaw_soccer.rsi.fast_intercept_control import FastInterceptControl
+
+            profile: BoundedFirstTouchControl = FastInterceptControl()
+            if report.get("execution_profile") != "foundation_only":
+                raise ValueError("fast-intercept CPU audit requires pure Foundation")
+        else:
+            profile = BoundedFirstTouchControl(
+                **commitment["bounded_control_profile"]["parameters"]
+            )
         if profile.contract() != commitment["bounded_control_profile"]:
             raise ValueError("bounded interface parameters or source contract changed")
         shapes.update(
@@ -562,6 +574,15 @@ def audit_cpu_transfer(
             raise ValueError("complete finite bounded causal recurrent state trace required")
     recurrent_decoder: Any = None
     validate_cpu_foundation_capture(report, commitment, trace)
+    if (
+        commitment.get("bounded_control_profile", {}).get("schema")
+        == "soccer.rsi.fast_intercept_control.v1"
+    ):
+        from rosclaw_soccer.rsi.fast_intercept_control import require_fast_navigation_trace
+
+        if "foundation_approach_ablation" not in commitment:
+            raise ValueError("fast interception requires explicitly captured pure ablation")
+        require_fast_navigation_trace(trace)
     if any(
         trace[k].shape != shape or not np.isfinite(trace[k]).all() for k, shape in shapes.items()
     ):

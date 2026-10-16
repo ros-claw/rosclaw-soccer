@@ -16,10 +16,18 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
 def _inputs(
-    trace: dict[str, Any], events: Any, mode: int, reference_height_probe_m: float | None = None
+    trace: dict[str, Any],
+    events: Any,
+    mode: int,
+    reference_height_probe_m: float | None = None,
+    fast_intercept_probe: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     if type(mode) is not int or mode not in (2, 3):
         raise ValueError("explicit walk/run planner mode required")
+    if type(fast_intercept_probe) is not bool or (
+        fast_intercept_probe and (mode != 3 or reference_height_probe_m != 0.75)
+    ):
+        raise ValueError("explicit pure run/height fast-intercept reference probe required")
     if reference_height_probe_m is not None and (
         type(reference_height_probe_m) is not float
         or not math.isfinite(reference_height_probe_m)
@@ -41,7 +49,7 @@ def _inputs(
     qpos, command = arrays
     if (
         not np.allclose(np.linalg.norm(qpos[:, 3:7], axis=1), 1, atol=1e-6, rtol=0)
-        or np.any(np.linalg.norm(command[:, :2], axis=1) > 1.5)
+        or np.any(np.linalg.norm(command[:, :2], axis=1) > (2.1 if fast_intercept_probe else 1.5))
         or np.any(command[:, 2] != 0)
     ):
         raise ValueError("unit body poses and original translational envelope required")
@@ -77,9 +85,10 @@ def replay_locomotion_segments(
     *,
     reference_observer: Callable[[int, np.ndarray], None] | None = None,
     reference_height_probe_m: float | None = None,
+    fast_intercept_probe: bool = False,
 ) -> list[dict[str, Any]]:
     """Pure segment replay over a supplied session; caller authenticates assets."""
-    qpos, commands = _inputs(trace, events, mode, reference_height_probe_m)
+    qpos, commands = _inputs(trace, events, mode, reference_height_probe_m, fast_intercept_probe)
     if reference_observer is not None and not callable(reference_observer):
         raise ValueError("optional reference observer must be callable")
     reference = None
@@ -181,6 +190,10 @@ def audit_locomotion_reference(
     """Caller must authenticate the complete physical report and raw trace."""
     contract = report.get("locomotion_mode_probe")
     height = contract.get("high_speed_reference_height_m") if type(contract) is dict else None
+    fast = (
+        type(contract) is dict
+        and contract.get("schema") == "soccer.rsi.sonic_locomotion_mode_probe.v3"
+    )
     fixed = dict(
         schema="soccer.rsi.sonic_locomotion_mode_probe.v1",
         planner_seed=30300,
@@ -194,6 +207,12 @@ def audit_locomotion_reference(
     )
     if height is not None:
         fixed["schema"] = "soccer.rsi.sonic_locomotion_mode_probe.v2"
+    if fast:
+        fixed.update(
+            schema="soccer.rsi.sonic_locomotion_mode_probe.v3",
+            maximum_navigation_speed_m_s=2.1,
+            fast_precontact_forward_cap_m_s=2.0,
+        )
     extra = {"high_speed_planner_mode", "planner_hash", "navigation_contract_hash"}
     if height is not None:
         extra.add("high_speed_reference_height_m")
@@ -207,7 +226,7 @@ def audit_locomotion_reference(
     events = report.get("locomotion_mode_planner_events")
     if type(mode) is not int or type(events) is not list:
         raise ValueError("explicit planner mode and complete event list required")
-    _inputs(trace, events, mode, height)
+    _inputs(trace, events, mode, height, fast)
     binding: dict[str, Any] = dict(
         schema="rosclaw_soccer.g1_sonic_navigation.v1",
         agent_id="cpu.first_touch.0",
@@ -227,6 +246,10 @@ def audit_locomotion_reference(
     )
     if height is not None:
         binding["config"]["experimental_reference_height_m"] = height
+    if fast:
+        binding["config"].update(
+            experimental_fast_intercept=True, experimental_maximum_speed_mps=2.1
+        )
     if contract["navigation_contract_hash"] != hash_json(binding):
         raise ValueError("original navigation body/foundation/configuration binding required")
     import hashlib
@@ -242,7 +265,9 @@ def audit_locomotion_reference(
     session = ort.InferenceSession(
         str(planner_path), sess_options=options, providers=["CPUExecutionProvider"]
     )
-    rows = replay_locomotion_segments(session, trace, events, mode, reference_height_probe_m=height)
+    rows = replay_locomotion_segments(
+        session, trace, events, mode, reference_height_probe_m=height, fast_intercept_probe=fast
+    )
     with planner_path.open("rb") as stream:
         after = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
     if after != digest:
@@ -267,4 +292,6 @@ def audit_locomotion_reference(
     )
     if height is not None:
         result["high_speed_reference_height_m"] = height
+    if fast:
+        result["fast_intercept_probe"] = True
     return dict(result, report_hash=hash_json(result))

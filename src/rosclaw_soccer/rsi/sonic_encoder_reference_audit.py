@@ -97,6 +97,7 @@ def audit_encoder_reference_consumption(
     mode: int,
     *,
     reference_height_probe_m: float | None = None,
+    fast_intercept_probe: bool = False,
 ) -> dict[str, Any]:
     """Fifteen independent planner calls and 300 measured feature comparisons."""
     recorded = np.asarray(trace.get("foundation_neural_encoder_features"))
@@ -124,6 +125,7 @@ def audit_encoder_reference_consumption(
         mode,
         reference_observer=observe,
         reference_height_probe_m=reference_height_probe_m,
+        fast_intercept_probe=fast_intercept_probe,
     )
     if seen != list(range(300)):
         raise ValueError("complete ordered encoder consumption coverage required")
@@ -160,4 +162,6 @@ def audit_encoder_reference_consumption(
     )
     if reference_height_probe_m is not None:
         result["high_speed_reference_height_m"] = reference_height_probe_m
+    if fast_intercept_probe:
+        result["fast_intercept_probe"] = True
     return dict(result, report_hash=hash_json(result))

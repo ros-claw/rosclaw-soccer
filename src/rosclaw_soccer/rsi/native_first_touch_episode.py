@@ -28,6 +28,7 @@ from rosclaw_soccer.rsi.contact_time_phase_features import (
     gait_phase_features,
     predict_contact_time,
 )
+from rosclaw_soccer.rsi.fast_intercept_control import FastInterceptControl
 from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor
 from rosclaw_soccer.rsi.online_motor_actor_critic import configure_preview, validate_model
 from rosclaw_soccer.rsi.postcontact_navigation_probe import PostcontactNavigationProbe
@@ -77,6 +78,13 @@ def run_native_first_touch_episode(
     reference_height_probe_m: float | None = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
+    fast_intercept = type(control_profile) is FastInterceptControl
+    if fast_intercept and (
+        foundation_approach_probe is not True
+        or locomotion_mode_probe != 3
+        or reference_height_probe_m != 0.75
+    ):
+        raise ValueError("fast interception requires captured pure Foundation run/height probe")
     if reference_height_probe_m is not None and (
         type(reference_height_probe_m) is not float
         or not math.isfinite(reference_height_probe_m)
@@ -124,7 +132,7 @@ def run_native_first_touch_episode(
         raise ValueError("native kernel cannot open or authorize a private Fresh exam")
     if control_profile is not None:
         if (
-            type(control_profile) is not BoundedFirstTouchControl
+            type(control_profile) not in (BoundedFirstTouchControl, FastInterceptControl)
             or approach_mode != "bounded_approach_diagnostic"
             or partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
             or (recurrent_sampling_factory is None and not foundation_approach_probe)
@@ -311,10 +319,11 @@ def run_native_first_touch_episode(
                 maximum_frames=300,
                 planner_seed=30300,
                 model_variant="low_latency",
-                experimental_maximum_speed_mps=1.5,
+                experimental_maximum_speed_mps=2.1 if fast_intercept else 1.5,
                 inference_threads=1,
                 experimental_locomotion_mode=locomotion_mode_probe,
                 experimental_reference_height_m=reference_height_probe_m,
+                experimental_fast_intercept=fast_intercept,
             ),
         )
     navigation.backend.qualification.require_eligible()
@@ -874,6 +883,12 @@ def run_native_first_touch_episode(
                 commitment["locomotion_mode_probe"].update(
                     schema="soccer.rsi.sonic_locomotion_mode_probe.v2",
                     high_speed_reference_height_m=reference_height_probe_m,
+                )
+            if fast_intercept:
+                commitment["locomotion_mode_probe"].update(
+                    schema="soccer.rsi.sonic_locomotion_mode_probe.v3",
+                    maximum_navigation_speed_m_s=2.1,
+                    fast_precontact_forward_cap_m_s=2.0,
                 )
         if postcontact_profile is not None:
             commitment["postcontact_navigation_probe"] = postcontact_profile.contract()

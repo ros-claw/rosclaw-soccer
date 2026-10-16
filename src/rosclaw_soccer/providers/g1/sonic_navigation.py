@@ -29,7 +29,10 @@ from rosclaw_soccer.providers.g1.sonic_runup import (
 )
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation, TeamMotorTarget
-from rosclaw_soccer.skills.team.navigation_envelope import SimulationNavigationEnvelope
+from rosclaw_soccer.skills.team.navigation_envelope import (
+    FastInterceptNavigationEnvelope,
+    SimulationNavigationEnvelope,
+)
 
 
 @dataclass(frozen=True)
@@ -45,10 +48,20 @@ class SonicNavigationConfig:
     experimental_command_replanning: bool = False
     experimental_locomotion_mode: int | None = None
     experimental_reference_height_m: float | None = None
+    experimental_fast_intercept: bool = False
     inference_threads: int | None = None
     onnx_graph_encoder_layout: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.experimental_fast_intercept) is not bool or (
+            self.experimental_fast_intercept
+            and (
+                self.experimental_maximum_speed_mps != 2.1
+                or self.experimental_locomotion_mode != 3
+                or self.experimental_reference_height_m != 0.75
+            )
+        ):
+            raise ValueError("explicit run/height fast-intercept SIM configuration required")
         if self.experimental_reference_height_m is not None and (
             type(self.experimental_reference_height_m) is not float
             or not math.isfinite(self.experimental_reference_height_m)
@@ -61,7 +74,8 @@ class SonicNavigationConfig:
             or self.experimental_locomotion_mode not in (2, 3)
             or (
                 self.model_variant != "low_latency"
-                or self.experimental_maximum_speed_mps != 1.5
+                or self.experimental_maximum_speed_mps
+                != (2.1 if self.experimental_fast_intercept else 1.5)
                 or self.latent_schedule is not None
                 or self.pose_reference is not None
                 or self.experimental_command_replanning
@@ -109,7 +123,9 @@ class SonicNavigationConfig:
         if self.experimental_maximum_speed_mps is not None and (
             type(self.experimental_maximum_speed_mps) not in (int, float)
             or not math.isfinite(self.experimental_maximum_speed_mps)
-            or not 0.7 < self.experimental_maximum_speed_mps <= 1.5
+            or not 0.7
+            < self.experimental_maximum_speed_mps
+            <= (2.1 if self.experimental_fast_intercept else 1.5)
         ):
             raise ValueError("experimental SONIC speed must be in (0.7, 1.5] m/s")
         if (
@@ -334,6 +350,8 @@ class G1SonicNavigation:
             config_record.pop("experimental_locomotion_mode")
         if self.config.experimental_reference_height_m is None:
             config_record.pop("experimental_reference_height_m")
+        if not self.config.experimental_fast_intercept:
+            config_record.pop("experimental_fast_intercept")
         if not self.config.experimental_command_replanning:
             config_record.pop("experimental_command_replanning")
         config_record.pop("pose_reference")
@@ -378,6 +396,8 @@ class G1SonicNavigation:
     @property
     def navigation_envelope(self) -> SimulationNavigationEnvelope | None:
         limit = self.config.experimental_maximum_speed_mps
+        if self.config.experimental_fast_intercept:
+            return FastInterceptNavigationEnvelope(self.agent_id, self.contract_hash, 2.1)
         return (
             None
             if limit is None

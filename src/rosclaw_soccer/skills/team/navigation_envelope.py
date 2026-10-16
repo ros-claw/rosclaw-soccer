@@ -32,3 +32,15 @@ class SimulationNavigationEnvelope:
             or self.activation_ceiling != "SIM_ONLY"
         ):
             raise ValueError("player-bound SIM_ONLY experimental navigation envelope required")
+
+
+@dataclass(frozen=True)
+class FastInterceptNavigationEnvelope(SimulationNavigationEnvelope):
+    """Distinct exact 2.1 SIM probe; the original envelope stays <=1.5."""
+
+    def __post_init__(self) -> None:
+        SimulationNavigationEnvelope(
+            self.agent_id, self.motor_contract_hash, 1.5, self.activation_ceiling
+        )
+        if type(self.maximum_speed_mps) is not float or self.maximum_speed_mps != 2.1:
+            raise ValueError("exact fast-intercept SIM command envelope 2.1 required")
