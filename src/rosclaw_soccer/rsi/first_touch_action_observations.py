@@ -100,3 +100,70 @@ def observe_action_response(trace: dict[str, Any]) -> dict[str, Any]:
         promotion_authorized=False,
         hardware_authorized=False,
     )
+
+
+def observe_contact_transition(trace: dict[str, Any]) -> dict[str, Any]:
+    """Measured transition timing, not a causal intervention or physics replay.
+
+    Commands are the recorded world-frame navigation reference. Their delta
+    across two control ticks is not a measured root acceleration.
+    """
+    outcome = label_first_touch(trace)
+    navigation = np.asarray(trace.get("navigation_command"))
+    if (
+        navigation.shape != (300, 1, 3)
+        or navigation.dtype != np.float64
+        or not np.isfinite(navigation).all()
+    ):
+        raise ValueError("complete finite float64 navigation measurements required")
+    forces = np.asarray(trace["force_n"])[:, 0]
+    heights = np.asarray(trace["pelvis_z_per_substep_m"])[:, 0]
+    any_contacts = np.flatnonzero(np.any(forces > 1.0, axis=1))
+    invalid = np.flatnonzero(np.any(forces[:, 2:] > 1.0, axis=1))
+    low = np.flatnonzero(np.any(heights < 0.65, axis=1))
+    first = int(any_contacts[0]) if len(any_contacts) else None
+    first_invalid = int(invalid[0]) if len(invalid) else None
+    body_names = (
+        "left_ankle_roll_link",
+        "right_ankle_roll_link",
+        "left_ankle_pitch_link",
+        "right_ankle_pitch_link",
+        "left_knee_link",
+        "right_knee_link",
+    )
+    invalid_indices = (
+        []
+        if first_invalid is None
+        else (np.flatnonzero(forces[first_invalid, 2:] > 1.0) + 2).tolist()
+    )
+    transition = None
+    if first is not None and first < 299:
+        transition = (navigation[first + 1, 0] - navigation[first, 0]).tolist()
+    return dict(
+        schema="soccer.rsi.observed_contact_transition.v1",
+        outcome=outcome.to_dict(),
+        first_any_contact_frame=first,
+        first_nonfoot_contact_frame=first_invalid,
+        first_nonfoot_contact_bodies=[body_names[i] for i in invalid_indices],
+        first_low_pelvis_frame=int(low[0]) if len(low) else None,
+        foot_preceded_nonfoot=(
+            None
+            if outcome.first_foot_contact_frame is None or first_invalid is None
+            else outcome.first_foot_contact_frame < first_invalid
+        ),
+        frames_foot_to_nonfoot=(
+            None
+            if outcome.first_foot_contact_frame is None or first_invalid is None
+            else first_invalid - outcome.first_foot_contact_frame
+        ),
+        maximum_nonfoot_contact_force_n=float(np.max(forces[:, 2:])),
+        contact_transition_navigation_delta_m_s=transition,
+        control_dt_s=0.02,
+        command_delta_is_not_measured_root_acceleration=True,
+        new_physics_executions=0,
+        causal_intervention_performed=False,
+        causation_proven=False,
+        training_authorized=False,
+        promotion_authorized=False,
+        hardware_authorized=False,
+    )
