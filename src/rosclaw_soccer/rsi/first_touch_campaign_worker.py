@@ -565,6 +565,12 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
         lock.close()
 
 
+def require_unused_episode_output(folder: Path) -> None:
+    """Native output ownership check without model imports or allocation."""
+    if folder.exists() or folder.is_symlink():
+        raise ValueError("native episode output must be unused; preserve existing evidence")
+
+
 def qualified_episode(
     folder: Path,
     group: int,
@@ -582,6 +588,7 @@ def qualified_episode(
     physical_payload_reader: "FixedPhysicalPayloadReader | None" = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
+    require_unused_episode_output(folder)
     if physical_payload_reader is not None:
         from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
 

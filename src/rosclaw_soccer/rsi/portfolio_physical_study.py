@@ -4,6 +4,7 @@ import copy
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import numpy as np
@@ -248,14 +249,26 @@ def prepare_portfolio(
             raise ValueError("portfolio preflight inputs changed")
     p.add_pins(pins)
     p.stable()
+    # Exercise the actual publication/output ownership contract before allocating
+    # Foundation models, not just the metadata query. Native mkdir is exclusive.
+    from rosclaw_soccer.rsi.first_touch_campaign_worker import require_unused_episode_output
+
+    with TemporaryDirectory(prefix="rosclaw-portfolio-output-preflight-") as temporary:
+        episode = Path(temporary) / "attempt-0000"
+        publish_selection(episode, queries[GROUPS[0]])
+        require_unused_episode_output(episode)
+        episode.mkdir(exist_ok=False)
     return PreparedPortfolio(model, options, fit["report_hash"], fit["execution_binding"], queries)
 
 
 def publish_selection(folder: Path, selection: dict[str, Any]) -> dict[str, str]:
     from scripts.rsi_atomic_artifacts import write_once
 
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / "portfolio-selection.json"
+    if folder.exists() or folder.is_symlink():
+        raise ValueError("unused native episode output required before selection publication")
+    selection_folder = folder.parent / ".portfolio-selections" / folder.name
+    selection_folder.mkdir(parents=True, exist_ok=True)
+    path = selection_folder / "portfolio-selection.json"
     write_once(path, dict(selection, report_hash=hash_json(selection)))
     return dict(path=str(path), sha256=hash_bytes(path.read_bytes()))
 

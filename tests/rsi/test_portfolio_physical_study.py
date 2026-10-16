@@ -173,6 +173,8 @@ def test_selection_immutable_and_rechecked_against_actual_initial_state(tmp_path
     portfolio = PreparedPortfolio(model, options, hash_json("fit"), binding, {0: selection})
     folder = tmp_path / "attempt0"
     witness = publish_selection(folder, selection)
+    assert not folder.exists()
+    folder.mkdir(exist_ok=False)  # The actual native executor exclusively owns this directory.
     np.savez(folder / "physical_trace.npz", **trace)
     (folder / "commitment.json").write_text(json.dumps(commit))
     (folder / "report.json").write_text(
@@ -199,6 +201,61 @@ def test_selection_immutable_and_rechecked_against_actual_initial_state(tmp_path
     np.savez(folder / "physical_trace.npz", **trace)
     with pytest.raises(ValueError, match="actual initial state"):
         verify_selected_receipt(receipt, selection, portfolio, tmp_path)
+
+
+def test_selection_publication_preserves_native_exclusive_creation_contract(tmp_path):
+    from rosclaw_soccer.rsi.first_touch_campaign_worker import require_unused_episode_output
+
+    episode = tmp_path / "attempt-0000"
+    selection = {"group": 0}
+    witness = publish_selection(episode, selection)
+    assert not episode.exists()
+    require_unused_episode_output(episode)
+    assert publish_selection(episode, selection) == witness
+    assert (
+        tmp_path / ".portfolio-selections" / episode.name / "portfolio-selection.json"
+    ).is_file()
+    episode.mkdir(exist_ok=False)
+    with pytest.raises(ValueError, match="unused"):
+        require_unused_episode_output(episode)
+    with pytest.raises(ValueError, match="unused"):
+        publish_selection(episode, selection)
+
+
+def test_broken_episode_symlink_is_not_an_unused_output(tmp_path):
+    from rosclaw_soccer.rsi.first_touch_campaign_worker import require_unused_episode_output
+
+    episode = tmp_path / "attempt-0000"
+    episode.symlink_to(tmp_path / "missing")
+    with pytest.raises(ValueError, match="unused"):
+        require_unused_episode_output(episode)
+    with pytest.raises(ValueError, match="unused"):
+        publish_selection(episode, {"group": 0})
+
+
+def test_qualified_episode_rejects_owned_output_before_import_or_physics(tmp_path):
+    from rosclaw_soccer.rsi.first_touch_campaign_worker import qualified_episode
+
+    episode = tmp_path / "attempt"
+    episode.mkdir()
+    evidence = episode / "existing.json"
+    evidence.write_bytes(b"preserve")
+    # No model/factory/assets exist. The output contract must fail before use.
+    with pytest.raises(ValueError, match="unused"):
+        qualified_episode(
+            episode,
+            0,
+            None,
+            plan=None,
+            manifest=None,
+            assets=None,
+            source=None,
+            core=None,
+            factory=None,
+            compiler=None,
+            auditor=None,
+        )
+    assert evidence.read_bytes() == b"preserve"
 
 
 def test_envelope_metadata_reader_is_not_full_restoration_and_rejects_tamper(tmp_path):
