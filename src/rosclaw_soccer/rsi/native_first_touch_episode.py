@@ -36,6 +36,7 @@ from rosclaw_soccer.rsi.taskspace_gate_memory import select_taskspace_gate
 from rosclaw_soccer.rsi.taskspace_swing_evidence import LEG_NAMES
 from rosclaw_soccer.rsi.taskspace_swing_probe import (
     choose_swing_side,
+    continuous_swing_joint_delta,
     release_joint_delta,
     swing_joint_delta,
 )
@@ -965,17 +966,29 @@ def run_native_first_touch_episode(
                 else:
                     jac = np.zeros((3, model.nv))
                     mujoco.mj_jacBody(model, data, jac, None, bodies[side])
-                    swing_delta = swing_joint_delta(
-                        positions[bodies[side]],
-                        positions[ball],
-                        jac[:, vi[ids]],
-                        target[ids],
-                        limits[ids],
-                        forward_cap_m=foot_forward_cap,
-                        lateral_cap_m=foot_lateral_cap,
-                        lateral_lead_m=0.0,
-                        vertical_offset_m=foot_vertical_offset,
-                    )
+                    if control_profile is None:
+                        swing_delta = swing_joint_delta(
+                            positions[bodies[side]],
+                            positions[ball],
+                            jac[:, vi[ids]],
+                            target[ids],
+                            limits[ids],
+                            forward_cap_m=foot_forward_cap,
+                            lateral_cap_m=foot_lateral_cap,
+                            lateral_lead_m=0.0,
+                            vertical_offset_m=foot_vertical_offset,
+                        )
+                    else:
+                        swing_delta = continuous_swing_joint_delta(
+                            positions[bodies[side]],
+                            positions[ball],
+                            jac[:, vi[ids]],
+                            target[ids],
+                            limits[ids],
+                            forward_cap_m=foot_forward_cap,
+                            lateral_cap_m=foot_lateral_cap,
+                            vertical_offset_m=foot_vertical_offset,
+                        )
                 target[ids] += swing_delta
         history["pre_motor_joint_target_rad"].append(target.copy()[None])
         if control_profile is not None:

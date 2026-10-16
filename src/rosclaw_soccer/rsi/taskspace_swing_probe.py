@@ -135,6 +135,84 @@ def swing_joint_delta(
     return np.where(safe, delta, 0.0)
 
 
+def validate_continuous_swing_parameters(
+    *, forward_cap_m: float, lateral_cap_m: float, vertical_offset_m: float
+) -> None:
+    """Explicit SIM diagnostic domain; legacy discrete probe stays unchanged."""
+    from rosclaw_soccer.rsi.bounded_first_touch_control import BOUNDS
+
+    for name, value in (
+        ("foot_forward_cap_m", forward_cap_m),
+        ("foot_lateral_cap_m", lateral_cap_m),
+        ("foot_vertical_offset_m", vertical_offset_m),
+    ):
+        lo, hi = BOUNDS[name]
+        if type(value) is not float or not np.isfinite(value) or not lo <= value <= hi:
+            raise ValueError("finite bounded continuous SIM swing parameters required")
+
+
+def continuous_swing_joint_delta(
+    foot_xyz: np.ndarray[Any, Any],
+    ball_xyz: np.ndarray[Any, Any],
+    linear_jacobian: np.ndarray[Any, Any],
+    baseline_target: np.ndarray[Any, Any],
+    joint_limits: np.ndarray[Any, Any],
+    *,
+    forward_cap_m: float,
+    lateral_cap_m: float,
+    vertical_offset_m: float,
+) -> np.ndarray[Any, Any]:
+    """Same damped IK and hard joint guards, explicit continuous SIM domain.
+
+    Called only by the native kernel's declared bounded diagnostic path.
+    Unlike the legacy probe, no categorical parameters are implied here.
+    """
+    validate_continuous_swing_parameters(
+        forward_cap_m=forward_cap_m,
+        lateral_cap_m=lateral_cap_m,
+        vertical_offset_m=vertical_offset_m,
+    )
+    if (
+        foot_xyz.shape != (3,)
+        or ball_xyz.shape != (3,)
+        or linear_jacobian.shape != (3, 6)
+        or baseline_target.shape != (6,)
+        or joint_limits.shape != (6, 2)
+        or not all(
+            np.isfinite(array).all()
+            for array in (foot_xyz, ball_xyz, linear_jacobian, baseline_target, joint_limits)
+        )
+        or np.any(joint_limits[:, 0] >= joint_limits[:, 1])
+    ):
+        raise ValueError("invalid bounded continuous task-space swing inputs")
+    gap = float(ball_xyz[0] - foot_xyz[0])
+    if not 0.18 <= gap <= 0.95:
+        return np.zeros(6, dtype=np.float64)
+    desired = np.array(
+        [
+            min(max(gap - 0.14 + 0.0, 0.0), forward_cap_m),
+            np.clip(ball_xyz[1] - foot_xyz[1] + 0.0, -lateral_cap_m, lateral_cap_m),
+            vertical_offset_m,
+        ],
+        dtype=np.float64,
+    )
+    gram = linear_jacobian @ linear_jacobian.T + REGULARIZATION**2 * np.eye(3)
+    delta = linear_jacobian.T @ np.linalg.solve(gram, desired)
+    ramp = min(1.0, (0.95 - gap) / 0.2)
+    delta = np.clip(delta, -MAX_JOINT_DELTA_RAD, MAX_JOINT_DELTA_RAD) * ramp
+    proposed = baseline_target + delta
+    safe = (
+        (
+            ((baseline_target >= joint_limits[:, 0]) & (baseline_target <= joint_limits[:, 1]))
+            & (proposed >= joint_limits[:, 0])
+            & (proposed <= joint_limits[:, 1])
+        )
+        | ((baseline_target < joint_limits[:, 0]) & (delta > 0))
+        | ((baseline_target > joint_limits[:, 1]) & (delta < 0))
+    )
+    return np.where(safe, delta, 0.0)
+
+
 def release_joint_delta(
     contact_delta: np.ndarray[Any, Any], frame_since_contact: int
 ) -> np.ndarray[Any, Any]:

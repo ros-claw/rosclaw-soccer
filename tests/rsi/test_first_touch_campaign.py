@@ -18,7 +18,7 @@ from rosclaw_soccer.rsi.first_touch_campaign_worker import (
     propose_next,
     require_same_action_functions,
 )
-from rosclaw_soccer.sim.contracts import hash_bytes
+from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
 def declaration():
@@ -292,3 +292,72 @@ def test_operational_migration_must_not_change_physics_or_search_functions(tmp_p
     current.write_text(source.replace("return 300", "return 600"))
     with pytest.raises(ValueError, match="arithmetic"):
         require_same_action_functions(previous, current)
+
+
+def reviewed_fault(tmp_path):
+    root = tmp_path / "fault"
+    old = FirstTouchCampaign(root, declaration())
+    old.begin("valid")
+    old.complete("valid", receipt(root))
+    old.begin("failed-contact")
+    old.state["phase"] = "FATAL_CONTRACT_VIOLATION"
+    old.state["fatal_error"] = dict(
+        type="ValueError", message="invalid bounded task-space swing inputs"
+    )
+    old.record("FATAL_TEST_FIXTURE")
+    review = dict(
+        schema="soccer.rsi.continuous_swing_interface_repair.v1",
+        ledger_tip=old.tip,
+        declaration_hash=old.state["declaration_hash"],
+        failed_active=old.state["active"],
+        failed_error=old.state["fatal_error"],
+        completed_only=True,
+        score_contract_changed=False,
+        hardware_authorized=False,
+        promotion_authorized=False,
+        witness_roots=[str(root)],
+    )
+    old.db.close()
+    ledger = root / "campaign.sqlite"
+    review["ledger_hash"] = hash_bytes(ledger.read_bytes())
+    review["report_hash"] = hash_json(review)
+    path = tmp_path / "review.json"
+    path.write_text(json.dumps(review))
+    spec = {
+        k: review[k] for k in ("ledger_hash", "ledger_tip", "declaration_hash", "witness_roots")
+    }
+    spec.update(
+        ledger_path=str(ledger),
+        evidence_root=str(root),
+        repair_review_path=str(path),
+        repair_review_hash=hash_bytes(path.read_bytes()),
+    )
+    return spec
+
+
+def test_reviewed_new_version_recovers_only_completed_results_not_failed_attempt(tmp_path):
+    spec = reviewed_fault(tmp_path)
+    campaign = FirstTouchCampaign(tmp_path / "successor", dict(declaration(), predecessor=spec))
+    campaign.adopt_predecessor()
+    assert len(campaign.state["completed"]) == 1
+    assert campaign.state["attempts"] == 2
+    assert campaign.state["active"] is None
+    assert campaign.state["preserved_predecessor_failed_attempt"]["job"] == "failed-contact"
+    assert campaign.begin("failed-contact") == 2
+    assert load_verified_predecessor(spec)["phase"] == "FATAL_CONTRACT_VIOLATION"
+
+
+def test_fault_cannot_be_recovered_without_exact_review(tmp_path):
+    spec = reviewed_fault(tmp_path)
+    spec.pop("repair_review_path")
+    with pytest.raises(ValueError, match="quiescent"):
+        load_verified_predecessor(spec)
+
+
+def test_changed_incident_review_is_rejected(tmp_path):
+    spec = reviewed_fault(tmp_path)
+    from pathlib import Path
+
+    Path(spec["repair_review_path"]).write_text("{}")
+    with pytest.raises(ValueError, match="immutable"):
+        load_verified_predecessor(spec)

@@ -27,9 +27,37 @@ TERMINAL_PHASES = frozenset(
 )
 
 
+def load_repair_review(specification: dict[str, Any]) -> dict[str, Any] | None:
+    if "repair_review_path" not in specification:
+        return None
+    path = Path(specification["repair_review_path"])
+    with path.open("rb") as stream:
+        digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
+    if digest != specification["repair_review_hash"]:
+        raise ValueError("immutable incident repair review required")
+    review = json.loads(path.read_text())
+    if (
+        review.get("report_hash")
+        != hash_json({k: v for k, v in review.items() if k != "report_hash"})
+        or review.get("schema") != "soccer.rsi.continuous_swing_interface_repair.v1"
+        or any(
+            review.get(k) != specification[k]
+            for k in ("ledger_hash", "ledger_tip", "declaration_hash")
+        )
+        or review.get("completed_only") is not True
+        or review.get("score_contract_changed") is not False
+        or review.get("hardware_authorized") is not False
+        or review.get("promotion_authorized") is not False
+        or review.get("witness_roots") != specification.get("witness_roots")
+    ):
+        raise ValueError("source-bound completed-only SIM repair review required")
+    return dict(review)
+
+
 def load_verified_predecessor(specification: dict[str, Any]) -> dict[str, Any]:
     """Read a stopped, explicitly pinned predecessor without rewriting it."""
     path = Path(specification["ledger_path"])
+    review = load_repair_review(specification)
     if (
         not path.is_absolute()
         or path.resolve().parent != Path(specification["evidence_root"]).resolve()
@@ -51,11 +79,20 @@ def load_verified_predecessor(specification: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError("predecessor event integrity violation")
             state = document["state"]
             previous = digest
+    stopped = state.get("phase") == "STOPPED_OPERATOR_REQUEST" and state.get("active") is None
+    reviewed_fault = (
+        review is not None
+        and state.get("phase") == "FATAL_CONTRACT_VIOLATION"
+        and state.get("fatal_error")
+        == dict(type="ValueError", message="invalid bounded task-space swing inputs")
+        and state.get("fatal_error") == review.get("failed_error")
+        and state.get("active") == review.get("failed_active")
+        and state.get("active") is not None
+    )
     if (
         previous != specification["ledger_tip"]
         or state.get("declaration_hash") != specification["declaration_hash"]
-        or state.get("active") is not None
-        or state.get("phase") != "STOPPED_OPERATOR_REQUEST"
+        or not (stopped or reviewed_fault)
         or state.get("hardware_authorized") is not False
         or state.get("promotion_authorized") is not False
     ):
@@ -140,7 +177,10 @@ class FirstTouchCampaign:
             roots = [self.root]
             predecessor = self.declaration.get("predecessor")
             if predecessor is not None:
-                roots.append(Path(predecessor["evidence_root"]).resolve())
+                roots.extend(
+                    Path(p).resolve()
+                    for p in predecessor.get("witness_roots", [predecessor["evidence_root"]])
+                )
             if not path.is_absolute() or not any(
                 path.resolve().is_relative_to(root) for root in roots
             ):
@@ -167,6 +207,9 @@ class FirstTouchCampaign:
             if key in previous:
                 self.state[key] = previous[key]
         self.state["adopted_predecessor_tip"] = specification["ledger_tip"]
+        if load_repair_review(specification) is not None:
+            self.state["preserved_predecessor_failed_attempt"] = previous["active"]
+            self.state["predecessor_fatal_error"] = previous["fatal_error"]
         self.state["phase"] = "READY_FOR_NEXT_JOB"
         self.record("EXPLICIT_OPERATIONAL_SUCCESSOR_ADOPTED_NO_PHYSICS_RERUN")
 

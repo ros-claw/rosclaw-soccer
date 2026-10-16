@@ -22,9 +22,11 @@ from rosclaw_soccer.rsi.bounded_first_touch_control import BOUNDS, BoundedFirstT
 from rosclaw_soccer.rsi.bounded_first_touch_search import initial_population
 from rosclaw_soccer.rsi.first_touch_campaign import (
     FirstTouchCampaign,
+    load_repair_review,
     load_verified_predecessor,
     summarize_first_touch_candidate,
 )
+from rosclaw_soccer.rsi.taskspace_swing_probe import continuous_swing_joint_delta
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
@@ -65,6 +67,38 @@ def require_same_action_functions(previous: Path, current: Path) -> None:
         raise ValueError("operational succession cannot change action or search arithmetic")
 
 
+def initial_campaign_population(seed: int) -> list[dict[str, Any]]:
+    samples = initial_population(seed=seed, count=3)
+    default = asdict(BoundedFirstTouchControl())
+    return [
+        dict(parameters=default, swing="legacy"),
+        dict(parameters=default, swing="bounded_contact_diagnostic"),
+        *[dict(parameters=asdict(p), swing="bounded_contact_diagnostic") for p in samples[1:]],
+    ]
+
+
+def preflight_population(population: list[dict[str, Any]]) -> None:
+    """Exercise the actual contact interface for EVERY candidate, without physics."""
+    if type(population) is not list or len(population) != 4:
+        raise ValueError("complete four-candidate population required")
+    for candidate in population:
+        if candidate.get("swing") not in ("legacy", "bounded_contact_diagnostic"):
+            raise ValueError("declared SIM contact mode required")
+        profile = BoundedFirstTouchControl(**candidate["parameters"])
+        delta = continuous_swing_joint_delta(
+            np.zeros(3),
+            np.asarray([0.5, 0.0, 0.1]),
+            np.eye(3, 6),
+            np.zeros(6),
+            np.tile([-2.0, 2.0], (6, 1)),
+            forward_cap_m=profile.foot_forward_cap_m,
+            lateral_cap_m=profile.foot_lateral_cap_m,
+            vertical_offset_m=profile.foot_vertical_offset_m,
+        )
+        if delta.shape != (6,) or not np.isfinite(delta).all() or np.max(np.abs(delta)) > 0.35:
+            raise ValueError("candidate contact interface failed pre-allocation smoke")
+
+
 def prepare(config_path: Path) -> tuple[Any, Any, dict[str, Any], dict[str, Any]]:
     config = json.loads(config_path.read_text())
     if (
@@ -96,6 +130,7 @@ def prepare(config_path: Path) -> tuple[Any, Any, dict[str, Any], dict[str, Any]
         if p.digest(old_config_path) != predecessor["configuration_hash"]:
             raise ValueError("original predecessor configuration required")
         old_config = json.loads(old_config_path.read_text())
+        repair = load_repair_review(predecessor)
         allowed_changes = {
             "source_root",
             "source_head",
@@ -103,6 +138,13 @@ def prepare(config_path: Path) -> tuple[Any, Any, dict[str, Any], dict[str, Any]
             "reserved_disk_gib",
             "predecessor",
         }
+        if repair is not None:
+            allowed_changes.add("deadline_unix")
+            if (
+                config["deadline_unix"] != repair["new_deadline_unix"]
+                or old_config["deadline_unix"] != repair["old_deadline_unix"]
+            ):
+                raise ValueError("reviewed repair walltime budget required")
         if {k: v for k, v in old_config.items() if k not in allowed_changes} != {
             k: v for k, v in config.items() if k not in allowed_changes
         }:
@@ -119,6 +161,32 @@ def prepare(config_path: Path) -> tuple[Any, Any, dict[str, Any], dict[str, Any]
             "src/rosclaw_soccer/rsi/first_touch_campaign_worker.py",
             "scripts/rsi_run_first_touch_campaign.py",
         }
+        if repair is not None:
+            repaired_paths = {
+                "src/rosclaw_soccer/rsi/taskspace_swing_probe.py",
+                "src/rosclaw_soccer/rsi/native_first_touch_episode.py",
+            }
+            if set(repair["repaired_sources"]) != repaired_paths:
+                raise ValueError("exact two-file SIM interface repair required")
+            for relative, pins in repair["repaired_sources"].items():
+                if (
+                    p.digest(old_source / relative) != pins["old"]
+                    or p.digest(source / relative) != pins["new"]
+                ):
+                    raise ValueError("reviewed repair source bytes changed")
+            allowed_source_changes.update(repaired_paths)
+            roots = [old_config["output_root"]]
+            ancestor = old_config.get("predecessor")
+            if ancestor is not None:
+                ancestor_config = Path(ancestor["configuration_path"])
+                if p.digest(ancestor_config) != ancestor["configuration_hash"]:
+                    raise ValueError("original inherited evidence owner required")
+                roots.extend(ancestor.get("witness_roots", [ancestor["evidence_root"]]))
+                p.add_pins({str(ancestor_config): p.digest(ancestor_config)})
+            if predecessor["witness_roots"] != roots:
+                raise ValueError("witness scopes must match the actual predecessor lineage")
+            review_path = Path(predecessor["repair_review_path"])
+            p.add_pins({str(review_path): p.digest(review_path)})
 
         def scientific_sources(base: Path) -> dict[str, str]:
             return {
@@ -134,7 +202,9 @@ def prepare(config_path: Path) -> tuple[Any, Any, dict[str, Any], dict[str, Any]
             )
         relative_worker = "src/rosclaw_soccer/rsi/first_touch_campaign_worker.py"
         require_same_action_functions(old_source / relative_worker, source / relative_worker)
-        load_verified_predecessor(predecessor)
+        previous_state = load_verified_predecessor(predecessor)
+        for population in previous_state.get("populations", []):
+            preflight_population(population)
         for path in (old_config_path, Path(predecessor["ledger_path"])):
             p.add_pins({str(path): p.digest(path)})
     p.add_pins({str(config_path): p.digest(config_path)})
@@ -165,6 +235,7 @@ def prepare(config_path: Path) -> tuple[Any, Any, dict[str, Any], dict[str, Any]
         p.add_pins({str(path): p.digest(path) for path in folder.iterdir() if path.is_file()})
     p.add_pins({str(result_path): p.digest(result_path)})
     sys.path[:0] = [str(source / "src"), str(core / "src"), str(source)]
+    preflight_population(initial_campaign_population(config["search_seed"]))
     p.stable()
     return p, assets, manifest, config
 
@@ -392,18 +463,7 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
         if episode("legacy-control", 0, None) is None:
             return
         if "populations" not in campaign.state:
-            samples = initial_population(seed=config["search_seed"], count=3)
-            default = asdict(BoundedFirstTouchControl())
-            campaign.state["populations"] = [
-                [
-                    dict(parameters=default, swing="legacy"),
-                    dict(parameters=default, swing="bounded_contact_diagnostic"),
-                    *[
-                        dict(parameters=asdict(p), swing="bounded_contact_diagnostic")
-                        for p in samples[1:]
-                    ],
-                ]
-            ]
+            campaign.state["populations"] = [initial_campaign_population(config["search_seed"])]
             campaign.record("FIRST_POPULATION_PREDECLARED")
         for generation in range(config["max_generations"]):
             if generation < len(campaign.state["generations"]):
@@ -419,6 +479,8 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
                 )
                 campaign.record("FEEDBACK_CONDITIONED_NEXT_POPULATION_PREDECLARED")
             population = campaign.state["populations"][generation]
+            preflight_population(population)
+            campaign.record("COMPLETE_POPULATION_CONTACT_INTERFACE_PREFLIGHT_PASSED")
             summaries = []
             for i, candidate in enumerate(population):
                 rows = []
@@ -480,6 +542,22 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
         stop.set()
         thread.join(timeout=20)
         atomic_status(root, "status.json", dict(campaign.state, ledger_tip=campaign.tip))
+        atomic_status(
+            root,
+            "heartbeat.json",
+            dict(
+                pid=os.getpid(),
+                time_unix=time.time(),
+                phase=campaign.state["phase"],
+                attempts=campaign.state["attempts"],
+                completed=len(campaign.state["completed"]),
+                active=campaign.state["active"],
+                worker_exiting=True,
+                neural_optimizer_updates=0,
+                hardware_authorized=False,
+                promotion_authorized=False,
+            ),
+        )
         campaign.db.close()
         lock.close()
 
