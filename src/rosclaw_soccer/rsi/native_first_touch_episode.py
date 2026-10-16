@@ -73,8 +73,21 @@ def run_native_first_touch_episode(
     control_profile: BoundedFirstTouchControl | None = None,
     postcontact_profile: PostcontactNavigationProbe | None = None,
     locomotion_mode_probe: int | None = None,
+    foundation_approach_probe: bool = False,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
+    if type(foundation_approach_probe) is not bool:
+        raise ValueError("explicit boolean foundation approach ablation required")
+    if foundation_approach_probe and (
+        getattr(args, "foundation_only", False) is not True
+        or getattr(args, "record_foundation_observation", False) is not True
+        or control_profile is None
+        or approach_mode != "bounded_approach_diagnostic"
+        or swing_mode != "legacy"
+        or partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
+        or postcontact_profile is not None
+    ):
+        raise ValueError("unmixed captured foundation-only bounded approach diagnostic required")
     if locomotion_mode_probe is not None and (
         type(locomotion_mode_probe) is not int
         or locomotion_mode_probe not in (2, 3)
@@ -105,7 +118,7 @@ def run_native_first_touch_episode(
             type(control_profile) is not BoundedFirstTouchControl
             or approach_mode != "bounded_approach_diagnostic"
             or partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
-            or recurrent_sampling_factory is None
+            or (recurrent_sampling_factory is None and not foundation_approach_probe)
         ):
             raise ValueError("explicit bounded SIM diagnostic and recurrent sampler required")
         control_profile.__post_init__()
@@ -820,6 +833,18 @@ def run_native_first_touch_episode(
         commitment["recurrent_clipped_factory"] = recurrent_clipped_factory.contract()
     if control_profile is not None:
         commitment["bounded_control_profile"] = control_profile.contract()
+        if foundation_approach_probe:
+            commitment["foundation_approach_ablation"] = dict(
+                schema="soccer.rsi.foundation_only_bounded_approach_ablation.v1",
+                motor_residual_enabled=False,
+                taskspace_ik_enabled=False,
+                navigation_rule_unchanged=True,
+                closed_loop_commands_may_differ_after_body_divergence=True,
+                alone_does_not_separate_residual_from_ik_effect=True,
+                teacher_qualified=False,
+                promotion_authorized=False,
+                hardware_authorized=False,
+            )
         if locomotion_mode_probe is not None:
             commitment["locomotion_mode_probe"] = dict(
                 schema="soccer.rsi.sonic_locomotion_mode_probe.v1",
@@ -1144,7 +1169,7 @@ def run_native_first_touch_episode(
 
             raw_motor = (
                 np.zeros(12)
-                if frame < 30
+                if frame < 30 or foundation_approach_probe
                 else CAP_RAD
                 * np.tanh(recurrent_decoder.sampled_transition["recurrent_sampling_latent_action"])
             )

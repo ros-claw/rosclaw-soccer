@@ -538,6 +538,21 @@ def audit_cpu_transfer(
     if "foundation_observation_capture" in commitment:
         validate_capture(commitment["foundation_observation_capture"], trace, frames=300, lanes=1)
         validate_measured_history(trace)
+    if "foundation_approach_ablation" in commitment:
+        from rosclaw_soccer.rsi.foundation_only_action_audit import require_foundation_only_actions
+
+        ablation = commitment["foundation_approach_ablation"]
+        if (
+            ablation.get("schema") != "soccer.rsi.foundation_only_bounded_approach_ablation.v1"
+            or ablation.get("motor_residual_enabled") is not False
+            or ablation.get("taskspace_ik_enabled") is not False
+            or report.get("execution_profile") != "foundation_only"
+            or report.get("executed_motor_policy") is not None
+            or "foundation_observation_capture" not in commitment
+            or "bounded_control_profile" not in commitment
+        ):
+            raise ValueError("captured pure foundation approach ablation required")
+        require_foundation_only_actions(trace)
     elif any(name.startswith(PREFIX) for name in trace):
         raise ValueError("CPU foundation capture requires an explicit commitment")
     if any(
