@@ -97,11 +97,11 @@ def audit_encoder_reference_consumption(
     recorded = np.asarray(trace.get("foundation_neural_encoder_features"))
     if (
         recorded.shape != (300, 1, 640)
-        or recorded.dtype != np.float64
+        or recorded.dtype != np.float32
         or not np.isfinite(recorded).all()
         or np.max(np.abs(recorded)) > 1e6
     ):
-        raise ValueError("complete finite float64 recorded encoder features required")
+        raise ValueError("complete finite float32 recorded encoder features required")
     rebuilt = np.empty((300, 640), dtype=np.float32)
     seen: list[int] = []
 
@@ -129,6 +129,7 @@ def audit_encoder_reference_consumption(
         actual_cpu_onnx_planner_calls=len(rows),
         compared_encoder_frames=len(seen),
         compared_features_per_frame=640,
+        recorded_features_dtype="float32",
         comparison_atol=ATOL,
         comparison_rtol=0,
         maximum_absolute_error=float(np.max(error)),

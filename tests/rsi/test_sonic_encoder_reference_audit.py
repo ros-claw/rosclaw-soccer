@@ -23,7 +23,7 @@ def tracker(reference):
 
 def captured_fixture(mode=2):
     trace, events = fixture(mode)
-    recorded = np.empty((300, 1, 640))
+    recorded = np.empty((300, 1, 640), dtype=np.float32)
     q, v = trace["canonical_qpos"], np.zeros((1, 41))
 
     def observe(frame, reference):
@@ -87,7 +87,7 @@ def test_invalid_recording_rejected_before_planner_call(fault):
     elif fault == "dtype":
         trace["foundation_neural_encoder_features"] = trace[
             "foundation_neural_encoder_features"
-        ].astype(np.float32)
+        ].astype(np.float64)
     else:
         trace["foundation_neural_encoder_features"][0, 0, 0] = np.nan
     session = Planner()
