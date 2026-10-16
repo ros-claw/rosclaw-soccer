@@ -79,6 +79,36 @@ def test_unknown_is_not_zero_probability_or_default_execution():
         assert query["option_index"] is None and query["option_hash"] is None
 
 
+def test_supported_unfitted_context_can_choose_failed_neighbour_without_authority():
+    """Public76 exposed this limitation; support must not be read as competence."""
+    model = fitted()
+    failed = replace(
+        model.cases[0],
+        outcomes=(ControlOutcome(False, False, -10.0), ControlOutcome(True, False, -1.0)),
+    )
+    model = replace(model, cases=(failed, *model.cases[1:]))
+    query = model.query(
+        (failed.context[0] + 0.001, failed.context[1], failed.context[2]),
+        execution_binding_hash=model.execution_binding_hash,
+    )
+    assert query["status"] == "SIM_RESEARCH_OPTION"
+    assert query["reason"] == "unqualified_neighbour_choice_not_success_probability"
+    assert query["option_index"] == 1
+    assert query["source_training_evidence_hash"] == failed.evidence_hashes[1]
+    assert not query["training_context_match"]
+    assert failed.outcomes[1].safe and not failed.outcomes[1].task_pass
+    for key in (
+        "calibrated_probability_model",
+        "unseen_generalization_proven",
+        "teacher_qualified",
+        "promotion_authorized",
+        "hardware_authorized",
+    ):
+        assert query[key] is False
+    # Query support says nothing about the unexecuted context's physical safety.
+    assert "safe" not in query and "task_pass" not in query
+
+
 @pytest.mark.parametrize(
     "change", ["partial", "duplicate_context", "replayed_evidence", "fresh", "duplicate_option"]
 )
