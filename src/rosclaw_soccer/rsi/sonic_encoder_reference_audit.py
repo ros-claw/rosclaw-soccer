@@ -91,7 +91,12 @@ def low_latency_legacy_features(reference: np.ndarray, root_quaternion: np.ndarr
 
 
 def audit_encoder_reference_consumption(
-    session: Any, trace: dict[str, Any], events: list[dict[str, Any]], mode: int
+    session: Any,
+    trace: dict[str, Any],
+    events: list[dict[str, Any]],
+    mode: int,
+    *,
+    reference_height_probe_m: float | None = None,
 ) -> dict[str, Any]:
     """Fifteen independent planner calls and 300 measured feature comparisons."""
     recorded = np.asarray(trace.get("foundation_neural_encoder_features"))
@@ -112,7 +117,14 @@ def audit_encoder_reference_consumption(
             )
             seen.append(tick)
 
-    rows = replay_locomotion_segments(session, trace, events, mode, reference_observer=observe)
+    rows = replay_locomotion_segments(
+        session,
+        trace,
+        events,
+        mode,
+        reference_observer=observe,
+        reference_height_probe_m=reference_height_probe_m,
+    )
     if seen != list(range(300)):
         raise ValueError("complete ordered encoder consumption coverage required")
     error = np.abs(rebuilt.astype(np.float64) - recorded[:, 0])
@@ -146,4 +158,6 @@ def audit_encoder_reference_consumption(
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if reference_height_probe_m is not None:
+        result["high_speed_reference_height_m"] = reference_height_probe_m
     return dict(result, report_hash=hash_json(result))

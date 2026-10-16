@@ -44,10 +44,18 @@ class SonicNavigationConfig:
     pose_reference: SonicPoseReference | None = None
     experimental_command_replanning: bool = False
     experimental_locomotion_mode: int | None = None
+    experimental_reference_height_m: float | None = None
     inference_threads: int | None = None
     onnx_graph_encoder_layout: bool = False
 
     def __post_init__(self) -> None:
+        if self.experimental_reference_height_m is not None and (
+            type(self.experimental_reference_height_m) is not float
+            or not math.isfinite(self.experimental_reference_height_m)
+            or not 0.65 <= self.experimental_reference_height_m <= 0.8
+            or self.experimental_locomotion_mode != 3
+        ):
+            raise ValueError("bounded explicit reference height requires the run-mode SIM probe")
         if self.experimental_locomotion_mode is not None and (
             type(self.experimental_locomotion_mode) is not int
             or self.experimental_locomotion_mode not in (2, 3)
@@ -223,6 +231,10 @@ class _StreamingBackend(G1SonicRunupController):
             feed["mode"] = np.asarray(
                 [self.navigation.experimental_locomotion_mode], dtype=np.int64
             )
+        if self.navigation.experimental_reference_height_m is not None and speed > 0.8:
+            feed["height"] = np.asarray(
+                [self.navigation.experimental_reference_height_m], dtype=np.float32
+            )
         output, count = self._planner.run(None, feed)
         count_array = np.asarray(count)
         if (
@@ -250,6 +262,10 @@ class _StreamingBackend(G1SonicRunupController):
         )
         if self.navigation.experimental_locomotion_mode is not None:
             self.events[-1]["planner_mode"] = int(np.asarray(feed["mode"])[0])
+        if self.navigation.experimental_reference_height_m is not None:
+            self.events[-1]["reference_height_input_m"] = (
+                self.navigation.experimental_reference_height_m if speed > 0.8 else -1.0
+            )
         self.planner_calls += 1
         self.last_planned_frame = frame
         self.last_planned_command = self.command
@@ -316,6 +332,8 @@ class G1SonicNavigation:
         config_record = asdict(self.config)
         if self.config.experimental_locomotion_mode is None:
             config_record.pop("experimental_locomotion_mode")
+        if self.config.experimental_reference_height_m is None:
+            config_record.pop("experimental_reference_height_m")
         if not self.config.experimental_command_replanning:
             config_record.pop("experimental_command_replanning")
         config_record.pop("pose_reference")

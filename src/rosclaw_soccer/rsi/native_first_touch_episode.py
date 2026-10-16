@@ -74,8 +74,17 @@ def run_native_first_touch_episode(
     postcontact_profile: PostcontactNavigationProbe | None = None,
     locomotion_mode_probe: int | None = None,
     foundation_approach_probe: bool = False,
+    reference_height_probe_m: float | None = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
+    if reference_height_probe_m is not None and (
+        type(reference_height_probe_m) is not float
+        or not math.isfinite(reference_height_probe_m)
+        or not 0.65 <= reference_height_probe_m <= 0.8
+        or foundation_approach_probe is not True
+        or locomotion_mode_probe != 3
+    ):
+        raise ValueError("reference-height intervention requires a captured pure run ablation")
     if type(foundation_approach_probe) is not bool:
         raise ValueError("explicit boolean foundation approach ablation required")
     if foundation_approach_probe and (
@@ -305,6 +314,7 @@ def run_native_first_touch_episode(
                 experimental_maximum_speed_mps=1.5,
                 inference_threads=1,
                 experimental_locomotion_mode=locomotion_mode_probe,
+                experimental_reference_height_m=reference_height_probe_m,
             ),
         )
     navigation.backend.qualification.require_eligible()
@@ -860,6 +870,11 @@ def run_native_first_touch_episode(
                 promotion_authorized=False,
                 hardware_authorized=False,
             )
+            if reference_height_probe_m is not None:
+                commitment["locomotion_mode_probe"].update(
+                    schema="soccer.rsi.sonic_locomotion_mode_probe.v2",
+                    high_speed_reference_height_m=reference_height_probe_m,
+                )
         if postcontact_profile is not None:
             commitment["postcontact_navigation_probe"] = postcontact_profile.contract()
     (args.output_root / "commitment.json").write_text(json.dumps(commitment, indent=2))
