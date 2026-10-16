@@ -7,6 +7,7 @@ Physics and teacher admission remain separate from process liveness.
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import time
 from collections import Counter
@@ -117,6 +118,17 @@ class FirstTouchCampaign:
             value = declaration.get(name)
             if type(value) is not int or value < 1:
                 raise ValueError("positive finite research budgets required")
+        extra = declaration.get("required_receipt_witnesses", [])
+        if (
+            type(extra) is not list
+            or len(extra) > 8
+            or any(
+                type(key) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,63}_witness", key) is None
+                for key in extra
+            )
+            or len(set(extra)) != len(extra)
+        ):
+            raise ValueError("bounded unique required receipt witness names required")
         root.mkdir(parents=True, exist_ok=True)
         self.root = root.resolve()
         self.db = sqlite3.connect(root / "campaign.sqlite", isolation_level=None)
@@ -172,7 +184,18 @@ class FirstTouchCampaign:
             "proof_payload",
         }:
             raise ValueError("complete immutable physical witnesses required")
-        for witness in witnesses.values():
+        required = dict(witnesses)
+        for key in self.declaration.get("required_receipt_witnesses", []):
+            witness = receipt.get(key)
+            if (
+                type(witness) is not dict
+                or set(witness) != {"path", "sha256"}
+                or type(witness["path"]) is not str
+                or type(witness["sha256"]) is not str
+            ):
+                raise ValueError("complete required receipt witness descriptor required")
+            required[key] = witness
+        for witness in required.values():
             path = Path(witness["path"])
             roots = [self.root]
             predecessor = self.declaration.get("predecessor")

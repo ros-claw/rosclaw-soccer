@@ -116,6 +116,74 @@ def test_restart_does_not_trust_completed_witness_after_modification(tmp_path):
         FirstTouchCampaign(tmp_path, declaration())
 
 
+@pytest.mark.parametrize(
+    "names",
+    [
+        None,
+        "selection_witness",
+        [1],
+        ["../x"],
+        ["a_witness"] * 2,
+        [f"a{i}_witness" for i in range(9)],
+    ],
+)
+def test_required_witness_names_fail_before_ledger_creation(tmp_path, names):
+    with pytest.raises(ValueError, match="witness names"):
+        FirstTouchCampaign(tmp_path, declaration() | {"required_receipt_witnesses": names})
+    assert not (tmp_path / "campaign.sqlite").exists()
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    [None, {}, {"path": 1, "sha256": "x"}, {"path": "x", "sha256": "x", "extra": True}],
+)
+def test_required_receipt_witness_cannot_be_missing_or_malformed(tmp_path, descriptor):
+    spec = declaration() | {"required_receipt_witnesses": ["selection_witness"]}
+    campaign = FirstTouchCampaign(tmp_path, spec)
+    campaign.begin("a")
+    value = receipt(tmp_path)
+    if descriptor is not None:
+        value["selection_witness"] = descriptor
+    with pytest.raises(ValueError, match="witness descriptor"):
+        campaign.complete("a", value)
+    assert campaign.state["completed"] == {}
+    campaign.db.close()
+
+
+def test_terminal_restart_rechecks_required_selection_witness(tmp_path):
+    spec = declaration() | {"required_receipt_witnesses": ["selection_witness"]}
+    campaign = FirstTouchCampaign(tmp_path, spec)
+    selection = tmp_path / "selection.json"
+    selection.write_bytes(b"frozen initial-state selection")
+    value = receipt(tmp_path) | {
+        "selection_witness": {"path": str(selection), "sha256": hash_bytes(selection.read_bytes())}
+    }
+    campaign.begin("a")
+    campaign.complete("a", value)
+    campaign.state["phase"] = "PILOT_COMPLETE_EXPANDED_VALIDATION_REQUIRED"
+    campaign.record("TEST_TERMINAL")
+    campaign.db.close()
+    FirstTouchCampaign(tmp_path, spec).db.close()
+    selection.write_bytes(b"different selection")
+    with pytest.raises(ValueError, match="witness bytes changed"):
+        FirstTouchCampaign(tmp_path, spec)
+
+
+def test_required_selection_witness_must_be_campaign_owned(tmp_path):
+    root = tmp_path / "campaign"
+    spec = declaration() | {"required_receipt_witnesses": ["selection_witness"]}
+    campaign = FirstTouchCampaign(root, spec)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b"outside")
+    value = receipt(root) | {
+        "selection_witness": {"path": str(outside), "sha256": hash_bytes(outside.read_bytes())}
+    }
+    campaign.begin("a")
+    with pytest.raises(ValueError, match="campaign-owned"):
+        campaign.complete("a", value)
+    campaign.db.close()
+
+
 def test_three_no_gain_generations_trigger_explicit_plateau(tmp_path):
     campaign = FirstTouchCampaign(tmp_path, declaration())
     assert (

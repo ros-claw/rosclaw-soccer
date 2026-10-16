@@ -208,6 +208,7 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
     declaration = dict(config, input_file_hashes=dict(p.PINS), source_heads=p.HEADS)
     if portfolio is not None:
         declaration["portfolio_queries"] = [portfolio.queries[g] for g in PORTFOLIO_GROUPS]
+        declaration["required_receipt_witnesses"] = ["portfolio_selection_witness"]
     campaign = FirstTouchCampaign(root, declaration)
     if campaign.state["phase"] in TERMINAL_PHASES:
         campaign.db.close()
