@@ -15,7 +15,7 @@ import rosclaw.growth.canonical_json_snapshot as snapshot_module
 from rosclaw.growth.canonical_json_snapshot import CanonicalJSONSnapshot
 
 from rosclaw_soccer.rsi import recurrent_sampling_motor
-from rosclaw_soccer.rsi.owned_smooth_preview import _json, _with_mean
+from rosclaw_soccer.rsi.owned_smooth_preview import _with_mean
 from rosclaw_soccer.sim.contracts import hash_bytes
 
 
@@ -69,23 +69,28 @@ class OwnedRecurrentSamplingPreview:
             "model_hash",
         }:
             raise ValueError("complete exact recurrent sampling document required")
-        # Own before validating: caller mutation must not change the return.
-        owned = CanonicalJSONSnapshot(wrapped).restore()
-        if _json({k: owned[k] for k in static}) != _json(static):
-            raise ValueError("fixed recurrent sampling law, source or authority changed")
-        seed = owned["seed"]
+        # Capture one seed scalar, then snapshot the WHOLE caller document.
+        # Compare its complete canonical bytes with a private expected document;
+        # no caller dictionary or object identity is grandfathered. Returned
+        # values are restored from private bytes, not the mutable input.
+        seed = wrapped["seed"]
         if type(seed) is not int or not 0 <= seed < 2**32:
             raise ValueError("bounded integer recurrent sampling seed required")
-        mean_bytes = self._mean._data
-        if type(owned["mean_model"]) is not dict or _json(owned["mean_model"]) != mean_bytes:
-            raise ValueError("complete canonical recurrent actor/critic/parent changed")
-        fields = {k: v for k, v in owned.items() if k != "model_hash"}
+        if type(wrapped["mean_model"]) is not dict or type(wrapped["model_hash"]) is not str:
+            raise ValueError("complete canonical recurrent actor/critic/parent and seal required")
+        incoming = CanonicalJSONSnapshot(wrapped)
+        fields = dict(static, seed=seed, mean_model=None)
         digest = (
             "sha256:"
-            + hashlib.sha256(_with_mean(fields, (), ("mean_model",), mean_bytes)).hexdigest()
+            + hashlib.sha256(_with_mean(fields, (), ("mean_model",), self._mean._data)).hexdigest()
         )
-        if type(owned["model_hash"]) is not str or owned["model_hash"] != digest:
-            raise ValueError("complete original recurrent sampling model seal changed")
+        expected = dict(fields, model_hash=digest)
+        if incoming._data != _with_mean(expected, (), ("mean_model",), self._mean._data):
+            raise ValueError(
+                "complete canonical recurrent actor/critic/parent, sampling law, source, "
+                "authority or original model seal changed"
+            )
+        owned = dict(static, seed=seed, mean_model=self._mean.restore(), model_hash=digest)
         return self._assemble_owned_policy(owned, digest)
 
     def _assemble_owned_policy(self, owned: dict[str, Any], digest: str) -> dict[str, Any]:
