@@ -167,3 +167,63 @@ def observe_contact_transition(trace: dict[str, Any]) -> dict[str, Any]:
         promotion_authorized=False,
         hardware_authorized=False,
     )
+
+
+def observe_postcontact_separation(trace: dict[str, Any]) -> dict[str, Any]:
+    """World-frame, pre-step snapshots around measured contact events.
+
+    Frame f+1 is the first available pre-step snapshot after contact in f.
+    Body-center distances are descriptive proxies, not collision clearances.
+    A horizon boundary remains missing rather than copied or extrapolated.
+    """
+    transition = observe_contact_transition(trace)
+    arrays = {}
+    for name, shape in (
+        ("root_pose_xyzw_m", (300, 1, 7)),
+        ("root_velocity_world", (300, 1, 6)),
+        ("ball_position_before_step_m", (300, 1, 3)),
+        ("ball_linear_velocity_before_step_m_s", (300, 1, 3)),
+    ):
+        value = np.asarray(trace.get(name))
+        if value.shape != shape or value.dtype != np.float64 or not np.isfinite(value).all():
+            raise ValueError("complete finite float64 separation measurements required")
+        arrays[name] = value[:, 0]
+
+    def snapshot(frame: int | None) -> dict[str, Any] | None:
+        if frame is None or not 0 <= frame < 300:
+            return None
+        gap = arrays["ball_position_before_step_m"][frame] - arrays["root_pose_xyzw_m"][frame, :3]
+        relative = (
+            arrays["ball_linear_velocity_before_step_m_s"][frame]
+            - arrays["root_velocity_world"][frame, :3]
+        )
+        return dict(
+            frame=frame,
+            ball_minus_pelvis_world_position_m=gap.tolist(),
+            ball_minus_root_world_linear_velocity_m_s=relative.tolist(),
+            ball_world_height_m=float(arrays["ball_position_before_step_m"][frame, 2]),
+        )
+
+    first = transition["outcome"]["first_foot_contact_frame"]
+    nonfoot = transition["first_nonfoot_contact_frame"]
+    post = None if first is None else first + 1
+    # Do not call a pre-foot nonfoot event a follow-through observation.
+    delayed = first is not None and nonfoot is not None and nonfoot > first
+    return dict(
+        schema="soccer.rsi.observed_postcontact_separation.v1",
+        transition=transition,
+        pre_foot_contact=snapshot(first),
+        first_post_foot_contact=snapshot(post),
+        ten_frames_after_foot_contact=snapshot(None if first is None else first + 10),
+        pre_delayed_nonfoot_contact=snapshot(nonfoot if delayed else None),
+        body_center_proxy_not_collision_clearance=True,
+        velocities_are_recorded_world_linear_not_navigation_commands=True,
+        velocity_refresh_and_root_reference_inherited_from_source_protocol=True,
+        relative_velocity_is_not_finite_difference_of_position_gap=True,
+        snapshots_are_before_step=True,
+        new_physics_executions=0,
+        causation_proven=False,
+        training_authorized=False,
+        promotion_authorized=False,
+        hardware_authorized=False,
+    )
