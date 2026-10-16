@@ -108,6 +108,101 @@ def test_entry_source_required_before_allocation(tmp_path):
         )
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["neural_model", "motor_policy", "step_model", "body_response_bundle"],
+)
+def test_foundation_only_native_api_rejects_residual_inputs_before_allocation(tmp_path, field):
+    args = argparse.Namespace(foundation_only=True, **{field: tmp_path / "absent-model"})
+    with pytest.raises(ValueError, match="foundation-only cannot include residual"):
+        kernel.run_native_first_touch_episode(
+            args,
+            course=(2.5, 0.0, -0.5),
+            partition="DECLARED_DEVELOPMENT_DIAGNOSTIC",
+            entry_source_path=Path(entry.__file__),
+            consumed_bank_hash=None,
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "sampling_factory",
+        "extended_factory",
+        "proposal_factory",
+        "imitation_factory",
+        "recurrent_factory",
+        "recurrent_sampling_factory",
+        "recurrent_clipped_factory",
+    ],
+)
+def test_foundation_only_rejects_even_unbound_factories_before_allocation(field):
+    with pytest.raises(ValueError, match="foundation-only cannot include residual"):
+        kernel.run_native_first_touch_episode(
+            argparse.Namespace(foundation_only=True),
+            course=(2.5, 0.0, -0.5),
+            partition="DECLARED_DEVELOPMENT_DIAGNOSTIC",
+            entry_source_path=Path(entry.__file__),
+            consumed_bank_hash=None,
+            **{field: object()},
+        )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"cached_proposal_envelope": True}, {"proposal_decoder": "owned_snapshot"}],
+)
+def test_foundation_only_rejects_residual_decoder_or_envelope(extra):
+    with pytest.raises(ValueError, match="foundation-only cannot include residual"):
+        kernel.run_native_first_touch_episode(
+            argparse.Namespace(foundation_only=True, **extra),
+            course=(2.5, 0.0, -0.5),
+            partition="DECLARED_DEVELOPMENT_DIAGNOSTIC",
+            entry_source_path=Path(entry.__file__),
+            consumed_bank_hash=None,
+        )
+
+
+@pytest.mark.parametrize("flag", [1, "true", None])
+def test_foundation_only_requires_boolean(flag):
+    with pytest.raises(ValueError, match="explicit boolean foundation-only"):
+        kernel.run_native_first_touch_episode(
+            argparse.Namespace(foundation_only=flag),
+            course=(2.5, 0.0, -0.5),
+            partition="DECLARED_DEVELOPMENT_DIAGNOSTIC",
+            entry_source_path=Path(entry.__file__),
+            consumed_bank_hash=None,
+        )
+
+
+@pytest.mark.parametrize("foundation_only", [False, True])
+def test_unmixed_mode_reaches_mock_allocator_boundary(tmp_path, monkeypatch, foundation_only):
+    import sys
+    from types import SimpleNamespace
+
+    def allocator_never_run(path):
+        raise RuntimeError("mock allocator boundary, no physical allocation")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "mujoco",
+        SimpleNamespace(MjSpec=SimpleNamespace(from_file=allocator_never_run)),
+    )
+    args = argparse.Namespace(
+        scene=tmp_path / "absent.xml",
+        foundation_only=foundation_only,
+        step_model=None if foundation_only else tmp_path / "absent-residual.json",
+    )
+    with pytest.raises(RuntimeError, match="mock allocator boundary"):
+        kernel.run_native_first_touch_episode(
+            args,
+            course=(2.5, 0.0, -0.5),
+            partition="DECLARED_DEVELOPMENT_DIAGNOSTIC",
+            entry_source_path=Path(entry.__file__),
+            consumed_bank_hash=None,
+        )
+
+
 def specialize_legacy_profile(function):
     """Specialize only explicit profile=None branches, retaining frozen hash.
 

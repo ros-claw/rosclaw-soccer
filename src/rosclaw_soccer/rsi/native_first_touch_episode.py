@@ -163,6 +163,30 @@ def run_native_first_touch_episode(
         raise ValueError(
             "training declarations cannot be attached to diagnostic or exam partitions"
         )
+    foundation_only = getattr(args, "foundation_only", False)
+    if type(foundation_only) is not bool:
+        raise ValueError("explicit boolean foundation-only mode required")
+    if foundation_only and (
+        any(
+            getattr(args, key, None) is not None
+            for key in ("neural_model", "motor_policy", "step_model", "body_response_bundle")
+        )
+        or any(
+            factory is not None
+            for factory in (
+                sampling_factory,
+                extended_factory,
+                proposal_factory,
+                imitation_factory,
+                recurrent_factory,
+                recurrent_sampling_factory,
+                recurrent_clipped_factory,
+            )
+        )
+        or getattr(args, "cached_proposal_envelope", False) is not False
+        or getattr(args, "proposal_decoder", "reference") != "reference"
+    ):
+        raise ValueError("foundation-only cannot include residual models, factories or guidance")
     import mujoco
     import torch
 
