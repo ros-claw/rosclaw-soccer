@@ -75,6 +75,11 @@
 
 ## 自动接续与验收决策
 
+更新：前驱三代 193 个逻辑任务已在 `PLATEAU_RESEARCH_REQUIRED`
+正常结束，等待门已通过并实际进入完整冻结模型初始化；当前还没有
+32 场物理成绩。完整前驱与组合结果见
+[阶段总结](bounded-search-and-portfolio-complete-20261017.zh-CN.md)。
+
 外部配置 `rsi-walk-run-mode-paired16-config-20261017.json` 和服务
 `rosclaw-walk-run-mode-paired16-20261017.service` 已固定。真实预检通过，
 等待进程已运行，当前未分配新身体/模型工厂。只有原有有界搜索正常
