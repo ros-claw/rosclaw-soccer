@@ -31,6 +31,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 if TYPE_CHECKING:
     from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
+    from rosclaw_soccer.rsi.public_physics_option_planning import PublicPlanningContext
 
 
 def atomic_status(root: Path, name: str, value: dict[str, Any]) -> None:
@@ -587,9 +588,34 @@ def qualified_episode(
     entry_source_path: Path | None = None,
     physical_payload_reader: "FixedPhysicalPayloadReader | None" = None,
     locomotion_mode_probe: int | None = None,
+    planning_context: "PublicPlanningContext | None" = None,
+    planning_stage: str = "PLANNING_SIMULATION",
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
+    if planning_context is None:
+        if planning_stage != "PLANNING_SIMULATION":
+            raise ValueError("an evaluation stage requires an explicit public planning context")
+    else:
+        from rosclaw_soccer.rsi.public_first_touch_training_plan import PublicFirstTouchTrainingPlan
+        from rosclaw_soccer.rsi.public_physics_option_planning import validate_context_source
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+
+        validate_context_source(planning_context, plan, group=group)
+        if (
+            type(planning_stage) is not str
+            or planning_stage not in {"PLANNING_SIMULATION", "SELECTED_OPTION_EVALUATION"}
+            or type(factory) is not RecurrentSamplingEpisodeFactory
+            or type(plan) is not PublicFirstTouchTrainingPlan
+            or plan.behavior_model_hash != assets.MEAN
+        ):
+            raise ValueError("explicit SIM planning stage and exact fixed-mean factory required")
+        try:
+            factory._stable()
+        except AttributeError as error:
+            raise ValueError("allocated private planning factory required") from error
     if physical_payload_reader is not None:
         from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
 
@@ -617,6 +643,7 @@ def qualified_episode(
     reference = manifest["records"][group]
     if list(draw.course) != reference["draw"]["course"]:
         raise ValueError("same declared public state required")
+    course = draw.course if planning_context is None else planning_context.course
     profile = None if candidate is None else BoundedFirstTouchControl(**candidate["parameters"])
     swing = "legacy" if candidate is None else candidate["swing"]
     postcontact = None
@@ -644,9 +671,35 @@ def qualified_episode(
         seed=draw.seed,
         lane=draw.lane,
     )
+    context_path = None
+    if planning_context is not None:
+        from rosclaw_soccer.rsi.portfolio_physical_study import logical_document
+
+        view = logical_document(args.step_model)
+        if (
+            type(view.get("seed")) is not int
+            or view["seed"] != planning_context.sampling_seed
+            or view.get("mean_model") != {"$rosclaw_shared_payload": factory._mean_hash}
+        ):
+            raise ValueError("planning draw must bind the whole private mean and exact noise seed")
+        context_path = folder.parent / f"{folder.name}-planning-context.json"
+        context_document = dict(
+            schema="soccer.rsi.public_planning_execution_context.v1",
+            context=asdict(planning_context),
+            context_hash=planning_context.context_hash,
+            source_plan_hash=plan.contract()["plan_hash"],
+            stage=planning_stage,
+            source_sampling_view_hash=hash_bytes(args.step_model.read_bytes()),
+            candidate_hash=hash_json(candidate),
+            outcome_contract_changed=False,
+            promotion_authorized=False,
+            hardware_authorized=False,
+        )
+        context_document["report_hash"] = hash_json(context_document)
+        write_once(context_path, context_document)
     run_native_first_touch_episode(
         args,
-        course=draw.course,
+        course=course,
         partition="DECLARED_DEVELOPMENT_DIAGNOSTIC",
         entry_source_path=source / "scripts/rsi_run_first_touch_campaign.py"
         if entry_source_path is None
@@ -664,7 +717,7 @@ def qualified_episode(
         if physical_payload_reader is None
         else _sealed(folder / "report.json", physical_payload_reader=physical_payload_reader)
     )
-    if report["compiled_model_hash"] != assets.WORLD or report["course"] != list(draw.course):
+    if report["compiled_model_hash"] != assets.WORLD or report["course"] != list(course):
         raise ValueError("fixed world and course required")
     review = audit_cpu_transfer(
         folder,
@@ -674,24 +727,26 @@ def qualified_episode(
         allocate_sampling_reference_once=True,
         physical_payload_reader=physical_payload_reader,
         initial_state_reference=NativeFirstTouchInitialState(
-            draw.course, G1SonicRunupController.default_angles
+            course, G1SonicRunupController.default_angles
         ),
     )
     with np.load(folder / "physical_trace.npz", allow_pickle=False) as archive:
         trace = {k: archive[k].copy() for k in archive.files}
-    with np.load(reference["witnesses"]["trace"]["path"], allow_pickle=False) as old:
-        if any(
-            not np.array_equal(trace[k][0], old[k][0]) for k in ("canonical_qpos", "canonical_qvel")
-        ):
-            raise ValueError("paired initial physical state changed")
-        if candidate is None and (
-            set(trace) != set(old.files)
-            or any(
-                trace[k].dtype != old[k].dtype or not np.array_equal(trace[k], old[k])
-                for k in trace
-            )
-        ):
-            raise ValueError("all28 legacy control arrays must exactly reproduce")
+    if planning_context is None:
+        with np.load(reference["witnesses"]["trace"]["path"], allow_pickle=False) as old:
+            if any(
+                not np.array_equal(trace[k][0], old[k][0])
+                for k in ("canonical_qpos", "canonical_qvel")
+            ):
+                raise ValueError("paired initial physical state changed")
+            if candidate is None and (
+                set(trace) != set(old.files)
+                or any(
+                    trace[k].dtype != old[k].dtype or not np.array_equal(trace[k], old[k])
+                    for k in trace
+                )
+            ):
+                raise ValueError("all28 legacy control arrays must exactly reproduce")
     if profile is not None:
         first = review["first_contact_frame"]
         for frame in range(300):
@@ -817,4 +872,10 @@ def qualified_episode(
         receipt["locomotion_reference_witness"] = dict(
             path=str(path), sha256=hash_bytes(path.read_bytes())
         )
+    if context_path is not None and planning_context is not None:
+        receipt["planning_context_witness"] = dict(
+            path=str(context_path), sha256=hash_bytes(context_path.read_bytes())
+        )
+        receipt["planning_stage"] = planning_stage
+        receipt["planning_context_hash"] = planning_context.context_hash
     return receipt
