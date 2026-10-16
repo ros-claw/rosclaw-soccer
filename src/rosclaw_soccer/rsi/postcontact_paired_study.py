@@ -1,4 +1,6 @@
-"""Fixed SIM paired controls: follow-through or precontact closing gain."""
+"""Fixed SIM control comparisons, including a frozen initial-state portfolio."""
+
+from __future__ import annotations
 
 import fcntl
 import gc
@@ -8,14 +10,28 @@ import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.first_touch_campaign import TERMINAL_PHASES, FirstTouchCampaign
 from rosclaw_soccer.rsi.first_touch_campaign_worker import atomic_status, prepare, qualified_episode
+from rosclaw_soccer.rsi.portfolio_physical_study import (
+    GROUPS as PORTFOLIO_GROUPS,
+)
+from rosclaw_soccer.rsi.portfolio_physical_study import (
+    PROFILE as PORTFOLIO_PROFILE,
+)
+from rosclaw_soccer.rsi.portfolio_physical_study import (
+    prepare_portfolio,
+    publish_selection,
+    verify_selected_receipt,
+)
 from rosclaw_soccer.rsi.postcontact_navigation_probe import PostcontactNavigationProbe
+
+if TYPE_CHECKING:
+    from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
 
 CLOSING_PROFILE = "closing_gain_single_factor_eleven"
 CLOSING_GROUPS = [0, 4, 8, 20, 24, 28, 36, 40, 44, 56, 60]
@@ -26,6 +42,7 @@ def require_declaration(config: dict[str, Any]) -> None:
         "failure_directed_four": ([4, 12, 32, 52], 10),
         "balanced_public_sixteen_retention": (list(range(0, 64, 4)), 34),
         CLOSING_PROFILE: (CLOSING_GROUPS, 24),
+        PORTFOLIO_PROFILE: (PORTFOLIO_GROUPS, 42),
     }
     profile = config.get("postcontact_study_profile", "failure_directed_four")
     if type(profile) is not str or profile not in profiles:
@@ -39,6 +56,29 @@ def require_declaration(config: dict[str, Any]) -> None:
         or config.get("teacher_auto_admission") is not False
     ):
         raise ValueError("complete fixed paired diagnostic declaration required")
+    if profile == PORTFOLIO_PROFILE:
+        if (
+            "postcontact_probe" in config
+            or "closing_gain_probe_s_inv" in config
+            or type(config.get("portfolio_control_arm_count")) is not int
+            or not 7 <= config["portfolio_control_arm_count"] <= 9
+            or config.get("physical_payload_reader_mode") != "fixed_after_first_qualified"
+            or any(
+                type(config.get(key)) is not str or not config[key]
+                for key in (
+                    "portfolio_model_path",
+                    "portfolio_fit_report_path",
+                    "portfolio_model_hash",
+                    "portfolio_fit_report_hash",
+                    "portfolio_fit_source_root",
+                    "portfolio_fit_source_head",
+                )
+            )
+        ):
+            raise ValueError(
+                "fixed supported model, complete arms and explicit portfolio reader mode required"
+            )
+        return
     if profile == CLOSING_PROFILE:
         if (
             "postcontact_probe" in config
@@ -133,6 +173,11 @@ def verify_precontact_pair(baseline: dict[str, Any], probe: dict[str, Any]) -> N
 def run(config_path: Path, *, preflight: bool = False) -> None:
     p, assets, manifest, config = prepare(config_path)
     require_declaration(config)
+    portfolio = (
+        prepare_portfolio(p, manifest, config)
+        if config.get("postcontact_study_profile") == PORTFOLIO_PROFILE
+        else None
+    )
     if config.get("postcontact_study_profile") == "balanced_public_sixteen_retention":
         prior_path = Path(config["prior_study_report_path"])
         prior_digest = p.digest(prior_path)
@@ -160,9 +205,10 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
     root.mkdir(parents=True, exist_ok=True)
     lock = (root / "owner.lock").open("a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    campaign = FirstTouchCampaign(
-        root, dict(config, input_file_hashes=dict(p.PINS), source_heads=p.HEADS)
-    )
+    declaration = dict(config, input_file_hashes=dict(p.PINS), source_heads=p.HEADS)
+    if portfolio is not None:
+        declaration["portfolio_queries"] = [portfolio.queries[g] for g in PORTFOLIO_GROUPS]
+    campaign = FirstTouchCampaign(root, declaration)
     if campaign.state["phase"] in TERMINAL_PHASES:
         campaign.db.close()
         lock.close()
@@ -243,11 +289,19 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
         gc.collect()
         auditor = TorchCallAuditor(assets.SONIC)
         closing = config.get("postcontact_study_profile") == CLOSING_PROFILE
-        prefix = "closing" if closing else "postcontact"
+        prefix = "portfolio" if portfolio is not None else "closing" if closing else "postcontact"
+        physical_reader: FixedPhysicalPayloadReader | None = None
         for group in config["postcontact_study_groups"]:
-            for arm in ("baseline", "probe"):
+            for arm in ("selected",) if portfolio is not None else ("baseline", "probe"):
                 job = f"{prefix}-{group}-{arm}"
                 if job in campaign.state["completed"]:
+                    if portfolio is not None:
+                        verify_selected_receipt(
+                            campaign.state["completed"][job],
+                            portfolio.queries[group],
+                            portfolio,
+                            root,
+                        )
                     continue
                 if stop.is_set():
                     return
@@ -258,10 +312,20 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
                 if not resources():
                     return
                 p.stable()
-                candidate = paired_candidate(config, arm)
+                candidate = (
+                    portfolio.queries[group]["candidate"]
+                    if portfolio is not None
+                    else paired_candidate(config, arm)
+                )
                 attempt = campaign.begin(job)
+                folder = root / f"attempt-{attempt:04d}-{job}"
+                selection_witness = (
+                    publish_selection(folder, portfolio.queries[group])
+                    if portfolio is not None
+                    else None
+                )
                 receipt = qualified_episode(
-                    root / f"attempt-{attempt:04d}-{job}",
+                    folder,
                     group,
                     candidate,
                     plan=plan,
@@ -273,11 +337,37 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
                     compiler=compiler,
                     auditor=auditor,
                     entry_source_path=source / "scripts/rsi_run_postcontact_paired_study.py",
+                    physical_payload_reader=physical_reader,
                 )
+                if portfolio is not None:
+                    receipt["portfolio_selection_witness"] = selection_witness
+                    verify_selected_receipt(receipt, portfolio.queries[group], portfolio, root)
+                    if physical_reader is None:
+                        from rosclaw_soccer.rsi.fixed_physical_payload_reader import (
+                            FixedPhysicalPayloadReader,
+                        )
+
+                        witness = receipt["witnesses"]["proof_payload"]
+                        physical_reader = FixedPhysicalPayloadReader(
+                            Path(witness["path"]), expected_file_hash=witness["sha256"]
+                        )
                 p.stable()
                 campaign.complete(job, receipt)
                 print(f"{prefix.upper()}_EPISODE_VERIFIED {job} {receipt['outcome']}", flush=True)
                 gc.collect()
+            if portfolio is not None:
+                receipt = campaign.state["completed"][f"portfolio-{group}-selected"]
+                verify_selected_receipt(receipt, portfolio.queries[group], portfolio, root)
+                verify_initial_pair(
+                    dict(
+                        witnesses=dict(
+                            trace=portfolio.queries[group]["source_initial_trace_witness"]
+                        )
+                    ),
+                    receipt,
+                )
+                campaign.record("PORTFOLIO_QUERY_AND_INITIAL_STATE_VERIFIED")
+                continue
             pair_check = verify_initial_pair if closing else verify_precontact_pair
             pair_check(
                 campaign.state["completed"][f"{prefix}-{group}-baseline"],

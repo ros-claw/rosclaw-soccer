@@ -1,4 +1,4 @@
-"""Fixed paired follow-through/closing SIM study; not teacher admission or Fresh."""
+"""Fixed bounded SIM control studies; not teacher admission or Fresh."""
 
 import argparse
 import json
