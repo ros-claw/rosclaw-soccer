@@ -19,15 +19,23 @@ from rosclaw_soccer.rsi.postcontact_navigation_probe import PostcontactNavigatio
 
 
 def require_declaration(config: dict[str, Any]) -> None:
+    profiles = {
+        "failure_directed_four": ([4, 12, 32, 52], 10),
+        "balanced_public_sixteen_retention": (list(range(0, 64, 4)), 34),
+    }
+    profile = config.get("postcontact_study_profile", "failure_directed_four")
+    if type(profile) is not str or profile not in profiles:
+        raise ValueError("explicit fixed postcontact study profile required")
+    groups, attempts = profiles[profile]
     if (
-        config.get("postcontact_study_groups") != [4, 12, 32, 52]
-        or config.get("max_attempts") != 10
+        config.get("postcontact_study_groups") != groups
+        or config.get("max_attempts") != attempts
         or config.get("predecessor") is not None
         or config.get("neural_training_authorized") is not False
         or config.get("teacher_auto_admission") is not False
         or config.get("postcontact_probe") != asdict(PostcontactNavigationProbe())
     ):
-        raise ValueError("fixed four-state failure-directed paired declaration required")
+        raise ValueError("complete fixed paired diagnostic declaration required")
     # Exercise real forward-reference computation before neural allocation.
     probe = PostcontactNavigationProbe(**config["postcontact_probe"])
     for previous in (0.0, 0.7, 1.4):
@@ -62,6 +70,26 @@ def verify_precontact_pair(baseline: dict[str, Any], probe: dict[str, Any]) -> N
 def run(config_path: Path, *, preflight: bool = False) -> None:
     p, assets, manifest, config = prepare(config_path)
     require_declaration(config)
+    if config.get("postcontact_study_profile") == "balanced_public_sixteen_retention":
+        prior_path = Path(config["prior_study_report_path"])
+        prior_digest = p.digest(prior_path)
+        prior = p.sealed(prior_path)
+        if (
+            prior.get("report_hash") != config["prior_study_report_hash"]
+            or prior.get("schema") != "soccer.rsi.qualified_postcontact_paired_study.v1"
+            or prior.get("completed_pairs") != 4
+            or prior.get("source_physical_executions") != 8
+            or prior.get("source_independent_physical_substeps") != 24000
+            or prior.get("source_foundation_recomputed_calls") != 2400
+            or prior.get("source_sampling_draws_reconstructed") != 2160
+            or prior.get("probe_high_quality", 0) <= prior.get("baseline_high_quality", 4)
+            or prior.get("teacher_qualified") is not False
+            or prior.get("promotion_authorized") is not False
+            or prior.get("hardware_authorized") is not False
+            or p.digest(prior_path) != prior_digest
+        ):
+            raise ValueError("completed qualified SIM pilot with a local gain required")
+        p.add_pins({str(prior_path): prior_digest})
     if preflight:
         print("POSTCONTACT_PAIRED_PREFLIGHT_NO_NEURAL_OR_PHYSICS_ALLOCATION", flush=True)
         return
@@ -196,7 +224,7 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
             )
             campaign.record("PRECONTACT_PAIR_BIT_PARITY_VERIFIED")
         campaign.state["phase"] = "PILOT_COMPLETE_EXPANDED_VALIDATION_REQUIRED"
-        campaign.record("FAILURE_DIRECTED_DIAGNOSTIC_COMPLETE_NOT_TEACHER_ADMISSION")
+        campaign.record("PAIRED_DIAGNOSTIC_COMPLETE_NOT_TEACHER_ADMISSION")
     except BaseException as error:
         campaign.state["phase"] = "FATAL_CONTRACT_VIOLATION"
         campaign.state["fatal_error"] = dict(type=type(error).__name__, message=str(error))

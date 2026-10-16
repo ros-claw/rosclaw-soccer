@@ -3,6 +3,7 @@ from dataclasses import asdict
 import numpy as np
 import pytest
 
+from rosclaw_soccer.rsi import postcontact_paired_study as study
 from rosclaw_soccer.rsi.postcontact_navigation_probe import PostcontactNavigationProbe
 from rosclaw_soccer.rsi.postcontact_paired_study import require_declaration, verify_precontact_pair
 
@@ -28,6 +29,85 @@ def test_exact_failure_directed_plan_exercises_actual_interface(monkeypatch):
     monkeypatch.setattr(PostcontactNavigationProbe, "navigation", measured)
     require_declaration(declaration())
     assert len(calls) == 12
+
+
+def test_balanced_retention_profile_requires_all_sixteen_states_and_fixed_budget():
+    config = declaration()
+    config.update(
+        postcontact_study_profile="balanced_public_sixteen_retention",
+        postcontact_study_groups=list(range(0, 64, 4)),
+        max_attempts=34,
+    )
+    require_declaration(config)
+    config["postcontact_study_groups"] = [4, 12, 32, 52]
+    with pytest.raises(ValueError):
+        require_declaration(config)
+    config["postcontact_study_groups"] = list(range(0, 64, 4))
+    config["max_attempts"] = 1000
+    with pytest.raises(ValueError):
+        require_declaration(config)
+
+
+@pytest.mark.parametrize("profile", [None, True, [], "fresh", "unknown"])
+def test_unknown_study_profile_cannot_change_scope(profile):
+    config = declaration()
+    config["postcontact_study_profile"] = profile
+    with pytest.raises(ValueError):
+        require_declaration(config)
+
+
+@pytest.mark.parametrize("gain,changed", [(True, False), (False, False), (True, True)])
+def test_balanced_preflight_binds_qualified_prior_without_neural_allocation(
+    tmp_path, monkeypatch, gain, changed
+):
+    config = declaration()
+    prior_path = tmp_path / "prior.json"
+    config.update(
+        postcontact_study_profile="balanced_public_sixteen_retention",
+        postcontact_study_groups=list(range(0, 64, 4)),
+        max_attempts=34,
+        prior_study_report_path=str(prior_path),
+        prior_study_report_hash="fixture-seal",
+    )
+    prior = dict(
+        schema="soccer.rsi.qualified_postcontact_paired_study.v1",
+        report_hash="fixture-seal",
+        completed_pairs=4,
+        source_physical_executions=8,
+        source_independent_physical_substeps=24000,
+        source_foundation_recomputed_calls=2400,
+        source_sampling_draws_reconstructed=2160,
+        baseline_high_quality=0,
+        probe_high_quality=int(gain),
+        teacher_qualified=False,
+        promotion_authorized=False,
+        hardware_authorized=False,
+    )
+    pins = {}
+    digest_reads = []
+
+    class Preparation:
+        def sealed(self, path):
+            assert path == prior_path
+            return prior
+
+        def digest(self, path):
+            assert path == prior_path
+            digest_reads.append(path)
+            if changed and len(digest_reads) > 1:
+                return "changed-file-hash"
+            return "fixture-file-hash"
+
+        def add_pins(self, value):
+            pins.update(value)
+
+    monkeypatch.setattr(study, "prepare", lambda _: (Preparation(), None, None, config))
+    if gain and not changed:
+        study.run(tmp_path / "config.json", preflight=True)
+        assert pins == {str(prior_path): "fixture-file-hash"}
+    else:
+        with pytest.raises(ValueError, match="qualified SIM pilot"):
+            study.run(tmp_path / "config.json", preflight=True)
 
 
 @pytest.mark.parametrize(
