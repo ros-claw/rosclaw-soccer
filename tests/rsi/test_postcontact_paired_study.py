@@ -18,6 +18,85 @@ def declaration():
     )
 
 
+def closing_declaration():
+    config = declaration()
+    del config["postcontact_probe"]
+    config.update(
+        postcontact_study_profile=study.CLOSING_PROFILE,
+        postcontact_study_groups=study.CLOSING_GROUPS.copy(),
+        closing_gain_probe_s_inv=3.0,
+        max_attempts=24,
+    )
+    return config
+
+
+def test_closing_changes_only_gain_not_lateral_swing_limits_or_postcontact():
+    from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
+
+    config = closing_declaration()
+    baseline = study.paired_candidate(config, "baseline")
+    probe = study.paired_candidate(config, "probe")
+    assert set(baseline) == set(probe) == {"parameters", "swing"}
+    assert baseline["swing"] == probe["swing"]
+    changed = [
+        k for k in baseline["parameters"] if baseline["parameters"][k] != probe["parameters"][k]
+    ]
+    assert changed == ["closing_gain_s_inv"]
+    a = BoundedFirstTouchControl(**baseline["parameters"])
+    b = BoundedFirstTouchControl(**probe["parameters"])
+    for gap in (0.2, 0.5, 1.0, 2.8):
+        for before in (True, False):
+            kwargs = dict(gap_x=gap, gap_y=0.1, ball_vx=0.6, before_contact=before)
+            assert a.navigation(**kwargs)[1][1:] == b.navigation(**kwargs)[1][1:]
+            if not before:
+                assert a.navigation(**kwargs) == b.navigation(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("postcontact_probe", {}),
+        ("closing_gain_probe_s_inv", 3),
+        ("closing_gain_probe_s_inv", 2.0),
+        ("postcontact_study_groups", [28, 44]),
+        ("max_attempts", 100),
+        ("neural_training_authorized", True),
+    ],
+)
+def test_closing_fixed_factor_coverage_and_budget_cannot_drift(key, value):
+    config = closing_declaration()
+    config[key] = value
+    with pytest.raises(ValueError):
+        require_declaration(config)
+
+
+def test_initial_pair_requires_all_initial_physical_fields_but_not_identical_commands(tmp_path):
+    keys = (
+        "root_pose_xyzw_m",
+        "root_velocity_world",
+        "ball_position_before_step_m",
+        "ball_linear_velocity_before_step_m_s",
+        "foot_geometry_position_before_step_m",
+        "joint_position_rad",
+        "joint_velocity_rad_s",
+        "canonical_qpos",
+        "canonical_qvel",
+    )
+    a = {key: np.zeros((300, 1, 3)) for key in keys}
+    b = {key: value.copy() for key, value in a.items()}
+    b["navigation_command"] = np.ones((300, 1, 3))
+    b["canonical_qpos"][1:] = 1.0
+    pa, pb = tmp_path / "a.npz", tmp_path / "b.npz"
+    np.savez(pa, **a)
+    np.savez(pb, **b)
+    ra, rb = (dict(witnesses=dict(trace=dict(path=p))) for p in (pa, pb))
+    study.verify_initial_pair(ra, rb)
+    b["canonical_qpos"][0, 0, 0] = 0.01
+    np.savez(pb, **b)
+    with pytest.raises(ValueError, match="initial paired physical state"):
+        study.verify_initial_pair(ra, rb)
+
+
 def test_exact_failure_directed_plan_exercises_actual_interface(monkeypatch):
     calls = []
     original = PostcontactNavigationProbe.navigation

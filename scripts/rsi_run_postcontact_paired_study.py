@@ -1,4 +1,4 @@
-"""Fixed failure-directed paired SIM study; not teacher admission or Fresh."""
+"""Fixed paired follow-through/closing SIM study; not teacher admission or Fresh."""
 
 import argparse
 import json

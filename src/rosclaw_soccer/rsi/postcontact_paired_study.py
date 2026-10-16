@@ -1,4 +1,4 @@
-"""Same initial state, stochastic draws and swing; only follow-through differs."""
+"""Fixed SIM paired controls: follow-through or precontact closing gain."""
 
 import fcntl
 import gc
@@ -17,11 +17,15 @@ from rosclaw_soccer.rsi.first_touch_campaign import TERMINAL_PHASES, FirstTouchC
 from rosclaw_soccer.rsi.first_touch_campaign_worker import atomic_status, prepare, qualified_episode
 from rosclaw_soccer.rsi.postcontact_navigation_probe import PostcontactNavigationProbe
 
+CLOSING_PROFILE = "closing_gain_single_factor_eleven"
+CLOSING_GROUPS = [0, 4, 8, 20, 24, 28, 36, 40, 44, 56, 60]
+
 
 def require_declaration(config: dict[str, Any]) -> None:
     profiles = {
         "failure_directed_four": ([4, 12, 32, 52], 10),
         "balanced_public_sixteen_retention": (list(range(0, 64, 4)), 34),
+        CLOSING_PROFILE: (CLOSING_GROUPS, 24),
     }
     profile = config.get("postcontact_study_profile", "failure_directed_four")
     if type(profile) is not str or profile not in profiles:
@@ -33,9 +37,23 @@ def require_declaration(config: dict[str, Any]) -> None:
         or config.get("predecessor") is not None
         or config.get("neural_training_authorized") is not False
         or config.get("teacher_auto_admission") is not False
-        or config.get("postcontact_probe") != asdict(PostcontactNavigationProbe())
     ):
         raise ValueError("complete fixed paired diagnostic declaration required")
+    if profile == CLOSING_PROFILE:
+        if (
+            "postcontact_probe" in config
+            or type(config.get("closing_gain_probe_s_inv")) is not float
+            or config["closing_gain_probe_s_inv"] != 3.0
+        ):
+            raise ValueError("single closing-gain factor without postcontact intervention required")
+        control = BoundedFirstTouchControl(closing_gain_s_inv=config["closing_gain_probe_s_inv"])
+        for gap in (0.2, 0.5, 1.0, 2.8):
+            control.navigation(gap_x=gap, gap_y=0.1, ball_vx=0.6, before_contact=True)
+        return
+    if "closing_gain_probe_s_inv" in config or config.get("postcontact_probe") != asdict(
+        PostcontactNavigationProbe()
+    ):
+        raise ValueError("fixed postcontact intervention without closing-gain changes required")
     # Exercise real forward-reference computation before neural allocation.
     probe = PostcontactNavigationProbe(**config["postcontact_probe"])
     for previous in (0.0, 0.7, 1.4):
@@ -45,6 +63,51 @@ def require_declaration(config: dict[str, Any]) -> None:
             )
             if not np.isfinite(raw) or not 0.0 <= actual <= 1.4:
                 raise ValueError("postcontact reference interface preflight failed")
+
+
+def paired_candidate(config: dict[str, Any], arm: str) -> dict[str, Any]:
+    require_declaration(config)
+    if arm not in ("baseline", "probe"):
+        raise ValueError("fixed paired arm required")
+    parameters = asdict(BoundedFirstTouchControl())
+    candidate: dict[str, Any] = dict(parameters=parameters, swing="bounded_contact_diagnostic")
+    if arm == "probe":
+        if config.get("postcontact_study_profile") == CLOSING_PROFILE:
+            parameters["closing_gain_s_inv"] = config["closing_gain_probe_s_inv"]
+        else:
+            candidate["postcontact"] = config["postcontact_probe"]
+    return candidate
+
+
+def verify_initial_pair(baseline: dict[str, Any], probe: dict[str, Any]) -> None:
+    """Gain intervention starts at frame0; compare initial physical state only.
+
+    Navigation/NN inputs can immediately differ. This is not precontact parity
+    and cannot establish identical policy trajectories after the intervention.
+    """
+    with (
+        np.load(baseline["witnesses"]["trace"]["path"], allow_pickle=False) as a,
+        np.load(probe["witnesses"]["trace"]["path"], allow_pickle=False) as b,
+    ):
+        for key in (
+            "root_pose_xyzw_m",
+            "root_velocity_world",
+            "ball_position_before_step_m",
+            "ball_linear_velocity_before_step_m_s",
+            "foot_geometry_position_before_step_m",
+            "joint_position_rad",
+            "joint_velocity_rad_s",
+            "canonical_qpos",
+            "canonical_qvel",
+        ):
+            if (
+                a[key].shape != b[key].shape
+                or a[key].shape[0] != 300
+                or a[key].dtype != b[key].dtype
+                or not np.isfinite(a[key][0]).all()
+                or not np.array_equal(a[key][0], b[key][0])
+            ):
+                raise ValueError(f"initial paired physical state changed: {key}")
 
 
 def verify_precontact_pair(baseline: dict[str, Any], probe: dict[str, Any]) -> None:
@@ -179,9 +242,11 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
         del old
         gc.collect()
         auditor = TorchCallAuditor(assets.SONIC)
+        closing = config.get("postcontact_study_profile") == CLOSING_PROFILE
+        prefix = "closing" if closing else "postcontact"
         for group in config["postcontact_study_groups"]:
             for arm in ("baseline", "probe"):
-                job = f"postcontact-{group}-{arm}"
+                job = f"{prefix}-{group}-{arm}"
                 if job in campaign.state["completed"]:
                     continue
                 if stop.is_set():
@@ -193,12 +258,7 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
                 if not resources():
                     return
                 p.stable()
-                candidate = dict(
-                    parameters=asdict(BoundedFirstTouchControl()),
-                    swing="bounded_contact_diagnostic",
-                )
-                if arm == "probe":
-                    candidate["postcontact"] = config["postcontact_probe"]
+                candidate = paired_candidate(config, arm)
                 attempt = campaign.begin(job)
                 receipt = qualified_episode(
                     root / f"attempt-{attempt:04d}-{job}",
@@ -216,13 +276,18 @@ def run(config_path: Path, *, preflight: bool = False) -> None:
                 )
                 p.stable()
                 campaign.complete(job, receipt)
-                print(f"POSTCONTACT_EPISODE_VERIFIED {job} {receipt['outcome']}", flush=True)
+                print(f"{prefix.upper()}_EPISODE_VERIFIED {job} {receipt['outcome']}", flush=True)
                 gc.collect()
-            verify_precontact_pair(
-                campaign.state["completed"][f"postcontact-{group}-baseline"],
-                campaign.state["completed"][f"postcontact-{group}-probe"],
+            pair_check = verify_initial_pair if closing else verify_precontact_pair
+            pair_check(
+                campaign.state["completed"][f"{prefix}-{group}-baseline"],
+                campaign.state["completed"][f"{prefix}-{group}-probe"],
             )
-            campaign.record("PRECONTACT_PAIR_BIT_PARITY_VERIFIED")
+            campaign.record(
+                "INITIAL_PAIR_BIT_PARITY_VERIFIED"
+                if closing
+                else "PRECONTACT_PAIR_BIT_PARITY_VERIFIED"
+            )
         campaign.state["phase"] = "PILOT_COMPLETE_EXPANDED_VALIDATION_REQUIRED"
         campaign.record("PAIRED_DIAGNOSTIC_COMPLETE_NOT_TEACHER_ADMISSION")
     except BaseException as error:
