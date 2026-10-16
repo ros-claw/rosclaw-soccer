@@ -90,6 +90,14 @@ def test_invalid_quaternion_is_not_silently_normalized():
         observe_first_touch_recovery(trace)
 
 
+@pytest.mark.parametrize("key", ["root_pose_xyzw_m", "root_velocity_world", "joint_velocity_rad_s"])
+def test_finite_extreme_values_cannot_overflow_derived_metrics(key):
+    trace = measured()
+    trace[key][42, 0, 0] = 1e308
+    with pytest.raises(ValueError, match="bounded"):
+        observe_first_touch_recovery(trace)
+
+
 def test_unsafe_result_stays_unsafe_even_if_motion_is_constant():
     trace = measured()
     trace["force_n"][50, 0, 4] = 2.0

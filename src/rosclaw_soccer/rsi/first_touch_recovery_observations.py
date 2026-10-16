@@ -21,8 +21,13 @@ def observe_first_touch_recovery(trace: dict[str, Any]) -> dict[str, Any]:
         ("joint_velocity_rad_s", (300, 1, 29)),
     ):
         raw = np.asarray(trace.get(key))
-        if raw.shape != shape or raw.dtype != np.float64 or not np.isfinite(raw).all():
-            raise ValueError("complete finite float64 recovery measurements required")
+        if (
+            raw.shape != shape
+            or raw.dtype != np.float64
+            or not np.isfinite(raw).all()
+            or np.max(np.abs(raw)) > 1e6
+        ):
+            raise ValueError("complete bounded finite float64 recovery measurements required")
         arrays[key] = raw[:, 0]
     quaternion = arrays["root_pose_xyzw_m"][:, 3:7]
     norm_squared = np.sum(quaternion**2, axis=1)
