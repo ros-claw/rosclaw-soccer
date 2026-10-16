@@ -14,7 +14,7 @@ import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -28,6 +28,9 @@ from rosclaw_soccer.rsi.first_touch_campaign import (
 )
 from rosclaw_soccer.rsi.taskspace_swing_probe import continuous_swing_joint_delta
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+
+if TYPE_CHECKING:
+    from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
 
 
 def atomic_status(root: Path, name: str, value: dict[str, Any]) -> None:
@@ -576,8 +579,17 @@ def qualified_episode(
     compiler: Any,
     auditor: Any,
     entry_source_path: Path | None = None,
+    physical_payload_reader: "FixedPhysicalPayloadReader | None" = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
+    if physical_payload_reader is not None:
+        from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
+
+        if (
+            type(physical_payload_reader) is not FixedPhysicalPayloadReader
+            or physical_payload_reader._path.parent != folder.absolute().parent / ".shared-models"
+        ):
+            raise ValueError("exact episode-owned fixed physical payload reader required")
     from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController
     from rosclaw_soccer.rsi.contact_motor_primitive import CAP_RAD
     from rosclaw_soccer.rsi.cpu_motor_transfer_evidence import audit_cpu_transfer
@@ -637,7 +649,11 @@ def qualified_episode(
         swing_mode=swing,
         postcontact_profile=postcontact,
     )
-    report = _sealed(folder / "report.json")
+    report = (
+        _sealed(folder / "report.json")
+        if physical_payload_reader is None
+        else _sealed(folder / "report.json", physical_payload_reader=physical_payload_reader)
+    )
     if report["compiled_model_hash"] != assets.WORLD or report["course"] != list(draw.course):
         raise ValueError("fixed world and course required")
     review = audit_cpu_transfer(
@@ -646,6 +662,7 @@ def qualified_episode(
         sampling_reference_compiler=compiler,
         sampling_factory_source_roots=(source, core),
         allocate_sampling_reference_once=True,
+        physical_payload_reader=physical_payload_reader,
         initial_state_reference=NativeFirstTouchInitialState(
             draw.course, G1SonicRunupController.default_angles
         ),
