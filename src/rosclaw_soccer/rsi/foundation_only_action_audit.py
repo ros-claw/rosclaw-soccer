@@ -5,6 +5,19 @@ from typing import Any
 import numpy as np
 
 
+def require_bounded_capture_decoder(
+    decoder: Any, recurrent_sampling: bool, foundation_approach_probe: bool
+) -> None:
+    """Validate the late capture boundary without requiring a null actor."""
+    if type(recurrent_sampling) is not bool or type(foundation_approach_probe) is not bool:
+        raise ValueError("explicit bounded capture mode flags required")
+    if foundation_approach_probe:
+        if decoder is not None or recurrent_sampling:
+            raise ValueError("foundation approach capture must have no recurrent decoder")
+    elif decoder is None or not recurrent_sampling:
+        raise ValueError("bounded teacher capture requires actual recurrent sampling")
+
+
 def require_foundation_only_actions(trace: dict[str, Any]) -> None:
     """Require measured Foundation targets to be the actually applied targets.
 

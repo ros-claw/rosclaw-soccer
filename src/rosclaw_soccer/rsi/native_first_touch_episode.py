@@ -902,8 +902,11 @@ def run_native_first_touch_episode(
         history.update({k: [] for k in ("body_response_applied_increment", "body_response_status")})
     tracker = None
     if control_profile is not None:
-        if recurrent_decoder is None or not recurrent_sampling:
-            raise ValueError("bounded teacher capture requires actual recurrent sampling")
+        from rosclaw_soccer.rsi.foundation_only_action_audit import require_bounded_capture_decoder
+
+        require_bounded_capture_decoder(
+            recurrent_decoder, recurrent_sampling, foundation_approach_probe
+        )
         history.update(
             {
                 k: []

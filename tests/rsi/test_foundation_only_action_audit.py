@@ -5,7 +5,10 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
-from rosclaw_soccer.rsi.foundation_only_action_audit import require_foundation_only_actions
+from rosclaw_soccer.rsi.foundation_only_action_audit import (
+    require_bounded_capture_decoder,
+    require_foundation_only_actions,
+)
 from rosclaw_soccer.rsi.native_first_touch_episode import run_native_first_touch_episode
 
 
@@ -22,6 +25,28 @@ def fixture():
             ("motor_pre_projection_requested_rad", 12),
         )
     }
+
+
+@pytest.mark.parametrize("decoder,sampling,probe", [(None, False, True), (object(), True, False)])
+def test_actual_late_capture_boundary_accepts_declared_mode(decoder, sampling, probe):
+    require_bounded_capture_decoder(decoder, sampling, probe)
+
+
+@pytest.mark.parametrize(
+    "decoder,sampling,probe",
+    [
+        (None, False, False),
+        (None, True, False),
+        (object(), False, False),
+        (object(), False, True),
+        (None, True, True),
+        (None, 0, True),
+        (None, False, 1),
+    ],
+)
+def test_actual_late_capture_boundary_rejects_mixed_or_missing_decoder(decoder, sampling, probe):
+    with pytest.raises(ValueError):
+        require_bounded_capture_decoder(decoder, sampling, probe)
 
 
 def test_pure_foundation_chain_accepts_without_modifying_input():
