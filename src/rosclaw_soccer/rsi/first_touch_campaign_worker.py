@@ -603,6 +603,7 @@ def qualified_episode(
     from rosclaw_soccer.rsi.cpu_motor_transfer_evidence import audit_cpu_transfer
     from rosclaw_soccer.rsi.failure_curriculum_evidence import _sealed
     from rosclaw_soccer.rsi.first_touch_outcome import label_first_touch
+    from rosclaw_soccer.rsi.first_touch_qualification import require_first_touch_qualification
     from rosclaw_soccer.rsi.foundation_observation_capture import (
         validate_capture,
         validate_measured_history,
@@ -758,13 +759,7 @@ def qualified_episode(
     validate_measured_history(trace)
     foundation = auditor.recompute(trace)
     outcome = label_first_touch(trace)
-    if (
-        review["physical_substeps"] != 3000
-        or foundation["recomputed_executed_calls"] != 300
-        or review["actual_recurrent_sampling_draws_reconstructed"] != 270
-        or review["high_quality"] is not outcome.task_pass
-    ):
-        raise ValueError("whole independent physical and Foundation qualification required")
+    alignment = require_first_touch_qualification(review, foundation, outcome)
     write_once(folder / "independent_review.json", review)
     foundation_document = dict(
         foundation,
@@ -794,6 +789,7 @@ def qualified_episode(
         physical_report_hash=report["report_hash"],
         independent_review_hash=review["report_hash"],
         foundation_review_hash=foundation_document["report_hash"],
+        qualification_alignment=alignment,
         witnesses={
             name: dict(path=str(path), sha256=hash_bytes(path.read_bytes()))
             for name, path in paths.items()
