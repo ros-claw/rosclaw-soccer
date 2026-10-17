@@ -47,3 +47,23 @@ feed key、dtype、数组及返回参考完全相同；原父代、有界、post
 新runner须在分配完整模型前逐个预检全部八个实际目录方案，
 并认证默认参考捕获开关；通过后才可进入原物理执行与审核。
 仍无教师、学生训练、Fresh、Champion、宣传或硬件授权。
+
+## 恢复预检与启动
+
+扩展相关十组测试349项通过，包含旧模式配对、完整原评分组合、
+默认冻结AST、规划域和动作选择边界；Ruff通过。
+恢复执行源冻结为`4951751f7825052fb64a4f6504e4373a1d8e2ced`。
+新runner `rsi_public_physics_planning_pilot_repair_20261017.py`
+在分配前读回并认证旧FATAL完整哈希链，将旧收费attempt1
+显式导入新账本，保留旧active／error，不能冒充旧已完成身体。
+全八个实际catalog方案均通过mock allocator边界检查；新上下文
+及选中前的持久化因果检查保留。截止时间沿用原声明，没有延长。
+最终完整runner通过F821/F822和无物理／全模型分配预检，
+配置封印：
+`sha256:a1a56421310cd4a48bf32de2a43cb858904234ac62191103246a9a4f69399ff8`。
+
+服务`rosclaw-public-physics-planning-pilot-repair-20261017.service`
+已启动；当前没有完成结果，不能把初始化或进程存活视为通过。
+当前只读参考审核每场额外15次planner调用，同时核对其300帧
+encoder消费；原模式探针专用的另15次reference审核不再冒用。
+原完整CPU、Foundation与采样独立审核数量保持不变。
