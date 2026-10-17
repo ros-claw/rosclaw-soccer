@@ -76,8 +76,13 @@ def run_native_first_touch_episode(
     locomotion_mode_probe: int | None = None,
     foundation_approach_probe: bool = False,
     reference_height_probe_m: float | None = None,
+    record_default_planner_events: bool = False,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
+    if type(record_default_planner_events) is not bool or (
+        record_default_planner_events and locomotion_mode_probe is not None
+    ):
+        raise ValueError("default reference capture cannot mix with a locomotion intervention")
     fast_intercept = type(control_profile) is FastInterceptControl
     if fast_intercept and (
         foundation_approach_probe is not True
@@ -309,6 +314,7 @@ def run_native_first_touch_episode(
             model_variant="low_latency",
             experimental_maximum_speed_mps=1.5,
             inference_threads=1,
+            record_default_planner_events=record_default_planner_events,
         ),
     )
     if control_profile is not None and locomotion_mode_probe is not None:
@@ -824,6 +830,14 @@ def run_native_first_touch_episode(
     observation_contract = make_observation_contract(
         args.root_velocity_reference, args.observation_snapshot
     )
+    if record_default_planner_events:
+        commitment["default_locomotion_reference_capture"] = dict(
+            schema="soccer.rsi.default_locomotion_reference_capture.v1",
+            navigation_contract_hash=navigation.contract_hash,
+            numerical_intervention=False,
+            hardware_authorized=False,
+            promotion_authorized=False,
+        )
     if args.proposal_decoder != "reference":
         from rosclaw_soccer.rsi.proposal_decoder_selection import compilation_contract
 
@@ -1289,6 +1303,8 @@ def run_native_first_touch_episode(
     )
     if control_profile is not None and locomotion_mode_probe is not None:
         result["locomotion_mode_planner_events"] = navigation.backend.events
+    if record_default_planner_events:
+        result["default_locomotion_planner_events"] = navigation.backend.events
     result["report_hash"] = hash_json(result)
     from scripts.rsi_atomic_artifacts import write_once, write_shared_physical_report
 

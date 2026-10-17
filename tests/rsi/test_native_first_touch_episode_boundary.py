@@ -215,6 +215,10 @@ def specialize_legacy_profile(function):
     class ProfileNone(ast.NodeTransformer):
         def visit_If(self, node):
             test = ast.unparse(node.test)
+            if test == "record_default_planner_events":
+                # Explicit opt-in observation metadata is disabled on the
+                # frozen default path. No control expression is removed.
+                return [self.visit(n) for n in node.orelse]
             if (
                 isinstance(node.test, ast.BoolOp)
                 and isinstance(node.test.op, ast.And)
@@ -224,6 +228,14 @@ def specialize_legacy_profile(function):
             if test in ("control_profile is None", "control_profile is not None"):
                 selected = node.body if test == "control_profile is None" else node.orelse
                 return [self.visit(n) for n in selected]
+            return self.generic_visit(node)
+
+        def visit_Call(self, node):
+            if ast.unparse(node.func) == "SonicNavigationConfig":
+                for keyword in node.keywords[:]:
+                    if keyword.arg == "record_default_planner_events":
+                        assert ast.unparse(keyword.value) == "record_default_planner_events"
+                        node.keywords.remove(keyword)
             return self.generic_visit(node)
 
         def visit_IfExp(self, node):

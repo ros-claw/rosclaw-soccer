@@ -604,6 +604,10 @@ def qualified_episode(
         )
 
         validate_context_source(planning_context, plan, group=group)
+        if locomotion_mode_probe is not None:
+            raise ValueError(
+                "public option planning uses default reference capture, not a mode probe"
+            )
         if (
             type(planning_stage) is not str
             or planning_stage not in {"PLANNING_SIMULATION", "SELECTED_OPTION_EVALUATION"}
@@ -711,6 +715,8 @@ def qualified_episode(
         swing_mode=swing,
         postcontact_profile=postcontact,
         locomotion_mode_probe=locomotion_mode_probe,
+        record_default_planner_events=planning_context is not None
+        and locomotion_mode_probe is None,
     )
     report = (
         _sealed(folder / "report.json")

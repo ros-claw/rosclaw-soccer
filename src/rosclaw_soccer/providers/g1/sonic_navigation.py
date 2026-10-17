@@ -51,8 +51,18 @@ class SonicNavigationConfig:
     experimental_fast_intercept: bool = False
     inference_threads: int | None = None
     onnx_graph_encoder_layout: bool = False
+    record_default_planner_events: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.record_default_planner_events) is not bool or (
+            self.record_default_planner_events
+            and (
+                self.model_variant != "low_latency" or self.experimental_locomotion_mode is not None
+            )
+        ):
+            raise ValueError(
+                "default planner capture is low-latency observation only, not a mode probe"
+            )
         if type(self.experimental_fast_intercept) is not bool or (
             self.experimental_fast_intercept
             and (
@@ -276,7 +286,10 @@ class _StreamingBackend(G1SonicRunupController):
                 "reference_hash": hash_bytes(segment.tobytes()),
             }
         )
-        if self.navigation.experimental_locomotion_mode is not None:
+        if (
+            self.navigation.experimental_locomotion_mode is not None
+            or self.navigation.record_default_planner_events
+        ):
             self.events[-1]["planner_mode"] = int(np.asarray(feed["mode"])[0])
         if self.navigation.experimental_reference_height_m is not None:
             self.events[-1]["reference_height_input_m"] = (
@@ -346,6 +359,8 @@ class G1SonicNavigation:
         self.config = config or SonicNavigationConfig()
         self.backend = _StreamingBackend(model_root, self.config)
         config_record = asdict(self.config)
+        if not self.config.record_default_planner_events:
+            config_record.pop("record_default_planner_events")
         if self.config.experimental_locomotion_mode is None:
             config_record.pop("experimental_locomotion_mode")
         if self.config.experimental_reference_height_m is None:

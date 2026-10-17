@@ -21,6 +21,7 @@ from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import RecurrentSampl
         "foreign_plan",
         "foreign_factory",
         "unallocated_factory",
+        "mixed_mode_probe",
     ],
 )
 def test_bad_planning_admission_has_no_physical_or_artifact_side_effects(tmp_path, case):
@@ -59,6 +60,7 @@ def test_bad_planning_admission_has_no_physical_or_artifact_side_effects(tmp_pat
             auditor=None,
             planning_context=context,
             planning_stage=stage,
+            locomotion_mode_probe=2 if case == "mixed_mode_probe" else None,
         )
     assert not folder.exists()
     assert not list(tmp_path.iterdir())
