@@ -67,3 +67,32 @@ feed key、dtype、数组及返回参考完全相同；原父代、有界、post
 当前只读参考审核每场额外15次planner调用，同时核对其300帧
 encoder消费；原模式探针专用的另15次reference审核不再冒用。
 原完整CPU、Foundation与采样独立审核数量保持不变。
+
+## 第二次分配前故障：预检模块表恢复导致C扩展重复导入
+
+恢复服务在预检结束后、完整模型初始化前导入torch时SystemError，
+最终SIGSEGV。旧新两份FATAL账本与声明均保留；第二次active=null、
+completed0，无physical_trace或compiled_model。它不是物理失败
+或学习失败，不能算一条成功或训练样本。
+
+定位到运行器的`patch.dict(sys.modules, ...)`：预检调用原生API
+时首次导入torch；退出mock上下文整体恢复模块表，删除了期间
+导入的torch条目，但C扩展原生状态仍在，再次导入导致崩溃。
+独立进程正常导入torch 2.13.0+cu130；没有重装或降级依赖。
+
+第三份独立runner只暂时替换／恢复mujoco这一条模块，不回滚
+期间其他导入。预检后检查torch与torch._C仍正确注册，再运行
+同一完整main到分配边界，最终F821/F822及完整预检正常退出。
+旧运行器与源码不修改，不重开两份旧FATAL。
+
+第二份旧账本：
+`sha256:65bbd27f94db07bd1067ebef1e18191cfd2c006787944ffed54ecf3ba229c5c5`。
+第二份旧tip：
+`sha256:14c82c423be42124907e7a9060c120bdd758c8dfc2d776251aac4fbf8b387f8d`。
+第三运行器显式认证两份完整哈希链；收费起点2（原入口失败1、
+本次import失败额外计1），总attempt上限11，仍最多9条新身体。
+旧deadline、新上下文、目录、原评分与72条完整物理总预算不变。
+
+新runner `rsi_public_physics_planning_pilot_import_repair_20261017.py`，
+服务`rosclaw-public-physics-planning-pilot-import-repair-20261017.service`。
+这些修复仍不是已完成的物理规划或神经学习成果。
