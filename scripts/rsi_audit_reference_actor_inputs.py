@@ -1,6 +1,7 @@
 """Reconstruct causal pre-parent inputs on all quarantined historical traces.
 
-No fitting, admission, new neural inference, physics or deployable teacher.
+No fitting, admission, new Foundation inference, physics or deployable teacher.
+An explicit optional flag tests an untrained Core GRU numerically, not in physics.
 The observations did not drive those old episodes: this is an offline input
 audit, not proof of a closed-loop student or a sensor-qualified real actor.
 """
@@ -23,6 +24,7 @@ def main():
     parser.add_argument("--reference-readback", type=Path, required=True)
     parser.add_argument("--study-complete", type=Path, action="append", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--zero-gru-seed", type=int)
     args = parser.parse_args()
     source = Path(__file__).resolve().parents[1]
     if (
@@ -32,6 +34,18 @@ def main():
     ):
         raise ValueError("unused output, four complete studies and clean frozen source required")
     pins = {}
+    if args.zero_gru_seed is not None and not 0 <= args.zero_gru_seed < 2**32:
+        raise ValueError("bounded explicit zero-GRU initialization seed required")
+    zero_parameters, limits = None, None
+    if args.zero_gru_seed is not None:
+        import mujoco
+        import rosclaw.growth.causal_residual_memory as memory
+
+        from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+        from rosclaw_soccer.rsi import reference_student_decoder as decoder_module
+        from rosclaw_soccer.rsi.contact_reference_labels import reference_labels
+
+        zero_parameters = memory.initial_parameters(135, 12, seed=args.zero_gru_seed)
 
     def digest(path):
         with Path(path).open("rb") as stream:
@@ -79,6 +93,9 @@ def main():
         "src/rosclaw_soccer/rsi/stochastic_step_execution.py",
     ):
         pins[str(source / relative)] = digest(source / relative)
+    if zero_parameters is not None:
+        for module in (memory, decoder_module):
+            pins[module.__file__] = digest(module.__file__)
     schemas = {
         "soccer.rsi.mesh_public_draw_complete.v1": 4,
         "soccer.rsi.mesh_contact_catalog_complete.v1": 16,
@@ -105,7 +122,8 @@ def main():
         ):
             raise ValueError("exact original reference-audited physical trace required")
         with np.load(witness["path"], allow_pickle=False) as archive:
-            arrays = inputs.trace_observations(dict(archive))
+            trace = dict(archive)
+        arrays = inputs.trace_observations(trace)
         x, y = arrays["observation"], arrays["same_state_reference_target_rad"]
         rows.append(
             dict(
@@ -123,6 +141,56 @@ def main():
                 dataset_admitted=False,
             )
         )
+        if zero_parameters is not None:
+            world = receipt["witnesses"]["world"]
+            commitment = receipt["witnesses"]["commitment"]
+            if any(
+                pins.get(w["path"]) != w["sha256"] or digest(w["path"]) != w["sha256"]
+                for w in (world, commitment)
+            ):
+                raise ValueError("original world and parent identity witness bytes required")
+            if limits is None:
+                model = mujoco.MjModel.from_binary_path(world["path"])
+                if (model.nq, model.nv, model.nu) != (43, 41, 29):
+                    raise ValueError("exact canonical compiled G1 joint limits required")
+                limits = np.stack([model.jnt_range[model.joint(n).id] for n in G1_DDS_JOINT_NAMES])
+                world_hash = world["sha256"]
+            elif world["sha256"] != world_hash:
+                raise ValueError("zero numeric replay must not mix physical worlds")
+            parent = json.loads(Path(commitment["path"]).read_text())["step_model_hash"]
+            decoder = decoder_module.ReferenceStudentDecoder(
+                zero_parameters,
+                mean=np.zeros(135),
+                scale=np.ones(135),
+                world_hash=world["sha256"],
+                parent_model_hash=parent,
+            )
+            navigation = reference_labels(trace)["navigation_joint_target_rad"]
+            observed, hidden = [], []
+            for frame in range(300):
+                record = decoder.advance(
+                    trace, frame=frame, navigation_target=navigation[frame, 0], joint_limits=limits
+                )
+                if (
+                    record["pre_parent_joint_target_rad"].tobytes()
+                    != navigation[frame, 0].tobytes()
+                    or np.any(record["applied_reference_increment_rad"] != 0)
+                    or np.any(record["requested_reference_increment_rad"] != 0)
+                ):
+                    raise ValueError("zero GRU must preserve every actual navigation target bit")
+                observed.append(record["input_features"])
+                hidden.append(record["recurrent_hidden_state"])
+            rows[-1]["zero_gru_numeric_replay"] = dict(
+                decoder_contract=decoder.contract(),
+                observed_features_hash=hash_bytes(np.stack(observed).tobytes()),
+                hidden_sequence_hash=hash_bytes(np.stack(hidden).tobytes()),
+                gru_numeric_inferences=300,
+                all_navigation_targets_bit_equal=True,
+                actual_parent_inferences_repeated=0,
+                actual_body_steps=0,
+                full_original_teacher_noninterference_claimed=False,
+                closed_loop_student_qualified=False,
+            )
     if len({r["source_receipt_hash"] for r in rows}) != 18:
         raise ValueError("eighteen distinct endpoints required; replays cannot inflate data")
     if any(digest(path) != h for path, h in pins.items()):
@@ -161,6 +229,20 @@ def main():
         promotion_authorized=False,
     )
     result["report_hash"] = hash_json(result)
+    if zero_parameters is not None:
+        result.update(
+            schema="soccer.rsi.pre_parent_reference_zero_gru_numeric_replay.v1",
+            zero_gru_initial_seed=args.zero_gru_seed,
+            new_neural_inferences=5400,
+            new_gru_numeric_inferences=5400,
+            new_foundation_inferences=0,
+            compiled_world_models_loaded=1,
+            mujoco_data_allocations=0,
+            all5400_navigation_targets_bit_equal=True,
+            zero_output_preserves_navigation_not_full_teacher=True,
+            no_training_only_initial_parameters=True,
+        )
+        result["report_hash"] = hash_json({k: v for k, v in result.items() if k != "report_hash"})
     write_once(args.output, result)
     print("PRE_PARENT_INPUT_AUDIT_COMPLETE_NOT_TRAINING", result["report_hash"], flush=True)
 
