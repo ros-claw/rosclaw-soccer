@@ -15,6 +15,19 @@ def digest(path):
 
 
 def bounded_profile(profile):
+    if profile == "contact-exit-four":
+        spec = bounded_profile("release-four")
+        spec.update(
+            declaration_schema="soccer.rsi.contact_exit_torque_mpc_pilot_declaration.v1",
+            complete_schema="soccer.rsi.contact_exit_torque_mpc_pilot_complete.v1",
+            readback_schema="soccer.rsi.contact_exit_torque_mpc_terminal_readback.v1",
+            phase="CONTACT_EXIT_TORQUE_MPC_COMPLETE_NOT_QUALIFIED_TEACHER",
+            jobs=[
+                dict(job, job="contact-exit-" + job["pair_id"], role="teacher")
+                for job in spec["jobs"]
+            ],
+        )
+        return spec
     if profile == "release-four":
         return dict(
             count=4,
@@ -156,6 +169,45 @@ def verify_release_prefix(trace, original_trace, original_outcome, outcome, pref
         raise ValueError("prefix witness must bind the actual original array bytes")
 
 
+def verify_contact_exit_reconstruction(report, commitment, receipt, review, source):
+    """Authenticate original replay evidence; this reader performs no physics."""
+    contract = commitment["contact_exit_torque_mpc"]
+    expected_sources = {
+        "teacher": source / "src/rosclaw_soccer/rsi/contact_exit_torque_mpc.py",
+        "forecast": source / "src/rosclaw_soccer/physics/g1_pd_torque_forecast.py",
+        "kinematics": source / "src/rosclaw_soccer/physics/g1_joint_task_kinematics.py",
+    }
+    counters = report["contact_exit_mpc_counters"]
+    active = sum(p["mode"] != "INACTIVE" for p in report["contact_exit_mpc_plans"])
+    reconstruction = review.get("contact_exit_torque_mpc_review", {})
+    if (
+        contract.get("source_hashes") != {k: digest(p) for k, p in expected_sources.items()}
+        or contract.get("forecast_budget_steps") != 6000
+        or contract.get("maximum_offset_nm") != 12.0
+        or contract.get("maximum_hard_limit_fraction") != 0.2
+        or contract.get("maximum_offset_change_per_control_frame_nm") != 2.0
+        or receipt.get("contact_exit_mpc_counters") != counters
+        or receipt.get("forecast_physical_substeps") != counters["integrated_forecast_steps"]
+        or reconstruction.get("schema") != "soccer.rsi.contact_exit_torque_mpc_reconstruction.v1"
+        or reconstruction.get("contract") != contract
+        or reconstruction.get("planning_counters") != counters
+        or reconstruction.get("frames_reconstructed") != 300
+        or reconstruction.get("optimization_reconstructed_with_same_pinned_implementation")
+        is not True
+        or reconstruction.get("independent_optimization_implementation") is not False
+        or reconstruction.get("locally_bitexact_active_intervals") != active
+        or reconstruction.get("chosen_control_forecast_attempts") != active
+        or reconstruction.get("chosen_control_attempted_forecast_steps") != active * 10
+        or reconstruction.get("chosen_control_integrated_forecast_steps") != active * 10
+        or reconstruction.get("source_numeric_replay_tolerance") != 1e-8
+        or reconstruction.get("hardware_authorized") is not False
+        or reconstruction.get("promotion_authorized") is not False
+        or type(reconstruction.get("source_end_state_hash_matches")) is not int
+        or not 0 <= reconstruction["source_end_state_hash_matches"] <= active
+    ):
+        raise ValueError("source-bound contact-exit optimization/actual replay accounting required")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -173,17 +225,26 @@ def main():
             "catalog-sixteen",
             "teacher-eighteen",
             "release-four",
+            "contact-exit-four",
         ),
         default="contact-three",
     )
     args = parser.parse_args()
     public_four = args.profile == "original-public-four"
     teacher_screen = args.profile == "teacher-eighteen"
-    release_ablation = args.profile == "release-four"
+    torque_mpc = args.profile == "contact-exit-four"
+    release_ablation = args.profile in {"release-four", "contact-exit-four"}
     context_study = teacher_screen or release_ablation
     spec = (
         bounded_profile(args.profile)
-        if args.profile in ("binding-four", "catalog-sixteen", "teacher-eighteen", "release-four")
+        if args.profile
+        in (
+            "binding-four",
+            "catalog-sixteen",
+            "teacher-eighteen",
+            "release-four",
+            "contact-exit-four",
+        )
         else None
     )
     count = spec["count"] if spec is not None else 4 if public_four else 3
@@ -286,7 +347,8 @@ def main():
         args.upstream_audit_source is None
         or args.baseline_screen_readback is None
         or args.baseline_screen_audit_source is None
-        or config.get("suppress_postcontact_swing_release") is not True
+        or config.get("suppress_postcontact_swing_release") is not (not torque_mpc)
+        or config.get("use_contact_exit_torque_mpc", False) is not torque_mpc
         or config.get("selected_option_index") != 4
         or config.get("upstream_terminal_audit_required") is not True
         or complete.get("independent_course_count") != 4
@@ -407,7 +469,8 @@ def main():
         if len(catalog) != 8 or catalog[0] is not None:
             raise ValueError("whole original catalog including None required")
         if (
-            args.profile in ("catalog-sixteen", "teacher-eighteen", "release-four")
+            args.profile
+            in ("catalog-sixteen", "teacher-eighteen", "release-four", "contact-exit-four")
             and declaration["options"] != catalog
         ):
             raise ValueError("actual entire catalog differs")
@@ -517,12 +580,22 @@ def main():
                 require_zero_postcontact_swing,
             )
 
-            tag = release_ablation_contract(expected_world)
-            if any(
-                doc.get("swing_release_ablation") != tag for doc in (report, commitment, receipt)
-            ):
-                raise ValueError("actual report, commitment and receipt must bind the intervention")
-            require_zero_postcontact_swing(commitment, trace)
+            if torque_mpc:
+                from rosclaw_soccer.rsi.contact_exit_torque_evidence import (
+                    require_contact_exit_capture,
+                )
+
+                require_contact_exit_capture(report, commitment, trace)
+                if receipt.get("contact_exit_torque_mpc") != commitment["contact_exit_torque_mpc"]:
+                    raise ValueError("contact-exit receipt must bind actual contract")
+            else:
+                tag = release_ablation_contract(expected_world)
+                if any(
+                    doc.get("swing_release_ablation") != tag
+                    for doc in (report, commitment, receipt)
+                ):
+                    raise ValueError("actual report, commitment and receipt must bind intervention")
+                require_zero_postcontact_swing(commitment, trace)
             baseline_item = config["baseline_receipts"][index]
             baseline = sealed(Path(baseline_item["path"]), "receipt_hash")
             if (
@@ -539,8 +612,19 @@ def main():
             with np.load(baseline["witnesses"]["trace"]["path"], allow_pickle=False) as archive:
                 original_trace = dict(archive)
             prefix = sealed(Path(witnesses["prefix_witness"]["path"]))
+            prefix_trace = trace
+            if torque_mpc:
+                if set(trace) - set(original_trace) != {
+                    "contact_exit_mpc_requested_offset_nm",
+                    "contact_exit_mpc_applied_offset_nm",
+                    "contact_exit_mpc_forecast_steps",
+                }:
+                    raise ValueError(
+                        "only declared contact-exit capture may extend original arrays"
+                    )
+                prefix_trace = {k: trace[k] for k in original_trace if k in trace}
             verify_release_prefix(
-                trace,
+                prefix_trace,
                 original_trace,
                 baseline["outcome"],
                 outcome,
@@ -548,6 +632,8 @@ def main():
                 baseline["receipt_hash"],
             )
         review = sealed(Path(witnesses["independent_review"]["path"]))
+        if torque_mpc:
+            verify_contact_exit_reconstruction(report, commitment, receipt, review, source)
         foundation = sealed(Path(witnesses["foundation_review"]["path"]))
         alignment = require_first_touch_qualification(review, foundation, outcome)
         if spec is not None and (
@@ -939,13 +1025,35 @@ def main():
                 independent_course_count=4,
                 paired_endpoint_count=8,
                 all_original_first_contact_prefixes_bit_equal=True,
-                actual_postcontact_taskspace_increment_exactly_zero=True,
                 optimized_recovery_claimed=False,
                 reused_endpoints_authenticated_via_prior_complete_terminal_readbacks=True,
                 reused_endpoint_physics_rerun_here=False,
                 upstream_terminal_readback_hash=upstream["report_hash"],
                 baseline_screen_terminal_readback_hash=screen["report_hash"],
             )
+            if torque_mpc:
+                totals = dict(
+                    native_forecast_substeps=0,
+                    independent_optimization_forecast_substeps=0,
+                    independent_chosen_control_forecast_substeps=0,
+                )
+                for item in complete["results"]:
+                    audit = sealed(Path(item["witnesses"]["independent_review"]["path"]))
+                    reconstruction = audit["contact_exit_torque_mpc_review"]
+                    totals["native_forecast_substeps"] += item["forecast_physical_substeps"]
+                    totals["independent_optimization_forecast_substeps"] += reconstruction[
+                        "planning_counters"
+                    ]["integrated_forecast_steps"]
+                    totals["independent_chosen_control_forecast_substeps"] += reconstruction[
+                        "chosen_control_integrated_forecast_steps"
+                    ]
+                if any(complete.get(k) != v for k, v in totals.items()):
+                    raise ValueError("all native and independent forecast integrations must agree")
+                report.update(totals)
+                report["optimization_reconstruction_uses_same_pinned_implementation"] = True
+                report["independent_optimization_implementation"] = False
+            else:
+                report["actual_postcontact_taskspace_increment_exactly_zero"] = True
         elif teacher_screen:
             from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
 

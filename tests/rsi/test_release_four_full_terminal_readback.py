@@ -22,7 +22,7 @@ from tests.rsi.test_mesh_contact_terminal_readback import write
 from tests.rsi.test_mesh_teacher_terminal_readback import expanded_fixture
 
 
-def fixture(tmp_path, monkeypatch, tamper=None):
+def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
     expanded_fixture(tmp_path, monkeypatch)
     prepared, _, manifest, config = first_touch_campaign_worker.prepare(None)
     screen_root = tmp_path / "teacher"
@@ -31,7 +31,37 @@ def fixture(tmp_path, monkeypatch, tamper=None):
     ]
     root = tmp_path / "release"
     root.mkdir()
-    spec = audit.bounded_profile("release-four")
+    profile = "contact-exit-four" if torque_mpc else "release-four"
+    spec = audit.bounded_profile(profile)
+    if torque_mpc:
+        from tests.rsi.test_contact_exit_torque_evidence import capture
+
+        mpc_report, mpc_commitment, mpc_trace = capture()
+        contract = mpc_commitment["contact_exit_torque_mpc"]
+        source = Path(config["source_root"])
+        source_files = {
+            "teacher": "rsi/contact_exit_torque_mpc.py",
+            "forecast": "physics/g1_pd_torque_forecast.py",
+            "kinematics": "physics/g1_joint_task_kinematics.py",
+        }
+        for name in source_files.values():
+            path = source / "src/rosclaw_soccer" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("# synthetic teacher source, not executable physics\n")
+        contract.update(
+            world_hash=config["mesh_task_contact_world_hash"],
+            source_hashes={
+                k: audit.digest(source / "src/rosclaw_soccer" / name)
+                for k, name in source_files.items()
+            },
+            maximum_offset_nm=12.0,
+            maximum_hard_limit_fraction=0.2,
+            maximum_offset_change_per_control_frame_nm=2.0,
+        )
+        contract["contract_hash"] = hash_json(
+            {k: v for k, v in contract.items() if k != "contract_hash"}
+        )
+        mpc_report["contact_exit_torque_mpc"] = copy.deepcopy(contract)
     plan = PublicFirstTouchTrainingPlan(tuple(range(20261060, 20261070)), "sha256:" + "a" * 64, 18)
 
     def endpoint(index, *, ablated=False, declaration=None, baseline=None):
@@ -48,6 +78,9 @@ def fixture(tmp_path, monkeypatch, tamper=None):
             trace["ball_position_after_step_m"][134, 0, 0] = 2
         trace["taskspace_joint_increment_rad"] = np.zeros((300, 1, 29))
         trace["taskspace_joint_increment_rad"][74:95] = 0.1
+        if torque_mpc:
+            for key in ("pd_requested_torque_nm", "torque_nm"):
+                trace[key] = mpc_trace[key].copy()
         c = json.loads(Path(r["witnesses"]["commitment"]["path"]).read_text())
         draw = plan.draws()[job["group"]]
         if index < 2:
@@ -63,17 +96,27 @@ def fixture(tmp_path, monkeypatch, tamper=None):
             )
             r.pop("planning_context_hash", None)
         if ablated:
-            trace["taskspace_joint_increment_rad"][75:] = 0
+            if not torque_mpc:
+                trace["taskspace_joint_increment_rad"][75:] = 0
             if tamper == "postcontact_nonzero" and index == 0:
                 trace["taskspace_joint_increment_rad"][76] = 0.01
             c.update(
-                swing_release_ablation=release_ablation_contract(
-                    config["mesh_task_contact_world_hash"]
-                ),
                 foundation_observation_capture=dict(synthetic=True),
                 execution_profile="taskspace_plus_motor",
             )
-            r["swing_release_ablation"] = c["swing_release_ablation"]
+            if torque_mpc:
+                c["contact_exit_torque_mpc"] = contract
+                trace.update({k: v.copy() for k, v in mpc_trace.items()})
+                r.update(
+                    contact_exit_torque_mpc=contract,
+                    contact_exit_mpc_counters=mpc_report["contact_exit_mpc_counters"],
+                    forecast_physical_substeps=0,
+                )
+            else:
+                c["swing_release_ablation"] = release_ablation_contract(
+                    config["mesh_task_contact_world_hash"]
+                )
+                r["swing_release_ablation"] = c["swing_release_ablation"]
         write(folder / "commitment.json", c, key=None)
         np.savez(folder / "trace.npz", **trace)
         old_report = json.loads(Path(r["witnesses"]["report"]["path"]).read_text())
@@ -82,6 +125,11 @@ def fixture(tmp_path, monkeypatch, tamper=None):
             dict(
                 old_report,
                 **c,
+                **(
+                    {k: v for k, v in mpc_report.items() if k != "contact_exit_torque_mpc"}
+                    if torque_mpc and ablated
+                    else {}
+                ),
                 commitment_hash=hash_json(c),
                 physical_trace_hash=audit.digest(folder / "trace.npz"),
                 **(
@@ -100,6 +148,28 @@ def fixture(tmp_path, monkeypatch, tamper=None):
                 reviewed_report_hash=report["report_hash"],
                 high_quality=outcome.task_pass,
                 clean_foot_only=outcome.safe,
+                **(
+                    dict(
+                        contact_exit_torque_mpc_review=dict(
+                            schema="soccer.rsi.contact_exit_torque_mpc_reconstruction.v1",
+                            contract=contract,
+                            planning_counters=mpc_report["contact_exit_mpc_counters"],
+                            frames_reconstructed=300,
+                            optimization_reconstructed_with_same_pinned_implementation=True,
+                            independent_optimization_implementation=False,
+                            locally_bitexact_active_intervals=0,
+                            chosen_control_forecast_attempts=0,
+                            chosen_control_attempted_forecast_steps=0,
+                            chosen_control_integrated_forecast_steps=0,
+                            source_end_state_hash_matches=0,
+                            source_numeric_replay_tolerance=1e-8,
+                            hardware_authorized=False,
+                            promotion_authorized=False,
+                        )
+                    )
+                    if torque_mpc and ablated
+                    else {}
+                ),
             ),
         )
         foundation = json.loads(Path(r["witnesses"]["foundation_review"]["path"]).read_text())
@@ -170,7 +240,11 @@ def fixture(tmp_path, monkeypatch, tamper=None):
                 baseline_receipt_hash=baseline["receipt_hash"],
                 prefix_frames=75,
                 all_original_array_prefixes_bit_equal=True,
-                prefix_array_hashes={k: hash_bytes(v[:75].tobytes()) for k, v in trace.items()},
+                prefix_array_hashes={
+                    k: hash_bytes(v[:75].tobytes())
+                    for k, v in trace.items()
+                    if not k.startswith("contact_exit_mpc_")
+                },
             )
             if tamper == "prefix_hash" and index == 0:
                 prefix["prefix_array_hashes"]["force_n"] = hash_json("other")
@@ -197,11 +271,13 @@ def fixture(tmp_path, monkeypatch, tamper=None):
         groups=spec["groups"],
         max_attempts=4,
         new_physical_budget=4,
-        suppress_postcontact_swing_release=True,
+        suppress_postcontact_swing_release=not torque_mpc,
         baseline_receipts=baseline_items,
         baseline_sources=[],
         required_receipt_witnesses=["intent_witness", "encoder_witness", "prefix_witness"],
     )
+    if torque_mpc:
+        config["use_contact_exit_torque_mpc"] = True
     config_path = root / "config.json"
     write(config_path, config, key=None)
     pins = {str(config_path): audit.digest(config_path)}
@@ -313,6 +389,15 @@ def fixture(tmp_path, monkeypatch, tamper=None):
             teacher_qualified=False,
             hardware_authorized=False,
             promotion_authorized=False,
+            **(
+                dict(
+                    native_forecast_substeps=0,
+                    independent_optimization_forecast_substeps=0,
+                    independent_chosen_control_forecast_substeps=0,
+                )
+                if torque_mpc
+                else {}
+            ),
         ),
     )
     output = root / "audit.json"
@@ -328,7 +413,7 @@ def fixture(tmp_path, monkeypatch, tamper=None):
             "--output",
             str(output),
             "--profile",
-            "release-four",
+            profile,
             "--upstream-audit-source",
             str(tmp_path / "upstream-reader.py"),
             "--baseline-screen-readback",
@@ -349,6 +434,32 @@ def test_full_four_reader_including_unsafe_baseline_and_both_prior_audits(tmp_pa
     assert report["actual_postcontact_taskspace_increment_exactly_zero"] is True
     assert report["rows"][2]["outcome"]["safe"] is False
     assert report["optimized_recovery_claimed"] is False
+
+
+def test_full_contact_exit_reader_retains_release_and_separates_forecast_accounting(
+    tmp_path, monkeypatch
+):
+    output = fixture(tmp_path, monkeypatch, torque_mpc=True)
+    audit.main()
+    report = json.loads(output.read_text())
+    assert report["schema"] == "soccer.rsi.contact_exit_torque_mpc_terminal_readback.v1"
+    assert len(report["rows"]) == 4 and report["reused_endpoint_count"] == 4
+    assert report["all_original_first_contact_prefixes_bit_equal"] is True
+    assert "actual_postcontact_taskspace_increment_exactly_zero" not in report
+    assert report["independent_optimization_implementation"] is False
+    assert report["native_forecast_substeps"] == 0
+    assert report["independent_chosen_control_forecast_substeps"] == 0
+    assert report["rows"][2]["outcome"]["safe"] is False
+
+
+@pytest.mark.parametrize("tamper", ["intent_baseline", "prefix_hash", "upstream_unverified"])
+def test_contact_exit_reader_rejects_resealed_lineage_and_prefix_tampering(
+    tmp_path, monkeypatch, tamper
+):
+    output = fixture(tmp_path, monkeypatch, tamper, torque_mpc=True)
+    with pytest.raises(ValueError):
+        audit.main()
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(

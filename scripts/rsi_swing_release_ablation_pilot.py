@@ -433,7 +433,11 @@ def main():
                 ]
         complete["report_hash"] = hash_json(complete)
         write_once(root / "complete.json", complete)
-        phase(study_kind.upper() + "_COMPLETE_NOT_QUALIFIED_TEACHER")
+        phase(
+            "CONTACT_EXIT_TORQUE_MPC_COMPLETE_NOT_QUALIFIED_TEACHER"
+            if torque_mpc
+            else "SWING_RELEASE_ABLATION_COMPLETE_NOT_OPTIMIZED_RECOVERY"
+        )
     except BaseException as error:
         campaign.state["fatal_error"] = dict(type=type(error).__name__, message=str(error))
         phase("FATAL_CONTRACT_VIOLATION")

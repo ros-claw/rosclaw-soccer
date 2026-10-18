@@ -1,5 +1,36 @@
 # 持续实施机制：不把心跳当成学习
 
+## 最新18:05：非零力矩探针通过局部核验，四例完整实验已真正启动
+
+当前活动单位 `rosclaw-contact-exit-torque-mpc-native-20261018.service`，
+启动PID2314225，冻结生产源f5e242a5：
+`rosclaw-soccer-contact-exit-mpc-native-source-20261018`。不要热改或重启。
+18:05:29进入ALLOCATING_INDEPENDENT_REFERENCE，尚无新成绩。
+实验目录 `rsi-contact-exit-torque-mpc-native-pilot-20261018`，配置同前缀
+`-config-20261018.json`，固定四身体、零神经更新、三小时deadline。
+最多一个此新模型worker；分配前MemAvailable约67GiB，56GiB门已核验。
+
+此前2131b4b6冻结短区间探针正常结束，context0选择lift_forward，
+最大请求修正2Nm，20ms向下冲量2.429125→2.245696Ns，前向球速
+1.687798→1.716741m/s。其余三例inactive、零修正。所选预测与实际
+完整积分末态bit-exact；总130积分子步（bootstrap40＋实际40＋预测50）。
+seal `950c8c0c166e5095dd8658db3a3b25bdbf7575d9e172902f2e5ab525504aa548`。
+这是局部作用证据，不是学到技能或完整任务成功。
+
+新四例保留原释放动作，默认关闭API，只测试接触条件化29关节力矩
+MPC，固定raw8/56、context0/1与原option4配对。实际Foundation/父motor
+仍逐帧反馈；不可喂未来轨迹、改阈值或增时限。原生与独立CPU各12000
+实际子步，双方规划预算分别≤24000；独立CPU选中控制预测另≤12000。
+所有预测单独计账，不算新课程。首触含帧33原数组必须bit-exact。
+148项相关测试、全仓ruff/compileall、四运行模块定向mypy通过。
+详见 `contact-exit-torque-mpc-protocol-20261018.zh-CN.md`。
+
+本轮正在补独立终态reader与自动审计接续。读取真实四例结果和账本，
+然后分析rescue/regression/新增不安全；未通过不得重复原设置或晋升。
+若通过，仍需扩展旧失败与保持集，再进入神经学生蒸馏，不跳到球队宣传。
+旧已完成服务/timer不会执行新学习；Goal继续负责推理实施，后台任务
+只持有声明的有限计算，不能宣称保证断电后AI自行思考。
+
 ## 最新17:37：两批真实终态拒绝，已转入力矩预测教师开发
 
 **当前没有活动的完整NN/物理实验worker，不要重启两个已完成的旧服务。**
