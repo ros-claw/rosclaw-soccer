@@ -9,8 +9,8 @@ from scripts import rsi_summarize_contact_exit_mpc_pilot as summary
 from tests.rsi.test_release_four_full_terminal_readback import fixture
 
 
-def setup_summary(tmp_path, monkeypatch):
-    audited = fixture(tmp_path, monkeypatch, torque_mpc=True)
+def setup_summary(tmp_path, monkeypatch, *, directional=False):
+    audited = fixture(tmp_path, monkeypatch, torque_mpc=not directional, directional=directional)
     audit.main()
     output = audited.parent / "summary.json"
     monkeypatch.setattr(
@@ -53,3 +53,18 @@ def test_summary_rejects_changed_actual_trace_even_with_existing_terminal_audit(
     with pytest.raises(ValueError, match="trace changed"):
         summary.main()
     assert not output.exists()
+
+
+def test_directional_summary_preserves_failure_and_does_not_certify_all_body_safety(
+    tmp_path, monkeypatch
+):
+    _, output = setup_summary(tmp_path, monkeypatch, directional=True)
+    summary.main()
+    result = json.loads(output.read_text())
+    assert result["schema"] == "soccer.rsi.directional_compliance_measured_summary.v1"
+    assert result["decision"] == "REJECT_LOCAL_TEACHER"
+    assert result["rows"][2]["evaluated"]["outcome"]["safe"] is False
+    assert result["additional_all_robot_contact_safety_review_required"] is True
+    assert result["all_robot_body_contact_safety_confirmed"] is False
+    assert result["teacher_qualified"] is False
+    assert result["new_optimizer_updates"] == 0

@@ -21,8 +21,11 @@ JOBS = tuple(f"release-zero-{p}" for p in ("raw-8", "raw-56", "context-0", "cont
 
 def expected_jobs(config):
     flag = config.get("use_contact_exit_torque_mpc", False)
-    if type(flag) is not bool:
+    directional = config.get("use_directional_contact_compliance", False)
+    if type(flag) is not bool or type(directional) is not bool or (flag and directional):
         raise ValueError("explicit boolean contact-exit diagnostic required")
+    if directional:
+        return tuple(f"directional-exit-{p}" for p in ("raw-8", "raw-56", "context-0", "context-1"))
     return (
         tuple(f"contact-exit-{p}" for p in ("raw-8", "raw-56", "context-0", "context-1"))
         if flag
@@ -65,14 +68,21 @@ def require_terminal(unit):
 def require_four_endpoints(config, declaration, complete, readback):
     jobs = expected_jobs(config)
     torque_mpc = config.get("use_contact_exit_torque_mpc", False)
-    kind = "contact_exit_torque_mpc" if torque_mpc else "swing_release_ablation"
+    directional = config.get("use_directional_contact_compliance", False)
+    kind = (
+        "directional_contact_compliance"
+        if directional
+        else "contact_exit_torque_mpc"
+        if torque_mpc
+        else "swing_release_ablation"
+    )
     flags = [
         "whole_input_and_witness_files_verified",
         "shared_payload_logical_seals_rebuilt",
         "prior_independent_replays_authenticated",
         "all_original_first_contact_prefixes_bit_equal",
     ]
-    if not torque_mpc:
+    if not (torque_mpc or directional):
         flags.append("actual_postcontact_taskspace_increment_exactly_zero")
     if (
         config.get("mode") != "SIM_ONLY"
@@ -82,7 +92,7 @@ def require_four_endpoints(config, declaration, complete, readback):
         )
         or config.get("max_attempts") != 4
         or config.get("new_physical_budget") != 4
-        or config.get("suppress_postcontact_swing_release") is not (not torque_mpc)
+        or config.get("suppress_postcontact_swing_release") is not (not (torque_mpc or directional))
         or complete.get("schema") != f"soccer.rsi.{kind}_pilot_complete.v1"
         or readback.get("schema") != f"soccer.rsi.{kind}_terminal_readback.v1"
         or complete.get("declaration_hash") != declaration["report_hash"]
@@ -207,7 +217,11 @@ def main():
         pins[cfg["collected_unit_journal"]] = cfg["collected_unit_journal_hash"]
     require_four_endpoints(producer, declaration, complete, readback)
     diagnostic_kind = (
-        "contact_exit_mpc" if producer.get("use_contact_exit_torque_mpc", False) else "release"
+        "directional_compliance"
+        if producer.get("use_directional_contact_compliance", False)
+        else "contact_exit_mpc"
+        if producer.get("use_contact_exit_torque_mpc", False)
+        else "release"
     )
     if readback["reader_source_hash"] != digest(cfg["audit_source"]):
         raise ValueError("exact independently frozen terminal reader required")

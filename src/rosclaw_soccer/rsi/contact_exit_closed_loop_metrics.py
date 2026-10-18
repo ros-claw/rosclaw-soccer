@@ -96,4 +96,26 @@ def closed_loop_metrics(trace: dict[str, Any]) -> dict[str, Any]:
             maximum_requested_offset_nm=float(np.max(abs(requested))),
             maximum_actual_applied_offset_nm=float(np.max(abs(applied))),
         )
+    if "directional_compliance_requested_delta_nm" in trace:
+        requested = trace["directional_compliance_requested_delta_nm"]
+        applied = trace["directional_compliance_applied_delta_nm"]
+        steps = trace["directional_compliance_forecast_steps"]
+        for a in (requested, applied):
+            if a.shape != (300, 1, 10, 29) or a.dtype != np.float64 or not np.isfinite(a).all():
+                raise ValueError("complete finite recorded gain authority required")
+        if steps.shape != (300, 1, 1) or steps.dtype != np.int64 or np.any(steps < 0):
+            raise ValueError("typed gain forecast accounting required")
+        result["directional_gain_intervention"] = dict(
+            nonzero_request_frames=np.flatnonzero(
+                np.any(requested[:, 0] != 0, axis=(1, 2))
+            ).tolist(),
+            nonzero_actual_delta_frames=np.flatnonzero(
+                np.any(applied[:, 0] != 0, axis=(1, 2))
+            ).tolist(),
+            forecast_frames=np.flatnonzero(steps[:, 0, 0] > 0).tolist(),
+            forecast_integrated_substeps=int(steps.sum()),
+            maximum_requested_delta_nm=float(np.max(abs(requested))),
+            maximum_actual_applied_delta_nm=float(np.max(abs(applied))),
+            this_is_not_the_old_capped_additive_residual=True,
+        )
     return result

@@ -30,18 +30,22 @@ def main():
     from scripts.rsi_atomic_artifacts import write_once
 
     cfg = json.loads(args.config.read_text())
+    directional = cfg.get("use_directional_contact_compliance", False)
+    torque_mpc = cfg.get("use_contact_exit_torque_mpc", False)
+    if type(directional) is not bool or type(torque_mpc) is not bool or directional == torque_mpc:
+        raise ValueError("one explicit unmixed postcontact intervention required")
+    kind = "directional_contact_compliance" if directional else "contact_exit_torque_mpc"
     audit = _sealed(args.audit)
     root = Path(cfg["output_root"])
     complete, declaration = (_sealed(root / name) for name in ("complete.json", "declaration.json"))
     if (
         args.output.exists()
-        or cfg.get("use_contact_exit_torque_mpc") is not True
         or cfg.get("suppress_postcontact_swing_release") is not False
-        or audit.get("schema") != "soccer.rsi.contact_exit_torque_mpc_terminal_readback.v1"
+        or audit.get("schema") != f"soccer.rsi.{kind}_terminal_readback.v1"
         or audit.get("reader_source_hash") != digest(args.reader_source)
         or audit.get("complete_hash") != complete["report_hash"]
         or complete.get("declaration_hash") != declaration["report_hash"]
-        or complete.get("schema") != "soccer.rsi.contact_exit_torque_mpc_pilot_complete.v1"
+        or complete.get("schema") != f"soccer.rsi.{kind}_pilot_complete.v1"
         or any(declaration.get(k) != v for k, v in cfg.items())
         or len(complete.get("results", [])) != 4
         or len(audit.get("rows", [])) != 4
@@ -112,7 +116,9 @@ def main():
         and paired["newly_unsafe_pairs"] == 0
     )
     result = dict(
-        schema="soccer.rsi.contact_exit_mpc_measured_summary.v1",
+        schema="soccer.rsi.directional_compliance_measured_summary.v1"
+        if directional
+        else "soccer.rsi.contact_exit_mpc_measured_summary.v1",
         complete_hash=complete["report_hash"],
         terminal_readback_hash=audit["report_hash"],
         paired_development=paired,
@@ -132,6 +138,8 @@ def main():
         new_body_integrations=0,
         new_optimizer_updates=0,
         successor_ready=None,
+        additional_all_robot_contact_safety_review_required=True,
+        all_robot_body_contact_safety_confirmed=False,
         teacher_qualified=False,
         private_fresh_accessed=False,
         hardware_authorized=False,

@@ -84,3 +84,47 @@ def test_longest_run_validates_bin_semantics():
     assert longest_run(np.zeros(0, dtype=np.bool_)) == 0
     with pytest.raises(ValueError):
         longest_run(np.ones(3))
+
+
+def directional_trace():
+    t = trace()
+    t.update(
+        directional_compliance_requested_delta_nm=np.zeros((300, 1, 10, 29)),
+        directional_compliance_applied_delta_nm=np.zeros((300, 1, 10, 29)),
+        directional_compliance_forecast_steps=np.zeros((300, 1, 1), dtype=np.int64),
+    )
+    return t
+
+
+def test_gain_authority_is_not_retagged_as_old_capped_additive_offset():
+    t = directional_trace()
+    t["directional_compliance_requested_delta_nm"][80, 0, :, 0] = 15
+    t["directional_compliance_applied_delta_nm"][80, 0, :, 0] = 3
+    t["directional_compliance_forecast_steps"][80, 0, 0] = 10
+    result = closed_loop_metrics(t)
+    assert "teacher_intervention" not in result
+    gain = result["directional_gain_intervention"]
+    assert gain["maximum_requested_delta_nm"] == 15
+    assert gain["maximum_actual_applied_delta_nm"] == 3
+    assert gain["nonzero_actual_delta_frames"] == [80]
+    assert gain["forecast_integrated_substeps"] == 10
+    assert gain["this_is_not_the_old_capped_additive_residual"] is True
+
+
+@pytest.mark.parametrize("bad", ["nan", "shape", "dtype", "negative_steps", "float_steps"])
+def test_invalid_gain_authority_rejected(bad):
+    t = directional_trace()
+    if bad == "nan":
+        t["directional_compliance_applied_delta_nm"][0, 0, 0, 0] = np.nan
+    elif bad == "shape":
+        t["directional_compliance_requested_delta_nm"] = np.zeros((300, 1, 29))
+    elif bad == "dtype":
+        t["directional_compliance_applied_delta_nm"] = t[
+            "directional_compliance_applied_delta_nm"
+        ].astype(np.float32)
+    elif bad == "negative_steps":
+        t["directional_compliance_forecast_steps"][0, 0, 0] = -1
+    else:
+        t["directional_compliance_forecast_steps"] = np.zeros((300, 1, 1))
+    with pytest.raises(ValueError):
+        closed_loop_metrics(t)
