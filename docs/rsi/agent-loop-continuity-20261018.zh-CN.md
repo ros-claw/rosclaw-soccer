@@ -1,5 +1,23 @@
 # 持续实施机制：不把心跳当成学习
 
+## 更新于15:21：现成控制出现两例救回，优先扩展教师而非重构
+
+catalog仍为PID1979620、active，已提交10/16；固定option4在raw8和raw56
+完整提交安全PASS，分别1.8542m/侧偏−0.2652m和2.6576m/侧偏+0.2738m。
+两个原失败因此被救回，但尚无完整catalog终态审计，不宣称教师或学习
+资格；原始正负结果和旧44体反例仍保留。
+
+这条新证据**调整下段15:18的开发优先级**：下一项应是现成option4的
+多状态/扰动与原成功保持筛查，不先花资源完成新表面点控制native。
+可复用原None四例及option4两例；固定四strata的既有8个派生公共
+planning contexts全部做None/option4对照，再补option4 raw4/32，
+计划18次新身体、总12课程24个配对端点（6个已存在），零PPO。
+不把观察后的选择叫盲选/Fresh；最终需原catalog完整审计与新独立审计。
+所有派生课程必须先通过已有validate_context_source，不裁剪边界。
+本段只是下一可执行任务，尚未冻结新runner/配置或启动新worker。
+
+详见 `mesh-catalog-option4-prefix-findings-20261018.zh-CN.md`。
+
 ## 最新接续：15:18三种子已审计，无净增长，不能重复同族PPO
 
 44体原生worker已正常终态，ce89ee76自动审计亦实际完成，seal
