@@ -476,6 +476,8 @@ def fixture(
             source_heads={},
             **(
                 dict(
+                    distinct_derived_course_count=6,
+                    source_scene_clusters=3,
                     reused_original_none_endpoints=[
                         dict(
                             role="control",
