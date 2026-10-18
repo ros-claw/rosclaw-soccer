@@ -37,6 +37,11 @@ def validate_cpu_foundation_capture(
         validate_measured_history,
     )
 
+    if "swing_release_ablation" in commitment:
+        from rosclaw_soccer.rsi.swing_release_ablation import require_zero_postcontact_swing
+
+        require_zero_postcontact_swing(commitment, trace)
+
     if ("foundation_observation_capture" in report) != (
         "foundation_observation_capture" in commitment
     ):

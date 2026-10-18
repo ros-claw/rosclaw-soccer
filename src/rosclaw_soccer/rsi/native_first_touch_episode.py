@@ -87,9 +87,52 @@ def run_native_first_touch_episode(
     mesh_task_contact_world_hash: str | None = None,
     mesh_world_review: ReviewedContactWorld | None = None,
     generated_seed_episode_binding: bool = False,
+    suppress_postcontact_swing_release: bool = False,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
+
+    if type(suppress_postcontact_swing_release) is not bool:
+        raise ValueError("explicit boolean postcontact swing ablation required")
+    if suppress_postcontact_swing_release:
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+
+        if (
+            partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
+            or getattr(args, "record_foundation_observation", False) is not True
+            or getattr(args, "foundation_only", False) is not False
+            or getattr(args, "proposal_decoder", None) != "reference"
+            or getattr(args, "step_model", None) is None
+            or getattr(args, "body_response_bundle", None) is not None
+            or getattr(args, "cached_proposal_envelope", False)
+            or type(control_profile) is not BoundedFirstTouchControl
+            or swing_mode != "bounded_contact_diagnostic"
+            or mesh_task_contact_world_hash is None
+            or mesh_world_review is None
+            or type(recurrent_sampling_factory) is not RecurrentSamplingEpisodeFactory
+            or cerebellar_model is not None
+            or cerebellar_sampling_seed is not None
+            or postcontact_profile is not None
+            or locomotion_mode_probe is not None
+            or reference_height_probe_m is not None
+            or foundation_approach_probe is not False
+            or generated_seed_episode_binding is not False
+            or any(
+                factory is not None
+                for factory in (
+                    sampling_factory,
+                    extended_factory,
+                    proposal_factory,
+                    imitation_factory,
+                    recurrent_factory,
+                    recurrent_clipped_factory,
+                )
+            )
+        ):
+            raise ValueError("unmixed captured reviewed-mesh bounded release ablation required")
+        recurrent_sampling_factory._stable()
 
     if type(generated_seed_episode_binding) is not bool:
         raise ValueError("explicit boolean private generated episode binding required")
@@ -950,6 +993,12 @@ def run_native_first_touch_episode(
         commitment["physics"]["contact_settings"] = "explicit existing foot meshes vs ball only"
         if mesh_review_binding is not None:
             commitment["mesh_task_contact_protocol"]["numerical_review"] = mesh_review_binding
+    if suppress_postcontact_swing_release:
+        from rosclaw_soccer.rsi.swing_release_ablation import release_ablation_contract
+
+        commitment["swing_release_ablation"] = release_ablation_contract(
+            commitment["compiled_model_hash"]
+        )
     cerebellar = None
     if cerebellar_model is not None:
         from rosclaw_soccer.rsi.native_cerebellar_torque import NativeCerebellarTorque
@@ -1252,7 +1301,12 @@ def run_native_first_touch_episode(
             if side >= 0:
                 ids = leg_ids[side]
                 if contact_frame is not None:
-                    swing_delta = release_joint_delta(swing_contact_delta, frame - contact_frame)
+                    if suppress_postcontact_swing_release:
+                        swing_delta = np.zeros(6)
+                    else:
+                        swing_delta = release_joint_delta(
+                            swing_contact_delta, frame - contact_frame
+                        )
                 else:
                     jac = np.zeros((3, model.nv))
                     mujoco.mj_jacBody(model, data, jac, None, bodies[side])
