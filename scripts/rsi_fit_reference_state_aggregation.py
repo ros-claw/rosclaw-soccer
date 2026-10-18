@@ -1,7 +1,7 @@
 """Conditional once-only 128-step numeric aggregation after the WHOLE current exam.
 
 No new physics, implicit retry, validation selection, data admission or activation.
-The original student's expert suggestions are unqualified counterfactual labels.
+Recorded own-body expert suggestions are unqualified counterfactual labels.
 """
 
 import argparse
@@ -12,6 +12,12 @@ from pathlib import Path
 
 import numpy as np
 
+from rosclaw_soccer.rsi.matched_aggregation_support import (
+    LEGACY_PROFILE,
+    PROFILE,
+    constrain_recommendation,
+    require_matched_support,
+)
 from rosclaw_soccer.rsi.reference_aggregation_decision import recommend_aggregation
 from rosclaw_soccer.rsi.reference_state_aggregation import LABEL_CEILING
 from rosclaw_soccer.rsi.reference_student_exam_diagnostics import measured_readout, require_cohort
@@ -32,7 +38,9 @@ def main():
     cfg = json.loads(args.config.read_text())
     source, root = Path(cfg["source_root"]), Path(cfg["output_root"])
     if (
-        cfg.get("profile") != "conditional-one-round-reference-aggregation-fit-v1"
+        cfg.get("profile") not in (LEGACY_PROFILE, PROFILE)
+        or (cfg.get("profile") == PROFILE and type(cfg.get("matched_comparison")) is not dict)
+        or (cfg.get("profile") == LEGACY_PROFILE and "matched_comparison" in cfg)
         or cfg.get("mode") != "SIM_ONLY"
         or root.exists()
         or time.time() >= cfg["deadline_unix"]
@@ -165,6 +173,24 @@ def main():
         for r in measured["rows"]
     )
     decision = recommend_aggregation(pairs, positive_dense_nonfoot=positive_nonfoot)
+    if cfg["profile"] == PROFILE:
+        if (
+            prepared.get("actual_behavior_model_hash")
+            != declaration["models"]["student"]["model_hash"]
+            or prepared.get("actual_behavior_fit_report_hash") != declaration["fit_report_hash"]
+            or prepared.get("bounded_current_own_state_window_not_cumulative_dagger") is not True
+        ):
+            raise ValueError(
+                "proposed input window must belong to the current actual student generation"
+            )
+        support = require_matched_support(
+            cfg["matched_comparison"],
+            current_contact_configuration=cfg["current_contact_configuration"],
+            current_complete_hash=complete["report_hash"],
+            sealed=sealed,
+            pins=pins,
+        )
+        decision = constrain_recommendation(decision, support)
     if args.preflight:
         print(
             "AGGREGATION_FIT_SCOPE_READY_ZERO_OPTIMIZER_ALLOCATIONS", decision["action"], flush=True
