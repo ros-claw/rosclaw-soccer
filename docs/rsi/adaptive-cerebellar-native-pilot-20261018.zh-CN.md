@@ -80,3 +80,26 @@ Foundation参考消费保留原default planner事件审计。
 得到正确的新闭环物理体验后再开展有限预算三seed actor-critic，
 不能把实验环境换成更易通过的静态关节回放，或用局部速度指标
 代替原足球任务与完整安全、历史保持及多角色比赛目标。
+
+## 已冻结并启动，尚未判定物理通过
+
+代码冻结为`512cd75158f83f03825b63b37cf9e6549d30d590`独立worktree。
+最终驱动通过F821/F822检查，静态配置／源／原数据预检通过并
+明确输出zero allocations；这不是物理验收通过。
+
+三个新身体的配置、驱动、启动guard及systemd unit已作哈希绑定，
+启动前再次验证。服务`rosclaw-adaptive-cerebellar-pilot-20261018.service`
+已启动，初始MainPID1470920，账本记录模型／独立编译器初始化。
+CPU与内存有独立上限，Restart=no，不自动覆盖已存在的证据目录。
+固定时间与三个新attempt预算不随失败或等待自动扩大。
+
+新证据根目录名`rsi-adaptive-cerebellar-native-pilot-20261018`。
+每个控制意图先于body attempt持久化，逐体原生执行、独立CPU
+与Foundation审核后才提交完整收据。默认None及零头的共同数组
+还必须与历史控制或新None分支逐字节比较。任何不一致停止并
+保留FATAL；合法任务失败不改为基础设施错误，也不偷偷丢弃。
+
+当前原44场神经选项考试仍为独立MainPID1331497、原冻结代码；
+未终止或修改它。本次启动没有产生新的训练更新，也没有给出
+尚未完成的闭环成功率。结果将以终态完整收据而非active/success
+的进程属性判定。
