@@ -15,16 +15,28 @@ def contact_exit_pilot_handoff(
     baselines: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Bind every current endpoint and classify evidence for the next agent turn."""
+    surface = summary.get("schema") == "soccer.rsi.mesh_surface_measured_summary.v1"
+    cases, bodies, dense_count = (6, 7, 10) if surface else (4, 4, 8)
     if (
-        summary.get("schema") != "soccer.rsi.directional_compliance_measured_summary.v1"
-        or complete.get("schema") != "soccer.rsi.directional_contact_compliance_pilot_complete.v1"
+        summary.get("schema")
+        != (
+            "soccer.rsi.mesh_surface_measured_summary.v1"
+            if surface
+            else "soccer.rsi.directional_compliance_measured_summary.v1"
+        )
+        or complete.get("schema")
+        != (
+            "soccer.rsi.mesh_surface_swing_pilot_complete.v1"
+            if surface
+            else "soccer.rsi.directional_contact_compliance_pilot_complete.v1"
+        )
         or dense.get("schema") != "soccer.rsi.contact_exit_metrics_readback.v1"
         or summary.get("complete_hash") != complete.get("report_hash")
         or summary.get("paired_development") != complete.get("paired_development")
-        or len(summary.get("rows", [])) != 4
-        or len(complete.get("results", [])) != 4
-        or len(baselines) != 4
-        or len(dense.get("rows", [])) != 8
+        or len(summary.get("rows", [])) != cases
+        or len(complete.get("results", [])) != bodies
+        or len(baselines) != cases
+        or len(dense.get("rows", [])) != dense_count
         or summary.get("teacher_qualified") is not False
         or summary.get("new_optimizer_updates") != 0
         or complete.get("new_optimizer_updates") != 0
@@ -36,8 +48,8 @@ def contact_exit_pilot_handoff(
             "whole same-study four-pair audited summary and eight dense endpoints required"
         )
     if (
-        len({b["pair_id"] for b in baselines}) != 4
-        or len({b["receipt_hash"] for b in baselines}) != 4
+        len({b["pair_id"] for b in baselines}) != cases
+        or len({b["receipt_hash"] for b in baselines}) != cases
         or {b["receipt_hash"] for b in baselines} & {r["receipt_hash"] for r in complete["results"]}
     ):
         raise ValueError("distinct original baseline receipts and four unique pairs required")
@@ -49,7 +61,10 @@ def contact_exit_pilot_handoff(
         by_identity[identity] = row
     records, paired_count, used = [], 0, set()
     for baseline, current, summarized in zip(
-        baselines, complete["results"], summary["rows"], strict=True
+        baselines,
+        complete["results"][1:] if surface else complete["results"],
+        summary["rows"],
+        strict=True,
     ):
         if (
             baseline["pair_id"] != current["pair_id"]
@@ -117,15 +132,24 @@ def contact_exit_pilot_handoff(
     # qualification, which even a successful four-case pilot cannot grant.
     local_pass = summary["decision"] == "LOCAL_PILOT_PASS_EXPANSION_REQUIRED"
     return dict(
-        schema="soccer.rsi.directional_compliance_research_handoff.v1",
+        schema="soccer.rsi.mesh_surface_research_handoff.v1"
+        if surface
+        else "soccer.rsi.directional_compliance_research_handoff.v1",
         complete_hash=complete["report_hash"],
         summary_hash=summary["report_hash"],
         dense_readback_hash=dense["report_hash"],
         original_m0_score_unchanged=True,
         rows=records,
         dense_pair_count=paired_count,
-        dense_single_endpoint_count=8 - 2 * paired_count,
-        all_four_current_endpoints_have_dense_contact_review=True,
+        dense_single_endpoint_count=dense_count - 2 * paired_count,
+        **{
+            (
+                "all_six_current_endpoints_have_dense_contact_review"
+                if surface
+                else "all_four_current_endpoints_have_dense_contact_review"
+            ): True
+        },
+        dense_current_endpoint_count=cases,
         current_nonfoot_ball_contact_cases=nonfoot,
         original_task_failure_cases=task_failures,
         next_agent_action=(

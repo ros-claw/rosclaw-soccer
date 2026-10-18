@@ -46,12 +46,19 @@ def main():
     config = json.loads(args.config.read_text())
     complete = sealed(Path(config["output_root"]) / "complete.json")
     summary, diagnostic, dense = (sealed(p) for p in (args.summary, args.diagnostic, args.dense))
+    surface = config.get("use_mesh_surface_swing", False)
+    if type(surface) is not bool:
+        raise ValueError("explicit boolean surface handoff scope required")
     if (
         diagnostic.get("schema")
-        != "soccer.rsi.directional_compliance_contact_diagnostic_complete.v1"
+        != (
+            "soccer.rsi.mesh_surface_contact_diagnostic_complete.v1"
+            if surface
+            else "soccer.rsi.directional_compliance_contact_diagnostic_complete.v1"
+        )
         or diagnostic.get("metrics_hash") != dense["report_hash"]
         or diagnostic.get("upstream_readback_hash") != summary["terminal_readback_hash"]
-        or diagnostic.get("new_fixed_control_replay_substeps") != 12000
+        or diagnostic.get("new_fixed_control_replay_substeps") != (18000 if surface else 12000)
         or diagnostic.get("new_closed_loop_policy_trials") != 0
         or diagnostic.get("new_optimizer_updates") != 0
     ):

@@ -93,6 +93,63 @@ def test_directional_all_four_endpoints_include_unsafe_cases():
     require_four_endpoints(*args)
 
 
+def surface_fixture():
+    cfg, declaration, complete, readback = directional_fixture()
+    cfg.update(
+        use_directional_contact_compliance=False,
+        use_mesh_surface_swing=True,
+        max_attempts=7,
+        new_physical_budget=7,
+    )
+    jobs = ("surface-off-raw-8", *expected_jobs(cfg))
+    declaration["jobs"] = [dict(job=j) for j in jobs]
+    rows = [
+        dict(job=j, receipt_hash=str(i), outcome=dict(task_pass=i != 3, safe=i != 3))
+        for i, j in enumerate(jobs)
+    ]
+    complete.update(
+        schema="soccer.rsi.mesh_surface_swing_pilot_complete.v1",
+        results=rows,
+        native_substeps=21000,
+        independent_cpu_substeps=21000,
+    )
+    readback.update(
+        schema="soccer.rsi.mesh_surface_swing_terminal_readback.v1",
+        rows=copy.deepcopy(rows),
+        source_native_bodies=7,
+        all_original_pre_activation_prefixes_bit_equal=True,
+        disabled_complete_300_frame_noninterference_verified=True,
+    )
+    readback.pop("all_original_first_contact_prefixes_bit_equal")
+    return cfg, declaration, complete, readback
+
+
+def test_surface_diagnostic_requires_disabled_body_and_all_six_actual_outcomes():
+    require_four_endpoints(*surface_fixture())
+
+
+@pytest.mark.parametrize(
+    "tamper", ["disabled", "partial", "mixed", "false_prefix", "retagged_prefix", "steps"]
+)
+def test_surface_diagnostic_rejects_retagged_or_incomplete_inputs(tamper):
+    args = surface_fixture()
+    if tamper == "disabled":
+        args[3]["disabled_complete_300_frame_noninterference_verified"] = False
+    elif tamper == "partial":
+        args[2]["results"].pop()
+    elif tamper == "mixed":
+        args[0]["use_contact_exit_torque_mpc"] = True
+    elif tamper == "false_prefix":
+        args[3]["all_original_pre_activation_prefixes_bit_equal"] = False
+    elif tamper == "retagged_prefix":
+        args[3].pop("all_original_pre_activation_prefixes_bit_equal")
+        args[3]["all_original_first_contact_prefixes_bit_equal"] = True
+    else:
+        args[2]["native_substeps"] = 18000
+    with pytest.raises(ValueError):
+        require_four_endpoints(*args)
+
+
 @pytest.mark.parametrize("tamper", ["mixed", "flag_type", "release_zero", "schema", "partial"])
 def test_directional_stage_rejects_mixed_retagged_or_partial_inputs(tamper):
     args = directional_fixture()

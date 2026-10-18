@@ -22,8 +22,16 @@ JOBS = tuple(f"release-zero-{p}" for p in ("raw-8", "raw-56", "context-0", "cont
 def expected_jobs(config):
     flag = config.get("use_contact_exit_torque_mpc", False)
     directional = config.get("use_directional_contact_compliance", False)
-    if type(flag) is not bool or type(directional) is not bool or (flag and directional):
+    surface = config.get("use_mesh_surface_swing", False)
+    if (
+        any(type(x) is not bool for x in (flag, directional, surface))
+        or sum((flag, directional, surface)) > 1
+    ):
         raise ValueError("explicit boolean contact-exit diagnostic required")
+    if surface:
+        return tuple(
+            f"surface-{p}" for p in ("raw-8", "raw-56", "context-0", "context-1", "raw-4", "raw-32")
+        )
     if directional:
         return tuple(f"directional-exit-{p}" for p in ("raw-8", "raw-56", "context-0", "context-1"))
     return (
@@ -69,8 +77,13 @@ def require_four_endpoints(config, declaration, complete, readback):
     jobs = expected_jobs(config)
     torque_mpc = config.get("use_contact_exit_torque_mpc", False)
     directional = config.get("use_directional_contact_compliance", False)
+    surface = config.get("use_mesh_surface_swing", False)
+    all_jobs = ("surface-off-raw-8", *jobs) if surface else jobs
+    body_count = len(all_jobs)
     kind = (
-        "directional_contact_compliance"
+        "mesh_surface_swing"
+        if surface
+        else "directional_contact_compliance"
         if directional
         else "contact_exit_torque_mpc"
         if torque_mpc
@@ -80,9 +93,13 @@ def require_four_endpoints(config, declaration, complete, readback):
         "whole_input_and_witness_files_verified",
         "shared_payload_logical_seals_rebuilt",
         "prior_independent_replays_authenticated",
-        "all_original_first_contact_prefixes_bit_equal",
+        "all_original_pre_activation_prefixes_bit_equal"
+        if surface
+        else "all_original_first_contact_prefixes_bit_equal",
     ]
-    if not (torque_mpc or directional):
+    if surface:
+        flags.append("disabled_complete_300_frame_noninterference_verified")
+    if not (torque_mpc or directional or surface):
         flags.append("actual_postcontact_taskspace_increment_exactly_zero")
     if (
         config.get("mode") != "SIM_ONLY"
@@ -90,20 +107,21 @@ def require_four_endpoints(config, declaration, complete, readback):
             config.get(k) is not False
             for k in ("hardware_authorized", "promotion_authorized", "neural_training_authorized")
         )
-        or config.get("max_attempts") != 4
-        or config.get("new_physical_budget") != 4
-        or config.get("suppress_postcontact_swing_release") is not (not (torque_mpc or directional))
+        or config.get("max_attempts") != body_count
+        or config.get("new_physical_budget") != body_count
+        or config.get("suppress_postcontact_swing_release")
+        is not (not (torque_mpc or directional or surface))
         or complete.get("schema") != f"soccer.rsi.{kind}_pilot_complete.v1"
         or readback.get("schema") != f"soccer.rsi.{kind}_terminal_readback.v1"
         or complete.get("declaration_hash") != declaration["report_hash"]
         or readback.get("complete_hash") != complete["report_hash"]
-        or readback.get("source_native_bodies") != 4
-        or complete.get("native_substeps") != 12000
-        or complete.get("independent_cpu_substeps") != 12000
+        or readback.get("source_native_bodies") != body_count
+        or complete.get("native_substeps") != 3000 * body_count
+        or complete.get("independent_cpu_substeps") != 3000 * body_count
         or complete.get("new_optimizer_updates") != 0
-        or tuple(j["job"] for j in declaration["jobs"]) != jobs
-        or tuple(r["job"] for r in complete["results"]) != jobs
-        or tuple(r["job"] for r in readback["rows"]) != jobs
+        or tuple(j["job"] for j in declaration["jobs"]) != all_jobs
+        or tuple(r["job"] for r in complete["results"]) != all_jobs
+        or tuple(r["job"] for r in readback["rows"]) != all_jobs
         or any(readback.get(k) is not True for k in flags)
         or any(
             readback.get(k) is not False
@@ -127,7 +145,11 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
-    if time.time() >= cfg["deadline_unix"] or cfg["new_substep_budget"] != 12000:
+    surface_profile = cfg.get("diagnostic_profile", "legacy-four") == "surface-six"
+    budget = 18000 if surface_profile else 12000
+    if cfg.get("diagnostic_profile", "legacy-four") not in ("legacy-four", "surface-six"):
+        raise ValueError("explicit fixed diagnostic stage profile required")
+    if time.time() >= cfg["deadline_unix"] or cfg["new_substep_budget"] != budget:
         raise ValueError("original bounded 12000-step diagnostic budget and deadline required")
     start = Path(cfg["started_path"])
     if any(
@@ -216,8 +238,12 @@ def main():
             raise ValueError("whole audit must authenticate the same collected-worker handoff")
         pins[cfg["collected_unit_journal"]] = cfg["collected_unit_journal_hash"]
     require_four_endpoints(producer, declaration, complete, readback)
+    if producer.get("use_mesh_surface_swing", False) is not surface_profile:
+        raise ValueError("surface diagnostic scope must match original producer study")
     diagnostic_kind = (
-        "directional_compliance"
+        "mesh_surface"
+        if surface_profile
+        else "directional_compliance"
         if producer.get("use_directional_contact_compliance", False)
         else "contact_exit_mpc"
         if producer.get("use_contact_exit_torque_mpc", False)
@@ -228,9 +254,10 @@ def main():
     pins[cfg["audit_source"]] = digest(cfg["audit_source"])
     cases = []
     for index, job in enumerate(expected_jobs(producer)):
-        path = root / f"receipt-{index:04d}.json"
+        source_index = index + 1 if surface_profile else index
+        path = root / f"receipt-{source_index:04d}.json"
         receipt = sealed(path, "receipt_hash")
-        if receipt != complete["results"][index]:
+        if receipt != complete["results"][source_index]:
             raise ValueError("whole completed study must bind the original receipt bytes")
         cases.append(
             dict(
@@ -243,8 +270,8 @@ def main():
     replay_cfg = dict(
         source_head=cfg["replay_head"],
         output_root=cfg["replay_output_root"],
-        new_replay_budget=4,
-        new_substep_budget=12000,
+        new_replay_budget=len(cases),
+        new_substep_budget=budget,
         cases=cases,
         world_hash=producer["mesh_task_contact_world_hash"],
         mujoco_version="3.12.0",
@@ -253,6 +280,8 @@ def main():
         promotion_authorized=False,
         neural_training_authorized=False,
     )
+    if surface_profile:
+        replay_cfg["replay_profile"] = "surface-six"
     write_once(
         start,
         dict(
@@ -260,7 +289,7 @@ def main():
             input_file_hashes=pins,
             upstream_readback_hash=readback["report_hash"],
             automatic_retry_authorized=False,
-            new_physical_substep_budget=12000,
+            new_physical_substep_budget=budget,
         ),
     )
     write_once(Path(cfg["replay_config"]), replay_cfg)
@@ -304,7 +333,7 @@ def main():
             upstream_readback_hash=readback["report_hash"],
             replay_complete_hash=replay["report_hash"],
             metrics_hash=metrics["report_hash"],
-            new_fixed_control_replay_substeps=12000,
+            new_fixed_control_replay_substeps=budget,
             new_closed_loop_policy_trials=0,
             new_neural_inferences=0,
             new_optimizer_updates=0,

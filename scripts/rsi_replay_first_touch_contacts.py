@@ -1,4 +1,4 @@
-"""Four fixed-control diagnostic replays, not new closed-loop policy trials."""
+"""Fixed-control diagnostic replays, not new closed-loop policy trials."""
 
 import argparse
 import hashlib
@@ -22,20 +22,47 @@ def digest(path):
         return "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def fixed_replay_scope(cfg):
+    profile = cfg.get("replay_profile", "legacy-four")
+    if profile not in ("legacy-four", "surface-six"):
+        raise ValueError("explicit fixed diagnostic profile required")
+    count = 6 if profile == "surface-six" else 4
+    steps = 3000 * count
+    cases = cfg.get("cases")
+    if (
+        type(cases) is not list
+        or len(cases) != count
+        or type(cfg.get("new_replay_budget")) is not int
+        or cfg["new_replay_budget"] != count
+        or type(cfg.get("new_substep_budget")) is not int
+        or cfg["new_substep_budget"] != steps
+        or len({r["case_id"] for r in cases}) != count
+        or len({r["receipt_hash"] for r in cases}) != count
+    ):
+        raise ValueError("whole fixed diagnostic budget and distinct endpoints required")
+    if profile == "surface-six" and [r["case_id"] for r in cases] != [
+        "surface_raw_8",
+        "surface_raw_56",
+        "surface_context_0",
+        "surface_context_1",
+        "surface_raw_4",
+        "surface_raw_32",
+    ]:
+        raise ValueError("all six original surface endpoints required in declaration order")
+    return count, steps
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--preflight", action="store_true")
     args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
+    count, substeps = fixed_replay_scope(cfg)
     source = Path(__file__).resolve().parents[1]
     root = Path(cfg["output_root"])
     if (
         root.exists()
-        or cfg["new_replay_budget"] != 4
-        or cfg["new_substep_budget"] != 12000
-        or len(cfg["cases"]) != 4
-        or len({r["case_id"] for r in cfg["cases"]}) != 4
         or cfg["mujoco_version"] != mujoco.__version__
         or any(
             cfg.get(k) is not False
@@ -88,7 +115,13 @@ def main():
             raise ValueError("original primitive and replay qualifications differ")
         receipts.append(receipt)
     if args.preflight:
-        print("FOUR_FIXED_REPLAYS_12000_SUBSTEPS_PREFLIGHT_ZERO_MODEL_ALLOCATIONS", flush=True)
+        print(
+            "FIXED_REPLAYS",
+            count,
+            substeps,
+            "SUBSTEPS_PREFLIGHT_ZERO_MODEL_ALLOCATIONS",
+            flush=True,
+        )
         return
     root.mkdir()
     declaration = dict(

@@ -9,8 +9,14 @@ from scripts import rsi_summarize_contact_exit_mpc_pilot as summary
 from tests.rsi.test_release_four_full_terminal_readback import fixture
 
 
-def setup_summary(tmp_path, monkeypatch, *, directional=False):
-    audited = fixture(tmp_path, monkeypatch, torque_mpc=not directional, directional=directional)
+def setup_summary(tmp_path, monkeypatch, *, directional=False, surface=False):
+    audited = fixture(
+        tmp_path,
+        monkeypatch,
+        torque_mpc=not (directional or surface),
+        directional=directional,
+        surface=surface,
+    )
     audit.main()
     output = audited.parent / "summary.json"
     monkeypatch.setattr(
@@ -68,3 +74,16 @@ def test_directional_summary_preserves_failure_and_does_not_certify_all_body_saf
     assert result["all_robot_body_contact_safety_confirmed"] is False
     assert result["teacher_qualified"] is False
     assert result["new_optimizer_updates"] == 0
+
+
+def test_surface_summary_keeps_six_cases_and_original_none_retention(tmp_path, monkeypatch):
+    _, output = setup_summary(tmp_path, monkeypatch, surface=True)
+    summary.main()
+    result = json.loads(output.read_text())
+    assert result["schema"] == "soccer.rsi.mesh_surface_measured_summary.v1"
+    assert len(result["rows"]) == 6
+    assert result["paired_development"]["pairs"] == 6
+    assert result["original_none_raw_retention"]["pairs"] == 4
+    assert result["source_body_integrations"] == 42000
+    assert result["teacher_qualified"] is False
+    assert result["all_robot_body_contact_safety_confirmed"] is False

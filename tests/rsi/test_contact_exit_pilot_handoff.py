@@ -10,21 +10,26 @@ from rosclaw_soccer.sim.contracts import hash_json
 from scripts import rsi_contact_exit_pilot_handoff as cli
 
 
-def fixture():
-    baselines = [dict(pair_id=str(i), receipt_hash=f"old{i}") for i in range(4)]
-    outcomes = [dict(task_pass=i != 2, safe=i != 2) for i in range(4)]
+def fixture(surface=False):
+    count = 6 if surface else 4
+    baselines = [dict(pair_id=str(i), receipt_hash=f"old{i}") for i in range(count)]
+    outcomes = [dict(task_pass=i != 2, safe=i != 2) for i in range(count)]
     results = [
         dict(pair_id=str(i), receipt_hash=f"new{i}", outcome=o) for i, o in enumerate(outcomes)
     ]
     complete = dict(
-        schema="soccer.rsi.directional_contact_compliance_pilot_complete.v1",
+        schema="soccer.rsi.mesh_surface_swing_pilot_complete.v1"
+        if surface
+        else "soccer.rsi.directional_contact_compliance_pilot_complete.v1",
         report_hash="complete",
         paired_development={"rescued_pairs": 0},
-        results=results,
+        results=[dict(receipt_hash="off-native")] + results if surface else results,
         new_optimizer_updates=0,
     )
     summary = dict(
-        schema="soccer.rsi.directional_compliance_measured_summary.v1",
+        schema="soccer.rsi.mesh_surface_measured_summary.v1"
+        if surface
+        else "soccer.rsi.directional_compliance_measured_summary.v1",
         report_hash="summary",
         complete_hash="complete",
         paired_development=complete["paired_development"],
@@ -64,6 +69,18 @@ def fixture():
         new_optimizer_updates=0,
     )
     return summary, complete, dense, baselines
+
+
+def test_six_current_endpoints_are_all_reviewed_without_inventing_missing_historical_pairs():
+    result = contact_exit_pilot_handoff(*fixture(True))
+    assert result["schema"] == "soccer.rsi.mesh_surface_research_handoff.v1"
+    assert result["dense_pair_count"] == 3
+    assert result["dense_single_endpoint_count"] == 4
+    assert result["dense_current_endpoint_count"] == 6
+    assert len(result["rows"]) == 6
+    assert result["all_six_current_endpoints_have_dense_contact_review"] is True
+    assert "all_four_current_endpoints_have_dense_contact_review" not in result
+    assert result["teacher_qualified"] is False
 
 
 def test_failure_preserved_three_pairs_not_four_no_retry_or_promotion():
@@ -138,9 +155,10 @@ def test_no_handoff_from_incomplete_or_inconsistent_evidence(tamper):
         contact_exit_pilot_handoff(*args)
 
 
+@pytest.mark.parametrize("surface", [False, True])
 @pytest.mark.parametrize("tamper", [None, "file", "chain", "existing"])
-def test_cli_binds_whole_inputs_and_writes_once(tmp_path, monkeypatch, tamper):
-    summary, complete, dense, baselines = fixture()
+def test_cli_binds_whole_inputs_and_writes_once(tmp_path, monkeypatch, tamper, surface):
+    summary, complete, dense, baselines = fixture(surface)
 
     def write_sealed(name, value):
         value["report_hash"] = hash_json({k: v for k, v in value.items() if k != "report_hash"})
@@ -159,10 +177,12 @@ def test_cli_binds_whole_inputs_and_writes_once(tmp_path, monkeypatch, tamper):
     sp = write_sealed("summary.json", summary)
     dp = write_sealed("dense.json", dense)
     diagnostic = dict(
-        schema="soccer.rsi.directional_compliance_contact_diagnostic_complete.v1",
+        schema="soccer.rsi.mesh_surface_contact_diagnostic_complete.v1"
+        if surface
+        else "soccer.rsi.directional_compliance_contact_diagnostic_complete.v1",
         metrics_hash=dense["report_hash"],
         upstream_readback_hash="audit",
-        new_fixed_control_replay_substeps=12000,
+        new_fixed_control_replay_substeps=18000 if surface else 12000,
         new_closed_loop_policy_trials=0,
         new_optimizer_updates=0,
     )
@@ -170,7 +190,15 @@ def test_cli_binds_whole_inputs_and_writes_once(tmp_path, monkeypatch, tamper):
         diagnostic["upstream_readback_hash"] = "different audit"
     diag = write_sealed("diagnostic.json", diagnostic)
     cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps(dict(output_root=str(tmp_path), baseline_receipts=baselines)))
+    cfg.write_text(
+        json.dumps(
+            dict(
+                output_root=str(tmp_path),
+                baseline_receipts=baselines,
+                use_mesh_surface_swing=surface,
+            )
+        )
+    )
     output = tmp_path / "handoff.json"
     if tamper == "existing":
         output.write_bytes(b"existing")

@@ -128,9 +128,9 @@ def fixture(
             trace["ball_position_after_step_m"][134, 0, 0] = 2
         trace["taskspace_joint_increment_rad"] = np.zeros((300, 1, 29))
         trace["taskspace_joint_increment_rad"][74:95] = 0.1
-        if torque_mpc or directional:
+        if torque_mpc or directional or surface:
             for key in ("pd_requested_torque_nm", "torque_nm"):
-                trace[key] = mpc_trace[key].copy()
+                trace[key] = np.zeros((300, 1, 10, 29)) if surface else mpc_trace[key].copy()
             trace["root_pose_xyzw_m"] = np.zeros((300, 1, 7))
             trace["root_pose_xyzw_m"][:, 0, 6] = 1
             trace["ball_linear_velocity_before_step_m_s"] = np.zeros((300, 1, 3))

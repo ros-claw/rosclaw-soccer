@@ -308,6 +308,12 @@ def test_extracted_physics_body_matches_original_frozen_ast():
         for n in tree.body
         if isinstance(n, ast.FunctionDef) and n.name == "run_native_first_touch_episode"
     )
+    # Explicitly specialize the newly introduced default-False diagnostic
+    # branches, exactly as the separate four-path arithmetic guard does. Do
+    # not refresh the historical hash to accept unreviewed arithmetic.
+    from tests.rsi.test_swing_release_default_arithmetic import OffPath
+
+    function = OffPath().visit(function)
     function = specialize_legacy_profile(function)
     start = next(
         i
@@ -412,6 +418,17 @@ def test_extracted_physics_body_matches_original_frozen_ast():
         == "65553cdb7c835e95fd63a2a20d987ebdb9237aaae1d7c17e4e4a07915cab88ce"
     )
     assert "sample_training_courses" not in ast.dump(function)
+
+
+def test_legacy_projection_still_detects_changed_default_pd_gain(tmp_path, monkeypatch):
+    original = Path(kernel.__file__).read_text()
+    expression = "(target - data.qpos[qi]) * navigation.backend.kp"
+    assert original.count(expression) == 1
+    changed = tmp_path / "changed_native.py"
+    changed.write_text(original.replace(expression, "2.0 * " + expression))
+    monkeypatch.setattr(kernel, "__file__", str(changed))
+    with pytest.raises(AssertionError):
+        test_extracted_physics_body_matches_original_frozen_ast()
 
 
 @pytest.mark.parametrize("enabled", [None, 0, 1, "true", True])

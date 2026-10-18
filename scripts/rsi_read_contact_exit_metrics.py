@@ -12,6 +12,7 @@ import numpy as np
 from rosclaw_soccer.physics.contact_exit_metrics import contact_exit_metrics
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_atomic_artifacts import write_once
+from scripts.rsi_replay_first_touch_contacts import fixed_replay_scope
 
 
 def digest(path):
@@ -32,7 +33,11 @@ def main():
         raise ValueError("unused output and clean frozen source required")
     pins = {
         str(path): digest(path)
-        for path in (Path(__file__), source / "src/rosclaw_soccer/physics/contact_exit_metrics.py")
+        for path in (
+            Path(__file__),
+            source / "src/rosclaw_soccer/physics/contact_exit_metrics.py",
+            source / "scripts/rsi_replay_first_touch_contacts.py",
+        )
     }
 
     def sealed(path):
@@ -45,15 +50,20 @@ def main():
         return value
 
     rows, identities = [], set()
+    expected_world_hash = None
     for path in args.replay_complete:
         replay = sealed(path)
         declaration = sealed(path.parent / "declaration.json")
+        count, substeps = fixed_replay_scope(declaration)
+        if expected_world_hash is not None and declaration["world_hash"] != expected_world_hash:
+            raise ValueError("contact comparisons must not mix different physical worlds")
+        expected_world_hash = declaration["world_hash"]
         if (
             replay["schema"] != "soccer.rsi.fixed_control_contact_replay_complete.v1"
             or replay["declaration_hash"] != declaration["report_hash"]
-            or replay["integrated_substeps"] != 12000
-            or replay["attempted_step_calls"] != 12000
-            or len(replay["rows"]) != 4
+            or replay["integrated_substeps"] != substeps
+            or replay["attempted_step_calls"] != substeps
+            or len(replay["rows"]) != count
             or declaration["mujoco_version"] != mujoco.__version__
         ):
             raise ValueError("whole original fixed four-replay declaration required")
