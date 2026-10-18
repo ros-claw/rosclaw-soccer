@@ -976,8 +976,7 @@ def run_native_first_touch_episode(
         history.update({k: [] for k in ("body_response_applied_increment", "body_response_status")})
     tracker = None
     if cerebellar is not None:
-        from rosclaw_soccer.rsi.native_cerebellar_torque import WIDTHS as CEREBELLAR_WIDTHS
-
+        CEREBELLAR_WIDTHS = cerebellar.capture_widths()
         history.update({name: [] for name in CEREBELLAR_WIDTHS})
     if control_profile is not None:
         from rosclaw_soccer.rsi.foundation_only_action_audit import require_bounded_capture_decoder

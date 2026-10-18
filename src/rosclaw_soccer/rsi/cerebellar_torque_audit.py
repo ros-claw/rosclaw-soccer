@@ -19,7 +19,6 @@ from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash
 def reconstruct_native_cerebellar(
     report: dict[str, Any], commitment: dict[str, Any], trace: dict[str, Any]
 ) -> dict[str, Any] | None:
-    expected_names = set(bridge_module.WIDTHS)
     names = {
         key
         for key in trace
@@ -34,12 +33,20 @@ def reconstruct_native_cerebellar(
         ):
             raise ValueError("neural torque capture requires its explicit execution commitment")
         return None
+    time_aware = (
+        type(contract) is dict and contract.get("schema") == bridge_module.TIME_AWARE_SCHEMA
+    )
+    widths = dict(bridge_module.WIDTHS)
+    if time_aware:
+        widths["cerebellar_input_features"] = 127
+        widths["cerebellar_before_integration_substep_index"] = 1
+    expected_names = set(widths)
     if (
         type(contract) is not dict
         or report.get("cerebellar_torque_contract") != contract
         or report.get("schema") != "soccer.rsi.cpu_motor_transfer.v2"
         or commitment.get("schema") != report["schema"]
-        or contract.get("schema") != bridge_module.SCHEMA
+        or contract.get("schema") not in (bridge_module.SCHEMA, bridge_module.TIME_AWARE_SCHEMA)
         or names != expected_names
         or contract.get("contract_hash")
         != hash_json({k: v for k, v in contract.items() if k != "contract_hash"})
@@ -78,6 +85,7 @@ def reconstruct_native_cerebellar(
     if (
         contract.get("model_hash") != model["model_hash"]
         or model["world_hash"] != contract["world_hash"]
+        or (model["schema"] == model_module.TIME_AWARE_SCHEMA) != time_aware
     ):
         raise ValueError("actual neural torque parameters/world binding differ")
     sampling = contract.get("sampling")
@@ -104,11 +112,11 @@ def reconstruct_native_cerebellar(
     if seed is not None and (type(seed) is not int or not 0 <= seed < 2**32):
         raise ValueError("explicit uint32 neural torque RNG seed required")
     arrays = {}
-    for key, width in bridge_module.WIDTHS.items():
+    for key, width in widths.items():
         raw = np.asarray(trace[key])
         dtype = (
             np.int64
-            if key.endswith("sample_index")
+            if key.endswith(("sample_index", "substep_index"))
             else np.bool_
             if key.endswith("performed")
             else np.float64
@@ -147,6 +155,14 @@ def reconstruct_native_cerebellar(
         -10,
         10,
     )
+    if time_aware:
+        clock = arrays["cerebellar_before_integration_substep_index"][:, 0]
+        if not np.array_equal(clock, np.arange(3000, dtype=np.int64)):
+            raise ValueError("actual before-integration task clock must advance once per substep")
+        features = np.concatenate(
+            (features, np.clip(q[:, 7:36] / 2, -10, 10), ((3000 - clock) / 3000)[:, None]),
+            axis=1,
+        )
     if not np.allclose(features, arrays["cerebellar_input_features"], rtol=0, atol=1e-12):
         raise ValueError("independent current-body features/applied history differ")
     import torch

@@ -106,19 +106,23 @@ def test_history_is_actual_after_clipping_and_rng_continues_across_calls():
     assert layer.calls == 12
 
 
-@pytest.fixture(scope="module", params=[None, 192])
+@pytest.fixture(scope="module", params=[(None, False), (192, False), (None, True), (192, True)])
 def numeric_capture(request):
     """Synthetic numeric contract fixture; NOT a physical evidence fixture."""
+    seed, time_aware = request.param
     layer = NativeCerebellarTorque(
-        initialize(seed=1, world_hash=WORLD), world_hash=WORLD, sampling_seed=request.param
+        initialize(seed=1, world_hash=WORLD, time_aware=time_aware),
+        world_hash=WORLD,
+        sampling_seed=seed,
     )
-    records = {key: [] for key in WIDTHS}
+    widths = layer.capture_widths()
+    records = {key: [] for key in widths}
     for _ in range(3000):
         _, row = layer.advance(*body())
         for key, value in row.items():
             records[key].append(value)
     trace = {
-        key: np.asarray(value).reshape(300, 1, 10, WIDTHS[key]) for key, value in records.items()
+        key: np.asarray(value).reshape(300, 1, 10, widths[key]) for key, value in records.items()
     }
     trace["joint_target_rad"] = np.zeros((300, 1, 29))
     commitment = dict(
@@ -126,7 +130,7 @@ def numeric_capture(request):
         compiled_model_hash=WORLD,
         cerebellar_torque_contract=layer.contract(),
     )
-    return commitment, trace, request.param
+    return commitment, trace, seed
 
 
 def test_independent_capture_reconstructs_math_but_does_not_claim_dynamics(numeric_capture):
@@ -164,3 +168,20 @@ def test_uncommitted_or_one_sided_capture_rejected(numeric_capture):
     with pytest.raises(ValueError, match="contract"):
         reconstruct_native_cerebellar({}, commitment, trace)
     assert reconstruct_native_cerebellar({}, {}, {}) is None
+
+
+def test_v2_clock_cannot_be_replayed_reset_or_forged_as_float(numeric_capture):
+    commitment, original, _ = numeric_capture
+    key = "cerebellar_before_integration_substep_index"
+    if key not in original:
+        return
+    for corruption in ("value", "dtype", "feature"):
+        trace = copy.deepcopy(original)
+        if corruption == "value":
+            trace[key][7, 0, 0, 0] = 0
+        elif corruption == "dtype":
+            trace[key] = trace[key].astype(np.float64)
+        else:
+            trace["cerebellar_input_features"][7, 0, 0, -1] = 1
+        with pytest.raises(ValueError):
+            reconstruct_native_cerebellar(commitment, commitment, trace)

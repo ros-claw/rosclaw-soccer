@@ -16,6 +16,7 @@ from rosclaw_soccer.rsi.cerebellar_torque_policy import CerebellarTorquePolicy, 
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes, hash_json
 
 SCHEMA = "soccer.rsi.native_adaptive_cerebellar_torque.v1"
+TIME_AWARE_SCHEMA = "soccer.rsi.native_adaptive_cerebellar_torque.v2"
 WIDTHS = {
     "cerebellar_canonical_qpos_before_substep": 43,
     "cerebellar_canonical_qvel_before_substep": 41,
@@ -81,9 +82,16 @@ class NativeCerebellarTorque:
         self._previous = np.zeros(29)
         self.calls = 0
 
+    def capture_widths(self) -> dict[str, int]:
+        widths = dict(WIDTHS)
+        if self._policy.time_aware:
+            widths["cerebellar_input_features"] = 127
+            widths["cerebellar_before_integration_substep_index"] = 1
+        return widths
+
     def contract(self) -> dict[str, Any]:
         value = dict(
-            schema=SCHEMA,
+            schema=TIME_AWARE_SCHEMA if self._policy.time_aware else SCHEMA,
             model=copy.deepcopy(self._model),
             model_hash=self._policy.model_hash,
             world_hash=self._policy.world_hash,
@@ -111,8 +119,9 @@ class NativeCerebellarTorque:
         raw = np.asarray(pd_requested)
         if raw.shape != (29,) or raw.dtype != np.float64 or not np.isfinite(raw).all():
             raise ValueError("finite canonical preclip PD request required")
-        feature = policy_module.features(qpos, qvel, target, self._previous)
-        offset = self._policy.offset(qpos, qvel, target, self._previous)
+        step = self.calls if self._policy.time_aware else None
+        feature = policy_module.features(qpos, qvel, target, self._previous, substep_index=step)
+        offset = self._policy.offset(qpos, qvel, target, self._previous, substep_index=step)
         mean = self._policy.last_raw_mean()
         sample = self._policy.sampling_transition()
         limits = np.asarray(G1_HARD_TORQUE_LIMITS)
@@ -136,6 +145,10 @@ class NativeCerebellarTorque:
             "requested_cerebellar_torque_offset_nm": offset.copy(),
             "applied_cerebellar_torque_offset_nm": applied.copy(),
         }
+        if self._policy.time_aware:
+            record["cerebellar_before_integration_substep_index"] = np.asarray(
+                [self.calls], dtype=np.int64
+            )
         self._previous = applied.copy()
         self.calls += 1
         return torque, record
