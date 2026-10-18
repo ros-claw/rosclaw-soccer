@@ -596,14 +596,22 @@ def qualified_episode(
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
-    if mesh_task_contact_world_hash is not None and (
-        planning_context is None
-        or candidate is None
-        or cerebellar_model is not None
-        or cerebellar_sampling_seed is not None
-        or mesh_task_contact_world_hash == assets.WORLD
-    ):
-        raise ValueError("new contact protocol requires distinct world and explicit public option")
+    if mesh_task_contact_world_hash is not None:
+        from rosclaw_soccer.rsi.public_first_touch_training_plan import PublicFirstTouchTrainingPlan
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+
+        if (
+            cerebellar_model is not None
+            or cerebellar_sampling_seed is not None
+            or mesh_task_contact_world_hash == assets.WORLD
+            or type(plan) is not PublicFirstTouchTrainingPlan
+            or type(factory) is not RecurrentSamplingEpisodeFactory
+            or plan.behavior_model_hash != assets.MEAN
+        ):
+            raise ValueError("new contact protocol requires distinct world and fixed public source")
+        factory._stable()
     if planning_context is None:
         if planning_stage != "PLANNING_SIMULATION":
             raise ValueError("an evaluation stage requires an explicit public planning context")
@@ -726,7 +734,9 @@ def qualified_episode(
         swing_mode=swing,
         postcontact_profile=postcontact,
         locomotion_mode_probe=locomotion_mode_probe,
-        record_default_planner_events=planning_context is not None
+        record_default_planner_events=(
+            planning_context is not None or mesh_task_contact_world_hash is not None
+        )
         and locomotion_mode_probe is None,
         cerebellar_model=cerebellar_model,
         cerebellar_sampling_seed=cerebellar_sampling_seed,
@@ -771,6 +781,7 @@ def qualified_episode(
             if (
                 candidate is None
                 and cerebellar_model is None
+                and mesh_task_contact_world_hash is None
                 and (
                     set(trace) != set(old.files)
                     or any(
