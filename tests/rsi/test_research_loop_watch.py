@@ -1,0 +1,118 @@
+import copy
+import sqlite3
+
+import pytest
+
+from rosclaw_soccer.rsi.research_loop_watch import assess, collect
+
+
+def snapshot():
+    return dict(
+        service=dict(LoadState="loaded", ActiveState="active", MainPID="12", Result="success"),
+        cpu_ticks=100,
+        process_start_ticks=99,
+        ledger=dict(tip="a", seq=1, phase="SIMULATING", completed=0),
+    )
+
+
+def test_running_is_not_completion_or_training():
+    result = assess(snapshot(), None, now=100)
+    assert result["phase"] == "RUNNING"
+    for name in (
+        "goal_complete",
+        "outcome_verified",
+        "ledger_integrity_verified",
+        "automatic_retry",
+    ):
+        assert result[name] is False
+
+
+def test_transient_observer_failure_does_not_poison_subsequent_observation():
+    current = snapshot()
+    current["ledger"] = None
+    result = assess(current, {"phase": "OBSERVATION_FAILED"}, now=100)
+    assert result["phase"] == "RUNNING"
+
+
+def test_cpu_activity_does_not_hide_absence_of_scientific_commits():
+    current = snapshot()
+    previous = assess(current, None, now=100)
+    current["cpu_ticks"] += 100
+    result = assess(current, previous, now=1400)
+    assert result["phase"] == "COMPUTING_WITHOUT_NEW_COMMIT"
+    assert result["last_ledger_change_unix"] == 100
+    assert result["last_cpu_change_unix"] == 1400
+
+
+def test_idle_requires_investigation_not_automatic_physics_retry():
+    current = snapshot()
+    previous = assess(current, None, now=100)
+    result = assess(current, previous, now=1400)
+    assert result["phase"] == "NO_OBSERVED_CPU_PROGRESS"
+    assert result["automatic_retry"] is False
+
+
+@pytest.mark.parametrize("completed", [0, 3, 44])
+def test_terminal_worker_always_leaves_next_agent_work(completed):
+    current = snapshot()
+    current["service"].update(ActiveState="inactive", MainPID="0")
+    current["ledger"].update(
+        completed=completed, phase="PILOT_COMPLETE_EXPANDED_VALIDATION_REQUIRED"
+    )
+    result = assess(current, None, now=100)
+    assert result["next_agent_action"] == "REVIEW_LEDGER_AND_DECLARE_NEXT_SCIENTIFIC_STAGE"
+    assert result["goal_complete"] is False
+
+
+def test_failure_is_not_successful_idle_or_a_silent_restart():
+    current = snapshot()
+    current["service"].update(ActiveState="failed", MainPID="0", Result="exit-code")
+    assert assess(current, None, now=100)["phase"] == "FAILED"
+
+
+def test_pid_reuse_and_clock_rollback_do_not_fake_stall():
+    current = snapshot()
+    previous = assess(current, None, now=100)
+    current["process_start_ticks"] += 1
+    assert assess(current, previous, now=1400)["phase"] == "COMPUTING_WITHOUT_NEW_COMMIT"
+    assert assess(current, previous, now=50)["phase"] == "RUNNING"
+
+
+def test_new_ledger_tip_is_observed_without_promoting_evidence():
+    current = snapshot()
+    previous = assess(copy.deepcopy(current), None, now=100)
+    current["ledger"]["tip"] = "b"
+    current["cpu_ticks"] += 1
+    result = assess(current, previous, now=1400)
+    assert result["phase"] == "RUNNING"
+    assert not result["ledger_integrity_verified"]
+
+
+@pytest.mark.parametrize("clock", [float("nan"), float("inf")])
+def test_finite_clock(clock):
+    with pytest.raises(ValueError):
+        assess(snapshot(), None, now=clock)
+
+
+def test_collect_uses_read_only_sqlite_and_does_not_create_missing_ledger(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    def run(command, **kwargs):
+        assert command[:3] == ["systemctl", "--user", "show"]
+        assert kwargs["check"]
+        return SimpleNamespace(
+            stdout="LoadState=loaded\nMainPID=0\nActiveState=inactive\nResult=success\n"
+        )
+
+    monkeypatch.setattr("rosclaw_soccer.rsi.research_loop_watch.subprocess.run", run)
+    assert collect("example.service", tmp_path)["ledger"] is None
+    assert not list(tmp_path.iterdir())
+    with sqlite3.connect(tmp_path / "campaign.sqlite") as db:
+        db.execute("CREATE TABLE events (seq, digest, body)")
+        db.execute(
+            "INSERT INTO events VALUES (1, 'a', ?)",
+            ('{"state":{"phase":"INIT","attempts":0,"completed":[],"active":null}}',),
+        )
+    data = (tmp_path / "campaign.sqlite").read_bytes()
+    assert collect("example.service", tmp_path)["ledger"]["completed"] == 0
+    assert (tmp_path / "campaign.sqlite").read_bytes() == data
