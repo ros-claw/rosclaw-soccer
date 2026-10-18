@@ -82,5 +82,24 @@ bundle测试明确 mock 重型组件，并覆盖错误归属传播和证据保�
 学习的保持锚点。后续还必须检查实际可学习力矩变化与物理净收益，参见
 [KL塑性权限审计](cerebellar-plasticity-authority-20261018.zh-CN.md)。
 
+### 四例已实际接续启动，不是仅留下计划
+
+11:14:01 启动 `rosclaw-mesh-original-public-draws-20261018.service`，
+启动PID1687227，源 `30e2bf9e55b76ea325f32c154fa6a3393bbcd8e3`。
+1399个源码/配置/启动文件已固定；展开主runner及bundle的F821/F822通过，
+真实四项预检退出0、零模型分配，才开始新服务。分配前要求RAM≥56GiB，
+MemoryHigh/Max=8/12GiB，RuntimeMax=2h、Restart=no，固定新工作截止13:12:40。
+目录 `rsi-mesh-original-public-draws-20261018`；不得原地恢复旧失败目录。
+
+新声明绑定三例完整审计seal及其所有物理原始witness，强制保留原来的
+失败标签，不把 numerical qualification 当 task success。每个新案例
+要求3000原生+3000独立CPU子步、300次独立Foundation复核和300次额外
+encoder参考审计。启动不算完成；本记录时正在分配独立参考，新增
+四例收据和真实优化更新均为0。下一接续必须检查四例结果并完成独立
+终态readback；旧的三例专用reader不能冒充四例审计。
+
+当前相关20组回归实际 **436 passed**（15.91s）；worker定点mypy
+follow-imports=silent通过；不声称全仓检查通过。
+
 全任务仍是连续G1球队比赛，不是三例M0资格。当前远未完成，所有结论
 仅限 SIM_ONLY 开发实验。
