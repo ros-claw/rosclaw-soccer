@@ -119,3 +119,34 @@ planning_context_hash、世界、全部初始qpos/qvel、Foundation、late actor
 同输入力矩漂移诊断是神经头的确定性有界残差请求差，不等同于经过
 总PD力矩投影后的实际执行器差；最终物理作用必须继续查实际applied
 offset和actuator force，不能用请求数值代替执行证据。
+
+## 13:10前缀：第一种子的完整采集与真实训练入场检查
+
+seed2026101801的四条collection全部提交：context0、2、4通过，context6
+侧偏失败且安全。context6首触226帧，60帧窗口完整，属于合法任务失败，
+不是采集异常。该失败继续进入训练，未删掉或重跑。
+
+另外从同一冻结生产源f44b9509对这四条真实收据调用只读`build_batch`，
+用活动目录自己拥有的完整共享载荷reader核验所有输入。实际检查耗时
+33.577551秒，通过整个声明集合、模型/意图/见证绑定、独立物理及Foundation
+复核、全部高斯采样/对数概率和当前身体特征重构。没有调用优化器，
+没有新物理执行，也没有写入活动目录的任何batch/actor文件。
+
+实际输出：特征(12000,127)、latent动作(12000,29)、old logp(12000,)；
+四条均terminated=true、truncated=false。这是四条完整物理轨迹，不能
+写成12,000个独立场景。三条成功与一条失败均入场。
+
+完整batch manifest封印：
+`sha256:322bf6fa8d3510c10d881d77decc0a377e9d6ece4dc5084a126073bb4ab6715c`。
+正式driver后续仍须在三个种子的12条采集全部完成后自行构建、保存并
+训练；这里不提前消费batch、不更新actor或critic、不授权候选。
+
+四条训练return分别为8.267317053、8.417994130、8.348094968、2.497173180，
+原始收据为：
+
+- context0：`sha256:1bdf692e93bababedcefa3c5e3bd751f9827c2698bfad9b8cd9e0a1609e8e8b0`
+- context2：`sha256:e3a627303fac99f16bf7cd06d28c0bdbe0dac9b9f97ff61018cd28cfaff3b583`
+- context4：`sha256:5739d90a7c68a46b4438d0072fbae8bc6301deab2e8517c0d266502da217fe39`
+- context6：`sha256:a674ec5d8af3de208283610cb8329737d9eded703c78a04b902a81ec9de7d551`
+
+目前第二种子继续采集，新优化器步骤仍为0。完整学习与球队目标尚未完成。

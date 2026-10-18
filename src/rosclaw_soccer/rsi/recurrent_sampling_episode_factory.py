@@ -143,6 +143,34 @@ class RecurrentSamplingEpisodeFactory:
     def bind(self, policy: dict[str, Any]) -> CompiledRecurrentSamplingMotor:
         self._stable()
         view = self._preview.validate_preview(policy)
+        return self._clone_verified_episode(view, policy["policy_hash"])
+
+    def generate_and_bind_seed(
+        self, *, seed: int
+    ) -> tuple[dict[str, Any], CompiledRecurrentSamplingMotor]:
+        """Generate an owned complete preview and numeric episode internally.
+
+        Only the seed crosses this boundary: no caller model, policy, sampling
+        law or validator is accepted. Allocation still uses the complete
+        original constructor; frozen bytes, dependencies and numeric prototype
+        are checked before and after. The ordinary returned policy retains all
+        original seals, actor, critic and historical parents. External policy
+        documents must still use bind() and its whole-preview verification.
+
+        This optional numeric API is not selected by any native collector.
+        Real-model timing and native parity require separate qualification.
+        """
+        self._stable()
+        policy = self._preview.preview_from_seed(seed=seed)
+        episode = self._clone_verified_episode(
+            policy["step_motor_proof"]["model"], policy["policy_hash"]
+        )
+        return policy, episode
+
+    def _clone_verified_episode(
+        self, view: dict[str, Any], policy_hash: str
+    ) -> CompiledRecurrentSamplingMotor:
+        """Internal reset from verified external or privately generated input."""
         decoder = copy.copy(self._prototype)
         behavior = copy.copy(self._prototype._behavior)
         behavior._layers = list(self._prototype._behavior._layers)
@@ -166,7 +194,7 @@ class RecurrentSamplingEpisodeFactory:
             seed=view["seed"], rho=view["rho"], count=270, dimension=12, first_frame=30
         )
         decoder._noise.flags.writeable = False
-        decoder._policy_hash = policy["policy_hash"]
+        decoder._policy_hash = policy_hash
         decoder._last_mean = np.zeros(12)
         decoder._last_draw = np.zeros(12)
         decoder._last_log_probability = 0.0
