@@ -130,3 +130,69 @@ def test_two_actual_synthetic_updates_reuse_core_and_hard_exclude_validation(mon
     )
     assert own_model(result["numeric_model"]) == result["numeric_model"]
     assert len(result["final_same_state_diagnostics"]) == 4
+
+
+def test_past_reference_ablation_zero_gradient_and_runtime_feedback_invariance(monkeypatch):
+    from rosclaw_soccer.rsi.reference_feedback_diagnostics import PREVIOUS
+    from rosclaw_soccer.rsi.reference_student_decoder import ReferenceStudentDecoder
+    from tests.rsi.test_pre_parent_reference_features import measured_trace
+
+    b, captured = batch(), []
+    original = imitation.fit_recurrent_residual_imitation
+
+    def spy(**kw):
+        captured.append(kw["context"].copy())
+        return original(**kw)
+
+    monkeypatch.setattr(imitation, "fit_recurrent_residual_imitation", spy)
+    report = imitation.fit_numeric_reference_student(
+        b,
+        world_hash="sha256:" + "a" * 64,
+        parent_model_hash="sha256:" + "b" * 64,
+        seed=10,
+        steps=2,
+        ignore_past_reference=True,
+    )
+    model = own_model(report["numeric_model"])
+    assert report["past_reference_input_ablation"]
+    assert not report["previous_reference_inputs_are_teacher_forced"]
+    assert len(report["ignored_input_feature_names"]) == 12
+    assert not captured[0][:, :, PREVIOUS].any()
+    assert not np.asarray(model["parameters"]["weight_ih"])[:, PREVIOUS].any()
+    other = [i for i in range(135) if i not in PREVIOUS]
+    np.testing.assert_array_equal(captured[0][:, :, other], b["normalized"][:2, :, other])
+    # Both actually trained weights and actual runtime decoder are exercised.
+    first = ReferenceStudentDecoder(
+        model["parameters"],
+        mean=b["mean"],
+        scale=b["scale"],
+        world_hash=model["world_hash"],
+        parent_model_hash=model["parent_model_hash"],
+    )
+    second = copy.deepcopy(first)
+    first._previous[:] = 0.3
+    trace, nav, bounds = measured_trace(), np.zeros(29), np.tile([-2.0, 2.0], (29, 1))
+    # Frame zero requires zero history, so start both, then perturb the past
+    # action only at a valid next tick. This is a synthetic invariance test.
+    first._previous[:] = 0
+    for decoder in (first, second):
+        decoder.advance(trace, frame=0, navigation_target=nav, joint_limits=bounds)
+    first._previous[:] = 0.3
+    a = first.advance(trace, frame=1, navigation_target=nav, joint_limits=bounds)
+    c = second.advance(trace, frame=1, navigation_target=nav, joint_limits=bounds)
+    np.testing.assert_array_equal(
+        a["requested_reference_increment_rad"], c["requested_reference_increment_rad"]
+    )
+    assert report["learning_receipt"]["completed_optimizer_steps"] == 2
+
+
+@pytest.mark.parametrize("bad", [0, 1, "true", None])
+def test_ablation_must_be_explicit_boolean(bad):
+    with pytest.raises(ValueError, match="boolean"):
+        imitation.fit_numeric_reference_student(
+            batch(),
+            world_hash="sha256:" + "a" * 64,
+            parent_model_hash="sha256:" + "b" * 64,
+            seed=10,
+            ignore_past_reference=bad,
+        )

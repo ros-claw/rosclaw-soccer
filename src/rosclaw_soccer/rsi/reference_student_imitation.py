@@ -12,6 +12,7 @@ from rosclaw.growth.recurrent_residual_imitation import (
     fit_recurrent_residual_imitation,
 )
 
+from rosclaw_soccer.rsi.pre_parent_reference_features import FEATURE_NAMES
 from rosclaw_soccer.rsi.reference_student_execution import make_model
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
@@ -103,12 +104,16 @@ def numeric_errors(parameters, batch):
     return rows
 
 
-def fit_numeric_reference_student(batch, *, world_hash, parent_model_hash, seed, steps=128):
+def fit_numeric_reference_student(
+    batch, *, world_hash, parent_model_hash, seed, steps=128, ignore_past_reference=False
+):
     """Finite CPU numeric fit; eligibility remains a caller-supplied assertion.
 
     Validation states never enter the optimizer or normalization. No best-of
     validation checkpoint choice, online interaction, RL or policy activation.
     """
+    if type(ignore_past_reference) is not bool:
+        raise ValueError("explicit boolean past-reference input ablation required")
     # Re-validate and derive statistics instead of trusting a mutable batch mask.
     raw = batch.get("original_observations")
     if raw is None:
@@ -128,9 +133,26 @@ def fit_numeric_reference_student(batch, *, world_hash, parent_model_hash, seed,
     )
     config.validate()
     parameters = initial_parameters(135, 12, hidden_dimension=64, seed=seed)
+    ignored = (
+        [
+            i
+            for i, n in enumerate(FEATURE_NAMES)
+            if n.startswith("previous_applied_reference_increment:")
+        ]
+        if ignore_past_reference
+        else []
+    )
+    if ignored:
+        # The execution feature contract and decoder stay unchanged. Zeroing
+        # both these input weights and training columns makes their gradients
+        # exactly zero in the existing Adam learner (no weight decay).
+        w = np.asarray(parameters["weight_ih"])
+        w[:, ignored] = 0
+        parameters["weight_ih"] = w.tolist()
     # Hard-subset the train sources, not merely zero validation weights.
     selected = batch["train"]
-    x = batch["normalized"][selected]
+    x = batch["normalized"][selected].copy()
+    x[:, :, ignored] = 0
     gates, weight = batch["gates"][selected], batch["weights"][selected]
     target = batch["targets"][selected] * (0.2 / 0.35)
     fit = fit_recurrent_residual_imitation(
@@ -142,6 +164,8 @@ def fit_numeric_reference_student(batch, *, world_hash, parent_model_hash, seed,
         training_weights=weight,
         config=config,
     )
+    if ignored and np.any(np.asarray(fit["parameters"]["weight_ih"])[:, ignored] != 0):
+        raise ValueError("ablated past-reference input weights must remain exactly zero")
     model = make_model(
         fit["parameters"],
         mean=batch["mean"],
@@ -176,7 +200,12 @@ def fit_numeric_reference_student(batch, *, world_hash, parent_model_hash, seed,
         final_same_state_diagnostics=numeric_errors(fit["parameters"], batch),
         validation_excluded_from_gradient_and_normalization=True,
         normalization_fit_only_on_eligible_train_episodes=True,
-        previous_reference_inputs_are_teacher_forced=True,
+        previous_reference_inputs_are_teacher_forced=not ignore_past_reference,
+        original_batch_contains_teacher_previous_references=True,
+        past_reference_input_ablation=ignore_past_reference,
+        ignored_input_feature_names=[FEATURE_NAMES[i] for i in ignored],
+        actual_optimizer_context_hash=hash_bytes(x.tobytes()),
+        ignored_input_weights_remain_exactly_zero=bool(ignored),
         offline_reference_loss_not_projected_execution_loss=True,
         failed_episodes_are_retained_not_negative_gradient_examples=True,
         target_units_ratio=0.2 / 0.35,
