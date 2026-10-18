@@ -1,5 +1,7 @@
 """Fixed public cross-state screen scope, not a new control law or teacher gate."""
 
+from __future__ import annotations
+
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -91,7 +93,7 @@ def require_previous_surface(
         if digest(old) != digest(new):
             raise ValueError("cross-state screen may not change prior qualified control arithmetic")
         pins[str(old)], pins[str(new)] = digest(old), digest(new)
-    return audit["report_hash"]
+    return str(audit["report_hash"])
 
 
 def require_context_baselines(
