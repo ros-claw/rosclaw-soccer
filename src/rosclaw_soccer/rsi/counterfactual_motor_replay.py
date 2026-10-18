@@ -230,6 +230,7 @@ class CounterfactualMotorReplay:
         )
         requested_offsets, applied_offsets = [], []
         neural_features, neural_qpos, neural_qvel = [], [], []
+        neural_samples = []
         previous_aux = previous_applied_torque
         force, torques, actual, pelvis = np.zeros(6), [], [], []
         ground_dynamics = []
@@ -251,6 +252,9 @@ class CounterfactualMotorReplay:
                 neural_qpos.append(q_current)
                 neural_qvel.append(v_current)
                 offset = torque_policy.offset(q_current, v_current, target, previous_aux)
+                sample = torque_policy.sampling_transition()
+                if sample is not None:
+                    neural_samples.append(sample)
             torque = np.clip(
                 requested if offset is None else requested + offset,
                 -np.asarray(G1_HARD_TORQUE_LIMITS),
@@ -327,6 +331,14 @@ class CounterfactualMotorReplay:
             result["requested_cerebellar_torque_offset_nm"] = np.asarray(requested_offsets)
             result["applied_cerebellar_torque_offset_nm"] = np.asarray(applied_offsets)
             result["last_applied_cerebellar_torque_offset_nm"] = previous_aux
+            if neural_samples:
+                if len(neural_samples) != 10:
+                    raise ValueError("complete actual substep sampling history required")
+                result["cerebellar_sampling_contract"] = torque_policy.sampling_contract()
+                for key in ("mean", "latent_action", "log_probability", "sample_index"):
+                    result[f"cerebellar_sampling_{key}"] = np.asarray(
+                        [sample[key] for sample in neural_samples]
+                    )
         return result
 
     def _compare(self, result: dict[str, Any]) -> None:

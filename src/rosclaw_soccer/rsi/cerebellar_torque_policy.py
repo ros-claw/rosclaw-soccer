@@ -141,13 +141,25 @@ def initialize(*, seed: int, world_hash: str) -> dict[str, Any]:
 
 
 class CerebellarTorquePolicy:
-    """Compile owned, read-only weights. Per-episode history stays explicit."""
+    """Owned read-only weights, explicit applied history, optional episode RNG.
 
-    def __init__(self, model: dict[str, Any]) -> None:
+    A sampled episode must retain the same object across control frames. The
+    declared RNG seed is not a learned parameter and is never reset implicitly.
+    """
+
+    def __init__(self, model: dict[str, Any], *, sampling_seed: int | None = None) -> None:
         validate_model(model)
+        if sampling_seed is not None and (
+            type(sampling_seed) is not int or not 0 <= sampling_seed < 2**32
+        ):
+            raise ValueError("optional explicit uint32 sampling seed required")
         self.model_hash = model["model_hash"]
         self.world_hash = model["world_hash"]
         self.optimizer_steps = model["optimizer_steps"]
+        self.sampling_seed = sampling_seed
+        self.samples_drawn = 0
+        self._rng = None if sampling_seed is None else np.random.default_rng(sampling_seed)
+        self._sampling_transition: dict[str, Any] | None = None
         self._layers = []
         for layer in model["layers"]:
             weight, bias = (
@@ -161,6 +173,45 @@ class CerebellarTorquePolicy:
         self, qpos: Any, qvel: Any, target: Any, previous_applied: Any
     ) -> np.ndarray[Any, Any]:
         value = features(qpos, qvel, target, previous_applied)
-        for weight, bias in self._layers:
-            value = np.tanh(weight @ value + bias)
-        return value * CAPS
+        for index, (weight, bias) in enumerate(self._layers):
+            value = weight @ value + bias
+            if index < 2:
+                value = np.tanh(value)
+        latent = value
+        if self._rng is not None:
+            noise = self._rng.normal(size=29)
+            latent = value + 0.05 * noise
+            standardized = (latent - value) / 0.05
+            logp = float(np.sum(-0.5 * standardized**2 - np.log(0.05) - 0.5 * np.log(2 * np.pi)))
+            self._sampling_transition = dict(
+                mean=value.copy(),
+                latent_action=latent.copy(),
+                log_probability=logp,
+                sample_index=self.samples_drawn,
+            )
+            self.samples_drawn += 1
+        result: np.ndarray[Any, Any] = np.tanh(latent) * CAPS
+        return result
+
+    def sampling_transition(self) -> dict[str, Any] | None:
+        """Copy actual latent density record; it is not an actuator density."""
+        if self._sampling_transition is None:
+            return None
+        return {
+            key: value.copy() if isinstance(value, np.ndarray) else value
+            for key, value in self._sampling_transition.items()
+        }
+
+    def sampling_contract(self) -> dict[str, Any]:
+        return dict(
+            schema="soccer.rsi.cerebellar_latent_sampling.v1",
+            model_hash=self.model_hash,
+            sampling_seed=self.sampling_seed,
+            latent_std=0.05,
+            generator="numpy_default_rng_PCG64",
+            distribution="IID Gaussian latent before tanh and original hard torque projection",
+            actuator_density_claimed=False,
+            reset_per_control_frame=False,
+            hardware_authorized=False,
+            promotion_authorized=False,
+        )

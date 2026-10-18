@@ -133,3 +133,55 @@ def test_model_corruption_or_authority_escalation_rejected(corruption):
         reseal(model)
     with pytest.raises(ValueError):
         validate_model(model)
+
+
+def test_seeded_latent_samples_and_actual_density_are_reproducible_and_bounded():
+    model = initialize(seed=42, world_hash=WORLD)
+    a, b = (CerebellarTorquePolicy(model, sampling_seed=919) for _ in range(2))
+    rng = np.random.default_rng(919)
+    for index in range(30):
+        expected_latent = 0.05 * rng.normal(size=29)
+        first, second = a.offset(*state()), b.offset(*state())
+        np.testing.assert_array_equal(first, second)
+        np.testing.assert_array_equal(first, np.tanh(expected_latent) * CAPS)
+        sample = a.sampling_transition()
+        assert sample["sample_index"] == index
+        np.testing.assert_array_equal(sample["latent_action"], expected_latent)
+        expected_logp = np.sum(
+            -0.5 * (expected_latent / 0.05) ** 2 - np.log(0.05) - 0.5 * np.log(2 * np.pi)
+        )
+        assert sample["log_probability"] == expected_logp
+        assert np.all(np.abs(first) <= CAPS)
+    assert a.samples_drawn == 30
+    assert a.sampling_contract()["reset_per_control_frame"] is False
+    assert a.sampling_contract()["actuator_density_claimed"] is False
+
+
+def test_deterministic_policy_consumes_no_draws_and_sample_records_are_copied():
+    model = initialize(seed=42, world_hash=WORLD)
+    deterministic = CerebellarTorquePolicy(model)
+    deterministic.offset(*state())
+    assert deterministic.sampling_transition() is None
+    assert deterministic.samples_drawn == 0
+    stochastic = CerebellarTorquePolicy(model, sampling_seed=19)
+    stochastic.offset(*state())
+    saved = stochastic.sampling_transition()
+    saved["mean"][:] = 999
+    assert np.all(stochastic.sampling_transition()["mean"] == 0)
+
+
+def test_invalid_measurement_does_not_advance_random_stream():
+    model = initialize(seed=42, world_hash=WORLD)
+    a, b = (CerebellarTorquePolicy(model, sampling_seed=919) for _ in range(2))
+    inputs = list(state())
+    inputs[1][0] = np.nan
+    with pytest.raises(ValueError):
+        a.offset(*inputs)
+    assert a.samples_drawn == 0
+    np.testing.assert_array_equal(a.offset(*state()), b.offset(*state()))
+
+
+@pytest.mark.parametrize("seed", [True, -1, 2**32, 1.0, "919"])
+def test_sampling_seed_cannot_be_implicitly_coerced(seed):
+    with pytest.raises(ValueError, match="sampling seed"):
+        CerebellarTorquePolicy(initialize(seed=42, world_hash=WORLD), sampling_seed=seed)
