@@ -193,6 +193,17 @@ def load_inputs(config_path):
     review = ReviewedContactWorld(Path(cfg["nominal_readback"]), cfg["nominal_readback_file_hash"])
     binding = review.verify(cfg["mesh_task_contact_world_hash"])
     p.stable()
+    if "matched_ablation" in cfg:
+        from scripts.rsi_load_reference_ablation_exam import load_ablation
+
+        student, stage, fit = load_ablation(
+            cfg,
+            sealed=sealed,
+            digest=digest,
+            pins=pins,
+            original_stage=stage,
+            original_fit=fit,
+        )
     return SimpleNamespace(
         cfg=cfg,
         source=source,
