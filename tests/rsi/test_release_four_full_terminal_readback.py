@@ -81,6 +81,9 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
         if torque_mpc:
             for key in ("pd_requested_torque_nm", "torque_nm"):
                 trace[key] = mpc_trace[key].copy()
+            trace["root_pose_xyzw_m"] = np.zeros((300, 1, 7))
+            trace["root_pose_xyzw_m"][:, 0, 6] = 1
+            trace["ball_linear_velocity_before_step_m_s"] = np.zeros((300, 1, 3))
         c = json.loads(Path(r["witnesses"]["commitment"]["path"]).read_text())
         draw = plan.draws()[job["group"]]
         if index < 2:
