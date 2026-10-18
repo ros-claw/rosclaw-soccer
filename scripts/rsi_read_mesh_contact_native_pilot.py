@@ -15,6 +15,31 @@ def digest(path):
 
 
 def bounded_profile(profile):
+    if profile == "release-four":
+        return dict(
+            count=4,
+            groups=[8, 56, 64, 65],
+            declaration_schema="soccer.rsi.swing_release_ablation_pilot_declaration.v1",
+            complete_schema="soccer.rsi.swing_release_ablation_pilot_complete.v1",
+            readback_schema="soccer.rsi.swing_release_ablation_terminal_readback.v1",
+            phase="SWING_RELEASE_ABLATION_COMPLETE_NOT_OPTIMIZED_RECOVERY",
+            jobs=[
+                dict(
+                    job=f"release-zero-{pair}",
+                    role="ablation",
+                    pair_id=pair,
+                    context_index=context,
+                    group=group,
+                    option_index=4,
+                )
+                for pair, group, context in (
+                    ("raw-8", 8, None),
+                    ("raw-56", 56, None),
+                    ("context-0", 64, 0),
+                    ("context-1", 65, 1),
+                )
+            ],
+        )
     if profile == "binding-four":
         return dict(
             count=4,
@@ -92,12 +117,53 @@ def verify_persisted_preparation(declaration, prepared):
     return True
 
 
+def verify_release_prefix(trace, original_trace, original_outcome, outcome, prefix, baseline_hash):
+    """Independent byte readback, not the producer's assertion or its comparison helper."""
+    import numpy as np
+
+    from rosclaw_soccer.rsi.first_touch_outcome import label_first_touch
+    from rosclaw_soccer.sim.contracts import hash_bytes
+
+    cutoff = original_outcome["first_foot_contact_frame"]
+    if type(cutoff) is not int or not 0 <= cutoff < 300:
+        raise ValueError("original observed foot-first contact required")
+    cutoff += 1
+    first = np.flatnonzero(np.any(original_trace["force_n"][:, 0] > 1, axis=1))
+    if (
+        not len(first)
+        or int(first[0]) != cutoff - 1
+        or outcome.first_foot_contact_frame != cutoff - 1
+        or set(trace) != set(original_trace)
+        or any(
+            trace[k].shape != original_trace[k].shape
+            or trace[k].dtype != original_trace[k].dtype
+            or trace[k].ndim == 0
+            or trace[k].shape[0] != 300
+            or trace[k][:cutoff].tobytes() != original_trace[k][:cutoff].tobytes()
+            for k in trace
+        )
+        or label_first_touch(original_trace).to_dict() != original_outcome
+    ):
+        raise ValueError("independently compared complete first-contact prefixes differ")
+    if (
+        prefix.get("schema") != "soccer.rsi.first_contact_prefix_parity.v1"
+        or prefix.get("baseline_receipt_hash") != baseline_hash
+        or prefix.get("prefix_frames") != cutoff
+        or prefix.get("prefix_array_hashes")
+        != {k: hash_bytes(trace[k][:cutoff].tobytes()) for k in sorted(trace)}
+        or prefix.get("all_original_array_prefixes_bit_equal") is not True
+    ):
+        raise ValueError("prefix witness must bind the actual original array bytes")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--unit", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--upstream-audit-source", type=Path)
+    parser.add_argument("--baseline-screen-readback", type=Path)
+    parser.add_argument("--baseline-screen-audit-source", type=Path)
     parser.add_argument(
         "--profile",
         choices=(
@@ -106,15 +172,18 @@ def main():
             "binding-four",
             "catalog-sixteen",
             "teacher-eighteen",
+            "release-four",
         ),
         default="contact-three",
     )
     args = parser.parse_args()
     public_four = args.profile == "original-public-four"
     teacher_screen = args.profile == "teacher-eighteen"
+    release_ablation = args.profile == "release-four"
+    context_study = teacher_screen or release_ablation
     spec = (
         bounded_profile(args.profile)
-        if args.profile in ("binding-four", "catalog-sixteen", "teacher-eighteen")
+        if args.profile in ("binding-four", "catalog-sixteen", "teacher-eighteen", "release-four")
         else None
     )
     count = spec["count"] if spec is not None else 4 if public_four else 3
@@ -213,6 +282,20 @@ def main():
         or complete.get("reused_endpoints") != declaration.get("reused_endpoints")
     ):
         raise ValueError("exact expanded teacher screen and upstream audit binding required")
+    if release_ablation and (
+        args.upstream_audit_source is None
+        or args.baseline_screen_readback is None
+        or args.baseline_screen_audit_source is None
+        or config.get("suppress_postcontact_swing_release") is not True
+        or config.get("selected_option_index") != 4
+        or config.get("upstream_terminal_audit_required") is not True
+        or complete.get("independent_course_count") != 4
+        or complete.get("paired_endpoint_count") != 8
+        or complete.get("reused_endpoints") != declaration.get("reused_endpoints")
+        or set(config.get("required_receipt_witnesses", []))
+        != {"intent_witness", "encoder_witness", "prefix_witness"}
+    ):
+        raise ValueError("exact four-course ablation with both terminal upstream audits required")
     if public_four and (
         complete.get("schema") != "soccer.rsi.mesh_public_draw_complete.v1"
         or declaration.get("schema") != "soccer.rsi.mesh_public_draw_declaration.v1"
@@ -233,6 +316,17 @@ def main():
         prepared, _, source_manifest, actual = prepare(args.config)
         if actual != config:
             raise ValueError("same original preparation configuration required")
+        if release_ablation:
+            for project in config["baseline_sources"]:
+                previous_source = Path(project["root"])
+                prepared.HEADS[str(previous_source)] = project["head"]
+                prepared.add_pins(
+                    {
+                        str(path): digest(path)
+                        for folder in (previous_source / "src", previous_source / "scripts")
+                        for path in folder.rglob("*.py")
+                    }
+                )
         preparation_was_persisted = verify_persisted_preparation(declaration, prepared)
         pins.update(prepared.PINS)
         heads = prepared.HEADS
@@ -291,7 +385,7 @@ def main():
         or set(final["completed"]) != set(names)
     ):
         raise ValueError("all charged attempts must finish in original order")
-    if teacher_screen and final.get("declaration_hash") != hash_json(declaration):
+    if context_study and final.get("declaration_hash") != hash_json(declaration):
         raise ValueError("teacher-screen ledger must bind the whole original declaration")
     rows = []
     shared_reader, shared_reader_witness = None, None
@@ -313,7 +407,7 @@ def main():
         if len(catalog) != 8 or catalog[0] is not None:
             raise ValueError("whole original catalog including None required")
         if (
-            args.profile in ("catalog-sixteen", "teacher-eighteen")
+            args.profile in ("catalog-sixteen", "teacher-eighteen", "release-four")
             and declaration["options"] != catalog
         ):
             raise ValueError("actual entire catalog differs")
@@ -327,7 +421,9 @@ def main():
             raise ValueError("completion, ledger and actual ordered receipts must agree")
         witnesses = dict(receipt["witnesses"])
         witnesses.update({k: receipt[k] for k in ("intent_witness", "encoder_witness")})
-        if teacher_screen and spec["jobs"][index]["context_index"] is not None:
+        if release_ablation:
+            witnesses["prefix_witness"] = receipt["prefix_witness"]
+        if context_study and spec["jobs"][index]["context_index"] is not None:
             witnesses["planning_context_witness"] = receipt["planning_context_witness"]
         for witness in witnesses.values():
             if spec is not None and (
@@ -415,6 +511,42 @@ def main():
                     "encoder reference audit must bind actual complete planner history"
                 )
         outcome = label_first_touch(trace)
+        if release_ablation:
+            from rosclaw_soccer.rsi.swing_release_ablation import (
+                release_ablation_contract,
+                require_zero_postcontact_swing,
+            )
+
+            tag = release_ablation_contract(expected_world)
+            if any(
+                doc.get("swing_release_ablation") != tag for doc in (report, commitment, receipt)
+            ):
+                raise ValueError("actual report, commitment and receipt must bind the intervention")
+            require_zero_postcontact_swing(commitment, trace)
+            baseline_item = config["baseline_receipts"][index]
+            baseline = sealed(Path(baseline_item["path"]), "receipt_hash")
+            if (
+                baseline_item["pair_id"] != spec["jobs"][index]["pair_id"]
+                or digest(Path(baseline_item["path"])) != baseline_item["file_hash"]
+                or baseline["receipt_hash"] != baseline_item["receipt_hash"]
+                or "swing_release_ablation" in baseline
+            ):
+                raise ValueError("exact original passing and unsafe baseline receipts required")
+            for witness in baseline["witnesses"].values():
+                if digest(Path(witness["path"])) != witness["sha256"]:
+                    raise ValueError("original baseline witness bytes changed")
+                pins[witness["path"]] = witness["sha256"]
+            with np.load(baseline["witnesses"]["trace"]["path"], allow_pickle=False) as archive:
+                original_trace = dict(archive)
+            prefix = sealed(Path(witnesses["prefix_witness"]["path"]))
+            verify_release_prefix(
+                trace,
+                original_trace,
+                baseline["outcome"],
+                outcome,
+                prefix,
+                baseline["receipt_hash"],
+            )
         review = sealed(Path(witnesses["independent_review"]["path"]))
         foundation = sealed(Path(witnesses["foundation_review"]["path"]))
         alignment = require_first_touch_qualification(review, foundation, outcome)
@@ -441,7 +573,7 @@ def main():
         ):
             raise ValueError("raw outcome and independently reconstructed body/Foundation differ")
         intended = declaration["jobs"][index]
-        if teacher_screen and any(
+        if context_study and any(
             receipt.get(k) != intended[k]
             for k in ("role", "pair_id", "context_index", "option_index")
         ):
@@ -463,7 +595,7 @@ def main():
             group = spec["jobs"][index]["group"] if spec is not None else (4, 8, 32, 56)[index]
             draw = plan.draws()[group]
             planning = None
-            if teacher_screen:
+            if context_study:
                 from rosclaw_soccer.rsi.public_physics_option_planning import planning_contexts
 
                 if declaration.get("contexts") != [
@@ -471,7 +603,7 @@ def main():
                     for c in planning_contexts(plan)
                 ]:
                     raise ValueError("whole predeclared eight-context source bank differs")
-            if teacher_screen and intended["context_index"] is not None:
+            if context_study and intended["context_index"] is not None:
                 from dataclasses import asdict
 
                 from rosclaw_soccer.rsi.public_physics_option_planning import (
@@ -539,10 +671,12 @@ def main():
                         candidate=expected_candidate,
                         declaration_hash=declaration["report_hash"],
                     )
-                    if teacher_screen:
+                    if context_study:
                         expected_intent["context_hash"] = (
                             None if planning is None else planning.context_hash
                         )
+                    if release_ablation:
+                        expected_intent["baseline_receipt_hash"] = baseline["receipt_hash"]
                 if expected_candidate is None:
                     if (
                         report.get("bounded_control_profile") is not None
@@ -728,6 +862,90 @@ def main():
                 != complete["passing_option_indices_by_group"]
             ):
                 raise ValueError("whole independently reconstructed option outcome matrix differs")
+        elif release_ablation:
+            from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
+
+            upstream = sealed(Path(config["upstream_catalog_readback"]))
+            selection = sealed(Path(config["selection_declaration"]))
+            catalog_complete = sealed(
+                Path(config["selection_declaration"]).parent / "complete.json"
+            )
+            screen = sealed(args.baseline_screen_readback)
+            screen_root = Path(config["baseline_receipts"][2]["path"]).parent
+            screen_complete = sealed(screen_root / "complete.json")
+            if (
+                upstream.get("schema") != "soccer.rsi.mesh_contact_catalog_terminal_readback.v1"
+                or upstream.get("complete_hash") != catalog_complete["report_hash"]
+                or catalog_complete.get("declaration_hash") != selection["report_hash"]
+                or selection["report_hash"] != config["selection_declaration_hash"]
+                or upstream.get("source_native_bodies") != 16
+                or upstream.get("reader_source_hash") != digest(args.upstream_audit_source)
+                or screen.get("schema")
+                != "soccer.rsi.mesh_option4_teacher_screen_terminal_readback.v1"
+                or screen.get("complete_hash") != screen_complete["report_hash"]
+                or screen.get("source_native_bodies") != 18
+                or screen.get("reader_source_hash") != digest(args.baseline_screen_audit_source)
+                or any(
+                    doc.get(k) is not True
+                    for doc in (upstream, screen)
+                    for k in (
+                        "whole_input_and_witness_files_verified",
+                        "shared_payload_logical_seals_rebuilt",
+                        "prior_independent_replays_authenticated",
+                    )
+                )
+            ):
+                raise ValueError("both complete independently audited baseline studies required")
+            for path in (args.upstream_audit_source, args.baseline_screen_audit_source):
+                pins[str(path)] = digest(path)
+            reused = []
+            for index, item in enumerate(config["baseline_receipts"]):
+                prior = sealed(Path(item["path"]), "receipt_hash")
+                prior_complete, prior_audit, prior_index = (
+                    (catalog_complete, upstream, 8 + index)
+                    if index < 2
+                    else (screen_complete, screen, 1 if index == 2 else 3)
+                )
+                if prior != prior_complete["results"][prior_index] or not any(
+                    row["job"] == prior["job"]
+                    and row["receipt_hash"] == prior["receipt_hash"]
+                    and row["outcome"] == prior["outcome"]
+                    for row in prior_audit["rows"]
+                ):
+                    raise ValueError("exact baseline endpoint must belong to its terminal audit")
+                job = spec["jobs"][index]
+                if (
+                    item["pair_id"] != job["pair_id"]
+                    or prior["candidate"] != catalog[4]
+                    or prior["group"] != job["group"]
+                    or prior.get("planning_context_hash")
+                    != complete["results"][index].get("planning_context_hash")
+                ):
+                    raise ValueError("same option4 and course, not a substituted baseline required")
+                reused.append(dict(role="control", pair_id=item["pair_id"], receipt=prior))
+            if reused != declaration["reused_endpoints"]:
+                raise ValueError(
+                    "all four original endpoints including the unsafe failure required"
+                )
+            paired = assess_pairs(
+                {r["pair_id"]: r["receipt"]["outcome"] for r in reused},
+                {j["pair_id"]: r["outcome"] for j, r in zip(spec["jobs"], rows, strict=True)},
+            )
+            if paired != complete["paired_development"]:
+                raise ValueError("complete independently reconstructed four-course pairing differs")
+            report.update(
+                paired_development=paired,
+                reused_endpoint_count=4,
+                independent_course_count=4,
+                paired_endpoint_count=8,
+                all_original_first_contact_prefixes_bit_equal=True,
+                actual_postcontact_taskspace_increment_exactly_zero=True,
+                optimized_recovery_claimed=False,
+                reused_endpoints_authenticated_via_prior_complete_terminal_readbacks=True,
+                reused_endpoint_physics_rerun_here=False,
+                upstream_terminal_readback_hash=upstream["report_hash"],
+                baseline_screen_terminal_readback_hash=screen["report_hash"],
+            )
         elif teacher_screen:
             from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
 
