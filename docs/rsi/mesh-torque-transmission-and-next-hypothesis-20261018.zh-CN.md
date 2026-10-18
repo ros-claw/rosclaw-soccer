@@ -125,3 +125,9 @@ f44b9509优化函数。只用Python line tracer在原`if not valid`边界读取
 6次accepted steps，不产生新候选或物理数据。未在这里再次重做原
 batch的全物理provenance还原，留给44体终态审计。tracer边界3项合成
 测试和Ruff/F821/F822通过；完整checkpoint相等来自实际数据重算。
+
+后续14:10证据更新：seed1完整配对6/8→5/8，raw4原成功丢失，附加量
+虽仅约0.00188Nm且未被限幅，但碰球前闭环轨迹明显分叉。故不把
+前述“更强或相关探索”直接当作下一默认干预，也不单纯扩大anchor KL。
+当前优先回到同世界G2/G3有界接近/接触可达性，详情见
+`mesh-cerebellar-first-retention-regression-20261018.zh-CN.md`与新catalog协议。

@@ -313,3 +313,26 @@ PID1929546，现在完整reference分配阶段。全新4body预算/1小时deadli
 需单独终态回读。不要重复分配第三个大模型，也不要因观察timeout
 重启任何已收费任务。性能基准与rejected-trial/传递诊断均已完成，
 无需再次运行；原始失败和旧源码保留，Goal未达成且active。
+
+## 14:14接续点：首seed明确退化，按证据排队下一科研阶段
+
+seed1全部8配对提交：6/8→5/8，0rescue、1regression（raw4）、0new unsafe。
+主worker仍按冻结次序执行seed2/3，不能重启或提前改门。raw4的原足触
+峰值102.8066N→0N；实际附加最大0.001880639Nm且未被限幅。冻结
+f74b8252诊断完整前25收据及原/新raw4对照，非神经commitment完全
+相同、初态相同、导航命令逐帧相同，碰球前闭环目标/身体已放大分叉。
+产物`rsi-mesh-torque-feedback-regression-prefix25-20261018.json`，
+封印8fc97624…；细节见first-retention-regression报告。没有新物理/训练。
+
+下一G2完整16次catalog硬球位对照已冻结7b112e83并通过零分配preflight，
+**尚未分配模型**。`rosclaw-mesh-contact-catalog-20261018.timer`已启用，
+等待原生准备非干扰worker成功终态＋56GiB available再接续；一次性
+launch marker防止静默重跑。配置deadline1792314563，旧16body预算
+不变，新generated入口关闭。启动pins使用v2（success-only门），v1保留。
+如前置失败先诊断，不自动启后续物理。不要误把该队列inactive当作
+已经执行或任务完成，也不要手动启动第三个全模型worker。
+
+两个真实活跃worker仍是主研究PID1760082、新原生验证PID1929546。
+14:11:26后者bundle ready，已开始第一个原入口g4控制。此四体结果
+未终态，之后需独立回读；catalog不使用未得资格的新绑定路径。
+当前全局目标仍active，尚无能力净增长，更没有可宣传球队视频。

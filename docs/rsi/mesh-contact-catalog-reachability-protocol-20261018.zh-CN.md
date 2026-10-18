@@ -27,9 +27,10 @@ Foundation→planner/encoder证据链全部复用，不造新训练框架。
 全部候选有界接口先静态预演；preflight零模型分配。
 
 4体准备优化研究释放槽位后才能分配本研究；独立控制默认**关闭**新
-generated binding入口，因此不依赖该性能优化的成功结果。不论该
-性能研究成功或失败，都不因此阻断足球研究，但必须MainPID=0且单元
-真实loaded/终态。最多两个本项目大模型worker，入场≥56GiB可用内存；
+generated binding入口，因此不采用该性能优化的未证实路径。自动接续
+只接受前置单元真实loaded、MainPID=0、inactive、Result=success；若其
+合同失败，必须先由Agent诊断，再按独立声明继续足球研究，不能盲目
+启动下一物理任务。最多两个本项目大模型worker，入场≥56GiB可用内存；
 MemoryHigh8G/Max12G/Swap4G、CPU150%、RuntimeMax2小时、Restart=no。
 固定绝对deadline在配置写入时声明，等待不自动延长。
 
@@ -49,3 +50,22 @@ encoder/240次planner复算，零优化。所有通过、球路失败、无触�
 当前44体三种子考试及终态审计完整继续，不因本协议改变候选、考试或
 预算；没有未来结果时不提前宣称全部seed失败。所有教师/晋升/硬件
 授权仍false。视频留待真实能力改善，不用新场景渲染掩盖负结果。
+
+## 已冻结并排队，不是已开始训练
+
+冻结源7b112e83969da4a15581e9efb0d4b9ddd6f4cbe7。
+实际preflight输出`MESH_CATALOG_16_JOBS_ALL_7_INTERFACES_ZERO_MODEL_ALLOCATIONS`，
+两项固定计划测试及Ruff/F821/F822通过。输出外置
+`rsi-mesh-contact-catalog-reachability-20261018`；配置
+`rsi-mesh-contact-catalog-reachability-config-20261018.json`，固定deadline
+1792314563（本地17:09:23），不因等待延长。
+
+用户级`rosclaw-mesh-contact-catalog-20261018.timer`已启用。实际验证前置
+PID1929546活跃时，ExecCondition退出1，尚无模型PID、输出root或启动
+marker，不占第三个模型槽位。自动接续实际使用更严格的success门，
+`rsi-mesh-contact-catalog-launch-pins-v2-20261018.json`；原v1声明保留，
+没有任何物理尝试或预算变动。一次性launch-attempted marker在入口
+守卫之前落盘，守卫/脚本失败后也不静默自动重跑。
+
+这让有限的下一科研阶段在已声明条件满足后可继续，而不是只有一个
+不断打印状态的监视器；但本阶段尚未采集，不可称已经学习或可达。
