@@ -24,7 +24,7 @@ from tests.rsi.test_mesh_contact_terminal_readback import fixture as original_fi
 from tests.rsi.test_mesh_contact_terminal_readback import write
 
 
-def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False):
+def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False, positive_lateral=False):
     original_fixture(tmp_path, monkeypatch, public_four=True)
     original = json.loads((tmp_path / "run/complete.json").read_text())
     root = tmp_path / "teacher"
@@ -101,7 +101,37 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False):
         from rosclaw_soccer.rsi.receding_teacher_scope import receding_contexts, scope_contract
 
         contexts = receding_contexts(plan)
-    spec = audit.bounded_profile("receding-catalog2-ten" if receding else "teacher-eighteen")
+    positive_scope = None
+    if positive_lateral:
+        from rosclaw_soccer.rsi.positive_lateral_episode_inputs import prospective_split
+        from rosclaw_soccer.rsi.positive_lateral_receding_scope import build_scope
+        from rosclaw_soccer.rsi.public_physics_option_planning import PublicPlanningContext
+
+        positive_scope = build_scope(plan.behavior_model_hash)
+        plan = PublicFirstTouchTrainingPlan(
+            tuple(positive_scope["source_plan"]["seeds"]), plan.behavior_model_hash, 19
+        )
+        contexts = tuple(
+            PublicPlanningContext(
+                c["context_index"],
+                c["source_group"],
+                c["source_context_id"],
+                c["source_seed"],
+                c["source_lane"],
+                c["sampling_seed"],
+                tuple(c["course"]),
+                c["perturbation_index"],
+            )
+            for c in positive_scope["contexts"]
+        )
+    profile = (
+        "positive-lateral-sixteen"
+        if positive_lateral
+        else "receding-catalog2-ten"
+        if receding
+        else "teacher-eighteen"
+    )
+    spec = audit.bounded_profile(profile, plan.behavior_model_hash)
     config = dict(
         source_root=str(tmp_path),
         core_root=str(tmp_path),
@@ -139,6 +169,58 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False):
             selected_option_index=2,
             neural_training_authorized=False,
             teacher_auto_admission=False,
+        )
+    if positive_lateral:
+        from rosclaw_soccer.rsi import positive_lateral_episode_inputs
+        from scripts import rsi_positive_lateral_physical_pilot as positive_pilot
+
+        config.update(
+            study_profile=profile,
+            behavior_model_hash=plan.behavior_model_hash,
+            groups=spec["groups"],
+            max_attempts=16,
+            new_physical_budget=16,
+            new_independent_cpu_budget=16,
+            combined_body_substep_budget=96000,
+            selected_option_index=2,
+            mode="SIM_ONLY",
+            generated_seed_episode_binding=True,
+            hardware_authorized=False,
+            promotion_authorized=False,
+            private_fresh_accessed=False,
+            neural_training_authorized=False,
+            teacher_auto_admission=False,
+            use_mesh_surface_swing=False,
+            use_contact_exit_torque_mpc=False,
+            use_directional_contact_compliance=False,
+            suppress_postcontact_swing_release=False,
+            required_receipt_witnesses=["intent_witness", "encoder_witness"],
+        )
+        registry_path = tmp_path / "positive-registry.json"
+        registry = write(
+            registry_path, dict(scope=positive_scope, scope_hash=positive_scope["scope_hash"])
+        )
+        config.update(
+            sampling_registry=str(registry_path),
+            sampling_registry_file_hash=audit.digest(registry_path),
+            sampling_registry_hash=registry["report_hash"],
+        )
+
+        # Separate registry/provenance tests cover these real contracts. This
+        # full-reader fixture mocks all numerical and old-source evidence.
+        def positive_inputs(*args, **kwargs):
+            if tamper == "positive_registry":
+                raise ValueError("synthetic missing registry authentication")
+            return plan, manifest, contexts
+
+        monkeypatch.setattr(positive_lateral_episode_inputs, "episode_inputs", positive_inputs)
+        monkeypatch.setattr(
+            positive_pilot,
+            "whole_predecessor",
+            lambda *a: (
+                dict(report_hash="previous"),
+                dict(report_hash="diagnostic", research_decision="retained"),
+            ),
         )
     write(config_path, config, key=None)
     reused = [
@@ -192,14 +274,39 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False):
                 if receding
                 else {}
             ),
+            **(
+                dict(
+                    source_plan=plan.contract(),
+                    scope_hash=positive_scope["scope_hash"],
+                    course_cluster_contract=positive_scope["cluster_accounting"],
+                    prospective_split=prospective_split(positive_scope),
+                    preceding_complete_hash="previous",
+                    preceding_diagnostic_hash="diagnostic",
+                    preceding_research_decision="retained",
+                )
+                if positive_lateral
+                else {}
+            ),
         ),
     )
+    if positive_lateral and tamper in (
+        "positive_split",
+        "positive_source_plan",
+        "positive_previous",
+    ):
+        if tamper == "positive_split":
+            declaration["prospective_split"]["train_source_seeds"].reverse()
+        elif tamper == "positive_source_plan":
+            declaration["source_plan"]["stream"] = 18
+        else:
+            declaration["preceding_research_decision"] = "invented"
+        declaration = write(root / "declaration.json", declaration)
     monkeypatch.setattr(
         first_touch_campaign_worker,
         "prepare",
         lambda p: (
             SimpleNamespace(PINS=pins, HEADS={}, stable=lambda: None),
-            None,
+            SimpleNamespace(MEAN=plan.behavior_model_hash) if positive_lateral else None,
             manifest,
             config,
         ),
@@ -276,6 +383,19 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False):
             commitment["bounded_control_profile"] = BoundedFirstTouchControl(
                 **candidate["parameters"]
             ).contract()
+        if positive_lateral:
+            commitment["generated_seed_episode_binding"] = dict(
+                schema="soccer.rsi.native_private_generated_episode_binding.v1",
+                seed=draw.sampling_seed,
+                full_external_sampling_view_restored_and_validated=True,
+                complete_generated_model_equals_external_view=True,
+                full_original_factory_constructor_retained=True,
+                sampling_law_changed=False,
+            )
+            if index == 0 and tamper == "positive_binding":
+                commitment["generated_seed_episode_binding"]["seed"] += 1
+            if index == 0 and tamper == "positive_mixed_intervention":
+                commitment["mesh_surface_swing"] = {}
         write(folder / "commitment.json", commitment, key=None)
         report = write(
             folder / "report.json",
@@ -318,6 +438,14 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False):
                 candidate=option,
                 context_hash=None if context is None else context.context_hash,
                 declaration_hash=declaration["report_hash"],
+                **(
+                    dict(
+                        source_plan_hash=plan.contract()["plan_hash"],
+                        prospective_split_hash=declaration["prospective_split"]["split_hash"],
+                    )
+                    if positive_lateral
+                    else {}
+                ),
             ),
         )
         write(
@@ -421,11 +549,13 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False):
     controls = (
         {r["pair_id"]: r["receipt"]["outcome"] for r in reused}
         if receding
+        else {}
+        if positive_lateral
         else {f"raw-{r['group']}": r["outcome"] for r in original["results"]}
     )
     evaluations = (
         {}
-        if receding
+        if receding or positive_lateral
         else {f"raw-{g}": r["outcome"] for g, r in zip((8, 56), selected, strict=True)}
     )
     for job, receipt in zip(spec["jobs"], receipts, strict=True):
@@ -451,6 +581,21 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False):
             hardware_authorized=False,
             promotion_authorized=False,
             **(dict(archived_c7_full_numeric_reproduction=True) if receding else {}),
+            **(
+                dict(
+                    new_independent_cpu_bodies=16,
+                    distinct_derived_course_count=8,
+                    source_scene_clusters=4,
+                    old_global_failures_retained_not_relabelled=True,
+                    source_plan_hash=plan.contract()["plan_hash"],
+                    prospective_split=declaration["prospective_split"],
+                    dataset_admission_authorized=False,
+                    neural_training_authorized=False,
+                    fresh_exam=False,
+                )
+                if positive_lateral
+                else {}
+            ),
         ),
     )
     monkeypatch.setattr(
@@ -465,7 +610,7 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False):
             "--output",
             str(output),
             "--profile",
-            "receding-catalog2-ten" if receding else "teacher-eighteen",
+            profile,
             "--upstream-audit-source",
             str(reader_source),
         ],

@@ -14,7 +14,20 @@ def digest(path):
         return "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def bounded_profile(profile):
+def bounded_profile(profile, behavior_model_hash=None):
+    if profile == "positive-lateral-sixteen":
+        from rosclaw_soccer.rsi.positive_lateral_receding_scope import build_scope
+
+        scope = build_scope(behavior_model_hash)
+        return dict(
+            count=16,
+            groups=[c["source_group"] for c in scope["contexts"]],
+            declaration_schema="soccer.rsi.positive_lateral_physical_declaration.v1",
+            complete_schema="soccer.rsi.positive_lateral_physical_complete.v1",
+            readback_schema="soccer.rsi.positive_lateral_physical_terminal_readback.v1",
+            phase="POSITIVE_LATERAL_PHYSICAL_COMPLETE_NOT_QUALIFIED_TEACHER",
+            jobs=scope["proposed_jobs"],
+        )
     if profile == "surface-receding-six":
         from rosclaw_soccer.rsi.receding_teacher_scope import SOURCE_GROUPS
         from rosclaw_soccer.rsi.surface_receding_evidence import surface_receding_jobs
@@ -412,14 +425,26 @@ def main():
             "surface-context-six",
             "receding-catalog2-ten",
             "surface-receding-six",
+            "positive-lateral-sixteen",
         ),
         default="contact-three",
     )
     args = parser.parse_args()
+    if args.profile == "positive-lateral-sixteen":
+        # The profile itself imports its deterministic source-plan builder.
+        # Bind the producer before that first package import, not only later
+        # when opening receipts. Do not reconstruct from a reviewer's package.
+        preliminary = json.loads(args.config.read_text())
+        sys.path[:0] = [
+            str(Path(preliminary["source_root"]) / "src"),
+            preliminary["source_root"],
+            str(Path(preliminary["core_root"]) / "src"),
+        ]
     public_four = args.profile == "original-public-four"
     teacher_screen = args.profile == "teacher-eighteen"
     receding = args.profile == "receding-catalog2-ten"
     surface_receding = args.profile == "surface-receding-six"
+    positive_lateral = args.profile == "positive-lateral-sixteen"
     torque_mpc = args.profile == "contact-exit-four"
     directional = args.profile == "directional-four"
     expansion = args.profile == "surface-context-six"
@@ -432,9 +457,13 @@ def main():
         "surface-seven",
         "surface-context-six",
     }
-    context_study = teacher_screen or release_ablation or receding or surface_receding
+    context_study = (
+        teacher_screen or release_ablation or receding or surface_receding or positive_lateral
+    )
     spec = (
-        bounded_profile(args.profile)
+        bounded_profile(
+            args.profile, json.loads(args.config.read_text()).get("behavior_model_hash")
+        )
         if args.profile
         in (
             "binding-four",
@@ -447,6 +476,7 @@ def main():
             "surface-context-six",
             "receding-catalog2-ten",
             "surface-receding-six",
+            "positive-lateral-sixteen",
         )
         else None
     )
@@ -631,6 +661,25 @@ def main():
         != {"intent_witness", "encoder_witness", "prefix_witness"}
     ):
         raise ValueError("exact six-course catalog2/material-point intervention required")
+    if positive_lateral:
+        from scripts.rsi_positive_lateral_physical_pilot import require_scope
+
+        require_scope(config)
+        if (
+            complete.get("new_independent_cpu_bodies") != 16
+            or complete.get("distinct_derived_course_count") != 8
+            or complete.get("source_scene_clusters") != 4
+            or complete.get("old_global_failures_retained_not_relabelled") is not True
+            or any(
+                complete.get(k) is not False
+                for k in (
+                    "dataset_admission_authorized",
+                    "neural_training_authorized",
+                    "fresh_exam",
+                )
+            )
+        ):
+            raise ValueError("whole sixteen-body cross-source development accounting required")
     if release_ablation and (
         args.upstream_audit_source is None
         or args.baseline_screen_readback is None
@@ -672,13 +721,40 @@ def main():
     prepared, preparation_was_persisted = None, False
     receding_reused, receding_archived = None, None
     surface_receding_baselines, surface_receding_none = None, None
+    positive_plan, positive_contexts, positive_registry = None, None, None
     if spec is not None:
         from rosclaw_soccer.rsi.first_touch_campaign_worker import prepare
         from rosclaw_soccer.rsi.reviewed_contact_world import ReviewedContactWorld
 
-        prepared, _, source_manifest, actual = prepare(args.config)
+        prepared, prepared_assets, source_manifest, actual = prepare(args.config)
         if actual != config:
             raise ValueError("same original preparation configuration required")
+        if positive_lateral:
+            from rosclaw_soccer.rsi.positive_lateral_episode_inputs import episode_inputs
+            from scripts.rsi_positive_lateral_physical_pilot import whole_predecessor
+
+            path = Path(config["sampling_registry"])
+            if digest(path) != config["sampling_registry_file_hash"]:
+                raise ValueError("original cross-source registry file changed")
+            positive_registry = sealed(path)
+            if config["behavior_model_hash"] != prepared_assets.MEAN:
+                raise ValueError("cross-source plan must retain original behavior identity")
+            positive_plan, source_manifest, positive_contexts = episode_inputs(
+                positive_registry,
+                expected_registry_hash=config["sampling_registry_hash"],
+                behavior_model_hash=prepared_assets.MEAN,
+                digest=digest,
+                pins=pins,
+            )
+            positive_previous, positive_diagnostic = whole_predecessor(config, source, sealed, pins)
+            if (
+                declaration.get("preceding_complete_hash") != positive_previous["report_hash"]
+                or declaration.get("preceding_diagnostic_hash")
+                != positive_diagnostic["report_hash"]
+                or declaration.get("preceding_research_decision")
+                != positive_diagnostic["research_decision"]
+            ):
+                raise ValueError("full preceding mechanism failures/diagnosis must remain bound")
         if receding:
             from rosclaw_soccer.rsi.receding_scope_evidence import load_scope_evidence
 
@@ -797,6 +873,7 @@ def main():
                 "surface-context-six",
                 "receding-catalog2-ten",
                 "surface-receding-six",
+                "positive-lateral-sixteen",
             )
             and declaration["options"] != catalog
         ):
@@ -858,6 +935,20 @@ def main():
                 != expected_world
             ):
                 raise ValueError("new world must bind actual report and commitment")
+        if positive_lateral and any(
+            key in doc
+            for doc in (report, commitment, receipt)
+            for key in (
+                "mesh_surface_swing",
+                "contact_exit_torque_mpc",
+                "directional_contact_compliance",
+                "swing_release_ablation",
+                "cerebellar_torque_contract",
+            )
+        ):
+            raise ValueError(
+                "cross-source replication cannot silently mix new contact interventions"
+            )
         if (
             report["report_hash"] != receipt["physical_report_hash"]
             or digest(Path(witnesses["world"]["path"])) != expected_world
@@ -1079,13 +1170,19 @@ def main():
             plan = PublicFirstTouchTrainingPlan(
                 tuple(range(20261060, 20261070)), view["mean_model"]["model_hash"], 18
             )
+            if positive_lateral:
+                if view["mean_model"]["model_hash"] != positive_plan.behavior_model_hash:
+                    raise ValueError("actual whole executed mean differs from new source plan")
+                plan = positive_plan
             group = spec["jobs"][index]["group"] if spec is not None else (4, 8, 32, 56)[index]
             draw = plan.draws()[group]
             planning = None
             if context_study:
                 from rosclaw_soccer.rsi.public_physics_option_planning import planning_contexts
 
-                if receding or surface_receding:
+                if positive_lateral:
+                    study_contexts = positive_contexts
+                elif receding or surface_receding:
                     from rosclaw_soccer.rsi.receding_teacher_scope import receding_contexts
 
                     study_contexts = receding_contexts(plan)
@@ -1105,7 +1202,7 @@ def main():
 
                 planning = (
                     next(c for c in study_contexts if c.source_group == group)
-                    if receding or surface_receding
+                    if receding or surface_receding or positive_lateral
                     else planning_contexts(plan)[intended["context_index"]]
                 )
                 validate_context_source(planning, plan, group=group)
@@ -1160,7 +1257,23 @@ def main():
                         )
                     expected_intent = dict(intended, declaration_hash=declaration["report_hash"])
                 else:
-                    if "generated_seed_episode_binding" in report:
+                    if positive_lateral:
+                        expected_tag = dict(
+                            schema="soccer.rsi.native_private_generated_episode_binding.v1",
+                            seed=draw.sampling_seed,
+                            full_external_sampling_view_restored_and_validated=True,
+                            complete_generated_model_equals_external_view=True,
+                            full_original_factory_constructor_retained=True,
+                            sampling_law_changed=False,
+                        )
+                        if any(
+                            doc.get("generated_seed_episode_binding") != expected_tag
+                            for doc in (report, commitment)
+                        ):
+                            raise ValueError(
+                                "actual generated seed binding must match new source draw"
+                            )
+                    elif "generated_seed_episode_binding" in report:
                         raise ValueError("catalog must retain original native binding path")
                     expected_intent = dict(
                         intended,
@@ -1173,6 +1286,11 @@ def main():
                         )
                     if release_ablation or surface_receding:
                         expected_intent["baseline_receipt_hash"] = baseline["receipt_hash"]
+                    if positive_lateral:
+                        expected_intent.update(
+                            source_plan_hash=positive_plan.contract()["plan_hash"],
+                            prospective_split_hash=declaration["prospective_split"]["split_hash"],
+                        )
                 if expected_candidate is None:
                     if (
                         report.get("bounded_control_profile") is not None
@@ -1367,6 +1485,44 @@ def main():
                 != complete["passing_option_indices_by_group"]
             ):
                 raise ValueError("whole independently reconstructed option outcome matrix differs")
+        elif positive_lateral:
+            from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
+            from rosclaw_soccer.rsi.positive_lateral_episode_inputs import prospective_split
+            from rosclaw_soccer.rsi.public_course_cluster_accounting import cluster_contract
+
+            controls, evaluations = {}, {}
+            for job, row in zip(spec["jobs"], rows, strict=True):
+                (controls if job["role"] == "control" else evaluations)[job["pair_id"]] = row[
+                    "outcome"
+                ]
+            paired = assess_pairs(controls, evaluations)
+            clusters = cluster_contract(positive_plan, positive_contexts)
+            split = prospective_split(positive_registry["scope"])
+            if (
+                complete.get("paired_development") != paired
+                or declaration.get("source_plan")
+                != json.loads(json.dumps(positive_plan.contract()))
+                or declaration.get("scope_hash") != positive_registry["scope_hash"]
+                or declaration.get("course_cluster_contract") != clusters
+                or any(doc.get("prospective_split") != split for doc in (declaration, complete))
+                or complete.get("source_plan_hash") != positive_plan.contract()["plan_hash"]
+            ):
+                raise ValueError(
+                    "all eight physical pairs and prospective cluster split must reconstruct"
+                )
+            report.update(
+                paired_development=paired,
+                distinct_derived_course_count=8,
+                source_scene_clusters=4,
+                course_cluster_contract=clusters,
+                prospective_split=split,
+                source_plan_hash=positive_plan.contract()["plan_hash"],
+                old_global_failures_retained_not_relabelled=True,
+                dataset_admission_authorized=False,
+                neural_training_authorized=False,
+                fresh_exam=False,
+                generated_seed_binding_in_all_bodies=True,
+            )
         elif surface_receding:
             from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
             from rosclaw_soccer.rsi.public_course_cluster_accounting import cluster_contract

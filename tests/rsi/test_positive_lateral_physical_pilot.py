@@ -20,6 +20,8 @@ from tests.rsi.test_surface_receding_diagnostics import dense_fixture
 
 def config():
     return dict(
+        behavior_model_hash="sha256:" + "a" * 64,
+        groups=[12, 13, 28, 29, 76, 77, 92, 93],
         study_profile="positive-lateral-sixteen",
         mode="SIM_ONLY",
         max_attempts=16,

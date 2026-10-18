@@ -24,6 +24,7 @@ from rosclaw_soccer.rsi.first_touch_campaign_worker import (
 from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
 from rosclaw_soccer.rsi.portfolio_physical_study import validate_option
 from rosclaw_soccer.rsi.positive_lateral_episode_inputs import episode_inputs, prospective_split
+from rosclaw_soccer.rsi.positive_lateral_receding_scope import build_scope
 from rosclaw_soccer.rsi.receding_scope_evidence import authenticate_receipt
 from rosclaw_soccer.rsi.reviewed_contact_world import ReviewedContactWorld
 from rosclaw_soccer.rsi.sonic_encoder_reference_audit import audit_encoder_reference_consumption
@@ -37,6 +38,7 @@ from scripts.rsi_stage_release_contact_replay import digest, require_terminal
 
 def require_scope(cfg):
     """Separate finite declaration; old studies are not implicitly extended."""
+    scope = build_scope(cfg["behavior_model_hash"])
     if (
         cfg.get("study_profile") != "positive-lateral-sixteen"
         or cfg.get("mode") != "SIM_ONLY"
@@ -66,6 +68,7 @@ def require_scope(cfg):
             )
         )
         or cfg.get("predecessor") is not None
+        or cfg.get("groups") != [c["source_group"] for c in scope["contexts"]]
         or cfg.get("required_receipt_witnesses") != ["intent_witness", "encoder_witness"]
     ):
         raise ValueError("fixed original-body-origin catalog2/None sixteen-body SIM study required")
@@ -155,7 +158,7 @@ def main():
     ):
         raise ValueError("unused output and exact frozen physical pilot source required")
     p, assets, _, actual = prepare(args.config)
-    if actual != cfg:
+    if actual != cfg or cfg["behavior_model_hash"] != assets.MEAN:
         raise ValueError("actual preparation must match declaration")
     pins = {str(args.config): digest(args.config)}
     for project in (source, core):
@@ -211,6 +214,7 @@ def main():
         scope_hash=registry["scope_hash"],
         prospective_split=split,
         course_cluster_contract=registry["scope"]["cluster_accounting"],
+        contexts=[dict(context_hash=c.context_hash, course=list(c.course)) for c in contexts],
         preceding_complete_hash=prior["report_hash"],
         preceding_diagnostic_hash=diagnostic["report_hash"],
         preceding_research_decision=diagnostic["research_decision"],
