@@ -131,8 +131,44 @@ def main():
         )
     ):
         raise ValueError("unused once-only stage artifacts required")
-    for unit in (cfg["producer_unit"], cfg["audit_unit"]):
-        require_terminal(unit)
+    collected_handoff = None
+    if cfg.get("collected_unit_journal") is not None:
+        from rosclaw_soccer.rsi.collected_sim_stage_evidence import verify_collected_sim_journal
+
+        path = Path(cfg["collected_unit_journal"])
+        if digest(path) != cfg["collected_unit_journal_hash"]:
+            raise ValueError("exact collected-worker journal bytes required")
+        status = subprocess.check_output(
+            [
+                "systemctl",
+                "--user",
+                "show",
+                cfg["producer_unit"],
+                "-p",
+                "LoadState",
+                "-p",
+                "ActiveState",
+                "-p",
+                "MainPID",
+            ],
+            text=True,
+        )
+        collected_handoff = verify_collected_sim_journal(
+            json.loads(path.read_text()),
+            status=dict(line.split("=", 1) for line in status.splitlines()),
+            unit=cfg["producer_unit"],
+            expected_command=[
+                sys.executable,
+                "-u",
+                "scripts/rsi_swing_release_ablation_pilot.py",
+                "--config",
+                cfg["producer_config"],
+            ],
+            terminal_phase="CONTACT_EXIT_TORQUE_MPC_COMPLETE_NOT_QUALIFIED_TEACHER",
+        )
+    else:
+        require_terminal(cfg["producer_unit"])
+    require_terminal(cfg["audit_unit"])
     pins = {str(args.config): digest(args.config)}
     for name in ("stage", "replay", "metrics"):
         source = Path(cfg[name + "_source"])
@@ -165,6 +201,10 @@ def main():
     declaration = sealed(root / "declaration.json")
     complete = sealed(root / "complete.json")
     readback = sealed(Path(cfg["readback"]))
+    if collected_handoff is not None:
+        if readback.get("collected_sim_stage_handoff") != collected_handoff:
+            raise ValueError("whole audit must authenticate the same collected-worker handoff")
+        pins[cfg["collected_unit_journal"]] = cfg["collected_unit_journal_hash"]
     require_four_endpoints(producer, declaration, complete, readback)
     diagnostic_kind = (
         "contact_exit_mpc" if producer.get("use_contact_exit_torque_mpc", False) else "release"

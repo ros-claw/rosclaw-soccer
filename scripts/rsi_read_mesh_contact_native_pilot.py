@@ -216,6 +216,8 @@ def main():
     parser.add_argument("--upstream-audit-source", type=Path)
     parser.add_argument("--baseline-screen-readback", type=Path)
     parser.add_argument("--baseline-screen-audit-source", type=Path)
+    parser.add_argument("--collected-unit-journal", type=Path)
+    parser.add_argument("--collected-unit-journal-hash")
     parser.add_argument(
         "--profile",
         choices=(
@@ -265,7 +267,30 @@ def main():
         ],
         text=True,
     )
-    if set(status.splitlines()) != {
+    collected_handoff = None
+    if args.collected_unit_journal is not None:
+        from rosclaw_soccer.rsi.collected_sim_stage_evidence import verify_collected_sim_journal
+
+        if (
+            not torque_mpc
+            or digest(args.collected_unit_journal) != args.collected_unit_journal_hash
+        ):
+            raise ValueError("explicit pinned collected MPC journal required")
+        records = json.loads(args.collected_unit_journal.read_text())
+        collected_handoff = verify_collected_sim_journal(
+            records,
+            status=dict(line.split("=", 1) for line in status.splitlines()),
+            unit=args.unit,
+            expected_command=[
+                sys.executable,
+                "-u",
+                "scripts/rsi_swing_release_ablation_pilot.py",
+                "--config",
+                str(args.config),
+            ],
+            terminal_phase=spec["phase"],
+        )
+    elif set(status.splitlines()) != {
         "MainPID=0",
         "ActiveState=inactive",
         "Result=success",
@@ -370,6 +395,8 @@ def main():
     if any(k not in declaration or declaration[k] != v for k, v in config.items()):
         raise ValueError("same frozen configuration required")
     pins = dict(declaration["input_file_hashes"])
+    if collected_handoff is not None:
+        pins[str(args.collected_unit_journal)] = args.collected_unit_journal_hash
     prepared, preparation_was_persisted = None, False
     if spec is not None:
         from rosclaw_soccer.rsi.first_touch_campaign_worker import prepare
@@ -907,6 +934,12 @@ def main():
         hardware_authorized=False,
         promotion_authorized=False,
     )
+    if collected_handoff is not None:
+        report["collected_sim_stage_handoff"] = collected_handoff
+        report["worker_os_exit_code_proven"] = False
+        report["collected_unit_journal"] = dict(
+            path=str(args.collected_unit_journal), sha256=args.collected_unit_journal_hash
+        )
     if public_four or spec is not None:
         report.update(
             source_native_bodies=count,
