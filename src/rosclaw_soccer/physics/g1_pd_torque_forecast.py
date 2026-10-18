@@ -43,6 +43,7 @@ class G1PDTorqueForecaster:
         kp: np.ndarray[Any, Any],
         kd: np.ndarray[Any, Any],
         max_forecast_steps: int,
+        coupled_stiffness_nm_per_rad: np.ndarray[Any, Any] | None = None,
     ) -> None:
         if (
             not isinstance(model, mujoco.MjModel)
@@ -78,6 +79,24 @@ class G1PDTorqueForecaster:
             )
         self._model = model
         self._kp, self._kd = kp.copy(), kd.copy()
+        self._coupled_stiffness: np.ndarray[Any, Any] | None = None
+        if coupled_stiffness_nm_per_rad is not None:
+            matrix = coupled_stiffness_nm_per_rad
+            if (
+                not isinstance(matrix, np.ndarray)
+                or matrix.shape != (29, 29)
+                or matrix.dtype != np.float64
+                or not np.isfinite(matrix).all()
+                or not np.array_equal(matrix, matrix.T)
+            ):
+                raise ValueError("finite symmetric explicit SIM stiffness matrix required")
+            relative = matrix / np.sqrt(kp)[:, None] / np.sqrt(kp)[None, :]
+            eigenvalues = np.linalg.eigvalsh(relative)
+            if eigenvalues.min() < 0.5 - 1e-10 or eigenvalues.max() > 1.0 + 1e-10:
+                raise ValueError("explicit matrix must contract original stiffness by at most half")
+            if not np.array_equal(matrix, np.diag(kp)):
+                self._coupled_stiffness = matrix.copy()
+                self._coupled_stiffness.flags.writeable = False
         self._scratch = mujoco.MjData(model)
         joints = [int(model.joint(n).id) for n in G1_DDS_JOINT_NAMES]
         self._qi = [int(model.jnt_qposadr[j]) for j in joints]
@@ -168,7 +187,13 @@ class G1PDTorqueForecaster:
         )
         warning_counts = tuple(int(d.warning[w].number) for w in bad_warnings)
         for _ in range(10):
-            raw = (target_rad - d.qpos[self._qi]) * self._kp - d.qvel[self._vi] * self._kd
+            if self._coupled_stiffness is None:
+                raw = (target_rad - d.qpos[self._qi]) * self._kp - d.qvel[self._vi] * self._kd
+            else:
+                raw = (
+                    self._coupled_stiffness @ (target_rad - d.qpos[self._qi])
+                    - d.qvel[self._vi] * self._kd
+                )
             # Preserve the old PD arithmetic exactly for the all-zero variant.
             requested = raw + offset_nm if np.any(offset_nm) else raw
             tau = np.clip(requested, -self._limits, self._limits)

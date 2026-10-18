@@ -117,3 +117,68 @@ def test_nonzero_offset_changes_own_forecast_not_the_next_candidate(structural_m
         != nonzero.canonical_qvel_after_substep.tobytes()
     )
     assert base.end_integration_state.tobytes() == again.end_integration_state.tobytes()
+
+
+def matrix_forecaster(structural_model, matrix):
+    model, world = structural_model
+    return G1PDTorqueForecaster(
+        model,
+        expected_world_hash=world,
+        kp=np.full(29, 10.0),
+        kd=np.full(29, 0.2),
+        max_forecast_steps=10,
+        coupled_stiffness_nm_per_rad=matrix,
+    )
+
+
+def test_identity_matrix_optional_path_keeps_parent_bytes(structural_model):
+    model, _ = structural_model
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    a = forecaster(structural_model).forecast(data, np.full(29, 0.1), np.zeros(29))
+    b = matrix_forecaster(structural_model, np.eye(29) * 10).forecast(
+        data, np.full(29, 0.1), np.zeros(29)
+    )
+    assert a.end_integration_state.tobytes() == b.end_integration_state.tobytes()
+    assert a.applied_control_nm.tobytes() == b.applied_control_nm.tobytes()
+
+
+def test_coupled_stiffness_matches_own_actual_control_and_does_not_alias_caller(structural_model):
+    model, _ = structural_model
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    vector = np.zeros(29)
+    vector[:2] = np.sqrt(0.5)
+    matrix = np.eye(29) * 10 - 5 * np.outer(vector, vector)
+    expected_matrix = matrix.copy()
+    f = matrix_forecaster(structural_model, matrix)
+    matrix[:] = 999  # Caller cannot mutate the bound control law.
+    target = np.full(29, 0.1)
+    forecast = f.forecast(data, target, np.zeros(29))
+    actual = mujoco.MjData(model)
+    mujoco.mj_copyData(actual, model, data)
+    for step in range(10):
+        requested = expected_matrix @ (target - actual.qpos[7:36]) - actual.qvel[6:35] * 0.2
+        assert requested.tobytes() == forecast.requested_pd_torque_nm[step].tobytes()
+        actual.ctrl[:] = forecast.applied_control_nm[step]
+        mujoco.mj_step(model, actual)
+    end = np.empty_like(forecast.end_integration_state)
+    mujoco.mj_getState(model, actual, end, mujoco.mjtState.mjSTATE_INTEGRATION)
+    assert end.tobytes() == forecast.end_integration_state.tobytes()
+
+
+@pytest.mark.parametrize("kind", ["shape", "asymmetry", "nan", "too_soft", "stiffer"])
+def test_unbounded_or_non_symmetric_matrix_rejected(structural_model, kind):
+    matrix = np.eye(29) * 10
+    if kind == "shape":
+        matrix = matrix[:-1]
+    elif kind == "asymmetry":
+        matrix[0, 1] = 0.1
+    elif kind == "nan":
+        matrix[0, 0] = np.nan
+    elif kind == "too_soft":
+        matrix[0, 0] = 4.9
+    else:
+        matrix[0, 0] = 10.1
+    with pytest.raises(ValueError):
+        matrix_forecaster(structural_model, matrix)
