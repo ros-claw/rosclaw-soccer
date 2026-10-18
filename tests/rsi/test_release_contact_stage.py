@@ -4,7 +4,7 @@ import copy
 
 import pytest
 
-from scripts.rsi_stage_release_contact_replay import JOBS, require_four_endpoints
+from scripts.rsi_stage_release_contact_replay import JOBS, expected_jobs, require_four_endpoints
 
 
 def fixture():
@@ -52,6 +52,45 @@ def test_all_four_failures_are_legitimate_diagnostic_inputs():
     args = fixture()
     assert args[3]["rows"][2]["outcome"]["safe"] is False
     require_four_endpoints(*args)
+
+
+def mpc_fixture():
+    args = fixture()
+    cfg, declaration, complete, readback = args
+    cfg.update(use_contact_exit_torque_mpc=True, suppress_postcontact_swing_release=False)
+    jobs = expected_jobs(cfg)
+    for document, key in ((declaration, "jobs"), (complete, "results"), (readback, "rows")):
+        for row, job in zip(document[key], jobs, strict=True):
+            row["job"] = job
+    complete["schema"] = "soccer.rsi.contact_exit_torque_mpc_pilot_complete.v1"
+    readback["schema"] = "soccer.rsi.contact_exit_torque_mpc_terminal_readback.v1"
+    del readback["actual_postcontact_taskspace_increment_exactly_zero"]
+    return args
+
+
+def test_all_four_mpc_endpoints_use_original_release_not_zero_release_claim():
+    args = mpc_fixture()
+    assert args[3]["rows"][2]["outcome"]["safe"] is False
+    require_four_endpoints(*args)
+
+
+@pytest.mark.parametrize("tamper", ["jobs", "schema", "mixed", "flag_type", "partial", "outcome"])
+def test_mpc_diagnostic_refuses_retagged_partial_or_mixed_studies(tamper):
+    args = mpc_fixture()
+    if tamper == "jobs":
+        args[2]["results"][0]["job"] = JOBS[0]
+    elif tamper == "schema":
+        args[3]["schema"] = "soccer.rsi.swing_release_ablation_terminal_readback.v1"
+    elif tamper == "mixed":
+        args[0]["suppress_postcontact_swing_release"] = True
+    elif tamper == "flag_type":
+        args[0]["use_contact_exit_torque_mpc"] = 1
+    elif tamper == "partial":
+        args[3]["rows"].pop()
+    else:
+        args[3]["rows"][2]["outcome"]["safe"] = True
+    with pytest.raises(ValueError):
+        require_four_endpoints(*args)
 
 
 @pytest.mark.parametrize(

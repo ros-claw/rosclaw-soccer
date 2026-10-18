@@ -19,6 +19,17 @@ from scripts.rsi_atomic_artifacts import write_once
 JOBS = tuple(f"release-zero-{p}" for p in ("raw-8", "raw-56", "context-0", "context-1"))
 
 
+def expected_jobs(config):
+    flag = config.get("use_contact_exit_torque_mpc", False)
+    if type(flag) is not bool:
+        raise ValueError("explicit boolean contact-exit diagnostic required")
+    return (
+        tuple(f"contact-exit-{p}" for p in ("raw-8", "raw-56", "context-0", "context-1"))
+        if flag
+        else JOBS
+    )
+
+
 def digest(path):
     with Path(path).open("rb") as stream:
         return "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
@@ -52,6 +63,17 @@ def require_terminal(unit):
 
 
 def require_four_endpoints(config, declaration, complete, readback):
+    jobs = expected_jobs(config)
+    torque_mpc = config.get("use_contact_exit_torque_mpc", False)
+    kind = "contact_exit_torque_mpc" if torque_mpc else "swing_release_ablation"
+    flags = [
+        "whole_input_and_witness_files_verified",
+        "shared_payload_logical_seals_rebuilt",
+        "prior_independent_replays_authenticated",
+        "all_original_first_contact_prefixes_bit_equal",
+    ]
+    if not torque_mpc:
+        flags.append("actual_postcontact_taskspace_increment_exactly_zero")
     if (
         config.get("mode") != "SIM_ONLY"
         or any(
@@ -60,28 +82,19 @@ def require_four_endpoints(config, declaration, complete, readback):
         )
         or config.get("max_attempts") != 4
         or config.get("new_physical_budget") != 4
-        or config.get("suppress_postcontact_swing_release") is not True
-        or complete.get("schema") != "soccer.rsi.swing_release_ablation_pilot_complete.v1"
-        or readback.get("schema") != "soccer.rsi.swing_release_ablation_terminal_readback.v1"
+        or config.get("suppress_postcontact_swing_release") is not (not torque_mpc)
+        or complete.get("schema") != f"soccer.rsi.{kind}_pilot_complete.v1"
+        or readback.get("schema") != f"soccer.rsi.{kind}_terminal_readback.v1"
         or complete.get("declaration_hash") != declaration["report_hash"]
         or readback.get("complete_hash") != complete["report_hash"]
         or readback.get("source_native_bodies") != 4
         or complete.get("native_substeps") != 12000
         or complete.get("independent_cpu_substeps") != 12000
         or complete.get("new_optimizer_updates") != 0
-        or tuple(j["job"] for j in declaration["jobs"]) != JOBS
-        or tuple(r["job"] for r in complete["results"]) != JOBS
-        or tuple(r["job"] for r in readback["rows"]) != JOBS
-        or any(
-            readback.get(k) is not True
-            for k in (
-                "whole_input_and_witness_files_verified",
-                "shared_payload_logical_seals_rebuilt",
-                "prior_independent_replays_authenticated",
-                "all_original_first_contact_prefixes_bit_equal",
-                "actual_postcontact_taskspace_increment_exactly_zero",
-            )
-        )
+        or tuple(j["job"] for j in declaration["jobs"]) != jobs
+        or tuple(r["job"] for r in complete["results"]) != jobs
+        or tuple(r["job"] for r in readback["rows"]) != jobs
+        or any(readback.get(k) is not True for k in flags)
         or any(
             readback.get(k) is not False
             for k in (
@@ -153,11 +166,14 @@ def main():
     complete = sealed(root / "complete.json")
     readback = sealed(Path(cfg["readback"]))
     require_four_endpoints(producer, declaration, complete, readback)
+    diagnostic_kind = (
+        "contact_exit_mpc" if producer.get("use_contact_exit_torque_mpc", False) else "release"
+    )
     if readback["reader_source_hash"] != digest(cfg["audit_source"]):
         raise ValueError("exact independently frozen terminal reader required")
     pins[cfg["audit_source"]] = digest(cfg["audit_source"])
     cases = []
-    for index, job in enumerate(JOBS):
+    for index, job in enumerate(expected_jobs(producer)):
         path = root / f"receipt-{index:04d}.json"
         receipt = sealed(path, "receipt_hash")
         if receipt != complete["results"][index]:
@@ -186,7 +202,7 @@ def main():
     write_once(
         start,
         dict(
-            schema="soccer.rsi.release_contact_diagnostic_started.v1",
+            schema=f"soccer.rsi.{diagnostic_kind}_contact_diagnostic_started.v1",
             input_file_hashes=pins,
             upstream_readback_hash=readback["report_hash"],
             automatic_retry_authorized=False,
@@ -230,7 +246,7 @@ def main():
         if any(digest(p) != h for p, h in pins.items()):
             raise ValueError("stage/source/input bytes changed")
         result = dict(
-            schema="soccer.rsi.release_contact_diagnostic_complete.v1",
+            schema=f"soccer.rsi.{diagnostic_kind}_contact_diagnostic_complete.v1",
             upstream_readback_hash=readback["report_hash"],
             replay_complete_hash=replay["report_hash"],
             metrics_hash=metrics["report_hash"],
@@ -243,7 +259,12 @@ def main():
         )
         result["report_hash"] = hash_json(result)
         write_once(Path(cfg["complete_path"]), result)
-        print("RELEASE_CONTACT_DIAGNOSTIC_COMPLETE", result["report_hash"], flush=True)
+        print(
+            diagnostic_kind.upper(),
+            "CONTACT_DIAGNOSTIC_COMPLETE",
+            result["report_hash"],
+            flush=True,
+        )
     except BaseException as error:
         write_once(
             start.with_suffix(".failure.json"),
