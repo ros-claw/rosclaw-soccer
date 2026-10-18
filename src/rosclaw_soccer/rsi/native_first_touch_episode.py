@@ -77,8 +77,27 @@ def run_native_first_touch_episode(
     foundation_approach_probe: bool = False,
     reference_height_probe_m: float | None = None,
     record_default_planner_events: bool = False,
+    cerebellar_model: dict[str, Any] | None = None,
+    cerebellar_sampling_seed: int | None = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
+    from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
+
+    validate_native_request(
+        cerebellar_model,
+        cerebellar_sampling_seed,
+        partition=partition,
+        captured=getattr(args, "record_foundation_observation", False),
+        foundation_only=getattr(args, "foundation_only", False),
+        recurrent_factory=recurrent_sampling_factory,
+        mixed_probe=(
+            postcontact_profile is not None
+            or locomotion_mode_probe is not None
+            or reference_height_probe_m is not None
+            or foundation_approach_probe is not False
+            or getattr(args, "body_response_bundle", None) is not None
+        ),
+    )
     if type(record_default_planner_events) is not bool or (
         record_default_planner_events and locomotion_mode_probe is not None
     ):
@@ -827,6 +846,17 @@ def run_native_first_touch_episode(
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    cerebellar = None
+    if cerebellar_model is not None:
+        from rosclaw_soccer.rsi.native_cerebellar_torque import NativeCerebellarTorque
+
+        cerebellar = NativeCerebellarTorque(
+            cerebellar_model,
+            world_hash=commitment["compiled_model_hash"],
+            sampling_seed=cerebellar_sampling_seed,
+        )
+        commitment["schema"] = "soccer.rsi.cpu_motor_transfer.v2"
+        commitment["cerebellar_torque_contract"] = cerebellar.contract()
     observation_contract = make_observation_contract(
         args.root_velocity_reference, args.observation_snapshot
     )
@@ -945,6 +975,10 @@ def run_native_first_touch_episode(
     if body_guidance is not None:
         history.update({k: [] for k in ("body_response_applied_increment", "body_response_status")})
     tracker = None
+    if cerebellar is not None:
+        from rosclaw_soccer.rsi.native_cerebellar_torque import WIDTHS as CEREBELLAR_WIDTHS
+
+        history.update({name: [] for name in CEREBELLAR_WIDTHS})
     if control_profile is not None:
         from rosclaw_soccer.rsi.foundation_only_action_audit import require_bounded_capture_decoder
 
@@ -1227,6 +1261,7 @@ def run_native_first_touch_episode(
         requested_torques = []
         actual_forces = []
         pelvis_samples = []
+        cerebellar_samples: list[dict[str, np.ndarray]] = []
         for _ in range(10):
             requested_torque = (target - data.qpos[qi]) * navigation.backend.kp - data.qvel[
                 vi
@@ -1236,6 +1271,17 @@ def run_native_first_touch_episode(
                 -np.asarray(G1_HARD_TORQUE_LIMITS),
                 np.asarray(G1_HARD_TORQUE_LIMITS),
             )
+            if cerebellar is not None:
+                current_qpos = np.concatenate(
+                    (data.qpos[:7], data.qpos[qi], data.qpos[bq : bq + 7])
+                )
+                current_qvel = np.concatenate(
+                    (data.qvel[:6], data.qvel[vi], data.qvel[bv : bv + 6])
+                )
+                torque, cerebellar_sample = cerebellar.advance(
+                    current_qpos, current_qvel, target, requested_torque
+                )
+                cerebellar_samples.append(cerebellar_sample)
             data.ctrl[ai] = torque
             torques.append(torque.copy())
             if control_profile is not None:
@@ -1265,6 +1311,11 @@ def run_native_first_touch_episode(
             motor_contact_delta = previous.copy()
         if control_profile is not None:
             history["pd_requested_torque_nm"].append(np.asarray(requested_torques)[None])
+        if cerebellar is not None:
+            for name in CEREBELLAR_WIDTHS:
+                history[name].append(
+                    np.asarray([sample[name] for sample in cerebellar_samples])[None]
+                )
         history["force_n"].append(forces[None])
         history["ball_position_after_step_m"].append(data.xpos[ball].copy()[None])
         history["torque_nm"].append(np.asarray(torques)[None])
@@ -1278,6 +1329,11 @@ def run_native_first_touch_episode(
     ):
         raise ValueError("bounded control profile changed during the episode")
     trace = args.output_root / "physical_trace.npz"
+    if cerebellar is not None and (
+        cerebellar.calls != 3000
+        or cerebellar.contract() != commitment["cerebellar_torque_contract"]
+    ):
+        raise ValueError("whole unchanged neural torque episode and 3000 substep calls required")
     arrays: dict[str, Any] = {k: np.asarray(v) for k, v in history.items()}
     if args.record_foundation_observation:
         from rosclaw_soccer.rsi.foundation_observation_capture import validate_capture

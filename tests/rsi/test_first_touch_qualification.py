@@ -81,6 +81,38 @@ def test_quality_true_cannot_promote_failed_ball_outcome():
         require_first_touch_qualification(review, foundation, outcome)
 
 
+@pytest.mark.parametrize("draws", [0, 3000])
+def test_explicit_neural_torque_model_requires_whole_independent_review(draws):
+    review, foundation, outcome = fixture()
+    model_hash = "sha256:" + "a" * 64
+    review.update(
+        cerebellar_model_hash=model_hash,
+        actual_cerebellar_inferences_reconstructed=3000,
+        actual_cerebellar_sampling_draws_reconstructed=draws,
+        cerebellar_actual_pd_plus_residual_torque_reconstructed=True,
+    )
+    result = require_first_touch_qualification(
+        review,
+        foundation,
+        outcome,
+        cerebellar_model_hash=model_hash,
+        cerebellar_sampling_draws=draws,
+    )
+    assert result["m0_task_pass"]
+    assert result["cerebellar_model_hash"] == model_hash
+    with pytest.raises(ValueError, match="unexpected neural"):
+        require_first_touch_qualification(review, foundation, outcome)
+    review["actual_cerebellar_inferences_reconstructed"] = 2999
+    with pytest.raises(ValueError, match="whole actual neural"):
+        require_first_touch_qualification(
+            review,
+            foundation,
+            outcome,
+            cerebellar_model_hash=model_hash,
+            cerebellar_sampling_draws=draws,
+        )
+
+
 @pytest.mark.parametrize("field", ["physical_substeps", "safety_passed", "minimum_pelvis_z_m"])
 def test_missing_evidence_rejected(field):
     review, foundation, outcome = fixture()

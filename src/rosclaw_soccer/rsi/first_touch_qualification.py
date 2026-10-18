@@ -6,13 +6,19 @@ infrastructure failure. Callers still authenticate/recompute both reviews.
 """
 
 import math
+import re
 from typing import Any
 
 from rosclaw_soccer.rsi.first_touch_outcome import FirstTouchOutcome, outcome_contract
 
 
 def require_first_touch_qualification(
-    review: dict[str, Any], foundation: dict[str, Any], outcome: FirstTouchOutcome
+    review: dict[str, Any],
+    foundation: dict[str, Any],
+    outcome: FirstTouchOutcome,
+    *,
+    cerebellar_model_hash: str | None = None,
+    cerebellar_sampling_draws: int | None = None,
 ) -> dict[str, Any]:
     """Validate counts and label composition, never authorize execution."""
     if (
@@ -21,6 +27,28 @@ def require_first_touch_qualification(
         or type(outcome) is not FirstTouchOutcome
     ):
         raise ValueError("typed replay reviews and primitive M0 outcome required")
+    if cerebellar_model_hash is None:
+        if cerebellar_sampling_draws is not None or any(
+            key.startswith("cerebellar_") or key.startswith("actual_cerebellar_") for key in review
+        ):
+            raise ValueError(
+                "unexpected neural torque layer requires explicit qualification intent"
+            )
+    elif (
+        type(cerebellar_model_hash) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", cerebellar_model_hash) is None
+        or type(cerebellar_sampling_draws) is not int
+        or cerebellar_sampling_draws not in (0, 3000)
+        or review.get("cerebellar_model_hash") != cerebellar_model_hash
+        or type(review.get("actual_cerebellar_inferences_reconstructed")) is not int
+        or review["actual_cerebellar_inferences_reconstructed"] != 3000
+        or type(review.get("actual_cerebellar_sampling_draws_reconstructed")) is not int
+        or review["actual_cerebellar_sampling_draws_reconstructed"] != cerebellar_sampling_draws
+        or review.get("cerebellar_actual_pd_plus_residual_torque_reconstructed") is not True
+    ):
+        raise ValueError(
+            "whole actual neural torque inference, sampling and dynamics qualification required"
+        )
     for document, key, expected in (
         (review, "physical_substeps", 3000),
         (review, "actual_recurrent_sampling_draws_reconstructed", 270),
@@ -46,7 +74,7 @@ def require_first_touch_qualification(
     combined = review["high_quality"] and review["safety_passed"]
     if combined is not outcome.task_pass:
         raise ValueError("independent CPU quality plus safety differs from primitive M0 outcome")
-    return dict(
+    result = dict(
         schema="soccer.rsi.first_touch_qualification_alignment.v1",
         legacy_cpu_ball_quality=review["high_quality"],
         independent_cpu_pelvis_safety=review["safety_passed"],
@@ -58,3 +86,7 @@ def require_first_touch_qualification(
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if cerebellar_model_hash is not None:
+        result["cerebellar_model_hash"] = cerebellar_model_hash
+        result["cerebellar_sampling_draws"] = cerebellar_sampling_draws
+    return result

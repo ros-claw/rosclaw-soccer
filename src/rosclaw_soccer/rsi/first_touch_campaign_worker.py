@@ -590,6 +590,8 @@ def qualified_episode(
     locomotion_mode_probe: int | None = None,
     planning_context: "PublicPlanningContext | None" = None,
     planning_stage: str = "PLANNING_SIMULATION",
+    cerebellar_model: dict[str, Any] | None = None,
+    cerebellar_sampling_seed: int | None = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -717,6 +719,8 @@ def qualified_episode(
         locomotion_mode_probe=locomotion_mode_probe,
         record_default_planner_events=planning_context is not None
         and locomotion_mode_probe is None,
+        cerebellar_model=cerebellar_model,
+        cerebellar_sampling_seed=cerebellar_sampling_seed,
     )
     report = (
         _sealed(folder / "report.json")
@@ -745,11 +749,15 @@ def qualified_episode(
                 for k in ("canonical_qpos", "canonical_qvel")
             ):
                 raise ValueError("paired initial physical state changed")
-            if candidate is None and (
-                set(trace) != set(old.files)
-                or any(
-                    trace[k].dtype != old[k].dtype or not np.array_equal(trace[k], old[k])
-                    for k in trace
+            if (
+                candidate is None
+                and cerebellar_model is None
+                and (
+                    set(trace) != set(old.files)
+                    or any(
+                        trace[k].dtype != old[k].dtype or not np.array_equal(trace[k], old[k])
+                        for k in trace
+                    )
                 )
             ):
                 raise ValueError("all28 legacy control arrays must exactly reproduce")
@@ -820,7 +828,25 @@ def qualified_episode(
     validate_measured_history(trace)
     foundation = auditor.recompute(trace)
     outcome = label_first_touch(trace)
-    alignment = require_first_touch_qualification(review, foundation, outcome)
+    cerebellar_hash = None if cerebellar_model is None else cerebellar_model["model_hash"]
+    cerebellar_draws = (
+        None if cerebellar_model is None else 0 if cerebellar_sampling_seed is None else 3000
+    )
+    if cerebellar_model is not None:
+        cerebellar_contract = commitment.get("cerebellar_torque_contract", {})
+        if (
+            cerebellar_contract.get("model_hash") != cerebellar_hash
+            or cerebellar_contract.get("sampling", {}).get("sampling_seed")
+            != cerebellar_sampling_seed
+        ):
+            raise ValueError("requested neural torque model and sampling law must bind execution")
+    alignment = require_first_touch_qualification(
+        review,
+        foundation,
+        outcome,
+        cerebellar_model_hash=cerebellar_hash,
+        cerebellar_sampling_draws=cerebellar_draws,
+    )
     write_once(folder / "independent_review.json", review)
     foundation_document = dict(
         foundation,
@@ -861,6 +887,11 @@ def qualified_episode(
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if cerebellar_model is not None:
+        receipt["cerebellar_model_hash"] = cerebellar_hash
+        receipt["cerebellar_inference_calls"] = 3000
+        receipt["cerebellar_sampling_draws"] = cerebellar_draws
+        receipt["cerebellar_model_optimizer_steps"] = cerebellar_model["optimizer_steps"]
     if locomotion_mode_probe is not None:
         from rosclaw_soccer.rsi.sonic_locomotion_reference_audit import audit_locomotion_reference
 

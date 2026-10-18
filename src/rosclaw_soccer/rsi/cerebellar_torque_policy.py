@@ -160,6 +160,7 @@ class CerebellarTorquePolicy:
         self.samples_drawn = 0
         self._rng = None if sampling_seed is None else np.random.default_rng(sampling_seed)
         self._sampling_transition: dict[str, Any] | None = None
+        self._last_raw_mean: np.ndarray[Any, Any] | None = None
         self._layers = []
         for layer in model["layers"]:
             weight, bias = (
@@ -178,6 +179,7 @@ class CerebellarTorquePolicy:
             if index < 2:
                 value = np.tanh(value)
         latent = value
+        self._last_raw_mean = value.copy()
         if self._rng is not None:
             noise = self._rng.normal(size=29)
             latent = value + 0.05 * noise
@@ -192,6 +194,11 @@ class CerebellarTorquePolicy:
             self.samples_drawn += 1
         result: np.ndarray[Any, Any] = np.tanh(latent) * CAPS
         return result
+
+    def last_raw_mean(self) -> np.ndarray[Any, Any]:
+        if self._last_raw_mean is None:
+            raise ValueError("neural torque policy has not been queried")
+        return self._last_raw_mean.copy()
 
     def sampling_transition(self) -> dict[str, Any] | None:
         """Copy actual latent density record; it is not an actuator density."""

@@ -574,6 +574,9 @@ def audit_cpu_transfer(
             raise ValueError("complete finite bounded causal recurrent state trace required")
     recurrent_decoder: Any = None
     validate_cpu_foundation_capture(report, commitment, trace)
+    from rosclaw_soccer.rsi.cerebellar_torque_audit import reconstruct_native_cerebellar
+
+    cerebellar_review = reconstruct_native_cerebellar(report, commitment, trace)
     if (
         commitment.get("bounded_control_profile", {}).get("schema")
         == "soccer.rsi.fast_intercept_control.v1"
@@ -659,11 +662,38 @@ def audit_cpu_transfer(
                     trace["pd_requested_torque_nm"][frame, 0, substep],
                     "bounded interface independently reconstructed preclip PD torque",
                 )
+            requested_pd = (target - data.qpos[qi]) * kp - data.qvel[vi] * kd
+            requested_total = requested_pd
+            if cerebellar_review is not None:
+                equal(
+                    np.concatenate((data.qpos[:7], data.qpos[qi], data.qpos[bq : bq + 7])),
+                    trace["cerebellar_canonical_qpos_before_substep"][frame, 0, substep],
+                    "neural torque current substep qpos",
+                )
+                equal(
+                    np.concatenate((data.qvel[:6], data.qvel[vi], data.qvel[bv : bv + 6])),
+                    trace["cerebellar_canonical_qvel_before_substep"][frame, 0, substep],
+                    "neural torque current substep qvel",
+                )
+                requested_total = (
+                    requested_pd + cerebellar_review["requested_offsets"][frame, substep]
+                )
             torque = np.clip(
-                (target - data.qpos[qi]) * kp - data.qvel[vi] * kd,
+                requested_total,
                 -np.asarray(G1_HARD_TORQUE_LIMITS),
                 np.asarray(G1_HARD_TORQUE_LIMITS),
             )
+            if cerebellar_review is not None:
+                equal(
+                    torque
+                    - np.clip(
+                        requested_pd,
+                        -np.asarray(G1_HARD_TORQUE_LIMITS),
+                        np.asarray(G1_HARD_TORQUE_LIMITS),
+                    ),
+                    trace["applied_cerebellar_torque_offset_nm"][frame, 0, substep],
+                    "actual hard-limited neural torque residual",
+                )
             equal(torque, trace["torque_nm"][frame, 0, substep], "PD torque")
             data.ctrl[ai] = torque
             mujoco.mj_step(model, data)
@@ -951,6 +981,16 @@ def audit_cpu_transfer(
     )
     if initial_state_reference is not None:
         result["independent_initial_state"] = initial_state_reference.contract()
+    if cerebellar_review is not None:
+        result["cerebellar_model_hash"] = cerebellar_review["model_hash"]
+        result["actual_cerebellar_inferences_reconstructed"] = 3000
+        result["actual_cerebellar_sampling_draws_reconstructed"] = cerebellar_review[
+            "sampling_draws"
+        ]
+        result["cerebellar_actual_pd_plus_residual_torque_reconstructed"] = True
+        result["cerebellar_numpy_torch_maximum_mean_error"] = cerebellar_review[
+            "numpy_torch_maximum_mean_error"
+        ]
     if recurrent_decoder is not None:
         result["causal_recurrent_state_reconstructed"] = True
         result["recurrent_state_frames_reconstructed"] = 300
