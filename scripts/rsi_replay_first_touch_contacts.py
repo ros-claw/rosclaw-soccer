@@ -35,6 +35,7 @@ def fixed_replay_scope(cfg):
         "receding-catalog2-ten": 10,
         "surface-receding-six": 6,
         "positive-lateral-sixteen": 16,
+        "reference-student-thirteen": 13,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -103,7 +104,59 @@ def fixed_replay_scope(cfg):
         f"{role}_positive_local_c{i}" for i in range(8) for role in ("control", "teacher")
     ]:
         raise ValueError("all sixteen prospective paired endpoints required in declaration order")
+    if profile == "reference-student-thirteen":
+        from rosclaw_soccer.rsi.reference_student_exam_scope import exam_scope
+
+        jobs = exam_scope(cfg["behavior_model_hash"])["jobs"]
+        if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
+            raise ValueError("all thirteen original own-student and retention endpoints required")
     return count, steps
+
+
+def reference_exam_sources(cfg, sealed, pins):
+    """Narrow model intent from a whole original exam, not a receipt-supplied tag."""
+    from rosclaw_soccer.rsi.reference_student_exam_diagnostics import require_cohort
+
+    path = Path(cfg["producer_config"])
+    if digest(path) != cfg["producer_config_file_hash"]:
+        raise ValueError("exact original own-body producer configuration required")
+    producer = json.loads(path.read_text())
+    pins[str(path)] = digest(path)
+    root = Path(producer["output_root"])
+    if (
+        Path(cfg["producer_complete"]).resolve() != (root / "complete.json").resolve()
+        or Path(cfg["producer_declaration"]).resolve() != (root / "declaration.json").resolve()
+        or cfg["world_hash"] != producer["mesh_task_contact_world_hash"]
+        or cfg["behavior_model_hash"] != producer["behavior_model_hash"]
+    ):
+        raise ValueError("original owned complete, declaration, world and parent required")
+    declaration = sealed(cfg["producer_declaration"])
+    complete = sealed(cfg["producer_complete"])
+    audit = sealed(cfg["source_terminal_readback"])
+    require_cohort(producer, declaration, complete, audit)
+    reader = Path(cfg["audit_source"])
+    if (
+        audit["reader_source_hash"] != digest(reader)
+        or audit["report_hash"] != cfg["source_terminal_readback_hash"]
+        or reader.resolve()
+        != (Path(producer["source_root"]) / "scripts/rsi_read_reference_student_exam.py").resolve()
+        or any(
+            Path(case["receipt_path"]).resolve() != (root / f"receipt-{i:04d}.json").resolve()
+            or case["receipt_hash"] != receipt["receipt_hash"]
+            for i, (case, receipt) in enumerate(zip(cfg["cases"], complete["results"], strict=True))
+        )
+    ):
+        raise ValueError("whole original thirteen-case audit and owned ordered receipts required")
+    pins[str(reader)] = digest(reader)
+    for name, h in {
+        **declaration["prepared_pins"],
+        **declaration["input_file_hashes"],
+        **audit["input_file_hashes"],
+    }.items():
+        if digest(name) != h:
+            raise ValueError("original own-student input, witness or source bytes changed")
+        pins[name] = h
+    return complete["results"]
 
 
 def verify_none_demonstration_sources(cfg, receipts, sealed, pins):
@@ -213,6 +266,20 @@ def main():
         pins[str(path)] = digest(path)
         return value
 
+    if cfg.get("replay_profile") == "reference-student-thirteen":
+        for relative in (
+            "src/rosclaw_soccer/rsi/reference_student_exam_diagnostics.py",
+            "src/rosclaw_soccer/rsi/reference_student_exam_scope.py",
+            "src/rosclaw_soccer/rsi/reference_student_execution.py",
+            "scripts/rsi_reference_student_exam.py",
+            "scripts/rsi_fit_pre_parent_reference.py",
+        ):
+            pins[str(source / relative)] = digest(source / relative)
+    reference = (
+        reference_exam_sources(cfg, sealed, pins)
+        if cfg.get("replay_profile") == "reference-student-thirteen"
+        else None
+    )
     archived = None
     if cfg.get("replay_profile") == "catalog2-zero-c7":
         archived = sealed(cfg["archived_expert_readback"])
@@ -264,6 +331,12 @@ def main():
             qualification_kwargs = dict(
                 cerebellar_model_hash=receipt["cerebellar_model_hash"],
                 cerebellar_sampling_draws=0,
+            )
+        if reference is not None:
+            if receipt != reference[len(receipts)]:
+                raise ValueError("only the exact whole-audited reference receipt may be replayed")
+            qualification_kwargs = dict(
+                reference_student_model_hash=receipt.get("reference_student_model_hash")
             )
         outcome = label_first_touch(trace)
         review = sealed(receipt["witnesses"]["independent_review"]["path"])

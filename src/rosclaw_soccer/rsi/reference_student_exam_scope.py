@@ -118,9 +118,13 @@ def assess_exam(scope, receipts, *, teachers, original_retention):
     if any(r["task_pass"] is not True for r in original_retention.values()):
         raise ValueError("both predeclared raw retention controls must be historical successes")
     return dict(
-        positive_teacher_vs_student=assess_pairs(teachers, positive),
-        retention_zero_vs_student=assess_pairs(zero, retention),
-        retention_legacy_vs_student=assess_pairs(original_retention, retention),
+        positive_teacher_vs_student=assess_pairs(
+            {g: teachers[g] for g in (12, 13, 28, 29, 76, 77, 92, 93)}, positive
+        ),
+        retention_zero_vs_student=assess_pairs({g: zero[g] for g in (4, 32)}, retention),
+        retention_legacy_vs_student=assess_pairs(
+            {g: original_retention[g] for g in (4, 32)}, retention
+        ),
         legacy_comparison_confounded_by_approach_change=True,
         zero_comparison_is_learned_reference_ablation=True,
         distinct_derived_course_count=10,

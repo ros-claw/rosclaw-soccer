@@ -70,6 +70,16 @@ def test_scope_and_pairing_survive_real_json_artifact_roundtrip():
     )
 
 
+def test_sorted_json_mapping_order_cannot_change_declared_pair_rows():
+    s, r, t, old = data()
+    serialized = json.loads(json.dumps({str(k): v for k, v in old.items()}, sort_keys=True))
+    changed = {int(k): v for k, v in serialized.items()}
+    assert list(changed) == [32, 4]
+    assert assess_exam(s, r, teachers=t, original_retention=changed) == assess_exam(
+        s, r, teachers=t, original_retention=old
+    )
+
+
 @pytest.mark.parametrize(
     "tamper", ["partial", "order", "duplicate", "teacher_failure", "old_success", "scope"]
 )
