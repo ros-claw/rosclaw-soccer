@@ -57,3 +57,21 @@ MemoryHigh8G/Max12G/Swap4G、CPU150%、Restart=no。
 资格，不能自动外推到其它policy family、CERE组合或真机。
 
 所有晋升/硬件/教师标志保持false。证据外置，代码直接提交main。
+
+## 实际启动记录（尚无四体终态）
+
+冻结源3920e4dafbd5591c6b39d84f980594a82c2d3dc3，preflight实际通过，
+未分配模型/世界。13:53:24用户级服务
+`rosclaw-generated-binding-native-parity-20261018.service`已启动，
+PID1929546，入口pins/精确干净HEAD/旧worker槽位守卫及F821/F822通过。
+13:53:32验证归属历史报告、13:53:48进入独立reference完整分配。
+
+输出`rsi-generated-binding-native-parity-20261018`，独立配置
+`rsi-generated-binding-native-parity-config-20261018.json`，固定deadline
+1792306370。入场MemAvailable约58GiB；原主研究PID1760082仍active，
+本项目合计两个大模型worker。只读watcher配置纳入这两个明确单元，
+它不执行训练、自动重试或科研继任决策；active Goal继续负责后续。
+
+原生/小脑/当前课表/保持/传递诊断等关联回归310 passed（16.13秒），
+不是全仓测试或310个物理案例。现在不能填写原生非干扰通过或端到端
+提速倍数，必须等四个正式收据和独立终态回读。
