@@ -91,6 +91,21 @@ numeric-fit封印`2009b44ec38fced7a4da97e4b6acec8cb6ba13de509b783eee31173fc66bed
 密集读取、模型配对和故障分支均走真实元数据逻辑；它不代表362场
 物理成功。原c42生产/审计、f625后继及已关闭60c8/256e源码未改。
 
+## 02:49新身体后继已持久化排队
+
+冻结`d63418a5315784802812e08d9026bc983a5c7067`，独立目录
+`rosclaw-soccer-reference-ablation-exam-source-20261019`。
+`rosclaw-reference-ablation-thirteen-{native,audit,contact}-20261019.timer`
+均已enabled/active，实际systemd单元校验、启动输入SHA256和未定义
+符号检查通过。此时新native MainPID=0，尚未实际预检/分配身体；
+正在等待旧13体完整审计/接触诊断，而不是宣称新训练已物理成功。
+
+新配置与旧配置分别保存，原teacher/旧未消融学生/旧技能/失败
+都继续绑定；新13体为13原生＋13独立CPU、78000子步，其后13条
+原力矩密集回放39000子步，不计作新策略试跑。保持H300/post60，
+未打开Fresh，默认SIM_ONLY。单位与内层均禁止同配置隐式重试。
+开始新完整神经模型分配前仍需MemAvailable至少56GiB，截止06:00。
+
 ## 持续机制边界
 
 Goal保持active；systemd接续已冻结的生产→完整审计→密集诊断；
