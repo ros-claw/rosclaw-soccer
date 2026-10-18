@@ -1,5 +1,55 @@
 # 持续实施机制：不把心跳当成学习
 
+## 最新18:50：四例MPC完整闭环已拒绝，审计/密集诊断/PD分解均真正完成
+
+**当前没有活动完整NN或物理worker。不要重启已完成MPC单位。Goal仍active，
+下一步开发短区间接触腿刚度干预，不是继续等待旧任务。**
+
+生产f5e242a5在18:38写完四例，3/4→3/4，0rescue/0regression/0新增unsafe。
+原成功raw8/raw56/context1全部33原数组完整300帧byte-exact且零修正。
+C0仍unsafe，前向−.238681→+.116308m，骨盆.666124→.694397m，但不通过。
+首触含帧所有原数组均byte-exact；C0实际修正77–98帧、最大12Nm。
+Native12000＋独立CPU12000＋规划1270＋重建规划1270＋选中控制预测230
+＝26770积分步，神经更新0。独立原有CPU/Foundation/encoder链均通过。
+
+Transient生产单位已被systemd实际collect，不存在，不把not-found的默认
+Result=success当exit0。保留27条真实journal与完整声明/账本，新增显式
+collected handoff；标明OS退出码未观察到。第一次519be970审核因提前
+导入审核端package破坏生产source绑定而失败，失败started与journal均保存。
+0deb4b4a隔离helper加载，真实新进程已核对f5模块/prepare绑定，零NN分配；
+新独立输出`rsi-contact-exit-torque-mpc-independent-readback-recovery-v2-20261018.json`
+18:45:28完成，seal `d249555e5609f0c3ee56fa3fba77eee78acd00436bc864ee51fb31855bb6281d`。
+审核单位`rosclaw-contact-exit-torque-mpc-audit-recovery-v2-20261018.service`
+正常终态；旧审核失败不被覆盖。后继summary和dense diagnostic都实际自动
+执行完毕，不要再从旧0cc输出文件名查结果，也不要重启这些阶段。
+
+密集新12000固定控制步也已完成。C0向下冲量59.170638→57.630049Ns，
+最长连续足接触382→294ms，但总足接触408→418ms、球反向851→848
+（提前6ms），非足接触999→1013。因此仍明确拒绝，不能只展示较好的高度。
+密集seal `57c077aab07b0caa571a307b9a6d5ef54c66c9d8fe1ccd2b7df4d3d5ab26572a`。
+只3对密集匹配＋2个单端点，不是4密集配对。
+
+**下一行动的新证据**：316f50fd冻结四对PD反馈分解实际运行，C0在22个
+非零帧首个2ms子步上，目标变化/位置反馈/速度反馈沿修正方向的投影分别
+−.384543/−.308754/−.202307，总PD−.895604，最终实际力矩差+.104396，
+恒等式误差3.55e−14Nm。这不是能量比率或因果消融，但支持接触控制与
+原高刚度跟踪相互抵消的具体假设；不能再归咎于“修正完全没有执行”。
+证据`rsi-contact-exit-mpc-pd-feedback-attribution-20261018.json`，seal
+`d52c660b0edb51016e63a015881cb92c91aa7aa5483c47c08bb5c148ba7e7944`。
+
+**接续优先级**：在同一真实state与已知当前目标做一次因果短区间对照，
+仅压球腿6关节Kp乘0.5，Kd和支撑腿/躯干不变，复用已有G1PDTorqueForecaster
+显式kp参数及旧资格snapshot。先预测/实际10子步bit-exact和压力/间隙/支撑
+检查，不初始化完整NN，不喂未来目标，不重复MPC12Nm同设置。raw8/56/C1
+不满足压力条件就保持原控制。该探针尚未实现/运行。成功也须完整四例及
+扩展后才谈教师与学习，失败再考虑任务/位置协调或神经闭环长预测。
+
+另外滚离球C6/7速度对照仍可作为独立G2支线，但尚未实现；现有cap合法
+最大1.48不是2.0，不能改旧bounds假装既有控制。先完成上述因果检验。
+相关组合304 passed/13.03s，全仓ruff/compileall通过，新增两个模块定向
+mypy通过。详见`contact-exit-torque-mpc-final-findings-20261018.zh-CN.md`。
+未来启动长任务要用持久unit并提前保存exit收据，避免再次丢失transient终态。
+
 ## 最新18:05：非零力矩探针通过局部核验，四例完整实验已真正启动
 
 当前活动单位 `rosclaw-contact-exit-torque-mpc-native-20261018.service`，
