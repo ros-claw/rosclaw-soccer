@@ -98,3 +98,30 @@ README、LICENSE和cnppo/sb3.py/cnpolicy.py，不运行其依赖或训练。
 记录的是回滚后的KL，没有被拒试算的逐项值，不能断言具体触发哪项
 阈值。放宽约束会改变稳定性—可塑性边界。是否需要改变必须另有初态/接触/旧
 成功锚的实测对照，不能因这轮增长慢而热改或伪称保护已充分。
+
+## 13:48补证：精确重算后确认拒绝项为anchor_mean
+
+前段“尚不知道被拒试算哪项超限”是当时的证据边界，而非最终结论。
+现在以冻结6632f291的`rsi_read_rejected_cerebellar_trials.py`，从三个
+原初始checkpoint、原NPZ batch、固定600锚特征重新调用**未改动的**
+f44b9509优化函数。只用Python line tracer在原`if not valid`边界读取
+已算出的统计，不编辑原源码、损失、超参或拒绝分支。三个重建结果的
+完整actor/critic/Adam/JSON与各自正式checkpoint逐值相等。
+
+| seed | 第3次rollout mean KL（上限0.0049） | 第3次anchor mean KL（上限0.001） | 超限项 |
+| --- | ---: | ---: | --- |
+| 2026101801 | 0.001971231 | 0.002039869 | anchor_mean |
+| 2026101802 | 0.001841663 | 0.001832838 | anchor_mean |
+| 2026101803 | 0.001589686 | 0.001693956 | anchor_mean |
+
+所有其他逐state KL约束仍在预算内。现在可以有证据地指出本轮第3步
+被旧成功输入锚的mean KL限制，而不是因为rollout KL或全身数值崩溃。
+仍不能由此证明扩大anchor KL会更好：锚上的小分布变化与实际安全、
+旧成功保有之间的量化关系尚需另行物理对照。
+
+外置产物`rsi-mesh-cerebellar-rejected-trial-readback-20261018.json`，
+封印`sha256:7f1646b0f248d25f9724251a0af07f6ca6ca70839f2ea845161f79178af9f02a`。
+本审计额外进行了9次优化试算重算、其中6次接受，不计入正式学习的
+6次accepted steps，不产生新候选或物理数据。未在这里再次重做原
+batch的全物理provenance还原，留给44体终态审计。tracer边界3项合成
+测试和Ruff/F821/F822通过；完整checkpoint相等来自实际数据重算。
