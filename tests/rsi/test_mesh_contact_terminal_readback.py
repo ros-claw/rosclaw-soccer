@@ -290,7 +290,7 @@ def fixture(tmp_path, monkeypatch, *, tamper=None, public_four=False):
     monkeypatch.setattr(
         audit.subprocess,
         "check_output",
-        lambda *a, **k: "MainPID=0\nActiveState=inactive\nResult=success\n",
+        lambda *a, **k: "MainPID=0\nActiveState=inactive\nResult=success\nLoadState=loaded\n",
     )
     # Only shared-payload loading is mocked: all byte pins, ledger links,
     # actual primitive labels and qualification compositions remain exercised.
@@ -388,5 +388,62 @@ def test_three_body_profile_cannot_certify_four_case_campaign(tmp_path, monkeypa
     output = fixture(tmp_path, monkeypatch, public_four=True)
     monkeypatch.setattr(sys, "argv", sys.argv[:-2])
     with pytest.raises(ValueError, match="whole-body accounting"):
+        audit.main()
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "profile,count,groups", [("binding-four", 4, [4, 8]), ("catalog-sixteen", 16, [8, 56])]
+)
+def test_new_bounded_profiles_keep_complete_fixed_job_identity(profile, count, groups):
+    spec = audit.bounded_profile(profile)
+    assert spec["count"] == count
+    assert spec["groups"] == groups
+    assert len(spec["jobs"]) == len({j["job"] for j in spec["jobs"]}) == count
+    assert spec["complete_schema"] != "soccer.rsi.mesh_public_draw_complete.v1"
+
+
+def test_new_catalog_has_all_sixteen_option_course_pairs():
+    spec = audit.bounded_profile("catalog-sixteen")
+    assert {(j["option_index"], j["group"]) for j in spec["jobs"]} == {
+        (i, g) for i in range(8) for g in (8, 56)
+    }
+
+
+def test_binding_profile_keeps_opposite_orders():
+    spec = audit.bounded_profile("binding-four")
+    assert [(j["group"], j["generated"]) for j in spec["jobs"]] == [
+        (4, False),
+        (4, True),
+        (8, True),
+        (8, False),
+    ]
+
+
+def test_prior_failed_audit_marker_blocks_silent_retry(tmp_path, monkeypatch):
+    output = fixture(tmp_path, monkeypatch)
+    output.with_suffix(".started.json").write_text("preserve failed audit")
+    with pytest.raises(ValueError, match="unused"):
+        audit.main()
+    assert not output.exists()
+
+
+def test_missing_unit_cannot_look_like_successful_terminal_run(tmp_path, monkeypatch):
+    output = fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        audit.subprocess,
+        "check_output",
+        lambda *a, **k: "MainPID=0\nActiveState=inactive\nResult=success\nLoadState=not-found\n",
+    )
+    with pytest.raises(ValueError, match="finished"):
+        audit.main()
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("profile", ["binding-four", "catalog-sixteen"])
+def test_old_four_draws_cannot_be_retagged_as_new_experiment(tmp_path, monkeypatch, profile):
+    output = fixture(tmp_path, monkeypatch, public_four=True)
+    monkeypatch.setattr(sys, "argv", sys.argv[:-1] + [profile])
+    with pytest.raises(ValueError):
         audit.main()
     assert not output.exists()

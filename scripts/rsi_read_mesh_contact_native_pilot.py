@@ -14,17 +14,55 @@ def digest(path):
         return "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def bounded_profile(profile):
+    if profile == "binding-four":
+        return dict(
+            count=4,
+            groups=[4, 8],
+            declaration_schema="soccer.rsi.generated_binding_native_declaration.v1",
+            complete_schema="soccer.rsi.generated_binding_native_complete.v1",
+            readback_schema="soccer.rsi.generated_binding_native_terminal_readback.v1",
+            phase="OPTIONAL_BINDING_NUMERIC_NONINTERFERENCE_COMPLETE_NOT_SKILL_GROWTH",
+            jobs=[
+                dict(job=f"g{g}-generated-{flag}", group=g, generated=flag)
+                for g, flag in ((4, False), (4, True), (8, True), (8, False))
+            ],
+        )
+    if profile == "catalog-sixteen":
+        return dict(
+            count=16,
+            groups=[8, 56],
+            declaration_schema="soccer.rsi.mesh_contact_catalog_declaration.v1",
+            complete_schema="soccer.rsi.mesh_contact_catalog_complete.v1",
+            readback_schema="soccer.rsi.mesh_contact_catalog_terminal_readback.v1",
+            phase="CATALOG_REACHABILITY_COMPLETE_NOT_ROBUST_TEACHER",
+            jobs=[
+                dict(job=f"option-{o}-raw-{g}", option_index=o, group=g)
+                for o in range(8)
+                for g in (8, 56)
+            ],
+        )
+    raise ValueError("explicit new bounded study profile required")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--unit", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
-        "--profile", choices=("contact-three", "original-public-four"), default="contact-three"
+        "--profile",
+        choices=("contact-three", "original-public-four", "binding-four", "catalog-sixteen"),
+        default="contact-three",
     )
     args = parser.parse_args()
     public_four = args.profile == "original-public-four"
-    count = 4 if public_four else 3
+    spec = (
+        bounded_profile(args.profile)
+        if args.profile in ("binding-four", "catalog-sixteen")
+        else None
+    )
+    count = spec["count"] if spec is not None else 4 if public_four else 3
     status = subprocess.check_output(
         [
             "systemctl",
@@ -37,12 +75,20 @@ def main():
             "ActiveState",
             "-p",
             "Result",
+            "-p",
+            "LoadState",
         ],
         text=True,
     )
-    if set(status.splitlines()) != {"MainPID=0", "ActiveState=inactive", "Result=success"}:
+    if set(status.splitlines()) != {
+        "MainPID=0",
+        "ActiveState=inactive",
+        "Result=success",
+        "LoadState=loaded",
+    }:
         raise ValueError("finished worker required; partial output is not completion")
-    if args.output.exists():
+    started_path = args.output.with_suffix(".started.json")
+    if args.output.exists() or started_path.exists():
         raise ValueError("unused terminal audit output required")
     config = json.loads(args.config.read_text())
     source, core, root = (Path(config[k]) for k in ("source_root", "core_root", "output_root"))
@@ -56,7 +102,22 @@ def main():
     from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
     from scripts.rsi_atomic_artifacts import write_once
 
+    write_once(
+        started_path,
+        dict(
+            schema="soccer.rsi.mesh_terminal_audit_started.v1",
+            profile=args.profile,
+            reader_source_hash=digest(Path(__file__)),
+            configuration_file_hash=digest(args.config),
+            automatic_retry_authorized=False,
+            hardware_authorized=False,
+        ),
+    )
+
+    audit_inputs = {}
+
     def sealed(path, key="report_hash"):
+        audit_inputs[str(path)] = digest(path)
         value = json.loads(path.read_text())
         if value[key] != hash_json({k: v for k, v in value.items() if k != key}):
             raise ValueError("source document seal changed")
@@ -64,14 +125,30 @@ def main():
 
     declaration, complete = (sealed(root / n) for n in ("declaration.json", "complete.json"))
     if (
-        complete["declaration_hash"] != declaration["report_hash"]
-        or complete["new_native_bodies"] != count
-        or complete["native_physical_substeps"] != count * 3000
-        or complete["independent_cpu_substeps"] != count * 3000
-        or complete["independent_foundation_calls"] != count * 300
-        or complete["new_optimizer_updates"] != 0
+        complete.get("declaration_hash") != declaration["report_hash"]
+        or complete.get("new_native_bodies") != count
+        or complete.get("native_substeps" if spec else "native_physical_substeps") != count * 3000
+        or complete.get("independent_cpu_substeps") != count * 3000
+        or (spec is None and complete.get("independent_foundation_calls") != count * 300)
+        or complete.get("new_optimizer_updates") != 0
     ):
         raise ValueError("exact declared whole-body accounting required")
+    if spec is not None and (
+        complete.get("schema") != spec["complete_schema"]
+        or declaration.get("schema") != spec["declaration_schema"]
+        or config.get("groups") != spec["groups"]
+        or config.get("max_attempts") != count
+        or config.get("new_physical_budget") != count
+        or declaration.get("jobs") != spec["jobs"]
+        or len(complete.get("results", [])) != count
+        or any(
+            complete.get(k) is not False
+            for k in ("teacher_qualified", "hardware_authorized", "promotion_authorized")
+        )
+    ):
+        raise ValueError(
+            "exact complete bounded study, not a partial or retagged protocol required"
+        )
     if public_four and (
         complete.get("schema") != "soccer.rsi.mesh_public_draw_complete.v1"
         or declaration.get("schema") != "soccer.rsi.mesh_public_draw_declaration.v1"
@@ -84,11 +161,28 @@ def main():
     if any(k not in declaration or declaration[k] != v for k, v in config.items()):
         raise ValueError("same frozen configuration required")
     pins = dict(declaration["input_file_hashes"])
-    pins.update(declaration["prepared_pins"])
+    prepared = None
+    if spec is not None:
+        from rosclaw_soccer.rsi.first_touch_campaign_worker import prepare
+        from rosclaw_soccer.rsi.reviewed_contact_world import ReviewedContactWorld
+
+        prepared, _, _, actual = prepare(args.config)
+        if actual != config:
+            raise ValueError("same original preparation configuration required")
+        pins.update(prepared.PINS)
+        heads = prepared.HEADS
+        binding = ReviewedContactWorld(
+            Path(config["nominal_readback"]), config["nominal_readback_file_hash"]
+        ).verify(config["mesh_task_contact_world_hash"])
+        if binding != declaration["numerical_world_review"]:
+            raise ValueError("original numerical world review binding changed")
+    else:
+        pins.update(declaration["prepared_pins"])
+        heads = declaration["source_heads"]
     for name, expected in pins.items():
         if digest(Path(name)) != expected:
             raise ValueError("source/input pin changed")
-    for name, expected in declaration["source_heads"].items():
+    for name, expected in heads.items():
         if (
             subprocess.check_output(["git", "-C", name, "rev-parse", "HEAD"], text=True).strip()
             != expected
@@ -112,12 +206,16 @@ def main():
         raise ValueError("nonempty durable ledger required")
     final = events[-1]["state"]
     names = (
-        tuple(f"original-public-{g}" for g in (4, 8, 32, 56))
+        tuple(j["job"] for j in spec["jobs"])
+        if spec is not None
+        else tuple(f"original-public-{g}" for g in (4, 8, 32, 56))
         if public_four
         else ("old64-option3", "new96-option3", "unsafe104-option7")
     )
     terminal_phase = (
-        "PUBLIC_DRAW_EVALUATION_COMPLETE_NO_PROMOTION"
+        spec["phase"]
+        if spec is not None
+        else "PUBLIC_DRAW_EVALUATION_COMPLETE_NO_PROMOTION"
         if public_four
         else "CONTACT_WORLD_DIAGNOSTIC_COMPLETE_NO_PROMOTION"
     )
@@ -129,6 +227,26 @@ def main():
     ):
         raise ValueError("all charged attempts must finish in original order")
     rows = []
+    shared_reader, shared_reader_witness = None, None
+    original = sealed(Path(config["nominal_complete"])) if spec is not None else None
+    references = {} if original is None else {r["group"]: r for r in original["results"]}
+    if spec is not None:
+        audited = sealed(Path(config["nominal_readback"]))
+        if (
+            original["report_hash"] != audited["complete_hash"]
+            or audited["report_hash"] != config["nominal_readback_hash"]
+        ):
+            raise ValueError("original four controls must bind original numerical review")
+        from rosclaw_soccer.rsi.portfolio_physical_study import validate_option
+
+        fit = sealed(Path(config["portfolio_fit"]))
+        if fit["report_hash"] != config["portfolio_fit_hash"]:
+            raise ValueError("original option catalog seal required")
+        catalog = [validate_option(r["candidate"]) for r in fit["options"]]
+        if len(catalog) != 8 or catalog[0] is not None:
+            raise ValueError("whole original catalog including None required")
+        if args.profile == "catalog-sixteen" and declaration["options"] != catalog:
+            raise ValueError("actual entire catalog differs")
     for index, name in enumerate(names):
         receipt = sealed(root / f"receipt-{index:04d}.json", "receipt_hash")
         if (
@@ -140,12 +258,34 @@ def main():
         witnesses = dict(receipt["witnesses"])
         witnesses.update({k: receipt[k] for k in ("intent_witness", "encoder_witness")})
         for witness in witnesses.values():
+            if spec is not None and (
+                not Path(witness["path"]).resolve().is_relative_to(root.resolve())
+                or Path(witness["path"]).is_symlink()
+            ):
+                raise ValueError("actual study-owned ordinary witnesses required")
             if digest(Path(witness["path"])) != witness["sha256"]:
                 raise ValueError("whole physical witness file changed")
-        reader = FixedPhysicalPayloadReader(
-            Path(witnesses["proof_payload"]["path"]),
-            expected_file_hash=witnesses["proof_payload"]["sha256"],
-        )
+            if spec is not None:
+                if witness["path"] in pins and pins[witness["path"]] != witness["sha256"]:
+                    raise ValueError("one ordinary witness cannot have two identities")
+                pins[witness["path"]] = witness["sha256"]
+        if spec is not None:
+            if shared_reader_witness is None:
+                shared_reader_witness = witnesses["proof_payload"]
+                shared_reader = FixedPhysicalPayloadReader(
+                    Path(shared_reader_witness["path"]),
+                    expected_file_hash=shared_reader_witness["sha256"],
+                )
+            if witnesses["proof_payload"] != shared_reader_witness:
+                raise ValueError(
+                    "all new bounded-study episodes require the same fixed numerical mean"
+                )
+            reader = shared_reader
+        else:
+            reader = FixedPhysicalPayloadReader(
+                Path(witnesses["proof_payload"]["path"]),
+                expected_file_hash=witnesses["proof_payload"]["sha256"],
+            )
         report = _sealed(Path(witnesses["report"]["path"]), physical_payload_reader=reader)
         commitment = json.loads(Path(witnesses["commitment"]["path"]).read_text())
         if hash_json(commitment) != report["commitment_hash"]:
@@ -166,7 +306,7 @@ def main():
             raise ValueError("actual report/world/trace identity differs")
         with np.load(witnesses["trace"]["path"], allow_pickle=False) as archive:
             trace = dict(archive)
-        if public_four:
+        if public_four or spec is not None:
             encoder = sealed(Path(witnesses["encoder_witness"]["path"]))
             recorded = np.asarray(trace.get("foundation_neural_encoder_features"))
             required_counts = dict(
@@ -206,6 +346,20 @@ def main():
         review = sealed(Path(witnesses["independent_review"]["path"]))
         foundation = sealed(Path(witnesses["foundation_review"]["path"]))
         alignment = require_first_touch_qualification(review, foundation, outcome)
+        if spec is not None and (
+            report["source_hash"]
+            != digest(source / "src/rosclaw_soccer/rsi/native_first_touch_episode.py")
+            or review["source_hash"]
+            != digest(source / "src/rosclaw_soccer/rsi/cpu_motor_transfer_evidence.py")
+            or foundation["audit_source_hash"]
+            != digest(source / "src/rosclaw_soccer/rsi/foundation_torch_capture_audit.py")
+            or type(receipt["physical_substeps"]) is not int
+            or receipt["physical_substeps"] != 3000
+            or type(receipt["foundation_calls"]) is not int
+            or receipt["foundation_calls"] != 300
+            or "cerebellar_torque_contract" in report
+        ):
+            raise ValueError("exact producer physics, CPU and Foundation audit sources required")
         if (
             outcome.to_dict() != receipt["outcome"]
             or alignment != receipt["qualification_alignment"]
@@ -216,7 +370,7 @@ def main():
             raise ValueError("raw outcome and independently reconstructed body/Foundation differ")
         intended = declaration["jobs"][index]
         intent = sealed(Path(witnesses["intent_witness"]["path"]))
-        if public_four:
+        if public_four or spec is not None:
             from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController
             from rosclaw_soccer.rsi.native_first_touch_initial_state import (
                 NativeFirstTouchInitialState,
@@ -229,9 +383,93 @@ def main():
             plan = PublicFirstTouchTrainingPlan(
                 tuple(range(20261060, 20261070)), view["mean_model"]["model_hash"], 18
             )
-            group = (4, 8, 32, 56)[index]
+            group = spec["jobs"][index]["group"] if spec is not None else (4, 8, 32, 56)[index]
             draw = plan.draws()[group]
-            if (
+            if spec is not None:
+                expected_candidate = (
+                    None if args.profile == "binding-four" else catalog[intended["option_index"]]
+                )
+                if (
+                    receipt["group"] != group
+                    or receipt["candidate"] != expected_candidate
+                    or view["seed"] != draw.sampling_seed
+                ):
+                    raise ValueError("actual raw draw, sampling seed and original candidate differ")
+                if args.profile == "binding-four":
+                    enabled = intended["generated"]
+                    expected_tag = dict(
+                        schema="soccer.rsi.native_private_generated_episode_binding.v1",
+                        seed=draw.sampling_seed,
+                        full_external_sampling_view_restored_and_validated=True,
+                        complete_generated_model_equals_external_view=True,
+                        full_original_factory_constructor_retained=True,
+                        sampling_law_changed=False,
+                    )
+                    if (
+                        enabled and report.get("generated_seed_episode_binding") != expected_tag
+                    ) or (not enabled and "generated_seed_episode_binding" in report):
+                        raise ValueError(
+                            "original versus generated binding must match actual commitment"
+                        )
+                    expected_intent = dict(intended, declaration_hash=declaration["report_hash"])
+                else:
+                    if "generated_seed_episode_binding" in report:
+                        raise ValueError("catalog must retain original native binding path")
+                    expected_intent = dict(
+                        intended,
+                        candidate=expected_candidate,
+                        declaration_hash=declaration["report_hash"],
+                    )
+                if expected_candidate is None:
+                    if (
+                        report.get("bounded_control_profile") is not None
+                        or report["approach_mode"] != "legacy"
+                        or report["swing_mode"] != "legacy"
+                    ):
+                        raise ValueError("None must retain original control law")
+                    reference = references[group]
+                    for witness in reference["witnesses"].values():
+                        if digest(Path(witness["path"])) != witness["sha256"]:
+                            raise ValueError("original numerical-control witness changed")
+                    with np.load(
+                        reference["witnesses"]["trace"]["path"], allow_pickle=False
+                    ) as archive:
+                        if set(trace) != set(archive.files) or any(
+                            trace[k].dtype != archive[k].dtype
+                            or trace[k].shape != archive[k].shape
+                            or trace[k].tobytes() != archive[k].tobytes()
+                            for k in trace
+                        ):
+                            raise ValueError(
+                                "every original same-world None array must remain bit-exact"
+                            )
+                    if outcome.to_dict() != reference["outcome"]:
+                        raise ValueError(
+                            "original passing and failing labels must remain unchanged"
+                        )
+                else:
+                    from rosclaw_soccer.rsi.bounded_first_touch_control import (
+                        BoundedFirstTouchControl,
+                    )
+                    from rosclaw_soccer.rsi.postcontact_navigation_probe import (
+                        PostcontactNavigationProbe,
+                    )
+
+                    if (
+                        report.get("bounded_control_profile")
+                        != BoundedFirstTouchControl(**expected_candidate["parameters"]).contract()
+                        or report["approach_mode"] != "bounded_approach_diagnostic"
+                        or report["swing_mode"] != expected_candidate["swing"]
+                    ):
+                        raise ValueError("exact bounded option must bind actual execution")
+                    postcontact = (
+                        PostcontactNavigationProbe(**expected_candidate["postcontact"]).contract()
+                        if "postcontact" in expected_candidate
+                        else None
+                    )
+                    if report.get("postcontact_navigation_probe") != postcontact:
+                        raise ValueError("exact postcontact option must bind actual execution")
+            if spec is None and (
                 intended != dict(job=name, group=group, candidate=None, course=list(draw.course))
                 or receipt["group"] != group
                 or receipt["candidate"] is not None
@@ -245,9 +483,10 @@ def main():
             NativeFirstTouchInitialState(draw.course, G1SonicRunupController.default_angles).verify(
                 report["course"], trace["canonical_qpos"][0, 0], trace["canonical_qvel"][0, 0]
             )
-            expected_intent = dict(
-                intended, world_hash=expected_world, declaration_hash=declaration["report_hash"]
-            )
+            if spec is None:
+                expected_intent = dict(
+                    intended, world_hash=expected_world, declaration_hash=declaration["report_hash"]
+                )
         else:
             context = intended["context"]
             expected_intent = dict(
@@ -274,13 +513,15 @@ def main():
             != (
                 "PUBLIC_DRAW_INTENT_COMMITTED_BEFORE_BODY"
                 if public_four
+                else "INTENT_COMMITTED_BEFORE_BODY"
+                if spec is not None
                 else "NEW_WORLD_INTENT_COMMITTED_BEFORE_BODY"
             )
             or prior["state"].get("next_intent_hash") != intent["report_hash"]
             or prior["state"].get("active") is not None
         ):
             raise ValueError("intent must be journaled before the charged body start")
-        if receipt["candidate"] != intended["candidate"]:
+        if spec is None and receipt["candidate"] != intended["candidate"]:
             raise ValueError("actual candidate differs from the frozen job")
         if (
             report["course"] != context["course"]
@@ -302,7 +543,9 @@ def main():
         )
     report = dict(
         schema=(
-            "soccer.rsi.mesh_original_public_terminal_readback.v1"
+            spec["readback_schema"]
+            if spec is not None
+            else "soccer.rsi.mesh_original_public_terminal_readback.v1"
             if public_four
             else "soccer.rsi.mesh_contact_terminal_readback.v1"
         ),
@@ -319,13 +562,45 @@ def main():
         hardware_authorized=False,
         promotion_authorized=False,
     )
-    if public_four:
+    if public_four or spec is not None:
         report.update(
-            source_native_bodies=4,
-            source_encoder_compared_frames=1200,
-            source_independent_planner_onnx_calls=60,
-            source_neural_encoder_recomputations=1200,
+            source_native_bodies=count,
+            source_encoder_compared_frames=count * 300,
+            source_independent_planner_onnx_calls=count * 15,
+            source_neural_encoder_recomputations=count * 300,
         )
+    if prepared is not None:
+        prepared.stable()
+        pins.update(audit_inputs)
+        for name, expected in pins.items():
+            if digest(Path(name)) != expected:
+                raise ValueError("source/input bytes changed during terminal readback")
+        report["prepared_pins_rederived_from_exact_original_preparation"] = True
+        report["original_prepared_pins_persisted_by_producer"] = False
+        if args.profile == "binding-four":
+            report["noninterference_scope"] = dict(
+                world_hash=config["mesh_task_contact_world_hash"],
+                groups=[4, 8],
+                candidate=None,
+                cerebellar_model=None,
+                full_original_arrays_bit_equal=True,
+                all_other_control_profiles_qualified=False,
+                all_other_worlds_qualified=False,
+            )
+        else:
+            report["passing_option_indices_by_group"] = {
+                str(g): [
+                    j["option_index"]
+                    for j, r in zip(spec["jobs"], rows, strict=True)
+                    if j["group"] == g and r["outcome"]["task_pass"]
+                ]
+                for g in (8, 56)
+            }
+            if (
+                report["passing_option_indices_by_group"]
+                != complete["passing_option_indices_by_group"]
+            ):
+                raise ValueError("whole independently reconstructed option outcome matrix differs")
     report["report_hash"] = hash_json(report)
     write_once(args.output, report)
     print(json.dumps(report, sort_keys=True), flush=True)
