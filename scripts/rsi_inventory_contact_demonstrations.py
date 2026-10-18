@@ -94,9 +94,8 @@ def main():
             if course.startswith("raw-")
             else 64 + int(course.removeprefix("context-"))
         )
-        if (
-            receipt["group"] != expected_group
-            or (receipt["candidate"] is None) is not (family == "none")
+        if receipt["group"] != expected_group or (receipt["candidate"] is None) is not (
+            family == "none"
         ):
             raise ValueError("dense endpoint cannot be retagged as another family or course")
         for witness in receipt["witnesses"].values():
