@@ -215,6 +215,13 @@ def specialize_legacy_profile(function):
     class ProfileNone(ast.NodeTransformer):
         def visit_If(self, node):
             test = ast.unparse(node.test)
+            if test in (
+                "mesh_task_contact_world_hash is not None",
+                "mesh_contact_construction is not None",
+            ):
+                # New task-contact world is explicitly opt-in. Default None
+                # retains the historical model and controller arithmetic.
+                return [self.visit(n) for n in node.orelse]
             if test == "record_default_planner_events":
                 # Explicit opt-in observation metadata is disabled on the
                 # frozen default path. No control expression is removed.
@@ -272,6 +279,9 @@ def specialize_legacy_profile(function):
         def visit_Assign(self, node):
             if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
                 name = node.targets[0].id
+                if name == "mesh_contact_construction":
+                    assert isinstance(node.value, ast.Constant) and node.value.value is None
+                    return None
                 if name in aliases:
                     return None
                 if name == "requested_torques":
@@ -391,6 +401,45 @@ def test_extracted_physics_body_matches_original_frozen_ast():
     body = ast.dump(ast.Module(body=nodes, type_ignores=[]), include_attributes=False)
     assert (
         hashlib.sha256(body.encode()).hexdigest()
-        == "b49c6c901799b82c56e3a0bb663ffd7e30720f6ac5329e85b675ce2d99c012c2"
+        # Baseline d9b09fd already includes the optional cerebellar layer.
+        # Its normalized AST was independently compared byte-for-byte with
+        # this tree after specializing ONLY the new mesh option to None.
+        == "65553cdb7c835e95fd63a2a20d987ebdb9237aaae1d7c17e4e4a07915cab88ce"
     )
     assert "sample_training_courses" not in ast.dump(function)
+
+
+@pytest.mark.parametrize("world", [True, "", "a" * 64, "sha256:" + "g" * 64])
+def test_mesh_contact_hash_rejected_before_allocation(world):
+    with pytest.raises(ValueError, match="mesh contact world"):
+        kernel.run_native_first_touch_episode(
+            argparse.Namespace(record_foundation_observation=True),
+            course=(2.5, 0.0, -0.5),
+            partition="DECLARED_DEVELOPMENT_DIAGNOSTIC",
+            entry_source_path=Path(entry.__file__),
+            consumed_bank_hash=None,
+            mesh_task_contact_world_hash=world,
+        )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        dict(partition="DECLARED_PUBLIC_TRAINING"),
+        dict(captured=False),
+        dict(cerebellar_model={}),
+        dict(cerebellar_sampling_seed=1),
+    ],
+)
+def test_new_contact_world_cannot_reuse_old_training_or_neural_torque_qualification(extra):
+    with pytest.raises(ValueError, match="mesh contact world"):
+        kernel.run_native_first_touch_episode(
+            argparse.Namespace(record_foundation_observation=extra.get("captured", True)),
+            course=(2.5, 0.0, -0.5),
+            partition=extra.get("partition", "DECLARED_DEVELOPMENT_DIAGNOSTIC"),
+            entry_source_path=Path(entry.__file__),
+            consumed_bank_hash=None,
+            mesh_task_contact_world_hash="sha256:" + "a" * 64,
+            cerebellar_model=extra.get("cerebellar_model"),
+            cerebellar_sampling_seed=extra.get("cerebellar_sampling_seed"),
+        )

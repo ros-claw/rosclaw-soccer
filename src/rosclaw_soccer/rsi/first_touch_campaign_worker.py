@@ -592,9 +592,18 @@ def qualified_episode(
     planning_stage: str = "PLANNING_SIMULATION",
     cerebellar_model: dict[str, Any] | None = None,
     cerebellar_sampling_seed: int | None = None,
+    mesh_task_contact_world_hash: str | None = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
+    if mesh_task_contact_world_hash is not None and (
+        planning_context is None
+        or candidate is None
+        or cerebellar_model is not None
+        or cerebellar_sampling_seed is not None
+        or mesh_task_contact_world_hash == assets.WORLD
+    ):
+        raise ValueError("new contact protocol requires distinct world and explicit public option")
     if planning_context is None:
         if planning_stage != "PLANNING_SIMULATION":
             raise ValueError("an evaluation stage requires an explicit public planning context")
@@ -721,14 +730,24 @@ def qualified_episode(
         and locomotion_mode_probe is None,
         cerebellar_model=cerebellar_model,
         cerebellar_sampling_seed=cerebellar_sampling_seed,
+        mesh_task_contact_world_hash=mesh_task_contact_world_hash,
     )
     report = (
         _sealed(folder / "report.json")
         if physical_payload_reader is None
         else _sealed(folder / "report.json", physical_payload_reader=physical_payload_reader)
     )
-    if report["compiled_model_hash"] != assets.WORLD or report["course"] != list(course):
+    expected_world = (
+        assets.WORLD if mesh_task_contact_world_hash is None else mesh_task_contact_world_hash
+    )
+    if report["compiled_model_hash"] != expected_world or report["course"] != list(course):
         raise ValueError("fixed world and course required")
+    if (
+        mesh_task_contact_world_hash is not None
+        and report.get("mesh_task_contact_protocol", {}).get("expected_world_hash")
+        != mesh_task_contact_world_hash
+    ):
+        raise ValueError("explicit new task contact protocol must bind the physical report")
     review = audit_cpu_transfer(
         folder,
         source / "src/rosclaw_soccer/rsi/native_first_touch_episode.py",
@@ -892,6 +911,9 @@ def qualified_episode(
         receipt["cerebellar_inference_calls"] = 3000
         receipt["cerebellar_sampling_draws"] = cerebellar_draws
         receipt["cerebellar_model_optimizer_steps"] = cerebellar_model["optimizer_steps"]
+    if mesh_task_contact_world_hash is not None:
+        receipt["mesh_task_contact_world_hash"] = mesh_task_contact_world_hash
+        receipt["legacy_qualifications_transferred"] = False
     if locomotion_mode_probe is not None:
         from rosclaw_soccer.rsi.sonic_locomotion_reference_audit import audit_locomotion_reference
 

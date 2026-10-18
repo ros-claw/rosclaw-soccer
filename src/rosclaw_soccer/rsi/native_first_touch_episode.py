@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -79,10 +80,20 @@ def run_native_first_touch_episode(
     record_default_planner_events: bool = False,
     cerebellar_model: dict[str, Any] | None = None,
     cerebellar_sampling_seed: int | None = None,
+    mesh_task_contact_world_hash: str | None = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
 
+    if mesh_task_contact_world_hash is not None and (
+        type(mesh_task_contact_world_hash) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", mesh_task_contact_world_hash) is None
+        or partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
+        or getattr(args, "record_foundation_observation", False) is not True
+        or cerebellar_model is not None
+        or cerebellar_sampling_seed is not None
+    ):
+        raise ValueError("new mesh contact world requires an explicit captured SIM diagnostic hash")
     validate_native_request(
         cerebellar_model,
         cerebellar_sampling_seed,
@@ -271,6 +282,16 @@ def run_native_first_touch_episode(
                 friction=(1.0, 0.005, 0.0001),
             )
         model = spec.compile()
+    mesh_contact_construction = None
+    if mesh_task_contact_world_hash is not None:
+        from rosclaw_soccer.physics.task_contact_surface import with_mesh_task_contacts
+
+        spec, mesh_contact_construction = with_mesh_task_contacts(
+            spec,
+            task_geom_name="ball_geom",
+            surface_body_names=("left_ankle_roll_link", "right_ankle_roll_link"),
+        )
+        model = spec.compile()
     data = mujoco.MjData(model)
     model.opt.timestep = 0.002
 
@@ -324,6 +345,11 @@ def run_native_first_touch_episode(
         model.geom_contype[mask] = 0
         model.geom_conaffinity[mask] = 0
     mujoco.mj_setConst(model, data)
+    if mesh_task_contact_world_hash is not None:
+        snapshot_bytes = np.empty(mujoco.mj_sizeModel(model), dtype=np.uint8)
+        mujoco.mj_saveModel(model, None, snapshot_bytes)
+        if hash_bytes(snapshot_bytes.tobytes()) != mesh_task_contact_world_hash:
+            raise ValueError("new task contact world differs from its predeclared compiled hash")
     navigation = G1SonicNavigation(
         args.model_root,
         "cpu.first_touch.0",
@@ -846,6 +872,13 @@ def run_native_first_touch_episode(
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if mesh_contact_construction is not None:
+        commitment["mesh_task_contact_protocol"] = dict(
+            expected_world_hash=mesh_task_contact_world_hash,
+            construction=mesh_contact_construction,
+            legacy_qualifications_transferred=False,
+        )
+        commitment["physics"]["contact_settings"] = "explicit existing foot meshes vs ball only"
     cerebellar = None
     if cerebellar_model is not None:
         from rosclaw_soccer.rsi.native_cerebellar_torque import NativeCerebellarTorque
