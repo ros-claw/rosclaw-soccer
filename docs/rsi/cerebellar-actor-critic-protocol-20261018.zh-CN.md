@@ -61,6 +61,15 @@ mypy 通过。曾有一次回归命令漏设冻结 Core PYTHONPATH，产生 coll
 
 ## 下一阶段有限实验设计（待最终冻结、preflight 和执行，不是已启动）
 
+准备进度：已在冻结源 `1bfefdc` 上，从八条旧成功控制的全部 300 帧构建
+2400×127 维锚点，逐一检查原有 witness、标签及 qualification。
+三个 seed 的 actor/critic/Adam JSON 初始检查点已生成，更新步数均为 0；
+没有新增物理执行，没有把旧数据当新模型的 on-policy rollout。
+外部证据目录 `rsi-cerebellar-ac-initialization-20261018`，complete seal 为
+`sha256:85558a7398a9e5071612877515aad687b9f1ac3552248f0d86578892f58dba76`。
+八条源轨迹的 compiled world 文件哈希均为原定
+`sha256:246da475bbad8d3ced351f6ceb18e18fc3d4c2de7236cdd8c427239cecb4ff83`。
+
 1. 等当前三体实验全部结束并复核完整性。合法随机失败保留为数据，不要求
    随机小脑先成功才允许学习；基础设施错误必须修复而非无限重试。
 2. 固定三个初始 seed：2026101801、2026101802、2026101803。
