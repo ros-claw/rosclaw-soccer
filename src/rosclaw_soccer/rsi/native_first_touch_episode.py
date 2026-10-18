@@ -34,6 +34,10 @@ from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor
 from rosclaw_soccer.rsi.online_motor_actor_critic import configure_preview, validate_model
 from rosclaw_soccer.rsi.postcontact_navigation_probe import PostcontactNavigationProbe
 from rosclaw_soccer.rsi.public_first_touch_training_plan import PublicFirstTouchTrainingPlan
+from rosclaw_soccer.rsi.reviewed_contact_world import (
+    ReviewedContactWorld,
+    verify_contact_world_request,
+)
 from rosclaw_soccer.rsi.sampling_model_io import load_sampling_model
 from rosclaw_soccer.rsi.taskspace_gate_memory import select_taskspace_gate
 from rosclaw_soccer.rsi.taskspace_swing_evidence import LEG_NAMES
@@ -81,6 +85,7 @@ def run_native_first_touch_episode(
     cerebellar_model: dict[str, Any] | None = None,
     cerebellar_sampling_seed: int | None = None,
     mesh_task_contact_world_hash: str | None = None,
+    mesh_world_review: ReviewedContactWorld | None = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
@@ -90,10 +95,17 @@ def run_native_first_touch_episode(
         or re.fullmatch(r"sha256:[0-9a-f]{64}", mesh_task_contact_world_hash) is None
         or partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
         or getattr(args, "record_foundation_observation", False) is not True
-        or cerebellar_model is not None
-        or cerebellar_sampling_seed is not None
+        or (
+            (cerebellar_model is not None or cerebellar_sampling_seed is not None)
+            and mesh_world_review is None
+        )
     ):
         raise ValueError("new mesh contact world requires an explicit captured SIM diagnostic hash")
+    mesh_review_binding = verify_contact_world_request(
+        mesh_world_review,
+        world_hash=mesh_task_contact_world_hash,
+        neural_requested=cerebellar_model is not None or cerebellar_sampling_seed is not None,
+    )
     validate_native_request(
         cerebellar_model,
         cerebellar_sampling_seed,
@@ -109,6 +121,12 @@ def run_native_first_touch_episode(
             or getattr(args, "body_response_bundle", None) is not None
         ),
     )
+    if (
+        mesh_task_contact_world_hash is not None
+        and cerebellar_model is not None
+        and cerebellar_model["world_hash"] != mesh_task_contact_world_hash
+    ):
+        raise ValueError("neural model cannot inherit or retag a different physical world")
     if type(record_default_planner_events) is not bool or (
         record_default_planner_events and locomotion_mode_probe is not None
     ):
@@ -879,6 +897,8 @@ def run_native_first_touch_episode(
             legacy_qualifications_transferred=False,
         )
         commitment["physics"]["contact_settings"] = "explicit existing foot meshes vs ball only"
+        if mesh_review_binding is not None:
+            commitment["mesh_task_contact_protocol"]["numerical_review"] = mesh_review_binding
     cerebellar = None
     if cerebellar_model is not None:
         from rosclaw_soccer.rsi.native_cerebellar_torque import NativeCerebellarTorque
@@ -1367,6 +1387,10 @@ def run_native_first_touch_episode(
     ):
         raise ValueError("whole unchanged neural torque episode and 3000 substep calls required")
     arrays: dict[str, Any] = {k: np.asarray(v) for k, v in history.items()}
+    if mesh_world_review is not None:
+        assert mesh_task_contact_world_hash is not None
+        if mesh_world_review.verify(mesh_task_contact_world_hash) != mesh_review_binding:
+            raise ValueError("contact world numerical review changed during the physical episode")
     if args.record_foundation_observation:
         from rosclaw_soccer.rsi.foundation_observation_capture import validate_capture
 

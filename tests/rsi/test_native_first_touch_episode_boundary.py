@@ -218,6 +218,7 @@ def specialize_legacy_profile(function):
             if test in (
                 "mesh_task_contact_world_hash is not None",
                 "mesh_contact_construction is not None",
+                "mesh_world_review is not None",
             ):
                 # New task-contact world is explicitly opt-in. Default None
                 # retains the historical model and controller arithmetic.

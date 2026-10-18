@@ -32,6 +32,7 @@ from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 if TYPE_CHECKING:
     from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
     from rosclaw_soccer.rsi.public_physics_option_planning import PublicPlanningContext
+    from rosclaw_soccer.rsi.reviewed_contact_world import ReviewedContactWorld
 
 
 def atomic_status(root: Path, name: str, value: dict[str, Any]) -> None:
@@ -593,6 +594,7 @@ def qualified_episode(
     cerebellar_model: dict[str, Any] | None = None,
     cerebellar_sampling_seed: int | None = None,
     mesh_task_contact_world_hash: str | None = None,
+    mesh_world_review: "ReviewedContactWorld | None" = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -603,15 +605,20 @@ def qualified_episode(
         )
 
         if (
-            cerebellar_model is not None
-            or cerebellar_sampling_seed is not None
-            or mesh_task_contact_world_hash == assets.WORLD
+            mesh_task_contact_world_hash == assets.WORLD
             or type(plan) is not PublicFirstTouchTrainingPlan
             or type(factory) is not RecurrentSamplingEpisodeFactory
             or plan.behavior_model_hash != assets.MEAN
         ):
             raise ValueError("new contact protocol requires distinct world and fixed public source")
         factory._stable()
+    from rosclaw_soccer.rsi.reviewed_contact_world import verify_contact_world_request
+
+    mesh_review_binding = verify_contact_world_request(
+        mesh_world_review,
+        world_hash=mesh_task_contact_world_hash,
+        neural_requested=cerebellar_model is not None or cerebellar_sampling_seed is not None,
+    )
     if planning_context is None:
         if planning_stage != "PLANNING_SIMULATION":
             raise ValueError("an evaluation stage requires an explicit public planning context")
@@ -741,6 +748,7 @@ def qualified_episode(
         cerebellar_model=cerebellar_model,
         cerebellar_sampling_seed=cerebellar_sampling_seed,
         mesh_task_contact_world_hash=mesh_task_contact_world_hash,
+        mesh_world_review=mesh_world_review,
     )
     report = (
         _sealed(folder / "report.json")
@@ -925,6 +933,15 @@ def qualified_episode(
     if mesh_task_contact_world_hash is not None:
         receipt["mesh_task_contact_world_hash"] = mesh_task_contact_world_hash
         receipt["legacy_qualifications_transferred"] = False
+        if mesh_review_binding is not None:
+            if (
+                commitment["mesh_task_contact_protocol"].get("numerical_review")
+                != mesh_review_binding
+            ):
+                raise ValueError(
+                    "requested contact world numerical review must bind actual execution"
+                )
+            receipt["mesh_world_numerical_review"] = mesh_review_binding
     if locomotion_mode_probe is not None:
         from rosclaw_soccer.rsi.sonic_locomotion_reference_audit import audit_locomotion_reference
 
