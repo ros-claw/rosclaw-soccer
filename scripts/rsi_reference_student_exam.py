@@ -57,6 +57,7 @@ def require_scope(cfg):
                 ("new_optimizer_updates", 0),
             )
         )
+        or ("matched_ablation" in cfg and "actual_winner_fit" in cfg)
         or any(
             cfg.get(k) is not False
             for k in (
@@ -209,6 +210,10 @@ def load_inputs(config_path):
             original_stage=stage,
             original_fit=fit,
         )
+    elif "actual_winner_fit" in cfg:
+        from scripts.rsi_load_actual_winner_exam import load_actual_winner
+
+        student, stage, fit = load_actual_winner(cfg, sealed=sealed, digest=digest, pins=pins)
     return SimpleNamespace(
         cfg=cfg,
         source=source,

@@ -5,11 +5,15 @@ import json
 
 import numpy as np
 import pytest
+from rosclaw.growth.causal_residual_memory import initial_parameters
 
 from rosclaw_soccer.rsi.actual_winner_batch import prepare_actual_winner_batch
 from rosclaw_soccer.rsi.actual_winner_supervision import select_actual_winner_paths
-from rosclaw_soccer.sim.contracts import hash_json
+from rosclaw_soccer.rsi.pre_parent_reference_features import FEATURE_NAMES
+from rosclaw_soccer.rsi.reference_student_execution import make_model
+from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts import rsi_fit_actual_winner_batch as fitter
+from scripts.rsi_load_actual_winner_exam import require_actual_fit
 
 
 def bank():
@@ -185,3 +189,125 @@ def test_fit_loader_rejects_provenance_or_selection_tampering(fit_inputs, tamper
         prepared["optimizer_updates"] = True
     with pytest.raises(ValueError):
         fitter.load_batch(cfg, sealed=lambda _: prepared, pins={})
+
+
+@pytest.fixture
+def candidate_lineage(fit_inputs):
+    cfg, prepared, batch, _ = fit_inputs
+    configuration = dict(
+        cfg,
+        profile="one-actual-winner-zero-anchor-fit-v1",
+        fit_seed=2026101902,
+        fit_steps=128,
+        maximum_numeric_candidates=1,
+    )
+    initial = initial_parameters(135, 12, hidden_dimension=64, seed=2026101902)
+    ignored = [
+        i
+        for i, n in enumerate(FEATURE_NAMES)
+        if n.startswith("previous_applied_reference_increment:")
+    ]
+    w = np.asarray(initial["weight_ih"])
+    w[:, ignored] = 0
+    initial["weight_ih"] = w.tolist()
+    model = make_model(
+        initial,
+        mean=batch["mean"],
+        scale=batch["scale"],
+        world_hash=cfg["world_hash"],
+        parent_model_hash=cfg["parent_model_hash"],
+    )
+    # Synthetic lineage only: no optimization or physical success in this test.
+    fit = dict(
+        report_hash="synthetic-fit",
+        numeric_model=model,
+        learning_receipt=dict(
+            parameters=model["parameters"],
+            fitted_parameters_hash=hash_json(model["parameters"]),
+            completed_optimizer_steps=128,
+            config=dict(
+                steps=128,
+                batch_episodes=4,
+                learning_rate=0.0004,
+                residual_cap=0.2,
+                seed=2026101902,
+                compute_device="cpu",
+            ),
+        ),
+        normalization_hash=hash_json(
+            dict(mean=batch["mean"].tolist(), scale=batch["scale"].tolist())
+        ),
+        whole_observations_hash=hash_bytes(batch["original_observations"].tobytes()),
+        whole_reference_labels_hash=hash_bytes(batch["targets"].tobytes()),
+        initial_parameters_hash=hash_json(initial),
+        past_reference_input_ablation=True,
+        ignored_input_weights_remain_exactly_zero=True,
+        previous_reference_inputs_are_teacher_forced=False,
+        ignored_input_feature_names=[FEATURE_NAMES[i] for i in ignored],
+        input_episode_count=16,
+        optimized_episode_count=3,
+        train_source_seeds=[20261077, 20261093],
+        validation_source_seeds=[20261096],
+        validation_excluded_from_gradient_and_normalization=True,
+    )
+    stage = dict(
+        schema="soccer.rsi.actual_winner_fit_complete.v1",
+        status="NUMERIC_CANDIDATE_REQUIRES_OWN_BODY_EXAM",
+        configuration=copy.deepcopy(configuration),
+        numeric_fit_hash=fit["report_hash"],
+        prepared_complete_hash=prepared["report_hash"],
+        selection_hash=prepared["selection"]["report_hash"],
+        optimizer_updates=128,
+        own_body_student_evaluated=False,
+        validation_checkpoint_selection=False,
+        dataset_admission_authorized=False,
+        teacher_qualified=False,
+        hardware_authorized=False,
+        promotion_authorized=False,
+    )
+    return stage, fit, dict(configuration=configuration, prepared=prepared, batch=batch)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        None,
+        "steps",
+        "world",
+        "labels",
+        "norm",
+        "seed",
+        "initial",
+        "selection",
+        "validation",
+        "model",
+        "flags",
+    ],
+)
+def test_candidate_cannot_enter_exam_with_changed_training_lineage(candidate_lineage, tamper):
+    stage, fit, kw = candidate_lineage
+    if tamper == "steps":
+        stage["optimizer_updates"] = 129
+    elif tamper == "world":
+        kw["configuration"]["world_hash"] = "other"
+    elif tamper == "labels":
+        fit["whole_reference_labels_hash"] = "other"
+    elif tamper == "norm":
+        kw["batch"]["mean"][0] += 0.01
+    elif tamper == "seed":
+        fit["learning_receipt"]["config"]["seed"] += 1
+    elif tamper == "initial":
+        fit["initial_parameters_hash"] = "other"
+    elif tamper == "selection":
+        stage["selection_hash"] = "other"
+    elif tamper == "validation":
+        fit["train_source_seeds"].append(20261096)
+    elif tamper == "model":
+        fit["learning_receipt"]["fitted_parameters_hash"] = "other"
+    elif tamper == "flags":
+        stage["promotion_authorized"] = True
+    if tamper is None:
+        assert require_actual_fit(stage, fit, **kw) == fit["numeric_model"]
+    else:
+        with pytest.raises(ValueError):
+            require_actual_fit(stage, fit, **kw)

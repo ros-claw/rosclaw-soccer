@@ -55,7 +55,7 @@ def config():
 
 
 @pytest.mark.parametrize(
-    "changed", [None, "budget", "cpu", "training", "hardware", "witness", "bool"]
+    "changed", [None, "budget", "cpu", "training", "hardware", "witness", "bool", "mixed_lineage"]
 )
 def test_own_body_protocol_cannot_widen_or_disable_independent_replay(changed):
     cfg = config()
@@ -71,6 +71,8 @@ def test_own_body_protocol_cannot_widen_or_disable_independent_replay(changed):
         cfg["required_receipt_witnesses"].pop()
     elif changed == "bool":
         cfg["new_optimizer_updates"] = False
+    elif changed == "mixed_lineage":
+        cfg.update(matched_ablation={}, actual_winner_fit={})
     if changed:
         with pytest.raises(ValueError):
             pilot.require_scope(cfg)
