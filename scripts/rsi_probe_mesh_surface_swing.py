@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--geometry-hash", required=True)
     parser.add_argument("--source-head", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--verify-adapter", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     if (
@@ -48,6 +49,11 @@ def main():
         raise ValueError("one original geometry declaration required")
     cfg = json.loads(Path(config_paths[0]).read_text())
     model = mujoco.MjModel.from_binary_path(cfg["compiled_world"])
+    adapter = None
+    if args.verify_adapter:
+        from rosclaw_soccer.rsi.mesh_surface_swing_probe import G1MeshSurfaceSwingProbe
+
+        adapter = G1MeshSurfaceSwingProbe(model, expected_world_hash=cfg["world_hash"])
     g, ball = int(model.geom("task_contact_surface_0").id), int(model.geom("ball_geom").id)
     body = int(model.geom_bodyid[g])
     # Explicit same left-leg mapping used by the native kernel, not right-foot mirroring.
@@ -110,6 +116,47 @@ def main():
                 ),
             )
             before = float(np.linalg.norm(point - target_point))
+            if adapter is not None:
+                preserved = {
+                    name: getattr(data, name).copy()
+                    for name in (
+                        "qpos",
+                        "qvel",
+                        "xpos",
+                        "geom_xpos",
+                        "ctrl",
+                        "qacc",
+                        "qacc_warmstart",
+                    )
+                }
+                actual_delta, record = adapter.advance(
+                    data,
+                    frame=step // 10,
+                    side=0,
+                    baseline_target=baseline,
+                    joint_limits=limits,
+                    forward_cap_m=0.08,
+                    lateral_cap_m=0.15,
+                    vertical_cap_m=0.04,
+                )
+                expected_record = np.concatenate(
+                    (
+                        [step // 10, 0, 1],
+                        point,
+                        center,
+                        jac[:, vi[:6]].ravel(),
+                        baseline,
+                        variants["mesh_surface"],
+                    )
+                )
+                if not np.array_equal(actual_delta, variants["mesh_surface"]) or not np.array_equal(
+                    record, expected_record
+                ):
+                    raise ValueError("scratch adapter differs from independent original-pose probe")
+                if any(
+                    not np.array_equal(getattr(data, name), old) for name, old in preserved.items()
+                ):
+                    raise ValueError("scratch adapter mutated caller state")
             for name, delta in variants.items():
                 probe = mujoco.MjData(model)
                 probe.qpos[:] = data.qpos
@@ -136,6 +183,7 @@ def main():
         input_file_hashes=pins,
         rows=rows,
         fixed_substeps=steps,
+        scratch_adapter_verified=args.verify_adapter,
         pose_probe_baseline="actual measured joint pose, NOT Foundation target or PD dynamics",
         material_point_held_fixed_during_pose_probe=True,
         new_physical_steps=0,
