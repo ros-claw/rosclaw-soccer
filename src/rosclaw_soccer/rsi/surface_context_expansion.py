@@ -1,10 +1,15 @@
 """Fixed public cross-state screen scope, not a new control law or teacher gate."""
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from rosclaw_soccer.rsi.public_physics_option_planning import PublicPlanningContext
 
 
-def context_jobs(contexts):
+def context_jobs(contexts: tuple[PublicPlanningContext, ...]) -> list[dict[str, Any]]:
     if len(contexts) != 8 or [c.context_index for c in contexts] != list(range(8)):
         raise ValueError("whole eight original public contexts required")
     return [
@@ -20,7 +25,13 @@ def context_jobs(contexts):
     ]
 
 
-def require_previous_surface(cfg, source, sealed, digest, pins):
+def require_previous_surface(
+    cfg: dict[str, Any],
+    source: Path,
+    sealed: Callable[[Path], dict[str, Any]],
+    digest: Callable[[Path], str],
+    pins: dict[str, str],
+) -> str:
     """Reuse completed OFF qualification only with byte-identical control sources.
 
     A successful evidence audit is not a teacher qualification. The prior seven
@@ -83,7 +94,13 @@ def require_previous_surface(cfg, source, sealed, digest, pins):
     return audit["report_hash"]
 
 
-def require_context_baselines(cfg, jobs, sealed, digest, pins):
+def require_context_baselines(
+    cfg: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    sealed: Callable[[Path], dict[str, Any]],
+    digest: Callable[[Path], str],
+    pins: dict[str, str],
+) -> dict[str, Any]:
     """Authenticate all twelve reused endpoints before any new model allocation."""
     path = Path(cfg["baseline_receipts"][0]["path"]).parent / "complete.json"
     complete = sealed(path)
@@ -128,7 +145,7 @@ def require_context_baselines(cfg, jobs, sealed, digest, pins):
                         item["pair_id"] != job["pair_id"]
                         or item["receipt_hash"] != prior["receipt_hash"]
                         or item["file_hash"] != digest(Path(item["path"]))
-                        or sealed(Path(item["path"]), "receipt_hash") != prior
+                        or json.loads(Path(item["path"]).read_text()) != prior
                     )
                 )
             ):

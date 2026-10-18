@@ -200,7 +200,7 @@ def test_all_twelve_original_endpoints_authenticated_before_new_physics(tmp_path
 
     # Seals are independently tested by the caller; these tests exercise the
     # whole audited membership and exact endpoint selection before allocation.
-    def sealed(p, key="report_hash"):
+    def sealed(p):
         return documents[p]
 
     if tamper:
