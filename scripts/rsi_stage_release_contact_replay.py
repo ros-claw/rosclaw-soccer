@@ -26,9 +26,12 @@ def expected_jobs(config):
     if (
         any(type(x) is not bool for x in (flag, directional, surface))
         or sum((flag, directional, surface)) > 1
+        or config.get("surface_profile", "original-seven") not in ("original-seven", "context-six")
     ):
         raise ValueError("explicit boolean contact-exit diagnostic required")
     if surface:
+        if config.get("surface_profile", "original-seven") == "context-six":
+            return tuple(f"surface-context-{i}" for i in range(2, 8))
         return tuple(
             f"surface-{p}" for p in ("raw-8", "raw-56", "context-0", "context-1", "raw-4", "raw-32")
         )
@@ -93,10 +96,13 @@ def require_four_endpoints(config, declaration, complete, readback):
     torque_mpc = config.get("use_contact_exit_torque_mpc", False)
     directional = config.get("use_directional_contact_compliance", False)
     surface = config.get("use_mesh_surface_swing", False)
-    all_jobs = ("surface-off-raw-8", *jobs) if surface else jobs
+    expansion = surface and config.get("surface_profile", "original-seven") == "context-six"
+    all_jobs = ("surface-off-raw-8", *jobs) if surface and not expansion else jobs
     body_count = len(all_jobs)
     kind = (
-        "mesh_surface_swing"
+        "mesh_surface_context_expansion"
+        if expansion
+        else "mesh_surface_swing"
         if surface
         else "directional_contact_compliance"
         if directional
@@ -113,7 +119,11 @@ def require_four_endpoints(config, declaration, complete, readback):
         else "all_original_first_contact_prefixes_bit_equal",
     ]
     if surface:
-        flags.append("disabled_complete_300_frame_noninterference_verified")
+        flags.append(
+            "prior_disabled_noninterference_reused_not_rerun"
+            if expansion
+            else "disabled_complete_300_frame_noninterference_verified"
+        )
     if not (torque_mpc or directional or surface):
         flags.append("actual_postcontact_taskspace_increment_exactly_zero")
     if (
@@ -160,9 +170,17 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
-    surface_profile = cfg.get("diagnostic_profile", "legacy-four") == "surface-six"
+    context_profile = cfg.get("diagnostic_profile") == "surface-context-six"
+    surface_profile = cfg.get("diagnostic_profile", "legacy-four") in (
+        "surface-six",
+        "surface-context-six",
+    )
     budget = 18000 if surface_profile else 12000
-    if cfg.get("diagnostic_profile", "legacy-four") not in ("legacy-four", "surface-six"):
+    if cfg.get("diagnostic_profile", "legacy-four") not in (
+        "legacy-four",
+        "surface-six",
+        "surface-context-six",
+    ):
         raise ValueError("explicit fixed diagnostic stage profile required")
     if time.time() >= cfg["deadline_unix"] or cfg["new_substep_budget"] != budget:
         raise ValueError("original bounded 12000-step diagnostic budget and deadline required")
@@ -255,8 +273,12 @@ def main():
     require_four_endpoints(producer, declaration, complete, readback)
     if producer.get("use_mesh_surface_swing", False) is not surface_profile:
         raise ValueError("surface diagnostic scope must match original producer study")
+    if (producer.get("surface_profile", "original-seven") == "context-six") is not context_profile:
+        raise ValueError("context diagnostic scope must match original fixed six-context producer")
     diagnostic_kind = (
-        "mesh_surface"
+        "mesh_surface_context"
+        if context_profile
+        else "mesh_surface"
         if surface_profile
         else "directional_compliance"
         if producer.get("use_directional_contact_compliance", False)
@@ -277,7 +299,7 @@ def main():
         verify_extra_baseline_replay(item, extra, producer)
     cases = []
     for index, job in enumerate(expected_jobs(producer)):
-        source_index = index + 1 if surface_profile else index
+        source_index = index + 1 if surface_profile and not context_profile else index
         path = root / f"receipt-{source_index:04d}.json"
         receipt = sealed(path, "receipt_hash")
         if receipt != complete["results"][source_index]:
@@ -304,7 +326,7 @@ def main():
         neural_training_authorized=False,
     )
     if surface_profile:
-        replay_cfg["replay_profile"] = "surface-six"
+        replay_cfg["replay_profile"] = "surface-context-six" if context_profile else "surface-six"
     write_once(
         start,
         dict(

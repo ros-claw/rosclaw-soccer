@@ -33,19 +33,26 @@ def main():
     directional = cfg.get("use_directional_contact_compliance", False)
     torque_mpc = cfg.get("use_contact_exit_torque_mpc", False)
     surface = cfg.get("use_mesh_surface_swing", False)
+    expansion = surface and cfg.get("surface_profile", "original-seven") == "context-six"
+    surface_off = surface and not expansion
+    retention_key = (
+        "original_none_context_retention" if expansion else "original_none_raw_retention"
+    )
     if (
         any(type(x) is not bool for x in (directional, torque_mpc, surface))
         or sum((directional, torque_mpc, surface)) != 1
     ):
         raise ValueError("one explicit unmixed postcontact intervention required")
     kind = (
-        "mesh_surface_swing"
+        "mesh_surface_context_expansion"
+        if expansion
+        else "mesh_surface_swing"
         if surface
         else "directional_contact_compliance"
         if directional
         else "contact_exit_torque_mpc"
     )
-    cases, bodies = (6, 7) if surface else (4, 4)
+    cases, bodies = (6, 6) if expansion else (6, 7) if surface else (4, 4)
     audit = _sealed(args.audit)
     root = Path(cfg["output_root"])
     complete, declaration = (_sealed(root / name) for name in ("complete.json", "declaration.json"))
@@ -76,8 +83,13 @@ def main():
     ):
         raise ValueError("whole audited four-pair evidence and unused summary output required")
     if surface and (
-        audit.get("disabled_complete_300_frame_noninterference_verified") is not True
-        or audit.get("original_none_raw_retention") != complete.get("original_none_raw_retention")
+        audit.get(
+            "prior_disabled_noninterference_reused_not_rerun"
+            if expansion
+            else "disabled_complete_300_frame_noninterference_verified"
+        )
+        is not True
+        or audit.get(retention_key) != complete.get(retention_key)
     ):
         raise ValueError("disabled source parity and original None retention must be audited")
     pins = {
@@ -94,8 +106,8 @@ def main():
     controls, evaluated, rows = {}, {}, []
     for item, receipt, audited in zip(
         cfg["baseline_receipts"],
-        complete["results"][1:] if surface else complete["results"],
-        audit["rows"][1:] if surface else audit["rows"],
+        complete["results"][1:] if surface_off else complete["results"],
+        audit["rows"][1:] if surface_off else audit["rows"],
         strict=True,
     ):
         baseline = json.loads(Path(item["path"]).read_text())
@@ -138,11 +150,12 @@ def main():
     )
     if surface:
         passed = passed and all(
-            complete["original_none_raw_retention"][k] == 0
-            for k in ("regressed_pairs", "newly_unsafe_pairs")
+            complete[retention_key][k] == 0 for k in ("regressed_pairs", "newly_unsafe_pairs")
         )
     result = dict(
-        schema="soccer.rsi.mesh_surface_measured_summary.v1"
+        schema="soccer.rsi.mesh_surface_context_measured_summary.v1"
+        if expansion
+        else "soccer.rsi.mesh_surface_measured_summary.v1"
         if surface
         else "soccer.rsi.directional_compliance_measured_summary.v1"
         if directional
@@ -174,7 +187,7 @@ def main():
         promotion_authorized=False,
     )
     if surface:
-        result["original_none_raw_retention"] = complete["original_none_raw_retention"]
+        result[retention_key] = complete[retention_key]
     if any(digest(Path(name)) != expected for name, expected in pins.items()):
         raise ValueError("summary input bytes changed during readback")
     result["report_hash"] = hash_json(result)

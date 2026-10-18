@@ -99,39 +99,65 @@ def test_directional_all_four_endpoints_include_unsafe_cases():
     require_four_endpoints(*args)
 
 
-def surface_fixture():
+def surface_fixture(*, expansion=False):
     cfg, declaration, complete, readback = directional_fixture()
     cfg.update(
         use_directional_contact_compliance=False,
         use_mesh_surface_swing=True,
-        max_attempts=7,
-        new_physical_budget=7,
+        max_attempts=6 if expansion else 7,
+        new_physical_budget=6 if expansion else 7,
     )
-    jobs = ("surface-off-raw-8", *expected_jobs(cfg))
+    if expansion:
+        cfg["surface_profile"] = "context-six"
+    jobs = expected_jobs(cfg) if expansion else ("surface-off-raw-8", *expected_jobs(cfg))
     declaration["jobs"] = [dict(job=j) for j in jobs]
     rows = [
         dict(job=j, receipt_hash=str(i), outcome=dict(task_pass=i != 3, safe=i != 3))
         for i, j in enumerate(jobs)
     ]
     complete.update(
-        schema="soccer.rsi.mesh_surface_swing_pilot_complete.v1",
+        schema="soccer.rsi.mesh_surface_context_expansion_pilot_complete.v1"
+        if expansion
+        else "soccer.rsi.mesh_surface_swing_pilot_complete.v1",
         results=rows,
-        native_substeps=21000,
-        independent_cpu_substeps=21000,
+        native_substeps=18000 if expansion else 21000,
+        independent_cpu_substeps=18000 if expansion else 21000,
     )
     readback.update(
-        schema="soccer.rsi.mesh_surface_swing_terminal_readback.v1",
+        schema="soccer.rsi.mesh_surface_context_expansion_terminal_readback.v1"
+        if expansion
+        else "soccer.rsi.mesh_surface_swing_terminal_readback.v1",
         rows=copy.deepcopy(rows),
-        source_native_bodies=7,
+        source_native_bodies=6 if expansion else 7,
         all_original_pre_activation_prefixes_bit_equal=True,
         disabled_complete_300_frame_noninterference_verified=True,
     )
+    if expansion:
+        readback.pop("disabled_complete_300_frame_noninterference_verified")
+        readback["prior_disabled_noninterference_reused_not_rerun"] = True
     readback.pop("all_original_first_contact_prefixes_bit_equal")
     return cfg, declaration, complete, readback
 
 
 def test_surface_diagnostic_requires_disabled_body_and_all_six_actual_outcomes():
     require_four_endpoints(*surface_fixture())
+
+
+def test_context_surface_diagnostic_reuses_prior_off_and_preserves_six_failures():
+    args = surface_fixture(expansion=True)
+    require_four_endpoints(*args)
+    assert len(args[2]["results"]) == 6
+    assert args[3]["rows"][3]["outcome"]["safe"] is False
+    args[3]["prior_disabled_noninterference_reused_not_rerun"] = False
+    with pytest.raises(ValueError):
+        require_four_endpoints(*args)
+
+
+def test_unknown_surface_scope_cannot_fall_back_to_old_seven_profile():
+    args = surface_fixture()
+    args[0]["surface_profile"] = "unbounded-contexts"
+    with pytest.raises(ValueError):
+        require_four_endpoints(*args)
 
 
 @pytest.mark.parametrize(

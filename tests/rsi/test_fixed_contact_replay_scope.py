@@ -139,6 +139,22 @@ def test_five_original_none_missing_endpoints_are_not_new_policy_courses():
         fixed_replay_scope(c)
 
 
+def test_remaining_six_contexts_cannot_be_replaced_by_old_six_or_partial_scope():
+    c = dict(
+        replay_profile="surface-context-six",
+        new_replay_budget=6,
+        new_substep_budget=18000,
+        cases=[dict(case_id=f"surface_context_{i}", receipt_hash=str(i)) for i in range(2, 8)],
+    )
+    assert fixed_replay_scope(c) == (6, 18000)
+    c["cases"][0]["case_id"] = "surface_context_0"
+    with pytest.raises(ValueError):
+        fixed_replay_scope(c)
+    c["cases"].pop()
+    with pytest.raises(ValueError):
+        fixed_replay_scope(c)
+
+
 @pytest.mark.parametrize("tamper", ["partial", "order", "duplicate", "budget", "bool"])
 def test_none_five_rejects_scope_tamper(tamper):
     c = none_five_config()

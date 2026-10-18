@@ -29,6 +29,7 @@ def fixed_replay_scope(cfg):
         "surface-six": 6,
         "surface-missing-three": 3,
         "demonstration-missing-five": 5,
+        "surface-context-six": 6,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -69,6 +70,10 @@ def fixed_replay_scope(cfg):
         "none_context_1",
     ]:
         raise ValueError("only five missing None endpoints may be replayed; C0 already exists")
+    if profile == "surface-context-six" and [r["case_id"] for r in cases] != [
+        f"surface_context_{i}" for i in range(2, 8)
+    ]:
+        raise ValueError("all six remaining material-point contexts required in original order")
     return count, steps
 
 
