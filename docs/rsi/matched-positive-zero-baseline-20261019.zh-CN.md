@@ -58,3 +58,25 @@ active Goal负责后续Agent轮次；systemd仅接续已声明、一次性且
 本协议开发测试中的物理/NN引擎均为mock；纯数值零目标检测另有
 非mock测试。真实启动和整批结果必须另外查外部证据，不能把
 测试通过写成9个身体实验已完成。
+
+## 实际启动记录（03:53复核）
+
+164项相关组合回归通过（77.47s），全ruff/compileall和变动文件
+format通过；不替代存量全量pytest、format和mypy债务。
+9/13两种完整合成驱动预检及失败终态均覆盖。首次扩展测试
+发现tuple课程经JSON变list导致错误拒绝，已统一采用规范哈希
+比较并复测通过，物理控制与固定积分主体未改。
+
+实验源码5f3f01b48fd83b788de4c0706b0537b8d542ff43冻结到独立
+`rosclaw-soccer-positive-zero-native-source-20261019`。实际unit
+校验、输入SHA及未定义符号检查通过。真实零完整NN/物理分配
+预检通过，03:52:46启动
+`rosclaw-reference-positive-zero-nine-native-20261019.service`，
+PID3210163，03:53读回active/running；此时尚无9体成绩。
+audit/contact两个同名后继timer已enabled/active，正常终态证据
+齐全才执行，不隐式重试。观察器已覆盖新旧三个实验，不唤醒Agent。
+
+原d634学生8个positive课程全部提交：c0和c7安全通过，其余6例
+失败，其中c3/c6不安全。2/8相比原学生0/8有局部改善，但仍低于
+教师4/8，并非完整13体、Fresh、零参考净收益或球队成果。
+当前13体保持对照继续，不改生产源码；自身状态聚合拟合仍未启动。
