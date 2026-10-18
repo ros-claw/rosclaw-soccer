@@ -14,7 +14,8 @@ import pytest
 from rosclaw_soccer.rsi import failure_curriculum_evidence, fixed_physical_payload_reader
 from rosclaw_soccer.rsi.first_touch_outcome import label_first_touch
 from rosclaw_soccer.rsi.first_touch_qualification import require_first_touch_qualification
-from rosclaw_soccer.sim.contracts import hash_json
+from rosclaw_soccer.rsi.public_first_touch_training_plan import PublicFirstTouchTrainingPlan
+from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 from scripts import rsi_read_mesh_contact_native_pilot as audit
 
 
@@ -25,7 +26,7 @@ def write(path, value, key="report_hash"):
     return value
 
 
-def fixture(tmp_path, monkeypatch, *, tamper=None):
+def fixture(tmp_path, monkeypatch, *, tamper=None, public_four=False):
     root = tmp_path / "run"
     root.mkdir()
     output = tmp_path / "audit.json"
@@ -39,6 +40,8 @@ def fixture(tmp_path, monkeypatch, *, tamper=None):
         mesh_task_contact_world_hash=world_hash,
     )
     config_path = tmp_path / "config.json"
+    if public_four:
+        config.update(groups=[4, 8, 32, 56], max_attempts=4, new_physical_budget=4)
     write(config_path, config, key=None)
     names = ("old64-option3", "new96-option3", "unsafe104-option7")
     jobs = [
@@ -50,6 +53,18 @@ def fixture(tmp_path, monkeypatch, *, tamper=None):
         )
         for i, name in enumerate(names)
     ]
+    draws = None
+    if public_four:
+        names = tuple(f"original-public-{g}" for g in (4, 8, 32, 56))
+        draws = PublicFirstTouchTrainingPlan(
+            tuple(range(20261060, 20261070)), "sha256:" + "a" * 64, 18
+        ).draws()
+        jobs = [
+            dict(job=name, group=g, candidate=None, course=list(draws[g].course))
+            for name, g in zip(names, (4, 8, 32, 56), strict=True)
+        ]
+        if tamper == "perturbed_course":
+            jobs[0]["course"][0] += 0.001
     declaration = write(
         root / "declaration.json",
         dict(
@@ -58,6 +73,7 @@ def fixture(tmp_path, monkeypatch, *, tamper=None):
             input_file_hashes={str(config_path): audit.digest(config_path)},
             prepared_pins={},
             source_heads={},
+            **(dict(schema="soccer.rsi.mesh_public_draw_declaration.v1") if public_four else {}),
         ),
     )
     events = []
@@ -73,21 +89,54 @@ def fixture(tmp_path, monkeypatch, *, tamper=None):
             canonical_qpos=np.zeros((300, 1, 43)),
         )
         trace["canonical_qpos"][0, 0, 36:39] = [2.3, 0.01, 0.13]
+        course, seed, lane = [2.3, 0.01, -0.4], 1, 0
+        view = None
+        if public_four:
+            from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController
+
+            draw = draws[jobs[index]["group"]]
+            course, seed, lane = jobs[index]["course"], draw.seed, draw.lane
+            q = trace["canonical_qpos"][0, 0]
+            q[:7] = (0, 0, 0.793, 1, 0, 0, 0)
+            q[7:36] = G1SonicRunupController.default_angles
+            q[36:43] = (*course[:2], 0.13, 1, 0, 0, 0)
+            trace["canonical_qvel"] = np.zeros((300, 1, 41))
+            trace["canonical_qvel"][0, 0, 35:41] = (course[2], 0, 0, 0, course[2] / 0.11, 0)
+            if tamper == "initial_spin":
+                trace["canonical_qvel"][0, 0, 39] += 0.1
+            view = dict(mean_model=dict(model_hash="sha256:" + "a" * 64), seed=draw.sampling_seed)
+            if tamper == "sampling_seed":
+                view["seed"] += 1
+            trace["foundation_neural_encoder_features"] = np.zeros((300, 1, 640), dtype=np.float32)
+            if tamper == "feature_dtype":
+                trace["foundation_neural_encoder_features"] = trace[
+                    "foundation_neural_encoder_features"
+                ].astype(np.float64)
         np.savez(folder / "trace.npz", **trace)
         outcome = label_first_touch(trace)
         commitment = dict(
             compiled_model_hash=world_hash,
             mesh_task_contact_protocol=dict(expected_world_hash=world_hash),
         )
+        if public_four:
+            commitment.update(
+                approach_mode="legacy",
+                swing_mode="legacy",
+                executed_motor_policy=dict(step_motor_proof=dict(model=view)),
+            )
+            commitment["default_locomotion_planner_events"] = [
+                dict(frame=i, planner_mode=2, reference_hash=hash_json(i))
+                for i in range(0, 300, 20)
+            ]
         write(folder / "commitment.json", commitment, key=None)
         report = write(
             folder / "report.json",
             dict(
                 commitment,
                 commitment_hash=hash_json(commitment),
-                course=[2.3, 0.01, -0.4],
-                seed=1,
-                lane=0,
+                course=course,
+                seed=seed,
+                lane=lane,
                 physical_trace_hash=audit.digest(folder / "trace.npz"),
             ),
         )
@@ -111,18 +160,39 @@ def fixture(tmp_path, monkeypatch, *, tamper=None):
                 physical_trace_hash=report["physical_trace_hash"],
             ),
         )
-        intent = write(
-            folder / "intent.json",
-            dict(
+        expected_intent = (
+            dict(jobs[index], world_hash=world_hash, declaration_hash=declaration["report_hash"])
+            if public_four
+            else dict(
                 job=name,
                 context_hash=hash_json(jobs[index]["context"]),
                 option_index=index,
                 candidate_hash=hash_json(jobs[index]["candidate"]),
                 world_hash=world_hash,
                 declaration_hash=declaration["report_hash"],
-            ),
+            )
         )
-        write(folder / "encoder.json", dict(synthetic=True))
+        intent = write(
+            folder / "intent.json",
+            expected_intent,
+        )
+        encoder = dict(synthetic=True)
+        if public_four:
+            encoder = dict(
+                schema="soccer.rsi.sonic_encoder_reference_consumption.v1",
+                actual_cpu_onnx_planner_calls=15,
+                compared_encoder_frames=300,
+                compared_features_per_frame=640,
+                recorded_features_hash=hash_bytes(
+                    trace["foundation_neural_encoder_features"].tobytes()
+                ),
+                recorded_features_dtype="float32",
+                maximum_absolute_error=0.0,
+                planner_events=commitment["default_locomotion_planner_events"],
+            )
+            if tamper == "encoder_reference":
+                encoder["recorded_features_hash"] = hash_json("wrong features")
+        write(folder / "encoder.json", encoder)
         (folder / "proof.json").write_bytes(b"synthetic shared payload")
         files = dict(
             trace=folder / "trace.npz",
@@ -150,31 +220,54 @@ def fixture(tmp_path, monkeypatch, *, tamper=None):
                 intent_witness=witness(folder / "intent.json"),
                 encoder_witness=witness(folder / "encoder.json"),
                 candidate=jobs[index]["candidate"],
-                planning_context_hash=intent["context_hash"],
+                **(
+                    dict(group=jobs[index]["group"])
+                    if public_four
+                    else dict(planning_context_hash=intent["context_hash"])
+                ),
             ),
             "receipt_hash",
         )
         state["next_intent_hash"] = intent["report_hash"]
         events.append(
-            dict(event="NEW_WORLD_INTENT_COMMITTED_BEFORE_BODY", state=copy.deepcopy(state))
+            dict(
+                event=(
+                    "PUBLIC_DRAW_INTENT_COMMITTED_BEFORE_BODY"
+                    if public_four
+                    else "NEW_WORLD_INTENT_COMMITTED_BEFORE_BODY"
+                ),
+                state=copy.deepcopy(state),
+            )
         )
         state.update(active=dict(job=name, attempt=index), attempts=index + 1)
         events.append(dict(event="ATTEMPT_STARTED", state=copy.deepcopy(state)))
         state["completed"][name] = receipt
         state["active"] = None
         receipts.append(receipt)
-    state["phase"] = "CONTACT_WORLD_DIAGNOSTIC_COMPLETE_NO_PROMOTION"
+    state["phase"] = (
+        "PUBLIC_DRAW_EVALUATION_COMPLETE_NO_PROMOTION"
+        if public_four
+        else "CONTACT_WORLD_DIAGNOSTIC_COMPLETE_NO_PROMOTION"
+    )
     events.append(dict(event="THREE_BODY_DIAGNOSTIC_COMPLETE", state=copy.deepcopy(state)))
     write(
         root / "complete.json",
         dict(
             declaration_hash=declaration["report_hash"],
-            new_native_bodies=3,
-            native_physical_substeps=9000,
-            independent_cpu_substeps=9000,
-            independent_foundation_calls=900,
+            new_native_bodies=len(names),
+            native_physical_substeps=3000 * len(names),
+            independent_cpu_substeps=3000 * len(names),
+            independent_foundation_calls=300 * len(names),
             new_optimizer_updates=0,
             results=receipts,
+            **(
+                dict(
+                    schema="soccer.rsi.mesh_public_draw_complete.v1",
+                    additional_encoder_reference_calls=1200,
+                )
+                if public_four
+                else {}
+            ),
         ),
     )
     if tamper == "intent_order":
@@ -224,6 +317,7 @@ def fixture(tmp_path, monkeypatch, *, tamper=None):
             "synthetic.service",
             "--output",
             str(output),
+            *(["--profile", "original-public-four"] if public_four else []),
         ],
     )
     return output
@@ -254,5 +348,45 @@ def test_nonterminal_unit_is_not_read_as_completed(tmp_path, monkeypatch):
         lambda *a, **k: "MainPID=12\nActiveState=active\nResult=success\n",
     )
     with pytest.raises(ValueError, match="finished worker"):
+        audit.main()
+    assert not output.exists()
+
+
+def test_four_original_public_draws_have_distinct_terminal_profile(tmp_path, monkeypatch):
+    output = fixture(tmp_path, monkeypatch, public_four=True)
+    audit.main()
+    report = json.loads(output.read_text())
+    assert len(report["rows"]) == 4
+    assert report["schema"] == "soccer.rsi.mesh_original_public_terminal_readback.v1"
+    assert all(not row["outcome"]["task_pass"] for row in report["rows"])
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "chain",
+        "trace",
+        "config",
+        "intent_order",
+        "initial_spin",
+        "perturbed_course",
+        "sampling_seed",
+        "encoder_reference",
+        "feature_dtype",
+    ],
+)
+def test_four_case_binding_rejects_consistently_resealed_but_wrong_public_states(
+    tmp_path, monkeypatch, tamper
+):
+    output = fixture(tmp_path, monkeypatch, public_four=True, tamper=tamper)
+    with pytest.raises(ValueError):
+        audit.main()
+    assert not output.exists()
+
+
+def test_three_body_profile_cannot_certify_four_case_campaign(tmp_path, monkeypatch):
+    output = fixture(tmp_path, monkeypatch, public_four=True)
+    monkeypatch.setattr(sys, "argv", sys.argv[:-2])
+    with pytest.raises(ValueError, match="whole-body accounting"):
         audit.main()
     assert not output.exists()
