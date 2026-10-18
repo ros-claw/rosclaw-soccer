@@ -75,6 +75,21 @@ mypy 通过。曾有一次回归命令漏设冻结 Core PYTHONPATH，产生 coll
 
 ## 恢复学习目标，与正式标签分开
 
+### 真实数据到更新器的入口
+
+新增 `cerebellar_training_batch.build_batch`：读取实际冻结声明，要求该 actor
+全部 collection jobs 按原顺序输入，不能只传调用方自选子集；检查显式
+SIM 研究训练范围，并拒绝 v1 数据冒充 v2、旧模型/世界/随机种子错配。
+逐文件验证 receipt 和全部 witness，重建共享 payload 的原始完整物理报告
+seal，核对其 commitment/原始 trace/独立 CPU 与 Foundation review 绑定，
+核对 15 次 planner reference 重建与 300×640 encoder 特征来源。
+再独立重算 3000 子步本体输入、实际潜变量/概率和学习 return。
+合法 unsafe、无触球、右删失仍保留为完整失败轨迹，不能触发成功筛选。
+
+新增 13 项合成 packet/文件管线测试；文件管线测试明确 mock 物理报告读者，
+不是新物理证据。相关回归 476 项通过，新增源文件定向 mypy、Ruff 通过。
+生产入口尚待新 v2 真实采集运行；目前仍没有新增足球训练更新。
+
 正式 300 帧任务、完整触球后 60 帧球路、足部接触与骨盆安全门均不变。
 新学习 return = 正式 training_reward + 5×task_pass − 有界恢复代价。
 
