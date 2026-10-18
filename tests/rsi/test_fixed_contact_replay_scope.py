@@ -182,6 +182,29 @@ def test_twelve_historical_context_controls_have_an_exact_nontraining_budget(tam
         assert fixed_replay_scope(c) == (12, 36000)
 
 
+@pytest.mark.parametrize("tamper", [None, "identity", "budget", "count", "steps"])
+def test_single_missing_archived_expert_is_not_an_arbitrary_one_case_replay(tamper):
+    c = dict(
+        replay_profile="catalog2-zero-c7",
+        new_replay_budget=1,
+        new_substep_budget=3000,
+        cases=[dict(case_id="catalog2_zero_context_7", receipt_hash="c7")],
+    )
+    if tamper == "identity":
+        c["cases"][0]["case_id"] = "anything"
+    elif tamper == "budget":
+        c["new_replay_budget"] = True
+    elif tamper == "count":
+        c["cases"] *= 2
+    elif tamper == "steps":
+        c["new_substep_budget"] -= 1
+    if tamper:
+        with pytest.raises(ValueError):
+            fixed_replay_scope(c)
+    else:
+        assert fixed_replay_scope(c) == (1, 3000)
+
+
 @pytest.mark.parametrize("tamper", ["partial", "order", "duplicate", "budget", "bool"])
 def test_none_five_rejects_scope_tamper(tamper):
     c = none_five_config()

@@ -31,6 +31,7 @@ def fixed_replay_scope(cfg):
         "demonstration-missing-five": 5,
         "surface-context-six": 6,
         "context-baseline-twelve": 12,
+        "catalog2-zero-c7": 1,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -79,6 +80,10 @@ def fixed_replay_scope(cfg):
         f"{family}_context_{i}" for i in range(2, 8) for family in ("none", "option4")
     ]:
         raise ValueError("both original controls for all six remaining contexts required")
+    if profile == "catalog2-zero-c7" and [r["case_id"] for r in cases] != [
+        "catalog2_zero_context_7"
+    ]:
+        raise ValueError("only the one exact archived zero-control C7 may be replayed")
     return count, steps
 
 
@@ -189,6 +194,26 @@ def main():
         pins[str(path)] = digest(path)
         return value
 
+    archived = None
+    if cfg.get("replay_profile") == "catalog2-zero-c7":
+        archived = sealed(cfg["archived_expert_readback"])
+        reader = Path(cfg["archived_expert_reader_source"])
+        if (
+            archived["report_hash"] != cfg["archived_expert_readback_hash"]
+            or archived.get("schema") != "soccer.rsi.archived_receding_expert_readback.v1"
+            or archived.get("recovered_catalog_index") != 2
+            or archived.get("actual_all3000_cerebellar_outputs_exactly_zero") is not True
+            or archived.get("exact_initial_canonical_qpos_qvel_equal") is not True
+            or archived.get("single_parameter_speed_ablation") is not False
+            or archived.get("teacher_qualified") is not False
+            or archived.get("training_authorized") is not False
+            or archived["input_file_hashes"].get(str(reader)) != digest(reader)
+        ):
+            raise ValueError("exact quarantined archived C7 readback and source required")
+        for name, h in archived["input_file_hashes"].items():
+            if digest(name) != h:
+                raise ValueError("original archived expert evidence bytes changed")
+            pins[name] = h
     for case in cfg["cases"]:
         receipt = sealed(case["receipt_path"], "receipt_hash")
         if (
@@ -202,12 +227,33 @@ def main():
                 raise ValueError("whole original witness bytes changed")
             pins[witness["path"]] = witness["sha256"]
         with np.load(receipt["witnesses"]["trace"]["path"], allow_pickle=False) as archive:
-            outcome = label_first_touch(dict(archive))
+            trace = dict(archive)
+        qualification_kwargs = {}
+        if archived is not None:
+            from scripts import rsi_recover_archived_receding_expert as helper
+
+            if (
+                digest(helper.__file__) != digest(cfg["archived_expert_reader_source"])
+                or receipt["receipt_hash"] != archived["recovered_receipt_hash"]
+                or receipt["outcome"] != archived["recovered_outcome"]
+            ):
+                raise ValueError(
+                    "only exact previously authenticated zero expert may use this profile"
+                )
+            pins[helper.__file__] = digest(helper.__file__)
+            helper.require_actual_zero_control(receipt, trace)
+            qualification_kwargs = dict(
+                cerebellar_model_hash=receipt["cerebellar_model_hash"],
+                cerebellar_sampling_draws=0,
+            )
+        outcome = label_first_touch(trace)
         review = sealed(receipt["witnesses"]["independent_review"]["path"])
         foundation = sealed(receipt["witnesses"]["foundation_review"]["path"])
         if (
             outcome.to_dict() != receipt["outcome"]
-            or require_first_touch_qualification(review, foundation, outcome)
+            or require_first_touch_qualification(
+                review, foundation, outcome, **qualification_kwargs
+            )
             != receipt["qualification_alignment"]
         ):
             raise ValueError("original primitive and replay qualifications differ")
