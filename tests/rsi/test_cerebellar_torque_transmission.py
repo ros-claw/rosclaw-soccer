@@ -3,7 +3,10 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.cerebellar_torque_transmission import diagnose_transmission
+from rosclaw_soccer.rsi.cerebellar_torque_transmission import (
+    diagnose_transmission,
+    paired_feedback_divergence,
+)
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS
 
 
@@ -88,3 +91,54 @@ def test_malformed_capture_rejected(mutation):
         value[key][0, 0, 0, 0] = np.nan if mutation == "nan" else 10
     with pytest.raises(ValueError):
         diagnose(value)
+
+
+def pair_trace():
+    value = trace()
+    for key, width in (
+        ("root_pose_xyzw_m", 7),
+        ("root_velocity_world", 3),
+        ("foot_geometry_position_before_step_m", 12),
+        ("joint_position_rad", 29),
+        ("motor_delta_rad", 12),
+        ("navigation_command", 3),
+        ("ball_position_before_step_m", 3),
+        ("ball_position_after_step_m", 3),
+        ("recurrent_residual_hidden_state", 64),
+        ("force_n", 6),
+    ):
+        value[key] = np.zeros((300, 1, width))
+    return value
+
+
+def test_paired_divergence_uses_matching_clock_and_units():
+    before, after = pair_trace(), pair_trace()
+    after["joint_target_rad"][37:, 0, 0] = 0.02
+    result = paired_feedback_divergence(before, after)
+    channel = result["channels"]["joint_target"]
+    assert channel["unit"] == "rad"
+    assert channel["first_frame_above"]["0.01"] == 37
+    assert channel["first_frame_above"]["0.1"] is None
+    assert result["new_physical_steps"] == 0
+
+
+def test_root_translation_does_not_mix_quaternion_components():
+    before, after = pair_trace(), pair_trace()
+    after["root_pose_xyzw_m"][..., 3:] = 0.5
+    result = paired_feedback_divergence(before, after)
+    assert result["channels"]["root_position"]["maximum_absolute_component_difference"] == 0
+
+
+def test_paired_divergence_rejects_different_initial_state():
+    before, after = pair_trace(), pair_trace()
+    after["cerebellar_canonical_qpos_before_substep"][0, 0, 0, 0] = 0.001
+    with pytest.raises(ValueError, match="initial"):
+        paired_feedback_divergence(before, after)
+
+
+@pytest.mark.parametrize("key", ["joint_target_rad", "cerebellar_canonical_qvel_before_substep"])
+def test_paired_divergence_rejects_nonfinite_later_capture(key):
+    before, after = pair_trace(), pair_trace()
+    after[key][40] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        paired_feedback_divergence(before, after)

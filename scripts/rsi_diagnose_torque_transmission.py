@@ -11,7 +11,10 @@ from pathlib import Path
 
 import numpy as np
 
-from rosclaw_soccer.rsi.cerebellar_torque_transmission import diagnose_transmission
+from rosclaw_soccer.rsi.cerebellar_torque_transmission import (
+    diagnose_transmission,
+    paired_feedback_divergence,
+)
 from rosclaw_soccer.rsi.first_touch_outcome import label_first_touch
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_atomic_artifacts import write_once
@@ -27,9 +30,12 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--pair", nargs=2, type=int)
     args = parser.parse_args()
     if args.output.exists() or not 1 <= args.count <= 44:
         raise ValueError("unused output and explicit bounded receipt prefix required")
+    if args.pair is not None and not (0 <= args.pair[0] < args.pair[1] < args.count):
+        raise ValueError("ordered distinct pair inside entire declared prefix required")
     root = args.root.resolve()
     pins = {}
 
@@ -58,7 +64,7 @@ def main():
     ):
         pin(Path(__file__).resolve().parents[1] / relative)
     declaration = sealed(root / "declaration.json")
-    rows = []
+    rows, paired_traces, paired_commitments = [], {}, {}
     for index in range(args.count):
         receipt = sealed(root / f"receipt-{index:04d}.json", "receipt_hash")
         if receipt["job"] != declaration["jobs"][index]["job"]:
@@ -101,11 +107,54 @@ def main():
             )
         )
         print("PD_TRANSMISSION_RECONSTRUCTED", index, flush=True)
+        if args.pair is not None and index in args.pair:
+            paired_traces[index] = trace
+            paired_commitments[index] = commitment
         del trace
+    pair = None
+    if args.pair is not None:
+        first, second = args.pair
+        jobs = [declaration["jobs"][i] for i in args.pair]
+        if (
+            jobs[0]["pair_id"] != jobs[1]["pair_id"]
+            or jobs[0]["kind"] != "zero_control"
+            or jobs[1]["kind"] not in ("evaluation", "retention")
+        ):
+            raise ValueError("predeclared zero-control versus deterministic learned pair required")
+        stripped = [
+            {k: v for k, v in paired_commitments[i].items() if k != "cerebellar_torque_contract"}
+            for i in args.pair
+        ]
+        if stripped[0] != stripped[1]:
+            raise ValueError("all non-cerebellar execution commitments must be exactly equal")
+        cerebellar = [paired_commitments[i]["cerebellar_torque_contract"] for i in args.pair]
+        if cerebellar[0].keys() != cerebellar[1].keys():
+            raise ValueError("same neural contract fields required")
+        for key in cerebellar[0]:
+            if (
+                key not in ("model", "model_hash", "sampling", "contract_hash")
+                and cerebellar[0][key] != cerebellar[1][key]
+            ):
+                raise ValueError("neural execution contract changed beyond learned model")
+        sampling = [
+            {k: v for k, v in value["sampling"].items() if k != "model_hash"}
+            for value in cerebellar
+        ]
+        if sampling[0] != sampling[1] or sampling[0]["sampling_seed"] is not None:
+            raise ValueError("unchanged deterministic neural law required")
+        pair = dict(
+            source_indices=args.pair,
+            pair_id=jobs[0]["pair_id"],
+            non_neural_execution_commitments_exactly_equal=True,
+            unchanged_deterministic_sampling_law=True,
+            measured=paired_feedback_divergence(paired_traces[first], paired_traces[second]),
+        )
     if any(digest(Path(name)) != expected for name, expected in pins.items()):
         raise ValueError("frozen inputs changed during diagnosis")
     result = dict(
-        schema="soccer.rsi.cerebellar_torque_transmission_prefix_readback.v1",
+        schema="soccer.rsi.cerebellar_torque_transmission_prefix_readback.v2"
+        if pair is not None
+        else "soccer.rsi.cerebellar_torque_transmission_prefix_readback.v1",
         declaration_hash=declaration["report_hash"],
         prefix_count=args.count,
         all_prefix_receipts_including_failures_retained=True,
@@ -119,6 +168,8 @@ def main():
         hardware_authorized=False,
         promotion_authorized=False,
     )
+    if pair is not None:
+        result["paired_feedback_divergence"] = pair
     result["report_hash"] = hash_json(result)
     write_once(args.output, result)
     print(result["report_hash"], flush=True)
