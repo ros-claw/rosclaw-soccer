@@ -18,7 +18,9 @@ VALIDATION_SEED = 20261096
 require_cohort = cast(Callable[..., dict[str, Any]], _require_cohort)
 
 
-def compare_matched_references(zero: dict[str, Any], student: dict[str, Any]) -> dict[str, Any]:
+def compare_matched_references(
+    zero: dict[str, Any], student: dict[str, Any], *, allow_zero_normalization_reuse: bool = False
+) -> dict[str, Any]:
     """Each cohort has config/declaration/complete/audit/measured, all whole.
 
     This is a research decision aid. A candidate with unsafe or dense nonfoot
@@ -29,12 +31,38 @@ def compare_matched_references(zero: dict[str, Any], student: dict[str, Any]) ->
         require_cohort(c["config"], c["declaration"], c["complete"], c["audit"])
     zc, sc = zero["config"], student["config"]
     zd, sd = zero["declaration"], student["declaration"]
+    equivalence = None
+    if type(allow_zero_normalization_reuse) is not bool:
+        raise ValueError("explicit zero-control equivalence mode required")
+    if allow_zero_normalization_reuse:
+        from rosclaw_soccer.rsi.reference_student_exam_scope import (
+            zero_model_like as _zero_model_like,
+        )
+        from rosclaw_soccer.rsi.zero_reference_equivalence import require_zero_reference_equivalence
+
+        zero_model_like = cast(Callable[..., dict[str, Any]], _zero_model_like)
+
+        if (
+            "actual_winner_fit" not in sc
+            or "matched_ablation" in sc
+            or "actual_winner_fit" in zc
+            or sd.get("actual_winner_fit") != sc["actual_winner_fit"]
+            or any(d["models"]["off"] is not None for d in (zd, sd))
+            or any(
+                d["models"]["zero"] != zero_model_like(d["models"]["student"], seed=2026101902)
+                for d in (zd, sd)
+            )
+        ):
+            raise ValueError(
+                "explicit actual-winner objective and exact own zero controls required"
+            )
+        equivalence = require_zero_reference_equivalence(zd["models"]["zero"], sd["models"]["zero"])
     if (
         zc["exam_profile"] != ZERO
         or sc["exam_profile"] != STUDENT
         or any(zc[k] != sc[k] for k in ("behavior_model_hash", "mesh_task_contact_world_hash"))
         or zd["candidate"] != sd["candidate"]
-        or zd["models"] != sd["models"]
+        or (equivalence is None and zd["models"] != sd["models"])
         or zd["reused_teachers"] != sd["reused_teachers"]
         or hash_json(zd["scope"]["source_plans"]["positive19"])
         != hash_json(sd["scope"]["source_plans"]["positive19"])
@@ -125,7 +153,7 @@ def compare_matched_references(zero: dict[str, Any], student: dict[str, Any]) ->
         disposition = "NO_POSITIVE_NET_LEARNED_REFERENCE_GAIN_VERSUS_MATCHED_NAV"
     else:
         disposition = "LOCAL_MATCHED_REFERENCE_GAIN_REQUIRES_THREE_SEEDS_FRESH_AND_CHAIN"
-    return dict(
+    result = dict(
         schema="soccer.rsi.matched_reference_three_way.v1",
         comparisons=comparisons,
         source_rows=source_rows,
@@ -153,3 +181,7 @@ def compare_matched_references(zero: dict[str, Any], student: dict[str, Any]) ->
         hardware_authorized=False,
         fresh_exam=False,
     )
+    if equivalence is not None:
+        result["recorded_zero_control_equivalence"] = equivalence
+        result["zero_normalization_reuse_is_not_nonzero_student_equivalence"] = True
+    return result

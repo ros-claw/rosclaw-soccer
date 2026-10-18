@@ -2,11 +2,14 @@
 
 import copy
 
+import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.matched_reference_comparison import compare_matched_references
 from rosclaw_soccer.rsi.reference_exam_profiles import assess_reference
 from rosclaw_soccer.rsi.reference_student_exam_diagnostics import measured_readout
+from rosclaw_soccer.rsi.reference_student_exam_scope import zero_model_like
+from rosclaw_soccer.rsi.reference_student_execution import make_model
 from tests.rsi.test_reference_positive_zero import dense as zero_dense
 from tests.rsi.test_reference_positive_zero import zero_cohort
 from tests.rsi.test_reference_student_exam_diagnostics import cohort, dense
@@ -62,6 +65,39 @@ def test_navigation_already_stronger_does_not_motivate_blind_imitation():
     assert report["next_research"].startswith("IMPROVE_EXPERT")
     assert not report["expert_advantage_training_sources"]
     assert not report["neural_training_authorized"] and report["optimizer_updates"] == 0
+
+
+def test_actual_winner_norm_change_needs_explicit_zero_equivalence_not_fake_same_model():
+    z, s = matched()
+    marker = dict(fit_configuration="test", fit_configuration_file_hash="test", fit_unit="test")
+    s["config"]["actual_winner_fit"] = marker
+    s["declaration"]["actual_winner_fit"] = marker
+    models = s["declaration"]["models"]
+    old = models["student"]
+    mean = np.asarray(old["mean"]).copy()
+    mean[0] += 1.0
+    models["student"] = make_model(
+        old["parameters"],
+        mean=mean,
+        scale=np.asarray(old["scale"]),
+        world_hash=old["world_hash"],
+        parent_model_hash=old["parent_model_hash"],
+    )
+    models["zero"] = zero_model_like(models["student"], seed=2026101902)
+    for receipt, audit in zip(s["complete"]["results"], s["audit"]["rows"], strict=True):
+        m = models[receipt["role"]]
+        if m is not None:
+            receipt["reference_student_model_hash"] = audit["model_hash"] = m["model_hash"]
+    refresh(z)
+    refresh(s)
+    with pytest.raises(ValueError):
+        compare_matched_references(z, s)
+    result = compare_matched_references(z, s, allow_zero_normalization_reuse=True)
+    assert result["recorded_zero_control_equivalence"]["hidden_states_may_differ"]
+    assert result["zero_normalization_reuse_is_not_nonzero_student_equivalence"]
+    del s["config"]["actual_winner_fit"]
+    with pytest.raises(ValueError):
+        compare_matched_references(z, s, allow_zero_normalization_reuse=True)
 
 
 def test_two_or_more_train_sources_with_expert_gain_motivates_research_not_admission():

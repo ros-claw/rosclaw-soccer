@@ -122,7 +122,11 @@ def main() -> None:
     cfg = json.loads(args.config.read_text())
     source, root = Path(cfg["source_root"]), Path(cfg["output_root"])
     if (
-        cfg.get("profile") != "matched-positive-zero-teacher-student-comparison-v1"
+        cfg.get("profile")
+        not in (
+            "matched-positive-zero-teacher-student-comparison-v1",
+            "actual-winner-versus-recorded-zero-comparison-v1",
+        )
         or cfg.get("mode") != "SIM_ONLY"
         or root.exists()
         or time.time() >= cfg["deadline_unix"]
@@ -158,7 +162,12 @@ def main() -> None:
     cohorts = {
         role: load_cohort(spec, sealed=sealed, pins=pins) for role, spec in cfg["cohorts"].items()
     }
-    comparison = compare_matched_references(cohorts["zero"], cohorts["student"])
+    comparison = compare_matched_references(
+        cohorts["zero"],
+        cohorts["student"],
+        allow_zero_normalization_reuse=cfg["profile"]
+        == "actual-winner-versus-recorded-zero-comparison-v1",
+    )
     if args.preflight:
         print(
             "MATCHED_ZERO_TEACHER_STUDENT_WHOLE_EVIDENCE_READY_ZERO_PHYSICS_OR_OPTIMIZER_ALLOCATIONS",
