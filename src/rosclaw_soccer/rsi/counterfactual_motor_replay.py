@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+from rosclaw_soccer.rsi.velocity_damping_probe import VelocityDampingProbe
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes
 
 
@@ -197,20 +198,50 @@ class CounterfactualMotorReplay:
             self._data.xpos[self._ball], self._trace["ball_position_before_step_m"][self._frame]
         )
 
-    def _step(self, data: Any, target: np.ndarray[Any, Any]) -> dict[str, Any]:
+    def _step(
+        self,
+        data: Any,
+        target: np.ndarray[Any, Any],
+        *,
+        damping_probe: VelocityDampingProbe | None = None,
+    ) -> dict[str, Any]:
         import mujoco
 
+        if damping_probe is not None and type(damping_probe) is not VelocityDampingProbe:
+            raise ValueError("only the fixed local velocity damping probe is supported")
+        held_offset = (
+            None if damping_probe is None else damping_probe.torque_offset(data.qvel[self._vi])
+        )
+        requested_offsets, applied_offsets = [], []
         force, torques, actual, pelvis = np.zeros(6), [], [], []
         ground_dynamics = []
         for _ in range(10):
             if self._capture_ground_dynamics:
                 integration_start = float(data.time)
                 velocity_before = data.qvel[self._vi].copy()
+            requested = (target - data.qpos[self._qi]) * self._kp - data.qvel[self._vi] * self._kd
+            offset = None
+            if damping_probe is not None:
+                offset = (
+                    held_offset
+                    if damping_probe.mode == "CONTROL_TICK_HOLD"
+                    else damping_probe.torque_offset(data.qvel[self._vi])
+                )
             torque = np.clip(
-                (target - data.qpos[self._qi]) * self._kp - data.qvel[self._vi] * self._kd,
+                requested if offset is None else requested + offset,
                 -np.asarray(G1_HARD_TORQUE_LIMITS),
                 np.asarray(G1_HARD_TORQUE_LIMITS),
             )
+            if offset is not None:
+                requested_offsets.append(offset.copy())
+                applied_offsets.append(
+                    torque
+                    - np.clip(
+                        requested,
+                        -np.asarray(G1_HARD_TORQUE_LIMITS),
+                        np.asarray(G1_HARD_TORQUE_LIMITS),
+                    )
+                )
             data.ctrl[self._ai] = torque
             torques.append(torque.copy())
             mujoco.mj_step(self._model, data)
@@ -257,6 +288,10 @@ class CounterfactualMotorReplay:
         )
         if self._capture_ground_dynamics:
             result["ground_dynamics"] = ground_dynamics
+        if damping_probe is not None:
+            result["damping_probe_contract"] = damping_probe.contract()
+            result["requested_damping_torque_offset_nm"] = np.asarray(requested_offsets)
+            result["applied_damping_torque_offset_nm"] = np.asarray(applied_offsets)
         return result
 
     def _compare(self, result: dict[str, Any]) -> None:
