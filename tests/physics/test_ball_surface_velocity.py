@@ -7,7 +7,9 @@ from rosclaw_soccer.physics.ball_surface_velocity import inspect_ball_surface_ve
 
 def world():
     return mujoco.MjModel.from_xml_string(
-        '<mujoco><worldbody><body name="ball" pos="0 0 0.11"><freejoint/><geom name="ball_geom" type="sphere" size="0.11" mass="0.43"/></body></worldbody></mujoco>'
+        '<mujoco><worldbody><body name="ball" pos="0 0 0.11"><freejoint/>'
+        '<geom name="ball_geom" type="sphere" size="0.11" mass="0.43"/>'
+        '</body></worldbody></mujoco>'
     )
 
 
