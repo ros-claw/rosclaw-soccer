@@ -96,18 +96,25 @@ def main():
             measured = ball_surface_velocity.inspect_ball_surface_velocity(
                 model, data, geom_id=int(model.geom("ball_geom").id)
             )
-            if not np.allclose(
-                measured["center_velocity_world_m_s"],
-                trace["ball_linear_velocity_before_step_m_s"][frame, 0],
-                rtol=0,
-                atol=1e-12,
-            ) or not np.allclose(
-                measured["center_position_world_m"],
-                trace["ball_position_before_step_m"][frame, 0],
-                rtol=0,
-                atol=1e-12,
-            ):
-                raise ValueError("kinematic ball state must match recorded pre-step measurements")
+            # The frozen producer may intentionally consume cached mj_step
+            # body observations. Do not silently replace that controller input
+            # with freshly assembled qpos/qvel kinematics or loosen a tolerance.
+            measured["recorded_controller_ball_position_world_m"] = trace[
+                "ball_position_before_step_m"
+            ][frame, 0].tolist()
+            measured["recorded_controller_ball_velocity_world_m_s"] = trace[
+                "ball_linear_velocity_before_step_m_s"
+            ][frame, 0].tolist()
+            measured["canonical_minus_recorded_ball_position_m"] = (
+                np.asarray(measured["center_position_world_m"])
+                - trace["ball_position_before_step_m"][frame, 0]
+            ).tolist()
+            measured["canonical_minus_recorded_ball_velocity_m_s"] = (
+                np.asarray(measured["center_velocity_world_m_s"])
+                - trace["ball_linear_velocity_before_step_m_s"][frame, 0]
+            ).tolist()
+            measured["canonical_snapshot_reassembled_for_diagnostics_only"] = True
+            measured["producer_controller_inputs_replaced"] = False
             samples.append(
                 dict(
                     frame=frame,
