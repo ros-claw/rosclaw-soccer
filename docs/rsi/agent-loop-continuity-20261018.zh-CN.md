@@ -45,6 +45,14 @@ MPC，固定raw8/56、context0/1与原option4配对。实际Foundation/父motor
 保持UNKNOWN。无rescue、有regression或新增unsafe均拒绝局部教师；
 即使全四例通过，也只是要求扩展验证，不自动蒸馏/晋升。
 
+汇总源eb0189eb已冻结于`rosclaw-soccer-contact-exit-mpc-summary-source-20261018`；
+`rosclaw-contact-exit-torque-mpc-summary-20261018.timer`已启用，须audit
+正常终态后一次执行，started标记阻断失败后自动重试。预计输出
+`rsi-contact-exit-torque-mpc-measured-summary-20261018.json`。
+两新service/timer静态systemd验证通过；全组合234 passed（12.17秒），
+六运行模块定向mypy通过，main已推送eb0189eb。接续先读当前PID、
+ledger和真实输出，不重启初始化，不把active Goal或timer当学习成绩。
+
 ## 最新17:37：两批真实终态拒绝，已转入力矩预测教师开发
 
 **当前没有活动的完整NN/物理实验worker，不要重启两个已完成的旧服务。**
