@@ -37,6 +37,14 @@ def validate_cpu_foundation_capture(
         validate_measured_history,
     )
 
+    if "pre_planner_navigation_pulse" in commitment or any(
+        name.startswith("planner_pulse_") for name in trace
+    ):
+        from rosclaw_soccer.rsi.planner_navigation_pulse_evidence import (
+            require_navigation_pulse_capture,
+        )
+
+        require_navigation_pulse_capture(report, commitment, trace)
     if "reference_student_model" in commitment or any(
         name.startswith("reference_student_") for name in trace
     ):
@@ -1252,6 +1260,14 @@ def audit_cpu_transfer(
         result["independent_initial_state"] = initial_state_reference.contract()
     if "reference_student_model" in commitment:
         result["reference_student_review"] = reference_student_review
+    if "pre_planner_navigation_pulse" in commitment:
+        from rosclaw_soccer.rsi.planner_navigation_pulse_evidence import (
+            require_navigation_pulse_capture,
+        )
+
+        result["planner_navigation_pulse_review"] = require_navigation_pulse_capture(
+            report, commitment, trace
+        )
     if cerebellar_review is not None:
         result["cerebellar_model_hash"] = cerebellar_review["model_hash"]
         result["actual_cerebellar_inferences_reconstructed"] = 3000

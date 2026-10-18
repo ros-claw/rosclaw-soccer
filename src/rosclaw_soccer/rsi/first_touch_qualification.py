@@ -20,6 +20,7 @@ def require_first_touch_qualification(
     cerebellar_model_hash: str | None = None,
     cerebellar_sampling_draws: int | None = None,
     reference_student_model_hash: str | None = None,
+    planner_navigation_pulse_contract_hash: str | None = None,
 ) -> dict[str, Any]:
     """Validate counts and label composition, never authorize execution."""
     if (
@@ -28,6 +29,39 @@ def require_first_touch_qualification(
         or type(outcome) is not FirstTouchOutcome
     ):
         raise ValueError("typed replay reviews and primitive M0 outcome required")
+    pulse_review = review.get("planner_navigation_pulse_review")
+    if planner_navigation_pulse_contract_hash is None:
+        if "planner_navigation_pulse_review" in review:
+            raise ValueError("unexpected navigation pulse requires explicit qualification intent")
+    elif (
+        type(planner_navigation_pulse_contract_hash) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", planner_navigation_pulse_contract_hash) is None
+        or reference_student_model_hash is None
+        or type(pulse_review) is not dict
+        or pulse_review.get("schema") != "soccer.rsi.pre_planner_navigation_pulse_review.v1"
+        or pulse_review.get("contract_hash") != planner_navigation_pulse_contract_hash
+        or type(pulse_review.get("frames_reconstructed")) is not int
+        or pulse_review["frames_reconstructed"] != 300
+        or any(
+            pulse_review.get(k) is not True
+            for k in (
+                "original_bounded_navigation_reconstructed",
+                "pulse_composition_reconstructed",
+                "entire_leg_reference_strictly_zero",
+                "forward_and_yaw_unchanged",
+            )
+        )
+        or any(
+            pulse_review.get(k) is not False
+            for k in (
+                "source_trace_authentication_performed_here",
+                "planner_and_encoder_effect_verified_here",
+                "hardware_authorized",
+                "promotion_authorized",
+            )
+        )
+    ):
+        raise ValueError("whole explicit zero-reference navigation pulse review required")
     reference_review = review.get("reference_student_review")
     if reference_student_model_hash is None:
         if "reference_student_review" in review:
@@ -136,4 +170,6 @@ def require_first_touch_qualification(
         result["cerebellar_sampling_draws"] = cerebellar_sampling_draws
     if reference_student_model_hash is not None:
         result["reference_student_model_hash"] = reference_student_model_hash
+    if planner_navigation_pulse_contract_hash is not None:
+        result["planner_navigation_pulse_contract_hash"] = planner_navigation_pulse_contract_hash
     return result

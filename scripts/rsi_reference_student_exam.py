@@ -76,9 +76,16 @@ def require_scope(cfg):
         raise ValueError("fixed thirteen-body own-student, retention and OFF SIM exam required")
 
 
-def load_inputs(config_path):
+def load_inputs(config_path, *, pulse_research=False):
     cfg = json.loads(config_path.read_text())
-    require_scope(cfg)
+    if type(pulse_research) is not bool:
+        raise ValueError("explicit fixed pulse research loader mode required")
+    if pulse_research:
+        from rosclaw_soccer.rsi.planner_navigation_pulse_scope import require_pulse_scope
+
+        require_pulse_scope(cfg)
+    else:
+        require_scope(cfg)
     source, core, root = (Path(cfg[k]) for k in ("source_root", "core_root", "output_root"))
     if (
         Path(__file__).resolve() != source / "scripts/rsi_reference_student_exam.py"
@@ -214,6 +221,12 @@ def load_inputs(config_path):
         from scripts.rsi_load_actual_winner_exam import load_actual_winner
 
         student, stage, fit = load_actual_winner(cfg, sealed=sealed, digest=digest, pins=pins)
+    if pulse_research:
+        from rosclaw_soccer.rsi.planner_navigation_pulse_scope import pulse_scope
+
+        scope = pulse_scope(assets.MEAN)
+    else:
+        scope = reference_scope(cfg["exam_profile"], assets.MEAN)
     return SimpleNamespace(
         cfg=cfg,
         source=source,
@@ -235,7 +248,7 @@ def load_inputs(config_path):
         binding=binding,
         nominal=nominal,
         models=dict(student=student, zero=zero_model_like(student, seed=FIT_SEED), off=None),
-        scope=reference_scope(cfg["exam_profile"], assets.MEAN),
+        scope=scope,
         fit_stage=stage,
         fit_report=fit,
     )

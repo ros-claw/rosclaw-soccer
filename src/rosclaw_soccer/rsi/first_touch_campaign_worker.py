@@ -601,6 +601,7 @@ def qualified_episode(
     use_directional_contact_compliance: bool = False,
     use_mesh_surface_swing: bool = False,
     reference_student_model: dict[str, Any] | None = None,
+    planner_navigation_pulse: Any = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -761,6 +762,7 @@ def qualified_episode(
         use_directional_contact_compliance=use_directional_contact_compliance,
         use_mesh_surface_swing=use_mesh_surface_swing,
         reference_student_model=reference_student_model,
+        planner_navigation_pulse=planner_navigation_pulse,
     )
     report = (
         _sealed(folder / "report.json")
@@ -780,6 +782,15 @@ def qualified_episode(
         raise ValueError("requested directional compliance must bind actual native execution")
     if ("mesh_surface_swing" in report) != use_mesh_surface_swing:
         raise ValueError("requested surface swing must bind actual native execution")
+    if ("pre_planner_navigation_pulse" in report) != (planner_navigation_pulse is not None):
+        raise ValueError("explicit pulse request must match its native report")
+    if planner_navigation_pulse is not None:
+        from rosclaw_soccer.rsi.planner_navigation_pulse_evidence import (
+            require_navigation_pulse_capture,
+        )
+
+        if report["pre_planner_navigation_pulse"] != planner_navigation_pulse.contract():
+            raise ValueError("declared pulse source and parameters required")
     if ("reference_student_model" in report) != (reference_student_model is not None):
         raise ValueError("requested reference student must bind actual native execution")
     if reference_student_model is not None:  # noqa: SIM102 - exact default-OFF projection
@@ -869,6 +880,14 @@ def qualified_episode(
                 prior = float(trace["navigation_command"][frame - 1, 0, 0])
                 step = postcontact.reference_slew_m_s2 * 0.02
                 command[0] = min(prior + step, max(prior - step, float(command[0])))
+            if planner_navigation_pulse is not None:
+                if not np.array_equal(command, trace["planner_pulse_baseline_command"][frame, 0]):
+                    raise ValueError("original bounded baseline before pulse required")
+                pulse_delta = (
+                    planner_navigation_pulse.lateral_delta_m_s if 100 <= frame < 160 else 0.0
+                )
+                if pulse_delta != 0.0:
+                    command[1] = min(0.2, max(-0.2, float(command[1]) + pulse_delta))
             if not np.array_equal(command, trace["navigation_command"][frame, 0]):
                 raise ValueError("projected navigation law mismatch")
         if not np.allclose(
@@ -884,6 +903,8 @@ def qualified_episode(
         if not np.array_equal(raw_motor, trace["motor_pre_projection_requested_rad"]):
             raise ValueError("raw residual differs from actual original sampled latent action")
     commitment = load_json_artifact(folder / "commitment.json")
+    if planner_navigation_pulse is not None:
+        require_navigation_pulse_capture(report, commitment, trace)
     if (
         postcontact is not None
         and commitment.get("postcontact_navigation_probe") != postcontact.contract()
@@ -905,7 +926,20 @@ def qualified_episode(
             != cerebellar_sampling_seed
         ):
             raise ValueError("requested neural torque model and sampling law must bind execution")
-    if reference_student_model is not None:
+    if planner_navigation_pulse is not None:
+        assert reference_student_model is not None
+        alignment = require_first_touch_qualification(
+            review,
+            foundation,
+            outcome,
+            cerebellar_model_hash=cerebellar_hash,
+            cerebellar_sampling_draws=cerebellar_draws,
+            reference_student_model_hash=reference_student_model["model_hash"],
+            planner_navigation_pulse_contract_hash=planner_navigation_pulse.contract()[
+                "contract_hash"
+            ],
+        )
+    elif reference_student_model is not None:
         alignment = require_first_touch_qualification(
             review,
             foundation,

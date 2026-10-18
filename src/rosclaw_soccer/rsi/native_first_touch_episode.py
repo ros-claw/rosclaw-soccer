@@ -92,9 +92,22 @@ def run_native_first_touch_episode(
     use_directional_contact_compliance: bool = False,
     use_mesh_surface_swing: bool = False,
     reference_student_model: dict[str, Any] | None = None,
+    planner_navigation_pulse: Any = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
+
+    if planner_navigation_pulse is not None:
+        from rosclaw_soccer.rsi.planner_navigation_pulse_evidence import (
+            require_navigation_pulse_request,
+        )
+
+        require_navigation_pulse_request(
+            planner_navigation_pulse,
+            reference_student_model,
+            profile=control_profile,
+            record_planner_events=record_default_planner_events,
+        )
 
     if reference_student_model is not None:
         from rosclaw_soccer.rsi.reference_student_execution import require_native_request
@@ -1275,6 +1288,8 @@ def run_native_first_touch_episode(
             )
             commitment["reference_student_model"] = reference_model
             commitment["reference_student_contract"] = reference_student.contract()
+        if planner_navigation_pulse is not None:
+            commitment["pre_planner_navigation_pulse"] = planner_navigation_pulse.contract()
         if foundation_approach_probe:
             commitment["foundation_approach_ablation"] = dict(
                 schema="soccer.rsi.foundation_only_bounded_approach_ablation.v1",
@@ -1368,6 +1383,10 @@ def run_native_first_touch_episode(
             from rosclaw_soccer.rsi.reference_student_execution import PREFIX as REFERENCE_PREFIX
 
             history.update({REFERENCE_PREFIX + name: [] for name in REFERENCE_FIELDS})
+        if planner_navigation_pulse is not None:
+            from rosclaw_soccer.rsi.planner_navigation_pulse_evidence import FIELDS as PULSE_FIELDS
+
+            history.update({"planner_pulse_" + name: [] for name in PULSE_FIELDS})
         history.update(
             {
                 k: []
@@ -1474,6 +1493,17 @@ def run_native_first_touch_episode(
                 )
                 requested_navigation = (raw_forward, 0.0, 0.0)
                 navigation_command = (actual_forward, 0.0, 0.0)
+            if planner_navigation_pulse is not None:
+                baseline_navigation = navigation_command
+                pulse_residual, navigation_command = planner_navigation_pulse.compose(
+                    frame, baseline_navigation
+                )
+                for name, value in (
+                    ("baseline_command", baseline_navigation),
+                    ("requested_residual", pulse_residual),
+                    ("applied_command", navigation_command),
+                ):
+                    history["planner_pulse_" + name].append(np.asarray(value)[None])
             previous_navigation_forward = navigation_command[0]
             history["approach_requested_navigation_command"].append(
                 np.asarray(requested_navigation)[None]
@@ -1869,6 +1899,12 @@ def run_native_first_touch_episode(
         ):
             raise ValueError("whole unchanged 300-frame reference student episode required")
         require_capture(commitment, commitment, arrays)
+    if planner_navigation_pulse is not None:
+        from rosclaw_soccer.rsi.planner_navigation_pulse_evidence import (
+            require_navigation_pulse_capture,
+        )
+
+        require_navigation_pulse_capture(commitment, commitment, arrays)
     if mesh_world_review is not None:
         assert mesh_task_contact_world_hash is not None
         if mesh_world_review.verify(mesh_task_contact_world_hash) != mesh_review_binding:
