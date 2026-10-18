@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+from rosclaw_soccer.rsi.cerebellar_torque_policy import CerebellarTorquePolicy, features
 from rosclaw_soccer.rsi.velocity_damping_probe import VelocityDampingProbe
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes
 
@@ -68,6 +69,7 @@ class CounterfactualMotorReplay:
 
         if hash_bytes(snapshot.read_bytes()) != world_hash:
             raise ValueError("exact original compiled simulation world required")
+        self._world_hash = world_hash
         self._model = mujoco.MjModel.from_binary_path(str(snapshot))
         m = self._model
         if (
@@ -204,15 +206,31 @@ class CounterfactualMotorReplay:
         target: np.ndarray[Any, Any],
         *,
         damping_probe: VelocityDampingProbe | None = None,
+        torque_policy: CerebellarTorquePolicy | None = None,
+        previous_applied_torque: np.ndarray[Any, Any] | None = None,
     ) -> dict[str, Any]:
         import mujoco
 
         if damping_probe is not None and type(damping_probe) is not VelocityDampingProbe:
             raise ValueError("only the fixed local velocity damping probe is supported")
+        if torque_policy is not None:
+            if (
+                type(torque_policy) is not CerebellarTorquePolicy
+                or torque_policy.world_hash != self._world_hash
+                or damping_probe is not None
+                or previous_applied_torque is None
+            ):
+                raise ValueError(
+                    "exact world-bound neural torque policy and explicit history required"
+                )
+        elif previous_applied_torque is not None:
+            raise ValueError("torque history requires an explicit neural torque policy")
         held_offset = (
             None if damping_probe is None else damping_probe.torque_offset(data.qvel[self._vi])
         )
         requested_offsets, applied_offsets = [], []
+        neural_features, neural_qpos, neural_qvel = [], [], []
+        previous_aux = previous_applied_torque
         force, torques, actual, pelvis = np.zeros(6), [], [], []
         ground_dynamics = []
         for _ in range(10):
@@ -227,6 +245,12 @@ class CounterfactualMotorReplay:
                     if damping_probe.mode == "CONTROL_TICK_HOLD"
                     else damping_probe.torque_offset(data.qvel[self._vi])
                 )
+            if torque_policy is not None:
+                q_current, v_current = self._canonical(data)
+                neural_features.append(features(q_current, v_current, target, previous_aux))
+                neural_qpos.append(q_current)
+                neural_qvel.append(v_current)
+                offset = torque_policy.offset(q_current, v_current, target, previous_aux)
             torque = np.clip(
                 requested if offset is None else requested + offset,
                 -np.asarray(G1_HARD_TORQUE_LIMITS),
@@ -242,6 +266,8 @@ class CounterfactualMotorReplay:
                         np.asarray(G1_HARD_TORQUE_LIMITS),
                     )
                 )
+                if torque_policy is not None:
+                    previous_aux = applied_offsets[-1].copy()
             data.ctrl[self._ai] = torque
             torques.append(torque.copy())
             mujoco.mj_step(self._model, data)
@@ -292,6 +318,15 @@ class CounterfactualMotorReplay:
             result["damping_probe_contract"] = damping_probe.contract()
             result["requested_damping_torque_offset_nm"] = np.asarray(requested_offsets)
             result["applied_damping_torque_offset_nm"] = np.asarray(applied_offsets)
+        if torque_policy is not None:
+            result["cerebellar_model_hash"] = torque_policy.model_hash
+            result["cerebellar_optimizer_steps"] = torque_policy.optimizer_steps
+            result["cerebellar_input_features"] = np.asarray(neural_features)
+            result["cerebellar_canonical_qpos_before_substep"] = np.asarray(neural_qpos)
+            result["cerebellar_canonical_qvel_before_substep"] = np.asarray(neural_qvel)
+            result["requested_cerebellar_torque_offset_nm"] = np.asarray(requested_offsets)
+            result["applied_cerebellar_torque_offset_nm"] = np.asarray(applied_offsets)
+            result["last_applied_cerebellar_torque_offset_nm"] = previous_aux
         return result
 
     def _compare(self, result: dict[str, Any]) -> None:
