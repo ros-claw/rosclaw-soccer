@@ -17,6 +17,18 @@ PID2637607，21:39:40启动、21:40:09进入ALLOCATING_INDEPENDENT_REFERENCE。
 OFF完整非干扰旧证据严格认证且7个控制/物理源码相同，不重复跑OFF。
 协议见`mesh-surface-context-six-protocol-20261018.zh-CN.md`。
 
+后续summary和contact-diagnostic timers也已enable/active。后处理
+冻结源8c8a00fc，不修改生产f355源；仅全6原生＋独立CPU与完整审计
+真实正常终态后执行。密集回放18000子步，复用旧6脚面回放，合计
+12个脚面端点；不是全三控制族36端点，也不声称新6对历史密集已配齐。
+新组合228项回归实际通过。21:46:49原生进入ALLOCATING_FIXED_MEAN；
+初始化尚无任务结局，观察器已经切换当前单位，不再指向旧7体。
+
+独立开发期间又实际完成18历史端点/5400帧reference标签重建，
+证明12条有capture的navigation与taskspace目标逐位相同，原None的
+另外6条明确只有公式重建。raw4旧成功实际无需此层参考修正。
+详见reference-label-reconstruction文档；这不授权拒绝教师的训练。
+
 工程故障保留：6453e0e7预检回调参数错误，b00724c8类型注解导入
 缺少延迟求值；两次都在完整模型分配/物理执行前停止，零物理步。
 原冻结源和配置保留，恢复使用独立新冻结源f355a189，实际预检
