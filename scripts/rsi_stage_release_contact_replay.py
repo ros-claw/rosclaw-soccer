@@ -73,6 +73,21 @@ def require_terminal(unit):
         raise ValueError("both real loaded processes must terminate successfully")
 
 
+def verify_extra_baseline_replay(item, extra, producer):
+    if (
+        digest(item["path"]) != item["file_hash"]
+        or extra["report_hash"] != item["report_hash"]
+        or extra.get("schema") != "soccer.rsi.fixed_control_contact_replay_complete.v1"
+        or any(
+            type(extra.get(k)) is not int or extra[k] != 9000
+            for k in ("integrated_substeps", "attempted_step_calls")
+        )
+        or [r["source_receipt_hash"] for r in extra["rows"]]
+        != [i["receipt_hash"] for i in producer["baseline_receipts"][3:]]
+    ):
+        raise ValueError("exact three historical baselines and their original step budget required")
+
+
 def require_four_endpoints(config, declaration, complete, readback):
     jobs = expected_jobs(config)
     torque_mpc = config.get("use_contact_exit_torque_mpc", False)
@@ -252,6 +267,14 @@ def main():
     if readback["reader_source_hash"] != digest(cfg["audit_source"]):
         raise ValueError("exact independently frozen terminal reader required")
     pins[cfg["audit_source"]] = digest(cfg["audit_source"])
+    extra_baselines = cfg.get("additional_baseline_replay_completes", [])
+    if type(extra_baselines) is not list or (
+        extra_baselines and (not surface_profile or len(extra_baselines) != 1)
+    ):
+        raise ValueError("at most one separately qualified missing-baseline replay is allowed")
+    for item in extra_baselines:
+        extra = sealed(Path(item["path"]))
+        verify_extra_baseline_replay(item, extra, producer)
     cases = []
     for index, job in enumerate(expected_jobs(producer)):
         source_index = index + 1 if surface_profile else index
@@ -320,6 +343,7 @@ def main():
                 str(Path(cfg["replay_output_root"]) / "complete.json"),
                 "--replay-complete",
                 cfg["prior_replay_complete"],
+                *[arg for item in extra_baselines for arg in ("--replay-complete", item["path"])],
                 "--output",
                 cfg["metrics_output"],
             ],

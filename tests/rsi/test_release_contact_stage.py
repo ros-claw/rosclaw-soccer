@@ -4,7 +4,13 @@ import copy
 
 import pytest
 
-from scripts.rsi_stage_release_contact_replay import JOBS, expected_jobs, require_four_endpoints
+from scripts.rsi_stage_release_contact_replay import (
+    JOBS,
+    digest,
+    expected_jobs,
+    require_four_endpoints,
+    verify_extra_baseline_replay,
+)
 
 
 def fixture():
@@ -126,6 +132,40 @@ def surface_fixture():
 
 def test_surface_diagnostic_requires_disabled_body_and_all_six_actual_outcomes():
     require_four_endpoints(*surface_fixture())
+
+
+@pytest.mark.parametrize(
+    "tamper", [None, "file", "hash", "partial", "substitute", "steps", "dtype"]
+)
+def test_additional_dense_baselines_bind_only_three_previously_missing_endpoints(tmp_path, tamper):
+    path = tmp_path / "complete.json"
+    path.write_bytes(b"synthetic source document, not physical evidence")
+    item = dict(path=str(path), file_hash=digest(path), report_hash="source")
+    producer = dict(baseline_receipts=[dict(receipt_hash=str(i)) for i in range(6)])
+    extra = dict(
+        schema="soccer.rsi.fixed_control_contact_replay_complete.v1",
+        report_hash="source",
+        integrated_substeps=9000,
+        attempted_step_calls=9000,
+        rows=[dict(source_receipt_hash=str(i)) for i in (3, 4, 5)],
+    )
+    if tamper == "file":
+        path.write_bytes(b"changed")
+    elif tamper == "hash":
+        item["report_hash"] = "other"
+    elif tamper == "partial":
+        extra["rows"].pop()
+    elif tamper == "substitute":
+        extra["rows"][0]["source_receipt_hash"] = "0"
+    elif tamper == "steps":
+        extra["integrated_substeps"] = 12000
+    elif tamper == "dtype":
+        extra["attempted_step_calls"] = 9000.0
+    if tamper is None:
+        verify_extra_baseline_replay(item, extra, producer)
+    else:
+        with pytest.raises(ValueError):
+            verify_extra_baseline_replay(item, extra, producer)
 
 
 @pytest.mark.parametrize(

@@ -83,6 +83,21 @@ def test_six_current_endpoints_are_all_reviewed_without_inventing_missing_histor
     assert result["teacher_qualified"] is False
 
 
+def test_all_six_dense_pairs_can_be_completed_with_only_three_missing_historical_replays():
+    args = fixture(True)
+    rows = args[2]["rows"]
+    for i in (3, 4, 5):
+        old = dict(rows[i], source_receipt_hash=f"old{i}")
+        rows.append(old)
+    result = contact_exit_pilot_handoff(*args)
+    assert result["dense_pair_count"] == 6
+    assert result["dense_single_endpoint_count"] == 1
+    assert result["teacher_qualified"] is False
+    rows[-1]["source_receipt_hash"] = "some-unpaired-extra"
+    with pytest.raises(ValueError, match="all six"):
+        contact_exit_pilot_handoff(*args)
+
+
 def test_failure_preserved_three_pairs_not_four_no_retry_or_promotion():
     result = contact_exit_pilot_handoff(*fixture())
     assert result["dense_pair_count"] == 3

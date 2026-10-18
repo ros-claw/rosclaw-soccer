@@ -16,7 +16,8 @@ def contact_exit_pilot_handoff(
 ) -> dict[str, Any]:
     """Bind every current endpoint and classify evidence for the next agent turn."""
     surface = summary.get("schema") == "soccer.rsi.mesh_surface_measured_summary.v1"
-    cases, bodies, dense_count = (6, 7, 10) if surface else (4, 4, 8)
+    cases, bodies = (6, 7) if surface else (4, 4)
+    dense_count = len(dense.get("rows", []))
     if (
         summary.get("schema")
         != (
@@ -36,7 +37,7 @@ def contact_exit_pilot_handoff(
         or len(summary.get("rows", [])) != cases
         or len(complete.get("results", [])) != bodies
         or len(baselines) != cases
-        or len(dense.get("rows", [])) != dense_count
+        or dense_count not in ((10, 13) if surface else (8,))
         or summary.get("teacher_qualified") is not False
         or summary.get("new_optimizer_updates") != 0
         or complete.get("new_optimizer_updates") != 0
@@ -122,6 +123,8 @@ def contact_exit_pilot_handoff(
                 audited_outcome=current["outcome"],
             )
         )
+    if surface and dense_count == 13 and paired_count != 6:
+        raise ValueError("expanded dense evidence must cover all six original baseline pairs")
     nonfoot = [
         r["pair_id"]
         for r in records
