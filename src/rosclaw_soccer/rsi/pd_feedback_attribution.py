@@ -60,7 +60,7 @@ def attribute_pd_feedback(
     projections = None
     if np.any(active):
 
-        def project(value):
+        def project(value: np.ndarray) -> float:
             result = float(np.sum(value[active] * offset[active]) / denominator)
             if not np.isfinite(result):
                 raise ValueError("finite PD projection required")
