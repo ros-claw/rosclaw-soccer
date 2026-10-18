@@ -52,8 +52,17 @@ def intervention_actions(
 
 class CounterfactualMotorReplay:
     def __init__(
-        self, snapshot: Path, trace: dict[str, Any], physics: dict[str, Any], *, world_hash: str
+        self,
+        snapshot: Path,
+        trace: dict[str, Any],
+        physics: dict[str, Any],
+        *,
+        world_hash: str,
+        capture_ground_dynamics: bool = False,
     ) -> None:
+        if type(capture_ground_dynamics) is not bool:
+            raise ValueError("explicit boolean ground-dynamics observation mode required")
+        self._capture_ground_dynamics = capture_ground_dynamics
         import mujoco
 
         if hash_bytes(snapshot.read_bytes()) != world_hash:
@@ -102,6 +111,9 @@ class CounterfactualMotorReplay:
         self._pelvis = identifier(mujoco.mjtObj.mjOBJ_BODY, "pelvis")
         self._ball = identifier(mujoco.mjtObj.mjOBJ_BODY, "ball")
         self._bg = identifier(mujoco.mjtObj.mjOBJ_GEOM, "ball_geom")
+        self._ground_geom = (
+            identifier(mujoco.mjtObj.mjOBJ_GEOM, "floor") if capture_ground_dynamics else None
+        )
         bj = m.body_jntadr[self._ball]
         self._bq, self._bv = m.jnt_qposadr[bj], m.jnt_dofadr[bj]
         if (
@@ -189,7 +201,11 @@ class CounterfactualMotorReplay:
         import mujoco
 
         force, torques, actual, pelvis = np.zeros(6), [], [], []
+        ground_dynamics = []
         for _ in range(10):
+            if self._capture_ground_dynamics:
+                integration_start = float(data.time)
+                velocity_before = data.qvel[self._vi].copy()
             torque = np.clip(
                 (target - data.qpos[self._qi]) * self._kp - data.qvel[self._vi] * self._kd,
                 -np.asarray(G1_HARD_TORQUE_LIMITS),
@@ -198,6 +214,20 @@ class CounterfactualMotorReplay:
             data.ctrl[self._ai] = torque
             torques.append(torque.copy())
             mujoco.mj_step(self._model, data)
+            if self._capture_ground_dynamics:
+                from rosclaw_soccer.physics.contact_dynamics import read_ground_contact_dynamics
+
+                assert self._ground_geom is not None
+                observed = read_ground_contact_dynamics(
+                    self._model,
+                    data,
+                    ground_geom_id=self._ground_geom,
+                    joint_names=G1_DDS_JOINT_NAMES,
+                    support_body_names=("left_ankle_roll_link", "right_ankle_roll_link"),
+                )
+                observed["integration_start_time_sec"] = integration_start
+                observed["joint_velocity_before_integration_rad_s"] = velocity_before.tolist()
+                ground_dynamics.append(observed)
             actual.append(data.actuator_force[self._ai].copy())
             pelvis.append(float(data.xpos[self._pelvis, 2]))
             for i in range(data.ncon):
@@ -216,7 +246,7 @@ class CounterfactualMotorReplay:
         q, v = self._canonical(data)
         if not np.isfinite(q).all() or not np.isfinite(v).all():
             raise ValueError("nonfinite branch dynamics")
-        return dict(
+        result = dict(
             torque_nm=np.asarray(torques),
             actual_actuator_force_nm=np.asarray(actual),
             pelvis_z_per_substep_m=np.asarray(pelvis),
@@ -225,6 +255,9 @@ class CounterfactualMotorReplay:
             canonical_qpos_after=q,
             canonical_qvel_after=v,
         )
+        if self._capture_ground_dynamics:
+            result["ground_dynamics"] = ground_dynamics
+        return result
 
     def _compare(self, result: dict[str, Any]) -> None:
         for k in (

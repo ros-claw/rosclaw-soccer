@@ -1,11 +1,28 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.counterfactual_motor_replay import intervention_actions
+from rosclaw_soccer.rsi.counterfactual_motor_replay import (
+    CounterfactualMotorReplay,
+    intervention_actions,
+)
 
 
 def inputs():
     return np.zeros(12), np.zeros(12), np.zeros(12), np.tile([-1.0, 1.0], (12, 1))
+
+
+@pytest.mark.parametrize("mode", [0, 1, None, "true"])
+def test_ground_capture_flag_checked_before_model_allocation(mode):
+    with pytest.raises(ValueError, match="boolean ground-dynamics"):
+        CounterfactualMotorReplay(
+            Path("unused-model-not-opened.mjb"),
+            {},
+            {},
+            world_hash="unused",
+            capture_ground_dynamics=mode,
+        )
 
 
 def test_owned_axis_interventions():
