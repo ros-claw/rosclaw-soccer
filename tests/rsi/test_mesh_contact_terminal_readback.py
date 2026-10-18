@@ -393,7 +393,12 @@ def test_three_body_profile_cannot_certify_four_case_campaign(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize(
-    "profile,count,groups", [("binding-four", 4, [4, 8]), ("catalog-sixteen", 16, [8, 56])]
+    "profile,count,groups",
+    [
+        ("binding-four", 4, [4, 8]),
+        ("catalog-sixteen", 16, [8, 56]),
+        ("teacher-eighteen", 18, [4, 8, 32, 56]),
+    ],
 )
 def test_new_bounded_profiles_keep_complete_fixed_job_identity(profile, count, groups):
     spec = audit.bounded_profile(profile)
@@ -408,6 +413,18 @@ def test_new_catalog_has_all_sixteen_option_course_pairs():
     assert {(j["option_index"], j["group"]) for j in spec["jobs"]} == {
         (i, g) for i in range(8) for g in (8, 56)
     }
+
+
+def test_teacher_reader_independently_declares_same_complete_job_bank():
+    from types import SimpleNamespace
+
+    from scripts.rsi_mesh_option4_teacher_screen import declared_jobs
+
+    contexts = [
+        SimpleNamespace(context_index=i, source_group=g)
+        for i, g in enumerate((64, 65, 68, 69, 72, 73, 76, 77))
+    ]
+    assert audit.bounded_profile("teacher-eighteen")["jobs"] == declared_jobs(contexts)
 
 
 def test_binding_profile_keeps_opposite_orders():
