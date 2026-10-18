@@ -19,6 +19,37 @@ def digest(path):
         return "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def optimizer_audit_accounting(receipts):
+    """Count actual replay attempts, including a rejected final trial."""
+    if len(receipts) != 3:
+        raise ValueError("all three reconstructed optimizer receipts required")
+    attempted, accepted = 0, 0
+    for receipt in receipts:
+        counts = [
+            receipt[key]
+            for key in (
+                "requested_optimizer_steps",
+                "attempted_optimizer_steps",
+                "accepted_joint_optimizer_steps",
+            )
+        ]
+        requested, tried, kept = counts
+        if (
+            any(type(value) is not int for value in counts)
+            or requested != 4
+            or not 0 <= kept <= tried <= requested
+        ):
+            raise ValueError("actual bounded integer optimizer accounting required")
+        attempted += tried
+        accepted += kept
+    return dict(
+        accepted_training_optimizer_steps=accepted,
+        additional_audit_accepted_optimizer_step_recomputations=accepted,
+        additional_audit_optimizer_step_attempts=attempted,
+        additional_audit_optimizer_step_attempt_budget=12,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -38,6 +69,8 @@ def main():
             "ActiveState",
             "-p",
             "Result",
+            "-p",
+            "LoadState",
         ],
         text=True,
     )
@@ -49,6 +82,7 @@ def main():
             "MainPID=0",
             "ActiveState=inactive",
             "Result=success",
+            "LoadState=loaded",
         }
     ):
         raise ValueError("terminal successful worker and unused audit path required")
@@ -393,7 +427,7 @@ def main():
         or anchors.tobytes() != expected_anchors.tobytes()
     ):
         raise ValueError("anchors must be exact inputs from passing original None controls")
-    recomputed_steps = 0
+    reconstructed_learning_receipts = []
     for seed in SEEDS:
         expected = [j for j in jobs if j["kind"] == "collection" and j["actor_seed"] == seed]
         paths = [root / f"receipt-{i:04d}.json" for i, j in enumerate(jobs) if j in expected]
@@ -420,8 +454,9 @@ def main():
         drift["report_hash"] = hash_json(drift)
         if drift != sealed(root / f"same-input-torque-drift-{seed}.json"):
             raise ValueError("actual same-input torque drift changed")
-        recomputed_steps += rebuilt["learning_receipt"]["accepted_joint_optimizer_steps"]
+        reconstructed_learning_receipts.append(rebuilt["learning_receipt"])
         del arrays, rebuilt
+    accounting = optimizer_audit_accounting(reconstructed_learning_receipts)
     if (
         complete["native_bodies"] != 44
         or complete["native_substeps"] != 132000
@@ -430,7 +465,8 @@ def main():
         or draws != 36000
         or complete["actual_cerebellar_inferences"] != inferences
         or inferences != 132000
-        or complete["accepted_joint_optimizer_steps"] != recomputed_steps
+        or complete["accepted_joint_optimizer_steps"]
+        != accounting["accepted_training_optimizer_steps"]
     ):
         raise ValueError("actual whole-study physical/update accounting differs")
     for name, expected in pins.items():
@@ -444,9 +480,7 @@ def main():
         paired_development={str(s): pairing.assess_pairs(controls, evaluations[s]) for s in SEEDS},
         audit_source_hash=digest(Path(__file__)),
         pairing_source_hash=digest(pairing_path),
-        accepted_training_optimizer_steps=recomputed_steps,
-        additional_audit_accepted_optimizer_step_recomputations=recomputed_steps,
-        additional_audit_optimizer_step_attempts=12,
+        **accounting,
         independently_recomputed_neural_substeps=inferences,
         full_source_and_witness_bytes_verified=True,
         actual_persistent_actor_critic_adam_reconstructed=True,
