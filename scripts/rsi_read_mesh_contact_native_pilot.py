@@ -15,6 +15,19 @@ def digest(path):
 
 
 def bounded_profile(profile):
+    if profile == "directional-four":
+        spec = bounded_profile("release-four")
+        spec.update(
+            declaration_schema="soccer.rsi.directional_contact_compliance_pilot_declaration.v1",
+            complete_schema="soccer.rsi.directional_contact_compliance_pilot_complete.v1",
+            readback_schema="soccer.rsi.directional_contact_compliance_terminal_readback.v1",
+            phase="DIRECTIONAL_CONTACT_COMPLIANCE_COMPLETE_NOT_QUALIFIED_TEACHER",
+            jobs=[
+                dict(job, job="directional-exit-" + job["pair_id"], role="teacher")
+                for job in spec["jobs"]
+            ],
+        )
+        return spec
     if profile == "contact-exit-four":
         spec = bounded_profile("release-four")
         spec.update(
@@ -208,6 +221,41 @@ def verify_contact_exit_reconstruction(report, commitment, receipt, review, sour
         raise ValueError("source-bound contact-exit optimization/actual replay accounting required")
 
 
+def verify_directional_reconstruction(report, commitment, receipt, review, source):
+    contract = commitment["directional_contact_compliance"]
+    expected_sources = {
+        "controller": "rsi/directional_contact_compliance.py",
+        "shaping": "rsi/directional_contact_impedance.py",
+        "forecast": "physics/g1_pd_torque_forecast.py",
+        "kinematics": "physics/g1_joint_task_kinematics.py",
+        "pressure": "rsi/contact_exit_torque_mpc.py",
+    }
+    counters = report["directional_compliance_counters"]
+    calls = sum(not p["identity"] for p in report["directional_compliance_plans"])
+    r = review.get("directional_contact_compliance_review", {})
+    if (
+        contract.get("source_hashes")
+        != {k: digest(source / "src/rosclaw_soccer" / p) for k, p in expected_sources.items()}
+        or receipt.get("directional_compliance_counters") != counters
+        or receipt.get("forecast_physical_substeps") != counters["integrated_forecast_steps"]
+        or r.get("schema") != "soccer.rsi.directional_compliance_reconstruction.v1"
+        or r.get("contract") != contract
+        or r.get("frames_reconstructed") != 300
+        or r.get("planning_counters") != counters
+        or r.get("gain_law_reconstructed_with_same_pinned_implementation") is not True
+        or r.get("independent_gain_law_implementation") is not False
+        or r.get("chosen_control_forecast_attempts") != calls
+        or r.get("chosen_control_integrated_forecast_steps") != calls * 10
+        or r.get("locally_bitexact_active_intervals") != calls
+        or r.get("source_numeric_replay_tolerance") != 1e-8
+        or type(r.get("source_end_state_hash_matches")) is not int
+        or not 0 <= r["source_end_state_hash_matches"] <= calls
+        or r.get("hardware_authorized") is not False
+        or r.get("promotion_authorized") is not False
+    ):
+        raise ValueError("source-bound gain reconstruction and local actual replay required")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -228,6 +276,7 @@ def main():
             "teacher-eighteen",
             "release-four",
             "contact-exit-four",
+            "directional-four",
         ),
         default="contact-three",
     )
@@ -235,7 +284,8 @@ def main():
     public_four = args.profile == "original-public-four"
     teacher_screen = args.profile == "teacher-eighteen"
     torque_mpc = args.profile == "contact-exit-four"
-    release_ablation = args.profile in {"release-four", "contact-exit-four"}
+    directional = args.profile == "directional-four"
+    release_ablation = args.profile in {"release-four", "contact-exit-four", "directional-four"}
     context_study = teacher_screen or release_ablation
     spec = (
         bounded_profile(args.profile)
@@ -246,6 +296,7 @@ def main():
             "teacher-eighteen",
             "release-four",
             "contact-exit-four",
+            "directional-four",
         )
         else None
     )
@@ -385,8 +436,9 @@ def main():
         args.upstream_audit_source is None
         or args.baseline_screen_readback is None
         or args.baseline_screen_audit_source is None
-        or config.get("suppress_postcontact_swing_release") is not (not torque_mpc)
+        or config.get("suppress_postcontact_swing_release") is not (not (torque_mpc or directional))
         or config.get("use_contact_exit_torque_mpc", False) is not torque_mpc
+        or config.get("use_directional_contact_compliance", False) is not directional
         or config.get("selected_option_index") != 4
         or config.get("upstream_terminal_audit_required") is not True
         or complete.get("independent_course_count") != 4
@@ -511,7 +563,13 @@ def main():
             raise ValueError("whole original catalog including None required")
         if (
             args.profile
-            in ("catalog-sixteen", "teacher-eighteen", "release-four", "contact-exit-four")
+            in (
+                "catalog-sixteen",
+                "teacher-eighteen",
+                "release-four",
+                "contact-exit-four",
+                "directional-four",
+            )
             and declaration["options"] != catalog
         ):
             raise ValueError("actual entire catalog differs")
@@ -621,7 +679,18 @@ def main():
                 require_zero_postcontact_swing,
             )
 
-            if torque_mpc:
+            if directional:
+                from rosclaw_soccer.rsi.directional_compliance_evidence import (
+                    require_directional_capture,
+                )
+
+                require_directional_capture(report, commitment, trace)
+                if (
+                    receipt.get("directional_contact_compliance")
+                    != commitment["directional_contact_compliance"]
+                ):
+                    raise ValueError("gain receipt must bind actual physical contract")
+            elif torque_mpc:
                 from rosclaw_soccer.rsi.contact_exit_torque_evidence import (
                     require_contact_exit_capture,
                 )
@@ -654,12 +723,22 @@ def main():
                 original_trace = dict(archive)
             prefix = sealed(Path(witnesses["prefix_witness"]["path"]))
             prefix_trace = trace
-            if torque_mpc:
-                if set(trace) - set(original_trace) != {
-                    "contact_exit_mpc_requested_offset_nm",
-                    "contact_exit_mpc_applied_offset_nm",
-                    "contact_exit_mpc_forecast_steps",
-                }:
+            if torque_mpc or directional:
+                extra = (
+                    {
+                        "contact_exit_mpc_requested_offset_nm",
+                        "contact_exit_mpc_applied_offset_nm",
+                        "contact_exit_mpc_forecast_steps",
+                    }
+                    if torque_mpc
+                    else {
+                        "directional_compliance_stiffness_nm_per_rad",
+                        "directional_compliance_requested_delta_nm",
+                        "directional_compliance_applied_delta_nm",
+                        "directional_compliance_forecast_steps",
+                    }
+                )
+                if set(trace) - set(original_trace) != extra:
                     raise ValueError(
                         "only declared contact-exit capture may extend original arrays"
                     )
@@ -675,6 +754,8 @@ def main():
         review = sealed(Path(witnesses["independent_review"]["path"]))
         if torque_mpc:
             verify_contact_exit_reconstruction(report, commitment, receipt, review, source)
+        if directional:
+            verify_directional_reconstruction(report, commitment, receipt, review, source)
         foundation = sealed(Path(witnesses["foundation_review"]["path"]))
         alignment = require_first_touch_qualification(review, foundation, outcome)
         if spec is not None and (
@@ -1081,7 +1162,7 @@ def main():
                 upstream_terminal_readback_hash=upstream["report_hash"],
                 baseline_screen_terminal_readback_hash=screen["report_hash"],
             )
-            if torque_mpc:
+            if torque_mpc or directional:
                 totals = dict(
                     native_forecast_substeps=0,
                     independent_optimization_forecast_substeps=0,
@@ -1089,7 +1170,11 @@ def main():
                 )
                 for item in complete["results"]:
                     audit = sealed(Path(item["witnesses"]["independent_review"]["path"]))
-                    reconstruction = audit["contact_exit_torque_mpc_review"]
+                    reconstruction = audit[
+                        "contact_exit_torque_mpc_review"
+                        if torque_mpc
+                        else "directional_contact_compliance_review"
+                    ]
                     totals["native_forecast_substeps"] += item["forecast_physical_substeps"]
                     totals["independent_optimization_forecast_substeps"] += reconstruction[
                         "planning_counters"
@@ -1100,8 +1185,12 @@ def main():
                 if any(complete.get(k) != v for k, v in totals.items()):
                     raise ValueError("all native and independent forecast integrations must agree")
                 report.update(totals)
-                report["optimization_reconstruction_uses_same_pinned_implementation"] = True
-                report["independent_optimization_implementation"] = False
+                if torque_mpc:
+                    report["optimization_reconstruction_uses_same_pinned_implementation"] = True
+                    report["independent_optimization_implementation"] = False
+                else:
+                    report["gain_law_reconstruction_uses_same_pinned_implementation"] = True
+                    report["independent_gain_law_implementation"] = False
             else:
                 report["actual_postcontact_taskspace_increment_exactly_zero"] = True
         elif teacher_screen:

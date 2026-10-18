@@ -47,6 +47,11 @@ def validate_cpu_foundation_capture(
 
         require_contact_exit_capture(report, commitment, trace)
 
+    if "directional_contact_compliance" in commitment:
+        from rosclaw_soccer.rsi.directional_compliance_evidence import require_directional_capture
+
+        require_directional_capture(report, commitment, trace)
+
     if ("foundation_observation_capture" in report) != (
         "foundation_observation_capture" in commitment
     ):
@@ -638,6 +643,19 @@ def audit_cpu_transfer(
         replay_source_end_hash_matches = 0
         replay_active_intervals = 0
 
+    if "directional_contact_compliance" in commitment:
+        from rosclaw_soccer.physics.g1_pd_torque_forecast import G1PDTorqueForecaster
+        from rosclaw_soccer.rsi.directional_compliance_evidence import compare_compliance_plans
+        from rosclaw_soccer.rsi.directional_contact_compliance import DirectionalContactCompliance
+
+        compliance_reconstructor = DirectionalContactCompliance(
+            model, world_hash=commitment["compiled_model_hash"], kp=kp, kd=kd
+        )
+        if compliance_reconstructor.contract() != commitment["directional_contact_compliance"]:
+            raise ValueError("unchanged pinned directional compliance contract required")
+        compliance_recorded_attempts = compliance_recorded_steps = compliance_recorded_exact = 0
+        compliance_source_hash_matches = 0
+
     def equal(actual: Any, expected: Any, name: str) -> None:
         if not np.allclose(actual, expected, atol=1e-8, rtol=0):
             raise ValueError(f"CPU dynamics replay differs: {name}")
@@ -709,6 +727,48 @@ def audit_cpu_transfer(
                     hash_bytes(chosen_forecast.end_integration_state.tobytes())
                     == report["contact_exit_mpc_plans"][frame]["expected_end_state_hash"]
                 )
+        if "directional_contact_compliance" in commitment:
+            compliance_past = np.asarray(replay_forces, dtype=np.float64).reshape(frame, 6)
+            compliance_foot = np.flatnonzero(np.any(compliance_past[:, :2] > 1, axis=1))
+            reconstructed_compliance_plan = compliance_reconstructor.plan(
+                data,
+                target,
+                frame=frame,
+                first_foot_contact_frame=int(compliance_foot[0]) if len(compliance_foot) else None,
+                force_history=compliance_past[-3:],
+                prior_nonfoot_contact=bool(np.any(compliance_past[:, 2:] > 1)),
+            )
+            compare_compliance_plans(
+                reconstructed_compliance_plan.report, report["directional_compliance_plans"][frame]
+            )
+            recorded_compliance_matrix = trace["directional_compliance_stiffness_nm_per_rad"][
+                frame, 0
+            ]
+            equal(
+                reconstructed_compliance_plan.stiffness_nm_per_rad,
+                recorded_compliance_matrix,
+                "causally reconstructed directional stiffness matrix",
+            )
+            recorded_compliance_identity = np.array_equal(recorded_compliance_matrix, np.diag(kp))
+            compliance_recorded_forecast = None
+            if not recorded_compliance_identity:
+                recorded_compliance_forecaster = G1PDTorqueForecaster(
+                    model,
+                    expected_world_hash=commitment["compiled_model_hash"],
+                    kp=kp,
+                    kd=kd,
+                    max_forecast_steps=10,
+                    coupled_stiffness_nm_per_rad=recorded_compliance_matrix,
+                )
+                compliance_recorded_forecast = recorded_compliance_forecaster.forecast(
+                    data, target, np.zeros(29)
+                )
+                compliance_recorded_attempts += 1
+                compliance_recorded_steps += recorded_compliance_forecaster.integrated_steps
+                compliance_source_hash_matches += int(
+                    hash_bytes(compliance_recorded_forecast.end_integration_state.tobytes())
+                    == report["directional_compliance_plans"][frame]["expected_end_state_hash"]
+                )
         forces = np.zeros(6)
         for substep in range(10):
             if "bounded_control_profile" in commitment:
@@ -719,6 +779,11 @@ def audit_cpu_transfer(
                 )
             requested_pd = (target - data.qpos[qi]) * kp - data.qvel[vi] * kd
             requested_total = requested_pd
+            if "directional_contact_compliance" in commitment:  # noqa: SIM102 - OFF projection
+                if not recorded_compliance_identity:
+                    requested_total = (
+                        recorded_compliance_matrix @ (target - data.qpos[qi]) - data.qvel[vi] * kd
+                    )
             if "contact_exit_torque_mpc" in commitment:  # noqa: SIM102 - OFF-path projection
                 if np.any(recorded_mpc_offset):
                     requested_total = requested_pd + recorded_mpc_offset
@@ -753,6 +818,22 @@ def audit_cpu_transfer(
                     "actual hard-limited neural torque residual",
                 )
             equal(torque, trace["torque_nm"][frame, 0, substep], "PD torque")
+            if "directional_contact_compliance" in commitment:
+                equal(
+                    requested_total - requested_pd,
+                    trace["directional_compliance_requested_delta_nm"][frame, 0, substep],
+                    "actual gain-modulated preclip PD delta",
+                )
+                equal(
+                    torque
+                    - np.clip(
+                        requested_pd,
+                        -np.asarray(G1_HARD_TORQUE_LIMITS),
+                        np.asarray(G1_HARD_TORQUE_LIMITS),
+                    ),
+                    trace["directional_compliance_applied_delta_nm"][frame, 0, substep],
+                    "actual hard-limited gain authority",
+                )
             if "contact_exit_torque_mpc" in commitment:
                 equal(
                     torque
@@ -792,6 +873,18 @@ def audit_cpu_transfer(
                 mujoco.mj_getState(model, data, actual_end, mujoco.mjtState.mjSTATE_INTEGRATION)
                 if actual_end.tobytes() != chosen_forecast.end_integration_state.tobytes():
                     raise ValueError("CPU chosen forecast and actual interval differ bitwise")
+        if "directional_contact_compliance" in commitment:  # noqa: SIM102 - OFF projection
+            if compliance_recorded_forecast is not None:
+                compliance_end = np.empty_like(compliance_recorded_forecast.end_integration_state)
+                mujoco.mj_getState(model, data, compliance_end, mujoco.mjtState.mjSTATE_INTEGRATION)
+                if (
+                    compliance_end.tobytes()
+                    != compliance_recorded_forecast.end_integration_state.tobytes()
+                ):
+                    raise ValueError(
+                        "independent directional-control forecast and actual interval differ"
+                    )
+                compliance_recorded_exact += 1
         equal(forces, trace["force_n"][frame, 0], "physical contacts")
         equal(data.xpos[ball], trace["ball_position_after_step_m"][frame, 0], "physical ball")
         replay_forces.append(forces)
@@ -1148,6 +1241,24 @@ def audit_cpu_transfer(
             chosen_control_integrated_forecast_steps=chosen_forecaster.integrated_steps,
             locally_bitexact_active_intervals=replay_active_intervals,
             source_end_state_hash_matches=replay_source_end_hash_matches,
+            source_numeric_replay_tolerance=1e-8,
+            hardware_authorized=False,
+            promotion_authorized=False,
+        )
+    if "directional_contact_compliance" in commitment:
+        if compliance_reconstructor.counters() != report["directional_compliance_counters"]:
+            raise ValueError("independent directional gain planning counters differ")
+        result["directional_contact_compliance_review"] = dict(
+            schema="soccer.rsi.directional_compliance_reconstruction.v1",
+            contract=commitment["directional_contact_compliance"],
+            frames_reconstructed=300,
+            gain_law_reconstructed_with_same_pinned_implementation=True,
+            independent_gain_law_implementation=False,
+            planning_counters=compliance_reconstructor.counters(),
+            chosen_control_forecast_attempts=compliance_recorded_attempts,
+            chosen_control_integrated_forecast_steps=compliance_recorded_steps,
+            locally_bitexact_active_intervals=compliance_recorded_exact,
+            source_end_state_hash_matches=compliance_source_hash_matches,
             source_numeric_replay_tolerance=1e-8,
             hardware_authorized=False,
             promotion_authorized=False,

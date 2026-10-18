@@ -598,6 +598,7 @@ def qualified_episode(
     generated_seed_episode_binding: bool = False,
     suppress_postcontact_swing_release: bool = False,
     use_contact_exit_torque_mpc: bool = False,
+    use_directional_contact_compliance: bool = False,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -755,6 +756,7 @@ def qualified_episode(
         generated_seed_episode_binding=generated_seed_episode_binding,
         suppress_postcontact_swing_release=suppress_postcontact_swing_release,
         use_contact_exit_torque_mpc=use_contact_exit_torque_mpc,
+        use_directional_contact_compliance=use_directional_contact_compliance,
     )
     report = (
         _sealed(folder / "report.json")
@@ -770,6 +772,8 @@ def qualified_episode(
         raise ValueError("requested swing release ablation must bind actual native execution")
     if ("contact_exit_torque_mpc" in report) != use_contact_exit_torque_mpc:
         raise ValueError("requested contact-exit teacher must bind actual native execution")
+    if ("directional_contact_compliance" in report) != use_directional_contact_compliance:
+        raise ValueError("requested directional compliance must bind actual native execution")
     if report["compiled_model_hash"] != expected_world or report["course"] != list(course):
         raise ValueError("fixed world and course required")
     if (
@@ -948,6 +952,12 @@ def qualified_episode(
         receipt["contact_exit_torque_mpc"] = commitment["contact_exit_torque_mpc"]
         receipt["contact_exit_mpc_counters"] = report["contact_exit_mpc_counters"]
         receipt["forecast_physical_substeps"] = report["contact_exit_mpc_counters"][
+            "integrated_forecast_steps"
+        ]
+    if use_directional_contact_compliance:
+        receipt["directional_contact_compliance"] = commitment["directional_contact_compliance"]
+        receipt["directional_compliance_counters"] = report["directional_compliance_counters"]
+        receipt["forecast_physical_substeps"] = report["directional_compliance_counters"][
             "integrated_forecast_steps"
         ]
     if mesh_task_contact_world_hash is not None:

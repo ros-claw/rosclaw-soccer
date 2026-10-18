@@ -89,9 +89,58 @@ def run_native_first_touch_episode(
     generated_seed_episode_binding: bool = False,
     suppress_postcontact_swing_release: bool = False,
     use_contact_exit_torque_mpc: bool = False,
+    use_directional_contact_compliance: bool = False,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
+
+    if type(use_directional_contact_compliance) is not bool:
+        raise ValueError("explicit boolean directional contact compliance required")
+    if use_directional_contact_compliance:
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+
+        if (
+            partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
+            or getattr(args, "record_foundation_observation", False) is not True
+            or getattr(args, "foundation_only", False) is not False
+            or getattr(args, "proposal_decoder", None) != "reference"
+            or getattr(args, "step_model", None) is None
+            or getattr(args, "body_response_bundle", None) is not None
+            or getattr(args, "cached_proposal_envelope", False)
+            or getattr(args, "neural_model", None) is not None
+            or getattr(args, "motor_policy", None) is not None
+            or type(control_profile) is not BoundedFirstTouchControl
+            or approach_mode != "bounded_approach_diagnostic"
+            or swing_mode != "bounded_contact_diagnostic"
+            or mesh_task_contact_world_hash is None
+            or mesh_world_review is None
+            or type(recurrent_sampling_factory) is not RecurrentSamplingEpisodeFactory
+            or cerebellar_model is not None
+            or cerebellar_sampling_seed is not None
+            or postcontact_profile is not None
+            or locomotion_mode_probe is not None
+            or reference_height_probe_m is not None
+            or foundation_approach_probe is not False
+            or record_default_planner_events is not True
+            or generated_seed_episode_binding is not False
+            or suppress_postcontact_swing_release is not False
+            or use_contact_exit_torque_mpc is not False
+            or any(
+                factory is not None
+                for factory in (
+                    sampling_factory,
+                    extended_factory,
+                    proposal_factory,
+                    imitation_factory,
+                    recurrent_factory,
+                    recurrent_clipped_factory,
+                )
+            )
+        ):
+            raise ValueError("unmixed captured reviewed-mesh directional compliance study required")
+        recurrent_sampling_factory._stable()
 
     if type(use_contact_exit_torque_mpc) is not bool:
         raise ValueError("explicit boolean contact-exit torque teacher required")
@@ -1056,6 +1105,16 @@ def run_native_first_touch_episode(
             kd=navigation.backend.kd,
         )
         commitment["contact_exit_torque_mpc"] = exit_teacher.contract()
+    if use_directional_contact_compliance:
+        from rosclaw_soccer.rsi.directional_contact_compliance import DirectionalContactCompliance
+
+        exit_compliance = DirectionalContactCompliance(
+            model,
+            world_hash=commitment["compiled_model_hash"],
+            kp=navigation.backend.kp,
+            kd=navigation.backend.kd,
+        )
+        commitment["directional_contact_compliance"] = exit_compliance.contract()
     cerebellar = None
     if cerebellar_model is not None:
         from rosclaw_soccer.rsi.native_cerebellar_torque import NativeCerebellarTorque
@@ -1220,6 +1279,19 @@ def run_native_first_touch_episode(
         )
         mpc_plans = []
         previous_mpc_offset = np.zeros(29)
+    if use_directional_contact_compliance:
+        history.update(
+            {
+                name: []
+                for name in (
+                    "directional_compliance_stiffness_nm_per_rad",
+                    "directional_compliance_requested_delta_nm",
+                    "directional_compliance_applied_delta_nm",
+                    "directional_compliance_forecast_steps",
+                )
+            }
+        )
+        compliance_plans = []
     tracking = y < 0
     gate = False
     side, contact_frame = -1, None
@@ -1501,6 +1573,27 @@ def run_native_first_touch_episode(
                 np.asarray([[mpc_plan.report["forecast_substeps"]]], dtype=np.int64)
             )
             mpc_applied = []
+        if use_directional_contact_compliance:
+            compliance_past = np.asarray(history["force_n"], dtype=np.float64).reshape(frame, 6)
+            compliance_foot_frames = np.flatnonzero(np.any(compliance_past[:, :2] > 1, axis=1))
+            compliance_plan = exit_compliance.plan(
+                data,
+                target,
+                frame=frame,
+                first_foot_contact_frame=int(compliance_foot_frames[0])
+                if len(compliance_foot_frames)
+                else None,
+                force_history=compliance_past[-3:],
+                prior_nonfoot_contact=bool(np.any(compliance_past[:, 2:] > 1)),
+            )
+            compliance_plans.append(compliance_plan.report)
+            history["directional_compliance_stiffness_nm_per_rad"].append(
+                compliance_plan.stiffness_nm_per_rad[None].copy()
+            )
+            history["directional_compliance_forecast_steps"].append(
+                np.asarray([[compliance_plan.report["forecast_substeps"]]], dtype=np.int64)
+            )
+            compliance_requested, compliance_applied = [], []
         history["joint_target_rad"].append(target[None].copy())
         forces = np.zeros(6)
         torques = []
@@ -1526,6 +1619,21 @@ def run_native_first_touch_episode(
                         np.asarray(G1_HARD_TORQUE_LIMITS),
                     )
                 mpc_applied.append(torque - baseline_torque)
+            if use_directional_contact_compliance:
+                parent_torque = torque.copy()
+                compliant_request = requested_torque
+                if not compliance_plan.identity:
+                    compliant_request = (
+                        compliance_plan.stiffness_nm_per_rad @ (target - data.qpos[qi])
+                        - data.qvel[vi] * navigation.backend.kd
+                    )
+                    torque = np.clip(
+                        compliant_request,
+                        -np.asarray(G1_HARD_TORQUE_LIMITS),
+                        np.asarray(G1_HARD_TORQUE_LIMITS),
+                    )
+                compliance_requested.append(compliant_request - requested_torque)
+                compliance_applied.append(torque - parent_torque)
             if cerebellar is not None:
                 current_qpos = np.concatenate(
                     (data.qpos[:7], data.qpos[qi], data.qpos[bq : bq + 7])
@@ -1561,6 +1669,14 @@ def run_native_first_touch_episode(
         if use_contact_exit_torque_mpc:
             exit_teacher.verify_actual_interval(data, mpc_plan)
             history["contact_exit_mpc_applied_offset_nm"].append(np.asarray(mpc_applied)[None])
+        if use_directional_contact_compliance:
+            exit_compliance.verify_actual_interval(data, compliance_plan)
+            history["directional_compliance_requested_delta_nm"].append(
+                np.asarray(compliance_requested)[None]
+            )
+            history["directional_compliance_applied_delta_nm"].append(
+                np.asarray(compliance_applied)[None]
+            )
         if contact_frame is None and np.any(forces > 1):
             contact_frame = frame
             first_contact_frame = frame
@@ -1589,6 +1705,9 @@ def run_native_first_touch_episode(
     if use_contact_exit_torque_mpc:  # noqa: SIM102 - retain explicit OFF-path projection
         if exit_teacher.contract() != commitment["contact_exit_torque_mpc"]:
             raise ValueError("contact-exit torque teacher changed during episode")
+    if use_directional_contact_compliance:  # noqa: SIM102 - explicit OFF-path projection
+        if exit_compliance.contract() != commitment["directional_contact_compliance"]:
+            raise ValueError("directional compliance controller changed during episode")
     trace = args.output_root / "physical_trace.npz"
     if cerebellar is not None and (
         cerebellar.calls != 3000
@@ -1629,6 +1748,9 @@ def run_native_first_touch_episode(
     if use_contact_exit_torque_mpc:
         result["contact_exit_mpc_plans"] = mpc_plans
         result["contact_exit_mpc_counters"] = exit_teacher.counters()
+    if use_directional_contact_compliance:
+        result["directional_compliance_plans"] = compliance_plans
+        result["directional_compliance_counters"] = exit_compliance.counters()
     result["report_hash"] = hash_json(result)
     from scripts.rsi_atomic_artifacts import write_once, write_shared_physical_report
 

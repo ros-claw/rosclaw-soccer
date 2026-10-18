@@ -64,9 +64,20 @@ def main():
     args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
     torque_mpc = cfg.get("use_contact_exit_torque_mpc", False)
-    if type(torque_mpc) is not bool:
+    directional = cfg.get("use_directional_contact_compliance", False)
+    if (
+        type(torque_mpc) is not bool
+        or type(directional) is not bool
+        or (torque_mpc and directional)
+    ):
         raise ValueError("explicit boolean diagnostic selection required")
-    study_kind = "contact_exit_torque_mpc" if torque_mpc else "swing_release_ablation"
+    study_kind = (
+        "directional_contact_compliance"
+        if directional
+        else "contact_exit_torque_mpc"
+        if torque_mpc
+        else "swing_release_ablation"
+    )
     source, core, root = (Path(cfg[k]) for k in ("source_root", "core_root", "output_root"))
     if (
         root.exists()
@@ -78,7 +89,7 @@ def main():
         or cfg.get("predecessor") is not None
         or cfg["upstream_terminal_audit_required"] is not True
         or cfg["teacher_auto_admission"] is not False
-        or cfg.get("suppress_postcontact_swing_release") is not (not torque_mpc)
+        or cfg.get("suppress_postcontact_swing_release") is not (not (torque_mpc or directional))
         or set(cfg.get("required_receipt_witnesses", []))
         != {"intent_witness", "encoder_witness", "prefix_witness"}
         or Path(__file__).resolve() != source / "scripts/rsi_swing_release_ablation_pilot.py"
@@ -150,6 +161,10 @@ def main():
         if cfg.get("maximum_forecast_steps_per_episode") != 6000:
             raise ValueError("fixed bounded contact-exit planning budget required")
         jobs = [dict(job, job="contact-exit-" + job["pair_id"], role="teacher") for job in jobs]
+    if directional:
+        if cfg.get("maximum_forecast_steps_per_episode") != 700:
+            raise ValueError("fixed bounded directional gain forecast budget required")
+        jobs = [dict(job, job="directional-exit-" + job["pair_id"], role="teacher") for job in jobs]
     references = {r["group"]: r for r in nominal["results"]}
     controls = {}
     evaluations, reused = {}, []
@@ -331,8 +346,9 @@ def main():
                 mesh_world_review=review,
                 planning_context=context,
                 planning_stage="SELECTED_OPTION_EVALUATION" if context else "PLANNING_SIMULATION",
-                suppress_postcontact_swing_release=not torque_mpc,
+                suppress_postcontact_swing_release=not (torque_mpc or directional),
                 use_contact_exit_torque_mpc=torque_mpc,
+                use_directional_contact_compliance=directional,
             )
             with np.load(folder / "physical_trace.npz", allow_pickle=False) as archive:
                 trace = dict(archive)
@@ -341,12 +357,22 @@ def main():
             with np.load(baseline["witnesses"]["trace"]["path"], allow_pickle=False) as archive:
                 baseline_trace = dict(archive)
                 original_trace = {k: v for k, v in trace.items() if k in baseline_trace}
-                if torque_mpc:
-                    if set(trace) - set(baseline_trace) != {
-                        "contact_exit_mpc_requested_offset_nm",
-                        "contact_exit_mpc_applied_offset_nm",
-                        "contact_exit_mpc_forecast_steps",
-                    }:
+                if torque_mpc or directional:
+                    new_fields = (
+                        {
+                            "contact_exit_mpc_requested_offset_nm",
+                            "contact_exit_mpc_applied_offset_nm",
+                            "contact_exit_mpc_forecast_steps",
+                        }
+                        if torque_mpc
+                        else {
+                            "directional_compliance_stiffness_nm_per_rad",
+                            "directional_compliance_requested_delta_nm",
+                            "directional_compliance_applied_delta_nm",
+                            "directional_compliance_forecast_steps",
+                        }
+                    )
+                    if set(trace) - set(baseline_trace) != new_fields:
                         raise ValueError("only explicitly declared teacher capture may be added")
                 elif set(trace) != set(baseline_trace):
                     raise ValueError("ablation may not add capture fields")
@@ -416,7 +442,7 @@ def main():
             hardware_authorized=False,
             promotion_authorized=False,
         )
-        if torque_mpc:
+        if torque_mpc or directional:
             complete["native_forecast_substeps"] = sum(
                 row["forecast_physical_substeps"] for row in results
             )
@@ -424,7 +450,11 @@ def main():
             complete["independent_chosen_control_forecast_substeps"] = 0
             for row in results:
                 audit = p.sealed(Path(row["witnesses"]["independent_review"]["path"]))
-                reconstruction = audit["contact_exit_torque_mpc_review"]
+                reconstruction = audit[
+                    "contact_exit_torque_mpc_review"
+                    if torque_mpc
+                    else "directional_contact_compliance_review"
+                ]
                 complete["independent_optimization_forecast_substeps"] += reconstruction[
                     "planning_counters"
                 ]["integrated_forecast_steps"]
@@ -434,7 +464,9 @@ def main():
         complete["report_hash"] = hash_json(complete)
         write_once(root / "complete.json", complete)
         phase(
-            "CONTACT_EXIT_TORQUE_MPC_COMPLETE_NOT_QUALIFIED_TEACHER"
+            "DIRECTIONAL_CONTACT_COMPLIANCE_COMPLETE_NOT_QUALIFIED_TEACHER"
+            if directional
+            else "CONTACT_EXIT_TORQUE_MPC_COMPLETE_NOT_QUALIFIED_TEACHER"
             if torque_mpc
             else "SWING_RELEASE_ABLATION_COMPLETE_NOT_OPTIMIZED_RECOVERY"
         )

@@ -22,7 +22,7 @@ from tests.rsi.test_mesh_contact_terminal_readback import write
 from tests.rsi.test_mesh_teacher_terminal_readback import expanded_fixture
 
 
-def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
+def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional=False):
     expanded_fixture(tmp_path, monkeypatch)
     prepared, _, manifest, config = first_touch_campaign_worker.prepare(None)
     screen_root = tmp_path / "teacher"
@@ -31,19 +31,37 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
     ]
     root = tmp_path / "release"
     root.mkdir()
-    profile = "contact-exit-four" if torque_mpc else "release-four"
+    profile = (
+        "directional-four" if directional else "contact-exit-four" if torque_mpc else "release-four"
+    )
     spec = audit.bounded_profile(profile)
-    if torque_mpc:
-        from tests.rsi.test_contact_exit_torque_evidence import capture
-
+    if torque_mpc or directional:
+        if directional:
+            from tests.rsi.test_directional_compliance_evidence import capture
+        else:
+            from tests.rsi.test_contact_exit_torque_evidence import capture
+        contract_key = (
+            "directional_contact_compliance" if directional else "contact_exit_torque_mpc"
+        )
+        counter_key = (
+            "directional_compliance_counters" if directional else "contact_exit_mpc_counters"
+        )
         mpc_report, mpc_commitment, mpc_trace = capture()
-        contract = mpc_commitment["contact_exit_torque_mpc"]
+        contract = mpc_commitment[contract_key]
         source = Path(config["source_root"])
         source_files = {
             "teacher": "rsi/contact_exit_torque_mpc.py",
             "forecast": "physics/g1_pd_torque_forecast.py",
             "kinematics": "physics/g1_joint_task_kinematics.py",
         }
+        if directional:
+            source_files = {
+                "controller": "rsi/directional_contact_compliance.py",
+                "shaping": "rsi/directional_contact_impedance.py",
+                "forecast": "physics/g1_pd_torque_forecast.py",
+                "kinematics": "physics/g1_joint_task_kinematics.py",
+                "pressure": "rsi/contact_exit_torque_mpc.py",
+            }
         for name in source_files.values():
             path = source / "src/rosclaw_soccer" / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,7 +79,7 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
         contract["contract_hash"] = hash_json(
             {k: v for k, v in contract.items() if k != "contract_hash"}
         )
-        mpc_report["contact_exit_torque_mpc"] = copy.deepcopy(contract)
+        mpc_report[contract_key] = copy.deepcopy(contract)
     plan = PublicFirstTouchTrainingPlan(tuple(range(20261060, 20261070)), "sha256:" + "a" * 64, 18)
 
     def endpoint(index, *, ablated=False, declaration=None, baseline=None):
@@ -78,13 +96,17 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
             trace["ball_position_after_step_m"][134, 0, 0] = 2
         trace["taskspace_joint_increment_rad"] = np.zeros((300, 1, 29))
         trace["taskspace_joint_increment_rad"][74:95] = 0.1
-        if torque_mpc:
+        if torque_mpc or directional:
             for key in ("pd_requested_torque_nm", "torque_nm"):
                 trace[key] = mpc_trace[key].copy()
             trace["root_pose_xyzw_m"] = np.zeros((300, 1, 7))
             trace["root_pose_xyzw_m"][:, 0, 6] = 1
             trace["ball_linear_velocity_before_step_m_s"] = np.zeros((300, 1, 3))
         c = json.loads(Path(r["witnesses"]["commitment"]["path"]).read_text())
+        if directional:
+            c["physics"] = copy.deepcopy(mpc_commitment["physics"])
+            for key in ("joint_target_rad", "joint_position_rad", "joint_velocity_rad_s"):
+                trace[key] = mpc_trace[key].copy()
         draw = plan.draws()[job["group"]]
         if index < 2:
             c["executed_motor_policy"]["step_motor_proof"]["model"]["seed"] = draw.sampling_seed
@@ -99,7 +121,7 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
             )
             r.pop("planning_context_hash", None)
         if ablated:
-            if not torque_mpc:
+            if not (torque_mpc or directional):
                 trace["taskspace_joint_increment_rad"][75:] = 0
             if tamper == "postcontact_nonzero" and index == 0:
                 trace["taskspace_joint_increment_rad"][76] = 0.01
@@ -107,14 +129,12 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
                 foundation_observation_capture=dict(synthetic=True),
                 execution_profile="taskspace_plus_motor",
             )
-            if torque_mpc:
-                c["contact_exit_torque_mpc"] = contract
+            if torque_mpc or directional:
+                c[contract_key] = contract
                 trace.update({k: v.copy() for k, v in mpc_trace.items()})
-                r.update(
-                    contact_exit_torque_mpc=contract,
-                    contact_exit_mpc_counters=mpc_report["contact_exit_mpc_counters"],
-                    forecast_physical_substeps=0,
-                )
+                r[contract_key] = contract
+                r[counter_key] = mpc_report[counter_key]
+                r["forecast_physical_substeps"] = 0
             else:
                 c["swing_release_ablation"] = release_ablation_contract(
                     config["mesh_task_contact_world_hash"]
@@ -129,8 +149,8 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
                 old_report,
                 **c,
                 **(
-                    {k: v for k, v in mpc_report.items() if k != "contact_exit_torque_mpc"}
-                    if torque_mpc and ablated
+                    {k: v for k, v in mpc_report.items() if k != contract_key}
+                    if (torque_mpc or directional) and ablated
                     else {}
                 ),
                 commitment_hash=hash_json(c),
@@ -156,7 +176,7 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
                         contact_exit_torque_mpc_review=dict(
                             schema="soccer.rsi.contact_exit_torque_mpc_reconstruction.v1",
                             contract=contract,
-                            planning_counters=mpc_report["contact_exit_mpc_counters"],
+                            planning_counters=mpc_report[counter_key],
                             frames_reconstructed=300,
                             optimization_reconstructed_with_same_pinned_implementation=True,
                             independent_optimization_implementation=False,
@@ -170,11 +190,20 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
                             promotion_authorized=False,
                         )
                     )
-                    if torque_mpc and ablated
+                    if (torque_mpc or directional) and ablated
                     else {}
                 ),
             ),
         )
+        if directional and ablated:
+            gain_review = copy.deepcopy(review["contact_exit_torque_mpc_review"])
+            gain_review["schema"] = "soccer.rsi.directional_compliance_reconstruction.v1"
+            gain_review["gain_law_reconstructed_with_same_pinned_implementation"] = True
+            gain_review["independent_gain_law_implementation"] = False
+            gain_review["planning_counters"] = mpc_report[counter_key]
+            review.pop("contact_exit_torque_mpc_review")
+            review["directional_contact_compliance_review"] = gain_review
+            review = write(folder / "independent.json", review)
         foundation = json.loads(Path(r["witnesses"]["foundation_review"]["path"]).read_text())
         foundation = write(
             folder / "foundation.json",
@@ -246,7 +275,7 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
                 prefix_array_hashes={
                     k: hash_bytes(v[:75].tobytes())
                     for k, v in trace.items()
-                    if not k.startswith("contact_exit_mpc_")
+                    if not k.startswith(("contact_exit_mpc_", "directional_compliance_"))
                 },
             )
             if tamper == "prefix_hash" and index == 0:
@@ -274,13 +303,15 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
         groups=spec["groups"],
         max_attempts=4,
         new_physical_budget=4,
-        suppress_postcontact_swing_release=not torque_mpc,
+        suppress_postcontact_swing_release=not (torque_mpc or directional),
         baseline_receipts=baseline_items,
         baseline_sources=[],
         required_receipt_witnesses=["intent_witness", "encoder_witness", "prefix_witness"],
     )
     if torque_mpc:
         config["use_contact_exit_torque_mpc"] = True
+    if directional:
+        config["use_directional_contact_compliance"] = True
     config_path = root / "config.json"
     write(config_path, config, key=None)
     pins = {str(config_path): audit.digest(config_path)}
@@ -398,7 +429,7 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False):
                     independent_optimization_forecast_substeps=0,
                     independent_chosen_control_forecast_substeps=0,
                 )
-                if torque_mpc
+                if torque_mpc or directional
                 else {}
             ),
         ),
@@ -453,6 +484,19 @@ def test_full_contact_exit_reader_retains_release_and_separates_forecast_account
     assert report["native_forecast_substeps"] == 0
     assert report["independent_chosen_control_forecast_substeps"] == 0
     assert report["rows"][2]["outcome"]["safe"] is False
+
+
+def test_full_directional_reader_keeps_old_unsafe_case_and_does_not_claim_independent_gain_law(
+    tmp_path, monkeypatch
+):
+    output = fixture(tmp_path, monkeypatch, directional=True)
+    audit.main()
+    report = json.loads(output.read_text())
+    assert report["schema"] == "soccer.rsi.directional_contact_compliance_terminal_readback.v1"
+    assert len(report["rows"]) == 4 and report["rows"][2]["outcome"]["safe"] is False
+    assert report["independent_gain_law_implementation"] is False
+    assert report["gain_law_reconstruction_uses_same_pinned_implementation"] is True
+    assert "actual_postcontact_taskspace_increment_exactly_zero" not in report
 
 
 @pytest.mark.parametrize("tamper", ["intent_baseline", "prefix_hash", "upstream_unverified"])

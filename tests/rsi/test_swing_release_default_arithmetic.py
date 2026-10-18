@@ -9,6 +9,7 @@ import pytest
 
 FLAG = "suppress_postcontact_swing_release"
 MPC_FLAG = "use_contact_exit_torque_mpc"
+COMPLIANCE_FLAG = "use_directional_contact_compliance"
 
 
 def canonical(node):
@@ -31,7 +32,7 @@ class OffPath(ast.NodeTransformer):
         pairs = [
             (a, d)
             for a, d in zip(node.kwonlyargs, node.kw_defaults, strict=True)
-            if a.arg not in {FLAG, MPC_FLAG}
+            if a.arg not in {FLAG, MPC_FLAG, COMPLIANCE_FLAG}
         ]
         node.kwonlyargs = [p[0] for p in pairs]
         node.kw_defaults = [p[1] for p in pairs]
@@ -47,6 +48,10 @@ class OffPath(ast.NodeTransformer):
             f"type({MPC_FLAG}) is not bool",
             f"('contact_exit_torque_mpc' in report) != {MPC_FLAG}",
             "'contact_exit_torque_mpc' in commitment",
+            COMPLIANCE_FLAG,
+            f"type({COMPLIANCE_FLAG}) is not bool",
+            f"('directional_contact_compliance' in report) != {COMPLIANCE_FLAG}",
+            "'directional_contact_compliance' in commitment",
         }
         if ast.dump(node.test, include_attributes=False) in {expression(s) for s in known}:
             return [self.visit(n) for n in node.orelse]
@@ -57,7 +62,9 @@ class OffPath(ast.NodeTransformer):
             k
             for k in node.keywords
             if not (
-                k.arg in {FLAG, MPC_FLAG} and isinstance(k.value, ast.Name) and k.value.id == k.arg
+                k.arg in {FLAG, MPC_FLAG, COMPLIANCE_FLAG}
+                and isinstance(k.value, ast.Name)
+                and k.value.id == k.arg
             )
         ]
         return self.generic_visit(node)
