@@ -15,6 +15,18 @@ def digest(path):
 
 
 def bounded_profile(profile):
+    if profile == "receding-catalog2-ten":
+        from rosclaw_soccer.rsi.receding_teacher_scope import SOURCE_GROUPS, receding_jobs
+
+        return dict(
+            count=10,
+            groups=list(SOURCE_GROUPS),
+            declaration_schema="soccer.rsi.receding_catalog2_declaration.v1",
+            complete_schema="soccer.rsi.receding_catalog2_complete.v1",
+            readback_schema="soccer.rsi.receding_catalog2_terminal_readback.v1",
+            phase="RECEDING_CATALOG2_COMPLETE_NOT_QUALIFIED_TEACHER",
+            jobs=receding_jobs(),
+        )
     if profile == "surface-context-six":
         return dict(
             count=6,
@@ -385,12 +397,14 @@ def main():
             "directional-four",
             "surface-seven",
             "surface-context-six",
+            "receding-catalog2-ten",
         ),
         default="contact-three",
     )
     args = parser.parse_args()
     public_four = args.profile == "original-public-four"
     teacher_screen = args.profile == "teacher-eighteen"
+    receding = args.profile == "receding-catalog2-ten"
     torque_mpc = args.profile == "contact-exit-four"
     directional = args.profile == "directional-four"
     expansion = args.profile == "surface-context-six"
@@ -403,7 +417,7 @@ def main():
         "surface-seven",
         "surface-context-six",
     }
-    context_study = teacher_screen or release_ablation
+    context_study = teacher_screen or release_ablation or receding
     spec = (
         bounded_profile(args.profile)
         if args.profile
@@ -416,6 +430,7 @@ def main():
             "directional-four",
             "surface-seven",
             "surface-context-six",
+            "receding-catalog2-ten",
         )
         else None
     )
@@ -551,6 +566,27 @@ def main():
         or complete.get("reused_endpoints") != declaration.get("reused_endpoints")
     ):
         raise ValueError("exact expanded teacher screen and upstream audit binding required")
+    if receding and (
+        config.get("selected_option_index") != 2
+        or config.get("neural_training_authorized") is not False
+        or config.get("teacher_auto_admission") is not False
+        or complete.get("independent_course_count") != 6
+        or complete.get("paired_endpoint_count") != 12
+        or complete.get("archived_c7_full_numeric_reproduction") is not True
+        or complete.get("reused_endpoints") != declaration.get("reused_endpoints")
+        or any(
+            config.get(k, False) is not False
+            for k in (
+                "use_mesh_surface_swing",
+                "use_contact_exit_torque_mpc",
+                "use_directional_contact_compliance",
+                "suppress_postcontact_swing_release",
+            )
+        )
+    ):
+        raise ValueError(
+            "exact receding catalog2 scope, reproduction and original controls required"
+        )
     if release_ablation and (
         args.upstream_audit_source is None
         or args.baseline_screen_readback is None
@@ -590,6 +626,7 @@ def main():
         pins[str(args.collected_unit_journal)] = args.collected_unit_journal_hash
         pins[str(collected_helper)] = collected_helper_hash
     prepared, preparation_was_persisted = None, False
+    receding_reused, receding_archived = None, None
     if spec is not None:
         from rosclaw_soccer.rsi.first_touch_campaign_worker import prepare
         from rosclaw_soccer.rsi.reviewed_contact_world import ReviewedContactWorld
@@ -597,6 +634,12 @@ def main():
         prepared, _, source_manifest, actual = prepare(args.config)
         if actual != config:
             raise ValueError("same original preparation configuration required")
+        if receding:
+            from rosclaw_soccer.rsi.receding_scope_evidence import load_scope_evidence
+
+            receding_reused, receding_archived = load_scope_evidence(config, sealed, digest, pins)
+            if receding_reused != declaration["reused_endpoints"]:
+                raise ValueError("original None receding endpoints must match declaration")
         if expansion:
             from rosclaw_soccer.rsi.surface_context_expansion import require_previous_surface
 
@@ -701,6 +744,7 @@ def main():
                 "directional-four",
                 "surface-seven",
                 "surface-context-six",
+                "receding-catalog2-ten",
             )
             and declaration["options"] != catalog
         ):
@@ -715,6 +759,8 @@ def main():
             raise ValueError("completion, ledger and actual ordered receipts must agree")
         witnesses = dict(receipt["witnesses"])
         witnesses.update({k: receipt[k] for k in ("intent_witness", "encoder_witness")})
+        if receding and index == 0:
+            witnesses["reproduction_witness"] = receipt["reproduction_witness"]
         if release_ablation:
             witnesses["prefix_witness"] = receipt["prefix_witness"]
         if context_study and spec["jobs"][index]["context_index"] is not None:
@@ -805,6 +851,20 @@ def main():
                     "encoder reference audit must bind actual complete planner history"
                 )
         outcome = label_first_touch(trace)
+        if receding and index == 0:
+            from rosclaw_soccer.rsi.receding_teacher_scope import reproduce_zero_control
+
+            with np.load(
+                receding_archived["witnesses"]["trace"]["path"], allow_pickle=False
+            ) as old_archive:
+                numeric = reproduce_zero_control(trace, dict(old_archive))
+            numeric["archived_receipt_hash"] = receding_archived["receipt_hash"]
+            numeric["report_hash"] = hash_json(numeric)
+            if (
+                sealed(Path(receipt["reproduction_witness"]["path"])) != numeric
+                or outcome.to_dict() != receding_archived["outcome"]
+            ):
+                raise ValueError("independent complete original zero-layer reproduction differs")
         if release_ablation:
             from rosclaw_soccer.rsi.swing_release_ablation import (
                 release_ablation_contract,
@@ -973,9 +1033,14 @@ def main():
             if context_study:
                 from rosclaw_soccer.rsi.public_physics_option_planning import planning_contexts
 
+                if receding:
+                    from rosclaw_soccer.rsi.receding_teacher_scope import receding_contexts
+
+                    study_contexts = receding_contexts(plan)
+                else:
+                    study_contexts = planning_contexts(plan)
                 if declaration.get("contexts") != [
-                    dict(context_hash=c.context_hash, course=list(c.course))
-                    for c in planning_contexts(plan)
+                    dict(context_hash=c.context_hash, course=list(c.course)) for c in study_contexts
                 ]:
                     raise ValueError("whole predeclared eight-context source bank differs")
             if context_study and intended["context_index"] is not None:
@@ -986,7 +1051,11 @@ def main():
                     validate_context_source,
                 )
 
-                planning = planning_contexts(plan)[intended["context_index"]]
+                planning = (
+                    next(c for c in study_contexts if c.source_group == group)
+                    if receding
+                    else planning_contexts(plan)[intended["context_index"]]
+                )
                 validate_context_source(planning, plan, group=group)
                 document = sealed(Path(witnesses["planning_context_witness"]["path"]))
                 expected_planning = dict(
@@ -1435,6 +1504,38 @@ def main():
                     report["independent_gain_law_implementation"] = False
             elif not surface:
                 report["actual_postcontact_taskspace_increment_exactly_zero"] = True
+        elif receding:
+            from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
+            from rosclaw_soccer.rsi.receding_teacher_scope import scope_contract
+
+            if declaration.get("scope_contract") != scope_contract(plan):
+                raise ValueError("whole six-course receding scope must match original source plan")
+            if (
+                declaration.get("archived_reference_receipt_hash")
+                != receding_archived["receipt_hash"]
+                or receding_archived["candidate"] != catalog[2]
+            ):
+                raise ValueError("candidate2 must match exact archived original success")
+            controls = {r["pair_id"]: r["receipt"]["outcome"] for r in receding_reused}
+            evaluations = {}
+            for job, row in zip(spec["jobs"], rows, strict=True):
+                (controls if job["role"] == "control" else evaluations)[job["pair_id"]] = row[
+                    "outcome"
+                ]
+            paired = assess_pairs(controls, evaluations)
+            if paired != complete["paired_development"]:
+                raise ValueError("whole original and new receding pairing differs")
+            report.update(
+                paired_development=paired,
+                reused_endpoint_count=2,
+                independent_course_count=6,
+                paired_endpoint_count=12,
+                archived_c7_full_numeric_reproduction=True,
+                reused_endpoints_authenticated_via_prior_complete_terminal_readbacks=True,
+                reused_endpoint_physics_rerun_here=False,
+                single_high_x_receding_stratum_only=True,
+                fresh_exam=False,
+            )
         elif teacher_screen:
             from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
 

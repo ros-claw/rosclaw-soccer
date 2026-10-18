@@ -24,7 +24,7 @@ from tests.rsi.test_mesh_contact_terminal_readback import fixture as original_fi
 from tests.rsi.test_mesh_contact_terminal_readback import write
 
 
-def expanded_fixture(tmp_path, monkeypatch, tamper=None):
+def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False):
     original_fixture(tmp_path, monkeypatch, public_four=True)
     original = json.loads((tmp_path / "run/complete.json").read_text())
     root = tmp_path / "teacher"
@@ -97,7 +97,11 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None):
     )
     plan = PublicFirstTouchTrainingPlan(tuple(range(20261060, 20261070)), "sha256:" + "a" * 64, 18)
     contexts = planning_contexts(plan)
-    spec = audit.bounded_profile("teacher-eighteen")
+    if receding:
+        from rosclaw_soccer.rsi.receding_teacher_scope import receding_contexts, scope_contract
+
+        contexts = receding_contexts(plan)
+    spec = audit.bounded_profile("receding-catalog2-ten" if receding else "teacher-eighteen")
     config = dict(
         source_root=str(tmp_path),
         core_root=str(tmp_path),
@@ -127,6 +131,15 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None):
         ],
     )
     config_path = tmp_path / "teacher-config.json"
+    if receding:
+        config.update(
+            groups=spec["groups"],
+            max_attempts=10,
+            new_physical_budget=10,
+            selected_option_index=2,
+            neural_training_authorized=False,
+            teacher_auto_admission=False,
+        )
     write(config_path, config, key=None)
     reused = [
         dict(role="control", pair_id=f"raw-{r['group']}", receipt=r) for r in original["results"]
@@ -135,6 +148,25 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None):
         dict(role="teacher", pair_id=f"raw-{g}", receipt=r)
         for g, r in zip((8, 56), selected, strict=True)
     ]
+    archived = None
+    if receding:
+        from rosclaw_soccer.rsi import receding_scope_evidence
+
+        reused = [
+            dict(role="control", pair_id=f"receding-g{g}", receipt=original["results"][0])
+            for g in (76, 77)
+        ]
+        archived = dict(
+            receipt_hash=hash_json("synthetic archived expert"),
+            candidate=candidate,
+            outcome=original["results"][0]["outcome"],
+            witnesses={},
+        )
+        # Authentication and numerical evidence are mocked in this fixture;
+        # real archived-source authentication is tested separately and executed.
+        monkeypatch.setattr(
+            receding_scope_evidence, "load_scope_evidence", lambda *a: (reused, archived)
+        )
     if tamper == "reuse_duplicate":
         reused[-1] = reused[-2]
     pins = {str(config_path): audit.digest(config_path)}
@@ -152,6 +184,14 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None):
             prepared_pins=pins,
             source_heads={},
             numerical_world_review=binding,
+            **(
+                dict(
+                    scope_contract=scope_contract(plan),
+                    archived_reference_receipt_hash=archived["receipt_hash"],
+                )
+                if receding
+                else {}
+            ),
         ),
     )
     monkeypatch.setattr(
@@ -175,7 +215,13 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None):
         folder = root / str(index)
         folder.mkdir()
         draw = plan.draws()[job["group"]]
-        context = None if job["context_index"] is None else contexts[job["context_index"]]
+        context = (
+            next(c for c in contexts if c.source_group == job["group"])
+            if receding
+            else None
+            if job["context_index"] is None
+            else contexts[job["context_index"]]
+        )
         course = draw.course if context is None else context.course
         trace = dict(
             force_n=np.zeros((300, 1, 6)),
@@ -190,6 +236,19 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None):
         q[7:36] = G1SonicRunupController.default_angles
         q[36:43] = (*course[:2], 0.13, 1, 0, 0, 0)
         trace["canonical_qvel"][0, 0, 35:41] = (course[2], 0, 0, 0, course[2] / 0.11, 0)
+        reproduction = None
+        if receding and index == 0:
+            from rosclaw_soccer.rsi.receding_teacher_scope import reproduce_zero_control
+
+            old_trace = dict(trace, cerebellar_sampling_mean=np.zeros((300, 1, 10, 29)))
+            old_path = tmp_path / "archived-trace.npz"
+            np.savez(old_path, **old_trace)
+            archived["witnesses"]["trace"] = dict(path=str(old_path), sha256=audit.digest(old_path))
+            reproduction = reproduce_zero_control(trace, old_trace)
+            reproduction["archived_receipt_hash"] = archived["receipt_hash"]
+            if tamper == "reproduction":
+                trace["canonical_qpos"] = trace["canonical_qpos"].copy()
+                trace["canonical_qpos"][299, 0, 10] += 1e-12
         np.savez(folder / "trace.npz", **trace)
         outcome = label_first_touch(trace)
         option = None if job["option_index"] == 0 else candidate
@@ -331,7 +390,11 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None):
                 planning_context_hash=context.context_hash,
             )
         if index == 0 and tamper == "receipt_role":
-            receipt["role"] = "teacher"
+            receipt["role"] = "control" if receding else "teacher"
+        if reproduction is not None:
+            p = root / "archived-c7-reproduction.json"
+            write(p, reproduction)
+            receipt["reproduction_witness"] = witness(p)
         receipt = write(root / f"receipt-{index:04d}.json", receipt, "receipt_hash")
         receipts.append(receipt)
         state.update(next_intent_hash=intent["report_hash"], active=None)
@@ -355,8 +418,16 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None):
                 "INSERT INTO events VALUES(?,?,?,?)", (seq, previous, json.dumps(body), value)
             )
             previous = value
-    controls = {f"raw-{r['group']}": r["outcome"] for r in original["results"]}
-    evaluations = {f"raw-{g}": r["outcome"] for g, r in zip((8, 56), selected, strict=True)}
+    controls = (
+        {r["pair_id"]: r["receipt"]["outcome"] for r in reused}
+        if receding
+        else {f"raw-{r['group']}": r["outcome"] for r in original["results"]}
+    )
+    evaluations = (
+        {}
+        if receding
+        else {f"raw-{g}": r["outcome"] for g, r in zip((8, 56), selected, strict=True)}
+    )
     for job, receipt in zip(spec["jobs"], receipts, strict=True):
         (controls if job["role"] == "control" else evaluations)[job["pair_id"]] = receipt["outcome"]
     paired = assess_pairs(controls, evaluations)
@@ -367,18 +438,19 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None):
         dict(
             schema=spec["complete_schema"],
             declaration_hash=declaration["report_hash"],
-            new_native_bodies=18,
-            native_substeps=54000,
-            independent_cpu_substeps=54000,
+            new_native_bodies=spec["count"],
+            native_substeps=3000 * spec["count"],
+            independent_cpu_substeps=3000 * spec["count"],
             new_optimizer_updates=0,
-            independent_course_count=12,
-            paired_endpoint_count=24,
+            independent_course_count=6 if receding else 12,
+            paired_endpoint_count=12 if receding else 24,
             results=receipts,
             reused_endpoints=reused,
             paired_development=paired,
             teacher_qualified=False,
             hardware_authorized=False,
             promotion_authorized=False,
+            **(dict(archived_c7_full_numeric_reproduction=True) if receding else {}),
         ),
     )
     monkeypatch.setattr(
@@ -393,7 +465,7 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None):
             "--output",
             str(output),
             "--profile",
-            "teacher-eighteen",
+            "receding-catalog2-ten" if receding else "teacher-eighteen",
             "--upstream-audit-source",
             str(reader_source),
         ],
