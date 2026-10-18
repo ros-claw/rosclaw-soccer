@@ -1,7 +1,10 @@
-"""Explicit direction eligibility intervention, not learning or admission.
+"""Explicit SIM swing eligibility interventions, not learning or admission.
 
-The diagnostic removes only the historical initial-ball vx restriction. The
-learned memory gate, foundation-only exclusion and all swing limits remain.
+``memory_gate_both_directions_diagnostic`` removes only the historical vx
+restriction and retains the learned memory gate. In contrast,
+``bounded_contact_diagnostic`` deliberately bypasses both eligibility gates.
+Both retain the foundation-only exclusion; downstream joint limits still apply.
+Neither mode grants runtime authority or proves a useful physical contact.
 """
 
 from __future__ import annotations

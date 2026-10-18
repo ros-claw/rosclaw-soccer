@@ -18,6 +18,7 @@ def test_legacy_parity_and_single_condition_intervention(memory_gate, foundation
     assert native_swing_eligible(**args, mode="memory_gate_both_directions_diagnostic") == (
         memory_gate and not foundation_only
     )
+    assert native_swing_eligible(**args, mode="bounded_contact_diagnostic") is (not foundation_only)
 
 
 @pytest.mark.parametrize("bad", [None, True, [], "", "FRESH"])
