@@ -1,7 +1,10 @@
+import ast
 import copy
 import json
 import shlex
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -134,3 +137,44 @@ def test_full_collected_mpc_reader_still_verifies_all_four_endpoints(tmp_path, m
     assert result["whole_input_and_witness_files_verified"] is True
     assert len(result["rows"]) == 4
     assert result["collected_sim_stage_handoff"]["exit_code"] is None
+
+
+def test_journal_helper_does_not_pin_reviewer_package_before_producer_binding():
+    helper = (
+        Path(audit.__file__).parents[1] / "src/rosclaw_soccer/rsi/collected_sim_stage_evidence.py"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys,runpy;assert 'rosclaw_soccer' not in sys.modules;"
+            "runpy.run_path(sys.argv[1]);assert 'rosclaw_soccer' not in sys.modules",
+            str(helper),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    main = next(
+        n
+        for n in ast.parse(Path(audit.__file__).read_text()).body
+        if isinstance(n, ast.FunctionDef) and n.name == "main"
+    )
+    prefix = []
+    for statement in main.body:
+        if isinstance(statement, ast.Assign) and any(
+            isinstance(t, ast.Subscript)
+            and isinstance(t.value, ast.Attribute)
+            and isinstance(t.value.value, ast.Name)
+            and t.value.value.id == "sys"
+            and t.value.attr == "path"
+            for t in statement.targets
+        ):
+            break
+        prefix.append(statement)
+    assert not any(
+        isinstance(n, ast.ImportFrom) and (n.module or "").startswith("rosclaw_soccer")
+        for statement in prefix
+        for n in ast.walk(statement)
+    )

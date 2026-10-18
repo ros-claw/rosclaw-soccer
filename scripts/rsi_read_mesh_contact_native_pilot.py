@@ -268,8 +268,21 @@ def main():
         text=True,
     )
     collected_handoff = None
+    collected_helper = None
+    collected_helper_hash = None
     if args.collected_unit_journal is not None:
-        from rosclaw_soccer.rsi.collected_sim_stage_evidence import verify_collected_sim_journal
+        import runpy
+
+        # Do not import the reviewer Soccer package before binding the producer
+        # below: doing so would poison subsequent exact-source reconstruction.
+        collected_helper = (
+            Path(__file__).resolve().parents[1]
+            / "src/rosclaw_soccer/rsi/collected_sim_stage_evidence.py"
+        )
+        collected_helper_hash = digest(collected_helper)
+        verify_collected_sim_journal = runpy.run_path(str(collected_helper))[
+            "verify_collected_sim_journal"
+        ]
 
         if (
             not torque_mpc
@@ -397,6 +410,7 @@ def main():
     pins = dict(declaration["input_file_hashes"])
     if collected_handoff is not None:
         pins[str(args.collected_unit_journal)] = args.collected_unit_journal_hash
+        pins[str(collected_helper)] = collected_helper_hash
     prepared, preparation_was_persisted = None, False
     if spec is not None:
         from rosclaw_soccer.rsi.first_touch_campaign_worker import prepare
@@ -939,6 +953,9 @@ def main():
         report["worker_os_exit_code_proven"] = False
         report["collected_unit_journal"] = dict(
             path=str(args.collected_unit_journal), sha256=args.collected_unit_journal_hash
+        )
+        report["collected_handoff_helper"] = dict(
+            path=str(collected_helper), sha256=collected_helper_hash
         )
     if public_four or spec is not None:
         report.update(
