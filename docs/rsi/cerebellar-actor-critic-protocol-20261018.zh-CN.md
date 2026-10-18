@@ -139,3 +139,30 @@ private Fresh 考试。分 seed 报告通过、失败、安全回归、恢复代
 
 全部通过也不等于球队宣传目标完成。后面还要将真正可用的小脑接到各角色
 身体闭环，再验证接球、带球、传射、扑救及连续 4v4 比赛。
+
+## 44-body 阶段已启动（09:41:18 本地时间）
+
+冻结执行源 `2e53e8403a121780613b4895d8d5b8e1624019d8`；任务表已固定为
+8 控制 → 12 采集 → 三个 seed 各 4 次有预算更新 → 24 评估。
+零头控制必须复现旧公共物理数组，不能凭“零初始化理论上中性”跳过。
+采集全部提交之前不更新；三个模型全部冻结之后才进入评估。
+retention 保持旧 A 路径：其 Foundation 执行数值已有复核，但不冒充新增
+planner reference 重建证据。collection 仍必须提交完整额外 reference 证据。
+
+任务表 seal：`sha256:1d8b1f8dc037b1076ea48b05e0b59547f5c0ad482760945e815d48edfe8d1d1b`；
+启动文件 pins seal：`sha256:ce45fbd05502d52b7b1a0d8cfbd080dba2b4528a6d1187efa54fd924c7a8fccd`。
+最终 runner 的静态预检实际退出 0，44 项声明通过，无新物理分配；
+最终展开源码 F821/F822 通过。首次任务表预检曾因 tuple/list 表示差异停止，
+保留失败 runner；完整规范化合同哈希一致后修复比较，不改数据和任务标准。
+
+服务 `rosclaw-cerebellar-ac-training-20261018.service` 启动后实际核实为
+active/running、PID 1545269，日志进入 `CEREBELLAR_AC_ALLOCATING_FIXED_MEAN`。
+这是启动时观察，不是永久存活承诺，也不是训练步数或成功率。
+物理预算 44、每体 H=300；绝对新工作开工期限 16:37:11，unit RuntimeMax 7h，
+Restart=no，MemoryHigh/Max=8/12GiB，分配前要求可用 RAM ≥56GiB。
+没有启动第三个 full-model worker，没有更改旧考试或已结束三体实验源码。
+
+证据目录 `rsi-cerebellar-three-seed-training-20261018`，每分钟观察器已切换到
+当前新训练服务和仍在运行的动作选择考试，而不再把结束的三体 worker 当活跃任务。
+本记录时新训练服务尚在初始化，新采集/更新仍为 0。后续结果以 ledger、
+checkpoint learning_receipt 和独立物理对照为准。
