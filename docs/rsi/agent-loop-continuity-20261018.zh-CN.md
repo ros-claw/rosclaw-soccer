@@ -1,5 +1,34 @@
 # 持续实施机制：不把心跳当成学习
 
+## 23:47：十身体已完整关闭，六例机制组合已实际接续
+
+上一批原生23:25:49完成、23:25:52进程正常退出；完整十身体审计
+与所有密集后处理正常完成，最后23:28:56。None0/6→catalog2为2/6，
+2救回/0退化/0新增不安全；C6/C7全身无>1N非足碰球，但108/141
+有膝碰球和约38.6/42.7Ns向下冲量。六派生课程实际只有三个基础
+场景簇，不称新训练、接球或球队突破。证据及物理细节见
+`surface-receding-six-protocol-20261018.zh-CN.md`。
+
+新`rosclaw-surface-receding-six-native-20261018.service`已23:45:28
+启动，PID2829795；23:46:00进入ALLOCATING_INDEPENDENT_REFERENCE。
+生产/审计冻结源161a432e，目录
+`rosclaw-soccer-surface-receding-native-source-20261018`，不得热改。
+真实预检`SURFACE_RECEDING_SIX_12_REUSED_ENDPOINTS_ZERO_MODEL_ALLOCATIONS`
+通过；启动前MemAvailable约66.8GiB。新增六原生/六独立CPU身体
+共36000子步，只组合原catalog2接近与现有材料点脚面控制，参数、
+世界、父代和考试不改。两族十二旧对照全复用，不重复执行。
+
+`rosclaw-surface-receding-six-audit-20261018.timer`已enabled/active；
+整批六例真实正常终态才执行。其后summary和六条/18000子步密集
+回放的独立后继**尚待开发与登记**，不可误称已经在跑。只读观察器
+已切换当前六例，Goal保持active负责继续Agent开发和科研。
+
+新跨基础簇课程注册也已实际完成（registry f93c7b57、源957ff204）：
+四个目标seed、八个派生课程、八个完整不变父代采样视图，零NN
+分配/物理步/优化。它不是新训练数据，未授权物理执行，优先级
+在当前针对膝接触失败的机制组合之后，而非只缩到有利课程。
+本轮组合回归111项及课程/视图10项通过，非物理成功场数。
+
 ## 22:47：已登记十身体审计后的持久化诊断后继
 
 当前PID2715405仍在工作，22:37:31进入ALLOCATING_FIXED_MEAN，
