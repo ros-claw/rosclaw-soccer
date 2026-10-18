@@ -4,6 +4,8 @@ Caller authenticates original file bytes and seals. This pure module neither
 executes physics nor admits a teacher, dataset, model or hardware action.
 """
 
+import math
+
 from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
 from rosclaw_soccer.rsi.positive_lateral_episode_inputs import prospective_split
 from rosclaw_soccer.rsi.positive_lateral_receding_scope import build_scope
@@ -96,3 +98,84 @@ def require_cohort(config, declaration, complete, audit):
     if any(doc.get("paired_development") != paired for doc in (complete, audit)):
         raise ValueError("all eight paired physical outcomes must reconstruct")
     return paired
+
+
+def measured_contact_readout(declaration, complete, replay, metrics):
+    """Inspect every reused control trace without manufacturing training authority."""
+    jobs = declaration["jobs"]
+    if (
+        replay.get("schema") != "soccer.rsi.fixed_control_contact_replay_complete.v1"
+        or replay.get("integrated_substeps") != 48000
+        or replay.get("attempted_step_calls") != 48000
+        or metrics.get("schema") != "soccer.rsi.contact_exit_metrics_readback.v1"
+        or any(
+            len(rows) != 16
+            for rows in (jobs, complete["results"], replay.get("rows", []), metrics.get("rows", []))
+        )
+    ):
+        raise ValueError("whole sixteen-endpoint 48000-step contact diagnostic required")
+    indexed = {r["source_receipt_hash"]: r for r in metrics["rows"]}
+    if len(indexed) != 16 or set(indexed) != {r["receipt_hash"] for r in complete["results"]}:
+        raise ValueError("distinct whole original receipt membership required")
+    scope_rows = {r["group"]: r for r in declaration["prospective_split"]["rows"]}
+    selected, successful, train_seeds, validation_seeds = [], [], set(), set()
+    unsafe, nonfoot = 0, 0
+    for job, receipt, row in zip(jobs, complete["results"], replay["rows"], strict=True):
+        dense = indexed[receipt["receipt_hash"]]
+        if (
+            row["case_id"] != job["job"].replace("-", "_")
+            or dense["case_id"] != row["case_id"]
+            or row["source_receipt_hash"] != receipt["receipt_hash"]
+            or row["original_outcome"] != receipt["outcome"]
+            or dense["original_outcome"] != receipt["outcome"]
+        ):
+            raise ValueError("all replay outcomes and paired course identities must remain exact")
+        m = dense["metrics"]
+        for key in ("total_robot_downward_impulse_n_s", "maximum_linear_newton_residual_n"):
+            if type(m[key]) not in (float, int) or not math.isfinite(m[key]) or m[key] < 0:
+                raise ValueError("finite nonnegative physical contact audit required")
+        if m["maximum_linear_newton_residual_n"] > 1e-7:
+            raise ValueError("Newton consistency threshold cannot be relaxed")
+        split = scope_rows[job["group"]]
+        selected.append(
+            dict(
+                job=job,
+                partition=split["partition"],
+                source_seed=split["source_seed"],
+                dense_row=dense,
+            )
+        )
+        if job["role"] == "teacher":
+            unsafe += not receipt["outcome"]["safe"]
+            nonfoot += m["first_nonfoot_robot_contact_substep"] is not None
+            if (
+                receipt["outcome"]["task_pass"]
+                and receipt["outcome"]["safe"]
+                and m["first_nonfoot_robot_contact_substep"] is None
+            ):
+                successful.append(receipt["receipt_hash"])
+                (train_seeds if split["partition"] == "train" else validation_seeds).add(
+                    split["source_seed"]
+                )
+    paired = complete["paired_development"]
+    if unsafe or nonfoot or paired["regressed_pairs"] or paired["newly_unsafe_pairs"]:
+        decision = "REJECT_DECLARED_TEACHER_RETAIN_ALL_FAILURES"
+    elif paired["net_success_gain"] <= 0 or len(train_seeds) < 2 or not validation_seeds:
+        decision = "INSUFFICIENT_CROSS_SOURCE_REFERENCE_EVIDENCE_REQUIRES_MECHANISM_REVIEW"
+    else:
+        decision = "LOCAL_REFERENCE_EVIDENCE_REQUIRES_LABEL_BUILD_AND_OWN_STUDENT_CLOSED_LOOP"
+    return dict(
+        rows=selected,
+        research_decision=decision,
+        successful_candidate_receipt_hashes=successful,
+        successful_train_source_seeds=sorted(train_seeds),
+        successful_validation_source_seeds=sorted(validation_seeds),
+        unsafe_candidate_endpoints=unsafe,
+        candidate_endpoints_with_nonfoot_over1n=nonfoot,
+        teacher_qualified=False,
+        dataset_admission_authorized=False,
+        neural_training_authorized=False,
+        promotion_authorized=False,
+        hardware_authorized=False,
+        fresh_exam=False,
+    )
