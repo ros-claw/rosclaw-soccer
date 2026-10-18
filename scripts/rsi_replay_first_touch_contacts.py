@@ -120,6 +120,39 @@ def main():
         ):
             raise ValueError("original primitive and replay qualifications differ")
         receipts.append(receipt)
+    if cfg.get("replay_profile") == "surface-missing-three":
+        baseline_audit = sealed(cfg["baseline_terminal_readback"])
+        baseline_complete = sealed(cfg["baseline_complete"])
+        baseline_reader = Path(cfg["baseline_reader_source"])
+        if (
+            baseline_audit["report_hash"] != cfg["baseline_terminal_readback_hash"]
+            or baseline_audit.get("complete_hash") != baseline_complete["report_hash"]
+            or baseline_audit.get("reader_source_hash") != digest(baseline_reader)
+            or baseline_audit.get("source_native_bodies") != 18
+            or any(
+                baseline_audit.get(k) is not True
+                for k in (
+                    "whole_input_and_witness_files_verified",
+                    "shared_payload_logical_seals_rebuilt",
+                    "prior_independent_replays_authenticated",
+                )
+            )
+            or len(baseline_complete.get("results", [])) != 18
+            or any(
+                receipt != baseline_complete["results"][index]
+                or not any(
+                    row["receipt_hash"] == receipt["receipt_hash"]
+                    and row["job"] == receipt["job"]
+                    and row["outcome"] == receipt["outcome"]
+                    for row in baseline_audit["rows"]
+                )
+                for receipt, index in zip(receipts, (3, 16, 17), strict=True)
+            )
+        ):
+            raise ValueError(
+                "all three exact original endpoints must belong to complete baseline audit"
+            )
+        pins[str(baseline_reader)] = digest(baseline_reader)
     if args.preflight:
         print(
             "FIXED_REPLAYS",
