@@ -74,3 +74,22 @@ def test_inputs_not_mutated_and_zero_angular_fraction_unknown():
     assert summary(q, v)["root_local_angular_energy_fractions"] is None
     np.testing.assert_array_equal(q, saved[0])
     np.testing.assert_array_equal(v, saved[1])
+
+
+@pytest.mark.parametrize("bad", ["short", "dtype", "nonfinite", "axis", "clock"])
+def test_bad_measurement_or_clock_rejected(bad):
+    q, v = body()
+    axis = np.array([1.0, 0.0, 0.0])
+    dt = 0.02
+    if bad == "short":
+        q, v = q[:1], v[:1]
+    elif bad == "dtype":
+        q = q.astype(np.float32)
+    elif bad == "nonfinite":
+        v[3, 0] = np.inf
+    elif bad == "axis":
+        axis[0] = 2
+    else:
+        dt = True
+    with pytest.raises(ValueError):
+        summarize_root_motion_window(q, v, sample_dt_s=dt, forward_axis_world=axis)
