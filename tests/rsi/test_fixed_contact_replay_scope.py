@@ -93,3 +93,22 @@ def test_model_allocation_integration_outputs_and_failure_tail_match_qualified_f
         hashlib.sha256(body.encode()).hexdigest()
         == "94a24c5e8430401162225a0f3ac0dee8ad270f7078942972163ce290fdec46fd"
     )
+
+
+def test_missing_three_baselines_have_separate_finite_budget_not_repeated_old_replays():
+    c = dict(
+        replay_profile="surface-missing-three",
+        new_replay_budget=3,
+        new_substep_budget=9000,
+        cases=[
+            dict(case_id=n, receipt_hash=str(i))
+            for i, n in enumerate(("baseline_context_1", "baseline_raw_4", "baseline_raw_32"))
+        ],
+    )
+    assert fixed_replay_scope(c) == (3, 9000)
+    c["cases"][0]["case_id"] = "surface_raw_8"
+    with pytest.raises(ValueError):
+        fixed_replay_scope(c)
+    c["cases"].pop()
+    with pytest.raises(ValueError):
+        fixed_replay_scope(c)

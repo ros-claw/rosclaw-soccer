@@ -24,9 +24,9 @@ def digest(path):
 
 def fixed_replay_scope(cfg):
     profile = cfg.get("replay_profile", "legacy-four")
-    if profile not in ("legacy-four", "surface-six"):
+    if profile not in ("legacy-four", "surface-six", "surface-missing-three"):
         raise ValueError("explicit fixed diagnostic profile required")
-    count = 6 if profile == "surface-six" else 4
+    count = 6 if profile == "surface-six" else 3 if profile == "surface-missing-three" else 4
     steps = 3000 * count
     cases = cfg.get("cases")
     if (
@@ -49,6 +49,12 @@ def fixed_replay_scope(cfg):
         "surface_raw_32",
     ]:
         raise ValueError("all six original surface endpoints required in declaration order")
+    if profile == "surface-missing-three" and [r["case_id"] for r in cases] != [
+        "baseline_context_1",
+        "baseline_raw_4",
+        "baseline_raw_32",
+    ]:
+        raise ValueError("only the three missing historical baseline endpoints may be replayed")
     return count, steps
 
 
