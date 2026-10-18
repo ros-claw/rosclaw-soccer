@@ -6,9 +6,8 @@ alone is insufficient: the same-approach expert must offer train-source value.
 
 import json
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from rosclaw_soccer.rsi.matched_reference_comparison import compare_matched_references
 from scripts.rsi_compare_matched_references import digest, load_cohort, require_terminal
@@ -17,12 +16,16 @@ PROFILE = "matched-zero-supported-one-round-reference-aggregation-fit-v1"
 LEGACY_PROFILE = "conditional-one-round-reference-aggregation-fit-v1"
 
 
+class SealReader(Protocol):
+    def __call__(self, path: str | Path, key: str = "report_hash") -> dict[str, Any]: ...
+
+
 def require_matched_support(
     spec: dict[str, Any],
     *,
     current_contact_configuration: str,
     current_complete_hash: str,
-    sealed: Callable[..., dict[str, Any]],
+    sealed: SealReader,
     pins: dict[str, str],
 ) -> dict[str, Any]:
     if set(spec) != {"configuration", "configuration_file_hash", "unit"}:

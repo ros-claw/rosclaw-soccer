@@ -9,6 +9,7 @@ import json
 import subprocess
 import time
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
@@ -83,13 +84,13 @@ def main():
         for folder in (project / "src", project / "scripts"):
             pins.update({str(p): digest(p) for p in folder.rglob("*.py")})
 
-    def sealed(path):
+    def sealed(path: str | Path, key: str = "report_hash") -> dict[str, Any]:
         path = Path(path)
         v = json.loads(path.read_text())
-        if v.get("report_hash") != hash_json({k: x for k, x in v.items() if k != "report_hash"}):
+        if v.get(key) != hash_json({k: x for k, x in v.items() if k != key}):
             raise ValueError("original sealed complete evidence required")
         pins[str(path)] = digest(path)
-        return v
+        return cast(dict[str, Any], v)
 
     prepared = sealed(cfg["prepared_aggregation"])
     proposed = prepared["proposed_batch"]

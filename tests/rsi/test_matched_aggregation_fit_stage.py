@@ -64,6 +64,13 @@ def test_current_generation_requires_whole_matched_expert_benefit_before_any_opt
     def authenticated(spec, **kw):
         checked.append(kw)
         assert kw["current_contact_configuration"] == cfg["current_contact_configuration"]
+        # Real whole-cohort loading reads receipt_hash as well as report_hash.
+        # Keep this callback contract even when authentication is mocked here.
+        receipt_path = tmp_path / "typed-seal-probe.json"
+        receipt = dict(value="synthetic receipt, not physical evidence")
+        receipt["receipt_hash"] = hash_json(receipt)
+        receipt_path.write_text(json.dumps(receipt))
+        assert kw["sealed"](receipt_path, "receipt_hash") == receipt
         if mode == "support_failure":
             raise ValueError("mock authentication failed")
         return dict(
