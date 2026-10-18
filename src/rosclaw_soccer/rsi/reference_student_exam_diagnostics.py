@@ -16,6 +16,10 @@ from scripts.rsi_reference_student_exam import require_scope
 
 def require_cohort(config, declaration, complete, audit):
     require_scope(config)
+    if config["exam_profile"] == "reference-positive-zero-nine-v1":
+        from rosclaw_soccer.rsi.reference_positive_zero_evidence import require_zero_cohort
+
+        return require_zero_cohort(config, declaration, complete, audit)
     scope = exam_scope(config["behavior_model_hash"])
     if (
         declaration.get("schema") != "soccer.rsi.reference_student_exam_declaration.v1"
@@ -112,6 +116,10 @@ def require_cohort(config, declaration, complete, audit):
 
 
 def measured_readout(declaration, complete, replay, metrics):
+    if declaration.get("exam_profile") == "reference-positive-zero-nine-v1":
+        from rosclaw_soccer.rsi.reference_positive_zero_evidence import zero_measured_readout
+
+        return zero_measured_readout(declaration, complete, replay, metrics)
     scope = declaration["scope"]
     if (
         replay.get("schema") != "soccer.rsi.fixed_control_contact_replay_complete.v1"

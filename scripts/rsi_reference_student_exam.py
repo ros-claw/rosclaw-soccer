@@ -23,7 +23,12 @@ from rosclaw_soccer.rsi.portfolio_physical_study import validate_option
 from rosclaw_soccer.rsi.positive_lateral_episode_inputs import episode_inputs
 from rosclaw_soccer.rsi.public_first_touch_training_plan import PublicFirstTouchTrainingPlan
 from rosclaw_soccer.rsi.receding_scope_evidence import authenticate_receipt
-from rosclaw_soccer.rsi.reference_student_exam_scope import assess_exam, exam_scope, zero_model_like
+from rosclaw_soccer.rsi.reference_exam_profiles import (
+    assess_reference,
+    profile_info,
+    reference_scope,
+)
+from rosclaw_soccer.rsi.reference_student_exam_scope import zero_model_like
 from rosclaw_soccer.rsi.reference_student_execution import own_model
 from rosclaw_soccer.rsi.reference_student_probe import require_parity
 from rosclaw_soccer.rsi.reviewed_contact_world import ReviewedContactWorld
@@ -37,18 +42,18 @@ from scripts.rsi_stage_release_contact_replay import digest, require_terminal
 
 
 def require_scope(cfg):
+    info = profile_info(cfg.get("exam_profile"))
     if (
-        cfg.get("exam_profile") != "reference-own-body-thirteen-v1"
-        or cfg.get("mode") != "SIM_ONLY"
+        cfg.get("mode") != "SIM_ONLY"
         or cfg.get("required_receipt_witnesses")
         != ["intent_witness", "encoder_witness", "prefix_witness"]
         or any(
             type(cfg.get(k)) is not int or cfg[k] != n
             for k, n in (
-                ("max_attempts", 13),
-                ("new_physical_budget", 13),
-                ("new_independent_cpu_budget", 13),
-                ("combined_body_substep_budget", 78000),
+                ("max_attempts", info["bodies"]),
+                ("new_physical_budget", info["bodies"]),
+                ("new_independent_cpu_budget", info["bodies"]),
+                ("combined_body_substep_budget", 2 * info["steps"]),
                 ("new_optimizer_updates", 0),
             )
         )
@@ -225,7 +230,7 @@ def load_inputs(config_path):
         binding=binding,
         nominal=nominal,
         models=dict(student=student, zero=zero_model_like(student, seed=FIT_SEED), off=None),
-        scope=exam_scope(assets.MEAN),
+        scope=reference_scope(cfg["exam_profile"], assets.MEAN),
         fit_stage=stage,
         fit_report=fit,
     )
@@ -237,10 +242,11 @@ def main():
     parser.add_argument("--preflight", action="store_true")
     args = parser.parse_args()
     c = load_inputs(args.config)
+    info = profile_info(c.cfg["exam_profile"])
     if c.root.exists():
         raise ValueError("unused once-only physical output required")
     if args.preflight:
-        print("THIRTEEN_FIXED_OWN_BODY_EXAMS_ZERO_FULL_MODELS_OR_PHYSICS_ALLOCATIONS", flush=True)
+        print(info["preflight"], flush=True)
         return
     available = next(
         int(s.split()[1]) * 1024
@@ -273,7 +279,7 @@ def main():
     c.root.mkdir()
     declaration = dict(
         c.cfg,
-        schema="soccer.rsi.reference_student_exam_declaration.v1",
+        schema=info["declaration_schema"],
         scope=c.scope,
         models=c.models,
         candidate=c.candidate,
@@ -389,7 +395,8 @@ def main():
             )
             del trace, baseline, report
             gc.collect()
-        paired = assess_exam(
+        paired = assess_reference(
+            c.cfg["exam_profile"],
             c.scope,
             results,
             teachers={g: r["outcome"] for g, r in c.teachers.items()},
@@ -399,14 +406,14 @@ def main():
         if any(digest(p) != h for p, h in c.pins.items()):
             raise ValueError("frozen source or original input changed during exam")
         complete = dict(
-            schema="soccer.rsi.reference_student_exam_complete.v1",
+            schema=info["complete_schema"],
             declaration_hash=declaration["report_hash"],
             results=results,
             paired_results=paired,
-            new_native_bodies=13,
-            new_independent_cpu_bodies=13,
-            native_substeps=39000,
-            independent_cpu_substeps=39000,
+            new_native_bodies=info["bodies"],
+            new_independent_cpu_bodies=info["bodies"],
+            native_substeps=info["steps"],
+            independent_cpu_substeps=info["steps"],
             new_optimizer_updates=0,
             independent_terminal_readback_required=True,
             teacher_qualified=False,

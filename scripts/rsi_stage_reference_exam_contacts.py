@@ -12,6 +12,7 @@ import sys
 import time
 from pathlib import Path
 
+from rosclaw_soccer.rsi.reference_exam_profiles import STUDENT, ZERO, profile_info
 from rosclaw_soccer.rsi.reference_student_exam_diagnostics import measured_readout, require_cohort
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_atomic_artifacts import write_once
@@ -23,16 +24,17 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
+    profiles = {"reference-student-thirteen": STUDENT, "reference-positive-zero-nine": ZERO}
+    info = profile_info(profiles.get(cfg.get("diagnostic_profile")))
     source = Path(__file__).resolve().parents[1]
     if (
-        cfg.get("diagnostic_profile") != "reference-student-thirteen"
-        or cfg.get("mode") != "SIM_ONLY"
+        cfg.get("mode") != "SIM_ONLY"
         or any(
             cfg.get(k) is not False
             for k in ("hardware_authorized", "promotion_authorized", "neural_training_authorized")
         )
         or type(cfg.get("new_substep_budget")) is not int
-        or cfg["new_substep_budget"] != 39000
+        or cfg["new_substep_budget"] != info["steps"]
         or time.time() >= cfg["deadline_unix"]
         or any(
             Path(cfg[k]).exists()
@@ -68,6 +70,8 @@ def main():
     if digest(pp) != cfg["producer_config_file_hash"]:
         raise ValueError("exact original producer configuration required")
     producer = json.loads(pp.read_text())
+    if producer["exam_profile"] != profiles[cfg["diagnostic_profile"]]:
+        raise ValueError("exact original diagnostic/producer profile pairing required")
     pins[str(pp)] = digest(pp)
     root = Path(producer["output_root"])
     declaration, complete = (sealed(root / n) for n in ("declaration.json", "complete.json"))
@@ -99,11 +103,11 @@ def main():
             )
         )
     replay_cfg = dict(
-        replay_profile="reference-student-thirteen",
+        replay_profile=info["replay_profile"],
         source_head=cfg["source_head"],
         output_root=cfg["replay_output_root"],
-        new_replay_budget=13,
-        new_substep_budget=39000,
+        new_replay_budget=info["bodies"],
+        new_substep_budget=info["steps"],
         cases=cases,
         world_hash=producer["mesh_task_contact_world_hash"],
         behavior_model_hash=producer["behavior_model_hash"],
@@ -126,7 +130,7 @@ def main():
             input_file_hashes=pins,
             upstream_readback_hash=audit["report_hash"],
             automatic_retry_authorized=False,
-            new_fixed_control_substep_budget=39000,
+            new_fixed_control_substep_budget=info["steps"],
             hardware_authorized=False,
         ),
     )
@@ -137,8 +141,8 @@ def main():
             terminal_readback_hash=audit["report_hash"],
             rows=audit["rows"],
             paired_results=paired,
-            distinct_derived_course_count=10,
-            source_scene_clusters=6,
+            distinct_derived_course_count=info["courses"],
+            source_scene_clusters=info["clusters"],
             decision="PENDING_DENSE_REPLAY_NOT_ADMISSION",
             new_optimizer_updates=0,
             fresh_exam=False,
@@ -191,10 +195,10 @@ def main():
             metrics_hash=metrics["report_hash"],
             measured_contact_readout=measured,
             paired_results=paired,
-            total_metrics_endpoints=13,
-            distinct_derived_course_count=10,
-            source_scene_clusters=6,
-            new_fixed_control_replay_substeps=39000,
+            total_metrics_endpoints=info["bodies"],
+            distinct_derived_course_count=info["courses"],
+            source_scene_clusters=info["clusters"],
+            new_fixed_control_replay_substeps=info["steps"],
             new_closed_loop_policy_trials=0,
             new_neural_inferences=0,
             new_optimizer_updates=0,

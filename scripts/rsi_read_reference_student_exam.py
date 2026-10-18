@@ -15,7 +15,12 @@ from rosclaw_soccer.rsi.first_touch_qualification import require_first_touch_qua
 from rosclaw_soccer.rsi.first_touch_recovery_observations import observe_first_touch_recovery
 from rosclaw_soccer.rsi.fixed_physical_payload_reader import FixedPhysicalPayloadReader
 from rosclaw_soccer.rsi.native_first_touch_initial_state import NativeFirstTouchInitialState
-from rosclaw_soccer.rsi.reference_student_exam_scope import assess_exam
+from rosclaw_soccer.rsi.reference_exam_profiles import (
+    ZERO,
+    assess_reference,
+    profile_info,
+    require_zero_navigation_trace,
+)
 from rosclaw_soccer.rsi.reference_student_execution import PREFIX, reconstruct
 from rosclaw_soccer.rsi.reference_student_probe import require_parity
 from rosclaw_soccer.sim.contracts import hash_json
@@ -25,6 +30,7 @@ from scripts.rsi_stage_release_contact_replay import digest, require_terminal
 
 
 def journal(root, declaration):
+    info = profile_info(declaration["exam_profile"])
     events, tip = [], "GENESIS"
     with sqlite3.connect((root / "campaign.sqlite").as_uri() + "?mode=ro", uri=True) as db:
         db.execute("BEGIN")
@@ -44,7 +50,7 @@ def journal(root, declaration):
     if (
         final["phase"] != "REFERENCE_STUDENT_OWN_BODY_EXAM_COMPLETE_NOT_PROMOTION"
         or final["active"] is not None
-        or final["attempts"] != 13
+        or final["attempts"] != info["bodies"]
         or set(final["completed"]) != {j["job"] for j in declaration["scope"]["jobs"]}
         or final["declaration_hash"] != hash_json(declaration)
     ):
@@ -63,10 +69,11 @@ def main():
     if args.output.exists() or started.exists():
         raise ValueError("unused once-only readback output required")
     c = load_inputs(args.config)
+    info = profile_info(c.cfg["exam_profile"])
     declaration, complete = (c.sealed(c.root / n) for n in ("declaration.json", "complete.json"))
     if (
-        declaration.get("schema") != "soccer.rsi.reference_student_exam_declaration.v1"
-        or complete.get("schema") != "soccer.rsi.reference_student_exam_complete.v1"
+        declaration.get("schema") != info["declaration_schema"]
+        or complete.get("schema") != info["complete_schema"]
         or any(declaration.get(k) != v for k, v in c.cfg.items())
         or hash_json(declaration["scope"]) != hash_json(c.scope)
         or declaration["models"] != c.models
@@ -79,14 +86,14 @@ def main():
         or declaration["source_heads"] != c.p.HEADS
         or declaration["numerical_world_review"] != c.binding
         or complete["declaration_hash"] != declaration["report_hash"]
-        or len(complete.get("results", [])) != 13
+        or len(complete.get("results", [])) != info["bodies"]
         or any(
             type(complete.get(k)) is not int or complete[k] != n
             for k, n in (
-                ("new_native_bodies", 13),
-                ("new_independent_cpu_bodies", 13),
-                ("native_substeps", 39000),
-                ("independent_cpu_substeps", 39000),
+                ("new_native_bodies", info["bodies"]),
+                ("new_independent_cpu_bodies", info["bodies"]),
+                ("native_substeps", info["steps"]),
+                ("independent_cpu_substeps", info["steps"]),
                 ("new_optimizer_updates", 0),
             )
         )
@@ -223,6 +230,8 @@ def main():
                 raise ValueError("original raw retention path must not acquire generated binding")
         with np.load(witnesses["trace"]["path"], allow_pickle=False) as a:
             trace = dict(a)
+        if c.cfg["exam_profile"] == ZERO and job["role"] == "zero":
+            require_zero_navigation_trace(trace)
         NativeFirstTouchInitialState(course, G1SonicRunupController.default_angles).verify(
             report["course"], trace["canonical_qpos"][0, 0], trace["canonical_qvel"][0, 0]
         )
@@ -322,13 +331,14 @@ def main():
             )
         )
         receipts.append(receipt)
-    paired = assess_exam(
+    paired = assess_reference(
+        c.cfg["exam_profile"],
         c.scope,
         receipts,
         teachers={g: r["outcome"] for g, r in c.teachers.items()},
         original_retention={g: r["outcome"] for g, r in c.retained.items()},
     )
-    if paired != complete["paired_results"] or reconstructed_frames != 3600:
+    if paired != complete["paired_results"] or reconstructed_frames != info["reference_frames"]:
         raise ValueError(
             "whole original paired outcomes and all own-action reconstructions required"
         )
@@ -336,7 +346,7 @@ def main():
     if any(digest(p) != h for p, h in c.pins.items()):
         raise ValueError("input/source bytes changed during readback")
     result = dict(
-        schema="soccer.rsi.reference_student_exam_terminal_readback.v1",
+        schema=info["readback_schema"],
         complete_hash=complete["report_hash"],
         ledger_tip=tip,
         rows=rows,
@@ -347,8 +357,8 @@ def main():
         shared_payload_logical_seals_rebuilt=True,
         original_off_all33_arrays_bit_exact=True,
         all_pre_action_prefixes_bit_exact=True,
-        causal_reference_frames_reconstructed=3600,
-        source_native_bodies=13,
+        causal_reference_frames_reconstructed=info["reference_frames"],
+        source_native_bodies=info["bodies"],
         new_physical_steps=0,
         new_optimizer_updates=0,
         successor_readiness_qualified=False,
@@ -358,6 +368,11 @@ def main():
         hardware_authorized=False,
         promotion_authorized=False,
     )
+    if c.cfg["exam_profile"] == ZERO:
+        result.update(
+            matched_zero_all300_reference_increments_exactly_zero=True,
+            fitted_student_policy_evaluated=False,
+        )
     result["report_hash"] = hash_json(result)
     write_once(args.output, result)
     print(

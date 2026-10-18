@@ -36,6 +36,7 @@ def fixed_replay_scope(cfg):
         "surface-receding-six": 6,
         "positive-lateral-sixteen": 16,
         "reference-student-thirteen": 13,
+        "reference-positive-zero-nine": 9,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -110,6 +111,12 @@ def fixed_replay_scope(cfg):
         jobs = exam_scope(cfg["behavior_model_hash"])["jobs"]
         if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
             raise ValueError("all thirteen original own-student and retention endpoints required")
+    if profile == "reference-positive-zero-nine":
+        from rosclaw_soccer.rsi.reference_exam_profiles import positive_zero_scope
+
+        jobs = positive_zero_scope(cfg["behavior_model_hash"])["jobs"]
+        if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
+            raise ValueError("all nine original OFF and positive zero endpoints required")
     return count, steps
 
 
@@ -266,18 +273,21 @@ def main():
         pins[str(path)] = digest(path)
         return value
 
-    if cfg.get("replay_profile") == "reference-student-thirteen":
+    if cfg.get("replay_profile") in ("reference-student-thirteen", "reference-positive-zero-nine"):
         for relative in (
             "src/rosclaw_soccer/rsi/reference_student_exam_diagnostics.py",
             "src/rosclaw_soccer/rsi/reference_student_exam_scope.py",
             "src/rosclaw_soccer/rsi/reference_student_execution.py",
             "scripts/rsi_reference_student_exam.py",
             "scripts/rsi_fit_pre_parent_reference.py",
+            "src/rosclaw_soccer/rsi/reference_exam_profiles.py",
+            "src/rosclaw_soccer/rsi/reference_positive_zero_evidence.py",
         ):
             pins[str(source / relative)] = digest(source / relative)
     reference = (
         reference_exam_sources(cfg, sealed, pins)
-        if cfg.get("replay_profile") == "reference-student-thirteen"
+        if cfg.get("replay_profile")
+        in ("reference-student-thirteen", "reference-positive-zero-nine")
         else None
     )
     archived = None
