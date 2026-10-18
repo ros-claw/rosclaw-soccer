@@ -75,3 +75,36 @@ PID1929546，入口pins/精确干净HEAD/旧worker槽位守卫及F821/F822通过
 原生/小脑/当前课表/保持/传递诊断等关联回归310 passed（16.13秒），
 不是全仓测试或310个物理案例。现在不能填写原生非干扰通过或端到端
 提速倍数，必须等四个正式收据和独立终态回读。
+
+## 14:26实际终态与独立读回
+
+四个body全部完成并经过原CPU/Foundation/encoder复核，原数组每例28个、
+总112次与原同世界控制的dtype/shape/bytes比较均相等。group4原/新均
+成功，group8原/新均球路失败，未继承或改写失败为成功。
+
+complete封印`sha256:4e28cfb8e47ceada5916968d3cdb5384af9c8fa277e12a90402d0f9e2e74a29b`。
+独立审计冻结c4bf941b，使用既有reader扩展的独立binding-four profile，
+14:25:55启动、14:26:39成功终态。完整账本、原生/独立复核/Foundation/
+encoder见证字节、完整共享payload逻辑封印、真实原/新入口tag和原始
+全部数组/标签再次核验。新物理和新优化均0。不是重新复试第二遍物理。
+
+独立读回`rsi-generated-binding-native-independent-readback-20261018.json`，
+封印`sha256:4ce439a7ecf8ad06edbd4c5de255ffacc8f9c0e11efbda5c73d04da86a9cecb4`。
+账本tip`sha256:6eed5dc2900265c29bbb13270d1af2d7eaa7bde678137f383cf609c692ca73a2`。
+资格范围仅为当前df743dfc…世界、raw4/8、None控制、无新小脑；其他
+control profile/世界/神经组合仍未自动取得资格。
+
+| 原生draw | 旧qualified_episode秒 | 新qualified_episode秒 | 两例局部比值 |
+| --- | ---: | ---: | ---: |
+| 4 | 224.647701 | 174.060911 | 1.290627 |
+| 8 | 221.456079 | 171.603390 | 1.290511 |
+
+这是各qualified_episode内部native＋独立CPU＋Foundation路径的实测
+耗时（约少22.5%），不含整次完整初始化、外层encoder及全部产物检查；
+样本少且存在缓存/机器负载影响。不能写成全pipeline稳定倍速，更不能
+把之前4.4倍准备阶段倍速替换成整体倍速。没有足球能力净增益。
+
+旧生产者没有把prepare的完整PINS/HEADS映射存入声明。本次依冻结的
+原准备器及原有manifest重新派生并验证，读回明确标记这一限制，不能
+宣称这些映射已由旧生产者保存。main后续版本将直接持久化这两项并
+要求严格比对；不改旧证据、不重跑四体、也不热改正在运行的catalog。

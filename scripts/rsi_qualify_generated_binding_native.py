@@ -101,6 +101,8 @@ def main():
         schema="soccer.rsi.generated_binding_native_declaration.v1",
         jobs=jobs,
         input_file_hashes=pins,
+        prepared_pins=dict(p.PINS),
+        source_heads=dict(p.HEADS),
         numerical_world_review=binding,
     )
     declaration["report_hash"] = hash_json(declaration)

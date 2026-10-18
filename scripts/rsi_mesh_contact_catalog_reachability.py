@@ -144,6 +144,8 @@ def main():
         jobs=declared_jobs(),
         options=catalog,
         input_file_hashes=pins,
+        prepared_pins=dict(p.PINS),
+        source_heads=dict(p.HEADS),
         numerical_world_review=binding,
         independent_course_count=2,
         physical_execution_count=16,

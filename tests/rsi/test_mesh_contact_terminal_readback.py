@@ -447,3 +447,37 @@ def test_old_four_draws_cannot_be_retagged_as_new_experiment(tmp_path, monkeypat
     with pytest.raises(ValueError):
         audit.main()
     assert not output.exists()
+
+
+def test_legacy_producer_preparation_gap_is_explicit():
+    from types import SimpleNamespace
+
+    assert audit.verify_persisted_preparation({}, SimpleNamespace(PINS={}, HEADS={})) is False
+
+
+def test_persisted_preparation_matches_both_maps_exactly():
+    from types import SimpleNamespace
+
+    value = dict(prepared_pins={"input": "sha256:original"}, source_heads={"root": "original-head"})
+    assert (
+        audit.verify_persisted_preparation(
+            value, SimpleNamespace(PINS=value["prepared_pins"], HEADS=value["source_heads"])
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        dict(prepared_pins={}),
+        dict(source_heads={}),
+        dict(prepared_pins={"changed": "hash"}, source_heads={}),
+        dict(prepared_pins={}, source_heads={"changed": "head"}),
+    ],
+)
+def test_partial_or_changed_persisted_preparation_is_not_silently_rederived(value):
+    from types import SimpleNamespace
+
+    with pytest.raises(ValueError):
+        audit.verify_persisted_preparation(value, SimpleNamespace(PINS={}, HEADS={}))

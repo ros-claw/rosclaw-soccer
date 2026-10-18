@@ -45,6 +45,21 @@ def bounded_profile(profile):
     raise ValueError("explicit new bounded study profile required")
 
 
+def verify_persisted_preparation(declaration, prepared):
+    fields = ("prepared_pins", "source_heads")
+    present = [key in declaration for key in fields]
+    if any(present) and not all(present):
+        raise ValueError("complete prepared pins and source heads required together")
+    if not any(present):
+        return False  # Explicitly disclosed legacy producer limitation.
+    if (
+        declaration["prepared_pins"] != prepared.PINS
+        or declaration["source_heads"] != prepared.HEADS
+    ):
+        raise ValueError("original persisted preparation differs from current exact reconstruction")
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -161,7 +176,7 @@ def main():
     if any(k not in declaration or declaration[k] != v for k, v in config.items()):
         raise ValueError("same frozen configuration required")
     pins = dict(declaration["input_file_hashes"])
-    prepared = None
+    prepared, preparation_was_persisted = None, False
     if spec is not None:
         from rosclaw_soccer.rsi.first_touch_campaign_worker import prepare
         from rosclaw_soccer.rsi.reviewed_contact_world import ReviewedContactWorld
@@ -169,6 +184,7 @@ def main():
         prepared, _, _, actual = prepare(args.config)
         if actual != config:
             raise ValueError("same original preparation configuration required")
+        preparation_was_persisted = verify_persisted_preparation(declaration, prepared)
         pins.update(prepared.PINS)
         heads = prepared.HEADS
         binding = ReviewedContactWorld(
@@ -575,8 +591,10 @@ def main():
         for name, expected in pins.items():
             if digest(Path(name)) != expected:
                 raise ValueError("source/input bytes changed during terminal readback")
-        report["prepared_pins_rederived_from_exact_original_preparation"] = True
-        report["original_prepared_pins_persisted_by_producer"] = False
+        report[
+            "prepared_pins_rederived_from_exact_original_preparation"
+        ] = not preparation_was_persisted
+        report["original_prepared_pins_persisted_by_producer"] = preparation_was_persisted
         if args.profile == "binding-four":
             report["noninterference_scope"] = dict(
                 world_hash=config["mesh_task_contact_world_hash"],
