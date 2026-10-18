@@ -215,6 +215,10 @@ def specialize_legacy_profile(function):
     class ProfileNone(ast.NodeTransformer):
         def visit_If(self, node):
             test = ast.unparse(node.test)
+            if test == "generated_seed_episode_binding":
+                # Default false retains the original preview/bind statements
+                # verbatim. New opt-in path needs separate physical parity.
+                return [self.visit(n) for n in node.orelse]
             if test in (
                 "mesh_task_contact_world_hash is not None",
                 "mesh_contact_construction is not None",
@@ -408,6 +412,19 @@ def test_extracted_physics_body_matches_original_frozen_ast():
         == "65553cdb7c835e95fd63a2a20d987ebdb9237aaae1d7c17e4e4a07915cab88ce"
     )
     assert "sample_training_courses" not in ast.dump(function)
+
+
+@pytest.mark.parametrize("enabled", [None, 0, 1, "true", True])
+def test_generated_binding_requires_explicit_private_factory_before_allocation(tmp_path, enabled):
+    with pytest.raises(ValueError, match="generated|boolean"):
+        kernel.run_native_first_touch_episode(
+            argparse.Namespace(),
+            course=(2.5, 0.0, -0.5),
+            partition="DECLARED_DEVELOPMENT_DIAGNOSTIC",
+            entry_source_path=Path(entry.__file__),
+            consumed_bank_hash=None,
+            generated_seed_episode_binding=enabled,
+        )
 
 
 @pytest.mark.parametrize("world", [True, "", "a" * 64, "sha256:" + "g" * 64])

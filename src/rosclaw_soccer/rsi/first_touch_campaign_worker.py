@@ -595,6 +595,7 @@ def qualified_episode(
     cerebellar_sampling_seed: int | None = None,
     mesh_task_contact_world_hash: str | None = None,
     mesh_world_review: "ReviewedContactWorld | None" = None,
+    generated_seed_episode_binding: bool = False,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -749,6 +750,7 @@ def qualified_episode(
         cerebellar_sampling_seed=cerebellar_sampling_seed,
         mesh_task_contact_world_hash=mesh_task_contact_world_hash,
         mesh_world_review=mesh_world_review,
+        generated_seed_episode_binding=generated_seed_episode_binding,
     )
     report = (
         _sealed(folder / "report.json")
@@ -758,6 +760,8 @@ def qualified_episode(
     expected_world = (
         assets.WORLD if mesh_task_contact_world_hash is None else mesh_task_contact_world_hash
     )
+    if ("generated_seed_episode_binding" in report) != generated_seed_episode_binding:
+        raise ValueError("requested generated binding must match actual native commitment")
     if report["compiled_model_hash"] != expected_world or report["course"] != list(course):
         raise ValueError("fixed world and course required")
     if (

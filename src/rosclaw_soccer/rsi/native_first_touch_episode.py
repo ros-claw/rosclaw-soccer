@@ -86,9 +86,44 @@ def run_native_first_touch_episode(
     cerebellar_sampling_seed: int | None = None,
     mesh_task_contact_world_hash: str | None = None,
     mesh_world_review: ReviewedContactWorld | None = None,
+    generated_seed_episode_binding: bool = False,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
+
+    if type(generated_seed_episode_binding) is not bool:
+        raise ValueError("explicit boolean private generated episode binding required")
+    if generated_seed_episode_binding:
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+
+        if (
+            type(recurrent_sampling_factory) is not RecurrentSamplingEpisodeFactory
+            or partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
+            or getattr(args, "record_foundation_observation", False) is not True
+            or getattr(args, "foundation_only", False) is not False
+            or getattr(args, "proposal_decoder", None) != "reference"
+            or getattr(args, "step_model", None) is None
+            or getattr(args, "cached_proposal_envelope", False)
+            or getattr(args, "body_response_bundle", None) is not None
+            or any(
+                factory is not None
+                for factory in (
+                    sampling_factory,
+                    extended_factory,
+                    proposal_factory,
+                    imitation_factory,
+                    recurrent_factory,
+                    recurrent_clipped_factory,
+                )
+            )
+        ):
+            raise ValueError("captured unmixed development private generated binding required")
+        try:
+            recurrent_sampling_factory._stable()
+        except AttributeError as error:
+            raise ValueError("allocated original private factory required") from error
 
     if mesh_task_contact_world_hash is not None and (
         type(mesh_task_contact_world_hash) is not str
@@ -506,16 +541,23 @@ def run_native_first_touch_episode(
             ):
                 raise ValueError("recurrent exploration requires the original reference law")
             make_preview = recurrent_sampling_preview
-            policy = (
-                make_preview(step_model)
-                if recurrent_sampling_factory is None
-                else recurrent_sampling_factory.preview(step_model)
-            )
-            recurrent_decoder = (
-                CompiledRecurrentSamplingMotor(policy)
-                if recurrent_sampling_factory is None
-                else recurrent_sampling_factory.bind(policy)
-            )
+            if generated_seed_episode_binding:
+                policy, recurrent_decoder = recurrent_sampling_factory.generate_and_bind_seed(
+                    seed=step_model["seed"]
+                )
+                if policy["step_motor_proof"]["model"] != step_model:
+                    raise ValueError("private generated model differs from fully validated input")
+            else:
+                policy = (
+                    make_preview(step_model)
+                    if recurrent_sampling_factory is None
+                    else recurrent_sampling_factory.preview(step_model)
+                )
+                recurrent_decoder = (
+                    CompiledRecurrentSamplingMotor(policy)
+                    if recurrent_sampling_factory is None
+                    else recurrent_sampling_factory.bind(policy)
+                )
             recurrent_sampling = True
             delta_at_frame = recurrent_decoder.delta_at_frame
         elif step_model.get("schema") == "soccer.rsi.recurrent_clipped_mc_motor.v1":
@@ -890,6 +932,15 @@ def run_native_first_touch_episode(
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if generated_seed_episode_binding:
+        commitment["generated_seed_episode_binding"] = dict(
+            schema="soccer.rsi.native_private_generated_episode_binding.v1",
+            seed=step_model["seed"],
+            full_external_sampling_view_restored_and_validated=True,
+            complete_generated_model_equals_external_view=True,
+            full_original_factory_constructor_retained=True,
+            sampling_law_changed=False,
+        )
     if mesh_contact_construction is not None:
         commitment["mesh_task_contact_protocol"] = dict(
             expected_world_hash=mesh_task_contact_world_hash,
