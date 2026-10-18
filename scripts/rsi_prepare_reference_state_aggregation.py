@@ -18,6 +18,38 @@ from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_stage_release_contact_replay import digest, require_terminal
 
 
+def require_behavior_fit(
+    profile, producer, declaration, *, original_stage, original_fit, sealed, pins
+):
+    """New-generation inputs require their own authenticated fitted behaviour.
+
+    Original teacher rows/splits still come from original_fit. This changes
+    only the actually visited student-body distribution, not teacher labels.
+    """
+    if profile == "proposed-original16-own13-aggregation-v1":
+        expected = original_fit
+        model, stage = original_fit["numeric_model"], original_stage
+    elif profile == "proposed-original16-ablation-own13-aggregation-v1":
+        from scripts.rsi_load_reference_ablation_exam import load_ablation
+
+        model, stage, expected = load_ablation(
+            producer,
+            sealed=sealed,
+            digest=digest,
+            pins=pins,
+            original_stage=original_stage,
+            original_fit=original_fit,
+        )
+    else:
+        raise ValueError("explicit original or input-ablation own-state generation required")
+    if (
+        declaration["fit_report_hash"] != expected["report_hash"]
+        or declaration["models"]["student"] != model
+        or declaration["fit_stage_hash"] != stage["report_hash"]
+    ):
+        raise ValueError("own-body behaviour fit identity must match its actual generation")
+
+
 def original_actor_rows(trace, *, captured_required):
     """Never substitute an expert reference for the behaviour policy's input."""
     value = trace_observations(trace)
@@ -52,7 +84,11 @@ def main():
     cfg = json.loads(args.config.read_text())
     source, root = Path(cfg["source_root"]), Path(cfg["output_root"])
     if (
-        cfg.get("profile") != "proposed-original16-own13-aggregation-v1"
+        cfg.get("profile")
+        not in (
+            "proposed-original16-own13-aggregation-v1",
+            "proposed-original16-ablation-own13-aggregation-v1",
+        )
         or cfg.get("mode") != "SIM_ONLY"
         or root.exists()
         or time.time() >= cfg["deadline_unix"]
@@ -133,6 +169,15 @@ def main():
     producer = json.loads(Path(cc["producer_config"]).read_text())
     sroot = Path(producer["output_root"])
     declaration, student = (sealed(sroot / n) for n in ("declaration.json", "complete.json"))
+    require_behavior_fit(
+        cfg["profile"],
+        producer,
+        declaration,
+        original_stage=stage,
+        original_fit=fit,
+        sealed=sealed,
+        pins=pins,
+    )
     if (
         original["report_hash"] != stage["positive_complete_hash"]
         or [r["receipt_hash"] for r in original["results"]] != stage["source_receipt_hashes"]
@@ -141,7 +186,6 @@ def main():
         or [r["receipt_hash"] for r in student["results"]]
         != [r["source_receipt_hash"] for r in own["rows"]]
         or [r["job"] for r in own["rows"]] != declaration["scope"]["jobs"]
-        or declaration["fit_report_hash"] != fit["report_hash"]
     ):
         raise ValueError(
             "all original source rows and exact actual own-state query memberships required"
@@ -224,6 +268,9 @@ def main():
             proposed_batch=proposed,
             source_fit_complete_hash=stage["report_hash"],
             source_own_query_complete_hash=own["report_hash"],
+            actual_behavior_fit_report_hash=declaration["fit_report_hash"],
+            actual_behavior_model_hash=declaration["models"]["student"]["model_hash"],
+            bounded_current_own_state_window_not_cumulative_dagger=True,
             numeric_arrays=dict(path=str(path), sha256=digest(path)),
             original_query_eligibility_overwritten=False,
             experimental_numeric_selection_only=True,
