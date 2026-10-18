@@ -600,6 +600,7 @@ def qualified_episode(
     use_contact_exit_torque_mpc: bool = False,
     use_directional_contact_compliance: bool = False,
     use_mesh_surface_swing: bool = False,
+    reference_student_model: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -759,6 +760,7 @@ def qualified_episode(
         use_contact_exit_torque_mpc=use_contact_exit_torque_mpc,
         use_directional_contact_compliance=use_directional_contact_compliance,
         use_mesh_surface_swing=use_mesh_surface_swing,
+        reference_student_model=reference_student_model,
     )
     report = (
         _sealed(folder / "report.json")
@@ -778,6 +780,11 @@ def qualified_episode(
         raise ValueError("requested directional compliance must bind actual native execution")
     if ("mesh_surface_swing" in report) != use_mesh_surface_swing:
         raise ValueError("requested surface swing must bind actual native execution")
+    if ("reference_student_model" in report) != (reference_student_model is not None):
+        raise ValueError("requested reference student must bind actual native execution")
+    if reference_student_model is not None:  # noqa: SIM102 - exact default-OFF projection
+        if report["reference_student_model"] != reference_student_model:
+            raise ValueError("requested reference model bytes differ from actual execution")
     if report["compiled_model_hash"] != expected_world or report["course"] != list(course):
         raise ValueError("fixed world and course required")
     if (
@@ -898,13 +905,23 @@ def qualified_episode(
             != cerebellar_sampling_seed
         ):
             raise ValueError("requested neural torque model and sampling law must bind execution")
-    alignment = require_first_touch_qualification(
-        review,
-        foundation,
-        outcome,
-        cerebellar_model_hash=cerebellar_hash,
-        cerebellar_sampling_draws=cerebellar_draws,
-    )
+    if reference_student_model is not None:
+        alignment = require_first_touch_qualification(
+            review,
+            foundation,
+            outcome,
+            cerebellar_model_hash=cerebellar_hash,
+            cerebellar_sampling_draws=cerebellar_draws,
+            reference_student_model_hash=reference_student_model["model_hash"],
+        )
+    else:
+        alignment = require_first_touch_qualification(
+            review,
+            foundation,
+            outcome,
+            cerebellar_model_hash=cerebellar_hash,
+            cerebellar_sampling_draws=cerebellar_draws,
+        )
     write_once(folder / "independent_review.json", review)
     foundation_document = dict(
         foundation,
@@ -950,6 +967,9 @@ def qualified_episode(
         receipt["cerebellar_inference_calls"] = 3000
         receipt["cerebellar_sampling_draws"] = cerebellar_draws
         receipt["cerebellar_model_optimizer_steps"] = cerebellar_model["optimizer_steps"]
+    if reference_student_model is not None:
+        receipt["reference_student_model_hash"] = reference_student_model["model_hash"]
+        receipt["reference_student_inference_calls"] = 300
     if suppress_postcontact_swing_release:
         receipt["swing_release_ablation"] = commitment["swing_release_ablation"]
     if use_contact_exit_torque_mpc:

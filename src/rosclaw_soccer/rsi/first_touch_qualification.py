@@ -19,6 +19,7 @@ def require_first_touch_qualification(
     *,
     cerebellar_model_hash: str | None = None,
     cerebellar_sampling_draws: int | None = None,
+    reference_student_model_hash: str | None = None,
 ) -> dict[str, Any]:
     """Validate counts and label composition, never authorize execution."""
     if (
@@ -27,6 +28,50 @@ def require_first_touch_qualification(
         or type(outcome) is not FirstTouchOutcome
     ):
         raise ValueError("typed replay reviews and primitive M0 outcome required")
+    reference_review = review.get("reference_student_review")
+    if reference_student_model_hash is None:
+        if "reference_student_review" in review:
+            raise ValueError("unexpected reference student requires explicit qualification intent")
+    elif (
+        type(reference_student_model_hash) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", reference_student_model_hash) is None
+        or type(reference_review) is not dict
+        or reference_review.get("schema")
+        != "soccer.rsi.pre_parent_reference_student_reconstruction.v1"
+        or reference_review.get("model_hash") != reference_student_model_hash
+        or type(reference_review.get("frames_reconstructed")) is not int
+        or reference_review["frames_reconstructed"] != 300
+        or any(
+            reference_review.get(k) is not True
+            for k in (
+                "own_hidden_and_applied_reference_reconstructed",
+                "raw_foundation_navigation_targets_bit_exact",
+                "reconstruction_uses_same_pinned_decoder",
+                "parent_target_composition_reconstructed_separately",
+            )
+        )
+        or any(
+            reference_review.get(k) is not False
+            for k in (
+                "independent_neural_implementation",
+                "training_provenance_authenticated",
+                "teacher_qualified",
+                "hardware_authorized",
+                "promotion_authorized",
+            )
+        )
+        or any(
+            review.get(k) is not True
+            for k in (
+                "actual_mujoco_dynamics_replayed",
+                "actual_pd_torque_reconstructed",
+                "neural_target_reconstructed",
+            )
+        )
+    ):
+        raise ValueError(
+            "whole own-state reference student and parent motor reconstruction required"
+        )
     if cerebellar_model_hash is None:
         if cerebellar_sampling_draws is not None or any(
             key.startswith("cerebellar_") or key.startswith("actual_cerebellar_") for key in review
@@ -89,4 +134,6 @@ def require_first_touch_qualification(
     if cerebellar_model_hash is not None:
         result["cerebellar_model_hash"] = cerebellar_model_hash
         result["cerebellar_sampling_draws"] = cerebellar_sampling_draws
+    if reference_student_model_hash is not None:
+        result["reference_student_model_hash"] = reference_student_model_hash
     return result

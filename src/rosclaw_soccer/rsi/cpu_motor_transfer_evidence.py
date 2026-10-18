@@ -37,6 +37,13 @@ def validate_cpu_foundation_capture(
         validate_measured_history,
     )
 
+    if "reference_student_model" in commitment or any(
+        name.startswith("reference_student_") for name in trace
+    ):
+        from rosclaw_soccer.rsi.reference_student_execution import require_capture
+
+        require_capture(report, commitment, trace)
+
     if ("mesh_surface_swing" in commitment) != any(
         name.startswith("mesh_surface_") for name in trace
     ):
@@ -1202,6 +1209,15 @@ def audit_cpu_transfer(
                 composed[ids] += delta
             equal(composed, trace["joint_target_rad"][frame, 0], "causal composed target")
             previous = delta
+    if "reference_student_model" in commitment:
+        from rosclaw_soccer.rsi.reference_student_execution import reconstruct
+
+        reference_student_review = reconstruct(
+            commitment,
+            trace,
+            joint_limits=model.jnt_range[joints].copy(),
+            parent_model_hash=policy["step_motor_proof"]["model"]["mean_model"]["model_hash"],
+        )
     displacement = post_contact_displacement(trace["ball_position_after_step_m"][:, 0], first)
     maximum_lateral = float(np.max(np.abs(trace["ball_position_after_step_m"][:, 0, 1])))
     quality = high_quality(
@@ -1234,6 +1250,8 @@ def audit_cpu_transfer(
     )
     if initial_state_reference is not None:
         result["independent_initial_state"] = initial_state_reference.contract()
+    if "reference_student_model" in commitment:
+        result["reference_student_review"] = reference_student_review
     if cerebellar_review is not None:
         result["cerebellar_model_hash"] = cerebellar_review["model_hash"]
         result["actual_cerebellar_inferences_reconstructed"] = 3000
