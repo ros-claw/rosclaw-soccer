@@ -23,6 +23,25 @@ def digest(path):
         return "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def feedback_torque(target, position, velocity, kp, kd):
+    """Canonical tuple hard limits must be converted before numeric negation."""
+    target, position, velocity, kp, kd = (
+        np.asarray(value) for value in (target, position, velocity, kp, kd)
+    )
+    values = (target, position, velocity, kp, kd)
+    if (
+        any(
+            v.shape != (29,) or v.dtype.kind not in "fiu" or not np.isfinite(v).all()
+            for v in values
+        )
+        or np.any(kp <= 0)
+        or np.any(kd < 0)
+    ):
+        raise ValueError("finite canonical 29-joint feedback and original gains required")
+    limits = np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
+    return np.clip(kp * (target - position) - kd * velocity, -limits, limits)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference-receipt", type=Path, required=True)
@@ -106,11 +125,7 @@ def main():
     for target in targets:
         for _ in range(10):
             for model, data, qi, vi, ai in bindings:
-                torque = np.clip(
-                    kp * (target - data.qpos[qi]) - kd * data.qvel[vi],
-                    -G1_HARD_TORQUE_LIMITS,
-                    G1_HARD_TORQUE_LIMITS,
-                )
+                torque = feedback_torque(target, data.qpos[qi], data.qvel[vi], kp, kd)
                 data.ctrl[ai] = torque
                 mujoco.mj_step(model, data)
                 ball = int(model.geom("ball_geom").id)
