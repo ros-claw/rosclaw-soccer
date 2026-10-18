@@ -63,3 +63,15 @@ factory分配仍使用原始完整构造器验证整模型，包括critic和历�
 format通过；factory单模块mypy通过；benchmark展开源F821/F822通过。
 这不是完整项目的全量测试，也不是完整实际模型的时间或物理资格结果。
 真实完整模型基准仍需另行冻结运行并记录终态，当前不填写推测倍速。
+
+## 实际启动与接续信息
+
+冻结源码`4f68c7e502ed1c60b85e94c14670978bb653d44a`，零模型/零世界分配
+静态preflight通过，全部展开源F821/F822与启动pins守卫通过后，服务
+`rosclaw-generated-binding-benchmark-20261018.service`于13:18:36启动，
+PID1875900。输出外置于`rsi-generated-seed-binding-benchmark-20261018`。
+
+运行上限45分钟、MemoryHigh6GiB/Max10GiB、CPU150%、Restart=no；入场
+可用内存约60GiB。与PID1760082的学习活动合计两个大模型worker，不
+修改原学习源码或抢占无关GPU任务。该服务无新物理或学习更新预算。
+13:21仍在完整原构造器初始化，尚无完整实际模型测速或非干扰结果。
