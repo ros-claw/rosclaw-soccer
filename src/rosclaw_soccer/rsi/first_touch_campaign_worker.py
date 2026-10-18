@@ -599,6 +599,7 @@ def qualified_episode(
     suppress_postcontact_swing_release: bool = False,
     use_contact_exit_torque_mpc: bool = False,
     use_directional_contact_compliance: bool = False,
+    use_mesh_surface_swing: bool = False,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -757,6 +758,7 @@ def qualified_episode(
         suppress_postcontact_swing_release=suppress_postcontact_swing_release,
         use_contact_exit_torque_mpc=use_contact_exit_torque_mpc,
         use_directional_contact_compliance=use_directional_contact_compliance,
+        use_mesh_surface_swing=use_mesh_surface_swing,
     )
     report = (
         _sealed(folder / "report.json")
@@ -774,6 +776,8 @@ def qualified_episode(
         raise ValueError("requested contact-exit teacher must bind actual native execution")
     if ("directional_contact_compliance" in report) != use_directional_contact_compliance:
         raise ValueError("requested directional compliance must bind actual native execution")
+    if ("mesh_surface_swing" in report) != use_mesh_surface_swing:
+        raise ValueError("requested surface swing must bind actual native execution")
     if report["compiled_model_hash"] != expected_world or report["course"] != list(course):
         raise ValueError("fixed world and course required")
     if (
@@ -960,6 +964,8 @@ def qualified_episode(
         receipt["forecast_physical_substeps"] = report["directional_compliance_counters"][
             "integrated_forecast_steps"
         ]
+    if use_mesh_surface_swing:
+        receipt["mesh_surface_swing"] = commitment["mesh_surface_swing"]
     if mesh_task_contact_world_hash is not None:
         receipt["mesh_task_contact_world_hash"] = mesh_task_contact_world_hash
         receipt["legacy_qualifications_transferred"] = False

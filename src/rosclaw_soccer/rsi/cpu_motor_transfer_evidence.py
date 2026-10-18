@@ -37,6 +37,14 @@ def validate_cpu_foundation_capture(
         validate_measured_history,
     )
 
+    if ("mesh_surface_swing" in commitment) != any(
+        name.startswith("mesh_surface_") for name in trace
+    ):
+        raise ValueError("surface record presence must match an explicit native commitment")
+    if "mesh_surface_swing" in commitment:
+        from rosclaw_soccer.rsi.mesh_surface_swing_evidence import require_surface_swing_capture
+
+        require_surface_swing_capture(report, commitment, trace)
     if "swing_release_ablation" in commitment:
         from rosclaw_soccer.rsi.swing_release_ablation import require_zero_postcontact_swing
 
@@ -656,6 +664,23 @@ def audit_cpu_transfer(
         compliance_recorded_attempts = compliance_recorded_steps = compliance_recorded_exact = 0
         compliance_source_hash_matches = 0
 
+    if "mesh_surface_swing" in commitment:
+        from rosclaw_soccer.rsi.mesh_surface_swing_probe import (
+            G1MeshSurfaceSwingProbe,
+            inactive_surface_probe_record,
+        )
+        from rosclaw_soccer.rsi.taskspace_swing_probe import choose_swing_side, release_joint_delta
+
+        replay_surface = G1MeshSurfaceSwingProbe(
+            model, expected_world_hash=commitment["compiled_model_hash"]
+        )
+        if replay_surface.contract() != commitment["mesh_surface_swing"]:
+            raise ValueError("surface replay must use exactly pinned solver and geometry")
+        replay_surface_side = -1
+        replay_surface_contact: int | None = None
+        replay_surface_contact_delta = np.zeros(6)
+        replay_surface_active_frames = 0
+
     def equal(actual: Any, expected: Any, name: str) -> None:
         if not np.allclose(actual, expected, atol=1e-8, rtol=0):
             raise ValueError(f"CPU dynamics replay differs: {name}")
@@ -703,6 +728,62 @@ def audit_cpu_transfer(
             "ball velocity",
         )
         target = trace["joint_target_rad"][frame, 0]
+        if "mesh_surface_swing" in commitment:
+            surface_record = inactive_surface_probe_record(frame)
+            surface_delta = np.zeros(6)
+            surface_full_delta = np.zeros(29)
+            if frame >= 30:
+                if replay_surface_contact is None:
+                    replay_surface_side = choose_swing_side(
+                        positions[contacts[:2]],
+                        positions[ball],
+                        replay_surface_side,
+                        acquisition_max_gap_m=0.95,
+                        revalidate_swing_side=True,
+                    )
+                if replay_surface_side >= 0:
+                    surface_ids = np.arange(6 * replay_surface_side, 6 * replay_surface_side + 6)
+                    if replay_surface_contact is None:
+                        surface_delta, surface_record = replay_surface.advance(
+                            data,
+                            frame=frame,
+                            side=replay_surface_side,
+                            baseline_target=trace["foundation_navigation_joint_target_rad"][
+                                frame, 0, surface_ids
+                            ],
+                            joint_limits=model.jnt_range[np.asarray(joints)[surface_ids]],
+                            forward_cap_m=profile.foot_forward_cap_m,
+                            lateral_cap_m=profile.foot_lateral_cap_m,
+                            vertical_cap_m=profile.foot_vertical_offset_m,
+                        )
+                        replay_surface_active_frames += 1
+                    else:
+                        surface_delta = release_joint_delta(
+                            replay_surface_contact_delta, frame - replay_surface_contact
+                        )
+                    surface_full_delta[surface_ids] = surface_delta
+            equal(
+                surface_record,
+                trace["mesh_surface_swing_record"][frame, 0],
+                "reconstructed current mesh point, Jacobian and IK",
+            )
+            equal(
+                surface_full_delta,
+                trace["taskspace_joint_increment_rad"][frame, 0],
+                "reconstructed mesh swing and original release",
+            )
+            equal(
+                trace["foundation_navigation_joint_target_rad"][frame, 0] + surface_full_delta,
+                trace["pre_motor_joint_target_rad"][frame, 0],
+                "new mesh pre-motor target consumed by original actor",
+            )
+            surface_motor_delta = np.zeros(29)
+            surface_motor_delta[:12] = trace["motor_delta_rad"][frame, 0]
+            equal(
+                trace["pre_motor_joint_target_rad"][frame, 0] + surface_motor_delta,
+                target,
+                "mesh target plus causally recomputed original motor",
+            )
         if "contact_exit_torque_mpc" in commitment:
             past_forces = np.asarray(replay_forces, dtype=np.float64).reshape(frame, 6)
             foot_frames = np.flatnonzero(np.any(past_forces[:, :2] > 1, axis=1))
@@ -887,6 +968,10 @@ def audit_cpu_transfer(
                 compliance_recorded_exact += 1
         equal(forces, trace["force_n"][frame, 0], "physical contacts")
         equal(data.xpos[ball], trace["ball_position_after_step_m"][frame, 0], "physical ball")
+        if "mesh_surface_swing" in commitment:  # noqa: SIM102 - explicit OFF-path projection
+            if replay_surface_contact is None and np.any(forces > 1):
+                replay_surface_contact = frame
+                replay_surface_contact_delta = surface_delta.copy()
         replay_forces.append(forces)
     actual_forces = np.asarray(replay_forces)
     contact_frames = np.flatnonzero(np.any(actual_forces > 1, axis=1))
@@ -1226,6 +1311,19 @@ def audit_cpu_transfer(
         }
         if owned:
             result["decoder_construction"]["canonical_preview_integrity_checked"] = True
+    if "mesh_surface_swing" in commitment:
+        result["mesh_surface_swing_review"] = dict(
+            schema="soccer.rsi.mesh_surface_swing_reconstruction.v1",
+            contract=commitment["mesh_surface_swing"],
+            frames_reconstructed=300,
+            active_frames=replay_surface_active_frames,
+            reconstruction_uses_same_pinned_geometry_and_ik=True,
+            independent_ik_implementation=False,
+            side_and_release_reconstructed_from_replayed_history=True,
+            source_numeric_replay_tolerance=1e-8,
+            hardware_authorized=False,
+            promotion_authorized=False,
+        )
     if "contact_exit_torque_mpc" in commitment:
         if replay_exit_teacher.counters() != report["contact_exit_mpc_counters"]:
             raise ValueError("CPU teacher forecast accounting differs from producer")

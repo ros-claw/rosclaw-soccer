@@ -90,9 +90,59 @@ def run_native_first_touch_episode(
     suppress_postcontact_swing_release: bool = False,
     use_contact_exit_torque_mpc: bool = False,
     use_directional_contact_compliance: bool = False,
+    use_mesh_surface_swing: bool = False,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
+
+    if type(use_mesh_surface_swing) is not bool:
+        raise ValueError("explicit boolean mesh-surface swing required")
+    if use_mesh_surface_swing:
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+
+        if (
+            partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
+            or getattr(args, "record_foundation_observation", False) is not True
+            or getattr(args, "foundation_only", False) is not False
+            or getattr(args, "proposal_decoder", None) != "reference"
+            or getattr(args, "step_model", None) is None
+            or getattr(args, "body_response_bundle", None) is not None
+            or getattr(args, "cached_proposal_envelope", False)
+            or getattr(args, "neural_model", None) is not None
+            or getattr(args, "motor_policy", None) is not None
+            or type(control_profile) is not BoundedFirstTouchControl
+            or approach_mode != "bounded_approach_diagnostic"
+            or swing_mode != "bounded_contact_diagnostic"
+            or mesh_task_contact_world_hash is None
+            or mesh_world_review is None
+            or type(recurrent_sampling_factory) is not RecurrentSamplingEpisodeFactory
+            or cerebellar_model is not None
+            or cerebellar_sampling_seed is not None
+            or postcontact_profile is not None
+            or locomotion_mode_probe is not None
+            or reference_height_probe_m is not None
+            or foundation_approach_probe is not False
+            or record_default_planner_events is not True
+            or generated_seed_episode_binding is not False
+            or suppress_postcontact_swing_release is not False
+            or use_contact_exit_torque_mpc is not False
+            or use_directional_contact_compliance is not False
+            or any(
+                f is not None
+                for f in (
+                    sampling_factory,
+                    extended_factory,
+                    proposal_factory,
+                    imitation_factory,
+                    recurrent_factory,
+                    recurrent_clipped_factory,
+                )
+            )
+        ):
+            raise ValueError("unmixed captured reviewed-mesh surface swing study required")
+        recurrent_sampling_factory._stable()
 
     if type(use_directional_contact_compliance) is not bool:
         raise ValueError("explicit boolean directional contact compliance required")
@@ -1115,6 +1165,13 @@ def run_native_first_touch_episode(
             kd=navigation.backend.kd,
         )
         commitment["directional_contact_compliance"] = exit_compliance.contract()
+    if use_mesh_surface_swing:
+        from rosclaw_soccer.rsi.mesh_surface_swing_probe import G1MeshSurfaceSwingProbe
+
+        surface_swing = G1MeshSurfaceSwingProbe(
+            model, expected_world_hash=commitment["compiled_model_hash"]
+        )
+        commitment["mesh_surface_swing"] = surface_swing.contract()
     cerebellar = None
     if cerebellar_model is not None:
         from rosclaw_soccer.rsi.native_cerebellar_torque import NativeCerebellarTorque
@@ -1292,6 +1349,8 @@ def run_native_first_touch_episode(
             }
         )
         compliance_plans = []
+    if use_mesh_surface_swing:
+        history["mesh_surface_swing_record"] = []
     tracking = y < 0
     gate = False
     side, contact_frame = -1, None
@@ -1431,6 +1490,10 @@ def run_native_first_touch_episode(
                 policy = configure_preview(neural, history, contact_frame)
                 knots = np.asarray(policy["knots_rad"])
         swing_delta = np.zeros(6)
+        if use_mesh_surface_swing:
+            from rosclaw_soccer.rsi.mesh_surface_swing_probe import inactive_surface_probe_record
+
+            surface_record = inactive_surface_probe_record(frame)
         if gate:
             if contact_frame is None:
                 side = choose_swing_side(
@@ -1465,17 +1528,31 @@ def run_native_first_touch_episode(
                             vertical_offset_m=foot_vertical_offset,
                         )
                     else:
-                        swing_delta = continuous_swing_joint_delta(
-                            positions[bodies[side]],
-                            positions[ball],
-                            jac[:, vi[ids]],
-                            target[ids],
-                            limits[ids],
-                            forward_cap_m=foot_forward_cap,
-                            lateral_cap_m=foot_lateral_cap,
-                            vertical_offset_m=foot_vertical_offset,
-                        )
+                        if use_mesh_surface_swing:
+                            swing_delta, surface_record = surface_swing.advance(
+                                data,
+                                frame=frame,
+                                side=side,
+                                baseline_target=target[ids],
+                                joint_limits=limits[ids],
+                                forward_cap_m=foot_forward_cap,
+                                lateral_cap_m=foot_lateral_cap,
+                                vertical_cap_m=foot_vertical_offset,
+                            )
+                        else:
+                            swing_delta = continuous_swing_joint_delta(
+                                positions[bodies[side]],
+                                positions[ball],
+                                jac[:, vi[ids]],
+                                target[ids],
+                                limits[ids],
+                                forward_cap_m=foot_forward_cap,
+                                lateral_cap_m=foot_lateral_cap,
+                                vertical_offset_m=foot_vertical_offset,
+                            )
                 target[ids] += swing_delta
+        if use_mesh_surface_swing:
+            history["mesh_surface_swing_record"].append(surface_record[None])
         history["pre_motor_joint_target_rad"].append(target.copy()[None])
         if control_profile is not None:
             history["taskspace_joint_increment_rad"].append((target - navigation_target)[None])
@@ -1724,6 +1801,9 @@ def run_native_first_touch_episode(
 
         validate_capture(commitment["foundation_observation_capture"], arrays, frames=300, lanes=1)
     np.savez_compressed(trace, **arrays)
+    if use_mesh_surface_swing:  # noqa: SIM102 - explicit OFF-path projection
+        if surface_swing.contract() != commitment["mesh_surface_swing"]:
+            raise ValueError("surface swing source or geometry contract changed")
     result = dict(
         commitment,
         commitment_hash=hash_json(commitment),

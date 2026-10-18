@@ -11,7 +11,7 @@ import numpy as np
 from rosclaw_soccer.physics.convex_surface_distance import ConvexSurfaceDistance
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.rsi.mesh_surface_swing import surface_strike_joint_delta
-from rosclaw_soccer.sim.contracts import hash_bytes
+from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 TRACE_WIDTH = 39
 
@@ -41,6 +41,7 @@ class G1MeshSurfaceSwingProbe:
         from scipy.spatial import ConvexHull  # type: ignore[import-untyped]
 
         self._model = model
+        self._world_hash = expected_world_hash
         self._scratch = mujoco.MjData(model)
         self._sphere = int(model.geom("ball_geom").id)
         if model.geom_type[self._sphere] != mujoco.mjtGeom.mjGEOM_SPHERE:
@@ -64,6 +65,39 @@ class G1MeshSurfaceSwingProbe:
             self._hulls.append(ConvexSurfaceDistance(vertices[hull.simplices], hull.equations))
         self._dofs = [int(model.jnt_dofadr[model.joint(n).id]) for n in G1_DDS_JOINT_NAMES[:12]]
 
+    def contract(self) -> dict[str, Any]:
+        from pathlib import Path
+
+        import rosclaw_soccer.physics.convex_surface_distance as geometry
+        import rosclaw_soccer.rsi.mesh_surface_swing as solver
+
+        value = dict(
+            schema="soccer.rsi.mesh_surface_swing.v1",
+            world_hash=self._world_hash,
+            source_hashes={
+                k: hash_bytes(Path(p).read_bytes())
+                for k, p in dict(
+                    adapter=__file__, solver=solver.__file__, geometry=geometry.__file__
+                ).items()
+            },
+            observation_clock="scratch current qpos before control; no live cache refresh",
+            side_selection_clock="unchanged native observation contract",
+            strike_direction_world=[1.0, 0.0, 0.0],
+            target_point="current ball center minus actual radius times strike direction",
+            maximum_joint_increment_rad=0.35,
+            regularization=0.05,
+            release_frames=20,
+            parent_motor_recomputed_after_new_pre_motor_target=True,
+            measured_qpos_is_not_the_pd_target=True,
+            trained_policy=False,
+            teacher_qualified=False,
+            independent_ik_implementation=False,
+            activation_ceiling="SIM_ONLY",
+            hardware_authorized=False,
+            promotion_authorized=False,
+        )
+        return dict(value, contract_hash=hash_json(value))
+
     def advance(
         self,
         data: Any,
@@ -79,7 +113,13 @@ class G1MeshSurfaceSwingProbe:
         import mujoco
 
         record = inactive_surface_probe_record(frame)
-        if type(side) is not int or side not in (0, 1) or data is self._scratch:
+        if (
+            type(side) is not int
+            or side not in (0, 1)
+            or not isinstance(data, mujoco.MjData)
+            or data.model is not self._model
+            or data is self._scratch
+        ):
             raise ValueError("explicit swing foot and distinct caller-owned state required")
         scratch, model = self._scratch, self._model
         scratch.qpos[:] = data.qpos
