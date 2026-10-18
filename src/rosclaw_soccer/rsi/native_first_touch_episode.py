@@ -88,9 +88,56 @@ def run_native_first_touch_episode(
     mesh_world_review: ReviewedContactWorld | None = None,
     generated_seed_episode_binding: bool = False,
     suppress_postcontact_swing_release: bool = False,
+    use_contact_exit_torque_mpc: bool = False,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
+
+    if type(use_contact_exit_torque_mpc) is not bool:
+        raise ValueError("explicit boolean contact-exit torque teacher required")
+    if use_contact_exit_torque_mpc:
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+
+        if (
+            partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
+            or getattr(args, "record_foundation_observation", False) is not True
+            or getattr(args, "foundation_only", False) is not False
+            or getattr(args, "proposal_decoder", None) != "reference"
+            or getattr(args, "step_model", None) is None
+            or getattr(args, "body_response_bundle", None) is not None
+            or getattr(args, "cached_proposal_envelope", False)
+            or getattr(args, "neural_model", None) is not None
+            or getattr(args, "motor_policy", None) is not None
+            or type(control_profile) is not BoundedFirstTouchControl
+            or approach_mode != "bounded_approach_diagnostic"
+            or swing_mode != "bounded_contact_diagnostic"
+            or mesh_task_contact_world_hash is None
+            or mesh_world_review is None
+            or type(recurrent_sampling_factory) is not RecurrentSamplingEpisodeFactory
+            or cerebellar_model is not None
+            or cerebellar_sampling_seed is not None
+            or postcontact_profile is not None
+            or locomotion_mode_probe is not None
+            or reference_height_probe_m is not None
+            or foundation_approach_probe is not False
+            or generated_seed_episode_binding is not False
+            or suppress_postcontact_swing_release is not False
+            or any(
+                factory is not None
+                for factory in (
+                    sampling_factory,
+                    extended_factory,
+                    proposal_factory,
+                    imitation_factory,
+                    recurrent_factory,
+                    recurrent_clipped_factory,
+                )
+            )
+        ):
+            raise ValueError("unmixed captured reviewed-mesh bounded contact-exit study required")
+        recurrent_sampling_factory._stable()
 
     if type(suppress_postcontact_swing_release) is not bool:
         raise ValueError("explicit boolean postcontact swing ablation required")
@@ -999,6 +1046,16 @@ def run_native_first_touch_episode(
         commitment["swing_release_ablation"] = release_ablation_contract(
             commitment["compiled_model_hash"]
         )
+    if use_contact_exit_torque_mpc:
+        from rosclaw_soccer.rsi.contact_exit_torque_mpc import ContactExitTorqueMPC
+
+        exit_teacher = ContactExitTorqueMPC(
+            model,
+            world_hash=commitment["compiled_model_hash"],
+            kp=navigation.backend.kp,
+            kd=navigation.backend.kd,
+        )
+        commitment["contact_exit_torque_mpc"] = exit_teacher.contract()
     cerebellar = None
     if cerebellar_model is not None:
         from rosclaw_soccer.rsi.native_cerebellar_torque import NativeCerebellarTorque
@@ -1150,6 +1207,19 @@ def run_native_first_touch_episode(
             }
         )
         previous_navigation_forward = 0.0
+    if use_contact_exit_torque_mpc:
+        history.update(
+            {
+                name: []
+                for name in (
+                    "contact_exit_mpc_requested_offset_nm",
+                    "contact_exit_mpc_applied_offset_nm",
+                    "contact_exit_mpc_forecast_steps",
+                )
+            }
+        )
+        mpc_plans = []
+        previous_mpc_offset = np.zeros(29)
     tracking = y < 0
     gate = False
     side, contact_frame = -1, None
@@ -1412,6 +1482,25 @@ def run_native_first_touch_episode(
                 * np.tanh(recurrent_decoder.sampled_transition["recurrent_sampling_latent_action"])
             )
             history["motor_pre_projection_requested_rad"].append(raw_motor[None])
+        if use_contact_exit_torque_mpc:
+            past_forces = np.asarray(history["force_n"], dtype=np.float64).reshape(frame, 6)
+            foot_frames = np.flatnonzero(np.any(past_forces[:, :2] > 1, axis=1))
+            mpc_plan = exit_teacher.plan(
+                data,
+                target,
+                frame=frame,
+                first_foot_contact_frame=int(foot_frames[0]) if len(foot_frames) else None,
+                force_history=past_forces[-3:],
+                previous_offset_nm=previous_mpc_offset,
+                prior_nonfoot_contact=bool(np.any(past_forces[:, 2:] > 1)),
+            )
+            previous_mpc_offset = mpc_plan.offset_nm.copy()
+            mpc_plans.append(mpc_plan.report)
+            history["contact_exit_mpc_requested_offset_nm"].append(previous_mpc_offset[None])
+            history["contact_exit_mpc_forecast_steps"].append(
+                np.asarray([[mpc_plan.report["forecast_substeps"]]], dtype=np.int64)
+            )
+            mpc_applied = []
         history["joint_target_rad"].append(target[None].copy())
         forces = np.zeros(6)
         torques = []
@@ -1428,6 +1517,15 @@ def run_native_first_touch_episode(
                 -np.asarray(G1_HARD_TORQUE_LIMITS),
                 np.asarray(G1_HARD_TORQUE_LIMITS),
             )
+            if use_contact_exit_torque_mpc:
+                baseline_torque = torque.copy()
+                if np.any(previous_mpc_offset):
+                    torque = np.clip(
+                        requested_torque + previous_mpc_offset,
+                        -np.asarray(G1_HARD_TORQUE_LIMITS),
+                        np.asarray(G1_HARD_TORQUE_LIMITS),
+                    )
+                mpc_applied.append(torque - baseline_torque)
             if cerebellar is not None:
                 current_qpos = np.concatenate(
                     (data.qpos[:7], data.qpos[qi], data.qpos[bq : bq + 7])
@@ -1460,6 +1558,9 @@ def run_native_first_touch_episode(
                 forces[index] = max(forces[index], float(np.linalg.norm(force[:3])))
             minimum_pelvis = min(minimum_pelvis, float(data.xpos[pelvis, 2]))
             pelvis_samples.append(float(data.xpos[pelvis, 2]))
+        if use_contact_exit_torque_mpc:
+            exit_teacher.verify_actual_interval(data, mpc_plan)
+            history["contact_exit_mpc_applied_offset_nm"].append(np.asarray(mpc_applied)[None])
         if contact_frame is None and np.any(forces > 1):
             contact_frame = frame
             first_contact_frame = frame
@@ -1485,6 +1586,9 @@ def run_native_first_touch_episode(
         and control_profile.contract() != commitment["bounded_control_profile"]
     ):
         raise ValueError("bounded control profile changed during the episode")
+    if use_contact_exit_torque_mpc:  # noqa: SIM102 - retain explicit OFF-path projection
+        if exit_teacher.contract() != commitment["contact_exit_torque_mpc"]:
+            raise ValueError("contact-exit torque teacher changed during episode")
     trace = args.output_root / "physical_trace.npz"
     if cerebellar is not None and (
         cerebellar.calls != 3000
@@ -1522,6 +1626,9 @@ def run_native_first_touch_episode(
         result["locomotion_mode_planner_events"] = navigation.backend.events
     if record_default_planner_events:
         result["default_locomotion_planner_events"] = navigation.backend.events
+    if use_contact_exit_torque_mpc:
+        result["contact_exit_mpc_plans"] = mpc_plans
+        result["contact_exit_mpc_counters"] = exit_teacher.counters()
     result["report_hash"] = hash_json(result)
     from scripts.rsi_atomic_artifacts import write_once, write_shared_physical_report
 

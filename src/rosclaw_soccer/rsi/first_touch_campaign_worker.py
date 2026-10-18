@@ -597,6 +597,7 @@ def qualified_episode(
     mesh_world_review: "ReviewedContactWorld | None" = None,
     generated_seed_episode_binding: bool = False,
     suppress_postcontact_swing_release: bool = False,
+    use_contact_exit_torque_mpc: bool = False,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -753,6 +754,7 @@ def qualified_episode(
         mesh_world_review=mesh_world_review,
         generated_seed_episode_binding=generated_seed_episode_binding,
         suppress_postcontact_swing_release=suppress_postcontact_swing_release,
+        use_contact_exit_torque_mpc=use_contact_exit_torque_mpc,
     )
     report = (
         _sealed(folder / "report.json")
@@ -766,6 +768,8 @@ def qualified_episode(
         raise ValueError("requested generated binding must match actual native commitment")
     if ("swing_release_ablation" in report) != suppress_postcontact_swing_release:
         raise ValueError("requested swing release ablation must bind actual native execution")
+    if ("contact_exit_torque_mpc" in report) != use_contact_exit_torque_mpc:
+        raise ValueError("requested contact-exit teacher must bind actual native execution")
     if report["compiled_model_hash"] != expected_world or report["course"] != list(course):
         raise ValueError("fixed world and course required")
     if (
@@ -940,6 +944,12 @@ def qualified_episode(
         receipt["cerebellar_model_optimizer_steps"] = cerebellar_model["optimizer_steps"]
     if suppress_postcontact_swing_release:
         receipt["swing_release_ablation"] = commitment["swing_release_ablation"]
+    if use_contact_exit_torque_mpc:
+        receipt["contact_exit_torque_mpc"] = commitment["contact_exit_torque_mpc"]
+        receipt["contact_exit_mpc_counters"] = report["contact_exit_mpc_counters"]
+        receipt["forecast_physical_substeps"] = report["contact_exit_mpc_counters"][
+            "integrated_forecast_steps"
+        ]
     if mesh_task_contact_world_hash is not None:
         receipt["mesh_task_contact_world_hash"] = mesh_task_contact_world_hash
         receipt["legacy_qualifications_transferred"] = False

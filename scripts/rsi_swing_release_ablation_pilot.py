@@ -63,6 +63,10 @@ def main():
     parser.add_argument("--preflight", action="store_true")
     args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
+    torque_mpc = cfg.get("use_contact_exit_torque_mpc", False)
+    if type(torque_mpc) is not bool:
+        raise ValueError("explicit boolean diagnostic selection required")
+    study_kind = "contact_exit_torque_mpc" if torque_mpc else "swing_release_ablation"
     source, core, root = (Path(cfg[k]) for k in ("source_root", "core_root", "output_root"))
     if (
         root.exists()
@@ -74,7 +78,7 @@ def main():
         or cfg.get("predecessor") is not None
         or cfg["upstream_terminal_audit_required"] is not True
         or cfg["teacher_auto_admission"] is not False
-        or cfg.get("suppress_postcontact_swing_release") is not True
+        or cfg.get("suppress_postcontact_swing_release") is not (not torque_mpc)
         or set(cfg.get("required_receipt_witnesses", []))
         != {"intent_witness", "encoder_witness", "prefix_witness"}
         or Path(__file__).resolve() != source / "scripts/rsi_swing_release_ablation_pilot.py"
@@ -142,6 +146,10 @@ def main():
     for context in contexts:
         validate_context_source(context, plan, group=context.source_group)
     jobs = declared_jobs(contexts)
+    if torque_mpc:
+        if cfg.get("maximum_forecast_steps_per_episode") != 6000:
+            raise ValueError("fixed bounded contact-exit planning budget required")
+        jobs = [dict(job, job="contact-exit-" + job["pair_id"], role="teacher") for job in jobs]
     references = {r["group"]: r for r in nominal["results"]}
     controls = {}
     evaluations, reused = {}, []
@@ -225,7 +233,7 @@ def main():
         pins[cfg[key]] = digest(cfg[key])
     p.stable()
     if args.preflight:
-        print("RELEASE_ABLATION_4_JOBS_4_ORIGINAL_BASELINES_ZERO_MODEL_ALLOCATIONS", flush=True)
+        print(study_kind.upper(), "4_JOBS_4_ORIGINAL_BASELINES_ZERO_MODEL_ALLOCATIONS", flush=True)
         return
     status = dict(
         line.split("=", 1)
@@ -259,7 +267,7 @@ def main():
     root.mkdir()
     declaration = dict(
         cfg,
-        schema="soccer.rsi.swing_release_ablation_pilot_declaration.v1",
+        schema=f"soccer.rsi.{study_kind}_pilot_declaration.v1",
         jobs=jobs,
         contexts=[dict(context_hash=c.context_hash, course=list(c.course)) for c in contexts],
         options=catalog,
@@ -323,14 +331,26 @@ def main():
                 mesh_world_review=review,
                 planning_context=context,
                 planning_stage="SELECTED_OPTION_EVALUATION" if context else "PLANNING_SIMULATION",
-                suppress_postcontact_swing_release=True,
+                suppress_postcontact_swing_release=not torque_mpc,
+                use_contact_exit_torque_mpc=torque_mpc,
             )
             with np.load(folder / "physical_trace.npz", allow_pickle=False) as archive:
                 trace = dict(archive)
             baseline = baselines[job["pair_id"]]
             cutoff = baseline["outcome"]["first_foot_contact_frame"] + 1
             with np.load(baseline["witnesses"]["trace"]["path"], allow_pickle=False) as archive:
-                require_original_prefix(trace, dict(archive), cutoff)
+                baseline_trace = dict(archive)
+                original_trace = {k: v for k, v in trace.items() if k in baseline_trace}
+                if torque_mpc:
+                    if set(trace) - set(baseline_trace) != {
+                        "contact_exit_mpc_requested_offset_nm",
+                        "contact_exit_mpc_applied_offset_nm",
+                        "contact_exit_mpc_forecast_steps",
+                    }:
+                        raise ValueError("only explicitly declared teacher capture may be added")
+                elif set(trace) != set(baseline_trace):
+                    raise ValueError("ablation may not add capture fields")
+                require_original_prefix(original_trace, baseline_trace, cutoff)
             if receipt["outcome"]["first_foot_contact_frame"] != cutoff - 1:
                 raise ValueError("postcontact ablation cannot change the original first contact")
             prefix = dict(
@@ -338,7 +358,7 @@ def main():
                 baseline_receipt_hash=baseline["receipt_hash"],
                 prefix_frames=cutoff,
                 prefix_array_hashes={
-                    k: hash_bytes(trace[k][:cutoff].tobytes()) for k in sorted(trace)
+                    k: hash_bytes(trace[k][:cutoff].tobytes()) for k in sorted(original_trace)
                 },
                 all_original_array_prefixes_bit_equal=True,
                 precontact_is_not_postcontact_success=True,
@@ -371,7 +391,7 @@ def main():
             (controls if job["role"] == "control" else evaluations)[job["pair_id"]] = receipt[
                 "outcome"
             ]
-            print("RELEASE_ABLATION_BODY_COMMITTED", job["job"], receipt["outcome"], flush=True)
+            print(study_kind.upper(), "BODY_COMMITTED", job["job"], receipt["outcome"], flush=True)
             del trace, report
             gc.collect()
         paired = assess_pairs(controls, evaluations)
@@ -379,7 +399,7 @@ def main():
         if any(digest(name) != h for name, h in pins.items()):
             raise ValueError("frozen source/input bytes changed")
         complete = dict(
-            schema="soccer.rsi.swing_release_ablation_pilot_complete.v1",
+            schema=f"soccer.rsi.{study_kind}_pilot_complete.v1",
             declaration_hash=declaration["report_hash"],
             results=results,
             reused_endpoints=reused,
@@ -396,9 +416,24 @@ def main():
             hardware_authorized=False,
             promotion_authorized=False,
         )
+        if torque_mpc:
+            complete["native_forecast_substeps"] = sum(
+                row["forecast_physical_substeps"] for row in results
+            )
+            complete["independent_optimization_forecast_substeps"] = 0
+            complete["independent_chosen_control_forecast_substeps"] = 0
+            for row in results:
+                audit = p.sealed(Path(row["witnesses"]["independent_review"]["path"]))
+                reconstruction = audit["contact_exit_torque_mpc_review"]
+                complete["independent_optimization_forecast_substeps"] += reconstruction[
+                    "planning_counters"
+                ]["integrated_forecast_steps"]
+                complete["independent_chosen_control_forecast_substeps"] += reconstruction[
+                    "chosen_control_integrated_forecast_steps"
+                ]
         complete["report_hash"] = hash_json(complete)
         write_once(root / "complete.json", complete)
-        phase("SWING_RELEASE_ABLATION_COMPLETE_NOT_OPTIMIZED_RECOVERY")
+        phase(study_kind.upper() + "_COMPLETE_NOT_QUALIFIED_TEACHER")
     except BaseException as error:
         campaign.state["fatal_error"] = dict(type=type(error).__name__, message=str(error))
         phase("FATAL_CONTRACT_VIOLATION")

@@ -42,6 +42,11 @@ def validate_cpu_foundation_capture(
 
         require_zero_postcontact_swing(commitment, trace)
 
+    if "contact_exit_torque_mpc" in commitment:
+        from rosclaw_soccer.rsi.contact_exit_torque_evidence import require_contact_exit_capture
+
+        require_contact_exit_capture(report, commitment, trace)
+
     if ("foundation_observation_capture" in report) != (
         "foundation_observation_capture" in commitment
     ):
@@ -609,8 +614,29 @@ def audit_cpu_transfer(
     data.qvel[vi] = trace["canonical_qvel"][0, 0, 6:35]
     data.qvel[bv : bv + 6] = trace["canonical_qvel"][0, 0, 35:41]
     mujoco.mj_forward(model, data)
-    replay_forces = []
+    replay_forces = []  # type: list[np.ndarray]
     minimum = float("inf")
+
+    if "contact_exit_torque_mpc" in commitment:
+        from rosclaw_soccer.physics.g1_pd_torque_forecast import G1PDTorqueForecaster
+        from rosclaw_soccer.rsi.contact_exit_torque_evidence import compare_plans
+        from rosclaw_soccer.rsi.contact_exit_torque_mpc import ContactExitTorqueMPC
+
+        replay_exit_teacher = ContactExitTorqueMPC(
+            model, world_hash=commitment["compiled_model_hash"], kp=kp, kd=kd
+        )
+        if replay_exit_teacher.contract() != commitment["contact_exit_torque_mpc"]:
+            raise ValueError("replay teacher must match exact pinned producer contract")
+        chosen_forecaster = G1PDTorqueForecaster(
+            model,
+            expected_world_hash=commitment["compiled_model_hash"],
+            kp=kp,
+            kd=kd,
+            max_forecast_steps=3000,
+        )
+        replay_previous_offset = np.zeros(29)
+        replay_source_end_hash_matches = 0
+        replay_active_intervals = 0
 
     def equal(actual: Any, expected: Any, name: str) -> None:
         if not np.allclose(actual, expected, atol=1e-8, rtol=0):
@@ -659,6 +685,30 @@ def audit_cpu_transfer(
             "ball velocity",
         )
         target = trace["joint_target_rad"][frame, 0]
+        if "contact_exit_torque_mpc" in commitment:
+            past_forces = np.asarray(replay_forces, dtype=np.float64).reshape(frame, 6)
+            foot_frames = np.flatnonzero(np.any(past_forces[:, :2] > 1, axis=1))
+            replay_plan = replay_exit_teacher.plan(
+                data,
+                target,
+                frame=frame,
+                first_foot_contact_frame=int(foot_frames[0]) if len(foot_frames) else None,
+                force_history=past_forces[-3:],
+                previous_offset_nm=replay_previous_offset,
+                prior_nonfoot_contact=bool(np.any(past_forces[:, 2:] > 1)),
+            )
+            compare_plans(replay_plan.report, report["contact_exit_mpc_plans"][frame])
+            recorded_mpc_offset = trace["contact_exit_mpc_requested_offset_nm"][frame, 0]
+            equal(replay_plan.offset_nm, recorded_mpc_offset, "recomputed teacher torque request")
+            replay_previous_offset = recorded_mpc_offset.copy()
+            chosen_forecast = None
+            if replay_plan.expected_end_state is not None:
+                chosen_forecast = chosen_forecaster.forecast(data, target, recorded_mpc_offset)
+                replay_active_intervals += 1
+                replay_source_end_hash_matches += int(
+                    hash_bytes(chosen_forecast.end_integration_state.tobytes())
+                    == report["contact_exit_mpc_plans"][frame]["expected_end_state_hash"]
+                )
         forces = np.zeros(6)
         for substep in range(10):
             if "bounded_control_profile" in commitment:
@@ -669,6 +719,9 @@ def audit_cpu_transfer(
                 )
             requested_pd = (target - data.qpos[qi]) * kp - data.qvel[vi] * kd
             requested_total = requested_pd
+            if "contact_exit_torque_mpc" in commitment:  # noqa: SIM102 - OFF-path projection
+                if np.any(recorded_mpc_offset):
+                    requested_total = requested_pd + recorded_mpc_offset
             if cerebellar_review is not None:
                 equal(
                     np.concatenate((data.qpos[:7], data.qpos[qi], data.qpos[bq : bq + 7])),
@@ -700,6 +753,17 @@ def audit_cpu_transfer(
                     "actual hard-limited neural torque residual",
                 )
             equal(torque, trace["torque_nm"][frame, 0, substep], "PD torque")
+            if "contact_exit_torque_mpc" in commitment:
+                equal(
+                    torque
+                    - np.clip(
+                        requested_pd,
+                        -np.asarray(G1_HARD_TORQUE_LIMITS),
+                        np.asarray(G1_HARD_TORQUE_LIMITS),
+                    ),
+                    trace["contact_exit_mpc_applied_offset_nm"][frame, 0, substep],
+                    "actual hard-limited contact-exit torque residual",
+                )
             data.ctrl[ai] = torque
             mujoco.mj_step(model, data)
             equal(
@@ -722,6 +786,12 @@ def audit_cpu_transfer(
                     mujoco.mj_contactForce(model, data, c, contact_force)
                     index = contacts.index(other_body)
                     forces[index] = max(forces[index], float(np.linalg.norm(contact_force[:3])))
+        if "contact_exit_torque_mpc" in commitment:  # noqa: SIM102 - OFF-path projection
+            if chosen_forecast is not None:
+                actual_end = np.empty_like(chosen_forecast.end_integration_state)
+                mujoco.mj_getState(model, data, actual_end, mujoco.mjtState.mjSTATE_INTEGRATION)
+                if actual_end.tobytes() != chosen_forecast.end_integration_state.tobytes():
+                    raise ValueError("CPU chosen forecast and actual interval differ bitwise")
         equal(forces, trace["force_n"][frame, 0], "physical contacts")
         equal(data.xpos[ball], trace["ball_position_after_step_m"][frame, 0], "physical ball")
         replay_forces.append(forces)
@@ -1063,5 +1133,24 @@ def audit_cpu_transfer(
         }
         if owned:
             result["decoder_construction"]["canonical_preview_integrity_checked"] = True
+    if "contact_exit_torque_mpc" in commitment:
+        if replay_exit_teacher.counters() != report["contact_exit_mpc_counters"]:
+            raise ValueError("CPU teacher forecast accounting differs from producer")
+        result["contact_exit_torque_mpc_review"] = dict(
+            schema="soccer.rsi.contact_exit_torque_mpc_reconstruction.v1",
+            contract=commitment["contact_exit_torque_mpc"],
+            optimization_reconstructed_with_same_pinned_implementation=True,
+            independent_optimization_implementation=False,
+            frames_reconstructed=300,
+            planning_counters=replay_exit_teacher.counters(),
+            chosen_control_forecast_attempts=chosen_forecaster.forecast_attempts,
+            chosen_control_attempted_forecast_steps=chosen_forecaster.attempted_steps,
+            chosen_control_integrated_forecast_steps=chosen_forecaster.integrated_steps,
+            locally_bitexact_active_intervals=replay_active_intervals,
+            source_end_state_hash_matches=replay_source_end_hash_matches,
+            source_numeric_replay_tolerance=1e-8,
+            hardware_authorized=False,
+            promotion_authorized=False,
+        )
     result["report_hash"] = hash_json(result)
     return result

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 FLAG = "suppress_postcontact_swing_release"
+MPC_FLAG = "use_contact_exit_torque_mpc"
 
 
 def canonical(node):
@@ -28,7 +29,9 @@ def expression(source):
 class OffPath(ast.NodeTransformer):
     def visit_arguments(self, node):
         pairs = [
-            (a, d) for a, d in zip(node.kwonlyargs, node.kw_defaults, strict=True) if a.arg != FLAG
+            (a, d)
+            for a, d in zip(node.kwonlyargs, node.kw_defaults, strict=True)
+            if a.arg not in {FLAG, MPC_FLAG}
         ]
         node.kwonlyargs = [p[0] for p in pairs]
         node.kw_defaults = [p[1] for p in pairs]
@@ -40,6 +43,10 @@ class OffPath(ast.NodeTransformer):
             f"type({FLAG}) is not bool",
             f"('swing_release_ablation' in report) != {FLAG}",
             "'swing_release_ablation' in commitment",
+            MPC_FLAG,
+            f"type({MPC_FLAG}) is not bool",
+            f"('contact_exit_torque_mpc' in report) != {MPC_FLAG}",
+            "'contact_exit_torque_mpc' in commitment",
         }
         if ast.dump(node.test, include_attributes=False) in {expression(s) for s in known}:
             return [self.visit(n) for n in node.orelse]
@@ -49,7 +56,9 @@ class OffPath(ast.NodeTransformer):
         node.keywords = [
             k
             for k in node.keywords
-            if not (k.arg == FLAG and isinstance(k.value, ast.Name) and k.value.id == FLAG)
+            if not (
+                k.arg in {FLAG, MPC_FLAG} and isinstance(k.value, ast.Name) and k.value.id == k.arg
+            )
         ]
         return self.generic_visit(node)
 
@@ -71,6 +80,11 @@ class OffPath(ast.NodeTransformer):
             "cpu_motor_transfer_evidence.py",
             "validate_cpu_foundation_capture",
             "5786657a2b152aa467aaaf08b0878c9bed7198a7fc7e1d088db5215393b78f58",
+        ),
+        (
+            "cpu_motor_transfer_evidence.py",
+            "audit_cpu_transfer",
+            "9ac9a5c8052d4a143e95e635b8df94ab609e64f8c8b2512d5d1cbe67d9ab428d",
         ),
     ],
 )
