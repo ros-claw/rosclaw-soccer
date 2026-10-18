@@ -1,5 +1,31 @@
 # 持续实施机制：不把心跳当成学习
 
+## 10月19日01:23：真实三身体学生接口验证已启动，非训练成功
+
+冻结8044036c源码、新目录`rosclaw-soccer-reference-three-native-source-20261019`，
+`rosclaw-reference-student-three-native-20261019.service`于01:21:16
+启动，PID2976508，01:21:39进入历史完整模型读取。真实预检退出0，
+全ruff/compileall和418项相关回归通过；并非全量pytest全过。
+原16体PID2902997继续运行，不改它的40a9源码或dacc后继。
+
+固定三例为OFF、数值零GRU、左踝单头bias.2；原plan18 C6同初态/种子，
+新增18000身体子步预算。OFF全33数组必须先复现旧C6，否则不执行
+任何学生身体。前30帧一致性和四级控制传递均需独立审计。没有
+训练更新，不将数值探针称为小脑训练成果。详细固定协议见
+`reference-student-three-probe-20261019.zh-CN.md`。
+
+三例完整且实际进程正常退出之后，已enabled/active的
+`rosclaw-reference-student-three-audit-20261019.timer`会接续完整
+终态读回。外层启动/内层开始标记阻止失败后静默重试。observer
+同时观察两个真实worker；持久恢复指针已更新。初始化通常约18分钟，
+不能因为日志安静就重启，项目同时最多两个完整原生NN worker。
+
+平台active Goal负责Agent轮次持续推进；systemd负责已声明阶段接续；
+watcher只检查进程CPU和账本变化，不唤醒Agent也不作晋级判断。
+三者不能保证科研必然突破，不能将CPU心跳或无限循环当能力增长。
+下一步需按实际控制权与跨簇教师证据拟合学生、做自身身体闭环和
+旧技能保留评估，尚未达到球队展示目标，Goal保持active。
+
 ## 10月19日00:43：四簇整批审计后的密集后继已持久化排队
 
 PID2902997仍active，00:40:22已进入ALLOCATING_FIXED_MEAN，
