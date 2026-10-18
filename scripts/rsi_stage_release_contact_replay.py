@@ -1,0 +1,261 @@
+"""Once-only diagnostic succession after all four qualified release ablations.
+
+No candidate generation, NN, retry, budget extension or policy activation.
+Calls two independently frozen diagnostic programs, preserving all failures.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from rosclaw_soccer.sim.contracts import hash_json
+from scripts.rsi_atomic_artifacts import write_once
+
+JOBS = tuple(f"release-zero-{p}" for p in ("raw-8", "raw-56", "context-0", "context-1"))
+
+
+def digest(path):
+    with Path(path).open("rb") as stream:
+        return "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def require_terminal(unit):
+    status = subprocess.check_output(
+        [
+            "systemctl",
+            "--user",
+            "show",
+            unit,
+            "-p",
+            "MainPID",
+            "-p",
+            "LoadState",
+            "-p",
+            "ActiveState",
+            "-p",
+            "Result",
+        ],
+        text=True,
+    )
+    if set(status.splitlines()) != {
+        "MainPID=0",
+        "LoadState=loaded",
+        "ActiveState=inactive",
+        "Result=success",
+    }:
+        raise ValueError("both real loaded processes must terminate successfully")
+
+
+def require_four_endpoints(config, declaration, complete, readback):
+    if (
+        config.get("mode") != "SIM_ONLY"
+        or any(
+            config.get(k) is not False
+            for k in ("hardware_authorized", "promotion_authorized", "neural_training_authorized")
+        )
+        or config.get("max_attempts") != 4
+        or config.get("new_physical_budget") != 4
+        or config.get("suppress_postcontact_swing_release") is not True
+        or complete.get("schema") != "soccer.rsi.swing_release_ablation_pilot_complete.v1"
+        or readback.get("schema") != "soccer.rsi.swing_release_ablation_terminal_readback.v1"
+        or complete.get("declaration_hash") != declaration["report_hash"]
+        or readback.get("complete_hash") != complete["report_hash"]
+        or readback.get("source_native_bodies") != 4
+        or complete.get("native_substeps") != 12000
+        or complete.get("independent_cpu_substeps") != 12000
+        or complete.get("new_optimizer_updates") != 0
+        or tuple(j["job"] for j in declaration["jobs"]) != JOBS
+        or tuple(r["job"] for r in complete["results"]) != JOBS
+        or tuple(r["job"] for r in readback["rows"]) != JOBS
+        or any(
+            readback.get(k) is not True
+            for k in (
+                "whole_input_and_witness_files_verified",
+                "shared_payload_logical_seals_rebuilt",
+                "prior_independent_replays_authenticated",
+                "all_original_first_contact_prefixes_bit_equal",
+                "actual_postcontact_taskspace_increment_exactly_zero",
+            )
+        )
+        or any(
+            readback.get(k) is not False
+            for k in (
+                "teacher_qualified",
+                "hardware_authorized",
+                "promotion_authorized",
+            )
+        )
+        or [r["receipt_hash"] for r in complete["results"]]
+        != [r["receipt_hash"] for r in readback["rows"]]
+        or [r["outcome"] for r in complete["results"]] != [r["outcome"] for r in readback["rows"]]
+    ):
+        raise ValueError(
+            "all four fixed outcomes, including failures, need their whole terminal audit"
+        )
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, required=True)
+    args = parser.parse_args()
+    cfg = json.loads(args.config.read_text())
+    if time.time() >= cfg["deadline_unix"] or cfg["new_substep_budget"] != 12000:
+        raise ValueError("original bounded 12000-step diagnostic budget and deadline required")
+    start = Path(cfg["started_path"])
+    if any(
+        Path(cfg[k]).exists()
+        for k in (
+            "started_path",
+            "complete_path",
+            "replay_config",
+            "replay_output_root",
+            "metrics_output",
+        )
+    ):
+        raise ValueError("unused once-only stage artifacts required")
+    for unit in (cfg["producer_unit"], cfg["audit_unit"]):
+        require_terminal(unit)
+    pins = {str(args.config): digest(args.config)}
+    for name in ("stage", "replay", "metrics"):
+        source = Path(cfg[name + "_source"])
+        if (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+            != cfg[name + "_head"]
+            or subprocess.check_output(
+                ["git", "status", "--porcelain"], cwd=source, text=True
+            ).strip()
+        ):
+            raise ValueError("all three distinct diagnostic source checkouts must remain frozen")
+        for folder in (source / "src", source / "scripts"):
+            pins.update({str(p): digest(p) for p in folder.rglob("*.py")})
+    if (
+        Path(__file__).resolve()
+        != Path(cfg["stage_source"]) / "scripts/rsi_stage_release_contact_replay.py"
+    ):
+        raise ValueError("stage must execute its own declared source")
+
+    def sealed(path, key="report_hash"):
+        value = json.loads(Path(path).read_text())
+        if value[key] != hash_json({k: v for k, v in value.items() if k != key}):
+            raise ValueError("original document seal changed")
+        pins[str(path)] = digest(path)
+        return value
+
+    producer = json.loads(Path(cfg["producer_config"]).read_text())
+    pins[cfg["producer_config"]] = digest(cfg["producer_config"])
+    root = Path(producer["output_root"])
+    declaration = sealed(root / "declaration.json")
+    complete = sealed(root / "complete.json")
+    readback = sealed(Path(cfg["readback"]))
+    require_four_endpoints(producer, declaration, complete, readback)
+    if readback["reader_source_hash"] != digest(cfg["audit_source"]):
+        raise ValueError("exact independently frozen terminal reader required")
+    pins[cfg["audit_source"]] = digest(cfg["audit_source"])
+    cases = []
+    for index, job in enumerate(JOBS):
+        path = root / f"receipt-{index:04d}.json"
+        receipt = sealed(path, "receipt_hash")
+        if receipt != complete["results"][index]:
+            raise ValueError("whole completed study must bind the original receipt bytes")
+        cases.append(
+            dict(
+                case_id=job.replace("-", "_"),
+                receipt_path=str(path),
+                receipt_file_hash=digest(path),
+                receipt_hash=receipt["receipt_hash"],
+            )
+        )
+    replay_cfg = dict(
+        source_head=cfg["replay_head"],
+        output_root=cfg["replay_output_root"],
+        new_replay_budget=4,
+        new_substep_budget=12000,
+        cases=cases,
+        world_hash=producer["mesh_task_contact_world_hash"],
+        mujoco_version="3.12.0",
+        source_terminal_readback_hash=readback["report_hash"],
+        hardware_authorized=False,
+        promotion_authorized=False,
+        neural_training_authorized=False,
+    )
+    write_once(
+        start,
+        dict(
+            schema="soccer.rsi.release_contact_diagnostic_started.v1",
+            input_file_hashes=pins,
+            upstream_readback_hash=readback["report_hash"],
+            automatic_retry_authorized=False,
+            new_physical_substep_budget=12000,
+        ),
+    )
+    write_once(Path(cfg["replay_config"]), replay_cfg)
+
+    def child(source_key, script, arguments):
+        source = Path(cfg[source_key + "_source"])
+        environment = dict(
+            os.environ,
+            PYTHONPATH=os.pathsep.join(
+                (str(source / "src"), str(source), str(Path(producer["core_root"]) / "src"))
+            ),
+        )
+        subprocess.run(
+            [sys.executable, str(source / "scripts" / script), *arguments],
+            cwd=source,
+            env=environment,
+            check=True,
+            timeout=1200,
+        )
+
+    try:
+        child("replay", "rsi_replay_first_touch_contacts.py", ["--config", cfg["replay_config"]])
+        child(
+            "metrics",
+            "rsi_read_contact_exit_metrics.py",
+            [
+                "--replay-complete",
+                str(Path(cfg["replay_output_root"]) / "complete.json"),
+                "--replay-complete",
+                cfg["prior_replay_complete"],
+                "--output",
+                cfg["metrics_output"],
+            ],
+        )
+        replay = sealed(Path(cfg["replay_output_root"]) / "complete.json")
+        metrics = sealed(Path(cfg["metrics_output"]))
+        if any(digest(p) != h for p, h in pins.items()):
+            raise ValueError("stage/source/input bytes changed")
+        result = dict(
+            schema="soccer.rsi.release_contact_diagnostic_complete.v1",
+            upstream_readback_hash=readback["report_hash"],
+            replay_complete_hash=replay["report_hash"],
+            metrics_hash=metrics["report_hash"],
+            new_fixed_control_replay_substeps=12000,
+            new_closed_loop_policy_trials=0,
+            new_neural_inferences=0,
+            new_optimizer_updates=0,
+            hardware_authorized=False,
+            promotion_authorized=False,
+        )
+        result["report_hash"] = hash_json(result)
+        write_once(Path(cfg["complete_path"]), result)
+        print("RELEASE_CONTACT_DIAGNOSTIC_COMPLETE", result["report_hash"], flush=True)
+    except BaseException as error:
+        write_once(
+            start.with_suffix(".failure.json"),
+            dict(
+                type=type(error).__name__,
+                message=str(error),
+                automatic_retry_authorized=False,
+                hardware_authorized=False,
+            ),
+        )
+        raise
+
+
+if __name__ == "__main__":
+    main()
