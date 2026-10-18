@@ -15,6 +15,30 @@ def digest(path):
 
 
 def bounded_profile(profile):
+    if profile == "surface-seven":
+        spec = bounded_profile("release-four")
+        rows = [dict(j, job="surface-" + j["pair_id"], role="teacher") for j in spec["jobs"]]
+        rows += [
+            dict(
+                job=f"surface-raw-{g}",
+                role="teacher",
+                pair_id=f"raw-{g}",
+                context_index=None,
+                group=g,
+                option_index=4,
+            )
+            for g in (4, 32)
+        ]
+        spec.update(
+            count=7,
+            groups=[8, 56, 64, 65, 4, 32],
+            declaration_schema="soccer.rsi.mesh_surface_swing_pilot_declaration.v1",
+            complete_schema="soccer.rsi.mesh_surface_swing_pilot_complete.v1",
+            readback_schema="soccer.rsi.mesh_surface_swing_terminal_readback.v1",
+            phase="MESH_SURFACE_SWING_COMPLETE_NOT_QUALIFIED_TEACHER",
+            jobs=[dict(rows[0], job="surface-off-raw-8", role="noninterference"), *rows],
+        )
+        return spec
     if profile == "directional-four":
         spec = bounded_profile("release-four")
         spec.update(
@@ -182,6 +206,68 @@ def verify_release_prefix(trace, original_trace, original_outcome, outcome, pref
         raise ValueError("prefix witness must bind the actual original array bytes")
 
 
+def verify_surface_prefix(trace, original_trace, prefix, baseline_hash, *, enabled):
+    import numpy as np
+
+    from rosclaw_soccer.sim.contracts import hash_bytes
+
+    extra = {"mesh_surface_swing_record"} if enabled else set()
+    if set(trace) != set(original_trace) | extra:
+        raise ValueError("surface study may only add its one declared record")
+    active = np.flatnonzero(trace["mesh_surface_swing_record"][:, 0, 2] == 1) if enabled else []
+    cutoff = int(active[0]) if len(active) else 300
+    if not 30 <= cutoff <= 300 or any(
+        trace[k].dtype != v.dtype
+        or trace[k].shape != v.shape
+        or trace[k][:cutoff].tobytes() != v[:cutoff].tobytes()
+        for k, v in original_trace.items()
+    ):
+        raise ValueError("all original arrays before surface activation must be bit-exact")
+    if (
+        prefix.get("schema") != "soccer.rsi.surface_pre_activation_prefix_parity.v1"
+        or prefix.get("baseline_receipt_hash") != baseline_hash
+        or prefix.get("prefix_frames") != cutoff
+        or prefix.get("all_original_array_prefixes_bit_equal") is not True
+        or prefix.get("prefix_array_hashes")
+        != {k: hash_bytes(trace[k][:cutoff].tobytes()) for k in sorted(original_trace)}
+    ):
+        raise ValueError("surface prefix witness must bind every original array")
+
+
+def verify_surface_reconstruction(report, commitment, receipt, review, source, trace):
+    from rosclaw_soccer.sim.contracts import hash_json
+
+    contract = commitment["mesh_surface_swing"]
+    r = review.get("mesh_surface_swing_review", {})
+    if (
+        receipt.get("mesh_surface_swing") != contract
+        or contract.get("contract_hash")
+        != hash_json({k: v for k, v in contract.items() if k != "contract_hash"})
+        or contract.get("source_hashes")
+        != {
+            k: digest(source / "src/rosclaw_soccer" / p)
+            for k, p in dict(
+                adapter="rsi/mesh_surface_swing_probe.py",
+                solver="rsi/mesh_surface_swing.py",
+                geometry="physics/convex_surface_distance.py",
+            ).items()
+        }
+        or r.get("schema") != "soccer.rsi.mesh_surface_swing_reconstruction.v1"
+        or r.get("contract") != contract
+        or r.get("frames_reconstructed") != 300
+        or type(r.get("active_frames")) is not int
+        or not 0 <= r["active_frames"] <= 270
+        or r["active_frames"] != int(trace["mesh_surface_swing_record"][:, 0, 2].sum())
+        or r.get("reconstruction_uses_same_pinned_geometry_and_ik") is not True
+        or r.get("independent_ik_implementation") is not False
+        or r.get("side_and_release_reconstructed_from_replayed_history") is not True
+        or r.get("source_numeric_replay_tolerance") != 1e-8
+        or any(r.get(k) is not False for k in ("hardware_authorized", "promotion_authorized"))
+        or report.get("mesh_surface_swing") != contract
+    ):
+        raise ValueError("source-bound causal surface reconstruction and honest scope required")
+
+
 def verify_contact_exit_reconstruction(report, commitment, receipt, review, source):
     """Authenticate original replay evidence; this reader performs no physics."""
     contract = commitment["contact_exit_torque_mpc"]
@@ -277,6 +363,7 @@ def main():
             "release-four",
             "contact-exit-four",
             "directional-four",
+            "surface-seven",
         ),
         default="contact-three",
     )
@@ -285,7 +372,13 @@ def main():
     teacher_screen = args.profile == "teacher-eighteen"
     torque_mpc = args.profile == "contact-exit-four"
     directional = args.profile == "directional-four"
-    release_ablation = args.profile in {"release-four", "contact-exit-four", "directional-four"}
+    surface = args.profile == "surface-seven"
+    release_ablation = args.profile in {
+        "release-four",
+        "contact-exit-four",
+        "directional-four",
+        "surface-seven",
+    }
     context_study = teacher_screen or release_ablation
     spec = (
         bounded_profile(args.profile)
@@ -297,6 +390,7 @@ def main():
             "release-four",
             "contact-exit-four",
             "directional-four",
+            "surface-seven",
         )
         else None
     )
@@ -436,13 +530,18 @@ def main():
         args.upstream_audit_source is None
         or args.baseline_screen_readback is None
         or args.baseline_screen_audit_source is None
-        or config.get("suppress_postcontact_swing_release") is not (not (torque_mpc or directional))
+        or config.get("suppress_postcontact_swing_release")
+        is not (not (torque_mpc or directional or surface))
         or config.get("use_contact_exit_torque_mpc", False) is not torque_mpc
         or config.get("use_directional_contact_compliance", False) is not directional
+        or config.get("use_mesh_surface_swing", False) is not surface
         or config.get("selected_option_index") != 4
         or config.get("upstream_terminal_audit_required") is not True
-        or complete.get("independent_course_count") != 4
-        or complete.get("paired_endpoint_count") != 8
+        or complete.get("independent_course_count") != (6 if surface else 4)
+        or complete.get("paired_endpoint_count") != (12 if surface else 8)
+        or len(config.get("baseline_receipts", [])) != (6 if surface else 4)
+        or [i["pair_id"] for i in config["baseline_receipts"]]
+        != [j["pair_id"] for j in (spec["jobs"][1:] if surface else spec["jobs"])]
         or complete.get("reused_endpoints") != declaration.get("reused_endpoints")
         or set(config.get("required_receipt_witnesses", []))
         != {"intent_witness", "encoder_witness", "prefix_witness"}
@@ -569,6 +668,7 @@ def main():
                 "release-four",
                 "contact-exit-four",
                 "directional-four",
+                "surface-seven",
             )
             and declaration["options"] != catalog
         ):
@@ -679,7 +779,18 @@ def main():
                 require_zero_postcontact_swing,
             )
 
-            if directional:
+            if surface:
+                if spec["jobs"][index]["role"] != "noninterference":
+                    from rosclaw_soccer.rsi.mesh_surface_swing_evidence import (
+                        require_surface_swing_capture,
+                    )
+
+                    require_surface_swing_capture(report, commitment, trace)
+                elif "mesh_surface_swing" in commitment or "mesh_surface_swing" in receipt:
+                    raise ValueError(
+                        "disabled source noninterference body may not enable new control"
+                    )
+            elif directional:
                 from rosclaw_soccer.rsi.directional_compliance_evidence import (
                     require_directional_capture,
                 )
@@ -706,7 +817,15 @@ def main():
                 ):
                     raise ValueError("actual report, commitment and receipt must bind intervention")
                 require_zero_postcontact_swing(commitment, trace)
-            baseline_item = config["baseline_receipts"][index]
+            baseline_item = (
+                next(
+                    i
+                    for i in config["baseline_receipts"]
+                    if i["pair_id"] == spec["jobs"][index]["pair_id"]
+                )
+                if surface
+                else config["baseline_receipts"][index]
+            )
             baseline = sealed(Path(baseline_item["path"]), "receipt_hash")
             if (
                 baseline_item["pair_id"] != spec["jobs"][index]["pair_id"]
@@ -743,19 +862,35 @@ def main():
                         "only declared contact-exit capture may extend original arrays"
                     )
                 prefix_trace = {k: trace[k] for k in original_trace if k in trace}
-            verify_release_prefix(
-                prefix_trace,
-                original_trace,
-                baseline["outcome"],
-                outcome,
-                prefix,
-                baseline["receipt_hash"],
-            )
+            if surface:
+                verify_surface_prefix(
+                    trace,
+                    original_trace,
+                    prefix,
+                    baseline["receipt_hash"],
+                    enabled=spec["jobs"][index]["role"] != "noninterference",
+                )
+                if (
+                    spec["jobs"][index]["role"] == "noninterference"
+                    and outcome.to_dict() != baseline["outcome"]
+                ):
+                    raise ValueError("disabled complete outcome must match original baseline")
+            else:
+                verify_release_prefix(
+                    prefix_trace,
+                    original_trace,
+                    baseline["outcome"],
+                    outcome,
+                    prefix,
+                    baseline["receipt_hash"],
+                )
         review = sealed(Path(witnesses["independent_review"]["path"]))
         if torque_mpc:
             verify_contact_exit_reconstruction(report, commitment, receipt, review, source)
         if directional:
             verify_directional_reconstruction(report, commitment, receipt, review, source)
+        if surface and spec["jobs"][index]["role"] != "noninterference":
+            verify_surface_reconstruction(report, commitment, receipt, review, source, trace)
         foundation = sealed(Path(witnesses["foundation_review"]["path"]))
         alignment = require_first_touch_qualification(review, foundation, outcome)
         if spec is not None and (
@@ -1121,7 +1256,11 @@ def main():
                 prior_complete, prior_audit, prior_index = (
                     (catalog_complete, upstream, 8 + index)
                     if index < 2
-                    else (screen_complete, screen, 1 if index == 2 else 3)
+                    else (
+                        screen_complete,
+                        screen,
+                        (1, 3, 16, 17)[index - 2] if surface else 1 if index == 2 else 3,
+                    )
                 )
                 if prior != prior_complete["results"][prior_index] or not any(
                     row["job"] == prior["job"]
@@ -1130,13 +1269,15 @@ def main():
                     for row in prior_audit["rows"]
                 ):
                     raise ValueError("exact baseline endpoint must belong to its terminal audit")
-                job = spec["jobs"][index]
+                job = spec["jobs"][index + 1 if surface else index]
                 if (
                     item["pair_id"] != job["pair_id"]
                     or prior["candidate"] != catalog[4]
                     or prior["group"] != job["group"]
                     or prior.get("planning_context_hash")
-                    != complete["results"][index].get("planning_context_hash")
+                    != complete["results"][index + 1 if surface else index].get(
+                        "planning_context_hash"
+                    )
                 ):
                     raise ValueError("same option4 and course, not a substituted baseline required")
                 reused.append(dict(role="control", pair_id=item["pair_id"], receipt=prior))
@@ -1146,22 +1287,55 @@ def main():
                 )
             paired = assess_pairs(
                 {r["pair_id"]: r["receipt"]["outcome"] for r in reused},
-                {j["pair_id"]: r["outcome"] for j, r in zip(spec["jobs"], rows, strict=True)},
+                {
+                    j["pair_id"]: r["outcome"]
+                    for j, r in zip(
+                        spec["jobs"][1:] if surface else spec["jobs"],
+                        rows[1:] if surface else rows,
+                        strict=True,
+                    )
+                },
             )
             if paired != complete["paired_development"]:
                 raise ValueError("complete independently reconstructed four-course pairing differs")
             report.update(
                 paired_development=paired,
-                reused_endpoint_count=4,
-                independent_course_count=4,
-                paired_endpoint_count=8,
-                all_original_first_contact_prefixes_bit_equal=True,
+                reused_endpoint_count=6 if surface else 4,
+                independent_course_count=6 if surface else 4,
+                paired_endpoint_count=12 if surface else 8,
                 optimized_recovery_claimed=False,
                 reused_endpoints_authenticated_via_prior_complete_terminal_readbacks=True,
                 reused_endpoint_physics_rerun_here=False,
                 upstream_terminal_readback_hash=upstream["report_hash"],
                 baseline_screen_terminal_readback_hash=screen["report_hash"],
             )
+            if surface:
+                raw_evaluations = {
+                    j["pair_id"]: r["outcome"]
+                    for j, r in zip(spec["jobs"][1:], rows[1:], strict=True)
+                    if j["context_index"] is None
+                }
+                retention = assess_pairs(
+                    {f"raw-{g}": references[g]["outcome"] for g in (4, 8, 32, 56)},
+                    raw_evaluations,
+                )
+                if (
+                    retention != complete.get("original_none_raw_retention")
+                    or complete.get("disabled_complete_300_frame_noninterference_verified")
+                    is not True
+                ):
+                    raise ValueError(
+                        "original None raw retention and actual disabled noninterference required"
+                    )
+                report.update(
+                    original_none_raw_retention=retention,
+                    all_original_pre_activation_prefixes_bit_equal=True,
+                    disabled_complete_300_frame_noninterference_verified=True,
+                    geometry_and_ik_reconstruction_uses_same_pinned_implementation=True,
+                    independent_ik_implementation=False,
+                )
+            else:
+                report["all_original_first_contact_prefixes_bit_equal"] = True
             if torque_mpc or directional:
                 totals = dict(
                     native_forecast_substeps=0,
@@ -1191,7 +1365,7 @@ def main():
                 else:
                     report["gain_law_reconstruction_uses_same_pinned_implementation"] = True
                     report["independent_gain_law_implementation"] = False
-            else:
+            elif not surface:
                 report["actual_postcontact_taskspace_increment_exactly_zero"] = True
         elif teacher_screen:
             from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs

@@ -1,7 +1,9 @@
-"""Four full-loop postcontact release ablations with exact first-contact prefixes.
+"""Bounded full-loop SIM controls with complete original endpoint comparisons.
 
-No neural learning, trajectory repair, parameter sweep or automatic admission.
-All failures and the four original endpoints remain explicitly bound.
+Four-case release/MPC/compliance studies retain first-contact prefixes. The
+separate seven-body surface study verifies disabled full parity first, then
+six precontact controls with parity before their first activation. No learning,
+trajectory repair, parameter sweep or automatic admission. All failures stay.
 """
 
 import argparse
@@ -57,6 +59,23 @@ def require_original_prefix(trace, baseline_trace, cutoff):
         raise ValueError("all original arrays through first contact must be bit-exact")
 
 
+def declared_surface_jobs(contexts):
+    original = declared_jobs(contexts)
+    rows = [dict(j, job="surface-" + j["pair_id"], role="teacher") for j in original]
+    rows += [
+        dict(
+            job=f"surface-raw-{g}",
+            role="teacher",
+            pair_id=f"raw-{g}",
+            context_index=None,
+            group=g,
+            option_index=4,
+        )
+        for g in (4, 32)
+    ]
+    return [dict(rows[0], job="surface-off-raw-8", role="noninterference"), *rows]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -65,14 +84,18 @@ def main():
     cfg = json.loads(args.config.read_text())
     torque_mpc = cfg.get("use_contact_exit_torque_mpc", False)
     directional = cfg.get("use_directional_contact_compliance", False)
+    surface = cfg.get("use_mesh_surface_swing", False)
     if (
         type(torque_mpc) is not bool
         or type(directional) is not bool
-        or (torque_mpc and directional)
+        or type(surface) is not bool
+        or sum((torque_mpc, directional, surface)) > 1
     ):
         raise ValueError("explicit boolean diagnostic selection required")
     study_kind = (
-        "directional_contact_compliance"
+        "mesh_surface_swing"
+        if surface
+        else "directional_contact_compliance"
         if directional
         else "contact_exit_torque_mpc"
         if torque_mpc
@@ -81,15 +104,16 @@ def main():
     source, core, root = (Path(cfg[k]) for k in ("source_root", "core_root", "output_root"))
     if (
         root.exists()
-        or cfg["max_attempts"] != 4
-        or cfg["new_physical_budget"] != 4
+        or cfg["max_attempts"] != (7 if surface else 4)
+        or cfg["new_physical_budget"] != (7 if surface else 4)
         or cfg["neural_training_authorized"] is not False
         or cfg["selected_option_index"] != 4
         or cfg.get("generated_seed_episode_binding") is not False
         or cfg.get("predecessor") is not None
         or cfg["upstream_terminal_audit_required"] is not True
         or cfg["teacher_auto_admission"] is not False
-        or cfg.get("suppress_postcontact_swing_release") is not (not (torque_mpc or directional))
+        or cfg.get("suppress_postcontact_swing_release")
+        is not (not (torque_mpc or directional or surface))
         or set(cfg.get("required_receipt_witnesses", []))
         != {"intent_witness", "encoder_witness", "prefix_witness"}
         or Path(__file__).resolve() != source / "scripts/rsi_swing_release_ablation_pilot.py"
@@ -157,6 +181,8 @@ def main():
     for context in contexts:
         validate_context_source(context, plan, group=context.source_group)
     jobs = declared_jobs(contexts)
+    if surface:
+        jobs = declared_surface_jobs(contexts)
     if torque_mpc:
         if cfg.get("maximum_forecast_steps_per_episode") != 6000:
             raise ValueError("fixed bounded contact-exit planning budget required")
@@ -196,14 +222,16 @@ def main():
             raise ValueError("original numerical anchors must remain None")
         authenticate_receipt(receipt)
     baselines = {}
-    if len(cfg["baseline_receipts"]) != 4:
+    if len(cfg["baseline_receipts"]) != (6 if surface else 4):
         raise ValueError("all four predeclared passing and unsafe baseline endpoints required")
-    for item, job in zip(cfg["baseline_receipts"], jobs, strict=True):
+    for item, job in zip(cfg["baseline_receipts"], jobs[1:] if surface else jobs, strict=True):
         path = Path(item["path"])
         receipt = json.loads(path.read_text())
         context = None if job["context_index"] is None else contexts[job["context_index"]]
         expected_job = (
             f"option-4-raw-{job['group']}"
+            if job["group"] in (8, 56)
+            else f"teacher-raw-{job['group']}"
             if context is None
             else f"teacher-context-{job['context_index']}"
         )
@@ -224,7 +252,9 @@ def main():
         with np.load(receipt["witnesses"]["trace"]["path"], allow_pickle=False) as archive:
             force = archive["force_n"][:, 0]
         first = np.flatnonzero(np.any(force > 1, axis=1))
-        if not len(first) or int(first[0]) != receipt["outcome"]["first_foot_contact_frame"]:
+        if not surface and (
+            not len(first) or int(first[0]) != receipt["outcome"]["first_foot_contact_frame"]
+        ):
             raise ValueError("baseline must have an observed foot-first contact for this ablation")
         commitment = json.loads(Path(receipt["witnesses"]["commitment"]["path"]).read_text())
         if "swing_release_ablation" in commitment:
@@ -248,7 +278,12 @@ def main():
         pins[cfg[key]] = digest(cfg[key])
     p.stable()
     if args.preflight:
-        print(study_kind.upper(), "4_JOBS_4_ORIGINAL_BASELINES_ZERO_MODEL_ALLOCATIONS", flush=True)
+        print(
+            study_kind.upper(),
+            len(jobs),
+            "JOBS_ORIGINAL_BASELINES_ZERO_MODEL_ALLOCATIONS",
+            flush=True,
+        )
         return
     status = dict(
         line.split("=", 1)
@@ -291,10 +326,14 @@ def main():
         prepared_pins=dict(p.PINS),
         source_heads=dict(p.HEADS),
         numerical_world_review=binding,
-        new_native_bodies=4,
-        independent_course_count=4,
-        paired_endpoint_count=8,
-        selection_scope="four fixed consumed candidate4 endpoints, including unsafe failure",
+        new_native_bodies=len(jobs),
+        independent_course_count=6 if surface else 4,
+        paired_endpoint_count=12 if surface else 8,
+        selection_scope=(
+            "six consumed option4 endpoints plus one disabled noninterference body"
+            if surface
+            else "four fixed consumed candidate4 endpoints, including unsafe failure"
+        ),
         teacher_qualified=False,
     )
     declaration["report_hash"] = hash_json(declaration)
@@ -346,20 +385,37 @@ def main():
                 mesh_world_review=review,
                 planning_context=context,
                 planning_stage="SELECTED_OPTION_EVALUATION" if context else "PLANNING_SIMULATION",
-                suppress_postcontact_swing_release=not (torque_mpc or directional),
+                suppress_postcontact_swing_release=not (torque_mpc or directional or surface),
                 use_contact_exit_torque_mpc=torque_mpc,
                 use_directional_contact_compliance=directional,
+                use_mesh_surface_swing=surface and job["role"] != "noninterference",
             )
             with np.load(folder / "physical_trace.npz", allow_pickle=False) as archive:
                 trace = dict(archive)
             baseline = baselines[job["pair_id"]]
-            cutoff = baseline["outcome"]["first_foot_contact_frame"] + 1
+            cutoff = 300 if surface else baseline["outcome"]["first_foot_contact_frame"] + 1
+            if surface:
+                if job["role"] == "noninterference":
+                    cutoff = 300
+                    if receipt["outcome"] != baseline["outcome"]:
+                        raise ValueError(
+                            "disabled new source must preserve original complete outcome"
+                        )
+                else:
+                    active = np.flatnonzero(trace["mesh_surface_swing_record"][:, 0, 2] == 1)
+                    cutoff = int(active[0]) if len(active) else 300
             with np.load(baseline["witnesses"]["trace"]["path"], allow_pickle=False) as archive:
                 baseline_trace = dict(archive)
                 original_trace = {k: v for k, v in trace.items() if k in baseline_trace}
-                if torque_mpc or directional:
+                if torque_mpc or directional or surface:
                     new_fields = (
-                        {
+                        (
+                            {"mesh_surface_swing_record"}
+                            if job["role"] != "noninterference"
+                            else set()
+                        )
+                        if surface
+                        else {
                             "contact_exit_mpc_requested_offset_nm",
                             "contact_exit_mpc_applied_offset_nm",
                             "contact_exit_mpc_forecast_steps",
@@ -377,10 +433,12 @@ def main():
                 elif set(trace) != set(baseline_trace):
                     raise ValueError("ablation may not add capture fields")
                 require_original_prefix(original_trace, baseline_trace, cutoff)
-            if receipt["outcome"]["first_foot_contact_frame"] != cutoff - 1:
+            if not surface and receipt["outcome"]["first_foot_contact_frame"] != cutoff - 1:
                 raise ValueError("postcontact ablation cannot change the original first contact")
             prefix = dict(
-                schema="soccer.rsi.first_contact_prefix_parity.v1",
+                schema="soccer.rsi.surface_pre_activation_prefix_parity.v1"
+                if surface
+                else "soccer.rsi.first_contact_prefix_parity.v1",
                 baseline_receipt_hash=baseline["receipt_hash"],
                 prefix_frames=cutoff,
                 prefix_array_hashes={
@@ -414,9 +472,10 @@ def main():
             write_once(root / f"receipt-{attempt:04d}.json", receipt)
             campaign.complete(job["job"], receipt)
             results.append(receipt)
-            (controls if job["role"] == "control" else evaluations)[job["pair_id"]] = receipt[
-                "outcome"
-            ]
+            if job["role"] != "noninterference":
+                (controls if job["role"] == "control" else evaluations)[job["pair_id"]] = receipt[
+                    "outcome"
+                ]
             print(study_kind.upper(), "BODY_COMMITTED", job["job"], receipt["outcome"], flush=True)
             del trace, report
             gc.collect()
@@ -430,11 +489,11 @@ def main():
             results=results,
             reused_endpoints=reused,
             paired_development=paired,
-            new_native_bodies=4,
-            native_substeps=12000,
-            independent_cpu_substeps=12000,
-            independent_course_count=4,
-            paired_endpoint_count=8,
+            new_native_bodies=len(jobs),
+            native_substeps=3000 * len(jobs),
+            independent_cpu_substeps=3000 * len(jobs),
+            independent_course_count=6 if surface else 4,
+            paired_endpoint_count=12 if surface else 8,
             new_optimizer_updates=0,
             teacher_qualified=False,
             independent_terminal_readback_required=True,
@@ -442,6 +501,12 @@ def main():
             hardware_authorized=False,
             promotion_authorized=False,
         )
+        if surface:
+            complete["original_none_raw_retention"] = assess_pairs(
+                {f"raw-{g}": references[g]["outcome"] for g in (4, 8, 32, 56)},
+                {f"raw-{g}": evaluations[f"raw-{g}"] for g in (4, 8, 32, 56)},
+            )
+            complete["disabled_complete_300_frame_noninterference_verified"] = True
         if torque_mpc or directional:
             complete["native_forecast_substeps"] = sum(
                 row["forecast_physical_substeps"] for row in results
@@ -464,7 +529,9 @@ def main():
         complete["report_hash"] = hash_json(complete)
         write_once(root / "complete.json", complete)
         phase(
-            "DIRECTIONAL_CONTACT_COMPLIANCE_COMPLETE_NOT_QUALIFIED_TEACHER"
+            "MESH_SURFACE_SWING_COMPLETE_NOT_QUALIFIED_TEACHER"
+            if surface
+            else "DIRECTIONAL_CONTACT_COMPLIANCE_COMPLETE_NOT_QUALIFIED_TEACHER"
             if directional
             else "CONTACT_EXIT_TORQUE_MPC_COMPLETE_NOT_QUALIFIED_TEACHER"
             if torque_mpc

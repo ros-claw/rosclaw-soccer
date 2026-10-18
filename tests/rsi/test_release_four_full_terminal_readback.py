@@ -22,19 +22,50 @@ from tests.rsi.test_mesh_contact_terminal_readback import write
 from tests.rsi.test_mesh_teacher_terminal_readback import expanded_fixture
 
 
-def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional=False):
+def fixture(
+    tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional=False, surface=False
+):
     expanded_fixture(tmp_path, monkeypatch)
     prepared, _, manifest, config = first_touch_campaign_worker.prepare(None)
     screen_root = tmp_path / "teacher"
     templates = [
-        json.loads((screen_root / f"receipt-{i:04d}.json").read_text()) for i in (16, 17, 1, 3)
+        json.loads((screen_root / f"receipt-{i:04d}.json").read_text())
+        for i in ((16, 17, 1, 3, 16, 17) if surface else (16, 17, 1, 3))
     ]
     root = tmp_path / "release"
     root.mkdir()
     profile = (
-        "directional-four" if directional else "contact-exit-four" if torque_mpc else "release-four"
+        "surface-seven"
+        if surface
+        else "directional-four"
+        if directional
+        else "contact-exit-four"
+        if torque_mpc
+        else "release-four"
     )
     spec = audit.bounded_profile(profile)
+    if surface:
+        from tests.rsi.test_mesh_surface_swing_evidence import capture as surface_capture
+
+        surface_contract = surface_capture()[1]["mesh_surface_swing"]
+        source = Path(config["source_root"])
+        source_files = dict(
+            adapter="rsi/mesh_surface_swing_probe.py",
+            solver="rsi/mesh_surface_swing.py",
+            geometry="physics/convex_surface_distance.py",
+        )
+        for name in source_files.values():
+            path = source / "src/rosclaw_soccer" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("# synthetic surface source, not physical validation\n")
+        surface_contract.update(
+            world_hash=config["mesh_task_contact_world_hash"],
+            source_hashes={
+                k: audit.digest(source / "src/rosclaw_soccer" / p) for k, p in source_files.items()
+            },
+        )
+        surface_contract.pop("contract_hash")
+        surface_contract["contract_hash"] = hash_json(surface_contract)
     if torque_mpc or directional:
         if directional:
             from tests.rsi.test_directional_compliance_evidence import capture
@@ -83,14 +114,15 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
     plan = PublicFirstTouchTrainingPlan(tuple(range(20261060, 20261070)), "sha256:" + "a" * 64, 18)
 
     def endpoint(index, *, ablated=False, declaration=None, baseline=None):
-        job = spec["jobs"][index]
-        r = copy.deepcopy(templates[index])
+        job = spec["jobs"][index + 1 if surface and not ablated else index]
+        template_index = max(index - 1, 0) if surface and ablated else index
+        r = copy.deepcopy(templates[template_index])
         folder = root / (f"new-{index}" if ablated else f"baseline-{index}")
         folder.mkdir()
         with np.load(r["witnesses"]["trace"]["path"], allow_pickle=False) as archive:
             trace = dict(archive)
         trace["force_n"][74, 0, 0] = 20
-        if index == 2:
+        if job["pair_id"] == "context-0":
             trace["force_n"][99, 0, 4] = 20
         else:
             trace["ball_position_after_step_m"][134, 0, 0] = 2
@@ -108,7 +140,7 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
             for key in ("joint_target_rad", "joint_position_rad", "joint_velocity_rad_s"):
                 trace[key] = mpc_trace[key].copy()
         draw = plan.draws()[job["group"]]
-        if index < 2:
+        if job["context_index"] is None:
             c["executed_motor_policy"]["step_motor_proof"]["model"]["seed"] = draw.sampling_seed
             trace["canonical_qpos"][0, 0, 36:43] = (*draw.course[:2], 0.13, 1, 0, 0, 0)
             trace["canonical_qvel"][0, 0, 35:41] = (
@@ -121,7 +153,7 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
             )
             r.pop("planning_context_hash", None)
         if ablated:
-            if not (torque_mpc or directional):
+            if not (torque_mpc or directional or surface):
                 trace["taskspace_joint_increment_rad"][75:] = 0
             if tamper == "postcontact_nonzero" and index == 0:
                 trace["taskspace_joint_increment_rad"][76] = 0.01
@@ -129,7 +161,24 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
                 foundation_observation_capture=dict(synthetic=True),
                 execution_profile="taskspace_plus_motor",
             )
-            if torque_mpc or directional:
+            if surface:
+                c["default_locomotion_reference_capture"] = dict(synthetic=True)
+                if job["role"] != "noninterference":
+                    from rosclaw_soccer.rsi.mesh_surface_swing_probe import (
+                        inactive_surface_probe_record,
+                    )
+
+                    trace["mesh_surface_swing_record"] = np.stack(
+                        [inactive_surface_probe_record(f) for f in range(300)]
+                    )[:, None]
+                    trace["mesh_surface_swing_record"][40, 0, 1:3] = [0, 1]
+                    c["mesh_surface_swing"] = surface_contract
+                    r["mesh_surface_swing"] = surface_contract
+                    if tamper == "surface_nonfoot_active":
+                        trace["mesh_surface_swing_record"][100, 0, 1:3] = [0, 1]
+                elif tamper == "surface_disabled_enabled":
+                    c["mesh_surface_swing"] = surface_contract
+            elif torque_mpc or directional:
                 c[contract_key] = contract
                 trace.update({k: v.copy() for k, v in mpc_trace.items()})
                 r[contract_key] = contract
@@ -157,7 +206,7 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
                 physical_trace_hash=audit.digest(folder / "trace.npz"),
                 **(
                     dict(course=list(draw.course), seed=draw.seed, lane=draw.lane)
-                    if index < 2
+                    if job["context_index"] is None
                     else {}
                 ),
             ),
@@ -204,6 +253,24 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
             review.pop("contact_exit_torque_mpc_review")
             review["directional_contact_compliance_review"] = gain_review
             review = write(folder / "independent.json", review)
+        if surface and ablated and job["role"] != "noninterference":
+            review["mesh_surface_swing_review"] = dict(
+                schema="soccer.rsi.mesh_surface_swing_reconstruction.v1",
+                contract=surface_contract,
+                frames_reconstructed=300,
+                active_frames=1,
+                reconstruction_uses_same_pinned_geometry_and_ik=True,
+                independent_ik_implementation=False,
+                side_and_release_reconstructed_from_replayed_history=True,
+                source_numeric_replay_tolerance=1e-8,
+                hardware_authorized=False,
+                promotion_authorized=False,
+            )
+            if tamper == "surface_replay_claim":
+                review["mesh_surface_swing_review"]["independent_ik_implementation"] = True
+            if tamper == "surface_frame_count":
+                review["mesh_surface_swing_review"]["active_frames"] = 0
+            review = write(folder / "independent.json", review)
         foundation = json.loads(Path(r["witnesses"]["foundation_review"]["path"]).read_text())
         foundation = write(
             folder / "foundation.json",
@@ -244,7 +311,11 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
         )
         if not ablated:
             r["job"] = (
-                f"option-4-raw-{job['group']}" if index < 2 else f"teacher-context-{index - 2}"
+                f"option-4-raw-{job['group']}"
+                if job["group"] in (8, 56)
+                else f"teacher-raw-{job['group']}"
+                if job["context_index"] is None
+                else f"teacher-context-{job['context_index']}"
             )
         else:
             intent = write(
@@ -267,15 +338,20 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
                     dest = folder / Path(r[key]["path"]).name
                     dest.write_bytes(Path(r[key]["path"]).read_bytes())
                     r[key] = witness(dest)
+            cutoff = (300 if job["role"] == "noninterference" else 40) if surface else 75
             prefix = dict(
-                schema="soccer.rsi.first_contact_prefix_parity.v1",
+                schema="soccer.rsi.surface_pre_activation_prefix_parity.v1"
+                if surface
+                else "soccer.rsi.first_contact_prefix_parity.v1",
                 baseline_receipt_hash=baseline["receipt_hash"],
-                prefix_frames=75,
+                prefix_frames=cutoff,
                 all_original_array_prefixes_bit_equal=True,
                 prefix_array_hashes={
-                    k: hash_bytes(v[:75].tobytes())
+                    k: hash_bytes(v[:cutoff].tobytes())
                     for k, v in trace.items()
-                    if not k.startswith(("contact_exit_mpc_", "directional_compliance_"))
+                    if not k.startswith(
+                        ("contact_exit_mpc_", "directional_compliance_", "mesh_surface_")
+                    )
                 },
             )
             if tamper == "prefix_hash" and index == 0:
@@ -286,24 +362,24 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
             root / f"{'receipt' if ablated else 'baseline'}-{index:04d}.json", r, "receipt_hash"
         )
 
-    baselines = [endpoint(i) for i in range(4)]
-    for i in (2, 3):
+    baselines = [endpoint(i) for i in range(6 if surface else 4)]
+    for i in range(2, len(baselines)):
         write(screen_root / f"baseline-{i:04d}.json", baselines[i], "receipt_hash")
     baseline_items = [
         dict(
             path=str((screen_root if i >= 2 else root) / f"baseline-{i:04d}.json"),
             file_hash=audit.digest((screen_root if i >= 2 else root) / f"baseline-{i:04d}.json"),
             receipt_hash=r["receipt_hash"],
-            pair_id=spec["jobs"][i]["pair_id"],
+            pair_id=spec["jobs"][i + 1 if surface else i]["pair_id"],
         )
         for i, r in enumerate(baselines)
     ]
     config.update(
         output_root=str(root),
         groups=spec["groups"],
-        max_attempts=4,
-        new_physical_budget=4,
-        suppress_postcontact_swing_release=not (torque_mpc or directional),
+        max_attempts=spec["count"],
+        new_physical_budget=spec["count"],
+        suppress_postcontact_swing_release=not (torque_mpc or directional or surface),
         baseline_receipts=baseline_items,
         baseline_sources=[],
         required_receipt_witnesses=["intent_witness", "encoder_witness", "prefix_witness"],
@@ -312,6 +388,8 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
         config["use_contact_exit_torque_mpc"] = True
     if directional:
         config["use_directional_contact_compliance"] = True
+    if surface:
+        config["use_mesh_surface_swing"] = True
     config_path = root / "config.json"
     write(config_path, config, key=None)
     pins = {str(config_path): audit.digest(config_path)}
@@ -338,7 +416,13 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
         ),
     )
     receipts = [
-        endpoint(i, ablated=True, declaration=declaration, baseline=baselines[i]) for i in range(4)
+        endpoint(
+            i,
+            ablated=True,
+            declaration=declaration,
+            baseline=baselines[max(i - 1, 0) if surface else i],
+        )
+        for i in range(spec["count"])
     ]
     # Synthetic prior audit rows bind precisely the source endpoints; payload
     # reconstruction remains mocked by expanded_fixture, not physical evidence.
@@ -360,7 +444,9 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
         ),
     )
     screen_complete = json.loads((screen_root / "complete.json").read_text())
-    screen_complete["results"][1], screen_complete["results"][3] = baselines[2:]
+    screen_complete["results"][1], screen_complete["results"][3] = baselines[2:4]
+    if surface:
+        screen_complete["results"][16:18] = baselines[4:]
     screen_complete = write(screen_root / "complete.json", screen_complete)
     screen_source = tmp_path / "screen-reader.py"
     screen_source.write_text("synthetic prior reader")
@@ -404,25 +490,52 @@ def fixture(tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional
             previous = h
     paired = assess_pairs(
         {i["pair_id"]: r["outcome"] for i, r in zip(baseline_items, baselines, strict=True)},
-        {i["pair_id"]: r["outcome"] for i, r in zip(spec["jobs"], receipts, strict=True)},
+        {
+            i["pair_id"]: r["outcome"]
+            for i, r in zip(
+                spec["jobs"][1:] if surface else spec["jobs"],
+                receipts[1:] if surface else receipts,
+                strict=True,
+            )
+        },
     )
     write(
         root / "complete.json",
         dict(
             schema=spec["complete_schema"],
             declaration_hash=declaration["report_hash"],
-            new_native_bodies=4,
-            native_substeps=12000,
-            independent_cpu_substeps=12000,
+            new_native_bodies=spec["count"],
+            native_substeps=3000 * spec["count"],
+            independent_cpu_substeps=3000 * spec["count"],
             new_optimizer_updates=0,
-            independent_course_count=4,
-            paired_endpoint_count=8,
+            independent_course_count=6 if surface else 4,
+            paired_endpoint_count=12 if surface else 8,
             reused_endpoints=reused,
             results=receipts,
             paired_development=paired,
             teacher_qualified=False,
             hardware_authorized=False,
             promotion_authorized=False,
+            **(
+                dict(
+                    disabled_complete_300_frame_noninterference_verified=True,
+                    original_none_raw_retention=assess_pairs(
+                        {
+                            f"raw-{r['group']}": r["outcome"]
+                            for r in json.loads(Path(config["nominal_complete"]).read_text())[
+                                "results"
+                            ]
+                        },
+                        {
+                            j["pair_id"]: r["outcome"]
+                            for j, r in zip(spec["jobs"][1:], receipts[1:], strict=True)
+                            if j["context_index"] is None
+                        },
+                    ),
+                )
+                if surface
+                else {}
+            ),
             **(
                 dict(
                     native_forecast_substeps=0,
@@ -497,6 +610,45 @@ def test_full_directional_reader_keeps_old_unsafe_case_and_does_not_claim_indepe
     assert report["independent_gain_law_implementation"] is False
     assert report["gain_law_reconstruction_uses_same_pinned_implementation"] is True
     assert "actual_postcontact_taskspace_increment_exactly_zero" not in report
+
+
+def test_full_surface_seven_keeps_disabled_body_six_pairs_and_original_none_retention(
+    tmp_path, monkeypatch
+):
+    output = fixture(tmp_path, monkeypatch, surface=True)
+    audit.main()
+    report = json.loads(output.read_text())
+    assert report["schema"] == "soccer.rsi.mesh_surface_swing_terminal_readback.v1"
+    assert len(report["rows"]) == 7
+    assert report["reused_endpoint_count"] == 6
+    assert report["independent_course_count"] == 6
+    assert report["paired_endpoint_count"] == 12
+    assert report["disabled_complete_300_frame_noninterference_verified"] is True
+    assert report["all_original_pre_activation_prefixes_bit_equal"] is True
+    assert "all_original_first_contact_prefixes_bit_equal" not in report
+    assert "actual_postcontact_taskspace_increment_exactly_zero" not in report
+    assert report["independent_ik_implementation"] is False
+    assert report["rows"][3]["outcome"]["safe"] is False
+    assert report["teacher_qualified"] is False
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "surface_nonfoot_active",
+        "surface_disabled_enabled",
+        "surface_replay_claim",
+        "surface_frame_count",
+        "intent_baseline",
+        "prefix_hash",
+        "upstream_unverified",
+    ],
+)
+def test_surface_reader_rejects_resealed_inconsistent_evidence(tmp_path, monkeypatch, tamper):
+    output = fixture(tmp_path, monkeypatch, tamper, surface=True)
+    with pytest.raises(ValueError):
+        audit.main()
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("tamper", ["intent_baseline", "prefix_hash", "upstream_unverified"])
