@@ -24,9 +24,15 @@ def digest(path):
 
 def fixed_replay_scope(cfg):
     profile = cfg.get("replay_profile", "legacy-four")
-    if profile not in ("legacy-four", "surface-six", "surface-missing-three"):
+    counts = {
+        "legacy-four": 4,
+        "surface-six": 6,
+        "surface-missing-three": 3,
+        "demonstration-missing-five": 5,
+    }
+    if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
-    count = 6 if profile == "surface-six" else 3 if profile == "surface-missing-three" else 4
+    count = counts[profile]
     steps = 3000 * count
     cases = cfg.get("cases")
     if (
@@ -55,7 +61,83 @@ def fixed_replay_scope(cfg):
         "baseline_raw_32",
     ]:
         raise ValueError("only the three missing historical baseline endpoints may be replayed")
+    if profile == "demonstration-missing-five" and [r["case_id"] for r in cases] != [
+        "none_raw_4",
+        "none_raw_8",
+        "none_raw_32",
+        "none_raw_56",
+        "none_context_1",
+    ]:
+        raise ValueError("only five missing None endpoints may be replayed; C0 already exists")
     return count, steps
+
+
+def verify_none_demonstration_sources(cfg, receipts, sealed, pins):
+    """Authenticate original None endpoints, without promoting an oracle selector.
+
+    The first four are from the complete original-public study; the last is
+    index 2 of the complete context/retention screen. Never replace either
+    provenance by a self-resealed list of selected passing receipts.
+    """
+    if len(receipts) != 5:
+        raise ValueError("exact five original None receipts required")
+    for prefix, indexes, subset, schema, bodies in (
+        (
+            "nominal",
+            (0, 1, 2, 3),
+            receipts[:4],
+            "soccer.rsi.mesh_original_public_terminal_readback.v1",
+            4,
+        ),
+        (
+            "baseline",
+            (2,),
+            receipts[4:],
+            "soccer.rsi.mesh_option4_teacher_screen_terminal_readback.v1",
+            18,
+        ),
+    ):
+        audit = sealed(cfg[f"{prefix}_terminal_readback"])
+        complete = sealed(cfg[f"{prefix}_complete"])
+        reader = Path(cfg[f"{prefix}_reader_source"])
+        if (
+            audit.get("schema") != schema
+            or audit["report_hash"] != cfg[f"{prefix}_terminal_readback_hash"]
+            or audit.get("complete_hash") != complete["report_hash"]
+            or audit.get("reader_source_hash") != digest(reader)
+            or audit.get("source_native_bodies") != bodies
+            or len(complete.get("results", [])) != bodies
+            or any(
+                audit.get(k) is not True
+                for k in (
+                    "whole_input_and_witness_files_verified",
+                    "shared_payload_logical_seals_rebuilt",
+                    "prior_independent_replays_authenticated",
+                )
+            )
+            or any(
+                receipt != complete["results"][index]
+                or not any(
+                    row["receipt_hash"] == receipt["receipt_hash"]
+                    and row["job"] == receipt["job"]
+                    and row["outcome"] == receipt["outcome"]
+                    for row in audit["rows"]
+                )
+                for receipt, index in zip(subset, indexes, strict=True)
+            )
+        ):
+            raise ValueError(
+                "all original None endpoints must belong to their whole terminal audit"
+            )
+        pins[str(reader)] = digest(reader)
+    if [r["job"] for r in receipts] != [
+        "original-public-4",
+        "original-public-8",
+        "original-public-32",
+        "original-public-56",
+        "control-context-1",
+    ]:
+        raise ValueError("original None course identity required")
 
 
 def main():
@@ -153,6 +235,8 @@ def main():
                 "all three exact original endpoints must belong to complete baseline audit"
             )
         pins[str(baseline_reader)] = digest(baseline_reader)
+    if cfg.get("replay_profile") == "demonstration-missing-five":
+        verify_none_demonstration_sources(cfg, receipts, sealed, pins)
     if args.preflight:
         print(
             "FIXED_REPLAYS",
