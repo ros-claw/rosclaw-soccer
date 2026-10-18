@@ -3,7 +3,6 @@
 import mujoco
 import numpy as np
 import pytest
-from scipy.spatial import ConvexHull
 
 from rosclaw_soccer.physics.convex_surface_distance import ConvexSurfaceDistance
 from rosclaw_soccer.physics.mesh_sphere_contact_state import measure_mesh_sphere_contact_state
@@ -23,8 +22,25 @@ def fixture():
     mesh = int(model.geom_dataid[g])
     start, count = int(model.mesh_vertadr[mesh]), int(model.mesh_vertnum[mesh])
     compiled = np.asarray(model.mesh_vert[start : start + count], dtype=np.float64)
-    hull = ConvexHull(compiled)
-    surface = ConvexSurfaceDistance(compiled[hull.simplices], hull.equations)
+    # The compiled rectangular box has axis-aligned principal axes. Construct
+    # its six analytic faces so ordinary tests need no optional SciPy install.
+    lo, hi = compiled.min(axis=0), compiled.max(axis=0)
+    triangles, planes = [], []
+    for axis in range(3):
+        other = [i for i in range(3) if i != axis]
+        for bound, sign in ((lo[axis], -1), (hi[axis], 1)):
+            corners = []
+            for u, v in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                point = np.zeros(3)
+                point[axis] = bound
+                point[other[0]] = (lo, hi)[u][other[0]]
+                point[other[1]] = (lo, hi)[v][other[1]]
+                corners.append(point)
+            triangles.extend([[corners[i] for i in face] for face in ((0, 1, 2), (0, 2, 3))])
+            plane = np.zeros(4)
+            plane[axis], plane[3] = sign, -sign * bound
+            planes.append(plane)
+    surface = ConvexSurfaceDistance(np.asarray(triangles), np.asarray(planes))
     return model, mujoco.MjData(model), g, s, surface
 
 
@@ -74,3 +90,14 @@ def test_reject_wrong_geometry_and_nonfinite_velocity():
     data.qvel[0] = np.nan
     with pytest.raises(ValueError, match="finite current"):
         measure_mesh_sphere_contact_state(model, data, g, s, hull)
+
+
+def test_sphere_spin_does_not_change_normal_gap_rate():
+    model, data, g, s, hull = fixture()
+    forward(model, data)
+    baseline = measure_mesh_sphere_contact_state(model, data, g, s, hull)
+    # Last three qvel entries are the free sphere's angular velocity.
+    data.qvel[-3:] = [20, -15, 40]
+    spinning = measure_mesh_sphere_contact_state(model, data, g, s, hull)
+    assert spinning.gap_rate_m_s == baseline.gap_rate_m_s == 0
+    assert spinning.gap_m == baseline.gap_m
