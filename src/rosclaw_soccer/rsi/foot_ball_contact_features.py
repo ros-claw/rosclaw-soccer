@@ -29,6 +29,17 @@ def measured_foot_ball_contact_features(model: Any, current_data: Any) -> np.nda
         body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
         if body < 0:
             raise ValueError("complete measured foot geometry required")
+        if any(
+            ball_geom in (int(model.pair_geom1[i]), int(model.pair_geom2[i]))
+            and (
+                model.geom_bodyid[model.pair_geom1[i]] == body
+                or model.geom_bodyid[model.pair_geom2[i]] == body
+            )
+            for i in range(model.npair)
+        ):
+            raise ValueError(
+                "legacy four-point contact features do not describe explicit foot/object surfaces"
+            )
         geometries = np.flatnonzero(
             (model.geom_bodyid == body)
             & (model.geom_type == mujoco.mjtGeom.mjGEOM_SPHERE)

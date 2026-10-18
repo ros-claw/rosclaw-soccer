@@ -166,3 +166,19 @@ Restart=no，MemoryHigh/Max=8/12GiB，分配前要求可用 RAM ≥56GiB。
 当前新训练服务和仍在运行的动作选择考试，而不再把结束的三体 worker 当活跃任务。
 本记录时新训练服务尚在初始化，新采集/更新仍为 0。后续结果以 ledger、
 checkpoint learning_receipt 和独立物理对照为准。
+
+## 10:04 后状态修正：旧接触世界训练已主动终止，目标继续
+
+上述启动状态不是当前状态。实际 MJB 检查发现完整可见脚掌 mesh 不参与
+球碰撞，仅每脚四个半径 5mm 支撑点参与。这是运动支撑建模，不是完整
+脚背/脚面任务接触。为先检查模型缺口，操作员任务范围内主动 SIGINT
+终止本次旧世界训练，保留源、任务表、所有账本和失败，不续写原目录。
+
+最终 ledger 序号 9，tip
+`2e3b1a1d32468332ec8ef4894407a42727dddf441319c4625651675f329b08d2`。
+已扣费两个 attempt：一个完成并通过的 V2 zero control，一个中断；
+真实 PPO 更新 **0**。systemd Result=success 是信号退出语义，不能覆盖
+实验账本的 `FATAL_CONTRACT_VIOLATION: KeyboardInterrupt`。
+
+详见 [接触世界诊断与新协议](mesh-task-contact-diagnosis-20261018.zh-CN.md)。
+新接触世界是新实验协议，不将旧策略、旧成功率或旧资格自动搬过去。
