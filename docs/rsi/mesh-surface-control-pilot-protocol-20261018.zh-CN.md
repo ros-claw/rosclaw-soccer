@@ -80,3 +80,21 @@ raw4的小脑保持失败已定位为真实错球，而非距离查询漏检。�
 
 原型10项、相关几何12项测试已通过；这些是工程证据而非物理场次。
 下一pilot未执行，所有教师、策略晋升、真实硬件授权仍false。
+
+## scratch适配器资格已做，但仍未接入native
+
+新增 `rsi/mesh_surface_swing_probe.py`：先将实际MjModel重新序列化并
+核对声明世界hash，再要求双脚网格/球显式碰撞pair及43q/41v/29act拓扑。
+在私有MjData复制当前qpos/qvel，仅FK/comPos，输出39列记录：
+frame/side/active、脚面点3、球心3、点Jacobian18、基准目标6、增量6。
+未激活记录明确side=−1，不能填出伪造的足部几何。
+
+冻结源4fe5a0163fb21c6cd1c94cadeed383d0a88e40b8的
+`--verify-adapter` 已在同样10个G1姿态执行：所有增量/完整记录与独立
+原位形探针逐字节相等，调用方qpos/qvel/xpos/geom_xpos/ctrl/qacc/
+qacc_warmstart全部未改。结果
+`rsi-fixed-pose-surface-swing-adapter-probe-20261018.json`，封印
+`sha256:1414ffc08c5dfb1873eb37c4b4c4b4b6ca4d06363ef13016ed3234ca1dc85c53`。
+原型与适配器17项测试通过。SciPy仍是显式可选diagnostics依赖。
+这不验证native选脚/门控、控制时序、PD跟踪或动态平衡；接入和物理
+pilot仍是下一项必须实际执行的工作。
