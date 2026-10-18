@@ -125,8 +125,11 @@ def main():
         or pc["mesh_task_contact_world_hash"] != zero["config"]["mesh_task_contact_world_hash"]
     ):
         raise ValueError("whole original teacher physics, dense audit and shared world required")
-    for owner in (decl, audit):
-        unchanged(owner)
+    # The historical positive-16 readback is a compact verifier receipt, not
+    # a file-pin manifest. Its authenticated producer declaration owns pins;
+    # do not assume the newer reference-13 audit schema on that old receipt.
+    unchanged(decl)
+    pins[cc["audit_source"]] = digest(cc["audit_source"])
     for i, r in enumerate(complete["results"]):
         if sealed(troot / f"receipt-{i:04d}.json", "receipt_hash") != r:
             raise ValueError("all original teacher/control receipt files required")

@@ -1,11 +1,15 @@
 """Synthetic arithmetic contracts, not physical or data-admission evidence."""
 
+import copy
+import json
+
 import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.actual_winner_batch import prepare_actual_winner_batch
 from rosclaw_soccer.rsi.actual_winner_supervision import select_actual_winner_paths
 from rosclaw_soccer.sim.contracts import hash_json
+from scripts import rsi_fit_actual_winner_batch as fitter
 
 
 def bank():
@@ -91,3 +95,93 @@ def test_rejects_incomplete_or_counterfactual_data(tamper):
         s["report_hash"] = hash_json({k: v for k, v in s.items() if k != "report_hash"})
     with pytest.raises(ValueError):
         prepare_actual_winner_batch(**kw)
+
+
+@pytest.fixture
+def fit_inputs(tmp_path, monkeypatch):
+    kw = inputs()
+    batch, numeric = prepare_actual_winner_batch(**kw)
+    path = tmp_path / "batch.npz"
+    np.savez(
+        path,
+        actual_observations=batch["original_observations"],
+        reference_targets=batch["targets"],
+        partitions=batch["partitions"],
+        source_seeds=batch["source_seeds"],
+        eligible=batch["eligible"],
+    )
+    native, contact = tmp_path / "native.json", tmp_path / "contact.json"
+    parent, world = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+    native.write_text(
+        json.dumps(dict(behavior_model_hash=parent, mesh_task_contact_world_hash=world))
+    )
+    contact.write_text(json.dumps(dict(producer_config=str(native))))
+    prepared = dict(
+        schema="soccer.rsi.actual_winner_batch_prepared.v1",
+        configuration=dict(
+            profile="proposed-actual-winner-zero-anchor-batch-v1",
+            mode="SIM_ONLY",
+            source_root=str(tmp_path),
+            source_head="fake-test-head",
+            zero_cohort=dict(contact_configuration=str(contact)),
+        ),
+        source_authentication_performed=True,
+        original_task_labels_unchanged=True,
+        input_file_hashes={
+            str(native): fitter.digest(native),
+            str(contact): fitter.digest(contact),
+        },
+        selection=kw["selection"],
+        numeric_batch=numeric,
+        numeric_arrays=dict(path=str(path), sha256=fitter.digest(path)),
+        optimizer_updates=0,
+        new_physical_steps=0,
+        dataset_admission_authorized=False,
+        neural_training_authorized=False,
+        teacher_qualified=False,
+        hardware_authorized=False,
+        promotion_authorized=False,
+    )
+    prepared["report_hash"] = hash_json(prepared)
+    cfg = dict(
+        prepared_unit="test.service",
+        prepared_complete=str(tmp_path / "complete.json"),
+        prepared_complete_hash=prepared["report_hash"],
+        parent_model_hash=parent,
+        world_hash=world,
+    )
+    monkeypatch.setattr(fitter, "require_terminal", lambda _: None)
+    monkeypatch.setattr(
+        fitter.subprocess,
+        "check_output",
+        lambda cmd, **_: "" if "status" in cmd else "fake-test-head",
+    )
+    return cfg, prepared, batch, native
+
+
+def test_fit_loader_rebuilds_selection_split_and_numeric_batch(fit_inputs):
+    cfg, prepared, expected, _ = fit_inputs
+    before = copy.deepcopy(prepared)
+    _, batch = fitter.load_batch(cfg, sealed=lambda _: prepared, pins={})
+    assert prepared == before
+    for key in ("mean", "scale", "weights", "train", "targets", "original_observations"):
+        np.testing.assert_array_equal(batch[key], expected[key])
+
+
+@pytest.mark.parametrize("tamper", ["seal", "unsafe", "world", "bytes", "weight", "updates"])
+def test_fit_loader_rejects_provenance_or_selection_tampering(fit_inputs, tamper):
+    cfg, prepared, _, native = fit_inputs
+    if tamper == "seal":
+        cfg["prepared_complete_hash"] = "other"
+    elif tamper == "unsafe":
+        prepared["selection"]["rows"][0]["original_outcome"]["safe"] = False
+    elif tamper == "world":
+        cfg["world_hash"] = "other"
+    elif tamper == "bytes":
+        native.write_text("changed")
+    elif tamper == "weight":
+        prepared["numeric_batch"]["train_paths"] = 9
+    else:
+        prepared["optimizer_updates"] = True
+    with pytest.raises(ValueError):
+        fitter.load_batch(cfg, sealed=lambda _: prepared, pins={})
