@@ -6,8 +6,10 @@ import json
 import subprocess
 from pathlib import Path
 
+import mujoco
 import numpy as np
 
+from rosclaw_soccer.physics import ball_surface_velocity
 from rosclaw_soccer.rsi import first_touch_ball_path_diagnostics as diagnostics
 from rosclaw_soccer.rsi import first_touch_outcome
 from rosclaw_soccer.rsi.reviewed_contact_world import ReviewedContactWorld
@@ -77,7 +79,47 @@ def main():
                 raise ValueError("all original independently reviewed witness bytes required")
             pins[str(path)] = witness["sha256"]
         with np.load(witnesses["trace"]["path"], allow_pickle=False) as archive:
-            result = diagnostics.diagnose(dict(archive))
+            trace = dict(archive)
+        result = diagnostics.diagnose(trace)
+        model = mujoco.MjModel.from_binary_path(witnesses["world"]["path"])
+        data = mujoco.MjData(model)
+        first = result["outcome"]["first_foot_contact_frame"]
+        samples = []
+        selected_frames = (
+            []
+            if first is None
+            else sorted({first + n for n in (0, 1, 3, 5, 10, 15, 20, 30, 60) if first + n < 300})
+        )
+        for frame in selected_frames:
+            data.qpos[:] = trace["canonical_qpos"][frame, 0]
+            data.qvel[:] = trace["canonical_qvel"][frame, 0]
+            measured = ball_surface_velocity.inspect_ball_surface_velocity(
+                model, data, geom_id=int(model.geom("ball_geom").id)
+            )
+            if not np.allclose(
+                measured["center_velocity_world_m_s"],
+                trace["ball_linear_velocity_before_step_m_s"][frame, 0],
+                rtol=0,
+                atol=1e-12,
+            ) or not np.allclose(
+                measured["center_position_world_m"],
+                trace["ball_position_before_step_m"][frame, 0],
+                rtol=0,
+                atol=1e-12,
+            ):
+                raise ValueError("kinematic ball state must match recorded pre-step measurements")
+            samples.append(
+                dict(
+                    frame=frame,
+                    frames_after_first_contact=frame - first,
+                    before_integration=True,
+                    **measured,
+                )
+            )
+        result["world_kinematic_ball_samples"] = samples
+        pins[str(Path(ball_surface_velocity.__file__))] = digest(
+            Path(ball_surface_velocity.__file__)
+        )
         if result["outcome"] != receipt["outcome"]:
             raise ValueError("measured physical outcome changed")
         rows.append(
@@ -86,7 +128,7 @@ def main():
     if any(digest(Path(p)) != value for p, value in pins.items()):
         raise ValueError("diagnostic source/input changed")
     result = dict(
-        schema="soccer.rsi.original_public_ball_path_diagnostics.v1",
+        schema="soccer.rsi.original_public_ball_path_diagnostics.v2",
         source_head=args.source_head,
         numerical_review_binding=binding,
         whole_reviewed_witness_bytes_authenticated=True,
