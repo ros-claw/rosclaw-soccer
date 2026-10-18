@@ -150,9 +150,36 @@ def test_remaining_six_contexts_cannot_be_replaced_by_old_six_or_partial_scope()
     c["cases"][0]["case_id"] = "surface_context_0"
     with pytest.raises(ValueError):
         fixed_replay_scope(c)
+    c["cases"][0]["case_id"] = "surface_context_2"
     c["cases"].pop()
     with pytest.raises(ValueError):
         fixed_replay_scope(c)
+
+
+@pytest.mark.parametrize("tamper", [None, "partial", "order", "duplicate", "budget", "retag"])
+def test_twelve_historical_context_controls_have_an_exact_nontraining_budget(tamper):
+    names = [f"{family}_context_{i}" for i in range(2, 8) for family in ("none", "option4")]
+    c = dict(
+        replay_profile="context-baseline-twelve",
+        new_replay_budget=12,
+        new_substep_budget=36000,
+        cases=[dict(case_id=n, receipt_hash=str(i)) for i, n in enumerate(names)],
+    )
+    if tamper == "partial":
+        c["cases"].pop()
+    elif tamper == "order":
+        c["cases"].reverse()
+    elif tamper == "duplicate":
+        c["cases"][1]["receipt_hash"] = c["cases"][0]["receipt_hash"]
+    elif tamper == "budget":
+        c["new_substep_budget"] -= 3000
+    elif tamper == "retag":
+        c["cases"][0]["case_id"] = "surface_context_2"
+    if tamper:
+        with pytest.raises(ValueError):
+            fixed_replay_scope(c)
+    else:
+        assert fixed_replay_scope(c) == (12, 36000)
 
 
 @pytest.mark.parametrize("tamper", ["partial", "order", "duplicate", "budget", "bool"])

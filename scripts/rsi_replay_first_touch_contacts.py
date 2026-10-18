@@ -30,6 +30,7 @@ def fixed_replay_scope(cfg):
         "surface-missing-three": 3,
         "demonstration-missing-five": 5,
         "surface-context-six": 6,
+        "context-baseline-twelve": 12,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -74,6 +75,10 @@ def fixed_replay_scope(cfg):
         f"surface_context_{i}" for i in range(2, 8)
     ]:
         raise ValueError("all six remaining material-point contexts required in original order")
+    if profile == "context-baseline-twelve" and [r["case_id"] for r in cases] != [
+        f"{family}_context_{i}" for i in range(2, 8) for family in ("none", "option4")
+    ]:
+        raise ValueError("both original controls for all six remaining contexts required")
     return count, steps
 
 
@@ -207,7 +212,7 @@ def main():
         ):
             raise ValueError("original primitive and replay qualifications differ")
         receipts.append(receipt)
-    if cfg.get("replay_profile") == "surface-missing-three":
+    if cfg.get("replay_profile") in ("surface-missing-three", "context-baseline-twelve"):
         baseline_audit = sealed(cfg["baseline_terminal_readback"])
         baseline_complete = sealed(cfg["baseline_complete"])
         baseline_reader = Path(cfg["baseline_reader_source"])
@@ -233,12 +238,16 @@ def main():
                     and row["outcome"] == receipt["outcome"]
                     for row in baseline_audit["rows"]
                 )
-                for receipt, index in zip(receipts, (3, 16, 17), strict=True)
+                for receipt, index in zip(
+                    receipts,
+                    range(4, 16)
+                    if cfg["replay_profile"] == "context-baseline-twelve"
+                    else (3, 16, 17),
+                    strict=True,
+                )
             )
         ):
-            raise ValueError(
-                "all three exact original endpoints must belong to complete baseline audit"
-            )
+            raise ValueError("all exact original endpoints must belong to complete baseline audit")
         pins[str(baseline_reader)] = digest(baseline_reader)
     if cfg.get("replay_profile") == "demonstration-missing-five":
         verify_none_demonstration_sources(cfg, receipts, sealed, pins)
