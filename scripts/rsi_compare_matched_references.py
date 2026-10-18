@@ -9,16 +9,29 @@ import argparse
 import json
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 from rosclaw_soccer.rsi.matched_reference_comparison import compare_matched_references
-from rosclaw_soccer.rsi.reference_student_exam_diagnostics import measured_readout, require_cohort
+from rosclaw_soccer.rsi.reference_student_exam_diagnostics import (
+    measured_readout as _measured_readout,
+)
+from rosclaw_soccer.rsi.reference_student_exam_diagnostics import require_cohort as _require_cohort
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_atomic_artifacts import write_once
-from scripts.rsi_stage_release_contact_replay import digest, require_terminal
+from scripts.rsi_stage_release_contact_replay import digest as _digest
+from scripts.rsi_stage_release_contact_replay import require_terminal as _require_terminal
+
+digest = cast(Callable[[str | Path], str], _digest)
+require_terminal = cast(Callable[[str], None], _require_terminal)
+require_cohort = cast(Callable[..., dict[str, Any]], _require_cohort)
+measured_readout = cast(Callable[..., dict[str, Any]], _measured_readout)
 
 
-def load_cohort(spec, *, sealed, pins):
+def load_cohort(
+    spec: dict[str, Any], *, sealed: Callable[..., dict[str, Any]], pins: dict[str, str]
+) -> dict[str, Any]:
     """Authenticate the complete original source chain, including every failure."""
     cp = Path(spec["contact_configuration"])
     if digest(cp) != spec["contact_configuration_file_hash"]:
@@ -101,7 +114,7 @@ def load_cohort(spec, *, sealed, pins):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--preflight", action="store_true")
@@ -134,13 +147,13 @@ def main():
     for folder in (source / "src", source / "scripts"):
         pins.update({str(p): digest(p) for p in folder.rglob("*.py")})
 
-    def sealed(path, key="report_hash"):
+    def sealed(path: str | Path, key: str = "report_hash") -> dict[str, Any]:
         path = Path(path)
         value = json.loads(path.read_text())
         if value.get(key) != hash_json({k: v for k, v in value.items() if k != key}):
             raise ValueError("unchanged whole sealed original evidence required")
         pins[str(path)] = digest(path)
-        return value
+        return cast(dict[str, Any], value)
 
     cohorts = {
         role: load_cohort(spec, sealed=sealed, pins=pins) for role, spec in cfg["cohorts"].items()

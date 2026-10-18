@@ -5,16 +5,20 @@ process/source/file ownership. All public failures and the held-out source are
 reported, but only predeclared training sources can motivate more supervision.
 """
 
+from collections.abc import Callable
+from typing import Any, cast
+
 from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
 from rosclaw_soccer.rsi.positive_lateral_receding_scope import build_scope
 from rosclaw_soccer.rsi.reference_exam_profiles import STUDENT, ZERO
-from rosclaw_soccer.rsi.reference_student_exam_diagnostics import require_cohort
+from rosclaw_soccer.rsi.reference_student_exam_diagnostics import require_cohort as _require_cohort
 from rosclaw_soccer.sim.contracts import hash_json
 
 VALIDATION_SEED = 20261096
+require_cohort = cast(Callable[..., dict[str, Any]], _require_cohort)
 
 
-def compare_matched_references(zero, student):
+def compare_matched_references(zero: dict[str, Any], student: dict[str, Any]) -> dict[str, Any]:
     """Each cohort has config/declaration/complete/audit/measured, all whole.
 
     This is a research decision aid. A candidate with unsafe or dense nonfoot
