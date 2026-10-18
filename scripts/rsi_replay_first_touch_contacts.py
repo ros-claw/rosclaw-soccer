@@ -32,6 +32,7 @@ def fixed_replay_scope(cfg):
         "surface-context-six": 6,
         "context-baseline-twelve": 12,
         "catalog2-zero-c7": 1,
+        "receding-catalog2-ten": 10,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -84,6 +85,11 @@ def fixed_replay_scope(cfg):
         "catalog2_zero_context_7"
     ]:
         raise ValueError("only the one exact archived zero-control C7 may be replayed")
+    if profile == "receding-catalog2-ten":
+        from rosclaw_soccer.rsi.receding_teacher_scope import receding_jobs
+
+        if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in receding_jobs()]:
+            raise ValueError("all ten original receding endpoints required in declaration order")
     return count, steps
 
 
@@ -297,6 +303,32 @@ def main():
         pins[str(baseline_reader)] = digest(baseline_reader)
     if cfg.get("replay_profile") == "demonstration-missing-five":
         verify_none_demonstration_sources(cfg, receipts, sealed, pins)
+    if cfg.get("replay_profile") == "receding-catalog2-ten":
+        from scripts.rsi_stage_receding_contact_replay import require_receding_endpoints
+
+        producer = json.loads(Path(cfg["producer_config"]).read_text())
+        pins[cfg["producer_config"]] = digest(cfg["producer_config"])
+        complete = sealed(cfg["producer_complete"])
+        declaration = sealed(cfg["producer_declaration"])
+        audit = sealed(cfg["source_terminal_readback"])
+        require_receding_endpoints(producer, declaration, complete, audit)
+        reader = Path(cfg["audit_source"])
+        if (
+            audit["reader_source_hash"] != digest(reader)
+            or audit["report_hash"] != cfg["source_terminal_readback_hash"]
+            or receipts != complete["results"]
+        ):
+            raise ValueError("whole receding audit and original receipt membership required")
+        pins[str(reader)] = digest(reader)
+        for name, h in declaration["input_file_hashes"].items():
+            if digest(name) != h:
+                raise ValueError("whole receding audit input bytes changed")
+            pins[name] = h
+        for relative in (
+            "scripts/rsi_stage_receding_contact_replay.py",
+            "src/rosclaw_soccer/rsi/receding_teacher_scope.py",
+        ):
+            pins[str(source / relative)] = digest(source / relative)
     if args.preflight:
         print(
             "FIXED_REPLAYS",
