@@ -23,19 +23,36 @@ from tests.rsi.test_mesh_teacher_terminal_readback import expanded_fixture
 
 
 def fixture(
-    tmp_path, monkeypatch, tamper=None, *, torque_mpc=False, directional=False, surface=False
+    tmp_path,
+    monkeypatch,
+    tamper=None,
+    *,
+    torque_mpc=False,
+    directional=False,
+    surface=False,
+    expansion=False,
 ):
+    surface = surface or expansion
+    surface_off = surface and not expansion
     expanded_fixture(tmp_path, monkeypatch)
     prepared, _, manifest, config = first_touch_campaign_worker.prepare(None)
     screen_root = tmp_path / "teacher"
     templates = [
         json.loads((screen_root / f"receipt-{i:04d}.json").read_text())
-        for i in ((16, 17, 1, 3, 16, 17) if surface else (16, 17, 1, 3))
+        for i in (
+            (5, 7, 9, 11, 13, 15)
+            if expansion
+            else (16, 17, 1, 3, 16, 17)
+            if surface
+            else (16, 17, 1, 3)
+        )
     ]
     root = tmp_path / "release"
     root.mkdir()
     profile = (
-        "surface-seven"
+        "surface-context-six"
+        if expansion
+        else "surface-seven"
         if surface
         else "directional-four"
         if directional
@@ -114,8 +131,8 @@ def fixture(
     plan = PublicFirstTouchTrainingPlan(tuple(range(20261060, 20261070)), "sha256:" + "a" * 64, 18)
 
     def endpoint(index, *, ablated=False, declaration=None, baseline=None):
-        job = spec["jobs"][index + 1 if surface and not ablated else index]
-        template_index = max(index - 1, 0) if surface and ablated else index
+        job = spec["jobs"][index + 1 if surface_off and not ablated else index]
+        template_index = max(index - 1, 0) if surface_off and ablated else index
         r = copy.deepcopy(templates[template_index])
         folder = root / (f"new-{index}" if ablated else f"baseline-{index}")
         folder.mkdir()
@@ -363,14 +380,16 @@ def fixture(
         )
 
     baselines = [endpoint(i) for i in range(6 if surface else 4)]
-    for i in range(2, len(baselines)):
+    for i in range(0 if expansion else 2, len(baselines)):
         write(screen_root / f"baseline-{i:04d}.json", baselines[i], "receipt_hash")
     baseline_items = [
         dict(
-            path=str((screen_root if i >= 2 else root) / f"baseline-{i:04d}.json"),
-            file_hash=audit.digest((screen_root if i >= 2 else root) / f"baseline-{i:04d}.json"),
+            path=str((screen_root if expansion or i >= 2 else root) / f"baseline-{i:04d}.json"),
+            file_hash=audit.digest(
+                (screen_root if expansion or i >= 2 else root) / f"baseline-{i:04d}.json"
+            ),
             receipt_hash=r["receipt_hash"],
-            pair_id=spec["jobs"][i + 1 if surface else i]["pair_id"],
+            pair_id=spec["jobs"][i + 1 if surface_off else i]["pair_id"],
         )
         for i, r in enumerate(baselines)
     ]
@@ -390,6 +409,13 @@ def fixture(
         config["use_directional_contact_compliance"] = True
     if surface:
         config["use_mesh_surface_swing"] = True
+    if expansion:
+        from rosclaw_soccer.rsi import surface_context_expansion
+
+        config["surface_profile"] = "context-six"
+        # Separate real-byte predecessor tests cover this contract. The full
+        # synthetic reader below mocks all numerical/model qualification too.
+        monkeypatch.setattr(surface_context_expansion, "require_previous_surface", lambda *a: None)
     config_path = root / "config.json"
     write(config_path, config, key=None)
     pins = {str(config_path): audit.digest(config_path)}
@@ -420,7 +446,7 @@ def fixture(
             i,
             ablated=True,
             declaration=declaration,
-            baseline=baselines[max(i - 1, 0) if surface else i],
+            baseline=baselines[max(i - 1, 0) if surface_off else i],
         )
         for i in range(spec["count"])
     ]
@@ -428,7 +454,8 @@ def fixture(
     # reconstruction remains mocked by expanded_fixture, not physical evidence.
     catalog_path = Path(config["selection_declaration"]).parent / "complete.json"
     catalog_complete = json.loads(catalog_path.read_text())
-    catalog_complete["results"][8:10] = baselines[:2]
+    if not expansion:
+        catalog_complete["results"][8:10] = baselines[:2]
     catalog_complete = write(catalog_path, catalog_complete)
     upstream_path = Path(config["upstream_catalog_readback"])
     upstream = json.loads(upstream_path.read_text())
@@ -437,15 +464,21 @@ def fixture(
         dict(
             upstream,
             complete_hash=catalog_complete["report_hash"],
-            rows=[
+            rows=upstream["rows"]
+            if expansion
+            else [
                 dict(job=r["job"], receipt_hash=r["receipt_hash"], outcome=r["outcome"])
                 for r in baselines[:2]
             ],
         ),
     )
     screen_complete = json.loads((screen_root / "complete.json").read_text())
-    screen_complete["results"][1], screen_complete["results"][3] = baselines[2:4]
-    if surface:
+    if expansion:
+        for i, baseline in zip(range(5, 16, 2), baselines, strict=True):
+            screen_complete["results"][i] = baseline
+    else:
+        screen_complete["results"][1], screen_complete["results"][3] = baselines[2:4]
+    if surface_off:
         screen_complete["results"][16:18] = baselines[4:]
     screen_complete = write(screen_root / "complete.json", screen_complete)
     screen_source = tmp_path / "screen-reader.py"
@@ -463,7 +496,7 @@ def fixture(
             prior_independent_replays_authenticated=True,
             rows=[
                 dict(job=r["job"], receipt_hash=r["receipt_hash"], outcome=r["outcome"])
-                for r in baselines[2:]
+                for r in (screen_complete["results"] if expansion else baselines[2:])
             ],
         ),
     )
@@ -493,8 +526,8 @@ def fixture(
         {
             i["pair_id"]: r["outcome"]
             for i, r in zip(
-                spec["jobs"][1:] if surface else spec["jobs"],
-                receipts[1:] if surface else receipts,
+                spec["jobs"][1:] if surface_off else spec["jobs"],
+                receipts[1:] if surface_off else receipts,
                 strict=True,
             )
         },
@@ -533,7 +566,26 @@ def fixture(
                         },
                     ),
                 )
-                if surface
+                if surface_off
+                else {}
+            ),
+            **(
+                dict(
+                    prior_disabled_noninterference_reused_not_rerun=True,
+                    original_none_context_retention=assess_pairs(
+                        {
+                            j["pair_id"]: screen_complete["results"][2 * j["context_index"]][
+                                "outcome"
+                            ]
+                            for j in spec["jobs"]
+                        },
+                        {
+                            j["pair_id"]: r["outcome"]
+                            for j, r in zip(spec["jobs"], receipts, strict=True)
+                        },
+                    ),
+                )
+                if expansion
                 else {}
             ),
             **(
@@ -630,6 +682,31 @@ def test_full_surface_seven_keeps_disabled_body_six_pairs_and_original_none_rete
     assert report["independent_ik_implementation"] is False
     assert report["rows"][3]["outcome"]["safe"] is False
     assert report["teacher_qualified"] is False
+
+
+def test_full_surface_context_six_requires_original_none_retention_without_rerunning_off(
+    tmp_path, monkeypatch
+):
+    output = fixture(tmp_path, monkeypatch, expansion=True)
+    audit.main()
+    report = json.loads(output.read_text())
+    assert report["schema"] == "soccer.rsi.mesh_surface_context_expansion_terminal_readback.v1"
+    assert len(report["rows"]) == 6
+    assert report["independent_course_count"] == 6
+    assert report["reused_endpoint_count"] == 6
+    assert report["prior_disabled_noninterference_reused_not_rerun"] is True
+    assert report["all_original_pre_activation_prefixes_bit_equal"] is True
+    assert "disabled_complete_300_frame_noninterference_verified" not in report
+    assert "original_none_context_retention" in report
+    assert report["teacher_qualified"] is False
+
+
+@pytest.mark.parametrize("tamper", ["intent_baseline", "prefix_hash", "upstream_unverified"])
+def test_context_expansion_reader_rejects_inconsistent_history(tmp_path, monkeypatch, tamper):
+    output = fixture(tmp_path, monkeypatch, tamper, expansion=True)
+    with pytest.raises(ValueError):
+        audit.main()
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(

@@ -85,15 +85,20 @@ def main():
     torque_mpc = cfg.get("use_contact_exit_torque_mpc", False)
     directional = cfg.get("use_directional_contact_compliance", False)
     surface = cfg.get("use_mesh_surface_swing", False)
+    surface_profile = cfg.get("surface_profile", "original-seven")
+    expansion = surface and surface_profile == "context-six"
     if (
         type(torque_mpc) is not bool
         or type(directional) is not bool
         or type(surface) is not bool
         or sum((torque_mpc, directional, surface)) > 1
+        or (surface_profile != "original-seven" and not expansion)
     ):
         raise ValueError("explicit boolean diagnostic selection required")
     study_kind = (
-        "mesh_surface_swing"
+        "mesh_surface_context_expansion"
+        if expansion
+        else "mesh_surface_swing"
         if surface
         else "directional_contact_compliance"
         if directional
@@ -104,8 +109,8 @@ def main():
     source, core, root = (Path(cfg[k]) for k in ("source_root", "core_root", "output_root"))
     if (
         root.exists()
-        or cfg["max_attempts"] != (7 if surface else 4)
-        or cfg["new_physical_budget"] != (7 if surface else 4)
+        or cfg["max_attempts"] != (6 if expansion else 7 if surface else 4)
+        or cfg["new_physical_budget"] != (6 if expansion else 7 if surface else 4)
         or cfg["neural_training_authorized"] is not False
         or cfg["selected_option_index"] != 4
         or cfg.get("generated_seed_episode_binding") is not False
@@ -183,6 +188,16 @@ def main():
     jobs = declared_jobs(contexts)
     if surface:
         jobs = declared_surface_jobs(contexts)
+    if expansion:
+        from rosclaw_soccer.rsi.surface_context_expansion import (
+            context_jobs,
+            require_context_baselines,
+            require_previous_surface,
+        )
+
+        jobs = context_jobs(contexts)
+        require_previous_surface(cfg, source, p.sealed, digest, pins)
+    evaluation_jobs = jobs[1:] if surface and not expansion else jobs
     if torque_mpc:
         if cfg.get("maximum_forecast_steps_per_episode") != 6000:
             raise ValueError("fixed bounded contact-exit planning budget required")
@@ -224,7 +239,7 @@ def main():
     baselines = {}
     if len(cfg["baseline_receipts"]) != (6 if surface else 4):
         raise ValueError("all four predeclared passing and unsafe baseline endpoints required")
-    for item, job in zip(cfg["baseline_receipts"], jobs[1:] if surface else jobs, strict=True):
+    for item, job in zip(cfg["baseline_receipts"], evaluation_jobs, strict=True):
         path = Path(item["path"])
         receipt = json.loads(path.read_text())
         context = None if job["context_index"] is None else contexts[job["context_index"]]
@@ -276,6 +291,21 @@ def main():
             pins.update(captured)
     for key in ("nominal_complete", "nominal_readback", "portfolio_fit", "selection_declaration"):
         pins[cfg[key]] = digest(cfg[key])
+    original_none = {}
+    if expansion:
+        screen = require_context_baselines(cfg, jobs, p.sealed, digest, pins)
+        for key in ("baseline_terminal_readback",):
+            pins[cfg[key]] = digest(Path(cfg[key]))
+        for job in jobs:
+            receipt = screen["results"][2 * job["context_index"]]
+            if (
+                receipt["candidate"] is not None
+                or receipt["group"] != job["group"]
+                or receipt["job"] != "control-" + job["pair_id"]
+            ):
+                raise ValueError("all six original None context controls required")
+            authenticate_receipt(receipt)
+            original_none[job["pair_id"]] = receipt["outcome"]
     p.stable()
     if args.preflight:
         print(
@@ -330,7 +360,9 @@ def main():
         independent_course_count=6 if surface else 4,
         paired_endpoint_count=12 if surface else 8,
         selection_scope=(
-            "six consumed option4 endpoints plus one disabled noninterference body"
+            "six remaining public contexts with unchanged material-point control; prior OFF reused"
+            if expansion
+            else "six consumed option4 endpoints plus one disabled noninterference body"
             if surface
             else "four fixed consumed candidate4 endpoints, including unsafe failure"
         ),
@@ -501,12 +533,15 @@ def main():
             hardware_authorized=False,
             promotion_authorized=False,
         )
-        if surface:
+        if surface and not expansion:
             complete["original_none_raw_retention"] = assess_pairs(
                 {f"raw-{g}": references[g]["outcome"] for g in (4, 8, 32, 56)},
                 {f"raw-{g}": evaluations[f"raw-{g}"] for g in (4, 8, 32, 56)},
             )
             complete["disabled_complete_300_frame_noninterference_verified"] = True
+        if expansion:
+            complete["original_none_context_retention"] = assess_pairs(original_none, evaluations)
+            complete["prior_disabled_noninterference_reused_not_rerun"] = True
         if torque_mpc or directional:
             complete["native_forecast_substeps"] = sum(
                 row["forecast_physical_substeps"] for row in results
@@ -529,7 +564,9 @@ def main():
         complete["report_hash"] = hash_json(complete)
         write_once(root / "complete.json", complete)
         phase(
-            "MESH_SURFACE_SWING_COMPLETE_NOT_QUALIFIED_TEACHER"
+            "MESH_SURFACE_CONTEXT_EXPANSION_COMPLETE_NOT_QUALIFIED_TEACHER"
+            if expansion
+            else "MESH_SURFACE_SWING_COMPLETE_NOT_QUALIFIED_TEACHER"
             if surface
             else "DIRECTIONAL_CONTACT_COMPLIANCE_COMPLETE_NOT_QUALIFIED_TEACHER"
             if directional

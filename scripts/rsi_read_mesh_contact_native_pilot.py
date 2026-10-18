@@ -15,6 +15,26 @@ def digest(path):
 
 
 def bounded_profile(profile):
+    if profile == "surface-context-six":
+        return dict(
+            count=6,
+            groups=[68, 69, 72, 73, 76, 77],
+            declaration_schema="soccer.rsi.mesh_surface_context_expansion_pilot_declaration.v1",
+            complete_schema="soccer.rsi.mesh_surface_context_expansion_pilot_complete.v1",
+            readback_schema="soccer.rsi.mesh_surface_context_expansion_terminal_readback.v1",
+            phase="MESH_SURFACE_CONTEXT_EXPANSION_COMPLETE_NOT_QUALIFIED_TEACHER",
+            jobs=[
+                dict(
+                    job=f"surface-context-{i}",
+                    role="teacher",
+                    pair_id=f"context-{i}",
+                    context_index=i,
+                    group=g,
+                    option_index=4,
+                )
+                for i, g in zip(range(2, 8), (68, 69, 72, 73, 76, 77), strict=True)
+            ],
+        )
     if profile == "surface-seven":
         spec = bounded_profile("release-four")
         rows = [dict(j, job="surface-" + j["pair_id"], role="teacher") for j in spec["jobs"]]
@@ -364,6 +384,7 @@ def main():
             "contact-exit-four",
             "directional-four",
             "surface-seven",
+            "surface-context-six",
         ),
         default="contact-three",
     )
@@ -372,12 +393,15 @@ def main():
     teacher_screen = args.profile == "teacher-eighteen"
     torque_mpc = args.profile == "contact-exit-four"
     directional = args.profile == "directional-four"
-    surface = args.profile == "surface-seven"
+    expansion = args.profile == "surface-context-six"
+    surface = args.profile in ("surface-seven", "surface-context-six")
+    surface_off = surface and not expansion
     release_ablation = args.profile in {
         "release-four",
         "contact-exit-four",
         "directional-four",
         "surface-seven",
+        "surface-context-six",
     }
     context_study = teacher_screen or release_ablation
     spec = (
@@ -391,6 +415,7 @@ def main():
             "contact-exit-four",
             "directional-four",
             "surface-seven",
+            "surface-context-six",
         )
         else None
     )
@@ -541,7 +566,9 @@ def main():
         or complete.get("paired_endpoint_count") != (12 if surface else 8)
         or len(config.get("baseline_receipts", [])) != (6 if surface else 4)
         or [i["pair_id"] for i in config["baseline_receipts"]]
-        != [j["pair_id"] for j in (spec["jobs"][1:] if surface else spec["jobs"])]
+        != [j["pair_id"] for j in (spec["jobs"][1:] if surface_off else spec["jobs"])]
+        or config.get("surface_profile", "original-seven")
+        != ("context-six" if expansion else "original-seven")
         or complete.get("reused_endpoints") != declaration.get("reused_endpoints")
         or set(config.get("required_receipt_witnesses", []))
         != {"intent_witness", "encoder_witness", "prefix_witness"}
@@ -570,6 +597,10 @@ def main():
         prepared, _, source_manifest, actual = prepare(args.config)
         if actual != config:
             raise ValueError("same original preparation configuration required")
+        if expansion:
+            from rosclaw_soccer.rsi.surface_context_expansion import require_previous_surface
+
+            require_previous_surface(config, source, sealed, digest, pins)
         if release_ablation:
             for project in config["baseline_sources"]:
                 previous_source = Path(project["root"])
@@ -669,6 +700,7 @@ def main():
                 "contact-exit-four",
                 "directional-four",
                 "surface-seven",
+                "surface-context-six",
             )
             and declaration["options"] != catalog
         ):
@@ -1254,7 +1286,9 @@ def main():
             for index, item in enumerate(config["baseline_receipts"]):
                 prior = sealed(Path(item["path"]), "receipt_hash")
                 prior_complete, prior_audit, prior_index = (
-                    (catalog_complete, upstream, 8 + index)
+                    (screen_complete, screen, 2 * spec["jobs"][index]["context_index"] + 1)
+                    if expansion
+                    else (catalog_complete, upstream, 8 + index)
                     if index < 2
                     else (
                         screen_complete,
@@ -1269,13 +1303,13 @@ def main():
                     for row in prior_audit["rows"]
                 ):
                     raise ValueError("exact baseline endpoint must belong to its terminal audit")
-                job = spec["jobs"][index + 1 if surface else index]
+                job = spec["jobs"][index + 1 if surface_off else index]
                 if (
                     item["pair_id"] != job["pair_id"]
                     or prior["candidate"] != catalog[4]
                     or prior["group"] != job["group"]
                     or prior.get("planning_context_hash")
-                    != complete["results"][index + 1 if surface else index].get(
+                    != complete["results"][index + 1 if surface_off else index].get(
                         "planning_context_hash"
                     )
                 ):
@@ -1290,8 +1324,8 @@ def main():
                 {
                     j["pair_id"]: r["outcome"]
                     for j, r in zip(
-                        spec["jobs"][1:] if surface else spec["jobs"],
-                        rows[1:] if surface else rows,
+                        spec["jobs"][1:] if surface_off else spec["jobs"],
+                        rows[1:] if surface_off else rows,
                         strict=True,
                     )
                 },
@@ -1309,7 +1343,41 @@ def main():
                 upstream_terminal_readback_hash=upstream["report_hash"],
                 baseline_screen_terminal_readback_hash=screen["report_hash"],
             )
-            if surface:
+            if expansion:
+                original_none = {}
+                for job in spec["jobs"]:
+                    prior = screen_complete["results"][2 * job["context_index"]]
+                    if (
+                        prior["candidate"] is not None
+                        or prior["group"] != job["group"]
+                        or prior["job"] != "control-" + job["pair_id"]
+                        or not any(
+                            r["receipt_hash"] == prior["receipt_hash"]
+                            and r["outcome"] == prior["outcome"]
+                            for r in screen["rows"]
+                        )
+                    ):
+                        raise ValueError(
+                            "original None contexts must belong to whole baseline audit"
+                        )
+                    original_none[job["pair_id"]] = prior["outcome"]
+                retention = assess_pairs(
+                    original_none,
+                    {j["pair_id"]: r["outcome"] for j, r in zip(spec["jobs"], rows, strict=True)},
+                )
+                if (
+                    retention != complete.get("original_none_context_retention")
+                    or complete.get("prior_disabled_noninterference_reused_not_rerun") is not True
+                ):
+                    raise ValueError("all None context outcomes and prior OFF reuse required")
+                report.update(
+                    original_none_context_retention=retention,
+                    prior_disabled_noninterference_reused_not_rerun=True,
+                    all_original_pre_activation_prefixes_bit_equal=True,
+                    geometry_and_ik_reconstruction_uses_same_pinned_implementation=True,
+                    independent_ik_implementation=False,
+                )
+            elif surface:
                 raw_evaluations = {
                     j["pair_id"]: r["outcome"]
                     for j, r in zip(spec["jobs"][1:], rows[1:], strict=True)
