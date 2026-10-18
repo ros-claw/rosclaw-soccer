@@ -66,18 +66,40 @@ def self_test():
     g = int(model.geom("mesh").id)
     s = int(model.geom("sphere").id)
     hull = surface(model, g)
+    checks = []
     for center, expected in (
         ([2.5, 0, 0], 0.4),
         ([1, 2.5, 0], 0.4),
         ([1, 0, 0.8], 0.2),
+        ([2.05, 0, 0], -0.05),
+        ([1, 0, 0.55], -0.05),
         ([1, 0, 0], -0.6),
     ):
         model.geom_pos[s] = center
         mujoco.mj_kinematics(model, data)
         independent, native, _ = query(model, data, g, s, hull)
-        if abs(independent - expected) > 1e-10 or abs(native - independent) > 1e-6:
-            raise ValueError("scaled/rotated hull or CCD cross-check failed")
-    print("FOUR_SCALED_ROTATED_SPHERE_HULL_CHECKS_ZERO_DYNAMICS_STEPS", flush=True)
+        inside = independent < -float(model.geom_size[s, 0])
+        if abs(independent - expected) > 1e-10:
+            raise ValueError("scaled/rotated independent hull analytic check failed")
+        if not inside and abs(native - independent) > 1e-6:
+            raise ValueError("non-contained native CCD cross-check failed")
+        checks.append(
+            dict(
+                center=center,
+                expected_gap_m=expected,
+                independent_gap_m=independent,
+                native_ccd_gap_m=native,
+                sphere_center_inside_hull=inside,
+            )
+        )
+    result = dict(
+        independent_analytic_geometry_qualified=True,
+        native_containment_distance_qualified=False,
+        checks=checks,
+        new_physical_steps=0,
+    )
+    print(json.dumps(result), flush=True)
+    return result
 
 
 def main():
@@ -189,6 +211,8 @@ def main():
                 )
         arrays[item["name"] + "_independent_gap_m"] = gaps
         arrays[item["name"] + "_native_ccd_gap_m"] = native
+        inside = gaps < -float(model.geom_size[sphere, 0])
+        arrays[item["name"] + "_native_center_inside_hull_unqualified"] = inside
         arrays[item["name"] + "_closest_mesh_point_world_m"] = points
         results.append(
             dict(
@@ -202,6 +226,11 @@ def main():
                 .min(axis=0)
                 .tolist(),
                 maximum_native_vs_independent_gap_error_m=float(np.max(np.abs(native - gaps))),
+                native_query_center_inside_hull_count=int(inside.sum()),
+                native_containment_distance_qualified=False,
+                significant_native_geometry_disagreement_count=int(
+                    np.count_nonzero(np.abs(native - gaps) > 1e-6)
+                ),
             )
         )
         print("CANONICAL_FOOT_SURFACE_GAPS_RECONSTRUCTED", item["name"], flush=True)
