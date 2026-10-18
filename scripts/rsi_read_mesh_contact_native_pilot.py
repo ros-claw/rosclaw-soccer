@@ -15,6 +15,19 @@ def digest(path):
 
 
 def bounded_profile(profile):
+    if profile == "surface-receding-six":
+        from rosclaw_soccer.rsi.receding_teacher_scope import SOURCE_GROUPS
+        from rosclaw_soccer.rsi.surface_receding_evidence import surface_receding_jobs
+
+        return dict(
+            count=6,
+            groups=list(SOURCE_GROUPS),
+            declaration_schema="soccer.rsi.mesh_surface_receding_pilot_declaration.v1",
+            complete_schema="soccer.rsi.mesh_surface_receding_pilot_complete.v1",
+            readback_schema="soccer.rsi.mesh_surface_receding_terminal_readback.v1",
+            phase="MESH_SURFACE_RECEDING_COMPLETE_NOT_QUALIFIED_TEACHER",
+            jobs=surface_receding_jobs(),
+        )
     if profile == "receding-catalog2-ten":
         from rosclaw_soccer.rsi.receding_teacher_scope import SOURCE_GROUPS, receding_jobs
 
@@ -398,6 +411,7 @@ def main():
             "surface-seven",
             "surface-context-six",
             "receding-catalog2-ten",
+            "surface-receding-six",
         ),
         default="contact-three",
     )
@@ -405,11 +419,12 @@ def main():
     public_four = args.profile == "original-public-four"
     teacher_screen = args.profile == "teacher-eighteen"
     receding = args.profile == "receding-catalog2-ten"
+    surface_receding = args.profile == "surface-receding-six"
     torque_mpc = args.profile == "contact-exit-four"
     directional = args.profile == "directional-four"
     expansion = args.profile == "surface-context-six"
-    surface = args.profile in ("surface-seven", "surface-context-six")
-    surface_off = surface and not expansion
+    surface = args.profile in ("surface-seven", "surface-context-six", "surface-receding-six")
+    surface_off = surface and not expansion and not surface_receding
     release_ablation = args.profile in {
         "release-four",
         "contact-exit-four",
@@ -417,7 +432,7 @@ def main():
         "surface-seven",
         "surface-context-six",
     }
-    context_study = teacher_screen or release_ablation or receding
+    context_study = teacher_screen or release_ablation or receding or surface_receding
     spec = (
         bounded_profile(args.profile)
         if args.profile
@@ -431,6 +446,7 @@ def main():
             "surface-seven",
             "surface-context-six",
             "receding-catalog2-ten",
+            "surface-receding-six",
         )
         else None
     )
@@ -587,6 +603,34 @@ def main():
         raise ValueError(
             "exact receding catalog2 scope, reproduction and original controls required"
         )
+    if surface_receding and (
+        config.get("selected_option_index") != 2
+        or config.get("surface_profile") != "receding-six"
+        or config.get("use_mesh_surface_swing") is not True
+        or any(
+            config.get(k) is not False
+            for k in (
+                "neural_training_authorized",
+                "teacher_auto_admission",
+                "generated_seed_episode_binding",
+                "suppress_postcontact_swing_release",
+            )
+        )
+        or any(
+            config.get(k, False) is not False
+            for k in ("use_contact_exit_torque_mpc", "use_directional_contact_compliance")
+        )
+        or complete.get("distinct_derived_course_count") != 6
+        or complete.get("source_scene_clusters") != 3
+        or complete.get("paired_endpoint_count") != 12
+        or complete.get("prior_disabled_noninterference_reused_not_rerun") is not True
+        or complete.get("reused_endpoints") != declaration.get("reused_endpoints")
+        or complete.get("reused_original_none_endpoints")
+        != declaration.get("reused_original_none_endpoints")
+        or set(config.get("required_receipt_witnesses", []))
+        != {"intent_witness", "encoder_witness", "prefix_witness"}
+    ):
+        raise ValueError("exact six-course catalog2/material-point intervention required")
     if release_ablation and (
         args.upstream_audit_source is None
         or args.baseline_screen_readback is None
@@ -627,6 +671,7 @@ def main():
         pins[str(collected_helper)] = collected_helper_hash
     prepared, preparation_was_persisted = None, False
     receding_reused, receding_archived = None, None
+    surface_receding_baselines, surface_receding_none = None, None
     if spec is not None:
         from rosclaw_soccer.rsi.first_touch_campaign_worker import prepare
         from rosclaw_soccer.rsi.reviewed_contact_world import ReviewedContactWorld
@@ -640,6 +685,12 @@ def main():
             receding_reused, receding_archived = load_scope_evidence(config, sealed, digest, pins)
             if receding_reused != declaration["reused_endpoints"]:
                 raise ValueError("original None receding endpoints must match declaration")
+        if surface_receding:
+            from rosclaw_soccer.rsi.surface_receding_evidence import load_baselines
+
+            surface_receding_baselines, surface_receding_none = load_baselines(
+                config, source, sealed, digest, pins
+            )
         if expansion:
             from rosclaw_soccer.rsi.surface_context_expansion import require_previous_surface
 
@@ -745,6 +796,7 @@ def main():
                 "surface-seven",
                 "surface-context-six",
                 "receding-catalog2-ten",
+                "surface-receding-six",
             )
             and declaration["options"] != catalog
         ):
@@ -761,7 +813,7 @@ def main():
         witnesses.update({k: receipt[k] for k in ("intent_witness", "encoder_witness")})
         if receding and index == 0:
             witnesses["reproduction_witness"] = receipt["reproduction_witness"]
-        if release_ablation:
+        if release_ablation or surface_receding:
             witnesses["prefix_witness"] = receipt["prefix_witness"]
         if context_study and spec["jobs"][index]["context_index"] is not None:
             witnesses["planning_context_witness"] = receipt["planning_context_witness"]
@@ -865,7 +917,7 @@ def main():
                 or outcome.to_dict() != receding_archived["outcome"]
             ):
                 raise ValueError("independent complete original zero-layer reproduction differs")
-        if release_ablation:
+        if release_ablation or surface_receding:
             from rosclaw_soccer.rsi.swing_release_ablation import (
                 release_ablation_contract,
                 require_zero_postcontact_swing,
@@ -1033,7 +1085,7 @@ def main():
             if context_study:
                 from rosclaw_soccer.rsi.public_physics_option_planning import planning_contexts
 
-                if receding:
+                if receding or surface_receding:
                     from rosclaw_soccer.rsi.receding_teacher_scope import receding_contexts
 
                     study_contexts = receding_contexts(plan)
@@ -1053,7 +1105,7 @@ def main():
 
                 planning = (
                     next(c for c in study_contexts if c.source_group == group)
-                    if receding
+                    if receding or surface_receding
                     else planning_contexts(plan)[intended["context_index"]]
                 )
                 validate_context_source(planning, plan, group=group)
@@ -1119,7 +1171,7 @@ def main():
                         expected_intent["context_hash"] = (
                             None if planning is None else planning.context_hash
                         )
-                    if release_ablation:
+                    if release_ablation or surface_receding:
                         expected_intent["baseline_receipt_hash"] = baseline["receipt_hash"]
                 if expected_candidate is None:
                     if (
@@ -1315,6 +1367,62 @@ def main():
                 != complete["passing_option_indices_by_group"]
             ):
                 raise ValueError("whole independently reconstructed option outcome matrix differs")
+        elif surface_receding:
+            from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
+            from rosclaw_soccer.rsi.public_course_cluster_accounting import cluster_contract
+
+            jobs = spec["jobs"]
+            reused = [
+                dict(
+                    role="control",
+                    pair_id=j["pair_id"],
+                    receipt=surface_receding_baselines[j["pair_id"]],
+                )
+                for j in jobs
+            ]
+            none_reused = [
+                dict(
+                    role="control",
+                    pair_id=j["pair_id"],
+                    receipt=surface_receding_none[j["pair_id"]],
+                )
+                for j in jobs
+            ]
+            evaluations = {j["pair_id"]: r["outcome"] for j, r in zip(jobs, rows, strict=True)}
+            paired = assess_pairs(
+                {k: r["outcome"] for k, r in surface_receding_baselines.items()}, evaluations
+            )
+            retention = assess_pairs(
+                {k: r["outcome"] for k, r in surface_receding_none.items()}, evaluations
+            )
+            clusters = cluster_contract(plan, study_contexts)
+            if (
+                reused != declaration["reused_endpoints"]
+                or none_reused != declaration["reused_original_none_endpoints"]
+                or paired != complete["paired_development"]
+                or retention != complete["original_none_context_retention"]
+                or declaration.get("course_cluster_contract") != clusters
+            ):
+                raise ValueError(
+                    "whole six pairs, None retention and source clusters must reconstruct"
+                )
+            report.update(
+                paired_development=paired,
+                original_none_context_retention=retention,
+                reused_endpoint_count=6,
+                reused_original_none_endpoint_count=6,
+                distinct_derived_course_count=6,
+                source_scene_clusters=3,
+                course_cluster_contract=clusters,
+                paired_endpoint_count=12,
+                prior_disabled_noninterference_reused_not_rerun=True,
+                all_original_pre_activation_prefixes_bit_equal=True,
+                geometry_and_ik_reconstruction_uses_same_pinned_implementation=True,
+                independent_ik_implementation=False,
+                fresh_exam=False,
+                reused_endpoints_authenticated_via_prior_complete_terminal_readbacks=True,
+                reused_endpoint_physics_rerun_here=False,
+            )
         elif release_ablation:
             from rosclaw_soccer.rsi.paired_learning_assessment import assess_pairs
 

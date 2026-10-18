@@ -31,16 +31,19 @@ def fixture(
     directional=False,
     surface=False,
     expansion=False,
+    surface_receding=False,
 ):
-    surface = surface or expansion
-    surface_off = surface and not expansion
-    expanded_fixture(tmp_path, monkeypatch)
+    surface = surface or expansion or surface_receding
+    surface_off = surface and not expansion and not surface_receding
+    expanded_fixture(tmp_path, monkeypatch, receding=surface_receding)
     prepared, _, manifest, config = first_touch_campaign_worker.prepare(None)
     screen_root = tmp_path / "teacher"
     templates = [
         json.loads((screen_root / f"receipt-{i:04d}.json").read_text())
         for i in (
-            (5, 7, 9, 11, 13, 15)
+            (1, 0, 3, 5, 7, 9)
+            if surface_receding
+            else (5, 7, 9, 11, 13, 15)
             if expansion
             else (16, 17, 1, 3, 16, 17)
             if surface
@@ -50,7 +53,9 @@ def fixture(
     root = tmp_path / "release"
     root.mkdir()
     profile = (
-        "surface-context-six"
+        "surface-receding-six"
+        if surface_receding
+        else "surface-context-six"
         if expansion
         else "surface-seven"
         if surface
@@ -380,13 +385,17 @@ def fixture(
         )
 
     baselines = [endpoint(i) for i in range(6 if surface else 4)]
-    for i in range(0 if expansion else 2, len(baselines)):
+    for i in range(0 if expansion or surface_receding else 2, len(baselines)):
         write(screen_root / f"baseline-{i:04d}.json", baselines[i], "receipt_hash")
     baseline_items = [
         dict(
-            path=str((screen_root if expansion or i >= 2 else root) / f"baseline-{i:04d}.json"),
+            path=str(
+                (screen_root if expansion or surface_receding or i >= 2 else root)
+                / f"baseline-{i:04d}.json"
+            ),
             file_hash=audit.digest(
-                (screen_root if expansion or i >= 2 else root) / f"baseline-{i:04d}.json"
+                (screen_root if expansion or surface_receding or i >= 2 else root)
+                / f"baseline-{i:04d}.json"
             ),
             receipt_hash=r["receipt_hash"],
             pair_id=spec["jobs"][i + 1 if surface_off else i]["pair_id"],
@@ -416,6 +425,32 @@ def fixture(
         # Separate real-byte predecessor tests cover this contract. The full
         # synthetic reader below mocks all numerical/model qualification too.
         monkeypatch.setattr(surface_context_expansion, "require_previous_surface", lambda *a: None)
+    none_controls = None
+    if surface_receding:
+        from rosclaw_soccer.rsi import surface_receding_evidence
+        from rosclaw_soccer.rsi.public_course_cluster_accounting import cluster_contract
+        from rosclaw_soccer.rsi.receding_teacher_scope import receding_contexts
+
+        original_complete = json.loads((screen_root / "complete.json").read_text())
+        none_controls = {r["pair_id"]: r["receipt"] for r in original_complete["reused_endpoints"]}
+        none_controls.update(
+            {r["pair_id"]: r for r in original_complete["results"] if r["role"] == "control"}
+        )
+        control_mapping = {j["pair_id"]: r for j, r in zip(spec["jobs"], baselines, strict=True)}
+
+        def mocked_baselines(*args):
+            if tamper == "upstream_unverified":
+                raise ValueError("synthetic missing complete predecessor audit")
+            return control_mapping, none_controls
+
+        monkeypatch.setattr(surface_receding_evidence, "load_baselines", mocked_baselines)
+        config.update(
+            surface_profile="receding-six",
+            selected_option_index=2,
+            neural_training_authorized=False,
+            teacher_auto_admission=False,
+            generated_seed_episode_binding=False,
+        )
     config_path = root / "config.json"
     write(config_path, config, key=None)
     pins = {str(config_path): audit.digest(config_path)}
@@ -439,6 +474,21 @@ def fixture(
             input_file_hashes=pins,
             prepared_pins=pins,
             source_heads={},
+            **(
+                dict(
+                    reused_original_none_endpoints=[
+                        dict(
+                            role="control",
+                            pair_id=j["pair_id"],
+                            receipt=none_controls[j["pair_id"]],
+                        )
+                        for j in spec["jobs"]
+                    ],
+                    course_cluster_contract=cluster_contract(plan, receding_contexts(plan)),
+                )
+                if surface_receding
+                else {}
+            ),
         ),
     )
     receipts = [
@@ -454,7 +504,7 @@ def fixture(
     # reconstruction remains mocked by expanded_fixture, not physical evidence.
     catalog_path = Path(config["selection_declaration"]).parent / "complete.json"
     catalog_complete = json.loads(catalog_path.read_text())
-    if not expansion:
+    if not expansion and not surface_receding:
         catalog_complete["results"][8:10] = baselines[:2]
     catalog_complete = write(catalog_path, catalog_complete)
     upstream_path = Path(config["upstream_catalog_readback"])
@@ -476,7 +526,7 @@ def fixture(
     if expansion:
         for i, baseline in zip(range(5, 16, 2), baselines, strict=True):
             screen_complete["results"][i] = baseline
-    else:
+    elif not surface_receding:
         screen_complete["results"][1], screen_complete["results"][3] = baselines[2:4]
     if surface_off:
         screen_complete["results"][16:18] = baselines[4:]
@@ -549,6 +599,23 @@ def fixture(
             teacher_qualified=False,
             hardware_authorized=False,
             promotion_authorized=False,
+            **(
+                dict(
+                    distinct_derived_course_count=6,
+                    source_scene_clusters=3,
+                    prior_disabled_noninterference_reused_not_rerun=True,
+                    reused_original_none_endpoints=declaration["reused_original_none_endpoints"],
+                    original_none_context_retention=assess_pairs(
+                        {k: r["outcome"] for k, r in none_controls.items()},
+                        {
+                            j["pair_id"]: r["outcome"]
+                            for j, r in zip(spec["jobs"], receipts, strict=True)
+                        },
+                    ),
+                )
+                if surface_receding
+                else {}
+            ),
             **(
                 dict(
                     disabled_complete_300_frame_noninterference_verified=True,
