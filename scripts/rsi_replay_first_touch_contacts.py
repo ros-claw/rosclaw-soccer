@@ -34,6 +34,7 @@ def fixed_replay_scope(cfg):
         "catalog2-zero-c7": 1,
         "receding-catalog2-ten": 10,
         "surface-receding-six": 6,
+        "positive-lateral-sixteen": 16,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -98,6 +99,10 @@ def fixed_replay_scope(cfg):
             j["job"].replace("-", "_") for j in surface_receding_jobs()
         ]:
             raise ValueError("all six original material-point receding endpoints required")
+    if profile == "positive-lateral-sixteen" and [r["case_id"] for r in cases] != [
+        f"{role}_positive_local_c{i}" for i in range(8) for role in ("control", "teacher")
+    ]:
+        raise ValueError("all sixteen prospective paired endpoints required in declaration order")
     return count, steps
 
 
@@ -311,7 +316,11 @@ def main():
         pins[str(baseline_reader)] = digest(baseline_reader)
     if cfg.get("replay_profile") == "demonstration-missing-five":
         verify_none_demonstration_sources(cfg, receipts, sealed, pins)
-    if cfg.get("replay_profile") in ("receding-catalog2-ten", "surface-receding-six"):
+    if cfg.get("replay_profile") in (
+        "receding-catalog2-ten",
+        "surface-receding-six",
+        "positive-lateral-sixteen",
+    ):
         from scripts.rsi_stage_receding_contact_replay import require_receding_endpoints
 
         producer = json.loads(Path(cfg["producer_config"]).read_text())
@@ -319,7 +328,20 @@ def main():
         complete = sealed(cfg["producer_complete"])
         declaration = sealed(cfg["producer_declaration"])
         audit = sealed(cfg["source_terminal_readback"])
-        if cfg["replay_profile"] == "surface-receding-six":
+        if cfg["replay_profile"] == "positive-lateral-sixteen":
+            from rosclaw_soccer.rsi.positive_lateral_diagnostics import require_cohort
+            from scripts.rsi_positive_lateral_physical_pilot import whole_predecessor
+
+            require_cohort(producer, declaration, complete, audit)
+            whole_predecessor(producer, Path(producer["source_root"]), sealed, pins)
+            for relative in (
+                "src/rosclaw_soccer/rsi/positive_lateral_diagnostics.py",
+                "src/rosclaw_soccer/rsi/positive_lateral_episode_inputs.py",
+                "src/rosclaw_soccer/rsi/positive_lateral_receding_scope.py",
+                "scripts/rsi_positive_lateral_physical_pilot.py",
+            ):
+                pins[str(source / relative)] = digest(source / relative)
+        elif cfg["replay_profile"] == "surface-receding-six":
             from rosclaw_soccer.rsi.surface_receding_diagnostics import require_endpoints
             from rosclaw_soccer.rsi.surface_receding_evidence import load_baselines
 

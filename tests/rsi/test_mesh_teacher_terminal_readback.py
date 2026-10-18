@@ -277,6 +277,8 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False, posi
             **(
                 dict(
                     source_plan=plan.contract(),
+                    distinct_derived_course_count=8,
+                    source_scene_clusters=4,
                     scope_hash=positive_scope["scope_hash"],
                     course_cluster_contract=positive_scope["cluster_accounting"],
                     prospective_split=prospective_split(positive_scope),
@@ -519,6 +521,8 @@ def expanded_fixture(tmp_path, monkeypatch, tamper=None, *, receding=False, posi
             )
         if index == 0 and tamper == "receipt_role":
             receipt["role"] = "control" if receding else "teacher"
+        if positive_lateral:
+            receipt["context_hash"] = job["context_hash"]
         if reproduction is not None:
             p = root / "archived-c7-reproduction.json"
             write(p, reproduction)
