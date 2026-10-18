@@ -187,3 +187,23 @@ numpy/Torch均值误差0，另有300次Foundation复算。
 进程PID1760082继续执行后续固定任务，不重启已完成第一例，终态审计
 仍等待全部44体。下一接续核对实际账本和第二例；不要重做初始化、
 重复扫描PAiD接管参数、或提前把初始化模型当成训练完成。
+
+## 12:57接续点：对照齐全，已进入真正随机力矩采集
+
+八个零头对照已经全部提交，四个新context均通过，完整候选基线6/8。
+第一条collection已于12:54:58通过独立CPU/Foundation/encoder复核并提交，
+实际3000次高斯采样、非零实际力矩，首触84帧且原M0通过；模型mean0、
+optimizer0。详见三种子协议新增前缀记录，不能把探索成功当学习成长。
+worker仍为PID1760082，继续后续12条固定采样；没有重启或热改。
+
+已重新阅读既有generated-seed benchmark、byte-preview非干扰与历史
+性能profile：seed生成曾约11.3秒，但原bind仍约43秒；不能重复报告为
+整条采样3倍提速。当前native还会restore sampling view、在loader中preview、
+再preview及bind，重复整模型表示检查仍是后续批量训练的潜在瓶颈。
+本轮没有另行分配大模型做重复benchmark，也未写/启用新的fast path。
+后续可研究仅接受私有seed并生成完整原preview和新episode的显式API，
+保留外部document入口的原完整验证、初始完整模型资格与独立复试；必须
+另做数值/状态隔离及原生bit-exact非干扰，不能跳过审查换取采样数量。
+
+优先级仍是读取当前真实采样、完整batch、更新和评估，不能被性能工程
+替代。Goal保持active；尚未达到连续自主比赛或宣传视频目标。
