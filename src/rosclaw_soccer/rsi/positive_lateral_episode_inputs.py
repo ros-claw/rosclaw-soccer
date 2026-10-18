@@ -50,7 +50,10 @@ def episode_inputs(registry, *, expected_registry_hash, behavior_model_hash, dig
     ):
         raise ValueError("whole original metadata-only registry required")
     scope = build_scope(behavior_model_hash)
-    if registry.get("scope") != scope or registry.get("scope_hash") != scope["scope_hash"]:
+    if (
+        hash_json(registry.get("scope")) != hash_json(scope)
+        or registry.get("scope_hash") != scope["scope_hash"]
+    ):
         raise ValueError("unchanged metadata sampling domain and first-match rule required")
     for name, h in registry["input_file_hashes"].items():
         if digest(Path(name)) != h:
@@ -65,9 +68,9 @@ def episode_inputs(registry, *, expected_registry_hash, behavior_model_hash, dig
     )
     rows = registry["records"]
     if (
-        plan.contract() != scope["source_plan"]
+        hash_json(plan.contract()) != hash_json(scope["source_plan"])
         or len(rows) != 96
-        or [r["draw"] for r in rows] != scope["source_plan"]["jobs"]
+        or hash_json([r["draw"] for r in rows]) != hash_json(scope["source_plan"]["jobs"])
         or any(r.get("metadata_only_no_physical_trajectory") is not True for r in rows)
     ):
         raise ValueError("entire 96-row source registry order required; not a collected bank")

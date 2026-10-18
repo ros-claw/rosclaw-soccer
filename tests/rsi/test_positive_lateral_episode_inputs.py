@@ -1,6 +1,7 @@
 """Synthetic input contracts only; no NN/physics/teacher qualification."""
 
 import copy
+import json
 
 import pytest
 
@@ -66,7 +67,9 @@ def fixture(tmp_path, monkeypatch):
     )
     reg["report_hash"] = hash_json(reg)
     monkeypatch.setattr(module, "logical_document", lambda p: copy.deepcopy(views[str(p)]))
-    return reg, behavior, hashes, views
+    # Scientific inputs are persisted JSON: course tuples become lists. The
+    # complete canonical JSON identity must survive this real serialization.
+    return json.loads(json.dumps(reg)), behavior, hashes, views
 
 
 @pytest.mark.parametrize(
@@ -125,7 +128,7 @@ def test_all_registry_inputs_required_before_physical_allocation(tmp_path, monke
     else:
         plan, manifest, contexts = module.episode_inputs(reg, **args)
         assert len(manifest["records"]) == 96 and len(contexts) == 8
-        assert plan.contract() == reg["scope"]["source_plan"]
+        assert hash_json(plan.contract()) == hash_json(reg["scope"]["source_plan"])
         assert len(pins) == 10
 
 
