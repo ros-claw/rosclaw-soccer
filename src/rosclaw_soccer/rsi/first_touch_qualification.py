@@ -22,6 +22,7 @@ def require_first_touch_qualification(
     reference_student_model_hash: str | None = None,
     planner_navigation_pulse_contract_hash: str | None = None,
     original_ik_planner_pulse_contract_hash: str | None = None,
+    foot_heading_contract_hash: str | None = None,
 ) -> dict[str, Any]:
     """Validate counts and label composition, never authorize execution."""
     if (
@@ -30,6 +31,16 @@ def require_first_touch_qualification(
         or type(outcome) is not FirstTouchOutcome
     ):
         raise ValueError("typed replay reviews and primitive M0 outcome required")
+    if foot_heading_contract_hash is None:
+        if any(k.startswith("foot_heading_") for k in review):
+            raise ValueError("unexpected foot heading requires explicit qualification intent")
+    elif (
+        type(foot_heading_contract_hash) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", foot_heading_contract_hash) is None
+        or original_ik_planner_pulse_contract_hash is None
+        or "original_ik_cpu_reconstruction" in review
+    ):
+        raise ValueError("explicit combined original-IK plus heading qualification required")
     if original_ik_planner_pulse_contract_hash is None:
         if any(
             k in review
@@ -55,11 +66,23 @@ def require_first_touch_qualification(
             )
         ):
             raise ValueError("explicit unmixed original-IK physical replay intent required")
-        require_original_ik_reviews(
-            review.get("original_ik_planner_pulse_review"),
-            review.get("original_ik_cpu_reconstruction"),
-            contract_hash=original_ik_planner_pulse_contract_hash,
-        )
+        if foot_heading_contract_hash is not None:
+            from rosclaw_soccer.rsi.foot_heading_evidence import require_heading_reviews
+
+            require_heading_reviews(
+                review.get("original_ik_planner_pulse_review"),
+                review.get("foot_heading_capture_review"),
+                review.get("foot_heading_cpu_reconstruction"),
+                pulse_hash=original_ik_planner_pulse_contract_hash,
+                heading_hash=foot_heading_contract_hash,
+                frames_compared=review.get("foot_heading_capture_frames_compared"),
+            )
+        else:
+            require_original_ik_reviews(
+                review.get("original_ik_planner_pulse_review"),
+                review.get("original_ik_cpu_reconstruction"),
+                contract_hash=original_ik_planner_pulse_contract_hash,
+            )
     pulse_review = review.get("planner_navigation_pulse_review")
     if planner_navigation_pulse_contract_hash is None:
         if "planner_navigation_pulse_review" in review:
@@ -205,4 +228,6 @@ def require_first_touch_qualification(
         result["planner_navigation_pulse_contract_hash"] = planner_navigation_pulse_contract_hash
     if original_ik_planner_pulse_contract_hash is not None:
         result["original_ik_planner_pulse_contract_hash"] = original_ik_planner_pulse_contract_hash
+    if foot_heading_contract_hash is not None:
+        result["foot_heading_contract_hash"] = foot_heading_contract_hash
     return result

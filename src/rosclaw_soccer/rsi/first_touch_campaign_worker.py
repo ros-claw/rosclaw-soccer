@@ -603,6 +603,7 @@ def qualified_episode(
     reference_student_model: dict[str, Any] | None = None,
     planner_navigation_pulse: Any = None,
     original_ik_planner_pulse: Any = None,
+    foot_heading_control: Any = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -765,6 +766,7 @@ def qualified_episode(
         reference_student_model=reference_student_model,
         planner_navigation_pulse=planner_navigation_pulse,
         original_ik_planner_pulse=original_ik_planner_pulse,
+        foot_heading_control=foot_heading_control,
     )
     report = (
         _sealed(folder / "report.json")
@@ -788,6 +790,11 @@ def qualified_episode(
         raise ValueError("explicit pulse request must match its native report")
     if ("original_ik_pre_planner_pulse" in report) != (original_ik_planner_pulse is not None):
         raise ValueError("explicit original-IK pulse request must match its native report")
+    if ("foot_heading_contact_probe" in report) != (foot_heading_control is not None):
+        raise ValueError("explicit heading request must match its native report")
+    if foot_heading_control is not None:  # noqa: SIM102 - exact default-OFF projection
+        if report["foot_heading_contact_probe"] != foot_heading_control.contract():
+            raise ValueError("declared heading source and parameters required")
     if original_ik_planner_pulse is not None:  # noqa: SIM102 - exact default-OFF projection
         if report["original_ik_pre_planner_pulse"] != original_ik_planner_pulse.contract():
             raise ValueError("declared original-IK pulse source and parameters required")
@@ -928,6 +935,10 @@ def qualified_episode(
         from rosclaw_soccer.rsi.original_ik_planner_evidence import require_original_ik_capture
 
         require_original_ik_capture(report, commitment, trace)
+    if foot_heading_control is not None:
+        from rosclaw_soccer.rsi.foot_heading_evidence import require_heading_capture
+
+        require_heading_capture(report, commitment, trace)
     if (
         postcontact is not None
         and commitment.get("postcontact_navigation_probe") != postcontact.contract()
@@ -949,7 +960,18 @@ def qualified_episode(
             != cerebellar_sampling_seed
         ):
             raise ValueError("requested neural torque model and sampling law must bind execution")
-    if original_ik_planner_pulse is not None:
+    if foot_heading_control is not None:
+        assert original_ik_planner_pulse is not None
+        alignment = require_first_touch_qualification(
+            review,
+            foundation,
+            outcome,
+            original_ik_planner_pulse_contract_hash=original_ik_planner_pulse.contract()[
+                "contract_hash"
+            ],
+            foot_heading_contract_hash=foot_heading_control.contract()["contract_hash"],
+        )
+    elif original_ik_planner_pulse is not None:
         alignment = require_first_touch_qualification(
             review,
             foundation,
@@ -1036,6 +1058,11 @@ def qualified_episode(
     if reference_student_model is not None:
         receipt["reference_student_model_hash"] = reference_student_model["model_hash"]
         receipt["reference_student_inference_calls"] = 300
+    if foot_heading_control is not None:
+        receipt["foot_heading_contract_hash"] = foot_heading_control.contract()["contract_hash"]
+        receipt["foot_heading_capture_frames_compared"] = review[
+            "foot_heading_capture_frames_compared"
+        ]
     if suppress_postcontact_swing_release:
         receipt["swing_release_ablation"] = commitment["swing_release_ablation"]
     if use_contact_exit_torque_mpc:

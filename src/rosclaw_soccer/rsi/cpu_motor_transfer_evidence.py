@@ -43,6 +43,12 @@ def validate_cpu_foundation_capture(
         from rosclaw_soccer.rsi.original_ik_planner_evidence import require_original_ik_capture
 
         require_original_ik_capture(report, commitment, trace)
+    if "foot_heading_contact_probe" in commitment or any(
+        name.startswith("foot_heading_") for name in trace
+    ):
+        from rosclaw_soccer.rsi.foot_heading_evidence import require_heading_capture
+
+        require_heading_capture(report, commitment, trace)
     if "pre_planner_navigation_pulse" in commitment or any(
         name.startswith("planner_pulse_") for name in trace
     ):
@@ -705,7 +711,18 @@ def audit_cpu_transfer(
     if "original_ik_pre_planner_pulse" in commitment:
         from rosclaw_soccer.rsi.original_ik_planner_evidence import OriginalIkCpuReconstruction
 
-        replay_original_ik = OriginalIkCpuReconstruction(model)
+        replay_original_ik: OriginalIkCpuReconstruction
+        if "foot_heading_contact_probe" in commitment:
+            from rosclaw_soccer.rsi.foot_heading_control import FootHeadingContactProbe
+            from rosclaw_soccer.rsi.foot_heading_evidence import FootHeadingCpuReconstruction
+
+            replay_original_ik = FootHeadingCpuReconstruction(
+                model,
+                FootHeadingContactProbe(**commitment["foot_heading_contact_probe"]["parameters"]),
+            )
+            heading_frames_compared = 0
+        else:
+            replay_original_ik = OriginalIkCpuReconstruction(model)
 
     def equal(actual: Any, expected: Any, name: str) -> None:
         if not np.allclose(actual, expected, atol=1e-8, rtol=0):
@@ -759,6 +776,15 @@ def audit_cpu_transfer(
             original_ik_delta = replay_original_ik.before_step(
                 data, frame, positions, original_nav_target
             )
+            if "foot_heading_contact_probe" in commitment:
+                if (
+                    not isinstance(replay_original_ik, FootHeadingCpuReconstruction)
+                    or replay_original_ik.last_record is None
+                ):
+                    raise ValueError("actual CPU heading capture reconstruction required")
+                for name, value in replay_original_ik.last_record.items():
+                    equal(value, trace[name][frame, 0], "actual causal heading capture: " + name)
+                heading_frames_compared += 1
             equal(
                 original_ik_delta,
                 trace["taskspace_joint_increment_rad"][frame, 0],
@@ -1309,7 +1335,16 @@ def audit_cpu_transfer(
         result["original_ik_planner_pulse_review"] = require_original_ik_capture(
             report, commitment, trace
         )
-        result["original_ik_cpu_reconstruction"] = replay_original_ik.review()
+        if "foot_heading_contact_probe" in commitment:
+            from rosclaw_soccer.rsi.foot_heading_evidence import require_heading_capture
+
+            result["foot_heading_capture_review"] = require_heading_capture(
+                report, commitment, trace
+            )
+            result["foot_heading_cpu_reconstruction"] = replay_original_ik.review()
+            result["foot_heading_capture_frames_compared"] = heading_frames_compared
+        else:
+            result["original_ik_cpu_reconstruction"] = replay_original_ik.review()
     if cerebellar_review is not None:
         result["cerebellar_model_hash"] = cerebellar_review["model_hash"]
         result["actual_cerebellar_inferences_reconstructed"] = 3000

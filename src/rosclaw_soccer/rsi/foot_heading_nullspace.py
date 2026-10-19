@@ -1,4 +1,6 @@
-"""Values-only foot-heading hypothesis, NOT wired to native execution.
+"""Bounded foot-heading numerical proposal, not an execution permit.
+
+Native use requires an explicit typed request and independent qualification.
 
 Projects a small yaw correction into the instantaneous position-Jacobian null
 space. First-order translation preservation is not dynamic balance, realized

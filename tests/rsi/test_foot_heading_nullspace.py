@@ -1,6 +1,6 @@
 """Kinematic proposal arithmetic only, not native motion or training."""
 
-from pathlib import Path
+import inspect
 
 import numpy as np
 import pytest
@@ -160,8 +160,9 @@ def test_invalid_inputs_do_not_make_a_motion_proposal(mutation):
         propose_foot_heading(*args, enabled=enabled)
 
 
-def test_numerical_prototype_is_not_silently_wired_to_native_execution():
-    assert "foot_heading_nullspace" not in Path(native_first_touch_episode.__file__).read_text()
+def test_native_heading_extension_is_explicit_and_default_off():
+    signature = inspect.signature(native_first_touch_episode.run_native_first_touch_episode)
+    assert signature.parameters["foot_heading_control"].default is None
 
 
 @pytest.mark.parametrize("enabled", [False, True])

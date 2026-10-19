@@ -94,9 +94,21 @@ def run_native_first_touch_episode(
     reference_student_model: dict[str, Any] | None = None,
     planner_navigation_pulse: Any = None,
     original_ik_planner_pulse: Any = None,
+    foot_heading_control: Any = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
+
+    if foot_heading_control is not None:
+        from rosclaw_soccer.rsi.foot_heading_control import require_heading_request
+
+        require_heading_request(
+            foot_heading_control,
+            pulse=original_ik_planner_pulse,
+            reference_model=reference_student_model,
+            profile=control_profile,
+            record_planner_events=record_default_planner_events,
+        )
 
     if original_ik_planner_pulse is not None:
         from rosclaw_soccer.rsi.original_ik_planner_pulse import (
@@ -1355,6 +1367,8 @@ def run_native_first_touch_episode(
             commitment["pre_planner_navigation_pulse"] = planner_navigation_pulse.contract()
         if original_ik_planner_pulse is not None:
             commitment["original_ik_pre_planner_pulse"] = original_ik_planner_pulse.contract()
+        if foot_heading_control is not None:
+            commitment["foot_heading_contact_probe"] = foot_heading_control.contract()
         if foundation_approach_probe:
             commitment["foundation_approach_ablation"] = dict(
                 schema="soccer.rsi.foundation_only_bounded_approach_ablation.v1",
@@ -1456,6 +1470,10 @@ def run_native_first_touch_episode(
             from rosclaw_soccer.rsi.original_ik_planner_evidence import FIELDS as IK_PULSE_FIELDS
 
             history.update({"ik_planner_pulse_" + name: [] for name in IK_PULSE_FIELDS})
+        if foot_heading_control is not None:
+            from rosclaw_soccer.rsi.foot_heading_evidence import FIELDS as HEADING_FIELDS
+
+            history.update({"foot_heading_" + name: [] for name in HEADING_FIELDS})
         history.update(
             {
                 k: []
@@ -1722,6 +1740,24 @@ def run_native_first_touch_episode(
                                 vertical_offset_m=foot_vertical_offset,
                             )
                 target[ids] += swing_delta
+        if foot_heading_control is not None:
+            from rosclaw_soccer.rsi.foot_heading_evidence import compose_heading_step
+
+            swing_delta, heading_record = compose_heading_step(
+                foot_heading_control,
+                model,
+                data,
+                frame=frame,
+                side=side,
+                contact_frame=contact_frame,
+                navigation_target=navigation_target,
+                increment=swing_delta,
+            )
+            if foot_heading_control.enabled and side >= 0:
+                heading_ids = leg_ids[side]
+                target[heading_ids] = navigation_target[heading_ids] + swing_delta
+            for key, value in heading_record.items():
+                history[key].append(value[None])
         if use_mesh_surface_swing:
             history["mesh_surface_swing_record"].append(surface_record[None])
         if control_profile is not None and reference_student_model is not None:
@@ -1989,6 +2025,10 @@ def run_native_first_touch_episode(
         from rosclaw_soccer.rsi.original_ik_planner_evidence import require_original_ik_capture
 
         require_original_ik_capture(commitment, commitment, arrays)
+    if foot_heading_control is not None:
+        from rosclaw_soccer.rsi.foot_heading_evidence import require_heading_capture
+
+        require_heading_capture(commitment, commitment, arrays)
     if mesh_world_review is not None:
         assert mesh_task_contact_world_hash is not None
         if mesh_world_review.verify(mesh_task_contact_world_hash) != mesh_review_binding:

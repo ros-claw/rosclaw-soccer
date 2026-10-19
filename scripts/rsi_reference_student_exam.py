@@ -76,15 +76,22 @@ def require_scope(cfg):
         raise ValueError("fixed thirteen-body own-student, retention and OFF SIM exam required")
 
 
-def load_inputs(config_path, *, pulse_research=False, original_ik_research=False):
+def load_inputs(
+    config_path, *, pulse_research=False, original_ik_research=False, heading_research=False
+):
     cfg = json.loads(config_path.read_text())
     if (
         type(pulse_research) is not bool
         or type(original_ik_research) is not bool
-        or (pulse_research and original_ik_research)
+        or type(heading_research) is not bool
+        or sum((pulse_research, original_ik_research, heading_research)) > 1
     ):
         raise ValueError("explicit fixed pulse research loader mode required")
-    if original_ik_research:
+    if heading_research:
+        from rosclaw_soccer.rsi.foot_heading_scope import require_heading_scope
+
+        require_heading_scope(cfg)
+    elif original_ik_research:
         from rosclaw_soccer.rsi.original_ik_planner_scope import require_ik_scope
 
         require_ik_scope(cfg)
@@ -229,7 +236,11 @@ def load_inputs(config_path, *, pulse_research=False, original_ik_research=False
         from scripts.rsi_load_actual_winner_exam import load_actual_winner
 
         student, stage, fit = load_actual_winner(cfg, sealed=sealed, digest=digest, pins=pins)
-    if original_ik_research:
+    if heading_research:
+        from rosclaw_soccer.rsi.foot_heading_scope import heading_scope
+
+        scope = heading_scope(assets.MEAN)
+    elif original_ik_research:
         from rosclaw_soccer.rsi.original_ik_planner_scope import ik_scope
 
         scope = ik_scope(assets.MEAN)

@@ -14,6 +14,7 @@ SURFACE_FLAG = "use_mesh_surface_swing"
 STUDENT_FLAG = "reference_student_model"
 PULSE_FLAG = "planner_navigation_pulse"
 IK_PULSE_FLAG = "original_ik_planner_pulse"
+HEADING_FLAG = "foot_heading_control"
 
 
 def canonical(node):
@@ -34,7 +35,7 @@ def expression(source):
 class OffPath(ast.NodeTransformer):
     def visit_arguments(self, node):
         for argument, default in zip(node.kwonlyargs, node.kw_defaults, strict=True):
-            if argument.arg in {STUDENT_FLAG, PULSE_FLAG, IK_PULSE_FLAG}:
+            if argument.arg in {STUDENT_FLAG, PULSE_FLAG, IK_PULSE_FLAG, HEADING_FLAG}:
                 assert isinstance(default, ast.Constant) and default.value is None
         pairs = [
             (a, d)
@@ -48,6 +49,7 @@ class OffPath(ast.NodeTransformer):
                 STUDENT_FLAG,
                 PULSE_FLAG,
                 IK_PULSE_FLAG,
+                HEADING_FLAG,
             }
         ]
         node.kwonlyargs = [p[0] for p in pairs]
@@ -56,6 +58,11 @@ class OffPath(ast.NodeTransformer):
 
     def visit_If(self, node):
         known = {
+            "foot_heading_control is not None",
+            "('foot_heading_contact_probe' in report) != (foot_heading_control is not None)",
+            "'foot_heading_contact_probe' in commitment",
+            "'foot_heading_contact_probe' in commitment or "
+            "any(name.startswith('foot_heading_') for name in trace)",
             "original_ik_planner_pulse is not None",
             "'original_ik_pre_planner_pulse' in commitment",
             "('original_ik_pre_planner_pulse' in report) != "
@@ -117,6 +124,7 @@ class OffPath(ast.NodeTransformer):
                     STUDENT_FLAG,
                     PULSE_FLAG,
                     IK_PULSE_FLAG,
+                    HEADING_FLAG,
                 }
                 and isinstance(k.value, ast.Name)
                 and k.value.id == k.arg
