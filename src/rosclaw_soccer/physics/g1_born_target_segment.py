@@ -65,6 +65,7 @@ class G1BornTargetSegment(G1TargetEpisode):
         self.bq, self.bv = checked._bq, checked._bv
         self.kp, self.kd, self.caps = parent.kp.copy(), parent.kd.copy(), checked._limits.copy()
         self.contacts = list(parent.contacts)
+        self.record_all_ball_contacts = False
         self.warnings = parent.warnings
         self.origin_frame = self.next_frame = parent.next_frame
         self.donor_integration_state_hash = donor_hash

@@ -10,7 +10,7 @@ from tests.physics.test_g1_feedback_forecast import world
 from tests.physics.test_recorded_early_episode import recorded  # noqa: F401
 
 
-def body():
+def body(*, record_all_ball_contacts=False):
     model, _, _ = world()
     model.dof_armature[6:35] = 0.1
     binary = np.zeros(mujoco.mj_sizeModel(model), dtype=np.uint8)
@@ -22,6 +22,7 @@ def body():
         kd=np.full(29, 0.2),
         course=(2.0, 1.0, 0.2),
         defaults=np.zeros(29),
+        record_all_ball_contacts=record_all_ball_contacts,
     )
 
 
@@ -89,3 +90,36 @@ def test_review_checks_both_native_counters():
     episode.attempted_steps = episode.integrated_steps = 10
     with pytest.raises(ValueError):
         episode.review()
+
+
+def test_optional_full_contact_capture_preserves_every_default_physical_field():
+    plain = body()
+    captured = body(record_all_ball_contacts=True)
+    ground_contact_seen = False
+    for frame in range(300):
+        target = np.zeros(29)
+        original = plain.step(frame, target)
+        observed = captured.step(frame, target)
+        for key, value in original.items():
+            np.testing.assert_array_equal(value, observed[key])
+        assert "ball_contact_force_by_body_n" not in original
+        contact = observed["ball_contact_force_by_body_n"]
+        assert contact.shape == (1, 10, captured.model.nbody)
+        ground_contact_seen |= bool(np.any(contact[:, :, 0] > 0))
+    assert ground_contact_seen
+    assert plain.review() == captured.review()
+
+
+def test_nonfinite_captured_contact_is_terminal_not_silently_zero(monkeypatch):
+    episode = body(record_all_ball_contacts=True)
+
+    def invalid_contact(model, data, contact_id, wrench):
+        wrench[:] = np.nan
+
+    monkeypatch.setattr(mujoco, "mj_contactForce", invalid_contact)
+    with pytest.raises(ValueError, match="nonfinite native ball contact"):
+        for frame in range(20):
+            episode.step(frame, np.zeros(29))
+    assert episode.failed
+    with pytest.raises(ValueError):
+        episode.step(episode.next_frame, np.zeros(29))

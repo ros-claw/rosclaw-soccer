@@ -24,6 +24,7 @@ def run_reference_tracking_episode(
     world_hash: str,
     reference: SonicPoseReference,
     course: tuple[float, float, float] = (10.0, 0.0, 0.0),
+    record_all_ball_contacts: bool = False,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Exactly3000 NEW native steps for this one fresh body.
 
@@ -31,6 +32,8 @@ def run_reference_tracking_episode(
     The initial history is explicit measured cold-start padding, not fabricated
     observed past motion. This helper does not independently certify its policy.
     """
+    if type(record_all_ball_contacts) is not bool:
+        raise ValueError("explicit boolean full-contact capture required")
     reference.__post_init__()
     defaults = G1SonicRunupController.default_angles.copy()
     expected_entry = np.r_[0.0, 0.0, 0.793, 1.0, 0.0, 0.0, 0.0, defaults]
@@ -53,6 +56,7 @@ def run_reference_tracking_episode(
         kd=nav.backend.kd.copy(),
         course=course,
         defaults=defaults,
+        record_all_ball_contacts=record_all_ball_contacts,
     )
     if not np.array_equal(body.canonical()[0][:36], expected_entry):
         raise ValueError("native reference entry differs from measured body")
@@ -95,5 +99,6 @@ def run_reference_tracking_episode(
         optimizer_steps=0,
         promotion_authorized=False,
         hardware_authorized=False,
+        all_ball_contacts_recorded=record_all_ball_contacts,
     )
     return arrays, report

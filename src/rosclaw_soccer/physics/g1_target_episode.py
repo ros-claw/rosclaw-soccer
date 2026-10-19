@@ -26,7 +26,11 @@ class G1TargetEpisode:
         kd: np.ndarray,
         course: tuple[float, float, float],
         defaults: np.ndarray,
+        record_all_ball_contacts: bool = False,
     ) -> None:
+        if type(record_all_ball_contacts) is not bool:
+            raise ValueError("explicit boolean optional contact capture required")
+        self.record_all_ball_contacts = record_all_ball_contacts
         checked = G1PDTorqueForecaster(
             model, expected_world_hash=world_hash, kp=kp, kd=kd, max_forecast_steps=3000
         )
@@ -90,6 +94,7 @@ class G1TargetEpisode:
         )
         pd, torques, actual, heights, native_q, native_v = [], [], [], [], [], []
         forces = np.zeros(6)
+        all_body_forces = []
         for _ in range(10):
             raw = (target - d.qpos[self.qi]) * self.kp - d.qvel[self.vi] * self.kd
             tau = np.clip(raw, -self.caps, self.caps)
@@ -114,17 +119,26 @@ class G1TargetEpisode:
             nq, nv = self.canonical()
             native_q.append(nq)
             native_v.append(nv)
+            body_forces = np.zeros(model.nbody) if self.record_all_ball_contacts else None
             for ci in range(d.ncon):
                 c = d.contact[ci]
                 g1, g2 = int(c.geom1), int(c.geom2)
                 if self.bg not in (g1, g2):
                     continue
                 body = int(model.geom_bodyid[g2 if g1 == self.bg else g1])
-                if body in self.contacts:
+                if body in self.contacts or self.record_all_ball_contacts:
                     wrench = np.zeros(6)
                     mujoco.mj_contactForce(model, d, ci, wrench)
-                    slot = self.contacts.index(body)
-                    forces[slot] = max(forces[slot], float(np.linalg.norm(wrench[:3])))
+                    norm = float(np.linalg.norm(wrench[:3]))
+                    if not np.isfinite(norm):
+                        raise ValueError("nonfinite native ball contact wrench")
+                    if body in self.contacts:
+                        slot = self.contacts.index(body)
+                        forces[slot] = max(forces[slot], norm)
+                    if body_forces is not None:
+                        body_forces[body] = max(body_forces[body], norm)
+            if body_forces is not None:
+                all_body_forces.append(body_forces)
         values.update(
             pd_requested_torque_nm=np.asarray(pd)[None],
             torque_nm=np.asarray(torques)[None],
@@ -135,6 +149,8 @@ class G1TargetEpisode:
             target_body_canonical_qpos_after_substep=np.asarray(native_q)[None],
             target_body_canonical_qvel_after_substep=np.asarray(native_v)[None],
         )
+        if self.record_all_ball_contacts:
+            values["ball_contact_force_by_body_n"] = np.asarray(all_body_forces)[None]
         self.next_frame += 1
         self.failed = False
         return values
