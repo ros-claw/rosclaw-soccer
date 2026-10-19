@@ -75,7 +75,7 @@ def ik_scope(parent_model_hash: str) -> dict[str, Any]:
 
 def assess_ik_scope(scope: dict[str, Any], receipts: list[dict[str, Any]]) -> dict[str, Any]:
     if (
-        scope != ik_scope(scope["source_plan"]["behavior_model_hash"])
+        hash_json(scope) != hash_json(ik_scope(scope["source_plan"]["behavior_model_hash"]))
         or len(receipts) != 6
         or len({r["receipt_hash"] for r in receipts}) != 6
         or any(

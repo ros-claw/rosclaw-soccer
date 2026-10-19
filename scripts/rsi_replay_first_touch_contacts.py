@@ -39,6 +39,7 @@ def fixed_replay_scope(cfg):
         "reference-positive-zero-nine": 9,
         "pre-planner-navigation-six": 6,
         "pre-planner-navigation-positive-six": 6,
+        "original-ik-pre-planner-six": 6,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -134,6 +135,12 @@ def fixed_replay_scope(cfg):
         )["jobs"]
         if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
             raise ValueError("all six original ordered OFF/pulse endpoints required")
+    if profile == "original-ik-pre-planner-six":
+        from rosclaw_soccer.rsi.original_ik_planner_scope import ik_scope
+
+        jobs = ik_scope(cfg["behavior_model_hash"])["jobs"]
+        if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
+            raise ValueError("all six original ordered original-IK endpoints required")
     return count, steps
 
 
@@ -333,6 +340,31 @@ def main():
             )
         ):
             raise ValueError("exact original pulse world, parent and owned receipt paths required")
+    original_ik = None
+    if cfg.get("replay_profile") == "original-ik-pre-planner-six":
+        from scripts.rsi_load_original_ik_cohort import load_closed_original_ik
+
+        for relative in (
+            "scripts/rsi_load_original_ik_cohort.py",
+            "scripts/rsi_read_original_ik_planner.py",
+            "src/rosclaw_soccer/rsi/original_ik_planner_evidence.py",
+            "src/rosclaw_soccer/rsi/original_ik_planner_pulse.py",
+            "src/rosclaw_soccer/rsi/original_ik_planner_scope.py",
+        ):
+            pins[str(source / relative)] = digest(source / relative)
+        original_ik = load_closed_original_ik(cfg, sealed=sealed, pins=pins)
+        if (
+            cfg["world_hash"] != original_ik["producer"]["mesh_task_contact_world_hash"]
+            or cfg["behavior_model_hash"] != original_ik["producer"]["behavior_model_hash"]
+            or any(
+                Path(case["receipt_path"]).resolve()
+                != (
+                    Path(original_ik["producer"]["output_root"]) / f"receipt-{i:04d}.json"
+                ).resolve()
+                for i, case in enumerate(cfg["cases"])
+            )
+        ):
+            raise ValueError("exact original-IK world, parent and owned receipt paths required")
     archived = None
     if cfg.get("replay_profile") == "catalog2-zero-c7":
         archived = sealed(cfg["archived_expert_readback"])
@@ -405,6 +437,18 @@ def main():
                 planner_navigation_pulse_contract_hash=PlannerNavigationPulse(
                     lateral_delta_m_s=job["lateral_delta_m_s"]
                 ).contract()["contract_hash"],
+            )
+        if original_ik is not None:
+            from rosclaw_soccer.rsi.original_ik_planner_pulse import OriginalIkPlannerPulse
+
+            i = len(receipts)
+            if receipt != original_ik["complete"]["results"][i]:
+                raise ValueError("exact whole-audited original-IK ordered receipts required")
+            job = original_ik["declaration"]["scope"]["jobs"][i]
+            qualification_kwargs = dict(
+                original_ik_planner_pulse_contract_hash=OriginalIkPlannerPulse(
+                    job["lateral_delta_m_s"]
+                ).contract()["contract_hash"]
             )
         outcome = label_first_touch(trace)
         review = sealed(receipt["witnesses"]["independent_review"]["path"])

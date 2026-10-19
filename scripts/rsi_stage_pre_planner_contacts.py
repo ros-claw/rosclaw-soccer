@@ -29,7 +29,11 @@ def main():
     if (
         cfg.get("mode") != "SIM_ONLY"
         or cfg.get("diagnostic_profile")
-        not in ("pre-planner-navigation-six", "pre-planner-navigation-positive-six")
+        not in (
+            "pre-planner-navigation-six",
+            "pre-planner-navigation-positive-six",
+            "original-ik-pre-planner-six",
+        )
         or any(
             cfg.get(k) is not False
             for k in ("hardware_authorized", "promotion_authorized", "neural_training_authorized")
@@ -83,12 +87,27 @@ def main():
         source_terminal_readback_hash=audit["report_hash"],
         audit_source=cfg["audit_source"],
     )
-    cohort = load_closed_pulse(inputs, sealed=sealed, pins=pins)
+    if cfg["diagnostic_profile"] == "original-ik-pre-planner-six":
+        from rosclaw_soccer.rsi.original_ik_planner_diagnostics import (
+            ik_contact_readout as contact_readout,
+        )
+        from rosclaw_soccer.rsi.original_ik_planner_diagnostics import (
+            ik_motion_readout as motion_readout,
+        )
+        from rosclaw_soccer.rsi.original_ik_planner_scope import PROFILE as IK_PROFILE
+        from scripts.rsi_load_original_ik_cohort import load_closed_original_ik
+
+        cohort = load_closed_original_ik(inputs, sealed=sealed, pins=pins)
+    else:
+        contact_readout, motion_readout = pulse_contact_readout, pulse_motion_readout
+        cohort = load_closed_pulse(inputs, sealed=sealed, pins=pins)
     producer, declaration, complete = (cohort[k] for k in ("producer", "declaration", "complete"))
     from rosclaw_soccer.rsi.planner_navigation_pulse_scope import POSITIVE_PROFILE, PROFILE
 
     expected = (
-        POSITIVE_PROFILE
+        IK_PROFILE
+        if cfg["diagnostic_profile"] == "original-ik-pre-planner-six"
+        else POSITIVE_PROFILE
         if cfg["diagnostic_profile"] == "pre-planner-navigation-positive-six"
         else PROFILE
     )
@@ -120,10 +139,15 @@ def main():
         promotion_authorized=False,
         neural_training_authorized=False,
     )
+    schema_prefix = (
+        "original_ik_planner"
+        if cfg["diagnostic_profile"] == "original-ik-pre-planner-six"
+        else "pre_planner_pulse"
+    )
     write_once(
         Path(cfg["started_path"]),
         dict(
-            schema="soccer.rsi.pre_planner_pulse_contact_started.v1",
+            schema=f"soccer.rsi.{schema_prefix}_contact_started.v1",
             input_file_hashes=pins,
             upstream_readback_hash=audit["report_hash"],
             automatic_retry_authorized=False,
@@ -164,7 +188,7 @@ def main():
         )
         replay = sealed(Path(cfg["replay_output_root"]) / "complete.json")
         metrics = sealed(cfg["metrics_output"])
-        measured = pulse_contact_readout(declaration, complete, replay, metrics)
+        measured = contact_readout(declaration, complete, replay, metrics)
         motion = []
         for i in range(0, 6, 2):
             traces = []
@@ -182,13 +206,13 @@ def main():
                     group=declaration["scope"]["jobs"][i]["group"],
                     off_receipt_hash=complete["results"][i]["receipt_hash"],
                     pulse_receipt_hash=complete["results"][i + 1]["receipt_hash"],
-                    diagnostic=pulse_motion_readout(*traces),
+                    diagnostic=motion_readout(*traces),
                 )
             )
         if any(digest(p) != h for p, h in pins.items()):
             raise ValueError("source or original evidence changed during diagnostic")
         result = dict(
-            schema="soccer.rsi.pre_planner_pulse_contact_complete.v1",
+            schema=f"soccer.rsi.{schema_prefix}_contact_complete.v1",
             upstream_readback_hash=audit["report_hash"],
             replay_complete_hash=replay["report_hash"],
             metrics_hash=metrics["report_hash"],

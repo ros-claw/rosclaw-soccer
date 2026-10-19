@@ -39,6 +39,38 @@ def test_exact_scope_preserves_old_four_and_separately_declares_six(surface):
     assert fixed_replay_scope(config(surface)) == ((6, 18000) if surface else (4, 12000))
 
 
+@pytest.mark.parametrize("mutation", [None, "order", "partial", "retag", "steps", "duplicate"])
+def test_original_ik_replay_is_explicit_and_cannot_retag_zero_reference_cases(mutation):
+    from rosclaw_soccer.rsi.original_ik_planner_scope import ik_scope
+
+    parent = "sha256:" + "a" * 64
+    cfg = dict(
+        replay_profile="original-ik-pre-planner-six",
+        behavior_model_hash=parent,
+        new_replay_budget=6,
+        new_substep_budget=18000,
+        cases=[
+            dict(case_id=j["job"].replace("-", "_"), receipt_hash=str(i))
+            for i, j in enumerate(ik_scope(parent)["jobs"])
+        ],
+    )
+    if mutation == "order":
+        cfg["cases"].reverse()
+    elif mutation == "partial":
+        cfg["cases"].pop()
+    elif mutation == "retag":
+        cfg["replay_profile"] = "pre-planner-navigation-positive-six"
+    elif mutation == "steps":
+        cfg["new_substep_budget"] = 36000
+    elif mutation == "duplicate":
+        cfg["cases"][0] = cfg["cases"][1]
+    if mutation is None:
+        assert fixed_replay_scope(cfg) == (6, 18000)
+    else:
+        with pytest.raises(ValueError):
+            fixed_replay_scope(cfg)
+
+
 @pytest.mark.parametrize("surface", [False, True])
 @pytest.mark.parametrize(
     "tamper", ["partial", "budget", "steps", "duplicate", "receipt", "retag", "truthy"]

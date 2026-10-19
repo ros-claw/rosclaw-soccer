@@ -46,6 +46,7 @@ def test_scope_uses_three_training_courses_original_ik_and_no_optimizer():
     assert result["all_failures_retained"]
     assert result["optimizer_updates"] == 0
     assert not result["teacher_qualified"]
+    assert assess_ik_scope(json.loads(json.dumps(scope)), rows) == result
 
 
 @pytest.mark.parametrize(

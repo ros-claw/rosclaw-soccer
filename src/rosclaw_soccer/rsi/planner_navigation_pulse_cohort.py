@@ -104,13 +104,13 @@ def require_pulse_cohort(
     return assessment
 
 
-def pulse_contact_readout(
+def fixed_six_contact_rows(
     declaration: dict[str, Any],
     complete: dict[str, Any],
     replay: dict[str, Any],
     metrics: dict[str, Any],
-) -> dict[str, Any]:
-    """Whole fixed-torque diagnostics, not six further closed-loop trials."""
+) -> list[dict[str, Any]]:
+    """Shared six-endpoint file/metric alignment, without model or scope admission."""
     jobs, receipts = declaration["scope"]["jobs"], complete["results"]
     if (
         replay.get("schema") != "soccer.rsi.fixed_control_contact_replay_complete.v1"
@@ -161,6 +161,18 @@ def pulse_contact_readout(
                 metrics=m,
             )
         )
+    return rows
+
+
+def pulse_contact_readout(
+    declaration: dict[str, Any],
+    complete: dict[str, Any],
+    replay: dict[str, Any],
+    metrics: dict[str, Any],
+) -> dict[str, Any]:
+    """Whole fixed-torque diagnostics, not six further closed-loop trials."""
+    rows = fixed_six_contact_rows(declaration, complete, replay, metrics)
+    receipts = complete["results"]
     unsafe = sum(not r["original_outcome"]["safe"] for r in rows if r["job"]["role"] == "pulse")
     nonfoot = sum(
         r["metrics"]["first_nonfoot_robot_contact_substep"] is not None
