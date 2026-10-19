@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError
 
 import numpy as np
 import pytest
+from rosclaw.growth.bounded_query_anchor_guard import BoundedQueryDomainAnchorGuard
 from rosclaw.growth.domain_anchor_bank import DomainAnchorGuard, build_domain_anchor_bank
 
 from rosclaw_soccer.rsi.fixed_recurrent_reference_audit import _numeric_graph_hash
@@ -31,7 +32,7 @@ from tests.rsi.test_recurrent_sampling_motor import long_body
 from tests.rsi.test_recurrent_success_motor import boundary
 
 
-def guard():
+def guard(cls=DomainAnchorGuard):
     bank = build_domain_anchor_bank(
         [
             dict(
@@ -45,11 +46,12 @@ def guard():
         parent_hash="sha256:" + "2" * 64,
         encoder_hash="sha256:" + "3" * 64,
     )
-    return DomainAnchorGuard(bank)
+    return cls(bank)
 
 
-def test_complete_bank_gate_metric_and_immutable_serialization():
-    source = guard()
+@pytest.mark.parametrize("cls", [DomainAnchorGuard, BoundedQueryDomainAnchorGuard])
+def test_complete_bank_gate_metric_and_immutable_serialization(cls):
+    source = guard(cls)
     compiled = SnapshotDomainAnchorGuard(source)
     assert compiled.bank() == source.bank() and compiled.to_dict() == source.to_dict()
     points = np.array([[0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [-0.001, 0.001], [2.0, 2.0], [5.0, 5.0]])
@@ -57,9 +59,7 @@ def test_complete_bank_gate_metric_and_immutable_serialization():
     np.testing.assert_array_equal(copy.deepcopy(compiled).gates(points), source.gates(points))
     assert _numeric_graph_hash(compiled) == _numeric_graph_hash(copy.deepcopy(compiled))
     restored = compiled.original_storage()
-    assert type(restored) is DomainAnchorGuard and _numeric_graph_hash(
-        restored
-    ) == _numeric_graph_hash(source)
+    assert type(restored) is cls and _numeric_graph_hash(restored) == _numeric_graph_hash(source)
     changed = compiled.bank()
     changed["domains"][0]["observations"][0][0] = 55.0
     assert compiled.bank() == source.bank()
@@ -71,13 +71,14 @@ def test_complete_bank_gate_metric_and_immutable_serialization():
         compiled.bank()
 
 
-def test_whole_graph_aliases_and_state_reversible(monkeypatch, request):
+@pytest.mark.parametrize("cls", [DomainAnchorGuard, BoundedQueryDomainAnchorGuard])
+def test_whole_graph_aliases_and_state_reversible(monkeypatch, request, cls):
     mean = make_model(request.getfixturevalue("imitation_parent"))
     policy = make_preview(make_sampling_view(mean, seed=901))
     decoder = CompiledRecurrentSamplingMotor(policy)
     # Explicit test-only metadata nodes. This is not an admissible original
     # policy declaration or proof about a real model's active domain guards.
-    decoder.test_guard = guard()
+    decoder.test_guard = guard(cls)
     decoder.test_guard_alias = decoder.test_guard
     original = _numeric_graph_hash(decoder)
     compiled, review = compile_snapshot_banks(decoder)

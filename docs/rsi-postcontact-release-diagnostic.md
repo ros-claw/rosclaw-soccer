@@ -1276,3 +1276,29 @@ failure, unsafe and censored result. These80 bodies are not80 independent
 worlds or sealed Fresh, and no increased kick skill is promised by the plan.
 Collection must wait for complete six-body storage parity and its independent
 recorded-PD check; the new storage adapter is not assumed physically valid.
+
+#### Actual storage admission exposed a missed explicit subtype
+
+The real full constructor completed in638.43s including storage processing.
+Its first implementation converted **zero guards**: the existing decoder
+already uses Core's `BoundedQueryDomainAnchorGuard` subtype, while the adapter
+admitted only the exact base class. The frame31 equivalent-state fork measured
+6.823s versus6.209s on a shared host, with identical graphs and no transformed
+guard. This single ordering-dependent measurement is **not evidence of a
+storage speedup**. Preserve the six-body experiment's frozen original source.
+
+Development now explicitly admits exactly those two Core guard types,
+delegating to the original selected class's scalar gate, retaining the entire
+bank, and restoring the exact original class during whole-graph reversal.
+No arbitrary subclass or altered query math is accepted. Synthetic tests are
+not actual G1 qualification of this corrected subtype path; that requires a
+new separately pinned physical experiment, not hot-editing the current one.
+
+`factual_response_pair` provides the next stage's source-independent tensor
+extraction. It checks the full original ABI, all before-action prefix bits,
+current pre-action controller/body fields and measured contacting side.
+80ms future velocity enters labels only. Missing tails, no contact and actual
+zero/aliased/cancelled requests remain skipped with their original task
+outcomes upstream, never invented zero-effect supervision. Source hashes,
+policy/noise matching, action attribution and actual native reexecution remain
+caller-owned prerequisites, not claims made by this numerical helper.

@@ -10,6 +10,7 @@ import copy
 from typing import Any, cast
 
 import numpy as np
+from rosclaw.growth.bounded_query_anchor_guard import BoundedQueryDomainAnchorGuard
 from rosclaw.growth.canonical_json_snapshot import CanonicalJSONSnapshot
 from rosclaw.growth.domain_anchor_bank import DomainAnchorGuard, validate_domain_anchor_bank
 
@@ -17,6 +18,11 @@ from rosclaw_soccer.rsi.fixed_recurrent_reference_audit import _numeric_graph_ha
 from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import RecurrentSamplingEpisodeFactory
 from rosclaw_soccer.rsi.recurrent_sampling_motor import CompiledRecurrentSamplingMotor
 from rosclaw_soccer.sim.contracts import hash_json
+
+GUARD_TYPES = {
+    "DomainAnchorGuard": DomainAnchorGuard,
+    "BoundedQueryDomainAnchorGuard": BoundedQueryDomainAnchorGuard,
+}
 
 
 class SnapshotDomainAnchorGuard:
@@ -29,7 +35,7 @@ class SnapshotDomainAnchorGuard:
     bank_hash: str
 
     def __init__(self, original: DomainAnchorGuard) -> None:
-        if type(original) is not DomainAnchorGuard or set(vars(original)) != {
+        if type(original) not in GUARD_TYPES.values() or set(vars(original)) != {
             "_bank",
             "_anchors",
             "dimension",
@@ -42,6 +48,7 @@ class SnapshotDomainAnchorGuard:
         validate_domain_anchor_bank(bank)
         fields = copy.deepcopy({k: v for k, v in vars(original).items() if k != "_bank"})
         self.__dict__.update(fields)
+        self._source_guard_kind = type(original).__name__
         self._bank_snapshot = CanonicalJSONSnapshot(bank)
         self._anchors.flags.writeable = False
         if self.bank() != bank or self.to_dict() != original.to_dict():
@@ -54,7 +61,8 @@ class SnapshotDomainAnchorGuard:
     def gate(self, latent: Any) -> float:
         # Legacy Core's numeric methods use only the copied metric fields, not
         # the serialization payload. Delegation avoids copying optimizer/math.
-        result: float = DomainAnchorGuard.gate(cast(DomainAnchorGuard, self), latent)
+        cls = GUARD_TYPES[self._source_guard_kind]
+        result: float = cls.gate(cast(DomainAnchorGuard, self), latent)
         return result
 
     def gates(self, latents: Any) -> np.ndarray:
@@ -67,15 +75,21 @@ class SnapshotDomainAnchorGuard:
 
     def original_storage(self) -> DomainAnchorGuard:
         """Fresh exact logical original, not a policy constructor shortcut."""
-        restored = object.__new__(DomainAnchorGuard)
+        restored = object.__new__(GUARD_TYPES[self._source_guard_kind])
         restored.__dict__.update(
-            copy.deepcopy({k: v for k, v in vars(self).items() if k != "_bank_snapshot"})
+            copy.deepcopy(
+                {
+                    k: v
+                    for k, v in vars(self).items()
+                    if k not in ("_bank_snapshot", "_source_guard_kind")
+                }
+            )
         )
         restored._bank = self.bank()
         return restored
 
 
-def _guards(root: Any, cls: type) -> list[Any]:
+def _guards(root: Any, cls: type | tuple[type, ...]) -> list[Any]:
     seen: set[int] = set()
     found = []
 
@@ -85,7 +99,7 @@ def _guards(root: Any, cls: type) -> list[Any]:
         if value is None or type(value) in (str, bool, int, float, bytes) or id(value) in seen:
             return
         seen.add(id(value))
-        if type(value) is cls:
+        if type(value) in (cls if isinstance(cls, tuple) else (cls,)):
             found.append(value)
         elif type(value) is CanonicalJSONSnapshot:
             # Frozen slotted dataclass: complete bytes were authenticated by
@@ -113,7 +127,7 @@ def compile_snapshot_banks(
     if type(decoder) is not CompiledRecurrentSamplingMotor:
         raise ValueError("exact original recurrent sampling numeric decoder required")
     before = _numeric_graph_hash(decoder)
-    originals = _guards(decoder, DomainAnchorGuard)
+    originals = _guards(decoder, tuple(GUARD_TYPES.values()))
     if _guards(decoder, SnapshotDomainAnchorGuard):
         raise ValueError("explicit once-only original-to-snapshot compilation required")
     replacements = {id(g): SnapshotDomainAnchorGuard(g) for g in originals}
@@ -132,6 +146,7 @@ def compile_snapshot_banks(
         compiled_numeric_graph_hash=after,
         reversible_whole_graph_and_aliases_verified=True,
         converted_guard_count=len(originals),
+        source_guard_types=[type(g).__name__ for g in originals],
         complete_logical_banks=[g.bank_hash for g in snapshots],
         core_gate_math_overridden=False,
         actor_or_critic_weights_changed=False,
