@@ -85,9 +85,20 @@ class CausalImpactReplay:
         postcontact_exit_enabled: bool = False,
         postcontact_exit_evidence_root: Path | None = None,
         reuse_owned_postcontact_updates: bool = False,
+        constant_forward_approach: bool = False,
     ) -> None:
         if (
             type(impact_enabled) is not bool
+            or type(constant_forward_approach) is not bool
+            or (
+                constant_forward_approach
+                and (
+                    impact_enabled
+                    or early_impact_enabled
+                    or postcontact_exit_enabled
+                    or release_action_name is not None
+                )
+            )
             or type(reuse_owned_postcontact_updates) is not bool
             or (reuse_owned_postcontact_updates and not postcontact_exit_enabled)
             or type(postcontact_exit_enabled) is not bool
@@ -111,6 +122,7 @@ class CausalImpactReplay:
                 )
             )
             or type(profile) is not BoundedFirstTouchControl
+            or (constant_forward_approach and profile != BoundedFirstTouchControl())
             or type(heading) is not FootHeadingContactProbe
             or type(foundation) is not FrozenSonicG1Torch
             or str(foundation.device) != "cpu"
@@ -179,6 +191,7 @@ class CausalImpactReplay:
             raise ValueError("same original PD gains required")
         self.foundation, self.policy, self.decoder = foundation, policy, decoder
         self.profile = profile
+        self.constant_forward_approach = constant_forward_approach
         self.pulse = OriginalIkPlannerPulse(0.08)
         self.ik = FootHeadingCpuReconstruction(model, heading)
         self.early_impact_enabled = early_impact_enabled
@@ -288,6 +301,15 @@ class CausalImpactReplay:
             ball_vx=float(ball_velocity[3]),
             before_contact=self.ik.contact is None,
         )
+        if self.constant_forward_approach:
+            from rosclaw_soccer.rsi.constant_forward_approach import apply_constant_forward
+
+            requested, baseline_command = apply_constant_forward(
+                requested,
+                baseline_command,
+                before_contact=self.ik.contact is None,
+                cap=self.profile.forward_cap_m_s,
+            )
         residual, command = self.pulse.compose(frame, baseline_command)
         values.update(
             canonical_qpos=q[None],
@@ -525,6 +547,9 @@ class CausalImpactReplay:
         )
         if self.release_control is not None:
             review["postcontact_release"] = self.release_control.review()
+        if self.constant_forward_approach:
+            review["constant_forward_approach"] = True
+            review["original_precontact_forward_law_unchanged"] = False
         if self.postcontact_exit_enabled:
             if type(self.teacher) is not PostContactExitController:
                 raise ValueError("owned complete exit controller required")

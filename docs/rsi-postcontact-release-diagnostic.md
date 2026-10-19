@@ -571,3 +571,67 @@ unchanged, and a declared owned path that is later changed cannot produce a
 successful completion review. This wires the already-existing continuation
 implementation for the **new** prospective robustness profile; it does not
 retroactively replace any running/frozen experiment or qualify a student.
+
+### Whole-bank closure and failed diagnostic generalization (2026-10-20)
+
+The full bank, raw reader, recorded-target physical verifier, three-seed
+learning job and nine paired-node extraction all finished successfully as
+processes. This is not a passing policy. The bank found13/18 contexts with
+at least one safe passing postcontact action, versus7/18 original passes.
+The online current-state MPC had already achieved13/18 on this consumed
+scope. The remaining five failures need a different intervention; simply
+fitting the same thirteen postcontact actions cannot overcome their observed
+reachability limit. This is not a limit on every possible control policy.
+
+The verifier performed714000 new recorded-target physical steps on238 bodies
+and reused14 previous proofs (42000 steps) without counting them as new. Its
+logical hash is
+`sha256:a9c39ce4c30792a20565db54771e75cb3917d46c64dae9d98726e9ad05e3b2bd`.
+This verifies recorded physics, not independently recomputed NN/search.
+
+Actual diagnostic learning used all12 observed local states from three
+original source clusters. Twelve models (three seeds, three cluster-disjoint
+CV folds plus one final local-only fit each) performed6000 Adam updates.
+The six consumed retention contexts never fitted weights or normalization.
+Retention pass/safety Brier scores (lower is better) were:
+
+| Seed | Pass Brier | Safety Brier |
+| --- | ---: | ---: |
+| 1019 | 0.328582 | 0.060534 |
+| 2027 | 0.317500 | 0.072116 |
+| 4093 | 0.349554 | 0.068180 |
+| Train-only constant comparator | 0.282051 | 0.054160 |
+
+All three final models are worse than the simple comparator on both heads.
+**Do not activate these models.** Their121 current SIM-truth features are
+diagnostic, not approved actor observations. More optimizer steps on this
+tiny correlated set are not evidence of learning to move better. Model
+completion logical hash:
+`sha256:f57b6b18765f05ce4d17cfb41d2bf6439f6f2de03847dd466b47e63b22ab2bd9`.
+
+The paired extractor closed all nine distinct predecision states (six local,
+three consumed retention),234 unique heading/action labels across252
+comparisons, with no new physics/inference/optimizer work. Logical hash:
+`sha256:695fff22028bf1cde59d6d17f25382f834fd4fcf01190921666ec2ae6af3d109`.
+
+### Next one-factor approach probe, not a learned controller
+
+`rsi_constant_forward_approach.py` declares eighteen new H300 rollouts,
+54000 native steps and zero forecast/optimizer steps. It reuses the original
+eighteen controls and preserves all ordinary failure/unsafe/censored rows.
+Only the precontact forward request changes: maintain the existing1.4m/s
+cap instead of slowing with the original ball-gap proportional law. The
+current lateral law, yaw, fixed pulse, mode, body/world, original IK, RNN
+weights, PD gains, limits and H300 scoring remain unchanged. No postcontact
+correction is enabled, avoiding a confounded two-factor experiment.
+
+The hypothesis is that premature slowing can miss an earlier swing/contact
+window; correlation alone has not established this. The causal adapter's
+new explicit boolean defaults to false and rejects combinations with other
+interventions or nondefault approach profiles before allocation. The probe
+checks every current-state navigation request, projection and pulse against
+the declared law, all original physical/NN bytes before the first changed
+projected command, and the shared pre-action body at that boundary. Raw
+requests can diverge before clipped physical commands; those are explicitly
+not claimed to be an unchanged prefix. Even a gain would be a mechanism
+result, not learned-muscle-memory or online-RL success.

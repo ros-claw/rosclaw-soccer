@@ -38,6 +38,7 @@ def build(
     release_action_name=None,
     exit_root=None,
     reuse_owned_postcontact_updates=False,
+    constant_forward_approach=False,
 ):
     sim, _, _ = world()
     sim.opt.gravity[:] = 0
@@ -106,7 +107,20 @@ def build(
         postcontact_exit_enabled=exit_root is not None,
         postcontact_exit_evidence_root=exit_root,
         reuse_owned_postcontact_updates=reuse_owned_postcontact_updates,
+        constant_forward_approach=constant_forward_approach,
     )
+
+
+def test_constant_forward_is_explicit_one_factor(monkeypatch, imitation_parent):  # noqa: F811
+    replay = build(monkeypatch, imitation_parent, constant_forward_approach=True)
+    # Close ball: original law would decelerate before foot contact.
+    replay.data.qpos[replay.bq] = 0.6
+    mujoco.mj_forward(replay.model, replay.data)
+    result = replay.step(0)
+    command = result.arrays["navigation_command"][0]
+    assert command[0] == 1.4 and command[2] == 0
+    assert replay.integrated_steps == 10
+    assert replay.teacher is None
 
 
 def test_postcontact_owned_continuation_remains_explicit_opt_in(
@@ -152,6 +166,28 @@ def test_owned_postcontact_flag_rejected_before_allocation(enabled, value):
             postcontact_exit_enabled=enabled,
             postcontact_exit_evidence_root=Path("unused") if enabled else None,
             reuse_owned_postcontact_updates=value,
+        )
+
+
+@pytest.mark.parametrize("value,impact", [(1, False), ("yes", False), (True, True)])
+def test_constant_forward_invalid_or_combined_rejected_before_allocation(value, impact):
+    with pytest.raises(ValueError, match="fixed study"):
+        mod.CausalImpactReplay(
+            None,
+            world_hash="unused",
+            kp=None,
+            kd=None,
+            model_root=Path("unused"),
+            foundation=None,
+            expected_foundation_hash="unused",
+            policy={},
+            decoder=None,
+            expected_policy_hash="unused",
+            course=(2.7, 0.1, 0.3),
+            profile=None,
+            heading=None,
+            impact_enabled=impact,
+            constant_forward_approach=value,
         )
 
 
