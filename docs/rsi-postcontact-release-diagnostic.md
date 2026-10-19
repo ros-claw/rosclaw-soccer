@@ -699,3 +699,59 @@ body auditors for480000 additional native steps, with finite errors at most
 fields. Neither branch fabricates another profile's action captures. No
 neural/search reexecution, motor activation, training authorization, teacher
 promotion or hardware approval follows from this verification.
+
+### Constant-forward18 closed: reject default replacement
+
+Producer154cf4e8 finished01:13:05; whole raw and independent physical
+verificationea9e0964 finished01:14:45. The new54000 recorded-target steps
+matched every measured physical channel exactly (maximum error0). Local
+development fell3/12→2/12: two rescues, three regressions and three newly
+unsafe cases. Consumed retention rose4/6→6/6, with no regression or added
+unsafe. The aggregate7/18→8/18 therefore **must not conceal the local safety
+regression**. Do not replace the existing approach with this constant law.
+No model weights were updated.
+
+Producer logical hash:
+`sha256:3e3ed88cd58e8a98428c33ab84957196a2f6cace00b013e6f05e0769ad3a9c88`;
+physical verification:
+`sha256:139a335807b82ea24170018f957e84d001460e42c6f622ba46e9a9dd6c967894`.
+
+The separately pinned phase reader rehashed69538 files and independently
+rederived both arms' M0 labels. It found a narrower mechanism, not a passing
+skill: local8 and10 changed from late/censored contact at266/251 to complete
+contact measurements at235/234 with ball-quality criteria satisfied, but
+nonfoot contact followed at265/266. They remain unsafe task failures.
+Local0 also introduced nonfoot contact24 control bins after first foot
+contact. These original six-channel force bins are not a dense all-body
+contact audit and do not provide within-bin substep order.
+
+The body does not immediately follow a changed navigation request. In local0
+the first changed command was123, the first changed encoder/target141, and
+the first changed canonical body state142. In local8/10 these were177,
+181/185 and186 respectively. These are bit-onset sensitivity diagnostics,
+not separately isolated causal-mediation experiments or uniform latency
+guarantees. Their different latencies include reference-refresh/lookahead and
+quantized neural tracking, so blindly increasing a speed request is inadequate.
+Phase reader logical hash:
+`sha256:4f1ac1a0a9c85ed42d616e9fc74ea3e5a9c1035225c589a3cdc422672985f0eb`.
+
+### Next component: owned navigation state across planner refreshes
+
+An80ms predictor cannot observe a nonfoot event roughly480–640ms after
+contact in the above examples. Longer prediction cannot simply repeat the
+old cached reference: it must execute future planner refreshes with owned
+planner counters, commands, references and histories. New research helper
+`providers.g1.sonic_navigation_branch.fork_plain_navigation` copies precisely
+that state at a completed plain H300 boundary. Only immutable configs,
+qualification metadata and read-only CPU ONNX sessions are shared. Unknown
+fields, callbacks, malformed/nonfinite/oversized tensors, missed/pending
+boundaries or changed profiles fail closed. No existing controller calls it.
+
+The targeted75-test run includes a tiny synthetic ONNX planner driven across
+refreshes20 and40: zero branch references/targets/events matched the parent,
+changed-command branches differed, and branch histories/gains/actions did
+not alias the parent. These are component tests, **not official G1 neural or
+physical evidence**. A real-model recorded-observation replay is still
+required. Full body/Foundation-tracker/IK/RNN ownership and prospective
+whole-task parity are not yet implemented by this navigation helper. No
+long-horizon teacher, new optimizer gain or successful recovery is claimed.
