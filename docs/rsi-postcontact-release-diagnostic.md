@@ -87,3 +87,31 @@ independent situations, and is not independent neural/search qualification,
 learning, or teacher admission. Physical tolerances, H300, M0 and world remain
 unchanged. Partial failures preserve actual step counts and the last state;
 there is no automatic retry or overwrite.
+
+## Fixed-action transfer before learning
+
+`scripts/rsi_postcontact_release_transfer.py` preregisters `forward_minus`
+across **all** twelve consumed public local contexts followed by all six
+original retention bindings. This is an explicitly consumed development test,
+not a held-out success rate. It reuses eighteen original-control baselines
+after byte authentication and raw outcome relabeling. The candidate executes
+eighteen new full current-body H300 rollouts (54,000 native steps, 5,400
+control Foundation pairs, no forecasts or optimizer updates). There are nine
+distinct courses in three source clusters, not eighteen independent worlds.
+
+The action is selected from the single-context authority diagnostic, then
+frozen for the entire campaign. It is not selected per case after observing
+outcomes. Original neural weights, policy identity/seed, gains, physical world,
+heading binding, IK release, outcome contract and H300/post60 remain unchanged.
+The body must finish each rollout even for ordinary failure, censoring or an
+observed safety veto; the release actuator cancels on observed unsafe state.
+Contract/numerical errors preserve partial data and terminate without retry.
+
+The entry requires the closed local24 raw readback and the full independent
+postcontact14 physical evidence. It reports rescues, regressions and added
+unsafe outcomes separately for local transfer and retention. Local promise
+requires a positive net gain, no added local unsafe outcomes and no retention
+regression or added unsafe outcome. Even that result does **not** automatically
+qualify a teacher or authorize training: robust causal selection and separate
+validation remain necessary. A negative result is an explicit next learning
+problem, not grounds to discard difficult conditions or relax M0.
