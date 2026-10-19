@@ -40,6 +40,7 @@ def fixed_replay_scope(cfg):
         "pre-planner-navigation-six": 6,
         "pre-planner-navigation-positive-six": 6,
         "original-ik-pre-planner-six": 6,
+        "foot-heading-contact-six": 6,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -141,6 +142,12 @@ def fixed_replay_scope(cfg):
         jobs = ik_scope(cfg["behavior_model_hash"])["jobs"]
         if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
             raise ValueError("all six original ordered original-IK endpoints required")
+    if profile == "foot-heading-contact-six":
+        from rosclaw_soccer.rsi.foot_heading_scope import heading_scope
+
+        jobs = heading_scope(cfg["behavior_model_hash"])["jobs"]
+        if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
+            raise ValueError("all six original ordered heading OFF/ON endpoints required")
     return count, steps
 
 
@@ -365,6 +372,31 @@ def main():
             )
         ):
             raise ValueError("exact original-IK world, parent and owned receipt paths required")
+    heading = None
+    if cfg.get("replay_profile") == "foot-heading-contact-six":
+        for relative in (
+            "scripts/rsi_load_heading_cohort.py",
+            "scripts/rsi_read_foot_heading.py",
+            "src/rosclaw_soccer/rsi/foot_heading_control.py",
+            "src/rosclaw_soccer/rsi/foot_heading_nullspace.py",
+            "src/rosclaw_soccer/rsi/foot_heading_evidence.py",
+            "src/rosclaw_soccer/rsi/foot_heading_scope.py",
+            "src/rosclaw_soccer/rsi/original_ik_planner_pulse.py",
+        ):
+            pins[str(source / relative)] = digest(source / relative)
+        from scripts.rsi_load_heading_cohort import load_closed_heading
+
+        heading = load_closed_heading(cfg, sealed=sealed, pins=pins)
+        if (
+            cfg["world_hash"] != heading["producer"]["mesh_task_contact_world_hash"]
+            or cfg["behavior_model_hash"] != heading["producer"]["behavior_model_hash"]
+            or any(
+                Path(case["receipt_path"]).resolve()
+                != (Path(heading["producer"]["output_root"]) / f"receipt-{i:04d}.json").resolve()
+                for i, case in enumerate(cfg["cases"])
+            )
+        ):
+            raise ValueError("exact heading world, parent and owned receipt paths required")
     archived = None
     if cfg.get("replay_profile") == "catalog2-zero-c7":
         archived = sealed(cfg["archived_expert_readback"])
@@ -449,6 +481,22 @@ def main():
                 original_ik_planner_pulse_contract_hash=OriginalIkPlannerPulse(
                     job["lateral_delta_m_s"]
                 ).contract()["contract_hash"]
+            )
+        if heading is not None:
+            from rosclaw_soccer.rsi.foot_heading_control import FootHeadingContactProbe
+            from rosclaw_soccer.rsi.original_ik_planner_pulse import OriginalIkPlannerPulse
+
+            i = len(receipts)
+            if receipt != heading["complete"]["results"][i]:
+                raise ValueError("exact whole-audited ordered heading receipts required")
+            job = heading["declaration"]["scope"]["jobs"][i]
+            qualification_kwargs = dict(
+                original_ik_planner_pulse_contract_hash=OriginalIkPlannerPulse(
+                    job["lateral_delta_m_s"]
+                ).contract()["contract_hash"],
+                foot_heading_contract_hash=FootHeadingContactProbe(
+                    job["heading_enabled"]
+                ).contract()["contract_hash"],
             )
         outcome = label_first_touch(trace)
         review = sealed(receipt["witnesses"]["independent_review"]["path"])

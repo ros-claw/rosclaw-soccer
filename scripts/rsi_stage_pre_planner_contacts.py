@@ -33,6 +33,7 @@ def main():
             "pre-planner-navigation-six",
             "pre-planner-navigation-positive-six",
             "original-ik-pre-planner-six",
+            "foot-heading-contact-six",
         )
         or any(
             cfg.get(k) is not False
@@ -87,7 +88,18 @@ def main():
         source_terminal_readback_hash=audit["report_hash"],
         audit_source=cfg["audit_source"],
     )
-    if cfg["diagnostic_profile"] == "original-ik-pre-planner-six":
+    if cfg["diagnostic_profile"] == "foot-heading-contact-six":
+        from rosclaw_soccer.rsi.foot_heading_diagnostics import (
+            heading_contact_readout as contact_readout,
+        )
+        from rosclaw_soccer.rsi.foot_heading_diagnostics import (
+            heading_motion_readout as motion_readout,
+        )
+        from rosclaw_soccer.rsi.foot_heading_scope import PROFILE as HEADING_PROFILE
+        from scripts.rsi_load_heading_cohort import load_closed_heading
+
+        cohort = load_closed_heading(inputs, sealed=sealed, pins=pins)
+    elif cfg["diagnostic_profile"] == "original-ik-pre-planner-six":
         from rosclaw_soccer.rsi.original_ik_planner_diagnostics import (
             ik_contact_readout as contact_readout,
         )
@@ -105,7 +117,9 @@ def main():
     from rosclaw_soccer.rsi.planner_navigation_pulse_scope import POSITIVE_PROFILE, PROFILE
 
     expected = (
-        IK_PROFILE
+        HEADING_PROFILE
+        if cfg["diagnostic_profile"] == "foot-heading-contact-six"
+        else IK_PROFILE
         if cfg["diagnostic_profile"] == "original-ik-pre-planner-six"
         else POSITIVE_PROFILE
         if cfg["diagnostic_profile"] == "pre-planner-navigation-positive-six"
@@ -140,7 +154,9 @@ def main():
         neural_training_authorized=False,
     )
     schema_prefix = (
-        "original_ik_planner"
+        "foot_heading"
+        if cfg["diagnostic_profile"] == "foot-heading-contact-six"
+        else "original_ik_planner"
         if cfg["diagnostic_profile"] == "original-ik-pre-planner-six"
         else "pre_planner_pulse"
     )

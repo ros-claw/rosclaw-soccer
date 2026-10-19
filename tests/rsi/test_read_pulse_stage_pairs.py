@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from rosclaw_soccer.rsi.foot_heading_diagnostics import heading_contact_readout
+from rosclaw_soccer.rsi.foot_heading_scope import assess_heading_scope
 from rosclaw_soccer.rsi.original_ik_planner_diagnostics import ik_contact_readout
 from rosclaw_soccer.rsi.original_ik_planner_scope import assess_ik_scope
 from rosclaw_soccer.rsi.planner_navigation_pulse_cohort import pulse_contact_readout
@@ -14,6 +16,7 @@ from rosclaw_soccer.rsi.planner_navigation_pulse_scope import assess_pulse_scope
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts import rsi_read_pulse_stage_pairs as reader
 from tests.rsi.test_first_touch_stage_diagnostics import outcome
+from tests.rsi.test_foot_heading_scope import receipts as heading_receipts
 from tests.rsi.test_original_ik_planner_scope import receipts as ik_receipts
 from tests.rsi.test_pre_planner_pulse_cohort import cohort, dense
 
@@ -22,30 +25,41 @@ from tests.rsi.test_pre_planner_pulse_cohort import cohort, dense
     "mutation",
     [None, "membership", "metrics", "source", "hash", "running", "admission", "counts", "upstream"],
 )
-@pytest.mark.parametrize("original_ik", [False, True])
+@pytest.mark.parametrize("profile_case", ["zero", "original_ik", "heading"])
 def test_whole_stage_readback_requires_original_cohort_and_dense_evidence(
-    tmp_path, monkeypatch, mutation, original_ik
+    tmp_path, monkeypatch, mutation, profile_case
 ):
+    original_ik, heading = profile_case == "original_ik", profile_case == "heading"
     p, d, c, a = cohort()
-    if original_ik:
+    if heading:
+        d["scope"], c["results"] = heading_receipts()
+    elif original_ik:
         d["scope"], c["results"] = ik_receipts()
     a["report_hash"] = "audit"
     for r in c["results"]:
         g, role = r["group"], r["role"]
         r["outcome"] = outcome(
             None
-            if g == 28 or (g == 76 and role in ("pulse", "ik_pulse"))
+            if g == 28 or (g == 76 and role in ("pulse", "ik_pulse", "heading_on"))
             else 151
             if g == 76
             else 231,
             weak=g == 76,
         )
-        if original_ik:
+        if original_ik or heading:
             r["receipt_hash"] = hash_json({k: v for k, v in r.items() if k != "receipt_hash"})
-    assess = assess_ik_scope if original_ik else assess_pulse_scope
+    assess = (
+        assess_heading_scope if heading else assess_ik_scope if original_ik else assess_pulse_scope
+    )
     c["assessment"] = assess(d["scope"], c["results"])
     replay, metrics = dense(d, c)
-    measured = (ik_contact_readout if original_ik else pulse_contact_readout)(d, c, replay, metrics)
+    measured = (
+        heading_contact_readout
+        if heading
+        else ik_contact_readout
+        if original_ik
+        else pulse_contact_readout
+    )(d, c, replay, metrics)
     if mutation == "membership":
         replay["rows"].reverse()
     elif mutation == "metrics":
@@ -63,7 +77,9 @@ def test_whole_stage_readback_requires_original_cohort_and_dense_evidence(
     witness = tmp_path / "original_source.py"
     witness.write_text("# frozen source\n")
     contact = dict(
-        schema="soccer.rsi.original_ik_planner_contact_complete.v1"
+        schema="soccer.rsi.foot_heading_contact_complete.v1"
+        if heading
+        else "soccer.rsi.original_ik_planner_contact_complete.v1"
         if original_ik
         else "soccer.rsi.pre_planner_pulse_contact_complete.v1",
         upstream_readback_hash="other" if mutation == "upstream" else "audit",
@@ -104,7 +120,9 @@ def test_whole_stage_readback_requires_original_cohort_and_dense_evidence(
             metrics=mp,
         ),
     )
-    if original_ik:
+    if heading:
+        cfg["stage_profile"] = "foot-heading"
+    elif original_ik:
         cfg["stage_profile"] = "original-ik-pulse"
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(cfg))
@@ -120,7 +138,13 @@ def test_whole_stage_readback_requires_original_cohort_and_dense_evidence(
         return dict(producer=p, declaration=d, complete=c, audit=a)
 
     monkeypatch.setattr(
-        reader, "load_closed_original_ik" if original_ik else "load_closed_pulse", load
+        reader,
+        "load_closed_heading"
+        if heading
+        else "load_closed_original_ik"
+        if original_ik
+        else "load_closed_pulse",
+        load,
     )
 
     def terminal(unit):
@@ -134,7 +158,9 @@ def test_whole_stage_readback_requires_original_cohort_and_dense_evidence(
         reader.main()
         result = json.loads(output.read_text())
         assert result["schema"] == (
-            "soccer.rsi.original_ik_first_touch_stage_pairs_readback.v1"
+            "soccer.rsi.foot_heading_first_touch_stage_pairs_readback.v1"
+            if heading
+            else "soccer.rsi.original_ik_first_touch_stage_pairs_readback.v1"
             if original_ik
             else "soccer.rsi.pulse_first_touch_stage_pairs_readback.v1"
         )

@@ -6,10 +6,12 @@ import subprocess
 from pathlib import Path
 
 from rosclaw_soccer.rsi.first_touch_stage_diagnostics import assess_first_touch_stages
+from rosclaw_soccer.rsi.foot_heading_diagnostics import heading_contact_readout
 from rosclaw_soccer.rsi.original_ik_planner_diagnostics import ik_contact_readout
 from rosclaw_soccer.rsi.planner_navigation_pulse_cohort import pulse_contact_readout
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_atomic_artifacts import write_once
+from scripts.rsi_load_heading_cohort import load_closed_heading
 from scripts.rsi_load_original_ik_cohort import load_closed_original_ik
 from scripts.rsi_load_pre_planner_cohort import load_closed_pulse
 from scripts.rsi_stage_release_contact_replay import digest, require_terminal
@@ -48,7 +50,7 @@ def main():
     started = output.with_suffix(".started.json")
     if (
         cfg.get("mode") != "SIM_ONLY"
-        or stage_profile not in ("zero-reference-pulse", "original-ik-pulse")
+        or stage_profile not in ("zero-reference-pulse", "original-ik-pulse", "foot-heading")
         or any(cfg.get(k) is not False for k in ("hardware_authorized", "promotion_authorized"))
         or output.exists()
         or started.exists()
@@ -86,7 +88,11 @@ def main():
     try:
         cohort_spec, contact_spec = completed_inputs(cfg, sealed=sealed)
         loader = (
-            load_closed_original_ik if stage_profile == "original-ik-pulse" else load_closed_pulse
+            load_closed_heading
+            if stage_profile == "foot-heading"
+            else load_closed_original_ik
+            if stage_profile == "original-ik-pulse"
+            else load_closed_pulse
         )
         cohort = loader(cohort_spec, sealed=sealed, pins=pins)
         declaration, complete, audit = (cohort[k] for k in ("declaration", "complete", "audit"))
@@ -96,11 +102,17 @@ def main():
             sealed(spec[k]) for k in ("complete", "replay_complete", "metrics")
         )
         readout = (
-            ik_contact_readout if stage_profile == "original-ik-pulse" else pulse_contact_readout
+            heading_contact_readout
+            if stage_profile == "foot-heading"
+            else ik_contact_readout
+            if stage_profile == "original-ik-pulse"
+            else pulse_contact_readout
         )
         measured = readout(declaration, complete, replay, metrics)
         contact_schema = (
-            "soccer.rsi.original_ik_planner_contact_complete.v1"
+            "soccer.rsi.foot_heading_contact_complete.v1"
+            if stage_profile == "foot-heading"
+            else "soccer.rsi.original_ik_planner_contact_complete.v1"
             if stage_profile == "original-ik-pulse"
             else "soccer.rsi.pre_planner_pulse_contact_complete.v1"
         )
@@ -138,7 +150,9 @@ def main():
                 raise ValueError("whole original contact source and evidence bytes changed")
             pins[name] = h
         roles = (
-            ("ik_pulse_off", "ik_pulse")
+            ("heading_off", "heading_on")
+            if stage_profile == "foot-heading"
+            else ("ik_pulse_off", "ik_pulse")
             if stage_profile == "original-ik-pulse"
             else ("pulse_off", "pulse")
         )
@@ -152,7 +166,7 @@ def main():
         )
         original_pairs = (
             complete["assessment"]["stages"]["original_m0_pairs"]
-            if stage_profile == "original-ik-pulse"
+            if stage_profile in ("original-ik-pulse", "foot-heading")
             else complete["assessment"]["paired_results"]
         )
         if any(
@@ -171,7 +185,9 @@ def main():
         if any(digest(p) != h for p, h in pins.items()):
             raise ValueError("source or input bytes changed during stage readback")
         result = dict(
-            schema="soccer.rsi.original_ik_first_touch_stage_pairs_readback.v1"
+            schema="soccer.rsi.foot_heading_first_touch_stage_pairs_readback.v1"
+            if stage_profile == "foot-heading"
+            else "soccer.rsi.original_ik_first_touch_stage_pairs_readback.v1"
             if stage_profile == "original-ik-pulse"
             else "soccer.rsi.pulse_first_touch_stage_pairs_readback.v1",
             configuration=cfg,
@@ -182,7 +198,15 @@ def main():
             native_audit_hash=audit["report_hash"],
             contact_complete_hash=contact["report_hash"],
             stage_diagnostics=stages,
-            pulse_dense_nonfoot_endpoints=measured["pulse_endpoints_with_nonfoot_over1n"],
+            **{
+                "heading_dense_nonfoot_endpoints"
+                if stage_profile == "foot-heading"
+                else "pulse_dense_nonfoot_endpoints": measured[
+                    "heading_endpoints_with_nonfoot_over1n"
+                    if stage_profile == "foot-heading"
+                    else "pulse_endpoints_with_nonfoot_over1n"
+                ]
+            },
             derived_courses=3,
             source_scene_clusters=3,
             source_native_bodies=6,
