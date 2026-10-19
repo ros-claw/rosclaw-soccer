@@ -1006,3 +1006,59 @@ typed modules passed mypy. The shared verifier admits only the two explicit
 protocols and uses the born-specific independent recorded-body method; no
 old namespace aliases or neural-policy independence are claimed. These tests
 do not themselves execute the actual G1 verification run.
+
+### Closed independent review and change of research direction
+
+The actual born14 independent run subsequently closed all fourteen literal
+action/duplicate/hold/cancel, PD-attribution, raw46/M0 and ranking checks, plus
+42000 additional recorded-target native steps. Every checked numeric physical
+error was exactly zero. Verifier logical hash:
+`sha256:7984f1ffc8e6e144f3f54ca81e8de1fd927276ae982a4dd71e2c2c959e5a525f`.
+This closes evidence integrity, **not** the failed controller's qualification.
+
+Read-only inspection of consumed constant context8 shows a first foot-force
+bin235: before-bin forward ball velocity0.536m/s, next-bin0.689, settling near
+0.596 by bin240. A second foot/knee collision begins265, followed by much
+larger forward acceleration. The ball remains near ground height in these
+sampled observations; an earlier speculative loft explanation is unsupported.
+These are sampled observations, not isolated causal attribution of impulse.
+
+A different local research reference was then actually executed: PAiD /
+HumanoidSoccer commit`e72e470230047dedaf66df0983f1d0ab746faeb5`, unchanged
+headless MuJoCo entry and ONNX policy, seed20261020, four6s trials. Source,
+weights, motions and assets were pinned before imports and closed afterward.
+The upstream0.1kg-ball run produced4/4 goal-plane successes and12000 native
+steps. A declared matched comparison repeated exactly the same four courses
+at0.1kg and0.43kg,24000 new native steps. Both masses produced4/4 goal-plane
+successes; standard-mass minimum root heights ranged0.71245–0.74222m.
+All four at each mass also had knee/ball contacts above1N. Therefore these
+results do not meet our unchanged foot-only M0, even though they demonstrate
+useful external motion capability. These are four courses, not eight unique
+courses or a statistically robust100% success claim.
+
+The same external actor was next run on our exact compiled world, standard
+ball, declared original initial state and four consumed contexts0/8/10/12.
+This changes both full policy and metadata PD gains; it is not a one-factor
+ablation. All four produced NO_FOOT_CONTACT inH300,12000 new native steps.
+Final root x was about3.21–3.33m, whereas the moving ball continued away.
+The reference's stationary-ball success is not transferable interception.
+No optimizer ran, no new student was trained, and no result changes M0.
+
+Reference artifacts remain external research-only evidence banks
+`paid-upstream-baseline4-20261020`, `paid-mass-pair8-20261020` and
+`paid-same-world4-20261020`. Restricted CC-BY-NC reference code, motions,
+weights and video are not redistributed, promoted, or mixed into publicity.
+No independent neural-policy or physical replay qualification of these new
+reference trials is claimed yet.
+
+`physics.g1_target_episode.G1TargetEpisode` now supplies an owned continuous
+SIM body for motion-policy comparison: canonical29-joint targets, original
+PD saturation, full native accounting and six-channel M0 captures. Switching
+the caller's target policy cannot reset body, contact warmstart or clock.
+Its receipt explicitly does not prove policy causality. It can compare a
+replayed approach with a new current-state policy, but such a diagnostic
+must disclose the replayed prefix and cannot claim a fully recomputed actor.
+Eight synthetic-toy tests passed, including wholeH300 equality to the
+separate recorded-PD fixture, handoff state continuity, malformed targets,
+wrong clocks, partial-integration terminal failure and both native counters.
+These tests are not genuine G1 task improvement.
