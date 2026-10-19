@@ -288,3 +288,31 @@ a speedup claim. The full-horizon bank is intended to obtain richer offline
 action/value supervision without repeatedly paying short-branch copy/check
 costs. Any learned low-latency replacement must still be measured and tested;
 the present slow oracle is not ready to control a live football match.
+
+### Whole-bank readback and learning observation boundary
+
+`scripts/rsi_read_postcontact_full_bank.py` reads only a successfully closed
+whole252 bank. It checks all238 new/14 reused executions, all raw native
+tensors, M0 labels, actual torque attribution and original prefixes; rebuilds
+each current-pose Jacobian bank; and independently rederives the offline
+action ranking. Each of the eighteen contexts stays in the exported matrix,
+including those with no eligible post-touch trigger, unsafe outcomes and
+unobserved late ball quality. The output remains explicitly
+`candidate_supervision_not_admitted`, with training/teacher flags false.
+
+`postcontact_learning_observation` supplies121 current-state inputs: the
+existing112 measured body/ball/current-target features, six **completed past**
+contact forces transformed by `log1p(force)/log(1001)`, the measured contact
+side as two indicators, and the remaining own task-clock fraction. It contains
+no source case id, future event or outcome. The same pre-action input must
+match across all fourteen interventions in a context. Ball state is simulator
+ground truth: this is not a claim of deployable vision or pure proprioception.
+
+The candidate export retains all thirteen actual torque vectors, availability,
+pass/safety/quality-observed labels, original dense rewards and measured
+post-touch recovery proxies. Dense reward is **not** a substitute for passing
+M0; recovery proxies are **not** certification of naturalness or balance.
+This is dataset preparation, not neural optimization. Independent body/NN
+verification, scoped teacher admission, three-seed learning and retention
+remain separate steps. The neural runtime must never receive the offline
+future-outcome table as its observation.
