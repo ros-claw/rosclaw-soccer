@@ -69,3 +69,99 @@ def test_wrong_recurrent_boundary_rejected(imitation_parent, next_frame):  # noq
         decoder.delta_at_frame(policy, long_body(), **boundary(frame, np.zeros(12)))
     with pytest.raises(ValueError):
         fork_motor(decoder, next_frame=next_frame)
+
+
+def test_composed_feedback_branch_real_adapters_on_toy_assets(imitation_parent):  # noqa: F811
+    """Exercises the full adapter composition, NOT an official G1/SONIC result."""
+    import mujoco
+
+    from rosclaw_soccer.physics.g1_feedback_forecast import G1FeedbackForecaster
+    from rosclaw_soccer.rsi.feedback_branch_control import G1FeedbackBranchControl
+    from rosclaw_soccer.rsi.foot_heading_control import FootHeadingContactProbe
+    from rosclaw_soccer.sim.contracts import hash_bytes
+    from rosclaw_soccer.sim.root_velocity_reference import root_velocity_world
+    from scripts.rsi_calibrate_feedback_branches import ik_signature, tracker_signature
+    from tests.physics.test_g1_feedback_forecast import world
+    from tests.providers.test_sonic_branch_state import tracker as toy_tracker
+
+    sim_model, data, _ = world()
+    # Declare toy limits before creating the new model-hash-bound forecaster.
+    sim_model.jnt_range[:] = [-2.0, 2.0]
+    # Toy spheres have near-zero hinge inertia; give this synthetic integration
+    # fixture explicit motor inertia before binding its new compiled-model hash.
+    sim_model.dof_armature[6:35] = 0.02
+    binary = np.zeros(mujoco.mj_sizeModel(sim_model), dtype=np.uint8)
+    mujoco.mj_saveModel(sim_model, None, binary)
+    f = G1FeedbackForecaster(
+        sim_model,
+        world_hash=hash_bytes(binary.tobytes()),
+        kp=np.full(29, 10.0),
+        kd=np.full(29, 0.2),
+        max_forecast_steps=40,
+    )
+    tracker, _, _ = toy_tracker()
+    tracker.reference = tracker.reference[:, :1].repeat(1, 256, 1)
+    q, v = data.qpos[None].copy(), data.qvel[None].copy()
+    tracker.reset(q, v)
+    policy = make_preview(make_sampling_view(make_model(imitation_parent), seed=901))
+    decoder = CompiledRecurrentSamplingMotor(policy)
+    ik = FootHeadingCpuReconstruction(sim_model, FootHeadingContactProbe(False))
+    pelvis, ball = sim_model.body("pelvis").id, sim_model.body("ball").id
+    geometry = [
+        sim_model.body(n).id
+        for n in (
+            "left_ankle_roll_link",
+            "right_ankle_roll_link",
+            "left_knee_link",
+            "right_knee_link",
+        )
+    ]
+    observed_body = dict(
+        joint_position_rad=data.qpos[7:36],
+        joint_velocity_rad_s=data.qvel[6:35],
+        root_pose_xyzw_m=np.concatenate((data.xpos[pelvis], data.xquat[pelvis][[1, 2, 3, 0]])),
+        root_velocity_world=root_velocity_world(sim_model, data, int(pelvis), "body-com"),
+        ball_position_before_step_m=data.xpos[ball],
+        ball_linear_velocity_before_step_m_s=np.zeros(3),
+        foot_geometry_position_before_step_m=data.xpos[geometry],
+    )
+    body = {k: np.repeat(a[None, None], 31, axis=0) for k, a in observed_body.items()}
+    previous = np.zeros(12)
+    for frame in range(31):
+        if frame:
+            tracker.observe(q, v)
+        nav = tracker.update(frame, q, v)[0].numpy().astype(np.float64)
+        delta = ik.before_step(data, frame, data.xpos, nav)
+        nominal = nav + delta
+        previous = decoder.delta_at_frame(
+            policy,
+            body,
+            frame=frame,
+            nominal_target=nominal,
+            baseline=nominal[:12],
+            limits=np.tile([-2.0, 2.0], (12, 1)),
+            previous=previous,
+            previous_contact_forces=np.zeros(6),
+        )
+        if frame < 30:
+            ik.after_step(frame, np.zeros(6))
+    target = nominal.copy()
+    target[:12] += previous
+    before = (_numeric_graph_hash(decoder), tracker_signature(tracker), ik_signature(ik))
+    outputs = []
+    for _ in range(2):
+        controller = G1FeedbackBranchControl(
+            sim_model,
+            frame=30,
+            tracker=tracker,
+            decoder=decoder,
+            ik=ik,
+            policy=policy,
+            body_prefix=body,
+            previous_motor_delta_rad=previous,
+        )
+        outputs.append(f.forecast(data, target, control=controller, first_offset_nm=np.zeros(29)))
+    assert before == (_numeric_graph_hash(decoder), tracker_signature(tracker), ik_signature(ik))
+    assert outputs[0].end_integration_state.tobytes() == outputs[1].end_integration_state.tobytes()
+    assert outputs[0].next_target_record["joint_target_rad"].shape == (29,)
+    assert f.next_target_completed == 2 and f.integrated_steps == 40 and data.time == 0.6
