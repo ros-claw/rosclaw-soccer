@@ -56,10 +56,16 @@ def main():
     mode.add_argument("--early-zero", action="store_true")
     mode.add_argument("--early-screen", action="store_true")
     mode.add_argument("--owned-zero-parity", action="store_true")
+    mode.add_argument("--owned-selected-parity", action="store_true")
     args = parser.parse_args()
     screening = args.impact_screen or args.early_screen
-    early = args.early_zero or args.early_screen or args.owned_zero_parity
-    if args.owned_zero_parity:
+    owned_parity = args.owned_zero_parity or args.owned_selected_parity
+    early = args.early_zero or args.early_screen or owned_parity
+    if args.owned_selected_parity:
+        from scripts.rsi_owned_selected_parity_inputs import prepare as prepare_selected
+
+        p = prepare_selected(args.config)
+    elif args.owned_zero_parity:
         from scripts.rsi_owned_feedback_parity_inputs import prepare as prepare_owned
 
         p = prepare_owned(args.config)
@@ -84,9 +90,14 @@ def main():
         )
     if args.owned_zero_parity:
         study_kind = "owned_early_feedback_continuation_parity"
+    if args.owned_selected_parity:
+        study_kind = "owned_selected_early_feedback_continuation_parity"
     if Path(__file__).resolve() != p.source / "scripts/rsi_calibrate_feedback_branches.py":
         raise ValueError("exact frozen feedback calibration runner required")
     if args.preflight:
+        if args.owned_selected_parity:
+            print("SIX_OWNED_SELECTED_PARITY_READY_NO_FULL_MODELS_OR_PHYSICS", flush=True)
+            return
         if args.owned_zero_parity:
             print("SIX_OWNED_EARLY_ZERO_PARITY_READY_NO_FULL_MODELS_OR_PHYSICS", flush=True)
             return
@@ -129,9 +140,12 @@ def main():
         declaration["early_zero_feedback_readback_hash"] = p.early_zero_readback["report_hash"]
     elif screening:
         declaration["zero_feedback_readback_hash"] = p.zero_readback["report_hash"]
-    if args.owned_zero_parity:
+    if owned_parity:
         declaration["reuse_owned_updates_only_on_second_branch"] = True
         declaration["new_task_gain_or_teacher_qualification_claimed"] = False
+    if args.owned_selected_parity:
+        declaration["selected_h300_hash"] = p.selected_h300_hash
+        declaration["gold_arrays_consumed_only_by_post_forecast_comparison"] = True
     declaration["report_hash"] = hash_json(declaration)
     write_once(p.root / "declaration.json", declaration)
     attempted = integrated = plans = currents = residuals = recurrent_completed = 0
@@ -394,6 +408,11 @@ def main():
                         if screening
                         else ([("baseline", np.zeros(29)), ("repeat_zero", np.zeros(29))], True)
                     )
+                    if args.owned_selected_parity:
+                        bank = [
+                            ("selected_legacy", case["selected_offset_nm"].copy()),
+                            ("selected_owned", case["selected_offset_nm"].copy()),
+                        ]
                     for branch, (action_name, offset) in enumerate(bank):
                         bounded()
                         branch_started = time.perf_counter()
@@ -414,20 +433,29 @@ def main():
                                 preserve_forecast,
                             )
 
-                            if args.owned_zero_parity:
+                            if owned_parity:
                                 forecaster.reuse_owned_updates = branch == 1
                             out = forecaster.forecast(
                                 d, target, control=control, early_offset_nm=offset
                             )
                             branch_wall_s = time.perf_counter() - branch_started
-                            witness = (
-                                preserve_and_compare(
-                                    p.root, index, branch, out, predicted, trace, frame, WIDTHS
+                            if args.owned_selected_parity:
+                                from scripts.rsi_owned_selected_parity_inputs import (
+                                    preserve_and_compare_selected,
                                 )
-                                if is_zero
-                                else preserve_forecast(p.root, index, branch, out)
-                            )
-                            if args.owned_zero_parity:
+
+                                witness = preserve_and_compare_selected(
+                                    p.root, index, branch, out, case, p.pins
+                                )
+                            else:
+                                witness = (
+                                    preserve_and_compare(
+                                        p.root, index, branch, out, predicted, trace, frame, WIDTHS
+                                    )
+                                    if is_zero
+                                    else preserve_forecast(p.root, index, branch, out)
+                                )
+                            if owned_parity:
                                 witness.update(
                                     owned_updates_reused=branch == 1,
                                     branch_wall_s_excluding_artifact_io=branch_wall_s,
@@ -445,7 +473,7 @@ def main():
                                 )
                             predictions.append(witness)
                             if predicted is None:
-                                if not is_zero:
+                                if not is_zero and not args.owned_selected_parity:
                                     raise ValueError("original early zero must be first")
                                 predicted = out
                             if (
@@ -571,8 +599,10 @@ def main():
                                 peaks[channel] = max(
                                     peaks[channel], float(np.linalg.norm(force[:3]))
                                 )
-                    if predicted is not None and case["frame"] <= frame <= case["frame"] + (
-                        3 if early else 1
+                    if (
+                        not args.owned_selected_parity
+                        and predicted is not None
+                        and case["frame"] <= frame <= case["frame"] + (3 if early else 1)
                     ):
                         slot = (frame - case["frame"]) * 10 + substep
                         q, v = canonical(d)
@@ -611,7 +641,9 @@ def main():
                             "feedback true force",
                         )
                 equal(peaks, trace["force_n"][frame, 0], "original full six contact channels")
-                if early and case["frame"] <= frame <= case["frame"] + 3:
+                if args.owned_selected_parity:
+                    pass  # Selected nonzero predictions compare to H300 gold, not zero dynamics.
+                elif early and case["frame"] <= frame <= case["frame"] + 3:
                     equal(
                         peaks,
                         predicted.arrays["completed_contact_peak_force_n"][
@@ -686,11 +718,25 @@ def main():
                     if screening
                     else "all_three_next_targets_and_neural_captures_matched"
                 ] = True
+            if args.owned_selected_parity:
+                row.pop("both_zero_feedback80ms_branches_match_original")
+                row.pop("all_three_next_targets_and_neural_captures_matched")
+                row.pop("nonzero_interventions_qualified")
+                row.update(
+                    selected_offset_nm=case["selected_offset_nm"].tolist(),
+                    selected_action_is_zero=not bool(np.any(case["selected_offset_nm"])),
+                    both_selected_forecasts_match_closed_h300_gold_bit_exact=True,
+                    nonzero_continuation_qualification_scope="FIXED_SELECTED_DEVELOPMENT_ACTIONS_ONLY",
+                )
             row["report_hash"] = hash_json(row)
             write_once(p.root / f"case-{index}-complete.json", row)
             rows.append(row)
             print(
-                "FEEDBACK_SCREEN_CASE_COMPLETE" if screening else "ZERO_FEEDBACK_CASE_COMPLETE",
+                "SELECTED_FEEDBACK_PARITY_CASE_COMPLETE"
+                if args.owned_selected_parity
+                else "FEEDBACK_SCREEN_CASE_COMPLETE"
+                if screening
+                else "ZERO_FEEDBACK_CASE_COMPLETE",
                 index,
                 flush=True,
             )
@@ -742,6 +788,10 @@ def main():
                 r["local_proxy_improved_over_baseline"] for r in rows
             )
             result["full_m0_gain_proven"] = False
+        if args.owned_selected_parity:
+            result.pop("all_six_zero_feedback_branches_qualified")
+            result["all_six_selected_action_forecasts_match_closed_h300_gold"] = True
+            result["runtime_mpc_default_changed"] = False
         result["report_hash"] = hash_json(result)
         write_once(p.root / "complete.json", result)
     except BaseException as error:
