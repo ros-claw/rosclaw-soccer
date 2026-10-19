@@ -1122,3 +1122,34 @@ own-state near-contact boundary by frame180. It must retain far-case failures,
 compare against the closed replay bank only as a comparator, and publish
 separate prefix/suffix inference and native accounting. It is not yet executed
 at this documentation checkpoint and will not authorize hardware/publicity.
+
+### Independent actual-transition learning adapter (not a motor actor)
+
+`rsi.observed_ball_response` adds a deliberately small partial-observation
+response predictor. Only current/past foot-ball geometry, finite-difference
+foot velocity, leg angles, root angular velocity, completed foot forces,
+current requested wrench wish and known planner-clock phase enter17 features.
+Left/right quantities are reflection-canonicalized. The observed ball-velocity
+change four control intervals later is a LABEL only. Hidden background
+controller state is omitted, so this is not a fully observed Markov world
+model, safety gate or substitute for native physics.
+
+Soccer owns observation/units/mirroring and original-unit prediction. Three
+scalar neural heads reuse Core's existing normalized-value-regression numeric
+solver; no generic optimizer is copied into the downstream app. Planned real
+data uses only physically verified public40 heading-OFF original/selected
+actual trajectories, including failures/unsafe cases, not the restricted
+external reference bank or unexecuted candidate fantasies. All paired arms of
+a course remain in its source cluster. A post-hoc consumed-development split
+uses clusters0–5 train,6–7 validation,8–9 diagnostic test; it is not sealed Fresh.
+Fixed seeds1019/2027/4093 and256 updates/head give at most2304 scalar optimizer
+steps. Persistence (zero delta) and training-mean deltas are explicit baselines.
+Model fitting, train loss or diagnostic held-out error cannot prove M0 gain.
+
+Ten synthetic software/numeric tests passed2.78s; the tiny synthetic fit
+performed12 optimizer steps, not genuine G1 training. Tests cover reflection,
+feature meaning, malformed/unobserved contact, output shape and explicit
+rejection of a rehashed artifact requesting runtime authority. The new adapter
+passed mypy and whole Ruff. At this checkpoint actual public40 fitting has
+not run. The model exposes only predicted velocity changes, no action,
+runtime, driver, hardware, actor update or promotion interface.
