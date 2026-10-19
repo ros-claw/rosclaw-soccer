@@ -640,6 +640,53 @@ class G1SonicNavigation:
             self._faulted = True
             raise ValueError("navigation history handoff failed; option latched off") from error
 
+    def handoff_to_navigation(
+        self,
+        destination: G1SonicNavigation,
+        *,
+        observation: TeamMotorObservation,
+    ) -> SonicHistoryHandoffReceipt:
+        """Transfer one measured boundary to a fresh same-player navigation.
+
+        Builds the recipient's new reference from this measurement, commits
+        the source's latest observation exactly once, imports its full history
+        and last action, and retires the source. The recipient's first proposal
+        consumes this SAME observation at local reference frame zero. Neither
+        a body state nor a simulation clock is modified. This is not permission
+        to execute a physical action. Any failed transition faults both options;
+        no retry, cold-history fallback or duplicate proposal is permitted.
+        """
+        if not isinstance(destination, G1SonicNavigation) or destination is self:
+            self._faulted = True
+            raise ValueError("distinct fresh navigation destination required")
+        try:
+            if (
+                self._faulted
+                or self._retired
+                or self._batch_pending
+                or destination._batch_pending
+                or destination.agent_id != self.agent_id
+            ):
+                raise ValueError("healthy same-player options without pending proposals required")
+            # This reset constructs the NEW reference and its initial validation
+            # state, not a physical reset. Its temporary cold history is replaced
+            # by the source history before any recipient inference is allowed.
+            destination.start_from_observation(observation)
+            receipt = self.handoff_to(
+                destination.backend,
+                observation=observation,
+                destination_observation=observation,
+            )
+            destination._ready_from_observation = False
+            destination._ready_from_handoff = True
+            return receipt
+        except Exception as error:
+            self._faulted = True
+            destination._faulted = True
+            raise ValueError(
+                "navigation-to-navigation handoff failed; both options latched off"
+            ) from error
+
     def start_from_history(
         self,
         source: G1SonicRunupController,
