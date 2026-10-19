@@ -822,3 +822,48 @@ an independently attested fact inferred from filesystem timestamps. Fifteen
 synthetic reader tests (including whole18 orchestration) and23 existing
 qualification/scope tests passed together:38 tests6.25s. These are reader
 validation, not physical prediction qualification or improved football skill.
+
+### Born-at-current navigation recovery prototype (nonzero parity pending)
+
+`BornNavigationRecovery` declares two finite post-contact options: lower the
+existing forward navigation request to at most0.7m/s or0m/s until frame299.
+It does not change lateral/yaw commands, PD gains, joint/torque caps, weights,
+IK or sampling. Installing once requires the actual current completed clock,
+an observed foot-force bin, completed IK/residual state and no other teacher
+or intervention. The private full-task predictor installs the same typed
+lease at its copied current boundary **before** resetting borrowed accounting.
+No old full-episode release-controller clock is fabricated. Default None is
+unchanged. No existing collector automatically enables these options.
+
+Seven new tests passed29.89s, including a269-frame nonzero future against
+actual toy execution with the same lease. Contact metadata in that fixture
+is explicitly synthetic; it is not a genuine G1 contact or M0 success. All
+six original full-task tests also passed in the earlier combined run; its
+new seventh test initially failed due to a missing fixture import, corrected
+without weakening assertions. Changed three source modules passed mypy.
+
+The planned real diagnostic predeclares consumed source indices0,8,10,12:
+three known local unsafe examples and one consumed retention comparison.
+It requires closed whole18 real zero parity **and** independent raw/source
+readback before model allocation. Four branches per context (baseline,
+repeat baseline,0.7m/s,0m/s) predict from the same measured contact state and
+persist before the donor continues. Three fresh full actual bodies execute
+the matching options. All43 future tensors and whole M0 labels must match;
+ordinary failures are retained. Budget:36000 actual-body plus14320 predicted
+native steps,50320 total; no optimizer updates. The prospective ranking is
+advisory and uses only measured past plus owned simulated future, never
+archived future labels to choose an action. All three actual arms execute
+regardless of ranking. This is not a qualified teacher or generalization
+test, and it does not establish that braking helps. Twenty-six new synthetic
+scope/orchestration tests plus the38 earlier reader/zero orchestration tests
+passed64 tests6.73s; fake counters are not physical evidence.
+
+Default/legacy causal control and constant-forward regression tests passed43
+tests250.01s. Review caught a report-field condition-placement mistake while
+adding the optional recovery receipt: the pre-contact-law flag must remain
+under the constant-forward condition, not the post-contact condition. It was
+corrected and four metadata-only combinations added. Final combined recovery,
+new orchestration and old zero/scope tests passed60 tests30.46s. The new
+qualifier also records construction versus control-step wall time separately
+for actual bodies and predictions; timing does not enter action selection.
+The protected original IK source hash remains unchanged.

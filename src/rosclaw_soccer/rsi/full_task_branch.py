@@ -3,9 +3,9 @@
 Copies only a COMPLETED current episode boundary, with no future input. Future
 steps execute the original Foundation, IK, residual and streaming planner on
 their own predicted physics. Original counters are not charged as new steps.
-No existing controller calls this baseline-only helper. Nonzero control is
-not admitted yet and requires a distinct current-boundary lease contract.
-Baseline physical parity must precede any predictive teacher admission.
+No existing controller calls this experimental helper. Nonzero navigation
+uses a distinct born-at-current lease; no old controller clock is fabricated.
+Physical nonzero parity must precede any predictive teacher admission.
 """
 
 import copy
@@ -18,6 +18,7 @@ from rosclaw_soccer.physics.g1_pd_torque_forecast import G1PDTorqueForecaster
 from rosclaw_soccer.providers.g1.sonic_branch_state import fork_sonic_tracker
 from rosclaw_soccer.providers.g1.sonic_navigation_branch import fork_plain_navigation
 from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch
+from rosclaw_soccer.rsi.born_navigation_recovery import FORWARD_CAPS, BornNavigationRecovery
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.causal_impact_replay import CausalImpactFrame, CausalImpactReplay
 from rosclaw_soccer.rsi.feedback_branch_control import BODY_SHAPES, fork_motor
@@ -51,6 +52,7 @@ CAUSAL_FIELDS = frozenset(
         "limits",
         "model",
         "navigation",
+        "navigation_recovery",
         "next_frame",
         "pelvis",
         "policy",
@@ -138,7 +140,8 @@ class FullTaskBranch:
             or parent.early_evidence is not None
             or parent.exit_evidence is not None
             or type(action_name) is not str
-            or action_name != "baseline"
+            or action_name not in ("baseline", *FORWARD_CAPS)
+            or parent.navigation_recovery is not None
             or parent.tracker is None
             or parent.tracker._next_frame != parent.next_frame
             or parent.tracker.model is not parent.foundation
@@ -210,10 +213,10 @@ class FullTaskBranch:
         owned.tracker = fork_sonic_tracker(parent.tracker)
         owned.decoder = fork_motor(parent.decoder, next_frame=start)
         owned.ik = fork_completed_ik(parent.ik, next_frame=start)
-        # Baseline-only qualification stage. A newborn nonzero lease requires
-        # its own explicit current-boundary control contract; never pretend an
-        # old full-episode release controller already consumed this prefix.
+        # Never pretend an old full-episode release controller consumed prefix.
         owned.release_control = None
+        if action_name != "baseline":
+            owned.install_navigation_recovery(BornNavigationRecovery(start, action_name))
         # The prefix was already integrated by the donor, not by this branch.
         # Inherited whole-episode review intentionally cannot pass these counts.
         owned.attempted_steps = owned.integrated_steps = 0
@@ -254,6 +257,9 @@ class FullTaskBranch:
             borrowed_prefix_frames=self.start,
             donor_integration_hash=self._donor_hash,
             action_name=self.action_name,
+            born_navigation_recovery=None
+            if actor.navigation_recovery is None
+            else actor.navigation_recovery.contract(),
             new_native_attempted_steps=actor.attempted_steps,
             new_native_integrated_steps=actor.integrated_steps,
             recomputed_control_frames=300 - self.start,

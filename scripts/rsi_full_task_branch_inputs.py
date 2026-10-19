@@ -39,8 +39,8 @@ def require_scope(cfg):
         raise ValueError("whole18 main and36 zero predictions within94840 native steps required")
 
 
-def prepare(path):
-    p = original_prepare(path, scope_validator=require_scope)
+def prepare(path, *, scope_validator=require_scope):
+    p = original_prepare(path, scope_validator=scope_validator)
     require_terminal(p.cfg["gold_unit"])
     require_terminal(p.cfg["gold_physical_unit"])
 

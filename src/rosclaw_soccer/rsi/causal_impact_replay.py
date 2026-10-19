@@ -19,6 +19,7 @@ from rosclaw_soccer.providers.g1.sonic_navigation import G1SonicNavigation, Soni
 from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController
 from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker
+from rosclaw_soccer.rsi.born_navigation_recovery import BornNavigationRecovery
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.contact_motor_primitive import CAP_RAD
 from rosclaw_soccer.rsi.early_impact_controller import EarlyImpactCommand, EarlyImpactController
@@ -192,6 +193,7 @@ class CausalImpactReplay:
         self.foundation, self.policy, self.decoder = foundation, policy, decoder
         self.profile = profile
         self.constant_forward_approach = constant_forward_approach
+        self.navigation_recovery: BornNavigationRecovery | None = None
         self.pulse = OriginalIkPlannerPulse(0.08)
         self.ik = FootHeadingCpuReconstruction(model, heading)
         self.early_impact_enabled = early_impact_enabled
@@ -256,6 +258,43 @@ class CausalImpactReplay:
         mujoco.mj_forward(model, d)
         self.warnings = tuple(int(w.number) for w in d.warning)
 
+    def install_navigation_recovery(self, option: BornNavigationRecovery) -> None:
+        """Once, after an OWN completed foot-force bin, never from future gold.
+
+        This is a new born-at-current lease, not a fabricated old controller
+        clock. Private prediction installs before resetting borrowed counters;
+        ordinary actual execution installs at the same genuine boundary.
+        """
+        if (
+            type(self) is not CausalImpactReplay
+            or type(option) is not BornNavigationRecovery
+            or option.start_frame != self.next_frame
+            or self.navigation_recovery is not None
+            or self.failed is not False
+            or self.attempted_steps != self.next_frame * 10
+            or self.integrated_steps != self.attempted_steps
+            or self.teacher is not None
+            or self.release_control is not None
+            or self.early_impact_enabled is not False
+            or self.postcontact_exit_enabled is not False
+            or self.early_evidence is not None
+            or self.exit_evidence is not None
+            or self.profile != BoundedFirstTouchControl()
+            or self.decoder._active_frame is not None
+            or self.decoder._memory.last_frame != self.next_frame - 1
+            or self.ik.next_frame != self.next_frame
+            or self.ik.pending is not None
+            or self.ik.contact is None
+            or self.previous_forces.shape != (6,)
+            or not np.isfinite(self.previous_forces).all()
+            or not np.any(self.previous_forces[:2] > 1)
+        ):
+            raise ValueError(
+                "once at an actual completed measured-foot plain SIM boundary required"
+            )
+        option.__post_init__()
+        self.navigation_recovery = option
+
     def canonical(self) -> tuple[np.ndarray, np.ndarray]:
         d = self.data
         return np.concatenate(
@@ -309,6 +348,13 @@ class CausalImpactReplay:
                 baseline_command,
                 before_contact=self.ik.contact is None,
                 cap=self.profile.forward_cap_m_s,
+            )
+        if self.navigation_recovery is not None:
+            requested, baseline_command = self.navigation_recovery.apply(
+                requested,
+                baseline_command,
+                frame=frame,
+                after_measured_contact=self.ik.contact is not None,
             )
         residual, command = self.pulse.compose(frame, baseline_command)
         values.update(
@@ -550,6 +596,8 @@ class CausalImpactReplay:
         if self.constant_forward_approach:
             review["constant_forward_approach"] = True
             review["original_precontact_forward_law_unchanged"] = False
+        if self.navigation_recovery is not None:
+            review["born_navigation_recovery"] = self.navigation_recovery.contract()
         if self.postcontact_exit_enabled:
             if type(self.teacher) is not PostContactExitController:
                 raise ValueError("owned complete exit controller required")
