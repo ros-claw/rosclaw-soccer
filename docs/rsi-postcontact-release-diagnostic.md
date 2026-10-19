@@ -1302,3 +1302,21 @@ zero/aliased/cancelled requests remain skipped with their original task
 outcomes upstream, never invented zero-effect supervision. Source hashes,
 policy/noise matching, action attribution and actual native reexecution remain
 caller-owned prerequisites, not claims made by this numerical helper.
+
+#### Short planning branches are not automatically executed-response data
+
+The original public MPC bank also retained unselected80ms native forecasts.
+They may support separately qualified dream/rehearsal data, but they are not
+new H300 executions. In particular the forecast applies an unconditional60ms
+offset; the actual controller may cancel at a subsequent completed safety
+observation. Mixing those two laws as identical labels would be incorrect.
+
+`RecordedFeedbackBranch` reuses the unchanged native PD forecaster to replay
+four recorded targets from a caller-reexecuted current native prefix. It
+checks dense canonical q/v, requested PD, clipped controls, actual actuator
+forces, solver-epoch pelvis height, ball wrench, support and complete end
+integration state, without writing the donor or resetting time. It reports
+the terminal **cached** body velocity using the same `mj_objectVelocity`
+observation law, not an assumed raw qvel substitute. It does not reexecute
+the recorded future neural policy and does not prove H300 skill success.
+Unconditional and safety-cancelled laws must remain separately identified.
