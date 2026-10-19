@@ -6,7 +6,7 @@ actual CPU physics and Foundation qualification remain separate requirements.
 """
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +15,8 @@ import numpy as np
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 
-def _inputs(
+def _observations(
     trace: dict[str, Any],
-    events: Any,
     mode: int,
     reference_height_probe_m: float | None = None,
     fast_intercept_probe: bool = False,
@@ -53,6 +52,17 @@ def _inputs(
         or np.any(command[:, 2] != 0)
     ):
         raise ValueError("unit body poses and original translational envelope required")
+    return qpos, command
+
+
+def _inputs(
+    trace: dict[str, Any],
+    events: Any,
+    mode: int,
+    reference_height_probe_m: float | None = None,
+    fast_intercept_probe: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    qpos, command = _observations(trace, mode, reference_height_probe_m, fast_intercept_probe)
     if type(events) is not list or len(events) != 15:
         raise ValueError("all fifteen fixed-cadence planner events required")
     keys = {"frame", "command", "reference_hash", "planner_mode"}
@@ -91,10 +101,37 @@ def replay_locomotion_segments(
     qpos, commands = _inputs(trace, events, mode, reference_height_probe_m, fast_intercept_probe)
     if reference_observer is not None and not callable(reference_observer):
         raise ValueError("optional reference observer must be callable")
-    reference = None
     results = []
-    for index, event in enumerate(events):
-        frame = event["frame"]
+    # Validate modes before inference, rather than spending calls on a rejected
+    # event. Every recorded segment hash remains mandatory on this legacy API.
+    for event in events:
+        speed = math.hypot(*commands[event["frame"], :2])
+        expected = 0 if speed < 0.02 else 1 if speed <= 0.8 else mode
+        if event["planner_mode"] != expected:
+            raise ValueError("recorded planner mode differs from fixed intervention")
+    for event, (frame, expected_mode, segment_hash, reference) in zip(
+        events,
+        _reconstruct_references(session, qpos, commands, mode, reference_height_probe_m),
+        strict=True,
+    ):
+        if segment_hash != event["reference_hash"]:
+            raise ValueError("independently reconstructed planner reference differs")
+        if reference_observer is not None:
+            reference_observer(frame, reference)
+        results.append(dict(frame=frame, planner_mode=expected_mode, reference_hash=segment_hash))
+    return results
+
+
+def _reconstruct_references(
+    session: Any,
+    qpos: np.ndarray,
+    commands: np.ndarray,
+    mode: int,
+    reference_height_probe_m: float | None = None,
+) -> Iterator[tuple[int, int, str, np.ndarray]]:
+    """Numeric kernel over validated observations; no recorded-event truth claim."""
+    reference = None
+    for index, frame in enumerate(range(0, 300, 20)):
         if reference is None:
             context = np.repeat(qpos[0, :36][None], 4, axis=0)
         else:
@@ -119,8 +156,6 @@ def replay_locomotion_segments(
             (vx / speed, vy / speed) if speed > 1e-8 else (math.cos(facing), math.sin(facing))
         )
         expected_mode = 0 if speed < 0.02 else 1 if speed <= 0.8 else mode
-        if event["planner_mode"] != expected_mode:
-            raise ValueError("recorded planner mode differs from fixed intervention")
         feed = dict(
             context_mujoco_qpos=context[None].astype(np.float32),
             target_vel=np.asarray([speed], dtype=np.float32),
@@ -156,7 +191,6 @@ def replay_locomotion_segments(
             not np.isfinite(segment).all()
             or np.max(np.abs(segment)) > 1e6
             or np.any(np.abs(np.linalg.norm(segment[:, 3:7], axis=1) - 1) > 0.01)
-            or hash_bytes(segment.tobytes()) != event["reference_hash"]
         ):
             raise ValueError("independently reconstructed planner reference differs")
         # Independent 30->50 Hz interpolation and fixed future-tail insertion.
@@ -175,13 +209,8 @@ def replay_locomotion_segments(
             length = min(len(resampled), len(reference) - start)
             reference[start : start + length] = resampled[:length]
             reference[start + length :] = resampled[length - 1]
-        if reference_observer is not None:
-            # A diagnostic cannot mutate the independently reconstructed history.
-            reference_observer(frame, reference.copy())
-        results.append(
-            dict(frame=frame, planner_mode=expected_mode, reference_hash=event["reference_hash"])
-        )
-    return results
+        # Never expose mutable internal history to a consumer.
+        yield frame, expected_mode, hash_bytes(segment.tobytes()), reference.copy()
 
 
 def audit_locomotion_reference(
