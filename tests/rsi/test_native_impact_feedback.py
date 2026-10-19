@@ -2,6 +2,7 @@
 
 import ast
 import inspect
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -199,3 +200,61 @@ def test_mirror_comparison_rejects_nonfinite_shapes_and_mismatch():
     for value in (np.zeros(28), np.ones(29), np.full(29, np.nan)):
         with pytest.raises(ValueError):
             close(value, np.zeros(29), "synthetic")
+
+
+def test_failed_mirror_keeps_native_prefix_state_and_budget(tmp_path):
+    from tests.physics.test_g1_feedback_forecast import world
+
+    model, data, forecaster = world()
+    adapter = object.__new__(NativeImpactFeedback)
+    adapter.root, adapter.model = tmp_path, model
+    adapter.ik = SimpleNamespace(before_step=lambda *a: np.zeros(29))
+    adapter.teacher = SimpleNamespace(last_frame=-1, last_candidates=[], forecaster=forecaster)
+    with pytest.raises(ValueError, match="mirror differs"):
+        adapter.before_frame(
+            data,
+            frame=30,
+            navigation_target=np.zeros(29),
+            native_increment=np.ones(29),
+            target=np.zeros(29),
+            previous=np.zeros(12),
+            tracker=None,
+            decoder=None,
+            policy={},
+            history={"canonical_qpos": [data.qpos.copy()]},
+        )
+    failure = json.loads((tmp_path / "frame-030-failure.json").read_text())
+    assert failure["forecast_attempted_steps"] == 0
+    assert failure["native_substeps_before_failed_decision"] == 300
+    with np.load(tmp_path / "frame-030-failure-prefix.npz", allow_pickle=False) as a:
+        np.testing.assert_array_equal(a["canonical_qpos"][0], data.qpos)
+        assert "native_integration_state" in a
+
+
+def test_legacy_cpu_audit_cannot_implicitly_qualify_new_teacher_even_if_offsets_zero(tmp_path):
+    import mujoco
+
+    from rosclaw_soccer.rsi.cpu_motor_transfer_evidence import audit_cpu_transfer
+    from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+    from scripts.rsi_atomic_artifacts import write_once
+
+    source = Path(__file__)
+    snapshot, trace = tmp_path / "compiled_model.mjb", tmp_path / "physical_trace.npz"
+    snapshot.write_bytes(b"must reject before parsing model")
+    trace.write_bytes(b"must reject before parsing trace")
+    c = dict(
+        source_hash=hash_bytes(source.read_bytes()),
+        physical_trace_hash=hash_bytes(trace.read_bytes()),
+        compiled_model_hash=hash_bytes(snapshot.read_bytes()),
+        activation_ceiling="SIM_ONLY",
+        promotion_authorized=False,
+        hardware_authorized=False,
+        physics=dict(engine="MuJoCo", device="cpu", version=mujoco.__version__),
+        impact_feedback_teacher={"teacher_qualified": False},
+    )
+    write_once(tmp_path / "commitment.json", c)
+    report = dict(c, commitment_hash=hash_json(c))
+    report["report_hash"] = hash_json(report)
+    write_once(tmp_path / "report.json", report)
+    with pytest.raises(ValueError, match="distinct causal search audit"):
+        audit_cpu_transfer(tmp_path, source)

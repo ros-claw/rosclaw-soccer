@@ -13,6 +13,7 @@ from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchCont
 from rosclaw_soccer.rsi.first_touch_outcome import label_first_touch
 from rosclaw_soccer.rsi.foot_heading_control import FootHeadingContactProbe
 from rosclaw_soccer.rsi.json_artifact_io import load_json_artifact
+from rosclaw_soccer.rsi.late_swing_memory import load_late_swing_actor
 from rosclaw_soccer.rsi.native_first_touch_episode import run_native_first_touch_episode
 from rosclaw_soccer.rsi.original_ik_planner_pulse import OriginalIkPlannerPulse
 from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import RecurrentSamplingEpisodeFactory
@@ -124,6 +125,7 @@ def prepare(path):
         if str(name) not in p.pins or digest(name) != p.pins[str(name)]:
             raise ValueError("same original source-authenticated scene and late actor required")
     p.body_inputs = []
+    late_actor_hash = load_late_swing_actor(p.late)["actor_hash"]
     for case, old, rr in zip(p.cases, readback["rows"], replay["rows"], strict=True):
         r = case["receipt"]
         if (
@@ -149,7 +151,7 @@ def prepare(path):
             or p.pins.get(str(p.review.path)) != p.review.expected_file_hash
         ):
             raise ValueError("same original numerically reviewed world required")
-        if c["late_actor_hash"] != p.pins[str(p.late)]:
+        if c["late_actor_hash"] != late_actor_hash:
             raise ValueError("same source late actor required")
         p.body_inputs.append(dict(view=views[0], source_commitment=c))
     return p
@@ -306,6 +308,7 @@ def main():
                 report = envelope["stripped_document"]
                 if (
                     report["motor_policy_hash"] != c["motor_policy_hash"]
+                    or report["late_actor_hash"] != c["late_actor_hash"]
                     or report["foundation_hash"] != c["foundation_hash"]
                     or report["compiled_model_hash"] != p.world_hash
                     or report["physical_trace_hash"] != digest(folder / "physical_trace.npz")
