@@ -49,6 +49,7 @@ class G1FeedbackForecaster:
         self._qi, self._vi, self._ai = checked._qi.copy(), checked._vi.copy(), checked._ai.copy()
         self._bq, self._bv = checked._bq, checked._bv
         self._ball, self._bg, self._pelvis = checked._ball, checked._bg, checked._pelvis
+        self._support = checked._support
         self.kp, self.kd = kp.copy(), kd.copy()
         self._limits = np.asarray(G1_HARD_TORQUE_LIMITS)
         self._caps = np.minimum(12.0, 0.2 * self._limits)
@@ -119,6 +120,9 @@ class G1FeedbackForecaster:
                 "actual_actuator_force_nm",
                 "pelvis_height_solver_epoch_m",
                 "robot_force_on_ball_world_n",
+                "foot_contact_peak_force_n_after_substep",
+                "nonfoot_robot_contact_over1n_after_substep",
+                "completed_foot_ground_normal_n",
             )
         }
         peaks = np.zeros(6)
@@ -149,9 +153,18 @@ class G1FeedbackForecaster:
                 ):
                     raise ValueError("numerical warning/reset/nonfinite feedback dynamics")
                 force = np.zeros(3)
+                foot_force = np.zeros(2)
+                nonfoot = False
                 for wrench in read_geom_contact_wrenches(self.model, d, geom_id=self._bg):
-                    if self.model.geom_bodyid[wrench.other_geom_id] != 0:
+                    other_body = int(self.model.geom_bodyid[wrench.other_geom_id])
+                    magnitude = float(np.linalg.norm(wrench.force_world_n))
+                    if other_body != 0:
                         force += np.asarray(wrench.force_world_n)
+                        if other_body in self._contact_bodies[:2]:
+                            foot_side = self._contact_bodies[:2].index(other_body)
+                            foot_force[foot_side] = max(foot_force[foot_side], magnitude)
+                        elif magnitude > 1:
+                            nonfoot = True
                 if step < 10:
                     for c in range(d.ncon):
                         g1, g2 = int(d.contact[c].geom1), int(d.contact[c].geom2)
@@ -175,6 +188,9 @@ class G1FeedbackForecaster:
                     actual_actuator_force_nm=d.actuator_force[self._ai],
                     pelvis_height_solver_epoch_m=float(d.xpos[self._pelvis, 2]),
                     robot_force_on_ball_world_n=force,
+                    foot_contact_peak_force_n_after_substep=foot_force,
+                    nonfoot_robot_contact_over1n_after_substep=nonfoot,
+                    completed_foot_ground_normal_n=self._support.read(d),
                 ).items():
                     values[name].append(np.asarray(value).copy())
             end = np.empty_like(before)

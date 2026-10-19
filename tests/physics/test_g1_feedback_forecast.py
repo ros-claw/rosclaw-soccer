@@ -74,6 +74,10 @@ def test_actual_updated_target_at20ms_and_full_solver_cache_not_refreshed(monkey
     prediction = f.forecast(
         data, np.zeros(29), control=control(model), first_offset_nm=np.full(29, offset)
     )
+    assert prediction.arrays["nonfoot_robot_contact_over1n_after_substep"].dtype == np.bool_
+    assert prediction.arrays["foot_contact_peak_force_n_after_substep"].shape == (20, 2)
+    assert prediction.arrays["completed_foot_ground_normal_n"].shape == (20, 2)
+    assert np.all(prediction.arrays["completed_foot_ground_normal_n"] >= 0)
     actual = mujoco.MjData(model)
     mujoco.mj_copyData(actual, model, data)
     limits = np.asarray(G1_HARD_TORQUE_LIMITS)
