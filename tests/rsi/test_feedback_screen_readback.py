@@ -7,7 +7,7 @@ import pytest
 
 from rosclaw_soccer.physics.g1_feedback_forecast import G1FeedbackForecast
 from rosclaw_soccer.rsi.feedback_impact_score import feedback_impact_score
-from scripts.rsi_read_feedback_screen import require_totals, verify_prediction
+from scripts.rsi_read_feedback_screen import regenerate_bank, require_totals, verify_prediction
 from tests.rsi.test_feedback_impact_score import prediction
 from tests.rsi.test_zero_feedback_readback import fixture
 
@@ -130,3 +130,47 @@ def test_actual_raw_bank_sizes_bound_every_execution_counter():
 def test_no_unbounded_or_incomplete_bank(count):
     with pytest.raises(ValueError):
         require_totals(totals(), count, 72, 3)
+
+
+def test_regenerate_from_current_canonical_state_does_not_step_physics(monkeypatch):
+    import mujoco
+
+    from tests.physics.test_g1_feedback_forecast import world
+    from tests.rsi.test_impact_torque_screen import sample
+
+    model, _, _ = world()
+    q = np.arange(43, dtype=np.float64) * 0.001
+    v = np.arange(41, dtype=np.float64) * 0.002
+    seen = []
+
+    class Sampler:
+        def sample(self, d):
+            np.testing.assert_array_equal(d.qpos, q)
+            np.testing.assert_array_equal(d.qvel, v)
+            seen.append(True)
+            return sample()
+
+    def forbidden(*a, **k):
+        pytest.fail("geometry readback must not integrate or refresh dynamics")
+
+    monkeypatch.setattr(mujoco, "mj_step", forbidden)
+    monkeypatch.setattr(mujoco, "mj_forward", forbidden)
+    bank = regenerate_bank(model, Sampler(), q, v, 0, True)
+    assert seen == [True] and bank[0][0] == "baseline" and bank[-1][0] == "repeat_zero"
+    bank = regenerate_bank(None, None, None, None, -1, False)
+    assert [n for n, _ in bank] == ["baseline", "repeat_zero"]
+
+
+@pytest.mark.parametrize("bad", ["qshape", "vshape", "qdtype", "nan"])
+def test_regeneration_rejects_malformed_current_body_before_allocation(bad):
+    q, v = np.zeros(43), np.zeros(41)
+    if bad == "qshape":
+        q = q[:-1]
+    elif bad == "vshape":
+        v = v[:-1]
+    elif bad == "qdtype":
+        q = q.astype(np.float32)
+    else:
+        v[-1] = np.nan
+    with pytest.raises(ValueError):
+        regenerate_bank(None, None, q, v, 0, True)
