@@ -115,3 +115,43 @@ regression or added unsafe outcome. Even that result does **not** automatically
 qualify a teacher or authorize training: robust causal selection and separate
 validation remain necessary. A negative result is an explicit next learning
 problem, not grounds to discard difficult conditions or relax M0.
+
+## Distinct current-body exit-selection experiment
+
+The separate `postcontact-exit-proxy-transfer18-v1` profile in the same transfer
+entry selects from a current-pose Jacobian bank, rather than replaying one
+fixed action. It requires `action_name=CURRENT_BODY_EXIT_PROXY`, an explicit
+boolean exit mode and at most fourteen forecasts per episode. The total
+forecast budget is 10,080 actual steps in addition to 54,000 native steps.
+This is still consumed public development plus retention, never Fresh.
+
+`PostContactExitController` only triggers after its own completed foot-force
+observation. It samples the contacting leg once, predicts each named60ms
+action plus20ms washout using three freshly recomputed Foundation/IK/RNN
+updates, and compares an independently repeated zero branch. A trigger too
+late or across a planner refresh remains zero; it cannot extend its horizon,
+delay to a favorable future event or retry another bank. Observed nonfoot
+contact or pelvis below the existing floor permanently cancels the action.
+
+`postcontact_exit_score` keeps the old strict forecast-array checks but not the
+old initial-contact score/feasibility. It evaluates terminal80ms ball velocity,
+remaining foot contact during the final20ms, backward robot-on-ball impulse,
+and the original action regularizer. Fixed research weights are: speed target
+1.2m/s with squared shortfall, lateral allowance0.25 times positive forward
+speed with squared excess,0.2 times squared terminal contact fraction,0.1
+times squared backward impulse, plus the old3e-4 normalized action cost.
+These are **proxy parameters**, not changes to M0 success or safety thresholds.
+A second predicted impact is not required: after actual touch, cleanly leaving
+the ball alone can be the right action. Any predicted nonfoot contact or low
+pelvis rejects that branch. If every branch is rejected, zero is an explicit
+fallback, **not** a claim of predicted safety.
+
+`CausalImpactReplay` enables this profile only with its distinct evidence
+directory and an exact boolean, mutually exclusive with all old impact and
+fixed-release modes. Default behavior remains unchanged. Every raw candidate
+body, three target/neural updates and its score are fsynced before executing
+current native substeps. Actual control uses the distinct `postcontact_exit_`
+namespace, not renamed early-action captures. Even successful short forecasts
+do not prove later-body stability: the complete H300 M0 and retention test
+remains mandatory, followed by separate raw/physics/search verification before
+any teacher or learning admission.

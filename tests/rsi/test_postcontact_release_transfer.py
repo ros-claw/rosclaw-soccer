@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from rosclaw_soccer.rsi.foot_heading_parity import SHAPES
 from scripts import rsi_postcontact_release_transfer as mod
 from scripts.rsi_postcontact_release_transfer_inputs import require_scope
 from tests.rsi.test_postcontact_release_protocol import arrays
@@ -98,7 +99,8 @@ def test_summary_incomplete_or_wrong_primitive_rejected(bad):
 
 
 @pytest.mark.parametrize("failure_frame", [None, 5])
-def test_complete18_or_preserved_fatal_partial(monkeypatch, tmp_path, failure_frame):
+@pytest.mark.parametrize("adaptive", [False, True])
+def test_complete18_or_preserved_fatal_partial(monkeypatch, tmp_path, failure_frame, adaptive):
     from rosclaw_soccer.providers.g1 import sonic_torch
     from rosclaw_soccer.rsi import (
         causal_impact_replay,
@@ -110,8 +112,28 @@ def test_complete18_or_preserved_fatal_partial(monkeypatch, tmp_path, failure_fr
     cfg = dict(
         scope(), deadline_unix=time.time() + 3600, mean_model_path="mean", mean_model_hash="mean"
     )
+    if adaptive:
+        cfg.update(
+            profile="postcontact-exit-proxy-transfer18-v1",
+            action_name="CURRENT_BODY_EXIT_PROXY",
+            forecast_step_budget=10080,
+            postcontact_exit_enabled=True,
+            maximum_forecasts_per_episode=14,
+        )
     baseline, _ = arrays("baseline")
     baseline = {k: v for k, v in baseline.items() if not k.startswith("postcontact_release_")}
+    if adaptive:
+        for key, tail in SHAPES.items():
+            if key not in baseline:
+                dtype = (
+                    np.bool_
+                    if key == "recurrent_sampling_performed"
+                    else np.float32
+                    if key.startswith("foundation_neural_")
+                    else np.float64
+                )
+                baseline[key] = np.zeros((300, 1, *tail), dtype=dtype)
+        baseline["canonical_qpos"][:, :, 2] = 0.793
     # Fake bodies remain byte-identical to fake baseline until first action.
     outcome = dict(task_pass=True, safe=True)
     jobs = [
@@ -195,8 +217,35 @@ def test_complete18_or_preserved_fatal_partial(monkeypatch, tmp_path, failure_fr
     class Replay:
         def __init__(self, model, **kwargs):
             assert kwargs["impact_enabled"] is kwargs["early_impact_enabled"] is False
-            names.append(kwargs["release_action_name"])
-            self.trace, self.review_data = arrays(kwargs["release_action_name"])
+            if adaptive:
+                assert (
+                    kwargs["postcontact_exit_enabled"] is True
+                    and "release_action_name" not in kwargs
+                )
+                assert str(kwargs["postcontact_exit_evidence_root"]).endswith("-preaction-evidence")
+                names.append("CURRENT_BODY_EXIT_PROXY")
+                extra, self.review_data = arrays("forward_minus")
+                self.trace = {**{k: v.copy() for k, v in baseline.items()}, **extra}
+                self.trace = {
+                    k.replace("postcontact_release_", "postcontact_exit_"): v
+                    for k, v in self.trace.items()
+                }
+                self.trace["postcontact_exit_forecast_steps"][41] = 120
+                self.review_data = dict(
+                    postcontact_exit=dict(
+                        trigger_frame=41,
+                        measured_contact_side=0,
+                        cancelled=False,
+                        maximum_forecast_steps=560,
+                        selected_name="forward_minus",
+                        forecast_integrated_steps=120,
+                    )
+                )
+                self.teacher = SimpleNamespace(forecaster=SimpleNamespace(attempted_steps=0))
+            else:
+                names.append(kwargs["release_action_name"])
+                self.trace, self.review_data = arrays(kwargs["release_action_name"])
+                self.teacher = None
             self.attempted_steps = 0
             self.data = SimpleNamespace(qpos=np.zeros(43), qvel=np.zeros(41), ctrl=np.zeros(29))
 
@@ -204,11 +253,18 @@ def test_complete18_or_preserved_fatal_partial(monkeypatch, tmp_path, failure_fr
             if frame == failure_frame:
                 raise RuntimeError("synthetic fatal transfer failure")
             self.attempted_steps += 10
+            if adaptive and frame == 41:
+                self.teacher.forecaster.attempted_steps = 120
             return SimpleNamespace(arrays={k: v[frame] for k, v in self.trace.items()})
 
         def review(self):
             assert self.attempted_steps == 3000
-            return dict(self.review_data, native_integrated_steps=3000, forecast_integrated_steps=0)
+            return dict(
+                self.review_data,
+                native_integrated_steps=3000,
+                forecast_integrated_steps=120 if adaptive else 0,
+                forecast_attempted_steps=120 if adaptive else 0,
+            )
 
     monkeypatch.setattr(
         recurrent_sampling_episode_factory, "RecurrentSamplingEpisodeFactory", Factory
@@ -230,8 +286,14 @@ def test_complete18_or_preserved_fatal_partial(monkeypatch, tmp_path, failure_fr
         return
     mod.main()
     result = json.loads((p.root / "complete.json").read_text())
-    assert names == ["forward_minus"] * 18
+    assert names == (["CURRENT_BODY_EXIT_PROXY"] if adaptive else ["forward_minus"]) * 18
     assert result["new_native_steps"] == 54000 and result["baseline_rollouts_reused"] == 18
     assert result["local"]["contexts"] == 12 and result["retention"]["contexts"] == 6
-    assert result["new_optimizer_updates"] == result["forecast_steps"] == 0
+    assert result["new_optimizer_updates"] == 0
+    assert result["forecast_steps"] == (2160 if adaptive else 0)
+    assert result["schema"] == (
+        "soccer.rsi.postcontact_exit_transfer_complete.v1"
+        if adaptive
+        else "soccer.rsi.postcontact_release_transfer_complete.v1"
+    )
     assert not result["teacher_qualified"] and not result["training_authorized"]

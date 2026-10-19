@@ -36,8 +36,16 @@ def require_scope(cfg):
         promotion_authorized=False,
         automatic_retry=False,
     )
+    if cfg.get("profile") == "postcontact-exit-proxy-transfer18-v1":
+        fixed.update(
+            profile="postcontact-exit-proxy-transfer18-v1",
+            action_name="CURRENT_BODY_EXIT_PROXY",
+            forecast_step_budget=10080,
+            postcontact_exit_enabled=True,
+            maximum_forecasts_per_episode=14,
+        )
     if any(type(cfg.get(k)) is not type(v) or cfg[k] != v for k, v in fixed.items()):
-        raise ValueError("fixed whole18 forward-minus local transfer and retention required")
+        raise ValueError("fixed whole18 declared local transfer and retention profile required")
 
 
 def prepare(path):

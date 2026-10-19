@@ -29,6 +29,11 @@ from rosclaw_soccer.rsi.foot_heading_evidence import FootHeadingCpuReconstructio
 from rosclaw_soccer.rsi.impact_feedback_teacher import ImpactFeedbackPlan, ImpactFeedbackTeacher
 from rosclaw_soccer.rsi.native_first_touch_initial_state import NativeFirstTouchInitialState
 from rosclaw_soccer.rsi.original_ik_planner_pulse import OriginalIkPlannerPulse
+from rosclaw_soccer.rsi.postcontact_exit_controller import (
+    PostContactExitCommand,
+    PostContactExitController,
+)
+from rosclaw_soccer.rsi.postcontact_exit_evidence import PostContactExitEvidence
 from rosclaw_soccer.rsi.postcontact_release_control import (
     ACTION_NAMES,
     PostContactReleaseCommand,
@@ -44,7 +49,13 @@ from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation
 class CausalImpactFrame:
     frame: int
     arrays: dict[str, np.ndarray]
-    impact_plan: ImpactFeedbackPlan | EarlyImpactCommand | PostContactReleaseCommand | None
+    impact_plan: (
+        ImpactFeedbackPlan
+        | EarlyImpactCommand
+        | PostContactReleaseCommand
+        | PostContactExitCommand
+        | None
+    )
 
 
 class CausalImpactReplay:
@@ -71,9 +82,17 @@ class CausalImpactReplay:
         early_evidence_root: Path | None = None,
         reuse_owned_early_updates: bool = False,
         release_action_name: str | None = None,
+        postcontact_exit_enabled: bool = False,
+        postcontact_exit_evidence_root: Path | None = None,
     ) -> None:
         if (
             type(impact_enabled) is not bool
+            or type(postcontact_exit_enabled) is not bool
+            or (postcontact_exit_enabled != (postcontact_exit_evidence_root is not None))
+            or (
+                postcontact_exit_enabled
+                and (impact_enabled or early_impact_enabled or release_action_name is not None)
+            )
             or type(early_impact_enabled) is not bool
             or (impact_enabled and early_impact_enabled)
             or (early_impact_enabled != (early_evidence_root is not None))
@@ -163,8 +182,18 @@ class CausalImpactReplay:
         self.early_evidence = (
             EarlyImpactEvidence(early_evidence_root) if early_evidence_root is not None else None
         )
-        self.teacher: EarlyImpactController | ImpactFeedbackTeacher | None
-        if early_impact_enabled:
+        self.postcontact_exit_enabled = postcontact_exit_enabled
+        self.exit_evidence = (
+            PostContactExitEvidence(postcontact_exit_evidence_root)
+            if postcontact_exit_evidence_root is not None
+            else None
+        )
+        self.teacher: (
+            EarlyImpactController | ImpactFeedbackTeacher | PostContactExitController | None
+        )
+        if postcontact_exit_enabled:
+            self.teacher = PostContactExitController(model, world_hash=world_hash, kp=kp, kd=kd)
+        elif early_impact_enabled:
             self.teacher = EarlyImpactController(
                 model,
                 world_hash=world_hash,
@@ -331,9 +360,15 @@ class CausalImpactReplay:
             else CAP_RAD
             * np.tanh(self.decoder.sampled_transition["recurrent_sampling_latent_action"])
         )[None]
-        plan: ImpactFeedbackPlan | EarlyImpactCommand | PostContactReleaseCommand | None = (
+        plan: (
+            ImpactFeedbackPlan
+            | EarlyImpactCommand
+            | PostContactReleaseCommand
+            | PostContactExitCommand
+            | None
+        ) = (
             None
-            if self.teacher is None
+            if self.teacher is None or isinstance(self.teacher, PostContactExitController)
             else self.teacher.plan(
                 d,
                 target,
@@ -346,6 +381,24 @@ class CausalImpactReplay:
                 previous_motor_delta_rad=previous,
             )
         )
+        if self.postcontact_exit_enabled:
+            if type(self.teacher) is not PostContactExitController:
+                raise ValueError("owned causal postcontact exit controller required")
+            plan = self.teacher.plan(
+                d,
+                target,
+                frame=frame,
+                previous_contact_forces=self.previous_forces,
+                tracker=self.tracker,
+                decoder=self.decoder,
+                ik=self.ik,
+                policy=self.policy,
+                body_prefix={k: np.asarray(a, dtype=np.float64) for k, a in self.body.items()},
+                previous_motor_delta_rad=previous,
+            )
+            if type(plan) is not PostContactExitCommand or self.exit_evidence is None:
+                raise ValueError("distinct postcontact command and pre-action writer required")
+            self.exit_evidence.record(frame, plan)
         if self.release_control is not None:
             plan = self.release_control.plan(
                 d,
@@ -412,7 +465,9 @@ class CausalImpactReplay:
         )
         if plan is not None:
             prefix = (
-                "postcontact_release_"
+                "postcontact_exit_"
+                if self.postcontact_exit_enabled
+                else "postcontact_release_"
                 if self.release_control is not None
                 else "early_impact_feedback_"
                 if self.early_impact_enabled
@@ -460,4 +515,8 @@ class CausalImpactReplay:
         )
         if self.release_control is not None:
             review["postcontact_release"] = self.release_control.review()
+        if self.postcontact_exit_enabled:
+            if type(self.teacher) is not PostContactExitController:
+                raise ValueError("owned complete exit controller required")
+            review["postcontact_exit"] = self.teacher.review()
         return review

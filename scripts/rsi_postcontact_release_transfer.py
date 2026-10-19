@@ -15,6 +15,7 @@ import numpy as np
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_prospective_impact import require_prefix
+from scripts.rsi_postcontact_exit_trace import check_exit_trace
 from scripts.rsi_postcontact_release_trace import check_release_trace
 from scripts.rsi_postcontact_release_transfer_inputs import prepare
 from scripts.rsi_stage_release_contact_replay import digest
@@ -65,6 +66,8 @@ def main():
     parser.add_argument("--preflight", action="store_true")
     args = parser.parse_args()
     p = prepare(args.config)
+    adaptive = p.cfg["profile"] == "postcontact-exit-proxy-transfer18-v1"
+    artifact_kind = "postcontact_exit_transfer" if adaptive else "postcontact_release_transfer"
     if (
         Path(__file__).resolve() != p.source / "scripts/rsi_postcontact_release_transfer.py"
         or not time.time() < p.cfg["deadline_unix"] <= time.time() + 86400
@@ -84,13 +87,14 @@ def main():
         raise ValueError("56GiB available before sole original mean constructor required")
     p.root.mkdir()
     declaration = dict(
-        schema="soccer.rsi.postcontact_release_transfer_declaration.v1",
+        schema=f"soccer.rsi.{artifact_kind}_declaration.v1",
         config=p.cfg,
         input_file_hashes=p.pins,
         local_complete_hash=p.local_complete_hash,
         release_physics_hash=p.release_physics_hash,
         jobs=[{k: v for k, v in j.items() if k != "baseline_trace"} for j in p.jobs],
-        action_chosen_from_consumed_single_context=True,
+        action_chosen_from_consumed_single_context=not adaptive,
+        current_body_postcontact_exit_selection=adaptive,
         baseline_rollouts_reused=18,
         original_unique_courses=3,
         local_unique_courses=6,
@@ -101,7 +105,7 @@ def main():
     )
     declaration["report_hash"] = hash_json(declaration)
     write_once(p.root / "declaration.json", declaration)
-    rows, native, replay, current, history = [], 0, None, None, {}
+    rows, native, forecasts, replay, current, history = [], 0, 0, None, None, {}
     try:
         import mujoco
         import torch
@@ -135,6 +139,14 @@ def main():
             report = load_json_artifact(Path(witness["report"]["path"]))["stripped_document"]
             seed = report["executed_motor_policy"]["step_motor_proof"]["model"]["seed"]
             policy, decoder = factory.generate_and_bind_seed(seed=seed)
+            options = (
+                dict(
+                    postcontact_exit_enabled=True,
+                    postcontact_exit_evidence_root=p.root / f"case-{index}-preaction-evidence",
+                )
+                if adaptive
+                else dict(release_action_name=p.cfg["action_name"])
+            )
             replay = CausalImpactReplay(
                 model,
                 world_hash=p.world_hash,
@@ -151,7 +163,7 @@ def main():
                 heading=FootHeadingContactProbe(case["job"]["heading_enabled"]),
                 impact_enabled=False,
                 early_impact_enabled=False,
-                release_action_name=p.cfg["action_name"],
+                **options,
             )
             history = {}
             for frame in range(300):
@@ -163,17 +175,25 @@ def main():
                 result = replay.step(frame)
                 for k, v in result.arrays.items():
                     history.setdefault(k, []).append(v.copy())
+                current_forecasts = (
+                    0 if replay.teacher is None else replay.teacher.forecaster.attempted_steps
+                )
+                if forecasts + current_forecasts > p.cfg["forecast_step_budget"]:
+                    raise RuntimeError("fixed transfer18 forecast budget exhausted")
             trace = {k: np.asarray(v) for k, v in history.items()}
             file = p.root / f"case-{index}-trace.npz"
             with file.open("xb") as stream:
                 np.savez_compressed(stream, **trace)
             review = replay.review()
-            if (
-                review["native_integrated_steps"] != 3000
-                or review["forecast_integrated_steps"] != 0
+            if review["native_integrated_steps"] != 3000 or review["forecast_integrated_steps"] > (
+                560 if adaptive else 0
             ):
-                raise ValueError("whole H300 zero-forecast release intervention required")
-            control = check_release_trace(trace, review, action_name=p.cfg["action_name"])
+                raise ValueError("whole H300 bounded postcontact intervention required")
+            control = (
+                check_exit_trace(trace, review)
+                if adaptive
+                else check_release_trace(trace, review, action_name=p.cfg["action_name"])
+            )
             require_prefix(
                 trace, job["baseline_trace"], control["first_physically_applied_correction_frame"]
             )
@@ -197,6 +217,7 @@ def main():
             write_once(p.root / f"case-{index}-complete.json", row)
             rows.append(row)
             native += 3000
+            forecasts += review["forecast_integrated_steps"]
             print(
                 "RELEASE_TRANSFER_NATIVE_CASE_COMPLETE",
                 index,
@@ -211,17 +232,21 @@ def main():
         if native != 54000 or any(digest(n) != h for n, h in p.pins.items()):
             raise ValueError("whole18 immutable paired transfer cohort required")
         result = dict(
-            schema="soccer.rsi.postcontact_release_transfer_complete.v1",
+            schema=f"soccer.rsi.{artifact_kind}_complete.v1",
             declaration_hash=declaration["report_hash"],
             rows=rows,
             new_native_steps=native,
             executed_control_foundation_pairs=5400,
-            forecast_steps=0,
+            forecast_steps=forecasts,
             new_optimizer_updates=0,
             baseline_rollouts_reused=18,
             **paired_summary(rows),
             hardware_authorized=False,
         )
+        if adaptive:
+            result["local_action_selection_promising"] = result.pop(
+                "fixed_action_locally_promising"
+            )
         result["report_hash"] = hash_json(result)
         write_once(p.root / "complete.json", result)
     except BaseException as error:
@@ -240,6 +265,10 @@ def main():
                 completed_cases=len(rows),
                 completed_native_steps=native,
                 current_attempted_steps=0 if replay is None else replay.attempted_steps,
+                completed_forecast_steps=forecasts,
+                current_forecast_attempts=0
+                if replay is None or replay.teacher is None
+                else replay.teacher.forecaster.attempted_steps,
                 error_type=type(error).__name__,
                 error=str(error),
                 automatic_retry=False,

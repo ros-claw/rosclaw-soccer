@@ -36,6 +36,7 @@ def build(
     early=False,
     reuse_owned_early_updates=False,
     release_action_name=None,
+    exit_root=None,
 ):
     sim, _, _ = world()
     sim.opt.gravity[:] = 0
@@ -101,6 +102,8 @@ def build(
         early_evidence_root=Path("synthetic-output") if early else None,
         reuse_owned_early_updates=reuse_owned_early_updates,
         release_action_name=release_action_name,
+        postcontact_exit_enabled=exit_root is not None,
+        postcontact_exit_evidence_root=exit_root,
     )
 
 
@@ -328,3 +331,130 @@ def test_early_adapter_applies_three_frame_torque_and_preserves_distinct_trace_n
         np.testing.assert_array_equal(
             values["torque_nm"], np.clip(raw + expected[:, None], -limits, limits)
         )
+
+
+def test_postcontact_exit_adapter_uses_own_past_forces_and_persists_before_all_native_steps(
+    monkeypatch,
+    imitation_parent,  # noqa: F811
+    tmp_path,
+):
+    """Actual toy body, synthetic NN and deliberately synthetic exit decisions."""
+    import json
+
+    from rosclaw_soccer.rsi.postcontact_exit_controller import PostContactExitCommand
+
+    forces_seen = []
+
+    class Exit:
+        def __init__(self, *a, **kw):
+            self.forecaster = SimpleNamespace(attempted_steps=0, integrated_steps=0)
+
+        def plan(self, data, target, **kw):
+            f = kw["frame"]
+            forces_seen.append(kw["previous_contact_forces"].copy())
+            offset = np.zeros(29)
+            if 31 <= f <= 33:
+                offset[3] = 3.0
+            return PostContactExitCommand(
+                offset,
+                dict(
+                    schema="soccer.rsi.postcontact80ms_exit_plan.v1",
+                    frame=f,
+                    requested_offset_nm=offset.tolist(),
+                    forecast_substeps=0,
+                    future_source_frame_or_target_used=False,
+                    full_h300_gain_proven=False,
+                    neural_policy_trained=False,
+                    teacher_qualified=False,
+                    hardware_authorized=False,
+                    promotion_authorized=False,
+                ),
+                (),
+            )
+
+        def review(self):
+            return dict(teacher_qualified=False)
+
+    monkeypatch.setattr(mod, "PostContactExitController", Exit)
+    root = tmp_path / "exit"
+    native_step = mujoco.mj_step
+
+    def checked_step(engine_model, data):
+        frame = round(data.time / 0.002) // 10
+        decision = json.loads((root / f"frame-{frame:03d}.json").read_text())
+        assert decision["persisted_before_current_native_substeps"] is True
+        assert decision["schema"] == "soccer.rsi.preaction_postcontact80ms_exit_decision.v1"
+        native_step(engine_model, data)
+
+    monkeypatch.setattr(mujoco, "mj_step", checked_step)
+    replay = build(monkeypatch, imitation_parent, exit_root=root)
+    frames = [replay.step(f) for f in range(300)]
+    review = replay.review()
+    assert review["native_integrated_steps"] == 3000 and review["forecast_integrated_steps"] == 0
+    assert not review["postcontact_exit"]["teacher_qualified"]
+    np.testing.assert_array_equal(forces_seen[0], 0)
+    for f in range(1, 300):
+        np.testing.assert_array_equal(forces_seen[f], frames[f - 1].arrays["force_n"][0])
+    for f in frames:
+        values = f.arrays
+        assert not any(
+            k.startswith(("early_impact_feedback_", "impact_feedback_", "postcontact_release_"))
+            for k in values
+        )
+        expected = np.zeros((1, 29))
+        if 31 <= f.frame <= 33:
+            expected[0, 3] = 3.0
+        np.testing.assert_array_equal(values["postcontact_exit_requested_offset_nm"], expected)
+        np.testing.assert_array_equal(
+            values["torque_nm"],
+            np.clip(
+                values["pd_requested_torque_nm"] + expected[:, None],
+                -replay.torque_limits,
+                replay.torque_limits,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        dict(postcontact_exit_enabled=1),
+        dict(postcontact_exit_enabled=True),
+        dict(postcontact_exit_evidence_root=Path("unused")),
+        dict(
+            postcontact_exit_enabled=True,
+            postcontact_exit_evidence_root=Path("unused"),
+            impact_enabled=True,
+        ),
+        dict(
+            postcontact_exit_enabled=True,
+            postcontact_exit_evidence_root=Path("unused"),
+            release_action_name="baseline",
+        ),
+        dict(
+            postcontact_exit_enabled=True,
+            postcontact_exit_evidence_root=Path("unused"),
+            early_impact_enabled=True,
+            early_evidence_root=Path("old"),
+        ),
+    ],
+)
+def test_exit_mode_exact_flags_and_mutually_exclusive_action_profiles(options):
+    kwargs = dict(
+        world_hash="unused",
+        kp=None,
+        kd=None,
+        model_root=Path("unused"),
+        foundation=None,
+        expected_foundation_hash="unused",
+        policy={},
+        decoder=None,
+        expected_policy_hash="unused",
+        course=(2.7, 0.1, 0.3),
+        profile=None,
+        heading=None,
+        impact_enabled=False,
+    )
+    kwargs.update(options)
+    with pytest.raises(ValueError, match="fixed study"):
+        mod.CausalImpactReplay(None, **kwargs)
