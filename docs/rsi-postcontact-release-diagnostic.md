@@ -647,3 +647,37 @@ or postcontact action arrays to reuse an incompatible namespace. It rejects
 offset-bearing captures before integration. Defaults of the old impact
 verification paths remain unchanged. This still does not independently
 recompute the Foundation or qualify a learned actor.
+
+### Public40 collector implementation, separate from the slowing probe
+
+`rsi_collect_public_four_arm.py` now implements the already committed forty
+public initial-state declaration. It runs serially, allocating a fresh body,
+decoder, recurrent history and navigation option for every one of160 arms.
+Only immutable Foundation weights and the compiled world are reused; no
+threaded/process throughput claim is made. All four arms of each course use
+one newly derived sampling seed. The original versus postcontact comparison
+checks the unmodified physical/NN prefix, while heading OFF/ON checks the
+original36 tensors before frame30 (the truthful heading-enabled metadata
+itself necessarily differs and is not claimed equal).
+
+All40 course preflights and complete six selected-owned-window proofs are
+required before allocation. That prerequisite is deliberately **not** called
+full14-bank qualification, real-time control, teacher admission or permission
+to fit an actor. The constant-forward hypothesis is NOT included in these
+four arms: its18-case mechanism test remains separate, so a failed hypothesis
+cannot silently change the predeclared public40 curriculum. The new raw data
+still needs whole independent readback and physical verification before any
+candidate teacher/data-admission decision. Budget480000 native plus at most
+44800 forecast steps; zero optimizer updates. Forty states and ten generator
+clusters, not160 independent situations or a private Fresh examination.
+
+The current integration supplies collector code/tests; actual running/closed
+counts must come from its external declaration, stage receipts and terminal
+service state, not this prospective description.
+
+Historical duplicate-work avoidance: the2026-09-28 PhysX layout A/B is recorded
+in `isaac-vector-first-touch-2026-09-28.zh-CN.md`, with graph-layout clean foot
+contact2/8 versus legacy3/8, audit
+`sha256:5a46b8ee83fe8cbc862a32737db95744239cffc9403e7fdf53d558ca2a4c782d`.
+The graph-input offset mismatch is real, but changing it was not an established
+motor improvement. No new layout experiment or default change was made here.
