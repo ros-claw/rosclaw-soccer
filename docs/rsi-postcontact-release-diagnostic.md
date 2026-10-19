@@ -984,3 +984,25 @@ full-toy-continuation validation passed103 tests45.27s. The shared runner admits
 only the two explicit source-owned protocol families and their literal budgets,
 not a caller-provided policy callback. All fourteen future outcomes remain
 prospective and every actual arm executes regardless of the advisory ranking.
+
+The subsequent real G1 born-release campaign closed50960 native steps with
+all fourteen prospective46-field futures and M0 labels matching their actual
+executions, including plain-zero versus newborn-zero identity. All fourteen
+actions failed M0 on the consumed earlier-touch context8; no safe action or
+new teacher was found. Reject these named post-contact controls for this case;
+do not infer that every possible control is impossible, but do not keep
+sweeping nearby post-contact gains. Independent raw/kinematic and42000-step
+recorded-body review still needs to close before accepting its evidence chain.
+Producer logical hash:
+`sha256:e6d065fe4f19448c6346090508d1ae688f4e76e00a46f47ee110e44e64cb7a76`.
+
+The new born raw reader rebuilds the literal40N/4Nm action algebra and duplicate
+removal without calling the candidate control/action generator. It shares the
+authenticated kinematic sampler (not a second kinematic engine), reconstructs
+current state from canonical q/v, checks every held/cancelled request and the
+PD-plus-offset saturation attribution, and preserves the old navigation law.
+Thirty-nine synthetic algebra/whole-bank/old-reader tests passed5.92s; two
+typed modules passed mypy. The shared verifier admits only the two explicit
+protocols and uses the born-specific independent recorded-body method; no
+old namespace aliases or neural-policy independence are claimed. These tests
+do not themselves execute the actual G1 verification run.

@@ -53,6 +53,27 @@ def review_navigation_recovery(
     ):
         if trace[k][start].tobytes() != baseline[k][start].tobytes():
             raise ValueError("same current body at lease birth required: " + k)
+    _review_current_commands(trace, start=start, action_name=action_name)
+    return dict(
+        start_frame=start,
+        action_name=action_name,
+        complete_prelease43_arrays_match=True,
+        first_changed_command_current_body_matches=True,
+        all300_current_state_navigation_commands_rebuilt=True,
+        new_physical_steps=0,
+        new_nn_inferences=0,
+        teacher_qualified=False,
+        hardware_authorized=False,
+    )
+
+
+def review_constant_forward_commands(trace: dict[str, Any]) -> None:
+    """Audit the old constant approach without claiming later body identity."""
+    original_arrays(trace)
+    _review_current_commands(trace, start=300, action_name="baseline")
+
+
+def _review_current_commands(trace: dict[str, Any], *, start: int, action_name: str) -> None:
     contact = False
     profile, pulse = BoundedFirstTouchControl(), OriginalIkPlannerPulse(0.08)
     for f in range(300):
@@ -81,14 +102,3 @@ def review_navigation_recovery(
             if trace[key][f, 0].tobytes() != np.asarray(expected).tobytes():
                 raise ValueError("independent current-state navigation algebra differs: " + key)
         contact = contact or bool(np.any(trace["force_n"][f] > 1))
-    return dict(
-        start_frame=start,
-        action_name=action_name,
-        complete_prelease43_arrays_match=True,
-        first_changed_command_current_body_matches=True,
-        all300_current_state_navigation_commands_rebuilt=True,
-        new_physical_steps=0,
-        new_nn_inferences=0,
-        teacher_qualified=False,
-        hardware_authorized=False,
-    )

@@ -20,8 +20,16 @@ from scripts.rsi_read_full_task_zero import same_arrays
 from scripts.rsi_stage_release_contact_replay import digest, require_terminal
 
 
-def read_campaign(root, *, complete_file_hash):
+def read_campaign(root, *, complete_file_hash, born_release=False):
     """Authenticate the whole finite campaign before any new physics."""
+    from scripts.rsi_born_release_inputs import ACTIONS as BORN_ACTIONS
+    from scripts.rsi_born_release_inputs import require_scope as born_scope
+
+    actions = BORN_ACTIONS if born_release else ACTIONS
+    contexts = [8] if born_release else CONTEXTS
+    prediction_actions = actions if born_release else ["baseline", "baseline", *ACTIONS[1:]]
+    expected_main, expected_prediction = (42000, 8960) if born_release else (36000, 14320)
+    stem = "soccer.rsi.born_release14" if born_release else "soccer.rsi.navigation_recovery4"
     pins = {}
 
     def pin(name, expected=None):
@@ -51,15 +59,15 @@ def read_campaign(root, *, complete_file_hash):
 
     complete = sealed(root / "complete.json", complete_file_hash)
     declaration = sealed(root / "declaration.json")
-    require_scope(declaration["config"])
+    (born_scope if born_release else require_scope)(declaration["config"])
     if (
-        complete["schema"] != "soccer.rsi.navigation_recovery4_complete.v1"
-        or declaration["schema"] != "soccer.rsi.navigation_recovery4_declaration.v1"
+        complete["schema"] != stem + "_complete.v1"
+        or declaration["schema"] != stem + "_declaration.v1"
         or complete["declaration_hash"] != declaration["report_hash"]
         or Path(declaration["config"]["output_root"]) != root
-        or [j["index"] for j in declaration["jobs"]] != CONTEXTS
-        or [r["index"] for r in complete["rows"]] != CONTEXTS
-        or declaration["prediction_actions"] != ["baseline", "baseline", *ACTIONS[1:]]
+        or [j["index"] for j in declaration["jobs"]] != contexts
+        or [r["index"] for r in complete["rows"]] != contexts
+        or declaration["prediction_actions"] != prediction_actions
         or any(
             complete.get(k) is not False
             for k in (
@@ -81,7 +89,9 @@ def read_campaign(root, *, complete_file_hash):
     prediction_steps = 0
     for group, job in zip(complete["rows"], declaration["jobs"], strict=True):
         i = job["index"]
-        if len(group["actuals"]) != 3 or len(group["predictions"]) != 4:
+        if len(group["actuals"]) != len(actions) or len(group["predictions"]) != len(
+            prediction_actions
+        ):
             raise ValueError("all three actual arms and four predictions required")
         if type(job["source_index"]) is not int or not 0 <= job["source_index"] < 6:
             raise ValueError("original source binding required")
@@ -94,7 +104,17 @@ def read_campaign(root, *, complete_file_hash):
         if commitment["motor_policy_hash"] != job["original_policy_hash"]:
             raise ValueError("same original sampled motor policy required")
         gold = arrays(job["gold_arrays"])
-        for ai, (action, row) in enumerate(zip(ACTIONS, group["actuals"], strict=True)):
+        reference = gold
+        native_model = None
+        if born_release:
+            import mujoco
+
+            from rosclaw_soccer.rsi.born_release_parity import body_arrays, review_born_release
+
+            reference = arrays(group["actuals"][0]["arrays"])
+            same_arrays(body_arrays(reference), gold)
+            native_model = mujoco.MjModel.from_binary_path(world["path"])
+        for ai, (action, row) in enumerate(zip(actions, group["actuals"], strict=True)):
             if (
                 row != sealed(root / f"case-{i}-arm-{ai}-complete.json")
                 or row["index"] != i
@@ -116,11 +136,21 @@ def read_campaign(root, *, complete_file_hash):
             ):
                 raise ValueError("all ordered same-course actual rows required")
             trace = arrays(row["arrays"])
-            control = review_navigation_recovery(trace, gold, action_name=action)
+            control = (
+                review_born_release(
+                    trace,
+                    reference,
+                    action_name=action,
+                    model=native_model,
+                    world_hash=world["sha256"],
+                )
+                if born_release
+                else review_navigation_recovery(trace, gold, action_name=action)
+            )
             outcome = label_first_touch(trace).to_dict()
             start = control["start_frame"]
             if outcome != row["outcome"] or row["matching_prediction_indices"] != (
-                [0, 1] if ai == 0 else [ai + 1]
+                [ai] if born_release else [0, 1] if ai == 0 else [ai + 1]
             ):
                 raise ValueError("whole M0 and exact predicted arm binding required")
             main = row["main_review"]
@@ -133,8 +163,17 @@ def read_campaign(root, *, complete_file_hash):
                 or main.get("original_precontact_forward_law_unchanged") is not False
             ):
                 raise ValueError("whole declared actual body and original approach flag required")
-            lease = main.get("born_navigation_recovery")
-            if ai == 0:
+            lease = main.get(
+                "born_postcontact_release" if born_release else "born_navigation_recovery"
+            )
+            if born_release:
+                require_born_receipt(lease, control)
+                if (
+                    main.get("born_navigation_recovery") is not None
+                    or main.get("postcontact_release") is not None
+                ):
+                    raise ValueError("distinct born control, no nav or old release alias required")
+            elif ai == 0:
                 if lease is not None:
                     raise ValueError("baseline must not install a lease")
             elif (
@@ -162,6 +201,8 @@ def read_campaign(root, *, complete_file_hash):
                     raise ValueError("separately sealed prospective same-lease prediction required")
                 same_arrays(arrays(pred["arrays"]), {k: a[start:] for k, a in trace.items()})
                 review = pred["review"]
+                if born_release:
+                    require_born_receipt(review.get("born_postcontact_release"), control)
                 expected_calls = sum(f % 20 == 0 for f in range(start, 300))
                 if (
                     review["action_name"] != action
@@ -192,9 +233,13 @@ def read_campaign(root, *, complete_file_hash):
                     )
                 prediction_steps += (300 - start) * 10
             cases.append((row, world, commitment, control))
+        if born_release:
+            same_arrays(
+                arrays(group["predictions"][0]["arrays"]), arrays(group["predictions"][1]["arrays"])
+            )
         choice = sealed(root / f"case-{i}-prospective-choice.json")
         selected = max(
-            [0, 2, 3],
+            list(range(len(actions))) if born_release else [0, 2, 3],
             key=lambda n: (
                 group["predictions"][n]["predicted_outcome"]["safe"],
                 group["predictions"][n]["predicted_outcome"]["training_reward"],
@@ -212,15 +257,47 @@ def read_campaign(root, *, complete_file_hash):
         ):
             raise ValueError("advisory choice must follow only its own prospective ranking")
     totals = dict(
-        new_main_native_steps=36000,
+        new_main_native_steps=expected_main,
         new_prediction_native_steps=prediction_steps,
-        combined_new_native_steps=36000 + prediction_steps,
+        combined_new_native_steps=expected_main + prediction_steps,
     )
-    if prediction_steps != 14320 or any(
+    if prediction_steps != expected_prediction or any(
         type(complete.get(k)) is not int or complete[k] != v for k, v in totals.items()
     ):
         raise ValueError("whole50320-step source accounting required")
     return complete, pins, cases, arrays
+
+
+def require_born_receipt(lease, control):
+    if control["action_name"] == "baseline":
+        if lease is not None:
+            raise ValueError("plain baseline cannot own a born lease")
+        return
+    expected = dict(
+        schema="soccer.rsi.born_postcontact_release_review.v1",
+        action_name=control["action_name"].split(":", 1)[1],
+        origin_frame=control["start_frame"],
+        observed_command_frames=300 - control["start_frame"],
+        commands_before_origin_observed=0,
+        trigger_frame=control["trigger_frame"],
+        measured_contact_side=control["measured_contact_side"],
+        action_available=control["action_available"],
+        cancelled=control["cancelled"],
+        maximum_action_duration_frames=3,
+        selection_from_completed_contact_only=True,
+        future_source_trace_consumed=False,
+        teacher_qualified=False,
+        hardware_authorized=False,
+        promotion_authorized=False,
+        new_physical_steps=0,
+        new_nn_inferences=0,
+    )
+    if type(lease) is not dict or any(
+        type(lease.get(k)) is not type(v) or lease[k] != v for k, v in expected.items()
+    ):
+        raise ValueError(
+            "exact zero-prefix born control observations and current-state mapping required"
+        )
 
 
 def main():
@@ -231,21 +308,28 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--preflight", action="store_true")
     args = parser.parse_args()
+    run_verify(args)
+
+
+def run_verify(args, *, born_release=False):
+    expected_steps = 42000 if born_release else 36000
+    expected_rows = 14 if born_release else 12
+    stem = "soccer.rsi.born_release14" if born_release else "soccer.rsi.navigation_recovery4"
     if args.output.exists() or (args.root / "failure.json").exists():
         raise ValueError("unused output and no source failure required")
     require_terminal(args.unit)
     complete, pins, cases, arrays = read_campaign(
-        args.root, complete_file_hash=args.complete_file_hash
+        args.root, complete_file_hash=args.complete_file_hash, born_release=born_release
     )
     if args.preflight:
         print("NAVIGATION_RECOVERY_WHOLE12_RAW_READY_NO_NEW_PHYSICS", flush=True)
         return
     args.output.mkdir()
     declaration = dict(
-        schema="soccer.rsi.navigation_recovery4_verification_declaration.v1",
+        schema=stem + "_verification_declaration.v1",
         producer_complete_hash=complete["report_hash"],
         input_file_hashes=pins,
-        physical_step_budget=36000,
+        physical_step_budget=expected_steps,
         new_nn_inferences=0,
         new_optimizer_updates=0,
         teacher_qualified=False,
@@ -276,7 +360,11 @@ def main():
                 course=tuple(row["course"]),
                 defaults=np.asarray(G1SonicRunupController.default_angles, dtype=np.float64),
             )
-            review = audit.verify_unforced_control(arrays(row["arrays"]))
+            review = (
+                audit.verify_born_release(arrays(row["arrays"]))
+                if born_release
+                else audit.verify_unforced_control(arrays(row["arrays"]))
+            )
             if review["actual_physical_steps"] != 3000 or any(
                 not np.isfinite(e) or e > 1e-8 for e in review["maximum_absolute_errors"].values()
             ):
@@ -291,13 +379,13 @@ def main():
             write_once(args.output / f"case-{index}-complete.json", result)
             rows.append(result)
             print("NAVIGATION_RECOVERY_RECORDED_PHYSICS_COMPLETE", index, flush=True)
-        if len(rows) != 12 or any(digest(n) != h for n, h in pins.items()):
+        if len(rows) != expected_rows or any(digest(n) != h for n, h in pins.items()):
             raise ValueError("whole12 input chain changed during physics audit")
         result = dict(
-            schema="soccer.rsi.navigation_recovery4_verification_complete.v1",
+            schema=stem + "_verification_complete.v1",
             declaration_hash=declaration["report_hash"],
             rows=rows,
-            actual_physical_steps=36000,
+            actual_physical_steps=expected_steps,
             new_nn_inferences=0,
             new_optimizer_updates=0,
             independent_neural_policy_qualified=False,
