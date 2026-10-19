@@ -36,6 +36,31 @@ def verify_actual_torques(trace):
 
 
 def compare_execution(trace, forecast, frame, *, safety_cancel_frame=None):
+    return _compare_execution(
+        trace,
+        forecast,
+        frame,
+        safety_cancel_frame=safety_cancel_frame,
+        schema="soccer.rsi.selected_early80ms_execution_alignment.v1",
+    )
+
+
+def compare_postcontact_execution(trace, forecast, frame, *, safety_cancel_frame=None):
+    if "postcontact_exit_requested_offset_nm" not in trace or any(
+        k.startswith(("early_impact_feedback_", "impact_feedback_", "postcontact_release_"))
+        for k in trace
+    ):
+        raise ValueError("actual distinct postcontact exit trace required for alignment")
+    return _compare_execution(
+        trace,
+        forecast,
+        frame,
+        safety_cancel_frame=safety_cancel_frame,
+        schema="soccer.rsi.selected_postcontact80ms_execution_alignment.v1",
+    )
+
+
+def _compare_execution(trace, forecast, frame, *, safety_cancel_frame, schema):
     if (
         type(frame) is not int
         or not 30 <= frame <= 294
@@ -143,7 +168,7 @@ def compare_execution(trace, forecast, frame, *, safety_cancel_frame=None):
                 bit_exact=True,
             )
     return dict(
-        schema="soccer.rsi.selected_early80ms_execution_alignment.v1",
+        schema=schema,
         forecast_start_frame=frame,
         actual_safety_cancel_frame=safety_cancel_frame,
         physical_substeps_compared=steps,

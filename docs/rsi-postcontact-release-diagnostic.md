@@ -155,3 +155,17 @@ namespace, not renamed early-action captures. Even successful short forecasts
 do not prove later-body stability: the complete H300 M0 and retention test
 remains mandatory, followed by separate raw/physics/search verification before
 any teacher or learning admission.
+
+`scripts/rsi_read_postcontact_transfer.py` checks the entire closed eighteen-row
+campaign, including all failures and retention conditions. It independently
+rederives the original public perturbation plan and all baseline identities,
+relabels raw full-H300 outcomes and checks prefix/control attribution. For the
+exit profile it rebuilds the current-pose named Jacobian bank, reads all300
+preaction decisions per case, verifies all raw three-update forecasts and
+exit scores, independently reranks the bank, verifies the repeated zero and
+compares selected80ms controls/contact bins/body boundaries and neural bits
+against the executed trajectory. Observed safety cancellation is explicitly a
+partial alignment, never a successful full80ms alignment claim. This shares
+the strict old forecast-array/alignment arithmetic, but consumes the actual
+distinct exit captures and score; no early-action arrays are fabricated. It
+does not advance physics, recompute the neural network or qualify a teacher.

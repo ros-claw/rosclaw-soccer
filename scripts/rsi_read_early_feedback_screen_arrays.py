@@ -5,11 +5,34 @@ import numpy as np
 from rosclaw_soccer.physics.g1_early_feedback_forecast import G1EarlyFeedbackForecast
 from rosclaw_soccer.rsi.early_feedback_impact_score import early_feedback_impact_score
 from rosclaw_soccer.rsi.impact_torque_screen import CAPS
+from rosclaw_soccer.rsi.postcontact_exit_score import postcontact_exit_score
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_json
 from scripts.rsi_impact_torque_authority_screen import equal
 
 
 def verify_early_prediction(a, metadata, side):
+    return _verify_prediction(a, metadata, side, postcontact_forces=None)
+
+
+def verify_postcontact_exit_prediction(a, metadata, previous_contact_forces):
+    if (
+        type(previous_contact_forces) is not np.ndarray
+        or previous_contact_forces.shape != (6,)
+        or previous_contact_forces.dtype != np.float64
+        or not np.isfinite(previous_contact_forces).all()
+        or np.any(previous_contact_forces < 0)
+        or not np.any(previous_contact_forces[:2] > 1)
+    ):
+        raise ValueError("actual completed foot forces required for postcontact raw prediction")
+    return _verify_prediction(
+        a,
+        metadata,
+        int(np.argmax(previous_contact_forces[:2])),
+        postcontact_forces=previous_contact_forces,
+    )
+
+
+def _verify_prediction(a, metadata, side, *, postcontact_forces):
     offsets = a["requested_offset_nm"]
     if offsets.shape != (40, 29) or offsets.dtype != np.float64 or not np.isfinite(offsets).all():
         raise ValueError("whole finite80ms action schedule required")
@@ -95,7 +118,11 @@ def verify_early_prediction(a, metadata, side):
     forecast = G1EarlyFeedbackForecast(
         metadata["donor_hash"], end, a, tuple(target_records), tuple(neural_records)
     )
-    score = early_feedback_impact_score(forecast, offset)
+    score = (
+        early_feedback_impact_score(forecast, offset)
+        if postcontact_forces is None
+        else postcontact_exit_score(forecast, offset, previous_contact_forces=postcontact_forces)
+    )
     if hash_json(score) != hash_json(metadata["score"]):
         raise ValueError("all40substeps raw impact proxy differs from metadata")
     return score
