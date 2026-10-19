@@ -77,12 +77,26 @@ class RecordedEarlyEpisode:
         """
         return self._verify(trace, motor_audit=motor_audit, postcontact=True)
 
+    def verify_postcontact_exit(
+        self,
+        trace: dict[str, np.ndarray],
+        *,
+        motor_audit: OriginalMotorComponentAudit | None = None,
+    ) -> dict[str, Any]:
+        """Actual exit fields; recorded search counters are NOT reexecution.
+
+        Search causality, raw candidates, ranking and selected80ms alignment
+        require their separate readback. This only reintegrates the body.
+        """
+        return self._verify(trace, motor_audit=motor_audit, postcontact=True, exit_profile=True)
+
     def _verify(
         self,
         trace: dict[str, np.ndarray],
         *,
         motor_audit: OriginalMotorComponentAudit | None,
         postcontact: bool,
+        exit_profile: bool = False,
     ) -> dict[str, Any]:
         if self.used:
             raise ValueError("once-only callback-free whole-body physical replay required")
@@ -97,18 +111,47 @@ class RecordedEarlyEpisode:
             raise ValueError("fresh exact same-model original motor component auditor required")
         if mujoco.get_mjcb_control() is not None:
             raise ValueError("once-only callback-free whole-body physical replay required")
-        prefix = "postcontact_release_" if postcontact else "early_impact_feedback_"
+        prefix = (
+            "postcontact_exit_"
+            if exit_profile
+            else "postcontact_release_"
+            if postcontact
+            else "early_impact_feedback_"
+        )
+        recorded_forecast_steps = 0
         if postcontact:
-            if any(k.startswith(("early_impact_feedback_", "impact_feedback_")) for k in trace):
+            forbidden = (
+                "early_impact_feedback_",
+                "impact_feedback_",
+                "postcontact_release_" if exit_profile else "postcontact_exit_",
+            )
+            if any(k.startswith(forbidden) for k in trace):
                 raise ValueError("distinct post-contact profile without old impact fields required")
             steps = trace.get(prefix + "forecast_steps")
             if (
                 not isinstance(steps, np.ndarray)
                 or steps.shape != (300, 1, 1)
                 or steps.dtype != np.int64
-                or np.any(steps)
+                or (not exit_profile and np.any(steps))
+                or (
+                    exit_profile
+                    and (
+                        np.any(steps < 0)
+                        or np.any(steps > 560)
+                        or np.any(steps % 40)
+                        or steps.sum() > 560
+                        or np.count_nonzero(steps) > 1
+                    )
+                )
             ):
-                raise ValueError("post-contact control must have zero actual forecasts")
+                raise ValueError("post-contact control requires its exact bounded forecast profile")
+            recorded_forecast_steps = int(steps.sum())
+            if exit_profile:
+                searched = np.flatnonzero(steps[:, 0, 0])
+                if len(searched):
+                    f = int(searched[0])
+                    if not 30 <= f <= 294 or f // 20 != (f + 3) // 20 or steps[f, 0, 0] < 80:
+                        raise ValueError("one bounded no-replan postcontact exit search required")
         expected_shapes = dict(
             canonical_qpos=(300, 1, 43),
             canonical_qvel=(300, 1, 41),
@@ -152,6 +195,12 @@ class RecordedEarlyEpisode:
             raise ValueError("one bounded at-most60ms original leg action required")
         if postcontact and len(frames) and not np.any(trace["force_n"][frames[0] - 1, 0, :2] > 1):
             raise ValueError("nonzero post-contact lease requires a completed foot force bin")
+        if exit_profile:
+            searched = np.flatnonzero(trace[prefix + "forecast_steps"][:, 0, 0])
+            if (len(frames) and (not len(searched) or frames[0] != searched[0])) or (
+                len(searched) and not np.any(trace["force_n"][searched[0] - 1, 0, :2] > 1)
+            ):
+                raise ValueError("actual exit search/action must follow the same completed contact")
         q0, v0 = trace["canonical_qpos"][0, 0], trace["canonical_qvel"][0, 0]
         self.initial.verify(self.course, q0, v0)
         d, m = self.data, self.model
@@ -273,5 +322,13 @@ class RecordedEarlyEpisode:
             )
             result["actual_postcontact_action_fields_consumed"] = True
             result["early_action_arrays_fabricated_or_aliased"] = False
+        if exit_profile:
+            result["schema"] = (
+                "soccer.rsi.recorded_postcontact_exit_h300_motor_physics.v1"
+                if motor_audit is not None
+                else "soccer.rsi.recorded_postcontact_exit_h300_physics.v1"
+            )
+            result["recorded_forecast_steps_not_reexecuted"] = recorded_forecast_steps
+            result["independent_exit_search_qualified"] = False
         self.failed = False
         return result

@@ -169,3 +169,14 @@ partial alignment, never a successful full80ms alignment claim. This shares
 the strict old forecast-array/alignment arithmetic, but consumes the actual
 distinct exit captures and score; no early-action arrays are fabricated. It
 does not advance physics, recompute the neural network or qualify a teacher.
+
+`scripts/rsi_replay_postcontact_transfer_physics.py` consumes that whole18 raw
+readback only after both real units close successfully and its exact file hash
+matches. It reintegrates all eighteen recorded bodies (54,000 new steps) from
+their declared courses and source-bound PD/world, checking all body, ball,
+torque and contact fields with the existing tolerance. Fixed release and
+adaptive exit retain distinct physical entry methods and namespaces. Exit
+search counters must describe a single bounded no-replan bank after a measured
+foot contact; they are explicitly **recorded counters, not reexecuted search**.
+The physics method still consumes recorded neural targets, so neither this
+check nor a passing raw proxy grants independent NN/search or teacher status.
