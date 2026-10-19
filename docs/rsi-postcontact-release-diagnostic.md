@@ -681,3 +681,21 @@ contact2/8 versus legacy3/8, audit
 `sha256:5a46b8ee83fe8cbc862a32737db95744239cffc9403e7fdf53d558ca2a4c782d`.
 The graph-input offset mismatch is real, but changing it was not an established
 motor improvement. No new layout experiment or default change was made here.
+
+`rsi_verify_public_four_arm.py` supplies the separately frozen successor
+verifier. Before any new integration it authenticates all160 rows/archives,
+reconstructs the fixed public40 plan, checks per-course same sampled policy,
+OFF/ON heading captures and their first30-frame physical/NN parity, rederives
+every M0 label and paired summary, and checks all80 teacher preaction ledgers.
+It independently reconstructs current-pose Jacobian candidate banks and
+re-scores/ranks the raw forecasts, including selected80ms body/three-future-NN
+alignment and independent repeated zero. These consume recorded NN values,
+not newly executed Foundation inference. Current121-feature records are
+explicitly privileged SIM diagnostics, never approved student observations.
+
+Only after whole raw admission does it allocate160 separate recorded-target
+body auditors for480000 additional native steps, with finite errors at most
+`1e-8`. Original arms use plain PD and teacher arms use their actual exit
+fields. Neither branch fabricates another profile's action captures. No
+neural/search reexecution, motor activation, training authorization, teacher
+promotion or hardware approval follows from this verification.
