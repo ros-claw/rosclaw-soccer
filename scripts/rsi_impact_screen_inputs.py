@@ -51,9 +51,9 @@ def require_scope(cfg):
         raise ValueError("fixed six retrospective diagnostic and18840-step maximum required")
 
 
-def prepare(path):
+def prepare(path, *, scope_validator=require_scope):
     cfg = json.loads(path.read_text())
-    require_scope(cfg)
+    scope_validator(cfg)
     source, root = Path(cfg["source_root"]), Path(cfg["output_root"])
     if (
         root.exists()
