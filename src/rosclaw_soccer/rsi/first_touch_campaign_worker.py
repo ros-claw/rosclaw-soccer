@@ -602,6 +602,7 @@ def qualified_episode(
     use_mesh_surface_swing: bool = False,
     reference_student_model: dict[str, Any] | None = None,
     planner_navigation_pulse: Any = None,
+    original_ik_planner_pulse: Any = None,
 ) -> dict[str, Any]:
     """Actual native dynamics + independent CPU/Foundation; no synthetic labels."""
     require_unused_episode_output(folder)
@@ -763,6 +764,7 @@ def qualified_episode(
         use_mesh_surface_swing=use_mesh_surface_swing,
         reference_student_model=reference_student_model,
         planner_navigation_pulse=planner_navigation_pulse,
+        original_ik_planner_pulse=original_ik_planner_pulse,
     )
     report = (
         _sealed(folder / "report.json")
@@ -784,6 +786,11 @@ def qualified_episode(
         raise ValueError("requested surface swing must bind actual native execution")
     if ("pre_planner_navigation_pulse" in report) != (planner_navigation_pulse is not None):
         raise ValueError("explicit pulse request must match its native report")
+    if ("original_ik_pre_planner_pulse" in report) != (original_ik_planner_pulse is not None):
+        raise ValueError("explicit original-IK pulse request must match its native report")
+    if original_ik_planner_pulse is not None:  # noqa: SIM102 - exact default-OFF projection
+        if report["original_ik_pre_planner_pulse"] != original_ik_planner_pulse.contract():
+            raise ValueError("declared original-IK pulse source and parameters required")
     if planner_navigation_pulse is not None:
         from rosclaw_soccer.rsi.planner_navigation_pulse_evidence import (
             require_navigation_pulse_capture,
@@ -888,6 +895,18 @@ def qualified_episode(
                 )
                 if pulse_delta != 0.0:
                     command[1] = min(0.2, max(-0.2, float(command[1]) + pulse_delta))
+            if original_ik_planner_pulse is not None:
+                if not np.array_equal(
+                    command, trace["ik_planner_pulse_baseline_command"][frame, 0]
+                ):
+                    raise ValueError(
+                        "original bounded IK navigation baseline before pulse required"
+                    )
+                ik_pulse_delta = (
+                    original_ik_planner_pulse.lateral_delta_m_s if 100 <= frame < 160 else 0.0
+                )
+                if ik_pulse_delta != 0.0:
+                    command[1] = min(0.2, max(-0.2, float(command[1]) + ik_pulse_delta))
             if not np.array_equal(command, trace["navigation_command"][frame, 0]):
                 raise ValueError("projected navigation law mismatch")
         if not np.allclose(
@@ -905,6 +924,10 @@ def qualified_episode(
     commitment = load_json_artifact(folder / "commitment.json")
     if planner_navigation_pulse is not None:
         require_navigation_pulse_capture(report, commitment, trace)
+    if original_ik_planner_pulse is not None:
+        from rosclaw_soccer.rsi.original_ik_planner_evidence import require_original_ik_capture
+
+        require_original_ik_capture(report, commitment, trace)
     if (
         postcontact is not None
         and commitment.get("postcontact_navigation_probe") != postcontact.contract()
@@ -926,7 +949,16 @@ def qualified_episode(
             != cerebellar_sampling_seed
         ):
             raise ValueError("requested neural torque model and sampling law must bind execution")
-    if planner_navigation_pulse is not None:
+    if original_ik_planner_pulse is not None:
+        alignment = require_first_touch_qualification(
+            review,
+            foundation,
+            outcome,
+            original_ik_planner_pulse_contract_hash=original_ik_planner_pulse.contract()[
+                "contract_hash"
+            ],
+        )
+    elif planner_navigation_pulse is not None:
         assert reference_student_model is not None
         alignment = require_first_touch_qualification(
             review,

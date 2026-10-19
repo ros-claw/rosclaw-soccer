@@ -37,6 +37,12 @@ def validate_cpu_foundation_capture(
         validate_measured_history,
     )
 
+    if "original_ik_pre_planner_pulse" in commitment or any(
+        name.startswith("ik_planner_pulse_") for name in trace
+    ):
+        from rosclaw_soccer.rsi.original_ik_planner_evidence import require_original_ik_capture
+
+        require_original_ik_capture(report, commitment, trace)
     if "pre_planner_navigation_pulse" in commitment or any(
         name.startswith("planner_pulse_") for name in trace
     ):
@@ -696,6 +702,11 @@ def audit_cpu_transfer(
         replay_surface_contact_delta = np.zeros(6)
         replay_surface_active_frames = 0
 
+    if "original_ik_pre_planner_pulse" in commitment:
+        from rosclaw_soccer.rsi.original_ik_planner_evidence import OriginalIkCpuReconstruction
+
+        replay_original_ik = OriginalIkCpuReconstruction(model)
+
     def equal(actual: Any, expected: Any, name: str) -> None:
         if not np.allclose(actual, expected, atol=1e-8, rtol=0):
             raise ValueError(f"CPU dynamics replay differs: {name}")
@@ -743,6 +754,28 @@ def audit_cpu_transfer(
             "ball velocity",
         )
         target = trace["joint_target_rad"][frame, 0]
+        if "original_ik_pre_planner_pulse" in commitment:
+            original_nav_target = trace["foundation_navigation_joint_target_rad"][frame, 0]
+            original_ik_delta = replay_original_ik.before_step(
+                data, frame, positions, original_nav_target
+            )
+            equal(
+                original_ik_delta,
+                trace["taskspace_joint_increment_rad"][frame, 0],
+                "causal original bounded IK increment",
+            )
+            equal(
+                original_nav_target + original_ik_delta,
+                trace["pre_motor_joint_target_rad"][frame, 0],
+                "original bounded IK before parent motor",
+            )
+            original_motor_delta = np.zeros(29)
+            original_motor_delta[:12] = trace["motor_delta_rad"][frame, 0]
+            equal(
+                trace["pre_motor_joint_target_rad"][frame, 0] + original_motor_delta,
+                target,
+                "original IK plus independently reconstructed parent motor",
+            )
         if "mesh_surface_swing" in commitment:
             surface_record = inactive_surface_probe_record(frame)
             surface_delta = np.zeros(6)
@@ -983,6 +1016,8 @@ def audit_cpu_transfer(
                 compliance_recorded_exact += 1
         equal(forces, trace["force_n"][frame, 0], "physical contacts")
         equal(data.xpos[ball], trace["ball_position_after_step_m"][frame, 0], "physical ball")
+        if "original_ik_pre_planner_pulse" in commitment:
+            replay_original_ik.after_step(frame, forces)
         if "mesh_surface_swing" in commitment:  # noqa: SIM102 - explicit OFF-path projection
             if replay_surface_contact is None and np.any(forces > 1):
                 replay_surface_contact = frame
@@ -1268,6 +1303,13 @@ def audit_cpu_transfer(
         result["planner_navigation_pulse_review"] = require_navigation_pulse_capture(
             report, commitment, trace
         )
+    if "original_ik_pre_planner_pulse" in commitment:
+        from rosclaw_soccer.rsi.original_ik_planner_evidence import require_original_ik_capture
+
+        result["original_ik_planner_pulse_review"] = require_original_ik_capture(
+            report, commitment, trace
+        )
+        result["original_ik_cpu_reconstruction"] = replay_original_ik.review()
     if cerebellar_review is not None:
         result["cerebellar_model_hash"] = cerebellar_review["model_hash"]
         result["actual_cerebellar_inferences_reconstructed"] = 3000

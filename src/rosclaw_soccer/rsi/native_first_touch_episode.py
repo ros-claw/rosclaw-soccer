@@ -93,9 +93,72 @@ def run_native_first_touch_episode(
     use_mesh_surface_swing: bool = False,
     reference_student_model: dict[str, Any] | None = None,
     planner_navigation_pulse: Any = None,
+    original_ik_planner_pulse: Any = None,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
+
+    if original_ik_planner_pulse is not None:
+        from rosclaw_soccer.rsi.original_ik_planner_pulse import (
+            require_original_ik_planner_request,
+        )
+        from rosclaw_soccer.rsi.recurrent_sampling_episode_factory import (
+            RecurrentSamplingEpisodeFactory,
+        )
+
+        require_original_ik_planner_request(
+            original_ik_planner_pulse,
+            reference_student_model,
+            profile=control_profile,
+            record_planner_events=record_default_planner_events,
+        )
+        if (
+            partition != "DECLARED_DEVELOPMENT_DIAGNOSTIC"
+            or approach_mode != "bounded_approach_diagnostic"
+            or swing_mode != "bounded_contact_diagnostic"
+            or getattr(args, "record_foundation_observation", False) is not True
+            or getattr(args, "foundation_only", False) is not False
+            or getattr(args, "proposal_decoder", None) != "reference"
+            or getattr(args, "step_model", None) is None
+            or getattr(args, "body_response_bundle", None) is not None
+            or getattr(args, "neural_model", None) is not None
+            or getattr(args, "motor_policy", None) is not None
+            or getattr(args, "cached_proposal_envelope", False) is not False
+            or getattr(args, "observation_snapshot", None) != "cached"
+            or getattr(args, "root_velocity_reference", None) != "body-com"
+            or type(recurrent_sampling_factory) is not RecurrentSamplingEpisodeFactory
+            or mesh_task_contact_world_hash is None
+            or mesh_world_review is None
+            or any(
+                v is not None
+                for v in (
+                    planner_navigation_pulse,
+                    cerebellar_model,
+                    cerebellar_sampling_seed,
+                    postcontact_profile,
+                    locomotion_mode_probe,
+                    reference_height_probe_m,
+                    sampling_factory,
+                    extended_factory,
+                    proposal_factory,
+                    imitation_factory,
+                    recurrent_factory,
+                    recurrent_clipped_factory,
+                )
+            )
+            or any(
+                v is not False
+                for v in (
+                    foundation_approach_probe,
+                    suppress_postcontact_swing_release,
+                    use_mesh_surface_swing,
+                    use_contact_exit_torque_mpc,
+                    use_directional_contact_compliance,
+                )
+            )
+        ):
+            raise ValueError("captured unmixed original-IK planner SIM request required")
+        recurrent_sampling_factory._stable()
 
     if planner_navigation_pulse is not None:
         from rosclaw_soccer.rsi.planner_navigation_pulse_evidence import (
@@ -1290,6 +1353,8 @@ def run_native_first_touch_episode(
             commitment["reference_student_contract"] = reference_student.contract()
         if planner_navigation_pulse is not None:
             commitment["pre_planner_navigation_pulse"] = planner_navigation_pulse.contract()
+        if original_ik_planner_pulse is not None:
+            commitment["original_ik_pre_planner_pulse"] = original_ik_planner_pulse.contract()
         if foundation_approach_probe:
             commitment["foundation_approach_ablation"] = dict(
                 schema="soccer.rsi.foundation_only_bounded_approach_ablation.v1",
@@ -1387,6 +1452,10 @@ def run_native_first_touch_episode(
             from rosclaw_soccer.rsi.planner_navigation_pulse_evidence import FIELDS as PULSE_FIELDS
 
             history.update({"planner_pulse_" + name: [] for name in PULSE_FIELDS})
+        if original_ik_planner_pulse is not None:
+            from rosclaw_soccer.rsi.original_ik_planner_evidence import FIELDS as IK_PULSE_FIELDS
+
+            history.update({"ik_planner_pulse_" + name: [] for name in IK_PULSE_FIELDS})
         history.update(
             {
                 k: []
@@ -1504,6 +1573,17 @@ def run_native_first_touch_episode(
                     ("applied_command", navigation_command),
                 ):
                     history["planner_pulse_" + name].append(np.asarray(value)[None])
+            if original_ik_planner_pulse is not None:
+                baseline_navigation = navigation_command
+                pulse_residual, navigation_command = original_ik_planner_pulse.compose(
+                    frame, baseline_navigation
+                )
+                for name, value in (
+                    ("baseline_command", baseline_navigation),
+                    ("requested_residual", pulse_residual),
+                    ("applied_command", navigation_command),
+                ):
+                    history["ik_planner_pulse_" + name].append(np.asarray(value)[None])
             previous_navigation_forward = navigation_command[0]
             history["approach_requested_navigation_command"].append(
                 np.asarray(requested_navigation)[None]
@@ -1905,6 +1985,10 @@ def run_native_first_touch_episode(
         )
 
         require_navigation_pulse_capture(commitment, commitment, arrays)
+    if original_ik_planner_pulse is not None:
+        from rosclaw_soccer.rsi.original_ik_planner_evidence import require_original_ik_capture
+
+        require_original_ik_capture(commitment, commitment, arrays)
     if mesh_world_review is not None:
         assert mesh_task_contact_world_hash is not None
         if mesh_world_review.verify(mesh_task_contact_world_hash) != mesh_review_binding:

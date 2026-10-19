@@ -21,6 +21,7 @@ def require_first_touch_qualification(
     cerebellar_sampling_draws: int | None = None,
     reference_student_model_hash: str | None = None,
     planner_navigation_pulse_contract_hash: str | None = None,
+    original_ik_planner_pulse_contract_hash: str | None = None,
 ) -> dict[str, Any]:
     """Validate counts and label composition, never authorize execution."""
     if (
@@ -29,6 +30,36 @@ def require_first_touch_qualification(
         or type(outcome) is not FirstTouchOutcome
     ):
         raise ValueError("typed replay reviews and primitive M0 outcome required")
+    if original_ik_planner_pulse_contract_hash is None:
+        if any(
+            k in review
+            for k in ("original_ik_planner_pulse_review", "original_ik_cpu_reconstruction")
+        ):
+            raise ValueError("unexpected original IK pulse requires explicit qualification intent")
+    else:
+        from rosclaw_soccer.rsi.original_ik_planner_evidence import require_original_ik_reviews
+
+        if (
+            type(original_ik_planner_pulse_contract_hash) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", original_ik_planner_pulse_contract_hash) is None
+            or planner_navigation_pulse_contract_hash is not None
+            or reference_student_model_hash is not None
+            or cerebellar_model_hash is not None
+            or any(
+                review.get(k) is not True
+                for k in (
+                    "actual_mujoco_dynamics_replayed",
+                    "actual_pd_torque_reconstructed",
+                    "neural_target_reconstructed",
+                )
+            )
+        ):
+            raise ValueError("explicit unmixed original-IK physical replay intent required")
+        require_original_ik_reviews(
+            review.get("original_ik_planner_pulse_review"),
+            review.get("original_ik_cpu_reconstruction"),
+            contract_hash=original_ik_planner_pulse_contract_hash,
+        )
     pulse_review = review.get("planner_navigation_pulse_review")
     if planner_navigation_pulse_contract_hash is None:
         if "planner_navigation_pulse_review" in review:
@@ -172,4 +203,6 @@ def require_first_touch_qualification(
         result["reference_student_model_hash"] = reference_student_model_hash
     if planner_navigation_pulse_contract_hash is not None:
         result["planner_navigation_pulse_contract_hash"] = planner_navigation_pulse_contract_hash
+    if original_ik_planner_pulse_contract_hash is not None:
+        result["original_ik_planner_pulse_contract_hash"] = original_ik_planner_pulse_contract_hash
     return result

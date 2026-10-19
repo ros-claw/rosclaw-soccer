@@ -13,6 +13,7 @@ COMPLIANCE_FLAG = "use_directional_contact_compliance"
 SURFACE_FLAG = "use_mesh_surface_swing"
 STUDENT_FLAG = "reference_student_model"
 PULSE_FLAG = "planner_navigation_pulse"
+IK_PULSE_FLAG = "original_ik_planner_pulse"
 
 
 def canonical(node):
@@ -33,13 +34,21 @@ def expression(source):
 class OffPath(ast.NodeTransformer):
     def visit_arguments(self, node):
         for argument, default in zip(node.kwonlyargs, node.kw_defaults, strict=True):
-            if argument.arg in {STUDENT_FLAG, PULSE_FLAG}:
+            if argument.arg in {STUDENT_FLAG, PULSE_FLAG, IK_PULSE_FLAG}:
                 assert isinstance(default, ast.Constant) and default.value is None
         pairs = [
             (a, d)
             for a, d in zip(node.kwonlyargs, node.kw_defaults, strict=True)
             if a.arg
-            not in {FLAG, MPC_FLAG, COMPLIANCE_FLAG, SURFACE_FLAG, STUDENT_FLAG, PULSE_FLAG}
+            not in {
+                FLAG,
+                MPC_FLAG,
+                COMPLIANCE_FLAG,
+                SURFACE_FLAG,
+                STUDENT_FLAG,
+                PULSE_FLAG,
+                IK_PULSE_FLAG,
+            }
         ]
         node.kwonlyargs = [p[0] for p in pairs]
         node.kw_defaults = [p[1] for p in pairs]
@@ -47,6 +56,12 @@ class OffPath(ast.NodeTransformer):
 
     def visit_If(self, node):
         known = {
+            "original_ik_planner_pulse is not None",
+            "'original_ik_pre_planner_pulse' in commitment",
+            "('original_ik_pre_planner_pulse' in report) != "
+            "(original_ik_planner_pulse is not None)",
+            "'original_ik_pre_planner_pulse' in commitment or "
+            "any(name.startswith('ik_planner_pulse_') for name in trace)",
             "planner_navigation_pulse is not None",
             "'pre_planner_navigation_pulse' in commitment",
             "('pre_planner_navigation_pulse' in report) != (planner_navigation_pulse is not None)",
@@ -93,7 +108,16 @@ class OffPath(ast.NodeTransformer):
             k
             for k in node.keywords
             if not (
-                k.arg in {FLAG, MPC_FLAG, COMPLIANCE_FLAG, SURFACE_FLAG, STUDENT_FLAG, PULSE_FLAG}
+                k.arg
+                in {
+                    FLAG,
+                    MPC_FLAG,
+                    COMPLIANCE_FLAG,
+                    SURFACE_FLAG,
+                    STUDENT_FLAG,
+                    PULSE_FLAG,
+                    IK_PULSE_FLAG,
+                }
                 and isinstance(k.value, ast.Name)
                 and k.value.id == k.arg
             )
