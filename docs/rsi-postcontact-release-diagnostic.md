@@ -809,3 +809,16 @@ is the consumed eighteen-source diagnostic, not generalization/Fresh/4v4.
 No nonzero teacher or task gain is admitted. The separate fake-orchestration
 and immutable-scope tests passed23 tests2.86s; their94840-step counters are
 not actual physical execution. Real closure must be established externally.
+
+The separate `rsi_read_full_task_zero.py` readback checks all18 individual
+case seals and36 individual prediction seals, all43 raw tensors against the
+main continuation and archived gold, measured-prefix plus simulated-future
+M0 labels, exact remaining planner refreshes and94840-step accounting. It
+rejects actor/teacher promotion claims and counts **zero** additional physics,
+NN inference or optimizer updates. It must run from separately pinned source
+after producer termination; it does not restart or modify the producer.
+Persistence-before-main remains a producer execution-order commitment, not
+an independently attested fact inferred from filesystem timestamps. Fifteen
+synthetic reader tests (including whole18 orchestration) and23 existing
+qualification/scope tests passed together:38 tests6.25s. These are reader
+validation, not physical prediction qualification or improved football skill.
