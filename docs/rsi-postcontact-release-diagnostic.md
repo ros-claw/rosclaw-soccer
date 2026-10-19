@@ -279,3 +279,12 @@ from completing this bank. The CLI has a new frozen declaration, unused
 output, explicit deadline/native budget, no retries and a56GiB admission floor
 before the sole new full-mean constructor. Partial data/state and actual
 attempt counts are preserved on contract or numerical failure.
+
+The current80ms proxy search is not a real-time controller: on its first two
+G1 cases, decision-frame file timestamps span270.48/271.88s for each560-step
+bank; complete6s simulated episodes take297.62/296.45s wall time. These are
+unrandomized filesystem-timestamp observations, not profiler measurements or
+a speedup claim. The full-horizon bank is intended to obtain richer offline
+action/value supervision without repeatedly paying short-branch copy/check
+costs. Any learned low-latency replacement must still be measured and tested;
+the present slow oracle is not ready to control a live football match.
