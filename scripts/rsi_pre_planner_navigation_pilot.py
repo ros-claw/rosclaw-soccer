@@ -53,12 +53,18 @@ def prepare(config_path, *, closed=False):
     c.recorded_zero_complete_hash = recorded["complete"]["report_hash"]
     from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 
-    for delta in (0.0, -0.08):
+    for delta in {j["lateral_delta_m_s"] for j in c.scope["jobs"]}:
         require_navigation_pulse_request(
             PlannerNavigationPulse(delta),
             c.models["zero"],
             profile=BoundedFirstTouchControl(**c.candidate["parameters"]),
             record_planner_events=True,
+        )
+    if "negative_predecessor" in c.cfg:
+        from scripts.rsi_load_pre_planner_cohort import require_negative_predecessor
+
+        c.negative_predecessor = require_negative_predecessor(
+            c.cfg["negative_predecessor"], sealed=c.sealed, pins=c.pins
         )
     return c
 

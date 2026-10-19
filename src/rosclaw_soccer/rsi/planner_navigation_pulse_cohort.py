@@ -22,7 +22,7 @@ def require_pulse_cohort(
 ) -> dict[str, Any]:
     """Callers authenticate source files, units, receipts, audits and witnesses."""
     require_pulse_scope(producer)
-    scope = pulse_scope(producer["behavior_model_hash"])
+    scope = pulse_scope(producer["behavior_model_hash"], profile=producer["exam_profile"])
     if (
         declaration.get("schema") != "soccer.rsi.pre_planner_pulse_six_declaration.v1"
         or complete.get("schema") != "soccer.rsi.pre_planner_pulse_six_complete.v1"
@@ -167,7 +167,13 @@ def pulse_contact_readout(
         for r in rows
         if r["job"]["role"] == "pulse"
     )
-    assessment = assess_pulse_scope(pulse_scope(declaration["behavior_model_hash"]), receipts)
+    assessment = assess_pulse_scope(
+        pulse_scope(
+            declaration["behavior_model_hash"],
+            profile=declaration.get("exam_profile", "pre-planner-navigation-six-v1"),
+        ),
+        receipts,
+    )
     if assessment != complete["assessment"]:
         raise ValueError("all paired outcomes including failures must reconstruct")
     return dict(

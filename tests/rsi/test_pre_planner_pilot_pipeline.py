@@ -12,7 +12,12 @@ import pytest
 
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.first_touch_campaign import FirstTouchCampaign
-from rosclaw_soccer.rsi.planner_navigation_pulse_scope import GROUPS, pulse_scope
+from rosclaw_soccer.rsi.planner_navigation_pulse_scope import (
+    GROUPS,
+    POSITIVE_PROFILE,
+    PROFILE,
+    pulse_scope,
+)
 from scripts import rsi_pre_planner_navigation_pilot as pilot
 from scripts.rsi_read_pre_planner_navigation import read_journal
 from tests.rsi.test_planner_navigation_pulse_evidence import zero_model
@@ -20,8 +25,9 @@ from tests.rsi.test_planner_navigation_pulse_scope import config
 
 
 @pytest.mark.parametrize("tamper", [None, "changed_course", "changed_stream"])
+@pytest.mark.parametrize("profile", [PROFILE, POSITIVE_PROFILE])
 def test_real_prepare_compares_json_plan_identity_not_python_tuple_container(
-    tmp_path, monkeypatch, tamper
+    tmp_path, monkeypatch, tamper, profile
 ):
     runtime_plan = dict(seeds=(20261077, 20261078), jobs=[dict(course=(2.65, 0.1, 0.5))], stream=19)
     saved_plan = json.loads(json.dumps(runtime_plan))
@@ -40,6 +46,7 @@ def test_real_prepare_compares_json_plan_identity_not_python_tuple_container(
         root=tmp_path / "unused",
         cfg=dict(matched_zero_cohort={}, mesh_task_contact_world_hash=model["world_hash"]),
         models=dict(zero=model),
+        scope=pulse_scope("sha256:" + "a" * 64, profile=profile),
         candidate=candidate,
         teachers=teachers,
         pins={},
@@ -61,9 +68,21 @@ def test_real_prepare_compares_json_plan_identity_not_python_tuple_container(
     )
     monkeypatch.setattr(pilot, "load_inputs", lambda *a, **kw: c)
     monkeypatch.setattr(pilot, "load_cohort", lambda *a, **kw: recorded)
+    if profile == POSITIVE_PROFILE:
+        c.cfg["negative_predecessor"] = {"whole_closed_negative": "test"}
+        from scripts import rsi_load_pre_planner_cohort as loader
+
+        def predecessor(spec, **kwargs):
+            assert spec == c.cfg["negative_predecessor"]
+            assert kwargs["pins"] is c.pins
+            return {"whole_closed_negative": "authenticated"}
+
+        monkeypatch.setattr(loader, "require_negative_predecessor", predecessor)
     if tamper is None:
         assert pilot.prepare(tmp_path / "not-read-config") is c
         assert list(c.recorded_zeros) == list(GROUPS)
+        if profile == POSITIVE_PROFILE:
+            assert c.negative_predecessor == {"whole_closed_negative": "authenticated"}
     else:
         with pytest.raises(ValueError, match="source plan"):
             pilot.prepare(tmp_path / "not-read-config")
@@ -73,7 +92,10 @@ def test_real_prepare_compares_json_plan_identity_not_python_tuple_container(
 @pytest.mark.parametrize(
     "mode", ["complete", "body_failure", "off_corrupt", "early_probe_corrupt", "preflight"]
 )
-def test_all_six_and_once_only_failure_before_following_bodies(tmp_path, monkeypatch, mode):
+@pytest.mark.parametrize("profile", [PROFILE, POSITIVE_PROFILE])
+def test_all_six_and_once_only_failure_before_following_bodies(
+    tmp_path, monkeypatch, mode, profile
+):
     baseline = {f"field_{i}": np.zeros((300, 1, 1)) for i in range(33)}
     source = tmp_path / "source-traces"
     source.mkdir()
@@ -87,12 +109,15 @@ def test_all_six_and_once_only_failure_before_following_bodies(tmp_path, monkeyp
             receipt_hash=f"original-{group}", witnesses=dict(trace=dict(path=str(path), sha256=h))
         )
     cfg = dict(config(), deadline_unix=10**30)
+    cfg["exam_profile"] = profile
+    if profile == POSITIVE_PROFILE:
+        cfg["negative_predecessor"] = {"whole_closed_evidence": "mocked_preparation"}
     c = SimpleNamespace(
         cfg=cfg,
         root=tmp_path / "study",
         source=tmp_path,
         core=tmp_path,
-        scope=pulse_scope("sha256:" + "a" * 64),
+        scope=pulse_scope("sha256:" + "a" * 64, profile=profile),
         models=dict(zero=dict(model_hash="mock-zero")),
         candidate=dict(parameters={}),
         recorded_zeros=witnesses,
@@ -174,7 +199,8 @@ def test_all_six_and_once_only_failure_before_following_bodies(tmp_path, monkeyp
     assert len(allocations) == 1
     expected = {"complete": 6, "body_failure": 4, "off_corrupt": 1, "early_probe_corrupt": 2}[mode]
     assert len(calls) == expected
-    assert calls == [(g, d) for g in GROUPS for d in (0.0, -0.08)][:expected]
+    delta = 0.08 if profile == POSITIVE_PROFILE else -0.08
+    assert calls == [(g, d) for g in GROUPS for d in (0.0, delta)][:expected]
     with sqlite3.connect(c.root / "campaign.sqlite") as db:
         state = json.loads(
             db.execute("SELECT body FROM events ORDER BY seq DESC LIMIT 1").fetchone()[0]

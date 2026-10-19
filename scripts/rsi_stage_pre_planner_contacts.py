@@ -28,7 +28,8 @@ def main():
     source = Path(__file__).resolve().parents[1]
     if (
         cfg.get("mode") != "SIM_ONLY"
-        or cfg.get("diagnostic_profile") != "pre-planner-navigation-six"
+        or cfg.get("diagnostic_profile")
+        not in ("pre-planner-navigation-six", "pre-planner-navigation-positive-six")
         or any(
             cfg.get(k) is not False
             for k in ("hardware_authorized", "promotion_authorized", "neural_training_authorized")
@@ -84,6 +85,15 @@ def main():
     )
     cohort = load_closed_pulse(inputs, sealed=sealed, pins=pins)
     producer, declaration, complete = (cohort[k] for k in ("producer", "declaration", "complete"))
+    from rosclaw_soccer.rsi.planner_navigation_pulse_scope import POSITIVE_PROFILE, PROFILE
+
+    expected = (
+        POSITIVE_PROFILE
+        if cfg["diagnostic_profile"] == "pre-planner-navigation-positive-six"
+        else PROFILE
+    )
+    if producer["exam_profile"] != expected:
+        raise ValueError("exact producer and diagnostic polarity pairing required")
     cases = [
         dict(
             case_id=job["job"].replace("-", "_"),
@@ -97,7 +107,7 @@ def main():
     ]
     replay_cfg = dict(
         inputs,
-        replay_profile="pre-planner-navigation-six",
+        replay_profile=cfg["diagnostic_profile"],
         source_head=cfg["source_head"],
         output_root=cfg["replay_output_root"],
         new_replay_budget=6,

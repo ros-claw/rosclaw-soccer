@@ -224,7 +224,7 @@ def load_inputs(config_path, *, pulse_research=False):
     if pulse_research:
         from rosclaw_soccer.rsi.planner_navigation_pulse_scope import pulse_scope
 
-        scope = pulse_scope(assets.MEAN)
+        scope = pulse_scope(assets.MEAN, profile=cfg["exam_profile"])
     else:
         scope = reference_scope(cfg["exam_profile"], assets.MEAN)
     return SimpleNamespace(

@@ -75,7 +75,7 @@ def captured(delta=-0.08, first_contact=None):
     return commitment, trace
 
 
-@pytest.mark.parametrize("delta", [0.0, -0.08])
+@pytest.mark.parametrize("delta", [0.0, -0.08, 0.08])
 @pytest.mark.parametrize("contact", [None, 110, 151])
 def test_reconstructs_original_b2_plus_fixed_pulse_without_calling_producer(
     delta, contact, monkeypatch

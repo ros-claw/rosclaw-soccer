@@ -22,13 +22,13 @@ class PlannerNavigationPulse:
     def __post_init__(self) -> None:
         if (
             type(self.lateral_delta_m_s) is not float
-            or self.lateral_delta_m_s not in (0.0, -0.08)
+            or self.lateral_delta_m_s not in (0.0, -0.08, 0.08)
             or type(self.start_frame) is not int
             or self.start_frame != 100
             or type(self.end_frame) is not int
             or self.end_frame != 160
         ):
-            raise ValueError("fixed zero or -0.08m/s pulse on [100,160) only required")
+            raise ValueError("fixed zero or signed 0.08m/s pulse on [100,160) only required")
 
     def compose(
         self, frame: int, baseline: tuple[float, float, float]
@@ -67,7 +67,11 @@ class PlannerNavigationPulse:
     def contract(self) -> dict[str, Any]:
         self.__post_init__()
         value = dict(
-            schema="soccer.rsi.pre_planner_navigation_pulse.v1",
+            schema=(
+                "soccer.rsi.pre_planner_navigation_positive_pulse.v2"
+                if self.lateral_delta_m_s > 0
+                else "soccer.rsi.pre_planner_navigation_pulse.v1"
+            ),
             parameters=asdict(self),
             source_hash=hash_bytes(Path(__file__).read_bytes()),
             official_horizon_frames=300,

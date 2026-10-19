@@ -10,15 +10,19 @@ from rosclaw_soccer.rsi.planner_navigation_pulse import PlannerNavigationPulse
 def test_zero_all300_and_active_pulse_outside_window_are_bit_preserving():
     base = (1.4, -0.0, 0.0)
     expected = struct.pack("ddd", *base)
-    for pulse in (PlannerNavigationPulse(), PlannerNavigationPulse(-0.08)):
+    for pulse in (
+        PlannerNavigationPulse(),
+        PlannerNavigationPulse(-0.08),
+        PlannerNavigationPulse(0.08),
+    ):
         for frame in range(300):
             request, command = pulse.compose(frame, base)
             if pulse.lateral_delta_m_s == 0 or not 100 <= frame < 160:
                 assert struct.pack("ddd", *command) == expected
                 assert command is base and request == (0.0, 0.0, 0.0)
             else:
-                assert request == (0.0, -0.08, 0.0)
-                assert command == (1.4, -0.08, 0.0)
+                assert request == (0.0, pulse.lateral_delta_m_s, 0.0)
+                assert command == (1.4, pulse.lateral_delta_m_s, 0.0)
 
 
 def test_fixed_planner_events_hold_and_reset_without_any_torque_authority():
@@ -37,6 +41,7 @@ def test_fixed_planner_events_hold_and_reset_without_any_torque_authority():
     "kwargs",
     [
         dict(lateral_delta_m_s=-0.1),
+        dict(lateral_delta_m_s=0.081),
         dict(lateral_delta_m_s=True),
         dict(lateral_delta_m_s=0),
         dict(start_frame=80),
@@ -65,3 +70,10 @@ def test_does_not_open_a_new_unbounded_pulse_parameter_search(kwargs):
 def test_only_existing_nonturning_command_envelope_and_original_clock(frame, baseline):
     with pytest.raises(ValueError):
         PlannerNavigationPulse(-0.08).compose(frame, baseline)
+
+
+def test_positive_correction_is_a_separately_named_fixed_polarity_not_a_speed_sweep():
+    pulse = PlannerNavigationPulse(0.08)
+    assert pulse.contract()["schema"] == "soccer.rsi.pre_planner_navigation_positive_pulse.v2"
+    assert pulse.compose(100, (1.48, 0.18, 0.0))[1] == (1.48, 0.2, 0.0)
+    assert pulse.compose(160, (1.48, 0.18, 0.0))[1] == (1.48, 0.18, 0.0)

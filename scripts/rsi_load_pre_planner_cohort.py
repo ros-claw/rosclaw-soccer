@@ -4,7 +4,10 @@ import json
 import subprocess
 from pathlib import Path
 
-from rosclaw_soccer.rsi.planner_navigation_pulse_cohort import require_pulse_cohort
+from rosclaw_soccer.rsi.planner_navigation_pulse_cohort import (
+    pulse_contact_readout,
+    require_pulse_cohort,
+)
 from scripts.rsi_read_pre_planner_navigation import read_journal
 from scripts.rsi_stage_release_contact_replay import digest, require_terminal
 
@@ -59,4 +62,62 @@ def load_closed_pulse(cfg, *, sealed, pins):
         complete=complete,
         audit=audit,
         assessment=assessment,
+    )
+
+
+def require_negative_predecessor(spec, *, sealed, pins):
+    """Positive research follows whole negative evidence, never a selected prefix."""
+    from rosclaw_soccer.rsi.planner_navigation_pulse_scope import PROFILE
+
+    cohort = load_closed_pulse(spec, sealed=sealed, pins=pins)
+    if cohort["producer"]["exam_profile"] != PROFILE:
+        raise ValueError("original negative six-body predecessor required")
+    require_terminal(spec["contact_unit"])
+    contact = sealed(spec["contact_complete"])
+    replay = sealed(spec["contact_replay_complete"])
+    metrics = sealed(spec["contact_metrics"])
+    measured = pulse_contact_readout(cohort["declaration"], cohort["complete"], replay, metrics)
+    if (
+        contact.get("schema") != "soccer.rsi.pre_planner_pulse_contact_complete.v1"
+        or contact["report_hash"] != spec["contact_complete_hash"]
+        or contact["upstream_readback_hash"] != cohort["audit"]["report_hash"]
+        or contact["replay_complete_hash"] != replay["report_hash"]
+        or contact["metrics_hash"] != metrics["report_hash"]
+        or contact["measured_contact_readout"] != measured
+        or any(
+            type(contact.get(k)) is not int or contact[k] != n
+            for k, n in (
+                ("new_fixed_control_replay_substeps", 18000),
+                ("new_closed_loop_policy_trials", 0),
+                ("new_neural_inferences", 0),
+                ("new_optimizer_updates", 0),
+                ("total_metrics_endpoints", 6),
+            )
+        )
+        or any(
+            contact.get(k) is not False
+            for k in (
+                "teacher_qualified",
+                "dataset_admission_authorized",
+                "neural_training_authorized",
+                "hardware_authorized",
+                "promotion_authorized",
+            )
+        )
+        or [r["group"] for r in contact.get("paired_motion_diagnostics", [])] != [28, 76, 12]
+    ):
+        raise ValueError("whole negative dense/motion diagnostics and unchanged labels required")
+    for path, h in contact["input_file_hashes"].items():
+        if digest(path) != h or (path in pins and pins[path] != h):
+            raise ValueError("original negative diagnostics source or evidence changed")
+        pins[path] = h
+    return dict(
+        negative_native_hash=cohort["complete"]["report_hash"],
+        negative_readback_hash=cohort["audit"]["report_hash"],
+        negative_contact_hash=contact["report_hash"],
+        assessment=cohort["assessment"],
+        changed_polarity_is_not_learning=True,
+        teacher_qualified=False,
+        hardware_authorized=False,
+        promotion_authorized=False,
     )

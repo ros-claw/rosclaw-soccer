@@ -38,6 +38,7 @@ def fixed_replay_scope(cfg):
         "reference-student-thirteen": 13,
         "reference-positive-zero-nine": 9,
         "pre-planner-navigation-six": 6,
+        "pre-planner-navigation-positive-six": 6,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -118,10 +119,19 @@ def fixed_replay_scope(cfg):
         jobs = positive_zero_scope(cfg["behavior_model_hash"])["jobs"]
         if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
             raise ValueError("all nine original OFF and positive zero endpoints required")
-    if profile == "pre-planner-navigation-six":
-        from rosclaw_soccer.rsi.planner_navigation_pulse_scope import pulse_scope
+    if profile in ("pre-planner-navigation-six", "pre-planner-navigation-positive-six"):
+        from rosclaw_soccer.rsi.planner_navigation_pulse_scope import (
+            POSITIVE_PROFILE,
+            PROFILE,
+            pulse_scope,
+        )
 
-        jobs = pulse_scope(cfg["behavior_model_hash"])["jobs"]
+        jobs = pulse_scope(
+            cfg["behavior_model_hash"],
+            profile=POSITIVE_PROFILE
+            if profile == "pre-planner-navigation-positive-six"
+            else PROFILE,
+        )["jobs"]
         if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
             raise ValueError("all six original ordered OFF/pulse endpoints required")
     return count, steps
@@ -298,7 +308,10 @@ def main():
         else None
     )
     pulse = None
-    if cfg.get("replay_profile") == "pre-planner-navigation-six":
+    if cfg.get("replay_profile") in (
+        "pre-planner-navigation-six",
+        "pre-planner-navigation-positive-six",
+    ):
         from scripts.rsi_load_pre_planner_cohort import load_closed_pulse
 
         for relative in (

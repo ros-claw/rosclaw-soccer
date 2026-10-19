@@ -7,15 +7,19 @@ from rosclaw_soccer.rsi.positive_lateral_receding_scope import build_scope
 from rosclaw_soccer.sim.contracts import hash_json
 
 PROFILE = "pre-planner-navigation-six-v1"
+POSITIVE_PROFILE = "pre-planner-navigation-positive-six-v2"
 GROUPS = (28, 76, 12)
 
 
-def pulse_scope(parent_model_hash: str) -> dict[str, Any]:
+def pulse_scope(parent_model_hash: str, *, profile: str = PROFILE) -> dict[str, Any]:
+    if profile not in (PROFILE, POSITIVE_PROFILE):
+        raise ValueError("one of two fixed signed six-body pulse profiles required")
+    positive_pulse = profile == POSITIVE_PROFILE
     positive = build_scope(parent_model_hash)
     by_group = {c["source_group"]: c for c in positive["contexts"]}
     jobs = [
         dict(
-            job=f"planner-pulse-{role}-g{group}",
+            job=f"planner-pulse-{'positive-' if positive_pulse else ''}{role}-g{group}",
             role=role,
             plan="positive19",
             group=group,
@@ -23,7 +27,7 @@ def pulse_scope(parent_model_hash: str) -> dict[str, Any]:
             use_generated_binding=True,
         )
         for group in GROUPS
-        for role, delta in (("pulse_off", 0.0), ("pulse", -0.08))
+        for role, delta in (("pulse_off", 0.0), ("pulse", 0.08 if positive_pulse else -0.08))
     ]
     result = dict(
         schema="soccer.rsi.pre_planner_pulse_six_scope.v1",
@@ -55,12 +59,20 @@ def pulse_scope(parent_model_hash: str) -> dict[str, Any]:
         hardware_authorized=False,
         promotion_authorized=False,
     )
+    if positive_pulse:
+        result["probe_profile"] = POSITIVE_PROFILE
+        result["closed_negative_cohort_review_required_before_physics"] = True
     return dict(result, scope_hash=hash_json(result))
 
 
 def require_pulse_scope(cfg: dict[str, Any]) -> None:
     if (
-        cfg.get("exam_profile") != PROFILE
+        cfg.get("exam_profile") not in (PROFILE, POSITIVE_PROFILE)
+        or (
+            cfg.get("exam_profile") == POSITIVE_PROFILE
+            and type(cfg.get("negative_predecessor")) is not dict
+        )
+        or (cfg.get("exam_profile") == PROFILE and "negative_predecessor" in cfg)
         or cfg.get("mode") != "SIM_ONLY"
         or "actual_winner_fit" in cfg
         or cfg.get("pulse_group_order") != list(GROUPS)
@@ -99,7 +111,9 @@ def require_pulse_scope(cfg: dict[str, Any]) -> None:
 
 
 def assess_pulse_scope(scope: dict[str, Any], receipts: list[dict[str, Any]]) -> dict[str, Any]:
-    expected = pulse_scope(scope["source_plan"]["behavior_model_hash"])
+    expected = pulse_scope(
+        scope["source_plan"]["behavior_model_hash"], profile=scope.get("probe_profile", PROFILE)
+    )
     if (
         scope != expected
         or len(receipts) != 6

@@ -8,14 +8,22 @@ from rosclaw_soccer.rsi.planner_navigation_pulse_cohort import (
     pulse_motion_readout,
     require_pulse_cohort,
 )
-from rosclaw_soccer.rsi.planner_navigation_pulse_scope import assess_pulse_scope, pulse_scope
+from rosclaw_soccer.rsi.planner_navigation_pulse_scope import (
+    POSITIVE_PROFILE,
+    PROFILE,
+    assess_pulse_scope,
+    pulse_scope,
+)
 from scripts.rsi_replay_first_touch_contacts import fixed_replay_scope
 from tests.rsi.test_planner_navigation_pulse_scope import PARENT, config
 
 
-def cohort():
+def cohort(profile=PROFILE):
     producer = dict(config(), behavior_model_hash=PARENT)
-    scope = pulse_scope(PARENT)
+    producer["exam_profile"] = profile
+    if profile == POSITIVE_PROFILE:
+        producer["negative_predecessor"] = {"test": "not-admitted"}
+    scope = pulse_scope(PARENT, profile=profile)
     declaration = dict(
         producer,
         schema="soccer.rsi.pre_planner_pulse_six_declaration.v1",
@@ -125,8 +133,9 @@ def dense(d, c):
     return replay, metrics
 
 
-def test_whole_failed_cohort_and_dense_diagnostics_do_not_create_training_success():
-    p, d, c, a = json.loads(json.dumps(cohort()))
+@pytest.mark.parametrize("profile", [PROFILE, POSITIVE_PROFILE])
+def test_whole_failed_cohort_and_dense_diagnostics_do_not_create_training_success(profile):
+    p, d, c, a = json.loads(json.dumps(cohort(profile)))
     original = copy.deepcopy((p, d, c, a))
     assert require_pulse_cohort(p, d, c, a) == c["assessment"]
     replay, metrics = dense(d, c)
@@ -382,3 +391,97 @@ def test_motion_readout_measures_navigation_and_body_without_inventing_skill_gai
     else:
         with pytest.raises(ValueError):
             pulse_motion_readout(off, pulse)
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "partial", "hash", "admission", "running", "replay", "positive", "source"]
+)
+def test_positive_preparation_requires_all_negative_native_audit_and_dense_evidence(
+    monkeypatch, mutation
+):
+    from scripts import rsi_load_pre_planner_cohort as module
+
+    p, d, c, a = cohort()
+    replay, metrics = dense(d, c)
+    a["report_hash"], replay["report_hash"], metrics["report_hash"] = "audit", "replay", "metrics"
+    contact = dict(
+        schema="soccer.rsi.pre_planner_pulse_contact_complete.v1",
+        report_hash="contact",
+        upstream_readback_hash="audit",
+        replay_complete_hash="replay",
+        metrics_hash="metrics",
+        measured_contact_readout=pulse_contact_readout(d, c, replay, metrics),
+        new_fixed_control_replay_substeps=18000,
+        new_closed_loop_policy_trials=0,
+        new_neural_inferences=0,
+        new_optimizer_updates=0,
+        total_metrics_endpoints=6,
+        teacher_qualified=False,
+        dataset_admission_authorized=False,
+        neural_training_authorized=False,
+        hardware_authorized=False,
+        promotion_authorized=False,
+        paired_motion_diagnostics=[dict(group=g) for g in (28, 76, 12)],
+        input_file_hashes={"source.py": "original"},
+    )
+    spec = dict(
+        contact_unit="dense.service",
+        contact_complete="contact",
+        contact_complete_hash="contact",
+        contact_replay_complete="replay",
+        contact_metrics="metrics",
+    )
+    monkeypatch.setattr(
+        module,
+        "load_closed_pulse",
+        lambda *args, **kw: dict(
+            producer=p, declaration=d, complete=c, audit=a, assessment=c["assessment"]
+        ),
+    )
+
+    def terminal(unit):
+        assert unit == "dense.service"
+        if mutation == "running":
+            raise ValueError("not terminal")
+
+    monkeypatch.setattr(module, "require_terminal", terminal)
+    monkeypatch.setattr(
+        module, "digest", lambda p: "changed" if mutation == "source" else "original"
+    )
+    if mutation == "partial":
+        contact["paired_motion_diagnostics"].pop()
+    elif mutation == "hash":
+        spec["contact_complete_hash"] = "other"
+    elif mutation == "admission":
+        contact["dataset_admission_authorized"] = True
+    elif mutation == "replay":
+        contact["new_fixed_control_replay_substeps"] = 0
+    elif mutation == "positive":
+        p["exam_profile"] = POSITIVE_PROFILE
+    documents = {"contact": contact, "replay": replay, "metrics": metrics}
+    if mutation is None:
+        result = module.require_negative_predecessor(spec, sealed=lambda p: documents[p], pins={})
+        assert result["changed_polarity_is_not_learning"]
+        assert not result["teacher_qualified"]
+    else:
+        with pytest.raises(ValueError):
+            module.require_negative_predecessor(spec, sealed=lambda p: documents[p], pins={})
+
+
+def test_positive_fixed_replay_scope_cannot_be_retagged_to_negative():
+    _, d, c, _ = cohort(POSITIVE_PROFILE)
+    r, _ = dense(d, c)
+    cfg = dict(
+        replay_profile="pre-planner-navigation-positive-six",
+        behavior_model_hash=PARENT,
+        new_replay_budget=6,
+        new_substep_budget=18000,
+        cases=[
+            dict(case_id=row["case_id"], receipt_hash=row["source_receipt_hash"])
+            for row in r["rows"]
+        ],
+    )
+    assert fixed_replay_scope(cfg) == (6, 18000)
+    cfg["replay_profile"] = "pre-planner-navigation-six"
+    with pytest.raises(ValueError):
+        fixed_replay_scope(cfg)

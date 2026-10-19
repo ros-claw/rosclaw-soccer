@@ -4,11 +4,13 @@ import pytest
 
 from rosclaw_soccer.rsi.planner_navigation_pulse_scope import (
     GROUPS,
+    POSITIVE_PROFILE,
     PROFILE,
     assess_pulse_scope,
     pulse_scope,
     require_pulse_scope,
 )
+from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_reference_student_exam import load_inputs
 
 PARENT = "sha256:" + "a" * 64
@@ -47,11 +49,34 @@ def config():
 def test_fixed_three_training_sources_and_two_actions_not_a_search_sweep():
     require_pulse_scope(config())
     scope = pulse_scope(PARENT)
+    # Original6b18 frozen negative scope: adding a positive study cannot retag it.
+    assert (
+        hash_json(scope)
+        == "sha256:713944928065eaa5acce56e04ae4facb58fbc22834f29b2904d9a0e2b77b479d"
+    )
     assert scope["source_seeds"] == [20261078, 20261093, 20261077]
     assert len(scope["jobs"]) == 6
     assert [r["lateral_delta_m_s"] for r in scope["jobs"]] == [0.0, -0.08] * 3
     assert not scope["validation_or_fresh_sources_used"]
     assert not scope["trained_policy"]
+
+
+def test_opposite_polarity_requires_explicit_new_profile_and_whole_predecessor():
+    c = config()
+    c["exam_profile"] = POSITIVE_PROFILE
+    with pytest.raises(ValueError):
+        require_pulse_scope(c)
+    c["negative_predecessor"] = {"full_closed_evidence": "checked by preparation"}
+    require_pulse_scope(c)
+    scope = pulse_scope(PARENT, profile=POSITIVE_PROFILE)
+    assert [r["lateral_delta_m_s"] for r in scope["jobs"]] == [0.0, 0.08] * 3
+    assert scope["closed_negative_cohort_review_required_before_physics"]
+    assert all("positive-" in j["job"] for j in scope["jobs"])
+    c["exam_profile"] = PROFILE
+    with pytest.raises(ValueError):
+        require_pulse_scope(c)
+    with pytest.raises(ValueError):
+        pulse_scope(PARENT, profile="arbitrary-signed-pulse")
 
 
 @pytest.mark.parametrize("pulse_mode", [False, True, 1])
