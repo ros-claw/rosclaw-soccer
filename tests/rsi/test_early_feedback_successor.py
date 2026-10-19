@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts import rsi_early_feedback_successor as mod
-from tests.rsi.test_early_feedback_screen_scope import scope
+from tests.rsi.test_early_feedback_screen_scope import proof, scope
 
 
 def config():
@@ -133,3 +133,28 @@ def test_screen_cannot_run_until_distinct_reader_terminal(monkeypatch, tmp_path)
     with pytest.raises(ValueError, match="reader still running"):
         mod.main()
     assert not calls and not (root / "screen-config.json").exists()
+
+
+def test_screen_binds_actual_reader_bytes_and_runs_only_fixed_entry(monkeypatch, tmp_path):
+    cfg, _, root = runtime(monkeypatch, tmp_path, "screen")
+    root.mkdir()
+    d, _, _ = proof()
+    d["source_head"] = cfg["source_head"]
+    d["report_hash"] = mod.hash_json({k: v for k, v in d.items() if k != "report_hash"})
+    reader = root / "zero-readback.json"
+    reader.write_text(json.dumps(d))
+    seen = []
+    monkeypatch.setattr(mod, "require_terminal", lambda unit: None)
+    monkeypatch.setattr(mod.subprocess, "run", lambda command, **kw: seen.append(command))
+    mod.main()
+    assert len(seen) == 1 and seen[0][1] == "scripts/rsi_calibrate_feedback_branches.py"
+    assert "--early-screen" in seen[0]
+    emitted = json.loads((root / "screen-config.json").read_text())
+    assert emitted["early_zero_readback_file_hash"] == mod.digest(reader)
+    assert emitted["early_zero_readback_hash"] == d["report_hash"]
+    assert emitted["source_head"] == cfg["source_head"]
+    assert emitted["output_root"] == str(root / "screen")
+    assert not emitted["teacher_qualified"] and not emitted["training_authorized"]
+    with pytest.raises(FileExistsError):
+        mod.main()
+    assert len(seen) == 1
