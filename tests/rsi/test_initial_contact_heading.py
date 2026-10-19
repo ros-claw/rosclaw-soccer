@@ -132,12 +132,13 @@ def kinematic_fixture():
             else "body_" + name
         )
         bodies.append(
-            f'<body name="{body}" pos=".1 0 .1"><joint name="{name}" type="hinge" axis="0 0 1"/>'
+            f'<body name="{body}" pos=".1 0 .1">'
+            f'<joint name="{name}" type="hinge" axis="0 0 1" range="-2 2"/>'
             '<geom type="sphere" size=".01" mass=".01"/></body>'
         )
         motors.append(f'<motor joint="{name}"/>')
     xml = (
-        '<mujoco><worldbody><body name="pelvis"><freejoint/>'
+        '<mujoco><compiler angle="radian"/><worldbody><body name="pelvis"><freejoint/>'
         '<geom type="sphere" size=".05" mass="1"/>'
         + "".join(bodies)
         + '</body><body name="ball" pos="1 2 3"><freejoint/>'

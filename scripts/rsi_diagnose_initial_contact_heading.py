@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--replay-complete", required=True, type=Path)
     parser.add_argument("--metrics-readback", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--kinematic-proposals", action="store_true")
     args = parser.parse_args()
     if args.output.exists() or digest(args.anchor_declaration) != args.anchor_file_hash:
         raise ValueError("unused output and exact input anchor declaration required")
@@ -93,19 +94,37 @@ def main():
         pins[w["path"]] = w["sha256"]
         with np.load(w["path"], allow_pickle=False) as archive:
             arrays = dict(archive)
-            rows.append(
-                dict(
-                    initial_contact_heading(r, arrays),
-                    reconstructed_orientation=reconstruct_contact_orientation(model, r, arrays),
-                )
+            row = dict(
+                initial_contact_heading(r, arrays),
+                reconstructed_orientation=reconstruct_contact_orientation(model, r, arrays),
             )
+            if args.kinematic_proposals:
+                from rosclaw_soccer.rsi.foot_heading_nullspace import check_recorded_pose_proposal
+
+                event = r["first_foot_contact_event"]
+                row["kinematic_proposal"] = (
+                    None
+                    if event is None
+                    else check_recorded_pose_proposal(
+                        model,
+                        arrays["canonical_qpos_before_substep"][event["substep_index"]],
+                        event["other_body_name"],
+                        enabled=True,
+                    )
+                )
+            rows.append(row)
     source = Path(__file__).resolve().parents[1]
     for p in (Path(__file__), source / "src/rosclaw_soccer/physics/initial_contact_heading.py"):
+        pins[str(p)] = digest(p)
+    if args.kinematic_proposals:
+        p = source / "src/rosclaw_soccer/rsi/foot_heading_nullspace.py"
         pins[str(p)] = digest(p)
     if any(digest(p) != h for p, h in pins.items()):
         raise ValueError("source or input changed during no-physics direction analysis")
     result = dict(
-        schema="soccer.rsi.original_sixteen_initial_contact_directions.v1",
+        schema="soccer.rsi.original_sixteen_foot_heading_proposals.v1"
+        if args.kinematic_proposals
+        else "soccer.rsi.original_sixteen_initial_contact_directions.v1",
         source_anchor_hash=anchor["report_hash"],
         replay_complete_hash=replay["report_hash"],
         original_metrics_hash=metrics["report_hash"],
@@ -115,6 +134,7 @@ def main():
         current_source_ancestry_authenticated_here=False,
         kinematic_model_allocated=True,
         physical_integration_performed=False,
+        kinematic_proposals_only=args.kinematic_proposals,
         new_physical_steps=0,
         new_neural_inferences=0,
         new_optimizer_updates=0,
