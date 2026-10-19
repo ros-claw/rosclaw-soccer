@@ -37,6 +37,7 @@ def fixed_replay_scope(cfg):
         "positive-lateral-sixteen": 16,
         "reference-student-thirteen": 13,
         "reference-positive-zero-nine": 9,
+        "pre-planner-navigation-six": 6,
     }
     if profile not in counts:
         raise ValueError("explicit fixed diagnostic profile required")
@@ -117,6 +118,12 @@ def fixed_replay_scope(cfg):
         jobs = positive_zero_scope(cfg["behavior_model_hash"])["jobs"]
         if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
             raise ValueError("all nine original OFF and positive zero endpoints required")
+    if profile == "pre-planner-navigation-six":
+        from rosclaw_soccer.rsi.planner_navigation_pulse_scope import pulse_scope
+
+        jobs = pulse_scope(cfg["behavior_model_hash"])["jobs"]
+        if [r["case_id"] for r in cases] != [j["job"].replace("-", "_") for j in jobs]:
+            raise ValueError("all six original ordered OFF/pulse endpoints required")
     return count, steps
 
 
@@ -290,6 +297,29 @@ def main():
         in ("reference-student-thirteen", "reference-positive-zero-nine")
         else None
     )
+    pulse = None
+    if cfg.get("replay_profile") == "pre-planner-navigation-six":
+        from scripts.rsi_load_pre_planner_cohort import load_closed_pulse
+
+        for relative in (
+            "scripts/rsi_load_pre_planner_cohort.py",
+            "scripts/rsi_read_pre_planner_navigation.py",
+            "src/rosclaw_soccer/rsi/planner_navigation_pulse_cohort.py",
+            "src/rosclaw_soccer/rsi/planner_navigation_pulse.py",
+            "src/rosclaw_soccer/rsi/planner_navigation_pulse_scope.py",
+        ):
+            pins[str(source / relative)] = digest(source / relative)
+        pulse = load_closed_pulse(cfg, sealed=sealed, pins=pins)
+        if (
+            cfg["world_hash"] != pulse["producer"]["mesh_task_contact_world_hash"]
+            or cfg["behavior_model_hash"] != pulse["producer"]["behavior_model_hash"]
+            or any(
+                Path(case["receipt_path"]).resolve()
+                != (Path(pulse["producer"]["output_root"]) / f"receipt-{i:04d}.json").resolve()
+                for i, case in enumerate(cfg["cases"])
+            )
+        ):
+            raise ValueError("exact original pulse world, parent and owned receipt paths required")
     archived = None
     if cfg.get("replay_profile") == "catalog2-zero-c7":
         archived = sealed(cfg["archived_expert_readback"])
@@ -347,6 +377,21 @@ def main():
                 raise ValueError("only the exact whole-audited reference receipt may be replayed")
             qualification_kwargs = dict(
                 reference_student_model_hash=receipt.get("reference_student_model_hash")
+            )
+        if pulse is not None:
+            from rosclaw_soccer.rsi.planner_navigation_pulse import PlannerNavigationPulse
+
+            i = len(receipts)
+            if receipt != pulse["complete"]["results"][i]:
+                raise ValueError("exact whole-audited ordered pulse receipts required")
+            job = pulse["declaration"]["scope"]["jobs"][i]
+            qualification_kwargs = dict(
+                reference_student_model_hash=pulse["declaration"]["zero_reference_model"][
+                    "model_hash"
+                ],
+                planner_navigation_pulse_contract_hash=PlannerNavigationPulse(
+                    lateral_delta_m_s=job["lateral_delta_m_s"]
+                ).contract()["contract_hash"],
             )
         outcome = label_first_touch(trace)
         review = sealed(receipt["witnesses"]["independent_review"]["path"])
