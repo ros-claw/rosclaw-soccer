@@ -47,8 +47,8 @@ def require_scope(cfg):
         raise ValueError("exact six-case18240-step zero-action feedback calibration required")
 
 
-def prepare(path):
-    p = original_prepare(path, scope_validator=require_scope)
+def prepare(path, *, scope_validator=require_scope):
+    p = original_prepare(path, scope_validator=scope_validator)
     require_terminal(p.cfg["restore_unit"])
     folder = Path(p.cfg["restore_root"])
     complete_path = folder / "complete.json"

@@ -1,4 +1,4 @@
-"""Whole-six40ms zero-feedback calibration; no action optimization or learning."""
+"""Whole-six40ms feedback diagnostics with an explicit bounded screen; no learning."""
 
 import argparse
 import contextlib
@@ -51,12 +51,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--preflight", action="store_true")
+    parser.add_argument("--impact-screen", action="store_true")
     args = parser.parse_args()
-    p = prepare(args.config)
+    screening = args.impact_screen
+    if screening:
+        from scripts.rsi_feedback_screen_inputs import prepare as prepare_screen
+
+        p = prepare_screen(args.config)
+    else:
+        p = prepare(args.config)
+    study_kind = "feedback_impact_screen" if screening else "zero_feedback_calibration"
     if Path(__file__).resolve() != p.source / "scripts/rsi_calibrate_feedback_branches.py":
         raise ValueError("exact frozen feedback calibration runner required")
     if args.preflight:
-        print("WHOLE_SIX_ZERO_FEEDBACK_READY_NO_FULL_MODELS_OR_PHYSICS", flush=True)
+        print(
+            "WHOLE_SIX_IMPACT_SCREEN_READY_NO_FULL_MODELS_OR_PHYSICS"
+            if screening
+            else "WHOLE_SIX_ZERO_FEEDBACK_READY_NO_FULL_MODELS_OR_PHYSICS",
+            flush=True,
+        )
         return
     available = next(
         int(s.split()[1]) * 1024
@@ -67,7 +80,7 @@ def main():
         raise ValueError("56GiB available RAM required before full fixed mean allocation")
     p.root.mkdir()
     declaration = dict(
-        schema="soccer.rsi.zero_feedback_calibration_declaration.v1",
+        schema=f"soccer.rsi.{study_kind}_declaration.v1",
         config=p.cfg,
         input_file_hashes=p.pins,
         restore_complete_hash=p.restore["report_hash"],
@@ -78,6 +91,8 @@ def main():
         hardware_authorized=False,
         promotion_authorized=False,
     )
+    if screening:
+        declaration["zero_feedback_readback_hash"] = p.zero_readback["report_hash"]
     declaration["report_hash"] = hash_json(declaration)
     write_once(p.root / "declaration.json", declaration)
     attempted = integrated = plans = currents = residuals = recurrent_completed = 0
@@ -107,7 +122,10 @@ def main():
         if (
             time.time() >= p.cfg["deadline_unix"]
             or attempted > 18000
-            or (forecaster is not None and forecaster.attempted_steps > 240)
+            or (
+                forecaster is not None
+                and forecaster.attempted_steps > p.cfg["feedback_forecast_substep_budget"]
+            )
             or plans > 60
             or residuals > 1800
         ):
@@ -126,6 +144,7 @@ def main():
         )
         from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch
         from rosclaw_soccer.rsi.feedback_branch_control import BODY_SHAPES, G1FeedbackBranchControl
+        from rosclaw_soccer.rsi.feedback_impact_score import feedback_impact_score
         from rosclaw_soccer.rsi.fixed_recurrent_reference_audit import _numeric_graph_hash
         from rosclaw_soccer.rsi.foot_heading_control import FootHeadingContactProbe
         from rosclaw_soccer.rsi.foot_heading_evidence import FootHeadingCpuReconstruction
@@ -135,6 +154,7 @@ def main():
         )
         from rosclaw_soccer.rsi.sonic_locomotion_reference_audit import replay_locomotion_segments
         from rosclaw_soccer.sim.root_velocity_reference import root_velocity_world
+        from scripts.rsi_feedback_screen_inputs import best_proxy_index, branch_bank
 
         torch.set_num_threads(1)
         print("ALLOCATING_FULL_FIXED_MEAN", flush=True)
@@ -170,7 +190,11 @@ def main():
             np.asarray(physics[k], dtype=np.float64) for k in ("canonical_pd_kp", "canonical_pd_kd")
         )
         forecaster = G1FeedbackForecaster(
-            model, world_hash=p.world_hash, kp=kp, kd=kd, max_forecast_steps=240
+            model,
+            world_hash=p.world_hash,
+            kp=kp,
+            kd=kd,
+            max_forecast_steps=p.cfg["feedback_forecast_substep_budget"],
         )
         qi, vi, ai = forecaster._qi, forecaster._vi, forecaster._ai
         bq, bv, ball, bg, pelvis = (
@@ -323,7 +347,14 @@ def main():
                         }
                     )
                     tracker_hash = tracker_signature(tracker)
-                    for branch in range(2):
+                    bank, eligible = (
+                        branch_bank(model, d, ik, p.world_hash)
+                        if screening
+                        else ([("baseline", np.zeros(29)), ("repeat_zero", np.zeros(29))], True)
+                    )
+                    for branch, (action_name, offset) in enumerate(bank):
+                        bounded()
+                        is_zero = not np.any(offset)
                         control = G1FeedbackBranchControl(
                             model,
                             frame=frame,
@@ -335,7 +366,7 @@ def main():
                             previous_motor_delta_rad=previous,
                         )
                         out = forecaster.forecast(
-                            d, target, control=control, first_offset_nm=np.zeros(29)
+                            d, target, control=control, first_offset_nm=offset
                         )
                         # Preserve raw successful integration even if comparison rejects it.
                         record = out.next_target_record
@@ -348,6 +379,7 @@ def main():
                                 **out.arrays,
                                 **{"next_" + k: v for k, v in record.items()},
                                 **{"neural_next_" + k: v.cpu().numpy() for k, v in neural.items()},
+                                **({"offset_nm": offset} if screening else {}),
                             )
                         predictions.append(
                             dict(
@@ -356,9 +388,18 @@ def main():
                                 donor_hash=out.donor_integration_state_hash,
                             )
                         )
+                        if screening:
+                            predictions[-1].update(
+                                name=action_name,
+                                offset_nm=offset.tolist(),
+                                is_zero=bool(is_zero),
+                                score=feedback_impact_score(out, offset),
+                            )
                         if predicted is None:
+                            if not is_zero:
+                                raise ValueError("original zero baseline must be first")
                             predicted = out
-                        else:
+                        elif is_zero:
                             if (
                                 out.end_integration_state.tobytes()
                                 != predicted.end_integration_state.tobytes()
@@ -374,14 +415,23 @@ def main():
                                 )
                             ):
                                 raise ValueError("independent zero feedback branches differ")
+                        if (
+                            out.donor_integration_state_hash
+                            != predicted.donor_integration_state_hash
+                        ):
+                            raise ValueError("all candidates must copy the same original donor")
                         for k, source in (
-                            ("navigation_target_rad", "foundation_navigation_joint_target_rad"),
-                            ("taskspace_increment_rad", "taskspace_joint_increment_rad"),
-                            ("motor_delta_rad", "motor_delta_rad"),
-                            ("joint_target_rad", "joint_target_rad"),
+                            ()
+                            if not is_zero
+                            else (
+                                ("navigation_target_rad", "foundation_navigation_joint_target_rad"),
+                                ("taskspace_increment_rad", "taskspace_joint_increment_rad"),
+                                ("motor_delta_rad", "motor_delta_rad"),
+                                ("joint_target_rad", "joint_target_rad"),
+                            )
                         ):
                             equal(record[k], trace[source][frame + 1, 0], "predicted next " + k)
-                        for name in WIDTHS:
+                        for name in () if not is_zero else WIDTHS:
                             if not np.array_equal(
                                 neural[name].cpu().numpy(),
                                 trace["foundation_neural_" + name][frame + 1],
@@ -499,10 +549,39 @@ def main():
                 hardware_authorized=False,
                 promotion_authorized=False,
             )
+            if screening:
+                row.pop("both_branch_end_states_and_arrays_bit_equal")
+                row.pop("next_target_decomposition_and_neural_capture_matched")
+                selected = best_proxy_index(predictions)
+                base_cost = predictions[0]["score"]["proxy_cost"]
+                selected_cost = (
+                    None if selected is None else predictions[selected]["score"]["proxy_cost"]
+                )
+                row.update(
+                    screen_eligible=eligible,
+                    ineligible_reason=None
+                    if eligible
+                    else "NO_CURRENT_PRECONTACT_CAUSAL_SWING_FOOT",
+                    baseline_and_repeated_zero_bits_equal=True,
+                    zero_next_target_and_neural_capture_matched=True,
+                    candidate_actions_including_baseline=len(bank) - 1,
+                    selected_proxy_index=selected,
+                    local_proxy_improved_over_baseline=bool(
+                        base_cost is not None
+                        and selected_cost is not None
+                        and base_cost - selected_cost > 1e-6
+                    ),
+                    full_m0_gain_proven=False,
+                    nonzero_branch_independent_physics_replayed=False,
+                )
             row["report_hash"] = hash_json(row)
             write_once(p.root / f"case-{index}-complete.json", row)
             rows.append(row)
-            print("ZERO_FEEDBACK_CASE_COMPLETE", index, flush=True)
+            print(
+                "FEEDBACK_SCREEN_CASE_COMPLETE" if screening else "ZERO_FEEDBACK_CASE_COMPLETE",
+                index,
+                flush=True,
+            )
             del policy, decoder, tracker, d, ik
             gc.collect()
         bounded()
@@ -510,7 +589,7 @@ def main():
         if any(digest(name) != h for name, h in p.pins.items()):
             raise ValueError("original source/model/input changed")
         result = dict(
-            schema="soccer.rsi.zero_feedback_calibration_complete.v1",
+            schema=f"soccer.rsi.{study_kind}_complete.v1",
             declaration_hash=declaration["report_hash"],
             rows=rows,
             **counters(),
@@ -523,6 +602,16 @@ def main():
             hardware_authorized=False,
             promotion_authorized=False,
         )
+        if screening:
+            result.pop("all_six_zero_feedback_branches_qualified")
+            result["candidate_actions_optimized"] = sum(
+                r["candidate_actions_including_baseline"] - 1 for r in rows
+            )
+            result["all_zero_baselines_and_repeats_match_original"] = True
+            result["local_proxy_improved_source_cases"] = sum(
+                r["local_proxy_improved_over_baseline"] for r in rows
+            )
+            result["full_m0_gain_proven"] = False
         result["report_hash"] = hash_json(result)
         write_once(p.root / "complete.json", result)
     except BaseException as error:
