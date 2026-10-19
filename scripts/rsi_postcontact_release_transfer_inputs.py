@@ -48,8 +48,8 @@ def require_scope(cfg):
         raise ValueError("fixed whole18 declared local transfer and retention profile required")
 
 
-def prepare(path):
-    p = original_prepare(path, scope_validator=require_scope)
+def prepare(path, *, scope_validator=require_scope):
+    p = original_prepare(path, scope_validator=scope_validator)
 
     def pin(name, expected=None):
         file = Path(name)

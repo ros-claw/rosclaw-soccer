@@ -180,3 +180,102 @@ search counters must describe a single bounded no-replan bank after a measured
 foot contact; they are explicitly **recorded counters, not reexecuted search**.
 The physics method still consumes recorded neural targets, so neither this
 check nor a passing raw proxy grants independent NN/search or teacher status.
+
+## Closed development results, 2026-10-19
+
+The following are physical development results, **not new neural learning or
+team-football performance**. Evidence basenames below are relative to the
+external evidence root; complete raw failures and all original denominators
+remain available.
+
+| Experiment | Actual result | Evidence ceiling |
+| --- | --- | --- |
+| One failed context, thirteen named actions plus repeated zero | Five nonzero actions pass, all fourteen safe; original and repeated zero reproduce failure | One consumed context, not fourteen situations |
+| Fixed `forward_minus`, twelve local contexts | 3/12 to 5/12; two rescues, no regressions or added unsafe outcomes | Both rescues share one perturbed ball course, differing heading binding |
+| Same fixed action, six original retentions | 4/6 to 4/6; no regressions or added unsafe outcomes | Original six retained, not the full52-case benchmark |
+
+The full14 producer is frozen at `5c343403af723012184f9d2c146d557074977b7b`;
+the fixed18 producer at `e22b1076a23ca6688c316afc16563a52d7ebf771`.
+Neither changes the original mean, exploration law/seed, Foundation, IK,
+H300/post60, physical world, PD gains, hard torque bounds or M0.
+
+`rsi-postcontact-release-transfer18-20261019/complete.json` has logical seal
+`sha256:1971178687228fd0c56493ec4db2416598dd34a718b6c8b1c44a6b67a4b42311`.
+It contains eighteen new full rollouts /54,000 native steps and5,400 executed
+control Foundation pairs, zero forecasts or optimizer updates. Eighteen source
+baselines are reused, not counted as new executions. The twelve local bindings
+cover six distinct perturbed courses from three source clusters; the six
+retentions cover three original courses. Local conditions8/10 remain late
+right-censored;9/11 remain unsafe. Those records were not dropped or extended.
+
+The two rescues are local contexts1/3, the negative perturbation of the same
+original source course with heading OFF/ON. In context1, continuous foot
+contact ends at frame193 rather than201, and post60 forward progress increases
+from0.421405 to1.375929m. In context3, both continuous first-contact episodes
+end at199: the intervention does **not** simply shorten contact. However, the
+original later nonfoot contact (first248, peak162.808N) disappears, and forward
+progress increases from0.645887 to1.048766m, changing unsafe failure to safe
+pass. This is evidence of a useful action intervention, not proof of one
+universal biomechanical explanation or natural humanlike motion.
+
+Full raw readback from frozen `20977daf9ad0d50a5c455de250899713772af4be`
+checked all eighteen outcomes/controls/prefixes and67,848 input file hashes.
+`rsi-postcontact-release-transfer18-readback-20261019.json` has logical seal
+`sha256:e6efed43f59c4fcd65d66d905298033d9123b3d05525c6b312fdffab5f5a97b3`.
+
+Independent recorded-target physics from frozen
+`b51910d1b435649ce52b2cd0706b1be93f2081ed` completed another54,000 integration
+steps, all eighteen bodies, maximum measured discrepancy zero. A separate
+readback rechecked all69,463 input files and row seals after successful unit
+termination. `rsi-postcontact-release-transfer18-physics-20261019/complete.json`
+has logical seal
+`sha256:27ae0c0fa149b19932e49acc3b4e174e5f202916cd0ea560d79a8eb8bf46df07`.
+Recorded targets were consumed: no independent NN or search execution is
+implied by this physical check. The earlier full14 physical diagnostic is
+separate and was not counted as eighteen new contexts.
+
+Decision: preserve this limited safe gain as evidence; do not distill or
+promote it as a general teacher. The current-body exit-proxy18 experiment is
+the next separately frozen experiment; its results are pending, not inferred
+from these fixed-action results. Continuous autonomous multi-agent football,
+natural motions, precise corner shooting and a newly trained cerebellar model
+are not established by these numbers.
+
+## Full-H300 offline action bank for subsequent learning
+
+The new `postcontact-full-h300-bank252-v1` entry
+(`scripts/rsi_postcontact_full_bank.py`) declares all eighteen consumed
+contexts times thirteen named actions plus repeated zero. It reuses the
+fourteen already executed and physically verified authority trials from
+context1; the remaining238 bodies are new, for at most714,000 native steps
+and71,400 control Foundation pairs, zero forecasts or optimizer updates.
+The full252-comparison matrix is still eighteen contexts/nine courses from
+three clusters, **not**252 independent situations. Previously tested actions
+elsewhere are repetitions, not new independent data.
+
+Each new action is fixed by name before its rollout, triggered by its own
+completed measured contact, and followed by its own complete Foundation,
+IK, residual and planner feedback. Full source baselines and each independently
+executed repeated zero must retain original array bits and M0 outcomes. The
+existing one-context authority trajectories must pass exact source/policy,
+raw control, outcome and independent-physics admission before reuse. There
+are no source future targets or future contact frames in any new actor.
+
+This dataset measures the actual full-horizon consequences of every candidate
+action, including unsafe failure and legitimate late-contact censoring. It
+avoids mistaking a favorable short proxy for a successful full body. Offline
+labels prefer baseline when it already passes; otherwise they choose among
+observed safe passing actions by lateral/forward ratio, normalized torque
+norm, then stable index. If none pass, baseline is an explicitly unsuccessful
+fallback. The source trial for every label stays inspectable.
+
+This is **offline simulated-outcome supervision**, not a runtime actor that
+knows the future, and not an automatically qualified teacher. Runtime future
+outcome inputs remain forbidden; all teacher/training/promotion flags remain
+false. A later learner must use only the state available before the action,
+pass separately declared development/retention tests and undergo independent
+verification. No claim of new trained muscles or online RL follows merely
+from completing this bank. The CLI has a new frozen declaration, unused
+output, explicit deadline/native budget, no retries and a56GiB admission floor
+before the sole new full-mean constructor. Partial data/state and actual
+attempt counts are preserved on contract or numerical failure.
