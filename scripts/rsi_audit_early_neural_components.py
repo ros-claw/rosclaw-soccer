@@ -59,6 +59,11 @@ def prepare(path):
         or subprocess.check_output(["git", "status", "--porcelain"], cwd=source, text=True).strip()
     ):
         raise ValueError("frozen exact entry, unused output and bounded deadline required")
+    return load_inputs(cfg, path, source, root)
+
+
+def load_inputs(cfg, path, source, root):
+    """Read-only closed-cohort admission; caller validates its distinct scope/entry."""
     for key in ("producer_unit", "readback_unit", "physical_unit"):
         require_terminal(cfg[key])
     pins = {

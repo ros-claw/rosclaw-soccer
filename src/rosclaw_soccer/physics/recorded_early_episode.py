@@ -13,6 +13,7 @@ import numpy as np
 
 from rosclaw_soccer.physics.g1_pd_torque_forecast import G1PDTorqueForecaster
 from rosclaw_soccer.rsi.native_first_touch_initial_state import NativeFirstTouchInitialState
+from rosclaw_soccer.rsi.original_motor_component_audit import OriginalMotorComponentAudit
 from rosclaw_soccer.sim.root_velocity_reference import root_velocity_world
 
 
@@ -55,10 +56,23 @@ class RecordedEarlyEpisode:
         self.attempted_steps = self.integrated_steps = 0
         self.failed = self.used = False
 
-    def verify(self, trace: dict[str, np.ndarray]) -> dict[str, Any]:
+    def verify(
+        self,
+        trace: dict[str, np.ndarray],
+        *,
+        motor_audit: OriginalMotorComponentAudit | None = None,
+    ) -> dict[str, Any]:
         if self.used:
             raise ValueError("once-only callback-free whole-body physical replay required")
         self.used = self.failed = True
+        if motor_audit is not None and (
+            type(motor_audit) is not OriginalMotorComponentAudit
+            or motor_audit.model is not self.model
+            or motor_audit.failed
+            or motor_audit.pending
+            or motor_audit.next_frame != 0
+        ):
+            raise ValueError("fresh exact same-model original motor component auditor required")
         if mujoco.get_mjcb_control() is not None:
             raise ValueError("once-only callback-free whole-body physical replay required")
         expected_shapes = dict(
@@ -143,6 +157,10 @@ class RecordedEarlyEpisode:
                     equal(key, value, trace[key][f, 0])
             forces = np.zeros(6)
             target, offset = trace["joint_target_rad"][f, 0], actions[f]
+            if motor_audit is not None:
+                target = motor_audit.before_frame(
+                    d, f, {key: value[f, 0] for key, value in trace.items()}
+                )
             for s in range(10):
                 raw = (target - d.qpos[self.qi]) * self.kp - d.qvel[self.vi] * self.kd
                 parent = np.clip(raw, -self.limits, self.limits)
@@ -194,8 +212,9 @@ class RecordedEarlyEpisode:
                 d.xpos[self.ball],
                 trace["ball_position_after_step_m"][f, 0],
             )
-        self.failed = False
-        return dict(
+            if motor_audit is not None:
+                motor_audit.after_frame(f, forces)
+        result = dict(
             schema="soccer.rsi.recorded_early_h300_physics.v1",
             actual_physical_steps=self.integrated_steps,
             maximum_absolute_errors=errors,
@@ -206,3 +225,9 @@ class RecordedEarlyEpisode:
             hardware_authorized=False,
             promotion_authorized=False,
         )
+        if motor_audit is not None:
+            result["schema"] = "soccer.rsi.recorded_early_h300_motor_physics.v1"
+            result["motor_review"] = motor_audit.review()
+            result["original_ik_and_recurrent_motor_recomputed"] = True
+        self.failed = False
+        return result
