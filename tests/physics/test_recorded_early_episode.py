@@ -10,7 +10,7 @@ from tests.physics.test_g1_feedback_forecast import world
 
 
 @pytest.fixture
-def recorded():
+def recorded(request):
     m, _, _ = world()
     m.dof_armature[6:35] = 0.1
     binary = np.empty(mujoco.mj_sizeModel(m), dtype=np.uint8)
@@ -34,7 +34,7 @@ def recorded():
     limits = np.asarray(G1_HARD_TORQUE_LIMITS)
     for f in range(300):
         offset = np.zeros(29)
-        if 50 <= f < 53:
+        if not getattr(request, "param", False) and 50 <= f < 53:
             offset[5] = 0.1
         row = dict(
             canonical_qpos=d.qpos.copy()[None],
