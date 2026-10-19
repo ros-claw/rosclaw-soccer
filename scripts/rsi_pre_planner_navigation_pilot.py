@@ -40,7 +40,8 @@ def prepare(config_path, *, closed=False):
         or d["candidate"] != c.candidate
         or d["models"]["zero"] != c.models["zero"]
         or d["reused_teachers"] != {str(g): r for g, r in c.teachers.items()}
-        or d["scope"]["source_plans"]["positive19"] != c.positive_plan.contract()
+        or hash_json(d["scope"]["source_plans"]["positive19"])
+        != hash_json(c.positive_plan.contract())
         or d["mesh_task_contact_world_hash"] != c.cfg["mesh_task_contact_world_hash"]
     ):
         raise ValueError(

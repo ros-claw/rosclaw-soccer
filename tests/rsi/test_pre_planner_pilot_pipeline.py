@@ -4,16 +4,70 @@ import copy
 import json
 import sqlite3
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.first_touch_campaign import FirstTouchCampaign
 from rosclaw_soccer.rsi.planner_navigation_pulse_scope import GROUPS, pulse_scope
 from scripts import rsi_pre_planner_navigation_pilot as pilot
 from scripts.rsi_read_pre_planner_navigation import read_journal
+from tests.rsi.test_planner_navigation_pulse_evidence import zero_model
 from tests.rsi.test_planner_navigation_pulse_scope import config
+
+
+@pytest.mark.parametrize("tamper", [None, "changed_course", "changed_stream"])
+def test_real_prepare_compares_json_plan_identity_not_python_tuple_container(
+    tmp_path, monkeypatch, tamper
+):
+    runtime_plan = dict(seeds=(20261077, 20261078), jobs=[dict(course=(2.65, 0.1, 0.5))], stream=19)
+    saved_plan = json.loads(json.dumps(runtime_plan))
+    if tamper == "changed_course":
+        saved_plan["jobs"][0]["course"][0] += 0.01
+    elif tamper == "changed_stream":
+        saved_plan["stream"] = 18
+    candidate = dict(
+        parameters=BoundedFirstTouchControl().contract()["parameters"],
+        swing="bounded_contact_diagnostic",
+    )
+    model = zero_model()
+    teachers = {12: dict(receipt_hash="original-teacher")}
+    c = SimpleNamespace(
+        source=Path(pilot.__file__).resolve().parents[1],
+        root=tmp_path / "unused",
+        cfg=dict(matched_zero_cohort={}, mesh_task_contact_world_hash=model["world_hash"]),
+        models=dict(zero=model),
+        candidate=candidate,
+        teachers=teachers,
+        pins={},
+        sealed=None,
+        positive_plan=SimpleNamespace(contract=lambda: runtime_plan),
+    )
+    recorded = dict(
+        config=dict(exam_profile="reference-positive-zero-nine-v1"),
+        declaration=dict(
+            candidate=candidate,
+            models=dict(zero=model),
+            reused_teachers={"12": teachers[12]},
+            scope=dict(source_plans=dict(positive19=saved_plan)),
+            mesh_task_contact_world_hash=model["world_hash"],
+        ),
+        complete=dict(
+            report_hash="zero-complete", results=[dict(group=g, role="zero") for g in GROUPS]
+        ),
+    )
+    monkeypatch.setattr(pilot, "load_inputs", lambda *a, **kw: c)
+    monkeypatch.setattr(pilot, "load_cohort", lambda *a, **kw: recorded)
+    if tamper is None:
+        assert pilot.prepare(tmp_path / "not-read-config") is c
+        assert list(c.recorded_zeros) == list(GROUPS)
+    else:
+        with pytest.raises(ValueError, match="source plan"):
+            pilot.prepare(tmp_path / "not-read-config")
+    assert not c.root.exists()
 
 
 @pytest.mark.parametrize(

@@ -73,7 +73,7 @@ def main():
         declaration.get("schema") != "soccer.rsi.pre_planner_pulse_six_declaration.v1"
         or complete.get("schema") != "soccer.rsi.pre_planner_pulse_six_complete.v1"
         or any(declaration.get(k) != v for k, v in c.cfg.items())
-        or declaration["scope"] != c.scope
+        or hash_json(declaration["scope"]) != hash_json(c.scope)
         or declaration["candidate"] != c.candidate
         or declaration["zero_reference_model"] != c.models["zero"]
         or declaration["reused_zero_controls"] != {str(g): r for g, r in c.recorded_zeros.items()}
