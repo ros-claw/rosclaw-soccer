@@ -477,3 +477,66 @@ equivalence or a proof of faster full-controller latency. The MPC default
 implementation and all running/queued source remain unchanged. A later
 owned-branch teacher profile would need its own prospective raw-alignment,
 full-task and retention validation; numerical parity here cannot replace that.
+
+### Adaptive18 closed result (2026-10-19, supersedes the partial status above)
+
+The complete adaptive source run finished successfully at23:49:14. Local
+development improved3/12→7/12 with four rescues, zero regressions and no added
+unsafe condition. Original consumed retention improved4/6→6/6 with two
+rescues, zero regressions and no added unsafe condition. All18 original
+conditions, including two late-censored and two original unsafe local cases,
+remain in the denominator. Source execution used54000 native integration
+steps,10080 forecast steps and5400 own-body Foundation/control pairs. New
+optimizer updates:0. This is a causal teacher/control gain, not learned-actor
+growth, global benchmark success or a new promotional team video.
+
+The whole18 raw reader finished23:50:07, checking source binding, all decisions,
+current-Jacobian candidates, proxy arithmetic/ranking, M0 labels, original
+prefix and selected80ms body/three-NN alignment. The separate recorded-target
+physical verifier finished23:51:24 with54000 NEW integration steps and zero
+errors for every case. It does not independently recompute the NN/search.
+Another post-completion pass rehashed all75119 pinned physical input/source
+files and all row/completion seals. Teacher/training/promotion remain false.
+
+| Artifact | Logical hash | File hash |
+| --- | --- | --- |
+| Adaptive18 source | `1c545cca355a5c16a76e76bbdcddd4d96d262223ffa574c9ff0e2509f5044e2c` | `008c04a4735aba9cabe9ad2752328dc7a1837d8512caf22b9b5cc7db0910024f` |
+| Whole raw readback | `f002952849b15127d36de64c1ac2e3f79d2a2fc855fbddbf61cd84e59b9a34a6` | `9292a2b81a03a545b1845faaad0ced708a1b603ebd42408edfe6fe9b4f1b53dc` |
+| Recorded body physics | `3f1eb646abf59f131a5ecd2ef05dacf7713fdd20878ff75174d1fd13f6ec5d46` | `0a147b581bbd2f97bc2a753b45ef49a9dd18096f0a0ca00bd7fc06daf1801863` |
+
+All hashes are SHA-256. The paired raw diagnostic now also ran the new
+production helper on actual closed contexts4/6 and independently relabeled
+their M0 outcomes: heading OFF ten passing nonrepeat actions, heading ON none.
+It remains partial and does not replace whole252 qualification. The new
+pre-import-pinned partial report is
+`sha256:3e391e98984daa1beb94f50a88020f877dfd59b16afbada88f1b235fb21f18ea`.
+
+### Next public robustness declaration, not yet160 new executions
+
+`postcontact_robustness_plan.declare_robustness40` fixes ten public generator
+seeds before new outcomes and declares40 distinct initial conditions: ten in
+each existing low/high-x and negative/positive-vx stratum. Each condition has
+four matched arms: original versus postcontact teacher, each with heading OFF
+and ON. A dedicated hash domain supplies one motor sampling seed per condition,
+shared across all four arms. These are40 initial states and160 executions,
+not160 independent states or a re-run of the old G0 sampling bank. The mean
+weights, H300, post-contact60-frame criterion and hard bounds stay frozen.
+
+The declaration calls the shared receiving-course preflight using an explicit
+FirstTouchCourse type. RSI public launches and the legacy0.9m classroom are
+different domains; neither is relabeled or clipped to fit the other. Legacy
+ReceivingCourse preflight hashes remain unchanged. All40 states are checked
+before worker allocation, with duplicates and out-of-domain input rejected.
+The prospective budget is480000 native plus at most44800 forecast steps,
+zero optimizer updates. All failures/censors remain mandatory. It is public
+mechanism expansion, not sealed Fresh or teacher admission.
+
+The collector is **not yet implemented/launched** at this integration.
+The existing selected-window parity experiment is actually running, on
+separately frozen source, before selecting an owned-branch teacher profile.
+A parallel collector must validate per-worker body/RNN/history isolation and
+shared immutable weights on this exact stack. MuJoCo documents per-thread
+MjData and read-only shared MjModel, while its Python bindings release the
+GIL only during C calls. These are design inputs, not an established speedup:
+[simulation threading](https://mujoco.readthedocs.io/en/3.12.0/programming/simulation.html#multi-threading),
+[Python GIL boundary](https://mujoco.readthedocs.io/en/3.12.0/python.html#functions).

@@ -4,21 +4,66 @@ This is input validation, not physical qualification, split isolation, or
 evidence of independent samples. Replays belong to execution, not this bank.
 """
 
-from dataclasses import asdict
+import re
+from dataclasses import asdict, dataclass
 
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse, receiving_ball_launch
 
 
-def preflight_receiving_courses(courses: tuple[ReceivingCourse, ...]) -> str:
+@dataclass(frozen=True)
+class FirstTouchCourse:
+    """Explicit RSI launch domain, not the legacy0.9m receiving classroom."""
+
+    agent_id: str
+    seed: int
+    course: tuple[float, float, float]
+
+
+def preflight_receiving_courses(
+    courses: tuple[ReceivingCourse, ...] | tuple[FirstTouchCourse, ...],
+) -> str:
     """Return a content binding only after every course passes the launch domain.
 
     Using a normalized origin/radius here validates course parameters only.
     The actual scene, dimensions, ownership and replay budget still require
     their own checks. No course is clipped, replaced, dropped, or made easier.
+    The explicit FirstTouchCourse path checks the RSI x/y/v launch domain;
+    it never coerces it into the legacy0.9m ReceivingCourse classroom. Legacy
+    receiving inputs keep their original launch rules and content-hash schema.
     """
     if type(courses) is not tuple or not 1 <= len(courses) <= 4096:
         raise ValueError("bounded immutable receiving course bank required")
+    if all(type(course) is FirstTouchCourse for course in courses):
+        from rosclaw_soccer.rsi.first_touch_mechanism_expansion import validate_public_course
+
+        identities, states = set(), set()
+        for item in courses:
+            assert isinstance(item, FirstTouchCourse)
+            if (
+                type(item.agent_id) is not str
+                or not re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", item.agent_id)
+                or type(item.seed) is not int
+                or not 0 <= item.seed < 2**32
+            ):
+                raise ValueError("typed public first-touch identity and uint32 seed required")
+            validate_public_course(item.course)
+            identity, state = (item.agent_id, item.seed), (item.agent_id, item.course)
+            if identity in identities or state in states:
+                raise ValueError("duplicate first-touch identity/state; arms are not new courses")
+            identities.add(identity)
+            states.add(state)
+        return str(
+            hash_json(
+                dict(
+                    schema="soccer.public_first_touch_course_preflight.v1",
+                    courses=[asdict(item) for item in courses],
+                    public_only=True,
+                    private_fresh_accessed=False,
+                    physics_qualified=False,
+                )
+            )
+        )
     identities = set()
     for course in courses:
         if (
