@@ -421,3 +421,37 @@ best action. Additional public courses are needed; a tiny local table cannot
 justify generalization. This is a next-stage design, not an implemented or
 qualified hierarchical controller, and it does not solve late approach or
 pre-contact collision failures by itself.
+
+### Nine-pair data interface for the earlier decision
+
+`precontact_heading_pairs` and `scripts/rsi_read_precontact_heading_pairs.py`
+extract the existing nine OFF/ON course pairs only after the complete252
+raw/physical evidence chain succeeds. The runner pins Soccer and the explicitly
+selected Core Python source **before** project imports, verifies the actually
+loaded Core path, and rechecks all hashes on completion. It validates all252
+physical row bindings and independently relabels all original M0 outcomes.
+It performs zero new integration, inference or optimizer updates.
+
+The dataset has nine distinct current112-feature states: six consumed local
+courses and three consumed-retention courses, from three original source
+clusters. It retains234 unique heading/action consequences and excludes the18
+repeated-zero controls from that label count. Heading derivatives do not become
+independent courses. Repeated current observations or duplicated courses reject
+completion. Each pair checks the first30 complete physical/control/NN frames
+and frame30 current qpos/qvel/Foundation-navigation target before treatment.
+
+Every original task result stays present, including late/no-contact/unsafe
+outcomes. Finite-H300 task nonpass is known for a censored late touch, but its
+complete60-frame ball quality is not: the latter remains null/unobserved, never
+an invented zero. All teacher/training/activation flags remain false.
+These privileged SIM features are intended for teacher/reachability diagnosis,
+**not an approved student observation**. The1013 prohibition on privileged
+actor inputs still applies. A later student requires its own measured/sensed
+observation contract and closed-loop physical validation, not just reuse of
+this ground-truth array.
+
+Synthetic tests cover all nine pairs, partition separation, distinct-state
+rejection, fatal partial preservation, zero-execution preflight and leakage
+from a post-treatment joint target. They establish the extraction protocol,
+not nine physically successful situations. Actual whole-bank extraction is
+pending at this integration.
