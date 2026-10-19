@@ -33,8 +33,8 @@ def require_scope(cfg):
     old_scope(normalized)  # Retain every other original six-case/no-learning bound.
 
 
-def prepare(path):
-    p = prepare_original(path, scope_validator=require_scope)
+def prepare(path, *, scope_validator=require_scope):
+    p = prepare_original(path, scope_validator=scope_validator)
     for case in p.cases:
         source_frame = case["frame"]
         frame = source_frame - 2
@@ -45,8 +45,8 @@ def prepare(path):
     return p
 
 
-def preserve_and_compare(root, index, branch, out, predicted, trace, frame, widths):
-    """Comparison oracle stays outside the actor and runs after saving raw arrays."""
+def preserve_forecast(root, index, branch, out):
+    """Save all three actual targets/NN captures before any downstream scoring."""
     path = root / f"case-{index}-branch-{branch}.npz"
     if len(out.next_target_records) != 3 or len(out.next_neural_records) != 3:
         raise ValueError("three actual updated targets/neural captures required")
@@ -63,6 +63,12 @@ def preserve_and_compare(root, index, branch, out, predicted, trace, frame, widt
             **out.arrays,
             **flattened,
         )
+    return dict(path=str(path), sha256=digest(path), donor_hash=out.donor_integration_state_hash)
+
+
+def preserve_and_compare(root, index, branch, out, predicted, trace, frame, widths):
+    """Comparison oracle stays outside the actor and runs after saving raw arrays."""
+    witness = preserve_forecast(root, index, branch, out)
     if predicted is not None and (
         out.donor_integration_state_hash != predicted.donor_integration_state_hash
         or out.end_integration_state.tobytes() != predicted.end_integration_state.tobytes()
@@ -103,4 +109,4 @@ def preserve_and_compare(root, index, branch, out, predicted, trace, frame, widt
                 or a.tobytes() != trace["foundation_neural_" + name][frame + j].tobytes()
             ):
                 raise ValueError(f"early next{j} neural bits differ: " + name)
-    return dict(path=str(path), sha256=digest(path), donor_hash=out.donor_integration_state_hash)
+    return witness

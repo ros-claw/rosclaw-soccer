@@ -54,10 +54,15 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--impact-screen", action="store_true")
     mode.add_argument("--early-zero", action="store_true")
+    mode.add_argument("--early-screen", action="store_true")
     args = parser.parse_args()
-    screening = args.impact_screen
-    early = args.early_zero
-    if early:
+    screening = args.impact_screen or args.early_screen
+    early = args.early_zero or args.early_screen
+    if args.early_screen:
+        from scripts.rsi_early_feedback_screen_inputs import prepare as prepare_early_screen
+
+        p = prepare_early_screen(args.config)
+    elif early:
         from scripts.rsi_early_feedback_calibration import prepare as prepare_early
 
         p = prepare_early(args.config)
@@ -69,12 +74,19 @@ def main():
         p = prepare(args.config)
     study_kind = "feedback_impact_screen" if screening else "zero_feedback_calibration"
     if early:
-        study_kind = "zero_early_feedback_calibration"
+        study_kind = (
+            "early_feedback_impact_screen" if screening else "zero_early_feedback_calibration"
+        )
     if Path(__file__).resolve() != p.source / "scripts/rsi_calibrate_feedback_branches.py":
         raise ValueError("exact frozen feedback calibration runner required")
     if args.preflight:
         if early:
-            print("WHOLE_SIX_ZERO_EARLY80MS_READY_NO_FULL_MODELS_OR_PHYSICS", flush=True)
+            print(
+                "WHOLE_SIX_EARLY80MS_SCREEN_READY_NO_FULL_MODELS_OR_PHYSICS"
+                if screening
+                else "WHOLE_SIX_ZERO_EARLY80MS_READY_NO_FULL_MODELS_OR_PHYSICS",
+                flush=True,
+            )
             return
         print(
             "WHOLE_SIX_IMPACT_SCREEN_READY_NO_FULL_MODELS_OR_PHYSICS"
@@ -103,7 +115,9 @@ def main():
         hardware_authorized=False,
         promotion_authorized=False,
     )
-    if screening:
+    if early and screening:
+        declaration["early_zero_feedback_readback_hash"] = p.early_zero_readback["report_hash"]
+    elif screening:
         declaration["zero_feedback_readback_hash"] = p.zero_readback["report_hash"]
     declaration["report_hash"] = hash_json(declaration)
     write_once(p.root / "declaration.json", declaration)
@@ -383,18 +397,40 @@ def main():
                         if early:
                             from scripts.rsi_early_feedback_calibration import (
                                 preserve_and_compare,
+                                preserve_forecast,
                             )
 
                             out = forecaster.forecast(
                                 d, target, control=control, early_offset_nm=offset
                             )
-                            predictions.append(
+                            witness = (
                                 preserve_and_compare(
                                     p.root, index, branch, out, predicted, trace, frame, WIDTHS
                                 )
+                                if is_zero
+                                else preserve_forecast(p.root, index, branch, out)
                             )
+                            if screening:
+                                from rosclaw_soccer.rsi.early_feedback_impact_score import (
+                                    early_feedback_impact_score,
+                                )
+
+                                witness.update(
+                                    name=action_name,
+                                    offset_nm=offset.tolist(),
+                                    is_zero=bool(is_zero),
+                                    score=early_feedback_impact_score(out, offset),
+                                )
+                            predictions.append(witness)
                             if predicted is None:
+                                if not is_zero:
+                                    raise ValueError("original early zero must be first")
                                 predicted = out
+                            if (
+                                out.donor_integration_state_hash
+                                != predicted.donor_integration_state_hash
+                            ):
+                                raise ValueError("all early branches must share unchanged donor")
                             continue
                         out = forecaster.forecast(
                             d, target, control=control, first_offset_nm=offset
@@ -617,13 +653,17 @@ def main():
                 )
             if early:
                 row.pop("both_zero_feedback40ms_branches_match_original")
-                row.pop("next_target_decomposition_and_neural_capture_matched")
+                row.pop("next_target_decomposition_and_neural_capture_matched", None)
                 row.update(
                     original_contact_frame=case["original_contact_frame"],
                     both_zero_feedback80ms_branches_match_original=True,
-                    all_three_next_targets_and_neural_captures_matched=True,
                     nonzero_interventions_qualified=False,
                 )
+                row[
+                    "all_three_zero_next_targets_and_neural_captures_matched"
+                    if screening
+                    else "all_three_next_targets_and_neural_captures_matched"
+                ] = True
             row["report_hash"] = hash_json(row)
             write_once(p.root / f"case-{index}-complete.json", row)
             rows.append(row)
@@ -638,7 +678,7 @@ def main():
         factory._stable()
         if any(digest(name) != h for name, h in p.pins.items()):
             raise ValueError("original source/model/input changed")
-        if early:
+        if early and not screening:
             actual_counts = counters()
             for key, expected in (
                 ("recorded_attempted_steps", 18000),
