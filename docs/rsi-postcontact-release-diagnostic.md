@@ -1210,3 +1210,31 @@ The same run profiled one unused branch constructor without extra integration:
 11.507s including profiler overhead,11.273s in residual forking,5.915s in
 three whole numeric-graph traversals and5.362s in deep-copying3.2million objects.
 Do not infer an unmeasured speedup or skip full-model checks from these timings.
+
+#### Matched response objective and strict historical roles
+
+The subsequent actual paired fit completed2304 Core scalar-head optimizer
+steps across three seeds, zero actor updates or new physical bodies. On its
+tiny consumed diagnostic, test action-effect MSE was0.005297/0.005215/0.005344
+versus zero-effect0.006020; validation also improved. Only13/4/2 physical pairs
+were available in train/validation/test, and the nonzero test pairs share one
+source cluster. This is a narrow response-prediction signal, not learned motor
+improvement, planning qualification or a publicity result.
+
+An expanded factual extraction retained235 actual matched pairs from the
+closed13-action bank and public40, without filtering for successful actions.
+Its V1 extraction executed no gradients, but its ancestry-only split metadata
+incorrectly labelled some original retention as training. Preserve that V1
+artifact; never train directly from its split. `matched_response_roles` admits
+roles against the authenticated original partition, forcing all historical
+contexts12–17 to evaluation-only retention even when ancestry overlaps local
+training. V2 admission is required before expanded fitting. All diagnostic
+splits remain consumed/post-hoc, not sealed Fresh or proven global ancestry.
+
+`snapshot_domain_compilation` is a separate opt-in research storage adapter.
+It runs the whole original factory constructor first, retains every original
+domain-bank byte and numeric field, delegates unchanged Core gate math, and
+requires exact reversible whole-graph/alias hashes. Default collectors remain
+unchanged. Synthetic decoder and kernel equivalence do not establish actual
+G1 parity or speedup: these require an independently recorded real simulation
+comparison before the adapter is used for broader data collection.
