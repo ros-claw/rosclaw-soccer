@@ -60,6 +60,41 @@ def compare_postcontact_execution(trace, forecast, frame, *, safety_cancel_frame
     )
 
 
+def compare_named_release_execution(trace, forecast, frame):
+    """Named actual release vs an uncancelled recorded planning branch.
+
+    No historical capture is relabelled. A changed/cancelled requested action
+    is rejected rather than claiming a full80ms bridge from a partial prefix.
+    Caller authenticates both original sources and their physical reviews.
+    """
+    if "postcontact_release_requested_offset_nm" not in trace or any(
+        k.startswith(("early_impact_feedback_", "impact_feedback_", "postcontact_exit_"))
+        for k in trace
+    ):
+        raise ValueError("actual named-release namespace without mixed interventions required")
+    if type(frame) is not int or not 30 <= frame <= 294:
+        raise ValueError("bounded actual named-release start frame required")
+    actual = trace["postcontact_release_requested_offset_nm"]
+    expected = forecast["requested_offset_nm"]
+    if (
+        actual.shape != (300, 1, 29)
+        or expected.shape != (40, 29)
+        or actual.dtype != np.float64
+        or expected.dtype != np.float64
+        or not np.isfinite(actual).all()
+        or not np.isfinite(expected).all()
+        or np.repeat(actual[frame : frame + 4, 0], 10, axis=0).tobytes() != expected.tobytes()
+    ):
+        raise ValueError("identical full80ms actual and planned requested offsets required")
+    return _compare_execution(
+        trace,
+        forecast,
+        frame,
+        safety_cancel_frame=None,
+        schema="soccer.rsi.named_release_planning_branch_execution_alignment.v1",
+    )
+
+
 def _compare_execution(trace, forecast, frame, *, safety_cancel_frame, schema):
     if (
         type(frame) is not int

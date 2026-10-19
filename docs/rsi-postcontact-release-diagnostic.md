@@ -1339,3 +1339,25 @@ update an actor, authorize a controller or qualify H300 success. Planned
 fixed256-step/head, three-seed fitting must use train clusters only and compare
 both zero-effect and train-only, same-action nearest-neighbor baselines on
 consumed validation/test source clusters. All failures remain evidence.
+
+The actual348-pair fit completed2304 scalar Core optimizer steps, zero actor
+updates. Train/validation/test are204/72/72 paired comparisons from17/6/6
+states and6/2/2 source clusters. All three seeds beat zero and same-action
+train-only nearest-neighbor baselines: test MSE0.012286/0.012384/0.012387
+versus0.016084 and0.015137 respectively. An independent literal review
+recomputed normalization, Core training-array commitments, predictions and
+both baselines; it did not rerun gradients or physical trajectories.
+
+Prediction improvement did not justify arbitrary action pruning. A fixed
+top-six nonzero velocity-prior diagnostic retained all6 test decisions but
+only5/6 validation and16/17 training decisions of the original native planner,
+identically across all seeds. Changed actions need new H300 physics; no goal
+gain follows from these tables. Prefer investigating learned search ordering
+with an admissible native cost lower bound before removing candidates.
+
+`compare_named_release_execution` explicitly bridges the actual named-release
+namespace to an original planning capture: full40 requested torque substeps,
+physical/control boundaries, three fresh neural target updates, and exact
+neural bits must agree. Mixed namespaces or a cancelled/changed lease are
+rejected, not relabelled or counted as complete80ms evidence. Source and
+physical-receipt authentication remain caller responsibilities.

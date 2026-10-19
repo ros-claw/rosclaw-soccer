@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS
-from scripts.rsi_early_impact_execution_alignment import compare_execution, verify_actual_torques
+from scripts.rsi_early_impact_execution_alignment import (
+    compare_execution,
+    compare_named_release_execution,
+    verify_actual_torques,
+)
 from tests.rsi.test_early_feedback_readback import fixture
 
 
@@ -18,6 +22,33 @@ def test_all40_controls_and_three_neural_boundaries_match():
     assert max(d["maximum_absolute_errors"].values()) == 0
     assert not d["dense2ms_actual_qv_captured"] and not d["teacher_qualified"]
     assert not d["independent_neural_implementation"] and d["new_physical_steps"] == 0
+
+
+def named_fixture():
+    # Explicit synthetic data, not a relabelled historical capture.
+    forecast, synthetic, _ = fixture()
+    trace = {k: v for k, v in synthetic.items() if not k.startswith("early_impact_feedback_")}
+    trace["postcontact_release_requested_offset_nm"] = np.zeros((300, 1, 29))
+    forecast["requested_offset_nm"] = np.zeros((40, 29))
+    return forecast, trace
+
+
+def test_named_release_has_its_own_namespace_and_full_bridge():
+    forecast, trace = named_fixture()
+    result = compare_named_release_execution(trace, forecast, 30)
+    assert result["full80ms_execution_alignment_verified"]
+    assert result["actual_neural_target_updates_compared"] == 3
+    assert result["new_physical_steps"] == 0
+    trace["postcontact_exit_requested_offset_nm"] = np.zeros((300, 1, 29))
+    with pytest.raises(ValueError, match="namespace"):
+        compare_named_release_execution(trace, forecast, 30)
+
+
+def test_changed_requested_lease_is_not_hidden_by_equal_saturated_controls():
+    forecast, trace = named_fixture()
+    trace["postcontact_release_requested_offset_nm"][31, 0, 0] = 1
+    with pytest.raises(ValueError, match="requested offsets"):
+        compare_named_release_execution(trace, forecast, 30)
 
 
 @pytest.mark.parametrize("j", [1, 2, 3])
