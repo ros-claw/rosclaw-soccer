@@ -1153,3 +1153,60 @@ rejection of a rehashed artifact requesting runtime authority. The new adapter
 passed mypy and whole Ruff. At this checkpoint actual public40 fitting has
 not run. The model exposes only predicted velocity changes, no action,
 runtime, driver, hardware, actor update or promotion interface.
+
+#### Actual marginal fit passed a weak check, then failed action-response review
+
+The real public40 reader retained76 factual transitions from38 courses/ten
+clusters, including task failures and unsafe outcomes. Two no-foot courses9/23
+remain explicitly skipped, not fabricated zero labels. There are57 distinct
+numeric input/label rows; paired arms are not independent courses. Train/
+validation/diagnostic-test rows are44/16/16; test still has only two clusters.
+Three seeds completed2304 scalar Core optimizer steps, zero actor updates or
+new physics. Diagnostic-test MSE was0.2010/0.2178/0.2211 versus persistence0.4271
+and train-mean0.3195. Validation MSE was also lower than both simple baselines.
+
+An independent literal feature/actual-label reconstruction and metric check
+then exposed the more important limitation. For nonzero matched interventions,
+predicted **action-induced** velocity differences were worse than predicting
+no action effect: test MSE0.02283/0.02259/0.02240 versus zero-effect0.00602;
+validation was likewise worse. There are only13/4/2 nonzero physical pairs in
+train/validation/test, with the test interventions all in one of its two
+clusters. Reject action-response/planning qualification despite the better
+marginal prediction. Do not rewrite the original fit result or call it a
+learned motor improvement. Both fit and independent rejection remain external
+evidence, with no authority to control a body.
+
+The next distinctly scoped objective is paired total-response learning:
+selected-minus-original measured effects under matched original controller,
+initial state and sampling seed. `fit_matched_effect` validates equal current
+partial state/clock and zero-versus-nonzero wishes, reuses the same Core solver,
+and adds explicit mathematical zero identities. These are not extra physical
+examples. Its separate schema and `predict_matched_effect` compute
+`raw(state,action)-raw(state,zero)`, enforcing an exact zero-action boundary.
+Full matching of histories remains a caller-owned evidence requirement; equal
+partial features alone do not establish causal provenance. Twelve combined
+synthetic tests passed2.80s; new-module mypy/whole Ruff pass after formatting
+an initial test import/semicolon style issue. The contrastive actual fit is not
+yet executed at this checkpoint and still has no actor interface.
+
+#### Full-neural approach confirmation now closed
+
+The fixed reference18 confirmation subsequently executed all eight genuinely
+recomputed H300 bodies24000 native steps: four baselines and four conditional
+candidates. The candidate switches only in near cases0/12 at its own measured
+frames150/152, making298 external actor calls on its own continuous suffix;
+all other approach/remainder frames recompute the original neural stack.
+Candidate task passes2/4 versus baseline1/4, one rescue and no loss of the
+one old success. Far cases8/10 deliberately retain the original unsafe
+failure, rather than claiming a solved interception. All compared body arrays
+and M0 outcomes exactly match the closed replay-oracle **as comparator only**.
+A separate recorded-PD reader completed24000 additional native steps, all
+checked physical errors exactly0. No optimizer ran in this confirmation.
+
+This establishes a narrow full-causal near-intercept research path, not robust
+teacher/student learning, unrestricted reference licensing, a whole-body
+naturalness certificate or continuous autonomous multiplayer soccer.
+The same run profiled one unused branch constructor without extra integration:
+11.507s including profiler overhead,11.273s in residual forking,5.915s in
+three whole numeric-graph traversals and5.362s in deep-copying3.2million objects.
+Do not infer an unmeasured speedup or skip full-model checks from these timings.

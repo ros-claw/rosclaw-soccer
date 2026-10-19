@@ -13,6 +13,8 @@ from rosclaw_soccer.sim.contracts import hash_json
 
 WIDTH = 17
 SEEDS = (1019, 2027, 4093)
+MARGINAL_SCHEMA = "soccer.research.observed_ball_response_model.v1"
+EFFECT_SCHEMA = "soccer.research.matched_ball_action_effect_model.v1"
 
 
 def observation(
@@ -108,6 +110,63 @@ def fit(
     Caller supplies ONLY the declared training source clusters. Source integrity,
     validation/test scoring and physical interpretation are outside this function.
     """
+    return _fit_heads(features, delta_velocity, seed=seed, steps=steps, paired_rows=None)
+
+
+def fit_matched_effect(
+    baseline_features: np.ndarray,
+    action_features: np.ndarray,
+    baseline_delta_velocity: np.ndarray,
+    action_delta_velocity: np.ndarray,
+    *,
+    seed: int,
+    steps: int = 256,
+) -> dict[str, Any]:
+    """Fit factual paired effects with explicit mathematical zero identities.
+
+    The caller must prove full matched initial/controller/noise histories. Partial
+    observation equality alone does not prove a causal experiment. Identity anchors
+    are NOT additional physical trajectories or independent causal examples.
+    """
+    for x in (baseline_features, action_features):
+        _features(x)
+    if (
+        len(baseline_features) > 2048
+        or action_features.shape != baseline_features.shape
+        or np.any(baseline_features[:, 12:16])
+        or not np.all(np.any(action_features[:, 12:16] != 0, axis=1))
+        or np.max(abs(action_features[:, 12:16])) > 1
+        or not np.array_equal(baseline_features[:, :12], action_features[:, :12])
+        or not np.array_equal(baseline_features[:, 16], action_features[:, 16])
+    ):
+        raise ValueError("matched current state/clock and nonzero-versus-zero action required")
+    for target in (baseline_delta_velocity, action_delta_velocity):
+        if (
+            type(target) is not np.ndarray
+            or target.dtype != np.float64
+            or target.shape != (len(baseline_features), 3)
+            or not np.isfinite(target).all()
+            or np.max(abs(target)) > 1e6
+        ):
+            raise ValueError("finite actual paired velocity labels required")
+    effect = action_delta_velocity - baseline_delta_velocity
+    return _fit_heads(
+        np.concatenate((action_features, baseline_features)),
+        np.concatenate((effect, np.zeros_like(effect))),
+        seed=seed,
+        steps=steps,
+        paired_rows=len(effect),
+    )
+
+
+def _fit_heads(
+    features: np.ndarray,
+    delta_velocity: np.ndarray,
+    *,
+    seed: int,
+    steps: int,
+    paired_rows: int | None,
+) -> dict[str, Any]:
     _features(features)
     if (
         type(delta_velocity) is not np.ndarray
@@ -157,7 +216,7 @@ def fit(
         )
         heads.append(result)
     model = dict(
-        schema="soccer.research.observed_ball_response_model.v1",
+        schema=MARGINAL_SCHEMA if paired_rows is None else EFFECT_SCHEMA,
         mode="SIM_ONLY",
         seed=seed,
         width=WIDTH,
@@ -165,7 +224,9 @@ def fit(
         scale=scale.tolist(),
         heads=heads,
         optimizer_steps=sum(h["accepted_value_optimizer_steps"] for h in heads),
-        target="mirrored_actual_cached_ball_velocity_tplus4_minus_t_m_s",
+        target="mirrored_actual_cached_ball_velocity_tplus4_minus_t_m_s"
+        if paired_rows is None
+        else "mirrored_actual_paired_total_controller_conditioned_action_effect_80ms_m_s",
         native_trajectory_verified_by_caller=False,
         partial_observation_not_markov=True,
         actor_optimizer_updates=0,
@@ -175,14 +236,44 @@ def fit(
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if paired_rows is not None:
+        model.update(
+            training_matched_physical_pairs=paired_rows,
+            mathematical_zero_identity_rows=paired_rows,
+            identity_rows_are_new_physical_examples=False,
+            full_matched_history_verified_by_caller=False,
+            prediction_transform="raw(s,a)-raw(s,0)",
+        )
     model["model_hash"] = hash_json(model)
     return model
 
 
 def predict(model: dict[str, Any], features: np.ndarray) -> np.ndarray:
+    return _predict_raw(model, features, schema=MARGINAL_SCHEMA)
+
+
+def predict_matched_effect(model: dict[str, Any], features: np.ndarray) -> np.ndarray:
+    """Exact zero-action boundary, no future data or action selection API."""
     _features(features)
     if (
-        model.get("schema") != "soccer.research.observed_ball_response_model.v1"
+        np.max(abs(features[:, 12:16])) > 1
+        or model.get("prediction_transform") != "raw(s,a)-raw(s,0)"
+    ):
+        raise ValueError("bounded matched-effect wish and exact zero-boundary transform required")
+    zero = features.copy()
+    zero[:, 12:16] = 0
+    result: np.ndarray = _predict_raw(model, features, schema=EFFECT_SCHEMA) - _predict_raw(
+        model, zero, schema=EFFECT_SCHEMA
+    )
+    if not np.isfinite(result).all():
+        raise ValueError("finite matched action-effect difference required")
+    return result
+
+
+def _predict_raw(model: dict[str, Any], features: np.ndarray, *, schema: str) -> np.ndarray:
+    _features(features)
+    if (
+        model.get("schema") != schema
         or model.get("model_hash")
         != hash_json({k: v for k, v in model.items() if k != "model_hash"})
         or model.get("width") != WIDTH

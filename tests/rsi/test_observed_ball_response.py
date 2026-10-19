@@ -5,7 +5,14 @@ import copy
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.observed_ball_response import WIDTH, fit, observation, predict
+from rosclaw_soccer.rsi.observed_ball_response import (
+    WIDTH,
+    fit,
+    fit_matched_effect,
+    observation,
+    predict,
+    predict_matched_effect,
+)
 from rosclaw_soccer.sim.contracts import hash_json
 
 
@@ -93,3 +100,41 @@ def test_no_target_shape_broadcast_or_undeclared_seed():
         fit(x, y[:, 0], seed=1019, steps=4)
     with pytest.raises(ValueError):
         fit(x, y, seed=0, steps=4)
+
+
+def test_matched_effect_has_separate_schema_and_exact_zero_boundary():
+    rng = np.random.default_rng(7)
+    zero = rng.normal(size=(3, WIDTH))
+    zero[:, 12:16] = 0
+    active = zero.copy()
+    active[:, 12] = 1
+    baseline = rng.normal(size=(3, 3))
+    changed = baseline + np.array([0.1, 0.02, 0.0])
+    model = fit_matched_effect(zero, active, baseline, changed, seed=2027, steps=4)
+    assert model["optimizer_steps"] == 12
+    assert model["training_matched_physical_pairs"] == 3
+    assert model["mathematical_zero_identity_rows"] == 3
+    assert model["identity_rows_are_new_physical_examples"] is False
+    assert (
+        model["target"]
+        == "mirrored_actual_paired_total_controller_conditioned_action_effect_80ms_m_s"
+    )
+    np.testing.assert_array_equal(predict_matched_effect(model, zero), np.zeros((3, 3)))
+    assert np.isfinite(predict_matched_effect(model, active)).all()
+    with pytest.raises(ValueError):
+        predict(model, active)
+
+
+def test_mismatched_partial_states_or_zero_training_action_rejected():
+    zero = np.zeros((2, WIDTH))
+    active = zero.copy()
+    active[:, 12] = 1
+    y = np.zeros((2, 3))
+    changed = active.copy()
+    changed[0, 0] = 1
+    with pytest.raises(ValueError):
+        fit_matched_effect(zero, changed, y, y, seed=1019, steps=4)
+    with pytest.raises(ValueError):
+        fit_matched_effect(zero, zero, y, y, seed=1019, steps=4)
+    with pytest.raises(ValueError):
+        fit_matched_effect(zero, active, y, y[:, 0], seed=1019, steps=4)
