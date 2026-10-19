@@ -1238,3 +1238,21 @@ requires exact reversible whole-graph/alias hashes. Default collectors remain
 unchanged. Synthetic decoder and kernel equivalence do not establish actual
 G1 parity or speedup: these require an independently recorded real simulation
 comparison before the adapter is used for broader data collection.
+
+The V2 expanded fit subsequently executed2304 additional scalar optimizer
+steps, zero actor/physics updates. It trained on61 factual pairs (48 old local
+and13 public), evaluated52 validation,50 diagnostic-test and72 original
+retention pairs. Retention never entered gradients. All three seeds improved
+old-family validation/test/retention relative to zero-effect. However public
+test MSE regressed to0.00721–0.00755 versus zero-effect0.00602 and the earlier
+tiny model around0.0052. Reject the mixed model for cross-family response
+qualification; an aggregate score would conceal the regression.
+
+The next bounded ablation changes only training replay weights, not model
+width, labels, feature definition or256-update/head budget. An explicit
+resampling index retains every admitted training pair; duplicates and
+mathematical identity rows are counted separately and never claimed as new
+physical experience. A predeclared equal-family mixture gives each of48 old
+pairs13 draws and each of13 public pairs48 draws (624 draws/family). Original
+retention, validation and test rows remain excluded. This is a diagnostic
+stability/plasticity ablation, not a claim that weighting solves motor learning.

@@ -138,3 +138,33 @@ def test_mismatched_partial_states_or_zero_training_action_rejected():
         fit_matched_effect(zero, zero, y, y, seed=1019, steps=4)
     with pytest.raises(ValueError):
         fit_matched_effect(zero, active, y, y[:, 0], seed=1019, steps=4)
+
+
+def test_resampling_preserves_physical_count_and_zero_identity():
+    zero = np.zeros((2, WIDTH))
+    active = zero.copy()
+    active[:, 12] = 1
+    y = np.zeros((2, 3))
+    indices = np.array([0, 1, 1], dtype=np.int64)
+    model = fit_matched_effect(
+        zero, active, y, y + 0.1, seed=1019, steps=2, resample_indices=indices
+    )
+    assert model["training_matched_physical_pairs"] == 2
+    assert model["training_resampled_pair_rows"] == 3
+    assert model["mathematical_zero_identity_rows"] == 3
+    assert model["resampling_duplicates_are_new_physical_examples"] is False
+    assert model["optimizer_steps"] == 6
+    np.testing.assert_array_equal(predict_matched_effect(model, zero), np.zeros((2, 3)))
+
+
+@pytest.mark.parametrize(
+    "indices",
+    [np.array([0, 0]), np.array([0, 2]), np.array([0.0, 1.0]), np.array([[0, 1]])],
+)
+def test_resampling_cannot_drop_or_invent_a_training_pair(indices):
+    zero = np.zeros((2, WIDTH))
+    active = zero.copy()
+    active[:, 12] = 1
+    y = np.zeros((2, 3))
+    with pytest.raises(ValueError):
+        fit_matched_effect(zero, active, y, y, seed=1019, steps=2, resample_indices=indices)

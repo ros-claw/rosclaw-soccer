@@ -121,12 +121,16 @@ def fit_matched_effect(
     *,
     seed: int,
     steps: int = 256,
+    resample_indices: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Fit factual paired effects with explicit mathematical zero identities.
 
     The caller must prove full matched initial/controller/noise histories. Partial
     observation equality alone does not prove a causal experiment. Identity anchors
     are NOT additional physical trajectories or independent causal examples.
+    Optional explicit training-only resampling changes sampling weights; it may
+    neither omit an admitted pair nor introduce new indices. Repetitions are
+    reported separately from the original physical-pair count.
     """
     for x in (baseline_features, action_features):
         _features(x)
@@ -150,13 +154,39 @@ def fit_matched_effect(
         ):
             raise ValueError("finite actual paired velocity labels required")
     effect = action_delta_velocity - baseline_delta_velocity
-    return _fit_heads(
+    physical_pairs = len(effect)
+    if resample_indices is not None:
+        if (
+            type(resample_indices) is not np.ndarray
+            or resample_indices.dtype.kind not in "iu"
+            or resample_indices.ndim != 1
+            or not physical_pairs <= len(resample_indices) <= 2048
+            or not np.array_equal(np.unique(resample_indices), np.arange(physical_pairs))
+        ):
+            raise ValueError(
+                "bounded explicit training-only resampling retaining every pair required"
+            )
+        baseline_features = baseline_features[resample_indices]
+        action_features = action_features[resample_indices]
+        effect = effect[resample_indices]
+    model = _fit_heads(
         np.concatenate((action_features, baseline_features)),
         np.concatenate((effect, np.zeros_like(effect))),
         seed=seed,
         steps=steps,
         paired_rows=len(effect),
     )
+    if resample_indices is not None:
+        # Repetition changes sampling weight, not the number of physical pairs.
+        # Callers own original role admission; this API sees training arrays only.
+        model.update(
+            training_matched_physical_pairs=physical_pairs,
+            training_resampled_pair_rows=len(effect),
+            resampling_duplicates_are_new_physical_examples=False,
+            training_resample_indices=resample_indices.tolist(),
+        )
+        model["model_hash"] = hash_json({k: v for k, v in model.items() if k != "model_hash"})
+    return model
 
 
 def _fit_heads(
