@@ -57,11 +57,18 @@ def main():
     mode.add_argument("--early-screen", action="store_true")
     mode.add_argument("--owned-zero-parity", action="store_true")
     mode.add_argument("--owned-selected-parity", action="store_true")
+    mode.add_argument("--postcontact-owned-selected-parity", action="store_true")
     args = parser.parse_args()
+    if args.postcontact_owned_selected_parity:
+        args.owned_selected_parity = True  # Shared selected-window numeric experiment.
     screening = args.impact_screen or args.early_screen
     owned_parity = args.owned_zero_parity or args.owned_selected_parity
     early = args.early_zero or args.early_screen or owned_parity
-    if args.owned_selected_parity:
+    if args.postcontact_owned_selected_parity:
+        from scripts.rsi_postcontact_owned_parity_inputs import prepare as prepare_postcontact
+
+        p = prepare_postcontact(args.config)
+    elif args.owned_selected_parity:
         from scripts.rsi_owned_selected_parity_inputs import prepare as prepare_selected
 
         p = prepare_selected(args.config)
@@ -92,9 +99,16 @@ def main():
         study_kind = "owned_early_feedback_continuation_parity"
     if args.owned_selected_parity:
         study_kind = "owned_selected_early_feedback_continuation_parity"
+    if args.postcontact_owned_selected_parity:
+        study_kind = "owned_selected_postcontact_continuation_parity"
     if Path(__file__).resolve() != p.source / "scripts/rsi_calibrate_feedback_branches.py":
         raise ValueError("exact frozen feedback calibration runner required")
     if args.preflight:
+        if args.postcontact_owned_selected_parity:
+            print(
+                "SIX_POSTCONTACT_SELECTED_OWNED_PARITY_READY_NO_FULL_MODELS_OR_PHYSICS", flush=True
+            )
+            return
         if args.owned_selected_parity:
             print("SIX_OWNED_SELECTED_PARITY_READY_NO_FULL_MODELS_OR_PHYSICS", flush=True)
             return

@@ -455,3 +455,25 @@ rejection, fatal partial preservation, zero-execution preflight and leakage
 from a post-treatment joint target. They establish the extraction protocol,
 not nine physically successful situations. Actual whole-bank extraction is
 pending at this integration.
+
+### Post-touch owned-continuation parity, a separate bounded performance experiment
+
+The calibration CLI now has `--postcontact-owned-selected-parity`. It accepts
+only the whole successful18-case adaptive raw/physical chain, then uses the six
+fixed original-retention cases (indices12..17) as comparison windows. It
+reconstructs each original full300-frame baseline and compares two forecasts
+at its first completed-foot-contact boundary: the established deep-fork path
+and the existing opt-in owned-continuation path. Both must match the exact
+recorded selected80ms prediction, including body arrays, integration state and
+all three future targets/NN records. Actual exit trace fields keep their own
+namespace; they are never relabeled as the earlier impact controller.
+
+Budgets are18000 recorded-body integration steps plus480 forecast steps,
+36 future target/NN pairs, zero optimizer updates and zero new task trials.
+The source-selected offset is comparison-only, not a runtime future-aware
+policy input. All18 source cases remain bound to the closed provenance chain.
+Only six selected actions are tested: this is **not** whole14-action-bank
+equivalence or a proof of faster full-controller latency. The MPC default
+implementation and all running/queued source remain unchanged. A later
+owned-branch teacher profile would need its own prospective raw-alignment,
+full-task and retention validation; numerical parity here cannot replace that.
