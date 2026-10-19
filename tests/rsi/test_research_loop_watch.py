@@ -158,3 +158,41 @@ def test_garbage_collected_oneshot_with_artifact_requires_history_not_relaunch()
     assert result["phase"] == "UNLOADED_STAGE_ARTIFACT_REQUIRES_HISTORY_CHECK"
     assert result["next_agent_action"].endswith("NO_RELAUNCH")
     assert not result["automatic_retry"] and not result["outcome_verified"]
+
+
+def test_activating_oneshot_with_actual_pid_is_running_not_only_transitioning():
+    current = snapshot()
+    current["service"]["ActiveState"] = "activating"
+    assert assess(current, None, now=100)["phase"] == "RUNNING"
+
+
+def test_waiting_launcher_child_cpu_is_observed_without_faking_scientific_progress():
+    current = snapshot()
+    current["service"].update(ActiveState="activating", CPUUsageNSec="1000000000")
+    previous = assess(copy.deepcopy(current), None, now=100)
+    current["service"]["CPUUsageNSec"] = "2000000000"
+    result = assess(current, previous, now=1400)
+    assert current["cpu_ticks"] == previous["cpu_ticks"]
+    assert result["whole_unit_cpu_advanced_since_previous_observation"]
+    assert result["cpu_advanced_since_previous_observation"]
+    assert result["phase"] == "COMPUTING_WITHOUT_NEW_COMMIT"
+    assert not result["goal_complete"] and not result["automatic_retry"]
+
+
+def test_unit_cpu_accounting_does_not_confuse_pid_reuse_with_same_invocation():
+    current = snapshot()
+    current["service"]["CPUUsageNSec"] = "1000"
+    previous = assess(copy.deepcopy(current), None, now=100)
+    current["process_start_ticks"] += 1
+    current["service"]["CPUUsageNSec"] = "100000"
+    result = assess(current, previous, now=101)
+    assert not result["whole_unit_cpu_advanced_since_previous_observation"]
+
+
+def test_loaded_waiting_job_is_not_missing_work_or_completion():
+    current = snapshot()
+    current["service"].update(ActiveState="inactive", MainPID="0", Job="8531938")
+    result = assess(current, None, now=100)
+    assert result["phase"] == "QUEUED_DECLARED_JOB"
+    assert result["next_agent_action"] == "VERIFY_PREDECESSOR_NO_DUPLICATE_LAUNCH"
+    assert not result["automatic_retry"] and not result["goal_complete"]

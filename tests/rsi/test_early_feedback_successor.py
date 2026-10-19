@@ -158,3 +158,27 @@ def test_screen_binds_actual_reader_bytes_and_runs_only_fixed_entry(monkeypatch,
     with pytest.raises(FileExistsError):
         mod.main()
     assert len(seen) == 1
+
+
+def test_screen_readback_waits_for_actual_screen_terminal_and_uses_fixed_reader(
+    monkeypatch, tmp_path
+):
+    cfg, zero, root = runtime(monkeypatch, tmp_path, "screen-readback")
+    cfg.update(screen_unit="screen.service", screen_root=str(tmp_path / "screen"))
+    Path(cfg["screen_root"]).mkdir()
+    complete = Path(cfg["screen_root"]) / "complete.json"
+    complete.write_text("{}")
+    # runtime() binds this exact external declaration into sys.argv.
+    Path(sys.argv[-1]).write_text(json.dumps(cfg))
+    seen, units = [], []
+    monkeypatch.setattr(mod, "require_terminal", lambda unit: units.append(unit))
+    monkeypatch.setattr(mod.subprocess, "run", lambda command, **kw: seen.append(command))
+    mod.main()
+    assert units == [cfg["zero_unit"], cfg["screen_unit"]]
+    assert len(seen) == 1 and seen[0][1] == "scripts/rsi_read_feedback_screen.py"
+    assert "--early80" in seen[0]
+    assert seen[0][seen[0].index("--complete-file-hash") + 1] == mod.digest(complete)
+    assert (root / "screen-readback-command-complete.json").is_file()
+    with pytest.raises(FileExistsError):
+        mod.main()
+    assert len(seen) == 1

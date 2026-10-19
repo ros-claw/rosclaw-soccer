@@ -97,22 +97,22 @@ def verify_prediction(a, metadata, side):
     return score
 
 
-def require_totals(complete, branch_count, nonzero_count, improved):
+def require_totals(complete, branch_count, nonzero_count, improved, *, early80=False):
     if not 12 <= branch_count <= 84:
         raise ValueError("bounded complete branch bank required")
     for key, expected in (
         ("recorded_attempted_steps", 18000),
         ("recorded_integrated_steps", 18000),
-        ("forecast_attempted_steps", branch_count * 20),
-        ("forecast_integrated_steps", branch_count * 20),
-        ("combined_attempted_steps", 18000 + branch_count * 20),
-        ("combined_integrated_steps", 18000 + branch_count * 20),
+        ("forecast_attempted_steps", branch_count * (40 if early80 else 20)),
+        ("forecast_integrated_steps", branch_count * (40 if early80 else 20)),
+        ("combined_attempted_steps", 18000 + branch_count * (40 if early80 else 20)),
+        ("combined_integrated_steps", 18000 + branch_count * (40 if early80 else 20)),
         ("planner_runs_attempted", 60),
         ("current_pairs_completed", 6),
         ("original_residual_decisions_completed", 1800),
         ("original_recurrent_updates_completed", 1620),
-        ("branch_target_attempts", branch_count),
-        ("branch_target_completed", branch_count),
+        ("branch_target_attempts", branch_count * (3 if early80 else 1)),
+        ("branch_target_completed", branch_count * (3 if early80 else 1)),
         ("new_closed_loop_policy_trials", 0),
         ("new_optimizer_updates", 0),
         ("candidate_actions_optimized", nonzero_count),
@@ -154,6 +154,7 @@ def main():
     parser.add_argument("--source-head", required=True)
     parser.add_argument("--complete-file-hash", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--early80", action="store_true")
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     if (
@@ -198,10 +199,16 @@ def main():
 
     complete, declaration = (sealed(args.root / n) for n in ("complete.json", "declaration.json"))
     cfg = declaration["config"]
-    require_scope(cfg)
+    if args.early80:
+        from scripts.rsi_early_feedback_screen_inputs import require_scope as early_scope
+
+        early_scope(cfg)
+    else:
+        require_scope(cfg)
+    kind = "early_feedback_impact_screen" if args.early80 else "feedback_impact_screen"
     if (
-        complete["schema"] != "soccer.rsi.feedback_impact_screen_complete.v1"
-        or declaration["schema"] != "soccer.rsi.feedback_impact_screen_declaration.v1"
+        complete["schema"] != f"soccer.rsi.{kind}_complete.v1"
+        or declaration["schema"] != f"soccer.rsi.{kind}_declaration.v1"
         or complete["declaration_hash"] != declaration["report_hash"]
         or Path(cfg["output_root"]) != args.root
         or len(complete["rows"]) != 6
@@ -225,11 +232,15 @@ def main():
         raise ValueError("complete non-promoting original six-case screen required")
     for name, h in declaration["input_file_hashes"].items():
         pin(name, h)
-    pin(cfg["zero_calibration_readback"], cfg["zero_calibration_readback_file_hash"])
-    zero = sealed(cfg["zero_calibration_readback"])
+    zero_key = "early_zero" if args.early80 else "zero_calibration"
+    pin(cfg[zero_key + "_readback"], cfg[zero_key + "_readback_file_hash"])
+    zero = sealed(cfg[zero_key + "_readback"])
     if (
-        zero["report_hash"] != cfg["zero_calibration_readback_hash"]
-        or zero["report_hash"] != declaration["zero_feedback_readback_hash"]
+        zero["report_hash"] != cfg[zero_key + "_readback_hash"]
+        or zero["report_hash"]
+        != declaration[
+            "early_zero_feedback_readback_hash" if args.early80 else "zero_feedback_readback_hash"
+        ]
     ):
         raise ValueError("same previously qualified whole-zero predecessor required")
     stage = sealed(cfg["stage_readback"])
@@ -263,7 +274,9 @@ def main():
                 row[k] is not True
                 for k in (
                     "all_original300_residual_ik_and_dynamics_frames_matched",
-                    "both_zero_feedback40ms_branches_match_original",
+                    "both_zero_feedback80ms_branches_match_original"
+                    if args.early80
+                    else "both_zero_feedback40ms_branches_match_original",
                     "baseline_and_repeated_zero_bits_equal",
                     "zero_next_target_and_neural_capture_matched",
                     "original_controller_unchanged",
@@ -285,7 +298,7 @@ def main():
         frame = row["retrospective_frame"]
         if (
             type(frame) is not int
-            or frame != parent["outcome"]["first_foot_contact_frame"]
+            or frame != parent["outcome"]["first_foot_contact_frame"] - (2 if args.early80 else 0)
             or not 30 <= frame < 298
             or (frame + 1) % 20 == 0
         ):
@@ -324,7 +337,12 @@ def main():
             ):
                 raise ValueError("same donor and every ordered raw branch required")
             a = arrays(w)
-            verify_prediction(a, w, side if eligible else -1)
+            if args.early80:
+                from scripts.rsi_read_early_feedback_screen_arrays import verify_early_prediction
+
+                verify_early_prediction(a, w, side if eligible else -1)
+            else:
+                verify_prediction(a, w, side if eligible else -1)
             raw.append(a)
         if (
             bank[0]["name"] != "baseline"
@@ -335,7 +353,12 @@ def main():
         ):
             raise ValueError("first zero baseline and last repeated zero required")
         for a in (raw[0], raw[-1]):
-            verify_branch(a, trace, d, frame)
+            if args.early80:
+                from scripts.rsi_read_early_feedback_arrays import verify_early_branch
+
+                verify_early_branch(a, trace, d, frame)
+            else:
+                verify_branch(a, trace, d, frame)
         if set(raw[0]) != set(raw[-1]) or any(
             raw[0][k].dtype != raw[-1][k].dtype
             or raw[0][k].shape != raw[-1][k].shape
@@ -343,7 +366,15 @@ def main():
             for k in raw[0]
         ):
             raise ValueError("all zero repeated branch bytes differ")
-        if len({a["offset_nm"].tobytes() for a in raw[:-1]}) != len(raw) - 1:
+        if (
+            len(
+                {
+                    (a["requested_offset_nm"][0] if args.early80 else a["offset_nm"]).tobytes()
+                    for a in raw[:-1]
+                }
+            )
+            != len(raw) - 1
+        ):
             raise ValueError("candidate offsets must be deduplicated except final zero repeat")
         best = best_proxy_index(bank)
         base_cost = bank[0]["score"]["proxy_cost"]
@@ -375,11 +406,11 @@ def main():
                 ),
             )
         )
-    require_totals(complete, total, nonzero, improved)
+    require_totals(complete, total, nonzero, improved, early80=args.early80)
     if any(digest(p) != h for p, h in pins.items()):
         raise ValueError("source or evidence changed during readback")
     report = dict(
-        schema="soccer.rsi.feedback_impact_screen_readback.v1",
+        schema=f"soccer.rsi.{kind}_readback.v1",
         source_head=args.source_head,
         complete_hash=complete["report_hash"],
         rows=rows,

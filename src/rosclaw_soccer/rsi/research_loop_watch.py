@@ -30,6 +30,10 @@ def collect(unit: str, root: Path) -> dict[str, Any]:
             "Result",
             "-p",
             "LoadState",
+            "-p",
+            "CPUUsageNSec",
+            "-p",
+            "Job",
         ],
         capture_output=True,
         text=True,
@@ -110,6 +114,19 @@ def assess(
     cpu_advanced = (
         same_process and ticks is not None and old_ticks is not None and ticks > old_ticks
     )
+    # A launcher can wait while its child owns the actual compute. Unit CPU
+    # accounting includes the whole cgroup, unlike /proc/MainPID/stat.
+    unit_cpu = service.get("CPUUsageNSec", "")
+    old_unit_cpu = old_service.get("CPUUsageNSec", "")
+    unit_cpu_advanced = (
+        same_process
+        and isinstance(unit_cpu, str)
+        and isinstance(old_unit_cpu, str)
+        and unit_cpu.isdigit()
+        and old_unit_cpu.isdigit()
+        and int(unit_cpu) > int(old_unit_cpu)
+    )
+    cpu_advanced = cpu_advanced or unit_cpu_advanced
     old_tip = (
         (previous.get("ledger") or {}).get("tip"),
         (previous.get("artifacts") or {}).get("tip"),
@@ -118,7 +135,18 @@ def assess(
     active_at = now if cpu_advanced or not same_process else previous["last_cpu_change_unix"]
     # A rollback in wall time must not falsely create a long-idle diagnosis.
     committed_at, active_at = min(now, committed_at), min(now, active_at)
-    running = service.get("ActiveState") == "active" and service.get("MainPID") not in (None, "0")
+    # Type=oneshot retains activating/start for the entire scientific program.
+    running = service.get("ActiveState") in ("active", "activating") and service.get(
+        "MainPID"
+    ) not in (None, "0")
+    job = service.get("Job", "")
+    queued = (
+        isinstance(job, str)
+        and job.isdigit()
+        and int(job) > 0
+        and service.get("MainPID") == "0"
+        and service.get("ActiveState") in ("inactive", "activating")
+    )
     if service.get("LoadState") != "loaded" and (
         artifacts.get("complete_present") or artifacts.get("failure_present")
     ):
@@ -146,6 +174,8 @@ def assess(
             phase, next_action = "COMPUTING_WITHOUT_NEW_COMMIT", "CHECK_STAGE_PROGRESS_NOT_JUST_CPU"
         else:
             phase, next_action = "RUNNING", "CONTINUE_AGENT_DEVELOPMENT_AND_WAIT_FOR_EVIDENCE"
+    elif queued:
+        phase, next_action = "QUEUED_DECLARED_JOB", "VERIFY_PREDECESSOR_NO_DUPLICATE_LAUNCH"
     elif service.get("ActiveState") in ("activating", "deactivating"):
         phase, next_action = "TRANSITIONING", "RECHECK_BOUNDED_TRANSITION"
     elif artifacts.get("complete_present"):
@@ -161,6 +191,7 @@ def assess(
         phase=phase,
         next_agent_action=next_action,
         cpu_advanced_since_previous_observation=cpu_advanced,
+        whole_unit_cpu_advanced_since_previous_observation=unit_cpu_advanced,
         last_ledger_change_unix=committed_at,
         last_cpu_change_unix=active_at,
         ledger_integrity_verified=False,

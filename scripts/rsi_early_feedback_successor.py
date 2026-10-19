@@ -1,4 +1,4 @@
-"""Fixed two-stage SIM diagnostic succession, no retry/selection/promotion."""
+"""Fixed SIM diagnostic/readback succession, no retry/selection/promotion."""
 
 import argparse
 import json
@@ -53,7 +53,7 @@ def validate_config(cfg):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--stage", choices=("readback", "screen"), required=True)
+    parser.add_argument("--stage", choices=("readback", "screen", "screen-readback"), required=True)
     parser.add_argument("--preflight", action="store_true")
     args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
@@ -114,7 +114,7 @@ def main():
                 "--output",
                 str(readback_path),
             ]
-        else:
+        elif args.stage == "screen":
             require_terminal(cfg["readback_unit"])
             d = json.loads(readback_path.read_text())
             if (
@@ -144,6 +144,26 @@ def main():
                 "--early-screen",
                 "--config",
                 str(config_path),
+            ]
+        else:
+            require_terminal(cfg["screen_unit"])
+            screen_root = Path(cfg["screen_root"])
+            if (screen_root / "failure.json").exists():
+                raise ValueError("failed screen cannot authorize raw readback")
+            command = [
+                sys.executable,
+                "scripts/rsi_read_feedback_screen.py",
+                "--early80",
+                "--root",
+                str(screen_root),
+                "--unit",
+                cfg["screen_unit"],
+                "--source-head",
+                cfg["source_head"],
+                "--complete-file-hash",
+                digest(screen_root / "complete.json"),
+                "--output",
+                str(stage_root / "screen-readback.json"),
             ]
         env = dict(os.environ)
         env.update(
