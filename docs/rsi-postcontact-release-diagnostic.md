@@ -316,3 +316,21 @@ This is dataset preparation, not neural optimization. Independent body/NN
 verification, scoped teacher admission, three-seed learning and retention
 remain separate steps. The neural runtime must never receive the offline
 future-outcome table as its observation.
+
+### Automatically queued whole-bank physical verification
+
+`scripts/rsi_replay_postcontact_full_bank_physics.py` admits only the terminal
+whole252 producer and its successful raw reader, with exact file hashes and
+clean frozen source. It independently integrates the238 new bodies from
+recorded targets:714000 new MuJoCo steps, no NN or optimizer updates. The14
+unchanged authority bodies reuse the previously sealed42000-step physical
+proofs, explicitly excluded from the new integration counter. Each original
+source world, commitment, context and row remains bound to the raw readback.
+All physical errors must be finite and at most1e-8. Failure preserves partial
+counts/state and never automatically retries or qualifies a teacher.
+
+The queued unit waits for the raw reader to terminate, then requires successful
+terminal state before running. A monitor does not wake a development agent;
+this is a concrete bounded experiment succession, not a promise of perpetual
+autonomous research after the agent session is interrupted. Whole-bank
+physical verification is still pending at this code integration.
