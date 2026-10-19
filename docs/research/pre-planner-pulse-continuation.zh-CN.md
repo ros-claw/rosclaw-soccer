@@ -181,3 +181,8 @@ helper 的 mypy（follow-imports=silent）通过。没有新增策略训练或�
 实现独立请求/标量复核/CPU 与 Foundation 资格、原始 IK 对照逐位复现及整批
 读回，才可按单独预算试验。相关 66 项 values-only/原脉冲回归通过（5.19s），
 新 typed 合同 mypy（follow-imports=silent）通过。
+
+另有显式的 original-IK values-only 请求校验器，只允许 None 参考模型、精确类型、
+原 B2 全部默认参数及真实布尔 planner capture 标志；拒绝零/已学习参考混用、
+其他控制档和绕过冻结字段的布尔注入。原生零参考入口仍拒绝它，尚未接入新
+物理执行。扩充后的相关回归 74 passed（5.30s），typed 合同 mypy 通过。

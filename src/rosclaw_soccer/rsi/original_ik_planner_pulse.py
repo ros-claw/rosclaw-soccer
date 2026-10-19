@@ -5,11 +5,12 @@ Integrating it requires a new explicit request, scalar review, CPU/foundation
 qualification and original-teacher parity; this contract does not supply those.
 """
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from rosclaw_soccer.rsi import planner_navigation_pulse as composition
+from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.planner_navigation_pulse import PlannerNavigationPulse
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
@@ -42,3 +43,20 @@ class OriginalIkPlannerPulse(PlannerNavigationPulse):
             navigation_gain_does_not_qualify_contact_direction=True,
         )
         return dict(value, contract_hash=hash_json(value))
+
+
+def require_original_ik_planner_request(
+    pulse: Any, reference_model: Any, *, profile: Any, record_planner_events: Any
+) -> None:
+    """Validate values for future explicit integration, never authorize execution."""
+    if (
+        type(pulse) is not OriginalIkPlannerPulse
+        or reference_model is not None
+        or type(profile) is not BoundedFirstTouchControl
+        or record_planner_events is not True
+    ):
+        raise ValueError("explicit original-IK-only research request required")
+    pulse.__post_init__()
+    profile.__post_init__()
+    if asdict(profile) != asdict(BoundedFirstTouchControl()):
+        raise ValueError("unchanged original B2 parameters required for one-factor IK study")

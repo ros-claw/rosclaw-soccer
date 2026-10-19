@@ -5,7 +5,10 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
-from rosclaw_soccer.rsi.original_ik_planner_pulse import OriginalIkPlannerPulse
+from rosclaw_soccer.rsi.original_ik_planner_pulse import (
+    OriginalIkPlannerPulse,
+    require_original_ik_planner_request,
+)
 from rosclaw_soccer.rsi.planner_navigation_pulse import PlannerNavigationPulse
 from rosclaw_soccer.rsi.planner_navigation_pulse_evidence import require_navigation_pulse_request
 from rosclaw_soccer.sim.contracts import hash_json
@@ -76,3 +79,52 @@ def test_prototype_is_frozen_and_untrusted_subclasses_are_not_executable_request
 
     with pytest.raises(ValueError):
         Subclass(0.08)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "zero",
+        "learned",
+        "legacy_type",
+        "other_profile",
+        "no_capture",
+        "truthy",
+        "corrupt_profile",
+    ],
+)
+def test_distinct_values_only_request_cannot_mix_a_reference_model_or_other_profile(mutation):
+    pulse, model, profile, record = (
+        OriginalIkPlannerPulse(0.08),
+        None,
+        BoundedFirstTouchControl(),
+        True,
+    )
+    if mutation == "zero":
+        model = zero_model()
+    elif mutation == "learned":
+        model = {"model_hash": "not-allowed"}
+    elif mutation == "legacy_type":
+        pulse = PlannerNavigationPulse(0.08)
+    elif mutation == "other_profile":
+        profile = BoundedFirstTouchControl(forward_cap_m_s=1.2)
+    elif mutation == "no_capture":
+        record = False
+    elif mutation == "truthy":
+        record = 1
+    elif mutation == "corrupt_profile":
+        object.__setattr__(profile, "lateral_offset_m", False)
+    if mutation is None:
+        assert (
+            require_original_ik_planner_request(
+                pulse, model, profile=profile, record_planner_events=record
+            )
+            is None
+        )
+        assert pulse.contract()["runtime_execution_authorized"] is False
+    else:
+        with pytest.raises(ValueError):
+            require_original_ik_planner_request(
+                pulse, model, profile=profile, record_planner_events=record
+            )
