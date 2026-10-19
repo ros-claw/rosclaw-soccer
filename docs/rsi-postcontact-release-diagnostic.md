@@ -371,3 +371,53 @@ physics/hardware execution, and preserves already completed models on
 failure. Source and all physical-input hashes are rechecked on completion.
 Synthetic fitting/protocol tests establish software behavior only. At this
 code integration no verified-G1-data optimizer update has yet occurred.
+
+### Partial paired diagnosis: an action after impact cannot repair every earlier choice
+
+The live adaptive experiment closed all twelve local development conditions:
+source3/12 versus candidate7/12, rescues1/3/5/7, no lost source successes or
+added unsafe condition. This is a **partial** result: all six original
+retention conditions and the whole independent raw/physical checks are still
+pending. The four rescues span two original source clusters, not four new
+independent source courses. Late conditions8/10 and original unsafe9/11 remain
+unsolved, as does the directional error in condition6.
+
+The closed full-bank contexts4 and6 supply a useful paired counterexample.
+They have exactly the same perturbed course
+`[2.654980523783098,0.08925451207515639,0.29722120716085476]`
+and original motor-policy hash. Their heading OFF/ON setting differs. Of the
+thirteen distinct post-contact interventions, source labels report ten safe
+passes with heading OFF and none with heading ON. Repeated zero is excluded
+from that count. This is one consumed course, not an aggregate success rate.
+
+A separate partial raw review checked all28 closed trace-file hashes and
+pairwise equality of all36 original physical/control/neural tensors for the
+first30 frames. The current canonical qpos/qvel and **Foundation navigation
+target before IK/residual** at frame30 also match bit-for-bit. The resulting112
+current body/ball features are identical across all28 interventions. This
+identifies a causal observation boundary for a future earlier decision; using
+the final joint target here would leak the heading treatment into its input.
+The review has a pre-import source-pinned wrapper and expanded-source lint.
+It is not the whole-bank source-chain/independent M0/physical qualification.
+
+Partial raw result logical hash:
+`sha256:28321a0c2d11d0964393b525e00550e1163cf4b5868faa5fb45a692d341358ea`;
+pre-import wrapper proof:
+`sha256:b9e99e2bc5e2670dbb0d4b9007235469e86f8788b66850ef0b7de53bc1f21d6e`.
+The initial read-only diagnostic imported helpers before capturing source
+pins; its unchanged artifact is retained. The second wrapper pinned source
+before import and reran the same read-only computation into unused output.
+Neither performed any new integration, NN inference or optimizer update.
+
+Implication: more fitting of the existing post-contact action head cannot
+produce a passing action for a state where all its measured candidates fail.
+After whole-bank verification, investigate hierarchical composition: an
+earlier state-only heading decision followed by the learned current-state
+post-touch decision. The existing paired matrix can supply both treatments
+without repeating their physics merely to inflate sample counts. Earlier
+training must remain source-cluster-disjoint and must account for the child
+controller's actual selection, not assume it always achieves an oracle's
+best action. Additional public courses are needed; a tiny local table cannot
+justify generalization. This is a next-stage design, not an implemented or
+qualified hierarchical controller, and it does not solve late approach or
+pre-contact collision failures by itself.
