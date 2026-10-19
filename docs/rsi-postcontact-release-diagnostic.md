@@ -867,3 +867,30 @@ new orchestration and old zero/scope tests passed60 tests30.46s. The new
 qualifier also records construction versus control-step wall time separately
 for actual bodies and predictions; timing does not enter action selection.
 The protected original IK source hash remains unchanged.
+
+The real-model baseline qualification subsequently closed all18 main bodies
+and36 prospective zero/repeat branches:94840 new native steps,9484 executed
+Foundation pairs plus four initialization parity pairs,0 optimizer updates.
+All43 future tensors and M0 outcomes matched the actual continuations,
+including unsafe failures. Producer logical hash:
+`sha256:df48db54316ac655c453d1843b1f265763eee858a5f5c8032acea951f685bd7e`.
+The independent raw reader also closed every individual artifact and source
+pin, logical hash:
+`sha256:d41dc42ebb9208f63bc912ffe4741dd1012138e9d65783a98543f2865a9f017b`.
+These establish baseline prediction parity on the consumed scope, not action
+improvement, a trained world model, a new motor actor or team competence.
+
+`navigation_recovery_parity` independently rebuilds all300 current-state
+navigation requests, clipping and planner-pulse captures without calling the
+candidate braking function. It checks all43 measured pre-lease arrays and the
+first altered command's pre-action body against the same original gold.
+`rsi_verify_navigation_recovery.py` authenticates all12 actual rows and16
+prospective predictions, rederives M0 and the advisory prospective ranking,
+then uses the separate recorded-target PD/body implementation for36000 new
+native steps. This does not reexecute an independent neural policy or attest
+temporal execution order from timestamps. Its own source must be separately
+pinned before imports. Ordinary failures remain; no retry or promotion.
+Thirteen synthetic algebra/orchestration tests plus17 existing recorded-body
+tests passed together:30 tests13.71s. Synthetic whole-bank counters are not
+physical evidence. Nonzero G1 parity and independent36000-step closure are
+still required from their actual runs.
