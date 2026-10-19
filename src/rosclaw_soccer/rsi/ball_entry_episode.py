@@ -5,6 +5,7 @@ actor. After handoff the contact reference remains open to proprioception,
 not task retargeting. Misses/timeouts are ordinary full physical episodes.
 """
 
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -39,10 +40,17 @@ def run_ball_entry_episode(
     affordance: SkillEntryAffordance,
     course: tuple[float, float, float],
     arm: str,
+    entry_planner: Callable[
+        [G1SonicNavigation, G1TargetEpisode, SkillEntryAffordance],
+        tuple[tuple[float, float, float], dict[str, Any]],
+    ]
+    | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """One fixed H300, no body resets or clock writes across option handoff."""
     if arm not in ("fixed_reference", "ball_entry"):
         raise ValueError("explicit fixed reference or ball-entry teacher arm required")
+    if arm == "fixed_reference" and entry_planner is not None:
+        raise ValueError("fixed-reference control cannot use a privileged entry planner")
     if source_interval != (286, 767):
         raise ValueError("pilot uses the same frozen historical skill reference window")
     source = source_poses.copy()
@@ -100,6 +108,8 @@ def run_ball_entry_episode(
     stages, commands, goals, errors = [], [], [], []
     target_xy = np.zeros(2)
     error = 0.0
+    held_command = None
+    planning_receipts = []
     for frame in range(300):
         q, v = body.canonical()
         command = (0.0, 0.0, 0.0)
@@ -113,6 +123,23 @@ def run_ball_entry_episode(
             )
             if decision.timed_out:
                 stage = 2
+            if entry_planner is not None and not decision.timed_out:
+                if not decision.ready and frame > 0 and frame % 20 == 0:
+                    from rosclaw_soccer.physics.sonic_navigation_forecast import (
+                        navigation_state_hash,
+                    )
+
+                    donor_body = integration_hash(model, body.data)
+                    donor_nav = navigation_state_hash(nav)
+                    held_command, planning_receipt = entry_planner(nav, body, affordance)
+                    if (
+                        integration_hash(model, body.data) != donor_body
+                        or navigation_state_hash(nav) != donor_nav
+                    ):
+                        raise ValueError("entry planner changed the actual actor/body")
+                    planning_receipts.append(planning_receipt)
+                if held_command is not None:
+                    command = held_command
         observation = TeamMotorObservation(
             agent_id="tracker",
             frame=frame,
@@ -184,6 +211,8 @@ def run_ball_entry_episode(
         final_option_contract=nav.contract_hash,
         neural_policy_recomputed_on_own_state=True,
         entry_teacher_is_learned=False,
+        entry_planner_used=entry_planner is not None,
+        entry_planner_receipts=planning_receipts,
         contact_controller_retargets_to_ball_after_handoff=False,
         optimizer_steps=0,
         promotion_authorized=False,
