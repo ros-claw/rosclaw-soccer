@@ -1320,3 +1320,22 @@ the terminal **cached** body velocity using the same `mj_objectVelocity`
 observation law, not an assumed raw qvel substitute. It does not reexecute
 the recorded future neural policy and does not prove H300 skill success.
 Unconditional and safety-cancelled laws must remain separately identified.
+
+The one-bank real-record pilot subsequently reexecuted730 prefix plus560
+branch native steps, no NN/optimizer, all fourteen branches exact. It also
+matched zero/repeated-zero and the uncancelled selected branch's cached
+terminal velocity against the original H300 records. The whole-public audit
+then retained all40 source contexts:29 have an original bank and11 remain
+explicitly without one. It reused the pilot1290 steps, separately executing
+40350 prefix and15680 branch steps (56030 new), producing348 paired response
+rows. These are29 unique public states with shared seed ancestry, not348
+independent worlds or H300 executions. No original outcome was changed.
+
+`planning_branch_response` keeps a distinct schema/conditioning-law wrapper
+around the same Core-backed matched neural regressor. Guarded-execution models
+and unconditional planning models cannot be silently passed to each other's
+prediction interface. Model fitting does not authenticate the source by itself,
+update an actor, authorize a controller or qualify H300 success. Planned
+fixed256-step/head, three-seed fitting must use train clusters only and compare
+both zero-effect and train-only, same-action nearest-neighbor baselines on
+consumed validation/test source clusters. All failures remain evidence.
