@@ -28,6 +28,8 @@ class FootHeadingContactProbe:
             source_hash=hash_bytes(Path(__file__).read_bytes()),
             numerical_source_hash=hash_bytes(Path(numeric.__file__).read_bytes()),
             max_heading_request_rad=numeric.MAX_HEADING_REQUEST_RAD,
+            heading_deadband_rad=numeric.HEADING_DEADBAND_RAD,
+            heading_law="deadband_then_clipped_error.v1",
             max_additional_joint_rad=numeric.MAX_ADDITIONAL_JOINT_RAD,
             max_total_ik_increment_rad=numeric.MAX_TOTAL_INCREMENT_RAD,
             target_heading_world_rad=0.0,

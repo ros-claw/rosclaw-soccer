@@ -59,6 +59,23 @@ def test_off_preserves_original_object_and_negative_zero_bits():
     assert not np.asarray(r["additional_joint_applied_rad"]).any()
 
 
+@pytest.mark.parametrize("degrees", [-10.0, -6.0, 0.0, 6.0, 10.0])
+def test_small_heading_deadband_does_not_disturb_already_aligned_feet(degrees):
+    args = inputs(float(np.deg2rad(degrees)))
+    total, r = propose_foot_heading(*args, enabled=True)
+    assert total is args[4]
+    assert r["status"] == "ALREADY_ALIGNED_UNCHANGED"
+    assert r["requested_heading_change_rad"] == 0
+    assert r["heading_deadband_rad"] == pytest.approx(np.pi / 18)
+
+
+def test_deadband_boundary_is_continuous_not_an_instant_maximum_joint_step():
+    args = inputs(float(np.deg2rad(10.01)))
+    total, r = propose_foot_heading(*args, enabled=True)
+    assert r["requested_heading_change_rad"] == pytest.approx(-np.deg2rad(0.01))
+    assert abs(total[5]) < 0.001
+
+
 @pytest.mark.parametrize(
     "mode", ["no_yaw", "no_limit_room", "baseline_outside", "already_aligned", "tilted", "backward"]
 )

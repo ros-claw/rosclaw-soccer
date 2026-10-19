@@ -18,6 +18,7 @@ from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
 MAX_HEADING_REQUEST_RAD = math.radians(10.0)
+HEADING_DEADBAND_RAD = math.radians(10.0)
 MAX_ADDITIONAL_JOINT_RAD = 0.1
 MAX_TOTAL_INCREMENT_RAD = 0.35
 
@@ -60,7 +61,9 @@ def propose_foot_heading(
         )
     total = original_ik_increment
     heading = math.atan2(float(foot_forward_axis_world[1]), float(foot_forward_axis_world[0]))
-    request = -float(np.clip(heading, -MAX_HEADING_REQUEST_RAD, MAX_HEADING_REQUEST_RAD))
+    request = -math.copysign(
+        min(max(abs(heading) - HEADING_DEADBAND_RAD, 0.0), MAX_HEADING_REQUEST_RAD), heading
+    )
     requested = np.zeros(6)
     applied = np.zeros(6)
     yaw_jacobian = np.zeros(6)
@@ -130,6 +133,7 @@ def propose_foot_heading(
         predicted_position_increment_m=(linear_jacobian @ applied).tolist(),
         final_ik_increment_rad=total.tolist(),
         maximum_heading_request_rad=MAX_HEADING_REQUEST_RAD,
+        heading_deadband_rad=HEADING_DEADBAND_RAD,
         maximum_additional_joint_rad=MAX_ADDITIONAL_JOINT_RAD,
         maximum_total_ik_increment_rad=MAX_TOTAL_INCREMENT_RAD,
         linearization_only=True,

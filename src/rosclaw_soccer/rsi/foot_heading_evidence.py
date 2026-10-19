@@ -4,6 +4,7 @@ No source-file authentication, integration, policy admission or hardware calls.
 Old original_ik_planner_evidence source and schemas remain unchanged.
 """
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,11 @@ from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.rsi import original_ik_planner_evidence as original
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.foot_heading_control import FootHeadingContactProbe, require_heading_request
-from rosclaw_soccer.rsi.foot_heading_nullspace import MAX_HEADING_REQUEST_RAD, propose_foot_heading
+from rosclaw_soccer.rsi.foot_heading_nullspace import (
+    HEADING_DEADBAND_RAD,
+    MAX_HEADING_REQUEST_RAD,
+    propose_foot_heading,
+)
 from rosclaw_soccer.rsi.original_ik_planner_pulse import OriginalIkPlannerPulse
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
 
@@ -229,7 +234,13 @@ def require_heading_capture(
             ):
                 raise ValueError("heading OFF must retain the exact original increment")
             expected_request = (
-                -float(np.clip(state[f, 5], -MAX_HEADING_REQUEST_RAD, MAX_HEADING_REQUEST_RAD))
+                -math.copysign(
+                    min(
+                        max(abs(float(state[f, 5])) - HEADING_DEADBAND_RAD, 0.0),
+                        MAX_HEADING_REQUEST_RAD,
+                    ),
+                    float(state[f, 5]),
+                )
                 if probe.enabled
                 else 0.0
             )
