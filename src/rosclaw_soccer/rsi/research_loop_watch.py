@@ -81,6 +81,7 @@ def collect(unit: str, root: Path) -> dict[str, Any]:
         observation["artifacts"] = dict(
             tip=hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest(),
             checkpoint_count=len(metadata),
+            checkpoint_names=[name for name, _, _ in metadata],
             complete_present=any(name == "complete.json" for name, _, _ in metadata),
             failure_present=any(name == "failure.json" for name, _, _ in metadata),
             contents_verified=False,
