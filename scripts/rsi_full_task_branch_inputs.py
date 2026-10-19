@@ -136,6 +136,29 @@ def prepare(path):
         )
     if sum((300 - j["comparison_start_after_measured_foot_bin"]) * 20 for j in jobs) != 40840:
         raise ValueError("exact94840-step retrospective parity budget required")
+    navigation = Path(p.cfg["navigation_parity_root"])
+    nc = sealed(navigation / "complete.json", p.cfg["navigation_parity_complete_file_hash"])
+    nd = sealed(navigation / "declaration.json")
+    if (
+        nc["schema"] != "soccer.rsi.real_navigation_branch18_complete.v1"
+        or nc["declaration_hash"] != nd["report_hash"]
+        or len(nc["rows"]) != 18
+        or nc["actual_planner_onnx_inferences"] != 322
+        or nc["new_physical_steps"] != 0
+        or nc["long_horizon_counterfactual_physics_qualified"] is not False
+    ):
+        raise ValueError(
+            "whole actual navigation component parity, not body qualification, required"
+        )
+    for n, h in nd["input_file_hashes"].items():
+        pin(n, h)
+    for i, row in enumerate(nc["rows"]):
+        if (
+            row != sealed(navigation / f"case-{i}-complete.json")
+            or row["source_case_hash"] != jobs[i]["source_case_hash"]
+            or row["zero_and_repeat_references_events_targets_bit_exact"] is not True
+        ):
+            raise ValueError("all18 actual resource parity source bindings required")
     p.jobs = jobs
     p.gold_complete_hash = c["report_hash"]
     return p
