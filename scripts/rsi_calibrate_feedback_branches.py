@@ -51,19 +51,31 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--preflight", action="store_true")
-    parser.add_argument("--impact-screen", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--impact-screen", action="store_true")
+    mode.add_argument("--early-zero", action="store_true")
     args = parser.parse_args()
     screening = args.impact_screen
-    if screening:
+    early = args.early_zero
+    if early:
+        from scripts.rsi_early_feedback_calibration import prepare as prepare_early
+
+        p = prepare_early(args.config)
+    elif screening:
         from scripts.rsi_feedback_screen_inputs import prepare as prepare_screen
 
         p = prepare_screen(args.config)
     else:
         p = prepare(args.config)
     study_kind = "feedback_impact_screen" if screening else "zero_feedback_calibration"
+    if early:
+        study_kind = "zero_early_feedback_calibration"
     if Path(__file__).resolve() != p.source / "scripts/rsi_calibrate_feedback_branches.py":
         raise ValueError("exact frozen feedback calibration runner required")
     if args.preflight:
+        if early:
+            print("WHOLE_SIX_ZERO_EARLY80MS_READY_NO_FULL_MODELS_OR_PHYSICS", flush=True)
+            return
         print(
             "WHOLE_SIX_IMPACT_SCREEN_READY_NO_FULL_MODELS_OR_PHYSICS"
             if screening
@@ -136,6 +148,7 @@ def main():
         import torch
 
         from rosclaw_soccer.physics.contact_wrench import read_geom_contact_wrenches
+        from rosclaw_soccer.physics.g1_early_feedback_forecast import G1EarlyFeedbackForecaster
         from rosclaw_soccer.physics.g1_feedback_forecast import G1FeedbackForecaster
         from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
         from rosclaw_soccer.providers.g1.sonic_causal_capture_state import (
@@ -189,20 +202,22 @@ def main():
         kp, kd = (
             np.asarray(physics[k], dtype=np.float64) for k in ("canonical_pd_kp", "canonical_pd_kd")
         )
-        forecaster = G1FeedbackForecaster(
+        forecaster_class = G1EarlyFeedbackForecaster if early else G1FeedbackForecaster
+        forecaster = forecaster_class(
             model,
             world_hash=p.world_hash,
             kp=kp,
             kd=kd,
             max_forecast_steps=p.cfg["feedback_forecast_substep_budget"],
         )
-        qi, vi, ai = forecaster._qi, forecaster._vi, forecaster._ai
+        metadata = forecaster._checked if early else forecaster
+        qi, vi, ai = metadata._qi, metadata._vi, metadata._ai
         bq, bv, ball, bg, pelvis = (
-            forecaster._bq,
-            forecaster._bv,
-            forecaster._ball,
-            forecaster._bg,
-            forecaster._pelvis,
+            metadata._bq,
+            metadata._bv,
+            metadata._ball,
+            metadata._bg,
+            metadata._pelvis,
         )
         if (
             model.geom_size[bg, 0] != 0.11
@@ -365,6 +380,22 @@ def main():
                             body_prefix={k: np.asarray(v) for k, v in body.items()},
                             previous_motor_delta_rad=previous,
                         )
+                        if early:
+                            from scripts.rsi_early_feedback_calibration import (
+                                preserve_and_compare,
+                            )
+
+                            out = forecaster.forecast(
+                                d, target, control=control, early_offset_nm=offset
+                            )
+                            predictions.append(
+                                preserve_and_compare(
+                                    p.root, index, branch, out, predicted, trace, frame, WIDTHS
+                                )
+                            )
+                            if predicted is None:
+                                predicted = out
+                            continue
                         out = forecaster.forecast(
                             d, target, control=control, first_offset_nm=offset
                         )
@@ -475,14 +506,16 @@ def main():
                         g1, g2 = int(d.contact[c].geom1), int(d.contact[c].geom2)
                         if bg in (g1, g2):
                             b = int(model.geom_bodyid[g2 if g1 == bg else g1])
-                            if b in forecaster._contact_bodies:
+                            if b in metadata._contact_bodies:
                                 force = np.zeros(6)
                                 mujoco.mj_contactForce(model, d, c, force)
-                                channel = forecaster._contact_bodies.index(b)
+                                channel = metadata._contact_bodies.index(b)
                                 peaks[channel] = max(
                                     peaks[channel], float(np.linalg.norm(force[:3]))
                                 )
-                    if predicted is not None and case["frame"] <= frame <= case["frame"] + 1:
+                    if predicted is not None and case["frame"] <= frame <= case["frame"] + (
+                        3 if early else 1
+                    ):
                         slot = (frame - case["frame"]) * 10 + substep
                         q, v = canonical(d)
                         equal(
@@ -520,7 +553,15 @@ def main():
                             "feedback true force",
                         )
                 equal(peaks, trace["force_n"][frame, 0], "original full six contact channels")
-                if frame == case["frame"]:
+                if early and case["frame"] <= frame <= case["frame"] + 3:
+                    equal(
+                        peaks,
+                        predicted.arrays["completed_contact_peak_force_n"][
+                            (frame - case["frame"]) * 10 + 9
+                        ],
+                        "early branch full six contact channels",
+                    )
+                elif frame == case["frame"]:
                     equal(
                         peaks,
                         predicted.arrays["first_control_peak_force_n"],
@@ -574,6 +615,15 @@ def main():
                     full_m0_gain_proven=False,
                     nonzero_branch_independent_physics_replayed=False,
                 )
+            if early:
+                row.pop("both_zero_feedback40ms_branches_match_original")
+                row.pop("next_target_decomposition_and_neural_capture_matched")
+                row.update(
+                    original_contact_frame=case["original_contact_frame"],
+                    both_zero_feedback80ms_branches_match_original=True,
+                    all_three_next_targets_and_neural_captures_matched=True,
+                    nonzero_interventions_qualified=False,
+                )
             row["report_hash"] = hash_json(row)
             write_once(p.root / f"case-{index}-complete.json", row)
             rows.append(row)
@@ -588,6 +638,24 @@ def main():
         factory._stable()
         if any(digest(name) != h for name, h in p.pins.items()):
             raise ValueError("original source/model/input changed")
+        if early:
+            actual_counts = counters()
+            for key, expected in (
+                ("recorded_attempted_steps", 18000),
+                ("recorded_integrated_steps", 18000),
+                ("forecast_attempted_steps", 480),
+                ("forecast_integrated_steps", 480),
+                ("combined_attempted_steps", 18480),
+                ("combined_integrated_steps", 18480),
+                ("planner_runs_attempted", 60),
+                ("current_pairs_completed", 6),
+                ("original_residual_decisions_completed", 1800),
+                ("original_recurrent_updates_completed", 1620),
+                ("branch_target_attempts", 36),
+                ("branch_target_completed", 36),
+            ):
+                if type(actual_counts[key]) is not int or actual_counts[key] != expected:
+                    raise ValueError("whole early80ms calibration counters differ: " + key)
         result = dict(
             schema=f"soccer.rsi.{study_kind}_complete.v1",
             declaration_hash=declaration["report_hash"],

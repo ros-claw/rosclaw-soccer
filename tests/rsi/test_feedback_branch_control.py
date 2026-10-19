@@ -71,10 +71,12 @@ def test_wrong_recurrent_boundary_rejected(imitation_parent, next_frame):  # noq
         fork_motor(decoder, next_frame=next_frame)
 
 
-def test_composed_feedback_branch_real_adapters_on_toy_assets(imitation_parent):  # noqa: F811
+@pytest.mark.parametrize("early", [False, True])
+def test_composed_feedback_branch_real_adapters_on_toy_assets(imitation_parent, early):  # noqa: F811
     """Exercises the full adapter composition, NOT an official G1/SONIC result."""
     import mujoco
 
+    from rosclaw_soccer.physics.g1_early_feedback_forecast import G1EarlyFeedbackForecaster
     from rosclaw_soccer.physics.g1_feedback_forecast import G1FeedbackForecaster
     from rosclaw_soccer.rsi.feedback_branch_control import G1FeedbackBranchControl
     from rosclaw_soccer.rsi.foot_heading_control import FootHeadingContactProbe
@@ -92,12 +94,13 @@ def test_composed_feedback_branch_real_adapters_on_toy_assets(imitation_parent):
     sim_model.dof_armature[6:35] = 0.02
     binary = np.zeros(mujoco.mj_sizeModel(sim_model), dtype=np.uint8)
     mujoco.mj_saveModel(sim_model, None, binary)
-    f = G1FeedbackForecaster(
+    forecaster_class = G1EarlyFeedbackForecaster if early else G1FeedbackForecaster
+    f = forecaster_class(
         sim_model,
         world_hash=hash_bytes(binary.tobytes()),
         kp=np.full(29, 10.0),
         kd=np.full(29, 0.2),
-        max_forecast_steps=40,
+        max_forecast_steps=80 if early else 40,
     )
     tracker, _, _ = toy_tracker()
     tracker.reference = tracker.reference[:, :1].repeat(1, 256, 1)
@@ -160,8 +163,19 @@ def test_composed_feedback_branch_real_adapters_on_toy_assets(imitation_parent):
             body_prefix=body,
             previous_motor_delta_rad=previous,
         )
-        outputs.append(f.forecast(data, target, control=controller, first_offset_nm=np.zeros(29)))
+        outputs.append(
+            f.forecast(data, target, control=controller, early_offset_nm=np.zeros(29))
+            if early
+            else f.forecast(data, target, control=controller, first_offset_nm=np.zeros(29))
+        )
     assert before == (_numeric_graph_hash(decoder), tracker_signature(tracker), ik_signature(ik))
     assert outputs[0].end_integration_state.tobytes() == outputs[1].end_integration_state.tobytes()
-    assert outputs[0].next_target_record["joint_target_rad"].shape == (29,)
-    assert f.next_target_completed == 2 and f.integrated_steps == 40 and data.time == 0.6
+    if early:
+        assert len(outputs[0].next_target_records) == len(outputs[0].next_neural_records) == 3
+        for row in outputs[0].next_target_records:
+            assert row["joint_target_rad"].shape == (29,)
+        assert f.next_target_completed == 6 and f.integrated_steps == 80
+    else:
+        assert outputs[0].next_target_record["joint_target_rad"].shape == (29,)
+        assert f.next_target_completed == 2 and f.integrated_steps == 40
+    assert data.time == 0.6
