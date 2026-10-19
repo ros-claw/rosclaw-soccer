@@ -119,7 +119,16 @@ def assess(
     # A rollback in wall time must not falsely create a long-idle diagnosis.
     committed_at, active_at = min(now, committed_at), min(now, active_at)
     running = service.get("ActiveState") == "active" and service.get("MainPID") not in (None, "0")
-    if service.get("LoadState") != "loaded":
+    if service.get("LoadState") != "loaded" and (
+        artifacts.get("complete_present") or artifacts.get("failure_present")
+    ):
+        # Transient oneshot units may be garbage-collected after termination.
+        # Do not relaunch charged physics just to manufacture a loaded unit.
+        phase, next_action = (
+            "UNLOADED_STAGE_ARTIFACT_REQUIRES_HISTORY_CHECK",
+            "VERIFY_ORIGINAL_PROCESS_JOURNAL_AND_ALL_ARTIFACTS_NO_RELAUNCH",
+        )
+    elif service.get("LoadState") != "loaded":
         phase, next_action = "MISSING_UNIT", "REPAIR_MISSING_DECLARED_WORKER"
     elif (
         service.get("ActiveState") == "failed"

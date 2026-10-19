@@ -148,3 +148,13 @@ def test_artifact_completion_does_not_override_active_worker_or_failed_exit():
     assert assess(current, None, now=100)["phase"] == "RUNNING"
     current["service"].update(ActiveState="inactive", MainPID="0", Result="exit-code")
     assert assess(current, None, now=101)["phase"] == "FAILED"
+
+
+def test_garbage_collected_oneshot_with_artifact_requires_history_not_relaunch():
+    current = snapshot()
+    current["service"].update(LoadState="not-found", ActiveState="inactive", MainPID="0")
+    current["artifacts"] = dict(tip="synthetic", complete_present=True, failure_present=False)
+    result = assess(current, None, now=100)
+    assert result["phase"] == "UNLOADED_STAGE_ARTIFACT_REQUIRES_HISTORY_CHECK"
+    assert result["next_agent_action"].endswith("NO_RELAUNCH")
+    assert not result["automatic_retry"] and not result["outcome_verified"]
