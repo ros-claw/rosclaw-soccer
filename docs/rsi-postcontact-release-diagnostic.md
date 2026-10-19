@@ -334,3 +334,40 @@ terminal state before running. A monitor does not wake a development agent;
 this is a concrete bounded experiment succession, not a promise of perpetual
 autonomous research after the agent session is interrupted. Whole-bank
 physical verification is still pending at this code integration.
+
+### Diagnostic neural consequence learning (not a torque actor)
+
+The next bounded stage is `scripts/rsi_fit_postcontact_outcome_models.py`.
+It refuses to fit before the whole252 physical verifier succeeds and its raw
+readback/source chain is pinned. `postcontact_outcome_model` fits a121→32 tanh
+network with26 logits: measured task-pass and safety probabilities for each
+of thirteen named interventions. This is supervised learning from actual
+action consequences, including failures, **not imitation of the rejected
+short-proxy teacher**, not online RL, and not a movement policy promotion.
+The module has no torque-output or Foundation execution interface.
+
+Three fixed initialization seeds (1019,2027,4093),500 full-batch Adam updates
+per model, fixed learning rate0.003 and weight regularization1e-4 are declared
+in code. Normalization is fitted on training observations only. Whole original
+source clusters, including their heading/perturbation derivatives, stay on
+one side of each cross-validation fold. Only local context indices0..11 may
+fit weights; the six consumed original retention contexts are evaluation-only.
+They are not a new private test set. No eligible post-touch observation means
+no invented feature/sample; that context remains in the eighteen-row ledger.
+Right-censored ball quality is masked out of the pass-head loss, not relabeled
+as observed failure. Actual measured safety still supplies its separate label.
+
+Results must report masked Brier scores against a training-only smoothed
+constant predictor, actual distinct pre-action-state counts and original
+source-cluster counts. Thirteen interventions on one state are not thirteen
+independent situations. A small development dataset may overfit or fail
+cross-cluster validation; such an outcome is preserved, not turned into an
+actor. Three final local-only fitted models and their consumed-retention
+predictions are saved, without activating any of them. Only subsequent
+causal closed-loop experiments could establish improvement to G1 movement.
+
+The fitting stage is bounded, uses CPU only, has no automatic retry or
+physics/hardware execution, and preserves already completed models on
+failure. Source and all physical-input hashes are rechecked on completion.
+Synthetic fitting/protocol tests establish software behavior only. At this
+code integration no verified-G1-data optimizer update has yet occurred.
