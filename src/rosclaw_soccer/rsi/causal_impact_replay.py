@@ -64,12 +64,15 @@ class CausalImpactReplay:
         impact_enabled: bool,
         early_impact_enabled: bool = False,
         early_evidence_root: Path | None = None,
+        reuse_owned_early_updates: bool = False,
     ) -> None:
         if (
             type(impact_enabled) is not bool
             or type(early_impact_enabled) is not bool
             or (impact_enabled and early_impact_enabled)
             or (early_impact_enabled != (early_evidence_root is not None))
+            or type(reuse_owned_early_updates) is not bool
+            or (reuse_owned_early_updates and not early_impact_enabled)
             or type(profile) is not BoundedFirstTouchControl
             or type(heading) is not FootHeadingContactProbe
             or type(foundation) is not FrozenSonicG1Torch
@@ -147,7 +150,13 @@ class CausalImpactReplay:
         )
         self.teacher: EarlyImpactController | ImpactFeedbackTeacher | None
         if early_impact_enabled:
-            self.teacher = EarlyImpactController(model, world_hash=world_hash, kp=kp, kd=kd)
+            self.teacher = EarlyImpactController(
+                model,
+                world_hash=world_hash,
+                kp=kp,
+                kd=kd,
+                reuse_owned_updates=reuse_owned_early_updates,
+            )
         else:
             self.teacher = (
                 ImpactFeedbackTeacher(model, world_hash=world_hash, kp=kp, kd=kd)

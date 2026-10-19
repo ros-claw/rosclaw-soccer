@@ -29,7 +29,7 @@ from tests.rsi.test_smooth_memory_motor import smooth_parent  # noqa: F401
 from tests.rsi.test_step_motor_network import model  # noqa: F401
 
 
-def build(monkeypatch, parent_model, *, early=False):
+def build(monkeypatch, parent_model, *, early=False, reuse_owned_early_updates=False):
     sim, _, _ = world()
     sim.opt.gravity[:] = 0
     sim.dof_armature[6:35] = 0.02
@@ -92,6 +92,7 @@ def build(monkeypatch, parent_model, *, early=False):
         impact_enabled=False,
         early_impact_enabled=early,
         early_evidence_root=Path("synthetic-output") if early else None,
+        reuse_owned_early_updates=reuse_owned_early_updates,
     )
 
 
@@ -149,6 +150,48 @@ def test_no_recorded_or_future_state_input_in_driver_api():
     forbidden = {"trace", "future_target", "source_contact_frame", "callback", "reference_trace"}
     assert not forbidden.intersection(inspect.signature(mod.CausalImpactReplay).parameters)
     assert list(inspect.signature(mod.CausalImpactReplay.step).parameters) == ["self", "frame"]
+
+
+def test_owned_continuation_is_opt_in_and_propagated_only_to_early_adapter(
+    monkeypatch,
+    imitation_parent,  # noqa: F811
+):
+    captured = []
+
+    class Early:
+        def __init__(self, *args, **kwargs):
+            captured.append(kwargs["reuse_owned_updates"])
+
+    monkeypatch.setattr(mod, "EarlyImpactController", Early)
+    monkeypatch.setattr(mod, "EarlyImpactEvidence", lambda root: object())
+    build(monkeypatch, imitation_parent, early=True)
+    build(monkeypatch, imitation_parent, early=True, reuse_owned_early_updates=True)
+    assert captured == [False, True]
+
+
+@pytest.mark.parametrize("early,value", [(False, True), (True, 1), (True, "yes")])
+def test_owned_option_requires_boolean_and_early_mode_before_model_allocation(early, value):
+    # Deliberately no model assets: invalid options fail before any allocation.
+    with pytest.raises(ValueError, match="fixed study"):
+        mod.CausalImpactReplay(
+            None,
+            world_hash="unused",
+            kp=None,
+            kd=None,
+            model_root=Path("unused"),
+            foundation=None,
+            expected_foundation_hash="unused",
+            policy={},
+            decoder=None,
+            expected_policy_hash="unused",
+            course=(2.7, 0.1, 0.3),
+            profile=None,
+            heading=None,
+            impact_enabled=False,
+            early_impact_enabled=early,
+            early_evidence_root=Path("unused") if early else None,
+            reuse_owned_early_updates=value,
+        )
 
 
 def test_early_adapter_applies_three_frame_torque_and_preserves_distinct_trace_namespace(

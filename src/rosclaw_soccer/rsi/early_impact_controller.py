@@ -89,10 +89,25 @@ def same_arrays(left: dict[str, np.ndarray], right: dict[str, np.ndarray]) -> bo
 
 
 class EarlyImpactController:
-    def __init__(self, model: Any, *, world_hash: str, kp: np.ndarray, kd: np.ndarray) -> None:
+    def __init__(
+        self,
+        model: Any,
+        *,
+        world_hash: str,
+        kp: np.ndarray,
+        kd: np.ndarray,
+        reuse_owned_updates: bool = False,
+    ) -> None:
+        if type(reuse_owned_updates) is not bool:
+            raise ValueError("explicit boolean owned continuation option required")
         self.model = model
         self.forecaster = G1EarlyFeedbackForecaster(
-            model, world_hash=world_hash, kp=kp, kd=kd, max_forecast_steps=MAX_FORECAST_STEPS
+            model,
+            world_hash=world_hash,
+            kp=kp,
+            kd=kd,
+            max_forecast_steps=MAX_FORECAST_STEPS,
+            reuse_owned_updates=reuse_owned_updates,
         )
         self.sampler = G1JointTaskKinematicSampler(model, expected_world_hash=world_hash)
         self.next_frame = self.baseline_windows = 0
