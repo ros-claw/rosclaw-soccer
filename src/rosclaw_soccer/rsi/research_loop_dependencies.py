@@ -90,12 +90,12 @@ def annotate_dependencies(
             role = "COMPLETE_METADATA_REQUIRES_AUTHENTICATION"
         else:
             role = "PREREQUISITES_OBSERVED_STAGE_EXECUTION_NOT_VERIFIED"
-        result[unit] = dict(
+        result[unit] = {
             **observation,
-            declared_work_role=role,
-            pending_prerequisites=pending,
-            failed_prerequisites=failed,
-            dependency_contents_verified=False,
-            goal_complete=False,
-        )
+            "declared_work_role": role,
+            "pending_prerequisites": pending,
+            "failed_prerequisites": failed,
+            "dependency_contents_verified": False,
+            "goal_complete": False,
+        }
     return result

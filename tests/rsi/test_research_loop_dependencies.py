@@ -3,6 +3,7 @@ import copy
 import pytest
 
 from rosclaw_soccer.rsi.research_loop_dependencies import annotate_dependencies
+from rosclaw_soccer.rsi.research_loop_watch import assess
 
 
 def setup():
@@ -27,6 +28,17 @@ def test_waiting_process_is_not_mislabelled_as_training():
     assert campaigns == before
     assert output["verify"]["declared_work_role"] == "WAITING_FOR_DECLARED_PREDECESSOR"
     assert output["verify"]["dependency_contents_verified"] is False
+
+
+def test_accepts_actual_assess_output_and_repeated_existing_annotations():
+    campaigns, plan = setup()
+    campaigns = {
+        k: assess({"service": v["service"]}, None, now=100.0) for k, v in campaigns.items()
+    }
+    first = annotate_dependencies(campaigns, plan)
+    second = annotate_dependencies(first, plan)
+    assert second == first
+    assert second["verify"]["goal_complete"] is False
 
 
 def test_complete_file_without_terminal_process_does_not_release_wait():
