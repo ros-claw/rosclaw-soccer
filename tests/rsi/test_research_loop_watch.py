@@ -116,3 +116,35 @@ def test_collect_uses_read_only_sqlite_and_does_not_create_missing_ledger(tmp_pa
     data = (tmp_path / "campaign.sqlite").read_bytes()
     assert collect("example.service", tmp_path)["ledger"]["completed"] == 0
     assert (tmp_path / "campaign.sqlite").read_bytes() == data
+
+
+def test_serial_checkpoints_are_progress_not_verified_outcomes(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "rosclaw_soccer.rsi.research_loop_watch.subprocess.run",
+        lambda *a, **kw: SimpleNamespace(
+            stdout="LoadState=loaded\nMainPID=0\nActiveState=inactive\nResult=success\n"
+        ),
+    )
+    (tmp_path / "declaration.json").write_text("{}")
+    first = collect("example.service", tmp_path)
+    assert first["artifacts"]["checkpoint_count"] == 1
+    previous = assess(first, None, now=100)
+    (tmp_path / "complete.json").write_text("not even valid json; observer must not promote it")
+    second = collect("example.service", tmp_path)
+    result = assess(second, previous, now=1400)
+    assert result["phase"] == "STAGE_ARTIFACT_READY_FOR_READBACK"
+    assert result["last_ledger_change_unix"] == 1400
+    assert not result["outcome_verified"] and not result["goal_complete"]
+    assert not result["artifacts"]["contents_verified"]
+    (tmp_path / "failure.json").write_text("{}")
+    assert assess(collect("example.service", tmp_path), result, now=1401)["phase"] == "FAILED"
+
+
+def test_artifact_completion_does_not_override_active_worker_or_failed_exit():
+    current = snapshot()
+    current["artifacts"] = dict(tip="synthetic", complete_present=True, failure_present=False)
+    assert assess(current, None, now=100)["phase"] == "RUNNING"
+    current["service"].update(ActiveState="inactive", MainPID="0", Result="exit-code")
+    assert assess(current, None, now=101)["phase"] == "FAILED"

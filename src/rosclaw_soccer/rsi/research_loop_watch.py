@@ -5,6 +5,7 @@ an unsafe rollout is data, whereas an integrity failure requires a repair review
 Neither condition authorizes silently retrying an already charged attempt.
 """
 
+import hashlib
 import json
 import math
 import sqlite3
@@ -61,6 +62,25 @@ def collect(unit: str, root: Path) -> dict[str, Any]:
                 completed=len(state["completed"]),
                 active=state["active"],
             )
+    # Serial diagnostic runners publish ordinary JSON checkpoints, not SQLite.
+    # Metadata change is progress observation, never scientific verification.
+    files = sorted(root.glob("*.json"))
+    if len(files) > 2048:
+        raise ValueError("bounded stage checkpoint directory required")
+    metadata = []
+    for path in files:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("ordinary stage checkpoint required")
+        stat = path.stat()
+        metadata.append((path.name, stat.st_size, stat.st_mtime_ns))
+    if metadata:
+        observation["artifacts"] = dict(
+            tip=hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest(),
+            checkpoint_count=len(metadata),
+            complete_present=any(name == "complete.json" for name, _, _ in metadata),
+            failure_present=any(name == "failure.json" for name, _, _ in metadata),
+            contents_verified=False,
+        )
     return observation
 
 
@@ -79,7 +99,8 @@ def assess(
         previous = {}
     service = observation["service"]
     ledger = observation.get("ledger") or {}
-    tip = ledger.get("tip")
+    artifacts = observation.get("artifacts") or {}
+    tip = (ledger.get("tip"), artifacts.get("tip"))
     identity = (service.get("MainPID"), observation.get("process_start_ticks"))
     old_service = previous.get("service", {})
     old_identity = (old_service.get("MainPID"), previous.get("process_start_ticks"))
@@ -89,7 +110,10 @@ def assess(
     cpu_advanced = (
         same_process and ticks is not None and old_ticks is not None and ticks > old_ticks
     )
-    old_tip = (previous.get("ledger") or {}).get("tip")
+    old_tip = (
+        (previous.get("ledger") or {}).get("tip"),
+        (previous.get("artifacts") or {}).get("tip"),
+    )
     committed_at = now if tip != old_tip or not previous else previous["last_ledger_change_unix"]
     active_at = now if cpu_advanced or not same_process else previous["last_cpu_change_unix"]
     # A rollback in wall time must not falsely create a long-idle diagnosis.
@@ -97,7 +121,11 @@ def assess(
     running = service.get("ActiveState") == "active" and service.get("MainPID") not in (None, "0")
     if service.get("LoadState") != "loaded":
         phase, next_action = "MISSING_UNIT", "REPAIR_MISSING_DECLARED_WORKER"
-    elif service.get("ActiveState") == "failed" or service.get("Result") not in (None, "success"):
+    elif (
+        service.get("ActiveState") == "failed"
+        or service.get("Result") not in (None, "success")
+        or artifacts.get("failure_present")
+    ):
         phase, next_action = "FAILED", "PRESERVE_FAILURE_AND_DIAGNOSE_NO_BLIND_RETRY"
     elif running:
         if now - active_at >= quiet_seconds:
@@ -111,6 +139,11 @@ def assess(
             phase, next_action = "RUNNING", "CONTINUE_AGENT_DEVELOPMENT_AND_WAIT_FOR_EVIDENCE"
     elif service.get("ActiveState") in ("activating", "deactivating"):
         phase, next_action = "TRANSITIONING", "RECHECK_BOUNDED_TRANSITION"
+    elif artifacts.get("complete_present"):
+        phase, next_action = (
+            "STAGE_ARTIFACT_READY_FOR_READBACK",
+            "AUTHENTICATE_ALL_RESULTS_AND_DECLARE_SCIENTIFIC_SUCCESSOR",
+        )
     else:
         phase, next_action = "NO_RUNNING_WORKER", "REVIEW_LEDGER_AND_DECLARE_NEXT_SCIENTIFIC_STAGE"
     return dict(
