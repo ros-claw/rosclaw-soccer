@@ -48,3 +48,8 @@ def test_velocity_limit_and_timeout_no_hidden_motion_extension():
     assert late.timed_out and not late.ready and late.command == (0, 0, 0)
     with pytest.raises(ValueError):
         ball_entry_decision(q, v, frame=300, affordance=prior)
+
+
+def test_frozen_affordance_cannot_contain_a_mutable_offset_list():
+    with pytest.raises(ValueError):
+        SkillEntryAffordance([0.25, -0.1], 150, 1.0, "sha256:" + "1" * 64)

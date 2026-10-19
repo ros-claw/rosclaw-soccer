@@ -25,7 +25,8 @@ class SkillEntryAffordance:
 
     def __post_init__(self) -> None:
         if (
-            len(self.ball_offset_xy_m) != 2
+            type(self.ball_offset_xy_m) is not tuple
+            or len(self.ball_offset_xy_m) != 2
             or not np.isfinite(self.ball_offset_xy_m).all()
             or max(abs(x) for x in self.ball_offset_xy_m) > 1
             or type(self.historical_frame) is not int
