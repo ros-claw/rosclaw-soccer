@@ -894,3 +894,15 @@ Thirteen synthetic algebra/orchestration tests plus17 existing recorded-body
 tests passed together:30 tests13.71s. Synthetic whole-bank counters are not
 physical evidence. Nonzero G1 parity and independent36000-step closure are
 still required from their actual runs.
+
+`recovery_diagnostics` separates two unchanged M0 veto components: native
+pelvis height below0.65m and observed six-channel nonfoot ball contact. Neither
+is renamed as a general fall detector. Additional unscored diagnostics report
+cached20ms root tilt/angular speed/negative world-x travel, sampled joint
+acceleration and native torque change/saturation. Root sample time span is
+distinct from remaining native task duration; absent post-contact data stays
+None rather than fabricated zero. These are not support-margin estimates,
+human-naturalness scores or changed rewards. Five synthetic tests passed1.15s
+and the typed module passed mypy. Such diagnostics are needed before calling
+a future M0 improvement a balance improvement rather than merely avoiding a
+second knee/ball contact. Actual comparative diagnosis remains to be run.
