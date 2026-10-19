@@ -84,9 +84,12 @@ class CausalImpactReplay:
         release_action_name: str | None = None,
         postcontact_exit_enabled: bool = False,
         postcontact_exit_evidence_root: Path | None = None,
+        reuse_owned_postcontact_updates: bool = False,
     ) -> None:
         if (
             type(impact_enabled) is not bool
+            or type(reuse_owned_postcontact_updates) is not bool
+            or (reuse_owned_postcontact_updates and not postcontact_exit_enabled)
             or type(postcontact_exit_enabled) is not bool
             or (postcontact_exit_enabled != (postcontact_exit_evidence_root is not None))
             or (
@@ -183,6 +186,7 @@ class CausalImpactReplay:
             EarlyImpactEvidence(early_evidence_root) if early_evidence_root is not None else None
         )
         self.postcontact_exit_enabled = postcontact_exit_enabled
+        self.reuse_owned_postcontact_updates = reuse_owned_postcontact_updates
         self.exit_evidence = (
             PostContactExitEvidence(postcontact_exit_evidence_root)
             if postcontact_exit_evidence_root is not None
@@ -192,7 +196,13 @@ class CausalImpactReplay:
             EarlyImpactController | ImpactFeedbackTeacher | PostContactExitController | None
         )
         if postcontact_exit_enabled:
-            self.teacher = PostContactExitController(model, world_hash=world_hash, kp=kp, kd=kd)
+            self.teacher = PostContactExitController(
+                model,
+                world_hash=world_hash,
+                kp=kp,
+                kd=kd,
+                reuse_owned_updates=reuse_owned_postcontact_updates,
+            )
         elif early_impact_enabled:
             self.teacher = EarlyImpactController(
                 model,
@@ -519,4 +529,8 @@ class CausalImpactReplay:
             if type(self.teacher) is not PostContactExitController:
                 raise ValueError("owned complete exit controller required")
             review["postcontact_exit"] = self.teacher.review()
+            if self.reuse_owned_postcontact_updates:
+                if self.teacher.forecaster.reuse_owned_updates is not True:
+                    raise ValueError("declared owned postcontact update path changed")
+                review["postcontact_exit_owned_updates_reused"] = True
         return review

@@ -540,3 +540,34 @@ MjData and read-only shared MjModel, while its Python bindings release the
 GIL only during C calls. These are design inputs, not an established speedup:
 [simulation threading](https://mujoco.readthedocs.io/en/3.12.0/programming/simulation.html#multi-threading),
 [Python GIL boundary](https://mujoco.readthedocs.io/en/3.12.0/python.html#functions).
+
+### Selected post-touch continuation parity closed (2026-10-20)
+
+The separately frozen `8605e3d8` run finished00:15:25. All six original
+comparison cases passed, including five nonzero selected corrections and one
+zero. It performed18000 original recorded-body steps,480 new forecast steps,
+1800 original residual decisions,1620 recurrent updates,60 reference/planner
+calls and36 future target/NN pairs. Both implementations matched each closed
+selected prediction byte-for-byte. No task policy was trained or promoted.
+The default MPC was not changed.
+
+An additional read-only reviewer rechecked every row seal, both actual branch
+files against their source gold, all numerical shapes/dtypes/bytes and every
+input/source pin. Single selected-branch wall-time ratios were2.7973–2.8395
+(unrandomized, excluding artifact I/O). These numbers do not establish whole
+bank speedup, real-time control, new course success or actor learning.
+
+Source completion logical hash:
+`sha256:34a37713cafcd4cdb1bee60b5b5c0cbbee72e7913d5268ad16c67e7ce888f813`;
+file hash:
+`sha256:8e281b168be2bafd485d014b1aad37cefd7e9497f70f6219b7b47859ca2c323b`.
+Whole readback logical hash:
+`sha256:ea9d05bae1144a32db2b37c65f026bf2bec7c5f3870c57d5ba62ce5cb917e4d5`.
+
+The causal adapter now provides the separate explicit boolean
+`reuse_owned_postcontact_updates=False`. Only an enabled postcontact-exit
+profile may opt in. Other profiles reject it before allocation, defaults stay
+unchanged, and a declared owned path that is later changed cannot produce a
+successful completion review. This wires the already-existing continuation
+implementation for the **new** prospective robustness profile; it does not
+retroactively replace any running/frozen experiment or qualify a student.

@@ -37,6 +37,7 @@ def build(
     reuse_owned_early_updates=False,
     release_action_name=None,
     exit_root=None,
+    reuse_owned_postcontact_updates=False,
 ):
     sim, _, _ = world()
     sim.opt.gravity[:] = 0
@@ -104,7 +105,54 @@ def build(
         release_action_name=release_action_name,
         postcontact_exit_enabled=exit_root is not None,
         postcontact_exit_evidence_root=exit_root,
+        reuse_owned_postcontact_updates=reuse_owned_postcontact_updates,
     )
+
+
+def test_postcontact_owned_continuation_remains_explicit_opt_in(
+    monkeypatch,
+    imitation_parent,  # noqa: F811
+):
+    values = []
+
+    class Exit:
+        def __init__(self, *a, **kw):
+            values.append(kw["reuse_owned_updates"])
+
+    monkeypatch.setattr(mod, "PostContactExitController", Exit)
+    monkeypatch.setattr(mod, "PostContactExitEvidence", lambda root: object())
+    build(monkeypatch, imitation_parent, exit_root=Path("unused-legacy"))
+    build(
+        monkeypatch,
+        imitation_parent,
+        exit_root=Path("unused-owned"),
+        reuse_owned_postcontact_updates=True,
+    )
+    assert values == [False, True]
+
+
+@pytest.mark.parametrize("enabled,value", [(False, True), (True, 1), (True, "yes")])
+def test_owned_postcontact_flag_rejected_before_allocation(enabled, value):
+    with pytest.raises(ValueError, match="fixed study"):
+        mod.CausalImpactReplay(
+            None,
+            world_hash="unused",
+            kp=None,
+            kd=None,
+            model_root=Path("unused"),
+            foundation=None,
+            expected_foundation_hash="unused",
+            policy={},
+            decoder=None,
+            expected_policy_hash="unused",
+            course=(2.7, 0.1, 0.3),
+            profile=None,
+            heading=None,
+            impact_enabled=False,
+            postcontact_exit_enabled=enabled,
+            postcontact_exit_evidence_root=Path("unused") if enabled else None,
+            reuse_owned_postcontact_updates=value,
+        )
 
 
 def test_current_body_full300_loop_integrates_and_recomputes_neural_inputs(
@@ -333,10 +381,12 @@ def test_early_adapter_applies_three_frame_torque_and_preserves_distinct_trace_n
         )
 
 
+@pytest.mark.parametrize("reuse_owned", [False, True])
 def test_postcontact_exit_adapter_uses_own_past_forces_and_persists_before_all_native_steps(
     monkeypatch,
     imitation_parent,  # noqa: F811
     tmp_path,
+    reuse_owned,
 ):
     """Actual toy body, synthetic NN and deliberately synthetic exit decisions."""
     import json
@@ -347,7 +397,9 @@ def test_postcontact_exit_adapter_uses_own_past_forces_and_persists_before_all_n
 
     class Exit:
         def __init__(self, *a, **kw):
-            self.forecaster = SimpleNamespace(attempted_steps=0, integrated_steps=0)
+            self.forecaster = SimpleNamespace(
+                attempted_steps=0, integrated_steps=0, reuse_owned_updates=kw["reuse_owned_updates"]
+            )
 
         def plan(self, data, target, **kw):
             f = kw["frame"]
@@ -387,11 +439,14 @@ def test_postcontact_exit_adapter_uses_own_past_forces_and_persists_before_all_n
         native_step(engine_model, data)
 
     monkeypatch.setattr(mujoco, "mj_step", checked_step)
-    replay = build(monkeypatch, imitation_parent, exit_root=root)
+    replay = build(
+        monkeypatch, imitation_parent, exit_root=root, reuse_owned_postcontact_updates=reuse_owned
+    )
     frames = [replay.step(f) for f in range(300)]
     review = replay.review()
     assert review["native_integrated_steps"] == 3000 and review["forecast_integrated_steps"] == 0
     assert not review["postcontact_exit"]["teacher_qualified"]
+    assert review.get("postcontact_exit_owned_updates_reused", False) is reuse_owned
     np.testing.assert_array_equal(forces_seen[0], 0)
     for f in range(1, 300):
         np.testing.assert_array_equal(forces_seen[f], frames[f - 1].arrays["force_n"][0])
@@ -413,6 +468,10 @@ def test_postcontact_exit_adapter_uses_own_past_forces_and_persists_before_all_n
                 replay.torque_limits,
             ),
         )
+    if reuse_owned:
+        replay.teacher.forecaster.reuse_owned_updates = False
+        with pytest.raises(ValueError, match="update path changed"):
+            replay.review()
 
 
 @pytest.mark.parametrize(
