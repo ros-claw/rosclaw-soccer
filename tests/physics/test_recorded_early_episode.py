@@ -108,6 +108,25 @@ def test_full300_frames_reintegrated_from_independent_declared_initial_state(rec
     assert a.attempted_steps == 3000
 
 
+@pytest.mark.parametrize("recorded", [True], indirect=True)
+def test_unforced_no_fabricated_impact_arrays(recorded):
+    audit, trace = recorded
+    trace = {k: v for k, v in trace.items() if not k.startswith("early_impact_feedback_")}
+    original_keys = set(trace)
+    result = audit.verify_unforced_control(trace)
+    assert result["actual_physical_steps"] == 3000
+    assert max(result["maximum_absolute_errors"].values()) == 0
+    assert result["plain_pd_only"] and not result["impact_action_arrays_fabricated_or_aliased"]
+    assert not result["neural_targets_recomputed"] and set(trace) == original_keys
+
+
+def test_unforced_rejects_offset_bearing_source_before_integration(recorded):
+    audit, trace = recorded
+    with pytest.raises(ValueError, match="cannot contain impact fields"):
+        audit.verify_unforced_control(trace)
+    assert audit.failed and audit.attempted_steps == 0
+
+
 @pytest.mark.parametrize(
     "field",
     [

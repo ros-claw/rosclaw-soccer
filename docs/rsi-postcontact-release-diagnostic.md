@@ -635,3 +635,15 @@ projected command, and the shared pre-action body at that boundary. Raw
 requests can diverge before clipped physical commands; those are explicitly
 not claimed to be an unchanged prefix. Even a gain would be a mechanism
 result, not learned-muscle-memory or online-RL success.
+
+The probe producer was committed/frozen at `154cf4e8` and its real full-source
+preflight passed before execution. The new independent verifier
+`rsi_verify_constant_forward.py` first rechecks all eighteen source-bound raw
+traces, M0 labels, current-state navigation laws and paired summaries before
+allocating any physical auditor. It then performs54000 additional native
+recorded-target steps. The auditor's explicit `verify_unforced_control`
+path admits plain PD captures only; it does not fabricate zero early-impact
+or postcontact action arrays to reuse an incompatible namespace. It rejects
+offset-bearing captures before integration. Defaults of the old impact
+verification paths remain unchanged. This still does not independently
+recompute the Foundation or qualify a learned actor.

@@ -64,6 +64,14 @@ class RecordedEarlyEpisode:
     ) -> dict[str, Any]:
         return self._verify(trace, motor_audit=motor_audit, postcontact=False)
 
+    def verify_unforced_control(self, trace: dict[str, np.ndarray]) -> dict[str, Any]:
+        """Reintegrate recorded targets with plain PD, no impact fields invented.
+
+        Navigation/NN/IK causality must be reviewed separately. This admits no
+        offset-bearing capture and does not call the early-impact controller.
+        """
+        return self._verify(trace, motor_audit=None, postcontact=False, unforced=True)
+
     def verify_postcontact_release(
         self,
         trace: dict[str, np.ndarray],
@@ -97,10 +105,23 @@ class RecordedEarlyEpisode:
         motor_audit: OriginalMotorComponentAudit | None,
         postcontact: bool,
         exit_profile: bool = False,
+        unforced: bool = False,
     ) -> dict[str, Any]:
         if self.used:
             raise ValueError("once-only callback-free whole-body physical replay required")
         self.used = self.failed = True
+        if unforced and any(
+            k.startswith(
+                (
+                    "early_impact_feedback_",
+                    "impact_feedback_",
+                    "postcontact_release_",
+                    "postcontact_exit_",
+                )
+            )
+            for k in trace
+        ):
+            raise ValueError("unforced recorded control cannot contain impact fields")
         if motor_audit is not None and (
             type(motor_audit) is not OriginalMotorComponentAudit
             or motor_audit.model is not self.model
@@ -163,8 +184,9 @@ class RecordedEarlyEpisode:
             force_n=(300, 1, 6),
             ball_position_after_step_m=(300, 1, 3),
         )
-        expected_shapes[prefix + "requested_offset_nm"] = (300, 1, 29)
-        expected_shapes[prefix + "applied_offset_nm"] = (300, 1, 10, 29)
+        if not unforced:
+            expected_shapes[prefix + "requested_offset_nm"] = (300, 1, 29)
+            expected_shapes[prefix + "applied_offset_nm"] = (300, 1, 10, 29)
         for key, shape in expected_shapes.items():
             a = trace.get(key)
             if (
@@ -174,7 +196,7 @@ class RecordedEarlyEpisode:
                 or not np.isfinite(a).all()
             ):
                 raise ValueError("whole finite typed recorded body required: " + key)
-        actions = trace[prefix + "requested_offset_nm"][:, 0]
+        actions = np.zeros((300, 29)) if unforced else trace[prefix + "requested_offset_nm"][:, 0]
         frames = np.flatnonzero(np.any(actions != 0, axis=1))
         if (
             np.any(abs(actions) > self.caps)
@@ -252,11 +274,12 @@ class RecordedEarlyEpisode:
                 tau = np.clip(raw + offset, -self.limits, self.limits) if np.any(offset) else parent
                 equal("pd_requested_torque_nm", raw, trace["pd_requested_torque_nm"][f, 0, s])
                 equal("torque_nm", tau, trace["torque_nm"][f, 0, s])
-                equal(
-                    "applied_offset_nm",
-                    tau - parent,
-                    trace[prefix + "applied_offset_nm"][f, 0, s],
-                )
+                if not unforced:
+                    equal(
+                        "applied_offset_nm",
+                        tau - parent,
+                        trace[prefix + "applied_offset_nm"][f, 0, s],
+                    )
                 d.ctrl[self.ai] = tau
                 old_time = float(d.time)
                 self.attempted_steps += 1
@@ -330,5 +353,9 @@ class RecordedEarlyEpisode:
             )
             result["recorded_forecast_steps_not_reexecuted"] = recorded_forecast_steps
             result["independent_exit_search_qualified"] = False
+        if unforced:
+            result["schema"] = "soccer.rsi.recorded_unforced_h300_physics.v1"
+            result["plain_pd_only"] = True
+            result["impact_action_arrays_fabricated_or_aliased"] = False
         self.failed = False
         return result
