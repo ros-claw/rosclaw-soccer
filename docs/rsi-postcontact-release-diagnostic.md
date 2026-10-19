@@ -67,3 +67,23 @@ fail, preserve that negative result and reconsider action authority or the
 underlying motion/reference semantics rather than doing another identical BC
 fit. In either case the larger goal remains independently verified continuous
 multi-agent football, not this diagnostic alone.
+
+# Independent physical readback
+
+`scripts/rsi_replay_postcontact_authority.py` requires a closed successful
+producer unit, the complete file hash, a clean frozen reader commit and an
+unused output directory. It admits all fourteen ordered raw traces before
+integrating any body. It rechecks the whole original input hash chain, raw
+M0 labels, the original motor/receipt identity, both full zero controls, all
+pre-intervention body/neural fields, measured-contact triggering and actual
+clipped-PD torque attribution. The declared named torque is independently
+rebuilt using the current recorded pose's Jacobian, not trusted by name alone.
+
+`RecordedEarlyEpisode.verify_postcontact_release` consumes the actual distinct
+postcontact fields, never fabricated early-impact fields. It reintegrates all
+3,000 substeps per body using recorded targets and its own state. Its
+42,000-step fourteen-body output is **one physical context**, not fourteen
+independent situations, and is not independent neural/search qualification,
+learning, or teacher admission. Physical tolerances, H300, M0 and world remain
+unchanged. Partial failures preserve actual step counts and the last state;
+there is no automatic retry or overwrite.

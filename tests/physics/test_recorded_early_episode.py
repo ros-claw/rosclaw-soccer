@@ -13,6 +13,15 @@ from tests.physics.test_g1_feedback_forecast import world
 def recorded(request):
     m, _, _ = world()
     m.dof_armature[6:35] = 0.1
+    mode = getattr(request, "param", False)
+    postcontact = mode in ("postcontact", "postcontact_late")
+    course = (2.0, 1.0, 0.2)
+    if postcontact:
+        # Controlled toy contact, not native G1 skill evidence. Ball approaches
+        # the left foot in zero gravity; all modifications precede world hash.
+        m.opt.gravity[:] = 0
+        m.body_pos[m.body("left_ankle_roll_link").id, 2] = -0.683
+        course = (2.072 if mode == "postcontact_late" else 0.999, 0.0, -0.2)
     binary = np.empty(mujoco.mj_sizeModel(m), dtype=np.uint8)
     mujoco.mj_saveModel(m, None, binary)
     kp, kd = np.full(29, 10.0), np.full(29, 0.2)
@@ -21,20 +30,27 @@ def recorded(request):
         world_hash=hash_bytes(binary.tobytes()),
         kp=kp,
         kd=kd,
-        course=(2.0, 1.0, 0.2),
+        course=course,
         defaults=np.zeros(29),
     )
     d = mujoco.MjData(m)
     d.qpos[:7] = (0, 0, 0.793, 1, 0, 0, 0)
     d.qpos[7:36] = 0
-    d.qpos[36:] = (2, 1, 0.13, 1, 0, 0, 0)
-    d.qvel[35:] = (0.2, 0, 0, 0, 0.2 / 0.11, 0)
+    d.qpos[36:] = (*course[:2], 0.13, 1, 0, 0, 0)
+    d.qvel[35:] = (course[2], 0, 0, 0, course[2] / 0.11, 0)
     mujoco.mj_forward(m, d)
     history = {}
     limits = np.asarray(G1_HARD_TORQUE_LIMITS)
+    previous_forces = np.zeros(6)
+    trigger = None
     for f in range(300):
         offset = np.zeros(29)
-        if not getattr(request, "param", False) and 50 <= f < 53:
+        if postcontact:
+            if trigger is None and f >= 30 and np.any(previous_forces[:2] > 1):
+                trigger = f
+            if trigger is not None and f < trigger + 3:
+                offset[5] = 0.1
+        elif mode is not True and 50 <= f < 53:
             offset[5] = 0.1
         row = dict(
             canonical_qpos=d.qpos.copy()[None],
@@ -76,6 +92,7 @@ def recorded(request):
         )
         for k, v in row.items():
             history.setdefault(k, []).append(v)
+        previous_forces = forces.copy()
     return audit, {k: np.asarray(v) for k, v in history.items()}
 
 

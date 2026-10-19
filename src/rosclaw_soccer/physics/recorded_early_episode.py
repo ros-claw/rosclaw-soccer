@@ -62,6 +62,28 @@ class RecordedEarlyEpisode:
         *,
         motor_audit: OriginalMotorComponentAudit | None = None,
     ) -> dict[str, Any]:
+        return self._verify(trace, motor_audit=motor_audit, postcontact=False)
+
+    def verify_postcontact_release(
+        self,
+        trace: dict[str, np.ndarray],
+        *,
+        motor_audit: OriginalMotorComponentAudit | None = None,
+    ) -> dict[str, Any]:
+        """Distinct actual post-touch fields; no fabricated early-action capture.
+
+        Allows a truncated-at-H300 final lease. The formal M0 outcome still
+        judges late contact separately; legitimate censoring is not corruption.
+        """
+        return self._verify(trace, motor_audit=motor_audit, postcontact=True)
+
+    def _verify(
+        self,
+        trace: dict[str, np.ndarray],
+        *,
+        motor_audit: OriginalMotorComponentAudit | None,
+        postcontact: bool,
+    ) -> dict[str, Any]:
         if self.used:
             raise ValueError("once-only callback-free whole-body physical replay required")
         self.used = self.failed = True
@@ -75,6 +97,18 @@ class RecordedEarlyEpisode:
             raise ValueError("fresh exact same-model original motor component auditor required")
         if mujoco.get_mjcb_control() is not None:
             raise ValueError("once-only callback-free whole-body physical replay required")
+        prefix = "postcontact_release_" if postcontact else "early_impact_feedback_"
+        if postcontact:
+            if any(k.startswith(("early_impact_feedback_", "impact_feedback_")) for k in trace):
+                raise ValueError("distinct post-contact profile without old impact fields required")
+            steps = trace.get(prefix + "forecast_steps")
+            if (
+                not isinstance(steps, np.ndarray)
+                or steps.shape != (300, 1, 1)
+                or steps.dtype != np.int64
+                or np.any(steps)
+            ):
+                raise ValueError("post-contact control must have zero actual forecasts")
         expected_shapes = dict(
             canonical_qpos=(300, 1, 43),
             canonical_qvel=(300, 1, 41),
@@ -85,9 +119,9 @@ class RecordedEarlyEpisode:
             pelvis_z_per_substep_m=(300, 1, 10),
             force_n=(300, 1, 6),
             ball_position_after_step_m=(300, 1, 3),
-            early_impact_feedback_requested_offset_nm=(300, 1, 29),
-            early_impact_feedback_applied_offset_nm=(300, 1, 10, 29),
         )
+        expected_shapes[prefix + "requested_offset_nm"] = (300, 1, 29)
+        expected_shapes[prefix + "applied_offset_nm"] = (300, 1, 10, 29)
         for key, shape in expected_shapes.items():
             a = trace.get(key)
             if (
@@ -97,7 +131,7 @@ class RecordedEarlyEpisode:
                 or not np.isfinite(a).all()
             ):
                 raise ValueError("whole finite typed recorded body required: " + key)
-        actions = trace["early_impact_feedback_requested_offset_nm"][:, 0]
+        actions = trace[prefix + "requested_offset_nm"][:, 0]
         frames = np.flatnonzero(np.any(actions != 0, axis=1))
         if (
             np.any(abs(actions) > self.caps)
@@ -106,7 +140,7 @@ class RecordedEarlyEpisode:
                 len(frames)
                 and (
                     len(frames) > 3
-                    or not 30 <= frames[0] <= 294
+                    or not 30 <= frames[0] <= (299 if postcontact else 294)
                     or not np.array_equal(frames, np.arange(frames[0], frames[-1] + 1))
                     or not np.array_equal(
                         actions[frames], np.tile(actions[frames[0]], (len(frames), 1))
@@ -116,6 +150,8 @@ class RecordedEarlyEpisode:
             )
         ):
             raise ValueError("one bounded at-most60ms original leg action required")
+        if postcontact and len(frames) and not np.any(trace["force_n"][frames[0] - 1, 0, :2] > 1):
+            raise ValueError("nonzero post-contact lease requires a completed foot force bin")
         q0, v0 = trace["canonical_qpos"][0, 0], trace["canonical_qvel"][0, 0]
         self.initial.verify(self.course, q0, v0)
         d, m = self.data, self.model
@@ -170,7 +206,7 @@ class RecordedEarlyEpisode:
                 equal(
                     "applied_offset_nm",
                     tau - parent,
-                    trace["early_impact_feedback_applied_offset_nm"][f, 0, s],
+                    trace[prefix + "applied_offset_nm"][f, 0, s],
                 )
                 d.ctrl[self.ai] = tau
                 old_time = float(d.time)
@@ -229,5 +265,13 @@ class RecordedEarlyEpisode:
             result["schema"] = "soccer.rsi.recorded_early_h300_motor_physics.v1"
             result["motor_review"] = motor_audit.review()
             result["original_ik_and_recurrent_motor_recomputed"] = True
+        if postcontact:
+            result["schema"] = (
+                "soccer.rsi.recorded_postcontact_h300_motor_physics.v1"
+                if motor_audit is not None
+                else "soccer.rsi.recorded_postcontact_h300_physics.v1"
+            )
+            result["actual_postcontact_action_fields_consumed"] = True
+            result["early_action_arrays_fabricated_or_aliased"] = False
         self.failed = False
         return result
