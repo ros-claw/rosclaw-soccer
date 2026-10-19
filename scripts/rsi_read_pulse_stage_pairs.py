@@ -6,9 +6,11 @@ import subprocess
 from pathlib import Path
 
 from rosclaw_soccer.rsi.first_touch_stage_diagnostics import assess_first_touch_stages
+from rosclaw_soccer.rsi.original_ik_planner_diagnostics import ik_contact_readout
 from rosclaw_soccer.rsi.planner_navigation_pulse_cohort import pulse_contact_readout
 from rosclaw_soccer.sim.contracts import hash_json
 from scripts.rsi_atomic_artifacts import write_once
+from scripts.rsi_load_original_ik_cohort import load_closed_original_ik
 from scripts.rsi_load_pre_planner_cohort import load_closed_pulse
 from scripts.rsi_stage_release_contact_replay import digest, require_terminal
 
@@ -40,11 +42,13 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
     cfg = json.loads(args.config.read_text())
+    stage_profile = cfg.get("stage_profile", "zero-reference-pulse")
     source = Path(__file__).resolve().parents[1]
     output = Path(cfg["output"])
     started = output.with_suffix(".started.json")
     if (
         cfg.get("mode") != "SIM_ONLY"
+        or stage_profile not in ("zero-reference-pulse", "original-ik-pulse")
         or any(cfg.get(k) is not False for k in ("hardware_authorized", "promotion_authorized"))
         or output.exists()
         or started.exists()
@@ -81,16 +85,27 @@ def main():
 
     try:
         cohort_spec, contact_spec = completed_inputs(cfg, sealed=sealed)
-        cohort = load_closed_pulse(cohort_spec, sealed=sealed, pins=pins)
+        loader = (
+            load_closed_original_ik if stage_profile == "original-ik-pulse" else load_closed_pulse
+        )
+        cohort = loader(cohort_spec, sealed=sealed, pins=pins)
         declaration, complete, audit = (cohort[k] for k in ("declaration", "complete", "audit"))
         spec = contact_spec
         require_terminal(spec["unit"])
         contact, replay, metrics = (
             sealed(spec[k]) for k in ("complete", "replay_complete", "metrics")
         )
-        measured = pulse_contact_readout(declaration, complete, replay, metrics)
+        readout = (
+            ik_contact_readout if stage_profile == "original-ik-pulse" else pulse_contact_readout
+        )
+        measured = readout(declaration, complete, replay, metrics)
+        contact_schema = (
+            "soccer.rsi.original_ik_planner_contact_complete.v1"
+            if stage_profile == "original-ik-pulse"
+            else "soccer.rsi.pre_planner_pulse_contact_complete.v1"
+        )
         if (
-            contact.get("schema") != "soccer.rsi.pre_planner_pulse_contact_complete.v1"
+            contact.get("schema") != contact_schema
             or contact["report_hash"] != spec["complete_hash"]
             or contact["upstream_readback_hash"] != audit["report_hash"]
             or contact["replay_complete_hash"] != replay["report_hash"]
@@ -122,16 +137,26 @@ def main():
             if digest(name) != h or (name in pins and pins[name] != h):
                 raise ValueError("whole original contact source and evidence bytes changed")
             pins[name] = h
-        groups = [str(j["group"]) for j in declaration["scope"]["jobs"] if j["role"] == "pulse_off"]
+        roles = (
+            ("ik_pulse_off", "ik_pulse")
+            if stage_profile == "original-ik-pulse"
+            else ("pulse_off", "pulse")
+        )
+        groups = [str(j["group"]) for j in declaration["scope"]["jobs"] if j["role"] == roles[0]]
         outcomes = {
             role: {str(r["group"]): r["outcome"] for r in complete["results"] if r["role"] == role}
-            for role in ("pulse_off", "pulse")
+            for role in roles
         }
         stages = assess_first_touch_stages(
-            outcomes["pulse_off"], outcomes["pulse"], declared_pair_ids=groups
+            outcomes[roles[0]], outcomes[roles[1]], declared_pair_ids=groups
+        )
+        original_pairs = (
+            complete["assessment"]["stages"]["original_m0_pairs"]
+            if stage_profile == "original-ik-pulse"
+            else complete["assessment"]["paired_results"]
         )
         if any(
-            stages["original_m0_pairs"][k] != complete["assessment"]["paired_results"][k]
+            stages["original_m0_pairs"][k] != original_pairs[k]
             for k in (
                 "pairs",
                 "baseline_passes",
@@ -146,7 +171,9 @@ def main():
         if any(digest(p) != h for p, h in pins.items()):
             raise ValueError("source or input bytes changed during stage readback")
         result = dict(
-            schema="soccer.rsi.pulse_first_touch_stage_pairs_readback.v1",
+            schema="soccer.rsi.original_ik_first_touch_stage_pairs_readback.v1"
+            if stage_profile == "original-ik-pulse"
+            else "soccer.rsi.pulse_first_touch_stage_pairs_readback.v1",
             configuration=cfg,
             effective_cohort_spec=cohort_spec,
             effective_contact_spec=contact_spec,
