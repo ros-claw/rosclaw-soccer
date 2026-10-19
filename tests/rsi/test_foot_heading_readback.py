@@ -1,5 +1,6 @@
 """Fixed producer/readback metadata, not executed C3 physics."""
 
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -150,6 +151,9 @@ def test_prepare_requires_whole_same_c2_positive_and_explicit_both_requests(
 ):
     scope, _ = receipts()
     old_scope, old_rows = ik_receipts()
+    # Real closed receipts/plans have crossed JSON: tuple courses become lists.
+    # Compare their complete canonical content, never Python container identity.
+    old_scope = json.loads(json.dumps(old_scope))
     parent = scope["source_plan"]["behavior_model_hash"]
     c = SimpleNamespace(
         source=tmp_path,

@@ -42,7 +42,8 @@ def prepare(config_path, *, closed=False):
         or cohort["producer"]["behavior_model_hash"] != c.assets.MEAN
         or cohort["declaration"]["candidate"] != c.candidate
         or cohort["producer"]["core_root"] != str(c.core)
-        or cohort["declaration"]["scope"]["source_plan"] != c.scope["source_plan"]
+        or hash_json(cohort["declaration"]["scope"]["source_plan"])
+        != hash_json(c.scope["source_plan"])
         or cohort["declaration"]["scope"]["source_seeds"] != c.scope["source_seeds"]
     ):
         raise ValueError("same C2 parent, B2, world, Core and source19 planning contexts required")
