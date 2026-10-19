@@ -29,7 +29,7 @@ from tests.rsi.test_smooth_memory_motor import smooth_parent  # noqa: F401
 from tests.rsi.test_step_motor_network import model  # noqa: F401
 
 
-def build(monkeypatch, parent_model):
+def build(monkeypatch, parent_model, *, early=False):
     sim, _, _ = world()
     sim.opt.gravity[:] = 0
     sim.dof_armature[6:35] = 0.02
@@ -90,6 +90,8 @@ def build(monkeypatch, parent_model):
         profile=BoundedFirstTouchControl(),
         heading=FootHeadingContactProbe(False),
         impact_enabled=False,
+        early_impact_enabled=early,
+        early_evidence_root=Path("synthetic-output") if early else None,
     )
 
 
@@ -147,3 +149,60 @@ def test_no_recorded_or_future_state_input_in_driver_api():
     forbidden = {"trace", "future_target", "source_contact_frame", "callback", "reference_trace"}
     assert not forbidden.intersection(inspect.signature(mod.CausalImpactReplay).parameters)
     assert list(inspect.signature(mod.CausalImpactReplay.step).parameters) == ["self", "frame"]
+
+
+def test_early_adapter_applies_three_frame_torque_and_preserves_distinct_trace_namespace(
+    monkeypatch,
+    imitation_parent,  # noqa: F811
+):  # noqa: F811
+    from rosclaw_soccer.rsi.early_impact_controller import EarlyImpactCommand
+
+    recorded = []
+
+    class Evidence:
+        def __init__(self, root):
+            assert root == Path("synthetic-output")
+
+        def record(self, frame, command):
+            assert frame == len(recorded)
+            recorded.append(frame)
+
+    class Early:
+        def __init__(self, *a, **kw):
+            self.forecaster = SimpleNamespace(attempted_steps=0, integrated_steps=0)
+
+        def plan(self, data, target, **kw):
+            frame = kw["frame"]
+            assert data.time == pytest.approx(frame * 0.02)
+            offset = np.zeros(29)
+            if 30 <= frame <= 32:
+                offset[3] = 3.0
+            return EarlyImpactCommand(offset, {"forecast_substeps": 0}, ())
+
+    monkeypatch.setattr(mod, "EarlyImpactController", Early)
+    monkeypatch.setattr(mod, "EarlyImpactEvidence", Evidence)
+    native_step = mujoco.mj_step
+
+    def checked_step(engine_model, data):
+        assert recorded[-1] == round(data.time / 0.002) // 10
+        native_step(engine_model, data)
+
+    monkeypatch.setattr(mujoco, "mj_step", checked_step)
+    replay = build(monkeypatch, imitation_parent, early=True)
+    frames = [replay.step(f) for f in range(300)]
+    report = replay.review()
+    assert recorded == list(range(300))
+    assert report["native_integrated_steps"] == 3000
+    assert report["forecast_integrated_steps"] == 0 and not report["teacher_qualified"]
+    for frame in frames:
+        values = frame.arrays
+        assert "impact_feedback_requested_offset_nm" not in values
+        expected = np.zeros((1, 29))
+        if 30 <= frame.frame <= 32:
+            expected[0, 3] = 3.0
+        np.testing.assert_array_equal(values["early_impact_feedback_requested_offset_nm"], expected)
+        raw = values["pd_requested_torque_nm"]
+        limits = replay.torque_limits
+        np.testing.assert_array_equal(
+            values["torque_nm"], np.clip(raw + expected[:, None], -limits, limits)
+        )

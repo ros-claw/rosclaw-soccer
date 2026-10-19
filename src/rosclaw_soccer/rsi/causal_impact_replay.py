@@ -21,6 +21,8 @@ from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.contact_motor_primitive import CAP_RAD
+from rosclaw_soccer.rsi.early_impact_controller import EarlyImpactCommand, EarlyImpactController
+from rosclaw_soccer.rsi.early_impact_evidence import EarlyImpactEvidence
 from rosclaw_soccer.rsi.feedback_branch_control import BODY_SHAPES
 from rosclaw_soccer.rsi.foot_heading_control import FootHeadingContactProbe, require_heading_request
 from rosclaw_soccer.rsi.foot_heading_evidence import FootHeadingCpuReconstruction
@@ -37,11 +39,11 @@ from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation
 class CausalImpactFrame:
     frame: int
     arrays: dict[str, np.ndarray]
-    impact_plan: ImpactFeedbackPlan | None
+    impact_plan: ImpactFeedbackPlan | EarlyImpactCommand | None
 
 
 class CausalImpactReplay:
-    """Exactly300 frames, at most3000 native+900 forecast substeps, one body."""
+    """Exactly300 frames,3000 native steps; optional bounded SIM forecast profile."""
 
     def __init__(
         self,
@@ -60,9 +62,14 @@ class CausalImpactReplay:
         profile: BoundedFirstTouchControl,
         heading: FootHeadingContactProbe,
         impact_enabled: bool,
+        early_impact_enabled: bool = False,
+        early_evidence_root: Path | None = None,
     ) -> None:
         if (
             type(impact_enabled) is not bool
+            or type(early_impact_enabled) is not bool
+            or (impact_enabled and early_impact_enabled)
+            or (early_impact_enabled != (early_evidence_root is not None))
             or type(profile) is not BoundedFirstTouchControl
             or type(heading) is not FootHeadingContactProbe
             or type(foundation) is not FrozenSonicG1Torch
@@ -134,11 +141,19 @@ class CausalImpactReplay:
         self.profile = profile
         self.pulse = OriginalIkPlannerPulse(0.08)
         self.ik = FootHeadingCpuReconstruction(model, heading)
-        self.teacher = (
-            ImpactFeedbackTeacher(model, world_hash=world_hash, kp=kp, kd=kd)
-            if impact_enabled
-            else None
+        self.early_impact_enabled = early_impact_enabled
+        self.early_evidence = (
+            EarlyImpactEvidence(early_evidence_root) if early_evidence_root is not None else None
         )
+        self.teacher: EarlyImpactController | ImpactFeedbackTeacher | None
+        if early_impact_enabled:
+            self.teacher = EarlyImpactController(model, world_hash=world_hash, kp=kp, kd=kd)
+        else:
+            self.teacher = (
+                ImpactFeedbackTeacher(model, world_hash=world_hash, kp=kp, kd=kd)
+                if impact_enabled
+                else None
+            )
         self.tracker: BatchedSonicTracker | None = None
         self.body: dict[str, list[np.ndarray]] = {k: [] for k in BODY_SHAPES}
         self.previous = np.zeros(12)
@@ -303,6 +318,10 @@ class CausalImpactReplay:
             )
         )
         offset = np.zeros(29) if plan is None else plan.offset_nm
+        if self.early_evidence is not None:
+            if type(plan) is not EarlyImpactCommand:
+                raise ValueError("owned early command required before recording/action")
+            self.early_evidence.record(frame, plan)
         forces = np.zeros(6)
         pd, torques, actual, heights, applied = [], [], [], [], []
         for _ in range(10):
@@ -354,12 +373,15 @@ class CausalImpactReplay:
             ball_position_after_step_m=d.xpos[self.ball].copy()[None],
         )
         if plan is not None:
+            prefix = "early_impact_feedback_" if self.early_impact_enabled else "impact_feedback_"
             values.update(
-                impact_feedback_requested_offset_nm=offset.copy()[None],
-                impact_feedback_applied_offset_nm=np.asarray(applied)[None],
-                impact_feedback_forecast_steps=np.asarray(
-                    [[plan.report["forecast_substeps"]]], dtype=np.int64
-                ),
+                {
+                    prefix + "requested_offset_nm": offset.copy()[None],
+                    prefix + "applied_offset_nm": np.asarray(applied)[None],
+                    prefix + "forecast_steps": np.asarray(
+                        [[plan.report["forecast_substeps"]]], dtype=np.int64
+                    ),
+                }
             )
         self.next_frame += 1
         self.failed = False
