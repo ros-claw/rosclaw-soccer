@@ -318,6 +318,11 @@ def audit_cpu_transfer(
     import json
 
     commitment = json.loads((root / "commitment.json").read_text())
+    if "impact_feedback_teacher" in commitment:
+        raise ValueError(
+            "prospective full-feedback impact requires its distinct causal search audit; "
+            "legacy recorded-PD qualification is insufficient"
+        )
     if report["commitment_hash"] != hash_json(commitment) or any(
         report[k] != v for k, v in commitment.items()
     ):

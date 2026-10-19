@@ -15,6 +15,7 @@ STUDENT_FLAG = "reference_student_model"
 PULSE_FLAG = "planner_navigation_pulse"
 IK_PULSE_FLAG = "original_ik_planner_pulse"
 HEADING_FLAG = "foot_heading_control"
+IMPACT_FLAG = "use_impact_feedback_teacher"
 
 
 def canonical(node):
@@ -35,6 +36,8 @@ def expression(source):
 class OffPath(ast.NodeTransformer):
     def visit_arguments(self, node):
         for argument, default in zip(node.kwonlyargs, node.kw_defaults, strict=True):
+            if argument.arg == IMPACT_FLAG:
+                assert isinstance(default, ast.Constant) and default.value is False
             if argument.arg in {STUDENT_FLAG, PULSE_FLAG, IK_PULSE_FLAG, HEADING_FLAG}:
                 assert isinstance(default, ast.Constant) and default.value is None
         pairs = [
@@ -50,6 +53,7 @@ class OffPath(ast.NodeTransformer):
                 PULSE_FLAG,
                 IK_PULSE_FLAG,
                 HEADING_FLAG,
+                IMPACT_FLAG,
             }
         ]
         node.kwonlyargs = [p[0] for p in pairs]
@@ -58,6 +62,10 @@ class OffPath(ast.NodeTransformer):
 
     def visit_If(self, node):
         known = {
+            IMPACT_FLAG,
+            f"type({IMPACT_FLAG}) is not bool",
+            "'impact_feedback_teacher' in commitment",
+            f"('impact_feedback_teacher' in report) != {IMPACT_FLAG}",
             "foot_heading_control is not None",
             "('foot_heading_contact_probe' in report) != (foot_heading_control is not None)",
             "'foot_heading_contact_probe' in commitment",
@@ -125,6 +133,7 @@ class OffPath(ast.NodeTransformer):
                     PULSE_FLAG,
                     IK_PULSE_FLAG,
                     HEADING_FLAG,
+                    IMPACT_FLAG,
                 }
                 and isinstance(k.value, ast.Name)
                 and k.value.id == k.arg

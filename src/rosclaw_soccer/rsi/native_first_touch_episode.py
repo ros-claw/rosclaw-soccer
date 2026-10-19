@@ -95,8 +95,16 @@ def run_native_first_touch_episode(
     planner_navigation_pulse: Any = None,
     original_ik_planner_pulse: Any = None,
     foot_heading_control: Any = None,
+    use_impact_feedback_teacher: bool = False,
 ) -> None:
     """Execute a pinned diagnostic; no RNG course generation or admission here."""
+    if type(use_impact_feedback_teacher) is not bool:
+        raise ValueError("explicit boolean prospective impact diagnostic required")
+    if use_impact_feedback_teacher:
+        impact_request = locals().copy()
+        from rosclaw_soccer.rsi.native_impact_feedback import require_native_impact_request
+
+        require_native_impact_request(impact_request)
     from rosclaw_soccer.rsi.native_cerebellar_torque import validate_native_request
 
     if foot_heading_control is not None:
@@ -1275,6 +1283,18 @@ def run_native_first_touch_episode(
         commitment["swing_release_ablation"] = release_ablation_contract(
             commitment["compiled_model_hash"]
         )
+    if use_impact_feedback_teacher:
+        from rosclaw_soccer.rsi.native_impact_feedback import NativeImpactFeedback
+
+        impact_feedback = NativeImpactFeedback(
+            model,
+            world_hash=commitment["compiled_model_hash"],
+            kp=navigation.backend.kp,
+            kd=navigation.backend.kd,
+            heading_probe=foot_heading_control,
+            output_root=args.output_root,
+        )
+        commitment["impact_feedback_teacher"] = impact_feedback.contract()
     if use_contact_exit_torque_mpc:
         from rosclaw_soccer.rsi.contact_exit_torque_mpc import ContactExitTorqueMPC
 
@@ -1487,6 +1507,17 @@ def run_native_first_touch_episode(
             }
         )
         previous_navigation_forward = 0.0
+    if use_impact_feedback_teacher:
+        history.update(
+            {
+                name: []
+                for name in (
+                    "impact_feedback_requested_offset_nm",
+                    "impact_feedback_applied_offset_nm",
+                    "impact_feedback_forecast_steps",
+                )
+            }
+        )
     if use_contact_exit_torque_mpc:
         history.update(
             {
@@ -1845,6 +1876,26 @@ def run_native_first_touch_episode(
                 * np.tanh(recurrent_decoder.sampled_transition["recurrent_sampling_latent_action"])
             )
             history["motor_pre_projection_requested_rad"].append(raw_motor[None])
+        if use_impact_feedback_teacher:
+            if policy is None:
+                raise ValueError("prospective feedback requires the actual original policy")
+            impact_offset = impact_feedback.before_frame(
+                data,
+                frame=frame,
+                navigation_target=navigation_target,
+                native_increment=history["taskspace_joint_increment_rad"][-1][0],
+                target=target,
+                previous=previous,
+                tracker=tracker,
+                decoder=recurrent_decoder,
+                policy=policy,
+                history=history,
+            )
+            history["impact_feedback_requested_offset_nm"].append(impact_offset[None].copy())
+            history["impact_feedback_forecast_steps"].append(
+                np.asarray([[impact_feedback.reports[-1]["forecast_substeps"]]], dtype=np.int64)
+            )
+            impact_applied = []
         if use_contact_exit_torque_mpc:
             past_forces = np.asarray(history["force_n"], dtype=np.float64).reshape(frame, 6)
             foot_frames = np.flatnonzero(np.any(past_forces[:, :2] > 1, axis=1))
@@ -1901,6 +1952,15 @@ def run_native_first_touch_episode(
                 -np.asarray(G1_HARD_TORQUE_LIMITS),
                 np.asarray(G1_HARD_TORQUE_LIMITS),
             )
+            if use_impact_feedback_teacher:
+                impact_parent_torque = torque.copy()
+                if np.any(impact_offset):
+                    torque = np.clip(
+                        requested_torque + impact_offset,
+                        -np.asarray(G1_HARD_TORQUE_LIMITS),
+                        np.asarray(G1_HARD_TORQUE_LIMITS),
+                    )
+                impact_applied.append(torque - impact_parent_torque)
             if use_contact_exit_torque_mpc:
                 baseline_torque = torque.copy()
                 if np.any(previous_mpc_offset):
@@ -1957,6 +2017,9 @@ def run_native_first_touch_episode(
                 forces[index] = max(forces[index], float(np.linalg.norm(force[:3])))
             minimum_pelvis = min(minimum_pelvis, float(data.xpos[pelvis, 2]))
             pelvis_samples.append(float(data.xpos[pelvis, 2]))
+        if use_impact_feedback_teacher:
+            impact_feedback.after_frame(frame, forces)
+            history["impact_feedback_applied_offset_nm"].append(np.asarray(impact_applied)[None])
         if use_contact_exit_torque_mpc:
             exit_teacher.verify_actual_interval(data, mpc_plan)
             history["contact_exit_mpc_applied_offset_nm"].append(np.asarray(mpc_applied)[None])
@@ -1993,6 +2056,9 @@ def run_native_first_touch_episode(
         and control_profile.contract() != commitment["bounded_control_profile"]
     ):
         raise ValueError("bounded control profile changed during the episode")
+    if use_impact_feedback_teacher:  # noqa: SIM102 - explicit OFF-path projection
+        if impact_feedback.contract() != commitment["impact_feedback_teacher"]:
+            raise ValueError("prospective impact controller changed during episode")
     if use_contact_exit_torque_mpc:  # noqa: SIM102 - retain explicit OFF-path projection
         if exit_teacher.contract() != commitment["contact_exit_torque_mpc"]:
             raise ValueError("contact-exit torque teacher changed during episode")
@@ -2062,6 +2128,9 @@ def run_native_first_touch_episode(
         result["locomotion_mode_planner_events"] = navigation.backend.events
     if record_default_planner_events:
         result["default_locomotion_planner_events"] = navigation.backend.events
+    if use_impact_feedback_teacher:
+        result["impact_feedback_plans"] = impact_feedback.reports
+        result["impact_feedback_counters"] = impact_feedback.review()
     if use_contact_exit_torque_mpc:
         result["contact_exit_mpc_plans"] = mpc_plans
         result["contact_exit_mpc_counters"] = exit_teacher.counters()

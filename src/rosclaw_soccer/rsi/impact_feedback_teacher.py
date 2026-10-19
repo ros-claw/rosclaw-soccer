@@ -122,6 +122,7 @@ class ImpactFeedbackTeacher:
         ):
             raise ValueError("bounded finite actual current joint target required")
         self.last_frame = frame  # Failures consume this decision too; never retry it silently.
+        self.last_candidates = []
         sample = self.sampler.sample(data)
         side = ik.side
         gap = (
