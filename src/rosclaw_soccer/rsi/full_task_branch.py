@@ -19,6 +19,7 @@ from rosclaw_soccer.providers.g1.sonic_branch_state import fork_sonic_tracker
 from rosclaw_soccer.providers.g1.sonic_navigation_branch import fork_plain_navigation
 from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch
 from rosclaw_soccer.rsi.born_navigation_recovery import FORWARD_CAPS, BornNavigationRecovery
+from rosclaw_soccer.rsi.born_postcontact_release import BORN_RELEASE_ACTIONS
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.causal_impact_replay import CausalImpactFrame, CausalImpactReplay
 from rosclaw_soccer.rsi.feedback_branch_control import BODY_SHAPES, fork_motor
@@ -32,6 +33,7 @@ CAUSAL_FIELDS = frozenset(
         "ball",
         "bg",
         "body",
+        "born_release_capture",
         "bq",
         "bv",
         "constant_forward_approach",
@@ -140,7 +142,10 @@ class FullTaskBranch:
             or parent.early_evidence is not None
             or parent.exit_evidence is not None
             or type(action_name) is not str
-            or action_name not in ("baseline", *FORWARD_CAPS)
+            or action_name not in ("baseline", *FORWARD_CAPS, *BORN_RELEASE_ACTIONS)
+            or type(parent.born_release_capture) is not bool
+            or (action_name in BORN_RELEASE_ACTIONS and not parent.born_release_capture)
+            or (action_name in FORWARD_CAPS and parent.born_release_capture)
             or parent.navigation_recovery is not None
             or parent.tracker is None
             or parent.tracker._next_frame != parent.next_frame
@@ -215,7 +220,11 @@ class FullTaskBranch:
         owned.ik = fork_completed_ik(parent.ik, next_frame=start)
         # Never pretend an old full-episode release controller consumed prefix.
         owned.release_control = None
-        if action_name != "baseline":
+        if action_name in BORN_RELEASE_ACTIONS:
+            owned.install_born_release(
+                world_hash=world_hash, action_name=BORN_RELEASE_ACTIONS[action_name]
+            )
+        elif action_name in FORWARD_CAPS:
             owned.install_navigation_recovery(BornNavigationRecovery(start, action_name))
         # The prefix was already integrated by the donor, not by this branch.
         # Inherited whole-episode review intentionally cannot pass these counts.
@@ -260,6 +269,9 @@ class FullTaskBranch:
             born_navigation_recovery=None
             if actor.navigation_recovery is None
             else actor.navigation_recovery.contract(),
+            born_postcontact_release=None
+            if actor.release_control is None
+            else actor.release_control.review(),
             new_native_attempted_steps=actor.attempted_steps,
             new_native_integrated_steps=actor.integrated_steps,
             recomputed_control_frames=300 - self.start,

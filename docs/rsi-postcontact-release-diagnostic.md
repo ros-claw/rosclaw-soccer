@@ -906,3 +906,81 @@ human-naturalness scores or changed rewards. Five synthetic tests passed1.15s
 and the typed module passed mypy. Such diagnostics are needed before calling
 a future M0 improvement a balance improvement rather than merely avoiding a
 second knee/ball contact. Actual comparative diagnosis remains to be run.
+
+The subsequent constant18 readback closed all source/data pins with no new
+physics or NN calls. All five safety-veto cases were observed nonfoot ball
+contacts, not pelvis-below0.65m events. Cases0/8/10 first contacted the left
+knee at209/265/266, with measured bin peaks130.01/25.51/36.89N. Their sampled
+post-foot maximum root tilts were11.00/6.06/5.77degrees and native post-foot
+minimum pelvis heights0.70472/0.70888/0.71043m. Sampled negative world-x root
+travel was zero in those three cases. These statements concern this H300
+study, not every historical match video. Diagnostic logical hash:
+`sha256:b6341ecaf1a817c89bfe0bc7d58e3cb6d1a032058ae732e43cabb3e9bde21928`.
+
+### Whole-task braking result: control parity passed, task candidate rejected
+
+The real nonzero navigation probe closed all12 full bodies and16 prospective
+branches:50320 new native steps,0 optimizer updates. Every predicted body,
+control and neural tensor matched the later actual same-lease execution.
+The separate recorded-target implementation then reexecuted36000 native steps
+on all12 bodies; every recorded physical error was exactly zero. Producer:
+`sha256:ea3d768141759284d9914e696a184dbf967305743bc9942a04dad3b559471957`;
+physical verifier:
+`sha256:823097ae41589b7c44ff3e1c666991f2e4d01a3bfe05e3113743d4c4502e5be0`.
+
+All three action arms passed only the same consumed retention context12.
+None rescued the three failed local contexts0/8/10. This is **no net task
+gain**, not a qualified braking teacher. Reject this post-contact-navigation-
+only candidate; do not blindly sweep nearby speed values or train a student
+on a claimed improvement. Correct nonzero prediction is a tool qualification,
+not evidence that its proposed action is useful. Branch construction took
+about6.7--7.0s versus1.9--3.4s for its remaining control/physics execution;
+profile that construction before claiming scalable search or realtime use.
+
+### Born post-contact torque lease prototype (real-model bank pending)
+
+The next one-factor diagnostic keeps the earlier-contact approach fixed and
+tests a short measured-Jacobian release instead of another speed cap.
+`BornPostContactReleaseControl` reuses the original bounded action algorithm
+but has a new explicit origin with **zero** preceding command observations.
+It does not construct a time-zero control and overwrite its clock. It retains
+the existing per-joint `min(12Nm,20% hard limit)` offset envelope, contacting
+leg only, at most three20ms frames, and observed-unsafe cancellation. No
+joint/PD/actuator hard limit is enlarged. Default capture is disabled.
+
+`CausalImpactReplay` can predeclare a distinct whole-episode born-release
+capture namespace, initially all zero. Installation requires its own completed
+foot bin, current full clock/counters and no competing intervention. The
+predictor installs the same newborn lease before resetting borrowed native
+accounting. Distinct raw fields and receipts never masquerade as a time-zero
+controller. The separate physical verifier has a matching born-only path;
+plain-PD replay rejects these fields rather than silently ignoring them.
+
+Twenty-one synthetic-clock/Jacobian and existing release tests passed0.61s.
+Nineteen recorded-body tests passed11.15s. Thirty-eight born/legacy/navigation/
+full-task tests passed147.42s; an additional actual toy-body, synthetic-contact
+nonzero test passed32.53s across269 future frames, including exact plain-zero
+versus newborn-zero parity and actual nonzero continuation. This is not a
+genuine G1 contact or successful skill. Default causal/constant regression
+also passed43 tests247.59s. Three initial new-test issues (insufficient toy
+topology, an invented scalar5Nm check rather than the existing vector CAPS,
+and a fixture-name shadow) were corrected without loosening canonical caps
+or declaring failed tests passed. Changed four typed modules passed mypy.
+
+The explicit new scope predeclares consumed context8, fourteen actual H300
+bodies42000 steps and fourteen own remainder forecasts8960 steps,50960 total.
+It includes plain zero and newborn zero plus all twelve named nonzero actions;
+aliases/unavailable actions and ordinary failures remain in the bank. Each
+prediction must be sealed before the donor continues and match every later
+actual body/control/NN/capture tensor and whole M0 outcome. No forecast proxy
+substitutes for the official label. A shared two-protocol bank runner avoids
+copying a different simulation loop for every experiment. Twenty-seven new
+fake scope/orchestration tests plus thirty old nav/readback tests passed57
+tests4.19s; their counters are not actual native execution. Even a positive
+single-context result is not teacher robustness, neural learning or publicity.
+
+Final combined born-bank/legacy-bank/readback/release/recorded-body/diagnostic/
+full-toy-continuation validation passed103 tests45.27s. The shared runner admits
+only the two explicit source-owned protocol families and their literal budgets,
+not a caller-provided policy callback. All fourteen future outcomes remain
+prospective and every actual arm executes regardless of the advisory ranking.

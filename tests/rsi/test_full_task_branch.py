@@ -29,7 +29,7 @@ from tests.rsi.test_causal_impact_replay import (  # noqa: F401
 )
 
 
-def build(monkeypatch, parent_model):
+def build(monkeypatch, parent_model, *, born_release_capture=False):
     sim, _, _ = world()
     sim.opt.gravity[:] = 0
     sim.dof_armature[6:35] = 0.1
@@ -60,6 +60,7 @@ def build(monkeypatch, parent_model):
         profile=BoundedFirstTouchControl(),
         heading=FootHeadingContactProbe(False),
         impact_enabled=False,
+        born_release_capture=born_release_capture,
     )
     return parent, world_hash
 

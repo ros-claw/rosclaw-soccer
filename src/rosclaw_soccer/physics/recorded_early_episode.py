@@ -98,6 +98,14 @@ class RecordedEarlyEpisode:
         """
         return self._verify(trace, motor_audit=motor_audit, postcontact=True, exit_profile=True)
 
+    def verify_born_release(self, trace: dict[str, np.ndarray]) -> dict[str, Any]:
+        """Reintegrate distinct whole-episode born-lease captures, not old aliases.
+
+        Origin/decision/Jacobian causality requires separate review; this path
+        verifies only the recorded bounded60ms offset and resulting body.
+        """
+        return self._verify(trace, motor_audit=None, postcontact=True, born_release=True)
+
     def _verify(
         self,
         trace: dict[str, np.ndarray],
@@ -106,10 +114,13 @@ class RecordedEarlyEpisode:
         postcontact: bool,
         exit_profile: bool = False,
         unforced: bool = False,
+        born_release: bool = False,
     ) -> dict[str, Any]:
         if self.used:
             raise ValueError("once-only callback-free whole-body physical replay required")
         self.used = self.failed = True
+        if born_release and (not postcontact or exit_profile or unforced):
+            raise ValueError("distinct born-release post-contact physics profile required")
         if unforced and any(
             k.startswith(
                 (
@@ -117,6 +128,7 @@ class RecordedEarlyEpisode:
                     "impact_feedback_",
                     "postcontact_release_",
                     "postcontact_exit_",
+                    "born_release_",
                 )
             )
             for k in trace
@@ -133,7 +145,9 @@ class RecordedEarlyEpisode:
         if mujoco.get_mjcb_control() is not None:
             raise ValueError("once-only callback-free whole-body physical replay required")
         prefix = (
-            "postcontact_exit_"
+            "born_release_"
+            if born_release
+            else "postcontact_exit_"
             if exit_profile
             else "postcontact_release_"
             if postcontact
@@ -144,7 +158,8 @@ class RecordedEarlyEpisode:
             forbidden = (
                 "early_impact_feedback_",
                 "impact_feedback_",
-                "postcontact_release_" if exit_profile else "postcontact_exit_",
+                "postcontact_release_" if exit_profile or born_release else "postcontact_exit_",
+                "postcontact_exit_" if born_release else "born_release_",
             )
             if any(k.startswith(forbidden) for k in trace):
                 raise ValueError("distinct post-contact profile without old impact fields required")
@@ -357,5 +372,9 @@ class RecordedEarlyEpisode:
             result["schema"] = "soccer.rsi.recorded_unforced_h300_physics.v1"
             result["plain_pd_only"] = True
             result["impact_action_arrays_fabricated_or_aliased"] = False
+        if born_release:
+            result["schema"] = "soccer.rsi.recorded_born_release_h300_physics.v1"
+            result["distinct_born_release_fields_consumed"] = True
+            result["old_episode_control_arrays_aliased"] = False
         self.failed = False
         return result

@@ -20,7 +20,7 @@ from scripts.rsi_read_full_task_zero import same_arrays
 from scripts.rsi_stage_release_contact_replay import digest
 
 
-def build_actor(p, job, factory, foundation, model):
+def build_actor(p, job, factory, foundation, model, *, born_release_capture=False):
     from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
     from rosclaw_soccer.rsi.causal_impact_replay import CausalImpactReplay
     from rosclaw_soccer.rsi.foot_heading_control import FootHeadingContactProbe
@@ -54,6 +54,7 @@ def build_actor(p, job, factory, foundation, model):
         heading=FootHeadingContactProbe(case["job"]["heading_enabled"]),
         impact_enabled=False,
         constant_forward_approach=True,
+        born_release_capture=born_release_capture,
     )
 
 
@@ -70,13 +71,53 @@ def main():
     parser.add_argument("--preflight", action="store_true")
     args = parser.parse_args()
     p = prepare(args.config)
+    run_bank(p, preflight=args.preflight)
+
+
+def run_bank(p, *, preflight, born_release=False):
+    """Two explicit source-owned protocols, not a caller-supplied controller."""
+    from rosclaw_soccer.rsi.born_postcontact_release import BORN_RELEASE_ACTIONS
+
+    actions = ["baseline", *BORN_RELEASE_ACTIONS] if born_release else ACTIONS
+    prediction_actions = actions if born_release else ["baseline", "baseline", *ACTIONS[1:]]
+    main_budget, prediction_budget, contexts = (
+        (42000, 8960, 1) if born_release else (36000, 14320, 4)
+    )
+    total_budget = main_budget + prediction_budget
+    stem = "soccer.rsi.born_release14" if born_release else "soccer.rsi.navigation_recovery4"
+    expected_profile = (
+        "full-task-born-release14-v1" if born_release else "full-task-navigation-recovery4-v1"
+    )
+    born_fields = {
+        "born_release_requested_offset_nm",
+        "born_release_applied_offset_nm",
+        "born_release_forecast_steps",
+    }
+
+    def base_arrays(values):
+        if not born_release:
+            return values
+        if {k for k in values if k.startswith("born_release_")} != born_fields:
+            raise ValueError("exact predeclared whole-episode born capture namespace required")
+        return {k: v for k, v in values.items() if k not in born_fields}
+
+    def indices(ai):
+        return [ai] if born_release else [0, 1] if ai == 0 else [ai + 1]
+
     if (
         Path(__file__).resolve() != p.source / "scripts/rsi_qualify_navigation_recovery.py"
         or not time.time() < p.cfg["deadline_unix"] <= time.time() + 86400
+        or p.cfg["profile"] != expected_profile
+        or len(p.jobs) != contexts
     ):
         raise ValueError("exact frozen bounded navigation-recovery entry required")
-    if args.preflight:
-        print("NAVIGATION_RECOVERY4_READY_NO_NEW_ALLOCATION_OR_PHYSICS", flush=True)
+    if preflight:
+        print(
+            "BORN_RELEASE14_READY_NO_NEW_ALLOCATION_OR_PHYSICS"
+            if born_release
+            else "NAVIGATION_RECOVERY4_READY_NO_NEW_ALLOCATION_OR_PHYSICS",
+            flush=True,
+        )
         return
     available = next(
         int(s.split()[1]) * 1024
@@ -87,11 +128,11 @@ def main():
         raise ValueError("56GiB available and operator-serialized full mean constructor required")
     p.root.mkdir()
     declaration = dict(
-        schema="soccer.rsi.navigation_recovery4_declaration.v1",
+        schema=stem + "_declaration.v1",
         config=p.cfg,
         input_file_hashes=p.pins,
         jobs=[{k: v for k, v in j.items() if k != "gold_trace"} for j in p.jobs],
-        prediction_actions=["baseline", "baseline", *ACTIONS[1:]],
+        prediction_actions=prediction_actions,
         measured_contact_trigger_only=True,
         recorded_future_used_for_control=False,
         new_optimizer_updates=0,
@@ -108,7 +149,10 @@ def main():
     rows = []
 
     def budget():
-        if time.time() >= p.cfg["deadline_unix"] or main_steps + prediction_steps + 10 > 50320:
+        if (
+            time.time() >= p.cfg["deadline_unix"]
+            or main_steps + prediction_steps + 10 > total_budget
+        ):
             raise RuntimeError("fixed navigation main/prediction native deadline budget exhausted")
 
     try:
@@ -124,7 +168,12 @@ def main():
         )
 
         torch.set_num_threads(1)
-        print("ALLOCATING_ORIGINAL_FULL_MEAN_FOR_NONZERO_NAVIGATION_PARITY", flush=True)
+        print(
+            "ALLOCATING_ORIGINAL_FULL_MEAN_FOR_BORN_RELEASE_PARITY"
+            if born_release
+            else "ALLOCATING_ORIGINAL_FULL_MEAN_FOR_NONZERO_NAVIGATION_PARITY",
+            flush=True,
+        )
         mean = load_json_artifact(Path(p.cfg["mean_model_path"]))
         if mean["model_hash"] != p.cfg["mean_model_hash"]:
             raise ValueError("complete original full mean required")
@@ -137,11 +186,15 @@ def main():
             i = job["index"]
             predictions = []
             actuals = []
-            for ai, action in enumerate(ACTIONS):
+            for ai, action in enumerate(actions):
                 current = dict(index=i, action_name=action, phase="ACTUAL_MAIN")
                 write_once(p.root / f"case-{i}-arm-{ai}-started.json", current)
                 clock = time.perf_counter()
-                actor = build_actor(p, job, factory, foundation, model)
+                actor = (
+                    build_actor(p, job, factory, foundation, model, born_release_capture=True)
+                    if born_release
+                    else build_actor(p, job, factory, foundation, model)
+                )
                 construction_seconds = time.perf_counter() - clock
                 actual_control_seconds = 0.0
                 start = None
@@ -155,7 +208,12 @@ def main():
                     for k, v in step.arrays.items():
                         history.setdefault(k, []).append(v.copy())
                     if start is None:
-                        same_arrays(step.arrays, {k: a[f] for k, a in job["gold_trace"].items()})
+                        same_arrays(
+                            base_arrays(step.arrays),
+                            {k: a[f] for k, a in job["gold_trace"].items()},
+                        )
+                        if born_release and any(np.any(step.arrays[k]) for k in born_fields):
+                            raise ValueError("no unobserved pre-foot born action may occur")
                     if start is None and f >= 30 and np.any(step.arrays["force_n"][0, :2] > 1):
                         start = f + 1
                         if start != job["comparison_start_after_measured_foot_bin"]:
@@ -163,7 +221,7 @@ def main():
                                 "OWN measured completed-foot trigger differs from gold comparator"
                             )
                         if ai == 0:
-                            for bi, option in enumerate(["baseline", "baseline", *ACTIONS[1:]]):
+                            for bi, option in enumerate(prediction_actions):
                                 current = dict(
                                     index=i,
                                     action_name=option,
@@ -223,7 +281,8 @@ def main():
                                 predictions.append((values, proof))
                                 branch = None
                             # Advisory only, all three actions execute regardless of ranking.
-                            eligible = [0, 2, 3]
+                            same_arrays(predictions[0][0], predictions[1][0])
+                            eligible = list(range(len(actions))) if born_release else [0, 2, 3]
                             selected = max(
                                 eligible,
                                 key=lambda n: (
@@ -244,16 +303,24 @@ def main():
                             choice["report_hash"] = hash_json(choice)
                             write_once(p.root / f"case-{i}-prospective-choice.json", choice)
                         else:
-                            actor.install_navigation_recovery(BornNavigationRecovery(start, action))
+                            if born_release:
+                                actor.install_born_release(
+                                    world_hash=p.world_hash,
+                                    action_name=BORN_RELEASE_ACTIONS[action],
+                                )
+                            else:
+                                actor.install_navigation_recovery(
+                                    BornNavigationRecovery(start, action)
+                                )
                         current = dict(index=i, action_name=action, phase="ACTUAL_AFTER_FOOT")
-                if start is None or len(predictions) != 4:
+                if start is None or len(predictions) != len(prediction_actions):
                     raise ValueError(
-                        "all four own future predictions and actual completed foot required"
+                        "all declared own future predictions and actual completed foot required"
                     )
                 trace = {k: np.asarray(v) for k, v in history.items()}
                 if ai == 0:
-                    same_arrays(trace, job["gold_trace"])
-                for bi in [0, 1] if ai == 0 else [ai + 1]:
+                    same_arrays(base_arrays(trace), job["gold_trace"])
+                for bi in indices(ai):
                     same_arrays(predictions[bi][0], {k: a[start:] for k, a in trace.items()})
                     if (
                         predictions[bi][1]["predicted_outcome"]
@@ -280,46 +347,61 @@ def main():
                     timing_seconds=dict(
                         construction=construction_seconds, control_steps=actual_control_seconds
                     ),
-                    matching_prediction_indices=[0, 1] if ai == 0 else [ai + 1],
-                    all_future43_arrays_match_prediction=True,
+                    matching_prediction_indices=indices(ai),
                     new_optimizer_updates=0,
                     teacher_qualified=False,
                     training_authorized=False,
                     promotion_authorized=False,
                     hardware_authorized=False,
                 )
+                row[
+                    "all_future46_arrays_match_prediction"
+                    if born_release
+                    else "all_future43_arrays_match_prediction"
+                ] = True
                 row["report_hash"] = hash_json(row)
                 write_once(p.root / f"case-{i}-arm-{ai}-complete.json", row)
                 actuals.append(row)
                 actor, history = None, {}
                 del trace
                 gc.collect()
-                print("NAVIGATION_RECOVERY_ACTUAL_PARITY_COMPLETE", i, action, flush=True)
+                print(
+                    "BORN_RELEASE_ACTUAL_PARITY_COMPLETE"
+                    if born_release
+                    else "NAVIGATION_RECOVERY_ACTUAL_PARITY_COMPLETE",
+                    i,
+                    action,
+                    flush=True,
+                )
             rows.append(
                 dict(index=i, actuals=actuals, predictions=[proof for _, proof in predictions])
             )
         factory._stable()
         if (
-            main_steps != 36000
-            or prediction_steps != 14320
-            or len(rows) != 4
+            main_steps != main_budget
+            or prediction_steps != prediction_budget
+            or len(rows) != contexts
             or any(digest(n) != h for n, h in p.pins.items())
         ):
-            raise ValueError("whole immutable50320-step navigation qualification required")
+            raise ValueError(f"whole immutable{total_budget}-step action bank required")
         complete = dict(
-            schema="soccer.rsi.navigation_recovery4_complete.v1",
+            schema=stem + "_complete.v1",
             declaration_hash=declaration["report_hash"],
             rows=rows,
             new_main_native_steps=main_steps,
             new_prediction_native_steps=prediction_steps,
             combined_new_native_steps=main_steps + prediction_steps,
             new_optimizer_updates=0,
-            nonzero_navigation_prediction_qualified_on_consumed_four_contexts=True,
             teacher_qualified=False,
             training_authorized=False,
             promotion_authorized=False,
             hardware_authorized=False,
         )
+        complete[
+            "born_release_prediction_qualified_on_one_consumed_context"
+            if born_release
+            else "nonzero_navigation_prediction_qualified_on_consumed_four_contexts"
+        ] = True
         complete["report_hash"] = hash_json(complete)
         write_once(p.root / "complete.json", complete)
     except BaseException as error:

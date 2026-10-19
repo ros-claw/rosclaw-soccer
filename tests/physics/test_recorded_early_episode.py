@@ -14,7 +14,8 @@ def recorded(request):
     m, _, _ = world()
     m.dof_armature[6:35] = 0.1
     mode = getattr(request, "param", False)
-    postcontact = mode in ("postcontact", "postcontact_late")
+    postcontact = mode in ("postcontact", "postcontact_late", "born_release")
+    prefix = "born_release_" if mode == "born_release" else "early_impact_feedback_"
     course = (2.0, 1.0, 0.2)
     if postcontact:
         # Controlled toy contact, not native G1 skill evidence. Ball approaches
@@ -56,8 +57,10 @@ def recorded(request):
             canonical_qpos=d.qpos.copy()[None],
             canonical_qvel=d.qvel.copy()[None],
             joint_target_rad=np.zeros((1, 29)),
-            early_impact_feedback_requested_offset_nm=offset[None],
         )
+        row[prefix + "requested_offset_nm"] = offset[None]
+        if mode == "born_release":
+            row[prefix + "forecast_steps"] = np.zeros((1, 1), dtype=np.int64)
         pd, tau, actual, applied, heights = [], [], [], [], []
         forces = np.zeros(6)
         for _ in range(10):
@@ -85,11 +88,11 @@ def recorded(request):
             pd_requested_torque_nm=np.asarray(pd)[None],
             torque_nm=np.asarray(tau)[None],
             actual_actuator_force_nm=np.asarray(actual)[None],
-            early_impact_feedback_applied_offset_nm=np.asarray(applied)[None],
             pelvis_z_per_substep_m=np.asarray(heights)[None],
             force_n=forces[None],
             ball_position_after_step_m=d.xpos[audit.ball].copy()[None],
         )
+        row[prefix + "applied_offset_nm"] = np.asarray(applied)[None]
         for k, v in row.items():
             history.setdefault(k, []).append(v)
         previous_forces = forces.copy()
@@ -125,6 +128,26 @@ def test_unforced_rejects_offset_bearing_source_before_integration(recorded):
     with pytest.raises(ValueError, match="cannot contain impact fields"):
         audit.verify_unforced_control(trace)
     assert audit.failed and audit.attempted_steps == 0
+
+
+@pytest.mark.parametrize("recorded", ["born_release"], indirect=True)
+def test_distinct_born_release_capture_reintegrates_all3000_steps(recorded):
+    audit, trace = recorded
+    keys = set(trace)
+    result = audit.verify_born_release(trace)
+    assert result["actual_physical_steps"] == 3000
+    assert max(result["maximum_absolute_errors"].values()) == 0
+    assert result["distinct_born_release_fields_consumed"]
+    assert not result["old_episode_control_arrays_aliased"]
+    assert keys == set(trace) and not any(k.startswith("postcontact_release_") for k in trace)
+
+
+@pytest.mark.parametrize("recorded", ["born_release"], indirect=True)
+def test_born_fields_cannot_be_consumed_as_plain_pd(recorded):
+    audit, trace = recorded
+    with pytest.raises(ValueError, match="cannot contain impact"):
+        audit.verify_unforced_control(trace)
+    assert audit.attempted_steps == 0
 
 
 @pytest.mark.parametrize(

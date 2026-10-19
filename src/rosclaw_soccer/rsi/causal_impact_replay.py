@@ -20,6 +20,10 @@ from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController
 from rosclaw_soccer.providers.g1.sonic_torch import FrozenSonicG1Torch
 from rosclaw_soccer.providers.g1.sonic_vector import BatchedSonicTracker
 from rosclaw_soccer.rsi.born_navigation_recovery import BornNavigationRecovery
+from rosclaw_soccer.rsi.born_postcontact_release import (
+    BornPostContactReleaseCommand,
+    BornPostContactReleaseControl,
+)
 from rosclaw_soccer.rsi.bounded_first_touch_control import BoundedFirstTouchControl
 from rosclaw_soccer.rsi.contact_motor_primitive import CAP_RAD
 from rosclaw_soccer.rsi.early_impact_controller import EarlyImpactCommand, EarlyImpactController
@@ -55,6 +59,7 @@ class CausalImpactFrame:
         | EarlyImpactCommand
         | PostContactReleaseCommand
         | PostContactExitCommand
+        | BornPostContactReleaseCommand
         | None
     )
 
@@ -87,9 +92,22 @@ class CausalImpactReplay:
         postcontact_exit_evidence_root: Path | None = None,
         reuse_owned_postcontact_updates: bool = False,
         constant_forward_approach: bool = False,
+        born_release_capture: bool = False,
     ) -> None:
         if (
             type(impact_enabled) is not bool
+            or type(born_release_capture) is not bool
+            or (
+                born_release_capture
+                and (
+                    impact_enabled
+                    or early_impact_enabled
+                    or postcontact_exit_enabled
+                    or release_action_name is not None
+                    or reuse_owned_early_updates
+                    or reuse_owned_postcontact_updates
+                )
+            )
             or type(constant_forward_approach) is not bool
             or (
                 constant_forward_approach
@@ -194,6 +212,7 @@ class CausalImpactReplay:
         self.profile = profile
         self.constant_forward_approach = constant_forward_approach
         self.navigation_recovery: BornNavigationRecovery | None = None
+        self.born_release_capture = born_release_capture
         self.pulse = OriginalIkPlannerPulse(0.08)
         self.ik = FootHeadingCpuReconstruction(model, heading)
         self.early_impact_enabled = early_impact_enabled
@@ -265,10 +284,25 @@ class CausalImpactReplay:
         clock. Private prediction installs before resetting borrowed counters;
         ordinary actual execution installs at the same genuine boundary.
         """
+        self._require_completed_plain_foot_boundary()
+        if (
+            type(option) is not BornNavigationRecovery
+            or option.start_frame != self.next_frame
+            or self.born_release_capture
+        ):
+            raise ValueError(
+                "once at an actual completed measured-foot plain SIM boundary required"
+            )
+        option.__post_init__()
+        self.navigation_recovery = option
+
+    def _require_completed_plain_foot_boundary(self) -> None:
         if (
             type(self) is not CausalImpactReplay
-            or type(option) is not BornNavigationRecovery
-            or option.start_frame != self.next_frame
+            or type(self.next_frame) is not int
+            or not 31 <= self.next_frame < 300
+            or type(self.attempted_steps) is not int
+            or type(self.integrated_steps) is not int
             or self.navigation_recovery is not None
             or self.failed is not False
             or self.attempted_steps != self.next_frame * 10
@@ -279,21 +313,34 @@ class CausalImpactReplay:
             or self.postcontact_exit_enabled is not False
             or self.early_evidence is not None
             or self.exit_evidence is not None
+            or type(self.profile) is not BoundedFirstTouchControl
             or self.profile != BoundedFirstTouchControl()
             or self.decoder._active_frame is not None
             or self.decoder._memory.last_frame != self.next_frame - 1
             or self.ik.next_frame != self.next_frame
             or self.ik.pending is not None
             or self.ik.contact is None
+            or type(self.previous_forces) is not np.ndarray
             or self.previous_forces.shape != (6,)
+            or self.previous_forces.dtype != np.float64
             or not np.isfinite(self.previous_forces).all()
             or not np.any(self.previous_forces[:2] > 1)
         ):
             raise ValueError(
                 "once at an actual completed measured-foot plain SIM boundary required"
             )
-        option.__post_init__()
-        self.navigation_recovery = option
+
+    def install_born_release(self, *, world_hash: str, action_name: str) -> None:
+        """New zero-history60ms SIM lease, never reset an old control clock."""
+        self._require_completed_plain_foot_boundary()
+        if self.born_release_capture is not True:
+            raise ValueError("predeclared whole-episode born-release capture required")
+        self.release_control = BornPostContactReleaseControl(
+            self.model,
+            world_hash=world_hash,
+            action_name=action_name,
+            start_frame=self.next_frame,
+        )
 
     def canonical(self) -> tuple[np.ndarray, np.ndarray]:
         d = self.data
@@ -443,6 +490,7 @@ class CausalImpactReplay:
             | EarlyImpactCommand
             | PostContactReleaseCommand
             | PostContactExitCommand
+            | BornPostContactReleaseCommand
             | None
         ) = (
             None
@@ -484,7 +532,12 @@ class CausalImpactReplay:
                 previous_contact_forces=self.previous_forces,
                 pelvis_z_m=float(d.xpos[self.pelvis, 2]),
             )
-            if type(plan) is not PostContactReleaseCommand:
+            expected_type = (
+                BornPostContactReleaseCommand
+                if type(self.release_control) is BornPostContactReleaseControl
+                else PostContactReleaseCommand
+            )
+            if type(plan) is not expected_type:
                 raise ValueError("owned post-contact release command required")
         offset = np.zeros(29) if plan is None else plan.offset_nm
         if self.early_evidence is not None:
@@ -541,7 +594,15 @@ class CausalImpactReplay:
             force_n=forces[None],
             ball_position_after_step_m=d.xpos[self.ball].copy()[None],
         )
-        if plan is not None:
+        if self.born_release_capture:
+            if plan is not None and type(plan) is not BornPostContactReleaseCommand:
+                raise ValueError("distinct born-release-only capture namespace required")
+            values.update(
+                born_release_requested_offset_nm=offset.copy()[None],
+                born_release_applied_offset_nm=np.asarray(applied)[None],
+                born_release_forecast_steps=np.zeros((1, 1), dtype=np.int64),
+            )
+        elif plan is not None:
             prefix = (
                 "postcontact_exit_"
                 if self.postcontact_exit_enabled
@@ -592,7 +653,12 @@ class CausalImpactReplay:
             promotion_authorized=False,
         )
         if self.release_control is not None:
-            review["postcontact_release"] = self.release_control.review()
+            key = (
+                "born_postcontact_release"
+                if type(self.release_control) is BornPostContactReleaseControl
+                else "postcontact_release"
+            )
+            review[key] = self.release_control.review()
         if self.constant_forward_approach:
             review["constant_forward_approach"] = True
             review["original_precontact_forward_law_unchanged"] = False

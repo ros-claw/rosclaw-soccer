@@ -45,8 +45,8 @@ def require_scope(cfg):
         raise ValueError("fixed four consumed contexts, three actions,50320 native steps required")
 
 
-def prepare(path):
-    p = original_prepare(path, scope_validator=require_scope)
+def require_closed_zero18(p):
+    """Shared whole18 prediction/readback admission, no context selection."""
     require_terminal(p.cfg["zero_parity_unit"])
     require_terminal(p.cfg["zero_readback_unit"])
 
@@ -91,6 +91,11 @@ def prepare(path):
             ):
                 raise ValueError("zero proof source/input pins changed")
             p.pins[str(file)] = h
+
+
+def prepare(path):
+    p = original_prepare(path, scope_validator=require_scope)
+    require_closed_zero18(p)
     p.jobs = [p.jobs[i] for i in CONTEXTS]
     if sum((300 - j["comparison_start_after_measured_foot_bin"]) * 40 for j in p.jobs) != 14320:
         raise ValueError("exact declared four-context prediction budget required")
