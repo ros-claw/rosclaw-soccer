@@ -101,6 +101,7 @@ def main():
     parser.add_argument("--source-head", required=True)
     parser.add_argument("--complete-file-hash", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--early80", action="store_true")
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     if (
@@ -135,13 +136,23 @@ def main():
 
     complete, declaration = (sealed(args.root / n) for n in ("complete.json", "declaration.json"))
     cfg = declaration["config"]
-    require_scope(cfg)
+    if args.early80:
+        from scripts.rsi_early_feedback_calibration import require_scope as early_scope
+
+        early_scope(cfg)
+    else:
+        require_scope(cfg)
     for name, h in declaration["input_file_hashes"].items():
         if (name in pins and pins[name] != h) or digest(name) != h:
             raise ValueError("complete original source/model/body/dense proof changed")
         pins[name] = h
     if (
-        complete["schema"] != "soccer.rsi.zero_feedback_calibration_complete.v1"
+        complete["schema"]
+        != (
+            "soccer.rsi.zero_early_feedback_calibration_complete.v1"
+            if args.early80
+            else "soccer.rsi.zero_feedback_calibration_complete.v1"
+        )
         or complete["declaration_hash"] != declaration["report_hash"]
         or len(complete["rows"]) != 6
         or any(
@@ -153,16 +164,16 @@ def main():
             for k, n in (
                 ("recorded_attempted_steps", 18000),
                 ("recorded_integrated_steps", 18000),
-                ("forecast_attempted_steps", 240),
-                ("forecast_integrated_steps", 240),
-                ("combined_attempted_steps", 18240),
-                ("combined_integrated_steps", 18240),
+                ("forecast_attempted_steps", 480 if args.early80 else 240),
+                ("forecast_integrated_steps", 480 if args.early80 else 240),
+                ("combined_attempted_steps", 18480 if args.early80 else 18240),
+                ("combined_integrated_steps", 18480 if args.early80 else 18240),
                 ("planner_runs_attempted", 60),
                 ("current_pairs_completed", 6),
                 ("original_residual_decisions_completed", 1800),
                 ("original_recurrent_updates_completed", 1620),
-                ("branch_target_attempts", 12),
-                ("branch_target_completed", 12),
+                ("branch_target_attempts", 36 if args.early80 else 12),
+                ("branch_target_completed", 36 if args.early80 else 12),
                 ("new_closed_loop_policy_trials", 0),
                 ("new_optimizer_updates", 0),
                 ("candidate_actions_optimized", 0),
@@ -201,7 +212,7 @@ def main():
         frame = row["retrospective_frame"]
         if (
             type(frame) is not int
-            or frame != parent["outcome"]["first_foot_contact_frame"]
+            or frame != parent["outcome"]["first_foot_contact_frame"] - (2 if args.early80 else 0)
             or not 30 <= frame < 298
         ):
             raise ValueError("unchanged original diagnostic frame required")
@@ -221,7 +232,12 @@ def main():
             if w["path"] != str(args.root / f"case-{index}-branch-{number}.npz"):
                 raise ValueError("same unused original branch paths required")
             arrays = load_arrays(w)
-            verify_branch(arrays, trace, dense_arrays, frame)
+            if args.early80:
+                from scripts.rsi_read_early_feedback_arrays import verify_early_branch
+
+                verify_early_branch(arrays, trace, dense_arrays, frame)
+            else:
+                verify_branch(arrays, trace, dense_arrays, frame)
             branches.append(arrays)
         if (
             set(branches[0]) != set(branches[1])
@@ -246,10 +262,18 @@ def main():
                 repeated_whole_branch_bytes_equal=True,
             )
         )
+        if args.early80:
+            rows[-1].pop("all20_substeps_match_original_dense")
+            rows[-1]["all40_substeps_match_original_dense"] = True
+            rows[-1]["all_three_neural_and_target_updates_verified"] = True
     if any(digest(path) != h for path, h in pins.items()):
         raise ValueError("original source/input changed during readback")
     report = dict(
-        schema="soccer.rsi.zero_feedback_calibration_readback.v1",
+        schema=(
+            "soccer.rsi.zero_early_feedback_calibration_readback.v1"
+            if args.early80
+            else "soccer.rsi.zero_feedback_calibration_readback.v1"
+        ),
         source_head=args.source_head,
         complete_hash=complete["report_hash"],
         input_file_hashes=pins,
