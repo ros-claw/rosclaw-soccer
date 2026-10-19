@@ -1256,3 +1256,23 @@ physical experience. A predeclared equal-family mixture gives each of48 old
 pairs13 draws and each of13 public pairs48 draws (624 draws/family). Original
 retention, validation and test rows remain excluded. This is a diagnostic
 stability/plasticity ablation, not a claim that weighting solves motor learning.
+
+That fixed equal-family ablation also closed2304 scalar updates across three
+seeds. Public diagnostic-test MSE fell to0.006025/0.005870/0.006017, but the first
+seed still did not beat zero-effect0.006020; all remain worse than the original
+tiny fit. Keep the aggregate decision REJECTED, without tuning another nearby
+mixture until it passes. An independent literal reader verified both runs'
+original retention exclusion, train-only normalization, Core training-array
+hashes, scalar-head receipt counts and all reported predictive errors; it ran
+zero optimizers/physics and did not independently repeat gradients.
+
+The next data intervention is predeclared by `public_response_probe_plan`:
+the same40 consumed public worlds/ten seed clusters, each receiving two
+opposed named60ms actions chosen by course index, not future score. Every
+nonzero named action occurs6–7 times. This adds80 actual H300 bodies240000
+native steps with no forecasts;40 closed original baseline bodies are reused
+only as matched comparators, not counted as new executions. Keep every task
+failure, unsafe and censored result. These80 bodies are not80 independent
+worlds or sealed Fresh, and no increased kick skill is promised by the plan.
+Collection must wait for complete six-body storage parity and its independent
+recorded-PD check; the new storage adapter is not assumed physically valid.
