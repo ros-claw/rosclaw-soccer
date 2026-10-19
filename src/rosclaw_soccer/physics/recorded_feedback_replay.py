@@ -1,6 +1,6 @@
-"""Independent integration of a recorded40ms feedback branch, SIM_ONLY.
+"""Independent integration of recorded40ms or80ms feedback, SIM_ONLY.
 
-The next target is recorded, NOT recomputed by a neural controller here. This
+The next targets are recorded, NOT recomputed by a neural controller here. This
 checks physical/control trajectory fidelity, not causal policy qualification,
 task gain, a teacher, or hardware authorization. Every attempted step is charged.
 """
@@ -17,10 +17,26 @@ from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS, hash_bytes
 
 class RecordedFeedbackReplay:
     def __init__(
-        self, model: Any, *, world_hash: str, kp: np.ndarray, kd: np.ndarray, maximum_steps: int
+        self,
+        model: Any,
+        *,
+        world_hash: str,
+        kp: np.ndarray,
+        kd: np.ndarray,
+        maximum_steps: int,
+        early80: bool = False,
     ) -> None:
-        if type(maximum_steps) is not int or not 20 <= maximum_steps <= 1680 or maximum_steps % 20:
-            raise ValueError("explicit at-most1680-step whole-window replay budget required")
+        horizon = 40 if early80 else 20
+        if (
+            type(early80) is not bool
+            or type(maximum_steps) is not int
+            or not horizon <= maximum_steps <= (3360 if early80 else 1680)
+            or maximum_steps % horizon
+        ):
+            raise ValueError("explicit bounded whole-window recorded replay budget required")
+        self.early80, self.horizon = early80, horizon
+        self.correction_steps = 30 if early80 else 10
+        self.failed = False
         checked = G1PDTorqueForecaster(
             model, expected_world_hash=world_hash, kp=kp, kd=kd, max_forecast_steps=20
         )
@@ -37,6 +53,20 @@ class RecordedFeedbackReplay:
         self.limits = np.asarray(G1_HARD_TORQUE_LIMITS)
         self.caps = np.minimum(12.0, 0.2 * self.limits)
         self.feet = [int(model.body(s + "_ankle_roll_link").id) for s in ("left", "right")]
+        self.contacts = (
+            self.feet
+            + [
+                int(model.body(n).id)
+                for n in (
+                    "left_ankle_pitch_link",
+                    "right_ankle_pitch_link",
+                    "left_knee_link",
+                    "right_knee_link",
+                )
+            ]
+            if early80
+            else []
+        )
         self.maximum_steps = maximum_steps
         self.attempted_steps = self.integrated_steps = self.attempted_windows = (
             self.completed_windows
@@ -55,13 +85,26 @@ class RecordedFeedbackReplay:
             or donor.model is not self.model
             or donor is self.scratch
             or mujoco.get_mjcb_control() is not None
+            or self.failed
         ):
             raise ValueError("original caller-owned same-world callback-free state required")
-        if self.attempted_steps + 20 > self.maximum_steps:
+        if self.attempted_steps + self.horizon > self.maximum_steps:
             raise RuntimeError("recorded feedback replay budget exhausted")
-        next_target = recorded["next_joint_target_rad"]
-        offset = recorded["offset_nm"]
-        for a in (first_target_rad, next_target, offset):
+        prefixes = [f"next_{j}_" for j in range(1, 4)] if self.early80 else ["next_"]
+        targets = [first_target_rad, *(recorded[p + "joint_target_rad"] for p in prefixes)]
+        if self.early80:
+            schedule = recorded.get("requested_offset_nm")
+            if (
+                not isinstance(schedule, np.ndarray)
+                or schedule.shape != (40, 29)
+                or schedule.dtype != np.float64
+                or not np.isfinite(schedule).all()
+            ):
+                raise ValueError("whole finite80ms requested action schedule required")
+            offset = schedule[0]
+        else:
+            offset = recorded["offset_nm"]
+        for a in (*targets, offset):
             if (
                 not isinstance(a, np.ndarray)
                 or a.shape != (29,)
@@ -69,25 +112,21 @@ class RecordedFeedbackReplay:
                 or not np.isfinite(a).all()
             ):
                 raise ValueError("whole finite canonical target/action required")
-        if (
-            np.any(abs(offset) > self.caps)
-            or np.max(abs(first_target_rad)) > 10
-            or np.max(abs(next_target)) > 10
-        ):
+        if np.any(abs(offset) > self.caps) or any(np.max(abs(target)) > 10 for target in targets):
             raise ValueError("bounded recorded targets and correction required")
         for key, shape, dtype in (
-            ("canonical_qpos_after_substep", (20, 43), np.float64),
-            ("canonical_qvel_after_substep", (20, 41), np.float64),
-            ("requested_pd_torque_nm", (20, 29), np.float64),
-            ("applied_control_nm", (20, 29), np.float64),
-            ("actual_actuator_force_nm", (20, 29), np.float64),
-            ("pelvis_height_solver_epoch_m", (20,), np.float64),
-            ("robot_force_on_ball_world_n", (20, 3), np.float64),
-            ("foot_contact_peak_force_n_after_substep", (20, 2), np.float64),
-            ("nonfoot_robot_contact_over1n_after_substep", (20,), np.bool_),
-            ("completed_foot_ground_normal_n", (20, 2), np.float64),
-            ("next_canonical_qpos", (43,), np.float64),
-            ("next_canonical_qvel", (41,), np.float64),
+            ("canonical_qpos_after_substep", (self.horizon, 43), np.float64),
+            ("canonical_qvel_after_substep", (self.horizon, 41), np.float64),
+            ("requested_pd_torque_nm", (self.horizon, 29), np.float64),
+            ("applied_control_nm", (self.horizon, 29), np.float64),
+            ("actual_actuator_force_nm", (self.horizon, 29), np.float64),
+            ("pelvis_height_solver_epoch_m", (self.horizon,), np.float64),
+            ("robot_force_on_ball_world_n", (self.horizon, 3), np.float64),
+            ("foot_contact_peak_force_n_after_substep", (self.horizon, 2), np.float64),
+            ("nonfoot_robot_contact_over1n_after_substep", (self.horizon,), np.bool_),
+            ("completed_foot_ground_normal_n", (self.horizon, 2), np.float64),
+            *[(p + "canonical_qpos", (43,), np.float64) for p in prefixes],
+            *[(p + "canonical_qvel", (41,), np.float64) for p in prefixes],
         ):
             a = recorded[key]
             if (
@@ -97,6 +136,23 @@ class RecordedFeedbackReplay:
                 or not np.isfinite(a).all()
             ):
                 raise ValueError("complete finite recorded branch required before physics")
+        if self.early80:
+            schedule, peaks = (
+                recorded["requested_offset_nm"],
+                recorded["completed_contact_peak_force_n"],
+            )
+            if (
+                schedule.shape != (40, 29)
+                or schedule.dtype != np.float64
+                or not np.isfinite(schedule).all()
+                or not np.array_equal(schedule[:30], np.tile(offset, (30, 1)))
+                or np.any(schedule[30:])
+                or peaks.shape != (40, 6)
+                or peaks.dtype != np.float64
+                or not np.isfinite(peaks).all()
+                or np.any(peaks < 0)
+            ):
+                raise ValueError("whole60ms-then-zero schedule and causal forces required")
         end_expected = recorded["end_integration_state"]
         if (
             not isinstance(end_expected, np.ndarray)
@@ -116,6 +172,7 @@ class RecordedFeedbackReplay:
         self.attempted_windows += 1
         warnings = tuple(int(w.number) for w in d.warning)
         max_errors: dict[str, float] = {}
+        contact_peaks = np.zeros(6)
 
         def compare(key: str, actual: Any, expected: Any) -> None:
             a, e = np.asarray(actual), np.asarray(expected)
@@ -132,25 +189,27 @@ class RecordedFeedbackReplay:
                 raise ValueError("independent recorded feedback physics differs: " + key)
 
         try:
-            for step in range(20):
-                if step == 10:
+            for step in range(self.horizon):
+                if step and step % 10 == 0:
+                    prefix = prefixes[step // 10 - 1]
                     compare(
-                        "next_canonical_qpos",
+                        prefix + "canonical_qpos",
                         np.concatenate(
                             (d.qpos[:7], d.qpos[self.qi], d.qpos[self.bq : self.bq + 7])
                         ),
-                        recorded["next_canonical_qpos"],
+                        recorded[prefix + "canonical_qpos"],
                     )
                     compare(
-                        "next_canonical_qvel",
+                        prefix + "canonical_qvel",
                         np.concatenate(
                             (d.qvel[:6], d.qvel[self.vi], d.qvel[self.bv : self.bv + 6])
                         ),
-                        recorded["next_canonical_qvel"],
+                        recorded[prefix + "canonical_qvel"],
                     )
-                target = first_target_rad if step < 10 else next_target
+                    contact_peaks.fill(0)
+                target = targets[step // 10]
                 raw = (target - d.qpos[self.qi]) * self.kp - d.qvel[self.vi] * self.kd
-                requested = raw + offset if step < 10 and np.any(offset) else raw
+                requested = raw + offset if step < self.correction_steps and np.any(offset) else raw
                 tau = np.clip(requested, -self.limits, self.limits)
                 d.ctrl[self.ai] = tau
                 old_time = float(d.time)
@@ -197,12 +256,30 @@ class RecordedFeedbackReplay:
                     completed_foot_ground_normal_n=self.support.read(d),
                 ).items():
                     compare(key, actual, recorded[key][step])
+                if self.early80:
+                    for i in range(d.ncon):
+                        g1, g2 = int(d.contact[i].geom1), int(d.contact[i].geom2)
+                        if self.bg not in (g1, g2):
+                            continue
+                        body = int(self.model.geom_bodyid[g2 if g1 == self.bg else g1])
+                        if body in self.contacts:
+                            wrench = np.zeros(6)
+                            mujoco.mj_contactForce(self.model, d, i, wrench)
+                            channel = self.contacts.index(body)
+                            contact_peaks[channel] = max(
+                                contact_peaks[channel], float(np.linalg.norm(wrench[:3]))
+                            )
+                    compare(
+                        "completed_contact_peak_force_n",
+                        contact_peaks,
+                        recorded["completed_contact_peak_force_n"][step],
+                    )
             end = np.empty_like(initial)
             mujoco.mj_getState(self.model, d, end, spec)
             compare("end_integration_state", end, recorded["end_integration_state"])
             self.completed_windows += 1
             return dict(
-                all20_substeps_physically_replayed=True,
+                **{f"all{self.horizon}_substeps_physically_replayed": True},
                 maximum_absolute_errors=max_errors,
                 replay_end_integration_state_hash=hash_bytes(end.tobytes()),
                 recorded_next_target_used=True,
@@ -211,6 +288,10 @@ class RecordedFeedbackReplay:
                 hardware_authorized=False,
                 promotion_authorized=False,
             )
+        except BaseException:
+            if self.early80:
+                self.failed = True
+            raise
         finally:
             check = np.empty_like(initial)
             mujoco.mj_getState(self.model, donor, check, spec)

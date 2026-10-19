@@ -16,17 +16,23 @@ from scripts.rsi_impact_torque_authority_screen import equal
 from scripts.rsi_stage_release_contact_replay import digest, require_terminal
 
 
-def require_scope(cfg):
+def require_scope(cfg, *, early80=False):
     if (
-        cfg.get("mode") != "SIM_ONLY"
-        or cfg.get("profile") != "six-recorded-feedback-replay-v1"
+        type(early80) is not bool
+        or cfg.get("mode") != "SIM_ONLY"
+        or cfg.get("profile")
+        != (
+            "six-recorded-early-feedback80-replay-v1"
+            if early80
+            else "six-recorded-feedback-replay-v1"
+        )
         or any(
             type(cfg.get(k)) is not int or cfg[k] != n
             for k, n in (
                 ("source_cases", 6),
                 ("recorded_step_budget", 18000),
-                ("branch_step_budget", 1680),
-                ("combined_step_budget", 19680),
+                ("branch_step_budget", 3360 if early80 else 1680),
+                ("combined_step_budget", 21360 if early80 else 19680),
                 ("new_neural_inferences", 0),
                 ("new_optimizer_updates", 0),
                 ("new_closed_loop_policy_trials", 0),
@@ -46,9 +52,9 @@ def require_scope(cfg):
         raise ValueError("exact bounded six-case19680-step recorded control replay required")
 
 
-def prepare(path):
+def prepare(path, *, early80=False):
     cfg = json.loads(path.read_text())
-    require_scope(cfg)
+    require_scope(cfg, early80=early80)
     source, root = Path(cfg["source_root"]), Path(cfg["output_root"])
     if (
         Path(__file__).resolve() != source / "scripts/rsi_replay_feedback_screen.py"
@@ -62,6 +68,13 @@ def prepare(path):
     ):
         raise ValueError("exact frozen source, bounded deadline and unused output required")
     require_terminal(cfg["screen_unit"])
+    bind = cfg.get("bind_terminal_readback", False)
+    if type(bind) is not bool or (
+        bind and (not early80 or "readback_hash" in cfg or "readback_file_hash" in cfg)
+    ):
+        raise ValueError("explicit early80 terminal-only readback hash binding required")
+    if bind:
+        require_terminal(cfg["readback_unit"])
     pins = {str(path): digest(path)}
     pins.update(
         {
@@ -86,9 +99,22 @@ def prepare(path):
         pins[str(path)] = h
         return d
 
-    readback = sealed(cfg["readback"], cfg["readback_file_hash"])
+    readback = sealed(cfg["readback"], None if bind else cfg["readback_file_hash"])
+    if bind:
+        if readback.get("source_head") != cfg["readback_source_head"]:
+            raise ValueError("same declared terminal independent reader source required")
+        cfg = dict(
+            cfg,
+            readback_hash=readback["report_hash"],
+            readback_file_hash=pins[str(Path(cfg["readback"]))],
+        )
     if (
-        readback["schema"] != "soccer.rsi.feedback_impact_screen_readback.v1"
+        readback["schema"]
+        != (
+            "soccer.rsi.early_feedback_impact_screen_readback.v1"
+            if early80
+            else "soccer.rsi.feedback_impact_screen_readback.v1"
+        )
         or readback["report_hash"] != cfg["readback_hash"]
         or readback["all_original_six_including_failures_retained"] is not True
         or len(readback["rows"]) != 6
@@ -144,14 +170,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--preflight", action="store_true")
+    parser.add_argument("--early80", action="store_true")
     args = parser.parse_args()
-    cfg, root, pins, readback, screen, native = prepare(args.config)
+    cfg, root, pins, readback, screen, native = prepare(args.config, early80=args.early80)
+    kind = "recorded_early_feedback_replay" if args.early80 else "recorded_feedback_replay"
     if args.preflight:
-        print("SIX_RECORDED_FEEDBACK_REPLAY_READY_NO_PHYSICS", flush=True)
+        print(
+            "SIX_EARLY80_RECORDED_REPLAY_READY_NO_PHYSICS"
+            if args.early80
+            else "SIX_RECORDED_FEEDBACK_REPLAY_READY_NO_PHYSICS",
+            flush=True,
+        )
         return
     root.mkdir()
     declaration = dict(
-        schema="soccer.rsi.recorded_feedback_replay_declaration.v1",
+        schema=f"soccer.rsi.{kind}_declaration.v1",
         config=cfg,
         readback_hash=readback["report_hash"],
         screen_complete_hash=screen["report_hash"],
@@ -199,7 +232,8 @@ def main():
             world_hash=world["sha256"],
             kp=np.asarray(physics["canonical_pd_kp"], dtype=np.float64),
             kd=np.asarray(physics["canonical_pd_kd"], dtype=np.float64),
-            maximum_steps=1680,
+            maximum_steps=3360 if args.early80 else 1680,
+            early80=args.early80,
         )
 
         def canonical(data):
@@ -305,7 +339,7 @@ def main():
         ):
             raise ValueError("all bounded original integration counts and sources required")
         result = dict(
-            schema="soccer.rsi.recorded_feedback_replay_complete.v1",
+            schema=f"soccer.rsi.{kind}_complete.v1",
             declaration_hash=declaration["report_hash"],
             rows=rows,
             **counts(),
@@ -329,7 +363,7 @@ def main():
             with (root / "failure-last-replay-state.npz").open("xb") as stream:
                 np.savez_compressed(stream, integration_state=state)
         failure = dict(
-            schema="soccer.rsi.recorded_feedback_replay_failure.v1",
+            schema=f"soccer.rsi.{kind}_failure.v1",
             declaration_hash=declaration["report_hash"],
             current_case=current_case,
             current_branch=current_branch,
