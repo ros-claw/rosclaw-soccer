@@ -29,6 +29,11 @@ from rosclaw_soccer.rsi.foot_heading_evidence import FootHeadingCpuReconstructio
 from rosclaw_soccer.rsi.impact_feedback_teacher import ImpactFeedbackPlan, ImpactFeedbackTeacher
 from rosclaw_soccer.rsi.native_first_touch_initial_state import NativeFirstTouchInitialState
 from rosclaw_soccer.rsi.original_ik_planner_pulse import OriginalIkPlannerPulse
+from rosclaw_soccer.rsi.postcontact_release_control import (
+    ACTION_NAMES,
+    PostContactReleaseCommand,
+    PostContactReleaseControl,
+)
 from rosclaw_soccer.rsi.recurrent_sampling_motor import CompiledRecurrentSamplingMotor
 from rosclaw_soccer.sim.contracts import G1_HARD_TORQUE_LIMITS
 from rosclaw_soccer.sim.root_velocity_reference import root_velocity_world
@@ -39,7 +44,7 @@ from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation
 class CausalImpactFrame:
     frame: int
     arrays: dict[str, np.ndarray]
-    impact_plan: ImpactFeedbackPlan | EarlyImpactCommand | None
+    impact_plan: ImpactFeedbackPlan | EarlyImpactCommand | PostContactReleaseCommand | None
 
 
 class CausalImpactReplay:
@@ -65,6 +70,7 @@ class CausalImpactReplay:
         early_impact_enabled: bool = False,
         early_evidence_root: Path | None = None,
         reuse_owned_early_updates: bool = False,
+        release_action_name: str | None = None,
     ) -> None:
         if (
             type(impact_enabled) is not bool
@@ -73,6 +79,15 @@ class CausalImpactReplay:
             or (early_impact_enabled != (early_evidence_root is not None))
             or type(reuse_owned_early_updates) is not bool
             or (reuse_owned_early_updates and not early_impact_enabled)
+            or (
+                release_action_name is not None
+                and (
+                    type(release_action_name) is not str
+                    or release_action_name not in ACTION_NAMES
+                    or impact_enabled
+                    or early_impact_enabled
+                )
+            )
             or type(profile) is not BoundedFirstTouchControl
             or type(heading) is not FootHeadingContactProbe
             or type(foundation) is not FrozenSonicG1Torch
@@ -164,6 +179,11 @@ class CausalImpactReplay:
                 else None
             )
         self.tracker: BatchedSonicTracker | None = None
+        self.release_control = (
+            PostContactReleaseControl(model, world_hash=world_hash, action_name=release_action_name)
+            if release_action_name is not None
+            else None
+        )
         self.body: dict[str, list[np.ndarray]] = {k: [] for k in BODY_SHAPES}
         self.previous = np.zeros(12)
         self.previous_forces = np.zeros(6)
@@ -311,7 +331,7 @@ class CausalImpactReplay:
             else CAP_RAD
             * np.tanh(self.decoder.sampled_transition["recurrent_sampling_latent_action"])
         )[None]
-        plan = (
+        plan: ImpactFeedbackPlan | EarlyImpactCommand | PostContactReleaseCommand | None = (
             None
             if self.teacher is None
             else self.teacher.plan(
@@ -326,6 +346,15 @@ class CausalImpactReplay:
                 previous_motor_delta_rad=previous,
             )
         )
+        if self.release_control is not None:
+            plan = self.release_control.plan(
+                d,
+                frame=frame,
+                previous_contact_forces=self.previous_forces,
+                pelvis_z_m=float(d.xpos[self.pelvis, 2]),
+            )
+            if type(plan) is not PostContactReleaseCommand:
+                raise ValueError("owned post-contact release command required")
         offset = np.zeros(29) if plan is None else plan.offset_nm
         if self.early_evidence is not None:
             if type(plan) is not EarlyImpactCommand:
@@ -382,7 +411,13 @@ class CausalImpactReplay:
             ball_position_after_step_m=d.xpos[self.ball].copy()[None],
         )
         if plan is not None:
-            prefix = "early_impact_feedback_" if self.early_impact_enabled else "impact_feedback_"
+            prefix = (
+                "postcontact_release_"
+                if self.release_control is not None
+                else "early_impact_feedback_"
+                if self.early_impact_enabled
+                else "impact_feedback_"
+            )
             values.update(
                 {
                     prefix + "requested_offset_nm": offset.copy()[None],
@@ -404,7 +439,7 @@ class CausalImpactReplay:
             or self.attempted_steps != 3000
         ):
             raise ValueError("whole300-frame causal replay required before review")
-        return dict(
+        review = dict(
             native_attempted_steps=self.attempted_steps,
             native_integrated_steps=self.integrated_steps,
             forecast_attempted_steps=0
@@ -423,3 +458,6 @@ class CausalImpactReplay:
             hardware_authorized=False,
             promotion_authorized=False,
         )
+        if self.release_control is not None:
+            review["postcontact_release"] = self.release_control.review()
+        return review

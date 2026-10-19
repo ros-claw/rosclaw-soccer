@@ -64,3 +64,12 @@ def test_original_arm_with_fake_zero_recording_is_not_accepted(recorded):  # noq
     with pytest.raises(ValueError, match="must not contain"):
         verify_local_recorded_arm(replay, trace, arm="original_control")
     assert replay.attempted_steps == 0
+
+
+@pytest.mark.parametrize("arm", ["original_control", "prospective_early_impact"])
+def test_new_release_study_cannot_masquerade_as_local24(recorded, arm):  # noqa: F811
+    replay, trace = recorded
+    trace["postcontact_release_requested_offset_nm"] = np.zeros((300, 1, 29))
+    with pytest.raises(ValueError, match="distinct profile"):
+        verify_local_recorded_arm(replay, trace, arm=arm)
+    assert replay.attempted_steps == 0

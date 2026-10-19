@@ -24,6 +24,8 @@ def verify_local_recorded_arm(
         raise ValueError("exact recorded physics engine and declared local pilot arm required")
     if any(k.startswith("impact_feedback_") for k in trace):
         raise ValueError("old last20ms profile cannot stand in for this local experiment")
+    if any(k.startswith("postcontact_release_") for k in trace):
+        raise ValueError("release action study is a distinct profile, not the local24 trial")
     derived = arm == "original_control"
     if derived:
         if any(k.startswith("early_impact_feedback_") for k in trace):

@@ -29,7 +29,14 @@ from tests.rsi.test_smooth_memory_motor import smooth_parent  # noqa: F401
 from tests.rsi.test_step_motor_network import model  # noqa: F401
 
 
-def build(monkeypatch, parent_model, *, early=False, reuse_owned_early_updates=False):
+def build(
+    monkeypatch,
+    parent_model,
+    *,
+    early=False,
+    reuse_owned_early_updates=False,
+    release_action_name=None,
+):
     sim, _, _ = world()
     sim.opt.gravity[:] = 0
     sim.dof_armature[6:35] = 0.02
@@ -93,6 +100,7 @@ def build(monkeypatch, parent_model, *, early=False, reuse_owned_early_updates=F
         early_impact_enabled=early,
         early_evidence_root=Path("synthetic-output") if early else None,
         reuse_owned_early_updates=reuse_owned_early_updates,
+        release_action_name=release_action_name,
     )
 
 
@@ -150,6 +158,77 @@ def test_no_recorded_or_future_state_input_in_driver_api():
     forbidden = {"trace", "future_target", "source_contact_frame", "callback", "reference_trace"}
     assert not forbidden.intersection(inspect.signature(mod.CausalImpactReplay).parameters)
     assert list(inspect.signature(mod.CausalImpactReplay.step).parameters) == ["self", "frame"]
+
+
+def test_release_adapter_integrates_full_body_and_keeps_distinct_trace_namespace(
+    monkeypatch,
+    imitation_parent,  # noqa: F811
+):
+    from rosclaw_soccer.rsi.postcontact_release_control import PostContactReleaseCommand
+
+    class Release:
+        def __init__(self, engine_model, **kw):
+            assert kw["action_name"] == "lift_plus"
+            self.frames = []
+
+        def plan(self, data, *, frame, previous_contact_forces, pelvis_z_m):
+            self.frames.append(frame)
+            assert data.time == pytest.approx(frame * 0.02)
+            assert previous_contact_forces.shape == (6,)
+            assert np.isfinite(pelvis_z_m)
+            offset = np.zeros(29)
+            if 30 <= frame <= 32:
+                offset[3] = 3
+            return PostContactReleaseCommand(offset, dict(forecast_substeps=0))
+
+        def review(self):
+            assert self.frames == list(range(300))
+            return dict(synthetic_release_adapter=True, teacher_qualified=False)
+
+    monkeypatch.setattr(mod, "PostContactReleaseControl", Release)
+    replay = build(monkeypatch, imitation_parent, release_action_name="lift_plus")
+    frames = [replay.step(f) for f in range(300)]
+    review = replay.review()
+    assert review["native_integrated_steps"] == 3000 and review["forecast_integrated_steps"] == 0
+    assert review["postcontact_release"]["synthetic_release_adapter"] is True
+    assert review["teacher_qualified"] is False
+    for f in frames:
+        a = f.arrays
+        assert not any(k.startswith(("early_impact_feedback_", "impact_feedback_")) for k in a)
+        offset = a["postcontact_release_requested_offset_nm"]
+        np.testing.assert_array_equal(offset[0], np.eye(29)[3] * (3 if 30 <= f.frame <= 32 else 0))
+        np.testing.assert_array_equal(
+            a["torque_nm"],
+            np.clip(
+                a["pd_requested_torque_nm"] + offset[:, None],
+                -replay.torque_limits,
+                replay.torque_limits,
+            ),
+        )
+
+
+@pytest.mark.parametrize("name,early", [(True, False), ("unknown", False), ("lift_plus", True)])
+def test_release_mode_rejects_unknown_or_combined_impact_before_model_allocation(name, early):
+    with pytest.raises(ValueError, match="fixed study"):
+        mod.CausalImpactReplay(
+            None,
+            world_hash="unused",
+            kp=None,
+            kd=None,
+            model_root=Path("unused"),
+            foundation=None,
+            expected_foundation_hash="unused",
+            policy={},
+            decoder=None,
+            expected_policy_hash="unused",
+            course=(2.7, 0.1, 0.3),
+            profile=None,
+            heading=None,
+            impact_enabled=False,
+            early_impact_enabled=early,
+            early_evidence_root=Path("unused") if early else None,
+            release_action_name=name,
+        )
 
 
 def test_owned_continuation_is_opt_in_and_propagated_only_to_early_adapter(
