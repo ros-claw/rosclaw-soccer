@@ -37,11 +37,13 @@ class G1EarlyFeedbackForecaster:
         kp: np.ndarray,
         kd: np.ndarray,
         max_forecast_steps: int,
+        reuse_owned_updates: bool = False,
     ) -> None:
         if (
             type(max_forecast_steps) is not int
             or not 40 <= max_forecast_steps <= 600000
             or max_forecast_steps % 40
+            or type(reuse_owned_updates) is not bool
         ):
             raise ValueError("whole80ms bounded forecast budget required")
         # Static admission only: this object never executes the old40ms path.
@@ -51,6 +53,7 @@ class G1EarlyFeedbackForecaster:
         self.model = model
         self._scratch = mujoco.MjData(model)
         self.max_forecast_steps = max_forecast_steps
+        self.reuse_owned_updates = reuse_owned_updates
         self.attempted_steps = self.integrated_steps = self.forecast_attempts = 0
         self.next_target_attempts = self.next_target_completed = 0
         self._failed = False
@@ -138,15 +141,19 @@ class G1EarlyFeedbackForecaster:
                     if step < 30:
                         # Each fork starts from the branch's actual updated NN,
                         # IK and residual state, NOT its original donor state.
-                        control = G1FeedbackBranchControl(
-                            self.model,
-                            frame=control.frame + 1,
-                            tracker=control.tracker,
-                            decoder=control.decoder,
-                            ik=control.ik,
-                            policy=control.policy,
-                            body_prefix=control.body,
-                            previous_motor_delta_rad=record["motor_delta_rad"],
+                        control = (
+                            control.continue_owned()
+                            if self.reuse_owned_updates
+                            else G1FeedbackBranchControl(
+                                self.model,
+                                frame=control.frame + 1,
+                                tracker=control.tracker,
+                                decoder=control.decoder,
+                                ik=control.ik,
+                                policy=control.policy,
+                                body_prefix=control.body,
+                                previous_motor_delta_rad=record["motor_delta_rad"],
+                            )
                         )
                 raw = (target - d.qpos[c._qi]) * c.kp - d.qvel[c._vi] * c.kd
                 offset = early_offset_nm if step < 30 else np.zeros(29)

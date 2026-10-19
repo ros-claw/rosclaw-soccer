@@ -55,10 +55,15 @@ def main():
     mode.add_argument("--impact-screen", action="store_true")
     mode.add_argument("--early-zero", action="store_true")
     mode.add_argument("--early-screen", action="store_true")
+    mode.add_argument("--owned-zero-parity", action="store_true")
     args = parser.parse_args()
     screening = args.impact_screen or args.early_screen
-    early = args.early_zero or args.early_screen
-    if args.early_screen:
+    early = args.early_zero or args.early_screen or args.owned_zero_parity
+    if args.owned_zero_parity:
+        from scripts.rsi_owned_feedback_parity_inputs import prepare as prepare_owned
+
+        p = prepare_owned(args.config)
+    elif args.early_screen:
         from scripts.rsi_early_feedback_screen_inputs import prepare as prepare_early_screen
 
         p = prepare_early_screen(args.config)
@@ -77,9 +82,14 @@ def main():
         study_kind = (
             "early_feedback_impact_screen" if screening else "zero_early_feedback_calibration"
         )
+    if args.owned_zero_parity:
+        study_kind = "owned_early_feedback_continuation_parity"
     if Path(__file__).resolve() != p.source / "scripts/rsi_calibrate_feedback_branches.py":
         raise ValueError("exact frozen feedback calibration runner required")
     if args.preflight:
+        if args.owned_zero_parity:
+            print("SIX_OWNED_EARLY_ZERO_PARITY_READY_NO_FULL_MODELS_OR_PHYSICS", flush=True)
+            return
         if early:
             print(
                 "WHOLE_SIX_EARLY80MS_SCREEN_READY_NO_FULL_MODELS_OR_PHYSICS"
@@ -119,6 +129,9 @@ def main():
         declaration["early_zero_feedback_readback_hash"] = p.early_zero_readback["report_hash"]
     elif screening:
         declaration["zero_feedback_readback_hash"] = p.zero_readback["report_hash"]
+    if args.owned_zero_parity:
+        declaration["reuse_owned_updates_only_on_second_branch"] = True
+        declaration["new_task_gain_or_teacher_qualification_claimed"] = False
     declaration["report_hash"] = hash_json(declaration)
     write_once(p.root / "declaration.json", declaration)
     attempted = integrated = plans = currents = residuals = recurrent_completed = 0
@@ -383,6 +396,7 @@ def main():
                     )
                     for branch, (action_name, offset) in enumerate(bank):
                         bounded()
+                        branch_started = time.perf_counter()
                         is_zero = not np.any(offset)
                         control = G1FeedbackBranchControl(
                             model,
@@ -400,9 +414,12 @@ def main():
                                 preserve_forecast,
                             )
 
+                            if args.owned_zero_parity:
+                                forecaster.reuse_owned_updates = branch == 1
                             out = forecaster.forecast(
                                 d, target, control=control, early_offset_nm=offset
                             )
+                            branch_wall_s = time.perf_counter() - branch_started
                             witness = (
                                 preserve_and_compare(
                                     p.root, index, branch, out, predicted, trace, frame, WIDTHS
@@ -410,6 +427,11 @@ def main():
                                 if is_zero
                                 else preserve_forecast(p.root, index, branch, out)
                             )
+                            if args.owned_zero_parity:
+                                witness.update(
+                                    owned_updates_reused=branch == 1,
+                                    branch_wall_s_excluding_artifact_io=branch_wall_s,
+                                )
                             if screening:
                                 from rosclaw_soccer.rsi.early_feedback_impact_score import (
                                     early_feedback_impact_score,

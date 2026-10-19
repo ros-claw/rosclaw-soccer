@@ -15,7 +15,7 @@ class FakeTracker(int):
         return {}
 
 
-def fixture(budget=80):
+def fixture(budget=80, *, reuse=False):
     model, data, _ = world()
     binary = np.empty(mujoco.mj_sizeModel(model), dtype=np.uint8)
     mujoco.mj_saveModel(model, None, binary)
@@ -28,6 +28,7 @@ def fixture(budget=80):
             kp=np.full(29, 10.0),
             kd=np.full(29, 0.2),
             max_forecast_steps=budget,
+            reuse_owned_updates=reuse,
         ),
     )
 
@@ -144,6 +145,12 @@ def test_rejects_refresh_crossing_or_invalid_frame_before_any_physics(frame):
 def test_rejects_invalid_budget(budget):
     with pytest.raises(ValueError, match="whole80ms"):
         fixture(budget)
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true"])
+def test_owned_update_option_requires_explicit_boolean(value):
+    with pytest.raises(ValueError, match="whole80ms"):
+        fixture(reuse=value)
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), 13.0])

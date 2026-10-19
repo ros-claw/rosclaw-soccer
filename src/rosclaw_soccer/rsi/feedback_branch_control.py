@@ -152,6 +152,55 @@ class G1FeedbackBranchControl:
             )
         ]
         self.consumed = False
+        self._continuation_taken = False
+        self._completed_motor_delta: np.ndarray | None = None
+
+    def continue_owned(self) -> "G1FeedbackBranchControl":
+        """Move a completed private branch forward without forking it again.
+
+        Initial donor isolation still uses the complete checked deep fork.
+        This SIM-only optimization consumes this object, retiring its mutable
+        handles. No caller-supplied next state, target or residual is accepted.
+        It is not selected by the default forecaster.
+        """
+        if (
+            type(self) is not G1FeedbackBranchControl
+            or self._continuation_taken
+            or not self.consumed
+            or self._completed_motor_delta is None
+            or self._completed_motor_delta.shape != (12,)
+            or self._completed_motor_delta.dtype != np.float64
+            or not np.isfinite(self._completed_motor_delta).all()
+            or np.max(abs(self._completed_motor_delta)) > 0.16 + 1e-8
+            or not 31 <= self.frame + 1 < 298
+            or (self.frame + 2) % 20 == 0
+            or self.tracker._next_frame != self.frame + 2
+            or self.decoder._active_frame is not None
+            or self.decoder._memory.last_frame != self.frame + 1
+            or self.decoder._recurrent.next_index != self.frame + 2 - 30
+            or self.ik.next_frame != self.frame + 1
+            or self.ik.pending is None
+            or self.ik.pending[0] != self.frame + 1
+            or self.policy.get("policy_hash") != self.decoder._policy_hash
+        ):
+            raise ValueError("one completed privately owned feedback continuation required")
+        if set(self.body) != set(BODY_SHAPES) or any(
+            a.shape != (self.frame + 2, 1, *BODY_SHAPES[key])
+            or a.dtype != np.float64
+            or not np.isfinite(a).all()
+            for key, a in self.body.items()
+        ):
+            raise ValueError("complete finite owned next-frame observation history required")
+        owned = copy.copy(self)
+        owned.frame += 1
+        owned.previous = self._completed_motor_delta.copy()
+        owned.consumed = owned._continuation_taken = False
+        owned._completed_motor_delta = None
+        self._continuation_taken = True
+        # Explicit move semantics: a retained old handle cannot operate on the
+        # decoder/tracker/IK/body now owned by its single successor.
+        del self.tracker, self.decoder, self.ik, self.body
+        return owned
 
     def next_target(
         self, data: Any, completed_force_n: np.ndarray
@@ -212,6 +261,7 @@ class G1FeedbackBranchControl:
         target[:12] += residual
         if not np.isfinite(target).all():
             raise ValueError("nonfinite feedback target")
+        self._completed_motor_delta = residual.copy()
         return target, dict(
             navigation_target_rad=navigation,
             taskspace_increment_rad=increment,

@@ -71,8 +71,8 @@ def test_wrong_recurrent_boundary_rejected(imitation_parent, next_frame):  # noq
         fork_motor(decoder, next_frame=next_frame)
 
 
-@pytest.mark.parametrize("early", [False, True])
-def test_composed_feedback_branch_real_adapters_on_toy_assets(imitation_parent, early):  # noqa: F811
+@pytest.mark.parametrize("early,offset", [(False, 0.0), (True, 0.0), (True, 0.5)])
+def test_composed_feedback_branch_real_adapters_on_toy_assets(imitation_parent, early, offset):  # noqa: F811
     """Exercises the full adapter composition, NOT an official G1/SONIC result."""
     import mujoco
 
@@ -152,7 +152,11 @@ def test_composed_feedback_branch_real_adapters_on_toy_assets(imitation_parent, 
     target[:12] += previous
     before = (_numeric_graph_hash(decoder), tracker_signature(tracker), ik_signature(ik))
     outputs = []
-    for _ in range(2):
+    for index in range(2):
+        if early:
+            # First branch uses the old deep-fork-every-period path; second
+            # opts into single-owner continuation. Both start at the same donor.
+            f.reuse_owned_updates = bool(index)
         controller = G1FeedbackBranchControl(
             sim_model,
             frame=30,
@@ -164,13 +168,19 @@ def test_composed_feedback_branch_real_adapters_on_toy_assets(imitation_parent, 
             previous_motor_delta_rad=previous,
         )
         outputs.append(
-            f.forecast(data, target, control=controller, early_offset_nm=np.zeros(29))
+            f.forecast(data, target, control=controller, early_offset_nm=np.full(29, offset))
             if early
             else f.forecast(data, target, control=controller, first_offset_nm=np.zeros(29))
         )
     assert before == (_numeric_graph_hash(decoder), tracker_signature(tracker), ik_signature(ik))
     assert outputs[0].end_integration_state.tobytes() == outputs[1].end_integration_state.tobytes()
     if early:
+        for key, value in outputs[0].arrays.items():
+            assert value.tobytes() == outputs[1].arrays[key].tobytes()
+        for name in ("next_target_records", "next_neural_records"):
+            for old, new in zip(getattr(outputs[0], name), getattr(outputs[1], name), strict=True):
+                assert set(old) == set(new)
+                assert all(old[k].tobytes() == new[k].tobytes() for k in old)
         assert len(outputs[0].next_target_records) == len(outputs[0].next_neural_records) == 3
         for row in outputs[0].next_target_records:
             assert row["joint_target_rad"].shape == (29,)
