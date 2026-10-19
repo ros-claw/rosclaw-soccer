@@ -94,8 +94,7 @@ def advance(nav, frame, speed=1.4):
     return reference, result
 
 
-@pytest.fixture
-def navigation():
+def blank_navigation():
     cfg = SonicNavigationConfig(
         maximum_frames=300,
         planner_seed=30300,
@@ -145,6 +144,12 @@ def navigation():
         errors=(),
     )
     nav.backend = b
+    return nav
+
+
+@pytest.fixture
+def navigation():
+    nav = blank_navigation()
     for f in range(20):
         advance(nav, f)
     return nav

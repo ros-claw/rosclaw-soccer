@@ -755,3 +755,57 @@ physical evidence**. A real-model recorded-observation replay is still
 required. Full body/Foundation-tracker/IK/RNN ownership and prospective
 whole-task parity are not yet implemented by this navigation helper. No
 long-horizon teacher, new optimizer gain or successful recovery is claimed.
+
+The real-model navigation replay subsequently closed all18 comparison bodies,
+including unsafe and formerly late examples. It executed322 actual SONIC
+planner ONNX calls. Each private zero/repeat navigation branch followed41
+recorded future observations across two reference refreshes, matching the
+parent references/events and recorded-action target math exactly; the changed
+command negative control changed the reference. These were **recorded future
+observations**, comparator-only, not predicted body states. New physics,
+Foundation encoder/decoder calls and optimizer updates:0. Logical hash:
+`sha256:4f469771abbb13b8a15e32d91c39f55bfe64c4d423a040c84a0c5fb039ccdbf2`.
+
+### Owned full-body remainder implementation, baseline qualification first
+
+`rsi.full_task_branch.FullTaskBranch` now copies a completed current plain
+CausalImpactReplay boundary: private MjData (including cached solver epochs),
+owned navigation, Foundation tracker, original recurrent motor, completed IK
+and measured past histories. It accepts no future states or targets. Its
+future steps call the original neural/controller stack on its own new physics,
+including planner refreshes. Immutable model/weights/configuration are shared;
+per-episode mutable state is not. An MJ forward reset at the clone boundary
+would change the cached observation epoch and is deliberately not performed.
+
+This stage is **baseline-only**. It rejects nonzero actions rather than
+fabricating a full-episode release controller's unconsumed clock/history.
+It resets only the private accounting counters, charging solely the remaining
+steps; inherited whole3000-step review cannot pass borrowed prefix counts.
+Completion requires the main donor to remain at the original boundary.
+Recursive search, unreviewed fields, changed caps/clock/profile and active
+intervention/evidence writers are rejected. Existing policies do not call it.
+
+Six actual toy/synthetic-Foundation tests passed121.93s. The main parity test
+recomputed269 future frames for zero and repeat branches,2690 new steps each,
+then compared every body/control/NN array against the original parent future
+through frame299, including thirteen new planner refreshes per branch.
+This is not yet official G1 model/physical qualification. Another76 navigation
+and no-nonzero-lease checks passed2.89s (five longer tests deselected there).
+
+`rsi_qualify_full_task_branch.py` declares the real prospective qualification:
+eighteen freshly reconstructed original bodies54000 steps, plus36 zero/repeat
+remaining-horizon predictions40840 steps; total94840 new native steps,9484
+executed Foundation encoder/decoder pairs plus four initialization parity
+pairs. Every prediction begins only after the main body's **own** completed
+foot contact, uses only its observed prefix and private simulated future, and
+is sealed before the main body advances. Archived trajectories are comparator
+inputs only, never passed to the controller/fork. Complete M0 predictions must
+match the later actual outcomes, including unsafe failures; all raw future
+arrays must match the actual main continuation. Ordinary failures remain.
+
+The prototype is model-based simulation with the frozen neural controller,
+**not learned neural dynamics, a new trained actor, or consciousness**. Scope
+is the consumed eighteen-source diagnostic, not generalization/Fresh/4v4.
+No nonzero teacher or task gain is admitted. The separate fake-orchestration
+and immutable-scope tests passed23 tests2.86s; their94840-step counters are
+not actual physical execution. Real closure must be established externally.
