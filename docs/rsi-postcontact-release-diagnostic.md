@@ -1062,3 +1062,63 @@ Eight synthetic-toy tests passed, including wholeH300 equality to the
 separate recorded-PD fixture, handoff state continuity, malformed targets,
 wrong clocks, partial-integration terminal failure and both native counters.
 These tests are not genuine G1 task improvement.
+
+### Completed reference-phase reachability and public40 separation
+
+The next finite reference bank actually executed all164 H300 bodies:
+four consumed contexts × (one recorded baseline + ten declared motion clips ×
+four fixed starting phases). It used492000 new native steps,19360 external
+actor inferences on its own suffix state and29840 **replayed** approach-target
+frames. The unchanged baselines matched the closed original measurements.
+There were no optimizer updates or autonomous approach-policy recomputations.
+All164 complete raw outcomes were retained, not only promising clips.
+
+Independent recorded-PD verification then closed another492000 steps with
+every checked error exactly zero. Per context, passed/safe out of41:
+0:12/37;8:0/40;10:0/40;12:12/37. Thus reference choice/phase genuinely changes
+near-contact reachability, but does not solve the two far rolling-away cases.
+One common passing option on contexts0 and12 is clip005_right, starting57:
+forward60-frame travel4.798/4.810m and lateral−0.100/+0.108m. It is a
+post-hoc consumed-development finding, not a fresh test, whole teacher,
+trained student, or permission to use restricted reference assets in publicity.
+
+The separate three-mode twelve-body handoff diagnostic failed qualification:
+no candidate task passes, and one old success lost. Its first independent
+reader failed **before any physics** because its loaded-unit-only terminal
+check rejected an already garbage-collected successful transient service.
+The failed reader and journal were preserved. A distinct recovery reader
+authenticated the systemd-manager success record and matching producer stdout
+under the same invocation ID, without weakening the shared loaded-unit check.
+It completed36000 additional recorded-PD steps, all numeric errors exactly0.
+Future transient-service evidence must account explicitly for retirement.
+
+The whole public40 four-arm experiment also closed:160 new bodies480000
+native steps plus33040 forecast steps, forty unique initial states/ten seed
+clusters. Heading-OFF original13/40 becomes19/40 with six rescues, zero
+regressions and zero added unsafe cases. Heading-ON16/40 becomes17/40 but
+adds one regression and one unsafe case. Reject universal mixed qualification;
+the useful OFF result must not hide the ON failure. The exact collector already
+used the owned-feedback optimization, so rerunning it as a supposed new speedup
+would be redundant. A separate whole raw/search/selected-future review and
+480000 recorded-PD steps closed with every checked physical error exactly0.
+Verifier hash`ae35c11793a3320c69cea9111f94e53c8e6ff6b8572eed011415aa6335d507e6`.
+This is not independent neural-policy/search reexecution or a new trained actor.
+
+### Preparing a fully recomputed approach/handoff confirmation
+
+`G1BornTargetSegment` is a distinct native body born at an actual completed,
+plain, precontact `CausalImpactReplay` boundary. It validates full clocks,
+accounting, body history, current original decoder/IK/tracker state and absence
+of prior contact/interventions. It copies the complete integration state without
+`mj_forward`, charges only new suffix steps and never calls a time-zero
+constructor then overwrites its clock. Ten combined synthetic-toy tests passed
+51.02s, including direct independent continuation equality, retained donor state,
+borrowed-prefix accounting and rejection of contact/fabricated clocks. New-source
+mypy and whole Ruff passed; these remain software tests, not new G1 trials.
+
+The intended next research confirmation uses a fresh genuinely recomputed
+SONIC/recurrent approach, then a fixed common passing reference only at an
+own-state near-contact boundary by frame180. It must retain far-case failures,
+compare against the closed replay bank only as a comparator, and publish
+separate prefix/suffix inference and native accounting. It is not yet executed
+at this documentation checkpoint and will not authorize hardware/publicity.
