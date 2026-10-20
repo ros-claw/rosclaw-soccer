@@ -59,7 +59,13 @@ def main():
             pairs.append((i, model.body("right_" + name[5:]).id))
     if len(pairs) < 12:
         raise ValueError("named bilateral body coverage required")
-    max_position = max_rotation = 0.0
+    max_position = max_rotation = max_unexplained = 0.0
+    per_body = {}
+    shoulder_deltas = {}
+    for side, other in (("left", "right"), ("right", "left")):
+        i = model.body(side + "_shoulder_pitch_link").id
+        j = model.body(other + "_shoulder_pitch_link").id
+        shoulder_deltas[side] = (j, model.body_pos[j] - reflection @ model.body_pos[i])
     violations = []
     for frame, (q, mirror_q) in enumerate(zip(poses, reflected, strict=True)):
         for data, pose in ((original, q), (mirrored, mirror_q)):
@@ -67,11 +73,32 @@ def main():
             mujoco.mj_forward(model, data)
         for left, right in pairs:
             for first, second in ((left, right), (right, left)):
+                delta = mirrored.xpos[second] - reflection @ original.xpos[first]
+                side = model.body(first).name.split("_", 1)[0]
+                shoulder, local_delta = shoulder_deltas[side]
+                ancestor = second
+                while ancestor not in (0, shoulder):
+                    ancestor = model.body_parentid[ancestor]
+                expected_delta = (
+                    mirrored.xmat[model.body_parentid[shoulder]].reshape(3, 3) @ local_delta
+                    if ancestor == shoulder
+                    else np.zeros(3)
+                )
+                unexplained = float(np.linalg.norm(delta - expected_delta))
+                max_unexplained = max(max_unexplained, unexplained)
+                name = model.body(second).name
+                prior = per_body.setdefault(
+                    name, dict(maximum_raw_position_error_m=0.0, maximum_unexplained_error_m=0.0)
+                )
+                prior["maximum_raw_position_error_m"] = max(
+                    prior["maximum_raw_position_error_m"], float(np.linalg.norm(delta))
+                )
+                prior["maximum_unexplained_error_m"] = max(
+                    prior["maximum_unexplained_error_m"], unexplained
+                )
                 max_position = max(
                     max_position,
-                    float(
-                        np.linalg.norm(mirrored.xpos[second] - reflection @ original.xpos[first])
-                    ),
+                    float(np.linalg.norm(delta)),
                 )
                 max_rotation = max(
                     max_rotation,
@@ -100,10 +127,18 @@ def main():
         bilateral_body_pairs=len(pairs),
         maximum_body_position_reflection_error_m=max_position,
         maximum_body_rotation_reflection_error=max_rotation,
+        compiled_shoulder_local_reflection_deltas_m={
+            side: delta.tolist() for side, (_, delta) in shoulder_deltas.items()
+        },
+        maximum_position_error_unexplained_by_compiled_shoulder_asymmetry_m=max_unexplained,
+        per_body_reflection_error=per_body,
         mirrored_native_limit_violations=violations,
         kinematic_augmentation_admissible=max_position <= 1e-6
         and max_rotation <= 1e-6
         and not violations,
+        named_joint_mapping_consistent_with_compiled_asymmetry=(
+            max_unexplained <= 1e-6 and max_rotation <= 1e-6 and not violations
+        ),
         new_native_integration_steps=0,
         new_neural_calls=0,
         optimizer_updates=0,
