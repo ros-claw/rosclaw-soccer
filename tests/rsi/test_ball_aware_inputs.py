@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.ball_aware_inputs import ball_goal9
+from rosclaw_soccer.rsi.ball_aware_inputs import (
+    BALL_AWARE_ABI,
+    ball_goal9,
+    require_ball_aware_qualification,
+)
 
 
 def fixture():
@@ -40,3 +44,65 @@ def test_invalid_perception_rejected_without_repair(kind):
         values["ball_position"] = np.zeros(3, dtype=int)
     with pytest.raises(ValueError):
         ball_goal9(**values)
+
+
+def qualification():
+    expected = [[i % 2 == 0, i % 2 == 1] if i < 6 else [False, False] for i in range(8)]
+    return dict(
+        status="BALL_AWARE_ABI_SENSOR_QUALIFICATION_NOT_LEARNED_SKILL",
+        ball_aware_abi=BALL_AWARE_ABI,
+        actor_observation_dim=177,
+        critic_observation_dim=304,
+        checkpoint_file="ball-aware-initialization.pt",
+        new_optimizer_steps=0,
+        optimizer_state_migrated=False,
+        weights_only_checkpoint_reload=True,
+        goal_complete=False,
+        football_skill_proven=False,
+        hardware_authorized=False,
+        promotion_authorized=False,
+        perception_max_error=1e-6,
+        actor_migration_max_error=0.0,
+        episode_gpu_world_steps=23120,
+        actual_neural_rows=4624,
+        perception_native_fk_calls=2312,
+        fixture_gpu_world_steps=80,
+        fixture_native_steps=80,
+        full_reference_episodes_completed=[True] * 8,
+        failed=[False] * 8,
+        right_censored=[False] * 8,
+        sensor_calibration=dict(
+            expected_labels=expected,
+            gpu_labels=expected,
+            native_labels=expected,
+            native_sensor_vs_collision_max_error_n=0.0,
+            max_qpos_error_mixed_units=1e-7,
+            max_qvel_error_mixed_units=0.001,
+        ),
+    )
+
+
+def test_qualification_checks_physics_and_new_abi_not_just_status():
+    require_ball_aware_qualification(qualification())
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("new_optimizer_steps", 1),
+        ("actor_observation_dim", 168),
+        ("actual_neural_rows", 2312),
+        ("perception_max_error", float("nan")),
+        ("actor_migration_max_error", 1.0),
+        ("fixture_native_steps", 0),
+        ("full_reference_episodes_completed", [True] * 7 + [False]),
+        ("promotion_authorized", True),
+        ("sensor_calibration", {}),
+        ("checkpoint_file", "../parent.pt"),
+    ],
+)
+def test_invalid_physics_qualification_cannot_unlock_training(key, value):
+    report = qualification()
+    report[key] = value
+    with pytest.raises(ValueError):
+        require_ball_aware_qualification(report)
