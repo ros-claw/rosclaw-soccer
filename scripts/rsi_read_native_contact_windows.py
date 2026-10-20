@@ -70,8 +70,9 @@ def main():
             pins[str(raw)] = r["raw_hash"]
         reports.append((root, d))
     for index in range(2):
+        source_name = ("soccer-standard-007_left.npz", "soccer-standard-010_right.npz")[index]
         row = next(
-            r for r in plan["results"] if r["arm"] == "initial" and r["seed"] == 1501 + index
+            r for r in plan["results"] if r["arm"] == "initial" and r["source"] == source_name
         )
         pins[str(a.plan_root / f"{index}-initial-raw.npz")] = row["raw_hash"]
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):

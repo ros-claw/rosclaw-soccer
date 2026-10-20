@@ -20,6 +20,7 @@ def main():
     for name in ("course-unit", "course-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--control", choices=("neural", "reference-pd"), default="neural")
+    p.add_argument("--reset-profile", choices=("public-dev", "new-reset-v1"), default="public-dev")
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import motion_checkpoint_filename
     from scripts.rsi_atomic_artifacts import write_once
@@ -43,6 +44,9 @@ def main():
         "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
         "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
     )
+    if a.reset_profile != "public-dev" and (not ball_aware or a.control != "neural"):
+        raise ValueError("new reset cohort requires explicit paired ball-aware neural control")
+    reset_seed_base = 37501 if a.reset_profile == "new-reset-v1" else 1501
     stable = course["status"] in (
         "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
         "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
@@ -119,7 +123,10 @@ def main():
             num_envs=32 if a.control == "neural" else 64,
             control=a.control,
             horizon=300,
-            reset_seeds=[1501, 1502] if a.control == "neural" else [1601],
+            reset_seeds=[reset_seed_base, reset_seed_base + 1] if a.control == "neural" else [1601],
+            reset_seed_profile=a.reset_profile,
+            known_public_motion_sources=True,
+            blind_fresh_task_qualification=False,
             first_episode_only=True,
             stable_prior_rehearsal=stable,
             ball_aware=ball_aware,
@@ -182,7 +189,7 @@ def main():
             else (("default", None), ("reference", None))
         )
         for source_index, source in enumerate(source_patterns):
-            seed = 1501 + source_index if a.control == "neural" else 1601
+            seed = reset_seed_base + source_index if a.control == "neural" else 1601
             initial_state = None
             for arm, state in arms:
                 rows = []
@@ -558,6 +565,9 @@ def main():
                     else "MJLAB_REFERENCE_PD_AUTHORITY_NOT_NEURAL_LEARNING"
                 ),
                 source_head=a.expected_head,
+                reset_seed_profile=a.reset_profile,
+                known_public_motion_sources=True,
+                blind_fresh_task_qualification=False,
                 input_file_hashes=pins,
                 results=summaries,
                 gpu_step_calls=steps_total,
