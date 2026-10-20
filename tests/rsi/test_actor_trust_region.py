@@ -60,3 +60,23 @@ def test_bad_candidate_exception_also_restores_transaction():
         bounded_adam_proposal([p], opt, broken)
     exact_tensor_tree(p.detach(), original[0])
     exact_tensor_tree(opt.state_dict(), original[1])
+
+
+def test_token_guard_blocks_small_kl_proposal_and_restores_moments():
+    import torch
+
+    p = torch.nn.Parameter(torch.tensor([0.1]))
+    opt = torch.optim.Adam([p], lr=0.01)
+    (p - 1).square().sum().backward()
+    opt.step()
+    original = p.detach().clone(), copy.deepcopy(opt.state_dict())
+
+    def guarded():
+        return (p - 1).square().sum(), dict(
+            mean_kl=torch.tensor(0.0), protected_token_changes=torch.tensor(1.0)
+        )
+
+    result = bounded_adam_proposal([p], opt, guarded)
+    assert not result["accepted"]
+    exact_tensor_tree(p.detach(), original[0])
+    exact_tensor_tree(opt.state_dict(), original[1])

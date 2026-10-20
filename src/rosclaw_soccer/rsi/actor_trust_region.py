@@ -49,11 +49,13 @@ def bounded_adam_proposal(
                     p.copy_(new if reduction == 0 else old + alpha * (new - old))
                 loss, stats = closure()
                 after, kl = float(loss), float(stats["mean_kl"])
+                protected_changes = float(stats.get("protected_token_changes", 0))
                 if (
                     math.isfinite(after)
                     and math.isfinite(kl)
                     and -1e-6 <= kl <= 0.005
                     and after < before - 1e-10
+                    and protected_changes == 0
                 ):
                     return dict(
                         accepted=True,

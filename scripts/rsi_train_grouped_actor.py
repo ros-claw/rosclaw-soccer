@@ -20,6 +20,9 @@ def main():
         "bank-unit",
     ):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--retention-exam", type=Path)
+    p.add_argument("--retention-audit", type=Path)
+    p.add_argument("--expected-retention-audit-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
@@ -74,6 +77,12 @@ def main():
             if digest(old) != digest(Path.cwd() / old.relative_to(source[0])):
                 raise ValueError("original control helpers changed")
     check_pins(pins)
+    retention = None
+    if any((a.retention_exam, a.retention_audit, a.expected_retention_audit_hash)):
+        if not all((a.retention_exam, a.retention_audit, a.expected_retention_audit_hash)):
+            raise ValueError("complete explicit retention evidence identity required")
+        retention = load_retention(a, spec, pins)
+        check_pins(pins)
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
@@ -87,6 +96,9 @@ def main():
             maximum_mean_gaussian_kl_old_to_new=0.005,
             raw_residual_cap=0.125,
             critic_frozen_and_not_used_in_advantage=True,
+            protected_deterministic_train_memory=[0, 10, 15, 16] if retention else [],
+            maximum_protected_token_changes=0 if retention else None,
+            guarded_direction_feasibility_probe=retention is not None,
             parent_and_geometry_normalizer_frozen=True,
             global_advantage_scale_only=True,
             per_context_std_normalization=False,
@@ -98,7 +110,7 @@ def main():
         ),
     )
     try:
-        result = train(a, spec, bc, pins)
+        result = train(a, spec, bc, pins, retention=retention)
         check_pins(pins)
         write_once(a.output / "complete.json", dict(source_head=a.expected_head, **result))
     except Exception as error:
@@ -114,7 +126,46 @@ def main():
         raise
 
 
-def train(a, spec, bc, pins):
+def load_retention(a, spec, pins):
+    import numpy as np
+
+    from scripts.rsi_native_context_recovery_common import digest
+
+    receipt = a.retention_audit / "complete.json"
+    if digest(receipt) != a.expected_retention_audit_hash:
+        raise ValueError("unchanged closed anchor audit required")
+    audit = json.loads(receipt.read_text())
+    if (
+        audit["status"] != "ONLINE_THREE_ROUNDS_TENSOR_AND_OUTCOME_REPRODUCED"
+        or audit["seed"] != 29
+    ):
+        raise ValueError("original seed29 whole pipeline audit required")
+    for k, h in audit["input_file_hashes"].items():
+        if k in pins and pins[k] != h:
+            raise ValueError("conflicting retention input commitment")
+        pins[k] = h
+    pins[str(receipt)] = a.expected_retention_audit_hash
+    features, tokens = [], []
+    for i in (0, 10, 15, 16):
+        root = a.retention_exam / f"evaluate{i % 4}" / f"course{i:02d}"
+        raw, record = root / "native.npz", root / "complete.json"
+        if str(raw) not in pins or str(record) not in pins:
+            raise ValueError("retention memory not bound to authenticated raw evidence")
+        row = json.loads(record.read_text())
+        if (
+            row["course_index"] != i
+            or row["split"] != "train"
+            or row["score"]["qualified"] is not True
+            or row["prefix_diagnostics"]["post_boundary_control_can_cause_first_touch"] is not True
+        ):
+            raise ValueError("only physically successful training memory allowed")
+        with np.load(raw, allow_pickle=False) as z:
+            features.append(z["student_features"].copy())
+            tokens.append(z["student_motion_token"].copy())
+    return dict(features=np.stack(features), tokens=np.stack(tokens))
+
+
+def train(a, spec, bc, pins, *, retention=None):
     import numpy as np
     import torch
 
@@ -183,6 +234,26 @@ def train(a, spec, bc, pins):
     torch.testing.assert_close(ref_mean.cpu(), stored_mean, atol=1e-5, rtol=1e-5)
     torch.testing.assert_close(ref_std.cpu(), stored_std, atol=1e-7, rtol=1e-6)
     raw = torch.from_numpy(data["raw"].reshape(128, 300, 64)).to(device)
+    protected_context = protected_parent = protected_tokens = None
+    if retention:
+        rx = torch.from_numpy(retention["features"])
+        rg = model.geometry(rx).to(device)
+        with torch.no_grad():
+            rx = rx.to(device)
+            rn = ((rx - base.observation_mean) / base.observation_std).clamp(-10, 10)
+            rm, _ = base.memory(base.encoder(rn))
+            protected_parent = base.actor(rm)
+            protected_context = torch.cat(
+                (rn, rm, ((rg - model.geometry_mean) / model.geometry_std).clamp(-10, 10)), -1
+            )
+            protected_tokens = torch.from_numpy(retention["tokens"]).to(device)
+            initial_mu = protected_parent + 0.125 * torch.tanh(model.adapter(protected_context))
+            initial_tokens = (
+                torch.round(15.515501022338867 * torch.tanh(initial_mu + 0.03223699703812599) - 0.5)
+                / 16
+            )
+            if not torch.equal(initial_tokens[:, 20:], protected_tokens[:, 20:]):
+                raise ValueError("initial CPU/native vs CUDA memory symbols differ")
     adv = torch.from_numpy(advantage.reshape(128, 300)).to(device)
     scale = adv[:, 20:].std(unbiased=False)
     if not torch.isfinite(scale) or float(scale) < 1e-8:
@@ -224,7 +295,21 @@ def train(a, spec, bc, pins):
         )
         entropy = (std.log() + 0.5 * math.log(2 * math.pi * math.e)).sum(-1)[:, 20:].mean()
         loss = actor + 0.01 * reverse - 0.0002 * entropy
+        changes = torch.zeros((), device=device)
+        if retention:
+            with torch.no_grad():
+                protected_mu = protected_parent + 0.125 * torch.tanh(
+                    model.adapter(protected_context)
+                )
+                token = (
+                    torch.round(
+                        15.515501022338867 * torch.tanh(protected_mu + 0.03223699703812599) - 0.5
+                    )
+                    / 16
+                )
+                changes = (token[:, 20:] != protected_tokens[:, 20:]).sum()
         return loss, dict(
+            protected_token_changes=changes,
             mean_kl=forward.mean(),
             maximum_frame_kl=forward.max(),
             reverse_kl=reverse,
@@ -263,6 +348,7 @@ def train(a, spec, bc, pins):
             source_head=a.expected_head,
             model_kind="online_kinematic_motion_residual64",
             learner_algorithm="group_leave_one_out_trust_region",
+            protected_train_token_memory=retention is not None,
             actor_new_optimizer_steps=accepted,
             actor_optimizer_steps=4 + accepted,
             critic_optimizer_steps=4,
@@ -285,6 +371,7 @@ def train(a, spec, bc, pins):
         behavior_checkpoint_hash=a.expected_policy_hash,
         new_native_steps=0,
         accepted_actor_optimizer_steps=accepted,
+        protected_train_token_memory=retention is not None,
         optimizer_proposals=len(history),
         critic_optimizer_steps=0,
         history=history,
