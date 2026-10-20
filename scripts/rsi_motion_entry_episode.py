@@ -24,6 +24,7 @@ def run_episode(
     evidence,
     runtime,
     entry_calibration=None,
+    waypoint_entry=False,
 ):
     import numpy as np
 
@@ -51,6 +52,7 @@ def run_episode(
         or side not in ("right", "left")
         or type(law_index) is not int
         or law_index not in (0, 3, 4)
+        or type(waypoint_entry) is not bool
     ):
         raise ValueError("predeclared three arms/three laws/two reference sides required")
     window, transport = ARMS[arm]
@@ -76,6 +78,31 @@ def run_episode(
     binding.validate(
         source, entry, world_hash=digest(a.world), source_window=window, reference_side=side
     )
+    waypoint_options = None
+    if waypoint_entry:
+        from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+
+        if (
+            entry_calibration is None
+            or arm != "compact_unadapted"
+            or side != "right"
+            or course.course[2] != 0.0
+        ):
+            raise ValueError(
+                "fixed waypoint pilot requires stationary calibrated right compact intent"
+            )
+        waypoint_options = dict(
+            fixed_world_goal_xy_m=(
+                float(course.course[0] - entry.ball_offset_xy_m[0]),
+                float(course.course[1] - entry.ball_offset_xy_m[1]),
+            ),
+            goal_basis_hash=binding.contract_hash,
+            goal_deadline_frame=90,
+            native_joint_limits=tuple(
+                (float(r[0]), float(r[1]))
+                for r in world.jnt_range[[world.joint(n).id for n in G1_DDS_JOINT_NAMES]]
+            ),
+        )
     folder = a.output / f"{side}-law{law_index}"
     folder.mkdir(parents=True, exist_ok=False)
     write_once(
@@ -92,21 +119,29 @@ def run_episode(
             optimizer_steps=0,
             hardware_authorized=False,
             promotion_authorized=False,
+            **({"fixed_root_waypoint_navigation": waypoint_options} if waypoint_entry else {}),
         ),
     )
     body = None
+    nav = None
     observed = []
     try:
-        nav = G1SonicNavigation(
-            a.model_root,
-            course.agent_id,
-            SonicNavigationConfig(
-                maximum_frames=300,
-                model_variant="low_latency",
-                inference_threads=1,
-                record_default_planner_events=True,
-            ),
+        nav_config = SonicNavigationConfig(
+            maximum_frames=300,
+            model_variant="low_latency",
+            inference_threads=1,
+            record_default_planner_events=True,
         )
+        if waypoint_options is not None:
+            from rosclaw_soccer.providers.g1.sonic_root_waypoints import (
+                G1SonicRootWaypointNavigation,
+            )
+
+            nav = G1SonicRootWaypointNavigation(
+                a.model_root, course.agent_id, nav_config, **waypoint_options
+            )
+        else:
+            nav = G1SonicNavigation(a.model_root, course.agent_id, nav_config)
         body = G1TargetEpisode(
             world,
             world_hash=digest(a.world),
@@ -149,6 +184,16 @@ def run_episode(
                 False,
             )
         np.savez_compressed(folder / "native300.npz", **trace)
+        if waypoint_options is not None:
+            write_once(
+                folder / "root-waypoint-planner-events.json",
+                dict(
+                    navigation_contract_hash=nav.contract_hash,
+                    events=nav.waypoint_events,
+                    fixed_goal=waypoint_options,
+                    inputs_are_model_goals_not_measured_future_body=True,
+                ),
+            )
         outcome = dict(
             arm=arm,
             reference_side=side,
@@ -173,6 +218,10 @@ def run_episode(
             promotion_authorized=False,
             hardware_authorized=False,
         )
+        if waypoint_options is not None:
+            outcome["root_waypoint_planner_events_hash"] = digest(
+                folder / "root-waypoint-planner-events.json"
+            )
         check_pins(runtime)
         write_once(folder / "complete.json", outcome)
         print(
@@ -187,6 +236,15 @@ def run_episode(
         )
         return outcome
     except Exception as error:
+        if waypoint_options is not None and nav is not None:
+            write_once(
+                folder / "partial-root-waypoint-planner-events.json",
+                dict(
+                    navigation_contract_hash=nav.contract_hash,
+                    events=nav.waypoint_events,
+                    fixed_goal=waypoint_options,
+                ),
+            )
         if observed:
             np.savez_compressed(
                 folder / "partial-observed-control.npz",

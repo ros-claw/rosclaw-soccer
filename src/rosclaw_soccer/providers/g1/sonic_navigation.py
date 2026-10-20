@@ -266,6 +266,12 @@ class _StreamingBackend(G1SonicRunupController):
         self.latent_records.append((frame, token.copy(), transformed.copy()))
         return transformed
 
+    def _transform_planner_feed(
+        self, feed: dict[str, np.ndarray], frame: int
+    ) -> dict[str, np.ndarray]:
+        """Identity by default; explicit SIM subclasses may bind planner goals."""
+        return feed
+
     def plan(self, context: np.ndarray, frame: int) -> np.ndarray:
         vx, vy, yaw_rate = self.command
         speed = math.hypot(vx, vy)
@@ -302,6 +308,7 @@ class _StreamingBackend(G1SonicRunupController):
             feed["height"] = np.asarray(
                 [self.navigation.experimental_reference_height_m], dtype=np.float32
             )
+        feed = self._transform_planner_feed(feed, frame)
         output, count = self._planner.run(None, feed)
         count_array = np.asarray(count)
         if (
@@ -320,6 +327,7 @@ class _StreamingBackend(G1SonicRunupController):
         norms = np.linalg.norm(segment[:, 3:7], axis=1)
         if np.any(np.abs(norms - 1) > 0.01):
             raise ValueError("nonunit SONIC planner quaternion")
+        self._validate_planner_segment(segment)
         self.events.append(
             {
                 "frame": frame,
@@ -346,6 +354,9 @@ class _StreamingBackend(G1SonicRunupController):
         self.last_planned_frame = frame
         self.last_planned_command = self.command
         return _resample_segments_30_to_50([segment], 0.02)
+
+    def _validate_planner_segment(self, segment: np.ndarray) -> None:
+        """Default numerical checks above remain authoritative and unchanged."""
 
     def _generate_reference(self, initial_qpos: np.ndarray) -> np.ndarray:
         if self.navigation.pose_reference is not None:
@@ -428,6 +439,9 @@ class G1SonicNavigation:
     No ownership, possession, physical step, or motor torque authority is held.
     """
 
+    def _make_backend(self, model_root: Path, config: SonicNavigationConfig) -> _StreamingBackend:
+        return _StreamingBackend(model_root, config)
+
     def __init__(
         self, model_root: Path, agent_id: str, config: SonicNavigationConfig | None = None
     ) -> None:
@@ -440,7 +454,7 @@ class G1SonicNavigation:
             raise ValueError("explicit navigation player identity required")
         self.agent_id = agent_id
         self.config = config or SonicNavigationConfig()
-        self.backend = _StreamingBackend(model_root, self.config)
+        self.backend = self._make_backend(model_root, self.config)
         config_record = asdict(self.config)
         if not self.config.experimental_reference_blend:
             config_record.pop("experimental_reference_blend")
