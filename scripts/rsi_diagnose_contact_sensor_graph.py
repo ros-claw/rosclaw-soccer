@@ -9,11 +9,13 @@ import json
 import math
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--contact-sort", choices=("stock", "non-grid-stride"), default="stock")
     for key in ("qualification-root", "reference-root", "output"):
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("qualification-unit", "qualification-hash", "expected-head"):
@@ -39,6 +41,14 @@ def main():
     pins[str(path)] = a.qualification_hash
     for root in (Path.cwd() / "src", Path.cwd() / "scripts", a.reference_root / "src"):
         pins.update({str(f): digest(f) for f in root.rglob("*.py")})
+    package = Path(sysconfig.get_paths()["purelib"])
+    for relative in (
+        "mujoco_warp/_src/sensor.py",
+        "mujoco_warp/_src/support.py",
+        "warp/_src/context.py",
+    ):
+        path = package / relative
+        pins[str(path)] = digest(path)
     check_pins(pins)
     a.output.mkdir()
     write_once(
@@ -55,6 +65,8 @@ def main():
             maximum_trace_buffer_mib=64,
             sensor_protocol_and_tolerances_unchanged=True,
             library_mutation=False,
+            contact_sort=a.contact_sort,
+            in_memory_kernel_override=a.contact_sort != "stock",
             new_optimizer_steps=0,
             hardware_authorized=False,
             goal_complete=False,
@@ -66,6 +78,25 @@ def main():
         import mujoco
         import numpy as np
         import torch
+
+        if a.contact_sort == "non-grid-stride":
+            # Explicit process-local experiment, before any simulator allocation.
+            # Match upstream's tile-sort launch option, without editing installed files.
+            from functools import cache
+
+            import warp as wp
+            from mujoco_warp._src import sensor
+
+            original_sort = sensor._contact_sort
+
+            @cache
+            def non_grid_stride_sort(maxmatch):
+                original = original_sort(maxmatch)
+                return wp.kernel(
+                    original.func, module="unique", enable_backward=False, grid_stride=False
+                )
+
+            sensor._contact_sort = non_grid_stride_sort
 
         from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
         from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
@@ -118,6 +149,9 @@ def main():
                     for step in range(10):
                         n = int(z["trace_nacon"][step, 0])
                         for cid in range(n):
+                            # Sensor-only contact records do not own solver rows.
+                            if not int(z["trace_contact_type"][step, cid]) & 1:
+                                continue
                             g1, g2 = z["trace_contact_geom"][step, cid]
                             b1, b2 = model.geom_bodyid[[g1, g2]]
                             other = b2 if b1 == layout.ball else b1 if b2 == layout.ball else -1
@@ -196,6 +230,7 @@ def main():
             dict(
                 status="CONTACT_SENSOR_DIAGNOSTIC_NOT_QUALIFICATION",
                 source_head=a.expected_head,
+                contact_sort=a.contact_sort,
                 input_file_hashes=pins,
                 results=results,
                 gpu_world_steps=480,

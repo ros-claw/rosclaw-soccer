@@ -71,7 +71,7 @@ def calibrate(env, layout, output, *, trace=False):
             "efc_force": data.efc.force,
             **{
                 "contact_" + name: getattr(data.contact, name)
-                for name in ("geom", "worldid", "dim", "efc_address", "friction")
+                for name in ("geom", "worldid", "dim", "efc_address", "friction", "type")
             },
         }
         trace_sources = {key: wp.to_torch(value) for key, value in trace_sources.items()}

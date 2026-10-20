@@ -211,3 +211,17 @@ packed contact 的 geom/world/dim/efc-address/friction 与约束求解力，
 官方参考源码已单独下载，版本为
 `google-deepmind/mujoco_warp@fb8e91ba35be9d5a78c90f4512993ca0a07797f3`；
 只作实现对照，不能把上游代码差异直接当作本地故障原因。
+### 接触排序对照预注册（2026-10-21）
+
+原版六次诊断均失败，eager 同样存在约 135 N 孤立传感器尖峰。
+新对照只在新的独立进程、仿真分配前，将 contact tile-sort 的
+`grid_stride` 显式设为 `False`，与
+[上游实现](https://github.com/google-deepmind/mujoco_warp/blob/fb8e91ba35be9d5a78c90f4512993ca0a07797f3/mujoco_warp/_src/sensor.py)
+的该项配置一致。这只是待验证假设，尚不认定根因。不会编辑环境文件，
+不会修改奖励、接触阈值、摩擦、初始条件或物理参数。
+
+同一新源码另跑 stock 对照，两臂各 Graph/eager 三次，每臂预声明
+480 GPU world steps + 480 原生步、0 优化器更新。额外保存 contact.type，
+原始约束解码只计 CONSTRAINT，排除 sensor-only 接触的无效约束地址；
+旧版本解码的越界计数不能据此直接认定求解器故障。安装文件哈希在
+执行前后复核。两臂全部保留，严格按既有误差门限验收。
