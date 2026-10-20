@@ -10,6 +10,7 @@ from rosclaw_soccer.rsi.ball_entry_teacher import SkillEntryAffordance, ball_ent
 from rosclaw_soccer.rsi.full_entry_forecast import (
     EntryCommandLaw,
     FullEntryForecaster,
+    feedback_entry_laws,
     full_entry_laws,
     score_full_entry,
 )
@@ -36,6 +37,27 @@ def test_nominal_is_per_frame_feedback_and_held_law_expires():
             held if frame < 40 else measured
         )
     assert laws[1].command(q, v, frame=91, affordance=prior) == (0, 0, 0)
+
+
+def test_feedback_bank_reacts_to_own_measured_velocity_after_frame40():
+    q, v, prior = context()
+    bank = feedback_entry_laws()
+    assert len(bank) == 6 and bank[0].name == "nominal_feedback"
+    before = bank[3].command(q, v, frame=60, affordance=prior)
+    v[0] = 0.4
+    after = bank[3].command(q, v, frame=60, affordance=prior)
+    assert after[0] < before[0]
+    assert (
+        bank[0].command(q, v, frame=60, affordance=prior)
+        == ball_entry_decision(q, v, frame=60, affordance=prior).command
+    )
+    assert all(law.command(q, v, frame=91, affordance=prior) == (0, 0, 0) for law in bank)
+
+
+@pytest.mark.parametrize("index", [-1, 6, True, 1.5])
+def test_unqualified_feedback_index_rejected(index):
+    with pytest.raises(ValueError, match="declared feedback"):
+        EntryCommandLaw("bad", None, index)
 
 
 @pytest.mark.parametrize(
@@ -174,3 +196,50 @@ def test_forecast_fault_is_latched_and_donor_guards_checked(monkeypatch):
             law=full_entry_laws(q, v, affordance=prior)[0],
         )
     assert forecaster.failed and forecaster.integrated_native_steps == 0
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    [
+        "MainPID=12\nResult=success\nSubState=start\nExecMainStatus=0\n",
+        "MainPID=0\nResult=exit-code\nSubState=failed\nExecMainStatus=1\n",
+    ],
+)
+def test_full_reader_rejects_live_or_failed_producer_before_physics(
+    tmp_path, monkeypatch, terminal
+):
+    import sys
+
+    from scripts import rsi_verify_full_entry_teacher as reader
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "reader",
+            "--producer",
+            str(tmp_path / "absent"),
+            "--world",
+            "unused",
+            "--core-source",
+            "unused",
+            "--output",
+            str(tmp_path / "out"),
+            "--expected-head",
+            "expected",
+            "--expected-producer-head",
+            "expected-producer",
+            "--expected-producer-hash",
+            "sha256:" + "1" * 64,
+            "--producer-unit",
+            "fixture.service",
+        ],
+    )
+    monkeypatch.setattr(
+        reader.subprocess,
+        "check_output",
+        lambda cmd, **kwargs: "expected\n" if cmd[0] == "git" else terminal,
+    )
+    with pytest.raises(ValueError, match="closed successful"):
+        reader.main()
+    assert not (tmp_path / "out").exists()

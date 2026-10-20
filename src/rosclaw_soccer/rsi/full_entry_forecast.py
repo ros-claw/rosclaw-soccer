@@ -35,10 +35,17 @@ class EntryCommandLaw:
 
     name: str
     held_command: tuple[float, float, float] | None
+    feedback_index: int | None = None
 
     def __post_init__(self) -> None:
         if type(self.name) is not str or not self.name:
             raise ValueError("named entry command law required")
+        if self.feedback_index is not None and (
+            type(self.feedback_index) is not int
+            or not 0 <= self.feedback_index < 6
+            or self.held_command is not None
+        ):
+            raise ValueError("one declared feedback law without held command required")
         c = self.held_command
         if c is not None and (
             type(c) is not tuple
@@ -55,6 +62,10 @@ class EntryCommandLaw:
         nominal = ball_entry_decision(q, v, frame=frame, affordance=affordance)
         if nominal.timed_out:
             return 0.0, 0.0, 0.0
+        if self.feedback_index is not None and frame >= 20:
+            return entry_candidates(q, v, frame=frame, affordance=affordance)[self.feedback_index][
+                1
+            ]
         if 20 <= frame < 40 and self.held_command is not None:
             return self.held_command
         return nominal.command
@@ -66,6 +77,27 @@ def full_entry_laws(
     return [EntryCommandLaw("nominal_feedback", None)] + [
         EntryCommandLaw(name + "_held20", cmd)
         for name, cmd in entry_candidates(q, v, frame=20, affordance=affordance)
+    ]
+
+
+def feedback_entry_laws() -> list[EntryCommandLaw]:
+    """Fixed six laws, evaluated on each OWN current state until handoff.
+
+    Same bounded gains as the earlier bank, not a hyperparameter sweep. Unlike
+    a held20 command, damping reacts to the continuing measured root velocity.
+    """
+    return [
+        EntryCommandLaw(name, None, index)
+        for index, name in enumerate(
+            (
+                "nominal_feedback",
+                "half_feedback",
+                "zero_feedback",
+                "damped_feedback",
+                "strong_damped_feedback",
+                "brake_feedback",
+            )
+        )
     ]
 
 
@@ -230,7 +262,7 @@ def body_fields_hash(body: G1TargetEpisode) -> str:
 
 
 class FullEntryForecaster:
-    """Exactly seven bounded280-frame previews from the same current frame20."""
+    """At most seven bounded280-frame previews from the same current frame20."""
 
     def __init__(self, *, world_hash: str) -> None:
         self.world_hash = world_hash

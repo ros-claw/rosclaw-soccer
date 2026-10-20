@@ -1,6 +1,6 @@
 """Four consumed courses, actual nominal vs full remaining-task teacher.
 
-Seven forecasts from actual frame20 per teacher body; no receding horizon,
+At most seven forecasts from actual frame20 per teacher body; no receding horizon,
 state adoption or new learned policy. All failures/candidates retained.
 """
 
@@ -35,6 +35,10 @@ def main():
         "expected-failed-entry-review-hash",
     ):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--law-family", choices=("held20", "feedback"), default="held20")
+    parser.add_argument("--preceding-full-study", type=Path)
+    parser.add_argument("--preceding-full-review", type=Path)
+    parser.add_argument("--expected-preceding-full-review-hash")
     args = parser.parse_args()
     source = Path.cwd().resolve()
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -69,7 +73,55 @@ def main():
         )
     ):
         raise ValueError("whole preserved preceding physics studies required")
-    for declaration in (prior, failed_declaration):
+    historical_declarations = [prior, failed_declaration]
+    preceding_roots = []
+    if args.law_family == "feedback":
+        if (
+            args.preceding_full_study is None
+            or args.preceding_full_review is None
+            or args.expected_preceding_full_review_hash is None
+        ):
+            raise ValueError("feedback successor requires the closed full-task predecessor review")
+        if (
+            digest(args.preceding_full_review / "complete.json")
+            != args.expected_preceding_full_review_hash
+        ):
+            raise ValueError("full-task predecessor review identity differs")
+        pc = json.loads((args.preceding_full_study / "complete.json").read_text())
+        pr = json.loads((args.preceding_full_review / "complete.json").read_text())
+        pd = json.loads((args.preceding_full_study / "declaration.json").read_text())
+        rd = json.loads((args.preceding_full_review / "declaration.json").read_text())
+        if (
+            pc["total_new_native_steps"] != 102400
+            or pr["additional_total_native_steps"] != 102400
+            or len(pr["results"]) != 8
+            or pd["schema"] != "soccer.rsi.full_remaining_entry_teacher4.v1"
+            or not all(
+                r["actual_physics_bit_exact"] and r["all_candidate_physics_bit_exact"]
+                for r in pr["results"]
+            )
+            or rd["input_file_hashes"].get(str(args.preceding_full_study / "complete.json"))
+            != digest(args.preceding_full_study / "complete.json")
+            or any(
+                (p / "failure.json").exists()
+                for p in (args.preceding_full_study, args.preceding_full_review)
+            )
+        ):
+            raise ValueError("whole authentic full-task predecessor required before successor")
+        historical_declarations += [pd, rd]
+        preceding_roots = [args.preceding_full_study, args.preceding_full_review]
+    elif any(
+        x is not None
+        for x in (
+            args.preceding_full_study,
+            args.preceding_full_review,
+            args.expected_preceding_full_review_hash,
+        )
+    ):
+        raise ValueError(
+            "predecessor arguments are only for the explicitly declared feedback successor"
+        )
+    for declaration in historical_declarations:
         for p, h in declaration["input_file_hashes"].items():
             if digest(Path(p)) != h:
                 raise ValueError("historical inputs changed")
@@ -86,12 +138,13 @@ def main():
     ]
     paths += [
         p
-        for root in (
+        for root in [
             args.prior,
             args.prior_review,
             args.failed_entry_study,
             args.failed_entry_review,
-        )
+        ]
+        + preceding_roots
         for p in root.iterdir()
         if p.is_file()
     ]
@@ -120,6 +173,7 @@ def main():
     from rosclaw_soccer.rsi.full_entry_forecast import (
         FullEntryForecaster,
         body_fields_hash,
+        feedback_entry_laws,
         full_entry_laws,
         nominal_prefix20,
         run_entry_suffix,
@@ -131,8 +185,13 @@ def main():
     from scripts.rsi_atomic_artifacts import write_once
 
     args.output.mkdir(parents=True, exist_ok=False)
+    candidate_count = 7 if args.law_family == "held20" else 6
+    planned_forecast = 4 * candidate_count * 2800
     declaration = dict(
-        schema="soccer.rsi.full_remaining_entry_teacher4.v1",
+        schema="soccer.rsi.full_remaining_entry_teacher4.v1"
+        if args.law_family == "held20"
+        else "soccer.rsi.full_remaining_entry_teacher4.v2",
+        law_family=args.law_family,
         source_head=head,
         input_file_hashes=pins,
         courses=prior["courses"],
@@ -141,19 +200,21 @@ def main():
         independent_new_courses=0,
         actual_bodies=8,
         planned_actual_native_steps=24000,
-        planned_forecast_native_steps=78400,
+        planned_forecast_native_steps=planned_forecast,
         actual_horizon=300,
         prefix_frames=20,
-        forecasts_per_teacher_body=7,
+        forecasts_per_teacher_body=candidate_count,
         source_interval=[286, 767],
         entry_intervals=50,
         earliest_handoff=30,
         latest_handoff=90,
         source_reference_after_handoff_not_retargeted=True,
         search_only_at_frame=20,
-        selected_command_law_held_window=[20, 40],
+        selected_command_law_held_window=[20, 40] if args.law_family == "held20" else None,
         candidate0="causal_per_frame_nominal_feedback",
-        candidate1_to6="six_fixed_commands20ticks_then_causal_nominal_feedback",
+        candidate1_to6="six_fixed_commands20ticks_then_causal_nominal_feedback"
+        if args.law_family == "held20"
+        else "fixed_six_laws_recomputed_on_own_current_state_until_handoff_or_timeout",
         all_actual_and_predicted_steps_have_own_neural_inference=True,
         actual_never_adopts_predicted_state_targets_or_reference=True,
         hard_veto=dict(nonfoot_force_over_n=1.0, minimum_pelvis_z_m=0.65, minimum_upright=0.9),
@@ -229,7 +290,13 @@ def main():
                 for key in prefix:
                     np.testing.assert_array_equal(prefix[key], gold[key][:20])
                 q, v = body.canonical()
-                laws = full_entry_laws(q, v, affordance=affordance)
+                laws = (
+                    full_entry_laws(q, v, affordance=affordance)
+                    if args.law_family == "held20"
+                    else feedback_entry_laws()
+                )
+                if len(laws) != candidate_count:
+                    raise ValueError("declared command-law bank coverage differs")
                 candidates, selected, selected_future, forecast_steps = [], 0, None, 0
                 forecaster = FullEntryForecaster(world_hash=digest(args.world))
                 donor = (
@@ -284,9 +351,10 @@ def main():
                         selected_future = {k: archive[k] for k in archive.files}
                     forecast_steps = forecaster.integrated_native_steps
                     if (
-                        forecast_steps != 19600
-                        or forecaster.attempted_native_steps != 19600
-                        or sum(r["new_integrated_native_steps"] for r in candidates) != 19600
+                        forecast_steps != candidate_count * 2800
+                        or forecaster.attempted_native_steps != candidate_count * 2800
+                        or sum(r["new_integrated_native_steps"] for r in candidates)
+                        != candidate_count * 2800
                     ):
                         raise ValueError("full remaining-task forecast accounting differs")
                 if donor != (
@@ -345,14 +413,13 @@ def main():
                     report["actual_score"],
                     flush=True,
                 )
-        for p, h in {
-            **prior["input_file_hashes"],
-            **failed_declaration["input_file_hashes"],
-            **pins,
-        }.items():
+        final_pins = dict(pins)
+        for historical in historical_declarations:
+            final_pins.update(historical["input_file_hashes"])
+        for p, h in final_pins.items():
             if digest(Path(p)) != h:
                 raise ValueError("sealed source/assets/evidence changed during experiment")
-        if total_forecast != 78400:
+        if total_forecast != planned_forecast:
             raise ValueError("full paired experiment forecast accounting differs")
         write_once(
             args.output / "complete.json",

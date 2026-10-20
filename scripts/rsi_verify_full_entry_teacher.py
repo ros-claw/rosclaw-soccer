@@ -65,11 +65,21 @@ def main():
         raise ValueError("producer closure identity differs")
     declaration = json.loads((args.producer / "declaration.json").read_text())
     complete = json.loads((args.producer / "complete.json").read_text())
+    family = declaration.get("law_family", "held20")
+    if family not in ("held20", "feedback"):
+        raise ValueError("unknown full-task command-law family")
+    expected_schema = (
+        "soccer.rsi.full_remaining_entry_teacher4.v1"
+        if family == "held20"
+        else "soccer.rsi.full_remaining_entry_teacher4.v2"
+    )
+    candidate_count = 7 if family == "held20" else 6
+    expected_forecast = 4 * candidate_count * 2800
     if (
-        declaration["schema"] != "soccer.rsi.full_remaining_entry_teacher4.v1"
+        declaration["schema"] != expected_schema
         or declaration["source_head"] != args.expected_producer_head
         or complete["actual_native_steps"] != 24000
-        or complete["forecast_native_steps"] != 78400
+        or complete["forecast_native_steps"] != expected_forecast
         or complete["optimizer_steps"] != 0
         or (args.producer / "failure.json").exists()
         or [r["job"] for r in complete["results"]]
@@ -111,7 +121,11 @@ def main():
         _sonic_control_parameters,
     )
     from rosclaw_soccer.rsi.ball_entry_teacher import SkillEntryAffordance, ball_entry_decision
-    from rosclaw_soccer.rsi.full_entry_forecast import full_entry_laws, score_full_entry
+    from rosclaw_soccer.rsi.full_entry_forecast import (
+        feedback_entry_laws,
+        full_entry_laws,
+        score_full_entry,
+    )
     from rosclaw_soccer.rsi.full_task_branch import integration_hash
     from rosclaw_soccer.rsi.reference_ball_strike_metrics import summarize_reference_ball_strike
     from scripts.rsi_atomic_artifacts import write_once
@@ -123,7 +137,7 @@ def main():
             schema="soccer.rsi.full_entry_recorded_review.v1",
             input_file_hashes=pins,
             producer_terminal=terminal,
-            expected_additional_native_steps=102400,
+            expected_additional_native_steps=24000 + expected_forecast,
             neural_policy_replayed=False,
             navigation_planner_reexecuted=False,
             warm_clone_and_score_helpers_shared=True,
@@ -178,7 +192,7 @@ def main():
 
         for row in complete["results"]:
             name = row["job"]
-            expected_candidates = 7 if name.endswith("-full_teacher") else 0
+            expected_candidates = candidate_count if name.endswith("-full_teacher") else 0
             if len(row["candidates"]) != expected_candidates:
                 raise ValueError("all declared candidate branches required")
             with np.load(args.producer / (name + ".npz"), allow_pickle=False) as archive:
@@ -199,7 +213,11 @@ def main():
                 physical = body.step(frame, raw["joint_target_rad"][frame].copy())
                 for key, value in physical.items():
                     np.testing.assert_array_equal(value[0], raw[key][frame])
-            laws = full_entry_laws(*body.canonical(), affordance=affordance)
+            laws = (
+                full_entry_laws(*body.canonical(), affordance=affordance)
+                if family == "held20"
+                else feedback_entry_laws()
+            )
             costs = []
             for index, candidate in enumerate(row["candidates"]):
                 if candidate["index"] != index or candidate["name"] != laws[index].name:
@@ -254,7 +272,7 @@ def main():
             )
             write_once(args.output / (name + "-complete.json"), results[-1])
             print("FULL_ENTRY_RECORDED_REVIEW_EXACT", name, len(costs), flush=True)
-        if total != 102400:
+        if total != 24000 + expected_forecast:
             raise ValueError("native replay accounting differs")
         for p, h in {**declaration["input_file_hashes"], **pins}.items():
             if digest(Path(p)) != h:
@@ -264,7 +282,7 @@ def main():
             dict(
                 results=results,
                 additional_actual_native_steps=24000,
-                additional_forecast_native_steps=78400,
+                additional_forecast_native_steps=expected_forecast,
                 additional_total_native_steps=total,
                 neural_policy_replayed=False,
                 navigation_planner_reexecuted=False,
