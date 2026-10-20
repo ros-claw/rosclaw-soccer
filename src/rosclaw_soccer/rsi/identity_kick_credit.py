@@ -18,12 +18,15 @@ class IdentityKickCredit:
         self.remaining = torch.zeros(worlds, dtype=torch.long, device=device)
         self.last_step: int | None = None
         self.cached: dict[str, torch.Tensor] | None = None
+        self.forbidden = torch.zeros(worlds, dtype=torch.bool, device=device)
+        self._uses_forbidden: bool | None = None
 
     def reset(self, ids: torch.Tensor) -> None:
         if ids.dtype != torch.long or ids.ndim != 1 or ((ids < 0) | (ids >= self.worlds)).any():
             raise ValueError("explicit valid reset world indices required")
         self.seen[ids] = False
         self.remaining[ids] = 0
+        self.forbidden[ids] = False
 
     def step(
         self,
@@ -33,10 +36,13 @@ class IdentityKickCredit:
         expected: torch.Tensor,
         ball_velocity: torch.Tensor,
         goal_delta: torch.Tensor,
+        forbidden_forces: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         if type(step) is not int or step < 0:
             raise ValueError("monotonic explicit control step required")
         if self.last_step == step:
+            if self._uses_forbidden != (forbidden_forces is not None):
+                raise ValueError("contact intent cannot change within a reward step")
             assert self.cached is not None
             return self.cached
         if self.last_step is not None and step != self.last_step + 1:
@@ -57,16 +63,35 @@ class IdentityKickCredit:
             )
         ):
             raise ValueError("finite aligned chronological actual two-foot force inputs required")
+        uses_forbidden = forbidden_forces is not None
+        if self._uses_forbidden is not None and self._uses_forbidden != uses_forbidden:
+            raise ValueError("contact intent cannot change within an environment lifetime")
+        if forbidden_forces is not None and (
+            forbidden_forces.shape != (b, 10)
+            or not forbidden_forces.is_floating_point()
+            or forbidden_forces.device != self.seen.device
+            or not torch.isfinite(forbidden_forces).all()
+            or (forbidden_forces < 0).any()
+        ):
+            raise ValueError("finite aligned actual forbidden-body contact history required")
+        self._uses_forbidden = uses_forbidden
+        newly_forbidden = torch.zeros_like(self.seen)
+        if forbidden_forces is not None:
+            bad = (forbidden_forces > 1.0).any(dim=1)
+            newly_forbidden = bad & ~self.forbidden
+            self.forbidden |= bad
         hit = forces > 10.0
         times = hit.any(dim=2)
         first = times.to(torch.int64).argmax(dim=1)
         at_first = hit[torch.arange(b, device=forces.device), first]
         new = times.any(dim=1) & ~self.seen
         single = at_first.sum(dim=1) == 1
-        correct = new & single & at_first.gather(1, expected.long()[:, None]).squeeze(1)
-        wrong = new & ~correct
+        identity_correct = new & single & at_first.gather(1, expected.long()[:, None]).squeeze(1)
+        correct = identity_correct & ~self.forbidden
+        wrong = new & ~identity_correct
         self.seen |= new
         self.remaining[correct] = 5
+        self.remaining[self.forbidden] = 0
         speed = ball_velocity.norm(dim=1)
         distance = goal_delta.norm(dim=1)
         active = (self.remaining > 0) & (speed >= 0.5) & (distance > 1e-6)
@@ -77,6 +102,8 @@ class IdentityKickCredit:
             alignment=torch.where(active, cosine.clamp(0, 1), 0),
             speed=torch.where(active, 1 - torch.exp(-speed.square() / 1.2**2), 0),
         )
+        if uses_forbidden:
+            self.cached["forbidden_contact"] = newly_forbidden.float()
         self.remaining = (self.remaining - 1).clamp_min(0)
         self.last_step = step
         return self.cached
