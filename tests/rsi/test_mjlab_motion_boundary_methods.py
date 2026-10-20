@@ -7,6 +7,38 @@ from types import SimpleNamespace
 import torch
 
 
+def test_balanced_source_assignment_only_changes_requested_reset_rows():
+    path = Path(__file__).parents[2] / "scripts/rsi_mjlab_motion_backend.py"
+    tree = ast.parse(path.read_text())
+    cls = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.ClassDef) and n.name == "BalancedInitialMotionCommand"
+    )
+    cls.bases = []
+    ns = {}
+    exec(
+        compile(
+            ast.fix_missing_locations(ast.Module(body=[cls], type_ignores=[])), str(path), "exec"
+        ),
+        ns,
+    )
+    command = ns["BalancedInitialMotionCommand"]()
+    lengths = torch.arange(200, 208)
+    command.motion = SimpleNamespace(num_files=8, file_lengths=lengths)
+    command.motion_idx = torch.full((72,), -1)
+    command.motion_length = torch.full((72,), -1)
+    command.time_steps = torch.full((72,), -1)
+    command._uniform_sampling(torch.arange(64))
+    assert command.motion_idx[:64].tolist() == list(range(8)) * 8
+    assert torch.bincount(command.motion_idx[:64]).tolist() == [8] * 8
+    assert command.motion_length[:64].tolist() == lengths.tolist() * 8
+    assert command.time_steps[:64].tolist() == [0] * 64
+    assert command.motion_idx[64:].tolist() == [-1] * 8
+    assert command.motion_length[64:].tolist() == [-1] * 8
+    assert command.time_steps[64:].tolist() == [-1] * 8
+
+
 def adapter_class():
     path = Path(__file__).parents[2] / "scripts/rsi_mjlab_motion_backend.py"
     tree = ast.parse(path.read_text())

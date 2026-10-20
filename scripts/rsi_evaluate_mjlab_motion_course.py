@@ -18,6 +18,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("course-unit", "course-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--control", choices=("neural", "reference-pd"), default="neural")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
@@ -58,9 +59,10 @@ def main():
         dict(
             source_head=a.expected_head,
             input_file_hashes=pins,
-            num_envs=32,
+            num_envs=32 if a.control == "neural" else 64,
+            control=a.control,
             horizon=300,
-            reset_seeds=[1501, 1502],
+            reset_seeds=[1501, 1502] if a.control == "neural" else [1601],
             first_episode_only=True,
             mode="SIM_ONLY",
             max_gpu_world_substeps=384000,
@@ -85,28 +87,46 @@ def main():
         from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
         from src.tasks.soccer.config.g1.rl_cfg import unitree_g1_soccer_ppo_runner_cfg
 
-        from rosclaw_soccer.rsi.mjlab_motion_curriculum import DEVELOPMENT_MOTION_NAMES
+        from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+        from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
+            DEVELOPMENT_MOTION_NAMES,
+            TRAIN_MOTION_GLOB,
+            TRAIN_MOTION_NAMES,
+        )
         from rosclaw_soccer.rsi.mjlab_motion_evaluation import MotionFirstEpisode
         from scripts.rsi_mjlab_motion_backend import (
             ExplicitBoundaryMotionEnv,
             make_motion_training_cfg,
         )
 
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-        initial = checkpoint["initial_actor_state_dict"]
-        final = checkpoint["algorithm"]["actor_state_dict"]
-        if not changed_weight_names(initial, cloned_tensors(final)):
-            raise ValueError("actual initial and final neural networks required")
+        initial, final = None, None
+        if a.control == "neural":
+            checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+            initial = checkpoint["initial_actor_state_dict"]
+            final = checkpoint["algorithm"]["actor_state_dict"]
+            if not changed_weight_names(initial, cloned_tensors(final)):
+                raise ValueError("actual initial and final neural networks required")
         summaries = []
-        for source_index, source in enumerate(DEVELOPMENT_MOTION_NAMES):
+        source_patterns = (
+            DEVELOPMENT_MOTION_NAMES if a.control == "neural" else (TRAIN_MOTION_GLOB,)
+        )
+        n = 32 if a.control == "neural" else 64
+        arms = (
+            (("initial", initial), ("final", final))
+            if a.control == "neural"
+            else (("default", None), ("reference", None))
+        )
+        for source_index, source in enumerate(source_patterns):
+            seed = 1501 + source_index if a.control == "neural" else 1601
             initial_state = None
-            for arm, state in (("initial", initial), ("final", final)):
+            for arm, state in arms:
                 rows = []
                 cfg = make_motion_training_cfg(
                     motion_dir=a.reference_root / "src/assets/soccer/motions/shooter",
-                    num_envs=32,
-                    seed=1501 + source_index,
+                    num_envs=n,
+                    seed=seed,
                     motion_glob=source,
+                    balanced_initial_sources=a.control == "reference-pd",
                 )
                 # uniform loads the actual source frame0 body with reset perturbations;
                 # the template's "start" mode only resets time and is NOT appropriate.
@@ -114,14 +134,21 @@ def main():
                 cfg.sim.nan_guard.enabled = True
                 env = ExplicitBoundaryMotionEnv(cfg=cfg, device="cuda:0", render_mode=None)
                 agent_cfg = unitree_g1_soccer_ppo_runner_cfg()
-                wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-                runner = MjlabOnPolicyRunner(wrapped, asdict(agent_cfg), None, "cuda:0")
-                policy = runner.get_inference_policy()
-                policy.load_state_dict(state, strict=True)
-                loaded_state = cloned_tensors(policy.state_dict())
-                obs, _ = env.reset(seed=1501 + source_index)
+                policy, loaded_state = None, None
+                if a.control == "neural":
+                    wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+                    runner = MjlabOnPolicyRunner(wrapped, asdict(agent_cfg), None, "cuda:0")
+                    policy = runner.get_inference_policy()
+                    policy.load_state_dict(state, strict=True)
+                    loaded_state = cloned_tensors(policy.state_dict())
+                obs, _ = env.reset(seed=seed)
                 motion = env.command_manager.get_term("motion")
-                if motion.motion.motion_names != [source.removesuffix(".npz")] or torch.any(
+                expected_names = (
+                    [source.removesuffix(".npz")]
+                    if a.control == "neural"
+                    else [name.removesuffix(".npz") for name in TRAIN_MOTION_NAMES]
+                )
+                if motion.motion.motion_names != expected_names or torch.any(
                     motion.time_steps != 0
                 ):
                     raise ValueError("single declared DEV source from actual frame0 required")
@@ -130,13 +157,35 @@ def main():
                     qvel=env.sim.data.qvel.cpu().numpy().copy(),
                     observation=obs["actor"].cpu().numpy().copy(),
                     phase=motion.time_steps.cpu().numpy().copy(),
+                    motion_id=motion.motion_idx.cpu().numpy().copy(),
                 )
                 if initial_state is None:
                     initial_state = snapshot
                 elif any(not np.array_equal(snapshot[k], initial_state[k]) for k in snapshot):
                     raise ValueError("initial/final arms must start from exactly identical states")
                 np.savez_compressed(a.output / f"{source_index}-{arm}-initial.npz", **snapshot)
-                score = MotionFirstEpisode(32)
+                action_term = env.action_manager.get_term("joint_pos")
+                if tuple(action_term.target_names) != G1_DDS_JOINT_NAMES or not torch.equal(
+                    action_term.target_ids, torch.arange(29, device="cuda:0")
+                ):
+                    raise ValueError("actual action targets must match qualified HG joint order")
+                if a.control == "reference-pd":
+                    if not np.array_equal(snapshot["motion_id"], np.arange(n) % 8):
+                        raise ValueError("balanced eight-source initial resets required")
+                    write_once(
+                        a.output / f"{source_index}-{arm}-codec.json",
+                        dict(
+                            target_names=action_term.target_names,
+                            target_ids=action_term.target_ids.cpu().tolist(),
+                            scale=torch.as_tensor(action_term.scale).cpu().tolist(),
+                            offset=torch.as_tensor(action_term.offset).cpu().tolist(),
+                            defaults_match=bool(
+                                torch.equal(action_term.offset, motion.robot.data.default_joint_pos)
+                            ),
+                            zero_neural_or_optimizer_calls=True,
+                        ),
+                    )
+                score = MotionFirstEpisode(n)
                 counter = env._sim_step_counter
                 with torch.inference_mode():
                     for _frame in range(300):
@@ -146,12 +195,25 @@ def main():
                             observation=obs["actor"].cpu().numpy().copy(),
                             source_phase=motion.time_steps.cpu().numpy().copy(),
                             active_before=score.active.copy(),
+                            motion_id=motion.motion_idx.cpu().numpy().copy(),
+                            reference_joint=motion.joint_pos.cpu().numpy().copy(),
+                            measured_joint=motion.robot.data.joint_pos.cpu().numpy().copy(),
+                            encoder_bias=motion.robot.data.encoder_bias.cpu().numpy().copy(),
                         )
-                        actions = policy(TensorDict(obs, batch_size=[32]), stochastic_output=False)
-                        neural_samples += 32
+                        if a.control == "neural":
+                            actions = policy(
+                                TensorDict(obs, batch_size=[n]), stochastic_output=False
+                            )
+                            neural_samples += n
+                        elif arm == "default":
+                            actions = torch.zeros((n, 29), device="cuda:0")
+                        else:
+                            actions = (motion.joint_pos - action_term.offset) / action_term.scale
                         if not torch.isfinite(actions).all():
                             raise ValueError("finite deterministic neural actions required")
                         raw["action"] = actions.cpu().numpy().copy()
+                        expected_target = actions * action_term.scale + action_term.offset
+                        raw["requested_joint_target"] = expected_target.cpu().numpy().copy()
                         applied = (
                             actions
                             if agent_cfg.clip_actions is None
@@ -162,6 +224,36 @@ def main():
                         obs, reward, term, trunc, _ = env.step(applied)
                         torch.cuda.synchronize()
                         steps_total += 10
+                        raw["processed_joint_target"] = (
+                            action_term._processed_actions.cpu().numpy().copy()
+                        )
+                        raw["position_target_after_step"] = (
+                            motion.robot.data.joint_pos_target.cpu().numpy().copy()
+                        )
+                        ongoing = ~(term | trunc)
+                        if not torch.allclose(
+                            motion.robot.data.joint_pos_target[ongoing],
+                            (action_term._processed_actions - motion.robot.data.encoder_bias)[
+                                ongoing
+                            ],
+                            atol=1e-6,
+                            rtol=1e-6,
+                        ):
+                            raise ValueError(
+                                "non-reset bodies must receive the actual decoded PD target"
+                            )
+                        if a.control == "reference-pd" and (
+                            agent_cfg.clip_actions is not None
+                            or not torch.allclose(
+                                action_term._processed_actions,
+                                expected_target,
+                                atol=1e-6,
+                                rtol=1e-6,
+                            )
+                        ):
+                            raise ValueError(
+                                "reference decoding must match the actual processed PD target"
+                            )
                         if (
                             not torch.isfinite(env.sim.data.qpos).all()
                             or not torch.isfinite(env.sim.data.qvel).all()
@@ -191,7 +283,7 @@ def main():
                             break
                 if env._sim_step_counter - counter != len(rows) * 10:
                     raise ValueError("actual GPU physics counter differs")
-                if any(
+                if a.control == "neural" and any(
                     not torch.equal(v, loaded_state[k])
                     for k, v in cloned_tensors(policy.state_dict()).items()
                 ):
@@ -201,10 +293,10 @@ def main():
                 summary = dict(
                     source=source,
                     arm=arm,
-                    seed=1501 + source_index,
+                    seed=seed,
                     raw_hash=digest(path),
                     batched_control_steps=len(rows),
-                    gpu_world_substeps=len(rows) * 10 * 32,
+                    gpu_world_substeps=len(rows) * 10 * n,
                     initial_phase_zero=True,
                     **score.summary(),
                 )
@@ -218,17 +310,22 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="MJLAB_PAIRED_DEV_MOTION_TRACKING_NOT_FOOTBALL_QUALIFIED",
+                status=(
+                    "MJLAB_PAIRED_DEV_MOTION_TRACKING_NOT_FOOTBALL_QUALIFIED"
+                    if a.control == "neural"
+                    else "MJLAB_REFERENCE_PD_AUTHORITY_NOT_NEURAL_LEARNING"
+                ),
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 results=summaries,
                 gpu_step_calls=steps_total,
-                gpu_world_substeps=steps_total * 32,
+                gpu_world_substeps=steps_total * n,
                 actual_neural_control_samples=neural_samples,
                 new_optimizer_steps=0,
                 all_initial_states_paired_exact=True,
                 first_episode_only=True,
                 public_source_development_not_fresh_world=True,
+                evaluated_source_split="dev" if a.control == "neural" else "train",
                 football_skill_proven=False,
                 goal_complete=False,
                 promotion_authorized=False,

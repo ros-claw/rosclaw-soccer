@@ -77,6 +77,21 @@ class ExplicitBoundaryMotionCfg(MultiMotionSoccerCommandCfg):
         return ExplicitBoundaryMotionCommand(self, env)
 
 
+class BalancedInitialMotionCommand(ExplicitBoundaryMotionCommand):
+    """Balance sources at the ordinary episode reset, never inside a step."""
+
+    def _uniform_sampling(self, env_ids):
+        self.motion_idx[env_ids] = env_ids % self.motion.num_files
+        self.motion_length[env_ids] = self.motion.file_lengths[self.motion_idx[env_ids]]
+        self.time_steps[env_ids] = 0
+
+
+@dataclass(kw_only=True)
+class BalancedInitialMotionCfg(ExplicitBoundaryMotionCfg):
+    def build(self, env):
+        return BalancedInitialMotionCommand(self, env)
+
+
 def reference_exhausted(env, command_name="motion"):
     command = env.command_manager.get_term(command_name)
     if not isinstance(command, ExplicitBoundaryMotionCommand):
@@ -114,7 +129,9 @@ class ExplicitBoundaryMotionEnv(ManagerBasedRlEnv):
         return self.obs_buf, extras
 
 
-def make_motion_training_cfg(*, motion_dir, num_envs, seed, motion_glob=TRAIN_MOTION_GLOB):
+def make_motion_training_cfg(
+    *, motion_dir, num_envs, seed, motion_glob=TRAIN_MOTION_GLOB, balanced_initial_sources=False
+):
     if (
         type(num_envs) is not int
         or not 1 <= num_envs <= 4096
@@ -123,6 +140,10 @@ def make_motion_training_cfg(*, motion_dir, num_envs, seed, motion_glob=TRAIN_MO
     ):
         raise ValueError("bounded explicit simulation batch and seed required")
     expected = motion_names_for_pattern(motion_glob)
+    if type(balanced_initial_sources) is not bool or (
+        balanced_initial_sources and (motion_glob != TRAIN_MOTION_GLOB or num_envs % 8 != 0)
+    ):
+        raise ValueError("balanced reset requires an exact multiple of all eight training sources")
     if tuple(p.name for p in sorted(Path(motion_dir).glob(motion_glob))) != expected:
         raise ValueError("exact declared source split required before simulator allocation")
     cfg = unitree_g1_stage1_env_cfg(play=False)
@@ -132,7 +153,9 @@ def make_motion_training_cfg(*, motion_dir, num_envs, seed, motion_glob=TRAIN_MO
     if not isinstance(original, MultiMotionSoccerCommandCfg):
         raise ValueError("exact qualified external motion command configuration required")
     values = {f.name: getattr(original, f.name) for f in fields(original)}
-    command = ExplicitBoundaryMotionCfg(**values)
+    command = (BalancedInitialMotionCfg if balanced_initial_sources else ExplicitBoundaryMotionCfg)(
+        **values
+    )
     command.motion_dir = str(motion_dir)
     command.motion_glob = motion_glob
     command.motion_origin_offset = (0.0, 0.0, 0.0)
