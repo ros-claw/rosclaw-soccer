@@ -2,13 +2,14 @@
 
 import math
 from collections import Counter, defaultdict
+from typing import Any
 
 
-def summarize_pairs(rows):
+def summarize_pairs(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not rows or len({r["course"]["course_index"] for r in rows}) != len(rows):
         raise ValueError("nonempty unique paired courses required")
-    strata = defaultdict(Counter)
-    owners = Counter()
+    strata: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    owners: Counter[int] = Counter()
     for row in rows:
         variants = row["variants"]
         if [v["variant"] for v in variants] != ["baseline", "portfolio"]:
@@ -50,7 +51,7 @@ def summarize_pairs(rows):
         c["both_success"] += b and p
         c["both_failure"] += not b and not p
         owners[variants[1]["portfolio_audit"]["selected_owner"]] += 1
-    total = Counter()
+    total: Counter[str] = Counter()
     for c in strata.values():
         total.update(c)
     n, r = total["rescues"] + total["regressions"], total["rescues"]

@@ -6,9 +6,10 @@ No world step, motor, promotion, hardware or future observation is available.
 """
 
 import math
+from typing import Any
 
 
-def create_kinematic_motion_residual(parent, extractor):
+def create_kinematic_motion_residual(parent: Any, extractor: Any) -> Any:
     import numpy as np
     import torch
     from torch import nn
@@ -17,7 +18,10 @@ def create_kinematic_motion_residual(parent, extractor):
         raise ValueError("explicitly frozen eval-only actor-critic parent required")
 
     class KinematicMotionResidual(nn.Module):
-        def __init__(self):
+        geometry_mean: torch.Tensor
+        geometry_std: torch.Tensor
+
+        def __init__(self) -> None:
             super().__init__()
             self.parent = parent
             self.extractor = extractor
@@ -26,22 +30,24 @@ def create_kinematic_motion_residual(parent, extractor):
             self.adapter = nn.Sequential(nn.Linear(262, 128), nn.ELU(), nn.Linear(128, 64))
             self.value_adapter = nn.Sequential(nn.Linear(262, 64), nn.ELU(), nn.Linear(64, 1))
             for head in (self.adapter[-1], self.value_adapter[-1]):
+                if not isinstance(head, nn.Linear):
+                    raise ValueError("linear output heads required")
                 nn.init.zeros_(head.weight)
                 nn.init.zeros_(head.bias)
             self.log_std = nn.Parameter(parent.log_std.detach().clone())
             self.sample_calls = 0
 
-        def network_call_counts(self):
+        def network_call_counts(self) -> dict[str, int]:
             if self.sample_calls != 300:
                 raise ValueError("complete current H300 inference stream required")
             return dict(policy_invocations=300, intention_network_calls=600)
 
-        def train(self, mode=True):
+        def train(self, mode: bool = True) -> Any:
             super().train(mode)
             self.parent.eval()
             return self
 
-        def geometry(self, observation):
+        def geometry(self, observation: Any) -> Any:
             if observation.ndim != 3 or observation.shape[-1] != 108:
                 raise ValueError("batch,time,current108 required")
             raw = observation.detach().cpu().numpy()
@@ -50,7 +56,9 @@ def create_kinematic_motion_residual(parent, extractor):
             )
             return torch.from_numpy(result.reshape(*raw.shape[:2], 26)).to(observation.device)
 
-        def parameters_for_state(self, observation, hidden=None, *, geometry=None):
+        def parameters_for_state(
+            self, observation: Any, hidden: Any = None, *, geometry: Any = None
+        ) -> tuple[Any, Any, Any, Any]:
             if (
                 observation.ndim != 3
                 or observation.shape[-1] != 108
@@ -98,7 +106,9 @@ def create_kinematic_motion_residual(parent, extractor):
                 raise ValueError("nonfinite isolated geometry branch; no fallback")
             return mean, std, value, next_hidden
 
-        def sample(self, observation, hidden, *, generator, stochastic):
+        def sample(
+            self, observation: Any, hidden: Any, *, generator: Any, stochastic: bool
+        ) -> dict[str, Any]:
             if type(stochastic) is not bool:
                 raise ValueError("explicit deterministic/stochastic mode required")
             if hidden is None:
@@ -113,7 +123,7 @@ def create_kinematic_motion_residual(parent, extractor):
             token = (
                 torch.round(15.515501022338867 * torch.tanh(raw + 0.03223699703812599) - 0.5) / 16.0
             )
-            distribution = torch.distributions.Normal(mean, std)
+            distribution: Any = torch.distributions.Normal(mean, std)
             self.sample_calls += 1
             return dict(
                 mean=mean,
@@ -127,7 +137,7 @@ def create_kinematic_motion_residual(parent, extractor):
                 entropy=distribution.entropy().sum(-1),
             )
 
-        def evaluate_raw(self, observation, raw):
+        def evaluate_raw(self, observation: Any, raw: Any) -> tuple[Any, Any, Any, Any, Any]:
             mean, std, value, _ = self.parameters_for_state(observation)
             if (
                 raw.shape != mean.shape
@@ -135,7 +145,7 @@ def create_kinematic_motion_residual(parent, extractor):
                 or not torch.isfinite(raw).all()
             ):
                 raise ValueError("complete finite prequantization actions required")
-            distribution = torch.distributions.Normal(mean, std)
+            distribution: Any = torch.distributions.Normal(mean, std)
             return (
                 distribution.log_prob(raw).sum(-1),
                 distribution.entropy().sum(-1),

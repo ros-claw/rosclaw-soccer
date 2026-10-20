@@ -7,6 +7,7 @@ derivatives. This is a G1 experiment adapter, not a generic Core body contract.
 """
 
 import math
+from typing import Any
 
 import mujoco
 import numpy as np
@@ -18,7 +19,7 @@ FOOT_FEATURE_WIDTH = 26
 
 
 class MeasuredFootKinematics:
-    def __init__(self, model, *, expected_world_hash):
+    def __init__(self, model: Any, *, expected_world_hash: str) -> None:
         if not isinstance(model, mujoco.MjModel) or (model.nq, model.nv, model.nu) != (43, 41, 29):
             raise ValueError("canonical G1 simulation body geometry required")
         binary = np.zeros(mujoco.mj_sizeModel(model), dtype=np.uint8)
@@ -60,7 +61,9 @@ class MeasuredFootKinematics:
             self.feet.append(body)
             self.geoms.append(geoms)
 
-    def features(self, qpos, qvel):
+    def features(
+        self, qpos: np.ndarray[Any, Any], qvel: np.ndarray[Any, Any]
+    ) -> np.ndarray[Any, Any]:
         for x, shape in ((qpos, (43,)), (qvel, (41,))):
             if (
                 type(x) is not np.ndarray
@@ -84,7 +87,7 @@ class MeasuredFootKinematics:
                 [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
             ]
         )
-        rows = []
+        rows: list[np.ndarray[Any, Any]] = []
         for foot, geoms in zip(self.feet, self.geoms, strict=True):
             jac = np.zeros((3, self.model.nv), dtype=np.float64)
             mujoco.mj_jacBody(self.model, d, jac, None, foot)
@@ -108,7 +111,7 @@ class MeasuredFootKinematics:
             raise ValueError("finite current26 foot/ball kinematics required")
         return result
 
-    def from_student_features(self, feature):
+    def from_student_features(self, feature: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         """Reconstruct only kinematically relevant state from existing108 inputs.
 
         RootXY is gauge-fixed to zero; spherical ball orientation/spin is not
