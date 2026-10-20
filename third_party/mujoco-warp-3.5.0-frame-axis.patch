@@ -1,0 +1,10 @@
+--- a/mujoco_warp/_src/sensor.py
++++ b/mujoco_warp/_src/sensor.py
+@@ -366,6 +366,7 @@
+     xmat = cam_xmat_in[worldid, objid]
+     axis = wp.vec3(xmat[0, frame_axis], xmat[1, frame_axis], xmat[2, frame_axis])
+   else:  # UNKNOWN
++    xmat = wp.identity(3, dtype=wp.float32)
+     axis = wp.vec3(xmat[0, frame_axis], xmat[1, frame_axis], xmat[2, frame_axis])
+ 
+   if refid == -1:

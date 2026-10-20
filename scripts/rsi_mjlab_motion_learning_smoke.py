@@ -6,7 +6,7 @@ import random
 import subprocess
 import sys
 from dataclasses import asdict
-from importlib.metadata import version
+from importlib.metadata import distribution, version
 from pathlib import Path
 
 
@@ -33,7 +33,13 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for k in ("reference-root", "dataset-review", "output"):
         p.add_argument("--" + k, type=Path, required=True)
-    for k in ("expected-head", "expected-dataset-hash", "dataset-unit", "install-unit"):
+    for k in (
+        "expected-head",
+        "expected-dataset-hash",
+        "dataset-unit",
+        "install-unit",
+        "expected-sensor-hash",
+    ):
         p.add_argument("--" + k, required=True)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
@@ -74,6 +80,18 @@ def main():
             for f in dr.rglob("*.py")
         }
     )
+    check_pins(pins)
+    # Bind the installed dependency source before any simulator import. A
+    # locally repaired wheel must not masquerade as an unmodified version.
+    sensor_path = Path(distribution("mujoco-warp").locate_file("mujoco_warp/_src/sensor.py"))
+    if digest(sensor_path) != a.expected_sensor_hash:
+        raise ValueError("exact declared MuJoCo-Warp sensor source required")
+    for package in ("mjlab", "mujoco-warp", "rsl-rl-lib"):
+        dist = distribution(package)
+        for member in dist.files or ():
+            if str(member).endswith(".py"):
+                installed = Path(dist.locate_file(member)).resolve()
+                pins[str(installed)] = digest(installed)
     check_pins(pins)
     packages = {
         name: version(name)
