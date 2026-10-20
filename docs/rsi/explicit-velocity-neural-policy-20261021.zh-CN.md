@@ -279,4 +279,28 @@ target 最大误差 0，参考 q 与 processed target 最大误差 5.96e-8 rad�
 子步。记录全部 q/v 误差、模型哈希、执行器增益与力限制。它仅审计一个 20ms 周期，
 不能证明长时间动力学一致，更不能将任意“进程成功”升级为运动成功。
 有可审计的原生模型后，才研究带接触动力学预测的闭环教师，不直接扩大该失败 PPO 家族。
+
+原生导出实际退出 0：模型 nq43/nv41/nu29，640 CPU 子步和 640 GPU 世界子步。
+初始 FK 最大位置差 2.062e-7 m，20ms 后最大 qpos/qvel 混合坐标绝对差分别为
+8.650e-5 / 0.004658；不能据此认证长时间 CPU/GPU 一致。
+模型 SHA256 55470494e9764e4c6f3803f502d7bf4a79addb52136b6087bd2bbbe0153e1a69；
+收据 SHA256 81bc4b3705698af614e2f2b50d69d3d0af2decbe15d3989bc2efb6d5fd400dfa。
+实际原生 actuator 顺序按电机分组，不能将 HG29 向量直接写入 ctrl；导出保存了真实映射。
+MJLab 的 action target_ids 则仍是 HG29，两个顺序应明确区分。
+
+接下来预声明一个原生闭环预测教师 Pilot：源001、记录初态 world0、种子1701，
+纯参考 PD 与预测教师同一完整 integration state；主轨迹各上限 300 控制步。
+预测教师每步评估 64 个三节点关节目标修正方案，预测 12 控制步（0.24s）、两轮更新，
+8 个原生线程，修正标准差0.1rad、上限0.3rad并满足编译关节边界。
+代价明确比较关节姿态、root位置与方向；每轮保留未修正参考作为候选。
+所有预测都在独立 MjData 上，主身体只接受选中的真实 actuator 目标。
+USER 状态（外力、mocap、等式开关等）通过原生 rollout 控制流固定，主身体不能被规划器改写。
+报告将区分请求的预测子步预算与时间戳确实前进的预测子步，禁止把发散后的填充行计为物理执行。
+
+这一 Pilot 不施加未来定时推扰，仅保留原记录初始扰动；这是新名义条件的研究任务，
+不能与之前 GPU 推扰考试混算。参考源只作 reference padding，不改变主身体相位或状态。
+单例物理教师即便完成也不构成神经成长、Fresh 泛化或足球成功。
+调研来源：DeepMind [Predictive Sampling](https://github.com/google-deepmind/mujoco_mpc)、
+[MPC-RL](https://github.com/junhengl/mpc-rl)。固定版本与使用边界见 reference manifest。
+后者是 Themis 研究参考，尚未在本项目运行，不计作 G1 已验证能力。
 安装进程未正常关闭前，等待器运行在旧的稳定解释器；不在被pip修改的新环境中提前import或训练。

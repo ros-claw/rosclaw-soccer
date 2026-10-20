@@ -93,6 +93,32 @@
       "copied_code": false
     }
   ],
+  "predictive_teacher_references_20261021": [
+    {
+      "name": "mujoco-mpc",
+      "repository": "https://github.com/google-deepmind/mujoco_mpc.git",
+      "commit": "ff572a21e7c2bf9fda62e1862a758da7e9a8719b",
+      "license_file": "LICENSE",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "license_id": "Apache-2.0",
+      "purpose": "Predictive-sampling design reference for an offline native teacher; no runtime model or planner code imported",
+      "files_reviewed": ["docs/OVERVIEW.md", "python/mujoco_mpc/demos/predictive_sampling/predictive_sampling.py"],
+      "reused_as": "external_design_reference",
+      "copied_code": false
+    },
+    {
+      "name": "mpc-rl",
+      "repository": "https://github.com/junhengl/mpc-rl.git",
+      "commit": "97e37648d19b635f9b233c7146c28e68a8d672eb",
+      "license_file": "LICENSE",
+      "license_sha256": "5b54b9e11531ced3a951db0cc5ad652965d16aaff67e9b4e562995fe23b821dd",
+      "license_id": "MIT",
+      "purpose": "Training-time centroidal MPC guidance research; Themis robot performance is not G1 evidence and source is not integrated",
+      "files_reviewed": ["README.md", "pyproject.toml", "src/themis_mpc/__init__.py", "src/themis_mpc/pimpc.py (setup and batch interface)"],
+      "reused_as": "external_design_reference",
+      "copied_code": false
+    }
+  ],
   "pending": [
     {
       "name": "Dream-RSI",
