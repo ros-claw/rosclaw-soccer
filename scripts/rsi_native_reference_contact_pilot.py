@@ -1,6 +1,6 @@
 """Paired actual NN reference-conditioned native contact pilot; no goal claim.
 
-Two fixed public DEV source plans, world0, initial/final, full independent repeat.
+Two fixed public DEV source plans, declared world, initial/final, full independent repeat.
 Only declared absolute reference commands are reused; all relative features are
 recomputed from CURRENT native geometry. Future GPU states/actions are unused.
 """
@@ -27,6 +27,7 @@ def main():
         p.add_argument("--" + name, required=True)
     p.add_argument("--position-gain", type=float, choices=(0.0, 1.0), default=0.0)
     p.add_argument("--command-point", choices=("torso", "pelvis"), default="torso")
+    p.add_argument("--world-index", type=int, choices=range(32), default=0)
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import motion_checkpoint_filename
     from scripts.rsi_atomic_artifacts import write_once
@@ -106,7 +107,7 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             sources=[7, 10],
-            world_indices=[0],
+            world_indices=[a.world_index],
             arms=["initial", "final"],
             full_independent_repeats=2,
             maximum_native_steps=24000,
@@ -135,6 +136,7 @@ def main():
         import numpy as np
         import torch
 
+        from rosclaw_soccer.rsi.foot_contact_timing import contact_timing_metrics
         from rosclaw_soccer.rsi.native_motion_reference import (
             point_velocity_command,
             reference_inputs70,
@@ -160,10 +162,10 @@ def main():
         for index, source in enumerate((7, 10)):
             with np.load(a.plan_root / f"{index}-initial-raw.npz", allow_pickle=False) as z:
                 # Do not load future physical q/v or GPU action outputs.
-                initial_q = z["qpos_before"][0, 0].copy()
-                initial_v = z["qvel_before"][0, 0].copy()
+                initial_q = z["qpos_before"][0, a.world_index].copy()
+                initial_v = z["qvel_before"][0, a.world_index].copy()
                 references = {
-                    k: z[k][:, 0].copy()
+                    k: z[k][:, a.world_index].copy()
                     for k in (
                         "reference_joint",
                         "reference_joint_velocity",
@@ -379,7 +381,7 @@ def main():
                     intended_foot = 0 if source == 7 else 1
                     result = dict(
                         source=source,
-                        world_index=0,
+                        world_index=a.world_index,
                         arm=arm,
                         repeat=repeat,
                         native_steps=horizon * 10,
@@ -405,6 +407,9 @@ def main():
                         raw_hash=digest(folder / "native.npz"),
                         goal_success=False,
                         football_skill_proven=False,
+                        **contact_timing_metrics(
+                            contact, speed, intended_foot=intended_foot, timestep=0.002
+                        ),
                     )
                     write_once(folder / "complete.json", result)
                     results.append(result)
