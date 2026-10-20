@@ -35,10 +35,13 @@ def main():
         "expected-failed-entry-review-hash",
     ):
         parser.add_argument("--" + name, required=True)
-    parser.add_argument("--law-family", choices=("held20", "feedback"), default="held20")
+    parser.add_argument("--law-family", choices=("held20", "feedback", "coupled"), default="held20")
     parser.add_argument("--preceding-full-study", type=Path)
     parser.add_argument("--preceding-full-review", type=Path)
     parser.add_argument("--expected-preceding-full-review-hash")
+    parser.add_argument("--contact-prior", type=Path)
+    parser.add_argument("--contact-prior-review", type=Path)
+    parser.add_argument("--expected-contact-prior-review-hash")
     args = parser.parse_args()
     source = Path.cwd().resolve()
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -75,7 +78,7 @@ def main():
         raise ValueError("whole preserved preceding physics studies required")
     historical_declarations = [prior, failed_declaration]
     preceding_roots = []
-    if args.law_family == "feedback":
+    if args.law_family in ("feedback", "coupled"):
         if (
             args.preceding_full_study is None
             or args.preceding_full_review is None
@@ -91,11 +94,17 @@ def main():
         pr = json.loads((args.preceding_full_review / "complete.json").read_text())
         pd = json.loads((args.preceding_full_study / "declaration.json").read_text())
         rd = json.loads((args.preceding_full_review / "declaration.json").read_text())
+        preceding_native = 102400 if args.law_family == "feedback" else 91200
+        preceding_schema = (
+            "soccer.rsi.full_remaining_entry_teacher4.v1"
+            if args.law_family == "feedback"
+            else "soccer.rsi.full_remaining_entry_teacher4.v2"
+        )
         if (
-            pc["total_new_native_steps"] != 102400
-            or pr["additional_total_native_steps"] != 102400
+            pc["total_new_native_steps"] != preceding_native
+            or pr["additional_total_native_steps"] != preceding_native
             or len(pr["results"]) != 8
-            or pd["schema"] != "soccer.rsi.full_remaining_entry_teacher4.v1"
+            or pd["schema"] != preceding_schema
             or not all(
                 r["actual_physics_bit_exact"] and r["all_candidate_physics_bit_exact"]
                 for r in pr["results"]
@@ -121,6 +130,53 @@ def main():
         raise ValueError(
             "predecessor arguments are only for the explicitly declared feedback successor"
         )
+    if args.law_family == "coupled":
+        if (
+            args.contact_prior is None
+            or args.contact_prior_review is None
+            or args.expected_contact_prior_review_hash is None
+        ):
+            raise ValueError("coupled study requires authenticated contact-authority evidence")
+        if (
+            digest(args.contact_prior_review / "complete.json")
+            != args.expected_contact_prior_review_hash
+        ):
+            raise ValueError("contact-authority independent proof differs")
+        cc = json.loads((args.contact_prior / "complete.json").read_text())
+        cr = json.loads((args.contact_prior_review / "complete.json").read_text())
+        cd = json.loads((args.contact_prior / "declaration.json").read_text())
+        dr = json.loads((args.contact_prior_review / "declaration.json").read_text())
+        if (
+            cc["actual_native_steps"] != 12000
+            or cr["additional_native_steps"] != 12000
+            or cd["schema"] != "soccer.rsi.contact_reference_offset_pair2.v1"
+            or len(cr["results"]) != 4
+            or not all(
+                r["all_native_arrays_bit_exact"]
+                and r["handoff_and_modified_reference_reconstructed"]
+                for r in cr["results"]
+            )
+            or dr["input_file_hashes"].get(str(args.contact_prior / "complete.json"))
+            != digest(args.contact_prior / "complete.json")
+            or cd["input_file_hashes"].get(str(args.preceding_full_study / "complete.json"))
+            != digest(args.preceding_full_study / "complete.json")
+            or any(
+                (p / "failure.json").exists()
+                for p in (args.contact_prior, args.contact_prior_review)
+            )
+        ):
+            raise ValueError("whole contact-authority proof bound to feedback predecessor required")
+        historical_declarations += [cd, dr]
+        preceding_roots += [args.contact_prior, args.contact_prior_review]
+    elif any(
+        x is not None
+        for x in (
+            args.contact_prior,
+            args.contact_prior_review,
+            args.expected_contact_prior_review_hash,
+        )
+    ):
+        raise ValueError("contact predecessor is only for the coupled mechanism")
     for declaration in historical_declarations:
         for p, h in declaration["input_file_hashes"].items():
             if digest(Path(p)) != h:
@@ -168,11 +224,15 @@ def main():
         G1SonicNavigation,
         SonicNavigationConfig,
     )
+    from rosclaw_soccer.providers.g1.sonic_reference_preparation import prepare_sonic_reference
     from rosclaw_soccer.providers.g1.sonic_runup import G1SonicRunupController
+    from rosclaw_soccer.providers.g1.sonic_wrist_quarantine import quarantine_wrist_reference
     from rosclaw_soccer.rsi.ball_entry_teacher import SkillEntryAffordance
+    from rosclaw_soccer.rsi.contact_reference_offset import offset_contact_reference
     from rosclaw_soccer.rsi.full_entry_forecast import (
         FullEntryForecaster,
         body_fields_hash,
+        coupled_entry_options,
         feedback_entry_laws,
         full_entry_laws,
         nominal_prefix20,
@@ -190,7 +250,9 @@ def main():
     declaration = dict(
         schema="soccer.rsi.full_remaining_entry_teacher4.v1"
         if args.law_family == "held20"
-        else "soccer.rsi.full_remaining_entry_teacher4.v2",
+        else "soccer.rsi.full_remaining_entry_teacher4.v2"
+        if args.law_family == "feedback"
+        else "soccer.rsi.full_remaining_entry_teacher4.v3",
         law_family=args.law_family,
         source_head=head,
         input_file_hashes=pins,
@@ -208,13 +270,20 @@ def main():
         entry_intervals=50,
         earliest_handoff=30,
         latest_handoff=90,
-        source_reference_after_handoff_not_retargeted=True,
+        source_reference_after_handoff_not_retargeted=args.law_family != "coupled",
+        reference_request_conditioned_at_handoff=args.law_family == "coupled",
+        reference_tracks_ball_after_handoff=False,
+        contact_reference_options_root_m=[[0.0, 0.0, 0.0], [0.0, -0.025, -0.025]]
+        if args.law_family == "coupled"
+        else [[0.0, 0.0, 0.0]],
         search_only_at_frame=20,
         selected_command_law_held_window=[20, 40] if args.law_family == "held20" else None,
         candidate0="causal_per_frame_nominal_feedback",
         candidate1_to6="six_fixed_commands20ticks_then_causal_nominal_feedback"
         if args.law_family == "held20"
-        else "fixed_six_laws_recomputed_on_own_current_state_until_handoff_or_timeout",
+        else "fixed_six_laws_recomputed_on_own_current_state_until_handoff_or_timeout"
+        if args.law_family == "feedback"
+        else "three_existing_feedback_laws_x_two_contact_reference_requests",
         all_actual_and_predicted_steps_have_own_neural_inference=True,
         actual_never_adopts_predicted_state_targets_or_reference=True,
         hard_veto=dict(nonfoot_force_over_n=1.0, minimum_pelvis_z_m=0.65, minimum_upright=0.9),
@@ -236,6 +305,8 @@ def main():
         hardware_authorized=False,
     )
     write_once(args.output / "declaration.json", declaration)
+    current_body = current_forecaster = None
+    completed_actual_native_steps = total_forecast = 0
     try:
         stored = json.loads((args.prior / "entry-affordance.json").read_text())
         fields = {
@@ -253,6 +324,57 @@ def main():
             raise ValueError("past own-body affordance identity differs")
         write_once(args.output / "entry-affordance.json", stored)
         poses = np.loadtxt(args.motion_csv, delimiter=",", skiprows=1, dtype=np.float64)
+        geometry_admissions = []
+        if args.law_family == "coupled":
+            # C does not change the path to handoff: independently authenticated
+            # historical entry measurements admit all reference options first.
+            geometry_model = mujoco.MjModel.from_binary_path(str(args.world))
+            for i in range(4):
+                parent = next(r for r in pc["results"] if r["job"] == f"course{i}-full_teacher")
+                for law_index in (0, 3, 4):
+                    old_candidate = parent["candidates"][law_index]
+                    artifact = args.preceding_full_study / old_candidate["artifact"]
+                    if digest(artifact) != old_candidate["artifact_hash"]:
+                        raise ValueError("feedback candidate source differs")
+                    handoff = old_candidate["report"]["handoff_frame"]
+                    if handoff is None:
+                        geometry_admissions.append(
+                            dict(
+                                course_index=i,
+                                law_index=law_index,
+                                no_handoff_reference_not_applicable=True,
+                                new_native_steps=0,
+                            )
+                        )
+                        continue
+                    with np.load(artifact, allow_pickle=False) as archive:
+                        entry = archive["canonical_qpos"][handoff - 20, :36].copy()
+                    held, _ = quarantine_wrist_reference(poses, entry)
+                    prepared = prepare_sonic_reference(
+                        held[286:767],
+                        entry,
+                        source_frequency_hz=120,
+                        entry_intervals=50,
+                        source_evidence_hash=hash_json(declaration),
+                    )
+                    for offset in ((0.0, 0.0, 0.0), (0.0, -0.025, -0.025)):
+                        modified, geometry = offset_contact_reference(
+                            geometry_model, prepared.reference, offset_root_m=offset
+                        )
+                        modified.initialize(entry, frames=410)
+                        geometry_admissions.append(
+                            dict(
+                                course_index=i,
+                                law_index=law_index,
+                                offset_root_m=list(offset),
+                                geometry=geometry,
+                                new_native_steps=0,
+                            )
+                        )
+            write_once(
+                args.output / "geometry-admission.json",
+                dict(results=geometry_admissions, new_native_steps=0, teacher_qualified=False),
+            )
         results, total_forecast = [], 0
         for i, course in enumerate(declaration["courses"]):
             with np.load(args.prior / f"course{i}-ball_entry.npz", allow_pickle=False) as archive:
@@ -284,6 +406,7 @@ def main():
                     defaults=G1SonicRunupController.default_angles.copy(),
                     record_all_ball_contacts=True,
                 )
+                current_body = body
                 prefix = nominal_prefix20(nav, body, affordance)
                 if set(prefix) != set(gold):
                     raise ValueError("full numeric evidence coverage differs")
@@ -295,10 +418,18 @@ def main():
                     if args.law_family == "held20"
                     else feedback_entry_laws()
                 )
+                offsets = [(0.0, 0.0, 0.0)] * len(laws)
+                names = [law.name for law in laws]
+                if args.law_family == "coupled":
+                    options = coupled_entry_options()
+                    laws = [o.law for o in options]
+                    offsets = [o.offset_root_m for o in options]
+                    names = [o.name for o in options]
                 if len(laws) != candidate_count:
                     raise ValueError("declared command-law bank coverage differs")
                 candidates, selected, selected_future, forecast_steps = [], 0, None, 0
                 forecaster = FullEntryForecaster(world_hash=digest(args.world))
+                current_forecaster = forecaster
                 donor = (
                     integration_hash(model, body.data),
                     navigation_state_hash(nav),
@@ -314,15 +445,53 @@ def main():
                             source_evidence_hash=hash_json(declaration),
                             affordance=affordance,
                             law=law,
+                            contact_reference_offset_m=offsets[index],
                         )
                         if index == 0:
                             for key in forecast.arrays:
                                 np.testing.assert_array_equal(forecast.arrays[key], gold[key][20:])
+                        if args.law_family == "coupled" and not any(offsets[index]):
+                            parent = next(
+                                r for r in pc["results"] if r["job"] == f"course{i}-full_teacher"
+                            )
+                            ancestor = parent["candidates"][law.feedback_index]
+                            with np.load(
+                                args.preceding_full_study / ancestor["artifact"], allow_pickle=False
+                            ) as archive:
+                                for key in forecast.arrays:
+                                    np.testing.assert_array_equal(
+                                        forecast.arrays[key], archive[key]
+                                    )
+                        if args.law_family == "coupled":
+                            parent = next(
+                                r for r in pc["results"] if r["job"] == f"course{i}-full_teacher"
+                            )
+                            historical_handoff = parent["candidates"][law.feedback_index]["report"][
+                                "handoff_frame"
+                            ]
+                            if forecast.report["handoff_frame"] != historical_handoff:
+                                raise ValueError("contact request changed the original entry path")
+                            if historical_handoff is not None:
+                                expected_geometry = next(
+                                    g["geometry"]
+                                    for g in geometry_admissions
+                                    if g["course_index"] == i
+                                    and g["law_index"] == law.feedback_index
+                                    and g.get("offset_root_m") == list(offsets[index])
+                                )
+                                if (
+                                    forecast.report["contact_reference_adaptation"]
+                                    != expected_geometry
+                                ):
+                                    raise ValueError(
+                                        "own forecast entry geometry differs from preflight"
+                                    )
                         artifact = args.output / f"{name}-candidate{index}.npz"
                         np.savez_compressed(artifact, **forecast.arrays)
                         row = dict(
                             index=index,
-                            name=law.name,
+                            name=names[index],
+                            contact_reference_offset_m=list(offsets[index]),
                             law=forecast.report["law"],
                             report=forecast.report,
                             score=score_full_entry(model, forecast.arrays),
@@ -337,7 +506,12 @@ def main():
                         candidates.append(row)
                         write_once(args.output / f"{name}-candidate{index}.json", row)
                         print(
-                            "FULL_ENTRY_CANDIDATE", name, index, law.name, row["score"], flush=True
+                            "FULL_ENTRY_CANDIDATE",
+                            name,
+                            index,
+                            names[index],
+                            row["score"],
+                            flush=True,
                         )
                     eligible = [r["index"] for r in candidates if r["score"]["qualified"]]
                     selected = (
@@ -371,6 +545,7 @@ def main():
                     source_evidence_hash=hash_json(declaration),
                     affordance=affordance,
                     law=laws[selected],
+                    contact_reference_offset_m=offsets[selected],
                 )
                 if selected_future is not None:
                     for key in suffix:
@@ -390,7 +565,8 @@ def main():
                     artifact_hash=digest(artifact),
                     candidates=candidates,
                     selected_index=selected,
-                    selected_name=laws[selected].name,
+                    selected_name=names[selected],
+                    selected_contact_reference_offset_m=list(offsets[selected]),
                     actual_score=score_full_entry(model, suffix),
                     no_eligible_candidate=bool(
                         candidates and not any(r["score"]["qualified"] for r in candidates)
@@ -413,6 +589,8 @@ def main():
                     report["actual_score"],
                     flush=True,
                 )
+                completed_actual_native_steps += 3000
+                current_body = current_forecaster = None
         final_pins = dict(pins)
         for historical in historical_declarations:
             final_pins.update(historical["input_file_hashes"])
@@ -438,7 +616,25 @@ def main():
         )
     except Exception as error:
         write_once(
-            args.output / "failure.json", dict(error=repr(error), promotion_authorized=False)
+            args.output / "failure.json",
+            dict(
+                error=repr(error),
+                completed_actual_native_steps=completed_actual_native_steps,
+                completed_forecast_native_steps=total_forecast,
+                incomplete_actual_attempted_native_steps=current_body.attempted_steps
+                if current_body is not None
+                else 0,
+                incomplete_actual_integrated_native_steps=current_body.integrated_steps
+                if current_body is not None
+                else 0,
+                incomplete_forecast_attempted_native_steps=current_forecaster.attempted_native_steps
+                if current_forecaster is not None
+                else 0,
+                incomplete_forecast_integrated_native_steps=current_forecaster.integrated_native_steps
+                if current_forecaster is not None
+                else 0,
+                promotion_authorized=False,
+            ),
         )
         raise
 

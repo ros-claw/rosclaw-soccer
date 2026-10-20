@@ -101,6 +101,35 @@ def feedback_entry_laws() -> list[EntryCommandLaw]:
     ]
 
 
+@dataclass(frozen=True)
+class EntryContactOption:
+    law: EntryCommandLaw
+    offset_root_m: tuple[float, float, float]
+
+    def __post_init__(self) -> None:
+        if (
+            self.law.feedback_index not in (0, 3, 4)
+            or self.law.held_command is not None
+            or type(self.offset_root_m) is not tuple
+            or self.offset_root_m not in ((0.0, 0.0, 0.0), (0.0, -0.025, -0.025))
+        ):
+            raise ValueError("fixed coupled command/reference option required")
+
+    @property
+    def name(self) -> str:
+        return self.law.name + ("__contact_lower" if any(self.offset_root_m) else "__contact_off")
+
+
+def coupled_entry_options() -> list[EntryContactOption]:
+    """Fixed3 existing entry laws x2 already-tested reference requests."""
+    laws = feedback_entry_laws()
+    return [
+        EntryContactOption(laws[i], offset)
+        for i in (0, 3, 4)
+        for offset in ((0.0, 0.0, 0.0), (0.0, -0.025, -0.025))
+    ]
+
+
 def _observation(
     nav: G1SonicNavigation, body: G1TargetEpisode, frame: int, command: tuple[float, float, float]
 ) -> TeamMotorObservation:
@@ -287,6 +316,7 @@ class FullEntryForecaster:
         source_evidence_hash: str,
         affordance: SkillEntryAffordance,
         law: EntryCommandLaw,
+        contact_reference_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> FullEntryForecast:
         if (
             self.failed
@@ -318,6 +348,7 @@ class FullEntryForecaster:
                 source_evidence_hash=source_evidence_hash,
                 affordance=affordance,
                 law=law,
+                contact_reference_offset_m=contact_reference_offset_m,
             )
             result = FullEntryForecast(
                 arrays,

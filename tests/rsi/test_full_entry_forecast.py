@@ -9,7 +9,9 @@ import pytest
 from rosclaw_soccer.rsi.ball_entry_teacher import SkillEntryAffordance, ball_entry_decision
 from rosclaw_soccer.rsi.full_entry_forecast import (
     EntryCommandLaw,
+    EntryContactOption,
     FullEntryForecaster,
+    coupled_entry_options,
     feedback_entry_laws,
     full_entry_laws,
     score_full_entry,
@@ -52,6 +54,65 @@ def test_feedback_bank_reacts_to_own_measured_velocity_after_frame40():
         == ball_entry_decision(q, v, frame=60, affordance=prior).command
     )
     assert all(law.command(q, v, frame=91, affordance=prior) == (0, 0, 0) for law in bank)
+
+
+def test_coupled_bank_has_six_explicit_options_and_original_anchor():
+    bank = coupled_entry_options()
+    assert len(bank) == 6 and len({o.name for o in bank}) == 6
+    assert [o.law.feedback_index for o in bank] == [0, 0, 3, 3, 4, 4]
+    assert [o.offset_root_m for o in bank] == [(0.0, 0.0, 0.0), (0.0, -0.025, -0.025)] * 3
+    assert bank[0].name == "nominal_feedback__contact_off"
+    with pytest.raises(ValueError, match="fixed coupled"):
+        EntryContactOption(feedback_entry_laws()[0], (0.0, 0.0, -0.03))
+    with pytest.raises(ValueError, match="fixed coupled"):
+        EntryContactOption(feedback_entry_laws()[1], (0.0, 0.0, 0.0))
+
+
+def test_contact_request_passed_to_owned_future_not_donor(monkeypatch):
+    from rosclaw_soccer.rsi import full_entry_forecast as module
+
+    q, v, prior = context()
+    body = SimpleNamespace(
+        failed=False,
+        next_frame=20,
+        record_all_ball_contacts=True,
+        model=object(),
+        data=object(),
+        kp=np.ones(29),
+        kd=np.ones(29),
+        attempted_steps=200,
+        integrated_steps=200,
+    )
+    branch = SimpleNamespace(attempted_steps=200, integrated_steps=200)
+    monkeypatch.setattr(module, "G1PDTorqueForecaster", lambda *a, **k: None)
+    monkeypatch.setattr(module, "integration_hash", lambda *a: "body")
+    monkeypatch.setattr(module, "navigation_state_hash", lambda *a: "nav")
+    monkeypatch.setattr(module, "body_fields_hash", lambda *a: "fields")
+    monkeypatch.setattr(module, "clone_navigation", lambda nav: object())
+    monkeypatch.setattr(module, "_clone_body", lambda original: branch)
+    poses = np.zeros((993, 36))
+
+    def suffix(controller, owned, **kwargs):
+        assert owned is branch and owned is not body
+        assert kwargs["contact_reference_offset_m"] == (0.0, -0.025, -0.025)
+        assert not np.shares_memory(kwargs["source_poses"], poses)
+        branch.attempted_steps += 2800
+        branch.integrated_steps += 2800
+        return {}, {}
+
+    monkeypatch.setattr(module, "run_entry_suffix", suffix)
+    result = FullEntryForecaster(world_hash="unused").forecast(
+        SimpleNamespace(_next_frame=20),
+        body,
+        model_root=Path("unused"),
+        source_poses=poses,
+        source_evidence_hash="unused",
+        affordance=prior,
+        law=feedback_entry_laws()[3],
+        contact_reference_offset_m=(0.0, -0.025, -0.025),
+    )
+    assert result.new_integrated_native_steps == result.new_attempted_native_steps == 2800
+    assert body.attempted_steps == body.integrated_steps == 200
 
 
 @pytest.mark.parametrize("index", [-1, 6, True, 1.5])
