@@ -1,6 +1,7 @@
 import pytest
 
 from rosclaw_soccer.rsi.velocity_command_protocol import (
+    ball_aware_checkpoint_protocol,
     command_protocol,
     require_same_command_protocol,
 )
@@ -37,3 +38,18 @@ def test_legacy_qualification_is_not_pelvis_qualification():
 def test_invalid_contract_rejected(point, gain):
     with pytest.raises(ValueError):
         command_protocol(point, gain)
+
+
+def test_first_ball_aware_report_omission_uses_bound_checkpoint_not_legacy_defaults():
+    from rosclaw_soccer.rsi.ball_aware_inputs import BALL_AWARE_ABI
+
+    report = dict(ball_aware_abi=BALL_AWARE_ABI, actor_observation_dim=177)
+    checkpoint = dict(report, **command_protocol("pelvis", 1.0))
+    assert ball_aware_checkpoint_protocol(report, checkpoint) == command_protocol("pelvis", 1.0)
+    for key, value in command_protocol("torso", 0.0).items():
+        with pytest.raises(ValueError, match="mismatch"):
+            ball_aware_checkpoint_protocol(dict(report, **{key: value}), checkpoint)
+    with pytest.raises(ValueError):
+        ball_aware_checkpoint_protocol(report, report)
+    with pytest.raises(ValueError):
+        ball_aware_checkpoint_protocol(dict(report, actor_observation_dim=168), checkpoint)

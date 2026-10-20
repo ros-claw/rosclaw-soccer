@@ -39,10 +39,12 @@ def main():
     if digest(course_path) != a.course_hash:
         raise ValueError("declared actual course receipt required")
     course = json.loads(course_path.read_text())
+    ball_aware = course["status"] == "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"
     stable = course["status"] in (
         "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
         "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
         "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
+        "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
     )
     position_gain = course.get("velocity_command_position_feedback_gain", 0.0)
     if position_gain not in (0.0, 1.0):
@@ -57,6 +59,7 @@ def main():
             "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
             "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
             "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
+            "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
         )
         or course["new_optimizer_steps"] <= 0
         or not course["weights_only_checkpoint_reload"]
@@ -74,6 +77,15 @@ def main():
         for source in directory.rglob("*.py"):
             pins[str(source)] = digest(source)
     check_pins(pins)
+    if ball_aware:
+        import torch
+
+        from rosclaw_soccer.rsi.velocity_command_protocol import ball_aware_checkpoint_protocol
+
+        metadata = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        protocol = ball_aware_checkpoint_protocol(course, metadata)
+        command_point = protocol["velocity_command_anatomical_point"]
+        position_gain = protocol["velocity_command_position_feedback_gain"]
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
@@ -86,6 +98,9 @@ def main():
             reset_seeds=[1501, 1502] if a.control == "neural" else [1601],
             first_episode_only=True,
             stable_prior_rehearsal=stable,
+            ball_aware=ball_aware,
+            actor_observation_dim=177 if ball_aware else 168 if stable else 166,
+            command_protocol_read_from_hash_bound_checkpoint=ball_aware,
             velocity_command_position_feedback_gain=position_gain,
             velocity_command_anatomical_point=command_point,
             mode="SIM_ONLY",
@@ -146,6 +161,7 @@ def main():
             for arm, state in arms:
                 rows = []
                 cfg_factory = make_motion_training_cfg
+                env_class = ExplicitBoundaryMotionEnv
                 cfg_extra = {}
                 if stable:
                     from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
@@ -172,6 +188,15 @@ def main():
                         else "reference_velocity",
                         command_point=command_point,
                     )
+                    if ball_aware:
+                        from scripts.rsi_mjlab_ball_aware_backend import (
+                            BallAwareMotionEnv,
+                            make_ball_aware_training_cfg,
+                        )
+
+                        cfg_factory = make_ball_aware_training_cfg
+                        env_class = BallAwareMotionEnv
+                        cfg_extra["football_rewards"] = True
                 cfg = cfg_factory(
                     motion_dir=a.reference_root / "src/assets/soccer/motions/shooter",
                     num_envs=n,
@@ -184,7 +209,7 @@ def main():
                 # the template's "start" mode only resets time and is NOT appropriate.
                 cfg.commands["motion"].sampling_mode = "uniform"
                 cfg.sim.nan_guard.enabled = True
-                env = ExplicitBoundaryMotionEnv(cfg=cfg, device="cuda:0", render_mode=None)
+                env = env_class(cfg=cfg, device="cuda:0", render_mode=None)
                 agent_cfg = unitree_g1_soccer_ppo_runner_cfg()
                 policy, loaded_state = None, None
                 if a.control == "neural":
@@ -197,7 +222,12 @@ def main():
                         # with scalar std; reconstruct that declared class only.
                         actor_config["distribution_cfg"]["class_name"] = "GaussianDistribution"
                         before_obs, _ = env.reset(seed=seed)
-                        policy = VelocityPriorMLPModel(
+                        model_class = VelocityPriorMLPModel
+                        if ball_aware:
+                            from scripts.rsi_mjlab_ball_aware_rl import BallAwarePriorMLPModel
+
+                            model_class = BallAwarePriorMLPModel
+                        policy = model_class(
                             TensorDict(before_obs, batch_size=[n]),
                             {"actor": ["actor"]},
                             "actor",
@@ -280,6 +310,14 @@ def main():
                             .copy(),
                             reference_joint_velocity=motion.joint_vel.cpu().numpy().copy(),
                         )
+                        if ball_aware:
+                            raw["goal_target_world"] = (
+                                (motion.target_destination_pos + env.scene.env_origins)
+                                .cpu()
+                                .numpy()
+                                .copy()
+                            )
+                            raw["expected_kicking_foot"] = motion.kick_leg.cpu().numpy().copy()
                         if a.control == "neural":
                             actions = policy(
                                 TensorDict(obs, batch_size=[n]), stochastic_output=False
@@ -352,6 +390,18 @@ def main():
                             .numpy()
                             .copy(),
                         )
+                        if ball_aware:
+                            physical = env.physical_step_data()
+                            if not np.array_equal(
+                                physical["terminal_capture_mask"].cpu().numpy(),
+                                (term | trunc).cpu().numpy(),
+                            ):
+                                raise ValueError(
+                                    "terminal actual states/contact histories must precede reset"
+                                )
+                            raw.update(
+                                {key: value.cpu().numpy().copy() for key, value in physical.items()}
+                            )
                         score.observe(
                             raw["reward"],
                             raw["terminated"],
@@ -407,10 +457,63 @@ def main():
                             for r in rows[: int(count)]
                         ]
                     )
+                    if ball_aware:
+                        # Include the actual final physical position, never the
+                        # post-reset position that happens to share its tick.
+                        ball_q = np.concatenate(
+                            (
+                                ball_q[:1],
+                                np.asarray(
+                                    [
+                                        r["qpos_after"][world, layout.bq : layout.bq + 3]
+                                        for r in rows[: int(count)]
+                                    ]
+                                ),
+                            ),
+                            axis=0,
+                        )
                     ball_motion.append(
                         float(np.linalg.norm(ball_q[:, :2] - ball_q[0, :2], axis=1).max())
                     )
                 summary["first_episode_ball_max_xy_displacement_m"] = ball_motion
+                if ball_aware:
+                    intended_contact, intended_first, sampled_speed = [], [], []
+                    for world, count in enumerate(score.steps):
+                        force = np.asarray(
+                            [r["foot_force_history"][world] for r in rows[: int(count)]]
+                        ).reshape(-1, 2)
+                        expected_side = int(rows[0]["expected_kicking_foot"][world])
+                        hit = force > 10.0
+                        intended = np.flatnonzero(hit[:, expected_side])
+                        any_hit = np.flatnonzero(hit.any(axis=1))
+                        intended_contact.append(bool(len(intended)))
+                        intended_first.append(
+                            bool(
+                                len(any_hit)
+                                and hit[any_hit[0]].sum() == 1
+                                and hit[any_hit[0], expected_side]
+                            )
+                        )
+                        speed = np.linalg.norm(
+                            np.asarray(
+                                [
+                                    r["qvel_after"][world, layout.bv : layout.bv + 3]
+                                    for r in rows[: int(count)]
+                                ]
+                            ),
+                            axis=1,
+                        )
+                        sampled_speed.append(
+                            float(speed[intended[0] // 10 :].max()) if len(intended) else None
+                        )
+                    summary.update(
+                        intended_foot_contact_detected=intended_contact,
+                        intended_foot_first=intended_first,
+                        sampled_max_ball_speed_after_intended_contact_mps=sampled_speed,
+                        force_threshold_n=10.0,
+                        terminal_physical_state_preserved=True,
+                        later_speed_is_not_causal_kick_attribution=True,
+                    )
                 write_once(a.output / f"{source_index}-{arm}.json", summary)
                 summaries.append(summary)
                 print(json.dumps(summary, allow_nan=False), flush=True)
@@ -422,7 +525,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "MJLAB_PAIRED_DEV_MOTION_TRACKING_NOT_FOOTBALL_QUALIFIED"
+                    "BALL_AWARE_PAIRED_DEV_NOT_FOOTBALL_QUALIFIED"
+                    if ball_aware
+                    else "MJLAB_PAIRED_DEV_MOTION_TRACKING_NOT_FOOTBALL_QUALIFIED"
                     if a.control == "neural"
                     else "MJLAB_REFERENCE_PD_AUTHORITY_NOT_NEURAL_LEARNING"
                 ),
@@ -438,6 +543,8 @@ def main():
                 public_source_development_not_fresh_world=True,
                 evaluated_source_split="dev" if a.control == "neural" else "train",
                 stable_prior_rehearsal=stable,
+                ball_aware=ball_aware,
+                actor_observation_dim=177 if ball_aware else 168 if stable else 166,
                 velocity_command_position_feedback_gain=position_gain,
                 velocity_command_anatomical_point=command_point,
                 football_skill_proven=False,

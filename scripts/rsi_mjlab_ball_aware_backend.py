@@ -76,7 +76,53 @@ def intended_foot_proximity(env):
 
 
 class BallAwareMotionEnv(ExplicitBoundaryMotionEnv):
+    def step(self, action):
+        self.terminal_capture = None
+        self._capture_terminal = True
+        try:
+            return super().step(action)
+        finally:
+            self._capture_terminal = False
+
+    def _physical_snapshot(self):
+        return dict(
+            qpos_after=self.sim.data.qpos.clone(),
+            qvel_after=self.sim.data.qvel.clone(),
+            foot_force_history=actual_foot_force_history(self).clone(),
+            processed_joint_target=self.action_manager.get_term(
+                "joint_pos"
+            )._processed_actions.clone(),
+            position_target_after_step=self.command_manager.get_term(
+                "motion"
+            ).robot.data.joint_pos_target.clone(),
+            actuator_force_after=self.sim.data.actuator_force.clone(),
+            reference_exhausted=self.termination_manager.get_term("reference_exhausted").clone(),
+        )
+
+    def physical_step_data(self):
+        """Read-only actual final state, including BEFORE-reset terminal worlds."""
+        result = self._physical_snapshot()
+        mask = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        terminal = getattr(self, "terminal_capture", None)
+        if terminal is not None:
+            ids = terminal["world_ids"]
+            for key in result:
+                result[key][ids] = terminal[key]
+            mask[ids] = True
+        result["terminal_capture_mask"] = mask
+        return result
+
     def _reset_idx(self, env_ids=None):
+        if getattr(self, "_capture_terminal", False):
+            ids = (
+                env_ids if env_ids is not None else torch.arange(self.num_envs, device=self.device)
+            )
+            if getattr(self, "terminal_capture", None) is not None:
+                raise ValueError("one explicit terminal reset batch per physical control required")
+            self.terminal_capture = dict(
+                world_ids=ids.clone(),
+                **{key: value[ids].clone() for key, value in self._physical_snapshot().items()},
+            )
         super()._reset_idx(env_ids)
         credit = getattr(self, "_identity_kick_credit", None)
         if credit is not None:

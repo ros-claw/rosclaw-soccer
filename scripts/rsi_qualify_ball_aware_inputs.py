@@ -101,7 +101,6 @@ def main():
         from scripts.rsi_ball_aware_sensor_calibration import calibrate
         from scripts.rsi_mjlab_ball_aware_backend import (
             BallAwareMotionEnv,
-            actual_foot_force_history,
             make_ball_aware_training_cfg,
         )
 
@@ -208,6 +207,11 @@ def main():
             obs, reward, terminated, truncated, _ = env.step(action)
             steps += 80
             term, trunc = terminated.cpu().numpy(), truncated.cpu().numpy()
+            physical = env.physical_step_data()
+            if not np.array_equal(physical["terminal_capture_mask"].cpu().numpy(), term | trunc):
+                raise ValueError(
+                    "all and only terminal physical worlds must be preserved before reset"
+                )
             completed |= before_active & trunc & exhaustion & ~term
             failed |= before_active & term
             active &= ~(term | trunc)
@@ -222,7 +226,7 @@ def main():
                 reward=reward.cpu().numpy(),
                 terminated=term,
                 truncated=trunc,
-                foot_force_history=actual_foot_force_history(env).cpu().numpy(),
+                **{key: value.cpu().numpy().copy() for key, value in physical.items()},
             )
             if hasattr(env, "_identity_kick_credit"):
                 row.update(

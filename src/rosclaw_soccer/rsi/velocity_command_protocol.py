@@ -26,3 +26,26 @@ def require_same_command_protocol(report: dict[str, Any], point: str, gain: floa
     )
     if actual != expected:
         raise ValueError("online course requires a smoke of the same command protocol")
+
+
+def ball_aware_checkpoint_protocol(
+    report: dict[str, Any], checkpoint: dict[str, Any]
+) -> dict[str, Any]:
+    """The first 177D report omitted protocol fields; never default it to torso.
+
+    Caller must authenticate the checkpoint bytes before this metadata check.
+    The old immutable report is not rewritten or retroactively promoted.
+    """
+    from rosclaw_soccer.rsi.ball_aware_inputs import BALL_AWARE_ABI
+
+    if any(
+        source.get("ball_aware_abi") != BALL_AWARE_ABI or source.get("actor_observation_dim") != 177
+        for source in (report, checkpoint)
+    ):
+        raise ValueError("explicit matching ball-aware177 ABI required")
+    require_same_command_protocol(checkpoint, "pelvis", 1.0)
+    result = command_protocol("pelvis", 1.0)
+    for key, value in result.items():
+        if key in report and report[key] != value:
+            raise ValueError("report/checkpoint command protocol mismatch")
+    return result
