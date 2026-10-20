@@ -19,3 +19,7 @@
 11项门逻辑测试与相关预算/生成/复核边界合计67项通过；5/16、6/16拒绝，净增但有旧成功丢失/新增不安全仍拒绝，未知/重复/不完整条件拒绝。当前CEM成绩以生产者和独立复核后继证据为准，本文不预先声明队列已启动或门已通过。
 
 这使“当前实验结束→固定已审查的下一验证阶段”不必等待LLM即时响应；但它不等于Agent永远在线，也不使只读观察器获得科研或硬件权限。更长远的研究方向仍由持续Goal结合实际证据推进。
+
+## 实际排队证据
+
+门源码封存 `ca58188d0af26c01f97ec31c9758a16eb120ccea`，实际服务 `rosclaw-response-cem-review-gate-20261020.service` 已创建。systemd作业号12589592，排入时状态为`start waiting`，`MainPID=0`，`After=`明确包含四个既有生产者；不是一个未落实的计划，也不是已经执行完的复核。只读观察器已实际识别`QUEUED_DECLARED_JOB / WAITING_FOR_DECLARED_PREDECESSOR`。门输出预定为外部 `rsi-response-cem-review-dispatch-20261020`；若通过CPU开销门，实际复核名为 `rosclaw-response-cem-review-20261020-c{0,1,2,3}.service`，目录为该门输出下的`review-c{0,1,2,3}`。当前是否运行/通过须读取实际终态，不能由这段排队记录推断。
