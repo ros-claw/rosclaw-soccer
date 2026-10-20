@@ -10,11 +10,15 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--study", choices=("response_cem", "matched_entry"), default="response_cem"
+        "--study",
+        choices=("response_cem", "matched_entry", "bilateral_entry"),
+        default="response_cem",
     )
     parser.add_argument("--prior-gate", type=Path)
     parser.add_argument("--expected-prior-gate-hash")
     parser.add_argument("--prior-gate-unit")
+    parser.add_argument("--bilateral-audit", type=Path)
+    parser.add_argument("--expected-bilateral-audit-hash")
     for name in ("bank", "world", "motion-csv", "model-root", "core-source", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     for name in ("expected-head", "expected-bank-hash", "expected-rejected-head"):
@@ -42,6 +46,7 @@ def main():
         "rsi_probe_contact_geometry.py",
         "rsi_native_context_recovery_common.py",
         "rsi_matched_entry_builder.py",
+        "rsi_bilateral_entry_builder.py",
     ):
         if (
             subprocess.check_output(["git", "show", f"{head}:scripts/{name}"])
@@ -56,13 +61,13 @@ def main():
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_response_cem_admission import admit
 
-    if args.study == "matched_entry" and any(
+    if args.study != "response_cem" and any(
         x is None for x in (args.prior_gate, args.expected_prior_gate_hash, args.prior_gate_unit)
     ):
         raise ValueError("matched entry requires the closed rejected CEM gate")
     bank, courses, previous, pins = admit(args)
     schema = "soccer.rsi.bounded_response_cem16.v1"
-    if args.study == "matched_entry":
+    if args.study != "response_cem":
         if any(
             x is None
             for x in (args.prior_gate, args.expected_prior_gate_hash, args.prior_gate_unit)
@@ -94,8 +99,13 @@ def main():
         ):
             raise ValueError("prior CEM gate must be closed and authenticated")
         gate = json.loads((args.prior_gate / "complete.json").read_text())
+        expected_status = (
+            "CEM_FAMILY_REJECTED_STOP"
+            if args.study == "matched_entry"
+            else "MATCHED_ENTRY_FAMILY_REJECTED_STOP"
+        )
         if (
-            gate["status"] != "CEM_FAMILY_REJECTED_STOP"
+            gate["status"] != expected_status
             or gate["producer_claimed_qualified"] != 6
             or gate["launched_reviews"]
         ):
@@ -104,9 +114,43 @@ def main():
         check_pins(gd["input_file_hashes"])
         pins.update(gd["input_file_hashes"])
         pins.update({str(p): digest(p) for p in args.prior_gate.iterdir() if p.is_file()})
-        protocol = Path.cwd() / "docs/rsi/matched-entry-bridge-preregister-20261020.zh-CN.md"
+        protocol = (
+            Path.cwd()
+            / "docs/rsi"
+            / (
+                "matched-entry-bridge-preregister-20261020.zh-CN.md"
+                if args.study == "matched_entry"
+                else "bilateral-entry-preregister-20261020.zh-CN.md"
+            )
+        )
         pins[str(protocol)] = digest(protocol)
         schema = "soccer.rsi.matched_entry_bridge16.v1"
+        if args.study == "bilateral_entry":
+            if args.bilateral_audit is None or args.expected_bilateral_audit_hash is None:
+                raise ValueError("bound compiled-asymmetry FK audit required")
+            if digest(args.bilateral_audit / "complete.json") != args.expected_bilateral_audit_hash:
+                raise ValueError("bilateral audit identity differs")
+            audit = json.loads((args.bilateral_audit / "complete.json").read_text())
+            if (
+                audit["named_joint_mapping_consistent_with_compiled_asymmetry"] is not True
+                or audit["mirrored_native_limit_violations"]
+                or audit["source_frames"] != 481
+                or audit["bilateral_body_pairs"] != 20
+                or audit["dynamic_tracking_qualified"] is not False
+                or audit["maximum_body_rotation_reflection_error"] > 1e-6
+                or audit["maximum_position_error_unexplained_by_compiled_shoulder_asymmetry_m"]
+                > 1e-6
+            ):
+                raise ValueError("named mirror mapping must explain actual native geometry")
+            ad = json.loads((args.bilateral_audit / "declaration.json").read_text())
+            check_pins(ad["input_file_hashes"])
+            if ad["input_file_hashes"].get(str(args.world)) != digest(args.world) or ad[
+                "input_file_hashes"
+            ].get(str(args.motion_csv)) != digest(args.motion_csv):
+                raise ValueError("audit must bind this unchanged body and motion source")
+            pins.update(ad["input_file_hashes"])
+            pins.update({str(p): digest(p) for p in args.bilateral_audit.iterdir() if p.is_file()})
+            schema = "soccer.rsi.bilateral_entry16.v1"
     if not args.preflight_only:
         if digest(args.preflight / "complete.json") != args.expected_preflight_hash:
             raise ValueError("same-source preflight identity differs")
@@ -151,7 +195,7 @@ def main():
         promotion_authorized=False,
         hardware_authorized=False,
     )
-    if args.study == "matched_entry":
+    if args.study != "response_cem":
         for key in (
             "iterations_per_law",
             "new_samples_per_iteration",
@@ -173,6 +217,27 @@ def main():
             source_playback_unstretched=True,
             publicity_license_authorized=False,
         )
+        if args.study == "bilateral_entry":
+            for key in (
+                "matched_modes",
+                "entry_interval_domain",
+                "modified_joint_count",
+                "maximum_joint_reference_correction_rad",
+                "new_modes_zero_C_only",
+            ):
+                declaration.pop(key)
+            declaration.update(
+                maximum_candidates_per_course=9,
+                full_bank_native_upper_bound=451200,
+                original_right_reference_anchors=6,
+                new_left_reference_options=3,
+                left_zero_C_only=True,
+                entry_intervals=50,
+                reference_reflection_not_physical_state_reflection=True,
+                original_strict_whole_body_mirror_gate_remains_failed=True,
+                known_compiled_shoulder_asymmetry_m=0.00001,
+                actual_contact_side_must_be_observed=True,
+            )
     write_once(args.output / "declaration.json", declaration)
     results = []
     try:
@@ -221,7 +286,7 @@ def main():
             from scripts.rsi_response_cem_builder import build_candidates
 
             builder = build_candidates
-        else:
+        elif args.study == "matched_entry":
             import mujoco
 
             from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
@@ -233,6 +298,14 @@ def main():
             builder = make_builder(poses, limits, hash_json(declaration))
             kwargs = dict(
                 forecast_budget=12, final_choice=choose_matched_candidate, label="MATCHED_ENTRY"
+            )
+        else:
+            from rosclaw_soccer.rsi.bilateral_entry import choose_bilateral_candidate
+            from scripts.rsi_bilateral_entry_builder import build_candidates
+
+            builder = build_candidates
+            kwargs = dict(
+                forecast_budget=9, final_choice=choose_bilateral_candidate, label="BILATERAL_ENTRY"
             )
         for item in courses:
             if item.parent_index == args.cluster:
@@ -251,6 +324,8 @@ def main():
         expected = (
             (lambda r: len(r["candidates"]) == 30 and len(r["proposals"]) == 6)
             if args.study == "response_cem"
+            else (lambda r: len(r["candidates"]) == 9 and len(r["proposals"]) == 3)
+            if args.study == "bilateral_entry"
             else (
                 lambda r: (
                     6 <= len(r["candidates"]) <= 12

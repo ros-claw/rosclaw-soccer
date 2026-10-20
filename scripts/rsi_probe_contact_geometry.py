@@ -113,14 +113,31 @@ def run_course(
         laws = feedback_entry_laws()
         evidence_hash = hash_json(json.loads((args.output / "declaration.json").read_text()))
 
-        def predict(law_index, offset, proposal=None, *, entry_reference_mode="legacy"):
+        def predict(
+            law_index,
+            offset,
+            proposal=None,
+            *,
+            entry_reference_mode="legacy",
+            contact_reference_foot="right",
+        ):
+            context_report = None
+            reference_poses, reference_affordance = poses, affordance
+            if contact_reference_foot != "right":
+                from rosclaw_soccer.rsi.bilateral_entry import contact_foot_context
+
+                if offset != (0.0, 0.0, 0.0) or entry_reference_mode != "legacy":
+                    raise ValueError("left reference permits zero C and original entry timing only")
+                reference_poses, reference_affordance, context_report = contact_foot_context(
+                    poses, affordance, contact_reference_foot
+                )
             future = forecaster.forecast(
                 nav,
                 body,
                 model_root=args.model_root,
-                source_poses=poses,
+                source_poses=reference_poses,
                 source_evidence_hash=evidence_hash,
-                affordance=affordance,
+                affordance=reference_affordance,
                 law=laws[law_index],
                 contact_reference_offset_m=offset,
                 **(
@@ -156,6 +173,14 @@ def run_course(
             )
             if entry_reference_mode != "legacy":
                 row["entry_reference_mode"] = entry_reference_mode
+            if context_report is not None:
+                from rosclaw_soccer.rsi.bilateral_entry import observed_contact_foot
+
+                row["contact_reference_foot"] = contact_reference_foot
+                row["contact_foot_context"] = context_report
+                row["observed_contact_foot"] = observed_contact_foot(
+                    model, future.arrays, global_start_frame=20
+                )
             write_once(folder / f"candidate{index}.json", row)
             candidates.append(row)
             print(
@@ -198,6 +223,15 @@ def run_course(
         else:
             selected = final_choice(candidates)
         chosen = candidates[selected]
+        actual_poses, actual_affordance = poses, affordance
+        if chosen.get("contact_reference_foot", "right") != "right":
+            from rosclaw_soccer.rsi.bilateral_entry import contact_foot_context
+
+            actual_poses, actual_affordance, actual_context = contact_foot_context(
+                poses, affordance, chosen["contact_reference_foot"]
+            )
+            if actual_context != chosen["contact_foot_context"]:
+                raise ValueError("actual must reconstruct its own declared foot context")
         with np.load(folder / chosen["artifact"], allow_pickle=False) as a:
             selected_future = {k: a[k] for k in a.files}
         if (
@@ -209,9 +243,9 @@ def run_course(
             nav,
             body,
             model_root=args.model_root,
-            source_poses=poses,
+            source_poses=actual_poses,
             source_evidence_hash=evidence_hash,
-            affordance=affordance,
+            affordance=actual_affordance,
             law=laws[chosen["law_index"]],
             contact_reference_offset_m=tuple(chosen["offset_root_m"]),
             step_observer=actual_rows.append,
@@ -259,6 +293,13 @@ def run_course(
             promotion_authorized=False,
             hardware_authorized=False,
         )
+        if label == "BILATERAL_ENTRY":
+            from rosclaw_soccer.rsi.bilateral_entry import observed_contact_foot
+
+            result["selected_reference_foot"] = chosen.get("contact_reference_foot", "right")
+            result["observed_contact_foot"] = observed_contact_foot(
+                model, arrays, global_start_frame=0
+            )
         check_pins(pins)
         write_once(folder / "complete.json", result)
         print(
