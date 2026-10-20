@@ -11,6 +11,7 @@ from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
     MotionLearningBudget,
     motion_names_for_pattern,
     require_completed_motion_smoke,
+    require_completed_stable_motion_smoke,
 )
 
 
@@ -111,3 +112,59 @@ def test_course_does_not_unlock_from_incomplete_or_promoted_smoke(key, value):
     report[key] = value
     with pytest.raises(ValueError):
         require_completed_motion_smoke(report)
+
+
+def stable_smoke():
+    report = completed_smoke()
+    report.update(
+        status="MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+        stable_prior_rehearsal=True,
+        iterations=2,
+        num_envs=32,
+        seed=501,
+        new_optimizer_steps=42,
+        optimizer_counts=[dict(attempted=42, completed=42)],
+        native_rehearsal=dict(
+            bank_hash="sha256:" + "a" * 64,
+            attempted_updates=2,
+            updates=2,
+            batch_size=256,
+            rows=512,
+            weight=1.0,
+        ),
+    )
+    return report
+
+
+def test_stable_course_requires_its_own_smoke_not_old_random_policy():
+    require_completed_stable_motion_smoke(stable_smoke())
+    with pytest.raises(ValueError):
+        require_completed_stable_motion_smoke(completed_smoke())
+    with pytest.raises(ValueError):
+        require_completed_motion_smoke(stable_smoke())
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("updates", 1),
+        ("attempted_updates", 3),
+        ("rows", 511),
+        ("batch_size", 128),
+        ("weight", 0),
+        ("bank_hash", "unbound"),
+    ],
+)
+def test_stable_course_rejects_incomplete_rehearsal(key, value):
+    report = stable_smoke()
+    report["native_rehearsal"][key] = value
+    with pytest.raises(ValueError):
+        require_completed_stable_motion_smoke(report)
+
+
+@pytest.mark.parametrize("missing", [None, [], "passed"])
+def test_missing_rehearsal_fails_closed(missing):
+    report = stable_smoke()
+    report["native_rehearsal"] = missing
+    with pytest.raises(ValueError):
+        require_completed_stable_motion_smoke(report)

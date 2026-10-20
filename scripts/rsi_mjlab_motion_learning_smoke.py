@@ -64,10 +64,20 @@ def main():
         "stable-pilot-hash",
     ):
         p.add_argument("--" + name)
+    for name in ("stable-evaluation-root", "stable-retention-root"):
+        p.add_argument("--" + name, type=Path)
+    for name in (
+        "stable-evaluation-unit",
+        "stable-evaluation-hash",
+        "stable-retention-unit",
+        "stable-retention-hash",
+    ):
+        p.add_argument("--" + name)
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
         MotionLearningBudget,
         require_completed_motion_smoke,
+        require_completed_stable_motion_smoke,
     )
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
@@ -92,8 +102,6 @@ def main():
             raise ValueError(
                 "complete immutable stable prior and physical pilot prerequisites required"
             )
-        if a.mode != "smoke":
-            raise ValueError("stable-prior first learner is a two-iteration smoke only")
         for root, unit, expected in (
             (a.stable_prior_root, a.stable_prior_unit, a.stable_prior_hash),
             (a.stable_pilot_root, a.stable_pilot_unit, a.stable_pilot_hash),
@@ -124,7 +132,56 @@ def main():
         if digest(a.prerequisite_smoke / "complete.json") != a.prerequisite_hash:
             raise ValueError("prerequisite receipt hash differs")
         prerequisite = json.loads((a.prerequisite_smoke / "complete.json").read_text())
-        require_completed_motion_smoke(prerequisite)
+        if stable:
+            require_completed_stable_motion_smoke(prerequisite)
+            for root, unit, expected, kind in (
+                (
+                    a.stable_evaluation_root,
+                    a.stable_evaluation_unit,
+                    a.stable_evaluation_hash,
+                    "evaluation",
+                ),
+                (
+                    a.stable_retention_root,
+                    a.stable_retention_unit,
+                    a.stable_retention_hash,
+                    "retention",
+                ),
+            ):
+                if not all((root, unit, expected)):
+                    raise ValueError(
+                        "stable course requires actual paired DEV and native retention"
+                    )
+                wait_for_terminal_collection(unit)
+                if digest(root / "complete.json") != expected:
+                    raise ValueError("stable course physical prerequisite receipt differs")
+                gate = json.loads((root / "complete.json").read_text())
+                if kind == "evaluation":
+                    if (
+                        gate["status"] != "MJLAB_PAIRED_DEV_MOTION_TRACKING_NOT_FOOTBALL_QUALIFIED"
+                        or not gate["stable_prior_rehearsal"]
+                        or not gate["all_initial_states_paired_exact"]
+                        or any(r["completed_count"] != 32 for r in gate["results"])
+                        or gate["input_file_hashes"].get(
+                            str(a.prerequisite_smoke / "complete.json")
+                        )
+                        != a.prerequisite_hash
+                    ):
+                        raise ValueError(
+                            "same learned checkpoint must retain first-episode DEV stability"
+                        )
+                elif (
+                    gate["status"] != "LEARNED_PRIOR_NATIVE_RETENTION_NOT_FOOTBALL_QUALIFIED"
+                    or gate["learned_checkpoint_arm"] != "final"
+                    or gate["native_steps"] != 24000
+                    or not gate["all_four_independent_full_repeats_exact"]
+                    or any(not r["command_response_research_gate"] for r in gate["results"])
+                    or gate["input_file_hashes"].get(str(a.prerequisite_smoke / "complete.json"))
+                    != a.prerequisite_hash
+                ):
+                    raise ValueError("same learned checkpoint must pass actual native retention")
+        else:
+            require_completed_motion_smoke(prerequisite)
 
     if (
         a.output.exists()
@@ -164,6 +221,15 @@ def main():
             pins[str(folder / "native300.npz")] = case_receipt["raw_hash"]
     if prerequisite is not None:
         pins[str(a.prerequisite_smoke / "complete.json")] = a.prerequisite_hash
+        if stable:
+            pins[str(a.prerequisite_smoke / f"learner-update{prerequisite['iterations']}.pt")] = (
+                prerequisite["checkpoint_hash"]
+            )
+            for root, expected in (
+                (a.stable_evaluation_root, a.stable_evaluation_hash),
+                (a.stable_retention_root, a.stable_retention_hash),
+            ):
+                pins[str(root / "complete.json")] = expected
     pins[str(a.dataset_review / "complete.json")] = a.expected_dataset_hash
     pins.update(
         {
@@ -211,7 +277,11 @@ def main():
             "separate explicitly pinned training stack required, not old native environment"
         )
     a.output.mkdir(parents=True)
-    if stable:
+    rehearsal_path = a.output / "native-rehearsal1200.npz"
+    if stable and prerequisite is not None:
+        rehearsal_path = a.prerequisite_smoke / "native-rehearsal1200.npz"
+        pins[str(rehearsal_path)] = prerequisite["native_rehearsal"]["bank_hash"]
+    if stable and prerequisite is None:
         import numpy as np
 
         rehearsal_observations = []
@@ -223,13 +293,11 @@ def main():
                 rehearsal_observations.append(raw["observation"].copy())
                 rehearsal_actions.append(raw["action"].copy())
         np.savez_compressed(
-            a.output / "native-rehearsal1200.npz",
+            rehearsal_path,
             observation=np.concatenate(rehearsal_observations),
             action=np.concatenate(rehearsal_actions),
         )
-        pins[str(a.output / "native-rehearsal1200.npz")] = digest(
-            a.output / "native-rehearsal1200.npz"
-        )
+        pins[str(rehearsal_path)] = digest(rehearsal_path)
     write_once(
         a.output / "declaration.json",
         dict(
@@ -254,6 +322,8 @@ def main():
             rehearsal_batch_size=256 if stable else 0,
             learning_rate=1e-4 if stable else 1e-3,
             initial_action_std=0.1 if stable else 1.0,
+            resumes_algorithm_weights_optimizer_and_rehearsal=stable and prerequisite is not None,
+            physics_episode_state_restored=False,
             publication_license_cleared=False,
             cpu_agreement_and_skill_validation_not_yet_proven=True,
             hardware_authorized=False,
@@ -402,8 +472,8 @@ def main():
                 prior_checkpoint_hash=prior["checkpoint_hash"],
             )
             runner_cfg["algorithm"].update(
-                rehearsal_path=str(a.output / "native-rehearsal1200.npz"),
-                rehearsal_hash=pins[str(a.output / "native-rehearsal1200.npz")],
+                rehearsal_path=str(rehearsal_path),
+                rehearsal_hash=pins[str(rehearsal_path)],
                 rehearsal_weight=1.0,
                 rehearsal_batch_size=256,
             )
@@ -425,7 +495,18 @@ def main():
             optimizer_ids = {id(p) for g in runner.alg.optimizer.param_groups for p in g["params"]}
             if not all(id(p) in optimizer_ids for p in runner.alg.actor.mlp.parameters()):
                 raise ValueError("optimizer must own actual initialized actor parameters")
+        prior_iterations = 0
+        if stable and prerequisite is not None:
+            previous = torch.load(
+                a.prerequisite_smoke / f"learner-update{prerequisite['iterations']}.pt",
+                map_location="cuda:0",
+                weights_only=True,
+            )
+            runner.alg.load(previous["algorithm"], None, True)
+            prior_iterations = previous["iteration"]
+            runner.current_learning_iteration = prior_iterations
         start_state = runner.alg.save()
+        initial_rehearsal_updates = start_state.get("native_rehearsal", {}).get("updates", 0)
         actor0 = cloned_tensors(start_state["actor_state_dict"])
         critic0 = cloned_tensors(start_state["critic_state_dict"])
         optimizers = [o for o in vars(runner.alg).values() if isinstance(o, torch.optim.Optimizer)]
@@ -450,9 +531,10 @@ def main():
         torch.cuda.synchronize()
         final_state = runner.alg.save()
         if stable and (
-            runner.alg.rehearsal_updates != budget.iterations
-            or runner.alg.rehearsal_attempted_updates != budget.iterations
-            or runner.alg.rehearsal_rows != budget.iterations * 256
+            runner.alg.rehearsal_updates != initial_rehearsal_updates + budget.iterations
+            or runner.alg.rehearsal_attempted_updates
+            != initial_rehearsal_updates + budget.iterations
+            or runner.alg.rehearsal_rows != (initial_rehearsal_updates + budget.iterations) * 256
             or torch.count_nonzero(runner.alg.actor.mlp.mlp[0].weight[:, 98:]) == 0
             or not torch.equal(
                 actor0["mlp.prior_mean"],
@@ -487,7 +569,9 @@ def main():
             algorithm=final_state,
             initial_actor_state_dict=actor0,
             initial_critic_state_dict=critic0,
-            iteration=budget.iterations,
+            iteration=prior_iterations + budget.iterations,
+            iterations_this_stage=budget.iterations,
+            resumed_from_iterations=prior_iterations,
             torch_rng=torch.get_rng_state(),
             cuda_rng=torch.cuda.get_rng_state_all(),
             python_rng=random.getstate(),
@@ -521,7 +605,11 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+                    (
+                        "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+                        if budget.mode == "smoke"
+                        else "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED"
+                    )
                     if stable
                     else (
                         "MJLAB_MOTION_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"

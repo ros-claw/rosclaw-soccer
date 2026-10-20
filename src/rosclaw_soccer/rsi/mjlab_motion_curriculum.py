@@ -111,3 +111,36 @@ def require_completed_motion_smoke(report: dict[str, Any]) -> None:
         )
     ):
         raise ValueError("safe checkpoint and explicit non-promotion scope required")
+
+
+def require_completed_stable_motion_smoke(report: dict[str, Any]) -> None:
+    """Different protocol: never inherit a from-scratch smoke certificate."""
+    if report.get("status") != "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED":
+        raise ValueError("actual stable-prior rehearsal smoke required")
+    # Reuse accounting and non-promotion checks, not the old policy identity.
+    accounting = dict(report, status="MJLAB_MOTION_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED")
+    require_completed_motion_smoke(accounting)
+    if type(report.get("native_rehearsal")) is not dict:
+        raise ValueError("complete native rehearsal protocol required")
+    if (
+        report.get("stable_prior_rehearsal") is not True
+        or report.get("new_optimizer_steps") != 42
+        or report.get("iterations") != 2
+        or report.get("num_envs") != 32
+        or report.get("seed") != 501
+        or report.get("native_rehearsal")
+        != dict(
+            bank_hash=report.get("native_rehearsal", {}).get("bank_hash"),
+            attempted_updates=2,
+            updates=2,
+            batch_size=256,
+            rows=512,
+            weight=1.0,
+        )
+    ):
+        raise ValueError("complete two-iteration stable prior and rehearsal protocol required")
+    bank_hash = report["native_rehearsal"]["bank_hash"]
+    import re
+
+    if type(bank_hash) is not str or re.fullmatch(r"sha256:[0-9a-f]{64}", bank_hash) is None:
+        raise ValueError("immutable native rehearsal bank identity required")
