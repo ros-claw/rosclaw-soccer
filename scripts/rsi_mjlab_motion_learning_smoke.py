@@ -48,6 +48,21 @@ def main():
     p.add_argument("--prerequisite-smoke", type=Path)
     p.add_argument("--prerequisite-unit")
     p.add_argument("--prerequisite-hash")
+    for name in (
+        "stable-prior-root",
+        "stable-pilot-root",
+        "native-rehearsal-root",
+        "policy-model",
+        "policy-config",
+    ):
+        p.add_argument("--" + name, type=Path)
+    for name in (
+        "stable-prior-unit",
+        "stable-prior-hash",
+        "stable-pilot-unit",
+        "stable-pilot-hash",
+    ):
+        p.add_argument("--" + name)
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
         MotionLearningBudget,
@@ -58,6 +73,48 @@ def main():
     from scripts.rsi_native_context_recovery_common import check_pins, digest
 
     budget = MotionLearningBudget(a.mode, a.num_envs, a.iterations, a.seed)
+    stable = a.stable_prior_root is not None
+    prior = pilot = native_bank = None
+    if stable:
+        if not all(
+            (
+                a.stable_pilot_root,
+                a.native_rehearsal_root,
+                a.policy_model,
+                a.policy_config,
+                a.stable_prior_unit,
+                a.stable_prior_hash,
+                a.stable_pilot_unit,
+                a.stable_pilot_hash,
+            )
+        ):
+            raise ValueError(
+                "complete immutable stable prior and physical pilot prerequisites required"
+            )
+        if a.mode != "smoke":
+            raise ValueError("stable-prior first learner is a two-iteration smoke only")
+        for root, unit, expected in (
+            (a.stable_prior_root, a.stable_prior_unit, a.stable_prior_hash),
+            (a.stable_pilot_root, a.stable_pilot_unit, a.stable_pilot_hash),
+        ):
+            wait_for_terminal_collection(unit)
+            if digest(root / "complete.json") != expected:
+                raise ValueError("stable prior prerequisite receipt changed")
+        prior = json.loads((a.stable_prior_root / "complete.json").read_text())
+        pilot = json.loads((a.stable_pilot_root / "complete.json").read_text())
+        native_path = a.native_rehearsal_root / "complete.json"
+        if digest(native_path) != prior["input_file_hashes"][str(native_path)]:
+            raise ValueError("actual prior-qualified native rehearsal source required")
+        native_bank = json.loads(native_path.read_text())
+        if (
+            prior["status"] != "TORCH_VELOCITY_PRIOR_INITIALIZATION_QUALIFIED_NOT_LEARNED_SKILL"
+            or pilot["status"] != "MJLAB_VELOCITY_PRIOR_REFERENCE_PILOT_NOT_LEARNING_OR_FOOTBALL"
+            or pilot["first_episode_summary"]["completed_count"] != 8
+            or not native_bank["all_four_independent_full_repeats_exact"]
+        ):
+            raise ValueError(
+                "qualified initialization, complete physical prior pilot and native bank required"
+            )
     prerequisite = None
     if a.mode == "course":
         if not all((a.prerequisite_smoke, a.prerequisite_unit, a.prerequisite_hash)):
@@ -94,6 +151,16 @@ def main():
     ):
         raise ValueError("complete qualified data and pristine source reference required")
     pins = dict(review["input_file_hashes"])
+    if stable:
+        for receipt in (prior, pilot, native_bank):
+            pins.update(receipt["input_file_hashes"])
+        pins[str(a.stable_prior_root / "complete.json")] = a.stable_prior_hash
+        pins[str(a.stable_pilot_root / "complete.json")] = a.stable_pilot_hash
+        pins[str(a.stable_prior_root / "prior-actor-initialization.pt")] = prior["checkpoint_hash"]
+        for case in range(4):
+            folder = a.native_rehearsal_root / f"case{case}-repeat0"
+            case_receipt = json.loads((folder / "complete.json").read_text())
+            pins[str(folder / "native300.npz")] = case_receipt["raw_hash"]
     if prerequisite is not None:
         pins[str(a.prerequisite_smoke / "complete.json")] = a.prerequisite_hash
     pins[str(a.dataset_review / "complete.json")] = a.expected_dataset_hash
@@ -143,6 +210,25 @@ def main():
             "separate explicitly pinned training stack required, not old native environment"
         )
     a.output.mkdir(parents=True)
+    if stable:
+        import numpy as np
+
+        rehearsal_observations = []
+        rehearsal_actions = []
+        for case in range(4):
+            with np.load(
+                a.native_rehearsal_root / f"case{case}-repeat0/native300.npz", allow_pickle=False
+            ) as raw:
+                rehearsal_observations.append(raw["observation"].copy())
+                rehearsal_actions.append(raw["action"].copy())
+        np.savez_compressed(
+            a.output / "native-rehearsal1200.npz",
+            observation=np.concatenate(rehearsal_observations),
+            action=np.concatenate(rehearsal_actions),
+        )
+        pins[str(a.output / "native-rehearsal1200.npz")] = digest(
+            a.output / "native-rehearsal1200.npz"
+        )
     write_once(
         a.output / "declaration.json",
         dict(
@@ -160,8 +246,13 @@ def main():
             maximum_gpu_world_substeps=budget.gpu_world_substeps,
             new_cpu_native_steps=0,
             new_policy_is_joint_position_with_pd_not_direct_torque=True,
-            learner_from_scratch=True,
-            old_weights_loaded=False,
+            learner_from_scratch=not stable,
+            old_weights_loaded=stable,
+            stable_prior_rehearsal=stable,
+            rehearsal_updates_per_ppo_iteration=1 if stable else 0,
+            rehearsal_batch_size=256 if stable else 0,
+            learning_rate=1e-4 if stable else 1e-3,
+            initial_action_std=0.1 if stable else 1.0,
             publication_license_cleared=False,
             cpu_agreement_and_skill_validation_not_yet_proven=True,
             hardware_authorized=False,
@@ -193,11 +284,27 @@ def main():
             make_motion_training_cfg,
         )
 
-        cfg = make_motion_training_cfg(
+        cfg_factory = make_motion_training_cfg
+        cfg_extra = {}
+        if stable:
+            from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
+            from scripts.rsi_mjlab_velocity_prior_backend import make_velocity_prior_training_cfg
+
+            params = VelocityPolicyParameters.load(
+                a.policy_config, expected_hash=pins[str(a.policy_config)]
+            )
+            cfg_factory = make_velocity_prior_training_cfg
+            cfg_extra = dict(
+                parameters=params, command_mode="reference_velocity", balanced_initial_sources=True
+            )
+        cfg = cfg_factory(
             motion_dir=a.reference_root / "src/assets/soccer/motions/shooter",
             num_envs=budget.num_envs,
             seed=budget.seed,
+            **cfg_extra,
         )
+        if stable:
+            cfg.commands["motion"].sampling_mode = "uniform"
         cfg.sim.nan_guard.enabled = True
         env = ExplicitBoundaryMotionEnv(cfg=cfg, device="cuda:0", render_mode=None)
         obs, _ = env.reset(seed=budget.seed)
@@ -211,7 +318,10 @@ def main():
             raise ValueError("compiled ball must actually match declared dimensions")
         actor_shape = tuple(obs["actor"].shape)
         critic_shape = tuple(obs["critic"].shape)
-        if actor_shape != (budget.num_envs, 166) or critic_shape != (budget.num_envs, 295):
+        if actor_shape != (budget.num_envs, 168 if stable else 166) or critic_shape != (
+            budget.num_envs,
+            295,
+        ):
             raise ValueError(f"explicit new observation ABI differs: {actor_shape}/{critic_shape}")
         rows = []
         initial_steps = env._sim_step_counter
@@ -274,9 +384,45 @@ def main():
         agent_cfg.max_iterations = budget.iterations
         agent_cfg.num_steps_per_env = 24
         agent_cfg.seed = budget.seed
+        if stable:
+            agent_cfg.actor.class_name = "scripts.rsi_mjlab_prior_rl:VelocityPriorMLPModel"
+            agent_cfg.actor.obs_normalization = False
+            agent_cfg.actor.distribution_cfg["init_std"] = 0.1
+            agent_cfg.algorithm.class_name = "scripts.rsi_mjlab_prior_rl:RehearsalPPO"
+            agent_cfg.algorithm.learning_rate = 1e-4
         # This is a plumbing smoke, not a selected learning-rate/std sweep.
         wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-        runner = MjlabOnPolicyRunner(wrapped, asdict(agent_cfg), str(a.output / "rsl"), "cuda:0")
+        runner_cfg = asdict(agent_cfg)
+        if stable:
+            runner_cfg["actor"].update(
+                prior_model=str(a.policy_model),
+                prior_model_hash=pins[str(a.policy_model)],
+                prior_checkpoint=str(a.stable_prior_root / "prior-actor-initialization.pt"),
+                prior_checkpoint_hash=prior["checkpoint_hash"],
+            )
+            runner_cfg["algorithm"].update(
+                rehearsal_path=str(a.output / "native-rehearsal1200.npz"),
+                rehearsal_hash=pins[str(a.output / "native-rehearsal1200.npz")],
+                rehearsal_weight=1.0,
+                rehearsal_batch_size=256,
+            )
+        runner = MjlabOnPolicyRunner(wrapped, runner_cfg, str(a.output / "rsl"), "cuda:0")
+        if stable:
+            from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
+
+            original_prior = VelocityPriorActor.from_onnx(
+                a.policy_model, expected_hash=pins[str(a.policy_model)]
+            ).to("cuda:0")
+            with torch.no_grad():
+                actual = runner.alg.actor.mlp(obs["actor"])
+                expected = original_prior(obs["actor"])
+                if not torch.equal(actual, expected):
+                    raise ValueError(
+                        "actual RSL learner must start from qualified prior, not random weights"
+                    )
+            optimizer_ids = {id(p) for g in runner.alg.optimizer.param_groups for p in g["params"]}
+            if not all(id(p) in optimizer_ids for p in runner.alg.actor.mlp.parameters()):
+                raise ValueError("optimizer must own actual initialized actor parameters")
         start_state = runner.alg.save()
         actor0 = cloned_tensors(start_state["actor_state_dict"])
         critic0 = cloned_tensors(start_state["critic_state_dict"])
@@ -301,6 +447,23 @@ def main():
         runner.learn(num_learning_iterations=budget.iterations, init_at_random_ep_len=False)
         torch.cuda.synchronize()
         final_state = runner.alg.save()
+        if stable and (
+            runner.alg.rehearsal_updates != budget.iterations
+            or runner.alg.rehearsal_attempted_updates != budget.iterations
+            or runner.alg.rehearsal_rows != budget.iterations * 256
+            or torch.count_nonzero(runner.alg.actor.mlp.mlp[0].weight[:, 98:]) == 0
+            or not torch.equal(
+                actor0["mlp.prior_mean"],
+                final_state["actor_state_dict"]["mlp.prior_mean"].cpu(),
+            )
+            or not torch.equal(
+                actor0["mlp.prior_denominator"],
+                final_state["actor_state_dict"]["mlp.prior_denominator"].cpu(),
+            )
+        ):
+            raise ValueError(
+                "real reference learning, counted rehearsal and fixed normalization required"
+            )
         actor_changes = changed_weight_names(
             actor0, cloned_tensors(final_state["actor_state_dict"])
         )
@@ -338,6 +501,9 @@ def main():
             source_head=a.expected_head,
             training_source_names=list(TRAIN_MOTION_NAMES),
             development_source_names=list(DEVELOPMENT_MOTION_NAMES),
+            stable_prior_rehearsal=stable,
+            actor_observation_dim=168 if stable else 166,
+            prior_configuration=runner_cfg if stable else None,
         )
         path = a.output / f"learner-update{budget.iterations}.pt"
         torch.save(checkpoint, path)
@@ -353,9 +519,13 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "MJLAB_MOTION_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"
-                    if budget.mode == "smoke"
-                    else "MJLAB_MOTION_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED"
+                    "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+                    if stable
+                    else (
+                        "MJLAB_MOTION_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+                        if budget.mode == "smoke"
+                        else "MJLAB_MOTION_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED"
+                    )
                 ),
                 source_head=a.expected_head,
                 mode=budget.mode,
@@ -369,6 +539,8 @@ def main():
                 policy_control_samples=budget.training_control_steps * budget.num_envs,
                 new_optimizer_steps=sum(c["completed"] for c in optimizer_counts),
                 optimizer_counts=optimizer_counts,
+                stable_prior_rehearsal=stable,
+                native_rehearsal=final_state.get("native_rehearsal"),
                 changed_actor_weights=actor_changes,
                 changed_critic_weights=critic_changes,
                 checkpoint_hash=digest(path),
