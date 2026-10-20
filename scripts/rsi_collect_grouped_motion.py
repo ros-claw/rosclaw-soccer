@@ -95,8 +95,9 @@ def main():
         ),
     )
     import torch
-    from scripts.rsi_online_kinematic_motion import load_model
+
     from scripts.rsi_motion_ppo_pilot import episodes
+    from scripts.rsi_online_kinematic_motion import load_model
 
     torch.set_num_threads(1)
     torch.use_deterministic_algorithms(True)
