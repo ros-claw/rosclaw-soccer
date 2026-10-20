@@ -90,3 +90,31 @@ def test_current108_reconstruction_matches_original_measured_geometry():
     np.testing.assert_allclose(
         extractor.features(q, v), extractor.from_student_features(feature), atol=1e-6
     )
+
+
+def test_value_only_learning_preserves_all_actor_distributions_and_memory():
+    import torch
+
+    _, child = model()
+    child.requires_grad_(False)
+    child.value_adapter.requires_grad_(True)
+    child.eval()
+    x = torch.randn(3, 12, 108)
+    with torch.no_grad():
+        initial = child.parameters_for_state(x)
+    before = {k: v.clone() for k, v in child.state_dict().items()}
+    optimizer = torch.optim.Adam(child.value_adapter.parameters(), lr=0.001)
+    for _ in range(10):
+        optimizer.zero_grad()
+        _, _, value, _ = child.parameters_for_state(x)
+        loss = (value - 1.0).square().mean()
+        loss.backward()
+        optimizer.step()
+    with torch.no_grad():
+        final = child.parameters_for_state(x)
+    for i in (0, 1, 3):
+        assert torch.equal(initial[i], final[i])
+    assert not torch.equal(initial[2], final[2])
+    for k, v in child.state_dict().items():
+        if not k.startswith("value_adapter."):
+            assert torch.equal(v, before[k])

@@ -4,6 +4,7 @@ Internal24/8 trajectory split; NOT original8 validation, Fresh or new skill.
 """
 
 import argparse
+import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -137,7 +138,7 @@ def main():
             for name in ("exp_avg", "exp_avg_sq")
         ):
             raise ValueError("original critic moment tensor mapping differs")
-    state["state"] = {i: oldopt["state"][i + 5] for i in range(4)}
+    state["state"] = copy.deepcopy({i: oldopt["state"][i + 5] for i in range(4)})
     optimizer.load_state_dict(state)
     generator = torch.Generator().manual_seed(a.seed)
     history = []
