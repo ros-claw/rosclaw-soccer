@@ -94,6 +94,7 @@ def main():
     )
     env = None
     neural_rows = 0
+    rows = []
     try:
         import mujoco
         import numpy as np
@@ -183,6 +184,19 @@ def main():
                 error = float(np.abs(prefix[world] - expected).max())
                 max_error = max(max_error, error)
                 if error > 1e-5:
+                    np.savez_compressed(
+                        a.output / "failed-codec-state.npz",
+                        qpos=qpos,
+                        qvel=qvel,
+                        world=world,
+                        frame=frame,
+                        expected=expected,
+                        actual=prefix[world],
+                        cached_gyro=env.command_manager.get_term("motion")
+                        .robot.data.root_link_ang_vel_b.cpu()
+                        .numpy()
+                        .copy(),
+                    )
                     raise ValueError(
                         "actual GPU observation prefix differs from qualified native codec"
                     )
@@ -225,6 +239,10 @@ def main():
                     truncated=truncated.cpu().numpy().copy(),
                     reference_exhausted=exhausted,
                     episode_frame=episode_frames,
+                    cached_gyro=env.command_manager.get_term("motion")
+                    .robot.data.root_link_ang_vel_b.cpu()
+                    .numpy()
+                    .copy(),
                 )
             )
             previous_actions[done] = 0
@@ -256,6 +274,13 @@ def main():
             ),
         )
     except Exception as error:
+        if rows:
+            import numpy as np
+
+            np.savez_compressed(
+                a.output / "failed-partial.npz",
+                **{k: np.asarray([r[k] for r in rows]) for k in rows[0]},
+            )
         write_once(
             a.output / "failure.json",
             dict(

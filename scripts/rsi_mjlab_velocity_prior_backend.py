@@ -53,9 +53,17 @@ def velocity_reference_observation(env, *, defaults, command_mode):
     gait = torch.stack((phase.sin(), phase.cos()), dim=1).float()
     gait[torch.linalg.vector_norm(command, dim=1) < 0.1] = 0
     home = torch.tensor(defaults, dtype=torch.float32, device=env.device)
+    # Interval push events run AFTER sim.forward() in MJLab1.2. The derived
+    # cvel-backed root_link_ang_vel_b can therefore predate current qvel.
+    # MuJoCo free-joint angular qvel is already body-frame; native Jacobian
+    # equivalence is independently checked by the bounded physical runner.
+    root_velocity_ids = robot.data.indexing.free_joint_v_adr
+    if root_velocity_ids.numel() != 6:
+        raise ValueError("actual six-DoF free root velocity required")
+    angular_velocity = env.sim.data.qvel[:, root_velocity_ids[3:6]]
     prefix = torch.cat(
         (
-            robot.data.root_link_ang_vel_b,
+            angular_velocity,
             robot.data.projected_gravity_b,
             command,
             gait,
