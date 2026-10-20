@@ -12,7 +12,14 @@ import numpy as np
 import torch
 from torch import nn
 
-from rosclaw_soccer.providers.g1.velocity_policy import file_hash, phase_delta
+from rosclaw_soccer.providers.g1.velocity_policy import (
+    VelocityPolicyParameters,
+    file_hash,
+    observation98,
+    phase_delta,
+    target29,
+)
+from rosclaw_soccer.sim.contracts import hash_json
 
 
 def phase_table(length: int = 4096) -> np.ndarray:
@@ -129,3 +136,99 @@ class VelocityPriorActor(nn.Module):
             raise ValueError("finite float32 actor observations required")
         velocity = (observations[:, :98] - self.prior_mean) / self.prior_denominator
         return cast(torch.Tensor, self.mlp(torch.cat((velocity, observations[:, 98:]), dim=1)))
+
+
+class LearnedPriorNativeSession:
+    """SIM research inference with explicit learned identity, not old ONNX proof.
+
+    Reference suffix is zero for a retention test; no reference-motion or
+    football skill is inferred. State/motor execution stays in the simulator.
+    """
+
+    def __init__(
+        self,
+        model: Path,
+        config: Path,
+        *,
+        expected_model_hash: str,
+        expected_config_hash: str,
+        checkpoint: Path,
+        expected_checkpoint_hash: str,
+        arm: str,
+    ) -> None:
+        if arm not in ("initial", "final") or file_hash(checkpoint) != expected_checkpoint_hash:
+            raise ValueError("explicit arm and immutable learned checkpoint required")
+        self.params = VelocityPolicyParameters.load(config, expected_hash=expected_config_hash)
+        self.model = VelocityPriorActor.from_onnx(model, expected_hash=expected_model_hash)
+        state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        if (
+            state.get("stable_prior_rehearsal") is not True
+            or state.get("actor_observation_dim") != 168
+        ):
+            raise ValueError("actual stable-prior learner checkpoint required")
+        actor_state = (
+            state["initial_actor_state_dict"]
+            if arm == "initial"
+            else state["algorithm"]["actor_state_dict"]
+        )
+        expected_keys = set(self.model.state_dict())
+        actual_keys = {k.removeprefix("mlp.") for k in actor_state if k.startswith("mlp.")}
+        if actual_keys != expected_keys:
+            raise ValueError("complete exact learned actor architecture required")
+        self.model.load_state_dict({k: actor_state["mlp." + k] for k in expected_keys}, strict=True)
+        self.model.eval()
+        self.contract_hash = hash_json(
+            dict(
+                schema="soccer.rsi.learned_prior_native_retention.v1",
+                checkpoint_hash=expected_checkpoint_hash,
+                arm=arm,
+                parameter_hash=self.params.contract_hash,
+                reference_features="zero70",
+                hardware_authorized=False,
+            )
+        )
+        self.phase = phase_delta()
+        self.last_action = np.zeros(29, dtype=np.float32)
+        self.last_observation = np.zeros(98, dtype=np.float32)
+        self.next_frame = 0
+        self.neural_calls = 0
+        self.attempted_neural_calls = 0
+        self.faulted = False
+
+    def propose(
+        self,
+        qpos: np.ndarray,
+        qvel: np.ndarray,
+        angular_velocity_body: np.ndarray,
+        command_body: np.ndarray,
+        *,
+        frame: int,
+    ) -> np.ndarray:
+        if self.faulted:
+            raise ValueError("learned prior fault latched; no implicit restart")
+        try:
+            if type(frame) is not int or frame != self.next_frame or not 0 <= frame < 300:
+                raise ValueError("consecutive H300 actual retention observations required")
+            obs, phase = observation98(
+                qpos,
+                qvel,
+                angular_velocity_body,
+                command_body,
+                self.last_action,
+                self.phase,
+                self.params,
+            )
+            inputs = np.concatenate((obs, np.zeros(70, dtype=np.float32)))
+            self.attempted_neural_calls += 1
+            with torch.no_grad():
+                action = self.model(torch.from_numpy(inputs[None])).numpy()[0].copy()
+            self.neural_calls += 1
+            target = target29(action, self.params)
+            self.last_observation = obs.copy()
+            self.last_action = action
+            self.phase = phase
+            self.next_frame += 1
+            return target
+        except Exception:
+            self.faulted = True
+            raise

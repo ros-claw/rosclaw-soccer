@@ -157,3 +157,50 @@ def test_unbound_rehearsal_rejected_before_loading(tmp_path):
     )
     with pytest.raises(ValueError, match="immutable"):
         load_rehearsal(archive, "sha256:" + "0" * 64, "cpu")
+
+
+def test_native_session_binds_learned_arm_and_latches_bad_frames(tmp_path):
+    import yaml
+    from test_g1_velocity_policy import config, state
+
+    from rosclaw_soccer.rsi.velocity_prior_actor import LearnedPriorNativeSession
+
+    _, actor, _, _ = make_actor(tmp_path)
+    before = {k: v.detach().clone() for k, v in actor.state_dict().items()}
+    with torch.no_grad():
+        actor.mlp.mlp[6].bias += 0.1
+    checkpoint = tmp_path / "learner.pt"
+    torch.save(
+        dict(
+            stable_prior_rehearsal=True,
+            actor_observation_dim=168,
+            initial_actor_state_dict=before,
+            algorithm=dict(actor_state_dict=actor.state_dict()),
+        ),
+        checkpoint,
+    )
+    config_path = tmp_path / "deployment.yaml"
+    config_path.write_text(yaml.safe_dump(config(), sort_keys=False))
+    arguments = dict(
+        expected_model_hash=file_hash(tmp_path / "synthetic.onnx"),
+        expected_config_hash=file_hash(config_path),
+        checkpoint=checkpoint,
+        expected_checkpoint_hash=file_hash(checkpoint),
+    )
+    initial = LearnedPriorNativeSession(
+        tmp_path / "synthetic.onnx", config_path, arm="initial", **arguments
+    )
+    final = LearnedPriorNativeSession(
+        tmp_path / "synthetic.onnx", config_path, arm="final", **arguments
+    )
+    assert initial.contract_hash != final.contract_hash
+    q, v = state()
+    args = (q, v, np.zeros(3), np.zeros(3, dtype=np.float32))
+    first = initial.propose(*args, frame=0)
+    second = final.propose(*args, frame=0)
+    np.testing.assert_allclose(second - first, 0.025, atol=1e-7, rtol=0)
+    assert final.neural_calls == final.next_frame == 1
+    with pytest.raises(ValueError, match="consecutive"):
+        final.propose(*args, frame=3)
+    with pytest.raises(ValueError, match="fault latched"):
+        final.propose(*args, frame=1)

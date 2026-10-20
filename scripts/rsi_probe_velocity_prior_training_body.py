@@ -22,6 +22,10 @@ def main():
         "expected-head",
     ):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--learned-root", type=Path)
+    p.add_argument("--learned-unit")
+    p.add_argument("--learned-hash")
+    p.add_argument("--learned-arm", choices=("initial", "final"), default="final")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
@@ -64,6 +68,23 @@ def main():
         str(actor_path): model_hash,
         str(config_path): config_hash,
     }
+    learned = None
+    checkpoint = None
+    if a.learned_root is not None:
+        if not all((a.learned_unit, a.learned_hash)):
+            raise ValueError("actual learned candidate terminal commitment required")
+        wait_for_terminal_collection(a.learned_unit)
+        if digest(a.learned_root / "complete.json") != a.learned_hash:
+            raise ValueError("actual learned candidate receipt changed")
+        learned = json.loads((a.learned_root / "complete.json").read_text())
+        if (
+            learned["status"] != "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+            or not learned["weights_only_checkpoint_reload"]
+        ):
+            raise ValueError("actual non-promoted stable prior learning required")
+        checkpoint = a.learned_root / f"learner-update{learned['iterations']}.pt"
+        pins[str(a.learned_root / "complete.json")] = a.learned_hash
+        pins[str(checkpoint)] = learned["checkpoint_hash"]
     for directory in (Path.cwd() / "src", Path.cwd() / "scripts"):
         for source in directory.rglob("*.py"):
             pins[str(source)] = digest(source)
@@ -85,6 +106,9 @@ def main():
             original_exported_dynamics_unchanged=True,
             not_inherited_old_body_certificate=True,
             new_optimizer_steps=0,
+            learned_checkpoint_arm=a.learned_arm if learned is not None else None,
+            original_onnx_weights_unchanged=learned is None,
+            zero_reference_suffix_retention_only=learned is not None,
             hardware_authorized=False,
         ),
     )
@@ -144,13 +168,31 @@ def main():
             first_result = None
             for repeat in range(2):
                 prior_actor_calls = calls
-                actor = G1VelocityPolicy(
-                    actor_path,
-                    config_path,
-                    expected_model_hash=model_hash,
-                    expected_config_hash=config_hash,
-                )
-                if actor.contract_hash != qual["policy_contract_hash"]:
+                if learned is None:
+                    actor = G1VelocityPolicy(
+                        actor_path,
+                        config_path,
+                        expected_model_hash=model_hash,
+                        expected_config_hash=config_hash,
+                    )
+                else:
+                    import torch
+
+                    from rosclaw_soccer.rsi.velocity_prior_actor import LearnedPriorNativeSession
+
+                    torch.set_num_threads(1)
+                    actor = LearnedPriorNativeSession(
+                        actor_path,
+                        config_path,
+                        expected_model_hash=model_hash,
+                        expected_config_hash=config_hash,
+                        checkpoint=checkpoint,
+                        expected_checkpoint_hash=learned["checkpoint_hash"],
+                        arm=a.learned_arm,
+                    )
+                if (
+                    learned is None and actor.contract_hash != qual["policy_contract_hash"]
+                ) or actor.params.contract_hash != qual["parameter_contract_hash"]:
                     raise ValueError("unchanged qualified actor and parameter contract required")
                 data = mujoco.MjData(model)
                 if case < 2:
@@ -322,7 +364,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="VELOCITY_PRIOR_NEW_BODY_MOBILITY_PROBE_NOT_FOOTBALL_QUALIFIED",
+                status="LEARNED_PRIOR_NATIVE_RETENTION_NOT_FOOTBALL_QUALIFIED"
+                if learned is not None
+                else "VELOCITY_PRIOR_NEW_BODY_MOBILITY_PROBE_NOT_FOOTBALL_QUALIFIED",
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 results=results,
@@ -336,6 +380,7 @@ def main():
                 hardware_authorized=False,
                 promotion_authorized=False,
                 goal_complete=False,
+                learned_checkpoint_arm=a.learned_arm if learned is not None else None,
             ),
         )
     except Exception as error:
