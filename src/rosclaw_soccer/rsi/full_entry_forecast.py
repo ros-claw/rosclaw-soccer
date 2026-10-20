@@ -161,6 +161,7 @@ def run_entry_suffix(
     source_evidence_hash: str,
     affordance: SkillEntryAffordance,
     law: EntryCommandLaw,
+    contact_reference_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Execute frame20..299 with its OWN NN and original native integration."""
     if (
@@ -179,6 +180,7 @@ def run_entry_suffix(
     rows = []
     stage, handoff_frame, handoff_receipt = 0, None, None
     handoff_hash, reference_hash, wrist_hash = None, None, None
+    contact_adaptation = None
     target, error = np.zeros(2), 0.0
     for frame in range(20, 300):
         q, v = body.canonical()
@@ -200,6 +202,11 @@ def run_entry_suffix(
                 entry_intervals=50,
                 source_evidence_hash=source_evidence_hash,
             )
+            from rosclaw_soccer.rsi.contact_reference_offset import offset_contact_reference
+
+            adapted_reference, contact_adaptation = offset_contact_reference(
+                body.model, prepared.reference, offset_root_m=contact_reference_offset_m
+            )
             destination = G1SonicNavigation(
                 model_root,
                 nav.agent_id,
@@ -207,7 +214,7 @@ def run_entry_suffix(
                     maximum_frames=300,
                     model_variant="low_latency",
                     inference_threads=1,
-                    pose_reference=prepared.reference,
+                    pose_reference=adapted_reference,
                 ),
             )
             if destination.backend.qualification != nav.backend.qualification:
@@ -239,6 +246,7 @@ def run_entry_suffix(
         law=asdict(law),
         neural_policy_recomputed_on_own_state=True,
         contact_controller_retargets_to_ball_after_handoff=False,
+        contact_reference_adaptation=contact_adaptation,
         optimizer_steps=0,
         promotion_authorized=False,
         hardware_authorized=False,
