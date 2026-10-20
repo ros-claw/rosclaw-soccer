@@ -29,6 +29,7 @@ def main():
     p.add_argument("--command-point", choices=("torso", "pelvis"), default="torso")
     p.add_argument("--world-index", type=int, choices=range(32), default=0)
     p.add_argument("--ball-perception", choices=("measured", "zero"), default="measured")
+    p.add_argument("--reference-retarget", choices=("none", "ball-strike-xy-v1"), default="none")
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
         motion_checkpoint_filename,
@@ -67,6 +68,12 @@ def main():
     )
     if not ball_aware and a.ball_perception != "measured":
         raise ValueError("ball9 ablation is only defined for explicit177D ball-aware models")
+    if a.reference_retarget != "none" and (
+        not ball_aware or a.command_point != "pelvis" or a.ball_perception != "measured"
+    ):
+        raise ValueError(
+            "retarget teacher requires matched pelvis ball-aware measured-input protocol"
+        )
     if ball_aware:
         from rosclaw_soccer.rsi.ball_aware_inputs import require_ball_aware_learning
 
@@ -169,6 +176,8 @@ def main():
             ball_aware=ball_aware,
             ball_perception_mode=a.ball_perception,
             observation_ablation_not_learning=a.ball_perception != "measured",
+            reference_retarget=a.reference_retarget,
+            teacher_only_not_learned_retarget=a.reference_retarget != "none",
             actor_observation_dim=177 if ball_aware else 168,
             explicit_target_world_from_plan=ball_aware,
             post_contact_window_profile="native_reference_motion.contact10N.post1p2s.v1"
@@ -202,6 +211,7 @@ def main():
             reference_inputs70,
         )
         from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+        from rosclaw_soccer.rsi.reference_xy_retarget import ball_strike_xy_plan
         from rosclaw_soccer.rsi.velocity_prior_actor import LearnedPriorNativeSession
 
         torch.set_num_threads(1)
@@ -220,6 +230,7 @@ def main():
             )
         results = []
         for index, source in enumerate((7, 10)):
+            retarget_metadata = None
             with np.load(a.plan_root / f"{index}-initial-raw.npz", allow_pickle=False) as z:
                 # Do not load future physical q/v or GPU action outputs.
                 initial_q = z["qpos_before"][0, a.world_index].copy()
@@ -268,6 +279,13 @@ def main():
                     angular=ba[:, 0],
                 )
                 scratch = mujoco.MjData(model)
+                strike_centers, strike_axes = [], []
+                if a.reference_retarget != "none":
+                    foot_geom = model.geom(
+                        "robot/" + ("left" if source == 7 else "right") + "_foot4_collision"
+                    ).id
+                    if model.geom_type[foot_geom] != mujoco.mjtGeom.mjGEOM_CAPSULE:
+                        raise ValueError("qualified foot4 capsule required for retarget teacher")
                 for frame in range(horizon):
                     scratch.qpos[:] = initial_q
                     scratch.qpos[layout.rq : layout.rq + 3] = root_reference["position"][frame]
@@ -276,6 +294,9 @@ def main():
                     ]
                     scratch.qpos[layout.qi] = references["reference_joint"][frame]
                     mujoco.mj_kinematics(model, scratch)
+                    if a.reference_retarget != "none":
+                        strike_centers.append(scratch.geom_xpos[foot_geom].copy())
+                        strike_axes.append(scratch.geom_xmat[foot_geom].reshape(3, 3)[:, 2].copy())
                     reference_fk_calls += 1
                     expected_torso_rotation = np.zeros(9)
                     mujoco.mju_quat2Mat(
@@ -300,6 +321,29 @@ def main():
                         raise ValueError(
                             "reference orientation identity or kinematic budget differs"
                         )
+                if a.reference_retarget != "none":
+                    ball_geom = int(model.body_geomadr[layout.ball])
+                    if (
+                        model.body_geomnum[layout.ball] != 1
+                        or model.geom_type[ball_geom] != mujoco.mjtGeom.mjGEOM_SPHERE
+                    ):
+                        raise ValueError("one compiled ball sphere required for retarget teacher")
+                    retarget = ball_strike_xy_plan(
+                        capsule_centers=np.asarray(strike_centers),
+                        capsule_axes=np.asarray(strike_axes),
+                        capsule_half_length=float(model.geom_size[foot_geom, 1]),
+                        capsule_radius=float(model.geom_size[foot_geom, 0]),
+                        ball_radius=float(model.geom_size[ball_geom, 0]),
+                        initial_ball=initial_q[layout.bq : layout.bq + 3],
+                        goal=goal_plan[0],
+                    )
+                    offset = retarget.pop("offset")
+                    velocity_offset = retarget.pop("offset_velocity")
+                    retarget_metadata = retarget
+                    references["reference_anchor"] += offset
+                    references["reference_anchor_linear_velocity"] += velocity_offset
+                    root_reference["position"] += offset
+                    root_reference["linear"] += velocity_offset
             for arm in ("initial", "final"):
                 first = None
                 for repeat in range(2):
@@ -385,6 +429,11 @@ def main():
                             action=actor.last_action.copy(),
                             target_rad=target.copy(),
                             command=command.copy(),
+                            reference_retarget_offset=(
+                                offset[frame].copy()
+                                if a.reference_retarget != "none"
+                                else np.zeros(3)
+                            ),
                             anchor_xy_error=np.linalg.norm(
                                 data.xpos[torso, :2] - references["reference_anchor"][frame, :2]
                             ),
@@ -469,6 +518,8 @@ def main():
                     result = dict(
                         source=source,
                         ball_perception_mode=a.ball_perception,
+                        reference_retarget=a.reference_retarget,
+                        retarget_plan=retarget_metadata,
                         world_index=a.world_index,
                         arm=arm,
                         repeat=repeat,
@@ -529,6 +580,8 @@ def main():
                 source_head=a.expected_head,
                 ball_perception_mode=a.ball_perception,
                 observation_ablation_not_learning=a.ball_perception != "measured",
+                reference_retarget=a.reference_retarget,
+                teacher_only_not_learned_retarget=a.reference_retarget != "none",
                 input_file_hashes=pins,
                 results=results,
                 native_steps=steps,
