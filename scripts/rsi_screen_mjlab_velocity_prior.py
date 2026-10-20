@@ -28,6 +28,7 @@ def main():
     p.add_argument("--learner-unit")
     p.add_argument("--learner-hash")
     p.add_argument("--position-gain", type=float, choices=(0.0, 1.0), default=0.0)
+    p.add_argument("--command-point", choices=("torso", "pelvis"), default="torso")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
@@ -123,6 +124,7 @@ def main():
             learned_train_collection=learner is not None,
             teacher_action_labels_physically_proven=False,
             velocity_command_position_feedback_gain=a.position_gain,
+            velocity_command_anatomical_point=a.command_point,
             hardware_authorized=False,
         ),
     )
@@ -152,6 +154,7 @@ def main():
         cfg = make_velocity_prior_training_cfg(
             parameters=params,
             command_mode=command_mode,
+            command_point=a.command_point,
             motion_dir=a.reference_root / "src/assets/soccer/motions/shooter",
             num_envs=8,
             seed=1601,
@@ -206,6 +209,12 @@ def main():
                 quaternion=motion.anchor_quat_w.cpu().numpy().copy(),
                 linear=motion.anchor_lin_vel_w.cpu().numpy().copy(),
                 angular=motion.anchor_ang_vel_w.cpu().numpy().copy(),
+            )
+            pelvis_index = motion.cfg.body_names.index("pelvis")
+            root_reference = dict(
+                position=motion.body_pos_w[:, pelvis_index].cpu().numpy().copy(),
+                linear=motion.body_lin_vel_w[:, pelvis_index].cpu().numpy().copy(),
+                angular=motion.body_ang_vel_w[:, pelvis_index].cpu().numpy().copy(),
             )
             source_id = motion.motion_idx.cpu().numpy().copy()
             source_phase = motion.time_steps.cpu().numpy().copy()
@@ -264,7 +273,10 @@ def main():
                         "actual GPU observation prefix differs from qualified native codec"
                     )
                 if a.reference_pilot:
-                    from rosclaw_soccer.rsi.native_motion_reference import reference_inputs70
+                    from rosclaw_soccer.rsi.native_motion_reference import (
+                        point_velocity_command,
+                        reference_inputs70,
+                    )
 
                     torso = model.body("robot/torso_link").id
                     expected_command, expected_reference = reference_inputs70(
@@ -279,6 +291,15 @@ def main():
                         reference_angular_velocity=absolute_reference["angular"][world],
                         position_gain=a.position_gain,
                     )
+                    if a.command_point == "pelvis":
+                        expected_command = point_velocity_command(
+                            root_rotation=data.xmat[layout.pelvis].reshape(3, 3),
+                            current_position=data.xpos[layout.pelvis],
+                            reference_position=root_reference["position"][world],
+                            reference_linear_velocity=root_reference["linear"][world],
+                            reference_angular_velocity=root_reference["angular"][world],
+                            position_gain=a.position_gain,
+                        )
                     if not np.allclose(
                         expected_command, prefix[world, 6:9], rtol=0, atol=1e-5
                     ) or not np.allclose(
@@ -340,6 +361,9 @@ def main():
                     reference_anchor_quat=absolute_reference["quaternion"],
                     reference_anchor_linear_velocity=absolute_reference["linear"],
                     reference_anchor_angular_velocity=absolute_reference["angular"],
+                    reference_pelvis_position=root_reference["position"],
+                    reference_pelvis_linear_velocity=root_reference["linear"],
+                    reference_pelvis_angular_velocity=root_reference["angular"],
                 )
             )
             previous_actions[done] = 0
@@ -378,6 +402,7 @@ def main():
                 learned_train_collection=learner is not None,
                 teacher_action_labels_physically_proven=False,
                 velocity_command_position_feedback_gain=a.position_gain,
+                velocity_command_anatomical_point=a.command_point,
             ),
         )
     except Exception as error:

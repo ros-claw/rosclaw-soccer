@@ -15,7 +15,7 @@ from rosclaw_soccer.rsi.velocity_prior_actor import phase_table
 from scripts.rsi_mjlab_motion_backend import make_motion_training_cfg
 
 
-def velocity_reference_observation(env, *, defaults, command_mode):
+def velocity_reference_observation(env, *, defaults, command_mode, command_point):
     motion = env.command_manager.get_term("motion")
     robot = motion.robot
     names = tuple(robot.joint_names)
@@ -28,14 +28,27 @@ def velocity_reference_observation(env, *, defaults, command_mode):
     if tuple(action_term.target_names) != G1_DDS_JOINT_NAMES:
         raise ValueError("actual action order must match velocity prior HG29 output")
     quaternion = robot.data.root_link_quat_w
+    if command_point == "pelvis":
+        body_index = motion.cfg.body_names.index("pelvis")
+        command_position = motion.body_pos_w[:, body_index]
+        command_linear = motion.body_lin_vel_w[:, body_index]
+        command_angular = motion.body_ang_vel_w[:, body_index]
+        current_position = robot.data.root_link_pos_w
+    elif command_point == "torso":
+        command_position = motion.anchor_pos_w
+        command_linear = motion.anchor_lin_vel_w
+        command_angular = motion.anchor_ang_vel_w
+        current_position = motion.robot_anchor_pos_w
+    else:
+        raise ValueError("explicit matched anatomical command point required")
     if command_mode == "zero":
         command = torch.zeros((env.num_envs, 3), device=env.device)
     elif command_mode in ("reference_velocity", "reference_position_velocity"):
-        velocity_world = motion.anchor_lin_vel_w
+        velocity_world = command_linear
         if command_mode == "reference_position_velocity":
-            velocity_world = velocity_world + (motion.anchor_pos_w - motion.robot_anchor_pos_w)
+            velocity_world = velocity_world + (command_position - current_position)
         linear = quat_apply_inverse(quaternion, velocity_world)
-        angular = quat_apply_inverse(quaternion, motion.anchor_ang_vel_w)
+        angular = quat_apply_inverse(quaternion, command_angular)
         # Exogenous velocity-command range, NOT actuator/state clipping.
         command = torch.stack(
             (
@@ -91,9 +104,11 @@ def velocity_reference_observation(env, *, defaults, command_mode):
     return torch.cat((prefix, suffix), dim=1)
 
 
-def make_velocity_prior_training_cfg(*, parameters, command_mode, **kwargs):
+def make_velocity_prior_training_cfg(*, parameters, command_mode, command_point="torso", **kwargs):
     if command_mode not in ("zero", "reference_velocity", "reference_position_velocity"):
         raise ValueError("explicit prior command mode required")
+    if command_point not in ("torso", "pelvis"):
+        raise ValueError("explicit anatomical command point required")
     cfg = make_motion_training_cfg(**kwargs)
     # The imported training template computes scales from effort/Kp, whereas
     # the qualified deployment codec stores rounded constants. This is an
@@ -105,7 +120,11 @@ def make_velocity_prior_training_cfg(*, parameters, command_mode, **kwargs):
         terms={
             "velocity98_reference70": ObservationTermCfg(
                 func=velocity_reference_observation,
-                params={"defaults": parameters.defaults, "command_mode": command_mode},
+                params={
+                    "defaults": parameters.defaults,
+                    "command_mode": command_mode,
+                    "command_point": command_point,
+                },
             )
         },
         enable_corruption=False,

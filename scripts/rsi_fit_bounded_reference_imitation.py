@@ -115,6 +115,9 @@ def main():
                 "velocity_command_position_feedback_gain", 0.0
             ),
             parent_checkpoint_hash=learner["checkpoint_hash"],
+            velocity_command_anatomical_point=collection.get(
+                "velocity_command_anatomical_point", "torso"
+            ),
         ),
     )
     attempted = updates = neural_rows = forward_calls = 0
@@ -232,6 +235,9 @@ def main():
             )
             + 1,
             parent_checkpoint_hash=learner["checkpoint_hash"],
+            velocity_command_anatomical_point=collection.get(
+                "velocity_command_anatomical_point", "torso"
+            ),
             velocity_command_position_feedback_gain=collection.get(
                 "velocity_command_position_feedback_gain", 0.0
             ),
@@ -292,6 +298,9 @@ def main():
                 cumulative_imitation_updates=checkpoint["imitation_iteration"],
                 imitation_generation=checkpoint["imitation_generation"],
                 parent_checkpoint_hash=learner["checkpoint_hash"],
+                velocity_command_anatomical_point=collection.get(
+                    "velocity_command_anatomical_point", "torso"
+                ),
                 velocity_command_position_feedback_gain=collection.get(
                     "velocity_command_position_feedback_gain", 0.0
                 ),

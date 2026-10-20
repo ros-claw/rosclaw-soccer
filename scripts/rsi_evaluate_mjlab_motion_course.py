@@ -47,6 +47,9 @@ def main():
     position_gain = course.get("velocity_command_position_feedback_gain", 0.0)
     if position_gain not in (0.0, 1.0):
         raise ValueError("declared position-command protocol required")
+    command_point = course.get("velocity_command_anatomical_point", "torso")
+    if command_point not in ("torso", "pelvis"):
+        raise ValueError("declared anatomical command point required")
     if (
         course["status"]
         not in (
@@ -84,6 +87,7 @@ def main():
             first_episode_only=True,
             stable_prior_rehearsal=stable,
             velocity_command_position_feedback_gain=position_gain,
+            velocity_command_anatomical_point=command_point,
             mode="SIM_ONLY",
             max_gpu_world_substeps=384000,
             new_optimizer_steps=0,
@@ -166,6 +170,7 @@ def main():
                         command_mode="reference_position_velocity"
                         if position_gain
                         else "reference_velocity",
+                        command_point=command_point,
                     )
                 cfg = cfg_factory(
                     motion_dir=a.reference_root / "src/assets/soccer/motions/shooter",
@@ -434,6 +439,7 @@ def main():
                 evaluated_source_split="dev" if a.control == "neural" else "train",
                 stable_prior_rehearsal=stable,
                 velocity_command_position_feedback_gain=position_gain,
+                velocity_command_anatomical_point=command_point,
                 football_skill_proven=False,
                 goal_complete=False,
                 promotion_authorized=False,
