@@ -17,6 +17,7 @@ def test_zero_classifier_preserves_parent_tokens_value_and_live_recurrent_memory
         reference = parent.sample(x, old_h, generator=None, stochastic=False)
         token, value, new_h = child(x, new_h)
         assert torch.equal(token, reference["token"])
+        assert token.numpy().tobytes() == reference["token"].numpy().tobytes()
         assert torch.equal(value, reference["value"])
         assert torch.equal(new_h, reference["hidden"])
         old_h = reference["hidden"]

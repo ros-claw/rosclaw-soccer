@@ -233,6 +233,7 @@ def episodes(a, spec, bd, pins, model):
         model.calls = 0
         independent = body()
         replay = replay_motion_student(model, FoundationMotorCodec(backend), independent, trace)
+        write_once(folder / "replay.json", replay)
         if actual.integrated_steps != 3000 or independent.integrated_steps != 3000:
             raise ValueError("whole native horizon required")
         if a.variant == "initial":

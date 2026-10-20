@@ -74,7 +74,15 @@ def create_categorical_motion(parent: Any) -> Any:
             context, classes, value, next_hidden = self.context(observation, hidden)
             chosen = self.logits(context, classes).argmax(-1)
             self.calls += 1
-            return (chosen.to(torch.float32) - 16.0) / 16.0, value, next_hidden
+            decoded = (chosen.to(torch.float32) - 16.0) / 16.0
+            mean = context[..., 108:172]
+            original_token = (
+                torch.round(15.515501022338867 * torch.tanh(mean + 0.03223699703812599) - 0.5)
+                / 16.0
+            )
+            # Original class16 may be -0.0: preserve prior bits on unchanged classes.
+            token = torch.where(chosen == classes, original_token, decoded)
+            return token, value, next_hidden
 
         def network_call_counts(self) -> dict[str, int]:
             if self.calls != 300:
