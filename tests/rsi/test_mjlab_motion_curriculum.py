@@ -9,6 +9,7 @@ from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
     TRAIN_MOTION_GLOB,
     TRAIN_MOTION_NAMES,
     MotionLearningBudget,
+    motion_checkpoint_filename,
     motion_names_for_pattern,
     require_completed_motion_smoke,
     require_completed_stable_motion_smoke,
@@ -168,3 +169,17 @@ def test_missing_rehearsal_fails_closed(missing):
     report["native_rehearsal"] = missing
     with pytest.raises(ValueError):
         require_completed_stable_motion_smoke(report)
+
+
+def test_explicit_actor_checkpoint_is_not_misnamed_as_ppo_iteration():
+    assert motion_checkpoint_filename(dict(iterations=2)) == "learner-update2.pt"
+    assert (
+        motion_checkpoint_filename(dict(checkpoint_file="actor-imitation50.pt"))
+        == "actor-imitation50.pt"
+    )
+
+
+@pytest.mark.parametrize("name", ["../x.pt", "/x.pt", "dir/x.pt", ".hidden.pt", "x.pkl", None])
+def test_checkpoint_artifact_cannot_escape_its_evidence_root(name):
+    with pytest.raises(ValueError):
+        motion_checkpoint_filename(dict(checkpoint_file=name))

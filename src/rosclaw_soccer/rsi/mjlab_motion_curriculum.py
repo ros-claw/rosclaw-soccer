@@ -1,5 +1,6 @@
 """Fixed public source split declared before any new policy optimization."""
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,18 @@ TRAIN_MOTION_NAMES = (
     "soccer-standard-009_right.npz",
 )
 DEVELOPMENT_MOTION_NAMES = ("soccer-standard-007_left.npz", "soccer-standard-010_right.npz")
+
+
+def motion_checkpoint_filename(report: dict[str, Any]) -> str:
+    name = report.get("checkpoint_file")
+    if name is None:
+        iterations = report.get("iterations")
+        if type(iterations) is not int or not 1 <= iterations <= 100000:
+            raise ValueError("explicit bounded checkpoint iteration required")
+        name = f"learner-update{iterations}.pt"
+    if type(name) is not str or re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}\.pt", name) is None:
+        raise ValueError("checkpoint must be an ordinary local artifact basename")
+    return name
 
 
 def motion_names_for_pattern(pattern: str) -> tuple[str, ...]:
@@ -140,7 +153,5 @@ def require_completed_stable_motion_smoke(report: dict[str, Any]) -> None:
     ):
         raise ValueError("complete two-iteration stable prior and rehearsal protocol required")
     bank_hash = report["native_rehearsal"]["bank_hash"]
-    import re
-
     if type(bank_hash) is not str or re.fullmatch(r"sha256:[0-9a-f]{64}", bank_hash) is None:
         raise ValueError("immutable native rehearsal bank identity required")

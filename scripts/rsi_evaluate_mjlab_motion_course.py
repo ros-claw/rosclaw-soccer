@@ -21,6 +21,7 @@ def main():
         p.add_argument("--" + name, required=True)
     p.add_argument("--control", choices=("neural", "reference-pd"), default="neural")
     a = p.parse_args()
+    from rosclaw_soccer.rsi.mjlab_motion_curriculum import motion_checkpoint_filename
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
     from scripts.rsi_mjlab_motion_learning_smoke import changed_weight_names, cloned_tensors
@@ -41,6 +42,7 @@ def main():
     stable = course["status"] in (
         "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
         "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
+        "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
     )
     if (
         course["status"]
@@ -48,6 +50,7 @@ def main():
             "MJLAB_MOTION_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
             "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
             "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
+            "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
         )
         or course["new_optimizer_steps"] <= 0
         or not course["weights_only_checkpoint_reload"]
@@ -59,7 +62,7 @@ def main():
         raise ValueError("stable-prior evaluation is an initial/final neural comparison")
     pins = dict(course["input_file_hashes"])
     pins[str(course_path)] = a.course_hash
-    checkpoint_path = a.course_root / f"learner-update{course['iterations']}.pt"
+    checkpoint_path = a.course_root / motion_checkpoint_filename(course)
     pins[str(checkpoint_path)] = course["checkpoint_hash"]
     for directory in (Path.cwd() / "src", Path.cwd() / "scripts", a.reference_root / "src"):
         for source in directory.rglob("*.py"):

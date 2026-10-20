@@ -27,6 +27,7 @@ def main():
     p.add_argument("--learned-hash")
     p.add_argument("--learned-arm", choices=("initial", "final"), default="final")
     a = p.parse_args()
+    from rosclaw_soccer.rsi.mjlab_motion_curriculum import motion_checkpoint_filename
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -82,11 +83,12 @@ def main():
             not in (
                 "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
                 "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
+                "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
             )
             or not learned["weights_only_checkpoint_reload"]
         ):
             raise ValueError("actual non-promoted stable prior learning required")
-        checkpoint = a.learned_root / f"learner-update{learned['iterations']}.pt"
+        checkpoint = a.learned_root / motion_checkpoint_filename(learned)
         pins[str(a.learned_root / "complete.json")] = a.learned_hash
         pins[str(checkpoint)] = learned["checkpoint_hash"]
     for directory in (Path.cwd() / "src", Path.cwd() / "scripts"):
