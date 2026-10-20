@@ -46,6 +46,8 @@ def main():
     p.add_argument("--num-envs", type=int, default=32)
     p.add_argument("--iterations", type=int, default=2)
     p.add_argument("--seed", type=int, default=501)
+    p.add_argument("--command-point", choices=("torso", "pelvis"), default="torso")
+    p.add_argument("--position-gain", type=float, choices=(0.0, 1.0), default=0.0)
     p.add_argument("--prerequisite-smoke", type=Path)
     p.add_argument("--prerequisite-unit")
     p.add_argument("--prerequisite-hash")
@@ -79,12 +81,19 @@ def main():
         require_completed_motion_smoke,
         require_completed_stable_motion_smoke,
     )
+    from rosclaw_soccer.rsi.velocity_command_protocol import (
+        command_protocol,
+        require_same_command_protocol,
+    )
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
     from scripts.rsi_native_context_recovery_common import check_pins, digest
 
     budget = MotionLearningBudget(a.mode, a.num_envs, a.iterations, a.seed)
     stable = a.stable_prior_root is not None
+    protocol = command_protocol(a.command_point, a.position_gain) if stable else {}
+    if not stable and (a.command_point != "torso" or a.position_gain != 0):
+        raise ValueError("velocity command protocol is only available to the stable prior actor")
     prior = pilot = native_bank = None
     if stable:
         if not all(
@@ -134,6 +143,7 @@ def main():
         prerequisite = json.loads((a.prerequisite_smoke / "complete.json").read_text())
         if stable:
             require_completed_stable_motion_smoke(prerequisite)
+            require_same_command_protocol(prerequisite, a.command_point, a.position_gain)
             for root, unit, expected, kind in (
                 (
                     a.stable_evaluation_root,
@@ -322,6 +332,7 @@ def main():
             rehearsal_batch_size=256 if stable else 0,
             learning_rate=1e-4 if stable else 1e-3,
             initial_action_std=0.1 if stable else 1.0,
+            **protocol,
             resumes_algorithm_weights_optimizer_and_rehearsal=stable and prerequisite is not None,
             physics_episode_state_restored=False,
             publication_license_cleared=False,
@@ -366,7 +377,12 @@ def main():
             )
             cfg_factory = make_velocity_prior_training_cfg
             cfg_extra = dict(
-                parameters=params, command_mode="reference_velocity", balanced_initial_sources=True
+                parameters=params,
+                command_mode=(
+                    "reference_position_velocity" if a.position_gain else "reference_velocity"
+                ),
+                command_point=a.command_point,
+                balanced_initial_sources=True,
             )
         cfg = cfg_factory(
             motion_dir=a.reference_root / "src/assets/soccer/motions/shooter",
@@ -590,6 +606,7 @@ def main():
             stable_prior_rehearsal=stable,
             actor_observation_dim=168 if stable else 166,
             prior_configuration=committed_runner_config if stable else None,
+            **protocol,
         )
         path = a.output / f"learner-update{budget.iterations}.pt"
         torch.save(checkpoint, path)
@@ -630,6 +647,7 @@ def main():
                 new_optimizer_steps=sum(c["completed"] for c in optimizer_counts),
                 optimizer_counts=optimizer_counts,
                 stable_prior_rehearsal=stable,
+                **protocol,
                 native_rehearsal=final_state.get("native_rehearsal"),
                 changed_actor_weights=actor_changes,
                 changed_critic_weights=critic_changes,

@@ -29,7 +29,11 @@ def main():
     p.add_argument("--command-point", choices=("torso", "pelvis"), default="torso")
     p.add_argument("--world-index", type=int, choices=range(32), default=0)
     a = p.parse_args()
-    from rosclaw_soccer.rsi.mjlab_motion_curriculum import motion_checkpoint_filename
+    from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
+        motion_checkpoint_filename,
+        require_completed_stable_motion_smoke,
+    )
+    from rosclaw_soccer.rsi.velocity_command_protocol import require_same_command_protocol
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -55,9 +59,13 @@ def main():
         receipts.append(json.loads(path.read_text()))
         pins[str(path)] = expected
     learner, plan, export = receipts
+    if learner["status"] == "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED":
+        require_completed_stable_motion_smoke(learner)
+        require_same_command_protocol(learner, a.command_point, a.position_gain)
+    elif learner["status"] != "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED":
+        raise ValueError("completed stable online smoke or bounded imitation required")
     if (
-        learner["status"] != "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED"
-        or plan["status"] != "MJLAB_PAIRED_DEV_MOTION_TRACKING_NOT_FOOTBALL_QUALIFIED"
+        plan["status"] != "MJLAB_PAIRED_DEV_MOTION_TRACKING_NOT_FOOTBALL_QUALIFIED"
         or not plan["stable_prior_rehearsal"]
         or export["status"] != "MJLAB_NATIVE_EXPORT_ONE_CONTROL_DIAGNOSTIC_NOT_LONG_RUN_QUALIFIED"
     ):
