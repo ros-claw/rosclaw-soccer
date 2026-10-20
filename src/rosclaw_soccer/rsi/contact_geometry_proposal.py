@@ -66,7 +66,10 @@ def contact_geometry_proposal(
             continue
         desired = qpos[frame, 36:39] - np.array([ball_radius_m + 0.005, 0, 0])
         residual = desired - toe_world[frame]
-        candidates.append((float(np.linalg.norm(residual)), frame, weight, residual))
+        distance = float(np.linalg.norm(residual))
+        if not np.isfinite(distance):
+            raise ValueError("derived contact geometry must remain finite")
+        candidates.append((distance, frame, weight, residual))
     if not candidates:
         return dict(report, reason="no_forward_approach_in_fixed_contact_window")
     distance, frame, weight, residual = min(candidates, key=lambda x: (x[0], x[1]))
@@ -84,12 +87,18 @@ def contact_geometry_proposal(
         ]
     )
     request = rotation.T @ residual / weight
+    if not np.isfinite(request).all() or not np.isfinite(np.linalg.norm(request)):
+        raise ValueError("derived contact geometry must remain finite")
     scale = min(
         1.0,
         0.04 / max(float(np.max(abs(request))), 1e-12),
         0.06 / max(float(np.linalg.norm(request)), 1e-12),
     )
     offset = request * scale
+    # Round inward only if floating point multiplication crosses a declared bound.
+    while np.max(abs(offset)) > 0.04 or np.linalg.norm(offset) > 0.06:
+        scale = float(np.nextafter(scale, 0.0))
+        offset = request * scale
     return dict(
         report,
         applicable=True,
