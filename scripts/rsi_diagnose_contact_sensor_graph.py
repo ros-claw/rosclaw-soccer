@@ -16,6 +16,7 @@ from pathlib import Path
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--contact-sort", choices=("stock", "non-grid-stride"), default="stock")
+    p.add_argument("--force-decoder", choices=("stock", "addressed"), default="stock")
     for key in ("qualification-root", "reference-root", "output"):
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("qualification-unit", "qualification-hash", "expected-head"):
@@ -67,6 +68,8 @@ def main():
             library_mutation=False,
             contact_sort=a.contact_sort,
             in_memory_kernel_override=a.contact_sort != "stock",
+            force_decoder=a.force_decoder,
+            in_memory_force_override=a.force_decoder != "stock",
             new_optimizer_steps=0,
             hardware_authorized=False,
             goal_complete=False,
@@ -79,13 +82,21 @@ def main():
         import numpy as np
         import torch
 
+        if a.force_decoder == "addressed":
+            from scripts.rsi_mjwarp_addressed_contact_force import install
+
+            install()
         if a.contact_sort == "non-grid-stride":
             # Explicit process-local experiment, before any simulator allocation.
             # Match upstream's tile-sort launch option, without editing installed files.
+            import inspect
             from functools import cache
 
             import warp as wp
             from mujoco_warp._src import sensor
+
+            if "grid_stride" not in inspect.signature(wp.kernel).parameters:
+                raise ValueError("non-grid-stride experiment unsupported by installed Warp")
 
             original_sort = sensor._contact_sort
 
@@ -159,15 +170,15 @@ def main():
                                 continue
                             world = int(z["trace_contact_worldid"][step, cid])
                             dim = int(z["trace_contact_dim"][step, cid])
-                            adr = int(z["trace_contact_efc_address"][step, cid, 0])
                             nefc = int(z["trace_nefc"][step, world])
                             width = 1 if dim == 1 else 2 * (dim - 1)
-                            if adr < 0:
+                            addresses = z["trace_contact_efc_address"][step, cid, :width]
+                            if (addresses < 0).any():
                                 continue
-                            if adr + width > nefc:
+                            if (addresses >= nefc).any():
                                 bad_addresses += 1
                                 continue
-                            pyramid = z["trace_efc_force"][step, world, adr : adr + width]
+                            pyramid = z["trace_efc_force"][step, world, addresses]
                             force = np.zeros(3)
                             force[0] = pyramid.sum()
                             if dim > 1:
@@ -231,6 +242,7 @@ def main():
                 status="CONTACT_SENSOR_DIAGNOSTIC_NOT_QUALIFICATION",
                 source_head=a.expected_head,
                 contact_sort=a.contact_sort,
+                force_decoder=a.force_decoder,
                 input_file_hashes=pins,
                 results=results,
                 gpu_world_steps=480,
