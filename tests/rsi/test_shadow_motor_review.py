@@ -7,6 +7,19 @@ from scripts import rsi_collect_shadow_motor as runner
 from scripts.rsi_native_context_recovery_common import digest
 
 
+def test_source_index_preserves_all_exact_suffix_matches_not_only_latest_hash():
+    pins = {
+        "/frozen1/src/pkg/a.py": "a1",
+        "/frozen2/src/pkg/a.py": "a2",
+        "/src/outer/src/pkg/a.py": "a3",
+        "/other/not-src/pkg/a.py": "bad",
+    }
+    index = runner.source_suffix_hash_index(pins)
+    for relative in ("src/pkg/a.py", "src/outer/src/pkg/a.py", "src/pkg/missing.py"):
+        original = {h for name, h in pins.items() if name.endswith("/" + relative)}
+        assert index.get(relative, set()) == original
+
+
 def arguments(tmp_path, monkeypatch, *, live):
     bank = tmp_path / "bank"
     bank.mkdir()
