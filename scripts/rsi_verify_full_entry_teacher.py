@@ -20,6 +20,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("producer", "world", "core-source", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--motion-csv", type=Path)
     for name in (
         "expected-head",
         "expected-producer-head",
@@ -66,12 +67,14 @@ def main():
     declaration = json.loads((args.producer / "declaration.json").read_text())
     complete = json.loads((args.producer / "complete.json").read_text())
     family = declaration.get("law_family", "held20")
-    if family not in ("held20", "feedback"):
+    if family not in ("held20", "feedback", "coupled"):
         raise ValueError("unknown full-task command-law family")
     expected_schema = (
         "soccer.rsi.full_remaining_entry_teacher4.v1"
         if family == "held20"
         else "soccer.rsi.full_remaining_entry_teacher4.v2"
+        if family == "feedback"
+        else "soccer.rsi.full_remaining_entry_teacher4.v3"
     )
     candidate_count = 7 if family == "held20" else 6
     expected_forecast = 4 * candidate_count * 2800
@@ -91,6 +94,11 @@ def main():
             raise ValueError("historical producer identity differs")
     if declaration["input_file_hashes"].get(str(args.world)) != digest(args.world):
         raise ValueError("same world binding required")
+    if family == "coupled" and (
+        args.motion_csv is None
+        or declaration["input_file_hashes"].get(str(args.motion_csv)) != digest(args.motion_csv)
+    ):
+        raise ValueError("coupled reference reconstruction requires the bound original CSV")
     paths = [
         p
         for folder in (Path.cwd() / "src", Path.cwd() / "scripts", args.core_source)
@@ -116,18 +124,23 @@ def main():
 
     from rosclaw_soccer.physics.g1_target_episode import G1TargetEpisode
     from rosclaw_soccer.physics.sonic_navigation_forecast import _clone_body
+    from rosclaw_soccer.providers.g1.sonic_reference_preparation import prepare_sonic_reference
     from rosclaw_soccer.providers.g1.sonic_runup import (
         G1SonicRunupController,
         _sonic_control_parameters,
     )
+    from rosclaw_soccer.providers.g1.sonic_wrist_quarantine import quarantine_wrist_reference
     from rosclaw_soccer.rsi.ball_entry_teacher import SkillEntryAffordance, ball_entry_decision
+    from rosclaw_soccer.rsi.contact_reference_offset import offset_contact_reference
     from rosclaw_soccer.rsi.full_entry_forecast import (
+        coupled_entry_options,
         feedback_entry_laws,
         full_entry_laws,
         score_full_entry,
     )
     from rosclaw_soccer.rsi.full_task_branch import integration_hash
     from rosclaw_soccer.rsi.reference_ball_strike_metrics import summarize_reference_ball_strike
+    from rosclaw_soccer.sim.contracts import hash_json
     from scripts.rsi_atomic_artifacts import write_once
 
     args.output.mkdir(parents=True, exist_ok=False)
@@ -141,6 +154,7 @@ def main():
             neural_policy_replayed=False,
             navigation_planner_reexecuted=False,
             warm_clone_and_score_helpers_shared=True,
+            posthandoff_contact_reference_reconstructed=family == "coupled",
             optimizer_steps=0,
             hardware_authorized=False,
         ),
@@ -161,12 +175,18 @@ def main():
         if affordance.contract_hash != stored["contract_hash"]:
             raise ValueError("past affordance binding differs")
         model = mujoco.MjModel.from_binary_path(str(args.world))
+        poses = (
+            np.loadtxt(args.motion_csv, delimiter=",", skiprows=1, dtype=np.float64)
+            if family == "coupled"
+            else None
+        )
         kp, kd, _ = _sonic_control_parameters(1.0, (1.0,) * 29)
         total = 0
         results = []
 
-        def replay(body, raw, law, start):
+        def replay(body, raw, law, start, *, contact_offset=(0.0, 0.0, 0.0), expected_report=None):
             stage, handoff = 0, None
+            reference = None
             goal, error = np.zeros(2), 0.0
             for frame in range(start, 300):
                 offset = frame - start
@@ -181,6 +201,33 @@ def main():
                         stage = 2
                 if d is not None and d.ready:
                     handoff, stage = frame, 1
+                    if family == "coupled":
+                        if (
+                            integration_hash(model, body.data)
+                            != expected_report["handoff_native_state_unchanged_hash"]
+                        ):
+                            raise ValueError("contact handoff full integration state differs")
+                        held, _ = quarantine_wrist_reference(poses, q[:36])
+                        prepared = prepare_sonic_reference(
+                            held[286:767],
+                            q[:36],
+                            source_frequency_hz=120,
+                            entry_intervals=50,
+                            source_evidence_hash=hash_json(declaration),
+                        )
+                        modified, geometry = offset_contact_reference(
+                            model, prepared.reference, offset_root_m=contact_offset
+                        )
+                        if geometry != expected_report["contact_reference_adaptation"]:
+                            raise ValueError(
+                                "recorded contact reference provenance/geometry differs"
+                            )
+                        reference = modified.initialize(q[:36], frames=410)
+                if reference is not None:
+                    local = frame - handoff
+                    np.testing.assert_array_equal(
+                        reference[local : local + 10], raw["encoder_reference_poses"][offset]
+                    )
                 np.testing.assert_array_equal(cmd, raw["entry_command"][offset])
                 np.testing.assert_array_equal(goal, raw["entry_target_root_xy_m"][offset])
                 if raw["entry_stage"][offset] != stage or raw["entry_error_m"][offset] != error:
@@ -218,17 +265,35 @@ def main():
                 if family == "held20"
                 else feedback_entry_laws()
             )
+            offsets = [(0.0, 0.0, 0.0)] * len(laws)
+            option_names = [law.name for law in laws]
+            if family == "coupled":
+                options = coupled_entry_options()
+                laws = [option.law for option in options]
+                offsets = [option.offset_root_m for option in options]
+                option_names = [option.name for option in options]
             costs = []
             for index, candidate in enumerate(row["candidates"]):
-                if candidate["index"] != index or candidate["name"] != laws[index].name:
+                if candidate["index"] != index or candidate["name"] != option_names[index]:
                     raise ValueError("candidate bank order differs")
+                if family == "coupled" and candidate["contact_reference_offset_m"] != list(
+                    offsets[index]
+                ):
+                    raise ValueError("candidate contact request differs")
                 with np.load(args.producer / candidate["artifact"], allow_pickle=False) as archive:
                     future = {k: archive[k] for k in archive.files}
                 branch = _clone_body(body)
                 donor = integration_hash(model, body.data)
                 if donor != candidate["donor_body_hash"]:
                     raise ValueError("forecast did not start at actual replayed prefix")
-                handoff = replay(branch, future, laws[index], 20)
+                handoff = replay(
+                    branch,
+                    future,
+                    laws[index],
+                    20,
+                    contact_offset=offsets[index],
+                    expected_report=candidate["report"],
+                )
                 if handoff != candidate["report"]["handoff_frame"]:
                     raise ValueError("candidate handoff timing differs")
                 if integration_hash(model, body.data) != donor:
@@ -243,7 +308,18 @@ def main():
             if row["selected_index"] != selected:
                 raise ValueError("deterministic candidate selection differs")
             suffix = {k: a[20:] for k, a in raw.items()}
-            handoff = replay(body, suffix, laws[selected], 20)
+            handoff = replay(
+                body,
+                suffix,
+                laws[selected],
+                20,
+                contact_offset=offsets[selected],
+                expected_report=row,
+            )
+            if family == "coupled" and row["selected_contact_reference_offset_m"] != list(
+                offsets[selected]
+            ):
+                raise ValueError("actual selected contact request differs")
             if (
                 handoff != row["handoff_frame"]
                 or score_full_entry(model, suffix) != row["actual_score"]
@@ -265,6 +341,7 @@ def main():
                     all_candidate_physics_bit_exact=True,
                     candidate_count=len(costs),
                     own_neural_reexecution_not_verified_by_this_reader=True,
+                    posthandoff_contact_reference_reconstructed=family == "coupled",
                     handoff_frame=handoff,
                     actual_score=row["actual_score"],
                     native=body.review(),

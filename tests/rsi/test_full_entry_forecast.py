@@ -304,3 +304,70 @@ def test_full_reader_rejects_live_or_failed_producer_before_physics(
     with pytest.raises(ValueError, match="closed successful"):
         reader.main()
     assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("unbound", [False, True])
+def test_coupled_reader_requires_original_csv_before_importing_physics(
+    tmp_path, monkeypatch, unbound
+):
+    import json
+    import sys
+
+    from scripts import rsi_verify_full_entry_teacher as reader
+
+    producer = tmp_path / "producer"
+    producer.mkdir()
+    world = tmp_path / "world"
+    world.write_text("not a physical model; must never be imported")
+    declaration = dict(
+        schema="soccer.rsi.full_remaining_entry_teacher4.v3",
+        law_family="coupled",
+        source_head="producer",
+        input_file_hashes={str(world): reader.digest(world)},
+    )
+    complete = dict(
+        actual_native_steps=24000,
+        forecast_native_steps=67200,
+        optimizer_steps=0,
+        results=[
+            dict(job=f"course{i}-{arm}") for i in range(4) for arm in ("nominal", "full_teacher")
+        ],
+    )
+    (producer / "declaration.json").write_text(json.dumps(declaration))
+    (producer / "complete.json").write_text(json.dumps(complete))
+    args = [
+        "reader",
+        "--producer",
+        str(producer),
+        "--world",
+        str(world),
+        "--core-source",
+        "unused",
+        "--output",
+        str(tmp_path / "out"),
+        "--expected-head",
+        "expected",
+        "--expected-producer-head",
+        "producer",
+        "--expected-producer-hash",
+        reader.digest(producer / "complete.json"),
+        "--producer-unit",
+        "fixture.service",
+    ]
+    if unbound:
+        csv = tmp_path / "unbound.csv"
+        csv.write_text("not pinned")
+        args += ["--motion-csv", str(csv)]
+    monkeypatch.setattr(sys, "argv", args)
+    monkeypatch.setattr(
+        reader.subprocess,
+        "check_output",
+        lambda cmd, **kwargs: (
+            "expected\n"
+            if cmd[0] == "git"
+            else "MainPID=0\nResult=success\nSubState=exited\nExecMainStatus=0\n"
+        ),
+    )
+    with pytest.raises(ValueError, match="bound original CSV"):
+        reader.main()
+    assert not (tmp_path / "out").exists()
