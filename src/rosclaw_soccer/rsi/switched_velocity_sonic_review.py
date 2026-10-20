@@ -19,6 +19,7 @@ def review_switched(
     world: Any,
     *,
     handoff: int,
+    held_gains: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> dict[str, Any]:
     n = 300 - handoff
     physical_shapes = dict(
@@ -80,7 +81,21 @@ def review_switched(
         raise ValueError("complete continuous native canonical trajectory required")
     caps = np.array(G1_HARD_TORQUE_LIMITS)
     kp, kd = np.array(params.stiffness), np.array(params.damping)
+    if held_gains is not None and (type(held_gains) is not tuple or len(held_gains) != 2):
+        raise ValueError("exact two held-gain arrays required")
+    if held_gains is not None and any(
+        type(a) is not np.ndarray
+        or a.shape != (300, 29)
+        or a.dtype != np.float64
+        or not np.isfinite(a).all()
+        or np.any(a <= 0)
+        or np.any(a > 1000)
+        for a in held_gains
+    ):
+        raise ValueError("complete bounded actual held gains required")
     for f in range(300):
+        if held_gains is not None:
+            kp, kd = held_gains[0][f], held_gains[1][f]
         target = raw["joint_target_rad"][f]
         before_q = np.concatenate((q[f, None], nq[f, :-1]))
         before_v = np.concatenate((v[f, None], nv[f, :-1]))
@@ -148,10 +163,10 @@ def review_switched(
     return dict(
         score=score,
         handoff_frame=handoff,
-        all_common_pd_and_policy_inputs_reconstructed=True,
+        all_common_pd_and_policy_inputs_reconstructed=held_gains is None,
         body_reset_performed=False,
-        gain_switch_performed=False,
-        common_fixed_pd_is_velocity_deployment_not_sonic_deployment=True,
+        gain_switch_performed=held_gains is not None,
+        common_fixed_pd_is_velocity_deployment_not_sonic_deployment=held_gains is None,
         old_sonic_motor_certificate_inherited=False,
         new_optimizer_steps=0,
         hardware_authorized=False,

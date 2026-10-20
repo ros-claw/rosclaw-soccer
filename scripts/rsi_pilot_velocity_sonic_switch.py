@@ -59,7 +59,23 @@ def historical_entry(pins):
     )
 
 
-def run(a, pins, probe, params, model, config, world, baseline, course, source, sonic_root):
+def run(
+    a,
+    pins,
+    probe,
+    params,
+    model,
+    config,
+    world,
+    baseline,
+    course,
+    source,
+    sonic_root,
+    *,
+    body_factory=None,
+    handoff_callback=None,
+    reviewer=None,
+):
     import numpy as np
 
     from rosclaw_soccer.physics.g1_target_episode import G1TargetEpisode
@@ -91,7 +107,7 @@ def run(a, pins, probe, params, model, config, world, baseline, course, source, 
         CountedCapture(tracker._encoder),
         CountedCapture(tracker._decoder),
     )
-    body = G1TargetEpisode(
+    body = (G1TargetEpisode if body_factory is None else body_factory)(
         world,
         world_hash=pins[str(a.world)],
         kp=np.array(params.stiffness),
@@ -149,6 +165,8 @@ def run(a, pins, probe, params, model, config, world, baseline, course, source, 
                             "all22 prefix fields must reproduce original measured-entry body"
                         )
                 write_once(a.output / "handoff.json", receipt)
+                if handoff_callback is not None:
+                    handoff_callback(body, f)
             if handoff is None:
                 omega = sensor.angular_velocity_body(q, v)
                 cmd = decision.command
@@ -217,7 +235,9 @@ def run(a, pins, probe, params, model, config, world, baseline, course, source, 
             or tracker._decoder.attempts != 300 - handoff
         ):
             raise ValueError("exact actual successful and attempted neural call counts required")
-        result = review_switched(native, neural, params, tracker, world, handoff=handoff)
+        result = (review_switched if reviewer is None else reviewer)(
+            native, neural, params, tracker, world, handoff=handoff
+        )
         np.savez_compressed(a.output / "native300.npz", **native)
         np.savez_compressed(
             a.output / "velocity-prefix.npz",
