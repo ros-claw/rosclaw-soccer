@@ -49,3 +49,11 @@ def ball_aware_checkpoint_protocol(
         if key in report and report[key] != value:
             raise ValueError("report/checkpoint command protocol mismatch")
     return result
+
+
+def ball_aware_force_protocol(report: dict[str, Any], checkpoint: dict[str, Any]) -> str:
+    """Missing legacy markers mean unqualified stock reads, never the new fix."""
+    actual = report.get("force_decoder", "stock")
+    if actual not in ("stock", "addressed") or checkpoint.get("force_decoder", "stock") != actual:
+        raise ValueError("explicit matching report/checkpoint contact force decoder required")
+    return str(actual)

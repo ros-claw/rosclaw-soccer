@@ -77,13 +77,28 @@ def main():
         for source in directory.rglob("*.py"):
             pins[str(source)] = digest(source)
     check_pins(pins)
+    force_decoder = None
     if ball_aware:
         import torch
 
-        from rosclaw_soccer.rsi.velocity_command_protocol import ball_aware_checkpoint_protocol
+        from rosclaw_soccer.rsi.velocity_command_protocol import (
+            ball_aware_checkpoint_protocol,
+            ball_aware_force_protocol,
+        )
 
         metadata = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
         protocol = ball_aware_checkpoint_protocol(course, metadata)
+        force_decoder = ball_aware_force_protocol(course, metadata)
+        if force_decoder == "addressed":
+            relative = "scripts/rsi_mjwarp_addressed_contact_force.py"
+            qualified_hashes = {
+                v for k, v in course["input_file_hashes"].items() if k.endswith("/" + relative)
+            }
+            if qualified_hashes != {digest(Path.cwd() / relative)}:
+                raise ValueError("GPU evaluation must use the actual qualified force decoder")
+            from scripts.rsi_mjwarp_addressed_contact_force import install
+
+            install()
         command_point = protocol["velocity_command_anatomical_point"]
         position_gain = protocol["velocity_command_position_feedback_gain"]
     a.output.mkdir(parents=True)
@@ -99,6 +114,8 @@ def main():
             first_episode_only=True,
             stable_prior_rehearsal=stable,
             ball_aware=ball_aware,
+            force_decoder=force_decoder,
+            gpu_contact_labels_qualified=force_decoder == "addressed",
             actor_observation_dim=177 if ball_aware else 168 if stable else 166,
             command_protocol_read_from_hash_bound_checkpoint=ball_aware,
             velocity_command_position_feedback_gain=position_gain,
@@ -544,6 +561,8 @@ def main():
                 evaluated_source_split="dev" if a.control == "neural" else "train",
                 stable_prior_rehearsal=stable,
                 ball_aware=ball_aware,
+                force_decoder=force_decoder,
+                gpu_contact_labels_qualified=force_decoder == "addressed",
                 actor_observation_dim=177 if ball_aware else 168 if stable else 166,
                 velocity_command_position_feedback_gain=position_gain,
                 velocity_command_anatomical_point=command_point,
