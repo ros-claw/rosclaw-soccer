@@ -27,6 +27,7 @@ def main():
     p.add_argument("--learner-root", type=Path)
     p.add_argument("--learner-unit")
     p.add_argument("--learner-hash")
+    p.add_argument("--position-gain", type=float, choices=(0.0, 1.0), default=0.0)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
@@ -72,7 +73,13 @@ def main():
             raise ValueError("original codec screen must pass before a full reference pilot")
         pins[str(screen_path)] = a.screen_hash
     controls = 300 if a.reference_pilot else 8
-    command_mode = "reference_velocity" if a.reference_pilot else "zero"
+    if a.position_gain and not a.reference_pilot:
+        raise ValueError("position tracking requires the explicit reference-pilot protocol")
+    command_mode = (
+        ("reference_position_velocity" if a.position_gain else "reference_velocity")
+        if a.reference_pilot
+        else "zero"
+    )
     pins[str(checkpoint)] = receipts[1]["checkpoint_hash"]
     pins[str(a.config)] = a.config_hash
     pins[str(a.export_root / "compiled_model.mjb")] = receipts[0]["model_hash"]
@@ -87,10 +94,15 @@ def main():
         if digest(learner_path) != a.learner_hash:
             raise ValueError("actual learned collector policy commitment changed")
         learner = json.loads(learner_path.read_text())
-        if learner["status"] != "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED":
-            raise ValueError("collector is predeclared to use the stable two-iteration policy")
+        if learner["status"] not in (
+            "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+            "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
+        ):
+            raise ValueError("collector requires the declared stable prior or imitation lineage")
         pins[str(learner_path)] = a.learner_hash
-        checkpoint = a.learner_root / f"learner-update{learner['iterations']}.pt"
+        from rosclaw_soccer.rsi.mjlab_motion_curriculum import motion_checkpoint_filename
+
+        checkpoint = a.learner_root / motion_checkpoint_filename(learner)
         pins[str(checkpoint)] = learner["checkpoint_hash"]
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts", a.reference_root / "src"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
@@ -110,6 +122,7 @@ def main():
             not_whole_motion_or_retention_exam=True,
             learned_train_collection=learner is not None,
             teacher_action_labels_physically_proven=False,
+            velocity_command_position_feedback_gain=a.position_gain,
             hardware_authorized=False,
         ),
     )
@@ -188,6 +201,12 @@ def main():
             full_observation = obs["actor"].cpu().numpy().copy()
             reference_joint = motion.joint_pos.cpu().numpy().copy()
             reference_joint_velocity = motion.joint_vel.cpu().numpy().copy()
+            absolute_reference = dict(
+                position=motion.anchor_pos_w.cpu().numpy().copy(),
+                quaternion=motion.anchor_quat_w.cpu().numpy().copy(),
+                linear=motion.anchor_lin_vel_w.cpu().numpy().copy(),
+                angular=motion.anchor_ang_vel_w.cpu().numpy().copy(),
+            )
             source_id = motion.motion_idx.cpu().numpy().copy()
             source_phase = motion.time_steps.cpu().numpy().copy()
             active_before = score.active.copy()
@@ -244,6 +263,30 @@ def main():
                     raise ValueError(
                         "actual GPU observation prefix differs from qualified native codec"
                     )
+                if a.reference_pilot:
+                    from rosclaw_soccer.rsi.native_motion_reference import reference_inputs70
+
+                    torso = model.body("robot/torso_link").id
+                    expected_command, expected_reference = reference_inputs70(
+                        root_rotation=data.xmat[layout.pelvis].reshape(3, 3),
+                        anchor_position=data.xpos[torso],
+                        anchor_rotation=data.xmat[torso].reshape(3, 3),
+                        joint_position=reference_joint[world],
+                        joint_velocity=reference_joint_velocity[world],
+                        reference_position=absolute_reference["position"][world],
+                        reference_quaternion=absolute_reference["quaternion"][world],
+                        reference_linear_velocity=absolute_reference["linear"][world],
+                        reference_angular_velocity=absolute_reference["angular"][world],
+                        position_gain=a.position_gain,
+                    )
+                    if not np.allclose(
+                        expected_command, prefix[world, 6:9], rtol=0, atol=1e-5
+                    ) or not np.allclose(
+                        expected_reference, full_observation[world, 98:], rtol=0, atol=1e-5
+                    ):
+                        raise ValueError(
+                            "actual full reference context differs from independent native geometry"
+                        )
             with torch.no_grad():
                 action = actor(obs["actor"])
             neural_rows += 8
@@ -293,6 +336,10 @@ def main():
                     active_before=active_before,
                     reward=reward.cpu().numpy().copy(),
                     actual_actuator_force=env.sim.data.actuator_force.cpu().numpy().copy(),
+                    reference_anchor=absolute_reference["position"],
+                    reference_anchor_quat=absolute_reference["quaternion"],
+                    reference_anchor_linear_velocity=absolute_reference["linear"],
+                    reference_anchor_angular_velocity=absolute_reference["angular"],
                 )
             )
             previous_actions[done] = 0
@@ -330,6 +377,7 @@ def main():
                 training_sources=list(TRAIN_MOTION_NAMES),
                 learned_train_collection=learner is not None,
                 teacher_action_labels_physically_proven=False,
+                velocity_command_position_feedback_gain=a.position_gain,
             ),
         )
     except Exception as error:

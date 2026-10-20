@@ -19,9 +19,13 @@ def main():
         "expected-head",
     ):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--rehearsal-root", type=Path)
+    p.add_argument("--rehearsal-unit")
+    p.add_argument("--rehearsal-hash")
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
         TRAIN_MOTION_NAMES,
+        motion_checkpoint_filename,
         require_completed_stable_motion_smoke,
     )
     from scripts.rsi_atomic_artifacts import write_once
@@ -50,7 +54,26 @@ def main():
         pins[str(path)] = expected
         receipts.append(receipt)
     collection, learner = receipts
-    require_completed_stable_motion_smoke(learner)
+    if learner["status"] == "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED":
+        require_completed_stable_motion_smoke(learner)
+        bank_root = a.learner_root
+        bank_owner = learner
+    elif learner["status"] == "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED":
+        if not all((a.rehearsal_root, a.rehearsal_unit, a.rehearsal_hash)):
+            raise ValueError("aggregated imitation requires the original native replay owner")
+        wait_for_terminal_collection(a.rehearsal_unit)
+        bank_path = a.rehearsal_root / "complete.json"
+        if (
+            digest(bank_path) != a.rehearsal_hash
+            or learner["input_file_hashes"].get(str(bank_path)) != a.rehearsal_hash
+        ):
+            raise ValueError("same original rehearsal lineage required")
+        bank_owner = json.loads(bank_path.read_text())
+        require_completed_stable_motion_smoke(bank_owner)
+        bank_root = a.rehearsal_root
+        pins[str(bank_path)] = a.rehearsal_hash
+    else:
+        raise ValueError("explicit stable prior or bounded imitation lineage required")
     if (
         collection["status"] != "MJLAB_LEARNED_PRIOR_TRAIN_COLLECTION_NOT_TEACHER_QUALIFIED"
         or tuple(collection["training_sources"]) != TRAIN_MOTION_NAMES
@@ -58,10 +81,10 @@ def main():
         != a.learner_hash
     ):
         raise ValueError("fixed TRAIN-only physical collection from this exact policy required")
-    source_checkpoint = a.learner_root / f"learner-update{learner['iterations']}.pt"
-    bank = a.learner_root / "native-rehearsal1200.npz"
+    source_checkpoint = a.learner_root / motion_checkpoint_filename(learner)
+    bank = bank_root / "native-rehearsal1200.npz"
     pins[str(source_checkpoint)] = learner["checkpoint_hash"]
-    pins[str(bank)] = learner["native_rehearsal"]["bank_hash"]
+    pins[str(bank)] = bank_owner["native_rehearsal"]["bank_hash"]
     pins[str(a.collection_root / "screen8.npz")] = collection["output_hash"]
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
@@ -88,6 +111,10 @@ def main():
             teacher_physically_proven=False,
             new_physics_steps=0,
             hardware_authorized=False,
+            velocity_command_position_feedback_gain=collection.get(
+                "velocity_command_position_feedback_gain", 0.0
+            ),
+            parent_checkpoint_hash=learner["checkpoint_hash"],
         ),
     )
     attempted = updates = neural_rows = forward_calls = 0
@@ -196,7 +223,18 @@ def main():
             actor_observation_dim=168,
             prior_configuration=copy.deepcopy(source["prior_configuration"]),
             iteration=source["iteration"],
-            imitation_iteration=updates,
+            imitation_iteration=source.get("imitation_iteration", 0) + updates,
+            imitation_generation=source.get(
+                "imitation_generation",
+                1
+                if learner["status"] == "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED"
+                else 0,
+            )
+            + 1,
+            parent_checkpoint_hash=learner["checkpoint_hash"],
+            velocity_command_position_feedback_gain=collection.get(
+                "velocity_command_position_feedback_gain", 0.0
+            ),
             imitation_optimizer_state_dict=optimizer.state_dict(),
             ppo_optimizer_continuation_valid=False,
             critic_updated=False,
@@ -251,6 +289,12 @@ def main():
                 checkpoint_file=path.name,
                 checkpoint_hash=digest(path),
                 iterations=50,
+                cumulative_imitation_updates=checkpoint["imitation_iteration"],
+                imitation_generation=checkpoint["imitation_generation"],
+                parent_checkpoint_hash=learner["checkpoint_hash"],
+                velocity_command_position_feedback_gain=collection.get(
+                    "velocity_command_position_feedback_gain", 0.0
+                ),
                 weights_only_checkpoint_reload=True,
                 new_physics_steps=0,
                 teacher_physically_proven=False,

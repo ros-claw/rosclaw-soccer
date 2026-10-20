@@ -44,6 +44,9 @@ def main():
         "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
         "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
     )
+    position_gain = course.get("velocity_command_position_feedback_gain", 0.0)
+    if position_gain not in (0.0, 1.0):
+        raise ValueError("declared position-command protocol required")
     if (
         course["status"]
         not in (
@@ -80,6 +83,7 @@ def main():
             reset_seeds=[1501, 1502] if a.control == "neural" else [1601],
             first_episode_only=True,
             stable_prior_rehearsal=stable,
+            velocity_command_position_feedback_gain=position_gain,
             mode="SIM_ONLY",
             max_gpu_world_substeps=384000,
             new_optimizer_steps=0,
@@ -157,7 +161,12 @@ def main():
                         config_path, expected_hash=pins[str(config_path)]
                     )
                     cfg_factory = make_velocity_prior_training_cfg
-                    cfg_extra = dict(parameters=params, command_mode="reference_velocity")
+                    cfg_extra = dict(
+                        parameters=params,
+                        command_mode="reference_position_velocity"
+                        if position_gain
+                        else "reference_velocity",
+                    )
                 cfg = cfg_factory(
                     motion_dir=a.reference_root / "src/assets/soccer/motions/shooter",
                     num_envs=n,
@@ -424,6 +433,7 @@ def main():
                 public_source_development_not_fresh_world=True,
                 evaluated_source_split="dev" if a.control == "neural" else "train",
                 stable_prior_rehearsal=stable,
+                velocity_command_position_feedback_gain=position_gain,
                 football_skill_proven=False,
                 goal_complete=False,
                 promotion_authorized=False,

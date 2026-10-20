@@ -30,8 +30,11 @@ def velocity_reference_observation(env, *, defaults, command_mode):
     quaternion = robot.data.root_link_quat_w
     if command_mode == "zero":
         command = torch.zeros((env.num_envs, 3), device=env.device)
-    elif command_mode == "reference_velocity":
-        linear = quat_apply_inverse(quaternion, motion.anchor_lin_vel_w)
+    elif command_mode in ("reference_velocity", "reference_position_velocity"):
+        velocity_world = motion.anchor_lin_vel_w
+        if command_mode == "reference_position_velocity":
+            velocity_world = velocity_world + (motion.anchor_pos_w - motion.robot_anchor_pos_w)
+        linear = quat_apply_inverse(quaternion, velocity_world)
         angular = quat_apply_inverse(quaternion, motion.anchor_ang_vel_w)
         # Exogenous velocity-command range, NOT actuator/state clipping.
         command = torch.stack(
@@ -89,7 +92,7 @@ def velocity_reference_observation(env, *, defaults, command_mode):
 
 
 def make_velocity_prior_training_cfg(*, parameters, command_mode, **kwargs):
-    if command_mode not in ("zero", "reference_velocity"):
+    if command_mode not in ("zero", "reference_velocity", "reference_position_velocity"):
         raise ValueError("explicit prior command mode required")
     cfg = make_motion_training_cfg(**kwargs)
     # The imported training template computes scales from effort/Kp, whereas
