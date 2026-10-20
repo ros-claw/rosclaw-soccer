@@ -34,7 +34,6 @@ def main():
     ):
         if digest(path) != expected:
             raise ValueError("diagnostic input identity differs")
-    bd = json.loads((args.bank / "declaration.json").read_text())
     tc = json.loads((args.train_root / "complete.json").read_text())
     ec = json.loads((args.evaluation / "complete.json").read_text())
     ed = json.loads((args.evaluation / "declaration.json").read_text())
