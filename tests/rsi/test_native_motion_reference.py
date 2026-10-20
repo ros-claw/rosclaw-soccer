@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.native_motion_reference import reference_inputs70
+from rosclaw_soccer.rsi.native_motion_reference import point_velocity_command, reference_inputs70
 
 
 def inputs():
@@ -58,3 +58,16 @@ def test_position_feedback_only_changes_bounded_velocity_command():
     assert bounded[1] == -0.5
     with pytest.raises(ValueError, match="gain"):
         reference_inputs70(**source, position_gain=-1.0)
+
+
+def test_articulated_torso_yaw_is_not_root_yaw_even_in_same_world_basis():
+    common = dict(
+        root_rotation=np.eye(3),
+        current_position=np.zeros(3),
+        reference_position=np.zeros(3),
+        reference_linear_velocity=np.zeros(3),
+    )
+    root = point_velocity_command(**common, reference_angular_velocity=np.zeros(3))
+    torso = point_velocity_command(**common, reference_angular_velocity=np.array([0.0, 0.0, 3.0]))
+    assert root[2] == 0
+    assert torso[2] == 1

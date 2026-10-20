@@ -26,6 +26,7 @@ def main():
     ):
         p.add_argument("--" + name, required=True)
     p.add_argument("--position-gain", type=float, choices=(0.0, 1.0), default=0.0)
+    p.add_argument("--command-point", choices=("torso", "pelvis"), default="torso")
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import motion_checkpoint_filename
     from scripts.rsi_atomic_artifacts import write_once
@@ -75,6 +76,21 @@ def main():
         if row["completed_count"] != 32:
             raise ValueError("complete first-episode absolute source plans required")
         pins[str(a.plan_root / f"{index}-initial-raw.npz")] = row["raw_hash"]
+    motion_files = {}
+    if a.command_point == "pelvis":
+        for source, side in ((7, "left"), (10, "right")):
+            candidates = {
+                k: v
+                for k, v in plan["input_file_hashes"].items()
+                if k.endswith(f"/soccer-standard-{source:03d}_{side}.npz")
+            }
+            if not candidates or len(set(candidates.values())) != 1:
+                raise ValueError(
+                    "unique qualified reference data bytes required for root semantics"
+                )
+            path = next(iter(candidates))
+            pins[path] = candidates[path]
+            motion_files[source] = Path(path)
     for k, v in learner["input_file_hashes"].items():
         if k.endswith("/policy/velocity/v0/exported/policy.onnx") or k.endswith(
             "/policy/velocity/v0/params/deploy.yaml"
@@ -101,6 +117,9 @@ def main():
             foot_force_threshold_n=1.0,
             velocity_command_position_feedback_gain=a.position_gain,
             no_joint_target_patch_or_external_body_force=True,
+            velocity_command_anatomical_point=a.command_point,
+            original_motion_body_indices=dict(pelvis=0, torso=9),
+            maximum_reference_kinematic_calls=600,
             ball_speed_research_threshold_mps=0.5,
             not_gpu_long_run_agreement=True,
             new_optimizer_steps=0,
@@ -108,6 +127,7 @@ def main():
         ),
     )
     steps = calls = attempts = 0
+    reference_fk_calls = 0
     rows = []
     data = None
     try:
@@ -115,7 +135,10 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.native_motion_reference import reference_inputs70
+        from rosclaw_soccer.rsi.native_motion_reference import (
+            point_velocity_command,
+            reference_inputs70,
+        )
         from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
         from rosclaw_soccer.rsi.velocity_prior_actor import LearnedPriorNativeSession
 
@@ -153,6 +176,61 @@ def main():
             horizon = len(references["reference_joint"])
             if not 1 <= horizon <= 300:
                 raise ValueError("bounded whole source plan required")
+            root_reference = None
+            if a.command_point == "pelvis":
+                with np.load(motion_files[source], allow_pickle=False) as z:
+                    if float(z["fps"]) != 50:
+                        raise ValueError("original50Hz source data required")
+                    bp = z["body_pos_w"][:horizon].copy()
+                    bq = z["body_quat_w"][:horizon].copy()
+                    bl = z["body_lin_vel_w"][:horizon].copy()
+                    ba = z["body_ang_vel_w"][:horizon].copy()
+                origin = references["reference_anchor"][0] - bp[0, 9]
+                if not np.allclose(
+                    bp[:, 9] + origin, references["reference_anchor"], atol=1e-5, rtol=0
+                ) or not np.allclose(
+                    bq[:, 9], references["reference_anchor_quat"], atol=1e-6, rtol=0
+                ):
+                    raise ValueError("source anatomical body map or plan origin differs")
+                root_reference = dict(
+                    position=bp[:, 0] + origin,
+                    quaternion=bq[:, 0],
+                    linear=bl[:, 0],
+                    angular=ba[:, 0],
+                )
+                scratch = mujoco.MjData(model)
+                for frame in range(horizon):
+                    scratch.qpos[:] = initial_q
+                    scratch.qpos[layout.rq : layout.rq + 3] = root_reference["position"][frame]
+                    scratch.qpos[layout.rq + 3 : layout.rq + 7] = root_reference["quaternion"][
+                        frame
+                    ]
+                    scratch.qpos[layout.qi] = references["reference_joint"][frame]
+                    mujoco.mj_kinematics(model, scratch)
+                    reference_fk_calls += 1
+                    expected_torso_rotation = np.zeros(9)
+                    mujoco.mju_quat2Mat(
+                        expected_torso_rotation,
+                        references["reference_anchor_quat"][frame].astype(np.float64),
+                    )
+                    if not np.allclose(
+                        scratch.xpos[torso],
+                        references["reference_anchor"][frame],
+                        atol=1e-5,
+                        rtol=0,
+                    ):
+                        raise ValueError(
+                            "native FK does not bind the claimed pelvis/torso data identities"
+                        )
+                    if (
+                        not np.allclose(
+                            scratch.xmat[torso], expected_torso_rotation, atol=1e-5, rtol=0
+                        )
+                        or reference_fk_calls > 600
+                    ):
+                        raise ValueError(
+                            "reference orientation identity or kinematic budget differs"
+                        )
             for arm in ("initial", "final"):
                 first = None
                 for repeat in range(2):
@@ -190,6 +268,15 @@ def main():
                             ][frame],
                             position_gain=a.position_gain,
                         )
+                        if root_reference is not None:
+                            command = point_velocity_command(
+                                root_rotation=data.xmat[layout.pelvis].reshape(3, 3),
+                                current_position=data.xpos[layout.pelvis],
+                                reference_position=root_reference["position"][frame],
+                                reference_linear_velocity=root_reference["linear"][frame],
+                                reference_angular_velocity=root_reference["angular"][frame],
+                                position_gain=a.position_gain,
+                            )
                         target = actor.propose_reference(
                             q,
                             v,
@@ -314,6 +401,7 @@ def main():
                         stable_research_guard=bool(cq[:, 2].min() >= 0.65 and upright.min() >= 0.9),
                         mean_anchor_xy_error_m=float(raw["anchor_xy_error"].mean()),
                         velocity_command_position_feedback_gain=a.position_gain,
+                        velocity_command_anatomical_point=a.command_point,
                         raw_hash=digest(folder / "native.npz"),
                         goal_success=False,
                         football_skill_proven=False,
@@ -332,6 +420,7 @@ def main():
                 native_steps=steps,
                 attempted_native_steps=attempts,
                 neural_calls=calls,
+                reference_kinematic_calls=reference_fk_calls,
                 all_full_independent_repeats_exact=True,
                 new_optimizer_steps=0,
                 goal_complete=False,
@@ -360,6 +449,7 @@ def main():
                 native_steps=steps,
                 attempted_native_steps=attempts,
                 completed_neural_calls=calls,
+                reference_kinematic_calls=reference_fk_calls,
                 automatic_retry_authorized=False,
             ),
         )
