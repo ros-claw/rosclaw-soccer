@@ -8,6 +8,10 @@ import re
 from dataclasses import asdict, dataclass
 
 from rosclaw_soccer.sim.contracts import hash_json
+from rosclaw_soccer.training.categorical_motion_holdout import (
+    CategoricalMotionHoldoutCourse,
+    preflight_categorical_motion_holdout,
+)
 from rosclaw_soccer.training.close_contact_courses import (
     CloseContactCourse,
     preflight_close_contact_bank,
@@ -37,7 +41,8 @@ def preflight_receiving_courses(
     | tuple[FirstTouchCourse, ...]
     | tuple[CloseContactCourse, ...]
     | tuple[ExpandedEntryCourse, ...]
-    | tuple[MotionPortfolioHoldoutCourse, ...],
+    | tuple[MotionPortfolioHoldoutCourse, ...]
+    | tuple[CategoricalMotionHoldoutCourse, ...],
     # Separately named near holdout never coerces the original RSI/legacy domains.
 ) -> str:
     """Return a content binding only after every course passes the launch domain.
@@ -51,6 +56,8 @@ def preflight_receiving_courses(
     """
     if type(courses) is not tuple or not 1 <= len(courses) <= 4096:
         raise ValueError("bounded immutable receiving course bank required")
+    if all(type(course) is CategoricalMotionHoldoutCourse for course in courses):
+        return preflight_categorical_motion_holdout(courses)  # type: ignore[arg-type]
     if all(type(course) is MotionPortfolioHoldoutCourse for course in courses):
         return preflight_motion_portfolio_holdout(courses)  # type: ignore[arg-type]
     if all(type(course) is CloseContactCourse for course in courses):
