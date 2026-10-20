@@ -135,8 +135,8 @@ def test_whole_original_both_cohorts_close_once_without_physics_or_optimization(
     if mode == "late_mutation":
         actual = stage.compare_matched_references
 
-        def mutate(*args):
-            result = actual(*args)
+        def mutate(*args, **kwargs):
+            result = actual(*args, **kwargs)
             Path(cfg["cohorts"]["zero"]["contact_configuration"]).write_text("{}")
             return result
 
