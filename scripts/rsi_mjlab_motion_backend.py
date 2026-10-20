@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Adapted scheduling: xiaojxkevin/G1-mjlab-soccer at 45e3d1e89ee924a263ff08d810fda5473dc3979d.
+# Modified for explicit episode boundaries, fixed codec, observations and ball/contact contracts.
+# See third_party/NOTICE.md and third_party/licenses/g1-mjlab-soccer-APACHE-2.0.txt.
 """Optional MJLab1.2 backend: explicit reset boundaries and fixed action codec.
 
 Import ONLY in the separately qualified training environment, after pinning the
