@@ -89,3 +89,61 @@ def test_new_actor_critic_created_before_fresh_optimizer_and_rehearsal_abi(tmp_p
     assert all(id(p) in owned for p in actor.mlp.parameters())
     assert all(id(p) in owned for p in critic.parameters())
     assert algorithm.save()["native_rehearsal"]["reference_features"] == 79
+
+
+def test_new_native_inference_needs_explicit_abi_and_separate_reference_perception(tmp_path):
+    import numpy as np
+    import yaml
+    from test_g1_velocity_policy import config, state
+
+    from rosclaw_soccer.rsi.ball_aware_inputs import BALL_AWARE_ABI
+    from rosclaw_soccer.rsi.ball_aware_migration import expand_ball_aware_state
+    from rosclaw_soccer.rsi.velocity_prior_actor import LearnedPriorNativeSession
+
+    _, parent, _, _ = make_actor(tmp_path)
+    expanded = expand_ball_aware_state(parent.state_dict(), part="actor")
+    path = tmp_path / "new177.pt"
+    torch.save(
+        dict(
+            stable_prior_rehearsal=True,
+            actor_observation_dim=177,
+            ball_aware_abi=BALL_AWARE_ABI,
+            algorithm=dict(actor_state_dict=expanded),
+            initial_actor_state_dict=expanded,
+        ),
+        path,
+    )
+    conf = tmp_path / "deploy.yaml"
+    conf.write_text(yaml.safe_dump(config(), sort_keys=False))
+    args = dict(
+        model=tmp_path / "synthetic.onnx",
+        config=conf,
+        expected_model_hash=file_hash(tmp_path / "synthetic.onnx"),
+        expected_config_hash=file_hash(conf),
+        checkpoint=path,
+        expected_checkpoint_hash=file_hash(path),
+        arm="final",
+    )
+    with pytest.raises(ValueError, match="checkpoint"):
+        LearnedPriorNativeSession(**args)
+    zero = LearnedPriorNativeSession(**args, reference_mode="zero79")
+    declared = LearnedPriorNativeSession(**args, reference_mode="declared79")
+    assert zero.contract_hash != declared.contract_hash
+    q, v = state()
+    prefix = (q, v, np.zeros(3), np.zeros(3, dtype=np.float32))
+    np.testing.assert_allclose(
+        zero.propose(*prefix, frame=0),
+        declared.propose_ball_aware(
+            *prefix, np.zeros(70, dtype=np.float32), np.ones(9, dtype=np.float32), frame=0
+        ),
+        atol=1e-6,
+    )
+    assert declared.last_reference.shape == (79,)
+    with pytest.raises(ValueError, match="separate"):
+        declared.propose_ball_aware(
+            *prefix, np.zeros(69, dtype=np.float32), np.zeros(10, dtype=np.float32), frame=1
+        )
+    with pytest.raises(ValueError, match="fault latched"):
+        declared.propose_ball_aware(
+            *prefix, np.zeros(70, dtype=np.float32), np.zeros(9, dtype=np.float32), frame=1
+        )

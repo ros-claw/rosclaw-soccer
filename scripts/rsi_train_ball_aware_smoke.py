@@ -306,6 +306,8 @@ def main():
                 checkpoint_hash=digest(path),
                 weights_only_checkpoint_reload=True,
                 parent_optimizer_state_loaded=False,
+                velocity_command_anatomical_point="pelvis",
+                velocity_command_position_feedback_gain=1.0,
                 parent_checkpoint_hash=qual["checkpoint_hash"],
                 new_native_steps=0,
                 goal_complete=False,

@@ -84,6 +84,7 @@ def main():
                 "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
                 "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
                 "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
+                "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
             )
             or not learned["weights_only_checkpoint_reload"]
         ):
@@ -115,6 +116,7 @@ def main():
             learned_checkpoint_arm=a.learned_arm if learned is not None else None,
             original_onnx_weights_unchanged=learned is None,
             zero_reference_suffix_retention_only=learned is not None,
+            actor_observation_dim=learned.get("actor_observation_dim", 168) if learned else 98,
             hardware_authorized=False,
         ),
     )
@@ -195,6 +197,9 @@ def main():
                         checkpoint=checkpoint,
                         expected_checkpoint_hash=learned["checkpoint_hash"],
                         arm=a.learned_arm,
+                        reference_mode=(
+                            "zero79" if learned.get("actor_observation_dim") == 177 else "zero70"
+                        ),
                     )
                 if (
                     learned is None and actor.contract_hash != qual["policy_contract_hash"]
@@ -370,7 +375,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="LEARNED_PRIOR_NATIVE_RETENTION_NOT_FOOTBALL_QUALIFIED"
+                status="BALL_AWARE_NATIVE_RETENTION_NOT_FOOTBALL_QUALIFIED"
+                if learned is not None and learned.get("actor_observation_dim") == 177
+                else "LEARNED_PRIOR_NATIVE_RETENTION_NOT_FOOTBALL_QUALIFIED"
                 if learned is not None
                 else "VELOCITY_PRIOR_NEW_BODY_MOBILITY_PROBE_NOT_FOOTBALL_QUALIFIED",
                 source_head=a.expected_head,
@@ -387,6 +394,7 @@ def main():
                 promotion_authorized=False,
                 goal_complete=False,
                 learned_checkpoint_arm=a.learned_arm if learned is not None else None,
+                actor_observation_dim=learned.get("actor_observation_dim", 168) if learned else 98,
             ),
         )
     except Exception as error:

@@ -159,18 +159,28 @@ class LearnedPriorNativeSession:
     ) -> None:
         if (
             arm not in ("initial", "final")
-            or reference_mode not in ("zero70", "declared70")
+            or reference_mode not in ("zero70", "declared70", "zero79", "declared79")
             or file_hash(checkpoint) != expected_checkpoint_hash
         ):
             raise ValueError("explicit arm and immutable learned checkpoint required")
         self.params = VelocityPolicyParameters.load(config, expected_hash=expected_config_hash)
-        self.model = VelocityPriorActor.from_onnx(model, expected_hash=expected_model_hash)
+        self.reference_features = 79 if reference_mode.endswith("79") else 70
+        self.model = VelocityPriorActor.from_onnx(
+            model, expected_hash=expected_model_hash, reference_features=self.reference_features
+        )
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
         if (
             state.get("stable_prior_rehearsal") is not True
-            or state.get("actor_observation_dim") != 168
+            or state.get("actor_observation_dim") != 98 + self.reference_features
         ):
             raise ValueError("actual stable-prior learner checkpoint required")
+        if self.reference_features == 79:
+            from rosclaw_soccer.rsi.ball_aware_inputs import BALL_AWARE_ABI
+
+            if state.get("ball_aware_abi") != BALL_AWARE_ABI:
+                raise ValueError(
+                    "explicit new ball-aware ABI required; no old certificate inheritance"
+                )
         actor_state = (
             state["initial_actor_state_dict"]
             if arm == "initial"
@@ -184,7 +194,11 @@ class LearnedPriorNativeSession:
         self.model.eval()
         self.contract_hash = hash_json(
             dict(
-                schema="soccer.rsi.learned_prior_native_inference.v2",
+                schema=(
+                    "soccer.rsi.learned_prior_native_inference.v3"
+                    if self.reference_features == 79
+                    else "soccer.rsi.learned_prior_native_inference.v2"
+                ),
                 checkpoint_hash=expected_checkpoint_hash,
                 arm=arm,
                 parameter_hash=self.params.contract_hash,
@@ -211,7 +225,7 @@ class LearnedPriorNativeSession:
         *,
         frame: int,
     ) -> np.ndarray:
-        if self.reference_mode != "zero70":
+        if self.reference_mode not in ("zero70", "zero79"):
             self.faulted = True
             raise ValueError("declared reference session requires explicit reference features")
         return self._propose(
@@ -219,7 +233,7 @@ class LearnedPriorNativeSession:
             qvel,
             angular_velocity_body,
             command_body,
-            np.zeros(70, dtype=np.float32),
+            np.zeros(self.reference_features, dtype=np.float32),
             frame=frame,
         )
 
@@ -257,11 +271,11 @@ class LearnedPriorNativeSession:
                 raise ValueError("consecutive H300 actual retention observations required")
             if (
                 not isinstance(reference, np.ndarray)
-                or reference.shape != (70,)
+                or reference.shape != (self.reference_features,)
                 or reference.dtype != np.float32
                 or not np.isfinite(reference).all()
             ):
-                raise ValueError("finite float32 declared reference70 required")
+                raise ValueError("finite float32 features of the declared inference ABI required")
             obs, phase = observation98(
                 qpos,
                 qvel,
@@ -286,3 +300,37 @@ class LearnedPriorNativeSession:
         except Exception:
             self.faulted = True
             raise
+
+    def propose_ball_aware(
+        self,
+        qpos: np.ndarray,
+        qvel: np.ndarray,
+        angular_velocity_body: np.ndarray,
+        command_body: np.ndarray,
+        reference70: np.ndarray,
+        perception9: np.ndarray,
+        *,
+        frame: int,
+    ) -> np.ndarray:
+        if self.reference_mode != "declared79":
+            self.faulted = True
+            raise ValueError("explicit declared79 SIM session required for ball perception")
+        for value, shape in ((reference70, (70,)), (perception9, (9,))):
+            if (
+                not isinstance(value, np.ndarray)
+                or value.shape != shape
+                or value.dtype != np.float32
+                or not np.isfinite(value).all()
+            ):
+                self.faulted = True
+                raise ValueError(
+                    "separate finite float32 reference70 and measured perception9 required"
+                )
+        return self._propose(
+            qpos,
+            qvel,
+            angular_velocity_body,
+            command_body,
+            np.concatenate((reference70, perception9)),
+            frame=frame,
+        )
