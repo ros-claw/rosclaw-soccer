@@ -156,11 +156,13 @@ class LearnedPriorNativeSession:
         expected_checkpoint_hash: str,
         arm: str,
         reference_mode: str = "zero70",
+        checkpoint_intent: str = "stable-prior",
     ) -> None:
         if (
             arm not in ("initial", "final")
             or reference_mode not in ("zero70", "declared70", "zero79", "declared79")
             or file_hash(checkpoint) != expected_checkpoint_hash
+            or checkpoint_intent not in ("stable-prior", "foot-only-v1")
         ):
             raise ValueError("explicit arm and immutable learned checkpoint required")
         self.params = VelocityPolicyParameters.load(config, expected_hash=expected_config_hash)
@@ -169,12 +171,23 @@ class LearnedPriorNativeSession:
             model, expected_hash=expected_model_hash, reference_features=self.reference_features
         )
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        if (
+        if checkpoint_intent == "foot-only-v1":
+            if (
+                reference_mode != "declared79"
+                or state.get("foot_only_intent") != "foot-only-v1"
+                or state.get("actor_observation_dim") != 177
+                or state.get("critic_observation_dim") != 304
+                or state.get("iteration") not in (16, 32)
+                or state.get("force_decoder") != "addressed"
+                or state.get("fresh_optimizer") is not True
+            ):
+                raise ValueError("explicit qualified new foot-only checkpoint intent required")
+        elif (
             state.get("stable_prior_rehearsal") is not True
             or state.get("actor_observation_dim") != 98 + self.reference_features
         ):
             raise ValueError("actual stable-prior learner checkpoint required")
-        if self.reference_features == 79:
+        if self.reference_features == 79 and checkpoint_intent == "stable-prior":
             from rosclaw_soccer.rsi.ball_aware_inputs import BALL_AWARE_ABI
 
             if state.get("ball_aware_abi") != BALL_AWARE_ABI:
@@ -195,7 +208,9 @@ class LearnedPriorNativeSession:
         self.contract_hash = hash_json(
             dict(
                 schema=(
-                    "soccer.rsi.learned_prior_native_inference.v3"
+                    "soccer.rsi.foot_only_native_inference.v1"
+                    if checkpoint_intent == "foot-only-v1"
+                    else "soccer.rsi.learned_prior_native_inference.v3"
                     if self.reference_features == 79
                     else "soccer.rsi.learned_prior_native_inference.v2"
                 ),

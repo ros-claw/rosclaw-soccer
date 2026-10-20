@@ -30,6 +30,9 @@ def main():
     p.add_argument("--world-index", type=int, choices=range(32), default=0)
     p.add_argument("--ball-perception", choices=("measured", "zero"), default="measured")
     p.add_argument("--reference-retarget", choices=("none", "ball-strike-xy-v1"), default="none")
+    p.add_argument("--foot-only-dev-root", type=Path)
+    p.add_argument("--foot-only-dev-unit")
+    p.add_argument("--foot-only-dev-hash")
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
         motion_checkpoint_filename,
@@ -62,9 +65,48 @@ def main():
         receipts.append(json.loads(path.read_text()))
         pins[str(path)] = expected
     learner, plan, export = receipts
-    ball_aware = learner["status"] in (
-        "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
-        "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
+    foot_only = learner["status"] in (
+        "FOOT_ONLY_PPO_PILOT_NOT_SKILL_QUALIFIED",
+        "FOOT_ONLY_VALUE_WARMUP_PPO_NOT_SKILL_QUALIFIED",
+    )
+    if foot_only:
+        from rosclaw_soccer.rsi.foot_only_contracts import (
+            require_foot_only_development,
+            require_foot_only_learning,
+        )
+
+        require_foot_only_learning(learner)
+        if (
+            not all((a.foot_only_dev_root, a.foot_only_dev_unit, a.foot_only_dev_hash))
+            or a.reference_retarget != "none"
+            or a.ball_perception != "measured"
+        ):
+            raise ValueError("new foot-only exam requires own DEV, no teacher/ablation")
+        wait_for_terminal_collection(a.foot_only_dev_unit)
+        own_path = a.foot_only_dev_root / "complete.json"
+        if digest(own_path) != a.foot_only_dev_hash:
+            raise ValueError("exact own foot-only DEV receipt required")
+        own_dev = json.loads(own_path.read_text())
+        require_foot_only_development(
+            own_dev, learner_path=str(a.learner_root / "complete.json"), learner_hash=a.learner_hash
+        )
+        pins[str(own_path)] = a.foot_only_dev_hash
+        for index, source in enumerate(("007_left", "010_right")):
+            row = next(
+                r
+                for r in own_dev["results"]
+                if r["source"] == f"soccer-standard-{source}.npz" and r["arm"] == "initial"
+            )
+            pins[str(a.foot_only_dev_root / f"{index}-initial-raw.npz")] = row["raw_hash"]
+    elif any((a.foot_only_dev_root, a.foot_only_dev_unit, a.foot_only_dev_hash)):
+        raise ValueError("new-intent DEV cannot confer qualification on a legacy learner")
+    ball_aware = (
+        learner["status"]
+        in (
+            "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+            "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
+        )
+        or foot_only
     )
     if not ball_aware and a.ball_perception != "measured":
         raise ValueError("ball9 ablation is only defined for explicit177D ball-aware models")
@@ -77,7 +119,8 @@ def main():
     if ball_aware:
         from rosclaw_soccer.rsi.ball_aware_inputs import require_ball_aware_learning
 
-        require_ball_aware_learning(learner)
+        if not foot_only:
+            require_ball_aware_learning(learner)
         if a.command_point != "pelvis" or a.position_gain != 1.0:
             raise ValueError("declared pelvis/+1 required for current ball-aware native protocol")
         if (
@@ -87,8 +130,11 @@ def main():
                 learner.get("force_decoder") == "addressed"
                 and plan.get("force_decoder") != "addressed"
             )
-            or plan["input_file_hashes"].get(str(a.learner_root / "complete.json"))
-            != a.learner_hash
+            or (
+                not foot_only
+                and plan["input_file_hashes"].get(str(a.learner_root / "complete.json"))
+                != a.learner_hash
+            )
         ):
             raise ValueError("exact same ball-aware learner and exogenous target plan required")
     elif learner["status"] == "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED":
@@ -149,7 +195,7 @@ def main():
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     check_pins(pins)
     force_threshold = 10.0 if ball_aware else 1.0
-    if ball_aware:
+    if ball_aware and not foot_only:
         import torch
 
         from rosclaw_soccer.rsi.velocity_command_protocol import ball_aware_checkpoint_protocol
@@ -174,6 +220,8 @@ def main():
             compiled_default_mocap_and_zero_warmstart=True,
             foot_force_threshold_n=force_threshold,
             ball_aware=ball_aware,
+            foot_only_intent=foot_only,
+            external_reference_plan_not_old_certificate_inheritance=foot_only,
             ball_perception_mode=a.ball_perception,
             observation_ablation_not_learning=a.ball_perception != "measured",
             reference_retarget=a.reference_retarget,
@@ -247,6 +295,26 @@ def main():
                     )
                 }
                 goal_plan = z["goal_target_world"][:, a.world_index].copy() if ball_aware else None
+            if foot_only:
+                with np.load(
+                    a.foot_only_dev_root / f"{index}-initial-raw.npz", allow_pickle=False
+                ) as own:
+                    if (
+                        not np.array_equal(initial_q, own["qpos_before"][0, a.world_index])
+                        or not np.array_equal(initial_v, own["qvel_before"][0, a.world_index])
+                        or not np.array_equal(
+                            references["reference_joint"],
+                            own["observation"][:, a.world_index, 98:127],
+                        )
+                        or not np.array_equal(
+                            references["reference_joint_velocity"],
+                            own["observation"][:, a.world_index, 127:156],
+                        )
+                        or not np.array_equal(goal_plan, own["goal_target_world"][:, a.world_index])
+                    ):
+                        raise ValueError(
+                            "external plan must exactly match own initial state, joints and goal"
+                        )
             horizon = len(references["reference_joint"])
             if ball_aware and (
                 goal_plan.shape != (horizon, 3)
@@ -356,6 +424,7 @@ def main():
                         expected_checkpoint_hash=learner["checkpoint_hash"],
                         arm=arm,
                         reference_mode="declared79" if ball_aware else "declared70",
+                        checkpoint_intent="foot-only-v1" if foot_only else "stable-prior",
                     )
                     data = mujoco.MjData(model)
                     data.qpos[:] = initial_q
@@ -443,6 +512,7 @@ def main():
                         vs = []
                         forces = []
                         contacts = []
+                        nonfoot_contacts = []
                         for _ in range(10):
                             before = data.time
                             attempts += 1
@@ -471,6 +541,7 @@ def main():
                             vs.append(cv)
                             forces.append(actual)
                             foot_force = np.zeros(2)
+                            nonfoot_force = 0.0
                             for contact in range(data.ncon):
                                 c = data.contact[contact]
                                 b1 = int(model.geom_bodyid[c.geom1])
@@ -483,7 +554,18 @@ def main():
                                     foot_force[foot] = max(
                                         foot_force[foot], np.linalg.norm(wrench[:3])
                                     )
+                                elif (
+                                    foot_only
+                                    and other >= 0
+                                    and (model.body(other).name or "").startswith("robot/")
+                                ):
+                                    wrench = np.zeros(6)
+                                    mujoco.mj_contactForce(model, data, contact, wrench)
+                                    nonfoot_force = max(
+                                        nonfoot_force, float(np.linalg.norm(wrench[:3]))
+                                    )
                             contacts.append(foot_force)
+                            nonfoot_contacts.append(nonfoot_force)
                         row.update(
                             canonical_qpos_after=np.asarray(qs),
                             canonical_qvel_after=np.asarray(vs),
@@ -491,6 +573,8 @@ def main():
                             foot_ball_contact_force_n=np.asarray(contacts),
                         )
                         rows.append(row)
+                        if foot_only:
+                            row["nonfoot_ball_contact_force_n"] = np.asarray(nonfoot_contacts)
                     raw = {k: np.asarray([r[k] for r in rows]) for k in rows[0]}
                     if any(not np.isfinite(v).all() for v in raw.values()):
                         raise ValueError("all raw actual physical observations must be finite")
@@ -565,6 +649,19 @@ def main():
                             threshold_n=force_threshold,
                         ),
                     )
+                    if foot_only:
+                        nonfoot = raw["nonfoot_ball_contact_force_n"].reshape(-1)
+                        clean = (
+                            result["post_contact_window"]["correct_foot_first"]
+                            and not (nonfoot > 1.0).any()
+                        )
+                        result.update(
+                            foot_only_intent="foot-only-v1",
+                            maximum_nonfoot_ball_force_n=float(nonfoot.max()),
+                            forbidden_nonfoot_contact=bool((nonfoot > 1.0).any()),
+                            clean_correct_foot_first=bool(clean),
+                            nonfoot_threshold_n=1.0,
+                        )
                     write_once(folder / "complete.json", result)
                     results.append(result)
                     rows = []
@@ -572,10 +669,13 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="BALL_AWARE_NATIVE_CONTACT_NOT_GOAL_OR_TEAM_QUALIFIED"
+                status="FOOT_ONLY_NATIVE_CONTACT_NOT_GOAL_OR_TEAM_QUALIFIED"
+                if foot_only
+                else "BALL_AWARE_NATIVE_CONTACT_NOT_GOAL_OR_TEAM_QUALIFIED"
                 if ball_aware
                 else "NATIVE_REFERENCE_CONTACT_PILOT_NOT_GOAL_OR_TEAM_QUALIFIED",
                 ball_aware=ball_aware,
+                foot_only_intent=foot_only,
                 actor_observation_dim=177 if ball_aware else 168,
                 source_head=a.expected_head,
                 ball_perception_mode=a.ball_perception,
