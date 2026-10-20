@@ -7,7 +7,7 @@ import torch
 from scripts.rsi_mjlab_ball_aware_backend import actual_foot_force_history
 
 
-def calibrate(env, layout, output):
+def calibrate(env, layout, output, *, trace=False):
     """Six capsule-end contacts (alternating feet), two negatives, ten substeps.
 
     Fixture state is set BEFORE integration, with the robot raised 0.5m so the
@@ -58,12 +58,40 @@ def calibrate(env, layout, output):
         cpu.append(data)
     gpu_q, gpu_v, native_q, native_v, native_force = [], [], [], [], []
     env._ball_fixture_native_data = cpu
+    trace_buffers = {}
+    trace_sources = {}
+    if trace:
+        import warp as wp
+
+        data = env.sim.wp_data
+        trace_sources = {
+            "nacon": data.nacon,
+            "nefc": data.nefc,
+            "sensordata": data.sensordata,
+            "efc_force": data.efc.force,
+            **{
+                "contact_" + name: getattr(data.contact, name)
+                for name in ("geom", "worldid", "dim", "efc_address", "friction")
+            },
+        }
+        trace_sources = {key: wp.to_torch(value) for key, value in trace_sources.items()}
+        if (
+            sum(value.numel() * value.element_size() * 10 for value in trace_sources.values())
+            > 64 * 1024 * 1024
+        ):
+            raise ValueError("bounded 64MiB contact diagnostic buffers required")
+        trace_buffers = {
+            key: torch.empty((10, *value.shape), dtype=value.dtype, device=value.device)
+            for key, value in trace_sources.items()
+        }
     native_sensor_error = 0.0
-    for _ in range(10):
+    for substep in range(10):
         env.sim.data.ctrl[:, layout.ai] = torch.as_tensor(target, device=env.device)
         env._ball_fixture_counts["gpu_attempted_world_steps"] += 8
         env.sim.step()
         env._ball_fixture_counts["gpu_world_steps"] += 8
+        for key, value in trace_sources.items():
+            trace_buffers[key][substep].copy_(value)
         env.scene.update(dt=0.002)
         gpu_q.append(env.sim.data.qpos.cpu().numpy().copy())
         gpu_v.append(env.sim.data.qvel.cpu().numpy().copy())
@@ -113,6 +141,7 @@ def calibrate(env, layout, output):
         native_qvel=native_v,
         native_force=native,
         gpu_force_history=history,
+        **{"trace_" + key: value.cpu().numpy() for key, value in trace_buffers.items()},
     )
     result = dict(
         gpu_world_steps=80,
