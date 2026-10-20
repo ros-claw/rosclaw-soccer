@@ -87,6 +87,7 @@ def make_actor(tmp_path):
         29,
         hidden_dims=[512, 256, 128],
         obs_normalization=False,
+        cnn_cfg=None,
         distribution_cfg={
             "class_name": "GaussianDistribution",
             "init_std": 0.1,

@@ -27,6 +27,10 @@ class VelocityPriorMLPModel(MLPModel):
         prior_checkpoint_hash,
         **kwargs,
     ):
+        # MJLab strips disabled CNN config before RSL construction. Direct
+        # evaluation reads the committed pre-normalization configuration.
+        if kwargs.pop("cnn_cfg", None) is not None:
+            raise ValueError("velocity prior is an MLP, not a CNN model")
         if kwargs.get("obs_normalization", False):
             raise ValueError("fixed qualified prior normalization must not be replaced by RMS")
         checkpoint = Path(prior_checkpoint)
