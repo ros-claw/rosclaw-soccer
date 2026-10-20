@@ -88,7 +88,15 @@ def main():
                 total=40,
                 qualified=len(successful),
                 successful=successful,
-                body_safe=sum(r["score"]["physical_prefix_and_suffix_safe"] for r in rows),
+                physical_and_contact_safe=sum(
+                    r["score"]["physical_prefix_and_suffix_safe"] for r in rows
+                ),
+                balance_threshold_safe=sum(
+                    r["score"]["minimum_pelvis_z_m"] >= 0.65
+                    and r["score"]["minimum_upright"] >= 0.9
+                    for r in rows
+                ),
+                legal_ball_contact=sum(r["score"]["maximum_nonfoot_force_n"] <= 1 for r in rows),
                 foot_touch=sum(
                     r["score"]["first_foot_contact_global_frame"] is not None for r in rows
                 ),
