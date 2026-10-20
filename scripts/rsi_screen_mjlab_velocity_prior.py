@@ -24,6 +24,9 @@ def main():
     p.add_argument("--screen-root", type=Path)
     p.add_argument("--screen-unit")
     p.add_argument("--screen-hash")
+    p.add_argument("--learner-root", type=Path)
+    p.add_argument("--learner-unit")
+    p.add_argument("--learner-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
@@ -73,6 +76,22 @@ def main():
     pins[str(checkpoint)] = receipts[1]["checkpoint_hash"]
     pins[str(a.config)] = a.config_hash
     pins[str(a.export_root / "compiled_model.mjb")] = receipts[0]["model_hash"]
+    learner = None
+    if a.learner_root is not None:
+        if not a.reference_pilot or not all((a.learner_unit, a.learner_hash)):
+            raise ValueError(
+                "learned TRAIN collector requires explicit reference pilot and receipt"
+            )
+        wait_for_terminal_collection(a.learner_unit)
+        learner_path = a.learner_root / "complete.json"
+        if digest(learner_path) != a.learner_hash:
+            raise ValueError("actual learned collector policy commitment changed")
+        learner = json.loads(learner_path.read_text())
+        if learner["status"] != "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED":
+            raise ValueError("collector is predeclared to use the stable two-iteration policy")
+        pins[str(learner_path)] = a.learner_hash
+        checkpoint = a.learner_root / f"learner-update{learner['iterations']}.pt"
+        pins[str(checkpoint)] = learner["checkpoint_hash"]
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts", a.reference_root / "src"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     check_pins(pins)
@@ -89,6 +108,8 @@ def main():
             new_optimizer_steps=0,
             command_mode=command_mode,
             not_whole_motion_or_retention_exam=True,
+            learned_train_collection=learner is not None,
+            teacher_action_labels_physically_proven=False,
             hardware_authorized=False,
         ),
     )
@@ -138,12 +159,23 @@ def main():
         actor = VelocityPriorActor.from_onnx(a.policy, expected_hash=pins[str(a.policy)]).to(
             "cuda:0"
         )
-        actor.load_state_dict(
-            torch.load(checkpoint, map_location="cuda:0", weights_only=True)["actor_state_dict"],
-            strict=True,
+        loaded = torch.load(checkpoint, map_location="cuda:0", weights_only=True)
+        state = (
+            loaded["actor_state_dict"]
+            if learner is None
+            else {
+                k: loaded["algorithm"]["actor_state_dict"]["mlp." + k] for k in actor.state_dict()
+            }
         )
+        actor.load_state_dict(state, strict=True)
         actor.eval()
+        immutable_state = {k: v.detach().clone() for k, v in actor.state_dict().items()}
         term = env.action_manager.get_term("joint_pos")
+        motion = env.command_manager.get_term("motion")
+        from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
+
+        if tuple(name + ".npz" for name in motion.motion.motion_names) != TRAIN_MOTION_NAMES:
+            raise ValueError("full fixed TRAIN sources only; DEV cannot enter imitation data")
         rows = []
         max_error = 0.0
         phases = phase_table(controls)
@@ -153,6 +185,12 @@ def main():
             qpos = env.sim.data.qpos.cpu().numpy().copy()
             qvel = env.sim.data.qvel.cpu().numpy().copy()
             prefix = obs["actor"][:, :98].cpu().numpy().copy()
+            full_observation = obs["actor"].cpu().numpy().copy()
+            reference_joint = motion.joint_pos.cpu().numpy().copy()
+            reference_joint_velocity = motion.joint_vel.cpu().numpy().copy()
+            source_id = motion.motion_idx.cpu().numpy().copy()
+            source_phase = motion.time_steps.cpu().numpy().copy()
+            active_before = score.active.copy()
             cached_gyro_before = (
                 env.command_manager.get_term("motion")
                 .robot.data.root_link_ang_vel_b.cpu()
@@ -246,6 +284,15 @@ def main():
                     reference_exhausted=exhausted,
                     episode_frame=episode_frames,
                     cached_gyro=cached_gyro_before,
+                    full_observation=full_observation,
+                    reference_joint=reference_joint,
+                    reference_joint_velocity=reference_joint_velocity,
+                    measured_joint=qpos[:, layout.qi].copy(),
+                    source_id=source_id,
+                    source_phase=source_phase,
+                    active_before=active_before,
+                    reward=reward.cpu().numpy().copy(),
+                    actual_actuator_force=env.sim.data.actuator_force.cpu().numpy().copy(),
                 )
             )
             previous_actions[done] = 0
@@ -255,10 +302,16 @@ def main():
             a.output / "screen8.npz", **{k: np.asarray([r[k] for r in rows]) for k in rows[0]}
         )
         check_pins(pins)
+        if any(not torch.equal(v, actor.state_dict()[k]) for k, v in immutable_state.items()):
+            raise ValueError("data collection cannot update its actor")
         write_once(
             a.output / "complete.json",
             dict(
-                status="MJLAB_VELOCITY_PRIOR_REFERENCE_PILOT_NOT_LEARNING_OR_FOOTBALL"
+                status=(
+                    "MJLAB_LEARNED_PRIOR_TRAIN_COLLECTION_NOT_TEACHER_QUALIFIED"
+                    if learner is not None
+                    else "MJLAB_VELOCITY_PRIOR_REFERENCE_PILOT_NOT_LEARNING_OR_FOOTBALL"
+                )
                 if a.reference_pilot
                 else "MJLAB_VELOCITY_PRIOR_CODEC_SCREEN_NOT_RETENTION_OR_FOOTBALL",
                 source_head=a.expected_head,
@@ -274,6 +327,9 @@ def main():
                 hardware_authorized=False,
                 promotion_authorized=False,
                 goal_complete=False,
+                training_sources=list(TRAIN_MOTION_NAMES),
+                learned_train_collection=learner is not None,
+                teacher_action_labels_physically_proven=False,
             ),
         )
     except Exception as error:
