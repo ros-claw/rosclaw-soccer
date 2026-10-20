@@ -13,7 +13,9 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--study", choices=("response_cem", "matched_entry"), default="response_cem"
+        "--study",
+        choices=("response_cem", "matched_entry", "bilateral_entry"),
+        default="response_cem",
     )
     for name in ("producer", "world", "motion-csv", "core-source", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
@@ -34,6 +36,7 @@ def main():
         "rsi_response_cem_builder.py",
         "rsi_native_context_recovery_common.py",
         "rsi_matched_entry_builder.py",
+        "rsi_bilateral_entry_builder.py",
     ):
         if (
             subprocess.check_output(["git", "show", f"{head}:scripts/{name}"])
@@ -82,11 +85,11 @@ def main():
     complete = json.loads((args.producer / "complete.json").read_text())
     if (
         declaration["schema"]
-        != (
-            "soccer.rsi.bounded_response_cem16.v1"
-            if args.study == "response_cem"
-            else "soccer.rsi.matched_entry_bridge16.v1"
-        )
+        != {
+            "response_cem": "soccer.rsi.bounded_response_cem16.v1",
+            "matched_entry": "soccer.rsi.matched_entry_bridge16.v1",
+            "bilateral_entry": "soccer.rsi.bilateral_entry16.v1",
+        }[args.study]
         or declaration["source_head"] != args.expected_producer_head
         or complete["source_head"] != args.expected_producer_head
         or complete["cluster"] != declaration["cluster"]
@@ -169,6 +172,8 @@ def main():
             (
                 len(row["candidates"]) != 30
                 if args.study == "response_cem"
+                else len(row["candidates"]) != 9
+                if args.study == "bilateral_entry"
                 else not 6 <= len(row["candidates"]) <= 12
             )
             or len(row["proposals"]) != (6 if args.study == "response_cem" else 3)
@@ -198,6 +203,12 @@ def main():
             choose_matched_candidate(row["candidates"])
             if [r["index"] for r in row["candidates"]] != list(range(len(row["candidates"]))):
                 raise ValueError("complete ordered matched-entry candidates required")
+        if args.study == "bilateral_entry":
+            from rosclaw_soccer.rsi.bilateral_entry import choose_bilateral_candidate
+
+            choose_bilateral_candidate(row["candidates"])
+            if [r["index"] for r in row["candidates"]] != list(range(9)):
+                raise ValueError("complete ordered bilateral candidates required")
         for r in row["candidates"]:
             bounded_offset(r["offset_root_m"])
             if r["new_attempted_native_steps"] != 2800 or r["new_integrated_native_steps"] != 2800:
@@ -209,9 +220,7 @@ def main():
     write_once(
         args.output / "declaration.json",
         dict(
-            schema="soccer.rsi.response_cem_recorded_review.v1"
-            if args.study == "response_cem"
-            else "soccer.rsi.matched_entry_recorded_review.v1",
+            schema="soccer.rsi." + args.study + "_recorded_review.v1",
             source_head=head,
             input_file_hashes=pins,
             producer_terminal=terminal,
@@ -260,6 +269,8 @@ def main():
 
             limits = model.jnt_range[[model.joint(n).id for n in G1_DDS_JOINT_NAMES]].copy()
             build_candidates = make_builder(poses, limits, evidence_hash)
+        elif args.study == "bilateral_entry":
+            from scripts.rsi_bilateral_entry_builder import build_candidates
         for item, row, raw, futures in recordings:
             prefix = {k: a[:20] for k, a in raw.items()}
             # Recreate CEM draws/updates from recorded, subsequently replayed responses.
@@ -272,6 +283,7 @@ def main():
                 proposal=None,
                 *,
                 entry_reference_mode="legacy",
+                contact_reference_foot="right",
                 _rows=row,
                 _rebuilt=reconstructed,
                 _futures=futures,
@@ -285,6 +297,7 @@ def main():
                     or recorded["offset_root_m"] != list(offset)
                     or recorded["geometry"] != proposal
                     or recorded.get("entry_reference_mode", "legacy") != entry_reference_mode
+                    or recorded.get("contact_reference_foot", "right") != contact_reference_foot
                 ):
                     raise ValueError("CEM samples are not generated from their own prior responses")
                 _rebuilt.append(recorded)
@@ -323,14 +336,23 @@ def main():
                 ):
                     raise ValueError("own-state donor or original law differs")
                 branch = _clone_body(body)
+                reference_poses, reference_affordance = poses, affordance
+                if candidate.get("contact_reference_foot", "right") != "right":
+                    from rosclaw_soccer.rsi.bilateral_entry import contact_foot_context
+
+                    reference_poses, reference_affordance, context = contact_foot_context(
+                        poses, affordance, candidate["contact_reference_foot"]
+                    )
+                    if context != candidate["contact_foot_context"]:
+                        raise ValueError("candidate foot reference/entry provenance differs")
                 current, origin = branch, branch.integrated_steps
                 replay_suffix(
                     branch,
                     future,
                     law=laws[candidate["law_index"]],
                     offset_root_m=tuple(candidate["offset_root_m"]),
-                    affordance=affordance,
-                    source_poses=poses,
+                    affordance=reference_affordance,
+                    source_poses=reference_poses,
                     source_evidence_hash=evidence_hash,
                     report=candidate["report"],
                     entry_reference_mode=candidate.get("entry_reference_mode", "legacy"),
@@ -340,6 +362,14 @@ def main():
                 score = score_full_entry(model, future)
                 if score != candidate["score"]:
                     raise ValueError("recorded candidate task metric differs")
+                if "observed_contact_foot" in candidate:
+                    from rosclaw_soccer.rsi.bilateral_entry import observed_contact_foot
+
+                    if (
+                        observed_contact_foot(model, future, global_start_frame=20)
+                        != candidate["observed_contact_foot"]
+                    ):
+                        raise ValueError("actual candidate contact side differs from claimed side")
                 scores.append(score)
                 total += 2800
                 current, origin = None, 0
@@ -348,6 +378,13 @@ def main():
             if selected != row["selected_index"] or row["uncertified_fallback"] != (not eligible):
                 raise ValueError("original task-gate/cost selection differs")
             chosen = row["candidates"][selected]
+            actual_poses, actual_affordance = poses, affordance
+            if chosen.get("contact_reference_foot", "right") != "right":
+                from rosclaw_soccer.rsi.bilateral_entry import contact_foot_context
+
+                actual_poses, actual_affordance, _ = contact_foot_context(
+                    poses, affordance, chosen["contact_reference_foot"]
+                )
             suffix = {k: a[20:] for k, a in raw.items()}
             current, origin = body, body.integrated_steps
             replay_suffix(
@@ -355,8 +392,8 @@ def main():
                 suffix,
                 law=laws[chosen["law_index"]],
                 offset_root_m=tuple(chosen["offset_root_m"]),
-                affordance=affordance,
-                source_poses=poses,
+                affordance=actual_affordance,
+                source_poses=actual_poses,
                 source_evidence_hash=evidence_hash,
                 report=row["report"],
                 entry_reference_mode=chosen.get("entry_reference_mode", "legacy"),
@@ -371,6 +408,15 @@ def main():
                 raise ValueError("actual native task outcome differs")
             total += 2800
             current, origin = None, 0
+            if args.study == "bilateral_entry":
+                from rosclaw_soccer.rsi.bilateral_entry import observed_contact_foot
+
+                if row["selected_reference_foot"] != chosen.get(
+                    "contact_reference_foot", "right"
+                ) or row["observed_contact_foot"] != observed_contact_foot(
+                    model, raw, global_start_frame=0
+                ):
+                    raise ValueError("actual selected reference/observed physical foot differs")
             old = previous[item.parent_index][1]["results"][item.variant_index]["results"][1][
                 "score"
             ]

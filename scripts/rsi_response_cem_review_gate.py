@@ -53,7 +53,9 @@ def review_decision(rows):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--study", choices=("response_cem", "matched_entry"), default="response_cem"
+        "--study",
+        choices=("response_cem", "matched_entry", "bilateral_entry"),
+        default="response_cem",
     )
     for name in ("reviewer-source", "world", "motion-csv", "core-source", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
@@ -155,11 +157,11 @@ def main():
             or unit in units
             or any(root.rglob("failure.json"))
             or declaration["schema"]
-            != (
-                "soccer.rsi.bounded_response_cem16.v1"
-                if args.study == "response_cem"
-                else "soccer.rsi.matched_entry_bridge16.v1"
-            )
+            != {
+                "response_cem": "soccer.rsi.bounded_response_cem16.v1",
+                "matched_entry": "soccer.rsi.matched_entry_bridge16.v1",
+                "bilateral_entry": "soccer.rsi.bilateral_entry16.v1",
+            }[args.study]
             or declaration["source_head"] != args.expected_producer_head
             or complete["source_head"] != args.expected_producer_head
             or declaration["bank_hash"] != args.expected_bank_hash
@@ -185,6 +187,8 @@ def main():
                 or (
                     len(row["candidates"]) != 30
                     if args.study == "response_cem"
+                    else len(row["candidates"]) != 9
+                    if args.study == "bilateral_entry"
                     else not 6 <= len(row["candidates"]) <= 12
                 )
                 or row["old_fixed_six_teacher_score_comparison_only"]
@@ -216,8 +220,8 @@ def main():
         raise ValueError("exact four closed producers required")
     decision = review_decision(complete_rows)
     decision["study"] = args.study
-    if args.study == "matched_entry" and decision["status"] == "CEM_FAMILY_REJECTED_STOP":
-        decision["status"] = "MATCHED_ENTRY_FAMILY_REJECTED_STOP"
+    if args.study != "response_cem" and decision["status"] == "CEM_FAMILY_REJECTED_STOP":
+        decision["status"] = args.study.upper() + "_FAMILY_REJECTED_STOP"
     check_pins(pins)
     from scripts.rsi_atomic_artifacts import write_once
 
