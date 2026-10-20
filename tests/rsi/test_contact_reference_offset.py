@@ -109,3 +109,49 @@ def test_wrong_model_rejected_before_data_allocation():
     model = SimpleNamespace(nq=3, nv=3, nu=1)
     with pytest.raises(ValueError, match="original G1"):
         offset_contact_reference(model, reference(), offset_root_m=(0.0, 0.0, -0.02))
+
+
+@pytest.mark.parametrize("live", [True, False])
+def test_reader_requires_closed_producer_before_physics(tmp_path, monkeypatch, live):
+    import sys
+
+    from scripts import rsi_verify_contact_reference_offset as reader
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "reader",
+            "--producer",
+            "absent",
+            "--world",
+            "unused",
+            "--motion-csv",
+            "unused",
+            "--core-source",
+            "unused",
+            "--output",
+            str(tmp_path / "out"),
+            "--expected-head",
+            "expected",
+            "--expected-producer-head",
+            "producer-head",
+            "--expected-producer-hash",
+            "unused",
+            "--producer-unit",
+            "fixture.service",
+        ],
+    )
+    terminal = (
+        "MainPID=12\nResult=success\nSubState=start\nExecMainStatus=0\n"
+        if live
+        else "MainPID=0\nResult=exit-code\nSubState=failed\nExecMainStatus=1\n"
+    )
+    monkeypatch.setattr(
+        reader.subprocess,
+        "check_output",
+        lambda cmd, **kwargs: "expected\n" if cmd[0] == "git" else terminal,
+    )
+    with pytest.raises(ValueError, match="closed successful"):
+        reader.main()
+    assert not (tmp_path / "out").exists()
