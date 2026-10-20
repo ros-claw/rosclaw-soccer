@@ -12,9 +12,14 @@ def main():
         parser.add_argument("--" + key, type=Path, required=True)
     parser.add_argument("--expected-head", required=True)
     parser.add_argument("--expected-bank-hash", required=True)
-    parser.add_argument("--mode", choices=("identity", "collect", "pipeline"), required=True)
+    parser.add_argument(
+        "--mode", choices=("identity", "collect", "pipeline", "verify"), required=True
+    )
     parser.add_argument("--train-root", type=Path)
     parser.add_argument("--expected-training-hash")
+    parser.add_argument("--collection", type=Path)
+    parser.add_argument("--collection-unit")
+    parser.add_argument("--expected-collection-source")
     args = parser.parse_args()
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if (
@@ -57,6 +62,64 @@ def main():
     bank = json.loads((args.bank / "declaration.json").read_text())
     pins = dict(bank["input_file_hashes"])
     pins.update({str(p): digest(p) for p in args.bank.iterdir() if p.is_file()})
+    if args.mode == "verify":
+        if (
+            args.collection is None
+            or not args.collection_unit
+            or not args.expected_collection_source
+        ):
+            raise ValueError("independent review requires an explicit closed collection")
+        terminal = dict(
+            line.split("=", 1)
+            for line in subprocess.check_output(
+                [
+                    "systemctl",
+                    "--user",
+                    "show",
+                    args.collection_unit,
+                    "-p",
+                    "MainPID",
+                    "-p",
+                    "SubState",
+                    "-p",
+                    "Result",
+                    "-p",
+                    "ExecMainStatus",
+                ],
+                text=True,
+            ).splitlines()
+        )
+        if terminal != dict(MainPID="0", SubState="exited", Result="success", ExecMainStatus="0"):
+            raise ValueError("all40 collection must actually have closed successfully")
+        prior_collection = json.loads((args.collection / "complete.json").read_text())
+        prior_declaration = json.loads((args.collection / "declaration.json").read_text())
+        if (
+            prior_collection["status"] != "ASSISTED_DAGGER_COLLECTION_NOT_STUDENT_QUALIFICATION"
+            or len(prior_collection["results"]) != 40
+            or prior_collection["native_steps"] != 120000
+            or prior_collection["optimizer_steps"] != 0
+            or prior_declaration["source_head"] != args.expected_collection_source
+            or prior_declaration["bank_hash"] != args.expected_bank_hash
+            or prior_declaration["training_hash"] != args.expected_training_hash
+            or prior_declaration["beta"] != 0.9
+        ):
+            raise ValueError("complete original fixed-beta same-state collection required")
+        if [r["course"] for r in prior_collection["results"]] != [
+            r["course"] for r in bank["rows"]
+        ]:
+            raise ValueError("all40 ordered course identities required")
+        pins.update(prior_declaration["input_file_hashes"])
+        pins.update({str(p): digest(p) for p in args.collection.rglob("*") if p.is_file()})
+        # Only runner orchestration differs; policy, feature, handoff and physics
+        # implementation must remain byte-identical to the original producer.
+        for p in (Path.cwd() / "src").rglob("*.py"):
+            old = [
+                h
+                for name, h in prior_declaration["input_file_hashes"].items()
+                if name.endswith("/" + str(p.relative_to(Path.cwd())))
+            ]
+            if digest(p) not in old:
+                raise ValueError("review policy/physics source differs from collection")
     check_pins(pins)
     for p in (args.world, args.motion_csv):
         if pins.get(str(p)) != digest(p):
@@ -107,7 +170,7 @@ def main():
     if prior.contract_hash != stored["contract_hash"]:
         raise ValueError("entry prior differs")
     policy = None
-    if args.mode == "collect":
+    if args.mode in ("collect", "verify"):
         if (
             args.train_root is None
             or digest(args.train_root / "complete.json") != args.expected_training_hash
@@ -130,7 +193,7 @@ def main():
         policy = create_motor_student()
         policy.load_state_dict(payload["state_dict"], strict=True)
         policy.eval()
-    records = bank["rows"] if args.mode == "collect" else [bank["rows"][i] for i in (2, 22)]
+    records = bank["rows"] if args.mode != "identity" else [bank["rows"][i] for i in (2, 22)]
     if [r["course"]["course_index"] for r in bank["rows"]] != list(range(40)):
         raise ValueError("entire ordered40 declaration required")
     model = mujoco.MjModel.from_binary_path(str(args.world))
@@ -258,10 +321,26 @@ def main():
             exact_array(arrays["consumed_action_isaac"], arrays["mixed_consumed_action_isaac"])
         folder = args.output / f"course{item['course_index']:02d}"
         folder.mkdir()
+        if args.mode == "verify":
+            original_folder = args.collection / folder.name
+            original = prior_collection["results"][item["course_index"]]
+            if digest(original_folder / "trace.npz") != original["artifact_hash"]:
+                raise ValueError("mixed native source artifact differs")
+            with np.load(original_folder / "trace.npz", allow_pickle=False) as z:
+                if set(z.files) != set(arrays):
+                    raise ValueError("mixed teacher/student recording fields differ")
+                for k in arrays:
+                    exact_array(arrays[k], z[k])
         np.savez_compressed(folder / "trace.npz", **arrays)
         score = score_full_entry(model, suffix)
         pd = diagnose_entry_prefix(model, prefix)
         score["qualified"] = bool(score["qualified"] and pd["prefix_physical_safe"])
+        if args.mode == "verify" and (
+            score != original["score"]
+            or pd != original["prefix_diagnostics"]
+            or report != original["report"]
+        ):
+            raise ValueError("mixed native qualification or controller provenance differs")
         result = dict(
             course=item,
             split=record["split"],
@@ -285,9 +364,13 @@ def main():
     write_once(
         args.output / "complete.json",
         dict(
-            status="SHADOW_IDENTITY_EXACT"
-            if policy is None
-            else "ASSISTED_DAGGER_COLLECTION_NOT_STUDENT_QUALIFICATION",
+            status=(
+                "SHADOW_IDENTITY_EXACT"
+                if policy is None
+                else "ALL40_MIXED_NN_AND_NATIVE_REPLAY_VERIFIED"
+                if args.mode == "verify"
+                else "ASSISTED_DAGGER_COLLECTION_NOT_STUDENT_QUALIFICATION"
+            ),
             results=results,
             native_steps=sum(r["native_steps"] for r in results),
             optimizer_steps=0,
