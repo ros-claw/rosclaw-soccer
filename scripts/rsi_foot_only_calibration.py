@@ -53,16 +53,13 @@ def calibrate(env, layout, output, *, profile):
                 geom = model.geom("robot/" + side + "_foot4_collision").id
             else:
                 knee = model.body("robot/" + side + "_knee_link").id
-                eligible = [
-                    g
-                    for g in range(model.ngeom)
-                    if model.geom_bodyid[g] == knee
-                    and model.geom_type[g] == mujoco.mjtGeom.mjGEOM_CAPSULE
-                    and (model.geom_contype[g] or model.geom_conaffinity[g])
-                ]
-                if len(eligible) != 1:
-                    raise ValueError("unique compiled knee collision capsule required")
-                geom = eligible[0]
+                # The compiled knee has TWO capsules (shin and linkage brace).
+                # Declare the named shin, never select by favorable contact outcome.
+                geom = model.geom("robot/" + side + "_shin_collision").id
+                if model.geom_bodyid[geom] != knee or not (
+                    model.geom_contype[geom] or model.geom_conaffinity[geom]
+                ):
+                    raise ValueError("declared shin collision on knee body required")
             if model.geom_type[geom] != mujoco.mjtGeom.mjGEOM_CAPSULE:
                 raise ValueError("capsule fixture required")
             axis = data.geom_xmat[geom].reshape(3, 3)[:, 2]

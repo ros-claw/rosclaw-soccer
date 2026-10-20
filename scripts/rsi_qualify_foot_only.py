@@ -153,7 +153,7 @@ def main():
         env.sim.forward()
         env.sim.sense()
         env.scene.update(dt=0.002)
-        obs = env.observation_manager.compute()
+        obs = env.observation_manager.compute(update_history=True)
         with torch.no_grad():
             actions = actor(obs["actor"])
         neural_rows += 8
