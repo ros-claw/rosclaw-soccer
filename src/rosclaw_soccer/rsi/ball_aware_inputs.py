@@ -82,15 +82,35 @@ def require_ball_aware_qualification(report: dict[str, Any]) -> None:
             raise ValueError("independent native actual contact and physics agreement required")
 
 
-def require_ball_aware_learning_smoke(report: dict[str, Any]) -> None:
-    """New ABI and exact fresh-optimizer accounting; not a football success gate."""
+def _require_ball_aware_learning(report: dict[str, Any], *, course: bool) -> None:
+    """Exact stage accounting; neither training regime proves football success."""
+    from rosclaw_soccer.rsi.ball_aware_learning_budget import BallAwareLearningBudget
+
+    budget = BallAwareLearningBudget(course)
+    if course and any(
+        report.get(k) != v
+        for k, v in dict(
+            iterations=200,
+            previous_iterations=2,
+            num_envs=128,
+            seed=2701,
+            force_decoder="addressed",
+            fresh_simulation_not_full_body_or_rng_resume=True,
+        ).items()
+    ):
+        raise ValueError("fixed addressed full-horizon same-ABI course protocol required")
     if (
-        report.get("status") != "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+        report.get("status")
+        != (
+            "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED"
+            if course
+            else "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+        )
         or report.get("ball_aware_abi") != BALL_AWARE_ABI
         or report.get("actor_observation_dim") != 177
         or report.get("critic_observation_dim") != 304
         or report.get("weights_only_checkpoint_reload") is not True
-        or report.get("parent_optimizer_state_loaded") is not False
+        or report.get("parent_optimizer_state_loaded") is not course
         or any(
             report.get(k) is not False
             for k in (
@@ -103,9 +123,9 @@ def require_ball_aware_learning_smoke(report: dict[str, Any]) -> None:
     ):
         raise ValueError("actual fresh-optimizer ball-aware177/304 learning smoke required")
     for key, expected in (
-        ("gpu_world_substeps", 15360),
-        ("policy_control_samples", 1536),
-        ("new_optimizer_steps", 42),
+        ("gpu_world_substeps", budget.gpu_world_steps),
+        ("policy_control_samples", budget.samples),
+        ("new_optimizer_steps", budget.optimizer_updates),
     ):
         if type(report.get(key)) is not int or report[key] != expected:
             raise ValueError("actual complete new ball-aware physics and update counts required")
@@ -121,7 +141,7 @@ def require_ball_aware_learning_smoke(report: dict[str, Any]) -> None:
             or c["completed"] != c["attempted"]
             for c in counts
         )
-        or sum(c["completed"] for c in counts) != 42
+        or sum(c["completed"] for c in counts) != budget.optimizer_updates
     ):
         raise ValueError("all attempted ball-aware optimizer updates must complete")
     for key in ("changed_actor_weights", "changed_critic_weights"):
@@ -144,15 +164,27 @@ def require_ball_aware_learning_smoke(report: dict[str, Any]) -> None:
     if not isinstance(replay, dict) or any(
         replay.get(k) != v
         for k, v in dict(
-            updates=2,
-            attempted_updates=2,
+            updates=202 if course else 2,
+            attempted_updates=202 if course else 2,
             batch_size=256,
-            rows=512,
+            rows=51712 if course else 512,
             weight=1.0,
             reference_features=79,
         ).items()
     ):
         raise ValueError("complete new79-suffix actual native rehearsal required")
+
+
+def require_ball_aware_learning_smoke(report: dict[str, Any]) -> None:
+    """Only the original exact fresh-optimizer smoke, never a course substitute."""
+    _require_ball_aware_learning(report, course=False)
+
+
+def require_ball_aware_learning(report: dict[str, Any]) -> None:
+    """Explicit fixed smoke or course, with distinct optimizer/rehearsal semantics."""
+    _require_ball_aware_learning(
+        report, course=report.get("status") == "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED"
+    )
 
 
 def ball_goal9(

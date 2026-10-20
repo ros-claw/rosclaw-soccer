@@ -4,6 +4,7 @@ import pytest
 from rosclaw_soccer.rsi.ball_aware_inputs import (
     BALL_AWARE_ABI,
     ball_goal9,
+    require_ball_aware_learning,
     require_ball_aware_learning_smoke,
     require_ball_aware_qualification,
 )
@@ -141,6 +142,64 @@ def learning_smoke():
 
 def test_new_ball_learning_accounting_gate():
     require_ball_aware_learning_smoke(learning_smoke())
+
+
+def learning_course():
+    report = learning_smoke()
+    report.update(
+        status="BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
+        iterations=200,
+        previous_iterations=2,
+        num_envs=128,
+        seed=2701,
+        force_decoder="addressed",
+        fresh_simulation_not_full_body_or_rng_resume=True,
+        parent_optimizer_state_loaded=True,
+        gpu_world_substeps=6144000,
+        policy_control_samples=614400,
+        new_optimizer_steps=4200,
+        optimizer_counts=[dict(attempted=4200, completed=4200)],
+        native_rehearsal=dict(
+            updates=202,
+            attempted_updates=202,
+            batch_size=256,
+            rows=51712,
+            weight=1.0,
+            reference_features=79,
+        ),
+    )
+    return report
+
+
+def test_course_and_smoke_have_distinct_accounting():
+    require_ball_aware_learning(learning_smoke())
+    require_ball_aware_learning(learning_course())
+    with pytest.raises(ValueError):
+        require_ball_aware_learning_smoke(learning_course())
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("iterations", 2),
+        ("previous_iterations", 0),
+        ("num_envs", 32),
+        ("seed", 2601),
+        ("force_decoder", "stock"),
+        ("fresh_simulation_not_full_body_or_rng_resume", False),
+        ("parent_optimizer_state_loaded", False),
+        ("new_optimizer_steps", 42),
+        ("gpu_world_substeps", 15360),
+        ("policy_control_samples", 1536),
+        ("native_rehearsal", learning_smoke()["native_rehearsal"]),
+        ("optimizer_counts", [dict(attempted=4201, completed=4200)]),
+    ],
+)
+def test_course_cannot_inherit_short_smoke_or_legacy_force_proof(key, value):
+    report = learning_course()
+    report[key] = value
+    with pytest.raises(ValueError):
+        require_ball_aware_learning(report)
 
 
 @pytest.mark.parametrize(

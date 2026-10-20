@@ -60,16 +60,23 @@ def main():
         receipts.append(json.loads(path.read_text()))
         pins[str(path)] = expected
     learner, plan, export = receipts
-    ball_aware = learner["status"] == "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+    ball_aware = learner["status"] in (
+        "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+        "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
+    )
     if ball_aware:
-        from rosclaw_soccer.rsi.ball_aware_inputs import require_ball_aware_learning_smoke
+        from rosclaw_soccer.rsi.ball_aware_inputs import require_ball_aware_learning
 
-        require_ball_aware_learning_smoke(learner)
+        require_ball_aware_learning(learner)
         if a.command_point != "pelvis" or a.position_gain != 1.0:
             raise ValueError("declared pelvis/+1 required for current ball-aware native protocol")
         if (
             plan.get("actor_observation_dim") != 177
             or plan.get("ball_aware") is not True
+            or (
+                learner.get("force_decoder") == "addressed"
+                and plan.get("force_decoder") != "addressed"
+            )
             or plan["input_file_hashes"].get(str(a.learner_root / "complete.json"))
             != a.learner_hash
         ):

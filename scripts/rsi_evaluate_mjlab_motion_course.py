@@ -39,12 +39,16 @@ def main():
     if digest(course_path) != a.course_hash:
         raise ValueError("declared actual course receipt required")
     course = json.loads(course_path.read_text())
-    ball_aware = course["status"] == "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+    ball_aware = course["status"] in (
+        "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+        "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
+    )
     stable = course["status"] in (
         "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
         "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
         "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
         "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+        "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
     )
     position_gain = course.get("velocity_command_position_feedback_gain", 0.0)
     if position_gain not in (0.0, 1.0):
@@ -60,6 +64,7 @@ def main():
             "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
             "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
             "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+            "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
         )
         or course["new_optimizer_steps"] <= 0
         or not course["weights_only_checkpoint_reload"]
@@ -69,6 +74,10 @@ def main():
         raise ValueError("actual completed non-promoted motion course required")
     if stable and a.control != "neural":
         raise ValueError("stable-prior evaluation is an initial/final neural comparison")
+    if ball_aware:
+        from rosclaw_soccer.rsi.ball_aware_inputs import require_ball_aware_learning
+
+        require_ball_aware_learning(course)
     pins = dict(course["input_file_hashes"])
     pins[str(course_path)] = a.course_hash
     checkpoint_path = a.course_root / motion_checkpoint_filename(course)

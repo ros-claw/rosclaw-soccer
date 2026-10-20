@@ -78,6 +78,10 @@ def main():
         if digest(a.learned_root / "complete.json") != a.learned_hash:
             raise ValueError("actual learned candidate receipt changed")
         learned = json.loads((a.learned_root / "complete.json").read_text())
+        if learned.get("actor_observation_dim") == 177:
+            from rosclaw_soccer.rsi.ball_aware_inputs import require_ball_aware_learning
+
+            require_ball_aware_learning(learned)
         if (
             learned["status"]
             not in (
@@ -85,6 +89,7 @@ def main():
                 "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
                 "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED",
                 "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+                "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
             )
             or not learned["weights_only_checkpoint_reload"]
         ):
