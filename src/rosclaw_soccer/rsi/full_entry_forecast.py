@@ -5,6 +5,7 @@ states adopted by the actual actor. Only an explicitly bounded command LAW
 may be selected. No training, promotion, hardware or official exam authority.
 """
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -161,9 +162,26 @@ def _tick(
     return result
 
 
+def _record_step(
+    observer: Callable[[dict[str, np.ndarray]], None] | None, row: dict[str, np.ndarray]
+) -> None:
+    """Observer gets independent read-only copies, never execution buffers."""
+    if observer is not None:
+        owned = {k: a.copy() for k, a in row.items()}
+        for a in owned.values():
+            a.setflags(write=False)
+        observer(owned)
+
+
 def nominal_prefix20(
-    nav: G1SonicNavigation, body: G1TargetEpisode, affordance: SkillEntryAffordance
+    nav: G1SonicNavigation,
+    body: G1TargetEpisode,
+    affordance: SkillEntryAffordance,
+    *,
+    step_observer: Callable[[dict[str, np.ndarray]], None] | None = None,
 ) -> dict[str, np.ndarray]:
+    if step_observer is not None and not callable(step_observer):
+        raise ValueError("optional recording observer must be callable")
     if body.next_frame != 0 or nav._next_frame != 0:
         raise ValueError("new continuous actor/body required for prefix")
     rows = []
@@ -177,6 +195,7 @@ def nominal_prefix20(
             entry_target_root_xy_m=np.asarray([d.target_root_xy_m]),
             entry_error_m=np.asarray([d.horizontal_error_m]),
         )
+        _record_step(step_observer, row)
         rows.append(row)
     return {key: np.concatenate([r[key] for r in rows]) for key in rows[0]}
 
@@ -191,8 +210,11 @@ def run_entry_suffix(
     affordance: SkillEntryAffordance,
     law: EntryCommandLaw,
     contact_reference_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    step_observer: Callable[[dict[str, np.ndarray]], None] | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Execute frame20..299 with its OWN NN and original native integration."""
+    if step_observer is not None and not callable(step_observer):
+        raise ValueError("optional recording observer must be callable")
     if (
         body.next_frame != 20
         or nav._next_frame != 20
@@ -262,6 +284,7 @@ def run_entry_suffix(
             entry_target_root_xy_m=target[None].copy(),
             entry_error_m=np.asarray([error]),
         )
+        _record_step(step_observer, row)
         rows.append(row)
     arrays = {key: np.concatenate([r[key] for r in rows]) for key in rows[0]}
     return arrays, dict(

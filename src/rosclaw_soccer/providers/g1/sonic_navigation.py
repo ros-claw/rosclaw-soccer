@@ -52,8 +52,49 @@ class SonicNavigationConfig:
     inference_threads: int | None = None
     onnx_graph_encoder_layout: bool = False
     record_default_planner_events: bool = False
+    experimental_reference_blend: bool = False
+    experimental_measured_joint_context: bool = False
+    experimental_context_joint_limits: tuple[tuple[float, float], ...] | None = None
 
     def __post_init__(self) -> None:
+        if (
+            type(self.experimental_reference_blend) is not bool
+            or type(self.experimental_measured_joint_context) is not bool
+            or (self.experimental_measured_joint_context and not self.experimental_reference_blend)
+        ):
+            raise ValueError("explicit boolean measured context requires reference blend")
+        limits = self.experimental_context_joint_limits
+        if self.experimental_measured_joint_context:
+            if (
+                type(limits) is not tuple
+                or len(limits) != 29
+                or any(
+                    type(pair) is not tuple
+                    or len(pair) != 2
+                    or any(type(x) is not float or not math.isfinite(x) for x in pair)
+                    or pair[0] >= pair[1]
+                    for pair in limits
+                )
+            ):
+                raise ValueError("immutable finite native29 joint-limit metadata required")
+        elif limits is not None:
+            raise ValueError("joint-limit context metadata requires measured-context opt-in")
+        if self.experimental_reference_blend and (
+            self.model_variant != "low_latency"
+            or self.maximum_frames != 300
+            or self.pose_reference is not None
+            or self.latent_schedule is not None
+            or self.experimental_command_replanning
+            or self.experimental_locomotion_mode is not None
+            or self.experimental_reference_height_m is not None
+            or self.experimental_fast_intercept
+            or self.experimental_maximum_speed_mps is not None
+            or self.onnx_graph_encoder_layout
+            or not self.record_default_planner_events
+        ):
+            raise ValueError(
+                "reference blend requires unmixed audited low-latency H300 SIM profile"
+            )
         if type(self.record_default_planner_events) is not bool or (
             self.record_default_planner_events
             and (
@@ -234,7 +275,7 @@ class _StreamingBackend(G1SonicRunupController):
             else (math.cos(self.facing), math.sin(self.facing))
         )
         heading = self.facing + yaw_rate * 0.4
-        feed = {
+        feed: dict[str, np.ndarray] = {
             "context_mujoco_qpos": context[None].astype(np.float32),
             "target_vel": np.asarray([speed], dtype=np.float32),
             "mode": np.asarray([0 if speed < 0.02 else 1 if speed <= 0.8 else 2], dtype=np.int64),
@@ -286,6 +327,12 @@ class _StreamingBackend(G1SonicRunupController):
                 "reference_hash": hash_bytes(segment.tobytes()),
             }
         )
+        if self.navigation.experimental_reference_blend:
+            # Serializable owned records: no session/proxy/simulator handle is exposed.
+            self.events[-1]["planner_inputs"] = {k: v.tolist() for k, v in feed.items()}
+            self.events[-1]["planner_input_dtypes"] = {k: str(v.dtype) for k, v in feed.items()}
+            self.events[-1]["planner_raw_output"] = output.tolist()
+            self.events[-1]["planner_raw_count"] = count_array.tolist()
         if (
             self.navigation.experimental_locomotion_mode is not None
             or self.navigation.record_default_planner_events
@@ -331,8 +378,44 @@ class _StreamingBackend(G1SonicRunupController):
             # The opt-in branch refreshes only the unexecuted reference. The
             # tracker, history, gains, joint/torque limits and world guards stay.
             start = frame + (4 if urgent else self.navigation.lookahead_frames)
-            segment = self.plan(future_reference_context(self.reference, start), frame)
+            context = future_reference_context(self.reference, start)
+            original_context = context.copy()
+            current_reference = self.reference[frame].copy()
+            delta = np.zeros(29)
+            if self.navigation.experimental_measured_joint_context:
+                from rosclaw_soccer.providers.g1.sonic_measured_context import (
+                    measured_joint_context,
+                )
+
+                context, delta = measured_joint_context(
+                    context,
+                    np.asarray(state.qpos, dtype=np.float64),
+                    current_reference,
+                    np.asarray(self.navigation.experimental_context_joint_limits, dtype=np.float64),
+                )
+            segment = self.plan(context, frame)
             n = min(len(segment), len(self.reference) - start)
+            if self.navigation.experimental_reference_blend:
+                from rosclaw_soccer.providers.g1.sonic_reference_blend import blend_planner_segment
+
+                old = self.reference[start : start + n].copy()
+                generated = segment[:n].copy()
+                segment = blend_planner_segment(old, generated)
+                if not np.array_equal(segment[0], old[0]):
+                    raise ValueError("experimental reference blend changed its old first pose")
+                self.events[-1]["reference_stitch"] = dict(
+                    schema="soccer.sonic.measured_context_reference_stitch.v1",
+                    start_frame=start,
+                    measured_qpos=np.asarray(state.qpos).tolist(),
+                    current_reference=current_reference.tolist(),
+                    original_context=original_context.tolist(),
+                    used_context=context.tolist(),
+                    joint_context_delta=delta.tolist(),
+                    old_future=old.tolist(),
+                    generated_future=generated.tolist(),
+                    blended_future=segment.tolist(),
+                    physical_state_or_targets_modified=False,
+                )
             self.reference[start : start + n] = segment[:n]
             self.reference[start + n :] = segment[n - 1]
 
@@ -359,6 +442,12 @@ class G1SonicNavigation:
         self.config = config or SonicNavigationConfig()
         self.backend = _StreamingBackend(model_root, self.config)
         config_record = asdict(self.config)
+        if not self.config.experimental_reference_blend:
+            config_record.pop("experimental_reference_blend")
+        if not self.config.experimental_measured_joint_context:
+            config_record.pop("experimental_measured_joint_context")
+        if self.config.experimental_context_joint_limits is None:
+            config_record.pop("experimental_context_joint_limits")
         if not self.config.record_default_planner_events:
             config_record.pop("record_default_planner_events")
         if self.config.experimental_locomotion_mode is None:

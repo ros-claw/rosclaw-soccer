@@ -1,4 +1,3 @@
-from dataclasses import asdict
 from types import SimpleNamespace
 
 import numpy as np
@@ -159,17 +158,15 @@ def test_legacy_contract_hash_unchanged_and_experiment_is_bound(monkeypatch):
     from test_s304_sonic_navigation import controller
 
     motor = controller(monkeypatch, SonicNavigationConfig(model_variant="low_latency"))
-    config = asdict(motor.config)
-    for key in (
-        "pose_reference",
-        "latent_schedule",
-        "experimental_maximum_speed_mps",
-        "experimental_command_replanning",
-        "experimental_locomotion_mode",
-        "inference_threads",
-        "onnx_graph_encoder_layout",
-    ):
-        config.pop(key)
+    # Literal legacy payload, not a moving list of fields from current asdict().
+    # Frozen pre-change3db14180 independently produces the same8c4dedab hash.
+    config = dict(
+        maximum_frames=600,
+        planner_seed=30300,
+        replan_frames=20,
+        lookahead_frames=10,
+        model_variant="low_latency",
+    )
     expected = hash_json(
         dict(
             schema="rosclaw_soccer.g1_sonic_navigation.v1",
@@ -181,6 +178,7 @@ def test_legacy_contract_hash_unchanged_and_experiment_is_bound(monkeypatch):
         )
     )
     assert motor.contract_hash == expected
+    assert expected == "sha256:8c4dedab4d4d2d6f830cf4bdd6f0cccff441d55129e49caf0cfa6e37f2463d78"
     experimental = controller(
         monkeypatch,
         SonicNavigationConfig(model_variant="low_latency", experimental_command_replanning=True),

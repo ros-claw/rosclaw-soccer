@@ -116,6 +116,29 @@ def test_only_sessions_shared_every_mutable_controller_buffer_private(monkeypatc
     cloned.backend.events.append(dict(frame=20))
     cloned.backend._kp[0] = 2
     assert navigation_state_hash(nav) == before
+
+
+@pytest.mark.parametrize("measured", [False, True])
+def test_context_blend_metadata_and_event_graph_are_owned(monkeypatch, measured):
+    nav = navigation(monkeypatch)
+    configured = replace(
+        nav.config,
+        maximum_frames=300,
+        experimental_reference_blend=True,
+        experimental_measured_joint_context=measured,
+        experimental_context_joint_limits=((-2.0, 2.0),) * 29 if measured else None,
+    )
+    nav.config = nav.backend.navigation = configured
+    nav.backend.events[0]["planner_inputs"] = {"context": [[0.0] * 36 for _ in range(4)]}
+    before = navigation_state_hash(nav)
+    cloned = clone_navigation(nav)
+    assert navigation_state_hash(cloned) == before
+    cloned.backend.events[0]["planner_inputs"]["context"][0][7] = 0.1
+    assert navigation_state_hash(nav) == before
+    assert (
+        cloned.config.experimental_context_joint_limits
+        == configured.experimental_context_joint_limits
+    )
     assert navigation_state_hash(cloned) != before
     # A forecast can itself be cloned without losing the private default array.
     further = clone_navigation(clone_navigation(nav))
