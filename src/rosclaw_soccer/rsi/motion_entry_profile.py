@@ -102,6 +102,7 @@ class BoundMotionEntry:
         if self.entry_estimate_kind not in (
             "historical_side_prior",
             "source_frame_transported_estimate",
+            "native_paired_displacement_estimate",
         ):
             raise ValueError("declared historical or transported estimate required")
 
@@ -155,7 +156,7 @@ class BoundMotionEntry:
         ):
             raise ValueError("motion/entry/world/side binding mismatch; no episode may start")
         if (
-            isinstance(entry, ConfiguredEntryEstimate)
+            hasattr(entry, "motion_configuration_hash")
             and entry.motion_configuration_hash != self.configuration.contract_hash
         ):
             raise ValueError("transported entry belongs to a different motion configuration")

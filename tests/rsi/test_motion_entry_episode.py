@@ -7,7 +7,15 @@ import numpy as np
 import pytest
 
 
-def setup(tmp_path, monkeypatch, *, fail=False, binding_fail=False):
+def setup(
+    tmp_path,
+    monkeypatch,
+    *,
+    fail=False,
+    binding_fail=False,
+    calibration=None,
+    arm="compact_transported",
+):
     from rosclaw_soccer.physics import g1_target_episode as bm
     from rosclaw_soccer.providers.g1 import sonic_navigation as nm
     from rosclaw_soccer.rsi import bilateral_entry as cm
@@ -104,14 +112,35 @@ def setup(tmp_path, monkeypatch, *, fail=False, binding_fail=False):
             NS(nbody=46),
             None,
             None,
-            arm="compact_transported",
+            arm=arm,
             side="right",
             law_index=0,
             evidence="fixture",
             runtime={},
+            entry_calibration=calibration,
         )
 
     return call, events, a
+
+
+def test_failed_native_calibration_binding_allocates_no_neural_or_body(tmp_path, monkeypatch):
+    from rosclaw_soccer.rsi import native_entry_calibration as nc
+
+    def reject(*args):
+        raise ValueError("fixture calibration mismatch")
+
+    monkeypatch.setattr(nc, "bind_native_entry", reject)
+    call, events, a = setup(tmp_path, monkeypatch, calibration=object(), arm="compact_unadapted")
+    with pytest.raises(ValueError, match="calibration mismatch"):
+        call()
+    assert not events and not a.output.exists()
+
+
+def test_native_calibration_cannot_silently_replace_geometry_arm(tmp_path, monkeypatch):
+    call, events, a = setup(tmp_path, monkeypatch, calibration=object())
+    with pytest.raises(ValueError, match="only admitted"):
+        call()
+    assert not events and not a.output.exists()
 
 
 def test_profile_known_before_neural_and_body_allocation_from0(tmp_path, monkeypatch):

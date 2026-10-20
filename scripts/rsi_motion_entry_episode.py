@@ -11,7 +11,20 @@ ARMS = {
 }
 
 
-def run_episode(a, course, world, poses, prior, *, arm, side, law_index, evidence, runtime):
+def run_episode(
+    a,
+    course,
+    world,
+    poses,
+    prior,
+    *,
+    arm,
+    side,
+    law_index,
+    evidence,
+    runtime,
+    entry_calibration=None,
+):
     import numpy as np
 
     from rosclaw_soccer.physics.g1_target_episode import G1TargetEpisode
@@ -51,6 +64,14 @@ def run_episode(a, course, world, poses, prior, *, arm, side, law_index, evidenc
         source_window=window,
         transport=transport,
     )
+    if entry_calibration is not None:
+        from rosclaw_soccer.rsi.native_entry_calibration import bind_native_entry
+
+        if arm != "compact_unadapted" or side != "right":
+            raise ValueError(
+                "native calibration is only admitted for the declared right compact pilot"
+            )
+        binding, entry = bind_native_entry(binding, entry, entry_calibration)
     # This check precedes ANY physical body allocation or neural controller.
     binding.validate(
         source, entry, world_hash=digest(a.world), source_window=window, reference_side=side
