@@ -179,7 +179,7 @@ def main():
             root_reference = None
             if a.command_point == "pelvis":
                 with np.load(motion_files[source], allow_pickle=False) as z:
-                    if float(z["fps"]) != 50:
+                    if z["fps"].size != 1 or float(z["fps"].item()) != 50:
                         raise ValueError("original50Hz source data required")
                     bp = z["body_pos_w"][:horizon].copy()
                     bq = z["body_quat_w"][:horizon].copy()
