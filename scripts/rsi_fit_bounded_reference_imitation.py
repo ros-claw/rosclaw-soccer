@@ -22,6 +22,7 @@ def main():
     p.add_argument("--rehearsal-root", type=Path)
     p.add_argument("--rehearsal-unit")
     p.add_argument("--rehearsal-hash")
+    p.add_argument("--label-mode", choices=("all_frames", "kick_window"), default="all_frames")
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
         TRAIN_MOTION_NAMES,
@@ -103,6 +104,8 @@ def main():
             alpha=0.25,
             error_cap_rad=0.6,
             maximum_label_delta_rad=0.15,
+            label_mode=a.label_mode,
+            kick_window_half_width_controls=15 if a.label_mode == "kick_window" else None,
             imitation_loss="joint_target_rad_squared_mean",
             rehearsal_loss="original_raw_action_squared_mean",
             rehearsal_weight=1.0,
@@ -126,7 +129,10 @@ def main():
         import torch
 
         from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
-        from rosclaw_soccer.rsi.bounded_reference_imitation import build_imitation_rows
+        from rosclaw_soccer.rsi.bounded_reference_imitation import (
+            build_imitation_rows,
+            localize_kick_window,
+        )
         from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
 
         torch.set_num_threads(1)
@@ -148,6 +154,8 @@ def main():
         with np.load(a.collection_root / "screen8.npz", allow_pickle=False) as z:
             raw = {k: z[k].copy() for k in z.files}
         dataset = build_imitation_rows(raw, params)
+        if a.label_mode == "kick_window":
+            dataset = localize_kick_window(dataset)
         np.savez_compressed(a.output / "counterfactual-labels.npz", **dataset)
         obs = torch.from_numpy(dataset["observation"])
         labels = torch.from_numpy(dataset["target_action"])
@@ -242,6 +250,7 @@ def main():
                 "velocity_command_position_feedback_gain", 0.0
             ),
             imitation_optimizer_state_dict=optimizer.state_dict(),
+            imitation_label_mode=a.label_mode,
             ppo_optimizer_continuation_valid=False,
             critic_updated=False,
             torch_rng=torch.get_rng_state(),
@@ -279,6 +288,7 @@ def main():
                 input_file_hashes=pins,
                 training_sources=list(TRAIN_MOTION_NAMES),
                 training_rows=len(obs),
+                imitation_label_mode=a.label_mode,
                 counterfactual_labels_hash=digest(a.output / "counterfactual-labels.npz"),
                 before=before,
                 after=after,

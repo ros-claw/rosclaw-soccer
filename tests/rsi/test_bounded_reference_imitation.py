@@ -2,7 +2,10 @@ import numpy as np
 import pytest
 from test_g1_velocity_policy import parameters
 
-from rosclaw_soccer.rsi.bounded_reference_imitation import build_imitation_rows
+from rosclaw_soccer.rsi.bounded_reference_imitation import (
+    build_imitation_rows,
+    localize_kick_window,
+)
 
 
 def raw_fixture():
@@ -52,3 +55,26 @@ def test_unbound_or_post_reset_labels_rejected(kind):
         raw["action"][0, 0, 0] = np.nan
     with pytest.raises(ValueError):
         build_imitation_rows(raw, parameters())
+
+
+def test_kick_window_anchors_parent_outside_and_keeps_counterfactual_bound():
+    from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+
+    raw = {k: np.repeat(v[:1], 40, axis=0) for k, v in raw_fixture().items()}
+    raw["source_phase"] = np.repeat(np.arange(40)[:, None], 8, axis=1)
+    for world, side in enumerate(
+        ("right", "left", "left", "right", "right", "right", "left", "right")
+    ):
+        knee = G1_DDS_JOINT_NAMES.index(side + "_knee_joint")
+        raw["full_observation"][20, world, 127 + knee] = -8
+    rows = build_imitation_rows(raw, parameters())
+    before = {k: v.copy() for k, v in rows.items()}
+    result = localize_kick_window(rows)
+    off = abs(result["control_index"] - 20) >= 15
+    np.testing.assert_array_equal(result["target_action"][off], result["base_action"][off])
+    assert np.all(result["kick_center_control_index"] == 20)
+    np.testing.assert_allclose(result["target_delta_rad"][result["control_index"] == 20], 0.15)
+    assert all(np.array_equal(rows[k], v) for k, v in before.items())
+    rows["observation"][:, 127:156] = 0
+    with pytest.raises(ValueError, match="swing"):
+        localize_kick_window(rows)

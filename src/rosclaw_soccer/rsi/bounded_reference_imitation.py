@@ -6,6 +6,7 @@ not a physically certified teacher. No simulator or hardware is accessed.
 
 import numpy as np
 
+from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
 
 
@@ -90,3 +91,50 @@ def build_imitation_rows(
         control_index=frame_ids.astype(np.int64),
         world_index=world_ids.astype(np.int64),
     )
+
+
+def localize_kick_window(rows: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Restrict label corrections to a fixed +/-15-control reference swing window.
+
+    Centers use only TRAIN reference hip/knee extension velocity, never ball
+    outcomes. Outside the triangular window the executed parent action is the
+    exact teacher. This is still a counterfactual label, not a certified kick.
+    """
+    source = rows["source_id"]
+    phase = rows["control_index"]
+    observation = rows["observation"]
+    if (
+        observation.shape != (len(source), 168)
+        or source.shape != phase.shape
+        or not np.isfinite(observation).all()
+        or source.dtype.kind not in "iu"
+        or phase.dtype.kind not in "iu"
+        or set(source.tolist()) != set(range(8))
+    ):
+        raise ValueError("all eight finite TRAIN source rows required")
+    weight = np.zeros(len(source), dtype=np.float32)
+    centers = np.zeros(len(source), dtype=np.int64)
+    for world, side in enumerate(
+        ("right", "left", "left", "right", "right", "right", "left", "right")
+    ):
+        ids = np.flatnonzero(source == world)
+        if not np.array_equal(phase[ids], np.arange(len(ids))):
+            raise ValueError("consecutive first-episode TRAIN phases required")
+        hip = G1_DDS_JOINT_NAMES.index(side + "_hip_pitch_joint")
+        knee = G1_DDS_JOINT_NAMES.index(side + "_knee_joint")
+        velocity = observation[ids, 127:156]
+        score = np.maximum(-velocity[:, hip], 0) + np.maximum(-velocity[:, knee], 0)
+        if score.max() <= 0:
+            raise ValueError("positive reference forward-swing signal required")
+        center = int(score.argmax())
+        centers[ids] = center
+        weight[ids] = np.maximum(0, 1 - np.abs(phase[ids] - center) / 15)
+    delta_action = rows["target_action"] - rows["base_action"]
+    result = {k: v.copy() for k, v in rows.items()}
+    result.update(
+        target_action=rows["base_action"] + weight[:, None] * delta_action,
+        target_delta_rad=weight[:, None] * rows["target_delta_rad"],
+        correction_weight=weight,
+        kick_center_control_index=centers,
+    )
+    return result
