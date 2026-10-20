@@ -26,6 +26,12 @@ def test_owned_sampling_stream_warms_prefix_without_advancing_rng():
     assert np.count_nonzero(trace["noise"][20:]) > 0
     for row in trace.values():
         assert row.dtype == np.float32 and np.isfinite(row).all()
+    with torch.no_grad():
+        lp, _, _, _, _ = model.evaluate_raw(
+            x.expand(1, 300, 108), torch.from_numpy(trace["raw"])[None]
+        )
+    # Recurrent full-sequence likelihood is recomputed, not copied from collection.
+    np.testing.assert_allclose(lp[0].numpy(), trace["log_prob"], atol=1e-3, rtol=1e-6)
     with pytest.raises(ValueError):
         adapter(x, hidden)
 

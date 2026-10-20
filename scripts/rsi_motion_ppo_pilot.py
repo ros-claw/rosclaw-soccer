@@ -23,6 +23,7 @@ def arguments():
     p.add_argument("--collection-unit", action="append", default=[])
     p.add_argument("--candidate", type=Path)
     p.add_argument("--expected-candidate-hash")
+    p.add_argument("--candidate-unit")
     return p.parse_args()
 
 
@@ -68,6 +69,30 @@ def main():
     ):
         if pins.get(str(a.model_root / name)) != digest(a.model_root / name):
             raise ValueError("original muscle assets required")
+    check_pins(pins)
+    if a.candidate_unit:
+        from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
+
+        if a.mode != "evaluate" or a.candidate is None:
+            raise ValueError("closed learner dependency only supported for candidate exams")
+        wait_for_terminal_collection(a.candidate_unit, wait=True)
+        root = a.candidate.parent
+        receipt = json.loads((root / "complete.json").read_text())
+        learner = json.loads((root / "declaration.json").read_text())
+        if (
+            receipt["source_head"] != head
+            or receipt["status"] != "NATIVE_EXPERIENCE_PPO_UPDATED_REQUIRES_EXAM"
+            or receipt["optimizer_steps"] != 4
+            or learner["mode"] != "learn"
+            or learner["base_weights_hash"] != tc["checkpoint_hash"]
+            or learner["bank_hash"] != a.expected_bank_hash
+        ):
+            raise ValueError("closed same-source learner receipt differs")
+        if a.expected_candidate_hash not in (None, receipt["checkpoint_hash"]):
+            raise ValueError("explicit candidate commitment differs from learner")
+        a.expected_candidate_hash = receipt["checkpoint_hash"]
+        for name in ("complete.json", "declaration.json", "experience-commitment.json"):
+            pins[str(root / name)] = digest(root / name)
     indices = a.indices or []
     if a.mode != "learn" and (
         not indices
@@ -96,6 +121,7 @@ def main():
         indices=indices,
         seed=a.seed,
         candidate_hash=a.expected_candidate_hash,
+        candidate_unit=a.candidate_unit,
         collection=[str(r) for r in a.collection],
         collection_units=a.collection_unit,
         prefix_frames=20,
@@ -130,7 +156,12 @@ def main():
     check_pins(pins)
     result.update(source_head=head, hardware_authorized=False, promotion_authorized=False)
     write_once(a.output / "complete.json", result)
-    print("PPO_STAGE_COMPLETE", a.mode, json.dumps(result), flush=True)
+    print(
+        "PPO_STAGE_COMPLETE",
+        a.mode,
+        json.dumps({k: result[k] for k in ("status", "new_native_steps")}),
+        flush=True,
+    )
 
 
 def episodes(a, policy, bd, pins):
