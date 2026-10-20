@@ -6,6 +6,17 @@ import subprocess
 from pathlib import Path
 
 
+def source_suffix_hash_index(pins):
+    """Index the exact old /src/ suffix relation once, not for each source file."""
+    index = {}
+    for name, value in pins.items():
+        position = name.find("/src/")
+        while position >= 0:
+            index.setdefault(name[position + 1 :], set()).add(value)
+            position = name.find("/src/", position + 1)
+    return index
+
+
 def wait_for_terminal_collection(unit, *, wait=False):
     """Bounded explicit predecessor wait; never launches/restarts the producer."""
     import time
@@ -138,13 +149,10 @@ def main():
         pins.update({str(p): digest(p) for p in args.collection.rglob("*") if p.is_file()})
         # Only runner orchestration differs; policy, feature, handoff and physics
         # implementation must remain byte-identical to the original producer.
-        for p in (Path.cwd() / "src").rglob("*.py"):
-            old = [
-                h
-                for name, h in prior_declaration["input_file_hashes"].items()
-                if name.endswith("/" + str(p.relative_to(Path.cwd())))
-            ]
-            if digest(p) not in old:
+        source_index = source_suffix_hash_index(prior_declaration["input_file_hashes"])
+        checkout = Path.cwd()
+        for p in (checkout / "src").rglob("*.py"):
+            if digest(p) not in source_index.get(str(p.relative_to(checkout)), set()):
                 raise ValueError("review policy/physics source differs from collection")
     check_pins(pins)
     for p in (args.world, args.motion_csv):
