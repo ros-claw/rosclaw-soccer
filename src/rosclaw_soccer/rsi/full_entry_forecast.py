@@ -208,6 +208,13 @@ def nominal_prefix20(
     return {key: np.concatenate([r[key] for r in rows]) for key in rows[0]}
 
 
+def entry_suffix_frames(start_frame: int = 20) -> int:
+    """Remaining original H300 frames, never a reset or an extended deadline."""
+    if type(start_frame) is not int or not 20 <= start_frame < 300:
+        raise ValueError("actual integer entry start frame20..299 required")
+    return 300 - start_frame
+
+
 def run_entry_suffix(
     nav: G1SonicNavigation,
     body: G1TargetEpisode,
@@ -222,16 +229,20 @@ def run_entry_suffix(
     entry_reference_mode: str = "legacy",
     motor_provider: Callable[[G1SonicNavigation, TeamMotorObservation], TeamMotorTarget]
     | None = None,
+    start_frame: int = 20,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
-    """Execute frame20..299 with its OWN NN and original native integration."""
+    """Execute actual start..299; default20 retains the original path exactly."""
     if step_observer is not None and not callable(step_observer):
         raise ValueError("optional recording observer must be callable")
     if motor_provider is not None and not callable(motor_provider):
         raise ValueError("optional SIM research motor provider must be callable")
     _validate_entry_mode(entry_reference_mode, contact_reference_offset_m)
+    entry_suffix_frames(start_frame)
     if (
-        body.next_frame != 20
-        or nav._next_frame != 20
+        body.next_frame != start_frame
+        or nav._next_frame != start_frame
+        or body.integrated_steps != 10 * start_frame
+        or body.attempted_steps != 10 * start_frame
         or nav._origin_frame != 0
         or nav.config.pose_reference is not None
         or nav.config.latent_schedule is not None
@@ -241,14 +252,14 @@ def run_entry_suffix(
         or len(source_poses) < 767
         or not np.isfinite(source_poses).all()
     ):
-        raise ValueError("aligned measured locomotion prefix20 and original finite source required")
+        raise ValueError("aligned actual native prefix and original finite source required")
     rows = []
     stage, handoff_frame, handoff_receipt = 0, None, None
     handoff_hash, reference_hash, wrist_hash = None, None, None
     contact_adaptation = None
     entry_adaptation = None
     target, error = np.zeros(2), 0.0
-    for frame in range(20, 300):
+    for frame in range(start_frame, 300):
         q, v = body.canonical()
         command = (0.0, 0.0, 0.0)
         decision = None
@@ -347,6 +358,9 @@ def run_entry_suffix(
     if motor_provider is not None:
         report["motor_provider_override"] = True
         report["neural_policy_recomputed_on_own_state"] = False
+    if start_frame != 20:
+        report["actual_entry_start_frame"] = start_frame
+        report["original_task_horizon"] = 300
     return arrays, report
 
 
@@ -374,7 +388,7 @@ def body_fields_hash(body: G1TargetEpisode) -> str:
 
 
 class FullEntryForecaster:
-    """Declared finite280-frame previews; default seven, explicit maximum32."""
+    """Bounded original-deadline previews; default20 is the original280 frames."""
 
     def __init__(self, *, world_hash: str, max_forecasts: int = 7) -> None:
         if type(max_forecasts) is not int or not 1 <= max_forecasts <= 32:
@@ -382,6 +396,7 @@ class FullEntryForecaster:
         self.world_hash = world_hash
         self._max_forecasts = max_forecasts
         self.attempted_native_steps = self.integrated_native_steps = 0
+        self._forecast_calls = 0
         self.failed = False
 
     @property
@@ -400,28 +415,36 @@ class FullEntryForecaster:
         law: EntryCommandLaw,
         contact_reference_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0),
         entry_reference_mode: str = "legacy",
+        start_frame: int = 20,
     ) -> FullEntryForecast:
         _validate_entry_mode(entry_reference_mode, contact_reference_offset_m)
+        remaining_steps = entry_suffix_frames(start_frame) * 10
         if (
             self.failed
             or body.failed
-            or body.next_frame != 20
-            or nav._next_frame != 20
+            or body.next_frame != start_frame
+            or nav._next_frame != start_frame
+            or self._forecast_calls >= self.max_forecasts
+            or self.attempted_native_steps + remaining_steps > self.max_forecasts * 2800
+            or body.integrated_steps != 10 * start_frame
+            or body.attempted_steps != 10 * start_frame
             or body.record_all_ball_contacts is not True
-            or self.attempted_native_steps + 2800 > self.max_forecasts * 2800
         ):
-            raise ValueError("healthy aligned prefix20 and remaining full-task budget required")
+            raise ValueError(
+                "healthy aligned actual prefix and remaining full-task budget required"
+            )
         G1PDTorqueForecaster(
             body.model,
             expected_world_hash=self.world_hash,
             kp=body.kp,
             kd=body.kd,
-            max_forecast_steps=2800,
+            max_forecast_steps=remaining_steps,
         )
         donor_body, donor_nav = integration_hash(body.model, body.data), navigation_state_hash(nav)
         donor_fields = body_fields_hash(body)
         branch = None
         origin_attempted, origin_integrated = body.attempted_steps, body.integrated_steps
+        self._forecast_calls += 1
         try:
             controller, branch = clone_navigation(nav), _clone_body(body)
             arrays, report = run_entry_suffix(
@@ -434,7 +457,13 @@ class FullEntryForecaster:
                 law=law,
                 contact_reference_offset_m=contact_reference_offset_m,
                 entry_reference_mode=entry_reference_mode,
+                start_frame=start_frame,
             )
+            if (
+                branch.attempted_steps - origin_attempted != remaining_steps
+                or branch.integrated_steps - origin_integrated != remaining_steps
+            ):
+                raise ValueError("complete actual-start-to-original-deadline forecast required")
             result = FullEntryForecast(
                 arrays,
                 report,
