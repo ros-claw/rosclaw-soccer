@@ -211,10 +211,12 @@ def run_entry_suffix(
     law: EntryCommandLaw,
     contact_reference_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0),
     step_observer: Callable[[dict[str, np.ndarray]], None] | None = None,
+    entry_reference_mode: str = "legacy",
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Execute frame20..299 with its OWN NN and original native integration."""
     if step_observer is not None and not callable(step_observer):
         raise ValueError("optional recording observer must be callable")
+    _validate_entry_mode(entry_reference_mode, contact_reference_offset_m)
     if (
         body.next_frame != 20
         or nav._next_frame != 20
@@ -232,6 +234,7 @@ def run_entry_suffix(
     stage, handoff_frame, handoff_receipt = 0, None, None
     handoff_hash, reference_hash, wrist_hash = None, None, None
     contact_adaptation = None
+    entry_adaptation = None
     target, error = np.zeros(2), 0.0
     for frame in range(20, 300):
         q, v = body.canonical()
@@ -246,17 +249,37 @@ def run_entry_suffix(
         obs = _observation(nav, body, frame, command)
         if decision is not None and decision.ready:
             held, quarantine = quarantine_wrist_reference(source_poses, q[:36])
-            prepared = prepare_sonic_reference(
-                held[286:767],
-                q[:36],
-                source_frequency_hz=120,
-                entry_intervals=50,
-                source_evidence_hash=source_evidence_hash,
-            )
+            if entry_reference_mode == "legacy":
+                prepared = prepare_sonic_reference(
+                    held[286:767],
+                    q[:36],
+                    source_frequency_hz=120,
+                    entry_intervals=50,
+                    source_evidence_hash=source_evidence_hash,
+                )
+                reference = prepared.reference
+                preparation_hash = prepared.contract_hash
+            else:
+                from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+                from rosclaw_soccer.providers.g1.sonic_matched_entry import (
+                    prepare_matched_entry_pair,
+                )
+
+                limits = body.model.jnt_range[
+                    [body.model.joint(n).id for n in G1_DDS_JOINT_NAMES]
+                ].copy()
+                pair = prepare_matched_entry_pair(
+                    held[286:767], q[:36], v, limits, source_evidence_hash=source_evidence_hash
+                )
+                reference = (
+                    pair.position if entry_reference_mode == "matched_position" else pair.velocity
+                )
+                entry_adaptation = pair.report(entry_reference_mode)
+                preparation_hash = hash_json(entry_adaptation)
             from rosclaw_soccer.rsi.contact_reference_offset import offset_contact_reference
 
             adapted_reference, contact_adaptation = offset_contact_reference(
-                body.model, prepared.reference, offset_root_m=contact_reference_offset_m
+                body.model, reference, offset_root_m=contact_reference_offset_m
             )
             destination = G1SonicNavigation(
                 model_root,
@@ -275,7 +298,7 @@ def run_entry_suffix(
             if integration_hash(body.model, body.data) != handoff_hash:
                 raise ValueError("contact handoff changed native physical state")
             handoff_frame, handoff_receipt = frame, asdict(handoff)
-            reference_hash, wrist_hash = prepared.contract_hash, quarantine.contract_hash
+            reference_hash, wrist_hash = preparation_hash, quarantine.contract_hash
             nav, stage = destination, 1
         row = _tick(nav, body, obs)
         row.update(
@@ -287,7 +310,7 @@ def run_entry_suffix(
         _record_step(step_observer, row)
         rows.append(row)
     arrays = {key: np.concatenate([r[key] for r in rows]) for key in rows[0]}
-    return arrays, dict(
+    report = dict(
         body=body.review(),
         handoff_frame=handoff_frame,
         handoff_receipt=handoff_receipt,
@@ -303,6 +326,16 @@ def run_entry_suffix(
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if entry_reference_mode != "legacy":
+        report["entry_reference_adaptation"] = entry_adaptation
+    return arrays, report
+
+
+def _validate_entry_mode(mode: str, offset: tuple[float, float, float]) -> None:
+    if type(mode) is not str or mode not in ("legacy", "matched_position", "matched_velocity"):
+        raise ValueError("explicit declared entry reference mode required")
+    if mode != "legacy" and offset != (0.0, 0.0, 0.0):
+        raise ValueError("matched entry study permits zero C only; source phase unchanged")
 
 
 @dataclass(frozen=True)
@@ -347,7 +380,9 @@ class FullEntryForecaster:
         affordance: SkillEntryAffordance,
         law: EntryCommandLaw,
         contact_reference_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        entry_reference_mode: str = "legacy",
     ) -> FullEntryForecast:
+        _validate_entry_mode(entry_reference_mode, contact_reference_offset_m)
         if (
             self.failed
             or body.failed
@@ -379,6 +414,7 @@ class FullEntryForecaster:
                 affordance=affordance,
                 law=law,
                 contact_reference_offset_m=contact_reference_offset_m,
+                entry_reference_mode=entry_reference_mode,
             )
             result = FullEntryForecast(
                 arrays,

@@ -104,7 +104,11 @@ def replay_suffix(
     source_poses: np.ndarray,
     source_evidence_hash: str,
     report: dict[str, Any],
+    entry_reference_mode: str = "legacy",
 ) -> None:
+    from rosclaw_soccer.rsi.full_entry_forecast import _validate_entry_mode
+
+    _validate_entry_mode(entry_reference_mode, offset_root_m)
     validate_recording(raw, frames=280, nbody=body.model.nbody)
     if body.next_frame != 20:
         raise ValueError("own measured prefix20 required for suffix review")
@@ -128,20 +132,42 @@ def replay_suffix(
             ):
                 raise ValueError("source full native handoff state differs")
             held, quarantine = quarantine_wrist_reference(source_poses, q[:36])
-            prepared = prepare_sonic_reference(
-                held[286:767],
-                q[:36],
-                source_frequency_hz=120,
-                entry_intervals=50,
-                source_evidence_hash=source_evidence_hash,
-            )
+            if entry_reference_mode == "legacy":
+                prepared = prepare_sonic_reference(
+                    held[286:767],
+                    q[:36],
+                    source_frequency_hz=120,
+                    entry_intervals=50,
+                    source_evidence_hash=source_evidence_hash,
+                )
+                original_reference, preparation_hash = prepared.reference, prepared.contract_hash
+            else:
+                from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+                from rosclaw_soccer.providers.g1.sonic_matched_entry import (
+                    prepare_matched_entry_pair,
+                )
+                from rosclaw_soccer.sim.contracts import hash_json
+
+                limits = body.model.jnt_range[
+                    [body.model.joint(n).id for n in G1_DDS_JOINT_NAMES]
+                ].copy()
+                pair = prepare_matched_entry_pair(
+                    held[286:767], q[:36], v, limits, source_evidence_hash=source_evidence_hash
+                )
+                original_reference = (
+                    pair.position if entry_reference_mode == "matched_position" else pair.velocity
+                )
+                adaptation = pair.report(entry_reference_mode)
+                if adaptation != report["entry_reference_adaptation"]:
+                    raise ValueError("measured velocity/reference adaptation differs")
+                preparation_hash = hash_json(adaptation)
             adapted, geometry = offset_contact_reference(
-                body.model, prepared.reference, offset_root_m=offset_root_m
+                body.model, original_reference, offset_root_m=offset_root_m
             )
             if (
                 geometry != report["contact_reference_adaptation"]
                 or quarantine.contract_hash != report["wrist_reference_quarantine_hash"]
-                or prepared.contract_hash != report["reference_preparation_hash"]
+                or preparation_hash != report["reference_preparation_hash"]
             ):
                 raise ValueError("source reference/quarantine/contact request differs")
             reference = adapted.initialize(q[:36], frames=410)

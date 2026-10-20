@@ -1,24 +1,17 @@
 """Own-response CEM builder; archives assert anchors, never choose samples."""
 
 
-def build_candidates(predict, rows, prefix, source, item, folder):
+def certified_anchors(predict, rows, source, item):
     import numpy as np
 
-    from rosclaw_soccer.rsi.contact_response_cem import (
-        SamplingExhausted,
-        elite_update,
-        response_merit,
-        sample_four,
-    )
-    from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
-    from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
 
     root, complete = source
     # Historical data is used ONLY to assert same-state anchors are unchanged.
     old = complete["results"][item.variant_index]["results"][1]["candidates"]
-    if len(old) != 6:
-        raise ValueError("all six original anchors required")
+    if len(old) != 6 or rows:
+        raise ValueError("six original anchors and empty candidate buffer required")
+    futures = []
     for law in (0, 3, 4):
         for offset in ((0.0, 0.0, 0.0), (0.0, -0.025, -0.025)):
             index = len(rows)
@@ -36,6 +29,23 @@ def build_candidates(predict, rows, prefix, source, item, folder):
                     raise ValueError("all18 anchor arrays required")
                 for k in a.files:
                     np.testing.assert_array_equal(a[k], future.arrays[k])
+            futures.append(future)
+    return futures
+
+
+def build_candidates(predict, rows, prefix, source, item, folder):
+    import numpy as np
+
+    from rosclaw_soccer.rsi.contact_response_cem import (
+        SamplingExhausted,
+        elite_update,
+        response_merit,
+        sample_four,
+    )
+    from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
+    from scripts.rsi_atomic_artifacts import write_once
+
+    certified_anchors(predict, rows, source, item)
     prefix_hash = hash_json(
         {
             k: dict(shape=list(a.shape), dtype=a.dtype.str, bytes_hash=hash_bytes(a.tobytes()))

@@ -9,6 +9,12 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--study", choices=("response_cem", "matched_entry"), default="response_cem"
+    )
+    parser.add_argument("--prior-gate", type=Path)
+    parser.add_argument("--expected-prior-gate-hash")
+    parser.add_argument("--prior-gate-unit")
     for name in ("bank", "world", "motion-csv", "model-root", "core-source", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     for name in ("expected-head", "expected-bank-hash", "expected-rejected-head"):
@@ -35,6 +41,7 @@ def main():
         "rsi_response_cem_builder.py",
         "rsi_probe_contact_geometry.py",
         "rsi_native_context_recovery_common.py",
+        "rsi_matched_entry_builder.py",
     ):
         if (
             subprocess.check_output(["git", "show", f"{head}:scripts/{name}"])
@@ -49,7 +56,57 @@ def main():
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_response_cem_admission import admit
 
+    if args.study == "matched_entry" and any(
+        x is None for x in (args.prior_gate, args.expected_prior_gate_hash, args.prior_gate_unit)
+    ):
+        raise ValueError("matched entry requires the closed rejected CEM gate")
     bank, courses, previous, pins = admit(args)
+    schema = "soccer.rsi.bounded_response_cem16.v1"
+    if args.study == "matched_entry":
+        if any(
+            x is None
+            for x in (args.prior_gate, args.expected_prior_gate_hash, args.prior_gate_unit)
+        ):
+            raise ValueError("matched entry requires the closed rejected CEM gate")
+        terminal = dict(
+            line.split("=", 1)
+            for line in subprocess.check_output(
+                [
+                    "systemctl",
+                    "--user",
+                    "show",
+                    args.prior_gate_unit,
+                    "-p",
+                    "MainPID",
+                    "-p",
+                    "Result",
+                    "-p",
+                    "SubState",
+                    "-p",
+                    "ExecMainStatus",
+                ],
+                text=True,
+            ).splitlines()
+        )
+        if (
+            terminal != dict(MainPID="0", Result="success", SubState="exited", ExecMainStatus="0")
+            or digest(args.prior_gate / "complete.json") != args.expected_prior_gate_hash
+        ):
+            raise ValueError("prior CEM gate must be closed and authenticated")
+        gate = json.loads((args.prior_gate / "complete.json").read_text())
+        if (
+            gate["status"] != "CEM_FAMILY_REJECTED_STOP"
+            or gate["producer_claimed_qualified"] != 6
+            or gate["launched_reviews"]
+        ):
+            raise ValueError("explicit no-gain CEM rejection required for this pivot")
+        gd = json.loads((args.prior_gate / "declaration.json").read_text())
+        check_pins(gd["input_file_hashes"])
+        pins.update(gd["input_file_hashes"])
+        pins.update({str(p): digest(p) for p in args.prior_gate.iterdir() if p.is_file()})
+        protocol = Path.cwd() / "docs/rsi/matched-entry-bridge-preregister-20261020.zh-CN.md"
+        pins[str(protocol)] = digest(protocol)
+        schema = "soccer.rsi.matched_entry_bridge16.v1"
     if not args.preflight_only:
         if digest(args.preflight / "complete.json") != args.expected_preflight_hash:
             raise ValueError("same-source preflight identity differs")
@@ -57,6 +114,7 @@ def main():
         proof = json.loads((args.preflight / "complete.json").read_text())
         if (
             declaration["source_head"] != head
+            or declaration["schema"] != schema
             or declaration["input_file_hashes"] != pins
             or proof["new_actor_allocations"] != 0
             or proof["new_native_steps"] != 0
@@ -71,7 +129,7 @@ def main():
 
     args.output.mkdir(parents=True, exist_ok=False)
     declaration = dict(
-        schema="soccer.rsi.bounded_response_cem16.v1",
+        schema=schema,
         source_head=head,
         input_file_hashes=pins,
         bank_hash=bank["bank_hash"],
@@ -93,6 +151,28 @@ def main():
         promotion_authorized=False,
         hardware_authorized=False,
     )
+    if args.study == "matched_entry":
+        for key in (
+            "iterations_per_law",
+            "new_samples_per_iteration",
+            "initial_std_m",
+            "minimum_std_m",
+            "maximum_draws_per_batch",
+            "pose_phase_and_body_unchanged",
+        ):
+            declaration.pop(key)
+        declaration.update(
+            maximum_candidates_per_course=12,
+            full_bank_native_upper_bound=585600,
+            matched_modes=["matched_position", "matched_velocity"],
+            entry_interval_domain=[10, 50],
+            modified_joint_count=23,
+            maximum_joint_reference_correction_rad=0.12,
+            new_modes_zero_C_only=True,
+            physical_body_and_history_handoff_unchanged=True,
+            source_playback_unstretched=True,
+            publicity_license_authorized=False,
+        )
     write_once(args.output / "declaration.json", declaration)
     results = []
     try:
@@ -111,13 +191,12 @@ def main():
                     hardware_authorized=False,
                 ),
             )
-            print("FULL16_RESPONSE_CEM_ADMITTED_ZERO_ACTORS", flush=True)
+            print("FULL16_" + args.study.upper() + "_ADMITTED_ZERO_ACTORS", flush=True)
             return
         import numpy as np
 
         from rosclaw_soccer.rsi.ball_entry_teacher import SkillEntryAffordance
         from scripts.rsi_probe_contact_geometry import run_course
-        from scripts.rsi_response_cem_builder import build_candidates
 
         choices = [Path(p) for p in pins if Path(p).name == "entry-affordance.json"]
         if len(choices) != 1:
@@ -137,6 +216,24 @@ def main():
         if affordance.contract_hash != stored["contract_hash"]:
             raise ValueError("same original entry affordance required")
         poses = np.loadtxt(args.motion_csv, delimiter=",", skiprows=1, dtype=np.float64)
+        kwargs = {}
+        if args.study == "response_cem":
+            from scripts.rsi_response_cem_builder import build_candidates
+
+            builder = build_candidates
+        else:
+            import mujoco
+
+            from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+            from rosclaw_soccer.sim.contracts import hash_json
+            from scripts.rsi_matched_entry_builder import choose_matched_candidate, make_builder
+
+            model = mujoco.MjModel.from_binary_path(str(args.world))
+            limits = model.jnt_range[[model.joint(n).id for n in G1_DDS_JOINT_NAMES]].copy()
+            builder = make_builder(poses, limits, hash_json(declaration))
+            kwargs = dict(
+                forecast_budget=12, final_choice=choose_matched_candidate, label="MATCHED_ENTRY"
+            )
         for item in courses:
             if item.parent_index == args.cluster:
                 results.append(
@@ -147,13 +244,23 @@ def main():
                         poses,
                         affordance,
                         pins,
-                        candidate_builder=build_candidates,
+                        candidate_builder=builder,
+                        **kwargs,
                     )
                 )
-        if len(results) != 4 or any(
-            len(r["candidates"]) != 30 or len(r["proposals"]) != 6 for r in results
-        ):
-            raise ValueError("whole fixed four-course30-candidate cluster required")
+        expected = (
+            (lambda r: len(r["candidates"]) == 30 and len(r["proposals"]) == 6)
+            if args.study == "response_cem"
+            else (
+                lambda r: (
+                    6 <= len(r["candidates"]) <= 12
+                    and len(r["candidates"]) % 2 == 0
+                    and len(r["proposals"]) == 3
+                )
+            )
+        )
+        if len(results) != 4 or not all(expected(r) for r in results):
+            raise ValueError("whole fixed four-course declared-candidate cluster required")
         check_pins(pins)
         write_once(
             args.output / "complete.json",
@@ -168,7 +275,7 @@ def main():
                 old_teacher_success_lost=sum(r["old_teacher_success_lost"] for r in results),
                 old_teacher_failure_rescued=sum(r["old_teacher_failure_rescued"] for r in results),
                 added_unsafe_vs_old_teacher=sum(r["added_unsafe_vs_old_teacher"] for r in results),
-                cem_distribution_updates=24,
+                cem_distribution_updates=24 if args.study == "response_cem" else 0,
                 neural_optimizer_updates=0,
                 promotion_authorized=False,
                 hardware_authorized=False,

@@ -26,7 +26,25 @@ def choose_candidate(rows):
     return min(eligible, key=lambda i: (rows[i]["score"]["cost"], i)) if eligible else 0
 
 
-def run_course(args, item, source, poses, affordance, pins, *, candidate_builder=None):
+def run_course(
+    args,
+    item,
+    source,
+    poses,
+    affordance,
+    pins,
+    *,
+    candidate_builder=None,
+    forecast_budget=30,
+    final_choice=None,
+    label="RESPONSE_CEM",
+):
+    if candidate_builder is not None and (
+        type(forecast_budget) is not int
+        or not 1 <= forecast_budget <= 32
+        or (final_choice is not None and not callable(final_choice))
+    ):
+        raise ValueError("declared finite candidate budget and optional choice function required")
     import mujoco
     import numpy as np
 
@@ -53,7 +71,7 @@ def run_course(args, item, source, poses, affordance, pins, *, candidate_builder
     folder.mkdir(exist_ok=False)
     body = forecaster = None
     candidates, proposals, actual_rows = [], [], []
-    log_prefix = "CONTACT_GEOMETRY" if candidate_builder is None else "RESPONSE_CEM"
+    log_prefix = "CONTACT_GEOMETRY" if candidate_builder is None else label
     try:
         check_pins(pins)
         oldroot, oldcomplete = source
@@ -89,12 +107,13 @@ def run_course(args, item, source, poses, affordance, pins, *, candidate_builder
             np.testing.assert_array_equal(prefix[k], gold[k][:20])
         np.savez_compressed(folder / "own-prefix20.npz", **prefix)
         forecaster = FullEntryForecaster(
-            world_hash=digest(args.world), max_forecasts=7 if candidate_builder is None else 30
+            world_hash=digest(args.world),
+            max_forecasts=7 if candidate_builder is None else forecast_budget,
         )
         laws = feedback_entry_laws()
         evidence_hash = hash_json(json.loads((args.output / "declaration.json").read_text()))
 
-        def predict(law_index, offset, proposal=None):
+        def predict(law_index, offset, proposal=None, *, entry_reference_mode="legacy"):
             future = forecaster.forecast(
                 nav,
                 body,
@@ -104,6 +123,11 @@ def run_course(args, item, source, poses, affordance, pins, *, candidate_builder
                 affordance=affordance,
                 law=laws[law_index],
                 contact_reference_offset_m=offset,
+                **(
+                    {}
+                    if entry_reference_mode == "legacy"
+                    else {"entry_reference_mode": entry_reference_mode}
+                ),
             )
             if (
                 future.new_attempted_native_steps != 2800
@@ -130,6 +154,8 @@ def run_course(args, item, source, poses, affordance, pins, *, candidate_builder
                 promotion_authorized=False,
                 hardware_authorized=False,
             )
+            if entry_reference_mode != "legacy":
+                row["entry_reference_mode"] = entry_reference_mode
             write_once(folder / f"candidate{index}.json", row)
             candidates.append(row)
             print(
@@ -165,10 +191,12 @@ def run_course(args, item, source, poses, affordance, pins, *, candidate_builder
                 if proposal["applicable"]:
                     predict(item_proposal["law_index"], tuple(proposal["offset_root_m"]), proposal)
             selected = choose_candidate(candidates)
-        else:
+        elif final_choice is None:
             from rosclaw_soccer.rsi.contact_response_cem import choose_response_candidate
 
             selected = choose_response_candidate(candidates)
+        else:
+            selected = final_choice(candidates)
         chosen = candidates[selected]
         with np.load(folder / chosen["artifact"], allow_pickle=False) as a:
             selected_future = {k: a[k] for k in a.files}
@@ -187,6 +215,11 @@ def run_course(args, item, source, poses, affordance, pins, *, candidate_builder
             law=laws[chosen["law_index"]],
             contact_reference_offset_m=tuple(chosen["offset_root_m"]),
             step_observer=actual_rows.append,
+            **(
+                {}
+                if chosen.get("entry_reference_mode", "legacy") == "legacy"
+                else {"entry_reference_mode": chosen["entry_reference_mode"]}
+            ),
         )
         for k in suffix:
             np.testing.assert_array_equal(suffix[k], selected_future[k])
