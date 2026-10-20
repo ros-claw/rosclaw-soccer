@@ -20,6 +20,10 @@ def main():
         "config-hash",
     ):
         p.add_argument("--" + n, required=True)
+    p.add_argument("--reference-pilot", action="store_true")
+    p.add_argument("--screen-root", type=Path)
+    p.add_argument("--screen-unit")
+    p.add_argument("--screen-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
@@ -53,6 +57,19 @@ def main():
     ):
         raise ValueError("original body and actual prior initialization qualification required")
     checkpoint = a.prior_root / "prior-actor-initialization.pt"
+    if a.reference_pilot:
+        if not all((a.screen_root, a.screen_unit, a.screen_hash)):
+            raise ValueError("reference pilot requires actual completed codec screen")
+        wait_for_terminal_collection(a.screen_unit)
+        screen_path = a.screen_root / "complete.json"
+        if digest(screen_path) != a.screen_hash:
+            raise ValueError("actual immutable codec screen required")
+        screen = json.loads(screen_path.read_text())
+        if screen["status"] != "MJLAB_VELOCITY_PRIOR_CODEC_SCREEN_NOT_RETENTION_OR_FOOTBALL":
+            raise ValueError("original codec screen must pass before a full reference pilot")
+        pins[str(screen_path)] = a.screen_hash
+    controls = 300 if a.reference_pilot else 8
+    command_mode = "reference_velocity" if a.reference_pilot else "zero"
     pins[str(checkpoint)] = receipts[1]["checkpoint_hash"]
     pins[str(a.config)] = a.config_hash
     pins[str(a.export_root / "compiled_model.mjb")] = receipts[0]["model_hash"]
@@ -66,11 +83,11 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             worlds=8,
-            controls=8,
-            maximum_gpu_world_substeps=640,
-            maximum_native_codec_checks=64,
+            controls=controls,
+            maximum_gpu_world_substeps=controls * 80,
+            maximum_native_codec_checks=controls * 8,
             new_optimizer_steps=0,
-            command_mode="zero",
+            command_mode=command_mode,
             not_whole_motion_or_retention_exam=True,
             hardware_authorized=False,
         ),
@@ -86,6 +103,7 @@ def main():
             VelocityPolicyParameters,
             observation98,
         )
+        from rosclaw_soccer.rsi.mjlab_motion_evaluation import MotionFirstEpisode
         from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
         from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor, phase_table
 
@@ -98,7 +116,7 @@ def main():
         params = VelocityPolicyParameters.load(a.config, expected_hash=pins[str(a.config)])
         cfg = make_velocity_prior_training_cfg(
             parameters=params,
-            command_mode="zero",
+            command_mode=command_mode,
             motion_dir=a.reference_root / "src/assets/soccer/motions/shooter",
             num_envs=8,
             seed=1601,
@@ -127,13 +145,17 @@ def main():
         term = env.action_manager.get_term("joint_pos")
         rows = []
         max_error = 0.0
-        phases = phase_table(8)
+        phases = phase_table(controls)
+        score = MotionFirstEpisode(8)
         previous_actions = np.zeros((8, 29), dtype=np.float32)
-        for frame in range(8):
+        for frame in range(controls):
             qpos = env.sim.data.qpos.cpu().numpy().copy()
             qvel = env.sim.data.qvel.cpu().numpy().copy()
             prefix = obs["actor"][:, :98].cpu().numpy().copy()
-            if tuple(obs["actor"].shape) != (8, 168) or torch.any(env.episode_length_buf != frame):
+            episode_frames = env.episode_length_buf.cpu().numpy().copy()
+            if tuple(obs["actor"].shape) != (8, 168) or (
+                not a.reference_pilot and np.any(episode_frames != frame)
+            ):
                 raise ValueError(
                     "actual eight-world semantic observation and no early reset required"
                 )
@@ -147,12 +169,13 @@ def main():
                 # frame0 and the preceding lookup phase for subsequent frames.
                 from rosclaw_soccer.providers.g1.velocity_policy import phase_delta
 
-                before_phase = phase_delta() if frame == 0 else phases[frame - 1]
+                episode_frame = int(episode_frames[world])
+                before_phase = phase_delta() if episode_frame == 0 else phases[episode_frame - 1]
                 expected, _ = observation98(
                     q,
                     v,
                     layout.angular_velocity_body(data),
-                    np.zeros(3, dtype=np.float32),
+                    prefix[world, 6:9].copy(),
                     previous_actions[world],
                     before_phase,
                     params,
@@ -179,8 +202,18 @@ def main():
                 or env._sim_step_counter - before != 10
             ):
                 raise ValueError("actual GPU target decoder or physical step count differs")
-            if torch.any(terminated | truncated) or not torch.isfinite(reward).all():
+            if (not a.reference_pilot and torch.any(terminated | truncated)) or not torch.isfinite(
+                reward
+            ).all():
                 raise ValueError("early physical termination in eight-control codec screen")
+            done = (terminated | truncated).cpu().numpy().copy()
+            exhausted = env.termination_manager.get_term("reference_exhausted").cpu().numpy().copy()
+            score.observe(
+                reward.cpu().numpy().copy(),
+                terminated.cpu().numpy().copy(),
+                truncated.cpu().numpy().copy(),
+                exhausted,
+            )
             rows.append(
                 dict(
                     qpos=qpos,
@@ -188,8 +221,15 @@ def main():
                     observation=prefix,
                     action=previous_actions.copy(),
                     target=target,
+                    terminated=terminated.cpu().numpy().copy(),
+                    truncated=truncated.cpu().numpy().copy(),
+                    reference_exhausted=exhausted,
+                    episode_frame=episode_frames,
                 )
             )
+            previous_actions[done] = 0
+            if a.reference_pilot and not score.active.any():
+                break
         np.savez_compressed(
             a.output / "screen8.npz", **{k: np.asarray([r[k] for r in rows]) for k in rows[0]}
         )
@@ -197,13 +237,17 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="MJLAB_VELOCITY_PRIOR_CODEC_SCREEN_NOT_RETENTION_OR_FOOTBALL",
+                status="MJLAB_VELOCITY_PRIOR_REFERENCE_PILOT_NOT_LEARNING_OR_FOOTBALL"
+                if a.reference_pilot
+                else "MJLAB_VELOCITY_PRIOR_CODEC_SCREEN_NOT_RETENTION_OR_FOOTBALL",
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 gpu_world_substeps=env._sim_step_counter * 8,
                 actual_neural_rows=neural_rows,
                 max_native_gpu_observation_error=max_error,
                 whole_motion_qualified=False,
+                first_episode_summary=score.summary(),
+                command_mode=command_mode,
                 new_optimizer_steps=0,
                 output_hash=digest(a.output / "screen8.npz"),
                 hardware_authorized=False,
