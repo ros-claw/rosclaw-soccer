@@ -7,17 +7,21 @@ import numpy as np
 from rosclaw_soccer.rsi.bilateral_entry import observed_contact_foot
 
 
-def diagnose_entry_prefix(model: Any, prefix: dict[str, np.ndarray]) -> dict[str, Any]:
+def diagnose_entry_prefix(
+    model: Any, prefix: dict[str, np.ndarray], *, frames: int = 20
+) -> dict[str, Any]:
+    if type(frames) is not int or frames not in (20, 30):
+        raise ValueError("explicit original20 or actual intervention30 prefix required")
     f = prefix["ball_contact_force_by_body_n"]
     q = prefix["target_body_canonical_qpos_after_substep"]
     if (
-        f.shape != (20, 10, model.nbody)
-        or q.shape != (20, 10, 43)
+        f.shape != (frames, 10, model.nbody)
+        or q.shape != (frames, 10, 43)
         or not np.isfinite(f).all()
         or not np.isfinite(q).all()
         or np.any(f < 0)
     ):
-        raise ValueError("complete finite native20 prefix required")
+        raise ValueError("complete finite declared native prefix required")
     root = model.body_rootid[model.body("pelvis").id]
     feet = [
         model.body(side + suffix).id
