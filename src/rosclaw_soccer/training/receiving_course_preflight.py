@@ -12,6 +12,10 @@ from rosclaw_soccer.training.close_contact_courses import (
     CloseContactCourse,
     preflight_close_contact_bank,
 )
+from rosclaw_soccer.training.expanded_entry_courses import (
+    ExpandedEntryCourse,
+    preflight_expanded_entry_bank,
+)
 from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse, receiving_ball_launch
 
 
@@ -27,7 +31,8 @@ class FirstTouchCourse:
 def preflight_receiving_courses(
     courses: tuple[ReceivingCourse, ...]
     | tuple[FirstTouchCourse, ...]
-    | tuple[CloseContactCourse, ...],
+    | tuple[CloseContactCourse, ...]
+    | tuple[ExpandedEntryCourse, ...],
 ) -> str:
     """Return a content binding only after every course passes the launch domain.
 
@@ -42,6 +47,8 @@ def preflight_receiving_courses(
         raise ValueError("bounded immutable receiving course bank required")
     if all(type(course) is CloseContactCourse for course in courses):
         return preflight_close_contact_bank(courses)  # type: ignore[arg-type]
+    if all(type(course) is ExpandedEntryCourse for course in courses):
+        return preflight_expanded_entry_bank(courses)  # type: ignore[arg-type]
     if all(type(course) is FirstTouchCourse for course in courses):
         from rosclaw_soccer.rsi.first_touch_mechanism_expansion import validate_public_course
 
