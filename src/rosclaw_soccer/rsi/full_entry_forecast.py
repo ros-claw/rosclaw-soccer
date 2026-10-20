@@ -27,7 +27,7 @@ from rosclaw_soccer.rsi.ball_entry_teacher import SkillEntryAffordance, ball_ent
 from rosclaw_soccer.rsi.full_task_branch import integration_hash
 from rosclaw_soccer.rsi.predictive_ball_entry import entry_candidates
 from rosclaw_soccer.sim.contracts import hash_json
-from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation
+from rosclaw_soccer.skills.team.motor_option import TeamMotorObservation, TeamMotorTarget
 
 
 @dataclass(frozen=True)
@@ -149,9 +149,17 @@ def _observation(
 
 
 def _tick(
-    nav: G1SonicNavigation, body: G1TargetEpisode, observation: TeamMotorObservation
+    nav: G1SonicNavigation,
+    body: G1TargetEpisode,
+    observation: TeamMotorObservation,
+    motor_provider: Callable[[G1SonicNavigation, TeamMotorObservation], TeamMotorTarget]
+    | None = None,
 ) -> dict[str, np.ndarray]:
-    proposal = nav.propose(observation)
+    proposal = (
+        nav.propose(observation) if motor_provider is None else motor_provider(nav, observation)
+    )
+    if nav._next_frame != observation.frame + 1 or nav._batch_pending:
+        raise ValueError("motor provider must commit exactly one actual action before integration")
     if not (np.array_equal(proposal.kp, body.kp) and np.array_equal(proposal.kd, body.kd)):
         raise ValueError("entry/contact policy changed native PD gains")
     local = observation.frame - nav._origin_frame
@@ -212,10 +220,14 @@ def run_entry_suffix(
     contact_reference_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0),
     step_observer: Callable[[dict[str, np.ndarray]], None] | None = None,
     entry_reference_mode: str = "legacy",
+    motor_provider: Callable[[G1SonicNavigation, TeamMotorObservation], TeamMotorTarget]
+    | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Execute frame20..299 with its OWN NN and original native integration."""
     if step_observer is not None and not callable(step_observer):
         raise ValueError("optional recording observer must be callable")
+    if motor_provider is not None and not callable(motor_provider):
+        raise ValueError("optional SIM research motor provider must be callable")
     _validate_entry_mode(entry_reference_mode, contact_reference_offset_m)
     if (
         body.next_frame != 20
@@ -300,7 +312,11 @@ def run_entry_suffix(
             handoff_frame, handoff_receipt = frame, asdict(handoff)
             reference_hash, wrist_hash = preparation_hash, quarantine.contract_hash
             nav, stage = destination, 1
-        row = _tick(nav, body, obs)
+        row = (
+            _tick(nav, body, obs)
+            if motor_provider is None
+            else _tick(nav, body, obs, motor_provider)
+        )
         row.update(
             entry_stage=np.asarray([stage], dtype=np.int64),
             entry_command=np.asarray([command]),
@@ -328,6 +344,9 @@ def run_entry_suffix(
     )
     if entry_reference_mode != "legacy":
         report["entry_reference_adaptation"] = entry_adaptation
+    if motor_provider is not None:
+        report["motor_provider_override"] = True
+        report["neural_policy_recomputed_on_own_state"] = False
     return arrays, report
 
 

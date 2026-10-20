@@ -650,6 +650,36 @@ class G1SonicNavigation:
             self._faulted = True
             raise ValueError("batched navigation preparation failed; option latched off") from error
 
+    def prepare_shadow_action(self, observation: TeamMotorObservation) -> np.ndarray:
+        """Query a SIM teacher once, then require the ACTUALLY consumed action.
+
+        Unlike a normal proposal, the teacher's decoder output is advice only.
+        ``commit_batched_action`` must commit the student's or explicitly mixed
+        executed action before the next observation, so the teacher's proprio
+        history contains the real previous action, not its own unused advice.
+        This never opens a simulator/robot handle or grants motor authority.
+        Pose-reference teachers are supported; no body state is changed here.
+        """
+        try:
+            if (
+                self.config.model_variant != "low_latency"
+                or self._faulted
+                or self._retired
+                or self._batch_pending
+            ):
+                raise ValueError("healthy sequential low-latency shadow teacher required")
+            state, local_frame = self._prepare_policy_observation(observation)
+            self.backend.navigation_tick(state, local_frame)
+            advice = self.backend.action.copy()
+            if advice.shape != (29,) or advice.dtype != np.float32 or not np.isfinite(advice).all():
+                raise ValueError("finite29 teacher advice required")
+            self._batch_pending = True
+            advice.setflags(write=False)
+            return advice
+        except Exception as error:
+            self._faulted = True
+            raise ValueError("shadow teacher query failed; option latched off") from error
+
     def commit_batched_action(self, action: np.ndarray) -> TeamMotorTarget:
         """Commit a checked 29-DoF neural action; target is derived locally."""
         from rosclaw_soccer.providers.g1.sonic_runup import ISAACLAB_TO_MUJOCO
