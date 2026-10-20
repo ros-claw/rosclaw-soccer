@@ -3,7 +3,19 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor  # noqa: E402
+from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor, phase_table  # noqa: E402
+
+
+def test_phase_lookup_preserves_repeated_float32_addition():
+    from rosclaw_soccer.providers.g1.velocity_policy import phase_delta
+
+    values = phase_table(300)
+    phase = phase_delta()
+    for value in values:
+        phase = np.float32(np.fmod(np.float32(phase + phase_delta()), np.float32(1)))
+        assert value == phase
+    with pytest.raises(ValueError, match="bounded"):
+        phase_table(0)
 
 
 def tensors():

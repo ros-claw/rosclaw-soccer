@@ -12,7 +12,19 @@ import numpy as np
 import torch
 from torch import nn
 
-from rosclaw_soccer.providers.g1.velocity_policy import file_hash
+from rosclaw_soccer.providers.g1.velocity_policy import file_hash, phase_delta
+
+
+def phase_table(length: int = 4096) -> np.ndarray:
+    """Pure lookup: reset primes one tick, inference advances one more tick."""
+    if type(length) is not int or not 1 <= length <= 100000:
+        raise ValueError("bounded explicit phase horizon required")
+    phase = phase_delta()
+    values = []
+    for _ in range(length):
+        phase = np.float32(np.fmod(np.float32(phase + phase_delta()), np.float32(1)))
+        values.append(float(phase))
+    return np.array(values, dtype=np.float32)
 
 
 class VelocityPriorActor(nn.Module):
