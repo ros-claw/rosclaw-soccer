@@ -49,6 +49,32 @@ def test_live_collection_not_restarted_or_used_for_learning(tmp_path, monkeypatc
     assert not (tmp_path / "output").exists()
 
 
+def test_explicit_wait_requires_observed_terminal_not_systemd_after(monkeypatch):
+    states = iter(
+        (
+            "MainPID=42\nSubState=running\nResult=success\nExecMainStatus=0\n",
+            "MainPID=0\nSubState=exited\nResult=success\nExecMainStatus=0\n",
+        )
+    )
+    monkeypatch.setattr(runner.subprocess, "check_output", lambda *a, **kw: next(states))
+    import time
+
+    sleeps = []
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    runner.wait_for_terminal_collection("known-existing-producer", wait=True)
+    assert sleeps == [5]
+
+
+def test_wait_does_not_retry_failed_predecessor(monkeypatch):
+    monkeypatch.setattr(
+        runner.subprocess,
+        "check_output",
+        lambda *a, **kw: "MainPID=0\nSubState=failed\nResult=exit-code\nExecMainStatus=1\n",
+    )
+    with pytest.raises(ValueError, match="actually have closed"):
+        runner.wait_for_terminal_collection("failed-producer", wait=True)
+
+
 def test_partial_collection_rejected_before_neural_or_physical_allocation(tmp_path, monkeypatch):
     arguments(tmp_path, monkeypatch, live=False)
     collection = tmp_path / "collection"

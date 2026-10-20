@@ -6,6 +6,52 @@ import subprocess
 from pathlib import Path
 
 
+def wait_for_terminal_collection(unit, *, wait=False):
+    """Bounded explicit predecessor wait; never launches/restarts the producer."""
+    import time
+
+    deadline = time.monotonic() + 3600
+    announced = False
+    while True:
+        terminal = dict(
+            line.split("=", 1)
+            for line in subprocess.check_output(
+                [
+                    "systemctl",
+                    "--user",
+                    "show",
+                    unit,
+                    "-p",
+                    "MainPID",
+                    "-p",
+                    "SubState",
+                    "-p",
+                    "Result",
+                    "-p",
+                    "ExecMainStatus",
+                ],
+                text=True,
+            ).splitlines()
+        )
+        if terminal == dict(MainPID="0", SubState="exited", Result="success", ExecMainStatus="0"):
+            return
+        if (
+            not wait
+            or terminal.get("MainPID", "0") == "0"
+            or terminal.get("SubState") not in ("running", "start")
+            or terminal.get("Result") != "success"
+            or time.monotonic() >= deadline
+        ):
+            raise ValueError("all40 collection must actually have closed successfully")
+        if not announced:
+            print(
+                "WAITING_FOR_ACTUAL_COLLECTION_TERMINATION_ZERO_MODEL_OR_PHYSICS_ALLOCATION",
+                flush=True,
+            )
+            announced = True
+        time.sleep(5)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for key in ("bank", "world", "model-root", "motion-csv", "core-source", "output"):
@@ -20,6 +66,7 @@ def main():
     parser.add_argument("--collection", type=Path)
     parser.add_argument("--collection-unit")
     parser.add_argument("--expected-collection-source")
+    parser.add_argument("--wait-for-collection", action="store_true")
     args = parser.parse_args()
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if (
@@ -37,7 +84,7 @@ def main():
         for mode in ("identity", "collect"):
             command = [sys.executable, str(Path(__file__).resolve()), "--mode", mode]
             for name, value in vars(args).items():
-                if name not in ("mode", "output") and value is not None:
+                if name not in ("mode", "output", "wait_for_collection") and value is not None:
                     command.extend(("--" + name.replace("_", "-"), str(value)))
             command.extend(("--output", str(args.output / mode)))
             subprocess.run(command, check=True)
@@ -69,28 +116,7 @@ def main():
             or not args.expected_collection_source
         ):
             raise ValueError("independent review requires an explicit closed collection")
-        terminal = dict(
-            line.split("=", 1)
-            for line in subprocess.check_output(
-                [
-                    "systemctl",
-                    "--user",
-                    "show",
-                    args.collection_unit,
-                    "-p",
-                    "MainPID",
-                    "-p",
-                    "SubState",
-                    "-p",
-                    "Result",
-                    "-p",
-                    "ExecMainStatus",
-                ],
-                text=True,
-            ).splitlines()
-        )
-        if terminal != dict(MainPID="0", SubState="exited", Result="success", ExecMainStatus="0"):
-            raise ValueError("all40 collection must actually have closed successfully")
+        wait_for_terminal_collection(args.collection_unit, wait=args.wait_for_collection)
         prior_collection = json.loads((args.collection / "complete.json").read_text())
         prior_declaration = json.loads((args.collection / "declaration.json").read_text())
         if (
