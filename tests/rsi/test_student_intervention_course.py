@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 
 
-def fixture(tmp_path, monkeypatch, *, veto=False, fail=False):
+def fixture(
+    tmp_path, monkeypatch, *, veto=False, fail=False, protocol="original9", window=(286, 767)
+):
     from rosclaw_soccer.physics import g1_target_episode as bm
     from rosclaw_soccer.providers.g1 import sonic_navigation as nm
     from rosclaw_soccer.rsi import bilateral_entry as bi
@@ -49,12 +51,13 @@ def fixture(tmp_path, monkeypatch, *, veto=False, fail=False):
 
     class Forecaster:
         def __init__(self, **kw):
-            assert kw["max_forecasts"] == 9
+            assert kw["max_forecasts"] == (9 if protocol == "original9" else 6)
             self.integrated_native_steps = self.attempted_native_steps = 0
 
         def forecast(self, n, b, **kw):
             assert b.integrated_steps == 300 and b.next_frame == n._next_frame == 30
             assert kw["start_frame"] == 30
+            assert kw["source_window"] == window
             self.integrated_native_steps += 2700
             self.attempted_native_steps += 2700
             i = index(kw)
@@ -130,6 +133,8 @@ def fixture(tmp_path, monkeypatch, *, veto=False, fail=False):
         {},
         "fixture",
         {},
+        option_protocol=protocol,
+        source_window=window,
     )
     return row, calls
 
@@ -157,3 +162,13 @@ def test_partial_actual_failure_keeps_forecast_and_body_charges(tmp_path, monkey
     d = json.loads((tmp_path / "output/course000/failure.json").read_text())
     assert d["forecast_integrated_steps"] == 24300 and d["actual_integrated_steps"] == 317
     assert not d["automatic_retry_authorized"]
+
+
+@pytest.mark.parametrize("window", [(286, 767), (466, 767)])
+def test_six_options_preserve_actual30_and_charge_only_six_futures(tmp_path, monkeypatch, window):
+    row, calls = fixture(tmp_path, monkeypatch, protocol="zero_c_six", window=window)
+    assert calls == [("future", i) for i in (0, 2, 4, 6, 7, 8)] + [("actual", 6)]
+    assert row["new_native_steps"] == 19200
+    assert row["forecast_native_steps"] == 16200 and row["executed_native_steps"] == 3000
+    assert row["selected"] == 3 and row["causal_qualified"]
+    assert row["source_window"] == list(window) and row["selected_report"] == dict(option=6)

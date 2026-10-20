@@ -5,7 +5,21 @@ state is copied into the actual body. Same original H300/post60/entry timeout.
 """
 
 
-def run_course(args, item, world, poses, prior, student, muscle_backend, expected, evidence, pins):
+def run_course(
+    args,
+    item,
+    world,
+    poses,
+    prior,
+    student,
+    muscle_backend,
+    expected,
+    evidence,
+    pins,
+    *,
+    source_window=(286, 767),
+    option_protocol="original9",
+):
     import json
 
     import numpy as np
@@ -27,7 +41,9 @@ def run_course(args, item, world, poses, prior, student, muscle_backend, expecte
         FullEntryForecaster,
         feedback_entry_laws,
         run_entry_suffix,
+        validate_source_window,
     )
+    from rosclaw_soccer.rsi.source_lead_protocol import choose_zero_c_six, zero_c_six_options
     from rosclaw_soccer.rsi.student_intervention_score import (
         fuse_physical_intervention30,
         score_student_intervention30,
@@ -37,6 +53,11 @@ def run_course(args, item, world, poses, prior, student, muscle_backend, expecte
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_warm_student_intervention import warm_student30
 
+    if option_protocol not in ("original9", "zero_c_six") or (
+        option_protocol == "original9" and source_window != (286, 767)
+    ):
+        raise ValueError("declared original9 or zero-C six source protocol required")
+    validate_source_window(source_window, "legacy", (0.0, 0.0, 0.0))
     folder = args.output / f"course{item.course_index:03d}"
     folder.mkdir()
     check_pins(pins)
@@ -103,7 +124,6 @@ def run_course(args, item, world, poses, prior, student, muscle_backend, expecte
             write_once(folder / "complete.json", row)
             print("STUDENT30_HISTORY_VETO", item.course_index, flush=True)
             return row
-        forecaster = FullEntryForecaster(world_hash=digest(args.world), max_forecasts=9)
         laws = feedback_entry_laws()
         options = [
             (law, offset, "right")
@@ -111,6 +131,10 @@ def run_course(args, item, world, poses, prior, student, muscle_backend, expecte
             for offset in ((0.0, 0.0, 0.0), (0.0, -0.025, -0.025))
         ]
         options += [(law, (0.0, 0.0, 0.0), "left") for law in (0, 3, 4)]
+        if option_protocol == "zero_c_six":
+            options = list(zero_c_six_options())
+        forecast_steps = len(options) * 2700
+        forecaster = FullEntryForecaster(world_hash=digest(args.world), max_forecasts=len(options))
         for index, (law, offset, foot) in enumerate(options):
             source, affordance, context = contact_foot_context(poses, prior, foot)
             future = forecaster.forecast(
@@ -123,6 +147,7 @@ def run_course(args, item, world, poses, prior, student, muscle_backend, expecte
                 law=laws[law],
                 contact_reference_offset_m=offset,
                 start_frame=30,
+                source_window=source_window,
             )
             if (
                 future.new_integrated_native_steps != 2700
@@ -157,7 +182,11 @@ def run_course(args, item, world, poses, prior, student, muscle_backend, expecte
                 row["score"]["qualified"],
                 flush=True,
             )
-        selected = choose_bilateral_candidate(candidates)
+        selected = (
+            choose_bilateral_candidate(candidates)
+            if option_protocol == "original9"
+            else choose_zero_c_six(candidates)
+        )
         choice = candidates[selected]
         source, affordance, _ = contact_foot_context(poses, prior, choice["contact_reference_foot"])
         actual, report = run_entry_suffix(
@@ -170,6 +199,7 @@ def run_course(args, item, world, poses, prior, student, muscle_backend, expecte
             law=laws[choice["law_index"]],
             contact_reference_offset_m=tuple(choice["offset_root_m"]),
             start_frame=30,
+            source_window=source_window,
             step_observer=actual_rows.append,
         )
         if json.loads(json.dumps(report)) != json.loads(json.dumps(choice["report"])):
@@ -183,10 +213,10 @@ def run_course(args, item, world, poses, prior, student, muscle_backend, expecte
             body.next_frame != 300
             or body.integrated_steps != 3000
             or body.attempted_steps != 3000
-            or forecaster.integrated_native_steps != 24300
-            or forecaster.attempted_native_steps != 24300
+            or forecaster.integrated_native_steps != forecast_steps
+            or forecaster.attempted_native_steps != forecast_steps
         ):
-            raise ValueError("all actual300 + nine270 native steps must be counted")
+            raise ValueError("all actual300 + declared270 futures native steps must be counted")
         np.savez_compressed(folder / "selected-actual270.npz", **actual)
         joined = fuse_physical_intervention30(world, prefix, actual)
         np.savez_compressed(folder / "selected-physical300.npz", **joined)
@@ -201,15 +231,19 @@ def run_course(args, item, world, poses, prior, student, muscle_backend, expecte
             causal_qualified=score["qualified"],
             observed_contact_foot=observed_contact_foot(world, joined, global_start_frame=0),
             actual_all18_and_report_byte_exact_to_own_future=True,
-            forecast_native_steps=24300,
+            forecast_native_steps=forecast_steps,
             executed_native_steps=3000,
-            new_native_steps=27300,
+            new_native_steps=3000 + forecast_steps,
             actual_body_continuous_no_state_adoption=True,
             original_task_horizon=300,
             optimizer_steps=0,
             promotion_authorized=False,
             hardware_authorized=False,
         )
+        if option_protocol == "zero_c_six":
+            row["option_protocol"] = option_protocol
+            row["source_window"] = list(source_window)
+            row["selected_report"] = report
         check_pins(pins)
         write_once(folder / "complete.json", row)
         print(
