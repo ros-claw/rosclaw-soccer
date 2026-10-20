@@ -5,6 +5,7 @@ Every role/state/physics comparison after this remains an independent exam.
 """
 
 import argparse
+import copy
 import json
 import subprocess
 import sys
@@ -37,14 +38,21 @@ def main():
     if digest(course_path) != a.course_hash:
         raise ValueError("declared actual course receipt required")
     course = json.loads(course_path.read_text())
+    stable = course["status"] == "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED"
     if (
-        course["status"] != "MJLAB_MOTION_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED"
+        course["status"]
+        not in (
+            "MJLAB_MOTION_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
+            "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+        )
         or course["new_optimizer_steps"] <= 0
         or not course["weights_only_checkpoint_reload"]
         or course["football_skill_proven"]
         or course["hardware_authorized"]
     ):
         raise ValueError("actual completed non-promoted motion course required")
+    if stable and a.control != "neural":
+        raise ValueError("stable-prior evaluation is an initial/final neural comparison")
     pins = dict(course["input_file_hashes"])
     pins[str(course_path)] = a.course_hash
     checkpoint_path = a.course_root / f"learner-update{course['iterations']}.pt"
@@ -64,6 +72,7 @@ def main():
             horizon=300,
             reset_seeds=[1501, 1502] if a.control == "neural" else [1601],
             first_episode_only=True,
+            stable_prior_rehearsal=stable,
             mode="SIM_ONLY",
             max_gpu_world_substeps=384000,
             new_optimizer_steps=0,
@@ -121,12 +130,34 @@ def main():
             initial_state = None
             for arm, state in arms:
                 rows = []
-                cfg = make_motion_training_cfg(
+                cfg_factory = make_motion_training_cfg
+                cfg_extra = {}
+                if stable:
+                    from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
+                    from scripts.rsi_mjlab_velocity_prior_backend import (
+                        make_velocity_prior_training_cfg,
+                    )
+
+                    # The source checkpoint commits its actual initialization
+                    # paths and hashes. No template/random network substitution.
+                    actor_config = copy.deepcopy(checkpoint["prior_configuration"]["actor"])
+                    config_path = next(
+                        Path(k)
+                        for k in pins
+                        if k.endswith("/policy/velocity/v0/params/deploy.yaml")
+                    )
+                    params = VelocityPolicyParameters.load(
+                        config_path, expected_hash=pins[str(config_path)]
+                    )
+                    cfg_factory = make_velocity_prior_training_cfg
+                    cfg_extra = dict(parameters=params, command_mode="reference_velocity")
+                cfg = cfg_factory(
                     motion_dir=a.reference_root / "src/assets/soccer/motions/shooter",
                     num_envs=n,
                     seed=seed,
                     motion_glob=source,
                     balanced_initial_sources=a.control == "reference-pd",
+                    **cfg_extra,
                 )
                 # uniform loads the actual source frame0 body with reset perturbations;
                 # the template's "start" mode only resets time and is NOT appropriate.
@@ -136,9 +167,27 @@ def main():
                 agent_cfg = unitree_g1_soccer_ppo_runner_cfg()
                 policy, loaded_state = None, None
                 if a.control == "neural":
-                    wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-                    runner = MjlabOnPolicyRunner(wrapped, asdict(agent_cfg), None, "cuda:0")
-                    policy = runner.get_inference_policy()
+                    if stable:
+                        from scripts.rsi_mjlab_prior_rl import VelocityPriorMLPModel
+
+                        actor_config.pop("class_name", None)
+                        # RSL5 pops the distribution class from the dict in
+                        # construction. This versioned smoke used Gaussian29
+                        # with scalar std; reconstruct that declared class only.
+                        actor_config["distribution_cfg"]["class_name"] = "GaussianDistribution"
+                        before_obs, _ = env.reset(seed=seed)
+                        policy = VelocityPriorMLPModel(
+                            TensorDict(before_obs, batch_size=[n]),
+                            {"actor": ["actor"]},
+                            "actor",
+                            29,
+                            **actor_config,
+                        ).to("cuda:0")
+                        policy.eval()
+                    else:
+                        wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+                        runner = MjlabOnPolicyRunner(wrapped, asdict(agent_cfg), None, "cuda:0")
+                        policy = runner.get_inference_policy()
                     policy.load_state_dict(state, strict=True)
                     loaded_state = cloned_tensors(policy.state_dict())
                 obs, _ = env.reset(seed=seed)
@@ -199,6 +248,8 @@ def main():
                             reference_joint=motion.joint_pos.cpu().numpy().copy(),
                             measured_joint=motion.robot.data.joint_pos.cpu().numpy().copy(),
                             encoder_bias=motion.robot.data.encoder_bias.cpu().numpy().copy(),
+                            reference_anchor=motion.anchor_pos_w.cpu().numpy().copy(),
+                            measured_anchor=motion.robot_anchor_pos_w.cpu().numpy().copy(),
                         )
                         if a.control == "neural":
                             actions = policy(
@@ -300,6 +351,37 @@ def main():
                     initial_phase_zero=True,
                     **score.summary(),
                 )
+                active = np.asarray([r["active_before"] for r in rows])
+                reference = np.asarray([r["reference_joint"] for r in rows])
+                measured = np.asarray([r["measured_joint"] for r in rows])
+                anchor_delta = np.asarray(
+                    [r["reference_anchor"] - r["measured_anchor"] for r in rows]
+                )
+                summary["mean_active_joint_abs_error_rad"] = float(
+                    np.abs(reference - measured)[active].mean()
+                )
+                summary["mean_active_anchor_xy_error_m"] = float(
+                    np.linalg.norm(anchor_delta[:, :, :2], axis=2)[active].mean()
+                )
+                # This compiled layout is ball-first. Inspect it explicitly
+                # before reporting displacement; no reset jump is counted.
+                from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+
+                layout = NativeVelocityLayout(
+                    env.sim.mj_model, robot_prefix="robot/", ball_body_name="ball/ball"
+                )
+                ball_motion = []
+                for world, count in enumerate(score.steps):
+                    ball_q = np.asarray(
+                        [
+                            r["qpos_before"][world, layout.bq : layout.bq + 3]
+                            for r in rows[: int(count)]
+                        ]
+                    )
+                    ball_motion.append(
+                        float(np.linalg.norm(ball_q[:, :2] - ball_q[0, :2], axis=1).max())
+                    )
+                summary["first_episode_ball_max_xy_displacement_m"] = ball_motion
                 write_once(a.output / f"{source_index}-{arm}.json", summary)
                 summaries.append(summary)
                 print(json.dumps(summary, allow_nan=False), flush=True)
@@ -326,6 +408,7 @@ def main():
                 first_episode_only=True,
                 public_source_development_not_fresh_world=True,
                 evaluated_source_split="dev" if a.control == "neural" else "train",
+                stable_prior_rehearsal=stable,
                 football_skill_proven=False,
                 goal_complete=False,
                 promotion_authorized=False,

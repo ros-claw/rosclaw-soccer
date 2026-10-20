@@ -1,6 +1,7 @@
 """Bounded GPU motion learning; a longer course requires a completed smoke."""
 
 import argparse
+import copy
 import json
 import random
 import subprocess
@@ -406,6 +407,7 @@ def main():
                 rehearsal_weight=1.0,
                 rehearsal_batch_size=256,
             )
+        committed_runner_config = copy.deepcopy(runner_cfg)
         runner = MjlabOnPolicyRunner(wrapped, runner_cfg, str(a.output / "rsl"), "cuda:0")
         if stable:
             from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
@@ -503,7 +505,7 @@ def main():
             development_source_names=list(DEVELOPMENT_MOTION_NAMES),
             stable_prior_rehearsal=stable,
             actor_observation_dim=168 if stable else 166,
-            prior_configuration=runner_cfg if stable else None,
+            prior_configuration=committed_runner_config if stable else None,
         )
         path = a.output / f"learner-update{budget.iterations}.pt"
         torch.save(checkpoint, path)
