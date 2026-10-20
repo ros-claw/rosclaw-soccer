@@ -78,7 +78,11 @@ def main():
             raise ValueError("actual learned candidate receipt changed")
         learned = json.loads((a.learned_root / "complete.json").read_text())
         if (
-            learned["status"] != "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+            learned["status"]
+            not in (
+                "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+                "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
+            )
             or not learned["weights_only_checkpoint_reload"]
         ):
             raise ValueError("actual non-promoted stable prior learning required")

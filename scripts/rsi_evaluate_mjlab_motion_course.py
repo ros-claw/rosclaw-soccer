@@ -38,12 +38,16 @@ def main():
     if digest(course_path) != a.course_hash:
         raise ValueError("declared actual course receipt required")
     course = json.loads(course_path.read_text())
-    stable = course["status"] == "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+    stable = course["status"] in (
+        "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+        "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
+    )
     if (
         course["status"]
         not in (
             "MJLAB_MOTION_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
             "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+            "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
         )
         or course["new_optimizer_steps"] <= 0
         or not course["weights_only_checkpoint_reload"]
