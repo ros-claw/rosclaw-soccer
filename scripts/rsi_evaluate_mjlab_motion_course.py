@@ -254,6 +254,14 @@ def main():
                             encoder_bias=motion.robot.data.encoder_bias.cpu().numpy().copy(),
                             reference_anchor=motion.anchor_pos_w.cpu().numpy().copy(),
                             measured_anchor=motion.robot_anchor_pos_w.cpu().numpy().copy(),
+                            reference_anchor_quat=motion.anchor_quat_w.cpu().numpy().copy(),
+                            reference_anchor_linear_velocity=motion.anchor_lin_vel_w.cpu()
+                            .numpy()
+                            .copy(),
+                            reference_anchor_angular_velocity=motion.anchor_ang_vel_w.cpu()
+                            .numpy()
+                            .copy(),
+                            reference_joint_velocity=motion.joint_vel.cpu().numpy().copy(),
                         )
                         if a.control == "neural":
                             actions = policy(
