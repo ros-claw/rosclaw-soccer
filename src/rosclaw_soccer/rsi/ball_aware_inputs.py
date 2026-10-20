@@ -15,6 +15,20 @@ BALL_AWARE_ABI = "soccer.velocity98.reference70.current_ball_goal9.v1"
 BALL_AWARE_DIM = 177
 
 
+def ball9_experiment_input(measured: np.ndarray, mode: str) -> np.ndarray:
+    """Controlled observation ablation only; never mutate actual measurements."""
+    if (
+        type(mode) is not str
+        or mode not in ("measured", "zero")
+        or not isinstance(measured, np.ndarray)
+        or measured.shape != (9,)
+        or measured.dtype != np.float32
+        or not np.isfinite(measured).all()
+    ):
+        raise ValueError("explicit finite measured float32 ball9 ablation required")
+    return measured.copy() if mode == "measured" else np.zeros(9, dtype=np.float32)
+
+
 def require_ball_aware_qualification(report: dict[str, Any]) -> None:
     """Fail-closed structural gate; caller must authenticate all files and unit exit."""
     if (

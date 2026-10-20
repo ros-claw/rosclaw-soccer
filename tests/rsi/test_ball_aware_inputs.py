@@ -3,6 +3,7 @@ import pytest
 
 from rosclaw_soccer.rsi.ball_aware_inputs import (
     BALL_AWARE_ABI,
+    ball9_experiment_input,
     ball_goal9,
     require_ball_aware_learning,
     require_ball_aware_learning_smoke,
@@ -19,6 +20,22 @@ def fixture():
         ball_linear_velocity=np.array([0.0, 2.0, 0.0]),
         target_position=np.array([13.0, 24.0, 2.0]),
     )
+
+
+@pytest.mark.parametrize("mode", ["measured", "zero"])
+def test_ball_ablation_never_mutates_measured_data(mode):
+    measured = np.arange(9, dtype=np.float32)
+    snapshot = measured.copy()
+    result = ball9_experiment_input(measured, mode)
+    np.testing.assert_array_equal(measured, snapshot)
+    np.testing.assert_array_equal(result, snapshot if mode == "measured" else np.zeros(9))
+    assert not np.shares_memory(measured, result)
+
+
+@pytest.mark.parametrize("mode", ["wrong", None])
+def test_unknown_ball_ablation_rejected(mode):
+    with pytest.raises(ValueError):
+        ball9_experiment_input(np.zeros(9, dtype=np.float32), mode)
 
 
 def test_measured_ball_and_relative_world_velocity_use_current_pelvis_basis():

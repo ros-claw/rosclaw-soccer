@@ -28,6 +28,7 @@ def main():
     p.add_argument("--position-gain", type=float, choices=(0.0, 1.0), default=0.0)
     p.add_argument("--command-point", choices=("torso", "pelvis"), default="torso")
     p.add_argument("--world-index", type=int, choices=range(32), default=0)
+    p.add_argument("--ball-perception", choices=("measured", "zero"), default="measured")
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
         motion_checkpoint_filename,
@@ -64,6 +65,8 @@ def main():
         "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
         "BALL_AWARE_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED",
     )
+    if not ball_aware and a.ball_perception != "measured":
+        raise ValueError("ball9 ablation is only defined for explicit177D ball-aware models")
     if ball_aware:
         from rosclaw_soccer.rsi.ball_aware_inputs import require_ball_aware_learning
 
@@ -164,6 +167,8 @@ def main():
             compiled_default_mocap_and_zero_warmstart=True,
             foot_force_threshold_n=force_threshold,
             ball_aware=ball_aware,
+            ball_perception_mode=a.ball_perception,
+            observation_ablation_not_learning=a.ball_perception != "measured",
             actor_observation_dim=177 if ball_aware else 168,
             explicit_target_world_from_plan=ball_aware,
             post_contact_window_profile="native_reference_motion.contact10N.post1p2s.v1"
@@ -189,7 +194,7 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.ball_aware_inputs import ball_goal9
+        from rosclaw_soccer.rsi.ball_aware_inputs import ball9_experiment_input, ball_goal9
         from rosclaw_soccer.rsi.foot_contact_timing import contact_timing_metrics
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.native_motion_reference import (
@@ -350,6 +355,7 @@ def main():
                                 ball_linear_velocity=data.qvel[layout.bv : layout.bv + 3],
                                 target_position=goal_plan[frame],
                             )
+                            perception = ball9_experiment_input(perception, a.ball_perception)
                             target = actor.propose_ball_aware(
                                 q,
                                 v,
@@ -462,6 +468,7 @@ def main():
                     intended_foot = 0 if source == 7 else 1
                     result = dict(
                         source=source,
+                        ball_perception_mode=a.ball_perception,
                         world_index=a.world_index,
                         arm=arm,
                         repeat=repeat,
@@ -520,6 +527,8 @@ def main():
                 ball_aware=ball_aware,
                 actor_observation_dim=177 if ball_aware else 168,
                 source_head=a.expected_head,
+                ball_perception_mode=a.ball_perception,
+                observation_ablation_not_learning=a.ball_perception != "measured",
                 input_file_hashes=pins,
                 results=results,
                 native_steps=steps,
