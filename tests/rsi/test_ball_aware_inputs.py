@@ -178,6 +178,13 @@ def test_course_and_smoke_have_distinct_accounting():
         require_ball_aware_learning_smoke(learning_course())
 
 
+@pytest.mark.parametrize("seed", [2701, 2702, 2703])
+def test_fixed_three_training_seeds_can_be_examined(seed):
+    report = learning_course()
+    report["seed"] = seed
+    require_ball_aware_learning(report)
+
+
 @pytest.mark.parametrize(
     "key,value",
     [

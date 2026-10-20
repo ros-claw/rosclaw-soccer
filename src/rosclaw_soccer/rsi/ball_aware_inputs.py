@@ -93,12 +93,13 @@ def _require_ball_aware_learning(report: dict[str, Any], *, course: bool) -> Non
             iterations=200,
             previous_iterations=2,
             num_envs=128,
-            seed=2701,
             force_decoder="addressed",
             fresh_simulation_not_full_body_or_rng_resume=True,
         ).items()
     ):
         raise ValueError("fixed addressed full-horizon same-ABI course protocol required")
+    if course and (type(report.get("seed")) is not int or report["seed"] not in (2701, 2702, 2703)):
+        raise ValueError("one of three preregistered course training seeds required")
     if (
         report.get("status")
         != (

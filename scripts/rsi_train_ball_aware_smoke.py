@@ -10,6 +10,7 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--course-seed", type=int, choices=(2701, 2702, 2703), default=2701)
     for key in ("resume-smoke", "dev", "retention"):
         p.add_argument("--" + key + "-root", type=Path)
         p.add_argument("--" + key + "-unit")
@@ -54,7 +55,7 @@ def main():
         pins.update(d["input_file_hashes"])
         pins[str(path)] = expected
     qual, replay = receipts
-    budget = BallAwareLearningBudget(a.resume_smoke_root is not None)
+    budget = BallAwareLearningBudget(a.resume_smoke_root is not None, a.course_seed)
     resume = None
     if budget.course:
         for key in ("resume_smoke", "dev", "retention"):

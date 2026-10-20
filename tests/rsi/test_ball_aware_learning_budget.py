@@ -20,3 +20,16 @@ def test_course_covers_many_complete_kicks_with_explicit_budget():
 def test_no_implicit_protocol_coercion(value):
     with pytest.raises(ValueError):
         BallAwareLearningBudget(value)
+
+
+@pytest.mark.parametrize("seed", [2701, 2702, 2703])
+def test_three_bounded_training_replicates_share_no_changed_task(seed):
+    b = BallAwareLearningBudget(True, seed)
+    assert b.seed == seed
+    assert b.gpu_world_steps == 6144000
+
+
+@pytest.mark.parametrize("course,seed", [(False, 2702), (True, 2704), (True, True)])
+def test_no_unlimited_seed_sweep(course, seed):
+    with pytest.raises(ValueError):
+        BallAwareLearningBudget(course, seed)

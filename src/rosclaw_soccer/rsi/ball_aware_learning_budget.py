@@ -6,9 +6,15 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class BallAwareLearningBudget:
     course: bool = False
+    course_seed: int = 2701
 
     def __post_init__(self) -> None:
-        if type(self.course) is not bool:
+        if (
+            type(self.course) is not bool
+            or type(self.course_seed) is not int
+            or self.course_seed not in (2701, 2702, 2703)
+            or (not self.course and self.course_seed != 2701)
+        ):
             raise ValueError("explicit smoke/course protocol required")
 
     @property
@@ -21,7 +27,7 @@ class BallAwareLearningBudget:
 
     @property
     def seed(self) -> int:
-        return 2701 if self.course else 2601
+        return self.course_seed if self.course else 2601
 
     @property
     def controls(self) -> int:
