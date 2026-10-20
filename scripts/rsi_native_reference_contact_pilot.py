@@ -166,6 +166,9 @@ def main():
             ball_aware=ball_aware,
             actor_observation_dim=177 if ball_aware else 168,
             explicit_target_world_from_plan=ball_aware,
+            post_contact_window_profile="native_reference_motion.contact10N.post1p2s.v1"
+            if ball_aware
+            else None,
             velocity_command_position_feedback_gain=a.position_gain,
             no_joint_target_patch_or_external_body_force=True,
             velocity_command_anatomical_point=a.command_point,
@@ -188,6 +191,7 @@ def main():
 
         from rosclaw_soccer.rsi.ball_aware_inputs import ball_goal9
         from rosclaw_soccer.rsi.foot_contact_timing import contact_timing_metrics
+        from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.native_motion_reference import (
             point_velocity_command,
             reference_inputs70,
@@ -484,6 +488,15 @@ def main():
                         velocity_command_position_feedback_gain=a.position_gain,
                         velocity_command_anatomical_point=a.command_point,
                         raw_hash=digest(folder / "native.npz"),
+                        post_contact_window=native_contact_window(
+                            force=contact,
+                            canonical_qpos=cq,
+                            canonical_qvel=cv,
+                            goal=goal_plan[0],
+                            intended_foot=intended_foot,
+                        )
+                        if ball_aware
+                        else None,
                         goal_success=False,
                         football_skill_proven=False,
                         **contact_timing_metrics(
