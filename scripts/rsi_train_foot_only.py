@@ -10,6 +10,7 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--value-warmup", action="store_true")
     for name in ("qualification-root", "learner-root", "reference-root", "output"):
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("qualification-hash", "learner-hash", "expected-head"):
@@ -82,7 +83,8 @@ def main():
         pins.update({str(f): digest(f) for f in root.rglob("*.py")})
     check_pins(pins)
     a.output.mkdir()
-    worlds, iterations, seed = 32, 16, 4601
+    worlds, iterations, seed = 32, 32 if a.value_warmup else 16, 4601
+    expected_updates = 656 if a.value_warmup else 336
     write_once(
         a.output / "declaration.json",
         dict(
@@ -93,9 +95,10 @@ def main():
             iterations=iterations,
             seed=seed,
             control_steps_per_iteration=24,
-            maximum_gpu_world_steps=122880,
-            maximum_control_samples=12288,
-            optimizer_updates=336,
+            maximum_gpu_world_steps=iterations * 24 * 32 * 10,
+            maximum_control_samples=iterations * 24 * 32,
+            optimizer_updates=expected_updates,
+            value_warmup_iterations=16 if a.value_warmup else 0,
             old_native_rehearsal_updates=16,
             fresh_optimizer=True,
             parent_optimizer_loaded=False,
@@ -184,6 +187,11 @@ def main():
         settings["actor"]["class_name"] = "scripts.rsi_mjlab_ball_aware_rl:BallAwarePriorMLPModel"
         settings["critic"]["class_name"] = "scripts.rsi_mjlab_ball_aware_rl:BallAwareCriticMLPModel"
         settings["algorithm"]["class_name"] = "scripts.rsi_mjlab_prior_rl:RehearsalPPO"
+        if a.value_warmup:
+            settings["algorithm"].update(
+                class_name="scripts.rsi_foot_only_value_warmup:FootOnlyValueWarmupPPO",
+                value_warmup_iterations=16,
+            )
         # RSL consumes class_name keys in-place during construction. Historical
         # configuration dictionaries were saved after that destructive pop.
         settings["actor"]["distribution_cfg"]["class_name"] = "GaussianDistribution"
@@ -204,6 +212,39 @@ def main():
         start = runner.alg.save()
         actor0 = cloned_tensors(start["actor_state_dict"])
         critic0 = cloned_tensors(start["critic_state_dict"])
+        warmup_boundary = None
+        if a.value_warmup:
+            original_update = runner.alg.update
+
+            def audited_update():
+                nonlocal warmup_boundary
+                loss = original_update()
+                if runner.alg.value_warmup_completed == 16 and warmup_boundary is None:
+                    boundary = runner.alg.save()
+                    if any(
+                        not torch.equal(v.cpu(), actor0[k])
+                        for k, v in boundary["actor_state_dict"].items()
+                    ):
+                        raise ValueError("warmup changed actual actor weights or normalization")
+                    if not changed_weight_names(
+                        critic0, cloned_tensors(boundary["critic_state_dict"])
+                    ):
+                        raise ValueError("warmup must actually update critic")
+                    if any(p in runner.alg.optimizer.state for p in runner.alg.actor.parameters()):
+                        raise ValueError("frozen actor must have no Adam momentum")
+                    warmup_path = a.output / "value-warmup-boundary16.pt"
+                    torch.save(boundary, warmup_path)
+                    warmup_boundary = dict(
+                        checkpoint_hash=digest(warmup_path),
+                        actor_bitexact=True,
+                        critic_changed=True,
+                        optimizer_updates=counts["completed"],
+                        physical_substeps=env._sim_step_counter - before,
+                    )
+                    write_once(a.output / "value-warmup-boundary.json", warmup_boundary)
+                return loss
+
+            runner.alg.update = audited_update
         step = runner.alg.optimizer.step
 
         def counted(*args, **kwargs):
@@ -243,14 +284,20 @@ def main():
         if (
             not ac
             or not cc
-            or counts != dict(attempted=336, completed=336)
-            or len(events) != 384
-            or env._sim_step_counter - before != 3840
+            or counts != dict(attempted=expected_updates, completed=expected_updates)
+            or len(events) != iterations * 24
+            or env._sim_step_counter - before != iterations * 240
             or runner.alg.rehearsal_updates != 16
             or runner.alg.rehearsal_rows != 4096
         ):
             raise ValueError("actual complete PPO, physics and rehearsal accounting required")
-        path = a.output / "foot-only-update16.pt"
+        if a.value_warmup and (
+            warmup_boundary is None or warmup_boundary["optimizer_updates"] != 320
+        ):
+            raise ValueError("actual bit-exact sixteen-iteration value-only boundary required")
+        path = a.output / (
+            "foot-only-warmup-update32.pt" if a.value_warmup else "foot-only-update16.pt"
+        )
         torch.save(
             dict(
                 algorithm=state,
@@ -261,7 +308,8 @@ def main():
                 actor_observation_dim=177,
                 critic_observation_dim=304,
                 source_head=a.expected_head,
-                iteration=16,
+                iteration=iterations,
+                value_warmup_boundary=warmup_boundary,
                 parent_checkpoint_hash=learner["checkpoint_hash"],
                 fresh_optimizer=True,
                 force_decoder="addressed",
@@ -283,13 +331,16 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="FOOT_ONLY_PPO_PILOT_NOT_SKILL_QUALIFIED",
+                status="FOOT_ONLY_VALUE_WARMUP_PPO_NOT_SKILL_QUALIFIED"
+                if a.value_warmup
+                else "FOOT_ONLY_PPO_PILOT_NOT_SKILL_QUALIFIED",
                 input_file_hashes=pins,
                 source_head=a.expected_head,
                 worlds=32,
-                iterations=16,
+                iterations=iterations,
                 seed=seed,
-                gpu_world_steps=122880,
+                gpu_world_steps=iterations * 24 * 32 * 10,
+                value_warmup_boundary=warmup_boundary,
                 new_native_steps=0,
                 optimizer_counts=counts,
                 changed_actor_weights=ac,

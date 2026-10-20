@@ -28,16 +28,35 @@ def main():
     if digest(receipt) != a.learner_hash:
         raise ValueError("actual completed foot-only learner required")
     learner = json.loads(receipt.read_text())
+    warmup = learner.get("status") == "FOOT_ONLY_VALUE_WARMUP_PPO_NOT_SKILL_QUALIFIED"
+    expected_steps = 245760 if warmup else 122880
+    expected_updates = 656 if warmup else 336
     if (
-        learner.get("status") != "FOOT_ONLY_PPO_PILOT_NOT_SKILL_QUALIFIED"
-        or learner.get("optimizer_counts") != dict(attempted=336, completed=336)
-        or learner.get("gpu_world_steps") != 122880
+        learner.get("status")
+        not in (
+            "FOOT_ONLY_PPO_PILOT_NOT_SKILL_QUALIFIED",
+            "FOOT_ONLY_VALUE_WARMUP_PPO_NOT_SKILL_QUALIFIED",
+        )
+        or learner.get("optimizer_counts")
+        != dict(attempted=expected_updates, completed=expected_updates)
+        or learner.get("gpu_world_steps") != expected_steps
     ):
         raise ValueError("actual new foot-only pilot, not legacy qualification required")
+    if warmup:
+        boundary = learner.get("value_warmup_boundary", {})
+        if (
+            boundary.get("actor_bitexact") is not True
+            or boundary.get("critic_changed") is not True
+            or boundary.get("optimizer_updates") != 320
+            or boundary.get("physical_substeps") != 3840
+        ):
+            raise ValueError("actual value-only actor-retention boundary required")
     pins = dict(learner["input_file_hashes"])
     pins[str(receipt)] = a.learner_hash
     checkpoint = a.learner_root / learner["checkpoint_file"]
     pins[str(checkpoint)] = learner["checkpoint_hash"]
+    if warmup:
+        pins[str(a.learner_root / "value-warmup-boundary16.pt")] = boundary["checkpoint_hash"]
     training_source = next(
         Path(k).parent.parent for k in pins if k.endswith("/scripts/rsi_train_foot_only.py")
     )
@@ -100,7 +119,9 @@ def main():
         if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
             raise ValueError("one isolated GPU required")
         loaded = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        if loaded.get("foot_only_intent") != "foot-only-v1" or loaded.get("iteration") != 16:
+        if loaded.get("foot_only_intent") != "foot-only-v1" or loaded.get("iteration") != (
+            32 if warmup else 16
+        ):
             raise ValueError("explicit hash-bound new-intent checkpoint required")
         onnx = next(Path(k) for k in pins if k.endswith("/policy/velocity/v0/exported/policy.onnx"))
         config = next(Path(k) for k in pins if k.endswith("/policy/velocity/v0/params/deploy.yaml"))
