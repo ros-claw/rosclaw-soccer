@@ -205,3 +205,22 @@ def test_native_session_binds_learned_arm_and_latches_bad_frames(tmp_path):
         final.propose(*args, frame=3)
     with pytest.raises(ValueError, match="fault latched"):
         final.propose(*args, frame=1)
+    declared = LearnedPriorNativeSession(
+        tmp_path / "synthetic.onnx",
+        config_path,
+        arm="final",
+        reference_mode="declared70",
+        **arguments,
+    )
+    reference = np.linspace(-0.3, 0.3, 70, dtype=np.float32)
+    assert declared.contract_hash != final.contract_hash
+    declared.propose_reference(*args, reference, frame=0)
+    saved = declared.last_reference.copy()
+    reference[:] = 0
+    np.testing.assert_array_equal(declared.last_reference, saved)
+    forbidden = LearnedPriorNativeSession(
+        tmp_path / "synthetic.onnx", config_path, arm="final", **arguments
+    )
+    with pytest.raises(ValueError, match="zero70"):
+        forbidden.propose_reference(*args, reference, frame=0)
+    assert forbidden.faulted and forbidden.neural_calls == 0

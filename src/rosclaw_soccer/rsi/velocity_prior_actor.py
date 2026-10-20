@@ -155,8 +155,13 @@ class LearnedPriorNativeSession:
         checkpoint: Path,
         expected_checkpoint_hash: str,
         arm: str,
+        reference_mode: str = "zero70",
     ) -> None:
-        if arm not in ("initial", "final") or file_hash(checkpoint) != expected_checkpoint_hash:
+        if (
+            arm not in ("initial", "final")
+            or reference_mode not in ("zero70", "declared70")
+            or file_hash(checkpoint) != expected_checkpoint_hash
+        ):
             raise ValueError("explicit arm and immutable learned checkpoint required")
         self.params = VelocityPolicyParameters.load(config, expected_hash=expected_config_hash)
         self.model = VelocityPriorActor.from_onnx(model, expected_hash=expected_model_hash)
@@ -179,11 +184,11 @@ class LearnedPriorNativeSession:
         self.model.eval()
         self.contract_hash = hash_json(
             dict(
-                schema="soccer.rsi.learned_prior_native_retention.v1",
+                schema="soccer.rsi.learned_prior_native_inference.v2",
                 checkpoint_hash=expected_checkpoint_hash,
                 arm=arm,
                 parameter_hash=self.params.contract_hash,
-                reference_features="zero70",
+                reference_features=reference_mode,
                 hardware_authorized=False,
             )
         )
@@ -194,6 +199,8 @@ class LearnedPriorNativeSession:
         self.neural_calls = 0
         self.attempted_neural_calls = 0
         self.faulted = False
+        self.reference_mode = reference_mode
+        self.last_reference = np.zeros(70, dtype=np.float32)
 
     def propose(
         self,
@@ -204,11 +211,57 @@ class LearnedPriorNativeSession:
         *,
         frame: int,
     ) -> np.ndarray:
+        if self.reference_mode != "zero70":
+            self.faulted = True
+            raise ValueError("declared reference session requires explicit reference features")
+        return self._propose(
+            qpos,
+            qvel,
+            angular_velocity_body,
+            command_body,
+            np.zeros(70, dtype=np.float32),
+            frame=frame,
+        )
+
+    def propose_reference(
+        self,
+        qpos: np.ndarray,
+        qvel: np.ndarray,
+        angular_velocity_body: np.ndarray,
+        command_body: np.ndarray,
+        reference: np.ndarray,
+        *,
+        frame: int,
+    ) -> np.ndarray:
+        if self.reference_mode != "declared70":
+            self.faulted = True
+            raise ValueError("reference features cannot enter a zero70 retention session")
+        return self._propose(
+            qpos, qvel, angular_velocity_body, command_body, reference, frame=frame
+        )
+
+    def _propose(
+        self,
+        qpos: np.ndarray,
+        qvel: np.ndarray,
+        angular_velocity_body: np.ndarray,
+        command_body: np.ndarray,
+        reference: np.ndarray,
+        *,
+        frame: int,
+    ) -> np.ndarray:
         if self.faulted:
             raise ValueError("learned prior fault latched; no implicit restart")
         try:
             if type(frame) is not int or frame != self.next_frame or not 0 <= frame < 300:
                 raise ValueError("consecutive H300 actual retention observations required")
+            if (
+                not isinstance(reference, np.ndarray)
+                or reference.shape != (70,)
+                or reference.dtype != np.float32
+                or not np.isfinite(reference).all()
+            ):
+                raise ValueError("finite float32 declared reference70 required")
             obs, phase = observation98(
                 qpos,
                 qvel,
@@ -218,7 +271,7 @@ class LearnedPriorNativeSession:
                 self.phase,
                 self.params,
             )
-            inputs = np.concatenate((obs, np.zeros(70, dtype=np.float32)))
+            inputs = np.concatenate((obs, reference))
             self.attempted_neural_calls += 1
             with torch.no_grad():
                 action = self.model(torch.from_numpy(inputs[None])).numpy()[0].copy()
@@ -226,6 +279,7 @@ class LearnedPriorNativeSession:
             target = target29(action, self.params)
             self.last_observation = obs.copy()
             self.last_action = action
+            self.last_reference = reference.copy()
             self.phase = phase
             self.next_frame += 1
             return target
