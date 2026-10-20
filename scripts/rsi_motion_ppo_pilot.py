@@ -10,6 +10,14 @@ import subprocess
 from pathlib import Path
 
 
+def learner_receipt_artifacts(mode):
+    if mode == "learn":
+        return ("complete.json", "declaration.json", "experience-commitment.json")
+    if mode == "consolidate":
+        return ("complete.json", "declaration.json")
+    raise ValueError("unknown closed learner protocol")
+
+
 def arguments():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--mode", required=True, choices=("collect", "learn", "evaluate"))
@@ -24,6 +32,7 @@ def arguments():
     p.add_argument("--candidate", type=Path)
     p.add_argument("--expected-candidate-hash")
     p.add_argument("--candidate-unit")
+    p.add_argument("--expected-candidate-source")
     p.add_argument("--expected-collection-source")
     p.add_argument(
         "--credit-assignment", choices=("per_tick", "contact_return"), default="per_tick"
@@ -34,6 +43,8 @@ def arguments():
 
 def main():
     a = arguments()
+    if a.expected_candidate_source and (a.mode != "evaluate" or not a.candidate_unit):
+        raise ValueError("cross-source candidate requires closed learner inspection")
     if a.mode != "learn" and (
         a.credit_assignment != "per_tick"
         or a.expected_collection_source is not None
@@ -97,7 +108,8 @@ def main():
         if (
             admitted is None
             or (learner["mode"], receipt["optimizer_steps"]) != admitted
-            or receipt["source_head"] != head
+            or receipt["source_head"] != (a.expected_candidate_source or head)
+            or learner["source_head"] != receipt["source_head"]
             or learner["base_weights_hash"] != tc["checkpoint_hash"]
             or learner["bank_hash"] != a.expected_bank_hash
         ):
@@ -105,7 +117,38 @@ def main():
         if a.expected_candidate_hash not in (None, receipt["checkpoint_hash"]):
             raise ValueError("explicit candidate commitment differs from learner")
         a.expected_candidate_hash = receipt["checkpoint_hash"]
-        for name in ("complete.json", "declaration.json", "experience-commitment.json"):
+        pins.update(learner["input_file_hashes"])
+        if a.expected_candidate_source and a.expected_candidate_source != head:
+            relative = (
+                "scripts/rsi_train_motion_consolidation.py"
+                if learner["mode"] == "consolidate"
+                else "scripts/rsi_motion_ppo_pilot.py"
+            )
+            candidates = [
+                Path(k).parent.parent
+                for k in learner["input_file_hashes"]
+                if k.endswith("/" + relative)
+            ]
+            sources = [
+                p
+                for p in candidates
+                if subprocess.check_output(
+                    ["git", "-C", str(p), "rev-parse", "HEAD"], text=True
+                ).strip()
+                == a.expected_candidate_source
+            ]
+            if len(sources) != 1:
+                raise ValueError("one frozen original learner source required")
+            for folder in ("src", "scripts"):
+                for old in (sources[0] / folder).rglob("*.py"):
+                    rel = old.relative_to(sources[0])
+                    if str(rel) != "scripts/rsi_motion_ppo_pilot.py" and digest(old) != digest(
+                        Path.cwd() / rel
+                    ):
+                        raise ValueError(
+                            "candidate recovery changed actor/physics/helper: " + str(rel)
+                        )
+        for name in learner_receipt_artifacts(learner["mode"]):
             pins[str(root / name)] = digest(root / name)
     indices = a.indices or []
     if a.mode != "learn" and (
@@ -136,6 +179,7 @@ def main():
         seed=a.seed,
         candidate_hash=a.expected_candidate_hash,
         candidate_unit=a.candidate_unit,
+        candidate_source=a.expected_candidate_source or head,
         expected_collection_source=a.expected_collection_source or head,
         credit_assignment=a.credit_assignment,
         quantized_likelihood=a.quantized_likelihood,
@@ -176,7 +220,7 @@ def main():
         cp = torch.load(a.candidate, map_location="cpu", weights_only=True)
         if (
             cp["base_weights_hash"] != tc["checkpoint_hash"]
-            or cp["source_head"] != head
+            or cp["source_head"] != (a.expected_candidate_source or head)
             or cp["model_kind"]
             not in ("motion_intention_ppo64", "motion_intention_consolidation64")
         ):
