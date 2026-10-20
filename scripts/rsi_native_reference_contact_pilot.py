@@ -25,6 +25,7 @@ def main():
         "expected-head",
     ):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--position-gain", type=float, choices=(0.0, 1.0), default=0.0)
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import motion_checkpoint_filename
     from scripts.rsi_atomic_artifacts import write_once
@@ -98,6 +99,8 @@ def main():
             nominal_future_no_scheduled_gpu_pushes=True,
             compiled_default_mocap_and_zero_warmstart=True,
             foot_force_threshold_n=1.0,
+            velocity_command_position_feedback_gain=a.position_gain,
+            no_joint_target_patch_or_external_body_force=True,
             ball_speed_research_threshold_mps=0.5,
             not_gpu_long_run_agreement=True,
             new_optimizer_steps=0,
@@ -185,6 +188,7 @@ def main():
                             reference_angular_velocity=references[
                                 "reference_anchor_angular_velocity"
                             ][frame],
+                            position_gain=a.position_gain,
                         )
                         target = actor.propose_reference(
                             q,
@@ -205,6 +209,9 @@ def main():
                             action=actor.last_action.copy(),
                             target_rad=target.copy(),
                             command=command.copy(),
+                            anchor_xy_error=np.linalg.norm(
+                                data.xpos[torso, :2] - references["reference_anchor"][frame, :2]
+                            ),
                         )
                         data.ctrl[ai] = target
                         qs = []
@@ -282,6 +289,7 @@ def main():
                     upright = 1 - 2 * (cq[:, 4] ** 2 + cq[:, 5] ** 2)
                     speed = np.linalg.norm(cv[:, 35:38], axis=1)
                     post_speed = float(speed[touch[0] :].max()) if len(touch) else 0.0
+                    intended_foot = 0 if source == 7 else 1
                     result = dict(
                         source=source,
                         world_index=0,
@@ -290,6 +298,8 @@ def main():
                         native_steps=horizon * 10,
                         neural_calls=horizon,
                         maximum_foot_ball_force_n=contact.max(axis=0).tolist(),
+                        reference_kicking_foot="left" if intended_foot == 0 else "right",
+                        intended_foot_contact_detected=bool(contact[:, intended_foot].max() > 1),
                         foot_contact_detected=bool(len(touch)),
                         maximum_ball_speed_after_first_foot_contact_mps=post_speed,
                         contact_and_ball_speed_research_gate=bool(len(touch) and post_speed >= 0.5),
@@ -302,6 +312,8 @@ def main():
                         minimum_pelvis_height_m=float(cq[:, 2].min()),
                         minimum_upright=float(upright.min()),
                         stable_research_guard=bool(cq[:, 2].min() >= 0.65 and upright.min() >= 0.9),
+                        mean_anchor_xy_error_m=float(raw["anchor_xy_error"].mean()),
+                        velocity_command_position_feedback_gain=a.position_gain,
                         raw_hash=digest(folder / "native.npz"),
                         goal_success=False,
                         football_skill_proven=False,

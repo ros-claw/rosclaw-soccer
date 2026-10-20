@@ -14,6 +14,7 @@ def reference_inputs70(
     reference_quaternion: np.ndarray,
     reference_linear_velocity: np.ndarray,
     reference_angular_velocity: np.ndarray,
+    position_gain: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     import mujoco
 
@@ -46,7 +47,15 @@ def reference_inputs70(
     reference_rotation = np.zeros(9)
     mujoco.mju_quat2Mat(reference_rotation, reference_quaternion.astype(np.float64))
     relative_rotation = anchor_rotation.T @ reference_rotation.reshape(3, 3)
-    linear_body = root_rotation.T @ reference_linear_velocity
+    if (
+        type(position_gain) is not float
+        or not np.isfinite(position_gain)
+        or not 0 <= position_gain <= 2
+    ):
+        raise ValueError("bounded explicit reference position-feedback gain required")
+    linear_body = root_rotation.T @ (
+        reference_linear_velocity + position_gain * (reference_position - anchor_position)
+    )
     angular_body = root_rotation.T @ reference_angular_velocity
     command = np.asarray([linear_body[0], linear_body[1], angular_body[2]], dtype=np.float32)
     # This is the declared velocity-command domain, never state/force clipping.

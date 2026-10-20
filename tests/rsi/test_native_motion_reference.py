@@ -46,3 +46,15 @@ def test_unqualified_reference_rejected_without_repair(kind):
         source["reference_quaternion"][:] = 0
     with pytest.raises(ValueError):
         reference_inputs70(**source)
+
+
+def test_position_feedback_only_changes_bounded_velocity_command():
+    source = inputs()
+    original, suffix = reference_inputs70(**source)
+    command, with_feedback = reference_inputs70(**source, position_gain=0.1)
+    np.testing.assert_allclose(command - original, [0, -0.1, 0], atol=1e-7)
+    np.testing.assert_array_equal(suffix, with_feedback)
+    bounded, _ = reference_inputs70(**source, position_gain=1.0)
+    assert bounded[1] == -0.5
+    with pytest.raises(ValueError, match="gain"):
+        reference_inputs70(**source, position_gain=-1.0)
