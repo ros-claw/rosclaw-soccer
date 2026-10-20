@@ -184,6 +184,9 @@ def main():
         settings["actor"]["class_name"] = "scripts.rsi_mjlab_ball_aware_rl:BallAwarePriorMLPModel"
         settings["critic"]["class_name"] = "scripts.rsi_mjlab_ball_aware_rl:BallAwareCriticMLPModel"
         settings["algorithm"]["class_name"] = "scripts.rsi_mjlab_prior_rl:RehearsalPPO"
+        # RSL consumes class_name keys in-place during construction. Historical
+        # configuration dictionaries were saved after that destructive pop.
+        settings["actor"]["distribution_cfg"]["class_name"] = "GaussianDistribution"
         saved_settings = copy.deepcopy(settings)
         runner = MjlabOnPolicyRunner(
             RslRlVecEnvWrapper(env, clip_actions=settings.get("clip_actions")),
