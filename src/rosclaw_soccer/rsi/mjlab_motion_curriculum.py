@@ -155,3 +155,77 @@ def require_completed_stable_motion_smoke(report: dict[str, Any]) -> None:
     bank_hash = report["native_rehearsal"]["bank_hash"]
     if type(bank_hash) is not str or re.fullmatch(r"sha256:[0-9a-f]{64}", bank_hash) is None:
         raise ValueError("immutable native rehearsal bank identity required")
+
+
+def require_completed_stable_motion_course(report: dict[str, Any]) -> None:
+    """Validate course accounting before native research, never authorize promotion."""
+    if report.get("status") != "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED":
+        raise ValueError("actual completed stable prior online course required")
+    num_envs, iterations, seed = (report.get(k) for k in ("num_envs", "iterations", "seed"))
+    if type(num_envs) is not int or type(iterations) is not int or type(seed) is not int:
+        raise ValueError("explicit integer course dimensions required")
+    budget = MotionLearningBudget("course", num_envs, iterations, seed)
+    expected = dict(
+        gpu_step_calls=(8 + budget.training_control_steps) * 10,
+        gpu_world_substeps=budget.gpu_world_substeps,
+        policy_control_samples=budget.training_control_steps * budget.num_envs,
+        new_optimizer_steps=21 * budget.iterations,
+        new_cpu_native_steps=0,
+    )
+    if any(type(report.get(k)) is not int or report[k] != v for k, v in expected.items()):
+        raise ValueError("complete actual online course physics/optimizer accounting required")
+    counts = report.get("optimizer_counts")
+    if (
+        not isinstance(counts, list)
+        or not counts
+        or any(
+            not isinstance(c, dict)
+            or type(c.get("completed")) is not int
+            or c["completed"] <= 0
+            or type(c.get("attempted")) is not int
+            or c["completed"] != c["attempted"]
+            for c in counts
+        )
+        or sum(c["completed"] for c in counts) != expected["new_optimizer_steps"]
+    ):
+        raise ValueError("completed attempted optimizer steps must match the course budget")
+    for name in ("changed_actor_weights", "changed_critic_weights"):
+        values = report.get(name)
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(type(v) is not str or not v.endswith((".weight", ".bias")) for v in values)
+        ):
+            raise ValueError("both actual neural actor/critic MLP changes required")
+    if (
+        report.get("stable_prior_rehearsal") is not True
+        or report.get("weights_only_checkpoint_reload") is not True
+        or any(
+            report.get(k) is not False
+            for k in (
+                "hardware_authorized",
+                "goal_complete",
+                "promotion_authorized",
+                "football_skill_proven",
+            )
+        )
+    ):
+        raise ValueError("safe loaded non-promoted online research only")
+    replay = report.get("native_rehearsal")
+    if (
+        not isinstance(replay, dict)
+        or replay
+        != dict(
+            bank_hash=replay.get("bank_hash"),
+            updates=budget.iterations + 2,
+            attempted_updates=budget.iterations + 2,
+            batch_size=256,
+            rows=(budget.iterations + 2) * 256,
+            weight=1.0,
+        )
+        or type(replay.get("bank_hash")) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", replay["bank_hash"]) is None
+    ):
+        raise ValueError(
+            "same original replay and complete two-smoke-plus-course counters required"
+        )

@@ -31,6 +31,7 @@ def main():
     a = p.parse_args()
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
         motion_checkpoint_filename,
+        require_completed_stable_motion_course,
         require_completed_stable_motion_smoke,
     )
     from rosclaw_soccer.rsi.velocity_command_protocol import require_same_command_protocol
@@ -61,6 +62,9 @@ def main():
     learner, plan, export = receipts
     if learner["status"] == "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED":
         require_completed_stable_motion_smoke(learner)
+        require_same_command_protocol(learner, a.command_point, a.position_gain)
+    elif learner["status"] == "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED":
+        require_completed_stable_motion_course(learner)
         require_same_command_protocol(learner, a.command_point, a.position_gain)
     elif learner["status"] != "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED":
         raise ValueError("completed stable online smoke or bounded imitation required")

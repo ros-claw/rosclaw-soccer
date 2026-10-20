@@ -12,6 +12,7 @@ from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
     motion_checkpoint_filename,
     motion_names_for_pattern,
     require_completed_motion_smoke,
+    require_completed_stable_motion_course,
     require_completed_stable_motion_smoke,
 )
 
@@ -183,3 +184,61 @@ def test_explicit_actor_checkpoint_is_not_misnamed_as_ppo_iteration():
 def test_checkpoint_artifact_cannot_escape_its_evidence_root(name):
     with pytest.raises(ValueError):
         motion_checkpoint_filename(dict(checkpoint_file=name))
+
+
+def stable_course():
+    report = stable_smoke()
+    report.update(
+        status="MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED",
+        mode="course",
+        num_envs=128,
+        iterations=200,
+        seed=2501,
+        gpu_step_calls=48080,
+        gpu_world_substeps=6154240,
+        policy_control_samples=614400,
+        new_optimizer_steps=4200,
+        optimizer_counts=[dict(attempted=4200, completed=4200)],
+    )
+    report["native_rehearsal"].update(updates=202, attempted_updates=202, rows=51712)
+    return report
+
+
+def test_actual_online_course_counts_do_not_inherit_smoke_or_promote():
+    report = stable_course()
+    require_completed_stable_motion_course(report)
+    with pytest.raises(ValueError):
+        require_completed_stable_motion_course(stable_smoke())
+    with pytest.raises(ValueError):
+        require_completed_stable_motion_smoke(report)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("gpu_step_calls", 48079),
+        ("gpu_world_substeps", 6154241),
+        ("policy_control_samples", 614399),
+        ("new_optimizer_steps", 4199),
+        ("optimizer_counts", []),
+        ("optimizer_counts", [dict(attempted=4201, completed=4200)]),
+        ("changed_actor_weights", []),
+        ("changed_critic_weights", ["distribution.std"]),
+        ("hardware_authorized", True),
+        ("promotion_authorized", True),
+        ("native_rehearsal", None),
+        ("weights_only_checkpoint_reload", False),
+    ],
+)
+def test_incomplete_course_cannot_reach_native_contact_research(key, value):
+    report = stable_course()
+    report[key] = value
+    with pytest.raises(ValueError):
+        require_completed_stable_motion_course(report)
+
+
+def test_course_must_include_all_replay_updates_from_two_iteration_parent():
+    report = stable_course()
+    report["native_rehearsal"]["rows"] = 51200
+    with pytest.raises(ValueError, match="replay"):
+        require_completed_stable_motion_course(report)
