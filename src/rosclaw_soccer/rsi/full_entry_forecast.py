@@ -322,12 +322,19 @@ def body_fields_hash(body: G1TargetEpisode) -> str:
 
 
 class FullEntryForecaster:
-    """At most seven bounded280-frame previews from the same current frame20."""
+    """Declared finite280-frame previews; default seven, explicit maximum32."""
 
-    def __init__(self, *, world_hash: str) -> None:
+    def __init__(self, *, world_hash: str, max_forecasts: int = 7) -> None:
+        if type(max_forecasts) is not int or not 1 <= max_forecasts <= 32:
+            raise ValueError("explicit integer forecast budget1..32 required")
         self.world_hash = world_hash
+        self._max_forecasts = max_forecasts
         self.attempted_native_steps = self.integrated_native_steps = 0
         self.failed = False
+
+    @property
+    def max_forecasts(self) -> int:
+        return self._max_forecasts
 
     def forecast(
         self,
@@ -347,7 +354,7 @@ class FullEntryForecaster:
             or body.next_frame != 20
             or nav._next_frame != 20
             or body.record_all_ball_contacts is not True
-            or self.attempted_native_steps + 2800 > 19600
+            or self.attempted_native_steps + 2800 > self.max_forecasts * 2800
         ):
             raise ValueError("healthy aligned prefix20 and remaining full-task budget required")
         G1PDTorqueForecaster(

@@ -26,7 +26,7 @@ def choose_candidate(rows):
     return min(eligible, key=lambda i: (rows[i]["score"]["cost"], i)) if eligible else 0
 
 
-def run_course(args, item, source, poses, affordance, pins):
+def run_course(args, item, source, poses, affordance, pins, *, candidate_builder=None):
     import mujoco
     import numpy as np
 
@@ -53,6 +53,7 @@ def run_course(args, item, source, poses, affordance, pins):
     folder.mkdir(exist_ok=False)
     body = forecaster = None
     candidates, proposals, actual_rows = [], [], []
+    log_prefix = "CONTACT_GEOMETRY" if candidate_builder is None else "RESPONSE_CEM"
     try:
         check_pins(pins)
         oldroot, oldcomplete = source
@@ -87,7 +88,9 @@ def run_course(args, item, source, poses, affordance, pins):
         for k in prefix:
             np.testing.assert_array_equal(prefix[k], gold[k][:20])
         np.savez_compressed(folder / "own-prefix20.npz", **prefix)
-        forecaster = FullEntryForecaster(world_hash=digest(args.world))
+        forecaster = FullEntryForecaster(
+            world_hash=digest(args.world), max_forecasts=7 if candidate_builder is None else 30
+        )
         laws = feedback_entry_laws()
         evidence_hash = hash_json(json.loads((args.output / "declaration.json").read_text()))
 
@@ -130,7 +133,7 @@ def run_course(args, item, source, poses, affordance, pins):
             write_once(folder / f"candidate{index}.json", row)
             candidates.append(row)
             print(
-                "CONTACT_GEOMETRY_FUTURE",
+                log_prefix + "_FUTURE",
                 item.parent_index,
                 item.variant_index,
                 index,
@@ -139,25 +142,33 @@ def run_course(args, item, source, poses, affordance, pins):
             )
             return future
 
-        for law_index in (0, 3, 4):
-            future = predict(law_index, (0.0, 0.0, 0.0))
-            if law_index == 0:
-                for k in future.arrays:
-                    np.testing.assert_array_equal(future.arrays[k], gold[k][20:])
-            own_complete = {k: np.concatenate((prefix[k], future.arrays[k])) for k in prefix}
-            proposal = forecast_contact_geometry(
-                model, own_complete, handoff_frame=future.report["handoff_frame"]
-            )
-            proposals.append(dict(law_index=law_index, proposal=proposal))
+        if candidate_builder is None:
+            for law_index in (0, 3, 4):
+                future = predict(law_index, (0.0, 0.0, 0.0))
+                if law_index == 0:
+                    for k in future.arrays:
+                        np.testing.assert_array_equal(future.arrays[k], gold[k][20:])
+                own_complete = {k: np.concatenate((prefix[k], future.arrays[k])) for k in prefix}
+                proposal = forecast_contact_geometry(
+                    model, own_complete, handoff_frame=future.report["handoff_frame"]
+                )
+                proposals.append(dict(law_index=law_index, proposal=proposal))
+        else:
+            proposals = candidate_builder(predict, candidates, prefix, source, item, folder)
         write_once(
             folder / "proposals.json",
             dict(proposals=proposals, source="own_warm_native_forecasts_not_archive_or_labels"),
         )
-        for item_proposal in proposals:
-            proposal = item_proposal["proposal"]
-            if proposal["applicable"]:
-                predict(item_proposal["law_index"], tuple(proposal["offset_root_m"]), proposal)
-        selected = choose_candidate(candidates)
+        if candidate_builder is None:
+            for item_proposal in proposals:
+                proposal = item_proposal["proposal"]
+                if proposal["applicable"]:
+                    predict(item_proposal["law_index"], tuple(proposal["offset_root_m"]), proposal)
+            selected = choose_candidate(candidates)
+        else:
+            from rosclaw_soccer.rsi.contact_response_cem import choose_response_candidate
+
+            selected = choose_response_candidate(candidates)
         chosen = candidates[selected]
         with np.load(folder / chosen["artifact"], allow_pickle=False) as a:
             selected_future = {k: a[k] for k in a.files}
@@ -218,7 +229,7 @@ def run_course(args, item, source, poses, affordance, pins):
         check_pins(pins)
         write_once(folder / "complete.json", result)
         print(
-            "CONTACT_GEOMETRY_ACTUAL",
+            log_prefix + "_ACTUAL",
             item.parent_index,
             item.variant_index,
             selected,
