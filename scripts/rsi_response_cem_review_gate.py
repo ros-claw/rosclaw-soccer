@@ -52,6 +52,9 @@ def review_decision(rows):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--study", choices=("response_cem", "matched_entry"), default="response_cem"
+    )
     for name in ("reviewer-source", "world", "motion-csv", "core-source", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     for name in (
@@ -151,14 +154,19 @@ def main():
             or c in clusters
             or unit in units
             or any(root.rglob("failure.json"))
-            or declaration["schema"] != "soccer.rsi.bounded_response_cem16.v1"
+            or declaration["schema"]
+            != (
+                "soccer.rsi.bounded_response_cem16.v1"
+                if args.study == "response_cem"
+                else "soccer.rsi.matched_entry_bridge16.v1"
+            )
             or declaration["source_head"] != args.expected_producer_head
             or complete["source_head"] != args.expected_producer_head
             or declaration["bank_hash"] != args.expected_bank_hash
             or complete["bank_hash"] != args.expected_bank_hash
             or len(complete["results"]) != 4
             or complete["actual_native_steps"] != 12000
-            or complete["forecast_native_steps"] != 336000
+            or (args.study == "response_cem" and complete["forecast_native_steps"] != 336000)
             or complete["neural_optimizer_updates"] != 0
         ):
             raise ValueError("exact closed CEM cluster commitment required")
@@ -174,16 +182,29 @@ def main():
                 or row["course"] != old["results"][v]["course"]
                 or row["course"]["parent_index"] != c
                 or row["course"]["variant_index"] != v
-                or len(row["candidates"]) != 30
+                or (
+                    len(row["candidates"]) != 30
+                    if args.study == "response_cem"
+                    else not 6 <= len(row["candidates"]) <= 12
+                )
                 or row["old_fixed_six_teacher_score_comparison_only"]
                 != old["results"][v]["results"][1]["score"]
             ):
                 raise ValueError("exact original condition/comparison required")
+            if (
+                row["forecast_native_steps"] != 2800 * len(row["candidates"])
+                or row["actual_native_steps"] != 3000
+            ):
+                raise ValueError("complete per-case forecast/actual accounting required")
             for receipt in [row] + row["candidates"]:
                 p = (folder / receipt["artifact"]).resolve()
                 if not p.is_relative_to(folder.resolve()) or digest(p) != receipt["artifact_hash"]:
                     raise ValueError("producer raw output identity differs")
             complete_rows.append(row)
+        if complete["forecast_native_steps"] != sum(
+            row["forecast_native_steps"] for row in complete["results"]
+        ):
+            raise ValueError("complete cluster forecast sum differs")
         for p in (args.world, args.motion_csv):
             if pins.get(str(p)) != digest(p):
                 raise ValueError("bound original assets required")
@@ -194,6 +215,9 @@ def main():
     if clusters != set(range(4)) or len(roots) != 4:
         raise ValueError("exact four closed producers required")
     decision = review_decision(complete_rows)
+    decision["study"] = args.study
+    if args.study == "matched_entry" and decision["status"] == "CEM_FAMILY_REJECTED_STOP":
+        decision["status"] = "MATCHED_ENTRY_FAMILY_REJECTED_STOP"
     check_pins(pins)
     from scripts.rsi_atomic_artifacts import write_once
 
@@ -232,6 +256,8 @@ def main():
             command += [
                 sys.executable,
                 "scripts/rsi_verify_response_cem.py",
+                "--study",
+                args.study,
                 "--producer",
                 str(root),
                 "--producer-unit",

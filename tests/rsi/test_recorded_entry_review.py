@@ -201,3 +201,91 @@ def test_external_certified_native_recording(variant, candidate):
         3000,
         "sha256:" + hashlib.sha256(raw["joint_target_rad"].tobytes()).hexdigest(),
     )
+
+
+def test_external_completed_matched_velocity_case():
+    """Replays one immutable completed case, not its still-running parent shard."""
+    import json
+    from pathlib import Path
+
+    location = os.environ.get("ROSCLAW_MATCHED_REVIEW_FIXTURE")
+    if location is None:
+        pytest.skip("explicit completed matched-mode fixture required")
+    from scripts.rsi_native_context_recovery_common import check_pins, digest
+
+    folder = Path(location)
+    if digest(folder / "complete.json") != os.environ["ROSCLAW_MATCHED_REVIEW_FIXTURE_SHA"]:
+        raise ValueError("completed matched-mode case identity differs")
+    row = json.loads((folder / "complete.json").read_text())
+    chosen = row["candidates"][row["selected_index"]]
+    assert chosen["entry_reference_mode"] == "matched_velocity"
+    declaration = json.loads((folder.parent / "declaration.json").read_text())
+    check_pins(declaration["input_file_hashes"])
+    choices = [Path(p) for p in declaration["input_file_hashes"]]
+    worlds = [p for p in choices if p.suffix == ".mjb"]
+    csvs = [p for p in choices if p.name == "BGI_Shooting_00001.csv"]
+    priors = [p for p in choices if p.name == "entry-affordance.json"]
+    assert len(worlds) == len(csvs) == len(priors) == 1
+    p = folder / row["artifact"]
+    assert digest(p) == row["artifact_hash"]
+    pins = {
+        str(p): digest(p)
+        for p in [folder / "complete.json", folder.parent / "declaration.json", p]
+        + worlds
+        + csvs
+        + priors
+    }
+    with np.load(p, allow_pickle=False) as a:
+        raw = {k: a[k] for k in a.files}
+    validate_recording(raw, frames=300, nbody=46)
+    import mujoco
+
+    from rosclaw_soccer.physics.g1_target_episode import G1TargetEpisode
+    from rosclaw_soccer.rsi.ball_entry_teacher import SkillEntryAffordance
+    from rosclaw_soccer.rsi.full_entry_forecast import feedback_entry_laws
+    from rosclaw_soccer.sim.contracts import hash_json
+
+    stored = json.loads(priors[0].read_text())
+    fields = {
+        k: stored[k]
+        for k in (
+            "ball_offset_xy_m",
+            "historical_frame",
+            "historical_forward_speed_mps",
+            "historical_artifact_hash",
+        )
+    }
+    fields["ball_offset_xy_m"] = tuple(fields["ball_offset_xy_m"])
+    affordance = SkillEntryAffordance(**fields)
+    assert affordance.contract_hash == stored["contract_hash"]
+    model = mujoco.MjModel.from_binary_path(str(worlds[0]))
+    kp, kd, _ = _sonic_control_parameters(1.0, (1.0,) * 29)
+    body = G1TargetEpisode(
+        model,
+        world_hash=digest(worlds[0]),
+        kp=kp,
+        kd=kd,
+        course=tuple(row["course"]["course"]),
+        defaults=G1SonicRunupController.default_angles.copy(),
+        record_all_ball_contacts=True,
+    )
+    replay_prefix(body, {k: a[:20] for k, a in raw.items()}, affordance)
+    poses = np.loadtxt(csvs[0], delimiter=",", skiprows=1, dtype=np.float64)
+    replay_suffix(
+        body,
+        {k: a[20:] for k, a in raw.items()},
+        law=feedback_entry_laws()[chosen["law_index"]],
+        offset_root_m=tuple(chosen["offset_root_m"]),
+        affordance=affordance,
+        source_poses=poses,
+        source_evidence_hash=hash_json(declaration),
+        report=row["report"],
+        entry_reference_mode=chosen["entry_reference_mode"],
+    )
+    assert body.attempted_steps == body.integrated_steps == 3000
+    check_pins(pins)
+    print(
+        "COMPLETED_MATCHED_VELOCITY_NATIVE_REPLAY",
+        3000,
+        row["report"]["entry_reference_adaptation"]["entry_intervals"],
+    )

@@ -12,6 +12,9 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--study", choices=("response_cem", "matched_entry"), default="response_cem"
+    )
     for name in ("producer", "world", "motion-csv", "core-source", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     for name in (
@@ -30,6 +33,7 @@ def main():
         Path(__file__).name,
         "rsi_response_cem_builder.py",
         "rsi_native_context_recovery_common.py",
+        "rsi_matched_entry_builder.py",
     ):
         if (
             subprocess.check_output(["git", "show", f"{head}:scripts/{name}"])
@@ -77,14 +81,19 @@ def main():
     declaration = json.loads((args.producer / "declaration.json").read_text())
     complete = json.loads((args.producer / "complete.json").read_text())
     if (
-        declaration["schema"] != "soccer.rsi.bounded_response_cem16.v1"
+        declaration["schema"]
+        != (
+            "soccer.rsi.bounded_response_cem16.v1"
+            if args.study == "response_cem"
+            else "soccer.rsi.matched_entry_bridge16.v1"
+        )
         or declaration["source_head"] != args.expected_producer_head
         or complete["source_head"] != args.expected_producer_head
         or complete["cluster"] != declaration["cluster"]
         or complete["bank_hash"] != declaration["bank_hash"]
         or complete["actual_native_steps"] != 12000
-        or complete["forecast_native_steps"] != 336000
-        or complete["cem_distribution_updates"] != 24
+        or (args.study == "response_cem" and complete["forecast_native_steps"] != 336000)
+        or complete["cem_distribution_updates"] != (24 if args.study == "response_cem" else 0)
         or complete["neural_optimizer_updates"] != 0
         or len(complete["results"]) != 4
         or any(args.producer.rglob("failure.json"))
@@ -157,10 +166,14 @@ def main():
             raise ValueError("ordered complete case identity differs")
         receipts = [row] + row["candidates"]
         if (
-            len(row["candidates"]) != 30
-            or len(row["proposals"]) != 6
+            (
+                len(row["candidates"]) != 30
+                if args.study == "response_cem"
+                else not 6 <= len(row["candidates"]) <= 12
+            )
+            or len(row["proposals"]) != (6 if args.study == "response_cem" else 3)
             or row["actual_native_steps"] != 3000
-            or row["forecast_native_steps"] != 84000
+            or row["forecast_native_steps"] != 2800 * len(row["candidates"])
         ):
             raise ValueError("exact per-course physical budget required")
         arrays = []
@@ -173,25 +186,38 @@ def main():
             if i and receipt != json.loads((folder / f"candidate{i - 1}.json").read_text()):
                 raise ValueError("candidate individual receipt differs")
             arrays.append(data)
-        if [r["index"] for r in row["candidates"]] != list(range(30)) or [
-            r["law_index"] for r in row["candidates"]
-        ] != [0, 0, 3, 3, 4, 4] + [0] * 8 + [3] * 8 + [4] * 8:
+        if args.study == "response_cem" and (
+            [r["index"] for r in row["candidates"]] != list(range(30))
+            or [r["law_index"] for r in row["candidates"]]
+            != [0, 0, 3, 3, 4, 4] + [0] * 8 + [3] * 8 + [4] * 8
+        ):
             raise ValueError("exact response candidate order required")
+        if args.study == "matched_entry":
+            from scripts.rsi_matched_entry_builder import choose_matched_candidate
+
+            choose_matched_candidate(row["candidates"])
+            if [r["index"] for r in row["candidates"]] != list(range(len(row["candidates"]))):
+                raise ValueError("complete ordered matched-entry candidates required")
         for r in row["candidates"]:
             bounded_offset(r["offset_root_m"])
             if r["new_attempted_native_steps"] != 2800 or r["new_integrated_native_steps"] != 2800:
                 raise ValueError("complete individual forecast required")
         recordings.append((item, row, arrays[0], arrays[1:]))
+    if sum(r[1]["forecast_native_steps"] for r in recordings) != complete["forecast_native_steps"]:
+        raise ValueError("cluster complete forecast accounting differs before replay")
     args.output.mkdir(parents=True, exist_ok=False)
     write_once(
         args.output / "declaration.json",
         dict(
-            schema="soccer.rsi.response_cem_recorded_review.v1",
+            schema="soccer.rsi.response_cem_recorded_review.v1"
+            if args.study == "response_cem"
+            else "soccer.rsi.matched_entry_recorded_review.v1",
             source_head=head,
             input_file_hashes=pins,
             producer_terminal=terminal,
             bank_hash=declaration["bank_hash"],
-            expected_additional_native_steps=348000,
+            expected_additional_native_steps=12000
+            + sum(r[1]["forecast_native_steps"] for r in recordings),
             encoder_decoder_planner_math_replayed=False,
             shared_native_clone_reference_score_cem_helpers=True,
             promotion_authorized=False,
@@ -228,6 +254,12 @@ def main():
         kp, kd, _ = _sonic_control_parameters(1.0, (1.0,) * 29)
         laws = feedback_entry_laws()
         evidence_hash = hash_json(declaration)
+        if args.study == "matched_entry":
+            from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+            from scripts.rsi_matched_entry_builder import make_builder
+
+            limits = model.jnt_range[[model.joint(n).id for n in G1_DDS_JOINT_NAMES]].copy()
+            build_candidates = make_builder(poses, limits, evidence_hash)
         for item, row, raw, futures in recordings:
             prefix = {k: a[:20] for k, a in raw.items()}
             # Recreate CEM draws/updates from recorded, subsequently replayed responses.
@@ -239,6 +271,7 @@ def main():
                 offset,
                 proposal=None,
                 *,
+                entry_reference_mode="legacy",
                 _rows=row,
                 _rebuilt=reconstructed,
                 _futures=futures,
@@ -251,10 +284,11 @@ def main():
                     recorded["law_index"] != law_index
                     or recorded["offset_root_m"] != list(offset)
                     or recorded["geometry"] != proposal
+                    or recorded.get("entry_reference_mode", "legacy") != entry_reference_mode
                 ):
                     raise ValueError("CEM samples are not generated from their own prior responses")
                 _rebuilt.append(recorded)
-                return SimpleNamespace(arrays=_futures[index])
+                return SimpleNamespace(arrays=_futures[index], report=recorded["report"])
 
             folder = args.output / f"variant{item.variant_index}-regenerated-cem"
             folder.mkdir()
@@ -266,7 +300,7 @@ def main():
                 item,
                 folder,
             )
-            if iterations != row["proposals"] or len(reconstructed) != 30:
+            if iterations != row["proposals"] or len(reconstructed) != len(row["candidates"]):
                 raise ValueError("complete own-response distribution update trace differs")
             body = G1TargetEpisode(
                 model,
@@ -299,6 +333,7 @@ def main():
                     source_poses=poses,
                     source_evidence_hash=evidence_hash,
                     report=candidate["report"],
+                    entry_reference_mode=candidate.get("entry_reference_mode", "legacy"),
                 )
                 if integration_hash(model, body.data) != donor:
                     raise ValueError("review clone changed own prefix donor")
@@ -324,6 +359,7 @@ def main():
                 source_poses=poses,
                 source_evidence_hash=evidence_hash,
                 report=row["report"],
+                entry_reference_mode=chosen.get("entry_reference_mode", "legacy"),
             )
             for k in suffix:
                 np.testing.assert_array_equal(suffix[k], futures[selected][k])
@@ -350,9 +386,11 @@ def main():
                 course=row["course"],
                 score=row["score"],
                 selected_index=selected,
-                actual_and_all30_forecast_native_physics_bit_exact=True,
+                actual_and_all_candidate_native_physics_bit_exact=True,
+                candidate_count=len(row["candidates"]),
                 recorded_action_to_target_and_posthandoff_reference_verified=True,
-                own_response_cem_sequence_reconstructed=True,
+                own_proposal_sequence_reconstructed=True,
+                study=args.study,
                 neural_math_replayed=False,
                 **flags,
             )
@@ -365,7 +403,7 @@ def main():
                 selected,
                 flush=True,
             )
-        if total != 348000:
+        if total != complete["actual_native_steps"] + complete["forecast_native_steps"]:
             raise ValueError("complete recorded replay accounting differs")
         check_pins(pins)
         write_once(
