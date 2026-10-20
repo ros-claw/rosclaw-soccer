@@ -4,6 +4,7 @@ import pytest
 from rosclaw_soccer.rsi.ball_aware_inputs import (
     BALL_AWARE_ABI,
     ball_goal9,
+    require_ball_aware_learning_smoke,
     require_ball_aware_qualification,
 )
 
@@ -106,3 +107,57 @@ def test_invalid_physics_qualification_cannot_unlock_training(key, value):
     report[key] = value
     with pytest.raises(ValueError):
         require_ball_aware_qualification(report)
+
+
+def learning_smoke():
+    return dict(
+        status="BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+        ball_aware_abi=BALL_AWARE_ABI,
+        actor_observation_dim=177,
+        critic_observation_dim=304,
+        weights_only_checkpoint_reload=True,
+        parent_optimizer_state_loaded=False,
+        hardware_authorized=False,
+        goal_complete=False,
+        promotion_authorized=False,
+        football_skill_proven=False,
+        gpu_world_substeps=15360,
+        policy_control_samples=1536,
+        new_optimizer_steps=42,
+        optimizer_counts=[dict(attempted=42, completed=42)],
+        changed_actor_weights=["mlp.0.weight"],
+        changed_critic_weights=["mlp.0.bias"],
+        ball9_weight_norm=0.01,
+        native_rehearsal=dict(
+            updates=2,
+            attempted_updates=2,
+            batch_size=256,
+            rows=512,
+            weight=1.0,
+            reference_features=79,
+        ),
+    )
+
+
+def test_new_ball_learning_accounting_gate():
+    require_ball_aware_learning_smoke(learning_smoke())
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("actor_observation_dim", 168),
+        ("gpu_world_substeps", 15359),
+        ("parent_optimizer_state_loaded", True),
+        ("new_optimizer_steps", True),
+        ("optimizer_counts", []),
+        ("ball9_weight_norm", float("nan")),
+        ("ball9_weight_norm", 0.0),
+        ("native_rehearsal", {}),
+    ],
+)
+def test_invalid_new_learning_cannot_reach_native_probe(key, value):
+    report = learning_smoke()
+    report[key] = value
+    with pytest.raises(ValueError):
+        require_ball_aware_learning_smoke(report)

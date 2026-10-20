@@ -50,3 +50,12 @@ def test_invalid_aligned_evidence_rejected(bad):
         force = force.astype(int)
     with pytest.raises(ValueError):
         contact_timing_metrics(force, speed, intended_foot=side, timestep=dt)
+
+
+def test_declared_training_threshold_does_not_relabel_light_brush_as_strong_contact():
+    force = np.array([[0.0, 2.0], [15.0, 0.0]])
+    result = contact_timing_metrics(
+        force, np.ones(2), intended_foot=0, timestep=0.002, threshold_n=10.0
+    )
+    assert result["first_foot_contact_side"] == "left"
+    assert not result["other_foot_contact_before_intended"]

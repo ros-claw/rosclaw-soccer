@@ -82,6 +82,79 @@ def require_ball_aware_qualification(report: dict[str, Any]) -> None:
             raise ValueError("independent native actual contact and physics agreement required")
 
 
+def require_ball_aware_learning_smoke(report: dict[str, Any]) -> None:
+    """New ABI and exact fresh-optimizer accounting; not a football success gate."""
+    if (
+        report.get("status") != "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+        or report.get("ball_aware_abi") != BALL_AWARE_ABI
+        or report.get("actor_observation_dim") != 177
+        or report.get("critic_observation_dim") != 304
+        or report.get("weights_only_checkpoint_reload") is not True
+        or report.get("parent_optimizer_state_loaded") is not False
+        or any(
+            report.get(k) is not False
+            for k in (
+                "hardware_authorized",
+                "goal_complete",
+                "promotion_authorized",
+                "football_skill_proven",
+            )
+        )
+    ):
+        raise ValueError("actual fresh-optimizer ball-aware177/304 learning smoke required")
+    for key, expected in (
+        ("gpu_world_substeps", 15360),
+        ("policy_control_samples", 1536),
+        ("new_optimizer_steps", 42),
+    ):
+        if type(report.get(key)) is not int or report[key] != expected:
+            raise ValueError("actual complete new ball-aware physics and update counts required")
+    counts = report.get("optimizer_counts")
+    if (
+        not isinstance(counts, list)
+        or not counts
+        or any(
+            not isinstance(c, dict)
+            or type(c.get("completed")) is not int
+            or c["completed"] <= 0
+            or type(c.get("attempted")) is not int
+            or c["completed"] != c["attempted"]
+            for c in counts
+        )
+        or sum(c["completed"] for c in counts) != 42
+    ):
+        raise ValueError("all attempted ball-aware optimizer updates must complete")
+    for key in ("changed_actor_weights", "changed_critic_weights"):
+        values = report.get(key)
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(type(v) is not str or not v.endswith((".weight", ".bias")) for v in values)
+        ):
+            raise ValueError("both actual actor and critic MLPs must change")
+    norm = report.get("ball9_weight_norm")
+    if (
+        not isinstance(norm, (float, int))
+        or isinstance(norm, bool)
+        or not math.isfinite(norm)
+        or norm <= 0
+    ):
+        raise ValueError("finite nonzero learned ball perception columns required")
+    replay = report.get("native_rehearsal")
+    if not isinstance(replay, dict) or any(
+        replay.get(k) != v
+        for k, v in dict(
+            updates=2,
+            attempted_updates=2,
+            batch_size=256,
+            rows=512,
+            weight=1.0,
+            reference_features=79,
+        ).items()
+    ):
+        raise ValueError("complete new79-suffix actual native rehearsal required")
+
+
 def ball_goal9(
     *,
     pelvis_rotation: np.ndarray,

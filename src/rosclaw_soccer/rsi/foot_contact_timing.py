@@ -6,7 +6,12 @@ import numpy as np
 
 
 def contact_timing_metrics(
-    force: np.ndarray, speed: np.ndarray, *, intended_foot: int, timestep: float
+    force: np.ndarray,
+    speed: np.ndarray,
+    *,
+    intended_foot: int,
+    timestep: float,
+    threshold_n: float = 1.0,
 ) -> dict[str, object]:
     """Summarize aligned post-step samples, with left/right columns and a 1 N gate."""
     if (
@@ -14,6 +19,8 @@ def contact_timing_metrics(
         or intended_foot not in (0, 1)
         or not math.isfinite(timestep)
         or timestep <= 0
+        or not math.isfinite(threshold_n)
+        or threshold_n <= 0
         or not isinstance(force, np.ndarray)
         or not isinstance(speed, np.ndarray)
         or force.ndim != 2
@@ -30,7 +37,7 @@ def contact_timing_metrics(
         raise ValueError("finite aligned nonnegative post-step forces/speeds required")
     first = []
     for side in range(2):
-        indices = np.flatnonzero(force[:, side] > 1.0)
+        indices = np.flatnonzero(force[:, side] > threshold_n)
         first.append(int(indices[0]) if len(indices) else None)
     intended = first[intended_foot]
     other = first[1 - intended_foot]
@@ -46,6 +53,7 @@ def contact_timing_metrics(
         else "right"
     )
     return dict(
+        contact_force_threshold_n=float(threshold_n),
         first_foot_contact_side=first_side,
         first_left_contact_time_s=None if first[0] is None else (first[0] + 1) * timestep,
         first_right_contact_time_s=None if first[1] is None else (first[1] + 1) * timestep,

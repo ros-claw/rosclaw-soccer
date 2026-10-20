@@ -60,7 +60,21 @@ def main():
         receipts.append(json.loads(path.read_text()))
         pins[str(path)] = expected
     learner, plan, export = receipts
-    if learner["status"] == "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED":
+    ball_aware = learner["status"] == "BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+    if ball_aware:
+        from rosclaw_soccer.rsi.ball_aware_inputs import require_ball_aware_learning_smoke
+
+        require_ball_aware_learning_smoke(learner)
+        if a.command_point != "pelvis" or a.position_gain != 1.0:
+            raise ValueError("declared pelvis/+1 required for current ball-aware native protocol")
+        if (
+            plan.get("actor_observation_dim") != 177
+            or plan.get("ball_aware") is not True
+            or plan["input_file_hashes"].get(str(a.learner_root / "complete.json"))
+            != a.learner_hash
+        ):
+            raise ValueError("exact same ball-aware learner and exogenous target plan required")
+    elif learner["status"] == "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_SMOKE_NOT_SKILL_QUALIFIED":
         require_completed_stable_motion_smoke(learner)
         require_same_command_protocol(learner, a.command_point, a.position_gain)
     elif learner["status"] == "MJLAB_STABLE_PRIOR_REHEARSAL_PPO_COURSE_NOT_SKILL_QUALIFIED":
@@ -69,7 +83,12 @@ def main():
     elif learner["status"] != "MJLAB_BOUNDED_REFERENCE_IMITATION_NOT_SKILL_QUALIFIED":
         raise ValueError("completed stable online smoke or bounded imitation required")
     if (
-        plan["status"] != "MJLAB_PAIRED_DEV_MOTION_TRACKING_NOT_FOOTBALL_QUALIFIED"
+        plan["status"]
+        != (
+            "BALL_AWARE_PAIRED_DEV_NOT_FOOTBALL_QUALIFIED"
+            if ball_aware
+            else "MJLAB_PAIRED_DEV_MOTION_TRACKING_NOT_FOOTBALL_QUALIFIED"
+        )
         or not plan["stable_prior_rehearsal"]
         or export["status"] != "MJLAB_NATIVE_EXPORT_ONE_CONTROL_DIAGNOSTIC_NOT_LONG_RUN_QUALIFIED"
     ):
@@ -112,6 +131,15 @@ def main():
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     check_pins(pins)
+    force_threshold = 10.0 if ball_aware else 1.0
+    if ball_aware:
+        import torch
+
+        from rosclaw_soccer.rsi.velocity_command_protocol import ball_aware_checkpoint_protocol
+
+        ball_aware_checkpoint_protocol(
+            learner, torch.load(checkpoint, map_location="cpu", weights_only=True)
+        )
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -127,7 +155,10 @@ def main():
             reference_features_recomputed_from_current_native_body=True,
             nominal_future_no_scheduled_gpu_pushes=True,
             compiled_default_mocap_and_zero_warmstart=True,
-            foot_force_threshold_n=1.0,
+            foot_force_threshold_n=force_threshold,
+            ball_aware=ball_aware,
+            actor_observation_dim=177 if ball_aware else 168,
+            explicit_target_world_from_plan=ball_aware,
             velocity_command_position_feedback_gain=a.position_gain,
             no_joint_target_patch_or_external_body_force=True,
             velocity_command_anatomical_point=a.command_point,
@@ -148,6 +179,7 @@ def main():
         import numpy as np
         import torch
 
+        from rosclaw_soccer.rsi.ball_aware_inputs import ball_goal9
         from rosclaw_soccer.rsi.foot_contact_timing import contact_timing_metrics
         from rosclaw_soccer.rsi.native_motion_reference import (
             point_velocity_command,
@@ -187,7 +219,14 @@ def main():
                         "reference_anchor_angular_velocity",
                     )
                 }
+                goal_plan = z["goal_target_world"][:, a.world_index].copy() if ball_aware else None
             horizon = len(references["reference_joint"])
+            if ball_aware and (
+                goal_plan.shape != (horizon, 3)
+                or not np.isfinite(goal_plan).all()
+                or not np.array_equal(goal_plan, np.repeat(goal_plan[:1], horizon, axis=0))
+            ):
+                raise ValueError("finite fixed first-episode exogenous world target plan required")
             if not 1 <= horizon <= 300:
                 raise ValueError("bounded whole source plan required")
             root_reference = None
@@ -256,7 +295,7 @@ def main():
                         checkpoint=checkpoint,
                         expected_checkpoint_hash=learner["checkpoint_hash"],
                         arm=arm,
-                        reference_mode="declared70",
+                        reference_mode="declared79" if ball_aware else "declared70",
                     )
                     data = mujoco.MjData(model)
                     data.qpos[:] = initial_q
@@ -291,14 +330,33 @@ def main():
                                 reference_angular_velocity=root_reference["angular"][frame],
                                 position_gain=a.position_gain,
                             )
-                        target = actor.propose_reference(
-                            q,
-                            v,
-                            layout.angular_velocity_body(data),
-                            command,
-                            reference,
-                            frame=frame,
-                        )
+                        if ball_aware:
+                            perception = ball_goal9(
+                                pelvis_rotation=data.xmat[layout.pelvis].reshape(3, 3),
+                                pelvis_position=data.xpos[layout.pelvis],
+                                pelvis_linear_velocity=data.qvel[layout.rv : layout.rv + 3],
+                                ball_position=data.xpos[layout.ball],
+                                ball_linear_velocity=data.qvel[layout.bv : layout.bv + 3],
+                                target_position=goal_plan[frame],
+                            )
+                            target = actor.propose_ball_aware(
+                                q,
+                                v,
+                                layout.angular_velocity_body(data),
+                                command,
+                                reference,
+                                perception,
+                                frame=frame,
+                            )
+                        else:
+                            target = actor.propose_reference(
+                                q,
+                                v,
+                                layout.angular_velocity_body(data),
+                                command,
+                                reference,
+                                frame=frame,
+                            )
                         calls += 1
                         row = dict(
                             native_qpos_before=data.qpos.copy(),
@@ -386,7 +444,7 @@ def main():
                     cq = raw["canonical_qpos_after"].reshape(-1, 43)
                     cv = raw["canonical_qvel_after"].reshape(-1, 41)
                     contact = raw["foot_ball_contact_force_n"].reshape(-1, 2)
-                    touch = np.flatnonzero(contact.max(axis=1) > 1)
+                    touch = np.flatnonzero(contact.max(axis=1) > force_threshold)
                     upright = 1 - 2 * (cq[:, 4] ** 2 + cq[:, 5] ** 2)
                     speed = np.linalg.norm(cv[:, 35:38], axis=1)
                     post_speed = float(speed[touch[0] :].max()) if len(touch) else 0.0
@@ -400,7 +458,9 @@ def main():
                         neural_calls=horizon,
                         maximum_foot_ball_force_n=contact.max(axis=0).tolist(),
                         reference_kicking_foot="left" if intended_foot == 0 else "right",
-                        intended_foot_contact_detected=bool(contact[:, intended_foot].max() > 1),
+                        intended_foot_contact_detected=bool(
+                            contact[:, intended_foot].max() > force_threshold
+                        ),
                         foot_contact_detected=bool(len(touch)),
                         maximum_ball_speed_after_first_foot_contact_mps=post_speed,
                         contact_and_ball_speed_research_gate=bool(len(touch) and post_speed >= 0.5),
@@ -420,7 +480,11 @@ def main():
                         goal_success=False,
                         football_skill_proven=False,
                         **contact_timing_metrics(
-                            contact, speed, intended_foot=intended_foot, timestep=0.002
+                            contact,
+                            speed,
+                            intended_foot=intended_foot,
+                            timestep=0.002,
+                            threshold_n=force_threshold,
                         ),
                     )
                     write_once(folder / "complete.json", result)
@@ -430,7 +494,11 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="NATIVE_REFERENCE_CONTACT_PILOT_NOT_GOAL_OR_TEAM_QUALIFIED",
+                status="BALL_AWARE_NATIVE_CONTACT_NOT_GOAL_OR_TEAM_QUALIFIED"
+                if ball_aware
+                else "NATIVE_REFERENCE_CONTACT_PILOT_NOT_GOAL_OR_TEAM_QUALIFIED",
+                ball_aware=ball_aware,
+                actor_observation_dim=177 if ball_aware else 168,
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 results=results,
