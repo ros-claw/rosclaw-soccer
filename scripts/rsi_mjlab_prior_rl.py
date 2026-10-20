@@ -55,7 +55,9 @@ class VelocityPriorMLPModel(MLPModel):
         self.obs_normalization = False
 
 
-def load_rehearsal(path, expected_hash, device):
+def load_rehearsal(path, expected_hash, device, reference_features=70):
+    if type(reference_features) is not int or reference_features not in (70, 79):
+        raise ValueError("explicit reference70 or reference70+perception9 rehearsal ABI required")
     path = Path(path)
     if file_hash(path) != expected_hash:
         raise ValueError("immutable recorded native rehearsal bank required")
@@ -73,7 +75,7 @@ def load_rehearsal(path, expected_hash, device):
         or not np.isfinite(actions).all()
     ):
         raise ValueError("complete finite actual native 1200-row rehearsal bank required")
-    padded = np.concatenate((obs, np.zeros((1200, 70), dtype=np.float32)), axis=1)
+    padded = np.concatenate((obs, np.zeros((1200, reference_features), dtype=np.float32)), axis=1)
     return TensorDict(
         {"actor": torch.from_numpy(padded).to(device)}, batch_size=[1200]
     ), torch.from_numpy(actions).to(device)
@@ -87,6 +89,7 @@ class RehearsalPPO(PPO):
         rehearsal_hash,
         rehearsal_weight=1.0,
         rehearsal_batch_size=256,
+        rehearsal_reference_features=70,
         **kwargs,
     ):
         if (
@@ -100,8 +103,9 @@ class RehearsalPPO(PPO):
         if self.is_multi_gpu:
             raise ValueError("initial rehearsal protocol is single-GPU only")
         self.rehearsal_obs, self.rehearsal_actions = load_rehearsal(
-            rehearsal_path, rehearsal_hash, self.device
+            rehearsal_path, rehearsal_hash, self.device, rehearsal_reference_features
         )
+        self.rehearsal_reference_features = rehearsal_reference_features
         self.rehearsal_hash = rehearsal_hash
         self.rehearsal_weight = rehearsal_weight
         self.rehearsal_batch_size = rehearsal_batch_size
@@ -143,12 +147,15 @@ class RehearsalPPO(PPO):
             attempted_updates=self.rehearsal_attempted_updates,
             rows=self.rehearsal_rows,
         )
+        if self.rehearsal_reference_features != 70:
+            state["native_rehearsal"]["reference_features"] = self.rehearsal_reference_features
         return state
 
     def load(self, loaded_dict, load_cfg=None, strict=True):
         state = loaded_dict["native_rehearsal"]
         if (
             state["bank_hash"] != self.rehearsal_hash
+            or state.get("reference_features", 70) != self.rehearsal_reference_features
             or state["weight"] != self.rehearsal_weight
             or state["batch_size"] != self.rehearsal_batch_size
             or state["updates"] != state["attempted_updates"]
