@@ -26,7 +26,10 @@ def test_boundary_rejected_before_body_or_model_access(bad):
 
 
 @pytest.mark.parametrize("start", [20, 30, 299])
-def test_actual_clock_preserved_and_short_suffix_cannot_bypass_call_budget(monkeypatch, start):
+@pytest.mark.parametrize("window", [(286, 767), (466, 767)])
+def test_actual_clock_preserved_and_short_suffix_cannot_bypass_call_budget(
+    monkeypatch, start, window
+):
     body = SimpleNamespace(
         failed=False,
         next_frame=start,
@@ -57,6 +60,7 @@ def test_actual_clock_preserved_and_short_suffix_cannot_bypass_call_budget(monke
 
     def suffix(n, b, **kw):
         assert kw.get("start_frame", 20) == start
+        assert kw["source_window"] == window
         steps = (300 - start) * 10
         b.attempted_steps += steps
         b.integrated_steps += steps
@@ -71,6 +75,7 @@ def test_actual_clock_preserved_and_short_suffix_cannot_bypass_call_budget(monke
         affordance=object(),
         law=module.feedback_entry_laws()[0],
         start_frame=start,
+        source_window=window,
     )
     r = f.forecast(nav, body, **args)
     assert r.new_integrated_native_steps == r.new_attempted_native_steps == (300 - start) * 10

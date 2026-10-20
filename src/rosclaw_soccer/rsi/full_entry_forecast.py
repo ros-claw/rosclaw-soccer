@@ -219,6 +219,21 @@ def entry_suffix_frames(start_frame: int = 20) -> int:
     return 300 - start_frame
 
 
+def validate_source_window(
+    window: tuple[int, int], mode: str, offset: tuple[float, float, float]
+) -> None:
+    """Two explicit source protocols; compact lead cannot inherit old C phase."""
+    if (
+        type(window) is not tuple
+        or len(window) != 2
+        or any(type(x) is not int for x in window)
+        or window not in ((286, 767), (466, 767))
+    ):
+        raise ValueError("declared original or source-event compact window required")
+    if window != (286, 767) and (mode != "legacy" or offset != (0.0, 0.0, 0.0)):
+        raise ValueError("compact source lead requires original50 entry and zero C")
+
+
 def run_entry_suffix(
     nav: G1SonicNavigation,
     body: G1TargetEpisode,
@@ -234,6 +249,7 @@ def run_entry_suffix(
     motor_provider: Callable[[G1SonicNavigation, TeamMotorObservation], TeamMotorTarget]
     | None = None,
     start_frame: int = 20,
+    source_window: tuple[int, int] = (286, 767),
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Execute actual start..299; default20 retains the original path exactly."""
     if step_observer is not None and not callable(step_observer):
@@ -241,6 +257,7 @@ def run_entry_suffix(
     if motor_provider is not None and not callable(motor_provider):
         raise ValueError("optional SIM research motor provider must be callable")
     _validate_entry_mode(entry_reference_mode, contact_reference_offset_m)
+    validate_source_window(source_window, entry_reference_mode, contact_reference_offset_m)
     entry_suffix_frames(start_frame)
     if (
         body.next_frame != start_frame
@@ -278,7 +295,7 @@ def run_entry_suffix(
             held, quarantine = quarantine_wrist_reference(source_poses, q[:36])
             if entry_reference_mode == "legacy":
                 prepared = prepare_sonic_reference(
-                    held[286:767],
+                    held[source_window[0] : source_window[1]],
                     q[:36],
                     source_frequency_hz=120,
                     entry_intervals=50,
@@ -296,7 +313,11 @@ def run_entry_suffix(
                     [body.model.joint(n).id for n in G1_DDS_JOINT_NAMES]
                 ].copy()
                 pair = prepare_matched_entry_pair(
-                    held[286:767], q[:36], v, limits, source_evidence_hash=source_evidence_hash
+                    held[source_window[0] : source_window[1]],
+                    q[:36],
+                    v,
+                    limits,
+                    source_evidence_hash=source_evidence_hash,
                 )
                 reference = (
                     pair.position if entry_reference_mode == "matched_position" else pair.velocity
@@ -341,7 +362,7 @@ def run_entry_suffix(
         _record_step(step_observer, row)
         rows.append(row)
     arrays = {key: np.concatenate([r[key] for r in rows]) for key in rows[0]}
-    report = dict(
+    report: dict[str, Any] = dict(
         body=body.review(),
         handoff_frame=handoff_frame,
         handoff_receipt=handoff_receipt,
@@ -365,6 +386,10 @@ def run_entry_suffix(
     if start_frame != 20:
         report["actual_entry_start_frame"] = start_frame
         report["original_task_horizon"] = 300
+    if source_window != (286, 767):
+        report["source_window"] = list(source_window)
+        report["source_lead_protocol"] = "compact60_before_declared526_event_original120Hz"
+        report["source_playback_speed_changed"] = False
     return arrays, report
 
 
@@ -420,8 +445,10 @@ class FullEntryForecaster:
         contact_reference_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0),
         entry_reference_mode: str = "legacy",
         start_frame: int = 20,
+        source_window: tuple[int, int] = (286, 767),
     ) -> FullEntryForecast:
         _validate_entry_mode(entry_reference_mode, contact_reference_offset_m)
+        validate_source_window(source_window, entry_reference_mode, contact_reference_offset_m)
         remaining_steps = entry_suffix_frames(start_frame) * 10
         if (
             self.failed
@@ -462,6 +489,7 @@ class FullEntryForecaster:
                 contact_reference_offset_m=contact_reference_offset_m,
                 entry_reference_mode=entry_reference_mode,
                 start_frame=start_frame,
+                source_window=source_window,
             )
             if (
                 branch.attempted_steps - origin_attempted != remaining_steps
