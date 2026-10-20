@@ -28,13 +28,16 @@ def arguments():
     p.add_argument(
         "--credit-assignment", choices=("per_tick", "contact_return"), default="per_tick"
     )
+    p.add_argument("--quantized-likelihood", action="store_true")
     return p.parse_args()
 
 
 def main():
     a = arguments()
     if a.mode != "learn" and (
-        a.credit_assignment != "per_tick" or a.expected_collection_source is not None
+        a.credit_assignment != "per_tick"
+        or a.expected_collection_source is not None
+        or a.quantized_likelihood
     ):
         raise ValueError("credit relabeling and collection-source override are learner-only")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -132,6 +135,7 @@ def main():
         candidate_unit=a.candidate_unit,
         expected_collection_source=a.expected_collection_source or head,
         credit_assignment=a.credit_assignment,
+        quantized_likelihood=a.quantized_likelihood,
         collection=[str(r) for r in a.collection],
         collection_units=a.collection_unit,
         prefix_frames=20,
@@ -373,9 +377,10 @@ def learn(a, policy, declaration):
         for folder in ("src", "scripts"):
             for original in (sources[0] / folder).rglob("*.py"):
                 relative = original.relative_to(sources[0])
-                if str(relative) != "scripts/rsi_motion_ppo_pilot.py" and digest(
-                    Path.cwd() / relative
-                ) != digest(original):
+                if str(relative) not in (
+                    "scripts/rsi_motion_ppo_pilot.py",
+                    "src/rosclaw_soccer/rsi/motion_ppo_math.py",
+                ) and digest(Path.cwd() / relative) != digest(original):
                     raise ValueError("on-policy actor/physics/helper changed: " + str(relative))
         data_pins.update({str(f): digest(f) for f in root.rglob("*") if f.is_file()})
         for row in c["results"]:
@@ -392,8 +397,20 @@ def learn(a, policy, declaration):
                 raise ValueError("closed trajectory commitment differs")
             with np.load(folder / "native.npz", allow_pickle=False) as z:
                 x, values = z["student_features"].copy(), z["value_estimate"].copy()
+                actual_token = z["student_motion_token"].copy()
             with np.load(folder / "sampling.npz", allow_pickle=False) as z:
                 raw, lp, rewards = (z[k].copy() for k in ("raw", "log_prob", "rewards"))
+            # NumPy tanh can differ from Torch at a last-bit rounding boundary;
+            # compare using the sampler's exact Torch arithmetic instead.
+            reconstructed = (
+                torch.round(
+                    15.515501022338867 * torch.tanh(torch.from_numpy(raw) + 0.03223699703812599)
+                    - 0.5
+                )
+                / 16
+            ).numpy()
+            if not np.array_equal(reconstructed, actual_token):
+                raise ValueError("recorded raw sample does not produce consumed FSQ action")
             if a.credit_assignment == "contact_return":
                 from rosclaw_soccer.rsi.contact_credit import contact_return_credit, credit_audit
 
@@ -441,6 +458,7 @@ def learn(a, policy, declaration):
             old_values,
             torch.from_numpy(adv),
             torch.from_numpy(returns),
+            quantized_likelihood=a.quantized_likelihood,
         )
         loss.backward()
         norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0, error_if_nonfinite=True)

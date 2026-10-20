@@ -39,7 +39,8 @@ def test_sampling_noise_is_reproducible_and_not_a_stored_action_bypass():
     assert not torch.equal(a["noise"], torch.zeros_like(a["noise"]))
 
 
-def test_gae_and_ppo_produce_actor_critic_gradients_without_updating_frozen_memory():
+@pytest.mark.parametrize("quantized", [False, True])
+def test_gae_and_ppo_produce_actor_critic_gradients_without_updating_frozen_memory(quantized):
     import numpy as np
     import torch
 
@@ -65,6 +66,7 @@ def test_gae_and_ppo_produce_actor_critic_gradients_without_updating_frozen_memo
         s["value"],
         torch.from_numpy(advantage),
         torch.from_numpy(returns),
+        quantized_likelihood=quantized,
     )
     loss.backward()
     assert all(p.grad is None for p in m.base.memory.parameters())

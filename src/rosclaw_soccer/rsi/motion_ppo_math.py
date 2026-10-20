@@ -39,12 +39,26 @@ def clipped_ppo_loss(
     old_values: Any,
     advantages: Any,
     returns: Any,
+    *,
+    quantized_likelihood: bool = False,
 ) -> tuple[Any, dict[str, Any]]:
     import torch
 
     lp, entropy, value, mean, std = policy.evaluate_raw(x, raw)
     with torch.no_grad():
         _, _, _, ref_mean, ref_std = reference.evaluate_raw(x, raw)
+    if type(quantized_likelihood) is not bool:
+        raise ValueError("explicit likelihood mode required")
+    if old_log_prob.shape != lp.shape or not torch.isfinite(old_log_prob).all():
+        raise ValueError("finite original on-policy scalar sequence required")
+    if quantized_likelihood:
+        from rosclaw_soccer.rsi.fsq_gaussian_mass import fsq_log_mass
+
+        token = torch.round(15.515501022338867 * torch.tanh(raw + 0.03223699703812599) - 0.5) / 16
+        lp = fsq_log_mass(mean, std, token).sum(-1)
+        # The reference is the actual unchanged collection policy; integrate
+        # its original Gaussian over the SAME observed symbols, not raw density.
+        old_log_prob = fsq_log_mass(ref_mean, ref_std, token).sum(-1)
     mask = torch.zeros_like(lp, dtype=torch.bool)
     mask[:, 20:] = True
     for a in (old_log_prob, old_values, advantages, returns):
