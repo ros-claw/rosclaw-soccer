@@ -22,6 +22,7 @@ def run_course(args, item, model, poses, affordance, evidence_hash, runtime_pins
         contact_foot_context,
         observed_contact_foot,
     )
+    from rosclaw_soccer.rsi.entry_prefix_diagnostics import diagnose_entry_prefix
     from rosclaw_soccer.rsi.full_entry_forecast import (
         FullEntryForecaster,
         feedback_entry_laws,
@@ -61,11 +62,22 @@ def run_course(args, item, model, poses, affordance, evidence_hash, runtime_pins
         )
         current = body
         prefix = nominal_prefix20(nav, body, affordance, step_observer=current_rows.append)
+        prefix_diagnostics = diagnose_entry_prefix(model, prefix)
         endpoint_steps = 200
         np.savez_compressed(folder / "own-prefix20.npz", **prefix)
         current, current_rows = None, []
         forecaster = FullEntryForecaster(world_hash=digest(args.world), max_forecasts=9)
         laws = feedback_entry_laws()
+
+        def score(suffix):
+            value = score_full_entry(model, suffix)
+            value["original_suffix_qualified"] = value["qualified"]
+            value["common_prefix_physical_safe"] = prefix_diagnostics["prefix_physical_safe"]
+            if not prefix_diagnostics["prefix_physical_safe"]:
+                value["qualified"], value["cost"] = False, None
+                value["physical_prefix_and_suffix_safe"] = False
+            return value
+
         options = [
             (law, offset, "right")
             for law in (0, 3, 4)
@@ -98,7 +110,7 @@ def run_course(args, item, model, poses, affordance, evidence_hash, runtime_pins
                 contact_reference_foot=foot,
                 contact_foot_context=context,
                 report=future.report,
-                score=score_full_entry(model, future.arrays),
+                score=score(future.arrays),
                 observed_contact_foot=observed_contact_foot(
                     model, future.arrays, global_start_frame=20
                 ),
@@ -165,7 +177,7 @@ def run_course(args, item, model, poses, affordance, evidence_hash, runtime_pins
             np.savez_compressed(artifact, **arrays)
             outcome = dict(
                 selected_index=index,
-                score=score_full_entry(model, suffix),
+                score=score(suffix),
                 report=report,
                 intended_reference_foot=row["contact_reference_foot"],
                 observed_contact_foot=observed_contact_foot(model, arrays, global_start_frame=0),
@@ -195,11 +207,17 @@ def run_course(args, item, model, poses, affordance, evidence_hash, runtime_pins
             baseline=old,
             selected=actual,
             paired_endpoints_share_prefix=True,
+            prefix_diagnostics=prefix_diagnostics,
             shared_endpoint=baseline == selected,
             forecast_native_steps=25200,
             endpoint_native_steps=endpoint_steps,
             old_teacher_success_lost=oscore["qualified"] and not nscore["qualified"],
             old_teacher_failure_rescued=not oscore["qualified"] and nscore["qualified"],
+            causal_first_touch_rescue=(
+                not oscore["qualified"]
+                and nscore["qualified"]
+                and prefix_diagnostics["post_boundary_control_can_cause_first_touch"]
+            ),
             added_unsafe_vs_old_teacher=oscore["physical_prefix_and_suffix_safe"]
             and not nscore["physical_prefix_and_suffix_safe"],
             neural_optimizer_updates=0,

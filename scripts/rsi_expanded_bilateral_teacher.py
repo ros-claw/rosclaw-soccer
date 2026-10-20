@@ -17,6 +17,8 @@ def main():
     parser.add_argument("--preflight", type=Path)
     parser.add_argument("--expected-preflight-hash")
     parser.add_argument("--shard", type=int, choices=range(4))
+    parser.add_argument("--legacy-fk-source", type=Path)
+    parser.add_argument("--expected-legacy-fk-head")
     args = parser.parse_args()
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if head != args.expected_head or args.output.exists():
@@ -106,6 +108,11 @@ def main():
         or sum(r["score"]["qualified"] for r in reviewed) != gate["producer_claimed_qualified"]
     ):
         raise ValueError("full16 independent outcome sum must match dispatch")
+    from scripts.rsi_legacy_relative_source_pins import resolve_source_pins
+
+    pins, legacy_resolution = resolve_source_pins(
+        pins, args.legacy_fk_source, args.expected_legacy_fk_head
+    )
     check_pins(pins)
     for path in [args.world, args.motion_csv] + [
         args.model_root / s
@@ -156,6 +163,8 @@ def main():
         full_bank_maximum_native_steps=1240000,
         actual_endpoint_prefix_shared=True,
         prior_gate_hash=args.expected_gate_hash,
+        legacy_relative_source_resolution=legacy_resolution,
+        legacy_fk_source_head=args.expected_legacy_fk_head,
         original_rsi_exam=False,
         private_fresh_accessed=False,
         neural_optimizer_updates=0,
@@ -242,6 +251,7 @@ def main():
                 baseline_qualified=sum(r["baseline"]["score"]["qualified"] for r in results),
                 selected_qualified=sum(r["selected"]["score"]["qualified"] for r in results),
                 rescues=sum(r["old_teacher_failure_rescued"] for r in results),
+                causal_first_touch_rescues=sum(r["causal_first_touch_rescue"] for r in results),
                 regressions=sum(r["old_teacher_success_lost"] for r in results),
                 added_unsafe=sum(r["added_unsafe_vs_old_teacher"] for r in results),
                 neural_optimizer_updates=0,

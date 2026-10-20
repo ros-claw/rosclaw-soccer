@@ -12,6 +12,7 @@ def run_fixture(tmp_path, monkeypatch, *, shared=False, fail=False):
     from rosclaw_soccer.physics import g1_target_episode as body_module
     from rosclaw_soccer.physics import sonic_navigation_forecast as clone_module
     from rosclaw_soccer.providers.g1 import sonic_navigation as nav_module
+    from rosclaw_soccer.rsi import entry_prefix_diagnostics as prefix_module
     from rosclaw_soccer.rsi import full_entry_forecast as entry_module
     from rosclaw_soccer.rsi import full_task_branch as integration_module
     from rosclaw_soccer.rsi.ball_entry_teacher import SkillEntryAffordance
@@ -106,6 +107,13 @@ def run_fixture(tmp_path, monkeypatch, *, shared=False, fail=False):
     monkeypatch.setattr(clone_module, "clone_navigation", copy.deepcopy)
     monkeypatch.setattr(clone_module, "navigation_state_hash", lambda nav: nav.state)
     monkeypatch.setattr(integration_module, "integration_hash", lambda model, data: data.time)
+    monkeypatch.setattr(
+        prefix_module,
+        "diagnose_entry_prefix",
+        lambda model, prefix: dict(
+            prefix_physical_safe=True, post_boundary_control_can_cause_first_touch=True
+        ),
+    )
     world = tmp_path / "world.mjb"
     world.write_bytes(b"fixture-not-a-native-model")
     args = SimpleNamespace(output=tmp_path, model_root=tmp_path, world=world)
