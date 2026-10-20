@@ -95,6 +95,7 @@ class NativePredictiveTracker:
         actuator_ids_hg: tuple[int, ...],
         root_joint_name: str,
         budget: PredictiveTrackingBudget,
+        tracked_body_names: tuple[str, ...] = (),
     ) -> None:
         import mujoco
         from mujoco.rollout import Rollout
@@ -135,6 +136,11 @@ class NativePredictiveTracker:
         self.requested_planning_substeps = 0
         self.observed_advancing_substeps = 0
         self.planning_updates = 0
+        self.tracked_body_ids = np.array(
+            [model.body(name).id for name in tracked_body_names], dtype=np.int64
+        )
+        self.fk_data = mujoco.MjData(model) if tracked_body_names else None
+        self.kinematic_evaluations = 0
 
     def close(self) -> None:
         self.rollout.close()
@@ -145,6 +151,7 @@ class NativePredictiveTracker:
         reference_joint: npt.NDArray[np.float64],
         reference_root_position: npt.NDArray[np.float64],
         reference_root_quaternion: npt.NDArray[np.float64],
+        reference_tracked_position: npt.NDArray[np.float64] | None = None,
     ) -> dict[str, Any]:
         import mujoco
 
@@ -161,6 +168,12 @@ class NativePredictiveTracker:
             or not np.allclose(np.linalg.norm(reference_root_quaternion, axis=1), 1.0, atol=1e-5)
         ):
             raise ValueError("finite, explicitly aligned native-reference horizon required")
+        if len(self.tracked_body_ids) and (
+            reference_tracked_position is None
+            or reference_tracked_position.shape != (h, len(self.tracked_body_ids), 3)
+            or not np.isfinite(reference_tracked_position).all()
+        ):
+            raise ValueError("finite declared task-space reference for every tracked body required")
         initial = np.empty(mujoco.mj_stateSize(self.model, mujoco.mjtState.mjSTATE_FULLPHYSICS))
         mujoco.mj_getState(self.model, data, initial, mujoco.mjtState.mjSTATE_FULLPHYSICS)
         # Rollout's initial vector excludes USER state. Freeze all external
@@ -224,6 +237,24 @@ class NativePredictiveTracker:
                 + 20.0 * orientation_error
                 + 0.01 * np.mean(residual * residual, axis=(1, 2))
             )
+            if len(self.tracked_body_ids):
+                fk = self.fk_data
+                reference_positions = reference_tracked_position
+                if fk is None or reference_positions is None:
+                    raise ValueError("task-space scratch data and references required")
+                # Independent scratch kinematics: no extra physical step and
+                # no edits to a planning trajectory or the main plant.
+                positions = np.zeros((b.samples, h, len(self.tracked_body_ids), 3))
+                for candidate in np.flatnonzero(valid):
+                    for future in range(h):
+                        fk.qpos[:] = samples[candidate, future]
+                        mujoco.mj_kinematics(self.model, fk)
+                        positions[candidate, future] = fk.xpos[self.tracked_body_ids]
+                        self.kinematic_evaluations += 1
+                error = positions - reference_positions[None, :, :, :]
+                costs += 20.0 * np.mean(np.sum(error * error, axis=3), axis=(1, 2))
+                height_margin = np.maximum(0.0, np.abs(error[:, :, :, 2]) - 0.2)
+                costs += 100.0 * np.mean(height_margin * height_margin, axis=(1, 2))
             costs[~valid] = np.inf
             if iteration == 0:
                 nominal_cost = float(costs[0]) if np.isfinite(costs[0]) else None

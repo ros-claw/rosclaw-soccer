@@ -17,6 +17,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("export-unit", "export-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--task-space-feedback", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
@@ -69,6 +70,7 @@ def main():
             planning_seed=1701,
             planning_sigma_rad=0.1,
             planning_delta_limit_rad=0.3,
+            task_space_feedback=a.task_space_feedback,
             maximum_requested_planning_substeps=4608000,
             maximum_main_native_steps=6000,
             new_neural_calls=0,
@@ -136,6 +138,9 @@ def main():
             actuator_ids_hg=ids,
             root_joint_name="robot/floating_base_joint",
             budget=PredictiveTrackingBudget(),
+            tracked_body_names=tuple("robot/" + name for name in ee_names)
+            if a.task_space_feedback
+            else (),
         )
         if np.any(qref < tracker.bounds[:, 0] - 1e-6) or np.any(qref > tracker.bounds[:, 1] + 1e-6):
             raise ValueError("source reference exceeds actual compiled physical joint bounds")
@@ -170,7 +175,13 @@ def main():
                 else:
                     phases = np.minimum(frame + np.arange(12), len(qref) - 1)
                     plan = tracker.plan(
-                        data, qref[phases], positions[phases, 0], quaternions[phases, 0]
+                        data,
+                        qref[phases],
+                        positions[phases, 0],
+                        quaternions[phases, 0],
+                        reference_tracked_position=positions[phases][:, ee_local]
+                        if a.task_space_feedback
+                        else None,
                     )
                     target = plan["target_hg"]
                     best = plan["best_cost"]
@@ -264,6 +275,8 @@ def main():
                 requested_planning_substeps=tracker.requested_planning_substeps,
                 observed_advancing_planning_substeps=tracker.observed_advancing_substeps,
                 planning_updates=tracker.planning_updates,
+                kinematic_evaluations=tracker.kinematic_evaluations,
+                task_space_feedback=a.task_space_feedback,
                 initial_integration_states_paired_exact=True,
                 future_external_impulses=False,
                 not_the_prior_gpu_disturbance_exam=True,

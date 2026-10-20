@@ -45,7 +45,8 @@ def test_bounded_teacher_allocation(kwargs):
         PredictiveTrackingBudget(**kwargs)
 
 
-def test_native_threaded_rollouts_do_not_mutate_evaluation_body():
+@pytest.mark.parametrize("task_space", [False, True])
+def test_native_threaded_rollouts_do_not_mutate_evaluation_body(task_space):
     import mujoco
 
     # A native toy articulation only; this is not a humanoid or football pass.
@@ -79,15 +80,29 @@ def test_native_threaded_rollouts_do_not_mutate_evaluation_body():
         actuator_ids_hg=tuple(reversed(range(29))),
         root_joint_name="root",
         budget=PredictiveTrackingBudget(samples=8, horizon_controls=3, improvements=1, threads=1),
+        tracked_body_names=("link28",) if task_space else (),
     )
     try:
+        if task_space:
+            with pytest.raises(ValueError):
+                tracker.plan(
+                    data, np.zeros((3, 29)), np.zeros((3, 3)), np.tile([1.0, 0, 0, 0], (3, 1))
+                )
+            assert tracker.requested_planning_substeps == 0
         result = tracker.plan(
-            data, np.zeros((3, 29)), np.zeros((3, 3)), np.tile([1.0, 0, 0, 0], (3, 1))
+            data,
+            np.zeros((3, 29)),
+            np.zeros((3, 3)),
+            np.tile([1.0, 0, 0, 0], (3, 1)),
+            reference_tracked_position=np.tile(data.xpos[model.body("link28").id], (3, 1, 1))
+            if task_space
+            else None,
         )
         assert np.isfinite(result["target_hg"]).all()
         assert result["best_cost"] <= result["nominal_cost"]
         assert tracker.requested_planning_substeps == 240
         assert tracker.observed_advancing_substeps == 240
+        assert tracker.kinematic_evaluations == (24 if task_space else 0)
         assert result["new_optimizer_steps"] == result["new_neural_calls"] == 0
         assert all(
             np.array_equal(before, after)
