@@ -52,13 +52,17 @@ def main():
     policy_dir = a.policy_reference_root / "deploy/robots/g1/config/policy/velocity/v0"
     actor_path = policy_dir / "exported/policy.onnx"
     config_path = policy_dir / "params/deploy.yaml"
+    # The terminal qualification binds assets through input_file_hashes;
+    # model_hash/config_hash are declaration fields, not terminal fields.
+    model_hash = qual["input_file_hashes"][str(actor_path)]
+    config_hash = qual["input_file_hashes"][str(config_path)]
     pins = {
         str(a.export_root / "complete.json"): a.export_hash,
         str(a.qualification_root / "complete.json"): a.qualification_hash,
         str(a.export_root / "compiled_model.mjb"): export["model_hash"],
         str(a.export_root / "native-gpu-control1.npz"): export["state_artifact_hash"],
-        str(actor_path): qual["model_hash"],
-        str(config_path): qual["config_hash"],
+        str(actor_path): model_hash,
+        str(config_path): config_hash,
     }
     for directory in (Path.cwd() / "src", Path.cwd() / "scripts"):
         for source in directory.rglob("*.py"):
@@ -143,8 +147,8 @@ def main():
                 actor = G1VelocityPolicy(
                     actor_path,
                     config_path,
-                    expected_model_hash=qual["model_hash"],
-                    expected_config_hash=qual["config_hash"],
+                    expected_model_hash=model_hash,
+                    expected_config_hash=config_hash,
                 )
                 if actor.contract_hash != qual["policy_contract_hash"]:
                     raise ValueError("unchanged qualified actor and parameter contract required")
