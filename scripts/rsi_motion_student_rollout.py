@@ -143,9 +143,22 @@ def replay_motion_student(model, codec, body, trace):
         for name in PHYSICAL_FIELDS:
             exact_array(row[name], trace[name][frame : frame + 1])
         previous = consumed.copy()
+    counts = dict(intention_network_calls=300)
+    method = getattr(model, "network_call_counts", None)
+    if callable(method):
+        measured = method()
+        if (
+            type(measured) is not dict
+            or not set(measured)
+            <= {"intention_network_calls", "policy_invocations", "router_network_calls"}
+            or measured.get("intention_network_calls", 0) < 300
+            or any(type(v) is not int or not 0 <= v <= 10000 for v in measured.values())
+        ):
+            raise ValueError("bounded explicit neural execution counts required")
+        counts.update(measured)
     return dict(
         additional_native_steps=body.integrated_steps,
-        intention_network_calls=300,
+        **counts,
         muscle_decoder_calls=280,
         teacher_encoder_calls=0,
         teacher_planner_calls=0,

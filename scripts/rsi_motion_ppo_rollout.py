@@ -46,6 +46,12 @@ class SamplingPolicy:
             raise ValueError("complete sampling record required")
         return {k: np.stack([r[k] for r in self.rows]) for k in self.rows[0]}
 
+    def network_call_counts(self):
+        if self.frame != 300:
+            raise ValueError("complete policy sampling stream required")
+        method = getattr(self.policy, "network_call_counts", None)
+        return method() if callable(method) else dict(intention_network_calls=300)
+
 
 class RewardedBody:
     def __init__(self, body):
