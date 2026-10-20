@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--mode", choices=("zero", "probe", "reproduce"), required=True)
+    p.add_argument("--mode", choices=("zero", "shadow-zero", "probe", "reproduce"), required=True)
     for k in (
         "inputs",
         "core-source",
@@ -39,6 +39,7 @@ def main():
     p.add_argument("--producer-unit")
     p.add_argument("--part", type=int, choices=range(8))
     a = p.parse_args()
+    zero_mode = a.mode in ("zero", "shadow-zero")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
     from scripts.rsi_motion_portfolio_common import admit
@@ -98,7 +99,7 @@ def main():
         raise ValueError("original consumed near96 population differs")
     for f in (a.near_plan / "complete.json", a.near_plan / "courses.json"):
         pins[str(f)] = digest(f)
-    if a.mode == "zero":
+    if zero_mode:
         if a.part is not None or a.zero or a.producer:
             raise ValueError("zero admission is original nominal0 only")
         original = expanded_entry_courses()
@@ -155,12 +156,10 @@ def main():
         part=a.part,
         indices=[i.course_index for i in items],
         cases=[asdict(i) for i in items],
-        population="original40_nominal0"
-        if a.mode == "zero"
-        else "consumed_near96_fixed24_diagnostic",
+        population="original40_nominal0" if zero_mode else "consumed_near96_fixed24_diagnostic",
         near_review_hash=a.expected_near_review_hash,
         candidates_per_case=9,
-        maximum_native_steps=62000 if a.mode == "zero" else 31000 * len(items),
+        maximum_native_steps=62000 if zero_mode else 31000 * len(items),
         new_optimizer_steps=0,
         student_actor_executed=False,
         privileged_teacher_uses_bounded_futures=True,
@@ -193,7 +192,11 @@ def main():
         if affordance.contract_hash != stored["contract_hash"]:
             raise ValueError("historical prior contract changed")
         for item in items:
-            if a.mode == "zero":
+            if zero_mode:
+                from scripts.rsi_shadow_prefix_qualification import ShadowPrefixQualification
+
+                first_shadow = ShadowPrefixQualification() if a.mode == "shadow-zero" else None
+                second_shadow = ShadowPrefixQualification() if a.mode == "shadow-zero" else None
                 first_root, second_root = a.output / "first", a.output / "second"
                 first_root.mkdir()
                 second_root.mkdir()
@@ -205,6 +208,7 @@ def main():
                     affordance,
                     evidence,
                     runtime,
+                    prefix_motor_provider=first_shadow,
                 )
                 compare_case(
                     first_root / f"course{item.course_index:02d}",
@@ -220,6 +224,7 @@ def main():
                     affordance,
                     evidence,
                     runtime,
+                    prefix_motor_provider=second_shadow,
                 )
                 compare_case(
                     second_root / f"course{item.course_index:02d}",
@@ -228,6 +233,11 @@ def main():
                 )
                 charged = 2 * (first["forecast_native_steps"] + first["endpoint_native_steps"])
                 progress.append(dict(course=asdict(item), new_native_steps=charged))
+                if first_shadow is not None:
+                    progress[-1]["shadow_history_checks"] = [
+                        first_shadow.verify_closed(),
+                        second_shadow.verify_closed(),
+                    ]
             else:
                 row = run_course(a, item, model, poses, affordance, evidence, runtime)
                 if a.mode == "reproduce":
@@ -239,11 +249,14 @@ def main():
                 progress.append(row)
             write_once(a.output / f"progress{item.course_index:03d}.json", progress[-1])
         check_pins(pins)
-        if a.mode == "zero":
+        if zero_mode:
             result = dict(
-                status="NOMINAL_ZERO_TEACHER_NEURAL_NATIVE_REPRODUCED",
+                status="SHADOW_WARM20_TEACHER_NEURAL_NATIVE_REPRODUCED"
+                if a.mode == "shadow-zero"
+                else "NOMINAL_ZERO_TEACHER_NEURAL_NATIVE_REPRODUCED",
                 new_native_steps=sum(r["new_native_steps"] for r in progress),
                 all18_array_fields_byte_exact_to_original=True,
+                shadow_history_checks=progress[0].get("shadow_history_checks", []),
             )
         else:
             result = dict(

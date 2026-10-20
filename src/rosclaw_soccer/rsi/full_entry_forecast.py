@@ -187,16 +187,20 @@ def nominal_prefix20(
     affordance: SkillEntryAffordance,
     *,
     step_observer: Callable[[dict[str, np.ndarray]], None] | None = None,
+    motor_provider: Callable[[G1SonicNavigation, TeamMotorObservation], TeamMotorTarget]
+    | None = None,
 ) -> dict[str, np.ndarray]:
     if step_observer is not None and not callable(step_observer):
         raise ValueError("optional recording observer must be callable")
+    if motor_provider is not None and not callable(motor_provider):
+        raise ValueError("optional prefix motor provider must be callable")
     if body.next_frame != 0 or nav._next_frame != 0:
         raise ValueError("new continuous actor/body required for prefix")
     rows = []
     for frame in range(20):
         q, v = body.canonical()
         d = ball_entry_decision(q, v, frame=frame, affordance=affordance)
-        row = _tick(nav, body, _observation(nav, body, frame, d.command))
+        row = _tick(nav, body, _observation(nav, body, frame, d.command), motor_provider)
         row.update(
             entry_stage=np.array([0], dtype=np.int64),
             entry_command=np.asarray([d.command]),

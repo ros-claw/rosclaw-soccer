@@ -1,7 +1,9 @@
 """Fresh own-state nine-option teacher and paired native endpoints, research only."""
 
 
-def run_course(args, item, model, poses, affordance, evidence_hash, runtime_pins):
+def run_course(
+    args, item, model, poses, affordance, evidence_hash, runtime_pins, *, prefix_motor_provider=None
+):
     from dataclasses import asdict
 
     import numpy as np
@@ -61,7 +63,13 @@ def run_course(args, item, model, poses, affordance, evidence_hash, runtime_pins
             record_all_ball_contacts=True,
         )
         current = body
-        prefix = nominal_prefix20(nav, body, affordance, step_observer=current_rows.append)
+        prefix = nominal_prefix20(
+            nav,
+            body,
+            affordance,
+            step_observer=current_rows.append,
+            motor_provider=prefix_motor_provider,
+        )
         prefix_diagnostics = diagnose_entry_prefix(model, prefix)
         endpoint_steps = 200
         np.savez_compressed(folder / "own-prefix20.npz", **prefix)
