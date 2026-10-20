@@ -219,6 +219,13 @@ def main():
         hardware_authorized=False,
     )
     evidence = hash_json(declaration)
+    if a.mode == "zero":
+        # Preserve generated identity separately from the ACTUAL old reference
+        # binding used for numerical parity. Closed38fcdc18 evidence stays raw.
+        declaration["generated_declaration_evidence_hash"] = evidence
+        evidence = json.loads((old_cases[21].parent / "declaration.json").read_text())[
+            "teacher_evidence_hash"
+        ]
     if a.mode == "reproduce":
         evidence = json.loads((a.producer / "declaration.json").read_text())[
             "teacher_evidence_hash"
@@ -239,9 +246,6 @@ def main():
             with np.load(paths[0], allow_pickle=False) as z:
                 expected = {k: z[k].copy() for k in z.files}
             if a.mode == "zero":
-                old_evidence = json.loads((old_cases[i].parent / "declaration.json").read_text())[
-                    "teacher_evidence_hash"
-                ]
                 trials = []
                 for name in ("first", "second"):
                     trial = a.output / name
@@ -255,7 +259,7 @@ def main():
                         student,
                         muscle,
                         expected,
-                        old_evidence,
+                        evidence,
                         runtime,
                         option_protocol="zero_c_six",
                     )
