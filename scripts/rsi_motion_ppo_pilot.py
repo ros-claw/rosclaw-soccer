@@ -90,11 +90,14 @@ def main():
         root = a.candidate.parent
         receipt = json.loads((root / "complete.json").read_text())
         learner = json.loads((root / "declaration.json").read_text())
+        admitted = {
+            "NATIVE_EXPERIENCE_PPO_UPDATED_REQUIRES_EXAM": ("learn", 4),
+            "MOTION_MEMORY_CONSOLIDATED_REQUIRES_EXAM": ("consolidate", 3000),
+        }.get(receipt.get("status"))
         if (
-            receipt["source_head"] != head
-            or receipt["status"] != "NATIVE_EXPERIENCE_PPO_UPDATED_REQUIRES_EXAM"
-            or receipt["optimizer_steps"] != 4
-            or learner["mode"] != "learn"
+            admitted is None
+            or (learner["mode"], receipt["optimizer_steps"]) != admitted
+            or receipt["source_head"] != head
             or learner["base_weights_hash"] != tc["checkpoint_hash"]
             or learner["bank_hash"] != a.expected_bank_hash
         ):
@@ -171,7 +174,12 @@ def main():
     policy.base.load_state_dict(payload["state_dict"], strict=True)
     if a.candidate is not None:
         cp = torch.load(a.candidate, map_location="cpu", weights_only=True)
-        if cp["base_weights_hash"] != tc["checkpoint_hash"] or cp["source_head"] != head:
+        if (
+            cp["base_weights_hash"] != tc["checkpoint_hash"]
+            or cp["source_head"] != head
+            or cp["model_kind"]
+            not in ("motion_intention_ppo64", "motion_intention_consolidation64")
+        ):
             raise ValueError("candidate provenance differs")
         policy.load_state_dict(cp["state_dict"], strict=True)
     result = learn(a, policy, declaration) if a.mode == "learn" else episodes(a, policy, bd, pins)
