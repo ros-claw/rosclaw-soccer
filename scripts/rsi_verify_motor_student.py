@@ -267,6 +267,15 @@ def main():
         if len(training_paths) != 1:
             raise ValueError("one bound trained motor receipt required")
         tc = json.loads(training_paths[0].read_text())
+        from rosclaw_soccer.rsi.motor_training_protocol import checkpoint_step_pair
+
+        protocol = d.get("training_protocol", "bc3000")
+        initial_steps, final_steps = checkpoint_step_pair(protocol)
+        if (
+            tc.get("training_protocol", "bc3000") != protocol
+            or tc["optimizer_steps"] != final_steps
+        ):
+            raise ValueError("actual fixed training protocol differs")
         models = {}
         weight_hashes = {}
         for variant, h in (
@@ -278,8 +287,10 @@ def main():
                 raise ValueError("unique unchanged motor checkpoint required")
             payload = torch.load(paths[0], map_location="cpu", weights_only=True)
             if (
-                payload["optimizer_steps"] != (0 if variant == "initial" else 3000)
+                payload["optimizer_steps"]
+                != (initial_steps if variant == "initial" else final_steps)
                 or payload["seed"] != c["seed"]
+                or payload.get("training_protocol", "bc3000") != protocol
             ):
                 raise ValueError("seed/update checkpoint provenance differs")
             model = create_motor_student(hidden_size=128, action_limit=8.0)
@@ -372,6 +383,9 @@ def main():
                 status="ALL80_STUDENT_NN_AND_NATIVE_REPLAY_VERIFIED",
                 seed=c["seed"],
                 results=results,
+                training_protocol=protocol,
+                initial_checkpoint_optimizer_steps=initial_steps,
+                trained_checkpoint_optimizer_steps=final_steps,
                 additional_native_steps=total,
                 optimizer_updates=0,
                 promotion_authorized=False,

@@ -12,6 +12,8 @@ def main():
         parser.add_argument("--" + key, type=Path, required=True)
     for key in ("expected-head", "train-unit", "expected-training-hash", "expected-bank-hash"):
         parser.add_argument("--" + key, required=True)
+    parser.add_argument("--training-protocol", choices=("bc3000", "dagger4500"), default="bc3000")
+    parser.add_argument("--wait-for-training", action="store_true")
     args = parser.parse_args()
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if (
@@ -20,7 +22,13 @@ def main():
         or subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"])
     ):
         raise ValueError("clean sealed evaluation source and unused output required")
+    from rosclaw_soccer.rsi.motor_training_protocol import checkpoint_step_pair
+    from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
     from scripts.rsi_native_context_recovery_common import check_pins, digest
+
+    initial_steps, final_steps = checkpoint_step_pair(args.training_protocol)
+    if args.wait_for_training:
+        wait_for_terminal_collection(args.train_unit, wait=True)
 
     terminal = dict(
         line.split("=", 1)
@@ -53,9 +61,11 @@ def main():
     td = json.loads((args.train_root / "declaration.json").read_text())
     bank = json.loads((args.bank / "declaration.json").read_text())
     if (
-        trained["optimizer_steps"] != 3000
+        trained["optimizer_steps"] != final_steps
         or trained["bank_complete_hash"] != args.expected_bank_hash
         or trained["parameter_change_l2_squared"] <= 0
+        or trained.get("training_protocol", "bc3000") != args.training_protocol
+        or td.get("training_protocol", "bc3000") != args.training_protocol
     ):
         raise ValueError("actual positive optimizer updates on this bank required")
     pins = dict(td["input_file_hashes"])
@@ -118,12 +128,13 @@ def main():
             raise ValueError("checkpoint bytes differ")
         payload = torch.load(path, map_location="cpu", weights_only=True)
         if (
-            payload["optimizer_steps"] != (0 if variant == "initial" else 3000)
+            payload["optimizer_steps"] != (initial_steps if variant == "initial" else final_steps)
             or payload["seed"] != td["seed"]
             or payload["bank_hash"] != args.expected_bank_hash
             or payload["source_head"] != trained["source_head"]
             or payload["hidden_size"] != 128
             or payload["action_limit"] != 8
+            or payload.get("training_protocol", "bc3000") != args.training_protocol
         ):
             raise ValueError("motor checkpoint architecture/provenance differs")
         model = create_motor_student(
@@ -144,6 +155,10 @@ def main():
             bank_complete_hash=args.expected_bank_hash,
             training_complete_hash=args.expected_training_hash,
             seed=td["seed"],
+            training_protocol=args.training_protocol,
+            initial_checkpoint_optimizer_steps=initial_steps,
+            trained_checkpoint_optimizer_steps=final_steps,
+            initial_is_untrained_network=initial_steps == 0,
             prefix_foundation_frames=20,
             student_control_frames=280,
             role="first_touch",
