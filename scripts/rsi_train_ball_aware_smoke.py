@@ -57,6 +57,8 @@ def main():
 
     require_completed_stable_motion_smoke(replay)
     require_ball_aware_qualification(qual)
+    if qual.get("force_decoder") != "addressed" or not qual.get("decoder_proof_hash"):
+        raise ValueError("repeat-qualified addressed contact force required before new learning")
     if (
         qual["status"] != "BALL_AWARE_ABI_SENSOR_QUALIFICATION_NOT_LEARNED_SKILL"
         or qual["ball_aware_abi"] != BALL_AWARE_ABI
@@ -77,6 +79,7 @@ def main():
     for relative in (
         "scripts/rsi_mjlab_ball_aware_backend.py",
         "scripts/rsi_mjlab_ball_aware_rl.py",
+        "scripts/rsi_mjwarp_addressed_contact_force.py",
         "scripts/rsi_mjlab_prior_rl.py",
         "src/rosclaw_soccer/rsi/ball_aware_migration.py",
         "src/rosclaw_soccer/rsi/identity_kick_credit.py",
@@ -100,6 +103,7 @@ def main():
         a.output / "declaration.json",
         dict(
             source_head=a.expected_head,
+            force_decoder="addressed",
             input_file_hashes=pins,
             ball_aware_abi=BALL_AWARE_ABI,
             num_envs=32,
@@ -125,6 +129,10 @@ def main():
         import numpy as np
         import torch
 
+        from scripts.rsi_mjwarp_addressed_contact_force import install
+
+        install()
+
         from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
         from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
         from scripts.rsi_mjlab_motion_learning_smoke import changed_weight_names, cloned_tensors
@@ -145,6 +153,8 @@ def main():
         initial = torch.load(initialization, map_location="cpu", weights_only=True)
         if initial["ball_aware_abi"] != BALL_AWARE_ABI or not initial["fresh_optimizer_required"]:
             raise ValueError("explicit new architecture migration required")
+        if initial.get("force_decoder") != "addressed":
+            raise ValueError("initialization must bind the qualified force decoder")
         policy_config = next(
             Path(k) for k in pins if k.endswith("/policy/velocity/v0/params/deploy.yaml")
         )
@@ -268,6 +278,7 @@ def main():
             prior_configuration=settings,
             iteration=2,
             source_head=a.expected_head,
+            force_decoder="addressed",
             parent_checkpoint_hash=qual["checkpoint_hash"],
             optimizer_state_migrated=False,
             stable_prior_rehearsal=True,
@@ -290,6 +301,7 @@ def main():
             dict(
                 status="BALL_AWARE_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
                 source_head=a.expected_head,
+                force_decoder="addressed",
                 input_file_hashes=pins,
                 ball_aware_abi=BALL_AWARE_ABI,
                 actor_observation_dim=177,

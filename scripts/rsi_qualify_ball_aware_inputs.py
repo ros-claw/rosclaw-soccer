@@ -3,6 +3,7 @@
 import argparse
 import copy
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,10 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--force-decoder", choices=("stock", "addressed"), default="stock")
+    p.add_argument("--decoder-proof-root", type=Path)
+    p.add_argument("--decoder-proof-unit")
+    p.add_argument("--decoder-proof-hash")
     for key in ("parent-root", "export-root", "reference-root", "output"):
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("parent-unit", "parent-hash", "export-unit", "export-hash", "expected-head"):
@@ -44,6 +49,39 @@ def main():
         pins.update(d["input_file_hashes"])
         pins[str(path)] = expected
     parent, export = receipts
+    if a.force_decoder == "addressed":
+        if not all((a.decoder_proof_root, a.decoder_proof_unit, a.decoder_proof_hash)):
+            raise ValueError("addressed decoder requires immutable repeated native/GPU proof")
+        wait_for_terminal_collection(a.decoder_proof_unit)
+        proof_path = a.decoder_proof_root / "complete.json"
+        if digest(proof_path) != a.decoder_proof_hash:
+            raise ValueError("decoder proof receipt hash differs")
+        proof = json.loads(proof_path.read_text())
+        results = proof.get("results", [])
+        if (
+            proof.get("status") != "CONTACT_SENSOR_DIAGNOSTIC_NOT_QUALIFICATION"
+            or proof.get("force_decoder") != "addressed"
+            or proof.get("contact_sort") != "stock"
+            or proof.get("gpu_world_steps") != 480
+            or proof.get("native_steps") != 480
+            or len(results) != 6
+            or {(r["mode"], r["repeat"]) for r in results}
+            != {(m, r) for m in ("graph", "eager") for r in range(3)}
+            or not all(
+                r.get("calibration_passed") is True
+                and r.get("contact_addresses_outside_active_constraints") == 0
+                and math.isfinite(r["max_force_error_n"])
+                and r["max_force_error_n"] <= 2.0
+                for r in results
+            )
+        ):
+            raise ValueError("all six unchanged-threshold decoder fixtures must pass")
+        pins.update(proof["input_file_hashes"])
+        pins[str(proof_path)] = a.decoder_proof_hash
+        for r in results:
+            folder = a.decoder_proof_root / f"{r['mode']}-repeat{r['repeat']}"
+            pins[str(folder / "sensor-calibration.npz")] = r["source_raw_hash"]
+            pins[str(folder / "independent-force-decode.npz")] = r["decode_hash"]
     require_completed_stable_motion_course(parent)
     checkpoint = a.parent_root / f"learner-update{parent['iterations']}.pt"
     pins[str(checkpoint)] = parent["checkpoint_hash"]
@@ -56,6 +94,8 @@ def main():
         a.output / "declaration.json",
         dict(
             source_head=a.expected_head,
+            force_decoder=a.force_decoder,
+            decoder_proof_hash=a.decoder_proof_hash,
             input_file_hashes=pins,
             actor_abi="98+70+9=177",
             critic_abi="295+9=304",
@@ -90,6 +130,11 @@ def main():
         import mujoco
         import numpy as np
         import torch
+
+        if a.force_decoder == "addressed":
+            from scripts.rsi_mjwarp_addressed_contact_force import install
+
+            install()
 
         from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
         from rosclaw_soccer.rsi.ball_aware_inputs import BALL_AWARE_ABI, ball_goal9
@@ -254,6 +299,7 @@ def main():
             optimizer_state_migrated=False,
             optimizer_steps=0,
             fresh_optimizer_required=True,
+            force_decoder=a.force_decoder,
             source_head=a.expected_head,
             velocity_command_anatomical_point="pelvis",
             velocity_command_position_feedback_gain=1.0,
@@ -287,6 +333,8 @@ def main():
             dict(
                 status="BALL_AWARE_ABI_SENSOR_QUALIFICATION_NOT_LEARNED_SKILL",
                 source_head=a.expected_head,
+                force_decoder=a.force_decoder,
+                decoder_proof_hash=a.decoder_proof_hash,
                 input_file_hashes=pins,
                 ball_aware_abi=BALL_AWARE_ABI,
                 actor_observation_dim=177,
