@@ -1,4 +1,4 @@
-"""Bounded GPU physics + two real PPO updates; never football promotion proof."""
+"""Bounded GPU motion learning; a longer course requires a completed smoke."""
 
 import argparse
 import json
@@ -41,10 +41,32 @@ def main():
         "expected-sensor-hash",
     ):
         p.add_argument("--" + k, required=True)
+    p.add_argument("--mode", choices=("smoke", "course"), default="smoke")
+    p.add_argument("--num-envs", type=int, default=32)
+    p.add_argument("--iterations", type=int, default=2)
+    p.add_argument("--seed", type=int, default=501)
+    p.add_argument("--prerequisite-smoke", type=Path)
+    p.add_argument("--prerequisite-unit")
+    p.add_argument("--prerequisite-hash")
     a = p.parse_args()
+    from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
+        MotionLearningBudget,
+        require_completed_motion_smoke,
+    )
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
     from scripts.rsi_native_context_recovery_common import check_pins, digest
+
+    budget = MotionLearningBudget(a.mode, a.num_envs, a.iterations, a.seed)
+    prerequisite = None
+    if a.mode == "course":
+        if not all((a.prerequisite_smoke, a.prerequisite_unit, a.prerequisite_hash)):
+            raise ValueError("longer course requires hash-bound actual terminal smoke")
+        wait_for_terminal_collection(a.prerequisite_unit)
+        if digest(a.prerequisite_smoke / "complete.json") != a.prerequisite_hash:
+            raise ValueError("prerequisite receipt hash differs")
+        prerequisite = json.loads((a.prerequisite_smoke / "complete.json").read_text())
+        require_completed_motion_smoke(prerequisite)
 
     if (
         a.output.exists()
@@ -72,6 +94,8 @@ def main():
     ):
         raise ValueError("complete qualified data and pristine source reference required")
     pins = dict(review["input_file_hashes"])
+    if prerequisite is not None:
+        pins[str(a.prerequisite_smoke / "complete.json")] = a.prerequisite_hash
     pins[str(a.dataset_review / "complete.json")] = a.expected_dataset_hash
     pins.update(
         {
@@ -97,6 +121,15 @@ def main():
         name: version(name)
         for name in ("mjlab", "mujoco", "mujoco-warp", "warp-lang", "torch", "rsl-rl-lib", "numpy")
     }
+    if prerequisite is not None and (
+        packages != prerequisite["packages"]
+        or any(
+            prerequisite["input_file_hashes"].get(k) != v
+            for k, v in pins.items()
+            if k in review["input_file_hashes"] or "site-packages" in k
+        )
+    ):
+        raise ValueError("course must use smoke-qualified data and dependency source bytes")
     if any(
         packages[k].split("+")[0] != v
         for k, v in {
@@ -116,14 +149,15 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             packages=packages,
-            num_envs=32,
-            seed=501,
+            mode=budget.mode,
+            num_envs=budget.num_envs,
+            seed=budget.seed,
             physics_dt=0.002,
             decimation=10,
             screen_control_steps=8,
-            ppo_iterations=2,
+            ppo_iterations=budget.iterations,
             ppo_control_steps_per_iteration=24,
-            maximum_gpu_world_substeps=32 * 10 * (8 + 48),
+            maximum_gpu_world_substeps=budget.gpu_world_substeps,
             new_cpu_native_steps=0,
             new_policy_is_joint_position_with_pd_not_direct_torque=True,
             learner_from_scratch=True,
@@ -142,10 +176,10 @@ def main():
 
         if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
             raise ValueError("one explicitly isolated visible GPU required for first smoke")
-        random.seed(501)
-        np.random.seed(501)
-        torch.manual_seed(501)
-        torch.cuda.manual_seed_all(501)
+        random.seed(budget.seed)
+        np.random.seed(budget.seed)
+        torch.manual_seed(budget.seed)
+        torch.cuda.manual_seed_all(budget.seed)
         sys.path.insert(0, str(a.reference_root))
         from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
         from src.tasks.soccer.config.g1.rl_cfg import unitree_g1_soccer_ppo_runner_cfg
@@ -160,11 +194,13 @@ def main():
         )
 
         cfg = make_motion_training_cfg(
-            motion_dir=a.reference_root / "src/assets/soccer/motions/shooter", num_envs=32, seed=501
+            motion_dir=a.reference_root / "src/assets/soccer/motions/shooter",
+            num_envs=budget.num_envs,
+            seed=budget.seed,
         )
         cfg.sim.nan_guard.enabled = True
         env = ExplicitBoundaryMotionEnv(cfg=cfg, device="cuda:0", render_mode=None)
-        obs, _ = env.reset(seed=501)
+        obs, _ = env.reset(seed=budget.seed)
         motion = env.command_manager.get_term("motion")
         if tuple(name + ".npz" for name in motion.motion.motion_names) != TRAIN_MOTION_NAMES:
             raise ValueError("exact eight training sources required; development sources forbidden")
@@ -175,7 +211,7 @@ def main():
             raise ValueError("compiled ball must actually match declared dimensions")
         actor_shape = tuple(obs["actor"].shape)
         critic_shape = tuple(obs["critic"].shape)
-        if actor_shape != (32, 166) or critic_shape != (32, 295):
+        if actor_shape != (budget.num_envs, 166) or critic_shape != (budget.num_envs, 295):
             raise ValueError(f"explicit new observation ABI differs: {actor_shape}/{critic_shape}")
         rows = []
         initial_steps = env._sim_step_counter
@@ -184,7 +220,9 @@ def main():
             before_id = motion.motion_idx.clone()
             before_length = motion.motion_length.clone()
             before_q = env.sim.data.qpos.detach().cpu().numpy().copy()
-            obs, reward, terminated, truncated, _ = env.step(torch.zeros((32, 29), device="cuda:0"))
+            obs, reward, terminated, truncated, _ = env.step(
+                torch.zeros((budget.num_envs, 29), device="cuda:0")
+            )
             torch.cuda.synchronize()
             done = (terminated | truncated).clone()
             expected_phase = torch.minimum(before_phase + 1, before_length - 1)
@@ -194,6 +232,8 @@ def main():
             if (
                 any(not torch.isfinite(v).all() for v in obs.values())
                 or not torch.isfinite(reward).all()
+                or not torch.isfinite(env.sim.data.qpos).all()
+                or not torch.isfinite(env.sim.data.qvel).all()
             ):
                 raise ValueError("finite actual GPU observations and rewards required")
             rows.append(
@@ -216,7 +256,7 @@ def main():
             dict(
                 control_steps=8,
                 gpu_step_calls=80,
-                gpu_world_substeps=2560,
+                gpu_world_substeps=80 * budget.num_envs,
                 actor_shape=actor_shape,
                 critic_shape=critic_shape,
                 reset_boundaries_checked=True,
@@ -230,10 +270,10 @@ def main():
         agent_cfg = unitree_g1_soccer_ppo_runner_cfg()
         agent_cfg.logger = "tensorboard"
         agent_cfg.upload_model = False
-        agent_cfg.save_interval = 1
-        agent_cfg.max_iterations = 2
+        agent_cfg.save_interval = min(50, budget.iterations)
+        agent_cfg.max_iterations = budget.iterations
         agent_cfg.num_steps_per_env = 24
-        agent_cfg.seed = 501
+        agent_cfg.seed = budget.seed
         # This is a plumbing smoke, not a selected learning-rate/std sweep.
         wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
         runner = MjlabOnPolicyRunner(wrapped, asdict(agent_cfg), str(a.output / "rsl"), "cuda:0")
@@ -257,8 +297,8 @@ def main():
             opt.step = counted_step
             optimizer_counts.append(counts)
         before = env._sim_step_counter
-        attempted_optimization = 2
-        runner.learn(num_learning_iterations=2, init_at_random_ep_len=False)
+        attempted_optimization = budget.iterations
+        runner.learn(num_learning_iterations=budget.iterations, init_at_random_ep_len=False)
         torch.cuda.synchronize()
         final_state = runner.alg.save()
         actor_changes = changed_weight_names(
@@ -273,14 +313,16 @@ def main():
             or not all(
                 c["completed"] > 0 and c["completed"] == c["attempted"] for c in optimizer_counts
             )
-            or env._sim_step_counter - before != 480
+            or env._sim_step_counter - before != budget.training_control_steps * 10
         ):
             raise ValueError(
-                "real actor AND critic weight changes and 48x10 actual GPU steps required"
+                "real actor AND critic weight changes and declared GPU step budget required"
             )
         checkpoint = dict(
             algorithm=final_state,
-            iteration=2,
+            initial_actor_state_dict=actor0,
+            initial_critic_state_dict=critic0,
+            iteration=budget.iterations,
             torch_rng=torch.get_rng_state(),
             cuda_rng=torch.cuda.get_rng_state_all(),
             python_rng=random.getstate(),
@@ -297,7 +339,7 @@ def main():
             training_source_names=list(TRAIN_MOTION_NAMES),
             development_source_names=list(DEVELOPMENT_MOTION_NAMES),
         )
-        path = a.output / "learner-update2.pt"
+        path = a.output / f"learner-update{budget.iterations}.pt"
         torch.save(checkpoint, path)
         loaded = torch.load(path, map_location="cpu", weights_only=True)
         for part in ("actor_state_dict", "critic_state_dict"):
@@ -310,13 +352,21 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="MJLAB_MOTION_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED",
+                status=(
+                    "MJLAB_MOTION_GPU_PPO_SMOKE_NOT_SKILL_QUALIFIED"
+                    if budget.mode == "smoke"
+                    else "MJLAB_MOTION_GPU_PPO_COURSE_NOT_SKILL_QUALIFIED"
+                ),
                 source_head=a.expected_head,
+                mode=budget.mode,
+                num_envs=budget.num_envs,
+                iterations=budget.iterations,
+                seed=budget.seed,
                 input_file_hashes=pins,
                 packages=packages,
                 gpu_step_calls=env._sim_step_counter - initial_steps,
-                gpu_world_substeps=(env._sim_step_counter - initial_steps) * 32,
-                policy_control_samples=48 * 32,
+                gpu_world_substeps=(env._sim_step_counter - initial_steps) * budget.num_envs,
+                policy_control_samples=budget.training_control_steps * budget.num_envs,
                 new_optimizer_steps=sum(c["completed"] for c in optimizer_counts),
                 optimizer_counts=optimizer_counts,
                 changed_actor_weights=actor_changes,
