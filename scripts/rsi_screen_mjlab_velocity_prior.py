@@ -153,6 +153,12 @@ def main():
             qpos = env.sim.data.qpos.cpu().numpy().copy()
             qvel = env.sim.data.qvel.cpu().numpy().copy()
             prefix = obs["actor"][:, :98].cpu().numpy().copy()
+            cached_gyro_before = (
+                env.command_manager.get_term("motion")
+                .robot.data.root_link_ang_vel_b.cpu()
+                .numpy()
+                .copy()
+            )
             episode_frames = env.episode_length_buf.cpu().numpy().copy()
             if tuple(obs["actor"].shape) != (8, 168) or (
                 not a.reference_pilot and np.any(episode_frames != frame)
@@ -239,10 +245,7 @@ def main():
                     truncated=truncated.cpu().numpy().copy(),
                     reference_exhausted=exhausted,
                     episode_frame=episode_frames,
-                    cached_gyro=env.command_manager.get_term("motion")
-                    .robot.data.root_link_ang_vel_b.cpu()
-                    .numpy()
-                    .copy(),
+                    cached_gyro=cached_gyro_before,
                 )
             )
             previous_actions[done] = 0
