@@ -24,11 +24,19 @@ def arguments():
     p.add_argument("--candidate", type=Path)
     p.add_argument("--expected-candidate-hash")
     p.add_argument("--candidate-unit")
+    p.add_argument("--expected-collection-source")
+    p.add_argument(
+        "--credit-assignment", choices=("per_tick", "contact_return"), default="per_tick"
+    )
     return p.parse_args()
 
 
 def main():
     a = arguments()
+    if a.mode != "learn" and (
+        a.credit_assignment != "per_tick" or a.expected_collection_source is not None
+    ):
+        raise ValueError("credit relabeling and collection-source override are learner-only")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if (
         head != a.expected_head
@@ -122,6 +130,8 @@ def main():
         seed=a.seed,
         candidate_hash=a.expected_candidate_hash,
         candidate_unit=a.candidate_unit,
+        expected_collection_source=a.expected_collection_source or head,
+        credit_assignment=a.credit_assignment,
         collection=[str(r) for r in a.collection],
         collection_units=a.collection_unit,
         prefix_frames=20,
@@ -137,6 +147,14 @@ def main():
         promotion_authorized=False,
     )
     write_once(a.output / "declaration.json", declaration)
+    if a.mode == "learn":
+        from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
+
+        if not a.collection or len(a.collection) != len(a.collection_unit):
+            raise ValueError("explicit paired producer units required")
+        # Wait before importing Torch/allocating models, not just before gradients.
+        for unit in a.collection_unit:
+            wait_for_terminal_collection(unit, wait=True)
     import torch
 
     from rosclaw_soccer.rsi.motion_actor_critic import create_motion_actor_critic
@@ -328,7 +346,7 @@ def learn(a, policy, declaration):
         d = json.loads((root / "declaration.json").read_text())
         c = json.loads((root / "complete.json").read_text())
         if (
-            d["source_head"] != a.expected_head
+            d["source_head"] != (a.expected_collection_source or a.expected_head)
             or d["mode"] != "collect"
             or d["bank_hash"] != a.expected_bank_hash
             or d["base_weights_hash"] != declaration["base_weights_hash"]
@@ -336,6 +354,29 @@ def learn(a, policy, declaration):
             or [r["course_index"] for r in c["results"]] != d["indices"]
         ):
             raise ValueError("same policy/source and fully replayed collection required")
+        check_pins(d["input_file_hashes"])
+        # New learner/relabeling code may consume old on-policy experience only
+        # if every pre-existing actor/physics/helper stays byte-identical.
+        sources = [
+            Path(k).parent.parent
+            for k in d["input_file_hashes"]
+            if k.endswith("/scripts/rsi_motion_ppo_pilot.py")
+        ]
+        if (
+            len(sources) != 1
+            or subprocess.check_output(
+                ["git", "-C", str(sources[0]), "rev-parse", "HEAD"], text=True
+            ).strip()
+            != d["source_head"]
+        ):
+            raise ValueError("one exact frozen on-policy producer source required")
+        for folder in ("src", "scripts"):
+            for original in (sources[0] / folder).rglob("*.py"):
+                relative = original.relative_to(sources[0])
+                if str(relative) != "scripts/rsi_motion_ppo_pilot.py" and digest(
+                    Path.cwd() / relative
+                ) != digest(original):
+                    raise ValueError("on-policy actor/physics/helper changed: " + str(relative))
         data_pins.update({str(f): digest(f) for f in root.rglob("*") if f.is_file()})
         for row in c["results"]:
             i = row["course_index"]
@@ -353,6 +394,22 @@ def learn(a, policy, declaration):
                 x, values = z["student_features"].copy(), z["value_estimate"].copy()
             with np.load(folder / "sampling.npz", allow_pickle=False) as z:
                 raw, lp, rewards = (z[k].copy() for k in ("raw", "log_prob", "rewards"))
+            if a.credit_assignment == "contact_return":
+                from rosclaw_soccer.rsi.contact_credit import contact_return_credit, credit_audit
+
+                before_rewards = rewards.copy()
+                frame = row["score"]["first_foot_contact_global_frame"]
+                rewards = contact_return_credit(
+                    rewards,
+                    row["reward_terms"],
+                    first_contact_frame=frame,
+                    qualified=row["score"]["qualified"],
+                    causal=row["prefix_diagnostics"]["post_boundary_control_can_cause_first_touch"],
+                )
+                write_once(
+                    a.output / f"credit-course{i:02d}.json",
+                    credit_audit(before_rewards, rewards, frame),
+                )
             sequences.append((x, raw, lp, values, rewards))
             all_indices.append(i)
     if len(all_indices) != len(set(all_indices)):
