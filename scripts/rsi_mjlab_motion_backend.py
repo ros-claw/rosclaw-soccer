@@ -5,10 +5,12 @@ external reference source. No deployment/SDK code is imported. Simulator-only.
 """
 
 from dataclasses import dataclass, fields, replace
+from pathlib import Path
 
 import mujoco
 import torch
 from mjlab.entity import EntityCfg
+from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import ContactMatch
@@ -19,6 +21,8 @@ from src.tasks.soccer.mdp.shooter_commands import (
     MultiMotionSoccerCommandCfg,
 )
 from src.tasks.soccer.mdp.shooter_obs import motion_anchor_ori_b, motion_anchor_pos_b
+
+from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_GLOB, motion_names_for_pattern
 
 
 class ExplicitBoundaryMotionCommand(MultiMotionSoccerCommand):
@@ -39,7 +43,10 @@ class ExplicitBoundaryMotionCommand(MultiMotionSoccerCommand):
             raise ValueError("fixed default-offset action codec required")
         # Undo the template's sampled-pose action offset. Future inference must
         # use the SAME canonical offset as training, not a hidden reset pose.
-        action._offset[env_ids] = self.robot.data.default_joint_pos[env_ids]
+        defaults = self.robot.data.default_joint_pos
+        if defaults is None:
+            raise ValueError("canonical action defaults required")
+        action._offset[env_ids] = defaults[env_ids]
 
     def _update_command(self):
         self.kick_contact_tracker.begin_step()
@@ -91,7 +98,19 @@ def standard_ball_spec():
     )
 
 
-def make_motion_training_cfg(*, motion_dir, num_envs, seed):
+class ExplicitBoundaryMotionEnv(ManagerBasedRlEnv):
+    def reset(self, **kwargs):
+        _, extras = super().reset(**kwargs)
+        # Template reset computes relative caches before the simulator forward.
+        # Refresh caches AFTER the base reset's forward, without touching bodies
+        # or adding a second history sample. Per-step reset is followed by the
+        # normal command-manager compute, which already refreshes these caches.
+        self.command_manager.get_term("motion")._compute_relative_transforms()
+        self.obs_buf = self.observation_manager.compute(update_history=False)
+        return self.obs_buf, extras
+
+
+def make_motion_training_cfg(*, motion_dir, num_envs, seed, motion_glob=TRAIN_MOTION_GLOB):
     if (
         type(num_envs) is not int
         or not 1 <= num_envs <= 4096
@@ -99,6 +118,9 @@ def make_motion_training_cfg(*, motion_dir, num_envs, seed):
         or not 0 <= seed < 2**31
     ):
         raise ValueError("bounded explicit simulation batch and seed required")
+    expected = motion_names_for_pattern(motion_glob)
+    if tuple(p.name for p in sorted(Path(motion_dir).glob(motion_glob))) != expected:
+        raise ValueError("exact declared source split required before simulator allocation")
     cfg = unitree_g1_stage1_env_cfg(play=False)
     cfg.scene.num_envs = num_envs
     cfg.seed = seed
@@ -108,6 +130,7 @@ def make_motion_training_cfg(*, motion_dir, num_envs, seed):
     values = {f.name: getattr(original, f.name) for f in fields(original)}
     command = ExplicitBoundaryMotionCfg(**values)
     command.motion_dir = str(motion_dir)
+    command.motion_glob = motion_glob
     command.motion_origin_offset = (0.0, 0.0, 0.0)
     command.motion_yaw_offset = 0.0
     cfg.commands["motion"] = command
@@ -125,6 +148,9 @@ def make_motion_training_cfg(*, motion_dir, num_envs, seed):
         func=motion_anchor_ori_b, params={"command_name": "motion"}
     )
     actor.terms["reference_anchor_linear_velocity_body"] = ObservationTermCfg(
+        func=reference_anchor_linear_velocity_body, params={"command_name": "motion"}
+    )
+    cfg.observations["critic"].terms["reference_anchor_linear_velocity_body"] = ObservationTermCfg(
         func=reference_anchor_linear_velocity_body, params={"command_name": "motion"}
     )
     cfg.scene.entities["ball"] = EntityCfg(
