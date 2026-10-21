@@ -131,8 +131,7 @@ def main():
     result.update(
         schema="soccer.rsi.native_residual_three_seed_decision.v1",
         diagnostic_ball_outcome=(
-            "observed1.2s,stable,no nonfoot>1N,goalprogress>=1m,"
-            "lateral<=.3progress; NOT formal52"
+            "observed1.2s,stable,no nonfoot>1N,goalprogress>=1m,lateral<=.3progress; NOT formal52"
         ),
         raw_trajectories_audited=trajectories,
         input_file_hashes=pins,

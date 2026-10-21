@@ -32,7 +32,7 @@ def worsens_target_range(base: np.ndarray, target: np.ndarray, bounds: np.ndarra
     ):
         raise ValueError("finite HG29 target and ordered range required")
 
-    def excess(value):
-        return np.maximum(bounds[:, 0] - value, 0) + np.maximum(value - bounds[:, 1], 0)
+    def excess(value: np.ndarray) -> np.ndarray:
+        return np.asarray(np.maximum(bounds[:, 0] - value, 0) + np.maximum(value - bounds[:, 1], 0))
 
     return bool(np.any(excess(target) > excess(base)))
