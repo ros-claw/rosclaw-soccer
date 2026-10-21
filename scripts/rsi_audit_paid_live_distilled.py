@@ -30,8 +30,15 @@ def main():
     ):
         raise ValueError("exact closed exam/frozen source and unused output required")
     r, d = json.loads(rp.read_text()), json.loads(dp.read_text())
-    if r["status"] != "PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED" or len(r["candidates"]) != 4:
-        raise ValueError("completed all-four-candidate CPU exam required")
+    indices = d.get("exam_candidate_indices", list(range(4)))
+    if (
+        r["status"] != "PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED"
+        or [x["candidate"] for x in r["candidates"]] != indices
+        or not indices
+        or len(set(indices)) != len(indices)
+        or any(i not in range(4) for i in indices)
+    ):
+        raise ValueError("complete declared CPU candidate set required")
     pins = {**r["input_file_hashes"], str(rp): a.hash, str(dp): digest(dp)}
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
@@ -151,12 +158,14 @@ def main():
         ):
             raise ValueError("actual physical terminal state/time differs")
 
-    def isolated(rows, bank, repeats):
+    def isolated(rows, bank, repeats, prior_rows=None):
         if len(rows) != 16 or len(bank) != 16:
             raise ValueError("complete16cases required")
         checks = []
-        for row, case in zip(rows, bank, strict=True):
+        for i, (row, case) in enumerate(zip(rows, bank, strict=True)):
             z, checked = audit_row(row, case, np.zeros(29, np.float32))
+            if prior_rows is not None:
+                same(z, read(prior_rows[i]))
             checks.append(checked)
             if repeats:
                 other = dict(
@@ -281,10 +290,20 @@ def main():
         ]
         summaries = []
         for candidate in r["candidates"]:
+            contextual = d.get("entry_controller", "candidate") == "qualified-prior"
+            if candidate.get("entry_controller", "candidate") != d.get(
+                "entry_controller", "candidate"
+            ):
+                raise ValueError("declared motor-context routing differs")
             iso = {}
             for key, bank in (("old16", d["old_cases"]), ("dev16", d["DEV_cases"])):
                 section = candidate["isolated"][key]
-                checks = isolated(section["results"], bank, True)
+                checks = isolated(
+                    section["results"],
+                    bank,
+                    True,
+                    r["baseline_isolated"][key] if contextual else None,
+                )
                 iso[key] = dict(
                     quality=sum(x["quality"] for x in checks),
                     stable=sum(not x["body_failed"] for x in checks),
@@ -298,7 +317,17 @@ def main():
                     raise ValueError("isolated statistics differ")
             section = candidate["continuous"]
             checked = []
-            for row, case in zip(section["results"], d["old_cases"], strict=True):
+            for i, (row, case) in enumerate(zip(section["results"], d["old_cases"], strict=True)):
+                if contextual:
+                    actual = next(
+                        x for x in row["artifacts"] if Path(x["raw_path"]).name == "first.npz"
+                    )
+                    expected = next(
+                        x
+                        for x in r["baseline_continuous"][i]["artifacts"]
+                        if Path(x["raw_path"]).name == "first.npz"
+                    )
+                    same(read(actual), read(expected))
                 checked.append(world(row, case, row["artifacts"]))
                 world(row, case, row["repeat_artifacts"])
                 for x, y in zip(row["artifacts"], row["repeat_artifacts"], strict=True):

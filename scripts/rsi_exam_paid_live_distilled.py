@@ -1,8 +1,9 @@
 """CPU neural-only old/DEV and full two-kick world exams of all four models.
 
-The candidate controls BOTH first and second kicks; body states are not reset
-at the handoff or borrowed from v0. Trainer ball returns are explicit practice
-fixtures, not claimed autonomous passes or team games.
+By default the candidate controls BOTH kicks. A separate, explicit contextual
+mode preserves the qualified initial-skill actor and uses the learned actor
+only for live-successor skills. This is not a case-ID winner lookup. Neither
+mode resets the body at handoff. Ball returns are practice, not a team game.
 """
 
 import argparse
@@ -10,6 +11,16 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
+
+
+def select_entry_actor(mode: str, candidate: Any, prior: Any) -> Any:
+    """Declared skill-context routing; no case/foot/goal/outcome is an input."""
+    if mode == "candidate":
+        return candidate
+    if mode == "qualified-prior":
+        return prior
+    raise ValueError("unknown initial motor context")
 
 
 def main():
@@ -23,6 +34,10 @@ def main():
     p.add_argument("--live-teacher-hash", required=True)
     p.add_argument("--base-root", type=Path, required=True)
     p.add_argument("--candidate", nargs=2, action="append", required=True)
+    p.add_argument(
+        "--entry-controller", choices=("candidate", "qualified-prior"), default="candidate"
+    )
+    p.add_argument("--candidate-index", type=int, choices=range(4))
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -83,7 +98,19 @@ def main():
             DEV_cases=declaration["dev_cases"],
             candidates=[str(x[0]) for x in candidates],
             independent_repeats=2,
-            candidate_owns_both_kicks=True,
+            candidate_owns_both_kicks=a.entry_controller == "candidate",
+            single_recurrent_actor=a.entry_controller == "candidate",
+            learned_expert_context_switch=a.entry_controller == "qualified-prior",
+            entry_controller=a.entry_controller,
+            isolated_controller=a.entry_controller,
+            exam_candidate_indices=list(range(4))
+            if a.candidate_index is None
+            else [a.candidate_index],
+            context_routing=(
+                "one learned candidate for all skills"
+                if a.entry_controller == "candidate"
+                else "frozen initial skill; learned live successor; no case-ID routing"
+            ),
             robot_resets_per_world=1,
             reference_and_h_c_reset_explicit=True,
             previous_executed_action_always_carried=True,
@@ -198,11 +225,12 @@ def main():
         def world(i, actor, folder, baseline=False):
             folder.mkdir()
             ep = bench.make(cases[i])
-            raw, first = bench.collect_current(ep, actor)
+            entry_actor = select_entry_actor(a.entry_controller, actor, baseline_actor)
+            raw, first = bench.collect_current(ep, entry_actor)
             verify_neural(raw)
             artifacts = [save(folder / "first.npz", raw)]
             first.update(artifacts[-1])
-            if baseline:
+            if baseline or a.entry_controller == "qualified-prior":
                 reference = prior["candidates"][0]["results"]["old16"]["results"][i]
                 with np.load(a.prior_exam_root / reference["raw_path"], allow_pickle=False) as z:
                     same(raw, {k: z[k] for k in z.files})
@@ -318,6 +346,7 @@ def main():
 
         def exam(index):
             actor = actors[index]
+            initial_actor = select_entry_actor(a.entry_controller, actor, baseline_actor)
             folder = a.output / f"candidate{index}"
             folder.mkdir()
             isolated_results = {}
@@ -326,8 +355,8 @@ def main():
                 target.mkdir()
                 rows = []
                 for i, case in enumerate(bank):
-                    raw, row = isolated(case, actor, target / f"case{i}-repeat0.npz")
-                    other, again = isolated(case, actor, target / f"case{i}-repeat1.npz")
+                    raw, row = isolated(case, initial_actor, target / f"case{i}-repeat0.npz")
+                    other, again = isolated(case, initial_actor, target / f"case{i}-repeat1.npz")
                     same(raw, other)
                     row["independent_repeat_raw_hash"] = again["raw_hash"]
                     rows.append(row)
@@ -384,6 +413,15 @@ def main():
             full_skill = research_gain and second_quality >= 12 and stable == 16
             output = dict(
                 candidate=index,
+                entry_controller=a.entry_controller,
+                isolated_controller=a.entry_controller,
+                live_successor_controller="candidate",
+                entry_checkpoint_hash=(
+                    base["final_checkpoint_hash"]
+                    if a.entry_controller == "qualified-prior"
+                    else candidates[index][2]["final_checkpoint_hash"]
+                ),
+                single_recurrent_actor=a.entry_controller == "candidate",
                 training_receipt_hash=candidates[index][1],
                 checkpoint_hash=candidates[index][2]["final_checkpoint_hash"],
                 isolated=isolated_results,
@@ -424,7 +462,8 @@ def main():
             return output
 
         with ThreadPoolExecutor(max_workers=4) as pool:
-            results = list(pool.map(exam, range(4)))
+            indices = list(range(4)) if a.candidate_index is None else [a.candidate_index]
+            results = list(pool.map(exam, indices))
         check_pins(pins)
         write_once(
             a.output / "complete.json",
@@ -434,6 +473,7 @@ def main():
                 baseline_isolated=old_baselines,
                 baseline_continuous=continuous_baseline,
                 candidates=results,
+                entry_controller=a.entry_controller,
                 actual_native_steps=bench.native_steps,
                 actual_neural_rows=bench.neural_rows,
                 optimizer_updates=0,
