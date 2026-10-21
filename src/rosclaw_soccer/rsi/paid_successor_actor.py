@@ -43,7 +43,14 @@ def sequence_config(variant: int) -> dict[str, Any]:
     )
 
 
-def validate_successor_state(state, receipt, initial, *, declaration_hash, scene_hash):
+def validate_successor_state(
+    state: dict[str, Any],
+    receipt: dict[str, Any],
+    initial: dict[str, torch.Tensor],
+    *,
+    declaration_hash: str,
+    scene_hash: str,
+) -> None:
     config = sequence_config(state.get("config", {}).get("variant"))
     counts = dict(first_forward_rows=975360, second_forward_rows=975360, optimizer_updates=1024)
     if (
@@ -139,7 +146,7 @@ def load_successor_actor(
     training_receipt_hash: str,
     scene_hash: str,
 ) -> tuple[PaidTrainableActor, dict[str, Any]]:
-    def digest(path):
+    def digest(path: Path) -> str:
         if not path.is_file() or path.is_symlink() or path.stat().st_size > 64 * 1024 * 1024:
             raise ValueError("bounded ordinary source checkpoint/receipt required")
         return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
@@ -166,7 +173,7 @@ def load_successor_actor(
         raise ValueError("exact complete-world declaration required")
     pins = receipt["input_file_hashes"]
 
-    def unique(key):
+    def unique(key: str) -> Path:
         paths = [Path(p) for p, h in pins.items() if h == state.get(key)]
         if len(paths) != 1 or digest(paths[0]) != state[key]:
             raise ValueError("one exact source-bound base artifact required")

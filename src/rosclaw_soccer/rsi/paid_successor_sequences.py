@@ -45,7 +45,9 @@ def paired_arrays(first: Any, second: Any) -> dict[str, np.ndarray]:
     )
 
 
-def paired_forward(model, obs, boundary: int, *, carry: bool):
+def paired_forward(
+    model: Any, obs: torch.Tensor, boundary: int, *, carry: bool
+) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
     """Private h/c is continuous only in the explicitly trained carry protocol.
 
     Held reference tails and the ball drop have no actor observations in these
