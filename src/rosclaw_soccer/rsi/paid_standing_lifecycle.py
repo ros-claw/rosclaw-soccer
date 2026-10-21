@@ -20,6 +20,7 @@ def run_standing_lifecycle(
     variant: int,
     skills: int,
     store: Callable[[str, dict[str, np.ndarray]], dict[str, Any]],
+    record_initial: bool = False,
 ) -> dict[str, Any]:
     """Variants: fixed-target/R2, neural-carry/R2, neural-carry/R6 successor.
 
@@ -32,12 +33,14 @@ def run_standing_lifecycle(
         or variant not in (0, 1, 2)
         or type(skills) is not int
         or skills not in (1, 3)
+        or type(record_initial) is not bool
     ):
         raise ValueError("predeclared lifecycle variant and one/three skills required")
     source = case["source"]
     if ("left" in source) == ("right" in source):
         raise ValueError("one admitted reference foot required")
     ep = bench.make(case)
+    initial = store("world-initial", snapshot(ep.env.data)) if record_initial else None
     start_native, start_neural = bench.native_steps, bench.neural_rows
     kicks: list[dict[str, Any]] = []
     stands: list[dict[str, Any]] = []
@@ -171,6 +174,7 @@ def run_standing_lifecycle(
     ):
         raise ValueError("one continuous body/clock/native accounting required")
     return dict(
+        **(dict(initial=initial) if record_initial else {}),
         status=status,
         kicks=kicks,
         stands=stands,

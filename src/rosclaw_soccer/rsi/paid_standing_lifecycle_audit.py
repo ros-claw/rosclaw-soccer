@@ -91,6 +91,10 @@ def audit_standing_lifecycle(
             raise ValueError("phase record does not name its own raw data")
         return value
 
+    if "initial" in world:
+        entry = block("world-initial", world["initial"])
+        require_integration_fields(entry)
+
     for k in range(skills):
         if k >= len(world["kicks"]) or world["kicks"][k]["index"] != k:
             raise ValueError("actual ordered kick list required")

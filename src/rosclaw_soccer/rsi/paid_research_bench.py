@@ -65,6 +65,8 @@ class PaidResearchBench:
             self.counters.append(ep.work)
         quat = self.clips[name].body_quat_w[0, 0].astype(np.float64)
         if "ball_local" in case:
+            if "velocity_world_initial" in case:
+                raise ValueError("world velocity cannot silently mix with local-frame case")
             ball = self.quat_apply(quat, np.r_[case["ball_local"], 0.0])
             ball[2] = 0.11
             velocity = self.quat_apply(quat, np.r_[case["velocity_local"], 0.0])[:2]
@@ -72,10 +74,19 @@ class PaidResearchBench:
             goal[2] = 0.11
         else:
             ball, goal = np.array(case["ball_world_initial"]), np.array(case["goal_world"])
-            local_velocity = (
-                [0, 0] if case["case"] % 2 == 0 else [-0.2, 0.1 if "left" in name else -0.1]
-            )
-            velocity = self.quat_apply(quat, np.r_[local_velocity, 0.0])[:2]
+            if "velocity_world_initial" in case:
+                velocity = np.asarray(case["velocity_world_initial"], dtype=np.float64)
+                if (
+                    velocity.shape != (2,)
+                    or not np.isfinite(velocity).all()
+                    or np.linalg.norm(velocity) > 0.6
+                ):
+                    raise ValueError("finite explicitly bounded world velocity required")
+            else:
+                local_velocity = (
+                    [0, 0] if case["case"] % 2 == 0 else [-0.2, 0.1 if "left" in name else -0.1]
+                )
+                velocity = self.quat_apply(quat, np.r_[local_velocity, 0.0])[:2]
         ep.reset(ball=ball, velocity=velocity, goal=goal)
         return ep
 
