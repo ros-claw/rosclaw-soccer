@@ -25,26 +25,48 @@ def validate_live_state(
 ) -> None:
     config = state.get("config", {})
     variant = config.get("variant")
-    counts = dict(
-        optimizer_updates=768, teacher_forward_rows=2898 * 256, rehearsal_forward_rows=3810 * 256
+    if type(variant) is not int or variant not in range(4):
+        raise ValueError("one exact declared training variant required")
+    v2 = state.get("schema") == "soccer.paid_live_distilled.v2"
+    protocol_ok = (
+        state.get("schema") == "soccer.paid_live_distilled.v1"
+        and config.get("seed") == 20261022 + (variant if variant < 3 else 0)
+        and config.get("rehearsal") == (1.0 if variant < 3 else 3.0)
+        and config.get("teacher_episodes") == 12
+        and config.get("unique_teacher_neural_rows") == 2898
+        and "curriculum" not in config
+        and "live_anchor_episodes" not in config
     )
+    if v2:
+        protocol_ok = (
+            config.get("curriculum") == "protected-live-v2"
+            and config.get("seed") == 20261025 + (variant if variant < 3 else 0)
+            and config.get("rehearsal") == 3.0
+            and config.get("live_rehearsal") == (3.0 if variant < 3 else 1.0)
+            and config.get("teacher_episodes") == 9
+            and config.get("live_anchor_episodes") == 5
+            and config.get("unique_teacher_neural_rows") == 2159
+            and config.get("unique_live_anchor_neural_rows") == 1201
+            and config.get("live_anchor_minibatch_sizes") == [2, 2, 1]
+        )
+    counts = dict(
+        optimizer_updates=768,
+        teacher_forward_rows=(2159 if v2 else 2898) * 256,
+        rehearsal_forward_rows=3810 * 256,
+    )
+    if v2:
+        counts["live_anchor_forward_rows"] = 1201 * 256
     if (
-        state.get("schema") != "soccer.paid_live_distilled.v1"
+        not protocol_ok
         or state.get("epoch") != 256
         or receipt.get("status") != "PAID_LIVE_DISTILLATION_TRAINED_NOT_PHYSICALLY_EXAMINED"
         or receipt.get("config") != config
         or config.get("epochs") != 256
-        or type(variant) is not int
-        or variant not in range(4)
-        or config.get("seed") != 20261022 + (variant if variant < 3 else 0)
         or config.get("lr") != 0.0001
-        or config.get("rehearsal") != (1.0 if variant < 3 else 3.0)
         or config.get("freeze_rnn") is not False
-        or config.get("teacher_episodes") != 12
         or config.get("rehearsal_episodes") != 16
         or config.get("exam_continuous_cases") != 16
         or config.get("DEV_episodes_used") != 0
-        or config.get("unique_teacher_neural_rows") != 2898
         or config.get("unique_rehearsal_neural_rows") != 3810
         or config.get("full_episode_BPTT") is not True
         or config.get("teacher_hidden_states_not_inputs") is not True
@@ -64,7 +86,7 @@ def validate_live_state(
         or receipt.get("native_steps") != 0
         or receipt.get("CPU_neural_only_full_sequence_exam_required") is not True
     ):
-        raise ValueError("exact completed live12/rehearsal16 research protocol required")
+        raise ValueError("exact completed versioned live research protocol required")
     proofs = set(receipt.get("input_file_hashes", {}).values())
     if any(
         state.get(key) not in proofs
@@ -148,11 +170,15 @@ def load_live_distilled_actor(
     dp = training_receipt.parent / "declaration.json"
     dh = digest(dp)
     declaration = json.loads(dp.read_text())
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    if not isinstance(state, dict):
+        raise ValueError("safe typed live-model checkpoint required")
+    v2 = state.get("schema") == "soccer.paid_live_distilled.v2"
     if (
         declaration.get("config") != receipt.get("config")
         or declaration.get("input_file_hashes") != receipt.get("input_file_hashes")
         or [x["case"] for x in declaration.get("expert", [])]
-        != [0, 1, 2, 3, 4, 5, 6, 8, 9, 12, 13, 14]
+        != ([0, 1, 2, 3, 5, 6, 8, 9, 14] if v2 else [0, 1, 2, 3, 4, 5, 6, 8, 9, 12, 13, 14])
         or [x["case"] for x in declaration.get("rehearsal", [])] != list(range(16))
         or declaration.get("excluded_positive_label_cases") != [7, 10, 11, 15]
         or len(declaration.get("all16_teacher_outcomes", [])) != 16
@@ -161,9 +187,22 @@ def load_live_distilled_actor(
         raise ValueError(
             "complete unfiltered curriculum plus explicit positive-label mask required"
         )
-    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-    if not isinstance(state, dict):
-        raise ValueError("safe typed live-model checkpoint required")
+    if v2 and (
+        [x["case"] for x in declaration.get("live_anchors", [])] != [4, 7, 12, 13, 15]
+        or declaration.get("preserved_live_quality_cases") != [4, 12, 13]
+        or declaration.get("body_failure_counterexample_cases") != [10, 11]
+        or len(declaration.get("all16_live_baseline_outcomes", [])) != 16
+        or any(
+            x.get("role")
+            != (
+                "preserve_live_football_skill"
+                if x["case"] in (4, 12, 13)
+                else "body_stability_only_TASK_STILL_FAILED"
+            )
+            for x in declaration.get("live_anchors", [])
+        )
+    ):
+        raise ValueError("version2 must preserve complete live skill/safety/negative-context roles")
     actor = PaidTrainableActor(policy, expected_hash=PUBLISHED_HASH)
     validate_live_state(
         state, receipt, actor.state_dict(), declaration_hash=dh, scene_hash=scene_hash

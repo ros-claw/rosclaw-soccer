@@ -27,6 +27,7 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--variant", type=int, choices=range(4), required=True)
     p.add_argument("--epochs", type=int, choices=(1, 256), default=256)
+    p.add_argument("--curriculum", choices=("live12", "protected-live"), default="live12")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     tp, ap, bp, xp = [
@@ -72,8 +73,11 @@ def main():
         raise ValueError(
             "this declared audited curriculum requires twelve positive labels and all16outcomes"
         )
+    protected = a.curriculum == "protected-live"
+    preserved_live = [4, 12, 13] if protected else []
+    expert_cases = [i for i in qualified if i not in preserved_live]
     expert = []
-    for i in qualified:
+    for i in expert_cases:
         row = teacher["final"][i]
         path = a.teacher_root / row["raw_path"]
         if not path.resolve().is_relative_to(a.teacher_root.resolve()):
@@ -82,6 +86,29 @@ def main():
         expert.append(
             dict(case=i, source=row["source"], path=str(path), neural_rows=row["neural_rows"])
         )
+    live_anchors = []
+    if protected:
+        if expert_cases != [0, 1, 2, 3, 5, 6, 8, 9, 14]:
+            raise ValueError("exact nine new rescue contexts required by protected curriculum")
+        for i in [4, 7, 12, 13, 15]:
+            row = teacher["baseline"][i]
+            if row["body_failed"] or (i in preserved_live and contact_rank([row, row])[1] == 0):
+                raise ValueError("live retention requires actually healthy measured baseline")
+            path = a.teacher_root / row["raw_path"]
+            if not path.resolve().is_relative_to(a.teacher_root.resolve()):
+                raise ValueError("live rehearsal escaped data root")
+            pins[str(path)] = row["raw_hash"]
+            live_anchors.append(
+                dict(
+                    case=i,
+                    source=row["source"],
+                    path=str(path),
+                    neural_rows=row["neural_rows"],
+                    role="preserve_live_football_skill"
+                    if i in preserved_live
+                    else "body_stability_only_TASK_STILL_FAILED",
+                )
+            )
     rehearsal = []
     for i, row in enumerate(exam["candidates"][0]["results"]["old16"]["results"]):
         path = a.exam_root / f"candidate0/old16/case{i}-repeat0.npz"
@@ -115,6 +142,22 @@ def main():
         unique_teacher_neural_rows=sum(x["neural_rows"] for x in expert),
         unique_rehearsal_neural_rows=sum(x["neural_rows"] for x in rehearsal),
     )
+    if protected:
+        config.update(
+            curriculum="protected-live-v2",
+            seed=20261025 + (a.variant if a.variant < 3 else 0),
+            rehearsal=3.0,
+            live_rehearsal=3.0 if a.variant < 3 else 1.0,
+            teacher_episodes=9,
+            live_anchor_episodes=5,
+            live_anchor_minibatch_sizes=[2, 2, 1],
+            unique_live_anchor_neural_rows=sum(x["neural_rows"] for x in live_anchors),
+        )
+        if (
+            config["unique_teacher_neural_rows"] != 2159
+            or config["unique_live_anchor_neural_rows"] != 1201
+        ):
+            raise ValueError("exact protected live9/live5 episode frame counts required")
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -124,6 +167,16 @@ def main():
             config=config,
             expert=expert,
             rehearsal=rehearsal,
+            **(
+                dict(
+                    live_anchors=live_anchors,
+                    all16_live_baseline_outcomes=teacher["baseline"],
+                    preserved_live_quality_cases=preserved_live,
+                    body_failure_counterexample_cases=[10, 11],
+                )
+                if protected
+                else {}
+            ),
             all16_teacher_outcomes=teacher["final"],
             excluded_positive_label_cases=[i for i in range(16) if i not in qualified],
             qualification_rule="original physical contact quality; no threshold changes",
@@ -141,6 +194,8 @@ def main():
         ),
     )
     counts = dict(teacher_forward_rows=0, rehearsal_forward_rows=0, optimizer_updates=0)
+    if protected:
+        counts["live_anchor_forward_rows"] = 0
     try:
         import numpy as np
         import onnx
@@ -223,6 +278,7 @@ def main():
             return arrays
 
         teachers, anchors = load(expert, True), load(rehearsal, False)
+        live_arrays = load(live_anchors, False)
         compute = dict(
             UUID=visible,
             name=props.name,
@@ -251,7 +307,9 @@ def main():
             if path.exists():
                 raise ValueError("checkpoint overwrite forbidden")
             state = dict(
-                schema="soccer.paid_live_distilled.v1",
+                schema="soccer.paid_live_distilled.v2"
+                if protected
+                else "soccer.paid_live_distilled.v1",
                 epoch=epoch,
                 source_head=a.expected_head,
                 declaration_hash=digest(a.output / "declaration.json"),
@@ -279,13 +337,19 @@ def main():
         initial_hash = checkpoint(0)
         history = []
 
-        def loss_for(episode, teacher_labels):
+        def loss_for(episode, teacher_labels, *, live=False):
             zero = (
                 torch.zeros(2, 1, 128, device="cuda:0"),
                 torch.zeros(2, 1, 128, device="cuda:0"),
             )
             predicted, _ = model(episode["obs"][:, None], zero)
-            key = "teacher_forward_rows" if teacher_labels else "rehearsal_forward_rows"
+            key = (
+                "live_anchor_forward_rows"
+                if live
+                else "teacher_forward_rows"
+                if teacher_labels
+                else "rehearsal_forward_rows"
+            )
             counts[key] += len(episode["obs"])
             weight = torch.where(episode["active"], config["active_weight"], config["other_weight"])
             return (
@@ -293,11 +357,16 @@ def main():
             ).sum() / (29 * weight.sum())
 
         for epoch in range(1, a.epochs + 1):
-            teacher_order, anchor_order = rng.permutation(12).tolist(), rng.permutation(16).tolist()
+            teacher_order, anchor_order = (
+                rng.permutation(len(teachers)).tolist(),
+                rng.permutation(16).tolist(),
+            )
+            live_order = rng.permutation(5).tolist() if protected else []
             batch_losses = []
             for group in range(3):
                 optimizer.zero_grad(set_to_none=True)
-                t_ids = teacher_order[group * 4 : (group + 1) * 4]
+                width = len(teachers) // 3
+                t_ids = teacher_order[group * width : (group + 1) * width]
                 lo, hi = ((0, 6), (6, 11), (11, 16))[group]
                 r_ids = anchor_order[lo:hi]
                 total = 0.0
@@ -313,6 +382,19 @@ def main():
                         raise ValueError("nonfinite rehearsal loss")
                     loss.backward()
                     total += float(loss.detach())
+                if protected:
+                    lo, hi = ((0, 2), (2, 4), (4, 5))[group]
+                    live_ids = live_order[lo:hi]
+                    for i in live_ids:
+                        loss = (
+                            config["live_rehearsal"]
+                            * loss_for(live_arrays[i], False, live=True)
+                            / len(live_ids)
+                        )
+                        if not torch.isfinite(loss):
+                            raise ValueError("nonfinite live retention loss")
+                        loss.backward()
+                        total += float(loss.detach())
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(), config["max_grad_norm"], error_if_nonfinite=True
                 )
@@ -330,6 +412,8 @@ def main():
                 mean_minibatch_loss=float(np.mean(batch_losses)),
                 counts=counts.copy(),
             )
+            if protected:
+                row["live_anchor_order"] = live_order
             if epoch % 64 == 0 or epoch == a.epochs:
                 row["checkpoint_hash"] = checkpoint(epoch)
             write_once(a.output / f"epoch{epoch}.json", row)

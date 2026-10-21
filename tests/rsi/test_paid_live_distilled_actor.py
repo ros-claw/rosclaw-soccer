@@ -88,6 +88,50 @@ def test_live_protocol_admits_final_candidate_not_authority():
     assert not r["promotion_authorized"]
 
 
+def protected_evidence(variant=0):
+    s, r, i = evidence()
+    s["schema"] = "soccer.paid_live_distilled.v2"
+    s["config"].update(
+        curriculum="protected-live-v2",
+        variant=variant,
+        seed=20261025 + (variant if variant < 3 else 0),
+        rehearsal=3.0,
+        live_rehearsal=3.0 if variant < 3 else 1.0,
+        teacher_episodes=9,
+        live_anchor_episodes=5,
+        unique_teacher_neural_rows=2159,
+        unique_live_anchor_neural_rows=1201,
+        live_anchor_minibatch_sizes=[2, 2, 1],
+    )
+    s["counts"].update(teacher_forward_rows=2159 * 256, live_anchor_forward_rows=1201 * 256)
+    r["config"], r["counts"] = copy.deepcopy(s["config"]), copy.deepcopy(s["counts"])
+    return s, r, i
+
+
+@pytest.mark.parametrize("variant", range(4))
+def test_version2_live_retention_protocol_is_distinct_and_fully_counted(variant):
+    s, r, i = protected_evidence(variant)
+    validate_live_state(s, r, i, declaration_hash="decl", scene_hash="scene")
+
+
+@pytest.mark.parametrize("fault", ["schema", "count", "anchor_count", "seed", "coefficient"])
+def test_v2_cannot_masquerade_as_v1_or_omit_live_rehearsal_work(fault):
+    s, r, i = protected_evidence()
+    if fault == "schema":
+        s["schema"] = "soccer.paid_live_distilled.v1"
+    elif fault == "count":
+        s["counts"].pop("live_anchor_forward_rows")
+        r["counts"] = copy.deepcopy(s["counts"])
+    elif fault == "anchor_count":
+        s["config"]["live_anchor_episodes"] = 0
+    elif fault == "seed":
+        s["config"]["seed"] = 20261022
+    else:
+        s["config"]["live_rehearsal"] = 0
+    with pytest.raises(ValueError):
+        validate_live_state(s, r, i, declaration_hash="decl", scene_hash="scene")
+
+
 @pytest.mark.parametrize(
     "fault",
     [
