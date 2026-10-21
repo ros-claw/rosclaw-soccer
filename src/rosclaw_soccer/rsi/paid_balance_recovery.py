@@ -12,6 +12,28 @@ import numpy as np
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 
 
+def qualified_reference_prefix(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Slice an already audited healthy source; never invent missing physics."""
+    n = len(raw["NN_action"])
+    if (
+        not 1 <= n <= 300
+        or len(raw["target"]) != n + 60
+        or raw["body_failed"].any()
+        or not raw["neural_control"][:n].all()
+        or raw["neural_control"][n:].any()
+    ):
+        raise ValueError("complete healthy source with explicit 60-control held tail required")
+    prefix = {}
+    for key, value in raw.items():
+        if key.startswith(("initial_", "NN_")):
+            prefix[key] = value.copy()
+        elif value.ndim >= 1 and len(value) == n + 60:
+            prefix[key] = value[:n].copy()
+        else:
+            raise ValueError("unrecognized source reference/control array")
+    return prefix
+
+
 def body_feedback(q: np.ndarray, v: np.ndarray) -> np.ndarray:
     """[roll,pitch,wx,wy,local_vx,local_vy,height_error,local_vz].
 
@@ -86,7 +108,7 @@ class BalanceRecovery:
     """At most 100 NEW 20ms controls; fixed anchor, 0.2rad/0.02rad-step bounds."""
 
     def __init__(self, ep: Any) -> None:
-        if not ep.done or ep.termination_reason != "REFERENCE_COMPLETE":
+        if not ep.done or ep.termination_reason not in ("REFERENCE_COMPLETE", "RECOVERY_ADMITTED"):
             raise ValueError("healthy completed actual skill required for recovery")
         self.ep = ep
         self.anchor = ep.target.copy()
@@ -100,7 +122,7 @@ class BalanceRecovery:
         ep = self.ep
         if (
             self.controls >= 100
-            or ep.termination_reason != "REFERENCE_COMPLETE"
+            or ep.termination_reason not in ("REFERENCE_COMPLETE", "RECOVERY_ADMITTED")
             or requested.shape != (29,)
             or not np.isfinite(requested).all()
             or np.abs(requested).max() > 0.2 + 1e-12
@@ -150,6 +172,10 @@ def collect_balance_recovery(
     feature = body_feedback(q, v)
     upright = float(1 - 2 * (q[4] ** 2 + q[5] ** 2))
     healthy = not bool(raw["body_failed"].any())
+    if healthy and ep.termination_reason == "RECOVERY_ADMITTED":
+        # Only this NEW complete 100-control phase permits a subsequent skill.
+        # Do not mark the omitted old tail as completed or rewrite its receipt.
+        ep.termination_reason = "REFERENCE_COMPLETE"
     certificate = bool(
         healthy
         and q[2] >= 0.72

@@ -98,6 +98,7 @@ class PaidResearchBench:
         transform: Any = None,
         transition_controls: int = 0,
         initial_state: tuple[Any, Any] | None = None,
+        stop_at_reference: bool = False,
     ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         """Run an already admitted live-body skill; NEVER reset simulator state.
 
@@ -107,7 +108,12 @@ class PaidResearchBench:
         """
         import torch
 
-        if ep.done or ep.frame != 0 or transition_controls not in (0, 12):
+        if (
+            ep.done
+            or ep.frame != 0
+            or transition_controls not in (0, 12)
+            or type(stop_at_reference) is not bool
+        ):
             raise ValueError("fresh explicit skill boundary and declared transition required")
         if transition_controls and transform is not None:
             raise ValueError("transition and teacher transformations must be separate experiments")
@@ -160,6 +166,8 @@ class PaidResearchBench:
                     )
                 )
             controls.append(ep.step(action))
+            if stop_at_reference and ep.frame == ep.clip.length and not ep.done:
+                ep.admit_reference_recovery()
         raw = {k: np.array([row[k] for row in controls]) for k in controls[0]}
         raw.update({"NN_" + k: np.array([row[k] for row in neural]) for k in neural[0]})
         raw.update({"initial_" + k: v for k, v in ep.initial.items()})
@@ -208,4 +216,11 @@ class PaidResearchBench:
             composite_teacher=transform is not None or transition_controls > 0,
             policy_likelihood_provided=False,
         )
+        if stop_at_reference:
+            summary.update(
+                reference_prefix_only=True,
+                official_exam_result=False,
+                held_tail_controls_omitted=60,
+                recovery_admitted=ep.termination_reason == "RECOVERY_ADMITTED",
+            )
         return raw, summary

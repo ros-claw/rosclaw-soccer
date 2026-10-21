@@ -135,6 +135,29 @@ class PaidNativeEpisode:
         if references is not None:
             self.ref_pos, self.ref_vel, self.ref_ang = references
 
+    def admit_reference_recovery(self) -> None:
+        """NEW diagnostic boundary at reference end, not an old exam completion.
+
+        No mjData field is written and no reference/tail is padded. The caller
+        must declare that the old 60-control fixed-target tail was NOT run.
+        A next skill cannot begin until a separate active recovery completes.
+        """
+        q, v = self.layout.canonical(self.env.data)
+        if (
+            self.done
+            or self.ready
+            or self.frame != self.clip.length
+            or self.termination_reason != "ACTIVE"
+            or not np.isfinite(q).all()
+            or not np.isfinite(v).all()
+            or q[2] < 0.65
+            or 1 - 2 * (q[4] ** 2 + q[5] ** 2) < 0.9
+            or tuple(int(x.number) for x in self.env.data.warning) != self.warning
+        ):
+            raise ValueError("only a healthy actual reference end may admit NEW recovery")
+        self.done = True
+        self.termination_reason = "RECOVERY_ADMITTED"
+
     def advance_hold(self) -> dict[str, Any]:
         """Advance a separately declared post-reference PD hold, no neural/ref padding."""
         import mujoco

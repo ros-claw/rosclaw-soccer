@@ -22,9 +22,13 @@ def main():
     p.add_argument("--audit-root", type=Path, required=True)
     p.add_argument("--audit-hash", required=True)
     p.add_argument("--seed-index", type=int, choices=(0, 1, 2), required=True)
+    p.add_argument(
+        "--recovery-start", choices=("complete-skill", "reference-end"), default="complete-skill"
+    )
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
+    early = a.recovery_start == "reference-end"
     if (
         a.output.exists()
         or subprocess.check_output(["git", "status", "--porcelain"])
@@ -46,6 +50,7 @@ def main():
         a.output / "declaration.json",
         dict(
             source_head=a.expected_head,
+            recovery_start=a.recovery_start,
             input_file_hashes=pins,
             source_cases=cases,
             pilot_cases=[0, 15],
@@ -59,10 +64,14 @@ def main():
             new_phase_is_not_old_exam=True,
             max_delta_rad=0.2,
             max_delta_per_control_rad=0.02,
-            preserve_original_skill_scores=True,
+            preserve_original_skill_scores=not early,
+            source_old_exam_not_rewritten=True,
+            reference_prefix_only=early,
             body_resets=0,
             branch_semantics=(
-                "full mj_copyData from actual two-skill parent after declared ball return"
+                "full mj_copyData from actual second reference end, no ball return before recovery"
+                if early
+                else "full mj_copyData from actual two-skill parent after declared ball return"
             ),
             selected_full_world_repeats=2,
             neural_optimizer_updates=0,
@@ -77,7 +86,10 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.paid_balance_recovery import collect_balance_recovery
+        from rosclaw_soccer.rsi.paid_balance_recovery import (
+            collect_balance_recovery,
+            qualified_reference_prefix,
+        )
         from rosclaw_soccer.rsi.paid_contact_residual_actor import load_contact_residual_actor
         from rosclaw_soccer.rsi.paid_native_episode import NativeStepCounter
         from rosclaw_soccer.rsi.paid_practice_chain import (
@@ -145,16 +157,25 @@ def main():
                     )
                     if boundary["status"] != "READY":
                         raise ValueError("qualified second skill boundary did not reproduce")
-                raw, row = bench.collect_current(ep, model)
-                same(raw, read_parent(reference["skills"][k]["result"]))
+                raw, row = bench.collect_current(ep, model, stop_at_reference=early and k == 1)
+                expected_raw = read_parent(reference["skills"][k]["result"])
+                same(
+                    raw,
+                    qualified_reference_prefix(expected_raw) if early and k == 1 else expected_raw,
+                )
                 rows.append(dict(row, **store(f"skill{k}", raw)))
                 store(f"terminal{k}", snapshot(ep.env.data))
-            drop = practice_ball_drop(ep, foot="left" if "left" in cases[i]["source"] else "right")
-            expected = next(
-                x for x in reference["artifacts"] if Path(x["raw_path"]).stem == "between1-2-drop"
-            )
-            same(drop, read_parent(expected))
-            store("between1-2-drop", drop)
+            if not early:
+                drop = practice_ball_drop(
+                    ep, foot="left" if "left" in cases[i]["source"] else "right"
+                )
+                expected = next(
+                    x
+                    for x in reference["artifacts"]
+                    if Path(x["raw_path"]).stem == "between1-2-drop"
+                )
+                same(drop, read_parent(expected))
+                store("between1-2-drop", drop)
             store("recovery-entry", snapshot(ep.env.data))
             record = dict(case=i, skills=rows, artifacts=artifacts)
             write_once(folder / "complete.json", record)
@@ -178,6 +199,8 @@ def main():
             initial = snapshot(ep.env.data)
             raw, row = collect_balance_recovery(ep, latent)
             raw.update({"initial_" + k: v for k, v in initial.items()})
+            if early:
+                raw.update({"terminal_" + k: v for k, v in snapshot(ep.env.data).items()})
             return raw, dict(row, **save(folder, key, raw))
 
         def rank(rows):
@@ -193,6 +216,17 @@ def main():
         baseline = [run(branch(i), np.zeros((9, 4)), folder, f"case{i}")[1] for i in (0, 15)]
         for i, row in zip((0, 15), baseline, strict=True):
             world = source["results"]["learned"]["worlds"][i]
+            if early:
+                original = read_parent(world["skills"][1]["result"])
+                n = len(original["NN_action"])
+                with np.load(a.output / row["raw_path"], allow_pickle=False) as actual:
+                    if any(
+                        not np.array_equal(actual[k][:60], value[n:])
+                        for k, value in original.items()
+                        if not k.startswith(("NN_", "initial_"))
+                    ):
+                        raise ValueError("zero EARLY recovery does not reproduce old blind tail")
+                continue
             hold = next(
                 (x for x in world["artifacts"] if Path(x["raw_path"]).stem == "between1-2-hold"),
                 None,
@@ -256,13 +290,24 @@ def main():
                 raw, row = run(ep, np.tanh(best_z), folder, "recovery")
                 with np.load(a.output / selected["raw_path"], allow_pickle=False) as old:
                     same(raw, {k: old[k] for k in old.files})
-                third = None
+                third = continuation = None
                 if row["healthy"]:
+                    if early:
+                        continuation = advance_practice_boundary(
+                            ep,
+                            ep.clip,
+                            foot="left" if "left" in cases[i]["source"] else "right",
+                            store=lambda key, z, folder=folder: save(folder, key, z),
+                            prefix="post-recovery",
+                        )
                     q, v = ep.layout.canonical(ep.env.data)
-                    if q[38] <= 0.12 and abs(v[37]) <= 0.1:
+                    if (continuation is not None and continuation["status"] == "READY") or (
+                        not early and q[38] <= 0.12 and abs(v[37]) <= 0.1
+                    ):
                         before = snapshot(ep.env.data)
                         previous = ep.last_action.copy()
-                        ep.begin_current_state(ep.clip, goal=ep.goal.copy())
+                        if not early:
+                            ep.begin_current_state(ep.clip, goal=ep.goal.copy())
                         require_identical_snapshot(before, snapshot(ep.env.data))
                         if not np.array_equal(ep.last_action, previous):
                             raise ValueError("recovery handoff erased the actual teacher action")
@@ -276,7 +321,7 @@ def main():
                         )
                         z, third = bench.collect_current(ep, actor)
                         third.update(save(folder, "third", z))
-                repeats.append(dict(case=i, recovery=row, third=third))
+                repeats.append(dict(case=i, recovery=row, third=third, continuation=continuation))
                 write_once(folder / "final.json", repeats[-1])
             if (repeats[0]["third"] is None) != (repeats[1]["third"] is None):
                 raise ValueError("selected continuation branch does not repeat")
@@ -293,6 +338,7 @@ def main():
             dict(
                 status="PAID_ACTIVE_BALANCE_TEACHER_PILOT_CLOSED_PENDING_AUDIT",
                 source_head=a.expected_head,
+                recovery_start=a.recovery_start,
                 input_file_hashes=pins,
                 pilot_cases=[0, 15],
                 parents=parent_records,

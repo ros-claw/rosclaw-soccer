@@ -46,6 +46,44 @@ def test_new_skill_preserves_all_physical_state_and_actual_previous_action():
     assert not ep.ref_pos.any()
 
 
+def test_reference_recovery_admission_changes_no_physics_and_is_not_old_exam_completion():
+    ep = boundary()
+    ep.frame, ep.ready, ep.done, ep.termination_reason = 300, False, False, "ACTIVE"
+    before = {k: np.array(v, copy=True) for k, v in vars(ep.env.data).items() if k != "warning"}
+    ep.admit_reference_recovery()
+    assert ep.done and ep.termination_reason == "RECOVERY_ADMITTED"
+    for key, value in before.items():
+        assert np.array_equal(getattr(ep.env.data, key), value)
+    with pytest.raises(ValueError, match="healthy reference"):
+        ep.begin_current_state(ep.clip, goal=np.array([6.0, 0, 0.11]))
+    with pytest.raises(ValueError, match="healthy completed"):
+        ep.advance_hold()
+
+
+@pytest.mark.parametrize(
+    "fault", ["early", "late", "ready", "done", "failure", "height", "warning"]
+)
+def test_reference_recovery_cannot_erase_incomplete_or_failed_skill(fault):
+    ep = boundary()
+    ep.frame, ep.ready, ep.done, ep.termination_reason = 300, False, False, "ACTIVE"
+    if fault == "early":
+        ep.frame = 299
+    if fault == "late":
+        ep.frame = 301
+    if fault == "ready":
+        ep.ready = True
+    if fault == "done":
+        ep.done = True
+    if fault == "failure":
+        ep.termination_reason = "BODY_FAILURE"
+    if fault == "height":
+        ep.env.data.qpos[2] = 0.5
+    if fault == "warning":
+        ep.env.data.warning[0].number = 1
+    with pytest.raises(ValueError, match="healthy actual reference"):
+        ep.admit_reference_recovery()
+
+
 @pytest.mark.parametrize("reason", ["ACTIVE", "BODY_FAILURE", "NOT_STARTED"])
 def test_failure_or_active_body_cannot_be_restarted(reason):
     ep = boundary()

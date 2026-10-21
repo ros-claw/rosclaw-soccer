@@ -41,6 +41,8 @@ def main():
         cases=d["source_cases"],
     )
     source = json.loads((a.source_root / "complete.json").read_text())
+    recovery_start = d.get("recovery_start", "complete-skill")
+    early = recovery_start == "reference-end"
     if (
         r["status"] != "PAID_ACTIVE_BALANCE_TEACHER_PILOT_CLOSED_PENDING_AUDIT"
         or r["pilot_cases"] != [0, 15]
@@ -57,6 +59,9 @@ def main():
         or r["CEM_distribution_updates"] != 4
         or r["neural_optimizer_updates"] != 0
         or not r["all_selected_recovery_and_third_repeats_exact"]
+        or recovery_start not in ("complete-skill", "reference-end")
+        or r.get("recovery_start", "complete-skill") != recovery_start
+        or d["preserve_original_skill_scores"] is not (not early)
     ):
         raise ValueError("exact bounded two-state teacher protocol required")
     pins = dict(r["input_file_hashes"])
@@ -89,14 +94,17 @@ def main():
         own_neural=0,
         recovery_segments=0,
         exact_parent_skills=0,
+        exact_parent_reference_prefixes=0,
     )
     try:
         import numpy as np
         import torch
 
         from rosclaw_soccer.rsi.paid_balance_audit import audit_balance_recovery
+        from rosclaw_soccer.rsi.paid_balance_recovery import qualified_reference_prefix
         from rosclaw_soccer.rsi.paid_contact_residual_actor import load_contact_residual_actor
         from rosclaw_soccer.rsi.paid_continuity_audit import (
+            audit_practice_boundary,
             audit_terminal,
             identical,
             snapshot_fields,
@@ -133,25 +141,49 @@ def main():
             old = source["results"]["learned"]["worlds"][i]
             refs = {Path(x["raw_path"]).stem: x for x in old["artifacts"]}
             parent_data = {Path(x["raw_path"]).stem: read(x) for x in parent["artifacts"]}
-            drop = read(refs["between1-2-drop"], a.source_root)
-            entry = snapshot_fields(drop, "after_" if bool(drop["performed"]) else "before_")
+            if early:
+                entry = parent_data["terminal1"]
+            else:
+                drop = read(refs["between1-2-drop"], a.source_root)
+                entry = snapshot_fields(drop, "after_" if bool(drop["performed"]) else "before_")
             for key, z in parent_data.items():
                 if key == "recovery-entry":
                     identical(z, entry)
+                elif early and key == "skill1":
+                    identical(z, qualified_reference_prefix(read(refs[key], a.source_root)))
+                elif early and key == "terminal1":
+                    audit_terminal(auditor, parent_data["skill1"], z)
                 else:
                     identical(z, read(refs[key], a.source_root))
-            if set(parent_data) != set(refs) - {
+            excluded = {
                 "skill2",
                 "terminal2",
                 "between1-2-hold",
                 "between1-2-boundary",
-            } | {"recovery-entry"}:
+            }
+            if early:
+                excluded.add("between1-2-drop")
+            if set(parent_data) != (set(refs) - excluded) | {"recovery-entry"}:
                 raise ValueError("exact complete parent prefix artifact set required")
             for k in range(2):
                 z = parent_data[f"skill{k}"]
+                row = parent["skills"][k]
+                if (
+                    early
+                    and k == 1
+                    and (
+                        row.get("reference_prefix_only") is not True
+                        or row.get("official_exam_result") is not False
+                        or row.get("held_tail_controls_omitted") != 60
+                        or row.get("recovery_admitted") is not True
+                    )
+                ):
+                    raise ValueError("reference prefix may not masquerade as complete old exam")
                 counts["producer_native"] += len(z["target"]) * 10
                 counts["producer_neural"] += len(z["NN_action"])
-                counts["exact_parent_skills"] += 1
+                counts[
+                    "exact_parent_reference_prefixes" if early and k == 1 else "exact_parent_skills"
+                ] += 1
             if "between0-1-hold" in parent_data:
                 counts["producer_native"] += len(parent_data["between0-1-hold"]["target"]) * 10
             entries[i] = entry
@@ -170,6 +202,12 @@ def main():
             )
             if any(row.get(k) != v for k, v in checked.items()):
                 raise ValueError("recorded recovery score differs from primitive evidence")
+            if early:
+                terminal = snapshot_fields(z, "terminal_")
+                audit_terminal(auditor, z, terminal)
+                for key in ("mocap_pos", "mocap_quat", "qfrc_applied", "xfrc_applied", "act"):
+                    if not np.array_equal(terminal[key], entries[i][key]):
+                        raise ValueError("active recovery changed goal/forces/activation state")
             counts["producer_native"] += checked["native_steps"]
             counts["recovery_segments"] += 1
             return checked, z
@@ -188,6 +226,17 @@ def main():
         ]
         for i, row in zip((0, 15), r["baseline"], strict=True):
             source_world = source["results"]["learned"]["worlds"][i]
+            if early:
+                old = read(source_world["skills"][1]["result"], a.source_root)
+                actual = read(row)
+                n = len(old["NN_action"])
+                if any(
+                    not np.array_equal(actual[k][:60], value[n:])
+                    for k, value in old.items()
+                    if not k.startswith(("NN_", "initial_"))
+                ):
+                    raise ValueError("zero early recovery changed old 60-control blind tail")
+                continue
             hold = next(
                 (
                     x
@@ -265,7 +314,43 @@ def main():
                 identical(z, read(selected))
                 third = result["third"]
                 q, v = z["qpos"][-1, -1], z["qvel"][-1, -1]
-                expected = checked["healthy"] and q[38] <= 0.12 and abs(v[37]) <= 0.1
+                continuation = result.get("continuation")
+                continuation_state = None
+                if early and checked["healthy"]:
+                    if not isinstance(continuation, dict):
+                        raise ValueError("healthy recovery must attempt declared continuation")
+                    if continuation["status"] == "FIXTURE_REJECTED":
+                        if continuation["artifacts"]:
+                            raise ValueError("rejected fixture may not mutate state")
+                    else:
+                        blocks = {
+                            Path(x["raw_path"]).stem: read(x) for x in continuation["artifacts"]
+                        }
+                        result_boundary = audit_practice_boundary(
+                            auditor,
+                            previous={
+                                "target": z["target"],
+                                "NN_action": z["RECOVERY_actual_action"],
+                            },
+                            terminal=snapshot_fields(z, "terminal_"),
+                            drop=blocks["post-recovery-drop"],
+                            hold=blocks.get("post-recovery-hold"),
+                            boundary=blocks.get("post-recovery-boundary"),
+                            source=d["source_cases"][i]["source"],
+                        )
+                        if result_boundary["status"] != continuation["status"]:
+                            raise ValueError("post-recovery fixture/settling outcome differs")
+                        counts["producer_native"] += result_boundary["native_steps"]
+                        continuation_state = result_boundary["state"]
+                elif continuation is not None:
+                    raise ValueError(
+                        "failed or legacy recovery cannot invent a continuation fixture"
+                    )
+                expected = (
+                    continuation_state is not None
+                    if early
+                    else (checked["healthy"] and q[38] <= 0.12 and abs(v[37]) <= 0.1)
+                )
                 if (third is not None) != expected:
                     raise ValueError("selected physical continuation branch differs")
                 third_raw = None
@@ -273,7 +358,10 @@ def main():
                     path = str(Path(result["recovery"]["raw_path"]).parent / "third-boundary.npz")
                     boundary = read(artifact(path))
                     before = snapshot_fields(boundary, "before_")
-                    audit_terminal(auditor, z, before)
+                    if early:
+                        identical(before, continuation_state)
+                    else:
+                        audit_terminal(auditor, z, before)
                     if not np.array_equal(
                         boundary["previous_actual_action"], z["RECOVERY_actual_action"][-1]
                     ):

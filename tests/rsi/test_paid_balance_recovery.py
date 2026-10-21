@@ -3,7 +3,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.paid_balance_recovery import BalanceRecovery, body_feedback, feedback_delta
+from rosclaw_soccer.rsi.paid_balance_recovery import (
+    BalanceRecovery,
+    body_feedback,
+    feedback_delta,
+    qualified_reference_prefix,
+)
 
 
 def state():
@@ -50,6 +55,25 @@ def test_nonunit_quaternion_not_silently_normalized():
     q[3] = 2
     with pytest.raises(ValueError, match="unit"):
         body_feedback(q, v)
+
+
+def test_qualified_prefix_contains_all_actual_nn_rows_but_not_a_padded_hold():
+    raw = dict(
+        NN_action=np.ones((2, 29)),
+        target=np.arange(62 * 29).reshape(62, 29),
+        neural_control=np.r_[np.ones(2, bool), np.zeros(60, bool)],
+        body_failed=np.zeros(62, bool),
+        initial_time=np.array(0.0),
+    )
+    prefix = qualified_reference_prefix(raw)
+    assert len(prefix["target"]) == 2
+    assert np.array_equal(prefix["NN_action"], raw["NN_action"])
+    assert np.array_equal(prefix["target"], raw["target"][:2])
+    prefix["NN_action"][0, 0] = 9
+    assert raw["NN_action"][0, 0] == 1
+    raw["body_failed"][-1] = True
+    with pytest.raises(ValueError, match="healthy source"):
+        qualified_reference_prefix(raw)
 
 
 def test_recovery_anchor_slew_budget_and_actual_action(monkeypatch):
