@@ -99,6 +99,7 @@ def main():
             "src/rosclaw_soccer/rsi/ball_aware_inputs.py",
             "src/rosclaw_soccer/rsi/native_motion_reference.py",
             "src/rosclaw_soccer/rsi/native_contact_adapter.py",
+            "src/rosclaw_soccer/rsi/native_contact_checkpoint.py",
         ):
             if digest(Path.cwd() / relative) != reused["input_file_hashes"].get(
                 str(active_roots[0] / relative)
