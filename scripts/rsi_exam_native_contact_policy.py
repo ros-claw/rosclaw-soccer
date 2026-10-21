@@ -18,6 +18,7 @@ def main():
         p.add_argument("--" + k, type=Path, required=True)
     for k in ("learner-hash", "starts-hash", "baseline-episodes-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
+    p.add_argument("--checkpoint-intent", choices=("shared", "bounded-residual"), default="shared")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -40,8 +41,15 @@ def main():
         pins.update(r["input_file_hashes"])
         pins[str(f)] = h
     learner, starts, baseline = reports
+    residual = a.checkpoint_intent == "bounded-residual"
+    expected_status = (
+        "NATIVE_CONTACT24_RESIDUAL_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+        if residual
+        else "NATIVE_CONTACT24_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+    )
     if (
-        learner.get("status") != "NATIVE_CONTACT24_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+        learner.get("status") != expected_status
+        or learner.get("actor_kind", "shared") != a.checkpoint_intent
         or learner.get("protocol") != "native-contact24-v1"
         or len(learner.get("results", [])) != 20
         or learner["counts"]["ppo_steps"] < 1
@@ -75,6 +83,7 @@ def main():
             source_split="TRAIN evaluation only, DEV untouched",
             worlds=64,
             checkpoint_selection="fixed final20 vs immutable parent baseline",
+            checkpoint_intent=a.checkpoint_intent,
             arms=["initial", "final"],
             full_independent_repeated_worlds=list(range(8)),
             maximum_controls=300,
@@ -105,12 +114,16 @@ def main():
         import torch
 
         from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
-        from rosclaw_soccer.rsi.native_contact_checkpoint import NativeContactSession
+        from rosclaw_soccer.rsi.native_contact_checkpoint import (
+            NativeContactSession,
+            NativeResidualContactSession,
+        )
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.native_reference_observation import native_reference_observation177
         from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
         torch.set_num_threads(1)
+        session_type = NativeResidualContactSession if residual else NativeContactSession
 
         def pinned(suffix):
             matches = [Path(k) for k in pins if k.endswith(suffix)]
@@ -162,7 +175,7 @@ def main():
                 current_arm = arm
                 first = None
                 for repeat in range(2 if world < 8 else 1):
-                    session = NativeContactSession(
+                    session = session_type(
                         onnx,
                         cfg,
                         expected_model_hash=pins[str(onnx)],
@@ -360,6 +373,7 @@ def main():
                 if improved
                 else "NATIVE_CONTACT24_TRAIN64_CANDIDATE_REJECTED",
                 input_file_hashes=pins,
+                checkpoint_intent=a.checkpoint_intent,
                 results=results,
                 summary=summary,
                 live_native_steps=live_steps,
