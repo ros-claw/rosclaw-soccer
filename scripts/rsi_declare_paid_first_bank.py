@@ -74,7 +74,12 @@ def main():
             identical(initial, {k: before[k] for k in keys})
             q, v = ep.layout.canonical(ep.env.data)
             clean = original_case_with_measured_velocity(
-                c, i, v[35:37].tolist(), float(ep.env.model.body_mass[ep.layout.ball])
+                c,
+                i,
+                v[35:37].tolist(),
+                float(ep.env.model.body_mass[ep.layout.ball]),
+                measured_ball=q[36:39].tolist(),
+                measured_goal=ep.goal.tolist(),
             )
             if not np.array_equal(q[36:39], clean["ball_world_initial"]):
                 raise ValueError("original compiled position differs")

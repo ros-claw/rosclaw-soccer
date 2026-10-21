@@ -73,6 +73,31 @@ def test_legacy_dev_metadata_defaults_are_derived_from_measured_compiled_ball():
         original_case_with_measured_velocity(c, 0, [0.19, -0.02], 0.41)
 
 
+def test_local_frame_dev_case_is_explicitly_projected_from_actual_native_entry():
+    source = dict(
+        source="soccer-standard-001_right.npz", ball_local=[0.65, -0.2], velocity_local=[0, 0]
+    )
+    out = original_case_with_measured_velocity(
+        source,
+        0,
+        [0.0, 0.0],
+        0.43,
+        measured_ball=[-0.2, -0.65, 0.11],
+        measured_goal=[0.0, -6.0, 0.11],
+    )
+    assert "ball_local" not in out and out["ball_world_initial"] == [-0.2, -0.65, 0.11]
+    assert out["goal_world"] == [0.0, -6.0, 0.11] and "ball_world_initial" not in source
+    with pytest.raises(ValueError):
+        original_case_with_measured_velocity(
+            dict(source, ball_world_initial=[1.0, 0.0, 0.11]),
+            0,
+            [0.0, 0.0],
+            0.43,
+            measured_ball=[-0.2, -0.65, 0.11],
+            measured_goal=[0.0, -6.0, 0.11],
+        )
+
+
 @pytest.mark.parametrize(
     "fault", ["missing", "entry", "bank", "body", "steps", "preservation", "velocity", "radius"]
 )

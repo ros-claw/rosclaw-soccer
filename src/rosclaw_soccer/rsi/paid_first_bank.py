@@ -14,7 +14,13 @@ AUDIT_STATUS = "PAID_FULL_ENTRY_ORIGINAL16_OWN_NN_AND_ALL_PHASE_PHYSICS_AUDIT_PA
 
 
 def original_case_with_measured_velocity(
-    source: dict[str, Any], index: int, velocity: list[float], compiled_mass: float
+    source: dict[str, Any],
+    index: int,
+    velocity: list[float],
+    compiled_mass: float,
+    *,
+    measured_ball: list[float] | None = None,
+    measured_goal: list[float] | None = None,
 ) -> dict[str, Any]:
     """Legacy DEV omits metadata defaults; measured native state remains authority."""
     v = np.asarray(velocity, float)
@@ -29,13 +35,31 @@ def original_case_with_measured_velocity(
         or index not in range(16)
     ):
         raise ValueError("measured unchanged original standard fixture required")
+    ball = np.asarray(
+        source["ball_world_initial"] if measured_ball is None else measured_ball, float
+    )
+    goal = np.asarray(source["goal_world"] if measured_goal is None else measured_goal, float)
+    if (
+        ball.shape != (3,)
+        or goal.shape != (3,)
+        or not np.isfinite(ball).all()
+        or not np.isfinite(goal).all()
+        or ball[2] != 0.11
+        or goal[2] != 0.11
+        or (
+            "ball_world_initial" in source
+            and not np.array_equal(ball, source["ball_world_initial"])
+        )
+        or ("goal_world" in source and not np.array_equal(goal, source["goal_world"]))
+    ):
+        raise ValueError("measured source-frame projection must preserve the original geometry")
     return dict(
         case=index,
         source=source["source"],
         profile="cached-standard",
         ball_mass_kg=compiled_mass,
-        ball_world_initial=list(source["ball_world_initial"]),
-        goal_world=list(source["goal_world"]),
+        ball_world_initial=ball.tolist(),
+        goal_world=goal.tolist(),
         velocity_world_initial=v.tolist(),
     )
 
