@@ -59,6 +59,7 @@ def main():
     p.add_argument("--sequence-bank-hash")
     p.add_argument("--successor-specialist", action="store_true")
     p.add_argument("--contact-residual-zero", action="store_true")
+    p.add_argument("--contact-residual-trained", action="store_true")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -84,6 +85,8 @@ def main():
         sequences != (a.sequence_bank_hash is not None)
         or (a.successor_specialist and not sequences)
         or (a.contact_residual_zero and not a.successor_specialist)
+        or (a.contact_residual_trained and not a.successor_specialist)
+        or (a.contact_residual_zero and a.contact_residual_trained)
         or (
             sequences
             and a.entry_controller != ("qualified-prior" if a.successor_specialist else "candidate")
@@ -135,7 +138,13 @@ def main():
         pins.update(r["input_file_hashes"])
         pins[str(rp)] = h
         pins[str(root / "declaration.json")] = digest(root / "declaration.json")
-        stem = "successor" if sequences else "live-distilled"
+        stem = (
+            "contact-residual"
+            if a.contact_residual_trained
+            else "successor"
+            if sequences
+            else "live-distilled"
+        )
         pins[str(root / f"{stem}-epoch256.pt")] = r["final_checkpoint_hash"]
         pins[str(root / f"{stem}-epoch0.pt")] = r["initial_checkpoint_hash"]
         if sequences and (
@@ -143,7 +152,9 @@ def main():
             != ("carry" if index < 3 and not a.successor_specialist else "reset")
             or r["config"]["protocol"]
             != (
-                "protected-successor-specialist-v1"
+                "frozen-contact-residual-v1"
+                if a.contact_residual_trained
+                else "protected-successor-specialist-v1"
                 if a.successor_specialist
                 else "complete-successor-sequences-v1"
             )
@@ -164,6 +175,7 @@ def main():
             sequence_protocol=sequences,
             successor_specialist=a.successor_specialist,
             contact_residual_zero=a.contact_residual_zero,
+            contact_residual_trained=a.contact_residual_trained,
             baseline_checkpoint_hash=base["final_checkpoint_hash"],
             candidate_memory_handoff=[
                 x[2]["config"]["memory_handoff"] if sequences else "reset" for x in candidates
@@ -214,6 +226,7 @@ def main():
         import numpy as np
         import torch
 
+        from rosclaw_soccer.rsi.paid_contact_residual_actor import load_contact_residual_actor
         from rosclaw_soccer.rsi.paid_distilled_actor import load_distilled_actor
         from rosclaw_soccer.rsi.paid_live_distilled_actor import load_live_distilled_actor
         from rosclaw_soccer.rsi.paid_research_bench import PaidResearchBench
@@ -240,12 +253,24 @@ def main():
             training_receipt_hash=digest(bp),
             scene_hash=digest(xmls[0]),
         )
-        candidate_loader = load_successor_actor if sequences else load_live_distilled_actor
+        candidate_loader = (
+            load_contact_residual_actor
+            if a.contact_residual_trained
+            else load_successor_actor
+            if sequences
+            else load_live_distilled_actor
+        )
         actors = [
             candidate_loader(
                 policy,
                 checkpoint=root
-                / ("successor-epoch256.pt" if sequences else "live-distilled-epoch256.pt"),
+                / (
+                    "contact-residual-epoch256.pt"
+                    if a.contact_residual_trained
+                    else "successor-epoch256.pt"
+                    if sequences
+                    else "live-distilled-epoch256.pt"
+                ),
                 checkpoint_hash=r["final_checkpoint_hash"],
                 training_receipt=root / "complete.json",
                 training_receipt_hash=h,
@@ -530,6 +555,7 @@ def main():
                 memory_handoff=memory_handoff,
                 successor_specialist=a.successor_specialist,
                 contact_residual_zero=a.contact_residual_zero,
+                contact_residual_trained=a.contact_residual_trained,
                 candidate_training_weights_used_for_motor=not a.contact_residual_zero,
                 entry_controller=a.entry_controller,
                 isolated_controller=a.entry_controller,
@@ -594,6 +620,7 @@ def main():
                 sequence_protocol=sequences,
                 successor_specialist=a.successor_specialist,
                 contact_residual_zero=a.contact_residual_zero,
+                contact_residual_trained=a.contact_residual_trained,
                 input_file_hashes=pins,
                 baseline_isolated=old_baselines,
                 baseline_continuous=continuous_baseline,

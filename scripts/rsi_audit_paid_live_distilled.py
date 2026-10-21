@@ -34,6 +34,7 @@ def main():
     sequences = d.get("sequence_protocol", False)
     specialist = d.get("successor_specialist", False)
     zero_residual = d.get("contact_residual_zero", False)
+    trained_residual = d.get("contact_residual_trained", False)
     if (
         r["status"] != "PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED"
         or [x["candidate"] for x in r["candidates"]] != indices
@@ -43,6 +44,9 @@ def main():
         or r.get("sequence_protocol", False) != sequences
         or (specialist and not sequences)
         or (zero_residual and not specialist)
+        or (trained_residual and not specialist)
+        or (trained_residual and zero_residual)
+        or r.get("contact_residual_trained", False) != trained_residual
         or r.get("contact_residual_zero", False) != zero_residual
         or r.get("successor_specialist", False) != specialist
         or (
@@ -390,7 +394,9 @@ def main():
                     != memory_handoff
                     or json.loads(training.read_text())["config"]["protocol"]
                     != (
-                        "protected-successor-specialist-v1"
+                        "frozen-contact-residual-v1"
+                        if trained_residual
+                        else "protected-successor-specialist-v1"
                         if specialist
                         else "complete-successor-sequences-v1"
                     )
