@@ -40,8 +40,17 @@ def approach_head_penalty(info: dict[str, Any]) -> np.ndarray:
 
 
 def approach_option_gae(
-    reward, value, next_value, terminated, handoff, valid, *, tail_reward, tail_valid, tail_terminal
-):
+    reward: np.ndarray,
+    value: np.ndarray,
+    next_value: np.ndarray,
+    terminated: np.ndarray,
+    handoff: np.ndarray,
+    valid: np.ndarray,
+    *,
+    tail_reward: np.ndarray,
+    tail_valid: np.ndarray,
+    tail_terminal: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
     shape = reward.shape
     if len(shape) != 2 or not 1 <= shape[0] <= 300 or shape[1] < 1:
         raise ValueError("bounded real time-major head required")
