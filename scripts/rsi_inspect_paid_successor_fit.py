@@ -19,7 +19,11 @@ def main():
     p.add_argument("--student-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--compare-root", type=Path)
+    p.add_argument("--compare-hash")
     a = p.parse_args()
+    if (a.compare_root is None) != (a.compare_hash is None):
+        p.error("comparison root and hash must be provided together")
     rp = a.student_root / "complete.json"
     if (
         a.output.exists()
@@ -53,6 +57,41 @@ def main():
         training_receipt_hash=a.student_hash,
         scene_hash=r["body_scene_hash"],
     )
+    comparison = None
+    if a.compare_root is not None:
+        other_rp = a.compare_root / "complete.json"
+        if digest(other_rp) != a.compare_hash:
+            raise ValueError("exact comparison student receipt required")
+        other = json.loads(other_rp.read_text())
+        old_actor, _ = load_successor_student(
+            policy,
+            checkpoint=Path(other["checkpoint_path"]),
+            checkpoint_hash=other["checkpoint_hash"],
+            training_receipt=other_rp,
+            training_receipt_hash=a.compare_hash,
+            scene_hash=r["body_scene_hash"],
+        )
+        pins.update(
+            {str(other_rp): a.compare_hash, other["checkpoint_path"]: other["checkpoint_hash"]}
+        )
+        if other["data_hash"] != r["data_hash"] or other["config"]["seed"] != r["config"]["seed"]:
+            raise ValueError("paired ablation requires identical data and initialization seed")
+        same_gate = all(
+            torch.equal(v, old_actor.residual.gate.state_dict()[k])
+            for k, v in actor.residual.gate.state_dict().items()
+        )
+        same_base = all(
+            torch.equal(v, old_actor.base.state_dict()[k])
+            for k, v in actor.base.state_dict().items()
+        )
+        if not same_gate or not same_base:
+            raise ValueError("paired amplitude ablation changed classifier or frozen motor")
+        comparison = dict(
+            data_and_seed_identical=True,
+            gate_tensors_bitwise_identical=True,
+            base_tensors_bitwise_identical=True,
+            comparison_receipt_hash=a.compare_hash,
+        )
     with np.load(data["feature_path"], allow_pickle=False) as z:
         x, y, active = [torch.from_numpy(z[key].copy()) for key in ("features", "target", "active")]
     with torch.no_grad():
@@ -65,6 +104,7 @@ def main():
         )
         capacity = torch.where(logits >= 0, capacity, torch.zeros_like(capacity))
         unavoidable = torch.relu(y.abs() - capacity[:, None]).square()
+        rejected_error = torch.where((logits < 0)[:, None], y.square(), torch.zeros_like(y))
         rows = []
         for row in data["trajectories"]:
             start, stop = row["start"], row["stop"]
@@ -96,6 +136,14 @@ def main():
                     )
                     if mask.any()
                     else 0,
+                    rejected_gate_MSE_lower_bound=float(rejected_error[start:stop][mask].mean())
+                    if mask.any()
+                    else None,
+                    admitted_amplitude_MSE_lower_bound=float(
+                        (unavoidable[start:stop][mask] - rejected_error[start:stop][mask]).mean()
+                    )
+                    if mask.any()
+                    else None,
                 )
             )
     check_pins(pins)
@@ -107,6 +155,7 @@ def main():
             input_file_hashes=pins,
             source_head=a.expected_head,
             rows=rows,
+            paired_ablation=comparison,
             own_residual_forward_rows=len(x),
             own_gate_forward_rows=len(x),
             native_steps=0,
