@@ -72,6 +72,7 @@ def main():
             guards_at_control_boundary=True,
             optimizer_updates=0,
             original177_foundation_only=True,
+            foundation_inference_batch_rows=1,
             legacy24_reward_diagnostic_not_for_learning=True,
             fault_injection=(
                 dict(
@@ -168,7 +169,10 @@ def main():
             action = np.zeros((a.worlds, 29), dtype=np.float32)
             if len(ids):
                 with torch.no_grad():
-                    action[ids] = actor(torch.from_numpy(obs[ids])).numpy()
+                    # Match the original frame-zero native teacher's GEMV
+                    # execution, not size-dependent batched GEMM rounding.
+                    for i in ids:
+                        action[i] = actor(torch.from_numpy(obs[i : i + 1])).numpy()[0]
                 neural += len(ids)
             return action
 
