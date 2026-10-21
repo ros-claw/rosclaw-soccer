@@ -79,6 +79,9 @@ def main():
             full_reference_horizon=True,
             original_PD_and_model_unchanged=True,
             privileged_reference=True,
+            target_range_guard=(
+                "no introduced or worsened excess relative to original PD target; no clipping"
+            ),
             maximum_live_steps=144000,
             maximum_replay_steps=144000,
             optimizer_updates=0,
@@ -98,7 +101,10 @@ def main():
         from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
         from rosclaw_soccer.rsi.native_contact_checkpoint import NativeResidualContactSession
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
-        from rosclaw_soccer.rsi.native_reference_authority import reference_contact_target
+        from rosclaw_soccer.rsi.native_reference_authority import (
+            reference_contact_target,
+            worsens_target_range,
+        )
         from rosclaw_soccer.rsi.native_reference_observation import native_reference_observation177
         from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
@@ -206,7 +212,7 @@ def main():
                         base, plan["joint"][frame], obs[168:177], gain=gain
                     )
                     bounds = model.jnt_range[layout.joints]
-                    if np.any(target < bounds[:, 0]) or np.any(target > bounds[:, 1]):
+                    if worsens_target_range(base, target, bounds):
                         rejected = True
                         break
                     if not np.array_equal(target, base):
