@@ -5,6 +5,7 @@ import torch
 
 from rosclaw_soccer.rsi.paid_contact_residual import ContactResidual
 from rosclaw_soccer.rsi.paid_successor_features import (
+    decoupled_successor_config,
     staged_successor_config,
     successor_student_config,
 )
@@ -106,6 +107,17 @@ def test_complete_new_schema_does_not_require_old_3810_row_protocol():
 
 def test_staged_student_has_two_explicit_optimizers_and_frozen_calibrated_gate():
     validate_successor_state(*fixture(staged=True))
+
+
+def test_decoupled_schema_is_explicit_and_bound_to_unchanged_staged_optimizers():
+    state, receipt, template = fixture(staged=True)
+    state["schema"] = "soccer.successor_contact_student.v3"
+    state["config"] = decoupled_successor_config(0)
+    receipt["config"] = state["config"]
+    validate_successor_state(state, receipt, template)
+    state["config"]["gate_scales_amplitude"] = True
+    with pytest.raises(ValueError):
+        validate_successor_state(state, receipt, template)
 
 
 @pytest.mark.parametrize("fault", ["gate_steps", "calibration", "shared_optimizer"])

@@ -47,6 +47,20 @@ class ContactResidual(nn.Module):
         return self.bound_radians * torch.tanh(self.net(features)) * torch.sigmoid(logits), logits
 
 
+class DecoupledContactResidual(ContactResidual):
+    """Same .2rad authority, binary rejection without probability attenuation."""
+
+    def forward_with_gate(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if (
+            features.ndim != 2
+            or features.shape[1] != 288
+            or features.dtype != torch.float32
+            or not torch.isfinite(features).all()
+        ):
+            raise ValueError("finite explicit batch288 float32 residual features required")
+        return self.bound_radians * torch.tanh(self.net(features)), self.gate(features)
+
+
 class FrozenContactResidualActor(nn.Module):
     def __init__(self, base: Any, residual: ContactResidual, scale: torch.Tensor) -> None:
         super().__init__()

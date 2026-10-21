@@ -32,6 +32,7 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--seed", type=int, choices=(0, 1, 2), required=True)
     p.add_argument("--gpu-uuid", required=True)
+    p.add_argument("--decoupled", action="store_true")
     a = p.parse_args()
 
     def clean():
@@ -51,6 +52,7 @@ def main():
         declaration = dict(
             schema="soccer.successor_learning_finite_queue.v1",
             seed=a.seed,
+            decoupled=a.decoupled,
             source_head=a.expected_head,
             data_source_head=a.data_source_head,
             data_root=str(a.data_root),
@@ -163,6 +165,7 @@ def main():
                 "--seed",
                 str(a.seed),
                 "--staged",
+                *(["--decoupled"] if a.decoupled else []),
             ],
             expected_status="PAID_SUCCESSOR_NEURAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",
             gpu=True,

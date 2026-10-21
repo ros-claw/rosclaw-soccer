@@ -96,3 +96,13 @@ def staged_successor_config(seed: int) -> dict[str, Any]:
         gate_frozen_during_head_training=True,
     )
     return config
+
+
+def decoupled_successor_config(seed: int) -> dict[str, Any]:
+    config = staged_successor_config(seed)
+    config.update(
+        protocol="successor-contact-student-v3",
+        gate_scales_amplitude=False,
+        amplitude_ablation_same_seed_and_sampling=True,
+    )
+    return config

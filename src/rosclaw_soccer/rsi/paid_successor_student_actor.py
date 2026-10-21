@@ -8,8 +8,13 @@ from typing import Any
 
 import torch
 
-from rosclaw_soccer.rsi.paid_contact_residual import ContactResidual, FrozenContactResidualActor
+from rosclaw_soccer.rsi.paid_contact_residual import (
+    ContactResidual,
+    DecoupledContactResidual,
+    FrozenContactResidualActor,
+)
 from rosclaw_soccer.rsi.paid_successor_features import (
+    decoupled_successor_config,
     staged_successor_config,
     successor_student_config,
 )
@@ -17,6 +22,8 @@ from rosclaw_soccer.rsi.paid_successor_features import (
 
 def _config(state: dict[str, Any]) -> dict[str, Any]:
     seed = state.get("config", {}).get("seed_index")
+    if state.get("schema") == "soccer.successor_contact_student.v3":
+        return decoupled_successor_config(seed)
     return (
         staged_successor_config(seed)
         if state.get("schema") == "soccer.successor_contact_student.v2"
@@ -28,7 +35,7 @@ def validate_successor_state(
     state: dict[str, Any], receipt: dict[str, Any], template: dict[str, torch.Tensor]
 ) -> None:
     config = _config(state)
-    staged = config["protocol"].endswith("v2")
+    staged = config.get("gate_frozen_during_head_training", False)
     counts = state.get("counts", {})
     calls, evaluations = counts.get("projection_calls"), counts.get("projection_gate_evaluations")
     hist = state.get("projection_histogram", {})
@@ -37,7 +44,11 @@ def validate_successor_state(
     maximum = certificate.get("maximum_negative_logit_CPU")
     if (
         state.get("schema")
-        not in ("soccer.successor_contact_student.v1", "soccer.successor_contact_student.v2")
+        not in (
+            "soccer.successor_contact_student.v1",
+            "soccer.successor_contact_student.v2",
+            "soccer.successor_contact_student.v3",
+        )
         or state.get("config") != config
         or receipt.get("config") != config
         or receipt.get("status") != "PAID_SUCCESSOR_NEURAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
@@ -190,7 +201,11 @@ def load_successor_student(
     config = _config(state)
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])
-        residual = ContactResidual()
+        residual = (
+            DecoupledContactResidual()
+            if config.get("gate_scales_amplitude") is False
+            else ContactResidual()
+        )
     validate_successor_state(state, receipt, residual.state_dict())
     if receipt["checkpoint_hash"] != checkpoint_hash or state["body_scene_hash"] != scene_hash:
         raise ValueError("exact trained body/checkpoint binding required")

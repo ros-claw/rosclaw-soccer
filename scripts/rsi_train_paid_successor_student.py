@@ -16,9 +16,12 @@ def main():
     p.add_argument("--data-hash", required=True)
     p.add_argument("--seed", type=int, choices=(0, 1, 2), required=True)
     p.add_argument("--staged", action="store_true")
+    p.add_argument("--decoupled", action="store_true")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
+    if a.decoupled and not a.staged:
+        p.error("decoupled amplitude comparison requires the unchanged staged gate protocol")
     rp, dp = a.data_root / "complete.json", a.data_root / "declaration.json"
     if (
         a.output.exists()
@@ -72,14 +75,24 @@ def main():
         import torch
         import torch.nn.functional as F
 
-        from rosclaw_soccer.rsi.paid_contact_residual import ContactResidual
+        from rosclaw_soccer.rsi.paid_contact_residual import (
+            ContactResidual,
+            DecoupledContactResidual,
+        )
         from rosclaw_soccer.rsi.paid_gate_retention import project_contact_gate
         from rosclaw_soccer.rsi.paid_successor_features import (
+            decoupled_successor_config,
             staged_successor_config,
             successor_student_config,
         )
 
-        config = staged_successor_config(a.seed) if a.staged else successor_student_config(a.seed)
+        config = (
+            decoupled_successor_config(a.seed)
+            if a.decoupled
+            else staged_successor_config(a.seed)
+            if a.staged
+            else successor_student_config(a.seed)
+        )
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
         visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
@@ -124,7 +137,7 @@ def main():
             raise ValueError(
                 "finite true-zero protected labels and original-only288 features required"
             )
-        model = ContactResidual().to("cuda:0")
+        model = (DecoupledContactResidual() if a.decoupled else ContactResidual()).to("cuda:0")
         features, targets = torch.from_numpy(x).to("cuda:0"), torch.from_numpy(y).to("cuda:0")
         negative = features[torch.from_numpy(~active).to("cuda:0")]
         positive_ids, negative_ids = np.flatnonzero(teacher), np.flatnonzero(~teacher)
@@ -305,7 +318,9 @@ def main():
             )
         state = cpu(
             dict(
-                schema="soccer.successor_contact_student.v2"
+                schema="soccer.successor_contact_student.v3"
+                if a.decoupled
+                else "soccer.successor_contact_student.v2"
                 if a.staged
                 else "soccer.successor_contact_student.v1",
                 source_head=a.expected_head,
