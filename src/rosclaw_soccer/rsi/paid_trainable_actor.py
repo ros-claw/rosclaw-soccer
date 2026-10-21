@@ -93,3 +93,52 @@ class PaidTrainableActor(nn.Module):
             raise ValueError("finite explicit per-player recurrent states required")
         output, state = self.rnn((observation - self.mean) / self.denominator, state)
         return self.actor(output), state
+
+
+class PaidTorchResearchPolicy(PaidResearchPolicy):
+    """CPU inference bridge for a new, separately measured native experiment."""
+
+    def __init__(self, path: Path, *, expected_hash: str, horizon: int) -> None:
+        super().__init__(path, expected_hash=expected_hash, horizon=horizon)
+        self.actor = PaidTrainableActor(path, expected_hash=expected_hash).eval()
+
+    def step(self, observation: np.ndarray, *, frame: int):
+        if self.faulted:
+            raise ValueError("teacher inference fault latched; new episode object required")
+        try:
+            if (
+                type(frame) is not int
+                or frame != self.frame
+                or not 0 <= frame < self.horizon
+                or observation.shape != (160,)
+                or observation.dtype != np.float32
+                or not np.isfinite(observation).all()
+            ):
+                raise ValueError(
+                    "consecutive actual finite160 input, no crop/pad/reference extension"
+                )
+            before = dict(
+                h_before=self.h.copy(), c_before=self.c.copy(), observation=observation.copy()
+            )
+            self.attempted_neural_calls += 1
+            with torch.no_grad():
+                ac, (h, c) = self.actor(
+                    torch.from_numpy(observation.copy()).reshape(1, 1, 160),
+                    (torch.from_numpy(self.h), torch.from_numpy(self.c)),
+                )
+            self.neural_calls += 1
+            action = ac[0, 0].numpy().copy()
+            h, c = h.numpy().copy(), c.numpy().copy()
+            if (
+                action.shape != (29,)
+                or h.shape != (2, 1, 128)
+                or c.shape != (2, 1, 128)
+                or any(x.dtype != np.float32 or not np.isfinite(x).all() for x in (action, h, c))
+            ):
+                raise ValueError("finite exact trainable actor outputs required")
+            self.h, self.c = h, c
+            self.frame += 1
+            return dict(**before, action=action, h_after=h.copy(), c_after=c.copy())
+        except Exception:
+            self.faulted = True
+            raise

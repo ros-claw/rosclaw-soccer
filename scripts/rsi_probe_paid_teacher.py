@@ -23,6 +23,9 @@ def main():
     p.add_argument("--policy-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--case-set", choices=("smoke8", "full16"), default="smoke8")
+    p.add_argument("--backend", choices=("onnx", "torch"), default="onnx")
+    p.add_argument("--parity-root", type=Path)
+    p.add_argument("--parity-hash")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     if (
@@ -43,6 +46,26 @@ def main():
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
 
     pins = {str(policy_path): a.policy_hash}
+    if a.backend == "torch":
+        if a.parity_root is None or a.parity_hash is None:
+            raise ValueError("whole-history parity proof required before new Torch physics")
+        parity = a.parity_root / "complete.json"
+        if digest(parity) != a.parity_hash:
+            raise ValueError("exact trainable parity receipt required")
+        proof = json.loads(parity.read_text())
+        if (
+            proof["status"]
+            != "PAID_TRAINABLE_RECORDED_OBSERVATION_PARITY_NOT_PHYSICS_QUALIFICATION"
+            or proof["input_file_hashes"].get(str(policy_path)) != a.policy_hash
+            or proof["optimizer_updates"] != 0
+            or len(proof["results"]) != 96
+            or proof["new_neural_rows"] != 45720
+        ):
+            raise ValueError("actual complete full16 two-mode research parity required")
+        check_pins(proof["input_file_hashes"])
+        pins[str(parity)] = a.parity_hash
+    elif a.parity_root is not None or a.parity_hash is not None:
+        raise ValueError("ONNX baseline must not inherit a Torch proof")
     for f in (a.reference_root / "README.md", a.reference_root / "LICENSE.md"):
         pins[str(f)] = digest(f)
     for root in (
@@ -81,6 +104,7 @@ def main():
         a.output / "declaration.json",
         dict(
             source_head=a.expected_head,
+            inference_backend=a.backend,
             reference_head=a.reference_head,
             input_file_hashes=pins,
             profiles=profiles,
@@ -267,7 +291,15 @@ def main():
                     env.reset(clip, np.zeros(2), ball, velocity)
                     normal = goal[:2] / np.linalg.norm(goal[:2])
                     env.set_goal_marker(goal, normal)
-                    policy = PaidResearchPolicy(
+                    policy_class = PaidResearchPolicy
+                    if a.backend == "torch":
+                        import torch
+
+                        from rosclaw_soccer.rsi.paid_trainable_actor import PaidTorchResearchPolicy
+
+                        torch.set_num_threads(1)
+                        policy_class = PaidTorchResearchPolicy
+                    policy = policy_class(
                         policy_path, expected_hash=a.policy_hash, horizon=clip.length
                     )
                     initial = {
@@ -431,7 +463,12 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="PAID_RESEARCH_NATIVE_TEACHER_PROBE_NOT_PROMOTED",
+                status=(
+                    "PAID_RESEARCH_NATIVE_TEACHER_PROBE_NOT_PROMOTED"
+                    if a.backend == "onnx"
+                    else "PAID_RESEARCH_NATIVE_TORCH_PROBE_NOT_PROMOTED"
+                ),
+                inference_backend=a.backend,
                 input_file_hashes=pins,
                 raw_hashes=raw_hashes,
                 results=results,
