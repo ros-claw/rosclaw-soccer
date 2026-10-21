@@ -15,6 +15,7 @@ def main():
     p.add_argument("--actor-kind", choices=("shared", "bounded-residual"), default="shared")
     p.add_argument("--adapter-proof-root", type=Path)
     p.add_argument("--adapter-proof-hash")
+    p.add_argument("--training-seed", type=int, choices=(7602, 7605, 7606))
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -88,6 +89,8 @@ def main():
             raise ValueError("same actually qualified adapter implementation required")
     elif a.adapter_proof_root or a.adapter_proof_hash:
         raise ValueError("adapter evidence cannot qualify a shared-actor experiment")
+    if not residual and a.training_seed is not None:
+        raise ValueError("shared pilot retains its original fixed seed")
     qualified_root = next(
         Path(k).parent.parent
         for k in pins
@@ -106,7 +109,7 @@ def main():
     for root in (Path.cwd() / "src", Path.cwd() / "scripts", a.reference_root / "src"):
         pins.update({str(f): digest(f) for f in root.rglob("*.py")})
     check_pins(pins)
-    seed, actor_lr = (7602, 3e-4) if residual else (7601, 3e-5)
+    seed, actor_lr = ((a.training_seed or 7602), 3e-4) if residual else (7601, 3e-5)
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -304,6 +307,7 @@ def main():
                 native_model_hash=pins[str(mp)],
                 reset_bank_hash=pins[str(bp)],
                 source_head=a.expected_head,
+                training_seed=seed,
                 qualification_hash=a.qualification_hash,
                 actor_state_dict=policy.actor.state_dict(),
                 critic_state_dict=policy.critic.state_dict(),
@@ -502,6 +506,7 @@ def main():
                 if residual
                 else "NATIVE_CONTACT24_PPO_CANDIDATE_REQUIRES_FULL_EXAM",
                 actor_kind=a.actor_kind,
+                training_seed=seed,
                 adapter_config=adapter_config,
                 adapter_proof_hash=a.adapter_proof_hash,
                 input_file_hashes=pins,
