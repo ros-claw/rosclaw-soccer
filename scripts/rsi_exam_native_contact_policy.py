@@ -23,6 +23,8 @@ def main():
     p.add_argument("--task-set", choices=("train64", "dev64"), default="train64")
     p.add_argument("--baseline-reuse-root", type=Path)
     p.add_argument("--baseline-reuse-hash")
+    p.add_argument("--initialization-exam-root", type=Path)
+    p.add_argument("--initialization-exam-hash")
     p.add_argument(
         "--checkpoint-intent",
         choices=(
@@ -30,6 +32,7 @@ def main():
             "bounded-residual",
             "bounded-recovery-option",
             "bounded-recovery-continuation",
+            "bounded-approach40",
         ),
         default="shared",
     )
@@ -63,10 +66,53 @@ def main():
     learner, starts = reports[:2]
     baseline = {} if dev else reports[2]
     continued = a.checkpoint_intent == "bounded-recovery-continuation"
-    option = a.checkpoint_intent in ("bounded-recovery-option", "bounded-recovery-continuation")
-    final_episode = 132 if continued else 20
+    approach = a.checkpoint_intent == "bounded-approach40"
+    option = approach or a.checkpoint_intent in (
+        "bounded-recovery-option",
+        "bounded-recovery-continuation",
+    )
+    final_episode = 40 if approach else 132 if continued else 20
     residual = a.checkpoint_intent != "shared"
     reuse_rows = {}
+    initialization_rows = {}
+    if approach:
+        if not all((a.initialization_exam_root, a.initialization_exam_hash)):
+            raise ValueError("new40 requires independent completed parent132 frame-zero exam")
+        ip = a.initialization_exam_root / "complete.json"
+        if digest(ip) != a.initialization_exam_hash:
+            raise ValueError("exact completed initialization exam required")
+        ir = json.loads(ip.read_text())
+        parent_hashes = {
+            h
+            for name, h in ir["input_file_hashes"].items()
+            if name.endswith("/native-contact-episode132.pt")
+        }
+        if (
+            ir.get("checkpoint_intent") != "bounded-recovery-continuation"
+            or ir.get("task_set") != a.task_set
+            or parent_hashes != {learner["actor_init_parent132_hash"]}
+            or ir.get("all_strict_replays_exact") is not True
+            or ir.get("all_representative_repeats_exact") is not True
+        ):
+            raise ValueError("same task and actual admitted parent132 baseline required")
+        initialization_rows = {
+            (r["world"], r["repeat"]): r for r in ir["results"] if r["arm"] == "final"
+        }
+        if set(initialization_rows) != {
+            (w, rep) for w in range(64) for rep in range(2 if w in repeated_worlds else 1)
+        }:
+            raise ValueError("complete72 parent132 neural trajectories required")
+        pins.update(ir["input_file_hashes"])
+        pins[str(ip)] = a.initialization_exam_hash
+        for (w, rep), row in initialization_rows.items():
+            pins[str(a.initialization_exam_root / f"world{w}-final-repeat{rep}/native.npz")] = row[
+                "raw_hash"
+            ]
+        lp = a.learner_root / "declaration.json"
+        pins[str(lp)] = digest(lp)
+        learner_declaration = json.loads(lp.read_text())
+    elif a.initialization_exam_root or a.initialization_exam_hash:
+        raise ValueError("initialization132 comparison is defined only for new40")
     if a.baseline_reuse_root or a.baseline_reuse_hash:
         if not all((a.baseline_reuse_root, a.baseline_reuse_hash)) or not residual or option:
             raise ValueError(
@@ -144,7 +190,9 @@ def main():
                 "raw_hash"
             ]
     expected_status = (
-        "NATIVE_OPTION_CONTINUATION132_REQUIRES_FULL_EXAM"
+        "NATIVE_APPROACH40_REQUIRES_FULL_EXAM"
+        if approach
+        else "NATIVE_OPTION_CONTINUATION132_REQUIRES_FULL_EXAM"
         if continued
         else "NATIVE_CONTACT24_RECOVERY60_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
         if option
@@ -154,18 +202,23 @@ def main():
     )
     if (
         learner.get("status") != expected_status
-        or learner.get("actor_kind", "shared")
-        != ("bounded-residual" if option else a.checkpoint_intent)
+        or (
+            not approach
+            and learner.get("actor_kind", "shared")
+            != ("bounded-residual" if option else a.checkpoint_intent)
+        )
         or learner.get("protocol")
         != (
-            "native-contact24-recovery60-continuation-v1"
+            "native-approach-measured-contact-recovery60-ppo-v1"
+            if approach
+            else "native-contact24-recovery60-continuation-v1"
             if continued
             else "native-contact24-recovery60-v1"
             if option
             else "native-contact24-v1"
         )
-        or len(learner.get("results", [])) != (112 if continued else 20)
-        or learner["counts"]["ppo_steps"] < 1
+        or len(learner.get("results", [])) != (40 if approach else 112 if continued else 20)
+        or learner["counts"]["PPO_steps" if approach else "ppo_steps"] < 1
         or starts.get("ball_placement_protocol") != "body-bound-v1"
         or (
             not dev
@@ -189,6 +242,11 @@ def main():
         )
     if continued and [r["episode"] for r in learner["results"]] != list(range(20, 132)):
         raise ValueError("complete fixed resumed20..131 learning history required")
+    if approach and (
+        [r["episode"] for r in learner["results"]] != list(range(40))
+        or learner.get("mode") != "train40"
+    ):
+        raise ValueError("complete fixed new0..39 learning history required")
     checkpoint = next(r for r in learner["checkpoints"] if r["episode"] == final_episode)
     cp = a.learner_root / checkpoint["file"]
     pins[str(cp)] = checkpoint["hash"]
@@ -245,7 +303,9 @@ def main():
             start="original frame zero, NOT precontact snapshots",
             no_state_overwrites=True,
             body_ball_motor_colliders_and_original_goal_initial_states_unchanged=True,
-            baseline_must_reproduce_all_old_native_fields_bitexact=not dev,
+            baseline_must_reproduce_all_old_native_fields_bitexact=not dev and not approach,
+            initialization132_exam_hash=a.initialization_exam_hash,
+            baseline_initial132_full_trajectory_exact_required=approach,
             strict_physical_replay="all substep canonical q/v/feet/nonfoot bitexact",
             correct_foot_threshold_n=10.0,
             forbidden_contact_threshold_n=1.0,
@@ -265,6 +325,7 @@ def main():
         import torch
 
         from rosclaw_soccer.providers.g1.velocity_policy import observation98
+        from rosclaw_soccer.rsi.approach_option_checkpoint import NativeApproachContactSession
         from rosclaw_soccer.rsi.contact_option_clock import enter_measured_recovery
         from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
             DEVELOPMENT_MOTION_NAMES,
@@ -282,10 +343,12 @@ def main():
 
         torch.set_num_threads(1)
         session_type = (
-            NativeContinuedContactSession
+            NativeApproachContactSession
+            if approach
+            else NativeContinuedContactSession
             if continued
             else NativeRecoveryContactSession
-            if option
+            if option and not approach
             else NativeResidualContactSession
             if residual
             else NativeContactSession
@@ -316,6 +379,30 @@ def main():
         cfg = pinned("/policy/velocity/v0/params/deploy.yaml")
         onnx = pinned("/policy/velocity/v0/exported/policy.onnx")
         model = mujoco.MjModel.from_binary_path(str(mp))
+        if approach:
+            initialization = pinned("/native-contact-episode132.pt")
+
+            def proof_hash(suffix):
+                return pins[str(pinned(suffix))]
+
+            session_options = dict(
+                initialization_checkpoint=initialization,
+                expected_initialization_hash=learner["actor_init_parent132_hash"],
+                expected_reset_bank_hash=proof_hash("/precontact-resets.npz"),
+                expected_course_proof_hash=proof_hash(
+                    "/rsi-native-approach-single-row-all64-20261021/complete.json"
+                ),
+                expected_fault_proof_hash=proof_hash(
+                    "/rsi-native-approach-actual-fault-20261021/complete.json"
+                ),
+                expected_course_audit_hash=proof_hash(
+                    "/native-approach-single-row-all64-independent-audit-20261021.json"
+                ),
+                expected_fault_audit_hash=proof_hash(
+                    "/native-approach-actual-fault-independent-audit-20261021.json"
+                ),
+                expected_source_head=learner_declaration["source_head"],
+            )
         layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
         feet = [model.body("robot/" + s + "_ankle_roll_link").id for s in ("left", "right")]
         torso = model.body("robot/torso_link").id
@@ -580,7 +667,19 @@ def main():
                             "complete independent NN/physics representative repeat differs"
                         )
                     first = raw
-                    if arm == "initial" and not dev:
+                    if arm == "initial" and approach:
+                        with np.load(
+                            a.initialization_exam_root
+                            / f"world{world}-final-repeat{repeat}/native.npz",
+                            allow_pickle=False,
+                        ) as z:
+                            if set(z.files) != set(raw) or any(
+                                not np.array_equal(z[k], raw[k]) for k in z.files
+                            ):
+                                raise ValueError(
+                                    "initial132 did not reproduce complete parent132 trajectory"
+                                )
+                    elif arm == "initial" and not dev:
                         with np.load(
                             a.baseline_episodes_root / f"world{world}-repeat0.npz",
                             allow_pickle=False,
@@ -727,7 +826,11 @@ def main():
                 policy_rows=nn_rows,
                 optimizer_updates=0,
                 all_old_baseline_fields_bitexact=True if not dev and not option else None,
-                old_baseline_reference_prefix_exact=True if option and not dev else None,
+                old_baseline_reference_prefix_exact=True
+                if option and not dev and not approach
+                else None,
+                initialization132_exam_hash=a.initialization_exam_hash,
+                initial132_full_trajectory_exact=True if approach else None,
                 task_set=a.task_set,
                 all_strict_replays_exact=True,
                 all_representative_repeats_exact=True,

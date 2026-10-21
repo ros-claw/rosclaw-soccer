@@ -23,7 +23,8 @@ def main():
         raise ValueError("unused output and exact completed exam required")
     r = json.loads(receipt.read_text())
     if (
-        r["checkpoint_intent"] not in ("bounded-recovery-option", "bounded-recovery-continuation")
+        r["checkpoint_intent"]
+        not in ("bounded-recovery-option", "bounded-recovery-continuation", "bounded-approach40")
         or r["optimizer_updates"] != 0
         or any(
             r[k] is not True
@@ -33,6 +34,30 @@ def main():
         raise ValueError("actual complete native finite-option proof required")
     pins = {**r["input_file_hashes"], str(receipt): a.exam_hash}
     pins[str(Path(__file__).resolve())] = digest(Path(__file__).resolve())
+    approach = r["checkpoint_intent"] == "bounded-approach40"
+    initialization_rows = {}
+    initialization_root = None
+    if approach:
+        paths = [
+            Path(p)
+            for p, h in pins.items()
+            if p.endswith("/complete.json") and h == r["initialization132_exam_hash"]
+        ]
+        if len(paths) != 1 or r.get("initial132_full_trajectory_exact") is not True:
+            raise ValueError("exact source132 exam and declared new baseline proof required")
+        path = paths[0]
+        if digest(path) != r["initialization132_exam_hash"]:
+            raise ValueError("initialization exam changed")
+        parent = json.loads(path.read_text())
+        if (
+            parent.get("checkpoint_intent") != "bounded-recovery-continuation"
+            or parent.get("task_set") != r["task_set"]
+        ):
+            raise ValueError("same task parent132 reference required")
+        initialization_rows = {
+            (x["world"], x["repeat"]): x for x in parent["results"] if x["arm"] == "final"
+        }
+        initialization_root = path.parent
 
     def pinned(suffix):
         found = [Path(p) for p in pins if p.endswith(suffix)]
@@ -136,7 +161,16 @@ def main():
         ).any(axis=1)
         if bad.any() and not np.array_equal(np.flatnonzero(bad), [length - 1]):
             raise ValueError("body kept advancing after guard failure")
-        if not dev and arm == "initial" and rep == 0:
+        if approach and arm == "initial":
+            reference = initialization_rows[w, rep]
+            path = initialization_root / f"world{w}-final-repeat{rep}/native.npz"
+            if digest(path) != reference["raw_hash"]:
+                raise ValueError("parent132 source trajectory changed")
+            pins[str(path)] = reference["raw_hash"]
+            baseline = load(path)
+            if set(baseline) != set(z) or any(not np.array_equal(baseline[k], z[k]) for k in z):
+                raise ValueError("new initial132 full execution differs from actual parent132")
+        elif not dev and arm == "initial" and rep == 0:
             baseline = load(
                 pinned(f"/rsi-body-bound-contact-episodes-20261021/world{w}-repeat0.npz")
             )
@@ -172,7 +206,8 @@ def main():
             phase_clock_and_stop_exact=True,
             recovery_inputs_zero79_zero_command=True,
             whole_repeats_exact=True,
-            original_baseline_prefix_exact=True if not dev else None,
+            original_baseline_prefix_exact=True if not dev and not approach else None,
+            initial132_full_trajectory_exact=True if approach else None,
             new_physics_steps=0,
             new_neural_rows=0,
             optimizer_updates=0,

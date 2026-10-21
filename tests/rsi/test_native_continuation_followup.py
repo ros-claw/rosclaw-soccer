@@ -10,7 +10,7 @@ import pytest
 from scripts import rsi_follow_native_continuation as module
 
 
-def fixture(tmp_path, monkeypatch):
+def fixture(tmp_path, monkeypatch, *, approach=False):
     source = tmp_path / "source"
     source.mkdir()
     monkeypatch.chdir(source)
@@ -25,6 +25,14 @@ def fixture(tmp_path, monkeypatch):
         input_file_hashes={},
         results=[dict(episode=i) for i in range(20, 132)],
     )
+    if approach:
+        receipt.update(
+            status="NATIVE_APPROACH40_REQUIRES_FULL_EXAM",
+            end_episode=40,
+            mode="train40",
+            actor_init_parent132_hash="parent132",
+            results=[dict(episode=i) for i in range(40)],
+        )
     (learner / "complete.json").write_text(json.dumps(receipt))
     (learner / "declaration.json").write_text(json.dumps(dict(source_head="learner-head")))
     tasks = {}
@@ -36,17 +44,22 @@ def fixture(tmp_path, monkeypatch):
         tasks[task] = dict(starts_root=str(folder), starts_hash=h)
         if task == "train64":
             tasks[task].update(baseline_root=str(folder), baseline_hash=h)
+        if approach:
+            tasks[task].update(initialization_root=str(folder), initialization_hash=h)
     plan = tmp_path / "plan.json"
     plan.write_text(
         json.dumps(
             dict(
-                schema="soccer.rsi.continuation132_followup_plan.v1",
+                schema="soccer.rsi.approach40_followup_plan.v1"
+                if approach
+                else "soccer.rsi.continuation132_followup_plan.v1",
                 worker_unit="learner.service",
                 learner_root=str(learner),
                 learner_source_head="learner-head",
                 resume_checkpoint_hash="cp",
                 resume_source_hash="parent",
                 resume_proof_hash="proof",
+                initialization_checkpoint_hash="parent132",
                 tasks=tasks,
                 promotion_authorized=False,
             )
@@ -94,9 +107,11 @@ def fixture(tmp_path, monkeypatch):
         calls.append(command)
         path = Path(command[command.index("--output") + 1])
         if command[2] == "scripts.rsi_exam_native_contact_policy":
-            assert (
-                command[command.index("--checkpoint-intent") + 1] == "bounded-recovery-continuation"
+            assert command[command.index("--checkpoint-intent") + 1] == (
+                "bounded-approach40" if approach else "bounded-recovery-continuation"
             )
+            if approach:
+                assert "--initialization-exam-root" in command
             path.mkdir()
             (path / "complete.json").write_text(json.dumps(dict(summary={"synthetic": True})))
         else:
@@ -109,17 +124,23 @@ def fixture(tmp_path, monkeypatch):
     return output, learner, calls, polls
 
 
-def test_waits_for_exit_then_runs_only_fixed_exams_and_audits(tmp_path, monkeypatch):
-    output, _, calls, polls = fixture(tmp_path, monkeypatch)
+@pytest.mark.parametrize("approach", [False, True])
+def test_waits_for_exit_then_runs_only_fixed_exams_and_audits(tmp_path, monkeypatch, approach):
+    output, _, calls, polls = fixture(tmp_path, monkeypatch, approach=approach)
     module.main()
     result = json.loads((output / "complete.json").read_text())
     assert len(polls) == 2 and len(calls) == 4
-    assert result["status"] == "CONTINUATION132_EXAMS_AUDITED_NOT_PROMOTED"
+    assert result["status"] == (
+        "APPROACH40_EXAMS_AUDITED_NOT_PROMOTED"
+        if approach
+        else "CONTINUATION132_EXAMS_AUDITED_NOT_PROMOTED"
+    )
     assert not result["promotion_authorized"] and not result["goal_complete"]
 
 
-def test_incomplete_final_history_stops_without_restart_or_exam(tmp_path, monkeypatch):
-    output, learner, calls, _ = fixture(tmp_path, monkeypatch)
+@pytest.mark.parametrize("approach", [False, True])
+def test_incomplete_final_history_stops_without_restart_or_exam(tmp_path, monkeypatch, approach):
+    output, learner, calls, _ = fixture(tmp_path, monkeypatch, approach=approach)
     path = learner / "complete.json"
     value = json.loads(path.read_text())
     value["results"].pop()

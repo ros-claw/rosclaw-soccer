@@ -1,4 +1,4 @@
-"""Finite SIM chain: await exact learner, examine fixed132, audit both arms.
+"""Finite SIM chain: await exact declared132/approach40, audit both exam arms.
 
 Never restarts training, chooses weights, promotes policies or wakes an Agent.
 Missing/failed workers stop the chain. The plan commits all inputs before wait.
@@ -35,16 +35,26 @@ def main():
     ):
         raise ValueError("unused external output, exact plan and frozen source required")
     plan = json.loads(a.plan.read_text())
+    approach = plan.get("schema") == "soccer.rsi.approach40_followup_plan.v1"
     if (
-        plan.get("schema") != "soccer.rsi.continuation132_followup_plan.v1"
+        plan.get("schema")
+        not in (
+            "soccer.rsi.continuation132_followup_plan.v1",
+            "soccer.rsi.approach40_followup_plan.v1",
+        )
         or plan.get("promotion_authorized") is not False
         or set(plan["tasks"]) != {"train64", "dev64"}
         or not re.fullmatch(r"[A-Za-z0-9_.@-]+\.service", plan["worker_unit"])
     ):
-        raise ValueError("bounded simulation-only fixed132 follow-up plan required")
+        raise ValueError("bounded simulation-only fixed native follow-up plan required")
     pins = {str(a.plan): a.plan_hash}
     for task, inputs in plan["tasks"].items():
-        for key in ("starts", "baseline") if task == "train64" else ("starts",):
+        prerequisites = ["starts"]
+        if task == "train64":
+            prerequisites.append("baseline")
+        if approach:
+            prerequisites.append("initialization")
+        for key in prerequisites:
             path = Path(inputs[key + "_root"]) / "complete.json"
             if digest(path) != inputs[key + "_hash"]:
                 raise ValueError("exact task prerequisites required")
@@ -59,7 +69,7 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             maximum_wait_s=10800,
-            fixed_checkpoint=132,
+            fixed_checkpoint=40 if approach else 132,
             automatic_promotion=False,
             hardware_authorized=False,
         ),
@@ -109,15 +119,25 @@ def main():
         receipt = learner_root / "complete.json"
         r = json.loads(receipt.read_text())
         declaration = json.loads((learner_root / "declaration.json").read_text())
-        if (
-            r["status"] != "NATIVE_OPTION_CONTINUATION132_REQUIRES_FULL_EXAM"
-            or r["end_episode"] != 132
-            or declaration["source_head"] != plan["learner_source_head"]
-            or r["resume_checkpoint_hash"] != plan["resume_checkpoint_hash"]
-            or r["resume_source_hash"] != plan["resume_source_hash"]
-            or r["resume_proof_hash"] != plan["resume_proof_hash"]
-            or [x["episode"] for x in r["results"]] != list(range(20, 132))
-        ):
+        valid = (
+            (
+                r["status"] == "NATIVE_APPROACH40_REQUIRES_FULL_EXAM"
+                and r["end_episode"] == 40
+                and r.get("mode") == "train40"
+                and r["actor_init_parent132_hash"] == plan["initialization_checkpoint_hash"]
+                and [x["episode"] for x in r["results"]] == list(range(40))
+            )
+            if approach
+            else not (
+                r["status"] != "NATIVE_OPTION_CONTINUATION132_REQUIRES_FULL_EXAM"
+                or r["end_episode"] != 132
+                or r["resume_checkpoint_hash"] != plan["resume_checkpoint_hash"]
+                or r["resume_source_hash"] != plan["resume_source_hash"]
+                or r["resume_proof_hash"] != plan["resume_proof_hash"]
+                or [x["episode"] for x in r["results"]] != list(range(20, 132))
+            )
+        )
+        if not valid or declaration["source_head"] != plan["learner_source_head"]:
             raise ValueError("learner is not the fixed declared continuation")
         pins.update(r["input_file_hashes"])
         learner_hash = digest(receipt)
@@ -139,7 +159,7 @@ def main():
                 "--task-set",
                 task,
                 "--checkpoint-intent",
-                "bounded-recovery-continuation",
+                "bounded-approach40" if approach else "bounded-recovery-continuation",
                 "--learner-root",
                 str(learner_root),
                 "--learner-hash",
@@ -153,6 +173,13 @@ def main():
                 "--output",
                 str(output),
             ]
+            if approach:
+                command += [
+                    "--initialization-exam-root",
+                    inputs["initialization_root"],
+                    "--initialization-exam-hash",
+                    inputs["initialization_hash"],
+                ]
             if task == "train64":
                 command += [
                     "--baseline-episodes-root",
@@ -197,7 +224,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="CONTINUATION132_EXAMS_AUDITED_NOT_PROMOTED",
+                status="APPROACH40_EXAMS_AUDITED_NOT_PROMOTED"
+                if approach
+                else "CONTINUATION132_EXAMS_AUDITED_NOT_PROMOTED",
                 input_file_hashes=pins,
                 learner_hash=learner_hash,
                 results=results,
