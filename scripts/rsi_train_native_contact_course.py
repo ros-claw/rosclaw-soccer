@@ -12,6 +12,9 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("qualification-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--actor-kind", choices=("shared", "bounded-residual"), default="shared")
+    p.add_argument("--adapter-proof-root", type=Path)
+    p.add_argument("--adapter-proof-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -47,6 +50,44 @@ def main():
     for i, h in enumerate(qual["raw_hashes"]):
         pins[str(a.qualification_root / f"episode{i}.npz")] = h
     pins[str(a.qualification_root / "fault-fixture.npz")] = qual["fixture_hash"]
+    residual = a.actor_kind == "bounded-residual"
+    if residual:
+        if not a.adapter_proof_root or not a.adapter_proof_hash:
+            raise ValueError("residual training requires its own actual zero-influence proof")
+        proof_path = a.adapter_proof_root / "complete.json"
+        if digest(proof_path) != a.adapter_proof_hash:
+            raise ValueError("immutable residual proof required")
+        adapter_proof = json.loads(proof_path.read_text())
+        if (
+            adapter_proof.get("status")
+            != "NATIVE_BOUNDED_CONTACT_ADAPTER_ZERO_INFLUENCE_QUALIFIED_NOT_SKILL"
+            or any(
+                adapter_proof.get(k) is not True
+                for k in (
+                    "zero_influence_all_inputs",
+                    "modified_finite_adapter_far_and_missing_perception_exact",
+                    "full_paired_physics_exact",
+                    "frozen_foundation_exact",
+                )
+            )
+            or adapter_proof["input_file_hashes"].get(str(f)) != a.qualification_hash
+        ):
+            raise ValueError("same native course and actual protected adapter proof required")
+        pins.update(adapter_proof["input_file_hashes"])
+        pins[str(proof_path)] = a.adapter_proof_hash
+        pins[str(a.adapter_proof_root / "function-test.npz")] = adapter_proof["function_test_hash"]
+        for label, h in adapter_proof["paired_raw_hashes"].items():
+            pins[str(a.adapter_proof_root / (label + ".npz"))] = h
+        adapter_source = next(
+            Path(k).parent.parent
+            for k in adapter_proof["input_file_hashes"]
+            if k.endswith("/scripts/rsi_qualify_native_contact_adapter.py")
+        )
+        relative = "src/rosclaw_soccer/rsi/native_contact_adapter.py"
+        if digest(Path.cwd() / relative) != pins[str(adapter_source / relative)]:
+            raise ValueError("same actually qualified adapter implementation required")
+    elif a.adapter_proof_root or a.adapter_proof_hash:
+        raise ValueError("adapter evidence cannot qualify a shared-actor experiment")
     qualified_root = next(
         Path(k).parent.parent
         for k in pins
@@ -65,6 +106,7 @@ def main():
     for root in (Path.cwd() / "src", Path.cwd() / "scripts", a.reference_root / "src"):
         pins.update({str(f): digest(f) for f in root.rglob("*.py")})
     check_pins(pins)
+    seed, actor_lr = (7602, 3e-4) if residual else (7601, 3e-5)
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -72,7 +114,10 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             protocol="native-contact24-v1",
-            seed=7601,
+            seed=seed,
+            actor_kind=a.actor_kind,
+            frozen_foundation=residual,
+            adapter_proof_hash=a.adapter_proof_hash,
             worlds=32,
             course_lead=10,
             controls=24,
@@ -88,7 +133,7 @@ def main():
             fresh_critic=True,
             fresh_optimizer=True,
             old_critic304_and_old_adam_loaded=False,
-            actor_learning_rate=3e-5,
+            actor_learning_rate=actor_lr,
             critic_learning_rate=3e-4,
             exploration_learning_rate=1e-5,
             gaussian_std_initial=0.05,
@@ -143,8 +188,8 @@ def main():
         from scripts.rsi_native_course_inputs import load_body_references
 
         torch.set_num_threads(1)
-        torch.manual_seed(7601)
-        np.random.seed(7601)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
         if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
             raise ValueError("one isolated GPU required for actual neural learning")
 
@@ -203,10 +248,26 @@ def main():
             {k: parent["algorithm"]["actor_state_dict"]["mlp." + k] for k in actor.state_dict()},
             strict=True,
         )
+        foundation = None
+        adapter_config = None
+        if residual:
+            from rosclaw_soccer.rsi.native_contact_adapter import NativeResidualContactActor
+
+            actor = NativeResidualContactActor(actor).cuda()
+            foundation = {k: v.detach().cpu().clone() for k, v in actor.base.state_dict().items()}
+            adapter_config = dict(
+                near_radius_m=actor.near_radius_m,
+                far_radius_m=actor.far_radius_m,
+                maximum_normalized_residual=actor.maximum_normalized_residual,
+                missing_ball9_disables_adapter=True,
+                hidden_dims=[128, 64],
+                input_dim=177,
+                output_dim=29,
+            )
         policy = make_contact_actor_critic(actor).cuda()
         optimizer = torch.optim.Adam(
             [
-                dict(params=list(policy.actor.parameters()), lr=3e-5),
+                dict(params=[p for p in policy.actor.parameters() if p.requires_grad], lr=actor_lr),
                 dict(params=list(policy.critic.parameters()), lr=3e-4),
                 dict(params=[policy.log_std], lr=1e-5),
             ]
@@ -224,7 +285,12 @@ def main():
         def checkpoint(episode):
             file = a.output / f"native-contact-episode{episode}.pt"
             value = dict(
-                schema="soccer.rsi.native_contact24_ppo.v1",
+                schema="soccer.rsi.native_contact24_residual_ppo.v1"
+                if residual
+                else "soccer.rsi.native_contact24_ppo.v1",
+                actor_kind=a.actor_kind,
+                adapter_config=adapter_config,
+                adapter_proof_hash=a.adapter_proof_hash,
                 protocol=env.protocol,
                 episode_count=episode,
                 value_warmup_episodes=4,
@@ -365,6 +431,13 @@ def main():
                         policy.log_std.clamp_(math.log(0.01), math.log(0.1))
                     if any(not torch.isfinite(v).all() for v in policy.state_dict().values()):
                         raise ValueError("nonfinite learned weights, no checkpoint promotion")
+                    if residual and any(
+                        not torch.equal(v.cpu(), foundation[k])
+                        for k, v in policy.actor.base.state_dict().items()
+                    ):
+                        raise ValueError(
+                            "immutable residual foundation changed during optimization"
+                        )
                     update_rows.append({k: float(v) for k, v in metrics.items()})
             if any(
                 not torch.equal(v.cpu(), frozen_base[k])
@@ -419,11 +492,18 @@ def main():
             or not counts["value_only_steps"]
         ):
             raise ValueError("real completed actor/critic optimization required")
+        if residual and any(not k.startswith("adapter.") for k in actor_changed):
+            raise ValueError("residual learning changed non-adapter state")
         check_pins(pins)
         write_once(
             a.output / "complete.json",
             dict(
-                status="NATIVE_CONTACT24_PPO_CANDIDATE_REQUIRES_FULL_EXAM",
+                status="NATIVE_CONTACT24_RESIDUAL_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+                if residual
+                else "NATIVE_CONTACT24_PPO_CANDIDATE_REQUIRES_FULL_EXAM",
+                actor_kind=a.actor_kind,
+                adapter_config=adapter_config,
+                adapter_proof_hash=a.adapter_proof_hash,
                 input_file_hashes=pins,
                 results=results,
                 checkpoints=checkpoints,
