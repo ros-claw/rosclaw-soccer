@@ -72,6 +72,37 @@ def test_missing_contact_is_audited_as_failure_not_synthetic_success():
     assert result == dict(native_steps=610, neural_rows=1, quality=False, body_failed=False)
 
 
+def test_new_reference_prefix_never_becomes_old_completed_exam():
+    a, z, row = synthetic_raw()
+    prefix = {
+        k: (v.copy() if k.startswith(("NN_", "initial_")) else v[:1].copy()) for k, v in z.items()
+    }
+    row.update(
+        native_steps=10,
+        reference_prefix_only=True,
+        official_exam_result=False,
+        held_tail_controls_omitted=60,
+    )
+    row["postcontact"] = native_contact_window(
+        force=prefix["forces"].reshape(-1, 3)[:, :2],
+        canonical_qpos=prefix["qpos"].reshape(-1, 43),
+        canonical_qvel=prefix["qvel"].reshape(-1, 41),
+        goal=prefix["initial_mocap_pos"][0],
+        intended_foot=0,
+    )
+    with pytest.raises(ValueError, match="tail"):
+        a.audit(prefix, row, horizon=1, previous_action=np.zeros(29, np.float32))
+    result = a.audit(
+        prefix, row, horizon=1, previous_action=np.zeros(29, np.float32), reference_prefix=True
+    )
+    assert result["native_steps"] == 10 and result["quality"] is False
+    row["official_exam_result"] = True
+    with pytest.raises(ValueError, match="masquerade"):
+        a.audit(
+            prefix, row, horizon=1, previous_action=np.zeros(29, np.float32), reference_prefix=True
+        )
+
+
 def test_declared_hold_checks_no_neural_padding_and_actual_torque():
     a, z, _ = synthetic_raw()
     keys = (

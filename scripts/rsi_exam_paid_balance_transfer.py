@@ -257,6 +257,7 @@ def main():
             a.output / "complete.json",
             dict(
                 status="PAID_BALANCE_FULL16_TRANSFER_CLOSED_PENDING_AUDIT",
+                declaration_hash=digest(a.output / "declaration.json"),
                 input_file_hashes=pins,
                 source_head=a.expected_head,
                 course_bank=a.course_bank,

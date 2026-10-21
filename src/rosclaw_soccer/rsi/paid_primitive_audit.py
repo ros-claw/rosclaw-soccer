@@ -94,12 +94,23 @@ class PaidPrimitiveAuditor:
         previous_action: np.ndarray,
         initial_memory: tuple[np.ndarray, np.ndarray] | None = None,
         intent: tuple[int, np.ndarray] | None = None,
+        reference_prefix: bool = False,
     ) -> dict[str, Any]:
         from rosclaw_soccer.rsi.paid_foot_taskspace import phase_intent
 
         if any(not np.isfinite(x).all() for x in z.values()):
             raise ValueError("nonfinite primitive evidence")
         controls, n = len(z["target"]), len(z["NN_action"])
+        if type(reference_prefix) is not bool or (
+            reference_prefix
+            and (
+                controls != n
+                or row.get("reference_prefix_only") is not True
+                or row.get("official_exam_result") is not False
+                or row.get("held_tail_controls_omitted") != 60
+            )
+        ):
+            raise ValueError("new reference-prefix audit must not masquerade as old complete exam")
         if (
             not 1 <= horizon <= 300
             or n != min(controls, horizon)
@@ -180,7 +191,9 @@ class PaidPrimitiveAuditor:
             (z["qpos"][:, :, 2] < 0.65)
             | (1 - 2 * (z["qpos"][:, :, 4] ** 2 + z["qpos"][:, :, 5] ** 2) < 0.9)
         ).any(axis=1)
-        if bad[:-1].any() or (not bad.any() and controls != horizon + 60):
+        if bad[:-1].any() or (
+            not bad.any() and controls != horizon + (0 if reference_prefix else 60)
+        ):
             raise ValueError("body failure stop or uncensored reference tail differs")
         forbidden = bool((f[:, 2] > 1).any())
         impulse = float((f[:, 2] * 0.002).sum())
