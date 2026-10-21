@@ -33,6 +33,7 @@ def main():
     indices = d.get("exam_candidate_indices", list(range(4)))
     sequences = d.get("sequence_protocol", False)
     specialist = d.get("successor_specialist", False)
+    zero_residual = d.get("contact_residual_zero", False)
     if (
         r["status"] != "PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED"
         or [x["candidate"] for x in r["candidates"]] != indices
@@ -41,6 +42,8 @@ def main():
         or any(i not in range(4) for i in indices)
         or r.get("sequence_protocol", False) != sequences
         or (specialist and not sequences)
+        or (zero_residual and not specialist)
+        or r.get("contact_residual_zero", False) != zero_residual
         or r.get("successor_specialist", False) != specialist
         or (
             sequences
@@ -367,6 +370,10 @@ def main():
         ]
         summaries = []
         for candidate in r["candidates"]:
+            if candidate.get("contact_residual_zero", False) != zero_residual or (
+                zero_residual and candidate["checkpoint_hash"] != d["baseline_checkpoint_hash"]
+            ):
+                raise ValueError("zero residual must declare its actual unchanged base motor")
             memory_handoff = "reset"
             if sequences:
                 memory_handoff = d["candidate_memory_handoff"][candidate["candidate"]]
@@ -427,6 +434,8 @@ def main():
                         if Path(x["raw_path"]).name == "first.npz"
                     )
                     same(read(actual), read(expected))
+                if zero_residual and row["second"] is not None:
+                    same(read(row["second"]), read(r["baseline_continuous"][i]["second"]))
                 checked.append(world(row, case, row["artifacts"], memory_handoff))
                 world(row, case, row["repeat_artifacts"], memory_handoff)
                 for x, y in zip(row["artifacts"], row["repeat_artifacts"], strict=True):
@@ -456,6 +465,10 @@ def main():
             gain = (
                 preserved
                 and summary["second_quality"] >= 8
+                and (
+                    not sequences
+                    or summary["second_quality"] > sum(w["quality"] for w in continuous)
+                )
                 and not summary["quality_regressions"]
                 and not summary["stability_regressions"]
             )

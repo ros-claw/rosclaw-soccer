@@ -58,6 +58,7 @@ def main():
     p.add_argument("--sequence-bank-root", type=Path)
     p.add_argument("--sequence-bank-hash")
     p.add_argument("--successor-specialist", action="store_true")
+    p.add_argument("--contact-residual-zero", action="store_true")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -82,6 +83,7 @@ def main():
     if (
         sequences != (a.sequence_bank_hash is not None)
         or (a.successor_specialist and not sequences)
+        or (a.contact_residual_zero and not a.successor_specialist)
         or (
             sequences
             and a.entry_controller != ("qualified-prior" if a.successor_specialist else "candidate")
@@ -161,6 +163,8 @@ def main():
             DEV_cases=declaration["DEV_cases" if sequences else "dev_cases"],
             sequence_protocol=sequences,
             successor_specialist=a.successor_specialist,
+            contact_residual_zero=a.contact_residual_zero,
+            baseline_checkpoint_hash=base["final_checkpoint_hash"],
             candidate_memory_handoff=[
                 x[2]["config"]["memory_handoff"] if sequences else "reset" for x in candidates
             ],
@@ -249,6 +253,17 @@ def main():
             )[0]
             for root, h, r in candidates
         ]
+        if a.contact_residual_zero:
+            from rosclaw_soccer.rsi.paid_contact_residual import (
+                ContactResidual,
+                FrozenContactResidualActor,
+            )
+
+            scale = torch.from_numpy(contract.parameters["action_scale"].copy())
+            actors = [
+                FrozenContactResidualActor(baseline_actor, ContactResidual(), scale).eval()
+                for _ in candidates
+            ]
         sys.path.insert(0, str(policy.parent.parent))
         from exp.mujoco_soccer.constants import BODY_NAMES, JOINT_EFFORT_LIMIT_ARRAY
         from exp.mujoco_soccer.math_utils import quat_apply
@@ -377,7 +392,7 @@ def main():
                             if second["body_failed"]
                             else "TWO_SKILLS_EXECUTED"
                         )
-                        if baseline:
+                        if baseline or a.contact_residual_zero:
                             with np.load(
                                 (
                                     a.prior_exam_root
@@ -502,6 +517,10 @@ def main():
             research_gain = (
                 old_preserved
                 and second_quality >= 8
+                and (
+                    not sequences
+                    or second_quality > sum(w["second_quality"] for w in continuous_baseline)
+                )
                 and not regressions
                 and not stability_regressions
             )
@@ -510,6 +529,8 @@ def main():
                 candidate=index,
                 memory_handoff=memory_handoff,
                 successor_specialist=a.successor_specialist,
+                contact_residual_zero=a.contact_residual_zero,
+                candidate_training_weights_used_for_motor=not a.contact_residual_zero,
                 entry_controller=a.entry_controller,
                 isolated_controller=a.entry_controller,
                 live_successor_controller="candidate",
@@ -520,7 +541,11 @@ def main():
                 ),
                 single_recurrent_actor=a.entry_controller == "candidate",
                 training_receipt_hash=candidates[index][1],
-                checkpoint_hash=candidates[index][2]["final_checkpoint_hash"],
+                checkpoint_hash=(
+                    base["final_checkpoint_hash"]
+                    if a.contact_residual_zero
+                    else candidates[index][2]["final_checkpoint_hash"]
+                ),
                 isolated=isolated_results,
                 continuous=dict(
                     results=worlds,
@@ -568,6 +593,7 @@ def main():
                 status="PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED",
                 sequence_protocol=sequences,
                 successor_specialist=a.successor_specialist,
+                contact_residual_zero=a.contact_residual_zero,
                 input_file_hashes=pins,
                 baseline_isolated=old_baselines,
                 baseline_continuous=continuous_baseline,

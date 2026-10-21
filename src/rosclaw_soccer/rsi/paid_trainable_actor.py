@@ -81,6 +81,13 @@ class PaidTrainableActor(nn.Module):
     def forward(
         self, observation: torch.Tensor, state: tuple[torch.Tensor, torch.Tensor]
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        action, state, _ = self.forward_with_features(observation, state)
+        return action, state
+
+    def forward_with_features(
+        self, observation: torch.Tensor, state: tuple[torch.Tensor, torch.Tensor]
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor], torch.Tensor]:
+        """Expose own causal last-layer features, not another policy's memory."""
         if (
             observation.ndim != 3
             or observation.shape[-1] != 160
@@ -104,7 +111,7 @@ class PaidTrainableActor(nn.Module):
             (observation - self.mean) / self.denominator,
             (state[0].contiguous(), state[1].contiguous()),
         )
-        return self.actor(output), state
+        return self.actor(output), state, output
 
 
 class PaidTorchResearchPolicy(PaidResearchPolicy):
