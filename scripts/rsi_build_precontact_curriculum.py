@@ -116,6 +116,7 @@ def main():
             status="TRAIN8_PRECONTACT_RESET_BANK_NOT_TRAINED_OR_RESTORE_QUALIFIED",
             input_file_hashes=pins,
             source_head=a.expected_head,
+            ball_placement_protocol=d.get("ball_placement_protocol", "legacy-subset-full-v0"),
             bank_hash=digest(bank),
             states=len(rows),
             selections=selections,

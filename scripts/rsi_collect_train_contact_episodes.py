@@ -38,6 +38,9 @@ def main():
         pins.update(d["input_file_hashes"])
         pins[str(f)] = h
     starts, learner, export = receipts
+    placement = starts.get("ball_placement_protocol", "legacy-subset-full-v0")
+    if placement not in ("legacy-subset-full-v0", "body-bound-v1"):
+        raise ValueError("explicit known source ball-placement protocol required")
     from rosclaw_soccer.rsi.ball_aware_inputs import require_ball_aware_learning
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
 
@@ -67,6 +70,7 @@ def main():
             input_file_hashes=pins,
             source_head=a.expected_head,
             source_split="train",
+            ball_placement_protocol=placement,
             worlds=64,
             repeated_worlds=list(range(8)),
             maximum_native_steps=216000,
@@ -301,6 +305,7 @@ def main():
                 neural_calls=calls,
                 independent_episodes=64,
                 source_split="train",
+                ball_placement_protocol=placement,
                 representative_full_repeats_exact=True,
                 new_optimizer_steps=0,
                 goal_complete=False,
@@ -309,6 +314,12 @@ def main():
             ),
         )
     except Exception as exc:
+        failure = dict(
+            error=repr(exc), native_steps=steps, neural_calls=calls, hardware_authorized=False
+        )
+        # Even if the output disk is full, the journal retains exact counters.
+        print(json.dumps({"collection_failed": failure}), flush=True)
+        write_once(a.output / "failed.json", failure)
         if rows:
             import numpy as np
 
@@ -316,12 +327,6 @@ def main():
                 a.output / "partial-failed.npz",
                 **{k: np.asarray([r[k] for r in rows]) for k in rows[0]},
             )
-        write_once(
-            a.output / "failed.json",
-            dict(
-                error=repr(exc), native_steps=steps, neural_calls=calls, hardware_authorized=False
-            ),
-        )
         raise
 
 
