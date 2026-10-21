@@ -8,6 +8,7 @@ from rosclaw_soccer.rsi.paid_balance_recovery import (
     body_feedback,
     feedback_delta,
     qualified_reference_prefix,
+    transfer_reference_prefix,
 )
 
 
@@ -104,3 +105,31 @@ def test_recovery_anchor_slew_budget_and_actual_action(monkeypatch):
     ep.termination_reason = "BODY_FAILURE"
     with pytest.raises(ValueError, match="healthy"):
         BalanceRecovery(ep)
+
+
+def test_transfer_keeps_actual_early_body_failure_without_padding_or_dropping():
+    raw = dict(
+        NN_action=np.ones((5, 29)),
+        target=np.ones((5, 29)),
+        neural_control=np.ones(5, bool),
+        body_failed=np.array([False] * 4 + [True]),
+        initial_time=np.array(0.0),
+    )
+    result = transfer_reference_prefix(raw, horizon=257)
+    assert len(result["target"]) == 5 and result["body_failed"][-1]
+    assert set(result) == set(raw)
+    raw["body_failed"][-1] = False
+    with pytest.raises(ValueError, match="actual body-failure"):
+        transfer_reference_prefix(raw, horizon=257)
+
+
+def test_transfer_can_measure_prefix_before_an_existing_tail_failure():
+    raw = dict(
+        NN_action=np.ones((3, 29)),
+        target=np.ones((8, 29)),
+        neural_control=np.r_[np.ones(3, bool), np.zeros(5, bool)],
+        body_failed=np.array([False] * 7 + [True]),
+        initial_time=np.array(0.0),
+    )
+    prefix = transfer_reference_prefix(raw, horizon=3)
+    assert len(prefix["target"]) == 3 and not prefix["body_failed"].any()

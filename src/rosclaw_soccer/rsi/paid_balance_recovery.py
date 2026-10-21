@@ -34,6 +34,36 @@ def qualified_reference_prefix(raw: dict[str, np.ndarray]) -> dict[str, np.ndarr
     return prefix
 
 
+def transfer_reference_prefix(raw: dict[str, np.ndarray], *, horizon: int) -> dict[str, np.ndarray]:
+    """Reuse a qualified prefix OR actual early failure; never drop failed DEV.
+
+    Unlike the successful-teacher admission above, a general transfer exam
+    must retain a source that failed before reference completion or in its
+    held tail. Only already observed control rows can be copied.
+    """
+    controls, n = len(raw["target"]), len(raw["NN_action"])
+    if (
+        type(horizon) is not int
+        or not 1 <= horizon <= 300
+        or controls < 1
+        or n != min(controls, horizon)
+        or controls > horizon + 60
+        or not raw["neural_control"][:n].all()
+        or raw["neural_control"][n:].any()
+        or (controls < horizon + 60 and not raw["body_failed"][-1])
+    ):
+        raise ValueError("complete qualified source or actual body-failure prefix required")
+    result = {}
+    for key, value in raw.items():
+        if key.startswith(("initial_", "NN_")):
+            result[key] = value.copy()
+        elif value.ndim >= 1 and len(value) == controls:
+            result[key] = value[:n].copy()
+        else:
+            raise ValueError("unrecognized source transfer/control array")
+    return result
+
+
 def body_feedback(q: np.ndarray, v: np.ndarray) -> np.ndarray:
     """[roll,pitch,wx,wy,local_vx,local_vy,height_error,local_vz].
 

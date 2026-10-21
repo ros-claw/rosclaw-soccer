@@ -13,6 +13,7 @@ def recovery_proof(
     audit_commitment: str,
     *,
     cases: list[dict[str, Any]],
+    course_bank: str = "train",
 ) -> tuple[dict[str, Any], dict[str, str]]:
     def read(path: Path, expected: str) -> dict[str, Any]:
         if path.is_symlink():
@@ -25,6 +26,8 @@ def recovery_proof(
             raise ValueError("ordinary JSON object recovery proof required")
         return value
 
+    if course_bank not in ("train", "dev"):
+        raise ValueError("explicit train/dev source identity required")
     rp, ap = root / "complete.json", audit_root / "complete.json"
     if any(p.is_symlink() or (p / "failed.json").exists() for p in (root, audit_root)):
         raise ValueError("ordinary closed recovery roots without failures required")
@@ -45,10 +48,10 @@ def recovery_proof(
     if (
         d["cases"] != cases
         or d["body_resets_between_skills"] != 0
-        or d.get("course_bank", "train") != "train"
+        or d.get("course_bank", "train") != course_bank
         or not d["fixed_world_goal"]
     ):
-        raise ValueError("same declared physical TRAIN courses and fixed-body protocol required")
+        raise ValueError("same declared physical courses and fixed-body protocol required")
     pins = dict(audit["input_file_hashes"])
     pins.update({str(rp): commitment, str(ap): audit_commitment})
     return d, pins
