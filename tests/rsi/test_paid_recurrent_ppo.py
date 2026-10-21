@@ -3,7 +3,12 @@ import pytest
 import torch
 from test_paid_trainable_actor import synthetic_actor
 
-from rosclaw_soccer.rsi.paid_recurrent_ppo import GAMMA, finite_option_gae, recurrent_episode_loss
+from rosclaw_soccer.rsi.paid_recurrent_ppo import (
+    GAMMA,
+    backtracked_adam_update,
+    finite_option_gae,
+    recurrent_episode_loss,
+)
 
 
 def test_true_finite_option_terminal_and_real_tail_discount():
@@ -49,3 +54,30 @@ def test_recurrent_loss_recomputes_prefix_and_backpropagates_to_rnn():
     loss.backward()
     assert not any(p.grad is not None for p in actor.parameters())
     assert stats["actor_rows"] == 0 and stats["anchor_rows"] == 0
+
+
+def test_post_update_backtracking_commits_one_adam_step_not_all_trials():
+    p = torch.nn.Parameter(torch.zeros(()))
+    opt = torch.optim.Adam([p], lr=1.0)
+    p.grad = torch.ones_like(p)
+    result = backtracked_adam_update(opt, [p], lambda: float(p.detach().square()), maximum_kl=0.01)
+    assert result["applied"] and len(result["attempts"]) > 1
+    assert float(p.detach().square()) <= 0.01
+    assert float(opt.state[p]["step"]) == 1
+    assert opt.param_groups[0]["lr"] < 1.0
+
+
+def test_rejected_or_faulting_search_restores_weights_moments_and_learning_rate():
+    p = torch.nn.Parameter(torch.zeros(()))
+    opt = torch.optim.Adam([p], lr=1.0)
+    p.grad = torch.ones_like(p)
+    result = backtracked_adam_update(opt, [p], lambda: 1.0, maximum_attempts=2)
+    assert not result["applied"] and float(p.detach()) == 0
+    assert not opt.state and opt.param_groups[0]["lr"] == 1.0
+
+    def broken():
+        raise RuntimeError("broken comparison")
+
+    with pytest.raises(RuntimeError, match="broken"):
+        backtracked_adam_update(opt, [p], broken)
+    assert float(p.detach()) == 0 and not opt.state

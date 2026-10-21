@@ -23,6 +23,7 @@ def main():
     p.add_argument("--reference-root", type=Path, required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--iterations", type=int, choices=(4, 8, 16), required=True)
+    p.add_argument("--post-update-trust", action="store_true")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     if (
@@ -109,6 +110,8 @@ def main():
         fixed_body_stop_upright=0.9,
         nonfoot_threshold_N=1.0,
         actor_all29_RNN_and_MLP_trainable=True,
+        post_update_trust=a.post_update_trust,
+        exact_TRAIN_global_KL=a.post_update_trust,
     )
     write_once(
         a.output / "declaration.json",
@@ -149,6 +152,7 @@ def main():
         update_critic_rows=0,
         optimizer_updates=0,
         actor_optimizer_updates=0,
+        trust_actor_rows=0,
     )
     try:
         import copy
@@ -160,7 +164,11 @@ def main():
 
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.paid_native_episode import PaidNativeEpisode
-        from rosclaw_soccer.rsi.paid_recurrent_ppo import finite_option_gae, recurrent_episode_loss
+        from rosclaw_soccer.rsi.paid_recurrent_ppo import (
+            backtracked_adam_update,
+            finite_option_gae,
+            recurrent_episode_loss,
+        )
         from rosclaw_soccer.rsi.paid_teacher_policy import PaidResearchPolicy
         from rosclaw_soccer.rsi.paid_trainable_actor import PUBLISHED_HASH, PaidTrainableActor
 
@@ -322,6 +330,7 @@ def main():
                         dict(
                             obs=obs,
                             action=action,
+                            mean=mean[0, 0].numpy().copy(),
                             logp=logp,
                             value=value,
                             h_before=before[0],
@@ -382,7 +391,7 @@ def main():
             )
             data = {
                 k: torch.from_numpy(raw["NN_" + k].astype(np.float32))
-                for k in ("obs", "action", "logp", "value", "advantage", "returns")
+                for k in ("obs", "action", "mean", "logp", "value", "advantage", "returns")
             }
             return summary, data
 
@@ -411,6 +420,34 @@ def main():
                 ).clamp_min(1e-6)
             losses, batches = [], []
             value_only = iteration < config["critic_only_iterations"]
+            if a.post_update_trust:
+                for group in optimizer.param_groups:
+                    group["lr"] = config["lr"]
+            old_std = log_std.detach().clamp(math.log(0.01), math.log(0.05)).exp().clone()
+
+            def exact_global_kl(samples=samples, old_std=old_std):
+                weighted, rows = 0.0, 0
+                with torch.no_grad():
+                    std = log_std.clamp(math.log(0.01), math.log(0.05)).exp()
+                    for _, data in samples:
+                        obs = data["obs"]
+                        mean, _ = actor(
+                            obs[:, None], (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
+                        )
+                        counts["trust_actor_rows"] += len(obs)
+                        # Exact diagonal-Gaussian old||new KL at each actual
+                        # TRAIN prefix; roundoff at zero is clamped, not a
+                        # changed acceptance threshold or altered ball metric.
+                        kl = (
+                            torch.log(std / old_std)
+                            + (old_std.square() + (data["mean"] - mean[:, 0]).square())
+                            / (2 * std.square())
+                            - 0.5
+                        ).sum(-1)
+                        weighted += float(kl.clamp_min(0).sum())
+                        rows += len(obs)
+                return weighted / rows
+
             kl_stop = False
             for epoch in range(config["ppo_epochs"]):
                 indices = rng.permutation(len(samples)).tolist()
@@ -431,7 +468,11 @@ def main():
                         counts["update_anchor_rows"] += stats["anchor_rows"]
                         counts["update_critic_rows"] += stats["critic_rows"]
                         losses.append(float(loss.detach()))
-                    if not value_only and weighted_kl > config["maximum_kl"]:
+                    if (
+                        not value_only
+                        and not a.post_update_trust
+                        and weighted_kl > config["maximum_kl"]
+                    ):
                         optimizer.zero_grad(set_to_none=True)
                         kl_stop = True
                         batches.append(
@@ -441,7 +482,26 @@ def main():
                     norm = torch.nn.utils.clip_grad_norm_(
                         parameters, config["max_grad_norm"], error_if_nonfinite=True
                     )
-                    optimizer.step()
+                    trust = None
+                    if a.post_update_trust and not value_only:
+                        trust = backtracked_adam_update(
+                            optimizer, parameters, exact_global_kl, maximum_kl=config["maximum_kl"]
+                        )
+                        if not trust["applied"]:
+                            optimizer.zero_grad(set_to_none=True)
+                            kl_stop = True
+                            batches.append(
+                                dict(
+                                    epoch=epoch,
+                                    episodes=batch,
+                                    kl=weighted_kl,
+                                    applied=False,
+                                    post_update_trust=trust,
+                                )
+                            )
+                            break
+                    else:
+                        optimizer.step()
                     counts["optimizer_updates"] += 1
                     counts["actor_optimizer_updates"] += int(not value_only)
                     batches.append(
@@ -451,8 +511,12 @@ def main():
                             kl=weighted_kl,
                             applied=True,
                             unclipped_grad_norm=float(norm),
+                            post_update_trust=trust,
                         )
                     )
+                    if a.post_update_trust and optimizer.param_groups[0]["lr"] < 1e-8:
+                        kl_stop = True
+                        break
                 if kl_stop:
                     break
             if not torch.equal(actor.mean, anchor.mean) or not torch.equal(
