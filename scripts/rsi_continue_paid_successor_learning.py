@@ -34,8 +34,9 @@ def main():
     p.add_argument("--gpu-uuid", required=True)
     p.add_argument("--decoupled", action="store_true")
     p.add_argument("--progressive", action="store_true")
+    p.add_argument("--ancestor-router", action="store_true")
     a = p.parse_args()
-    if a.progressive and a.decoupled:
+    if sum((a.progressive, a.decoupled, a.ancestor_router)) > 1:
         p.error("progressive acquired-parent curriculum is not the paired amplitude ablation")
 
     def clean():
@@ -66,6 +67,7 @@ def main():
             hardware_authorized=False,
             promotion_authorized=False,
             **(dict(progressive=True) if a.progressive else {}),
+            **(dict(ancestor_router=True) if a.ancestor_router else {}),
         )
         path = a.output / "declaration.json"
         if path.exists():
@@ -86,11 +88,16 @@ def main():
             data["source_head"] != a.data_source_head
             or data["status"]
             != (
-                "PAID_PROGRESSIVE_TRAIN_PARENT_FEATURES_CAUSALLY_RECOMPUTED"
+                "PAID_ANCESTRAL_ROUTER_TRAIN_FEATURES_CAUSALLY_RECOMPUTED"
+                if a.ancestor_router
+                else "PAID_PROGRESSIVE_TRAIN_PARENT_FEATURES_CAUSALLY_RECOMPUTED"
                 if a.progressive
                 else "PAID_SUCCESSOR_TRAIN_FEATURES_CAUSALLY_RECOMPUTED"
             )
-            or (not a.progressive and data["curriculum_protocol"] != "successor-six-teacher-v2")
+            or (
+                not (a.progressive or a.ancestor_router)
+                and data["curriculum_protocol"] != "successor-six-teacher-v2"
+            )
             or (a.data_root / "failed.json").exists()
         ):
             raise ValueError("declared expanded TRAIN-only feature curation required")
@@ -165,7 +172,9 @@ def main():
 
         student, training = stage(
             "trained",
-            "rsi_train_paid_progressive_student"
+            "rsi_train_paid_ancestor_router"
+            if a.ancestor_router
+            else "rsi_train_paid_progressive_student"
             if a.progressive
             else "rsi_train_paid_successor_student",
             [
@@ -175,11 +184,13 @@ def main():
                 data_hash,
                 "--seed",
                 str(a.seed),
-                *([] if a.progressive else ["--staged"]),
+                *([] if (a.progressive or a.ancestor_router) else ["--staged"]),
                 *(["--decoupled"] if a.decoupled else []),
             ],
             expected_status=(
-                "PAID_PROGRESSIVE_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+                "PAID_ANCESTRAL_ROUTER_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+                if a.ancestor_router
+                else "PAID_PROGRESSIVE_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
                 if a.progressive
                 else "PAID_SUCCESSOR_NEURAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
             ),

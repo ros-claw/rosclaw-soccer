@@ -18,6 +18,7 @@ def fixture(
     empty_child=False,
     changed_source=False,
     progressive=False,
+    ancestor_router=False,
 ):
     data = tmp_path / "data"
     data.mkdir()
@@ -26,7 +27,9 @@ def fixture(
             dict(
                 source_head="data-head",
                 status=(
-                    "PAID_PROGRESSIVE_TRAIN_PARENT_FEATURES_CAUSALLY_RECOMPUTED"
+                    "PAID_ANCESTRAL_ROUTER_TRAIN_FEATURES_CAUSALLY_RECOMPUTED"
+                    if ancestor_router
+                    else "PAID_PROGRESSIVE_TRAIN_PARENT_FEATURES_CAUSALLY_RECOMPUTED"
                     if progressive
                     else "PAID_SUCCESSOR_TRAIN_FEATURES_CAUSALLY_RECOMPUTED"
                 ),
@@ -54,6 +57,8 @@ def fixture(
         args.extend(["--" + name, str(tmp_path / name)])
     if progressive:
         args.append("--progressive")
+    if ancestor_router:
+        args.append("--ancestor-router")
     monkeypatch.setattr(sys, "argv", args)
     state = {"mutated": False}
 
@@ -72,6 +77,9 @@ def fixture(
     statuses = {
         "scripts.rsi_train_paid_successor_student": training_status,
         "scripts.rsi_train_paid_progressive_student": progressive_status,
+        "scripts.rsi_train_paid_ancestor_router": (
+            "PAID_ANCESTRAL_ROUTER_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+        ),
         "scripts.rsi_exam_paid_successor_student": exam_status,
         "scripts.rsi_audit_paid_successor_student": audit_status,
     }
@@ -92,6 +100,7 @@ def fixture(
         if module in (
             "scripts.rsi_train_paid_successor_student",
             "scripts.rsi_train_paid_progressive_student",
+            "scripts.rsi_train_paid_ancestor_router",
         ):
             result.update(data_hash=digest(data / "complete.json"), config=dict(seed_index=0))
         (path / "complete.json").write_text(json.dumps(result))
@@ -144,5 +153,16 @@ def test_progressive_queue_uses_new_curriculum_and_same_full_physics_audits(tmp_
     assert "scripts.rsi_train_paid_progressive_student" in calls[0][0]
     assert "--staged" not in calls[0][0] and "--decoupled" not in calls[0][0]
     assert json.loads((output / "declaration.json").read_text())["progressive"] is True
+    queue.main()
+    assert len(calls) == 5
+
+
+def test_router_queue_retains_both_physics_banks_and_recoverable_commitment(tmp_path, monkeypatch):
+    calls, output = fixture(tmp_path, monkeypatch, ancestor_router=True)
+    queue.main()
+    assert len(calls) == 5
+    assert "scripts.rsi_train_paid_ancestor_router" in calls[0][0]
+    assert "--staged" not in calls[0][0] and "--progressive" not in calls[0][0]
+    assert json.loads((output / "declaration.json").read_text())["ancestor_router"] is True
     queue.main()
     assert len(calls) == 5

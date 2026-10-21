@@ -417,5 +417,12 @@ def load_paid_student(policy: Path, **kwargs: Any) -> tuple[Any, dict[str, Any]]
     if _digest(path) != kwargs["training_receipt_hash"]:
         raise ValueError("exact student receipt commitment required before dispatch")
     status = json.loads(path.read_text()).get("status")
+    from rosclaw_soccer.rsi.paid_ancestor_router_student import (
+        ROUTER_STATUS,
+        load_ancestral_router_student,
+    )
+
+    if status == ROUTER_STATUS:
+        return load_ancestral_router_student(policy, **kwargs)
     loader = load_progressive_student if status == TRAINED_STATUS else load_successor_student
     return loader(policy, **kwargs)
