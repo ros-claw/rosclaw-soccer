@@ -13,7 +13,10 @@ def test_only_predeclared_variants_and_horizons_can_allocate_worlds(variant, ski
 
 
 @pytest.mark.parametrize("record_initial", [False, True])
-def test_first_body_failure_never_restarts_into_standing_or_another_kick(record_initial):
+@pytest.mark.parametrize("student_first", [False, True])
+def test_first_body_failure_never_restarts_into_standing_or_another_kick(
+    record_initial, student_first
+):
     """Flow-only fixture, not native physics evidence."""
     data = SimpleNamespace(
         **{
@@ -46,6 +49,7 @@ def test_first_body_failure_never_restarts_into_standing_or_another_kick(record_
 
         def collect_current(self, ep, actor, *, stop_at_reference):
             assert stop_at_reference
+            assert actor is selected
             ep.native_steps = 10
             data.time = 0.02
             self.neural_rows = 1
@@ -59,14 +63,17 @@ def test_first_body_failure_never_restarts_into_standing_or_another_kick(record_
         captured[key] = {k: v.copy() for k, v in raw.items()}
         return dict(raw_path=key, raw_hash="fixture")
 
+    parent = SimpleNamespace(base=object())
+    selected = parent if student_first else parent.base
     result = run_standing_lifecycle(
         Bench(),
         dict(source="motion-right.npz"),
-        SimpleNamespace(base=None),
-        variant=1,
+        parent,
+        variant=2 if student_first else 1,
         skills=3,
         store=store,
         record_initial=record_initial,
+        motor_schedule=("student", "base", "base") if student_first else None,
     )
     assert result["status"] == "KICK_BODY_FAILURE" and len(result["kicks"]) == 1
     assert result["stands"] == result["boundaries"] == []

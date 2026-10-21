@@ -12,6 +12,7 @@ from rosclaw_soccer.rsi.paid_continuity_audit import (
     require_integration_fields,
     snapshot_fields,
 )
+from rosclaw_soccer.rsi.paid_motor_schedule import lifecycle_motor_schedule
 from rosclaw_soccer.rsi.paid_neural_stand_audit import audit_neural_stand
 
 
@@ -74,7 +75,16 @@ def audit_standing_lifecycle(
     variant: int,
     skills: int,
     count_inference: Any,
+    motor_schedule: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
+    schedule = lifecycle_motor_schedule(variant, skills, motor_schedule)
+    if (
+        motor_schedule is None
+        and "motor_schedule" in world
+        or motor_schedule is not None
+        and world.get("motor_schedule") != list(schedule)
+    ):
+        raise ValueError("motor schedule must match an explicit independent caller commitment")
     used: set[str] = set()
     native = neural = 0
     quality: list[bool] = []
@@ -111,7 +121,7 @@ def audit_standing_lifecycle(
         native += checked["native_steps"]
         neural += checked["neural_rows"]
         quality.append(checked["quality"])
-        model = actor if variant == 2 and k else actor.base
+        model = actor if schedule[k] == "student" else actor.base
         state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
         goal = z["initial_mocap_pos"][auditor.goal_mocap_id]
         with torch.no_grad():

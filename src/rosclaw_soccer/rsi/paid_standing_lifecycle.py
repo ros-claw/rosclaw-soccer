@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from rosclaw_soccer.rsi.paid_balance_recovery import collect_balance_recovery
+from rosclaw_soccer.rsi.paid_motor_schedule import lifecycle_motor_schedule
 from rosclaw_soccer.rsi.paid_neural_stand import NeuralStandingTask
 from rosclaw_soccer.rsi.paid_practice_chain import require_identical_snapshot
 from rosclaw_soccer.rsi.paid_skill_handoff import practice_ball_drop, snapshot
@@ -21,6 +22,7 @@ def run_standing_lifecycle(
     skills: int,
     store: Callable[[str, dict[str, np.ndarray]], dict[str, Any]],
     record_initial: bool = False,
+    motor_schedule: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Variants: fixed-target/R2, neural-carry/R2, neural-carry/R6 successor.
 
@@ -36,6 +38,7 @@ def run_standing_lifecycle(
         or type(record_initial) is not bool
     ):
         raise ValueError("predeclared lifecycle variant and one/three skills required")
+    schedule = lifecycle_motor_schedule(variant, skills, motor_schedule)
     source = case["source"]
     if ("left" in source) == ("right" in source):
         raise ValueError("one admitted reference foot required")
@@ -77,7 +80,7 @@ def run_standing_lifecycle(
                 },
             )
             boundaries[-1]["boundary"] = boundary
-        motor = actor if variant == 2 and k else actor.base
+        motor = actor if schedule[k] == "student" else actor.base
         raw, row = bench.collect_current(ep, motor, stop_at_reference=True)
         if not np.array_equal(raw["NN_action"], raw["NN_nominal_action"]):
             raise ValueError("kick requires declared own neural actor, no teacher actions")
@@ -175,6 +178,7 @@ def run_standing_lifecycle(
         raise ValueError("one continuous body/clock/native accounting required")
     return dict(
         **(dict(initial=initial) if record_initial else {}),
+        **(dict(motor_schedule=list(schedule)) if motor_schedule is not None else {}),
         status=status,
         kicks=kicks,
         stands=stands,
