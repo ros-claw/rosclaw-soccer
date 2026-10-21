@@ -71,10 +71,10 @@ class FrozenContactResidualActor(nn.Module):
         return nominal + delta / self.action_scale, next_state
 
 
-def residual_config(variant: int) -> dict[str, Any]:
+def residual_config(variant: int, *, projected: bool = False) -> dict[str, Any]:
     if type(variant) is not int or variant not in range(4):
         raise ValueError("one predeclared residual training seed or retention ablation required")
-    return dict(
+    config = dict(
         protocol="frozen-contact-residual-v1",
         variant=variant,
         seed=20261104 + (variant if variant < 3 else 0),
@@ -105,3 +105,21 @@ def residual_config(variant: int) -> dict[str, Any]:
         runtime_case_lookup=False,
         loss_units="joint_residual_radians_squared_plus_gate_BCE",
     )
+    if projected:
+        config.update(
+            protocol="projected-contact-residual-v2",
+            seed=20261107 + (variant if variant < 3 else 0),
+            retention_weight=5.0,
+            gate_projection=variant < 3,
+            gate_retention_margin=0.1,
+            max_projection_halvings=8,
+            hard_negative_weight=0.005,
+            hard_negative_margin=0.5,
+            grown_positive_cases=[1, 8, 9, 15],
+            unfinished_teacher_cases=[0, 4],
+            grown_replay_rows=925,
+            unfinished_teacher_rows=549,
+            warmstart="qualified_previous_joint_delta_head_fresh_rejecting_gate",
+            negative_support="all_zero_target_frames_in_all16_episodes",
+        )
+    return config

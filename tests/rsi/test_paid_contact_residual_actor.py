@@ -112,3 +112,82 @@ def test_incompatible_untrained_or_unsafe_residual_rejected(fault):
         s["config"]["old_good_zero_cases"].append(10)
     with pytest.raises(ValueError):
         validate_contact_state(s, r, t, declaration_hash="decl", scene_hash="scene")
+
+
+def projected_evidence(variant=0):
+    s, r, t = evidence(variant)
+    s["schema"] = "soccer.paid_contact_residual.v2"
+    s["config"] = residual_config(variant, projected=True)
+    calls = 1024 if variant < 3 else 0
+    cert = dict(
+        negative_support_rows=3000,
+        maximum_logit_cpu=-0.2 if variant < 3 else 0.4,
+        feasible=variant < 3,
+        projection=dict(
+            calls=calls,
+            gate_evaluations=calls,
+            rejections=0,
+            accepted_fractions={"1.0": calls} if calls else {},
+            negative_support_rows=3000,
+        ),
+    )
+    s["counts"].update(
+        hard_negative_gate_rows=3000 * 1024,
+        projection_gate_rows=3000 * calls,
+        CPU_constraint_gate_rows=15000,
+    )
+    s["retention_certificate"] = cert
+    r.update(
+        config=copy.deepcopy(s["config"]),
+        counts=copy.deepcopy(s["counts"]),
+        retention_certificate=copy.deepcopy(cert),
+    )
+    return s, r, t
+
+
+@pytest.mark.parametrize("variant", range(4))
+def test_projected_protocol_counts_actual_gate_work_and_keeps_explicit_ablation(variant):
+    s, r, t = projected_evidence(variant)
+    validate_contact_state(s, r, t, declaration_hash="decl", scene_hash="scene")
+    assert s["config"]["gate_projection"] == (variant < 3)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "schema",
+        "count",
+        "rows",
+        "projection_count",
+        "fractions",
+        "max_score",
+        "false_feasible",
+        "receipt",
+        "warm_config",
+        "bool_counter",
+    ],
+)
+def test_projected_work_or_feasibility_cannot_masquerade_as_v1_or_pass_by_summary(fault):
+    s, r, t = projected_evidence()
+    if fault == "schema":
+        s["schema"] = "soccer.paid_contact_residual.v1"
+    elif fault == "count":
+        s["counts"]["hard_negative_gate_rows"] += 1
+    elif fault == "rows":
+        s["retention_certificate"]["negative_support_rows"] = 1
+    elif fault == "projection_count":
+        s["retention_certificate"]["projection"]["calls"] = 0
+    elif fault == "fractions":
+        s["retention_certificate"]["projection"]["accepted_fractions"] = {"1.5": 1024}
+    elif fault == "max_score":
+        s["retention_certificate"]["maximum_logit_cpu"] = float("nan")
+    elif fault == "false_feasible":
+        s["retention_certificate"]["maximum_logit_cpu"] = 0.2
+    elif fault == "receipt":
+        r["retention_certificate"]["projection"]["rejections"] = 1
+    elif fault == "warm_config":
+        s["config"]["warmstart"] = "random_or_uncertified"
+    else:
+        s["retention_certificate"]["projection"]["calls"] = True
+    with pytest.raises(ValueError):
+        validate_contact_state(s, r, t, declaration_hash="decl", scene_hash="scene")
