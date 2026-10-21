@@ -21,6 +21,7 @@ def main():
     p.add_argument("--hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--device", choices=("cpu", "cuda:0"), default="cpu")
     a = p.parse_args()
     receipt = a.root / "complete.json"
     if (
@@ -56,6 +57,7 @@ def main():
             commercial_publicity_authorized=False,
             single_step_and_free_history=True,
             physics_equivalence_proven=False,
+            inference_device=a.device,
         ),
     )
     import torch
@@ -64,23 +66,51 @@ def main():
 
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
+    device = torch.device(a.device)
+    compute = dict(device=a.device, physics_backend="none", distributed_training=False)
+    if device.type == "cuda":
+        import os
+
+        visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+        if not visible.startswith("GPU-") or "," in visible or torch.cuda.device_count() != 1:
+            raise ValueError("one explicitly UUID-isolated GPU required")
+        if os.environ.get("CUBLAS_WORKSPACE_CONFIG") != ":4096:8":
+            raise ValueError("predeclared deterministic CUDA workspace required")
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cudnn.deterministic = True
+        torch.use_deterministic_algorithms(True)
+        props = torch.cuda.get_device_properties(0)
+        if "GPU-" + str(props.uuid) != visible:
+            raise ValueError("visible CUDA device does not match the declared physical UUID")
+        compute.update(
+            visible_uuid=visible,
+            actual_uuid=str(props.uuid),
+            name=props.name,
+            total_memory_bytes=props.total_memory,
+            tf32=False,
+            torch_version=torch.__version__,
+            cuda_version=torch.version.cuda,
+        )
+    write_once(a.output / "compute.json", compute)
     paths = [Path(f) for f in pins if f.endswith("/ckp/policy_30000.onnx")]
     if len(paths) != 1:
         raise ValueError("one pinned full teacher required")
-    model = PaidTrainableActor(paths[0], expected_hash=PUBLISHED_HASH).eval()
+    model = PaidTrainableActor(paths[0], expected_hash=PUBLISHED_HASH).to(device).eval()
     counts, results = 0, []
     try:
         with torch.no_grad():
             for row in r["results"]:
                 path = a.root / f"{row['profile']}/case{row['case']}-repeat{row['repeat']}.npz"
                 with np.load(path, allow_pickle=False) as z:
-                    obs = torch.from_numpy(z["NN_observation"].copy())
+                    obs = torch.from_numpy(z["NN_observation"].copy()).to(device)
                     actions = torch.from_numpy(z["NN_action"].copy())
                     h0, c0 = [
                         torch.from_numpy(z["NN_" + n + "_before"].copy())
                         .squeeze(2)
                         .transpose(0, 1)
                         .contiguous()
+                        .to(device)
                         for n in ("h", "c")
                     ]
                     hr, cr = [
@@ -100,6 +130,7 @@ def main():
                 )
 
                 def compare(key, x, reference, path=path, maximum=maximum):
+                    reference = reference.to(device)
                     error = float((x - reference).abs().max())
                     if not torch.isfinite(x).all() or error > 0.0002:
                         raise ValueError(f"{key} parity failed at {path}: {error}")
@@ -114,7 +145,10 @@ def main():
                     compare("recorded_action", ac[0], actions[start:end])
                     compare("recorded_h", h, hr[:, start:end])
                     compare("recorded_c", c, cr[:, start:end])
-                state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
+                state = (
+                    torch.zeros(2, 1, 128, device=device),
+                    torch.zeros(2, 1, 128, device=device),
+                )
                 for frame in range(len(obs)):
                     ac, state = model(obs[frame].reshape(1, 1, 160), state)
                     counts += 1
@@ -136,7 +170,12 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="PAID_TRAINABLE_RECORDED_OBSERVATION_PARITY_NOT_PHYSICS_QUALIFICATION",
+                status=(
+                    "PAID_TRAINABLE_RECORDED_OBSERVATION_PARITY_NOT_PHYSICS_QUALIFICATION"
+                    if device.type == "cpu"
+                    else "PAID_TRAINABLE_CUDA_RECORDED_OBSERVATION_PARITY_NOT_PHYSICS_QUALIFICATION"
+                ),
+                compute=compute,
                 input_file_hashes=pins,
                 results=results,
                 new_neural_rows=counts,
