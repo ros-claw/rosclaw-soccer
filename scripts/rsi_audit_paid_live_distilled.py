@@ -35,6 +35,7 @@ def main():
     specialist = d.get("successor_specialist", False)
     zero_residual = d.get("contact_residual_zero", False)
     trained_residual = d.get("contact_residual_trained", False)
+    grown_reference = d.get("grown_reference_root") is not None
     if (
         r["status"] != "PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED"
         or [x["candidate"] for x in r["candidates"]] != indices
@@ -46,6 +47,7 @@ def main():
         or (zero_residual and not specialist)
         or (trained_residual and not specialist)
         or (trained_residual and zero_residual)
+        or (grown_reference and not trained_residual)
         or r.get("contact_residual_trained", False) != trained_residual
         or r.get("contact_residual_zero", False) != zero_residual
         or r.get("successor_specialist", False) != specialist
@@ -59,6 +61,23 @@ def main():
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     check_pins(pins)
+    grown_candidate = None
+    if grown_reference:
+        gr = Path(d["grown_reference_root"]) / "complete.json"
+        if (
+            pins.get(str(gr)) != d.get("grown_reference_hash")
+            or digest(gr) != d["grown_reference_hash"]
+        ):
+            raise ValueError("exact qualified grown grade reference must be sealed")
+        g = json.loads(gr.read_text())
+        if len(g["candidates"]) != 1 or not g["candidates"][0]["full_continuous_skill_gate"]:
+            raise ValueError("qualified grown policy required")
+        grown_candidate = g["candidates"][0]
+        if (
+            grown_candidate["continuous"]["second_quality"] != 12
+            or grown_candidate["continuous"]["stable"] != 16
+        ):
+            raise ValueError("grown12/body16 retention reference required")
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -74,6 +93,7 @@ def main():
 
     from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+    from rosclaw_soccer.rsi.paid_growth_grading import contact_growth_gates
     from rosclaw_soccer.rsi.paid_primitive_audit import PaidPrimitiveAuditor
     from rosclaw_soccer.rsi.paid_teacher_policy import strict_parameters
 
@@ -406,7 +426,9 @@ def main():
                     != memory_handoff
                     or json.loads(training.read_text())["config"]["protocol"]
                     != (
-                        "frozen-contact-residual-v1"
+                        "projected-contact-residual-v2"
+                        if grown_reference
+                        else "frozen-contact-residual-v1"
                         if trained_residual
                         else "protected-successor-specialist-v1"
                         if specialist
@@ -454,24 +476,45 @@ def main():
                     same(read(actual), read(expected))
                 if zero_residual and row["second"] is not None:
                     same(read(row["second"]), read(r["baseline_continuous"][i]["second"]))
+                if (
+                    grown_reference
+                    and candidate["candidate"] < 3
+                    and i in (2, 3, 5, 6, 7, 10, 11, 12, 13, 14)
+                ):
+                    if row["second"] is None:
+                        raise ValueError("retained zero-support course lost its body")
+                    same(read(row["second"]), read(r["baseline_continuous"][i]["second"]))
                 checked.append(world(row, case, row["artifacts"], memory_handoff))
                 world(row, case, row["repeat_artifacts"], memory_handoff)
                 for x, y in zip(row["artifacts"], row["repeat_artifacts"], strict=True):
                     same(read(x), read(y))
+            quality_reference = (
+                [
+                    dict(quality=w["second_quality"], stable=w["world_stable"])
+                    for w in grown_candidate["continuous"]["results"]
+                ]
+                if grown_reference
+                else continuous
+            )
             summary = dict(
                 second_quality=sum(x["quality"] for x in checked),
                 stable=sum(x["stable"] for x in checked),
                 quality_regressions=[
                     i
-                    for i, (old, new) in enumerate(zip(continuous, checked, strict=True))
+                    for i, (old, new) in enumerate(zip(quality_reference, checked, strict=True))
                     if old["quality"] and not new["quality"]
                 ],
                 stability_regressions=[
                     i
-                    for i, (old, new) in enumerate(zip(continuous, checked, strict=True))
+                    for i, (old, new) in enumerate(zip(quality_reference, checked, strict=True))
                     if old["stable"] and not new["stable"]
                 ],
             )
+            if grown_reference or "reference_quality" in section:
+                summary.update(
+                    reference_quality=sum(w["quality"] for w in quality_reference),
+                    grown_reference=grown_reference,
+                )
             if any(section[k] != v for k, v in summary.items()):
                 raise ValueError("continuous statistics differ")
             preserved = all(
@@ -480,17 +523,15 @@ def main():
                 and not x["regressions"]
                 for key, x in iso.items()
             )
-            gain = (
-                preserved
-                and summary["second_quality"] >= 8
-                and (
-                    not sequences
-                    or summary["second_quality"] > sum(w["quality"] for w in continuous)
-                )
-                and not summary["quality_regressions"]
-                and not summary["stability_regressions"]
+            gain, full = contact_growth_gates(
+                old_preserved=preserved,
+                second_quality=summary["second_quality"],
+                stable=summary["stable"],
+                quality_regressions=summary["quality_regressions"],
+                stability_regressions=summary["stability_regressions"],
+                reference_quality=sum(w["quality"] for w in quality_reference),
+                grown_reference=grown_reference,
             )
-            full = gain and summary["second_quality"] >= 12 and summary["stable"] == 16
             if (
                 gain != candidate["research_contact_gain"]
                 or full != candidate["full_continuous_skill_gate"]

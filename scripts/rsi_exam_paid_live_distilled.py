@@ -60,6 +60,8 @@ def main():
     p.add_argument("--successor-specialist", action="store_true")
     p.add_argument("--contact-residual-zero", action="store_true")
     p.add_argument("--contact-residual-trained", action="store_true")
+    p.add_argument("--grown-reference-root", type=Path)
+    p.add_argument("--grown-reference-hash")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -81,6 +83,12 @@ def main():
     prior, teacher, base = [json.loads(f.read_text()) for f in (xp, tp, bp)]
     declaration = json.loads((a.prior_exam_root / "declaration.json").read_text())
     sequences = a.sequence_bank_root is not None
+    grown_reference = a.grown_reference_root is not None
+    if grown_reference != (a.grown_reference_hash is not None) or (
+        grown_reference and not a.contact_residual_trained
+    ):
+        raise ValueError("projected contact exam requires exact qualified grown reference")
+    grown_candidate = None
     if (
         sequences != (a.sequence_bank_hash is not None)
         or (a.successor_specialist and not sequences)
@@ -121,6 +129,23 @@ def main():
             for key in ("first", "second"):
                 row = world[key]
                 pins[str(a.prior_exam_root / row["raw_path"])] = row["raw_hash"]
+    if grown_reference:
+        gr = a.grown_reference_root / "complete.json"
+        if digest(gr) != a.grown_reference_hash:
+            raise ValueError("grown reference commitment differs")
+        grown = json.loads(gr.read_text())
+        if (
+            len(grown["candidates"]) != 1
+            or not grown["candidates"][0]["full_continuous_skill_gate"]
+        ):
+            raise ValueError("actual qualified grown policy required")
+        grown_candidate = grown["candidates"][0]
+        if (
+            grown_candidate["continuous"]["second_quality"] != 12
+            or grown_candidate["continuous"]["stable"] != 16
+        ):
+            raise ValueError("current projected curriculum requires its qualified grown12 parent")
+        pins[str(gr)] = a.grown_reference_hash
     for key in ("old16", "dev16"):
         for row in prior_results[key]["results"]:
             pins[str(a.prior_exam_root / row["raw_path"])] = row["raw_hash"]
@@ -152,7 +177,9 @@ def main():
             != ("carry" if index < 3 and not a.successor_specialist else "reset")
             or r["config"]["protocol"]
             != (
-                "frozen-contact-residual-v1"
+                "projected-contact-residual-v2"
+                if grown_reference
+                else "frozen-contact-residual-v1"
                 if a.contact_residual_trained
                 else "protected-successor-specialist-v1"
                 if a.successor_specialist
@@ -160,6 +187,10 @@ def main():
             )
         ):
             raise ValueError("exact trained memory and motor-context protocol required")
+        if grown_reference:
+            cd = json.loads((root / "declaration.json").read_text())
+            if cd.get("grown_exam_hash") != a.grown_reference_hash:
+                raise ValueError("training must bind the exact grown skill retention reference")
         candidates.append((root, h, r))
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
@@ -177,6 +208,11 @@ def main():
             contact_residual_zero=a.contact_residual_zero,
             contact_residual_trained=a.contact_residual_trained,
             baseline_checkpoint_hash=base["final_checkpoint_hash"],
+            grown_reference_root=str(a.grown_reference_root) if grown_reference else None,
+            grown_reference_hash=a.grown_reference_hash,
+            second_quality_reference="qualified_grown12"
+            if grown_reference
+            else "physical_baseline",
             candidate_memory_handoff=[
                 x[2]["config"]["memory_handoff"] if sequences else "reset" for x in candidates
             ],
@@ -228,6 +264,7 @@ def main():
 
         from rosclaw_soccer.rsi.paid_contact_residual_actor import load_contact_residual_actor
         from rosclaw_soccer.rsi.paid_distilled_actor import load_distilled_actor
+        from rosclaw_soccer.rsi.paid_growth_grading import contact_growth_gates
         from rosclaw_soccer.rsi.paid_live_distilled_actor import load_live_distilled_actor
         from rosclaw_soccer.rsi.paid_research_bench import PaidResearchBench
         from rosclaw_soccer.rsi.paid_skill_handoff import practice_ball_drop, snapshot
@@ -341,7 +378,9 @@ def main():
             row.update(save(path, raw))
             return raw, row
 
-        def world(i, actor, folder, baseline=False, memory_handoff="reset"):
+        def world(
+            i, actor, folder, baseline=False, memory_handoff="reset", strict_zero_retention=False
+        ):
             folder.mkdir()
             ep = bench.make(cases[i])
             entry_actor = select_entry_actor(a.entry_controller, actor, baseline_actor)
@@ -417,7 +456,11 @@ def main():
                             if second["body_failed"]
                             else "TWO_SKILLS_EXECUTED"
                         )
-                        if baseline or a.contact_residual_zero:
+                        if (
+                            baseline
+                            or a.contact_residual_zero
+                            or (strict_zero_retention and i in (2, 3, 5, 6, 7, 10, 11, 12, 13, 14))
+                        ):
                             with np.load(
                                 (
                                     a.prior_exam_root
@@ -507,8 +550,20 @@ def main():
                 candidates[index][2]["config"]["memory_handoff"] if sequences else "reset"
             )
             for i in range(16):
-                first = world(i, actor, target / f"case{i}-repeat0", memory_handoff=memory_handoff)
-                other = world(i, actor, target / f"case{i}-repeat1", memory_handoff=memory_handoff)
+                first = world(
+                    i,
+                    actor,
+                    target / f"case{i}-repeat0",
+                    memory_handoff=memory_handoff,
+                    strict_zero_retention=grown_reference and index < 3,
+                )
+                other = world(
+                    i,
+                    actor,
+                    target / f"case{i}-repeat1",
+                    memory_handoff=memory_handoff,
+                    strict_zero_retention=grown_reference and index < 3,
+                )
                 if first["status"] != other["status"] or len(first["artifacts"]) != len(
                     other["artifacts"]
                 ):
@@ -523,14 +578,17 @@ def main():
                 worlds.append(first)
             second_quality = sum(w["second_quality"] for w in worlds)
             stable = sum(w["world_stable"] for w in worlds)
+            continuous_reference = (
+                grown_candidate["continuous"]["results"] if grown_reference else continuous_baseline
+            )
             regressions = [
                 i
-                for i, (old, new) in enumerate(zip(continuous_baseline, worlds, strict=True))
+                for i, (old, new) in enumerate(zip(continuous_reference, worlds, strict=True))
                 if old["second_quality"] and not new["second_quality"]
             ]
             stability_regressions = [
                 i
-                for i, (old, new) in enumerate(zip(continuous_baseline, worlds, strict=True))
+                for i, (old, new) in enumerate(zip(continuous_reference, worlds, strict=True))
                 if old["world_stable"] and not new["world_stable"]
             ]
             old_preserved = all(
@@ -539,17 +597,15 @@ def main():
                 and not r["regressions"]
                 for key, r in isolated_results.items()
             )
-            research_gain = (
-                old_preserved
-                and second_quality >= 8
-                and (
-                    not sequences
-                    or second_quality > sum(w["second_quality"] for w in continuous_baseline)
-                )
-                and not regressions
-                and not stability_regressions
+            research_gain, full_skill = contact_growth_gates(
+                old_preserved=old_preserved,
+                second_quality=second_quality,
+                stable=stable,
+                quality_regressions=regressions,
+                stability_regressions=stability_regressions,
+                reference_quality=sum(w["second_quality"] for w in continuous_reference),
+                grown_reference=grown_reference,
             )
-            full_skill = research_gain and second_quality >= 12 and stable == 16
             output = dict(
                 candidate=index,
                 memory_handoff=memory_handoff,
@@ -579,6 +635,8 @@ def main():
                     stable=stable,
                     quality_regressions=regressions,
                     stability_regressions=stability_regressions,
+                    reference_quality=sum(w["second_quality"] for w in continuous_reference),
+                    grown_reference=grown_reference,
                 ),
                 research_contact_gain=research_gain,
                 full_continuous_skill_gate=full_skill,
