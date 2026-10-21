@@ -15,6 +15,19 @@ from rosclaw_soccer.rsi.paid_continuity_audit import (
 from rosclaw_soccer.rsi.paid_neural_stand_audit import audit_neural_stand
 
 
+def audit_kick_entry(raw: dict[str, np.ndarray], entry: dict[str, np.ndarray]) -> None:
+    """Legacy kick raw stores seven entry fields, not a ten-field snapshot.
+
+    Full ten-field before/after handoff proof is checked separately. Never
+    fabricate missing force/activation entry arrays in the legacy raw.
+    """
+    initial = snapshot_fields(raw, "initial_")
+    keys = {"qpos", "qvel", "ctrl", "qacc_warmstart", "mocap_pos", "mocap_quat", "time"}
+    if set(initial) != keys:
+        raise ValueError("exact seven-field legacy kick entry schema required")
+    identical(initial, {key: entry[key] for key in keys})
+
+
 def audit_ball_drop(
     auditor: Any, raw: dict[str, np.ndarray], entry: dict[str, np.ndarray], source: str
 ) -> dict[str, np.ndarray]:
@@ -87,7 +100,7 @@ def audit_standing_lifecycle(
         if k == 0:
             identical(z, first_prefix)
         if entry is not None:
-            identical(snapshot_fields(z, "initial_"), entry)
+            audit_kick_entry(z, entry)
         checked = auditor.audit(
             z, row, horizon=len(motion["q"]), previous_action=previous, reference_prefix=True
         )
@@ -121,6 +134,11 @@ def audit_standing_lifecycle(
                 previous = mean[0, 0].numpy().copy()
         terminal = block(f"kick-terminal{k}", kick["terminal"])
         audit_terminal(auditor, z, terminal)
+        if entry is not None and any(
+            not np.array_equal(terminal[key], entry[key])
+            for key in ("mocap_pos", "mocap_quat", "qfrc_applied", "xfrc_applied", "act")
+        ):
+            raise ValueError("kick changed external goal/force/activation state")
         if checked["body_failed"]:
             status = "KICK_BODY_FAILURE"
             break

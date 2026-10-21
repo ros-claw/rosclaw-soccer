@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.paid_standing_lifecycle_audit import audit_ball_drop
+from rosclaw_soccer.rsi.paid_standing_lifecycle_audit import audit_ball_drop, audit_kick_entry
 
 
 def fixture(performed):
@@ -67,3 +67,17 @@ def test_ball_return_cannot_be_fabricated_when_near_robot():
     raw["performed"] = np.array(True)
     with pytest.raises(ValueError, match="eligibility"):
         audit_ball_drop(a, raw, entry, "motion-right.npz")
+
+
+def test_legacy_kick_seven_field_entry_is_not_fabricated_as_full_snapshot():
+    _, entry, _ = fixture(False)
+    keys = {"qpos", "qvel", "ctrl", "qacc_warmstart", "mocap_pos", "mocap_quat", "time"}
+    raw = {"initial_" + key: entry[key].copy() for key in keys}
+    audit_kick_entry(raw, entry)
+    raw["initial_qpos"][0] += 0.01
+    with pytest.raises(ValueError):
+        audit_kick_entry(raw, entry)
+    raw["initial_qpos"][0] -= 0.01
+    del raw["initial_ctrl"]
+    with pytest.raises(ValueError, match="schema"):
+        audit_kick_entry(raw, entry)
