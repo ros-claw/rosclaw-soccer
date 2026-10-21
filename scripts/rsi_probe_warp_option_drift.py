@@ -291,6 +291,11 @@ def main():
             ),
         )
     except Exception as error:
+        if neural_trace:
+            np.savez_compressed(
+                a.output / "failed-neural.npz",
+                **{k: np.stack([row[k] for row in neural_trace]) for k in neural_trace[0]},
+            )
         if rows:
             np.savez_compressed(
                 a.output / "failed-partial.npz",
