@@ -68,7 +68,7 @@ class PaidResearchPolicy:
         if (
             "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash
             or type(horizon) is not int
-            or not 1 <= horizon <= 260
+            or not 1 <= horizon <= 300
         ):
             raise ValueError("pinned teacher and actual bounded source horizon required")
         graph = onnx.load(path, load_external_data=False)
@@ -85,6 +85,21 @@ class PaidResearchPolicy:
             raise ValueError("self-contained known ONNX weights required")
         if any(n.domain not in ("", "ai.onnx") for n in graph.graph.node):
             raise ValueError("no custom ONNX operators in research reader")
+        if any(n.op_type in ("If", "Loop", "Scan") for n in graph.graph.node):
+            raise ValueError("explicit acyclic action branch required for reference-clock audit")
+        producers = {out: n for n in graph.graph.node for out in n.output}
+        input_names = {x.name for x in graph.graph.input}
+        for output in ("actions", "h_out", "c_out"):
+            pending, seen = [output], set()
+            while pending:
+                name = pending.pop()
+                if name in seen:
+                    continue
+                seen.add(name)
+                if name in producers:
+                    pending.extend(producers[name].input)
+            if seen & input_names != {"obs", "h_in", "c_in"}:
+                raise ValueError("action/RNN must not depend on clamped exported reference table")
         onnx.checker.check_model(graph, full_check=True)
         self.joint_names, self.parameters = strict_parameters(
             {x.key: x.value for x in graph.metadata_props}

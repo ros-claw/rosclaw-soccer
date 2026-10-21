@@ -52,7 +52,7 @@ def main():
         a.reference_root / "source/whole_body_tracking/soccer/assets/unitree_description",
     ):
         for f in root.rglob("*"):
-            if f.is_file() and (f.suffix in (".py", ".xml", ".stl", ".obj", ".png")):
+                if f.is_file() and (f.suffix.lower() in (".py", ".xml", ".stl", ".obj", ".png")):
                 pins[str(f)] = digest(f)
     for name in TRAIN_MOTION_NAMES:
         file = a.reference_root / "motions/soccer-standard" / name
@@ -86,11 +86,13 @@ def main():
             profiles=profiles,
             cases=cases,
             repetitions=2,
-            maximum_reference_controls=260,
+            maximum_reference_controls=300,
             maximum_held_target_tail_controls=60,
-            maximum_native_steps=len(cases) * 3 * 2 * 320 * 10,
-            maximum_replay_steps=len(cases) * 3 * 2 * 320 * 10,
-            maximum_neural_rows=len(cases) * 3 * 2 * 260,
+            maximum_native_steps=len(cases) * 3 * 2 * 360 * 10,
+            maximum_replay_steps=len(cases) * 3 * 2 * 360 * 10,
+            maximum_neural_rows=len(cases) * 3 * 2 * 300,
+            exported260_reference_outputs_unused=True,
+            action_and_hc_graph_independent_of_exported_time_index=True,
             current_state_forward_before_observation=True,
             original_initial_world_angular_velocity_reset_semantics=True,
             no_reference_padding=True,
@@ -159,7 +161,7 @@ def main():
                     if z[key].shape != shape or not np.isfinite(z[key]).all():
                         raise ValueError("complete exact30body actual motion required")
                 if (
-                    not 1 <= length <= 260
+                    not 1 <= length <= 300
                     or float(z["fps"].reshape(-1)[0]) != 50
                     or abs(np.linalg.norm(z["body_quat_w"], axis=2) - 1).max() > 1e-5
                 ):
