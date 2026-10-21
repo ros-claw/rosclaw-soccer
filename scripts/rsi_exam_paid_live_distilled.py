@@ -106,6 +106,10 @@ def main():
             raise ValueError("sequence initialization must match the qualified new baseline")
         pins.update(bank["input_file_hashes"])
         pins[str(sp)] = a.sequence_bank_hash
+        for world in prior["candidates"][0]["continuous"]["results"]:
+            for key in ("first", "second"):
+                row = world[key]
+                pins[str(a.prior_exam_root / row["raw_path"])] = row["raw_hash"]
     for key in ("old16", "dev16"):
         for row in prior_results[key]["results"]:
             pins[str(a.prior_exam_root / row["raw_path"])] = row["raw_hash"]

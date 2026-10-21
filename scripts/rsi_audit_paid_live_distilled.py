@@ -131,6 +131,54 @@ def main():
     def snap(raw, prefix):
         return {k.removeprefix(prefix): v for k, v in raw.items() if k.startswith(prefix)}
 
+    def source_raw(root, row):
+        path = root / row["raw_path"]
+        if (
+            path.is_symlink()
+            or not path.resolve().is_relative_to(root.resolve())
+            or digest(path) != row["raw_hash"]
+        ):
+            raise ValueError("actual qualified baseline trajectory hash differs")
+        if str(path) in pins and pins[str(path)] != row["raw_hash"]:
+            raise ValueError("conflicting qualified baseline identity")
+        pins[str(path)] = row["raw_hash"]
+        with np.load(path, allow_pickle=False) as z:
+            return {k: z[k].copy() for k in z.files}
+
+    def bind_sequence_baseline():
+        if not sequences:
+            return
+        training = Path(d["candidates"][0]) / "declaration.json"
+        if pins.get(str(training)) != digest(training):
+            raise ValueError("actual sequence training declaration must be sealed")
+        bank_hash = json.loads(training.read_text())["bank_hash"]
+        bank_paths = [Path(p) for p, h in pins.items() if h == bank_hash]
+        if len(bank_paths) != 1 or digest(bank_paths[0]) != bank_hash:
+            raise ValueError("one exact completed paired-world bank required")
+        bank = json.loads(bank_paths[0].read_text())
+        root = Path(bank["bootstrap_exam_root"])
+        rp = root / "complete.json"
+        if pins.get(str(rp)) != digest(rp):
+            raise ValueError("qualified initialization exam must bind retention baselines")
+        report = json.loads(rp.read_text())
+        matches = [
+            c for c in report["candidates"] if c["checkpoint_hash"] == bank["base_checkpoint_hash"]
+        ]
+        if len(matches) != 1:
+            raise ValueError("one exact initial-skill and successor-body baseline required")
+        baseline = matches[0]
+        for key in ("old16", "dev16"):
+            rows = baseline["isolated"][key]["results"]
+            if len(rows) != 16:
+                raise ValueError("complete stronger historical retention cohort required")
+            for before, after in zip(rows, r["baseline_isolated"][key], strict=True):
+                same(source_raw(root, before), read(after))
+        for before, after in zip(
+            baseline["continuous"]["results"], r["baseline_continuous"], strict=True
+        ):
+            for key in ("first", "second"):
+                same(source_raw(root, before[key]), read(after[key]))
+
     def audit_row(row, case, previous, artifact=None, initial_memory=None):
         nonlocal native, neural, episode_count
         z = read(row if artifact is None else artifact)
@@ -302,6 +350,7 @@ def main():
         return dict(quality=second_quality, stable=stable)
 
     try:
+        bind_sequence_baseline()
         baseline = {
             key: isolated(r["baseline_isolated"][key], bank, False)
             for key, bank in (("old16", d["old_cases"]), ("dev16", d["DEV_cases"]))
