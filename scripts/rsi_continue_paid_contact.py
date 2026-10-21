@@ -32,8 +32,26 @@ def main():
         p.add_argument("--" + name + "-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--course-bank", choices=("train", "dev"), default="train")
+    p.add_argument("--recovery-chain-root", type=Path)
+    p.add_argument("--recovery-chain-hash")
+    p.add_argument("--recovery-audit-root", type=Path)
+    p.add_argument("--recovery-audit-hash")
+    p.add_argument("--recovery-cutover", type=int, choices=(140, 160, 190))
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
+    recovery_options = (
+        "recovery-chain-root",
+        "recovery-chain-hash",
+        "recovery-audit-root",
+        "recovery-audit-hash",
+        "recovery-cutover",
+    )
+    use_teacher = any(getattr(a, k.replace("-", "_")) is not None for k in recovery_options)
+    if use_teacher and (
+        a.course_bank != "train"
+        or any(getattr(a, k.replace("-", "_")) is None for k in recovery_options)
+    ):
+        raise ValueError("complete TRAIN-only recovery teacher commitment required")
     if (
         a.output.exists()
         or subprocess.check_output(["git", "status", "--porcelain"])
@@ -70,6 +88,9 @@ def main():
         dict(
             source_head=a.expected_head,
             course_bank=a.course_bank,
+            recovery_teacher={k: str(getattr(a, k.replace("-", "_"))) for k in recovery_options}
+            if use_teacher
+            else None,
             parent_exam_hash=a.exam_hash,
             parent_primitive_hash=a.primitive_hash,
             parent_neural_hash=a.neural_hash,
@@ -90,6 +111,9 @@ def main():
                 "--" + name + "-hash",
                 getattr(a, name + "_hash"),
             ]
+        if use_teacher:
+            for key in recovery_options:
+                command += ["--" + key, str(getattr(a, key.replace("-", "_")))]
         subprocess.run(
             command
             + [

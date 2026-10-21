@@ -80,6 +80,7 @@ def run_practice_chain(
     actors: list[Any],
     *,
     store: Callable[[str, dict[str, np.ndarray]], dict[str, Any]],
+    allow_composite_teachers: bool = False,
 ) -> dict[str, Any]:
     """Execute 2..4 full learned skills. No actor/role/case winner selection.
 
@@ -89,6 +90,8 @@ def run_practice_chain(
     """
     if not 2 <= len(actors) <= 4:
         raise ValueError("bounded predeclared two-to-four-skill chain required")
+    if any(getattr(a, "composite_teacher", False) for a in actors) and not allow_composite_teachers:
+        raise ValueError("composite teacher requires a separate explicit diagnostic declaration")
     source = case["source"]
     if ("left" in source) == ("right" in source):
         raise ValueError("one explicit admitted reference contact foot required")
@@ -111,11 +114,22 @@ def run_practice_chain(
                 status = boundary["status"]
                 break
         start_native = ep.native_steps
+        composite = getattr(actor, "composite_teacher", False) is True
+        if composite:
+            actor.begin_skill()
         raw, row = bench.collect_current(ep, actor)
         if any(k.startswith("PLAN_") for k in raw) or not np.array_equal(
             raw["NN_action"], raw["NN_nominal_action"]
         ):
             raise ValueError("chain exams must execute learned neural actors, not teacher mixtures")
+        if composite:
+            trace = actor.trace()
+            if len(trace["TEACHER_step"]) != len(raw["NN_action"]):
+                raise ValueError("all composite teacher controls must have both own proposals")
+            raw.update(trace)
+            row.update(
+                composite_teacher=True, teacher_mixture=True, policy_likelihood_provided=False
+            )
         artifact = store(f"skill{index}", raw)
         terminal = store(f"terminal{index}", snapshot(ep.env.data))
         skills.append(dict(index=index, result=dict(row, **artifact), terminal=terminal))
@@ -146,4 +160,5 @@ def run_practice_chain(
         goal_complete=False,
         team_game=False,
         hardware_authorized=False,
+        teacher_mixture=any(getattr(a, "composite_teacher", False) for a in actors),
     )

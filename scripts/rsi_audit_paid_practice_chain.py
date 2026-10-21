@@ -54,20 +54,49 @@ def main():
     if d["input_file_hashes"].get(str(parent_declaration)) != digest(parent_declaration):
         raise ValueError("exact parent course declaration required")
     course_bank = d.get("course_bank", "train")
+    recovery = d.get("recovery_teacher")
+    if r.get("recovery_teacher") != recovery:
+        raise ValueError("recovery teacher declaration/receipt differs")
     cases, parent_prefixes = chain_parent_profile(
-        json.loads(parent_declaration.read_text()), parent, candidate, course_bank
+        json.loads(parent_declaration.read_text()),
+        parent,
+        candidate,
+        course_bank,
+        recovery_teacher=recovery is not None,
     )
-    prefix_count = 2 if course_bank == "train" else 1
+    prefix_count = 2 if course_bank == "train" and recovery is None else 1
     if (
         cases != d["cases"]
         or r.get("course_bank", "train") != course_bank
         or d.get("qualified_prefix_skills", 2) != prefix_count
         or r.get("qualified_prefix_skills", 2) != prefix_count
-        or d["first_two_arrays_must_match_parent"] is not (course_bank == "train")
-        or r["all_first_two_arrays_exact_parent"] is not (course_bank == "train")
+        or d["first_two_arrays_must_match_parent"] is not (prefix_count == 2)
+        or r["all_first_two_arrays_exact_parent"] is not (prefix_count == 2)
     ):
         raise ValueError("course bank or qualified prefix coverage changed")
     pins = dict(r["input_file_hashes"])
+    if recovery is not None:
+        from rosclaw_soccer.rsi.paid_recovery_proof import recovery_proof
+
+        recovery_declaration, recovery_pins = recovery_proof(
+            Path(recovery["chain_root"]),
+            recovery["chain_hash"],
+            Path(recovery["audit_root"]),
+            recovery["audit_hash"],
+            cases=cases,
+        )
+        if (
+            recovery["checkpoint_hash"] != recovery_declaration["checkpoint_hash"]
+            or recovery["training_receipt_hash"] != recovery_declaration["training_receipt_hash"]
+            or recovery["blend_half_width"] != 12
+            or recovery["both_networks_run_each_control"] is not True
+            or recovery["trained_single_network"] is not False
+            or recovery["runtime_case_lookup"] is not False
+            or r["skills"] != 3
+        ):
+            raise ValueError("exact bounded two-network teacher authority required")
+        if any(pins.get(p) != h for p, h in recovery_pins.items()):
+            raise ValueError("recovery dependencies must already be producer-pinned")
     pins.update({str(rp): a.hash, str(dp): digest(dp), str(pp): a.parent_hash})
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
@@ -83,7 +112,7 @@ def main():
             hardware_authorized=False,
         ),
     )
-    counts = dict(native=0, neural=0, raw_episodes=0, holds=0, boundaries=0)
+    counts = dict(native=0, neural=0, raw_episodes=0, holds=0, boundaries=0, actor_forwards=0)
     try:
         import numpy as np
         import torch
@@ -119,6 +148,19 @@ def main():
             training_receipt_hash=d["training_receipt_hash"],
             scene_hash=scene,
         )
+        successor = actor
+        if recovery is not None:
+            from rosclaw_soccer.rsi.paid_recovery_teacher import RecoveryMixtureTeacher
+
+            old_actor, _ = load_contact_residual_actor(
+                policy,
+                checkpoint=unique(recovery["checkpoint_hash"]),
+                checkpoint_hash=recovery["checkpoint_hash"],
+                training_receipt=unique(recovery["training_receipt_hash"]),
+                training_receipt_hash=recovery["training_receipt_hash"],
+                scene_hash=scene,
+            )
+            successor = RecoveryMixtureTeacher(actor, old_actor, cutover=recovery["cutover"])
 
         def read(row, root=a.root):
             path = root / row["raw_path"]
@@ -225,7 +267,14 @@ def main():
                             or not np.array_equal(z["NN_obs"][1:, 61:64], motion["w"][: n - 1])
                         ):
                             raise ValueError("reference clock/cache was not explicitly reset")
-                        model = actor if arm == "learned" and index else actor.base
+                        is_teacher = recovery is not None and arm == "learned" and index > 0
+                        model = successor if arm == "learned" and index else actor.base
+                        if is_teacher:
+                            model.begin_skill()
+                        if bool(row.get("composite_teacher")) != is_teacher:
+                            raise ValueError(
+                                "composite teacher may not masquerade as single network"
+                            )
                         state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
                         with torch.no_grad():
                             for j, obs in enumerate(z["NN_obs"]):
@@ -246,6 +295,20 @@ def main():
                                     raise ValueError(
                                         "recorded motor output differs from qualified own network"
                                     )
+                        teacher_keys = {k for k in z if k.startswith("TEACHER_")}
+                        if is_teacher:
+                            trace = model.trace()
+                            if set(trace) != teacher_keys or any(
+                                not np.array_equal(z[k], value) for k, value in trace.items()
+                            ):
+                                raise ValueError(
+                                    "own two proposals or causal teacher blend differs"
+                                )
+                        elif teacher_keys:
+                            raise ValueError(
+                                "pure neural controls cannot contain teacher proposals"
+                            )
+                        counts["actor_forwards"] += n * (2 if is_teacher else 1)
                         counts["native"] += checked["native_steps"]
                         counts["neural"] += checked["neural_rows"]
                         counts["raw_episodes"] += 1
@@ -298,6 +361,8 @@ def main():
         if (
             counts["native"] != r["actual_native_steps"]
             or counts["neural"] != r["actual_neural_rows"]
+            or counts["actor_forwards"]
+            != r.get("actual_neural_actor_forward_rows", r["actual_neural_rows"])
         ):
             raise ValueError("complete producer native/neural work totals differ")
         check_pins(pins)
@@ -309,10 +374,12 @@ def main():
                 summaries=summaries,
                 course_bank=course_bank,
                 qualified_prefix_skills=prefix_count,
+                recovery_teacher=recovery,
                 counts=counts,
                 producer_native_steps=counts["native"],
                 own_native_steps=0,
-                own_neural_rows=counts["neural"],
+                own_neural_rows=counts["actor_forwards"],
+                own_neural_control_rows=counts["neural"],
                 not_additional_independent_physics=True,
                 goal_complete=False,
                 team_game=False,

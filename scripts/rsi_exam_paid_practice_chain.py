@@ -22,6 +22,11 @@ def main():
         p.add_argument("--" + name + "-hash", required=True)
     p.add_argument("--skills", type=int, choices=(2, 3, 4), default=3)
     p.add_argument("--course-bank", choices=("train", "dev"), default="train")
+    p.add_argument("--recovery-chain-root", type=Path)
+    p.add_argument("--recovery-chain-hash")
+    p.add_argument("--recovery-audit-root", type=Path)
+    p.add_argument("--recovery-audit-hash")
+    p.add_argument("--recovery-cutover", type=int, choices=(140, 160, 190))
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -65,8 +70,47 @@ def main():
     parent_d = json.loads(dp.read_text())
     from rosclaw_soccer.rsi.paid_chain_courses import chain_parent_profile
 
-    cases, parent_prefixes = chain_parent_profile(parent_d, exam, candidate, a.course_bank)
-    prefix_count = 2 if a.course_bank == "train" else 1
+    recovery_args = (
+        a.recovery_chain_root,
+        a.recovery_chain_hash,
+        a.recovery_audit_root,
+        a.recovery_audit_hash,
+        a.recovery_cutover,
+    )
+    use_teacher = any(x is not None for x in recovery_args)
+    if use_teacher and (not all(x is not None for x in recovery_args) or a.skills != 3):
+        raise ValueError(
+            "complete recovery proof and bounded three-skill teacher declaration required"
+        )
+    cases, parent_prefixes = chain_parent_profile(
+        parent_d, exam, candidate, a.course_bank, recovery_teacher=use_teacher
+    )
+    prefix_count = 2 if a.course_bank == "train" and not use_teacher else 1
+    recovery = recovery_declaration = None
+    if use_teacher:
+        from rosclaw_soccer.rsi.paid_recovery_proof import recovery_proof
+
+        recovery_declaration, recovery_pins = recovery_proof(
+            a.recovery_chain_root,
+            a.recovery_chain_hash,
+            a.recovery_audit_root,
+            a.recovery_audit_hash,
+            cases=cases,
+        )
+        pins.update(recovery_pins)
+        recovery = dict(
+            chain_root=str(a.recovery_chain_root),
+            chain_hash=a.recovery_chain_hash,
+            audit_root=str(a.recovery_audit_root),
+            audit_hash=a.recovery_audit_hash,
+            cutover=a.recovery_cutover,
+            blend_half_width=12,
+            checkpoint_hash=recovery_declaration["checkpoint_hash"],
+            training_receipt_hash=recovery_declaration["training_receipt_hash"],
+            both_networks_run_each_control=True,
+            trained_single_network=False,
+            runtime_case_lookup=False,
+        )
     root = Path(parent_d["candidates"][candidate["candidate"]])
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
@@ -80,15 +124,18 @@ def main():
             cases=cases,
             course_bank=a.course_bank,
             qualified_prefix_skills=prefix_count,
+            recovery_teacher=recovery,
             skills=a.skills,
             independent_full_world_repeats=2,
-            first_two_arrays_must_match_parent=a.course_bank == "train",
+            first_two_arrays_must_match_parent=prefix_count == 2,
             first_array_must_match_parent=True,
             new_successor_states_not_training_labels=True,
             fixed_world_goal=True,
             body_resets_between_skills=0,
             first_actor="qualified_R2motor",
-            successor_actor="qualified_R2motor_plus_learned_contact_gate_and_residual",
+            successor_actor="two_frozen_residual_heads_explicit_recovery_teacher"
+            if use_teacher
+            else "qualified_R2motor_plus_learned_contact_gate_and_residual",
             checkpoint_hash=candidate["checkpoint_hash"],
             training_receipt_hash=candidate["training_receipt_hash"],
             all16_cases_retained=True,
@@ -123,6 +170,20 @@ def main():
             training_receipt_hash=candidate["training_receipt_hash"],
             scene_hash=scene_hash,
         )
+        successor = actor
+        if recovery is not None:
+            from rosclaw_soccer.rsi.paid_recovery_proof import unique_proof_path
+            from rosclaw_soccer.rsi.paid_recovery_teacher import RecoveryMixtureTeacher
+
+            old_actor, _ = load_contact_residual_actor(
+                policy,
+                checkpoint=unique_proof_path(pins, recovery["checkpoint_hash"]),
+                checkpoint_hash=recovery["checkpoint_hash"],
+                training_receipt=unique_proof_path(pins, recovery["training_receipt_hash"]),
+                training_receipt_hash=recovery["training_receipt_hash"],
+                scene_hash=scene_hash,
+            )
+            successor = RecoveryMixtureTeacher(actor, old_actor, cutover=a.recovery_cutover)
 
         def same(x, y):
             if set(x) != set(y) or any(not np.array_equal(x[k], y[k]) for k in x):
@@ -147,7 +208,7 @@ def main():
             ("baseline", [actor.base] * a.skills),
             (
                 "learned",
-                [actor.base] + [actor] * (a.skills - 1),
+                [actor.base] + [successor] * (a.skills - 1),
             ),
         ):
             worlds = []
@@ -178,7 +239,9 @@ def main():
                         artifacts.append(artifact)
                         return artifact
 
-                    world = run_practice_chain(bench, case, actors, store=store)
+                    world = run_practice_chain(
+                        bench, case, actors, store=store, allow_composite_teachers=use_teacher
+                    )
                     if len(world["skills"]) < prefix_count:
                         raise ValueError("qualified physical prefix did not reproduce")
                     for k, row in parent_prefixes[name][i].items():
@@ -228,11 +291,23 @@ def main():
                 skills=a.skills,
                 course_bank=a.course_bank,
                 qualified_prefix_skills=prefix_count,
+                recovery_teacher=recovery,
                 all_qualified_prefix_arrays_exact_parent=True,
-                all_first_two_arrays_exact_parent=a.course_bank == "train",
+                all_first_two_arrays_exact_parent=prefix_count == 2,
                 all_independent_chain_repeats_exact=True,
                 actual_native_steps=bench.native_steps,
                 actual_neural_rows=bench.neural_rows,
+                actual_neural_actor_forward_rows=bench.neural_rows
+                + (
+                    sum(
+                        s["result"]["neural_rows"]
+                        for w in result["learned"]["worlds"]
+                        for s in w["skills"][1:]
+                    )
+                    * 2
+                    if use_teacher
+                    else 0
+                ),
                 optimizer_updates=0,
                 goal_complete=False,
                 team_game=False,

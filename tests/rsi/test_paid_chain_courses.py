@@ -67,3 +67,12 @@ def test_short_prefix_coverage_fails_before_physics():
     candidate["isolated"]["dev16"]["results"].pop()
     with pytest.raises(ValueError, match="coverage"):
         chain_parent_profile(d, exam, candidate, "dev")
+
+
+def test_recovery_teacher_changes_second_so_only_first_is_parent_qualified():
+    d, exam, candidate = fixture()
+    cases, prefixes = chain_parent_profile(d, exam, candidate, "train", recovery_teacher=True)
+    assert cases == d["old_cases"]
+    assert all(set(row) == {0} for rows in prefixes.values() for row in rows)
+    with pytest.raises(ValueError, match="TRAIN-only"):
+        chain_parent_profile(d, exam, candidate, "dev", recovery_teacher=True)

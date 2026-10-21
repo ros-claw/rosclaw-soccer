@@ -8,6 +8,8 @@ def chain_parent_profile(
     exam: dict[str, Any],
     candidate: dict[str, Any],
     course_bank: str,
+    *,
+    recovery_teacher: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[int, dict[str, Any]]]]]:
     """DEV has only a qualified FIRST action, never invent a second proof.
 
@@ -46,4 +48,8 @@ def chain_parent_profile(
                     or not isinstance(row.get("raw_hash"), str)
                 ):
                     raise ValueError("exact source-bound parent action proof required")
+    if recovery_teacher:
+        if course_bank != "train":
+            raise ValueError("recovery teachers are TRAIN-only, not DEV labels")
+        prefixes = {arm: [{0: row[0]} for row in rows] for arm, rows in prefixes.items()}
     return cases, prefixes
