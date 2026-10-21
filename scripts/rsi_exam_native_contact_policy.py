@@ -21,6 +21,8 @@ def main():
     p.add_argument("--baseline-episodes-root", type=Path)
     p.add_argument("--baseline-episodes-hash")
     p.add_argument("--task-set", choices=("train64", "dev64"), default="train64")
+    p.add_argument("--baseline-reuse-root", type=Path)
+    p.add_argument("--baseline-reuse-hash")
     p.add_argument("--checkpoint-intent", choices=("shared", "bounded-residual"), default="shared")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
@@ -52,6 +54,82 @@ def main():
     learner, starts = reports[:2]
     baseline = {} if dev else reports[2]
     residual = a.checkpoint_intent == "bounded-residual"
+    reuse_rows = {}
+    if a.baseline_reuse_root or a.baseline_reuse_hash:
+        if not all((a.baseline_reuse_root, a.baseline_reuse_hash)) or not residual:
+            raise ValueError(
+                "explicit immutable baseline reuse is only defined for frozen residuals"
+            )
+        rf = a.baseline_reuse_root / "complete.json"
+        if digest(rf) != a.baseline_reuse_hash:
+            raise ValueError("exact complete baseline execution proof required")
+        reused = json.loads(rf.read_text())
+        if (
+            reused.get("checkpoint_intent") != "bounded-residual"
+            or reused.get("task_set", "train64") != a.task_set
+            or reused.get("all_strict_replays_exact") is not True
+            or reused.get("all_representative_repeats_exact") is not True
+            or (not dev and reused.get("all_old_baseline_fields_bitexact") is not True)
+            or reused["input_file_hashes"].get(str(a.starts_root / "complete.json"))
+            != a.starts_hash
+        ):
+            raise ValueError("same task instances and actually replayed baseline required")
+        declaration_path = a.baseline_reuse_root / "declaration.json"
+        original_head = json.loads(declaration_path.read_text())["source_head"]
+        roots = [
+            Path(k).parent.parent
+            for k in reused["input_file_hashes"]
+            if k.endswith("/scripts/rsi_exam_native_contact_policy.py")
+        ]
+        active_roots = [
+            root
+            for root in roots
+            if subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            == original_head
+        ]
+        if len(active_roots) != 1:
+            raise ValueError("unambiguous original active baseline source required")
+        for relative in (
+            "src/rosclaw_soccer/rsi/velocity_prior_actor.py",
+            "src/rosclaw_soccer/rsi/native_reference_observation.py",
+            "src/rosclaw_soccer/rsi/native_velocity_transfer.py",
+            "src/rosclaw_soccer/providers/g1/velocity_policy.py",
+            "src/rosclaw_soccer/rsi/ball_aware_inputs.py",
+            "src/rosclaw_soccer/rsi/native_motion_reference.py",
+            "src/rosclaw_soccer/rsi/native_contact_adapter.py",
+        ):
+            if digest(Path.cwd() / relative) != reused["input_file_hashes"].get(
+                str(active_roots[0] / relative)
+            ):
+                raise ValueError(
+                    "baseline inference/observation/codec behavior changed; cannot reuse"
+                )
+        reuse_rows = {
+            (r["world"], r["repeat"]): r for r in reused["results"] if r["arm"] == "initial"
+        }
+        if set(reuse_rows) != {
+            (w, rep) for w in range(64) for rep in range(2 if w in repeated_worlds else 1)
+        }:
+            raise ValueError("complete balanced64 baseline with all declared repeats required")
+        for suffix in (
+            "/ball-aware-update200.pt",
+            "/policy/velocity/v0/exported/policy.onnx",
+            "/policy/velocity/v0/params/deploy.yaml",
+            "/rsi-body-bound-foot-only-qualification-20261021/compiled_model.mjb",
+        ):
+            current = {k: h for k, h in pins.items() if k.endswith(suffix)}
+            original = {k: h for k, h in reused["input_file_hashes"].items() if k.endswith(suffix)}
+            if len(current) != 1 or current != original:
+                raise ValueError("baseline body, codec and immutable foundation must match")
+        pins.update(reused["input_file_hashes"])
+        pins[str(rf)] = a.baseline_reuse_hash
+        pins[str(declaration_path)] = digest(declaration_path)
+        for (w, rep), row in reuse_rows.items():
+            pins[str(a.baseline_reuse_root / f"world{w}-initial-repeat{rep}/native.npz")] = row[
+                "raw_hash"
+            ]
     expected_status = (
         "NATIVE_CONTACT24_RESIDUAL_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
         if residual
@@ -117,6 +195,9 @@ def main():
             worlds=64,
             checkpoint_selection="fixed final20 vs immutable parent baseline",
             checkpoint_intent=a.checkpoint_intent,
+            baseline_reused=bool(reuse_rows),
+            baseline_reuse_receipt_hash=a.baseline_reuse_hash,
+            reused_baseline_is_not_new_physics_or_new_independent_data=True,
             arms=["initial", "final"],
             full_independent_repeated_worlds=repeated_worlds,
             maximum_controls=300,
@@ -240,6 +321,51 @@ def main():
                 current_arm = arm
                 first = None
                 for repeat in range(2 if world in repeated_worlds else 1):
+                    if arm == "initial" and reuse_rows:
+                        import os
+
+                        row = reuse_rows[world, repeat]
+                        source = (
+                            a.baseline_reuse_root
+                            / f"world{world}-initial-repeat{repeat}/native.npz"
+                        )
+                        # Admit the new checkpoint's zero-head/foundation identity,
+                        # even though it requires no new baseline integration.
+                        session_type(
+                            onnx,
+                            cfg,
+                            expected_model_hash=pins[str(onnx)],
+                            expected_config_hash=pins[str(cfg)],
+                            checkpoint=cp,
+                            expected_checkpoint_hash=checkpoint["hash"],
+                            parent_checkpoint=parent,
+                            expected_parent_hash=pins[str(parent)],
+                            expected_native_model_hash=pins[str(mp)],
+                            arm="initial",
+                        )
+                        with np.load(source, allow_pickle=False) as z:
+                            if (
+                                not np.array_equal(
+                                    z["native_qpos_before"][0], initial["qpos"][world]
+                                )
+                                or not np.array_equal(
+                                    z["native_qvel_before"][0], initial["qvel"][world]
+                                )
+                                or len(z["target_rad"]) != horizon
+                            ):
+                                raise ValueError("reused baseline entry or full horizon differs")
+                        folder = a.output / f"world{world}-initial-repeat{repeat}"
+                        folder.mkdir()
+                        os.symlink(source.resolve(), folder / "native.npz")
+                        result = {
+                            **row,
+                            "baseline_reused_from": str(source),
+                            "new_physics_steps": 0,
+                            "new_policy_rows": 0,
+                        }
+                        write_once(folder / "result.json", result)
+                        results.append(result)
+                        continue
                     session = session_type(
                         onnx,
                         cfg,
@@ -457,6 +583,8 @@ def main():
                 ),
                 input_file_hashes=pins,
                 checkpoint_intent=a.checkpoint_intent,
+                baseline_reuse_receipt_hash=a.baseline_reuse_hash,
+                reused_baseline_trajectories=len(reuse_rows),
                 results=results,
                 summary=summary,
                 live_native_steps=live_steps,
