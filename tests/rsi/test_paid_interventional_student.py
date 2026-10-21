@@ -1,0 +1,141 @@
+import copy
+
+import numpy as np
+import pytest
+import torch
+from test_paid_compact_student import fixture as warm_fixture
+
+from rosclaw_soccer.rsi.paid_interventional_student import (
+    CONTROL_STATUS,
+    STUDENT_STATUS,
+    learner_config,
+    learning_certificate,
+    validate_learner_state,
+)
+
+
+def fixture(control=False):
+    head, p, n, warm, _, _ = warm_fixture()
+    initial = {
+        k.removeprefix("net."): v.clone() for k, v in warm["model"].items() if k.startswith("net.")
+    }
+    if not control:
+        with torch.no_grad():
+            head.net[-1].bias.add_(0.001)
+    state = dict(
+        schema="paid.interventional_dagger_student.v1",
+        config=learner_config(0, control=control),
+        head=copy.deepcopy(head.state_dict()),
+        initial_net=initial,
+        optimizer=copy.deepcopy(warm["optimizer"]),
+        hardware_authorized=False,
+        promotion_authorized=False,
+    )
+    steps = 0 if control else 2048
+    for slot in state["optimizer"]["state"].values():
+        slot["step"].fill_(1024 + steps)
+    state["counts"] = dict(
+        optimizer_updates=steps,
+        inherited_optimizer_updates=1024,
+        canonical_forward_rows=256 * steps,
+        intervention_forward_rows=256 * steps,
+        retention_forward_rows=512 * steps,
+        nonzero_gradient_steps=steps,
+    )
+    for k in (
+        "source_head",
+        "declaration_hash",
+        "data_hash",
+        "warm_hash",
+        "body_scene_hash",
+        "parent_hash",
+        "parent_checkpoint_hash",
+    ):
+        state[k] = k
+    z = dict(
+        features=torch.cat([p, n]).numpy(),
+        target=np.ones((5, 29), np.float32) * 0.1,
+        parent_delta=np.zeros((5, 29), np.float32),
+        teacher=np.array([True, True, False, False, False]),
+        active=np.array([True, True, False, False, False]),
+    )
+    state["learning_certificate"] = learning_certificate(head, z, 1, initial, control=control)
+    receipt = copy.deepcopy(state)
+    receipt.update(
+        status=CONTROL_STATUS if control else STUDENT_STATUS,
+        parent_parameters_in_optimizer=0,
+        base_parameters_in_optimizer=0,
+        own_native_steps=0,
+        Fresh_fit_rows=0,
+        DEV_fit_rows=0,
+    )
+    return state, receipt, warm
+
+
+@pytest.mark.parametrize("control", [False, True])
+def test_new_gradients_and_zero_update_control_have_distinct_contracts(control):
+    s, r, w = fixture(control)
+    validate_learner_state(s, r, w)
+    assert r["learning_certificate"]["new_neural_weight_effect"] is (not control)
+    assert r["learning_certificate"]["counts"]["protected"] == 3
+    assert r["counts"]["inherited_optimizer_updates"] == 1024
+
+
+@pytest.mark.parametrize(
+    "fault", ["steps", "source", "noop", "tensor", "initial", "count", "flags", "moment"]
+)
+def test_no_forged_updates_or_lost_warm_memory(fault):
+    s, r, w = fixture()
+    if fault == "steps":
+        s["optimizer"]["state"][0]["step"].fill_(1024)
+    elif fault == "source":
+        r["warm_hash"] = "other"
+    elif fault == "noop":
+        for k, v in s["initial_net"].items():
+            s["head"]["net." + k] = v.clone()
+    elif fault == "tensor":
+        s["head"]["net.4.bias"][0] = float("nan")
+    elif fault == "initial":
+        s["initial_net"]["4.bias"].fill_(42)
+    elif fault == "count":
+        s["counts"]["inherited_optimizer_updates"] = 0
+    elif fault == "flags":
+        r["promotion_authorized"] = True
+    elif fault == "moment":
+        s["optimizer"]["state"][0]["exp_avg_sq"].fill_(-1)
+    with pytest.raises(ValueError):
+        validate_learner_state(s, r, w)
+
+
+def test_control_cannot_masquerade_as_neural_learning_or_change_moments():
+    s, r, w = fixture(True)
+    r["status"] = STUDENT_STATUS
+    with pytest.raises(ValueError):
+        validate_learner_state(s, r, w)
+    r["status"] = CONTROL_STATUS
+    s["optimizer"]["state"][0]["exp_avg"].add_(1)
+    with pytest.raises(ValueError, match="control"):
+        validate_learner_state(s, r, w)
+
+
+@pytest.mark.parametrize("index", [-1, 3, True, "0"])
+def test_seed_and_causal_control_design_is_fixed(index):
+    with pytest.raises(ValueError):
+        learner_config(index)
+    with pytest.raises(ValueError):
+        learner_config(1, control=True)
+
+
+def test_dirty_learner_rejects_before_source_reads_or_GPU_allocation(tmp_path, monkeypatch):
+    import sys
+
+    from scripts import rsi_train_paid_interventional as runner
+
+    args = ["run", "--expected-head", "frozen", "--seed", "0", "--output", str(tmp_path / "out")]
+    for name in ("data", "warm"):
+        args += ["--" + name + "-root", str(tmp_path / name), "--" + name + "-hash", "hash"]
+    monkeypatch.setattr(sys, "argv", args)
+    monkeypatch.setattr(runner.subprocess, "check_output", lambda *a, **k: b"dirty")
+    with pytest.raises(ValueError, match="frozen"):
+        runner.main()
+    assert not (tmp_path / "out").exists()
