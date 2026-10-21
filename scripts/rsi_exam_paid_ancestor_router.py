@@ -17,6 +17,7 @@ def main():
     for n in ("plan-hash", "expected-head"):
         p.add_argument("--" + n, required=True)
     p.add_argument("--wait-for-student", action="store_true")
+    p.add_argument("--first-enabled", action="store_true")
     a = p.parse_args()
 
     def clean():
@@ -57,7 +58,9 @@ def main():
     check_pins(pins)
     clean()
     a.output.mkdir()
-    schedule = ("base", "student", "student")
+    schedule = (
+        ("student", "student", "student") if a.first_enabled else ("base", "student", "student")
+    )
     write_once(
         a.output / "declaration.json",
         dict(
@@ -74,6 +77,7 @@ def main():
             Fresh_fit_rows=0,
             hardware_authorized=False,
             promotion_authorized=False,
+            **(dict(first_enabled=True) if a.first_enabled else {}),
         ),
     )
     bench = None

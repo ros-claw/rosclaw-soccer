@@ -12,6 +12,28 @@ def test_default_old_modes_and_explicit_third_ancestor_are_distinct():
     assert teacher[:2] == lifecycle_motor_schedule(2, 3)[:2] and teacher[2] == "base"
 
 
+def test_first_enabled_requires_explicit_commitment_and_does_not_change_legacy_default():
+    assert lifecycle_motor_schedule(2, 3, ("student",) * 3) == ("student",) * 3
+    assert lifecycle_motor_schedule(2, 3)[0] == "base"
+
+
+def test_first_enabled_world_cannot_be_audited_as_unchanged_first_motor():
+    with pytest.raises(ValueError, match="caller commitment"):
+        audit_standing_lifecycle(
+            None,
+            None,
+            None,
+            dict(motor_schedule=["student"] * 3),
+            {},
+            {},
+            {},
+            variant=2,
+            skills=3,
+            count_inference=lambda: None,
+            motor_schedule=("base", "student", "student"),
+        )
+
+
 @pytest.mark.parametrize(
     "variant,schedule",
     [

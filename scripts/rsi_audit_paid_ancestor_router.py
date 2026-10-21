@@ -17,6 +17,7 @@ def main():
     for n in ("producer-head", "expected-head"):
         p.add_argument("--" + n, required=True)
     p.add_argument("--wait-for-completion", action="store_true")
+    p.add_argument("--first-enabled", action="store_true")
     a = p.parse_args()
 
     def clean():
@@ -43,7 +44,9 @@ def main():
     rp, dp = a.root / "complete.json", a.root / "declaration.json"
     r, d = [json.loads(f.read_text()) for f in (rp, dp)]
     _, plan = load_ancestor_plan(Path(d["plan_root"]), d["plan_hash"])
-    schedule = ("base", "student", "student")
+    schedule = (
+        ("student", "student", "student") if a.first_enabled else ("base", "student", "student")
+    )
     if (
         (a.root / "failed.json").exists()
         or r["status"] != "PAID_ROUTER_TRAIN20_WORLDS_CLOSED_PENDING_AUDIT"
@@ -54,6 +57,7 @@ def main():
         or d["cases"] != plan["cases"]
         or [w["case"] for w in r["worlds"]] != list(range(20))
         or d["schedule"] != list(schedule)
+        or d.get("first_enabled", False) is not a.first_enabled
         or d["repeats"] != 2
         or r["repeats_exact"] is not True
         or any(o["bank"] != "train" or o["Fresh_fit_rows"] != 0 for o in (r, d))
