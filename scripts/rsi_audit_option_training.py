@@ -123,7 +123,9 @@ def main():
 
     check_pins(pins)
     bank = load(pinned("/precontact-resets.npz"))
-    model = mujoco.MjModel.from_binary_path(str(pinned("/compiled_model.mjb")))
+    model = mujoco.MjModel.from_binary_path(
+        str(pinned("/rsi-body-bound-foot-only-qualification-20261021/compiled_model.mjb"))
+    )
     layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
     qi = [*range(layout.rq, layout.rq + 7), *layout.qi, *range(layout.bq, layout.bq + 7)]
     vi = [*range(layout.rv, layout.rv + 6), *layout.vi, *range(layout.bv, layout.bv + 6)]
