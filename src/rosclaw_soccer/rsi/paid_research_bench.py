@@ -87,9 +87,30 @@ class PaidResearchBench:
         A transformed action is an explicit composite teacher, NOT the actor's
         stochastic sample. No policy likelihood is fabricated for these data.
         """
+        ep = self.make(case)
+        return self.collect_current(ep, actor, transform=transform)
+
+    def collect_current(
+        self,
+        ep: PaidNativeEpisode,
+        actor: Any,
+        *,
+        transform: Any = None,
+        transition_controls: int = 0,
+    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+        """Run an already admitted live-body skill; NEVER reset simulator state.
+
+        Neural h/c starts at zero at this explicit skill boundary, while the
+        previous executed action is carried by the episode. Optional crossfade
+        is an explicit composite transition, not a pure-neural policy claim.
+        """
         import torch
 
-        ep = self.make(case)
+        if ep.done or ep.frame != 0 or transition_controls not in (0, 12):
+            raise ValueError("fresh explicit skill boundary and declared transition required")
+        if transition_controls and transform is not None:
+            raise ValueError("transition and teacher transformations must be separate experiments")
+        previous = ep.last_action.copy()
         state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
         controls, neural, plans = [], [], []
         while not ep.done:
@@ -103,6 +124,10 @@ class PaidResearchBench:
                     self.neural_rows += 1
                 nominal = mean[0, 0].numpy().copy()
                 action = nominal.copy()
+                if transition_controls and ep.frame < transition_controls:
+                    u = (ep.frame + 1) / transition_controls
+                    weight = 10 * u**3 - 15 * u**4 + 6 * u**5
+                    action = ((1 - weight) * previous + weight * nominal).astype(np.float32)
                 if transform is not None:
                     action, plan = transform(ep, nominal)
                     plans.append(plan)
@@ -131,7 +156,7 @@ class PaidResearchBench:
             canonical_qpos=q,
             canonical_qvel=v,
             goal=ep.goal,
-            intended_foot=0 if "left" in case["source"] else 1,
+            intended_foot=0 if "left" in ep.clip.name else 1,
         )
         nonfoot = bool((f[:, 2] > 1).any())
         failed = bool(raw["body_failed"].any())
@@ -155,7 +180,7 @@ class PaidResearchBench:
                 - 0.5 * retreat
             )
         summary = dict(
-            source=case["source"],
+            source=ep.clip.path.name,
             native_steps=len(controls) * 10,
             neural_rows=len(neural),
             body_failed=failed,
@@ -163,7 +188,7 @@ class PaidResearchBench:
             nonfoot_impulse_Ns=impulse,
             terminal_reward=reward,
             postcontact=post,
-            composite_teacher=transform is not None,
+            composite_teacher=transform is not None or transition_controls > 0,
             policy_likelihood_provided=False,
         )
         return raw, summary

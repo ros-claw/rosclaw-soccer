@@ -56,6 +56,7 @@ class PaidNativeEpisode:
         ):
             raise ValueError("qualified standard-ball29motor episode required")
         self.frame, self.done = 0, True
+        self.termination_reason = "NOT_STARTED"
         self.work = NativeStepCounter()
 
     @property
@@ -63,8 +64,6 @@ class PaidNativeEpisode:
         return self.work.native_steps
 
     def reset(self, *, ball: np.ndarray, velocity: np.ndarray, goal: np.ndarray) -> None:
-        import mujoco
-
         if not self.done:
             raise ValueError("no hidden episode reset before terminal boundary")
         if (
@@ -77,6 +76,9 @@ class PaidNativeEpisode:
         self.env.reset(self.clip, np.zeros(2), ball, velocity)
         normal = goal[:2] / np.linalg.norm(goal[:2])
         self.env.set_goal_marker(goal, normal)
+        self._begin_local(goal, np.zeros(29, np.float32))
+
+    def _begin_local(self, goal: np.ndarray, previous_action: np.ndarray) -> None:
         for contact in self.env.data.contact:
             x, y = (int(self.env.model.geom_bodyid[g]) for g in contact.geom)
             if (x == self.layout.ball and y in self.robot) or (
@@ -85,7 +87,8 @@ class PaidNativeEpisode:
                 raise ValueError("initial ball/body overlap; no resampling")
         self.goal = goal.copy()
         self.frame, self.done, self.ready = 0, False, False
-        self.last_action = np.zeros(29, np.float32)
+        self.termination_reason = "ACTIVE"
+        self.last_action = previous_action.copy()
         self.ref_pos = np.zeros(29, np.float32)
         self.ref_vel = np.zeros(29, np.float32)
         self.ref_ang = np.zeros(3, np.float32)
@@ -97,7 +100,41 @@ class PaidNativeEpisode:
         self.initial["time"] = np.array(self.env.data.time)
         # Reset only prepares state. Each observation below refreshes native
         # kinematics at the same boundary as the qualified cached-standard arm.
-        assert mujoco.get_mjcb_control() is None
+
+    def begin_current_state(self, clip: Any, *, goal: np.ndarray) -> None:
+        """Explicit new reference boundary; do not write ANY mjData field.
+
+        Actual last executed action is carried. A caller may explicitly reset
+        its neural h/c for a new skill, but may not erase body state or time.
+        Body-failure terminals cannot be restarted by this entry.
+        """
+        if not self.done or self.termination_reason != "REFERENCE_COMPLETE":
+            raise ValueError("completed healthy reference boundary required")
+        if not 1 <= clip.length <= 300 or goal.shape != (3,) or not np.isfinite(goal).all():
+            raise ValueError("bounded next reference and finite existing goal required")
+        if not np.array_equal(goal, self.env.data.mocap_pos[self.env.goal_mocap_id]):
+            raise ValueError("handoff must preserve the declared world target")
+        q, _ = self.layout.canonical(self.env.data)
+        if q[2] < 0.65 or 1 - 2 * (q[4] ** 2 + q[5] ** 2) < 0.9:
+            raise ValueError("unhealthy actual body cannot start another skill")
+        if tuple(int(x.number) for x in self.env.data.warning) != self.warning:
+            raise ValueError("prior native warning cannot be hidden by a new skill")
+        previous = self.last_action.copy()
+        self._begin_local(goal, previous)
+        self.clip = clip
+
+    def advance_hold(self) -> dict[str, Any]:
+        """Advance a separately declared post-reference PD hold, no neural/ref padding."""
+        import mujoco
+
+        if not self.done or self.termination_reason != "REFERENCE_COMPLETE":
+            raise ValueError("only healthy completed references can hold")
+        mujoco.mj_forward(self.env.model, self.env.data)
+        row = self._integrate_target(False)
+        row["post_reference_hold"] = True
+        if row["body_failed"]:
+            self.termination_reason = "BODY_FAILURE"
+        return row
 
     def observation(self) -> np.ndarray:
         import mujoco
@@ -166,6 +203,23 @@ class PaidNativeEpisode:
             if action is not None:
                 raise ValueError("held target tail must not add a neural proposal")
             mujoco.mj_forward(m, d)
+        row = self._integrate_target(neural)
+        self.frame += 1
+        self.ready = False
+        self.done = row["body_failed"] or self.frame == self.clip.length + 60
+        self.termination_reason = (
+            "BODY_FAILURE"
+            if row["body_failed"]
+            else "REFERENCE_COMPLETE"
+            if self.done
+            else "ACTIVE"
+        )
+        return row
+
+    def _integrate_target(self, neural: bool) -> dict[str, Any]:
+        import mujoco
+
+        m, d = self.env.model, self.env.data
         row = dict(
             native_qpos_before=d.qpos.copy(),
             native_qvel_before=d.qvel.copy(),
@@ -196,7 +250,4 @@ class PaidNativeEpisode:
         row["body_failed"] = bool(
             ((q[:, 2] < 0.65) | (1 - 2 * (q[:, 4] ** 2 + q[:, 5] ** 2) < 0.9)).any()
         )
-        self.frame += 1
-        self.ready = False
-        self.done = row["body_failed"] or self.frame == self.clip.length + 60
         return row
