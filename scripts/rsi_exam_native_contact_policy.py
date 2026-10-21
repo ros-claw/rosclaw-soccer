@@ -1,0 +1,399 @@
+"""All64 TRAIN frame-zero full-horizon native neural exam, not a football pass.
+
+The pilot trains at measured precontact states; this exam MUST begin at the
+original frame-zero states. Fixed final20 vs frozen initial, no checkpoint pick.
+Every rollout has an independent plain native recorded-control physics replay.
+Eight representative sources repeat complete neural execution independently.
+"""
+
+import argparse
+import json
+import subprocess
+from pathlib import Path
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    for k in ("learner-root", "starts-root", "baseline-episodes-root", "output"):
+        p.add_argument("--" + k, type=Path, required=True)
+    for k in ("learner-hash", "starts-hash", "baseline-episodes-hash", "expected-head"):
+        p.add_argument("--" + k, required=True)
+    a = p.parse_args()
+    from scripts.rsi_atomic_artifacts import write_once
+    from scripts.rsi_native_context_recovery_common import check_pins, digest
+
+    if (
+        a.output.exists()
+        or subprocess.check_output(["git", "status", "--porcelain"])
+        or subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        != a.expected_head
+    ):
+        raise ValueError("new frozen exam and unused output required")
+    pins, reports = {}, []
+    for key in ("learner", "starts", "baseline_episodes"):
+        f = getattr(a, key + "_root") / "complete.json"
+        h = getattr(a, key + "_hash")
+        if digest(f) != h:
+            raise ValueError("immutable completed prerequisite required")
+        r = json.loads(f.read_text())
+        reports.append(r)
+        pins.update(r["input_file_hashes"])
+        pins[str(f)] = h
+    learner, starts, baseline = reports
+    if (
+        learner.get("status") != "NATIVE_CONTACT24_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+        or learner.get("protocol") != "native-contact24-v1"
+        or len(learner.get("results", [])) != 20
+        or learner["counts"]["ppo_steps"] < 1
+        or starts.get("ball_placement_protocol") != "body-bound-v1"
+        or starts.get("worlds") != 64
+        or baseline.get("ball_placement_protocol") != "body-bound-v1"
+    ):
+        raise ValueError(
+            "completed native learner and unchanged full body-bound TRAIN64 source required"
+        )
+    checkpoint = next(r for r in learner["checkpoints"] if r["episode"] == 20)
+    cp = a.learner_root / checkpoint["file"]
+    pins[str(cp)] = checkpoint["hash"]
+    initial_path = a.starts_root / "train-starts.npz"
+    pins[str(initial_path)] = starts["starts_hash"]
+    for name, h in starts["plan_hashes"].items():
+        pins[str(a.starts_root / (name.removesuffix(".npz") + "-plan.npz"))] = h
+    for r in baseline["results"]:
+        pins[str(a.baseline_episodes_root / f"world{r['world']}-repeat{r['repeat']}.npz")] = r[
+            "raw_hash"
+        ]
+    for root in (Path.cwd() / "src", Path.cwd() / "scripts"):
+        pins.update({str(f): digest(f) for f in root.rglob("*.py")})
+    check_pins(pins)
+    a.output.mkdir()
+    write_once(
+        a.output / "declaration.json",
+        dict(
+            source_head=a.expected_head,
+            input_file_hashes=pins,
+            source_split="TRAIN evaluation only, DEV untouched",
+            worlds=64,
+            checkpoint_selection="fixed final20 vs immutable parent baseline",
+            arms=["initial", "final"],
+            full_independent_repeated_worlds=list(range(8)),
+            maximum_controls=300,
+            maximum_live_native_steps=432000,
+            maximum_replay_native_steps=432000,
+            maximum_policy_rows=43200,
+            optimizer_updates=0,
+            start="original frame zero, NOT precontact snapshots",
+            no_state_overwrites=True,
+            body_ball_motor_colliders_and_original_goal_initial_states_unchanged=True,
+            baseline_must_reproduce_all_old_native_fields_bitexact=True,
+            strict_physical_replay="all substep canonical q/v/feet/nonfoot bitexact",
+            correct_foot_threshold_n=10.0,
+            forbidden_contact_threshold_n=1.0,
+            stable_thresholds=dict(pelvis_height_m=0.65, upright=0.9),
+            not_independent_holdout_or_goalkeeper_team_evidence=True,
+            promotion_authorized=False,
+            hardware_authorized=False,
+        ),
+    )
+    live_steps = replay_steps = nn_rows = 0
+    raw_rows = []
+    current_world = current_arm = None
+    results = []
+    try:
+        import mujoco
+        import numpy as np
+        import torch
+
+        from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
+        from rosclaw_soccer.rsi.native_contact_checkpoint import NativeContactSession
+        from rosclaw_soccer.rsi.native_contact_window import native_contact_window
+        from rosclaw_soccer.rsi.native_reference_observation import native_reference_observation177
+        from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+
+        torch.set_num_threads(1)
+
+        def pinned(suffix):
+            matches = [Path(k) for k in pins if k.endswith(suffix)]
+            if len(matches) != 1:
+                raise ValueError("one exact pinned input required: " + suffix)
+            return matches[0]
+
+        mp = pinned("/rsi-body-bound-foot-only-qualification-20261021/compiled_model.mjb")
+        parent = pinned("/ball-aware-update200.pt")
+        cfg = pinned("/policy/velocity/v0/params/deploy.yaml")
+        onnx = pinned("/policy/velocity/v0/exported/policy.onnx")
+        model = mujoco.MjModel.from_binary_path(str(mp))
+        layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
+        feet = [model.body("robot/" + s + "_ankle_roll_link").id for s in ("left", "right")]
+        torso = model.body("robot/torso_link").id
+        with np.load(initial_path, allow_pickle=False) as z:
+            initial = {k: z[k].copy() for k in z.files}
+        if not np.array_equal(initial["motion_id"], np.arange(64) % 8):
+            raise ValueError("unchanged balanced TRAIN64 source identities required")
+        plans = []
+        for name in TRAIN_MOTION_NAMES:
+            with np.load(
+                a.starts_root / (name.removesuffix(".npz") + "-plan.npz"), allow_pickle=False
+            ) as z:
+                plans.append({k: z[k].copy() for k in z.files})
+
+        def force(data):
+            ff, nonfoot = np.zeros(2), 0.0
+            for ci in range(data.ncon):
+                c = data.contact[ci]
+                x, y = (int(model.geom_bodyid[g]) for g in c.geom)
+                other = y if x == layout.ball else x if y == layout.ball else -1
+                if other >= 0 and (model.body(other).name or "").startswith("robot/"):
+                    wrench = np.zeros(6)
+                    mujoco.mj_contactForce(model, data, ci, wrench)
+                    mag = float(np.linalg.norm(wrench[:3]))
+                    if other in feet:
+                        ff[feet.index(other)] = max(ff[feet.index(other)], mag)
+                    else:
+                        nonfoot = max(nonfoot, mag)
+            return ff, nonfoot
+
+        for world in range(64):
+            current_world = world
+            sid = int(initial["motion_id"][world])
+            plan, origin, goal = plans[sid], initial["origins"][world], initial["goal_world"][world]
+            horizon = len(plan["joint"])
+            for arm in ("initial", "final"):
+                current_arm = arm
+                first = None
+                for repeat in range(2 if world < 8 else 1):
+                    session = NativeContactSession(
+                        onnx,
+                        cfg,
+                        expected_model_hash=pins[str(onnx)],
+                        expected_config_hash=pins[str(cfg)],
+                        checkpoint=cp,
+                        expected_checkpoint_hash=checkpoint["hash"],
+                        parent_checkpoint=parent,
+                        expected_parent_hash=pins[str(parent)],
+                        expected_native_model_hash=pins[str(mp)],
+                        arm=arm,
+                    )
+                    d = mujoco.MjData(model)
+                    d.qpos[:], d.qvel[:] = initial["qpos"][world], initial["qvel"][world]
+                    warnings = tuple(int(w.number) for w in d.warning)
+                    raw_rows = []
+                    for frame in range(horizon):
+                        mujoco.mj_forward(model, d)
+                        obs, phase_after = native_reference_observation177(
+                            data=d,
+                            layout=layout,
+                            params=session.params,
+                            plan=plan,
+                            frame=frame,
+                            origin=origin,
+                            goal=goal,
+                            last_action=session.last_action,
+                            phase=session.phase,
+                            torso=torso,
+                        )
+                        row = dict(
+                            native_qpos_before=d.qpos.copy(),
+                            native_qvel_before=d.qvel.copy(),
+                            qacc_warmstart_before=d.qacc_warmstart.copy(),
+                            previous_action=session.last_action.copy(),
+                            phase_before=float(session.phase),
+                            ball_to_feet=d.xpos[layout.ball] - d.xpos[feet],
+                        )
+                        q, v = layout.canonical(d)
+                        target = session.propose_ball_aware(
+                            q,
+                            v,
+                            layout.angular_velocity_body(d),
+                            obs[6:9].copy(),
+                            obs[98:168].copy(),
+                            obs[168:177].copy(),
+                            frame=frame,
+                        )
+                        nn_rows += 1
+                        actual_obs = np.r_[session.last_observation, session.last_reference]
+                        if not np.array_equal(obs, actual_obs) or session.phase != phase_after:
+                            raise ValueError(
+                                "new checkpoint input/history differs from actual inference"
+                            )
+                        row.update(
+                            observation=actual_obs,
+                            action=session.last_action.copy(),
+                            target_rad=target,
+                        )
+                        d.ctrl[layout.ai] = target
+                        qs, vs, fs, ns = [], [], [], []
+                        for _ in range(10):
+                            mujoco.mj_step(model, d)
+                            live_steps += 1
+                            if tuple(int(w.number) for w in d.warning) != warnings:
+                                raise ValueError("native warning in full source exam")
+                            ai = layout.ai
+                            expected = np.clip(
+                                model.actuator_gainprm[ai, 0] * target
+                                + model.actuator_biasprm[ai, 0]
+                                + model.actuator_biasprm[ai, 1] * d.actuator_length[ai]
+                                + model.actuator_biasprm[ai, 2] * d.actuator_velocity[ai],
+                                model.actuator_forcerange[ai, 0],
+                                model.actuator_forcerange[ai, 1],
+                            )
+                            if not np.allclose(d.actuator_force[ai], expected, atol=1e-8, rtol=0):
+                                raise ValueError("original native PD differs during exam")
+                            q, v = layout.canonical(d)
+                            ff, nf = force(d)
+                            qs.append(q)
+                            vs.append(v)
+                            fs.append(ff)
+                            ns.append(nf)
+                        row.update(
+                            canonical_qpos_after=np.array(qs),
+                            canonical_qvel_after=np.array(vs),
+                            foot_force=np.array(fs),
+                            nonfoot_force=np.array(ns),
+                        )
+                        raw_rows.append(row)
+                    raw = {k: np.array([r[k] for r in raw_rows]) for k in raw_rows[0]}
+                    folder = a.output / f"world{world}-{arm}-repeat{repeat}"
+                    folder.mkdir()
+                    path = folder / "native.npz"
+                    np.savez_compressed(path, **raw)
+                    if repeat and any(not np.array_equal(raw[k], first[k]) for k in raw):
+                        raise ValueError(
+                            "complete independent NN/physics representative repeat differs"
+                        )
+                    first = raw
+                    if arm == "initial":
+                        with np.load(
+                            a.baseline_episodes_root / f"world{world}-repeat0.npz",
+                            allow_pickle=False,
+                        ) as z:
+                            if set(z.files) != set(raw) or any(
+                                not np.array_equal(z[k], raw[k]) for k in z.files
+                            ):
+                                raise ValueError(
+                                    "new parser initial arm did not reproduce complete baseline"
+                                )
+                    rd = mujoco.MjData(model)
+                    rd.qpos[:], rd.qvel[:] = initial["qpos"][world], initial["qvel"][world]
+                    for frame in range(horizon):
+                        mujoco.mj_forward(model, rd)
+                        if not np.array_equal(
+                            rd.qpos, raw["native_qpos_before"][frame]
+                        ) or not np.array_equal(rd.qvel, raw["native_qvel_before"][frame]):
+                            raise ValueError("strict physical replay entry differs")
+                        rd.ctrl[layout.ai] = raw["target_rad"][frame]
+                        for sub in range(10):
+                            mujoco.mj_step(model, rd)
+                            replay_steps += 1
+                            rq, rv = layout.canonical(rd)
+                            ff, nf = force(rd)
+                            if (
+                                not np.array_equal(rq, raw["canonical_qpos_after"][frame, sub])
+                                or not np.array_equal(rv, raw["canonical_qvel_after"][frame, sub])
+                                or not np.array_equal(ff, raw["foot_force"][frame, sub])
+                                or nf != raw["nonfoot_force"][frame, sub]
+                            ):
+                                raise ValueError("strict physical replay state or force differs")
+                    cq = raw["canonical_qpos_after"].reshape(-1, 43)
+                    cv = raw["canonical_qvel_after"].reshape(-1, 41)
+                    post = native_contact_window(
+                        force=raw["foot_force"].reshape(-1, 2),
+                        canonical_qpos=cq,
+                        canonical_qvel=cv,
+                        goal=goal,
+                        intended_foot=int(initial["expected_foot"][world]),
+                    )
+                    forbidden = bool((raw["nonfoot_force"] > 1).any())
+                    stable = bool(
+                        cq[:, 2].min() >= 0.65
+                        and (1 - 2 * (cq[:, 4] ** 2 + cq[:, 5] ** 2)).min() >= 0.9
+                    )
+                    result = dict(
+                        world=world,
+                        source=TRAIN_MOTION_NAMES[sid],
+                        arm=arm,
+                        repeat=repeat,
+                        raw_hash=digest(path),
+                        controls=horizon,
+                        correct_foot_first=post["correct_foot_first"],
+                        forbidden=forbidden,
+                        clean=bool(post["correct_foot_first"] and not forbidden),
+                        stable=stable,
+                        postcontact=post,
+                        strict_recorded_control_replay_exact=True,
+                    )
+                    write_once(folder / "result.json", result)
+                    results.append(result)
+                    print(
+                        json.dumps(
+                            dict(
+                                world=world,
+                                arm=arm,
+                                repeat=repeat,
+                                clean=result["clean"],
+                                stable=stable,
+                                forbidden=forbidden,
+                                native_steps=live_steps,
+                                replay_steps=replay_steps,
+                                policy_rows=nn_rows,
+                            )
+                        ),
+                        flush=True,
+                    )
+        summary = {}
+        for arm in ("initial", "final"):
+            selected = [r for r in results if r["arm"] == arm and r["repeat"] == 0]
+            summary[arm] = {
+                k: sum(bool(r[k]) for r in selected)
+                for k in ("clean", "correct_foot_first", "forbidden", "stable")
+            }
+        improved = (
+            summary["final"]["clean"] > summary["initial"]["clean"]
+            and summary["final"]["stable"] >= summary["initial"]["stable"]
+            and summary["final"]["forbidden"] <= summary["initial"]["forbidden"]
+        )
+        check_pins(pins)
+        write_once(
+            a.output / "complete.json",
+            dict(
+                status="NATIVE_CONTACT24_TRAIN64_GAIN_REQUIRES_UNTOUCHED_DEV"
+                if improved
+                else "NATIVE_CONTACT24_TRAIN64_CANDIDATE_REJECTED",
+                input_file_hashes=pins,
+                results=results,
+                summary=summary,
+                live_native_steps=live_steps,
+                replay_native_steps=replay_steps,
+                policy_rows=nn_rows,
+                optimizer_updates=0,
+                all_old_baseline_fields_bitexact=True,
+                all_strict_replays_exact=True,
+                all_representative_repeats_exact=True,
+                not_independent_holdout=True,
+                goal_complete=False,
+                promotion_authorized=False,
+                hardware_authorized=False,
+            ),
+        )
+    except Exception as exc:
+        failure = dict(
+            error=repr(exc),
+            world=current_world,
+            arm=current_arm,
+            live_native_steps=live_steps,
+            replay_native_steps=replay_steps,
+            policy_rows=nn_rows,
+            hardware_authorized=False,
+        )
+        print(json.dumps(failure), flush=True)
+        write_once(a.output / "failed.json", failure)
+        if raw_rows:
+            np.savez_compressed(
+                a.output / "failed-partial.npz",
+                **{k: np.array([r[k] for r in raw_rows]) for k in raw_rows[0]},
+            )
+        raise
+
+
+if __name__ == "__main__":
+    main()
