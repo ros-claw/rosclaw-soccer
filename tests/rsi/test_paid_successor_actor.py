@@ -2,10 +2,9 @@ import copy
 
 import pytest
 import torch
+from test_paid_live_distilled_actor import evidence
 
 from rosclaw_soccer.rsi.paid_successor_actor import sequence_config, validate_successor_state
-
-from test_paid_live_distilled_actor import evidence
 
 
 def sequence_evidence(variant=0):
