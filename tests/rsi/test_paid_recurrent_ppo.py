@@ -21,6 +21,21 @@ def test_true_finite_option_terminal_and_real_tail_discount():
         finite_option_gae(v, 1, 61)
 
 
+def test_monte_carlo_preserves_real_reward_delay_without_lambda_suppression():
+    value = np.linspace(-1, 2, 289, dtype=np.float32)
+    adv, returns = finite_option_gae(value, 10, 60, credit_mode="monte-carlo")
+    assert returns[104] == pytest.approx(10 * GAMMA ** (288 - 104 + 60))
+    assert returns[-1] == pytest.approx(10 * GAMMA**60)
+    np.testing.assert_array_equal(adv, returns - value)
+    other, other_returns = finite_option_gae(
+        np.zeros_like(value), 10, 60, credit_mode="monte-carlo"
+    )
+    np.testing.assert_array_equal(returns, other_returns)
+    np.testing.assert_array_equal(other, returns)
+    with pytest.raises(ValueError, match="credit rule"):
+        finite_option_gae(value, 10, 0, credit_mode="hindsight-shifted-reward")
+
+
 def test_recurrent_loss_recomputes_prefix_and_backpropagates_to_rnn():
     import copy
 

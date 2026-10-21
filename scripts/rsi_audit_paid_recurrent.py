@@ -335,16 +335,30 @@ def main():
                 ):
                     raise ValueError("raw physical reward/outcome differs")
                 value = z["NN_value"].astype(np.float32)
-                reward_t = np.zeros(n, np.float32)
-                reward_t[-1] = reward * 0.995 ** (controls - n)
-                advantage = np.zeros(n, np.float32)
-                carry = nv = 0.0
-                for t in range(n - 1, -1, -1):
-                    carry = float(reward_t[t]) + 0.995 * nv - float(value[t]) + 0.995 * 0.95 * carry
-                    advantage[t] = carry
-                    nv = float(value[t])
+                credit_mode = r["config"].get("credit_mode", "gae")
+                if credit_mode == "monte-carlo":
+                    if r["config"]["gae_lambda"] != 1.0:
+                        raise ValueError("exact declared full-return credit rule required")
+                    returns = np.array(
+                        [reward * 0.995 ** (controls - 1 - t) for t in range(n)], dtype=np.float32
+                    )
+                    advantage = (returns - value).astype(np.float32)
+                elif credit_mode == "gae" and r["config"]["gae_lambda"] == 0.95:
+                    reward_t = np.zeros(n, np.float32)
+                    reward_t[-1] = reward * 0.995 ** (controls - n)
+                    advantage = np.zeros(n, np.float32)
+                    carry = nv = 0.0
+                    for t in range(n - 1, -1, -1):
+                        carry = (
+                            float(reward_t[t]) + 0.995 * nv - float(value[t]) + 0.995 * 0.95 * carry
+                        )
+                        advantage[t] = carry
+                        nv = float(value[t])
+                    returns = (advantage + value).astype(np.float32)
+                else:
+                    raise ValueError("unknown finite-option credit rule")
                 if not np.array_equal(advantage, z["NN_advantage"]) or not np.array_equal(
-                    (advantage + value).astype(np.float32), z["NN_returns"]
+                    returns, z["NN_returns"]
                 ):
                     raise ValueError("independent finite-option GAE/returns differ")
                 results.append(

@@ -24,6 +24,7 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--iterations", type=int, choices=(4, 8, 16), required=True)
     p.add_argument("--post-update-trust", action="store_true")
+    p.add_argument("--credit-mode", choices=("gae", "monte-carlo"), default="gae")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     if (
@@ -97,7 +98,8 @@ def main():
         episode_minibatch_size=4,
         lr=0.00001,
         gamma=0.995,
-        gae_lambda=0.95,
+        gae_lambda=1.0 if a.credit_mode == "monte-carlo" else 0.95,
+        credit_mode=a.credit_mode,
         initial_std=0.02,
         maximum_kl=0.015,
         clip_ratio=0.1,
@@ -372,7 +374,10 @@ def main():
                     - 0.5 * post["maximum_pelvis_retreat_after_contact_m"]
                 )
             adv, returns = finite_option_gae(
-                raw["NN_value"].astype(np.float32), reward, len(controls) - len(neural)
+                raw["NN_value"].astype(np.float32),
+                reward,
+                len(controls) - len(neural),
+                credit_mode=a.credit_mode,
             )
             raw["NN_advantage"], raw["NN_returns"] = adv, returns
             file = folder.with_suffix(".npz")

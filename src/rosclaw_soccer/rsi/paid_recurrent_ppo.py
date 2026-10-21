@@ -75,7 +75,11 @@ def backtracked_adam_update(
 
 
 def finite_option_gae(
-    value: np.ndarray, terminal_reward: float, tail_controls: int
+    value: np.ndarray,
+    terminal_reward: float,
+    tail_controls: int,
+    *,
+    credit_mode: str = "gae",
 ) -> tuple[np.ndarray, np.ndarray]:
     if (
         value.ndim != 1
@@ -86,6 +90,14 @@ def finite_option_gae(
         or not 0 <= tail_controls <= 60
     ):
         raise ValueError("finite source episode with bounded actual held tail required")
+    if credit_mode not in ("gae", "monte-carlo"):
+        raise ValueError("explicit predeclared finite-option credit rule required")
+    if credit_mode == "monte-carlo":
+        # The objective/time of the reward is unchanged. Lambda=1 removes
+        # extra estimator decay; the real held-tail delay remains discounted.
+        exponent = np.arange(len(value) - 1, -1, -1) + tail_controls
+        returns = (terminal_reward * GAMMA**exponent).astype(np.float32)
+        return (returns - value).astype(np.float32), returns
     reward = np.zeros_like(value)
     reward[-1] = terminal_reward * GAMMA**tail_controls
     advantage = np.zeros_like(value)
