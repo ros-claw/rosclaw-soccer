@@ -10,9 +10,10 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 
-def contact_rank(rows):
+def contact_rank(rows: list[dict[str, Any]]) -> tuple[int, int, int, float]:
     if len(rows) != 2:
         raise ValueError("two complete declared TRAIN conditions required")
     feasible = all(
