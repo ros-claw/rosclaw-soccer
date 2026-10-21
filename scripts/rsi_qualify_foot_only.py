@@ -9,6 +9,11 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--ball-placement",
+        choices=("legacy-subset-full-v0", "body-bound-v1"),
+        default="legacy-subset-full-v0",
+    )
     for name in ("learner-root", "export-root", "reference-root", "output"):
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("learner-hash", "export-hash", "expected-head"):
@@ -66,6 +71,7 @@ def main():
             maximum_nn_rows=8,
             optimizer_updates=0,
             force_decoder="addressed",
+            ball_placement_protocol=a.ball_placement,
             hardware_authorized=False,
             promotion_authorized=False,
         ),
@@ -112,11 +118,19 @@ def main():
             num_envs=8,
             seed=1601,
             balanced_initial_sources=True,
+            ball_placement_protocol=a.ball_placement,
         )
         cfg.commands["motion"].sampling_mode = "uniform"
         cfg.sim.nan_guard.enabled = True
         env = FootOnlyMotionEnv(cfg=cfg, device="cuda:0", render_mode=None)
         obs, _ = env.reset(seed=1601)
+        expected_motion = (
+            "BodyBoundBalancedMotionCommand"
+            if a.ball_placement == "body-bound-v1"
+            else "BalancedInitialMotionCommand"
+        )
+        if type(env.command_manager.get_term("motion")).__name__ != expected_motion:
+            raise ValueError("actual compiled environment uses a different placement command")
         if obs["actor"].shape != (8, 177) or obs["critic"].shape != (8, 304):
             raise ValueError("actor/critic ABI changed")
         model = env.sim.mj_model
@@ -188,6 +202,8 @@ def main():
             a.output / "complete.json",
             dict(
                 status="FOOT_ONLY_SENSOR_REWARD_QUALIFIED_NOT_SKILL",
+                ball_placement_protocol=a.ball_placement,
+                motion_command_type=expected_motion,
                 input_file_hashes=pins,
                 results=results,
                 bindings=bindings,

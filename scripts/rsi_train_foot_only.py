@@ -40,6 +40,8 @@ def main():
         pins[str(path)] = expected
         receipts.append(d)
     qual, learner = receipts
+    if qual.get("ball_placement_protocol", "legacy-subset-full-v0") != "legacy-subset-full-v0":
+        raise ValueError("legacy pilot cannot consume a body-bound placement qualification")
     if (
         qual.get("status") != "FOOT_ONLY_SENSOR_REWARD_QUALIFIED_NOT_SKILL"
         or qual.get("probe_passed") is not True
