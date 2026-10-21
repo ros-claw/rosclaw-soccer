@@ -12,6 +12,27 @@ import subprocess
 from pathlib import Path
 
 
+def legacy_session_options(learner, *, option, continued, approach):
+    """Old recovery identity is not a field of the new approach40 receipt."""
+    if approach:
+        return {}
+    result = (
+        dict(
+            expected_recovery_proof_hash=learner["recovery_proof_hash"],
+            expected_recovery_fault_hash=learner["recovery_fault_hash"],
+        )
+        if option
+        else {}
+    )
+    if continued:
+        result.update(
+            expected_resume_checkpoint_hash=learner["resume_checkpoint_hash"],
+            expected_resume_source_hash=learner["resume_source_hash"],
+            expected_resume_proof_hash=learner["resume_proof_hash"],
+        )
+    return result
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for k in ("learner-root", "starts-root", "output"):
@@ -353,20 +374,9 @@ def main():
             if residual
             else NativeContactSession
         )
-        session_options = (
-            dict(
-                expected_recovery_proof_hash=learner["recovery_proof_hash"],
-                expected_recovery_fault_hash=learner["recovery_fault_hash"],
-            )
-            if option
-            else {}
+        session_options = legacy_session_options(
+            learner, option=option, continued=continued, approach=approach
         )
-        if continued:
-            session_options.update(
-                expected_resume_checkpoint_hash=learner["resume_checkpoint_hash"],
-                expected_resume_source_hash=learner["resume_source_hash"],
-                expected_resume_proof_hash=learner["resume_proof_hash"],
-            )
 
         def pinned(suffix):
             matches = [Path(k) for k in pins if k.endswith(suffix)]

@@ -68,6 +68,24 @@ def test_admits_new40_parent132_baseline_not_legacy_zero_adapter_baseline():
     validate_approach40_state(state, identities=ids, parent_actor=parent)
 
 
+def test_new_exam_does_not_read_missing_legacy_receipt_fields():
+    from scripts.rsi_exam_native_contact_policy import legacy_session_options
+
+    assert legacy_session_options({}, option=True, continued=False, approach=True) == {}
+    source = {
+        k: k
+        for k in (
+            "recovery_proof_hash",
+            "recovery_fault_hash",
+            "resume_checkpoint_hash",
+            "resume_source_hash",
+            "resume_proof_hash",
+        )
+    }
+    result = legacy_session_options(source, option=True, continued=True, approach=False)
+    assert result == {"expected_" + k: v for k, v in source.items()}
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
