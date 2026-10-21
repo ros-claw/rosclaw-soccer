@@ -6,11 +6,12 @@ import numpy as np
 import torch
 
 from rosclaw_soccer.rsi.paid_contact_residual import ContactResidual, DecoupledContactResidual
+from rosclaw_soccer.rsi.paid_progressive_contact import ProgressiveContactResidual
 
 
 def progressive_features(
     base: Any,
-    parent: ContactResidual,
+    parent: ContactResidual | ProgressiveContactResidual,
     raw: dict[str, np.ndarray],
     scale: torch.Tensor,
     *,
@@ -28,7 +29,8 @@ def progressive_features(
     if (
         recorded_policy not in ("base", "parent")
         or type(protect) is not bool
-        or type(parent) not in (ContactResidual, DecoupledContactResidual)
+        or type(parent)
+        not in (ContactResidual, DecoupledContactResidual, ProgressiveContactResidual)
         or parent.training
         or any(p.requires_grad or p.device.type != "cpu" for p in parent.parameters())
         or scale.shape != (29,)

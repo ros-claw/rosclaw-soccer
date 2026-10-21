@@ -4,6 +4,7 @@ import torch
 from test_paid_successor_features import fixture
 
 from rosclaw_soccer.rsi.paid_contact_residual import DecoupledContactResidual
+from rosclaw_soccer.rsi.paid_progressive_contact import ProgressiveContactResidual
 from rosclaw_soccer.rsi.paid_progressive_features import progressive_features
 
 
@@ -83,3 +84,14 @@ def test_r2_success_cannot_be_relabelled_as_parent_success_if_parent_would_chang
         progressive_features(
             base, parent, raw, torch.ones(29), recorded_policy="base", protect=True
         )
+
+
+def test_own_causal_features_support_current_frozen_compound_parent():
+    base, parent, raw = data()
+    compound = (
+        ProgressiveContactResidual(parent, DecoupledContactResidual()).eval().requires_grad_(False)
+    )
+    _, target, prior = progressive_features(
+        base, compound, raw, torch.ones(29), recorded_policy="parent", protect=True
+    )
+    assert not target.any() and np.array_equal(prior, raw["NN_action"])
