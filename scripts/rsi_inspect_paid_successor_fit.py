@@ -58,6 +58,13 @@ def main():
     with torch.no_grad():
         predicted = actor.residual(x)
         logits = actor.residual.gate(x)[:, 0]
+        capacity = (
+            0.2 * torch.sigmoid(logits)
+            if r["config"].get("gate_scales_amplitude", True)
+            else torch.full_like(logits, 0.2)
+        )
+        capacity = torch.where(logits >= 0, capacity, torch.zeros_like(capacity))
+        unavoidable = torch.relu(y.abs() - capacity[:, None]).square()
         rows = []
         for row in data["trajectories"]:
             start, stop = row["start"], row["stop"]
@@ -79,6 +86,16 @@ def main():
                     )
                     if mask.any()
                     else None,
+                    amplitude_MSE_lower_bound=float(unavoidable[start:stop][mask].mean())
+                    if mask.any()
+                    else None,
+                    amplitude_limited_active_rows=int(
+                        (
+                            y[start:stop][mask].abs().max(dim=1).values > capacity[start:stop][mask]
+                        ).sum()
+                    )
+                    if mask.any()
+                    else 0,
                 )
             )
     check_pins(pins)
