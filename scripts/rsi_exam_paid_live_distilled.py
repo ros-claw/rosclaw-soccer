@@ -57,6 +57,7 @@ def main():
     p.add_argument("--candidate-index", type=int, choices=range(4))
     p.add_argument("--sequence-bank-root", type=Path)
     p.add_argument("--sequence-bank-hash")
+    p.add_argument("--successor-specialist", action="store_true")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -78,10 +79,15 @@ def main():
     prior, teacher, base = [json.loads(f.read_text()) for f in (xp, tp, bp)]
     declaration = json.loads((a.prior_exam_root / "declaration.json").read_text())
     sequences = a.sequence_bank_root is not None
-    if sequences != (a.sequence_bank_hash is not None) or (
-        sequences and a.entry_controller != "candidate"
+    if (
+        sequences != (a.sequence_bank_hash is not None)
+        or (a.successor_specialist and not sequences)
+        or (
+            sequences
+            and a.entry_controller != ("qualified-prior" if a.successor_specialist else "candidate")
+        )
     ):
-        raise ValueError("paired sequence bank identity and one actor for both skills required")
+        raise ValueError("exact sequence identity and explicitly trained motor context required")
     prior_results = (
         prior["candidates"][0]["isolated"] if sequences else prior["candidates"][0]["results"]
     )
@@ -130,8 +136,17 @@ def main():
         stem = "successor" if sequences else "live-distilled"
         pins[str(root / f"{stem}-epoch256.pt")] = r["final_checkpoint_hash"]
         pins[str(root / f"{stem}-epoch0.pt")] = r["initial_checkpoint_hash"]
-        if sequences and r["config"]["memory_handoff"] != ("carry" if index < 3 else "reset"):
-            raise ValueError("exact trained memory protocol required for each candidate")
+        if sequences and (
+            r["config"]["memory_handoff"]
+            != ("carry" if index < 3 and not a.successor_specialist else "reset")
+            or r["config"]["protocol"]
+            != (
+                "protected-successor-specialist-v1"
+                if a.successor_specialist
+                else "complete-successor-sequences-v1"
+            )
+        ):
+            raise ValueError("exact trained memory and motor-context protocol required")
         candidates.append((root, h, r))
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
@@ -145,6 +160,7 @@ def main():
             old_cases=declaration["old_cases"],
             DEV_cases=declaration["DEV_cases" if sequences else "dev_cases"],
             sequence_protocol=sequences,
+            successor_specialist=a.successor_specialist,
             candidate_memory_handoff=[
                 x[2]["config"]["memory_handoff"] if sequences else "reset" for x in candidates
             ],
@@ -164,7 +180,7 @@ def main():
                 else "frozen initial skill; learned live successor; no case-ID routing"
             ),
             robot_resets_per_world=1,
-            reference_and_h_c_reset_explicit=not sequences,
+            reference_and_h_c_reset_explicit=not sequences or a.successor_specialist,
             reference_clock_reset=True,
             memory_constant_during_hold_and_drop=True,
             previous_executed_action_always_carried=True,
@@ -493,6 +509,7 @@ def main():
             output = dict(
                 candidate=index,
                 memory_handoff=memory_handoff,
+                successor_specialist=a.successor_specialist,
                 entry_controller=a.entry_controller,
                 isolated_controller=a.entry_controller,
                 live_successor_controller="candidate",
@@ -550,6 +567,7 @@ def main():
             dict(
                 status="PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED",
                 sequence_protocol=sequences,
+                successor_specialist=a.successor_specialist,
                 input_file_hashes=pins,
                 baseline_isolated=old_baselines,
                 baseline_continuous=continuous_baseline,

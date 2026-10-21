@@ -32,6 +32,7 @@ def main():
     r, d = json.loads(rp.read_text()), json.loads(dp.read_text())
     indices = d.get("exam_candidate_indices", list(range(4)))
     sequences = d.get("sequence_protocol", False)
+    specialist = d.get("successor_specialist", False)
     if (
         r["status"] != "PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED"
         or [x["candidate"] for x in r["candidates"]] != indices
@@ -39,7 +40,12 @@ def main():
         or len(set(indices)) != len(indices)
         or any(i not in range(4) for i in indices)
         or r.get("sequence_protocol", False) != sequences
-        or (sequences and d.get("entry_controller") != "candidate")
+        or (specialist and not sequences)
+        or r.get("successor_specialist", False) != specialist
+        or (
+            sequences
+            and d.get("entry_controller") != ("qualified-prior" if specialist else "candidate")
+        )
     ):
         raise ValueError("complete declared CPU candidate set required")
     pins = {**r["input_file_hashes"], str(rp): a.hash, str(dp): digest(dp)}
@@ -364,7 +370,7 @@ def main():
             memory_handoff = "reset"
             if sequences:
                 memory_handoff = d["candidate_memory_handoff"][candidate["candidate"]]
-                expected = "carry" if candidate["candidate"] < 3 else "reset"
+                expected = "carry" if candidate["candidate"] < 3 and not specialist else "reset"
                 if candidate.get("memory_handoff") != memory_handoff or memory_handoff != expected:
                     raise ValueError(
                         "exact predeclared sequence seed/ablation memory mode required"
@@ -375,6 +381,12 @@ def main():
                     or digest(training) != candidate["training_receipt_hash"]
                     or json.loads(training.read_text())["config"]["memory_handoff"]
                     != memory_handoff
+                    or json.loads(training.read_text())["config"]["protocol"]
+                    != (
+                        "protected-successor-specialist-v1"
+                        if specialist
+                        else "complete-successor-sequences-v1"
+                    )
                 ):
                     raise ValueError("memory handoff must bind actual completed training")
             contextual = d.get("entry_controller", "candidate") == "qualified-prior"
