@@ -7,8 +7,9 @@ from scripts import rsi_review_paid_full_entry as review
 
 
 @pytest.mark.parametrize("runner", [analysis, review])
+@pytest.mark.parametrize("compact", [False, True])
 def test_dirty_diagnostic_source_never_reads_models_or_allocates_physics(
-    tmp_path, monkeypatch, runner
+    tmp_path, monkeypatch, runner, compact
 ):
     args = ["run", "--expected-head", "frozen", "--output", str(tmp_path / "out")]
     if runner is analysis:
@@ -30,6 +31,8 @@ def test_dirty_diagnostic_source_never_reads_models_or_allocates_physics(
             "--producer-head",
             "producer",
         ]
+        if compact:
+            args += ["--compact-support"]
     monkeypatch.setattr(sys, "argv", args)
     monkeypatch.setattr(runner.subprocess, "check_output", lambda *a, **k: b"dirty")
     with pytest.raises(ValueError, match="clean|frozen"):

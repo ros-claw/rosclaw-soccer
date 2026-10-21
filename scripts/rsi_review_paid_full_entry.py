@@ -18,6 +18,7 @@ def main():
     for n in ("family-prefix", "stamp", "reference-hash", "producer-head", "expected-head"):
         p.add_argument("--" + n, required=True)
     p.add_argument("--wait-for-completion", action="store_true")
+    p.add_argument("--compact-support", action="store_true")
     a = p.parse_args()
     if (
         re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", a.family_prefix) is None
@@ -38,7 +39,8 @@ def main():
         raise ValueError("unused final review output required")
     paths = {}
     for i in range(3):
-        paths[i] = {"trained": a.family_root / f"{a.family_prefix}-s{i}-trained-{a.stamp}"}
+        stage = "verified" if a.compact_support else "trained"
+        paths[i] = {"trained": a.family_root / f"{a.family_prefix}-s{i}-{stage}-{a.stamp}"}
         for bank in ("train20", "train16", "dev16"):
             for mode in ("exam", "audit"):
                 paths[i][bank + "-" + mode] = (
@@ -57,6 +59,7 @@ def main():
             first_enabled_required=True,
             novel_first_cases_required=[4, 5],
             protect_best_existing_orchestration=True,
+            compact_support=a.compact_support,
             Fresh_rows_read=0,
             hardware_authorized=False,
             promotion_authorized=False,
@@ -115,13 +118,20 @@ def main():
     seeds = []
     for seed, values in paths.items():
         trained = read(
-            values["trained"], "PAID_FULL_ENTRY_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+            values["trained"],
+            "PAID_COMPACT_SUPPORT_BATCH1_AUDITED_NOT_PHYSICALLY_QUALIFIED"
+            if a.compact_support
+            else "PAID_FULL_ENTRY_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",
         )
         th = digest(values["trained"] / "complete.json")
         if (
             trained["config"]["seed_index"] != seed
             or trained["source_head"] != a.producer_head
-            or trained["config"].get("trajectory_support") is not True
+            or (
+                trained["config"].get("protocol") != "full-entry-contact.compact-support.v3"
+                if a.compact_support
+                else trained["config"].get("trajectory_support") is not True
+            )
         ):
             raise ValueError("fixed predeclared trajectory-support seed identity required")
         comparisons = {}
