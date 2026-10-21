@@ -7,6 +7,12 @@ import time
 from pathlib import Path
 
 
+def canonical_teacher_trajectories(data):
+    """Full-prefix reference only; intervention segments start at a nonzero frame."""
+    roles = {"novel_first_cartesian_teacher", "canonical_first_R2_teacher"}
+    return {t["case"]: t for t in data["trajectories"] if t["role"] in roles}
+
+
 def main():
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -17,6 +23,7 @@ def main():
     for k in ("data-hash", "producer-head", "expected-head"):
         p.add_argument("--" + k, required=True)
     p.add_argument("--wait-for-completion", action="store_true")
+    p.add_argument("--interventional", action="store_true")
     a = p.parse_args()
 
     def clean():
@@ -76,10 +83,15 @@ def main():
     if digest(sp) != d["student_hash"]:
         raise ValueError("same recorded student identity required")
     student = json.loads(sp.read_text())
-    if student["data_hash"] != a.data_hash or student["status"] not in (
-        "PAID_COMPACT_SUPPORT_BATCH1_AUDITED_NOT_PHYSICALLY_QUALIFIED",
-        "PAID_ACTIVE_COMPACT_SUPPORT_AUDITED_NOT_PHYSICALLY_QUALIFIED",
-    ):
+    statuses = (
+        ("PAID_INTERVENTIONAL_DAGGER_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",)
+        if a.interventional
+        else (
+            "PAID_COMPACT_SUPPORT_BATCH1_AUDITED_NOT_PHYSICALLY_QUALIFIED",
+            "PAID_ACTIVE_COMPACT_SUPPORT_AUDITED_NOT_PHYSICALLY_QUALIFIED",
+        )
+    )
+    if student["data_hash"] != a.data_hash or student["status"] not in statuses:
         raise ValueError("student and diagnostic TRAIN curriculum differ")
     pins = dict(ar["input_file_hashes"])
     for f in (rp, ap, dp, sp, data_path):
@@ -98,6 +110,7 @@ def main():
             audit_hash=digest(ap),
             data_hash=a.data_hash,
             student_hash=digest(sp),
+            interventional=a.interventional,
             cases=list(range(20)),
             selected_by_outcome=False,
             Fresh_rows_read=0,
@@ -135,7 +148,7 @@ def main():
         pins[str(f)] = data["feature_hash"]
         with np.load(f, allow_pickle=False) as archive:
             z = {k: archive[k].copy() for k in archive.files}
-        teachers = {t["case"]: t for t in data["trajectories"] if "teacher" in t["role"]}
+        teachers = canonical_teacher_trajectories(data)
         rows, cases = 0, []
         for world in r["worlds"]:
             link = next(v for v in world["artifacts"] if Path(v["raw_path"]).stem == "kick0")

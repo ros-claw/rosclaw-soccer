@@ -4,6 +4,14 @@ import pytest
 from rosclaw_soccer.rsi.paid_compact_diagnosis import summarize_compact_trace
 
 
+def test_intervention_segment_never_overwrites_frame_zero_teacher_reference():
+    from scripts.rsi_diagnose_paid_compact_policy import canonical_teacher_trajectories
+
+    original = dict(case=4, role="novel_first_cartesian_teacher", start=0, stop=289)
+    segment = dict(case=4, role="executed_teacher_on_student_states", start=21922, stop=22131)
+    assert canonical_teacher_trajectories(dict(trajectories=[original, segment])) == {4: original}
+
+
 def trace():
     return dict(
         features=np.zeros((4, 288), np.float32),
