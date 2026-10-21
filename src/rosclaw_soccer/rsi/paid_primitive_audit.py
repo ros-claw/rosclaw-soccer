@@ -95,6 +95,7 @@ class PaidPrimitiveAuditor:
         initial_memory: tuple[np.ndarray, np.ndarray] | None = None,
         intent: tuple[int, np.ndarray] | None = None,
         reference_prefix: bool = False,
+        handoff_control: int | None = None,
     ) -> dict[str, Any]:
         from rosclaw_soccer.rsi.paid_foot_taskspace import phase_intent
 
@@ -135,6 +136,14 @@ class PaidPrimitiveAuditor:
         ):
             raise ValueError("actual per-player neural memory/action history differs")
         nominal = z["NN_nominal_action"]
+        if handoff_control is not None and (
+            type(handoff_control) is not int
+            or not 0 <= handoff_control <= horizon
+            or intent is None
+            or row.get("explicit_own_causal_teacher_context") is not True
+            or row.get("composite_teacher") is not True
+        ):
+            raise ValueError("explicit causal composite-teacher boundary required")
         if intent is None:
             if any(k.startswith("PLAN_") for k in z) or not np.array_equal(nominal, z["NN_action"]):
                 raise ValueError("unassisted neural action differs")
@@ -147,8 +156,32 @@ class PaidPrimitiveAuditor:
                 or np.abs(delta).max() > 0.2 + 1e-12
             ):
                 raise ValueError("declared bounded Cartesian teacher differs")
-            action = nominal.copy()
+            baseline = nominal
+            if handoff_control is not None:
+                baseline = z["PLAN_R2_nominal_action"]
+                mask = np.arange(n) >= handoff_control
+                if (
+                    baseline.shape != (n, 29)
+                    or baseline.dtype != np.float32
+                    or z["PLAN_teacher_action"].shape != (n, 29)
+                    or z["PLAN_teacher_action"].dtype != np.float32
+                    or z["PLAN_teacher_applied"].shape != (n,)
+                    or z["PLAN_teacher_applied"].dtype != np.bool_
+                    or z["PLAN_context_frame"].dtype.kind not in "iu"
+                    or z["PLAN_switch_control"].dtype.kind not in "iu"
+                    or not np.array_equal(z["PLAN_context_frame"], np.arange(n))
+                    or not np.array_equal(z["PLAN_switch_control"], np.full(n, handoff_control))
+                    or not np.array_equal(z["PLAN_teacher_applied"], mask)
+                    or np.abs((nominal[:, self.order] - baseline[:, self.order]) * self.scale).max()
+                    > 0.20002
+                ):
+                    raise ValueError("bounded student prefix and actual teacher schedule differ")
+            action = baseline.copy()
             action[:, self.order] = (action[:, self.order] + delta / self.scale).astype(np.float32)
+            if handoff_control is not None:
+                if not np.array_equal(action, z["PLAN_teacher_action"]):
+                    raise ValueError("counterfactual IK teacher action differs")
+                action = np.where((np.arange(n) >= handoff_control)[:, None], action, nominal)
             if not np.array_equal(action, z["NN_action"]):
                 raise ValueError("teacher action not bound to neural proposal and actual IK delta")
         targets = self.offset + z["NN_action"][:, self.order] * self.scale

@@ -27,10 +27,13 @@ def audit_successor_contact(
     latent: np.ndarray,
     pure: bool,
     count_inference: Any,
+    handoff_control: int | None = None,
 ) -> dict[str, Any]:
     import mujoco
 
     row = record["kick"]
+    if handoff_control is not None and pure:
+        raise ValueError("causal handoff is always an explicit composite teacher")
     z = read(row)
     audit_kick_entry(z, entry)
     result = auditor.audit(
@@ -40,6 +43,7 @@ def audit_successor_contact(
         previous_action=previous,
         reference_prefix=True,
         intent=None if pure else (center, latent),
+        handoff_control=handoff_control,
     )
     state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
     model = auditor.layout.model
@@ -52,7 +56,17 @@ def audit_successor_contact(
         scale=auditor.scale,
         order=auditor.order,
         layout=auditor.layout,
+        clip=SimpleNamespace(length=len(motion["q"])),
     )
+    causal_teacher = None
+    if handoff_control is not None:
+        from rosclaw_soccer.rsi.paid_own_state_teacher import OwnStateTeacherHandoff
+
+        if intent is None:
+            raise ValueError("declared IK teacher required for causal handoff")
+        causal_teacher = OwnStateTeacherHandoff(
+            proxy, actor.base, intent=intent, switch_control=handoff_control
+        )
     goal = entry["mocap_pos"][auditor.goal_mocap_id]
     with torch.no_grad():
         for j in range(len(z["NN_action"])):
@@ -84,7 +98,21 @@ def audit_successor_contact(
                 kin.qvel[:] = z["native_qvel_before"][j]
                 mujoco.mj_forward(model, kin)
                 proxy.frame = j
-                action, plan = intent(proxy, nominal)
+                if causal_teacher is None:
+                    action, plan = intent(proxy, nominal)
+                else:
+                    from rosclaw_soccer.rsi.paid_causal_context import CausalMotorContext
+
+                    context = CausalMotorContext(
+                        id(proxy),
+                        j,
+                        obs,
+                        z["NN_h_before"][j],
+                        z["NN_c_before"][j],
+                        state[0].numpy(),
+                        state[1].numpy(),
+                    )
+                    action, plan = causal_teacher(proxy, nominal, context)
                 if any(
                     not np.array_equal(value, z["PLAN_" + key][j]) for key, value in plan.items()
                 ):
@@ -109,7 +137,7 @@ def audit_successor_contact(
         checked = audit_neural_stand(
             auditor,
             observer,
-            actor,
+            actor.base if causal_teacher is not None else actor,
             stand,
             sr,
             entry=end,
@@ -132,4 +160,14 @@ def audit_successor_contact(
         stand_stable=stable,
         quality=result["quality"],
         nonfoot_contacts=kick_replay["nonfoot_contacts"],
+        **(
+            dict(
+                own_R2_planner_head_rows=causal_teacher.r2_head_queries,
+                own_IK_queries=causal_teacher.ik_queries,
+                teacher_rows=causal_teacher.teacher_rows,
+                student_rows=causal_teacher.student_rows,
+            )
+            if causal_teacher is not None
+            else {}
+        ),
     )

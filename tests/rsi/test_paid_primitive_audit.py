@@ -72,6 +72,41 @@ def test_missing_contact_is_audited_as_failure_not_synthetic_success():
     assert result == dict(native_steps=610, neural_rows=1, quality=False, body_failed=False)
 
 
+@pytest.mark.parametrize("switch", [0, 1])
+def test_explicit_handoff_audits_both_executed_and_counterfactual_actions(switch):
+    a, z, row = synthetic_raw()
+    row.update(composite_teacher=True, explicit_own_causal_teacher_context=True)
+    z.update(
+        PLAN_pose_offset=np.zeros((1, 6)),
+        PLAN_joint_delta_HG=np.zeros((1, 29)),
+        PLAN_R2_nominal_action=np.zeros((1, 29), np.float32),
+        PLAN_teacher_action=np.zeros((1, 29), np.float32),
+        PLAN_context_frame=np.array([0]),
+        PLAN_switch_control=np.array([switch]),
+        PLAN_teacher_applied=np.array([switch == 0]),
+    )
+    kwargs = dict(
+        horizon=1,
+        previous_action=np.zeros(29, np.float32),
+        intent=(120, np.zeros((2, 6))),
+        handoff_control=switch,
+    )
+    assert not a.audit(z, row, **kwargs)["quality"]
+    z["PLAN_teacher_applied"][0] = not z["PLAN_teacher_applied"][0]
+    with pytest.raises(ValueError, match="schedule"):
+        a.audit(z, row, **kwargs)
+    z["PLAN_teacher_applied"][0] = switch == 0
+    z["PLAN_teacher_action"][0, 0] = 0.1
+    with pytest.raises(ValueError, match="counterfactual"):
+        a.audit(z, row, **kwargs)
+
+
+def test_causal_handoff_cannot_masquerade_as_pure_neural_evidence():
+    a, z, row = synthetic_raw()
+    with pytest.raises(ValueError, match="composite"):
+        a.audit(z, row, horizon=1, previous_action=np.zeros(29, np.float32), handoff_control=0)
+
+
 def test_new_reference_prefix_never_becomes_old_completed_exam():
     a, z, row = synthetic_raw()
     prefix = {

@@ -91,7 +91,12 @@ class PaidResearchBench:
         return ep
 
     def collect(
-        self, case: dict[str, Any], actor: Any, *, transform: Any = None
+        self,
+        case: dict[str, Any],
+        actor: Any,
+        *,
+        transform: Any = None,
+        causal_transform: Any = None,
     ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         """One deterministic actor/composite-teacher rollout from frame zero.
 
@@ -99,7 +104,9 @@ class PaidResearchBench:
         stochastic sample. No policy likelihood is fabricated for these data.
         """
         ep = self.make(case)
-        return self.collect_current(ep, actor, transform=transform)
+        return self.collect_current(
+            ep, actor, transform=transform, causal_transform=causal_transform
+        )
 
     def collect_current(
         self,
@@ -107,6 +114,7 @@ class PaidResearchBench:
         actor: Any,
         *,
         transform: Any = None,
+        causal_transform: Any = None,
         transition_controls: int = 0,
         initial_state: tuple[Any, Any] | None = None,
         stop_at_reference: bool = False,
@@ -126,8 +134,15 @@ class PaidResearchBench:
             or type(stop_at_reference) is not bool
         ):
             raise ValueError("fresh explicit skill boundary and declared transition required")
-        if transition_controls and transform is not None:
+        if (
+            transform is not None
+            and causal_transform is not None
+            or transition_controls
+            and (transform is not None or causal_transform is not None)
+        ):
             raise ValueError("transition and teacher transformations must be separate experiments")
+        if causal_transform is not None and not callable(causal_transform):
+            raise ValueError("explicit callable causal research transform required")
         previous = ep.last_action.copy()
         if initial_state is not None and (
             len(initial_state) != 2
@@ -164,6 +179,47 @@ class PaidResearchBench:
                     action = ((1 - weight) * previous + weight * nominal).astype(np.float32)
                 if transform is not None:
                     action, plan = transform(ep, nominal)
+                    plans.append(plan)
+                if causal_transform is not None:
+                    from rosclaw_soccer.rsi.paid_causal_context import CausalMotorContext
+
+                    context = CausalMotorContext(
+                        episode_key=id(ep),
+                        frame=ep.frame,
+                        observation=obs,
+                        h_before=before[0],
+                        c_before=before[1],
+                        h_after=state[0].numpy(),
+                        c_after=state[1].numpy(),
+                    )
+                    # A planner may propose an action but must not rewrite the
+                    # actual SIM state or the actor proposal being recorded.
+                    physical = {
+                        k: getattr(ep.env.data, k).copy()
+                        for k in (
+                            "qpos",
+                            "qvel",
+                            "act",
+                            "ctrl",
+                            "qacc_warmstart",
+                            "mocap_pos",
+                            "mocap_quat",
+                        )
+                    }
+                    clock = float(ep.env.data.time)
+                    action, plan = causal_transform(ep, nominal.copy(), context)
+                    context.assert_current(ep)
+                    if float(ep.env.data.time) != clock or any(
+                        not np.array_equal(getattr(ep.env.data, k), v) for k, v in physical.items()
+                    ):
+                        raise ValueError("causal teacher mutated native SIM state")
+                    if (
+                        not isinstance(action, np.ndarray)
+                        or action.shape != (29,)
+                        or action.dtype != np.float32
+                        or not np.isfinite(action).all()
+                    ):
+                        raise ValueError("finite float32 policy-order29 teacher proposal required")
                     plans.append(plan)
                 neural.append(
                     dict(
@@ -224,9 +280,13 @@ class PaidResearchBench:
             nonfoot_impulse_Ns=impulse,
             terminal_reward=reward,
             postcontact=post,
-            composite_teacher=transform is not None or transition_controls > 0,
+            composite_teacher=transform is not None
+            or causal_transform is not None
+            or transition_controls > 0,
             policy_likelihood_provided=False,
         )
+        if causal_transform is not None:
+            summary["explicit_own_causal_teacher_context"] = True
         if stop_at_reference:
             summary.update(
                 reference_prefix_only=True,
