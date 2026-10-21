@@ -38,6 +38,14 @@ def load_sources(a):
     td = roots["teacher"] / "declaration.json"
     ed = roots["student_exam"] / "declaration.json"
     teacher_decl, exam_decl = [json.loads(p.read_text()) for p in (td, ed)]
+    interventional = getattr(a, "interventional", False)
+    if type(interventional) is not bool:
+        raise ValueError("explicit typed student generation required")
+    student_status = (
+        "PAID_INTERVENTIONAL_DAGGER_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+        if interventional
+        else "PAID_ACTIVE_COMPACT_SUPPORT_AUDITED_NOT_PHYSICALLY_QUALIFIED"
+    )
     if (
         t["status"] != "PAID_TRAIN_FIRST_CONTACT_TEACHER_CLOSED_PENDING_OWN_AUDIT"
         or ta["status"] != "PAID_FIRST_CONTACT_ALL_TRIAL_OWN_NN_IK_AND_NATIVE_AUDIT_PASS"
@@ -49,7 +57,9 @@ def load_sources(a):
         or ta["own_trajectory_neural_rows"] != t["actual_neural_rows"]
         or t["bank"] != "train"
         or t["Fresh_rows_read"] != 0
-        or s["status"] != "PAID_ACTIVE_COMPACT_SUPPORT_AUDITED_NOT_PHYSICALLY_QUALIFIED"
+        or s["status"] != student_status
+        or interventional
+        and s["config"].get("protocol") != "interventional_dagger.warm_contact.v1"
         or s["config"]["seed_index"] != 0
         or e["status"] != "PAID_ROUTER_TRAIN20_WORLDS_CLOSED_PENDING_AUDIT"
         or ea["status"] != "PAID_ROUTER_TRAIN20_OWN_NN_AND_ALL_PHASE_PHYSICS_AUDIT_PASS"
