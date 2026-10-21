@@ -21,6 +21,9 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--worlds", choices=(8, 64), type=int, default=8)
     p.add_argument("--leads", choices=(10, 20, 40, 80), type=int, nargs="+", default=[80])
+    p.add_argument(
+        "--faults", action="store_true", help="declared8world head/tail failure injection"
+    )
     a = p.parse_args()
     if (
         a.output.exists()
@@ -28,6 +31,7 @@ def main():
         or subprocess.check_output(["git", "status", "--porcelain"])
         or subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
         != a.expected_head
+        or (a.faults and (a.worlds != 8 or a.leads != [80]))
     ):
         raise ValueError("new output, unique declared leads and clean frozen source required")
     receipt = a.proof_root / "complete.json"
@@ -69,6 +73,16 @@ def main():
             optimizer_updates=0,
             original177_foundation_only=True,
             legacy24_reward_diagnostic_not_for_learning=True,
+            fault_injection=(
+                dict(
+                    source0_reference_ankle_z_error_m=1.0,
+                    tail_world1_HG_joint_ids=[0, 3, 4, 6, 9, 10],
+                    tail_world1_joint_target_rad=[-1.2, 2.4, -0.8, -1.2, 2.4, -0.8],
+                    original_PD_joint_limits_required=True,
+                )
+                if a.faults
+                else None
+            ),
             old24_protocol_unchanged_not_inherited_qualification=True,
             goal_complete=False,
             promotion_authorized=False,
@@ -125,6 +139,15 @@ def main():
             for n in TRAIN_MOTION_NAMES
         ]
         refs = load_body_references(a.reference_root, model, layout, plans)
+        fault_ids = np.array([0, 3, 4, 6, 9, 10])
+        fault_targets = np.array([-1.2, 2.4, -0.8, -1.2, 2.4, -0.8], dtype=np.float32)
+        if a.faults:
+            from rosclaw_soccer.rsi.native_course_tracking import TRACKING_BODIES
+
+            refs[0]["position"][:, TRACKING_BODIES.index("left_ankle_roll_link"), 2] += 1.0
+            bounds = model.jnt_range[layout.joints][fault_ids]
+            if (fault_targets < bounds[:, 0]).any() or (fault_targets > bounds[:, 1]).any():
+                raise ValueError("declared fault targets outside actual joints; no repair")
         onnx = pinned("/policy/velocity/v0/exported/policy.onnx")
         actor = VelocityPriorActor.from_onnx(
             onnx, expected_hash=pins[str(onnx)], reference_features=79
@@ -210,8 +233,25 @@ def main():
                 assert_snapshot(tail, saved, observation=False)
                 while not tail.ended.all():
                     stopped = snapshot(tail, np.flatnonzero(tail.ended))
-                    tail_rows.append(tail.step(act(tail.observation, tail.active_ids)))
+                    action = act(tail.observation, tail.active_ids)
+                    if a.faults and 1 in tail.active_ids:
+                        action[1, fault_ids] = (
+                            fault_targets - np.asarray(params.action_offset)[fault_ids]
+                        ) / np.asarray(params.action_scale)[fault_ids]
+                    tail_rows.append(tail.step(action))
                     assert_snapshot(tail, stopped)
+                if a.faults and (
+                    not course.head_failed[0]
+                    or course.elapsed[0] != 1
+                    or course.head_failed[1:].any()
+                    or not tail.failed[1]
+                    or not 0 < tail.elapsed[1] < 60
+                    or tail.failed[2:].any()
+                    or not np.all(tail.elapsed[2:] == 60)
+                ):
+                    raise ValueError(
+                        "declared head/tail failures did not isolate actual expected worlds"
+                    )
                 raw = {"head_" + k: np.stack([row[k] for row in head_rows]) for k in head_rows[0]}
                 if tail_rows:
                     raw.update(
