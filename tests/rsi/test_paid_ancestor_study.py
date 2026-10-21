@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 from test_paid_fresh_protocol import source_cases
 
-from rosclaw_soccer.rsi.paid_ancestor_study import SCHEDULES, ancestor_train_cases, case_condition
+from rosclaw_soccer.rsi.paid_ancestor_study import (
+    SCHEDULES,
+    ancestor_comparison,
+    ancestor_train_cases,
+    case_condition,
+)
 from rosclaw_soccer.rsi.paid_fresh_protocol import fresh_lifecycle_cases
 from rosclaw_soccer.rsi.paid_lifecycle_bundle import require_same_prefix
 from rosclaw_soccer.sim.contracts import hash_json
@@ -96,3 +101,39 @@ def test_missing_prefix_cannot_be_a_same_state_proof():
     del b["between1-2-boundary"]
     with pytest.raises(ValueError):
         require_same_prefix(a, b, before_kick=2)
+
+
+def test_same_entry_rescue_is_distinct_from_earlier_path_and_harm():
+    def outcome(good):
+        return dict(stable=True, quality_by_kick=[True, True, good])
+
+    groups = [
+        dict(
+            case=i, arms={name: outcome(good) for name, good in zip(SCHEDULES, values, strict=True)}
+        )
+        for i, values in enumerate(
+            [(False, True, True), (False, False, True), (True, False, False)]
+        )
+    ]
+    result = ancestor_comparison(groups)
+    assert result["same_entry_ancestor_rescues"] == [0]
+    assert result["full_R2_only_rescues"] == [1]
+    assert result["same_entry_ancestor_harms"] == [2]
+    assert (
+        result["reproducible_teacher_exists"]
+        and not result["training_authorized_by_this_diagnostic"]
+    )
+
+
+def test_no_physical_teacher_means_no_router_training_recommendation():
+    groups = [
+        dict(
+            case=0,
+            arms={
+                name: dict(stable=True, quality_by_kick=[True, True, False]) for name in SCHEDULES
+            },
+        )
+    ]
+    result = ancestor_comparison(groups)
+    assert not result["reproducible_teacher_exists"]
+    assert result["conclusion"] == "NO_SAME_ENTRY_RESCUE_NO_ROUTER_TRAINING_YET"
