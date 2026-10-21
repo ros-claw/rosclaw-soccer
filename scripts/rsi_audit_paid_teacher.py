@@ -13,8 +13,17 @@ import numpy as np
 
 
 def collision_counterfactual(model, *, mode, ball, feet, robot):
-    if mode not in ("no-robot-ball", "no-foot-ball") or model.npair:
-        raise ValueError("explicit contact-bit-only probe and no explicit pairs required")
+    if mode not in ("no-robot-ball", "no-foot-ball"):
+        raise ValueError("explicit contact-bit-only probe required")
+    # Explicit pairs bypass bit masks. Preserve the source's foot/floor pairs
+    # exactly, but reject any ball pair rather than pretend masks disable it.
+    for i in range(model.npair):
+        bodies = {
+            int(model.geom_bodyid[int(model.pair_geom1[i])]),
+            int(model.geom_bodyid[int(model.pair_geom2[i])]),
+        }
+        if ball in bodies or not bodies <= ({0} | set(robot)):
+            raise ValueError("explicit pair bypasses declared counterfactual boundary")
     for g in range(model.ngeom):
         t, a = int(model.geom_contype[g]), int(model.geom_conaffinity[g])
         if (t, a) == (0, 0):

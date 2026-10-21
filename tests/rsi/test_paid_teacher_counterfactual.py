@@ -42,3 +42,25 @@ def test_unrecognized_original_contact_masks_are_rejected_not_repaired():
     )
     with pytest.raises(ValueError, match="unexpected"):
         collision_counterfactual(m, mode="no-foot-ball", ball=31, feet=[11, 12], robot={1, 11, 12})
+
+
+@pytest.mark.parametrize("ball_pair", [False, True])
+def test_explicit_floor_pairs_preserved_but_ball_pairs_rejected(ball_pair):
+    m = SimpleNamespace(
+        npair=1,
+        ngeom=3,
+        geom_bodyid=np.array([0, 11, 31]),
+        geom_contype=np.ones(3, dtype=int),
+        geom_conaffinity=np.ones(3, dtype=int),
+        pair_geom1=np.array([2 if ball_pair else 0]),
+        pair_geom2=np.array([1]),
+    )
+    original = (m.pair_geom1.copy(), m.pair_geom2.copy())
+    if ball_pair:
+        with pytest.raises(ValueError, match="explicit pair"):
+            collision_counterfactual(m, mode="no-foot-ball", ball=31, feet=[11], robot={11})
+        assert np.array_equal(m.geom_contype, np.ones(3))
+    else:
+        collision_counterfactual(m, mode="no-foot-ball", ball=31, feet=[11], robot={11})
+    assert np.array_equal(m.pair_geom1, original[0])
+    assert np.array_equal(m.pair_geom2, original[1])
