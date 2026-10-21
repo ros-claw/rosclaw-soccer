@@ -67,7 +67,14 @@ def main():
             hardware_authorized=False,
         ),
     )
-    counts = dict(neural_rows=0, raw_episodes=0, residual_rows=0, base_only_rows=0)
+    counts = dict(
+        neural_rows=0,
+        raw_episodes=0,
+        residual_rows=0,
+        base_only_rows=0,
+        additional_gate_head_rows=0,
+    )
+    gate_episodes = []
     try:
         import numpy as np
         import torch
@@ -94,6 +101,7 @@ def main():
             seen.add(str(path))
             pins[str(path)] = row["raw_hash"]
             state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
+            gate_probabilities = []
             with np.load(path, allow_pickle=False) as z, torch.no_grad():
                 for j, observation in enumerate(z["NN_obs"]):
                     if any(
@@ -116,7 +124,31 @@ def main():
                         )
                     counts["neural_rows"] += 1
                     counts["residual_rows" if residual else "base_only_rows"] += 1
+                    if residual:
+                        # Diagnostic head-only pass from the VERIFIED own h/c,
+                        # not another full actor rollout or new physical data.
+                        feature = torch.cat(
+                            [
+                                (torch.from_numpy(observation).reshape(1, 160) - actor.base.mean)
+                                / actor.base.denominator,
+                                state[0][-1],
+                            ],
+                            dim=1,
+                        )
+                        probability = float(torch.sigmoid(actor.residual.gate(feature))[0, 0])
+                        gate_probabilities.append(probability)
+                        counts["additional_gate_head_rows"] += 1
             counts["raw_episodes"] += 1
+            if residual:
+                gate_episodes.append(
+                    dict(
+                        raw_path=row["raw_path"],
+                        active_controls=[i for i, p in enumerate(gate_probabilities) if p >= 0.5],
+                        minimum_probability=min(gate_probabilities),
+                        maximum_probability=max(gate_probabilities),
+                        controls=len(gate_probabilities),
+                    )
+                )
 
         for candidate in r["candidates"]:
             index = candidate["candidate"]
@@ -173,6 +205,8 @@ def main():
                 status="PAID_GATED_CONTACT_ALL_NEURAL_PROPOSALS_EXACT",
                 input_file_hashes=pins,
                 counts=counts,
+                learned_gate_episodes=gate_episodes,
+                gate_head_passes_are_additional_diagnostic_compute=True,
                 own_native_steps=0,
                 own_neural_rows=counts["neural_rows"],
                 producer_native_steps_not_recounted=r["actual_native_steps"],
