@@ -12,6 +12,33 @@ def test_intervention_segment_never_overwrites_frame_zero_teacher_reference():
     assert canonical_teacher_trajectories(dict(trajectories=[original, segment])) == {4: original}
 
 
+def test_actual_interventional_receipt_has_original_metadata_not_inline_trajectories(tmp_path):
+    import hashlib
+    import json
+
+    from scripts.rsi_diagnose_paid_compact_policy import original_reference_metadata
+
+    original = dict(rows=21922, trajectories=[dict(case=4, start=0, stop=289)])
+    path = tmp_path / "complete.json"
+    path.write_text(json.dumps(original))
+    h = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    extended = dict(
+        original_root=str(tmp_path),
+        original_hash=h,
+        original_rows=21922,
+        input_file_hashes={str(path): h},
+    )
+    assert "trajectories" not in extended
+    assert original_reference_metadata(extended) == original
+    extended["original_rows"] -= 1
+    with pytest.raises(ValueError, match="prefix offsets"):
+        original_reference_metadata(extended)
+    extended["original_rows"] += 1
+    extended["input_file_hashes"] = {}
+    with pytest.raises(ValueError, match="bound original"):
+        original_reference_metadata(extended)
+
+
 def trace():
     return dict(
         features=np.zeros((4, 288), np.float32),

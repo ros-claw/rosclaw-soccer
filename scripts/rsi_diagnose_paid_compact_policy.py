@@ -13,6 +13,22 @@ def canonical_teacher_trajectories(data):
     return {t["case"]: t for t in data["trajectories"] if t["role"] in roles}
 
 
+def original_reference_metadata(data):
+    from scripts.rsi_native_context_recovery_common import digest
+
+    path = Path(data["original_root"]) / "complete.json"
+    if (
+        path.is_symlink()
+        or digest(path) != data["original_hash"]
+        or data["input_file_hashes"].get(str(path)) != data["original_hash"]
+    ):
+        raise ValueError("bound original-prefix reference metadata required")
+    original = json.loads(path.read_text())
+    if original["rows"] != data["original_rows"]:
+        raise ValueError("original reference intervals must retain exact prefix offsets")
+    return original
+
+
 def main():
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -79,6 +95,7 @@ def main():
     if digest(data_path) != a.data_hash:
         raise ValueError("exact original TRAIN curation required")
     data = json.loads(data_path.read_text())
+    reference_data = original_reference_metadata(data) if a.interventional else data
     sp = Path(d["student_root"]) / "complete.json"
     if digest(sp) != d["student_hash"]:
         raise ValueError("same recorded student identity required")
@@ -148,7 +165,7 @@ def main():
         pins[str(f)] = data["feature_hash"]
         with np.load(f, allow_pickle=False) as archive:
             z = {k: archive[k].copy() for k in archive.files}
-        teachers = canonical_teacher_trajectories(data)
+        teachers = canonical_teacher_trajectories(reference_data)
         rows, cases = 0, []
         for world in r["worlds"]:
             link = next(v for v in world["artifacts"] if Path(v["raw_path"]).stem == "kick0")
