@@ -14,10 +14,13 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    for k in ("learner-root", "starts-root", "baseline-episodes-root", "output"):
+    for k in ("learner-root", "starts-root", "output"):
         p.add_argument("--" + k, type=Path, required=True)
-    for k in ("learner-hash", "starts-hash", "baseline-episodes-hash", "expected-head"):
+    for k in ("learner-hash", "starts-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
+    p.add_argument("--baseline-episodes-root", type=Path)
+    p.add_argument("--baseline-episodes-hash")
+    p.add_argument("--task-set", choices=("train64", "dev64"), default="train64")
     p.add_argument("--checkpoint-intent", choices=("shared", "bounded-residual"), default="shared")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
@@ -30,8 +33,14 @@ def main():
         != a.expected_head
     ):
         raise ValueError("new frozen exam and unused output required")
+    dev = a.task_set == "dev64"
+    if (not dev and not all((a.baseline_episodes_root, a.baseline_episodes_hash))) or (
+        dev and any((a.baseline_episodes_root, a.baseline_episodes_hash))
+    ):
+        raise ValueError("TRAIN requires historical baseline; new DEV must not borrow it")
+    repeated_worlds = [0, 1, 2, 3, 32, 33, 34, 35] if dev else list(range(8))
     pins, reports = {}, []
-    for key in ("learner", "starts", "baseline_episodes"):
+    for key in ("learner", "starts") if dev else ("learner", "starts", "baseline_episodes"):
         f = getattr(a, key + "_root") / "complete.json"
         h = getattr(a, key + "_hash")
         if digest(f) != h:
@@ -40,7 +49,8 @@ def main():
         reports.append(r)
         pins.update(r["input_file_hashes"])
         pins[str(f)] = h
-    learner, starts, baseline = reports
+    learner, starts = reports[:2]
+    baseline = {} if dev else reports[2]
     residual = a.checkpoint_intent == "bounded-residual"
     expected_status = (
         "NATIVE_CONTACT24_RESIDUAL_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
@@ -54,8 +64,22 @@ def main():
         or len(learner.get("results", [])) != 20
         or learner["counts"]["ppo_steps"] < 1
         or starts.get("ball_placement_protocol") != "body-bound-v1"
-        or starts.get("worlds") != 64
-        or baseline.get("ball_placement_protocol") != "body-bound-v1"
+        or (
+            not dev
+            and (
+                starts.get("worlds") != 64
+                or baseline.get("ball_placement_protocol") != "body-bound-v1"
+            )
+        )
+        or (
+            dev
+            and (
+                starts.get("status") != "NATIVE_BODY_BOUND_DEV_TASKS_NOT_POLICY_EVIDENCE"
+                or starts.get("source_split") != "DEV evaluation only"
+                or [(r.get("source"), r.get("worlds")) for r in starts.get("results", [])]
+                != [("soccer-standard-007_left.npz", 32), ("soccer-standard-010_right.npz", 32)]
+            )
+        )
     ):
         raise ValueError(
             "completed native learner and unchanged full body-bound TRAIN64 source required"
@@ -64,13 +88,19 @@ def main():
     cp = a.learner_root / checkpoint["file"]
     pins[str(cp)] = checkpoint["hash"]
     initial_path = a.starts_root / "train-starts.npz"
-    pins[str(initial_path)] = starts["starts_hash"]
-    for name, h in starts["plan_hashes"].items():
-        pins[str(a.starts_root / (name.removesuffix(".npz") + "-plan.npz"))] = h
-    for r in baseline["results"]:
-        pins[str(a.baseline_episodes_root / f"world{r['world']}-repeat{r['repeat']}.npz")] = r[
-            "raw_hash"
-        ]
+    if dev:
+        for r in starts["results"]:
+            folder = a.starts_root / r["source"].removesuffix(".npz")
+            pins[str(folder / "starts.npz")] = r["starts_hash"]
+            pins[str(folder / "plan.npz")] = r["plan_hash"]
+    else:
+        pins[str(initial_path)] = starts["starts_hash"]
+        for name, h in starts["plan_hashes"].items():
+            pins[str(a.starts_root / (name.removesuffix(".npz") + "-plan.npz"))] = h
+        for r in baseline["results"]:
+            pins[str(a.baseline_episodes_root / f"world{r['world']}-repeat{r['repeat']}.npz")] = r[
+                "raw_hash"
+            ]
     for root in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in root.rglob("*.py")})
     check_pins(pins)
@@ -80,12 +110,15 @@ def main():
         dict(
             source_head=a.expected_head,
             input_file_hashes=pins,
-            source_split="TRAIN evaluation only, DEV untouched",
+            source_split="DEV evaluation only, no gradients"
+            if dev
+            else "TRAIN evaluation only, DEV untouched",
+            task_set=a.task_set,
             worlds=64,
             checkpoint_selection="fixed final20 vs immutable parent baseline",
             checkpoint_intent=a.checkpoint_intent,
             arms=["initial", "final"],
-            full_independent_repeated_worlds=list(range(8)),
+            full_independent_repeated_worlds=repeated_worlds,
             maximum_controls=300,
             maximum_live_native_steps=432000,
             maximum_replay_native_steps=432000,
@@ -94,7 +127,7 @@ def main():
             start="original frame zero, NOT precontact snapshots",
             no_state_overwrites=True,
             body_ball_motor_colliders_and_original_goal_initial_states_unchanged=True,
-            baseline_must_reproduce_all_old_native_fields_bitexact=True,
+            baseline_must_reproduce_all_old_native_fields_bitexact=not dev,
             strict_physical_replay="all substep canonical q/v/feet/nonfoot bitexact",
             correct_foot_threshold_n=10.0,
             forbidden_contact_threshold_n=1.0,
@@ -113,7 +146,10 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
+        from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
+            DEVELOPMENT_MOTION_NAMES,
+            TRAIN_MOTION_NAMES,
+        )
         from rosclaw_soccer.rsi.native_contact_checkpoint import (
             NativeContactSession,
             NativeResidualContactSession,
@@ -139,16 +175,45 @@ def main():
         layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
         feet = [model.body("robot/" + s + "_ankle_roll_link").id for s in ("left", "right")]
         torso = model.body("robot/torso_link").id
-        with np.load(initial_path, allow_pickle=False) as z:
-            initial = {k: z[k].copy() for k in z.files}
-        if not np.array_equal(initial["motion_id"], np.arange(64) % 8):
-            raise ValueError("unchanged balanced TRAIN64 source identities required")
+        names = DEVELOPMENT_MOTION_NAMES if dev else TRAIN_MOTION_NAMES
         plans = []
-        for name in TRAIN_MOTION_NAMES:
-            with np.load(
-                a.starts_root / (name.removesuffix(".npz") + "-plan.npz"), allow_pickle=False
-            ) as z:
+        if dev:
+            batches = []
+            for name in names:
+                folder = a.starts_root / name.removesuffix(".npz")
+                with np.load(folder / "starts.npz", allow_pickle=False) as z:
+                    batches.append({k: z[k].copy() for k in z.files})
+                for key, shape in {
+                    "qpos": (32, 43),
+                    "qvel": (32, 41),
+                    "observation": (32, 177),
+                    "goal_world": (32, 3),
+                    "origins": (32, 3),
+                    "expected_foot": (32,),
+                }.items():
+                    if batches[-1][key].shape != shape or not np.isfinite(batches[-1][key]).all():
+                        raise ValueError("complete finite declared DEV32 source required")
+                if not np.all(batches[-1]["expected_foot"] == len(batches) - 1):
+                    raise ValueError("DEV task foot identity changed")
+            initial = {k: np.concatenate([batch[k] for batch in batches]) for k in batches[0]}
+            initial["motion_id"] = np.repeat(np.arange(2), 32)
+        else:
+            with np.load(initial_path, allow_pickle=False) as z:
+                initial = {k: z[k].copy() for k in z.files}
+            if not np.array_equal(initial["motion_id"], np.arange(64) % 8):
+                raise ValueError("unchanged balanced TRAIN64 source identities required")
+        for name in names:
+            plan_path = (
+                (a.starts_root / name.removesuffix(".npz") / "plan.npz")
+                if dev
+                else (a.starts_root / (name.removesuffix(".npz") + "-plan.npz"))
+            )
+            with np.load(plan_path, allow_pickle=False) as z:
                 plans.append({k: z[k].copy() for k in z.files})
+            if not 1 <= len(plans[-1]["joint"]) <= 300 or (
+                dev and len(plans[-1]["joint"]) != starts["results"][len(plans) - 1]["controls"]
+            ):
+                raise ValueError("full declared bounded reference horizon required")
 
         def force(data):
             ff, nonfoot = np.zeros(2), 0.0
@@ -174,7 +239,7 @@ def main():
             for arm in ("initial", "final"):
                 current_arm = arm
                 first = None
-                for repeat in range(2 if world < 8 else 1):
+                for repeat in range(2 if world in repeated_worlds else 1):
                     session = session_type(
                         onnx,
                         cfg,
@@ -205,6 +270,16 @@ def main():
                             phase=session.phase,
                             torso=torso,
                         )
+                        if (
+                            dev
+                            and frame == 0
+                            and not np.allclose(
+                                obs, initial["observation"][world], atol=2e-5, rtol=0
+                            )
+                        ):
+                            raise ValueError(
+                                "native DEV first177 input differs from actual reset export"
+                            )
                         row = dict(
                             native_qpos_before=d.qpos.copy(),
                             native_qvel_before=d.qvel.copy(),
@@ -275,7 +350,7 @@ def main():
                             "complete independent NN/physics representative repeat differs"
                         )
                     first = raw
-                    if arm == "initial":
+                    if arm == "initial" and not dev:
                         with np.load(
                             a.baseline_episodes_root / f"world{world}-repeat0.npz",
                             allow_pickle=False,
@@ -323,7 +398,7 @@ def main():
                     )
                     result = dict(
                         world=world,
-                        source=TRAIN_MOTION_NAMES[sid],
+                        source=names[sid],
                         arm=arm,
                         repeat=repeat,
                         raw_hash=digest(path),
@@ -369,9 +444,17 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="NATIVE_CONTACT24_TRAIN64_GAIN_REQUIRES_UNTOUCHED_DEV"
-                if improved
-                else "NATIVE_CONTACT24_TRAIN64_CANDIDATE_REJECTED",
+                status=(
+                    "NATIVE_CONTACT24_DEV64_GAIN_REQUIRES_FRESH"
+                    if improved
+                    else "NATIVE_CONTACT24_DEV64_NO_NET_GAIN"
+                )
+                if dev
+                else (
+                    "NATIVE_CONTACT24_TRAIN64_GAIN_REQUIRES_UNTOUCHED_DEV"
+                    if improved
+                    else "NATIVE_CONTACT24_TRAIN64_CANDIDATE_REJECTED"
+                ),
                 input_file_hashes=pins,
                 checkpoint_intent=a.checkpoint_intent,
                 results=results,
@@ -380,7 +463,8 @@ def main():
                 replay_native_steps=replay_steps,
                 policy_rows=nn_rows,
                 optimizer_updates=0,
-                all_old_baseline_fields_bitexact=True,
+                all_old_baseline_fields_bitexact=True if not dev else None,
+                task_set=a.task_set,
                 all_strict_replays_exact=True,
                 all_representative_repeats_exact=True,
                 not_independent_holdout=True,
