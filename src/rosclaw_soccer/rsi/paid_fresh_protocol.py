@@ -110,3 +110,70 @@ def fresh_summary(worlds: list[dict[str, Any]], cases: list[dict[str, Any]]) -> 
         motion_source_clusters=8,
         repeats_are_not_independent=True,
     )
+
+
+def paired_fresh_review(
+    arms: dict[str, list[dict[str, Any]]], cases: list[dict[str, Any]], criteria: dict[str, Any]
+) -> dict[str, Any]:
+    """Per-case comparisons and source-cluster uncertainty, no policy promotion."""
+    if set(arms) != {"r2", "parent", "progressive"}:
+        raise ValueError("all three frozen arms required")
+    summaries = {name: fresh_summary(rows, cases) for name, rows in arms.items()}
+    candidate = arms["progressive"]
+    comparisons = {}
+    for reference in ("r2", "parent"):
+        old = arms[reference]
+        gained, lost = [], []
+        for k in range(3):
+            a = {
+                i
+                for i, w in enumerate(old)
+                if len(w["quality_by_kick"]) > k and w["quality_by_kick"][k]
+            }
+            b = {
+                i
+                for i, w in enumerate(candidate)
+                if len(w["quality_by_kick"]) > k and w["quality_by_kick"][k]
+            }
+            gained.append(sorted(b - a))
+            lost.append(sorted(a - b))
+        effects = np.zeros(8)
+        for i, case in enumerate(cases):
+            effects[case["source_cluster"]] += (float(i in gained[2]) - float(i in lost[2])) / 4
+        rng = np.random.Generator(np.random.PCG64(2026102208))
+        bootstrap = effects[rng.integers(0, 8, size=(10000, 8))].mean(axis=1)
+        comparisons[reference] = dict(
+            gained_by_kick=gained,
+            lost_by_kick=lost,
+            body_regressions=[
+                i for i in range(32) if old[i]["stable"] and not candidate[i]["stable"]
+            ],
+            third_net_gain=len(gained[2]) - len(lost[2]),
+            third_cluster_effects=effects.tolist(),
+            third_source_cluster_bootstrap95_effect_per_case=np.quantile(
+                bootstrap, [0.025, 0.975]
+            ).tolist(),
+            bootstrap_resamples=10000,
+            bootstrap_seed=2026102208,
+            statistical_clusters=8,
+        )
+    checks = dict(
+        candidate_stable=summaries["progressive"]["stable"]
+        == criteria["candidate_stable_required"],
+        no_case_or_body_regressions=all(
+            not any(c["lost_by_kick"]) and not c["body_regressions"] for c in comparisons.values()
+        ),
+        third_gain_vs_R2=comparisons["r2"]["third_net_gain"]
+        >= criteria["third_gain_vs_R2_minimum"],
+        third_gain_vs_parent=comparisons["parent"]["third_net_gain"]
+        >= criteria["third_gain_vs_parent_minimum"],
+    )
+    return dict(
+        summaries=summaries,
+        comparisons=comparisons,
+        checks=checks,
+        preregistered_outcome_conditions_met=all(checks.values()),
+        statistical_interval_is_not_a_promotion_gate=True,
+        hardware_authorized=False,
+        promotion_authorized=False,
+    )
