@@ -316,8 +316,10 @@ def main():
             or neural != r["actual_neural_rows"]
         ):
             raise ValueError("all672 raw episodes and explicit hold work ledger differ")
+
         def quality(rows):
             return sum(contact_rank([x, x])[1] > 0 for x in rows)
+
         if (
             quality(r["baseline"]) != r["baseline_quality"]
             or quality(r["final"]) != r["final_quality"]
