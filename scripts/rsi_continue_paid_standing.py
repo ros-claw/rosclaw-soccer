@@ -141,14 +141,28 @@ def main():
                 str(source / "src") + ":" + str(source) + ":" + os.environ.get("PYTHONPATH", "")
             )
             with (a.output / (name + ".log")).open("xb") as log:
-                subprocess.run(
-                    [sys.executable, "-u", "-m", module, *argv],
-                    cwd=source,
-                    env=env,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    check=True,
-                )
+                try:
+                    subprocess.run(
+                        [sys.executable, "-u", "-m", module, *argv],
+                        cwd=source,
+                        env=env,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        check=True,
+                        timeout=7200,
+                    )
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                    write_once(
+                        a.output / (name + "-failed.json"),
+                        dict(
+                            error_type=type(error).__name__,
+                            error=str(error),
+                            automatic_retry=False,
+                            raw_data_preserved=True,
+                            hardware_authorized=False,
+                        ),
+                    )
+                    raise
             clean_sources()
             if not (root / "complete.json").is_file() or (root / "failed.json").exists():
                 raise ValueError("child exit zero is not a closed evidence result")
@@ -204,17 +218,20 @@ def main():
                     raise ValueError("DEV gate evidence changed")
             else:
                 write_once(path, result)
-        write_once(
-            a.output / "complete.json",
-            dict(
-                status="FINITE_STANDING_DEV_QUEUE_CLOSED_REQUIRES_AGENT_ANALYSIS",
-                goal_complete=False,
-                team_game=False,
-                promotion_authorized=False,
-                hardware_authorized=False,
-                next="analyse all DEV outcomes before next learning plan",
-            ),
+        completed = dict(
+            status="FINITE_STANDING_DEV_QUEUE_CLOSED_REQUIRES_AGENT_ANALYSIS",
+            goal_complete=False,
+            team_game=False,
+            promotion_authorized=False,
+            hardware_authorized=False,
+            next="analyse all DEV outcomes before next learning plan",
         )
+        path = a.output / "complete.json"
+        if path.exists():
+            if json.loads(path.read_text()) != completed:
+                raise ValueError("closed queue record changed")
+        else:
+            write_once(path, completed)
 
 
 if __name__ == "__main__":
