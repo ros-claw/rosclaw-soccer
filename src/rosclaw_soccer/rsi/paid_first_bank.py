@@ -13,6 +13,33 @@ EXAM_STATUS = "PAID_FULL_ENTRY_ORIGINAL16_WORLDS_CLOSED_PENDING_AUDIT"
 AUDIT_STATUS = "PAID_FULL_ENTRY_ORIGINAL16_OWN_NN_AND_ALL_PHASE_PHYSICS_AUDIT_PASS"
 
 
+def original_case_with_measured_velocity(
+    source: dict[str, Any], index: int, velocity: list[float], compiled_mass: float
+) -> dict[str, Any]:
+    """Legacy DEV omits metadata defaults; measured native state remains authority."""
+    v = np.asarray(velocity, float)
+    if (
+        source.get("profile", "cached-standard") != "cached-standard"
+        or compiled_mass != 0.43
+        or source.get("ball_mass_kg", compiled_mass) != compiled_mass
+        or v.shape != (2,)
+        or not np.isfinite(v).all()
+        or np.linalg.norm(v) > 0.6
+        or type(index) is not int
+        or index not in range(16)
+    ):
+        raise ValueError("measured unchanged original standard fixture required")
+    return dict(
+        case=index,
+        source=source["source"],
+        profile="cached-standard",
+        ball_mass_kg=compiled_mass,
+        ball_world_initial=list(source["ball_world_initial"]),
+        goal_world=list(source["goal_world"]),
+        velocity_world_initial=v.tolist(),
+    )
+
+
 def load_motor_exam_plan(root: Path, expected: str) -> tuple[dict[str, Any], dict[str, Any]]:
     rp, dp = root / "complete.json", root / "declaration.json"
 

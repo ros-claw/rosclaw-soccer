@@ -44,7 +44,11 @@ def main():
         import numpy as np
 
         from rosclaw_soccer.rsi.paid_continuity_audit import identical, snapshot_fields
-        from rosclaw_soccer.rsi.paid_first_bank import SCHEMA, STATUS
+        from rosclaw_soccer.rsi.paid_first_bank import (
+            SCHEMA,
+            STATUS,
+            original_case_with_measured_velocity,
+        )
         from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
         from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
 
@@ -69,11 +73,9 @@ def main():
                 raise ValueError("actual legacy seven-field schema required")
             identical(initial, {k: before[k] for k in keys})
             q, v = ep.layout.canonical(ep.env.data)
-            clean = {
-                k: c[k]
-                for k in ("source", "profile", "ball_mass_kg", "ball_world_initial", "goal_world")
-            }
-            clean.update(case=i, velocity_world_initial=v[35:37].tolist())
+            clean = original_case_with_measured_velocity(
+                c, i, v[35:37].tolist(), float(ep.env.model.body_mass[ep.layout.ball])
+            )
             if not np.array_equal(q[36:39], clean["ball_world_initial"]):
                 raise ValueError("original compiled position differs")
             explicit = bench.make(clean)

@@ -3,7 +3,12 @@ import json
 import pytest
 from test_paid_fresh_protocol import source_cases
 
-from rosclaw_soccer.rsi.paid_first_bank import SCHEMA, STATUS, load_motor_exam_plan
+from rosclaw_soccer.rsi.paid_first_bank import (
+    SCHEMA,
+    STATUS,
+    load_motor_exam_plan,
+    original_case_with_measured_velocity,
+)
 from scripts.rsi_native_context_recovery_common import digest
 
 
@@ -55,6 +60,17 @@ def test_dev_fixture_has_own_complete_bank_identity_without_neural_execution(tmp
     h = publish(tmp_path, d, r)
     rr, dd = load_motor_exam_plan(tmp_path, h)
     assert dd["bank"] == "dev" and len(dd["cases"]) == 16 and rr["own_neural_rows"] == 0
+
+
+def test_legacy_dev_metadata_defaults_are_derived_from_measured_compiled_ball():
+    c = source_cases()[0]
+    c.pop("profile")
+    c.pop("ball_mass_kg")
+    out = original_case_with_measured_velocity(c, 0, [0.19, -0.02], 0.43)
+    assert out["profile"] == "cached-standard" and out["ball_mass_kg"] == 0.43
+    assert out["velocity_world_initial"] == [0.19, -0.02] and "profile" not in c
+    with pytest.raises(ValueError):
+        original_case_with_measured_velocity(c, 0, [0.19, -0.02], 0.41)
 
 
 @pytest.mark.parametrize(
