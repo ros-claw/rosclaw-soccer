@@ -91,6 +91,20 @@ def main():
     names = list(dict.fromkeys(c["source"] for c in cases))
     if len(cases) != 16 or len(names) != 8:
         raise ValueError("all sixteen two-condition live parents required")
+    source_indices = d.get("search_source_indices", list(range(8)))
+    final_indices = d.get("final_case_indices", list(range(16)))
+    expected_final = [i for i, c in enumerate(cases) if names.index(c["source"]) in source_indices]
+    if (
+        not source_indices
+        or len(set(source_indices)) != len(source_indices)
+        or any(type(i) is not int or i not in range(8) for i in source_indices)
+        or final_indices != expected_final
+        or len(r["selected"]) != len(source_indices)
+        or len(r["final"]) != len(final_indices)
+        or len(r["baseline"]) != 16
+    ):
+        raise ValueError("complete predeclared source shard and paired final courses required")
+    expected_raw_count = 32 + 72 * len(source_indices) + 4 * len(final_indices)
     horizons = {}
     for name in names:
         path = policy.parent.parent / "motions/soccer-standard" / name
@@ -155,7 +169,17 @@ def main():
         record = json.loads((folder / "complete.json").read_text())
         first, _ = audit_raw(record["first"], i)
         # Re-admit every first skill against the previously qualified neural actor exam.
-        old = next(Path(f) for f in pins if f.endswith(f"/candidate0/old16/case{i}-repeat0.npz"))
+        references = d.get("bootstrap_first_references", [])
+        if references:
+            if len(references) != 16:
+                raise ValueError("all sixteen qualified learned-parent references required")
+            old = Path(references[i]["path"])
+            if pins.get(str(old)) != references[i]["hash"]:
+                raise ValueError("learned first-skill reference is not bound to producer inputs")
+        else:
+            old = next(
+                Path(f) for f in pins if f.endswith(f"/candidate0/old16/case{i}-repeat0.npz")
+            )
         with np.load(old, allow_pickle=False) as z:
             same(first, {k: z[k].copy() for k in z.files})
         drop = read(folder / "drop.npz")
@@ -242,8 +266,20 @@ def main():
     try:
         parents = [parent(a.root / f"parent{i}", i) for i in range(16)]
         for i, row in enumerate(r["baseline"]):
-            audit_raw(row, i, np.zeros((2, 6)), parent=parents[i])
-        for si, name in enumerate(names):
+            raw, _ = audit_raw(row, i, np.zeros((2, 6)), parent=parents[i])
+            references = d.get("bootstrap_second_references", [])
+            if references:
+                if (
+                    len(references) != 16
+                    or pins.get(references[i]["path"]) != references[i]["hash"]
+                ):
+                    raise ValueError(
+                        "all sixteen learned full-world second-skill references required"
+                    )
+                with np.load(references[i]["path"], allow_pickle=False) as z:
+                    same({k: raw[k] for k in z.files}, {k: z[k].copy() for k in z.files})
+        for slot, si in enumerate(source_indices):
+            name = names[si]
             ids = [i for i, c in enumerate(cases) if c["source"] == name]
             rng = np.random.default_rng(20261022 + si)
             best_z, mean, std = np.zeros((2, 6)), np.zeros((2, 6)), np.full((2, 6), 0.5)
@@ -281,7 +317,7 @@ def main():
                     or not np.array_equal(record["next_z_std"], std)
                 ):
                     raise ValueError("CEM distribution update differs")
-            selected = r["selected"][si]
+            selected = r["selected"][slot]
             if (
                 selected["source"] != name
                 or not np.array_equal(selected["selected_z"], best_z)
@@ -292,9 +328,10 @@ def main():
             if not np.array_equal(selected["selected_latent"], np.tanh(best_z)):
                 raise ValueError("selected bounded intent differs")
             print(json.dumps(dict(source=name, rank=list(best_rank))), flush=True)
-        for i, row in enumerate(r["final"]):
-            latent = np.array(r["selected"][names.index(cases[i]["source"])]["selected_latent"])
-            chosen = r["selected"][names.index(cases[i]["source"])]["results"][i % 2]
+        for i, row in zip(final_indices, r["final"], strict=True):
+            selected = next(x for x in r["selected"] if x["source"] == cases[i]["source"])
+            latent = np.array(selected["selected_latent"])
+            chosen = selected["results"][i % 2]
             selected_raw = read(a.root / chosen["raw_path"])
             previous = None
             for repeat in (0, 1):
@@ -311,11 +348,11 @@ def main():
                     same(z, previous)
                 previous = z
         if (
-            len(audited) != 672
+            len(audited) != expected_raw_count
             or native + hold_steps != r["actual_native_steps"]
             or neural != r["actual_neural_rows"]
         ):
-            raise ValueError("all672 raw episodes and explicit hold work ledger differ")
+            raise ValueError("declared complete raw episodes and explicit hold work ledger differ")
 
         def quality(rows):
             return sum(contact_rank([x, x])[1] > 0 for x in rows)
@@ -324,7 +361,7 @@ def main():
             quality(r["baseline"]) != r["baseline_quality"]
             or quality(r["final"]) != r["final_quality"]
             or sum(not x["body_failed"] for x in r["final"]) != r["stable"]
-            or r["cem_distribution_updates"] != 24
+            or r["cem_distribution_updates"] != 3 * len(source_indices)
         ):
             raise ValueError("final physical improvement statistics differ")
         check_pins(pins)
@@ -333,7 +370,9 @@ def main():
             dict(
                 status="PAID_LIVE_CONTACT_PRIMITIVE_CEM_AUDIT_PASS",
                 input_file_hashes=pins,
-                raw_episode_count=672,
+                raw_episode_count=expected_raw_count,
+                search_source_indices=source_indices,
+                final_case_indices=final_indices,
                 producer_native_steps=native + hold_steps,
                 producer_neural_rows=neural,
                 baseline_quality=r["baseline_quality"],

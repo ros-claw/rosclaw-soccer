@@ -13,6 +13,39 @@ import sys
 from pathlib import Path
 
 
+def qualified_successor_bootstrap(report, audit, *, report_path, report_hash, training_hash):
+    """Select an audited global entry policy, never a per-case deployment winner."""
+    if (
+        report.get("status") != "PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED"
+        or report.get("entry_controller") != "candidate"
+        or audit.get("status") != "PAID_LIVE_DISTILLED_ALL_PRIMITIVE_AUDIT_PASS"
+        or audit.get("input_file_hashes", {}).get(str(report_path)) != report_hash
+    ):
+        raise ValueError("audited single-policy full-world bootstrap required")
+    selected = [x for x in report["candidates"] if x["training_receipt_hash"] == training_hash]
+    if len(selected) != 1:
+        raise ValueError("one exact trained bootstrap policy required")
+    candidate = selected[0]
+    if (
+        set(candidate["isolated"]) != {"old16", "dev16"}
+        or not report.get("all_whole_neural_native_repeats_exact")
+        or report.get("IK_executed") is not False
+        or not candidate.get("single_recurrent_actor")
+        or any(
+            x["quality"] < 14 or x["stable"] != 16 or x["regressions"]
+            for x in candidate["isolated"].values()
+        )
+        or candidate["continuous"]["stable"] != 16
+        or len(candidate["continuous"]["results"]) != 16
+        or any(
+            not w["first_quality"] or not w["world_stable"] or w["second"] is None
+            for w in candidate["continuous"]["results"]
+        )
+    ):
+        raise ValueError("all initial skills and whole-world bodies must be qualified")
+    return candidate
+
+
 def main():
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -22,6 +55,11 @@ def main():
     p.add_argument("--handoff-hash", required=True)
     p.add_argument("--training-root", type=Path, required=True)
     p.add_argument("--exam-root", type=Path, required=True)
+    p.add_argument("--bootstrap-exam-root", type=Path)
+    p.add_argument("--bootstrap-exam-hash")
+    p.add_argument("--bootstrap-audit-root", type=Path)
+    p.add_argument("--bootstrap-audit-hash")
+    p.add_argument("--source-index", type=int, choices=range(8))
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -37,9 +75,43 @@ def main():
     handoff = json.loads(hp.read_text())
     training = json.loads(tp.read_text())
     pins = {**handoff["input_file_hashes"], str(hp): a.handoff_hash, str(tp): digest(tp)}
-    cp = a.training_root / "distilled-epoch256.pt"
-    if handoff["input_file_hashes"].get(str(tp)) != digest(tp):
+    boot_args = (
+        a.bootstrap_exam_root,
+        a.bootstrap_exam_hash,
+        a.bootstrap_audit_root,
+        a.bootstrap_audit_hash,
+    )
+    bootstrap = None
+    if any(x is not None for x in boot_args):
+        if not all(x is not None for x in boot_args):
+            raise ValueError("complete bootstrap exam/audit commitments required")
+        bxp, bap = a.bootstrap_exam_root / "complete.json", a.bootstrap_audit_root / "complete.json"
+        if digest(bxp) != a.bootstrap_exam_hash or digest(bap) != a.bootstrap_audit_hash:
+            raise ValueError("bootstrap proof identity differs")
+        bootstrap_report, bootstrap_audit = json.loads(bxp.read_text()), json.loads(bap.read_text())
+        bootstrap = qualified_successor_bootstrap(
+            bootstrap_report,
+            bootstrap_audit,
+            report_path=bxp,
+            report_hash=a.bootstrap_exam_hash,
+            training_hash=digest(tp),
+        )
+        if bootstrap["checkpoint_hash"] != training["final_checkpoint_hash"]:
+            raise ValueError("bootstrap must execute this exact trained checkpoint")
+        pins.update(bootstrap_report["input_file_hashes"])
+        pins.update({str(bxp): a.bootstrap_exam_hash, str(bap): a.bootstrap_audit_hash})
+    cp = a.training_root / ("live-distilled-epoch256.pt" if bootstrap else "distilled-epoch256.pt")
+    if bootstrap is None and handoff["input_file_hashes"].get(str(tp)) != digest(tp):
         raise ValueError("training receipt differs")
+    pins[str(tp)] = digest(tp)
+    pins[str(cp)] = training["final_checkpoint_hash"]
+    if bootstrap:
+        pins[str(a.training_root / "declaration.json")] = digest(
+            a.training_root / "declaration.json"
+        )
+        pins[str(a.training_root / "live-distilled-epoch0.pt")] = training[
+            "initial_checkpoint_hash"
+        ]
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     ep_path = a.exam_root / "complete.json"
@@ -47,7 +119,9 @@ def main():
         raise ValueError("original exam must be bound by completed handoff receipt")
     exam = json.loads(ep_path.read_text())
     edp = ep_path.parent / "declaration.json"
-    if str(edp) not in pins or digest(tp) != exam["candidates"][0]["training_receipt_hash"]:
+    if str(edp) not in pins or (
+        bootstrap is None and digest(tp) != exam["candidates"][0]["training_receipt_hash"]
+    ):
         raise ValueError("qualified v0 and complete original exam required")
     cases = json.loads(edp.read_text())["old_cases"]
     names = list(dict.fromkeys(c["source"] for c in cases))
@@ -56,11 +130,30 @@ def main():
     for i, row in enumerate(exam["candidates"][0]["results"]["old16"]["results"]):
         path = ep_path.parent / "candidate0/old16" / f"case{i}-repeat0.npz"
         pins[str(path)] = row["raw_hash"]
+    first_references = []
+    second_references = []
+    if bootstrap:
+        bdp = a.bootstrap_exam_root / "declaration.json"
+        pins[str(bdp)] = digest(bdp)
+        if json.loads(bdp.read_text())["old_cases"] != cases:
+            raise ValueError("bootstrap must preserve the original sixteen training courses")
+        for w in bootstrap["continuous"]["results"]:
+            pair = []
+            for key in ("first", "second"):
+                path = a.bootstrap_exam_root / w[key]["raw_path"]
+                if not path.resolve().is_relative_to(a.bootstrap_exam_root.resolve()):
+                    raise ValueError("bootstrap reference escaped the exam")
+                pins[str(path)] = w[key]["raw_hash"]
+                pair.append(dict(path=str(path), hash=w[key]["raw_hash"]))
+            first_references.append(pair[0])
+            second_references.append(pair[1])
     for row in handoff["results"]:
         if row["spec"]["transition_controls"] == 0:
             for artifact in row["artifacts"]:
                 pins[str(a.handoff_root / artifact["path"])] = artifact["hash"]
     check_pins(pins)
+    source_indices = list(range(8)) if a.source_index is None else [a.source_index]
+    final_indices = [i for i, c in enumerate(cases) if names.index(c["source"]) in source_indices]
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -69,6 +162,13 @@ def main():
             input_file_hashes=pins,
             TRAIN_cases=cases,
             DEV_cases=[],
+            search_source_indices=source_indices,
+            final_case_indices=final_indices,
+            bootstrap_first_references=first_references,
+            bootstrap_second_references=second_references,
+            bootstrap_training_receipt_hash=digest(tp) if bootstrap else None,
+            base_model_checkpoint_hash=pins[str(cp)],
+            first_kick_reference="learned_safe_successor" if bootstrap else "original_v0",
             parents_from_actual_first_kick_and_explicit_gravity_drop=True,
             branch_semantics="mj_copyData of full live parent; never call env.reset in a branch",
             first_kick_pure_neural=True,
@@ -114,6 +214,7 @@ def main():
 
         from rosclaw_soccer.rsi.paid_distilled_actor import load_distilled_actor
         from rosclaw_soccer.rsi.paid_foot_taskspace import FootTaskSpaceIntent
+        from rosclaw_soccer.rsi.paid_live_distilled_actor import load_live_distilled_actor
         from rosclaw_soccer.rsi.paid_native_episode import NativeStepCounter
         from rosclaw_soccer.rsi.paid_research_bench import PaidResearchBench
         from rosclaw_soccer.rsi.paid_skill_handoff import practice_ball_drop, snapshot
@@ -126,7 +227,8 @@ def main():
         policy = next(Path(f) for f in pins if f.endswith("/ckp/policy_30000.onnx"))
         xml = next(Path(f) for f in pins if f.endswith("/cached-standard/declared-scene.xml"))
         contract = PaidResearchPolicy(policy, expected_hash=PUBLISHED_HASH, horizon=1)
-        actor, _ = load_distilled_actor(
+        loader = load_live_distilled_actor if bootstrap else load_distilled_actor
+        actor, _ = loader(
             policy,
             checkpoint=cp,
             checkpoint_hash=training["final_checkpoint_hash"],
@@ -165,11 +267,16 @@ def main():
             folder.mkdir()
             ep = bench.make(cases[i])
             raw, row = bench.collect_current(ep, actor)
-            with np.load(
-                ep_path.parent / "candidate0/old16" / f"case{i}-repeat0.npz", allow_pickle=False
-            ) as z:
+            reference = (
+                Path(first_references[i]["path"])
+                if bootstrap
+                else ep_path.parent / "candidate0/old16" / f"case{i}-repeat0.npz"
+            )
+            with np.load(reference, allow_pickle=False) as z:
                 if set(raw) != set(z.files) or any(not np.array_equal(raw[k], z[k]) for k in raw):
-                    raise ValueError("all sixteen first-kick parent physics must reproduce v0")
+                    raise ValueError(
+                        "first-kick parent must reproduce its complete qualified reference"
+                    )
             row.update(save(folder / "first.npz", raw))
             if ep.termination_reason != "REFERENCE_COMPLETE":
                 raise ValueError("unstable first kick cannot be made into a reset parent")
@@ -244,8 +351,12 @@ def main():
         folder.mkdir()
         for i in range(16):
             raw, row = run(i, np.zeros((2, 6)), folder / f"case{i}.npz")
-            if i % 2 == 0:
-                old = a.handoff_root / f"world{i}-repeat0/skill1.npz"
+            if bootstrap or i % 2 == 0:
+                old = (
+                    Path(second_references[i]["path"])
+                    if bootstrap
+                    else a.handoff_root / f"world{i}-repeat0/skill1.npz"
+                )
                 with np.load(old, allow_pickle=False) as z:
                     if any(not np.array_equal(raw[k], z[k]) for k in z.files):
                         raise ValueError("cloned branch must match actual continuous second skill")
@@ -327,9 +438,9 @@ def main():
             return result
 
         with ThreadPoolExecutor(max_workers=8) as pool:
-            selected = list(pool.map(search, range(8)))
+            selected = list(pool.map(search, source_indices))
         final = []
-        for i in range(16):
+        for i in final_indices:
             outputs = []
             latent = np.array(
                 next(s["selected_latent"] for s in selected if s["source"] == cases[i]["source"])
@@ -373,6 +484,9 @@ def main():
                 cem_distribution_updates=cem_updates,
                 neural_optimizer_updates=0,
                 all_first_kick_baselines_exact=True,
+                first_kick_reference="learned_safe_successor" if bootstrap else "original_v0",
+                search_source_indices=source_indices,
+                final_case_indices=final_indices,
                 all_static_live_baselines_exact=True,
                 all_selected_whole_sequences_repeated_exactly=True,
                 goal_complete=False,
