@@ -20,6 +20,11 @@ def main():
     for key in ("recovery-proof", "recovery-fault"):
         p.add_argument("--" + key + "-root", type=Path)
         p.add_argument("--" + key + "-hash")
+    p.add_argument("--resume-root", type=Path)
+    p.add_argument("--resume-hash")
+    p.add_argument("--resume-mode", choices=("qualify21", "train132"))
+    p.add_argument("--resume-proof", type=Path)
+    p.add_argument("--resume-proof-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -57,6 +62,49 @@ def main():
     pins[str(a.qualification_root / "fault-fixture.npz")] = qual["fixture_hash"]
     residual = a.actor_kind == "bounded-residual"
     option = a.course_kind == "contact-recovery"
+    resume = a.resume_mode is not None
+    resume_checkpoint = None
+    if resume:
+        if not option or a.resume_root is None or not a.resume_hash:
+            raise ValueError("explicit finite-option source required for continuation")
+        source_receipt = a.resume_root / "complete.json"
+        if digest(source_receipt) != a.resume_hash:
+            raise ValueError("exact completed source learner required")
+        source = json.loads(source_receipt.read_text())
+        if (
+            source.get("status") != "NATIVE_CONTACT24_RECOVERY60_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+            or source.get("training_seed") != 7607
+            or len(source["results"]) != 20
+        ):
+            raise ValueError("fixed20 finite-option pilot required")
+        pins.update(source["input_file_hashes"])
+        pins[str(source_receipt)] = a.resume_hash
+        ck = next(x for x in source["checkpoints"] if x["episode"] == 20)
+        resume_checkpoint = a.resume_root / ck["file"]
+        pins[str(resume_checkpoint)] = ck["hash"]
+        if a.resume_mode == "train132":
+            if not a.resume_proof or digest(a.resume_proof) != a.resume_proof_hash:
+                raise ValueError("paired actual resumed episode proof required before long run")
+            rp = json.loads(a.resume_proof.read_text())
+            if (
+                rp.get("status") != "NATIVE_OPTION_RESUMED_EPISODE_EXACT_NOT_TASK_PASS"
+                or rp.get("resume_checkpoint_hash") != ck["hash"]
+                or rp.get("all_state_and_trajectory_exact") is not True
+            ):
+                raise ValueError("complete paired resumed physical/optimizer proof required")
+            pins.update(rp["input_file_hashes"])
+            pins[str(a.resume_proof)] = a.resume_proof_hash
+            for relative in (
+                "scripts/rsi_train_native_contact_course.py",
+                "src/rosclaw_soccer/rsi/contact_option_resume.py",
+                "src/rosclaw_soccer/rsi/contact_option_rollout.py",
+            ):
+                if rp["qualified_source_hashes"].get(relative) != digest(Path(relative)):
+                    raise ValueError("same actual qualified continuation implementation required")
+        elif a.resume_proof or a.resume_proof_hash:
+            raise ValueError("boundary attempt does not inherit a long-run proof")
+    elif any((a.resume_root, a.resume_hash, a.resume_proof, a.resume_proof_hash)):
+        raise ValueError("resume arguments require explicit continuation intent")
     if option and (not residual or a.training_seed not in (None, 7607)):
         raise ValueError("new finite-option pilot requires frozen residual and fixed seed7607")
     if not option and a.training_seed == 7607:
@@ -159,6 +207,15 @@ def main():
         ((a.training_seed or (7607 if option else 7602)), 3e-4) if residual else (7601, 3e-5)
     )
     protocol = "native-contact24-recovery60-v1" if option else "native-contact24-v1"
+    if resume:
+        protocol = "native-contact24-recovery60-continuation-v1"
+    start_episode = 20 if resume else 0
+    end_episode = (21 if a.resume_mode == "qualify21" else 132) if resume else 20
+    saves = (
+        (21,) if a.resume_mode == "qualify21" else (36, 68, 132) if resume else (4, 8, 12, 16, 20)
+    )
+    before_counts = dict(source["counts"]) if resume else {}
+    prior_native_steps = source["native_steps"] if resume else 0
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -166,6 +223,14 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             protocol=protocol,
+            resume_mode=a.resume_mode,
+            resume_source_hash=a.resume_hash,
+            resume_checkpoint_hash=pins[str(resume_checkpoint)] if resume else None,
+            resume_proof_hash=a.resume_proof_hash,
+            start_episode=start_episode,
+            end_episode=end_episode,
+            counts_before_resume=before_counts,
+            prior_native_steps=prior_native_steps,
             recovery_proof_hash=a.recovery_proof_hash,
             recovery_fault_hash=a.recovery_fault_hash,
             actual_recovery_controls=60 if option else 0,
@@ -176,23 +241,30 @@ def main():
             worlds=32,
             course_lead=10,
             controls=24,
-            value_only_episodes=4,
-            ppo_episodes=16,
-            maximum_native_steps=537600 if option else 153600,
-            maximum_rollout_policy_rows=15360,
-            maximum_recovery_foundation_rows=38400 if option else 0,
-            maximum_optimizer_steps=320,
+            value_only_episodes=0 if resume else 4,
+            prior_value_only_episodes=4 if resume else 0,
+            ppo_episodes=end_episode - 4,
+            new_ppo_episodes=end_episode - start_episode if resume else 16,
+            maximum_native_steps=(end_episode - start_episode) * 32 * (84 if option else 24) * 10,
+            maximum_rollout_policy_rows=(end_episode - start_episode) * 32 * 24,
+            maximum_recovery_foundation_rows=(end_episode - start_episode) * 32 * 60
+            if option
+            else 0,
+            maximum_optimizer_steps=(end_episode - start_episode) * 16,
             epochs=4,
             minibatches=4,
             actor_abi=177,
             critic_abi=177,
-            fresh_critic=True,
-            fresh_optimizer=True,
+            fresh_critic=not resume,
+            fresh_optimizer=not resume,
+            optimizer_resumed=resume,
+            restored_native177_critic_and_Adam=resume,
             old_critic304_and_old_adam_loaded=False,
             actor_learning_rate=actor_lr,
             critic_learning_rate=3e-4,
             exploration_learning_rate=1e-5,
-            gaussian_std_initial=0.05,
+            gaussian_std_initial=None if resume else 0.05,
+            gaussian_std_restored=resume,
             gaussian_std_bounds=[0.01, 0.1],
             gamma=0.99,
             gae_lambda=0.95,
@@ -209,7 +281,7 @@ def main():
             if option
             else None,
             invalid_ended_world_samples_excluded_from_gradient_and_normalization=True,
-            checkpoint_episodes=[0, 4, 8, 12, 16, 20],
+            checkpoint_episodes=[start_episode, *saves],
             require_independent_full_native_exam_before_expansion=True,
             promotion_authorized=False,
             hardware_authorized=False,
@@ -239,6 +311,10 @@ def main():
 
         from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
         from rosclaw_soccer.rsi.contact_option_credit import contact_option_gae
+        from rosclaw_soccer.rsi.contact_option_resume import (
+            IDENTITY_KEYS,
+            restore_contact_option_boundary,
+        )
         from rosclaw_soccer.rsi.contact_option_rollout import finish_contact_option
         from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
         from rosclaw_soccer.rsi.native_contact_course import NativeContactCourse
@@ -338,6 +414,17 @@ def main():
         )
         if optimizer.state:
             raise ValueError("fresh Adam required")
+        if resume:
+            boundary = torch.load(resume_checkpoint, map_location="cpu", weights_only=True)
+            restored = restore_contact_option_boundary(
+                policy,
+                optimizer,
+                resume_checkpoint,
+                expected_hash=pins[str(resume_checkpoint)],
+                expected_identity={k: boundary[k] for k in IDENTITY_KEYS},
+            )
+            counts = restored["counts"]
+            env.episode = restored["course_episode"]
         initial_actor = {k: v.detach().cpu().clone() for k, v in policy.actor.state_dict().items()}
         initial_critic = {
             k: v.detach().cpu().clone() for k, v in policy.critic.state_dict().items()
@@ -349,7 +436,9 @@ def main():
         def checkpoint(episode):
             file = a.output / f"native-contact-episode{episode}.pt"
             value = dict(
-                schema="soccer.rsi.native_contact24_recovery60_residual_ppo.v1"
+                schema="soccer.rsi.native_contact24_recovery60_continuation_ppo.v1"
+                if resume
+                else "soccer.rsi.native_contact24_recovery60_residual_ppo.v1"
                 if option
                 else "soccer.rsi.native_contact24_residual_ppo.v1"
                 if residual
@@ -358,6 +447,14 @@ def main():
                 adapter_config=adapter_config,
                 adapter_proof_hash=a.adapter_proof_hash,
                 protocol=protocol,
+                resume_checkpoint_hash=pins[str(resume_checkpoint)] if resume else None,
+                resume_source_hash=a.resume_hash,
+                resume_proof_hash=a.resume_proof_hash,
+                resume_mode=a.resume_mode,
+                counts_before_resume=before_counts,
+                prior_native_steps=prior_native_steps,
+                new_native_steps=env.native_steps,
+                aggregate_native_steps=prior_native_steps + env.native_steps,
                 recovery_proof_hash=a.recovery_proof_hash,
                 recovery_fault_hash=a.recovery_fault_hash,
                 episode_count=episode,
@@ -382,7 +479,8 @@ def main():
                 cuda_rng=[v.cpu() for v in torch.cuda.get_rng_state_all()],
                 counts=dict(counts),
                 course_episode=env.episode,
-                fresh_optimizer=True,
+                fresh_optimizer=not resume,
+                optimizer_resumed=resume,
                 activation_ceiling="SIM_ONLY",
                 promotion_authorized=False,
                 hardware_authorized=False,
@@ -396,9 +494,9 @@ def main():
                 raise ValueError("checkpoint safe readback differs")
             checkpoints.append(dict(episode=episode, file=file.name, hash=digest(file)))
 
-        checkpoint(0)
+        checkpoint(start_episode)
         results = []
-        for episode in range(20):
+        for episode in range(start_episode, end_episode):
             env.reset()
             history = []
             recovery_history = []
@@ -587,7 +685,7 @@ def main():
             write_once(folder / "result.json", row)
             results.append(row)
             print(json.dumps({k: v for k, v in row.items() if k != "minibatches"}), flush=True)
-            if episode + 1 in (4, 8, 12, 16, 20):
+            if episode + 1 in saves:
                 checkpoint(episode + 1)
         actor_changed = [
             k
@@ -613,7 +711,13 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="NATIVE_CONTACT24_RECOVERY60_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+                status=(
+                    "NATIVE_OPTION_BOUNDARY_ATTEMPT_REQUIRES_PAIRED_COMPARISON"
+                    if a.resume_mode == "qualify21"
+                    else "NATIVE_OPTION_CONTINUATION132_REQUIRES_FULL_EXAM"
+                )
+                if resume
+                else "NATIVE_CONTACT24_RECOVERY60_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
                 if option
                 else "NATIVE_CONTACT24_RESIDUAL_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
                 if residual
@@ -628,6 +732,16 @@ def main():
                 actor_changed=actor_changed,
                 critic_changed=critic_changed,
                 native_steps=env.native_steps,
+                counts_before_resume=before_counts,
+                prior_native_steps=prior_native_steps,
+                aggregate_native_steps=prior_native_steps + env.native_steps,
+                new_optimizer_updates=counts["optimizer_completed"]
+                - before_counts.get("optimizer_completed", 0),
+                resume_checkpoint_hash=pins[str(resume_checkpoint)] if resume else None,
+                resume_source_hash=a.resume_hash,
+                resume_proof_hash=a.resume_proof_hash,
+                resume_mode=a.resume_mode,
+                end_episode=end_episode,
                 counts=counts,
                 actor_abi=177,
                 critic_abi=177,
