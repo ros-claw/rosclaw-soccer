@@ -20,6 +20,7 @@ def main():
         parser.add_argument("--" + key, type=Path, required=True)
     for key in ("baseline-hash", "starts-hash", "learner-hash", "expected-head"):
         parser.add_argument("--" + key, required=True)
+    parser.add_argument("--reference-scope", choices=("whole-body", "legs"), default="whole-body")
     args = parser.parse_args()
     if (
         args.output.exists()
@@ -79,6 +80,7 @@ def main():
             full_reference_horizon=True,
             original_PD_and_model_unchanged=True,
             privileged_reference=True,
+            reference_scope=args.reference_scope,
             target_range_guard=(
                 "no introduced or worsened excess relative to original PD target; no clipping"
             ),
@@ -209,7 +211,11 @@ def main():
                     ):
                         raise ValueError("measured input/history differs")
                     target, gate = reference_contact_target(
-                        base, plan["joint"][frame], obs[168:177], gain=gain
+                        base,
+                        plan["joint"][frame],
+                        obs[168:177],
+                        gain=gain,
+                        scope=args.reference_scope,
                     )
                     bounds = model.jnt_range[layout.joints]
                     if worsens_target_range(base, target, bounds):

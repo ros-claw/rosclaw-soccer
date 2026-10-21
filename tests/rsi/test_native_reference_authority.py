@@ -36,3 +36,14 @@ def test_original_pd_range_excess_not_repaired_or_increased():
     assert worsens_target_range(base, candidate, bounds)
     candidate[0], candidate[1] = 1.1, -1.01
     assert worsens_target_range(base, candidate, bounds)
+
+
+def test_leg_scope_leaves_all_trunk_and_arm_targets_unchanged():
+    base = np.arange(29, dtype=np.float32) / 100
+    target, _ = reference_contact_target(
+        base, base + 1, np.r_[0.2, np.zeros(8)], gain=0.5, scope="legs"
+    )
+    assert np.array_equal(target[12:], base[12:])
+    np.testing.assert_allclose(target[:12] - base[:12], 0.25, atol=3e-8)
+    with pytest.raises(ValueError):
+        reference_contact_target(base, base, np.zeros(9), gain=0.0, scope="unknown")
