@@ -4,11 +4,17 @@ External research assets/implementations are injected after runner provenance
 checks. No policy, driver, automatic reset, observation padding, or reward here.
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+
+
+@dataclass
+class NativeStepCounter:
+    native_steps: int = 0
 
 
 class PaidNativeEpisode:
@@ -49,7 +55,12 @@ class PaidNativeEpisode:
             )
         ):
             raise ValueError("qualified standard-ball29motor episode required")
-        self.frame, self.done, self.native_steps = 0, True, 0
+        self.frame, self.done = 0, True
+        self.work = NativeStepCounter()
+
+    @property
+    def native_steps(self) -> int:
+        return self.work.native_steps
 
     def reset(self, *, ball: np.ndarray, velocity: np.ndarray, goal: np.ndarray) -> None:
         import mujoco
@@ -173,7 +184,7 @@ class PaidNativeEpisode:
                 raise ValueError("nonfinite native PD torque; no repair")
             d.ctrl[self.layout.ai] = torque
             mujoco.mj_step(m, d)
-            self.native_steps += 1
+            self.work.native_steps += 1
             if tuple(int(x.number) for x in d.warning) != self.warning or not np.array_equal(
                 d.actuator_force[self.layout.ai], torque
             ):
