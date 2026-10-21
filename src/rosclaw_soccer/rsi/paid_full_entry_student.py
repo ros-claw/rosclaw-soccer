@@ -436,7 +436,7 @@ def validate_full_entry_state(
 
 
 class FrozenFullEntryActor(torch.nn.Module):
-    def __init__(self, base: Any, residual: FullEntryContactResidual, scale: torch.Tensor) -> None:
+    def __init__(self, base: Any, residual: torch.nn.Module, scale: torch.Tensor) -> None:
         super().__init__()
         if (
             scale.shape != (29,)
