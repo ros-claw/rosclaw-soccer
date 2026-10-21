@@ -126,3 +126,58 @@ def test_invalid_drop_is_rejected_in_scratch_without_any_live_write():
         practice_ball_drop(ep, foot="left")
     for k in before:
         np.testing.assert_array_equal(getattr(ep.env.data, k), before[k])
+
+
+def test_collector_restarts_only_neural_memory_and_records_executed_transition_history():
+    """Unit test of collector plumbing, not a physical rollout or skill proof."""
+    from pathlib import Path
+    from threading import Lock
+
+    import torch
+
+    from rosclaw_soccer.rsi.paid_research_bench import PaidResearchBench
+
+    bench = PaidResearchBench.__new__(PaidResearchBench)
+    bench.lock, bench.neural_rows = Lock(), 0
+    ep = SimpleNamespace(
+        done=False,
+        frame=0,
+        clip=SimpleNamespace(length=14, name="left", path=Path("left.npz")),
+        last_action=np.arange(29, dtype=np.float32) * 0.03,
+        initial={"time": np.array(9.0)},
+        goal=np.array([6.0, 0, 0.11]),
+    )
+
+    def observation():
+        obs = np.zeros(160, np.float32)
+        obs[125:154] = ep.last_action
+        return obs
+
+    def step(action):
+        q = np.zeros((10, 43))
+        q[:, 2:4] = [0.8, 1]
+        q[:, 36:39] = [0.8, 0.15, 0.11]
+        ep.last_action = action.copy()
+        ep.frame += 1
+        ep.done = ep.frame == ep.clip.length
+        return dict(qpos=q, qvel=np.zeros((10, 41)), forces=np.zeros((10, 3)), body_failed=False)
+
+    class Actor:
+        def __call__(self, obs, state):
+            return torch.full((1, 1, 29), 0.5), (state[0] + 1, state[1] + 2)
+
+    ep.observation, ep.step = observation, step
+    previous = ep.last_action.copy()
+    raw, row = bench.collect_current(ep, Actor(), transition_controls=12)
+    assert bench.neural_rows == 14 and row["composite_teacher"]
+    np.testing.assert_array_equal(raw["NN_obs"][0, 125:154], previous)
+    np.testing.assert_array_equal(raw["NN_obs"][1:, 125:154], raw["NN_action"][:-1])
+    assert not raw["NN_h_before"][0].any() and not raw["NN_c_before"][0].any()
+    np.testing.assert_array_equal(raw["NN_h_after"][:-1], raw["NN_h_before"][1:])
+    for i in range(12):
+        u = (i + 1) / 12
+        weight = 10 * u**3 - 15 * u**4 + 6 * u**5
+        np.testing.assert_array_equal(
+            raw["NN_action"][i], ((1 - weight) * previous + weight * 0.5).astype(np.float32)
+        )
+    np.testing.assert_array_equal(raw["NN_action"][12:], raw["NN_nominal_action"][12:])
