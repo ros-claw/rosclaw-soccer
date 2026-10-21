@@ -39,28 +39,43 @@ def main():
         if not a.wait_for_completion or time.monotonic() > deadline:
             raise TimeoutError("closed exam required")
         time.sleep(10)
-    from rosclaw_soccer.rsi.paid_ancestor_study import load_ancestor_plan
+    from rosclaw_soccer.rsi.paid_first_bank import (
+        AUDIT_STATUS,
+        EXAM_STATUS,
+        load_motor_exam_plan,
+    )
+    from rosclaw_soccer.rsi.paid_first_bank import (
+        STATUS as ORIGINAL_PLAN_STATUS,
+    )
 
     rp, dp = a.root / "complete.json", a.root / "declaration.json"
     r, d = [json.loads(f.read_text()) for f in (rp, dp)]
-    _, plan = load_ancestor_plan(Path(d["plan_root"]), d["plan_hash"])
+    plan_receipt, plan = load_motor_exam_plan(Path(d["plan_root"]), d["plan_hash"])
+    original_bank = plan_receipt["status"] == ORIGINAL_PLAN_STATUS
+    bank = plan.get("bank", "train")
+    size = len(plan["cases"])
     schedule = (
         ("student", "student", "student") if a.first_enabled else ("base", "student", "student")
     )
     if (
         (a.root / "failed.json").exists()
-        or r["status"] != "PAID_ROUTER_TRAIN20_WORLDS_CLOSED_PENDING_AUDIT"
+        or r["status"]
+        != (EXAM_STATUS if original_bank else "PAID_ROUTER_TRAIN20_WORLDS_CLOSED_PENDING_AUDIT")
         or any(o["source_head"] != a.producer_head for o in (r, d))
         or r["declaration_hash"] != digest(dp)
         or r["plan_hash"] != d["plan_hash"]
         or r["student_hash"] != d["student_hash"]
         or d["cases"] != plan["cases"]
-        or [w["case"] for w in r["worlds"]] != list(range(20))
+        or [w["case"] for w in r["worlds"]] != list(range(size))
         or d["schedule"] != list(schedule)
         or d.get("first_enabled", False) is not a.first_enabled
         or d["repeats"] != 2
         or r["repeats_exact"] is not True
-        or any(o["bank"] != "train" or o["Fresh_fit_rows"] != 0 for o in (r, d))
+        or any(o["bank"] != bank or o["Fresh_fit_rows"] != 0 for o in (r, d))
+        or original_bank
+        and (not a.first_enabled or any(o.get("world_bank_kind") != "original16" for o in (r, d)))
+        or not original_bank
+        and any("world_bank_kind" in o for o in (r, d))
         or any(
             o[k] is not False
             for o in (r, d)
@@ -161,7 +176,7 @@ def main():
             or counts["native"] != replay.native_steps
             or counts["neural"] != r["actual_neural_rows"]
             or counts["own_neural"] != counts["neural"]
-            or counts["worlds"] != 40
+            or counts["worlds"] != 2 * size
             or any(str(f) not in pins for f in a.root.rglob("*.npz"))
             or ancestor_outcome(worlds) != r["summary"]
         ):
@@ -171,7 +186,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="PAID_ROUTER_TRAIN20_OWN_NN_AND_ALL_PHASE_PHYSICS_AUDIT_PASS",
+                status=AUDIT_STATUS
+                if original_bank
+                else "PAID_ROUTER_TRAIN20_OWN_NN_AND_ALL_PHASE_PHYSICS_AUDIT_PASS",
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 source_hash=digest(rp),
@@ -184,12 +201,13 @@ def main():
                 own_trajectory_neural_rows=counts["own_neural"],
                 first_kick_replayed=True,
                 independent_whole_world_replay=False,
-                bank="train",
+                bank=bank,
                 Fresh_fit_rows=0,
                 optimizer_updates=0,
                 hardware_authorized=False,
                 promotion_authorized=False,
                 goal_complete=False,
+                **(dict(world_bank_kind="original16") if original_bank else {}),
             ),
         )
     except Exception as error:

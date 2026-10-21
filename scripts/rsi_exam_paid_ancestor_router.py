@@ -40,9 +40,21 @@ def main():
         if not a.wait_for_student or time.monotonic() > deadline:
             raise TimeoutError("closed student required")
         time.sleep(10)
-    from rosclaw_soccer.rsi.paid_ancestor_study import load_ancestor_plan
+    from rosclaw_soccer.rsi.paid_first_bank import (
+        EXAM_STATUS,
+        load_motor_exam_plan,
+    )
+    from rosclaw_soccer.rsi.paid_first_bank import (
+        STATUS as ORIGINAL_PLAN_STATUS,
+    )
 
-    plan_receipt, plan = load_ancestor_plan(a.plan_root, a.plan_hash)
+    plan_receipt, plan = load_motor_exam_plan(a.plan_root, a.plan_hash)
+    original_bank = plan_receipt["status"] == ORIGINAL_PLAN_STATUS
+    bank = plan.get("bank", "train")
+    if original_bank and not a.first_enabled:
+        raise ValueError(
+            "original16 full-entry protocol requires explicit first-enabled commitment"
+        )
     training = json.loads(rp.read_text())
     pins = dict(plan_receipt["input_file_hashes"])
     for path, h in training["input_file_hashes"].items():
@@ -73,11 +85,12 @@ def main():
             cases=plan["cases"],
             schedule=schedule,
             repeats=2,
-            bank="train",
+            bank=bank,
             Fresh_fit_rows=0,
             hardware_authorized=False,
             promotion_authorized=False,
             **(dict(first_enabled=True) if a.first_enabled else {}),
+            **(dict(world_bank_kind="original16") if original_bank else {}),
         ),
     )
     bench = None
@@ -158,7 +171,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="PAID_ROUTER_TRAIN20_WORLDS_CLOSED_PENDING_AUDIT",
+                status=EXAM_STATUS
+                if original_bank
+                else "PAID_ROUTER_TRAIN20_WORLDS_CLOSED_PENDING_AUDIT",
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 declaration_hash=digest(a.output / "declaration.json"),
@@ -169,12 +184,13 @@ def main():
                 repeats_exact=True,
                 actual_native_steps=bench.native_steps,
                 actual_neural_rows=bench.neural_rows,
-                bank="train",
+                bank=bank,
                 Fresh_fit_rows=0,
                 optimizer_updates=0,
                 hardware_authorized=False,
                 promotion_authorized=False,
                 goal_complete=False,
+                **(dict(world_bank_kind="original16") if original_bank else {}),
             ),
         )
     except Exception as error:
