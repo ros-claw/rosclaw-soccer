@@ -14,6 +14,11 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--ball-placement",
+        choices=("legacy-subset-full-v0", "body-bound-v1"),
+        default="legacy-subset-full-v0",
+    )
     for k in ("reference-root", "qualification-root", "export-root", "output"):
         p.add_argument("--" + k, type=Path, required=True)
     for k in ("qualification-hash", "export-hash", "expected-head"):
@@ -57,6 +62,7 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             source_split="TRAIN8_ONLY",
+            ball_placement_protocol=a.ball_placement,
             worlds=64,
             seed=5601,
             maximum_physics_steps=0,
@@ -100,6 +106,7 @@ def main():
             num_envs=64,
             seed=5601,
             balanced_initial_sources=True,
+            ball_placement_protocol=a.ball_placement,
         )
         cfg.commands["motion"].sampling_mode = "uniform"
         env = FootOnlyMotionEnv(cfg=cfg, device="cuda:0", render_mode=None)
@@ -177,6 +184,7 @@ def main():
                 worlds=64,
                 seed=5601,
                 source_split="train",
+                ball_placement_protocol=a.ball_placement,
                 bindings=bindings,
                 physics_steps=0,
                 neural_calls=0,

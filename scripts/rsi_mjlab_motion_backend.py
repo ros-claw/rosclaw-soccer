@@ -18,7 +18,7 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import ContactMatch
-from mjlab.utils.lab_api.math import quat_apply_inverse
+from mjlab.utils.lab_api.math import quat_apply_inverse, sample_uniform
 from src.tasks.soccer.config.g1.training_env_cfgs import unitree_g1_stage1_env_cfg
 from src.tasks.soccer.mdp.shooter_commands import (
     MultiMotionSoccerCommand,
@@ -86,6 +86,69 @@ class BalancedInitialMotionCommand(ExplicitBoundaryMotionCommand):
         self.time_steps[env_ids] = 0
 
 
+class BodyBoundBallPlacementMixin:
+    """New reset protocol: subset anchor index may only index the subset view.
+
+    Legacy upstream code uses this index on full30 data, where torso subset7
+    selects right hip pitch full7 instead of torso full15. Never silently change
+    old experiment initial conditions; this implementation is explicit opt-in.
+    """
+
+    def _compute_soccer_ball_positions(self, env_ids):
+        if self.cfg.fixed_ball_pos is not None:
+            return super()._compute_soccer_ball_positions(env_ids)
+        index = self.motion_anchor_body_index
+        full_index = int(self.motion._body_indexes[index])
+        if self.robot.body_names[full_index] != self.cfg.anchor_body_name:
+            raise ValueError("motion subset anchor is not bound to the named physical body")
+        n = len(env_ids)
+        source = self.motion_idx[env_ids]
+        last = (self.motion_length[env_ids] - 1).clamp(min=0)
+        # Correct VIEW: index is a cfg.body_names subset index, not a full index.
+        positions = self.motion.body_pos_w
+        first_anchor = positions[
+            source, torch.zeros(n, dtype=torch.long, device=self.device), index
+        ]
+        last_anchor = positions[source, last, index]
+        vector = last_anchor[:, :2] - first_anchor[:, :2]
+        square = torch.sum(vector * vector, dim=-1)
+        radius = torch.sqrt(square.clamp(min=1e-12)) + self.curve_radius_offset[env_ids]
+        valid = square > 1e-12
+        direction = torch.where(
+            valid.unsqueeze(-1),
+            vector / torch.sqrt(square.clamp(min=1e-12)).unsqueeze(-1),
+            torch.tensor([1.0, 0.0], device=self.device).expand(n, -1),
+        )
+        arc = float(self._target_arc_angle)
+        if arc > 0.0:
+            angle = torch.atan2(vector[:, 1], vector[:, 0])
+            offset = sample_uniform(-arc, arc, (n,), device=self.device)
+            angle = torch.where(valid, angle + offset, angle)
+            direction = torch.stack((torch.cos(angle), torch.sin(angle)), dim=-1)
+        self.soccer_ball_pos[env_ids, :2] = first_anchor[:, :2] + radius[:, None] * direction
+        self.soccer_ball_pos[env_ids, 2] = 0.11
+
+
+class BodyBoundMotionCommand(BodyBoundBallPlacementMixin, ExplicitBoundaryMotionCommand):
+    pass
+
+
+class BodyBoundBalancedMotionCommand(BodyBoundBallPlacementMixin, BalancedInitialMotionCommand):
+    pass
+
+
+@dataclass(kw_only=True)
+class BodyBoundMotionCfg(ExplicitBoundaryMotionCfg):
+    def build(self, env):
+        return BodyBoundMotionCommand(self, env)
+
+
+@dataclass(kw_only=True)
+class BodyBoundBalancedMotionCfg(ExplicitBoundaryMotionCfg):
+    def build(self, env):
+        return BodyBoundBalancedMotionCommand(self, env)
+
+
 @dataclass(kw_only=True)
 class BalancedInitialMotionCfg(ExplicitBoundaryMotionCfg):
     def build(self, env):
@@ -130,7 +193,13 @@ class ExplicitBoundaryMotionEnv(ManagerBasedRlEnv):
 
 
 def make_motion_training_cfg(
-    *, motion_dir, num_envs, seed, motion_glob=TRAIN_MOTION_GLOB, balanced_initial_sources=False
+    *,
+    motion_dir,
+    num_envs,
+    seed,
+    motion_glob=TRAIN_MOTION_GLOB,
+    balanced_initial_sources=False,
+    ball_placement_protocol="legacy-subset-full-v0",
 ):
     if (
         type(num_envs) is not int
@@ -140,6 +209,8 @@ def make_motion_training_cfg(
     ):
         raise ValueError("bounded explicit simulation batch and seed required")
     expected = motion_names_for_pattern(motion_glob)
+    if ball_placement_protocol not in ("legacy-subset-full-v0", "body-bound-v1"):
+        raise ValueError("explicit legacy or named-body ball placement protocol required")
     if type(balanced_initial_sources) is not bool or (
         balanced_initial_sources and (motion_glob != TRAIN_MOTION_GLOB or num_envs % 8 != 0)
     ):
@@ -153,9 +224,14 @@ def make_motion_training_cfg(
     if not isinstance(original, MultiMotionSoccerCommandCfg):
         raise ValueError("exact qualified external motion command configuration required")
     values = {f.name: getattr(original, f.name) for f in fields(original)}
-    command = (BalancedInitialMotionCfg if balanced_initial_sources else ExplicitBoundaryMotionCfg)(
-        **values
+    command_type = (
+        BalancedInitialMotionCfg if balanced_initial_sources else ExplicitBoundaryMotionCfg
     )
+    if ball_placement_protocol == "body-bound-v1":
+        command_type = (
+            BodyBoundBalancedMotionCfg if balanced_initial_sources else BodyBoundMotionCfg
+        )
+    command = command_type(**values)
     command.motion_dir = str(motion_dir)
     command.motion_glob = motion_glob
     command.motion_origin_offset = (0.0, 0.0, 0.0)
