@@ -79,3 +79,20 @@ def successor_student_config(seed: int) -> dict[str, Any]:
         DEV_episodes_fit=0,
         memory_handoff="reset_for_kick_carry_own_base_for_stand",
     )
+
+
+def staged_successor_config(seed: int) -> dict[str, Any]:
+    config = successor_student_config(seed)
+    config.update(
+        protocol="successor-contact-student-v2",
+        seed=2026102300 + seed,
+        gate_projection=False,
+        gate_training_steps=512,
+        head_training_steps=1024,
+        gate_positive_core_rad=0.005,
+        gate_hard_negative_rows=256,
+        gate_strategy="ranking_hard_negatives_then_CPU_bias_calibration_and_freeze",
+        calibration_margin=0.1,
+        gate_frozen_during_head_training=True,
+    )
+    return config

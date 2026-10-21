@@ -15,6 +15,7 @@ def main():
     p.add_argument("--data-root", type=Path, required=True)
     p.add_argument("--data-hash", required=True)
     p.add_argument("--seed", type=int, choices=(0, 1, 2), required=True)
+    p.add_argument("--staged", action="store_true")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -71,9 +72,12 @@ def main():
 
         from rosclaw_soccer.rsi.paid_contact_residual import ContactResidual
         from rosclaw_soccer.rsi.paid_gate_retention import project_contact_gate
-        from rosclaw_soccer.rsi.paid_successor_features import successor_student_config
+        from rosclaw_soccer.rsi.paid_successor_features import (
+            staged_successor_config,
+            successor_student_config,
+        )
 
-        config = successor_student_config(a.seed)
+        config = staged_successor_config(a.seed) if a.staged else successor_student_config(a.seed)
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
         visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
@@ -172,6 +176,47 @@ def main():
             return value
 
         initial = {k: cpu(v) for k, v in model.state_dict().items()}
+        gate_optimizer = None
+        calibration = None
+        if a.staged:
+            from rosclaw_soccer.rsi.paid_successor_calibration import calibrate_successor_gate
+
+            counts.update(
+                gate_optimizer_updates=0, head_optimizer_updates=0, gate_training_forward_rows=0
+            )
+            core_ids = np.flatnonzero(teacher & (np.abs(y).max(axis=1) > 0.005))
+            if not len(core_ids):
+                raise ValueError("actual material teacher correction support required")
+            model.net.requires_grad_(False)
+            gate_optimizer = torch.optim.Adam(model.gate.parameters(), lr=0.0003)
+            for _step in range(512):
+                with torch.no_grad():
+                    hard = model.gate(negative)[:, 0].topk(min(256, len(negative))).indices
+                    counts["gate_training_forward_rows"] += len(negative)
+                pos = rng.choice(core_ids, 512, replace=True)
+                random_neg = torch.from_numpy(rng.integers(0, len(negative), size=256)).to("cuda:0")
+                px = features[torch.from_numpy(pos).to("cuda:0")]
+                nx = negative[torch.cat((hard, random_neg))]
+                pl, nl = model.gate(px)[:, 0], model.gate(nx)[:, 0]
+                ranking = F.softplus(0.2 - pl + nl.max()).mean()
+                classification = F.binary_cross_entropy_with_logits(pl, torch.ones_like(pl))
+                classification += F.binary_cross_entropy_with_logits(nl, torch.zeros_like(nl))
+                loss = ranking + 0.1 * classification
+                gate_optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                norm = torch.nn.utils.clip_grad_norm_(model.gate.parameters(), 1.0)
+                if not torch.isfinite(loss) or not torch.isfinite(norm):
+                    raise ValueError("nonfinite gate ranking training")
+                gate_optimizer.step()
+                counts["optimizer_updates"] += 1
+                counts["gate_optimizer_updates"] += 1
+                counts["gate_training_forward_rows"] += len(px) + len(nx)
+            calibration = calibrate_successor_gate(model.gate, negative)
+            model.gate.requires_grad_(False)
+            model.gate.zero_grad(set_to_none=True)
+            model.net.requires_grad_(True)
+            optimizer = torch.optim.Adam(model.net.parameters(), lr=0.0003)
+            print(json.dumps(dict(stage="gate_calibrated", calibration=calibration)), flush=True)
         history = []
         for epoch in range(256):
             last_loss = None
@@ -184,6 +229,9 @@ def main():
                 )
                 pp, pl = model.forward_with_gate(features[pindex])
                 npred, nl = model.forward_with_gate(features[nindex])
+                if a.staged:
+                    pp = torch.where(pl >= 0, pp, torch.zeros_like(pp))
+                    npred = torch.where(nl >= 0, npred, torch.zeros_like(npred))
                 mask = torch.from_numpy(active[pos]).to("cuda:0")
                 weights = torch.where(mask, 5.0, 1.0)
                 imitation = (weights[:, None] * (pp - targets[pindex]).square()).mean()
@@ -201,21 +249,30 @@ def main():
                 previous = {k: p.detach().clone() for k, p in model.gate.named_parameters()}
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                norm = torch.nn.utils.clip_grad_norm_(
+                    [p for p in model.parameters() if p.requires_grad], 1.0
+                )
                 if not torch.isfinite(norm) or any(
-                    p.grad is None or not torch.isfinite(p.grad).all() for p in model.parameters()
+                    p.grad is None or not torch.isfinite(p.grad).all()
+                    for p in model.parameters()
+                    if p.requires_grad
                 ):
                     raise ValueError("nonfinite or missing plastic-head gradient")
                 optimizer.step()
-                projected = project_contact_gate(model.gate, previous, negative)
+                projected = (
+                    None if a.staged else project_contact_gate(model.gate, previous, negative)
+                )
                 counts["optimizer_updates"] += 1
                 counts["positive_forward_rows"] += 512
                 counts["retention_forward_rows"] += 512
-                counts["projection_calls"] += 1
-                counts["projection_forward_rows"] += projected["gate_forward_rows"]
-                counts["projection_gate_evaluations"] += projected["gate_evaluations"]
-                fraction = str(projected["accepted_fraction"])
-                projection_histogram[fraction] = projection_histogram.get(fraction, 0) + 1
+                if a.staged:
+                    counts["head_optimizer_updates"] += 1
+                else:
+                    counts["projection_calls"] += 1
+                    counts["projection_forward_rows"] += projected["gate_forward_rows"]
+                    counts["projection_gate_evaluations"] += projected["gate_evaluations"]
+                    fraction = str(projected["accepted_fraction"])
+                    projection_histogram[fraction] = projection_histogram.get(fraction, 0) + 1
                 last_loss = float(loss.detach())
             if (epoch + 1) % 32 == 0:
                 event = dict(
@@ -246,13 +303,20 @@ def main():
             )
         state = cpu(
             dict(
-                schema="soccer.successor_contact_student.v1",
+                schema="soccer.successor_contact_student.v2"
+                if a.staged
+                else "soccer.successor_contact_student.v1",
                 source_head=a.expected_head,
                 declaration_hash=digest(a.output / "declaration.json"),
                 config=config,
                 residual=candidate.state_dict(),
                 initial_residual=initial,
                 optimizer=optimizer.state_dict(),
+                **(
+                    dict(gate_optimizer=gate_optimizer.state_dict(), gate_calibration=calibration)
+                    if a.staged
+                    else {}
+                ),
                 counts=counts.copy(),
                 projection_histogram=projection_histogram,
                 retention_certificate=metric,
@@ -290,6 +354,7 @@ def main():
                     not torch.equal(initial[k], v) for k, v in candidate.state_dict().items()
                 ),
                 base_parameters_in_optimizer=0,
+                **(dict(gate_calibration=calibration) if a.staged else {}),
                 DEV_episodes_fit=0,
                 own_native_steps=0,
                 hardware_authorized=False,
