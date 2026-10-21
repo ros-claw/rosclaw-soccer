@@ -3,6 +3,7 @@ import pytest
 import torch
 from test_paid_successor_features import fixture
 
+from rosclaw_soccer.rsi.paid_ancestor_router import AncestralResidualRouter
 from rosclaw_soccer.rsi.paid_contact_residual import DecoupledContactResidual
 from rosclaw_soccer.rsi.paid_progressive_contact import ProgressiveContactResidual
 from rosclaw_soccer.rsi.paid_progressive_features import progressive_features
@@ -95,3 +96,20 @@ def test_own_causal_features_support_current_frozen_compound_parent():
         base, compound, raw, torch.ones(29), recorded_policy="parent", protect=True
     )
     assert not target.any() and np.array_equal(prior, raw["NN_action"])
+
+
+def test_features_use_the_actual_frozen_competence_router_not_its_ungated_parent():
+    base, parent, raw = data()
+    router = (
+        AncestralResidualRouter(ProgressiveContactResidual(parent, DecoupledContactResidual()))
+        .eval()
+        .requires_grad_(False)
+    )
+    with torch.no_grad():
+        router.gate[-1].bias.fill_(1.0)
+    raw["NN_nominal_action"][:] = 0
+    raw["NN_action"][:] = 0
+    _, target, prior = progressive_features(
+        base, router, raw, torch.ones(29), recorded_policy="parent", protect=True
+    )
+    assert not target.any() and not prior.any()

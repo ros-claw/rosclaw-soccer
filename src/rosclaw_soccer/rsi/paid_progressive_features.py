@@ -5,13 +5,14 @@ from typing import Any, Literal
 import numpy as np
 import torch
 
+from rosclaw_soccer.rsi.paid_ancestor_router import AncestralResidualRouter
 from rosclaw_soccer.rsi.paid_contact_residual import ContactResidual, DecoupledContactResidual
 from rosclaw_soccer.rsi.paid_progressive_contact import ProgressiveContactResidual
 
 
 def progressive_features(
     base: Any,
-    parent: ContactResidual | ProgressiveContactResidual,
+    parent: ContactResidual | ProgressiveContactResidual | AncestralResidualRouter,
     raw: dict[str, np.ndarray],
     scale: torch.Tensor,
     *,
@@ -30,7 +31,12 @@ def progressive_features(
         recorded_policy not in ("base", "parent")
         or type(protect) is not bool
         or type(parent)
-        not in (ContactResidual, DecoupledContactResidual, ProgressiveContactResidual)
+        not in (
+            ContactResidual,
+            DecoupledContactResidual,
+            ProgressiveContactResidual,
+            AncestralResidualRouter,
+        )
         or parent.training
         or any(p.requires_grad or p.device.type != "cpu" for p in parent.parameters())
         or scale.shape != (29,)
