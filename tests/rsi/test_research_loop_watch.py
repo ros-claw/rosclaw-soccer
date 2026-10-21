@@ -118,7 +118,8 @@ def test_collect_uses_read_only_sqlite_and_does_not_create_missing_ledger(tmp_pa
     assert (tmp_path / "campaign.sqlite").read_bytes() == data
 
 
-def test_serial_checkpoints_are_progress_not_verified_outcomes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure_name", ["failure.json", "failed.json"])
+def test_serial_checkpoints_are_progress_not_verified_outcomes(tmp_path, monkeypatch, failure_name):
     from types import SimpleNamespace
 
     monkeypatch.setattr(
@@ -138,7 +139,7 @@ def test_serial_checkpoints_are_progress_not_verified_outcomes(tmp_path, monkeyp
     assert result["last_ledger_change_unix"] == 1400
     assert not result["outcome_verified"] and not result["goal_complete"]
     assert not result["artifacts"]["contents_verified"]
-    (tmp_path / "failure.json").write_text("{}")
+    (tmp_path / failure_name).write_text("{}")
     assert assess(collect("example.service", tmp_path), result, now=1401)["phase"] == "FAILED"
 
 
