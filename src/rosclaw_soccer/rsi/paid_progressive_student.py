@@ -435,5 +435,12 @@ def load_paid_student(policy: Path, **kwargs: Any) -> tuple[Any, dict[str, Any]]
 
     if status == AUDITED_STATUS:
         return load_compact_student(policy, **kwargs)
+    from rosclaw_soccer.rsi.paid_active_compact_student import (
+        ACTIVE_STATUS,
+        load_active_compact_student,
+    )
+
+    if status == ACTIVE_STATUS:
+        return load_active_compact_student(policy, **kwargs)
     loader = load_progressive_student if status == TRAINED_STATUS else load_successor_student
     return loader(policy, **kwargs)

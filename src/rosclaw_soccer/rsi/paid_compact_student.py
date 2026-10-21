@@ -210,10 +210,16 @@ def load_compact_fit(
 
 
 def audit_compact_batch1(
-    model: CompactSupportedHead, receipt: dict[str, Any], z: dict[str, np.ndarray]
+    model: CompactSupportedHead,
+    receipt: dict[str, Any],
+    z: dict[str, np.ndarray],
+    *,
+    active_only: bool = False,
 ) -> dict[str, Any]:
     """Check actual inference shape, not training gains or CPU batch16 outputs."""
-    protected = opened = active_rows = 0
+    if type(active_only) is not bool:
+        raise ValueError("explicit immutable support ablation required")
+    protected = opened = active_rows = inactive_teacher = 0
     error = 0.0
     timings = []
     with torch.no_grad():
@@ -226,14 +232,18 @@ def audit_compact_batch1(
             timings.append(time.perf_counter() - t0)
             if not torch.isfinite(pred).all() or (pred.abs() > 0.2).any():
                 raise ValueError("finite original-authority runtime output required")
-            if z["teacher"][i]:
+            centre = z["active"][i] if active_only else z["teacher"][i]
+            if centre:
                 if float(gain) != 1.0:
                     raise ValueError("all teacher centres must open in runtime batch1")
                 opened += 1
             else:
                 if gain.count_nonzero() or not torch.equal(pred, prior):
                     raise ValueError("all old anchors must preserve exact parent in batch1")
-                protected += 1
+                if z["teacher"][i]:
+                    inactive_teacher += 1
+                else:
+                    protected += 1
             if z["active"][i]:
                 target = torch.from_numpy(z["target"][i].copy()).reshape(1, 29)
                 error += float((pred - prior - target).square().sum())
@@ -242,7 +252,8 @@ def audit_compact_batch1(
     c = receipt["retention_certificate"]
     if (
         protected != c["protected_rows_exact_parent"]
-        or opened != c["teacher_centres_gain_exact_one"]
+        or opened
+        != (int(z["active"].sum()) if active_only else c["teacher_centres_gain_exact_one"])
         or not math.isclose(mse, c["active_correction_MSE"], rel_tol=1e-5, abs_tol=1e-10)
         or not mse < c["no_op_active_correction_MSE"]
     ):
@@ -259,6 +270,14 @@ def audit_compact_batch1(
         latency_includes="compact_support_and_neural_head_only_not_base_or_physics",
         realtime_guaranteed=False,
         closed_loop_physics_qualified=False,
+        **(
+            dict(
+                support_mode="active_only_cones",
+                inactive_teacher_rows_exact_parent=inactive_teacher,
+            )
+            if active_only
+            else {}
+        ),
     )
 
 
