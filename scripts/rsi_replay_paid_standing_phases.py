@@ -19,6 +19,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("hash", "audit-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--student", action="store_true")
     a = p.parse_args()
     if (
         a.output.exists()
@@ -34,8 +35,22 @@ def main():
     r, d = [
         json.loads((a.root / name).read_text()) for name in ("complete.json", "declaration.json")
     ]
-    standing_gate(a.root, a.audit_root, variant=d["variant"], bank=d["course_bank"])
     review = json.loads((a.audit_root / "complete.json").read_text())
+    if (a.root / "failed.json").exists() or (a.audit_root / "failed.json").exists():
+        raise ValueError("failed experiment/audit cannot be admitted by complete markers")
+    if a.student:
+        from rosclaw_soccer.rsi.paid_student_evidence import qualify_student_worlds
+
+        qualify_student_worlds(
+            r,
+            d,
+            review,
+            report_path=str(a.root / "complete.json"),
+            report_hash=a.hash,
+            declaration_hash=digest(a.root / "declaration.json"),
+        )
+    else:
+        standing_gate(a.root, a.audit_root, variant=d["variant"], bank=d["course_bank"])
     pins = dict(review["input_file_hashes"])
     pins.update(
         {str(a.root / "complete.json"): a.hash, str(a.audit_root / "complete.json"): a.audit_hash}
@@ -51,6 +66,7 @@ def main():
             input_file_hashes=pins,
             all_post_first_phases_required=True,
             first_kick_replayed=False,
+            student=a.student,
             independent_whole_world_replay=False,
             hardware_authorized=False,
         ),
@@ -117,6 +133,7 @@ def main():
                 phases=replay.phases,
                 all_q_v_forces_terminal_exact=True,
                 first_kick_replayed=False,
+                student=a.student,
                 independent_whole_world_replay=False,
                 optimizer_updates=0,
                 own_neural_rows=0,
