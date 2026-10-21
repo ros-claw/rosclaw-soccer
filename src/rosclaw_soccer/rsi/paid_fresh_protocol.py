@@ -6,9 +6,15 @@ from typing import Any
 import numpy as np
 
 PROTOCOL = "paid.fresh_lifecycle.8sources.4contexts.v1"
+ROUTER_FRESH_PROTOCOL = "paid.fresh_lifecycle.8sources.4contexts.ancestral_router.v2"
+CASE_SEEDS = {PROTOCOL: 2026102207, ROUTER_FRESH_PROTOCOL: 2026102301}
 
 
-def fresh_lifecycle_cases(source_cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def fresh_lifecycle_cases(
+    source_cases: list[dict[str, Any]], *, protocol: str = PROTOCOL
+) -> list[dict[str, Any]]:
+    if protocol not in CASE_SEEDS:
+        raise ValueError("one explicitly versioned fixed Fresh generator required")
     if (
         len(source_cases) != 16
         or [x.get("case") for x in source_cases] != list(range(16))
@@ -18,7 +24,7 @@ def fresh_lifecycle_cases(source_cases: list[dict[str, Any]]) -> list[dict[str, 
         raise ValueError(
             "eight frozen motion sources with two declared TRAIN entries each required"
         )
-    rng = np.random.Generator(np.random.PCG64(2026102207))
+    rng = np.random.Generator(np.random.PCG64(CASE_SEEDS[protocol]))
     cases: list[dict[str, Any]] = []
     for cluster in range(8):
         for distance in range(2):

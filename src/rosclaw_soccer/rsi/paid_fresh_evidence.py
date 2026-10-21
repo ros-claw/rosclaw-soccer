@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from rosclaw_soccer.rsi.paid_fresh_protocol import PROTOCOL
+from rosclaw_soccer.rsi.paid_fresh_protocol import CASE_SEEDS, ROUTER_FRESH_PROTOCOL
 
 
 def digest(path: Path) -> str:
@@ -24,12 +24,18 @@ def load_fresh_declaration(root: Path, expected: str) -> tuple[dict[str, Any], d
     ):
         raise ValueError("exact closed Fresh preflight required")
     r, d = json.loads(rp.read_text()), json.loads(dp.read_text())
+    protocol = d.get("schema")
+    if protocol not in CASE_SEEDS:
+        raise ValueError("explicit versioned Fresh protocol required")
+    if protocol == ROUTER_FRESH_PROTOCOL:
+        from rosclaw_soccer.rsi.paid_router_fresh import validate_router_fresh_declaration
+
+        validate_router_fresh_declaration(d)
     if (
         r.get("status") != "PAID_FRESH_ALL32_CASES_DECLARED_AND_PREFLIGHT_PASS_NO_ROLLOUT"
         or r.get("declaration_hash") != digest(dp)
         or r.get("source_head") != d.get("source_head")
-        or r.get("protocol") != PROTOCOL
-        or d.get("schema") != PROTOCOL
+        or r.get("protocol") != protocol
         or d.get("arms") != ["r2", "parent", "progressive"]
         or d.get("repeats") != 2
         or d.get("skills") != 3
@@ -39,7 +45,7 @@ def load_fresh_declaration(root: Path, expected: str) -> tuple[dict[str, Any], d
         or d["candidate_seed_index"] != 0
         or d.get("candidate_frozen_before_generation") is not True
         or d.get("candidate_seed_chosen_on_fresh") is not False
-        or d.get("case_generation_seed") != 2026102207
+        or d.get("case_generation_seed") != CASE_SEEDS[protocol]
         or d.get("evaluation")
         != dict(
             candidate_stable_required=32,
@@ -133,7 +139,17 @@ def load_fresh_actor(policy: Path, declaration: dict[str, Any], arm: str) -> tup
         scene_hash=declaration["unchanged_body_scene_hash"],
     )
     if arm == "parent":
-        actor = FrozenContactResidualActor(
-            actor.base, actor.residual.parent, actor.action_scale
-        ).eval()
+        if declaration["schema"] == ROUTER_FRESH_PROTOCOL:
+            from rosclaw_soccer.rsi.paid_ancestor_router_student import FrozenAncestralRouterActor
+            from rosclaw_soccer.rsi.paid_progressive_student import FrozenProgressiveActor
+
+            if type(actor) is not FrozenAncestralRouterActor:
+                raise ValueError("explicit admitted router with current compound parent required")
+            actor = FrozenProgressiveActor(
+                actor.base, actor.residual.parent, actor.get_buffer("action_scale")
+            ).eval()
+        else:
+            actor = FrozenContactResidualActor(
+                actor.base, actor.residual.parent, actor.action_scale
+            ).eval()
     return actor, 1 if arm == "r2" else 2

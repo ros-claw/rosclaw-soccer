@@ -15,7 +15,22 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("student-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--router-v2", action="store_true")
+    for name in ("qualification-review-root", "previous-fresh-root", "new-train-plan-root"):
+        p.add_argument("--" + name, type=Path)
+    for name in ("qualification-review-hash", "previous-fresh-hash", "new-train-plan-hash"):
+        p.add_argument("--" + name)
     a = p.parse_args()
+    optional = (
+        a.qualification_review_root,
+        a.qualification_review_hash,
+        a.previous_fresh_root,
+        a.previous_fresh_hash,
+        a.new_train_plan_root,
+        a.new_train_plan_hash,
+    )
+    if (a.router_v2 and not all(optional)) or (not a.router_v2 and any(optional)):
+        p.error("router v2 requires all review/exclusion identities; legacy v1 accepts none")
     if (
         a.output.exists()
         or digest(a.student_root / "complete.json") != a.student_hash
@@ -25,7 +40,12 @@ def main():
         != a.expected_head
     ):
         raise ValueError("unused declaration, frozen candidate and source required")
-    from rosclaw_soccer.rsi.paid_fresh_protocol import PROTOCOL, fresh_lifecycle_cases
+    from rosclaw_soccer.rsi.paid_fresh_protocol import (
+        CASE_SEEDS,
+        PROTOCOL,
+        ROUTER_FRESH_PROTOCOL,
+        fresh_lifecycle_cases,
+    )
     from rosclaw_soccer.rsi.paid_standing_continuation import standing_gate
 
     standing_gate(a.source_root, a.source_audit_root, variant=1, bank="train")
@@ -34,9 +54,10 @@ def main():
         for root in (a.student_root, a.source_root)
     ]
     receipt = json.loads((a.student_root / "complete.json").read_text())
-    if (
-        receipt["config"]["seed_index"] != 0
-        or receipt["config"]["protocol"] != "acquired-parent-progressive-contact-v1"
+    if receipt["config"]["seed_index"] != 0 or receipt["config"]["protocol"] != (
+        "ancestral_competence_router.v1"
+        if a.router_v2
+        else "acquired-parent-progressive-contact-v1"
     ):
         raise ValueError("seed0 fixed before Fresh; no outcome-based seed selection")
     pins = dict(receipt["input_file_hashes"])
@@ -54,7 +75,28 @@ def main():
         a.source_audit_root / "complete.json",
     ):
         pins[str(path)] = digest(path)
-    cases = fresh_lifecycle_cases(source["cases"])
+    protocol = ROUTER_FRESH_PROTOCOL if a.router_v2 else PROTOCOL
+    metadata = {}
+    if a.router_v2:
+        from rosclaw_soccer.rsi.paid_router_fresh import router_fresh_commitment
+
+        cases, metadata, extra_pins = router_fresh_commitment(
+            student_root=a.student_root,
+            student_hash=a.student_hash,
+            sources=source["cases"],
+            review_root=a.qualification_review_root,
+            review_hash=a.qualification_review_hash,
+            previous_root=a.previous_fresh_root,
+            previous_hash=a.previous_fresh_hash,
+            train_root=a.new_train_plan_root,
+            train_hash=a.new_train_plan_hash,
+        )
+        for path, h in extra_pins.items():
+            if path in pins and pins[path] != h:
+                raise ValueError("router qualification/exclusion lineage conflict")
+            pins[path] = h
+    else:
+        cases = fresh_lifecycle_cases(source["cases"])
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     check_pins(pins)
@@ -62,7 +104,7 @@ def main():
     # Publish the entire proposal BEFORE model compilation/admission. If any
     # case fails, this exact declaration remains failed; no silent replacement.
     declaration = dict(
-        schema=PROTOCOL,
+        schema=protocol,
         source_head=a.expected_head,
         input_file_hashes=pins,
         student_root=str(a.student_root),
@@ -78,7 +120,7 @@ def main():
         skills=3,
         standing_controls=100,
         body_resets=0,
-        case_generation_seed=2026102207,
+        case_generation_seed=CASE_SEEDS[protocol],
         candidate_frozen_before_generation=True,
         candidate_seed_chosen_on_fresh=False,
         Fresh_episodes_fit=0,
@@ -97,6 +139,7 @@ def main():
         ),
         hardware_authorized=False,
         promotion_authorized=False,
+        **metadata,
     )
     write_once(a.output / "declaration.json", declaration)
     try:
@@ -154,7 +197,7 @@ def main():
                 source_head=a.expected_head,
                 declaration_hash=digest(a.output / "declaration.json"),
                 input_file_hashes=pins,
-                protocol=PROTOCOL,
+                protocol=protocol,
                 native_entries=native_entries,
                 compiled_ball_dimensions=asdict(dimensions),
                 own_native_steps=0,
