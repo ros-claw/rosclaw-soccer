@@ -65,3 +65,17 @@ def test_independent_players_do_not_share_mutable_memory():
     again, _ = model(a, sa)
     assert torch.equal(first, again)
     assert all((s == 1).all() for s in sb)
+
+
+def test_rejected_learned_context_is_exact_base_not_small_motor_perturbation():
+    residual = ContactResidual().eval()
+    with torch.no_grad():
+        residual.net[-1].bias.fill_(2)
+        residual.gate[-1].bias.fill_(-0.001)
+    features = torch.ones(4, 288)
+    soft, _ = residual.forward_with_gate(features)
+    assert (soft > 0).all()
+    assert not residual(features).any()
+    with torch.no_grad():
+        residual.gate[-1].bias.fill_(0.001)
+    assert (residual(features) > 0).all()

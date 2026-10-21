@@ -76,6 +76,9 @@ def main():
         retention_weight=5.0 if a.variant < 3 else 1.0,
         active_weight=5.0,
         gate_loss_weight=0.001,
+        gate_positive_weight=5.0,
+        hard_gate_at_inference=True,
+        inference_gate_probability_threshold=0.5,
         max_grad_norm=1.0,
         bound_radians=0.2,
         residual_features=288,
@@ -328,7 +331,11 @@ def main():
                         w = torch.where(row["active"], config["active_weight"], 1.0)
                         error = (pred - row["target"]).square().mean(dim=1)
                         gate = torch.nn.functional.binary_cross_entropy_with_logits(
-                            logits[:, 0], row["active"].float()
+                            logits[:, 0],
+                            row["active"].float(),
+                            pos_weight=torch.tensor(
+                                config["gate_positive_weight"], device="cuda:0"
+                            ),
                         )
                         loss = (
                             weight

@@ -30,8 +30,10 @@ class ContactResidual(nn.Module):
         nn.init.constant_(gate_output.bias, -4.0)
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
-        delta, _ = self.forward_with_gate(features)
-        return delta
+        delta, logits = self.forward_with_gate(features)
+        # A learned reject option: unsupported contexts retain the base motor
+        # EXACTLY, not merely a small unrequested perturbation. No case labels.
+        return delta if self.training else torch.where(logits >= 0, delta, torch.zeros_like(delta))
 
     def forward_with_gate(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if (
@@ -81,6 +83,9 @@ def residual_config(variant: int) -> dict[str, Any]:
         retention_weight=5.0 if variant < 3 else 1.0,
         active_weight=5.0,
         gate_loss_weight=0.001,
+        gate_positive_weight=5.0,
+        hard_gate_at_inference=True,
+        inference_gate_probability_threshold=0.5,
         max_grad_norm=1.0,
         bound_radians=0.2,
         residual_features=288,
