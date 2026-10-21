@@ -1,8 +1,9 @@
 """Extend an independently qualified learned contact policy to 2..4 skills.
 
-The first two complete physical histories MUST reproduce their qualified
-parent arrays. New successor states are genuine continuing physics, never
-reset poses. This is practice with a declared ball return, not a team game.
+TRAIN's first two histories MUST reproduce their qualified parent arrays.
+DEV has only a qualified first history: later skills are genuinely new exams,
+not fabricated two-skill proofs. Bodies never reset between skills. This is
+practice with a declared ball return, not a team game or sealed Fresh exam.
 """
 
 import argparse
@@ -20,6 +21,7 @@ def main():
         p.add_argument("--" + name + "-root", type=Path, required=True)
         p.add_argument("--" + name + "-hash", required=True)
     p.add_argument("--skills", type=int, choices=(2, 3, 4), default=3)
+    p.add_argument("--course-bank", choices=("train", "dev"), default="train")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -61,9 +63,10 @@ def main():
     if pins.get(str(dp)) != digest(dp):
         raise ValueError("exact parent course declaration required")
     parent_d = json.loads(dp.read_text())
-    cases = parent_d["old_cases"]
-    if len(cases) != 16:
-        raise ValueError("all16 frozen practice conditions required")
+    from rosclaw_soccer.rsi.paid_chain_courses import chain_parent_profile
+
+    cases, parent_prefixes = chain_parent_profile(parent_d, exam, candidate, a.course_bank)
+    prefix_count = 2 if a.course_bank == "train" else 1
     root = Path(parent_d["candidates"][candidate["candidate"]])
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
@@ -75,9 +78,13 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             cases=cases,
+            course_bank=a.course_bank,
+            qualified_prefix_skills=prefix_count,
             skills=a.skills,
             independent_full_world_repeats=2,
-            first_two_arrays_must_match_parent=True,
+            first_two_arrays_must_match_parent=a.course_bank == "train",
+            first_array_must_match_parent=True,
+            new_successor_states_not_training_labels=True,
             fixed_world_goal=True,
             body_resets_between_skills=0,
             first_actor="qualified_R2motor",
@@ -136,12 +143,11 @@ def main():
                 return {k: z[k].copy() for k in z.files}
 
         result = {}
-        for name, actors, parent in (
-            ("baseline", [actor.base] * a.skills, exam["baseline_continuous"]),
+        for name, actors in (
+            ("baseline", [actor.base] * a.skills),
             (
                 "learned",
                 [actor.base] + [actor] * (a.skills - 1),
-                candidate["continuous"]["results"],
             ),
         ):
             worlds = []
@@ -152,8 +158,7 @@ def main():
                     folder.mkdir(parents=True)
                     artifacts = []
                     prefix_references = {
-                        f"skill{k}": read(parent[i][key], True)
-                        for k, key in enumerate(("first", "second"))
+                        f"skill{k}": read(row, True) for k, row in parent_prefixes[name][i].items()
                     }
 
                     def store(
@@ -174,10 +179,10 @@ def main():
                         return artifact
 
                     world = run_practice_chain(bench, case, actors, store=store)
-                    if len(world["skills"]) < 2:
-                        raise ValueError("qualified two-skill parent did not reproduce")
-                    for k, key in enumerate(("first", "second")):
-                        same(read(world["skills"][k]["result"]), read(parent[i][key], True))
+                    if len(world["skills"]) < prefix_count:
+                        raise ValueError("qualified physical prefix did not reproduce")
+                    for k, row in parent_prefixes[name][i].items():
+                        same(read(world["skills"][k]["result"]), read(row, True))
                     world["case"] = i
                     world["artifacts"] = artifacts
                     world["quality_by_skill"] = [
@@ -221,7 +226,10 @@ def main():
                 input_file_hashes=pins,
                 results=result,
                 skills=a.skills,
-                all_first_two_arrays_exact_parent=True,
+                course_bank=a.course_bank,
+                qualified_prefix_skills=prefix_count,
+                all_qualified_prefix_arrays_exact_parent=True,
+                all_first_two_arrays_exact_parent=a.course_bank == "train",
                 all_independent_chain_repeats_exact=True,
                 actual_native_steps=bench.native_steps,
                 actual_neural_rows=bench.neural_rows,

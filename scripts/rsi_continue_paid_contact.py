@@ -31,6 +31,7 @@ def main():
         p.add_argument("--" + name + "-root", type=Path, required=True)
         p.add_argument("--" + name + "-hash", required=True)
     p.add_argument("--expected-head", required=True)
+    p.add_argument("--course-bank", choices=("train", "dev"), default="train")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     if (
@@ -68,6 +69,7 @@ def main():
         a.output / "declaration.json",
         dict(
             source_head=a.expected_head,
+            course_bank=a.course_bank,
             parent_exam_hash=a.exam_hash,
             parent_primitive_hash=a.primitive_hash,
             parent_neural_hash=a.neural_hash,
@@ -89,7 +91,17 @@ def main():
                 getattr(a, name + "_hash"),
             ]
         subprocess.run(
-            command + ["--skills", "3", "--expected-head", a.expected_head, "--output", str(chain)],
+            command
+            + [
+                "--skills",
+                "3",
+                "--course-bank",
+                a.course_bank,
+                "--expected-head",
+                a.expected_head,
+                "--output",
+                str(chain),
+            ],
             check=True,
         )
         _, chain_hash = checked_receipt(

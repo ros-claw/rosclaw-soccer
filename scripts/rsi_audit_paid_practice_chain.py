@@ -48,6 +48,25 @@ def main():
     if len(parents) != 1 or not parents[0]["full_continuous_skill_gate"]:
         raise ValueError("exact actually qualified learned parent required")
     candidate = parents[0]
+    from rosclaw_soccer.rsi.paid_chain_courses import chain_parent_profile
+
+    parent_declaration = a.parent_root / "declaration.json"
+    if d["input_file_hashes"].get(str(parent_declaration)) != digest(parent_declaration):
+        raise ValueError("exact parent course declaration required")
+    course_bank = d.get("course_bank", "train")
+    cases, parent_prefixes = chain_parent_profile(
+        json.loads(parent_declaration.read_text()), parent, candidate, course_bank
+    )
+    prefix_count = 2 if course_bank == "train" else 1
+    if (
+        cases != d["cases"]
+        or r.get("course_bank", "train") != course_bank
+        or d.get("qualified_prefix_skills", 2) != prefix_count
+        or r.get("qualified_prefix_skills", 2) != prefix_count
+        or d["first_two_arrays_must_match_parent"] is not (course_bank == "train")
+        or r["all_first_two_arrays_exact_parent"] is not (course_bank == "train")
+    ):
+        raise ValueError("course bank or qualified prefix coverage changed")
     pins = dict(r["input_file_hashes"])
     pins.update({str(rp): a.hash, str(dp): digest(dp), str(pp): a.parent_hash})
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
@@ -118,11 +137,6 @@ def main():
             worlds = r["results"][arm]["worlds"]
             if len(worlds) != 16 or [w["case"] for w in worlds] != list(range(16)):
                 raise ValueError("no case may be dropped, replaced or reordered")
-            parent_worlds = (
-                parent["baseline_continuous"]
-                if arm == "baseline"
-                else candidate["continuous"]["results"]
-            )
             qualities = []
             for i, (world, case) in enumerate(zip(worlds, d["cases"], strict=True)):
                 for artifacts in (world["artifacts"], world["repeat_artifacts"]):
@@ -191,11 +205,11 @@ def main():
                                 z["initial_mocap_pos"], first_goal
                             ):
                                 raise ValueError("world goal changed during chain")
-                        if index < 2:
+                        if index < prefix_count:
                             identical(
                                 z,
                                 read(
-                                    parent_worlds[i]["first" if index == 0 else "second"],
+                                    parent_prefixes[arm][i][index],
                                     a.parent_root,
                                 ),
                             )
@@ -293,6 +307,8 @@ def main():
                 status="PAID_CONTINUING_CHAIN_NATIVE_AND_NEURAL_AUDIT_PASS",
                 input_file_hashes=pins,
                 summaries=summaries,
+                course_bank=course_bank,
+                qualified_prefix_skills=prefix_count,
                 counts=counts,
                 producer_native_steps=counts["native"],
                 own_native_steps=0,
