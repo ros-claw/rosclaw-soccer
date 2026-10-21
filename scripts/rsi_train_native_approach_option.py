@@ -227,6 +227,8 @@ def main():
             expected_resume_checkpoint_hash=parent["resume_checkpoint_hash"],
             expected_resume_proof_hash=parent["resume_proof_hash"],
             expected_resume_source_hash=parent["resume_source_hash"],
+            expected_recovery_proof_hash=parent["recovery_proof_hash"],
+            expected_recovery_fault_hash=parent["recovery_fault_hash"],
             arm="final",
         )
         actor = copy.deepcopy(session.model)
