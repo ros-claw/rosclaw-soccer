@@ -101,3 +101,35 @@ def test_incomplete_tampered_or_different_teacher_witness_cannot_admit(fault):
         p["searches"][0]["selected"][1][0]["latent"] = [[1] * 6] * 2
     with pytest.raises(ValueError):
         admitted_replan_windows(p, a, "source")
+
+
+def test_dirty_second_generation_curator_never_allocates(tmp_path, monkeypatch):
+    import sys
+
+    from scripts import rsi_curate_paid_replans as runner
+
+    args = ["run", "--expected-head", "frozen", "--output", str(tmp_path / "out")]
+    for name in ("previous-root", "replan-root", "audit-root"):
+        args += ["--" + name, str(tmp_path)]
+    args += ["--previous-hash", "hash", "--producer-head", "producer"]
+    monkeypatch.setattr(sys, "argv", args)
+    monkeypatch.setattr(runner.subprocess, "check_output", lambda *a, **k: b"dirty")
+    with pytest.raises(ValueError, match="clean frozen"):
+        runner.main()
+    assert not (tmp_path / "out").exists()
+
+
+def test_second_generation_loader_does_not_relax_first_generation_contract(tmp_path):
+    import hashlib
+    import json
+
+    from rosclaw_soccer.rsi.paid_replan_data import load_replanned_data
+
+    (tmp_path / "declaration.json").write_text("{}")
+    path = tmp_path / "complete.json"
+    path.write_text(
+        json.dumps(dict(status="PAID_INTERVENTIONAL_DAGGER_TRAIN_FEATURES_CAUSALLY_RECOMPUTED"))
+    )
+    h = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="explicit generation-two"):
+        load_replanned_data(tmp_path, h, tmp_path / "never-open-policy.onnx")
