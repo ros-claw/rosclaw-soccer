@@ -23,6 +23,7 @@ from rosclaw_soccer.sim.contracts import hash_json
 class NativeContactSession(LearnedPriorNativeSession):
     checkpoint_schema = "soccer.rsi.native_contact24_ppo.v1"
     inference_schema = "soccer.rsi.native_contact24_inference.v1"
+    protocol = "native-contact24-v1"
     model: Any
 
     def _make_model(self, model: Path, expected_hash: str) -> Any:
@@ -72,7 +73,7 @@ class NativeContactSession(LearnedPriorNativeSession):
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
         if (
             state.get("schema") != self.checkpoint_schema
-            or state.get("protocol") != "native-contact24-v1"
+            or state.get("protocol") != self.protocol
             or state.get("actor_observation_dim") != 177
             or state.get("critic_observation_dim") != 177
             or state.get("native_pd_position_targets") != 29
@@ -179,3 +180,39 @@ class NativeResidualContactSession(NativeContactSession):
         for k in ("base.prior_mean", "base.prior_denominator"):
             if not torch.equal(actor[k], self.model.state_dict()[k]):
                 raise ValueError("original residual deployment normalization required")
+
+
+class NativeRecoveryContactSession(NativeResidualContactSession):
+    """New finite-option intent; never admitted under the old contact24 schema."""
+
+    checkpoint_schema = "soccer.rsi.native_contact24_recovery60_residual_ppo.v1"
+    inference_schema = "soccer.rsi.native_contact24_recovery60_inference.v1"
+    protocol = "native-contact24-recovery60-v1"
+
+    def __init__(
+        self,
+        *args: Any,
+        expected_recovery_proof_hash: str,
+        expected_recovery_fault_hash: str,
+        **kwargs: Any,
+    ) -> None:
+        for h in (expected_recovery_proof_hash, expected_recovery_fault_hash):
+            if (
+                not h.startswith("sha256:")
+                or len(h) != 71
+                or any(c not in "0123456789abcdef" for c in h[7:])
+            ):
+                raise ValueError("explicit actual recovery and fault proof hashes required")
+        self._recovery_proof_hash = expected_recovery_proof_hash
+        self._recovery_fault_hash = expected_recovery_fault_hash
+        super().__init__(*args, **kwargs)
+
+    def _validate_intent(self, state: dict[str, Any]) -> None:
+        super()._validate_intent(state)
+        if (
+            state.get("recovery_proof_hash") != self._recovery_proof_hash
+            or state.get("recovery_fault_hash") != self._recovery_fault_hash
+            or state.get("training_seed") != 7607
+            or not 0 < state["counts"].get("recovery_foundation_rows", 0) <= 38400
+        ):
+            raise ValueError("actual finite-option recovery intent/counts/qualification required")

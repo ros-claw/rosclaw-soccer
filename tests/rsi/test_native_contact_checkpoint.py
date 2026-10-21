@@ -42,8 +42,9 @@ def test_checkpoint_reader_rejects_old_intent_or_posthoc_checkpoint(monkeypatch,
         )
 
 
+@pytest.mark.parametrize("recovery", [False, True])
 def test_residual_reader_checks_foundation_intent_and_preserves_initial_function(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, recovery
 ):
     import torch
     from torch import nn
@@ -79,9 +80,10 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
         parent_path,
     )
     parent_hash = module.file_hash(parent_path)
+    kind = module.NativeRecoveryContactSession if recovery else module.NativeResidualContactSession
     state = dict(
-        schema=module.NativeResidualContactSession.checkpoint_schema,
-        protocol="native-contact24-v1",
+        schema=kind.checkpoint_schema,
+        protocol=kind.protocol,
         actor_kind="bounded-residual",
         adapter_config=dict(
             near_radius_m=0.35,
@@ -113,10 +115,26 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
         actor_state_dict=actor.state_dict(),
         policy_state_dict=baseline,
     )
+    if recovery:
+        state.update(
+            recovery_proof_hash="sha256:" + "a" * 64,
+            recovery_fault_hash="sha256:" + "b" * 64,
+            training_seed=7607,
+        )
+        state["counts"]["recovery_foundation_rows"] = 30000
 
-    def reader(kind=module.NativeResidualContactSession, arm="final"):
+    def reader(reader_kind=None, arm="final"):
+        reader_kind = reader_kind or kind
+        extra = (
+            dict(
+                expected_recovery_proof_hash="sha256:" + "a" * 64,
+                expected_recovery_fault_hash="sha256:" + "b" * 64,
+            )
+            if reader_kind is module.NativeRecoveryContactSession
+            else {}
+        )
         torch.save(state, checkpoint)
-        return kind(
+        return reader_kind(
             Path("actor.onnx"),
             Path("params.yaml"),
             expected_model_hash="onnx",
@@ -127,6 +145,7 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
             expected_parent_hash=parent_hash,
             expected_native_model_hash="body",
             arm=arm,
+            **extra,
         )
 
     initial, final = reader(arm="initial"), reader()
@@ -138,6 +157,13 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
     assert torch.equal(final.model(obs), base(obs))
     with pytest.raises(ValueError, match="fixed final20"):
         reader(module.NativeContactSession)
+    if recovery:
+        with pytest.raises(ValueError, match="fixed final20"):
+            reader(module.NativeResidualContactSession)
+        state["recovery_fault_hash"] = "sha256:" + "c" * 64
+        with pytest.raises(ValueError, match="finite-option"):
+            reader()
+        state["recovery_fault_hash"] = "sha256:" + "b" * 64
     state["actor_state_dict"]["base.head.bias"] = state["actor_state_dict"]["base.head.bias"] + 0.01
     with pytest.raises(ValueError, match="immutable foundation"):
         reader()

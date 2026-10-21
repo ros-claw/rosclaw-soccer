@@ -23,7 +23,11 @@ def main():
     p.add_argument("--task-set", choices=("train64", "dev64"), default="train64")
     p.add_argument("--baseline-reuse-root", type=Path)
     p.add_argument("--baseline-reuse-hash")
-    p.add_argument("--checkpoint-intent", choices=("shared", "bounded-residual"), default="shared")
+    p.add_argument(
+        "--checkpoint-intent",
+        choices=("shared", "bounded-residual", "bounded-recovery-option"),
+        default="shared",
+    )
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -53,10 +57,11 @@ def main():
         pins[str(f)] = h
     learner, starts = reports[:2]
     baseline = {} if dev else reports[2]
-    residual = a.checkpoint_intent == "bounded-residual"
+    option = a.checkpoint_intent == "bounded-recovery-option"
+    residual = a.checkpoint_intent != "shared"
     reuse_rows = {}
     if a.baseline_reuse_root or a.baseline_reuse_hash:
-        if not all((a.baseline_reuse_root, a.baseline_reuse_hash)) or not residual:
+        if not all((a.baseline_reuse_root, a.baseline_reuse_hash)) or not residual or option:
             raise ValueError(
                 "explicit immutable baseline reuse is only defined for frozen residuals"
             )
@@ -132,14 +137,18 @@ def main():
                 "raw_hash"
             ]
     expected_status = (
-        "NATIVE_CONTACT24_RESIDUAL_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+        "NATIVE_CONTACT24_RECOVERY60_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+        if option
+        else "NATIVE_CONTACT24_RESIDUAL_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
         if residual
         else "NATIVE_CONTACT24_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
     )
     if (
         learner.get("status") != expected_status
-        or learner.get("actor_kind", "shared") != a.checkpoint_intent
-        or learner.get("protocol") != "native-contact24-v1"
+        or learner.get("actor_kind", "shared")
+        != ("bounded-residual" if option else a.checkpoint_intent)
+        or learner.get("protocol")
+        != ("native-contact24-recovery60-v1" if option else "native-contact24-v1")
         or len(learner.get("results", [])) != 20
         or learner["counts"]["ppo_steps"] < 1
         or starts.get("ball_placement_protocol") != "body-bound-v1"
@@ -191,6 +200,8 @@ def main():
             input_file_hashes=pins,
             source_split="DEV evaluation only, no gradients"
             if dev
+            else "TRAIN evaluation only, no DEV gradients"
+            if option
             else "TRAIN evaluation only, DEV untouched",
             task_set=a.task_set,
             worlds=64,
@@ -201,10 +212,18 @@ def main():
             reused_baseline_is_not_new_physics_or_new_independent_data=True,
             arms=["initial", "final"],
             full_independent_repeated_worlds=repeated_worlds,
-            maximum_controls=300,
-            maximum_live_native_steps=432000,
-            maximum_replay_native_steps=432000,
-            maximum_policy_rows=43200,
+            maximum_controls=360 if option else 300,
+            maximum_live_native_steps=518400 if option else 432000,
+            maximum_replay_native_steps=518400 if option else 432000,
+            maximum_policy_rows=51840 if option else 43200,
+            option_handoff=(
+                "14 additional controls after FIRST MEASURED foot>10N control, or reference end; "
+                "then60actualzero-command/zero79 foundation controls"
+                if option
+                else None
+            ),
+            option_clock_is_not_training_oracle_lead10=option,
+            finite_option_diagnostic_not_original_formal52=option,
             optimizer_updates=0,
             start="original frame zero, NOT precontact snapshots",
             no_state_overwrites=True,
@@ -228,12 +247,15 @@ def main():
         import numpy as np
         import torch
 
+        from rosclaw_soccer.providers.g1.velocity_policy import observation98
+        from rosclaw_soccer.rsi.contact_option_clock import enter_measured_recovery
         from rosclaw_soccer.rsi.mjlab_motion_curriculum import (
             DEVELOPMENT_MOTION_NAMES,
             TRAIN_MOTION_NAMES,
         )
         from rosclaw_soccer.rsi.native_contact_checkpoint import (
             NativeContactSession,
+            NativeRecoveryContactSession,
             NativeResidualContactSession,
         )
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
@@ -241,7 +263,21 @@ def main():
         from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
         torch.set_num_threads(1)
-        session_type = NativeResidualContactSession if residual else NativeContactSession
+        session_type = (
+            NativeRecoveryContactSession
+            if option
+            else NativeResidualContactSession
+            if residual
+            else NativeContactSession
+        )
+        session_options = (
+            dict(
+                expected_recovery_proof_hash=learner["recovery_proof_hash"],
+                expected_recovery_fault_hash=learner["recovery_fault_hash"],
+            )
+            if option
+            else {}
+        )
 
         def pinned(suffix):
             matches = [Path(k) for k in pins if k.endswith(suffix)]
@@ -378,25 +414,44 @@ def main():
                         expected_parent_hash=pins[str(parent)],
                         expected_native_model_hash=pins[str(mp)],
                         arm=arm,
+                        **session_options,
                     )
                     d = mujoco.MjData(model)
                     d.qpos[:], d.qvel[:] = initial["qpos"][world], initial["qvel"][world]
                     warnings = tuple(int(w.number) for w in d.warning)
                     raw_rows = []
-                    for frame in range(horizon):
+                    recovering = False
+                    first_contact_frame = None
+                    head_controls = tail_controls = 0
+                    for frame in range(horizon + (60 if option else 0)):
                         mujoco.mj_forward(model, d)
-                        obs, phase_after = native_reference_observation177(
-                            data=d,
-                            layout=layout,
-                            params=session.params,
-                            plan=plan,
-                            frame=frame,
-                            origin=origin,
-                            goal=goal,
-                            last_action=session.last_action,
-                            phase=session.phase,
-                            torso=torso,
-                        )
+                        if option and frame == horizon:
+                            recovering = True
+                        if option and recovering:
+                            q, v = layout.canonical(d)
+                            prefix, phase_after = observation98(
+                                q,
+                                v,
+                                layout.angular_velocity_body(d),
+                                np.zeros(3, dtype=np.float32),
+                                session.last_action,
+                                session.phase,
+                                session.params,
+                            )
+                            obs = np.r_[prefix, np.zeros(79, dtype=np.float32)]
+                        else:
+                            obs, phase_after = native_reference_observation177(
+                                data=d,
+                                layout=layout,
+                                params=session.params,
+                                plan=plan,
+                                frame=frame,
+                                origin=origin,
+                                goal=goal,
+                                last_action=session.last_action,
+                                phase=session.phase,
+                                torso=torso,
+                            )
                         if (
                             dev
                             and frame == 0
@@ -466,7 +521,29 @@ def main():
                             foot_force=np.array(fs),
                             nonfoot_force=np.array(ns),
                         )
+                        if option:
+                            row["recovery_phase"] = int(recovering)
                         raw_rows.append(row)
+                        if option:
+                            if recovering:
+                                tail_controls += 1
+                            else:
+                                head_controls += 1
+                            if first_contact_frame is None and (np.array(fs) > 10).any():
+                                first_contact_frame = frame
+                            actual_q = np.array(qs)
+                            if (
+                                actual_q[:, 2].min() < 0.65
+                                or (1 - 2 * (actual_q[:, 4] ** 2 + actual_q[:, 5] ** 2)).min() < 0.9
+                                or tail_controls == 60
+                            ):
+                                break
+                            if not recovering and enter_measured_recovery(
+                                completed_controls=head_controls,
+                                first_contact_control=first_contact_frame,
+                                reference_horizon=horizon,
+                            ):
+                                recovering = True
                     raw = {k: np.array([r[k] for r in raw_rows]) for k in raw_rows[0]}
                     folder = a.output / f"world{world}-{arm}-repeat{repeat}"
                     folder.mkdir()
@@ -482,15 +559,17 @@ def main():
                             a.baseline_episodes_root / f"world{world}-repeat0.npz",
                             allow_pickle=False,
                         ) as z:
-                            if set(z.files) != set(raw) or any(
-                                not np.array_equal(z[k], raw[k]) for k in z.files
+                            prefix_length = head_controls if option else horizon
+                            if (not option and set(z.files) != set(raw)) or any(
+                                not np.array_equal(z[k][:prefix_length], raw[k][:prefix_length])
+                                for k in z.files
                             ):
                                 raise ValueError(
                                     "new parser initial arm did not reproduce complete baseline"
                                 )
                     rd = mujoco.MjData(model)
                     rd.qpos[:], rd.qvel[:] = initial["qpos"][world], initial["qvel"][world]
-                    for frame in range(horizon):
+                    for frame in range(len(raw_rows)):
                         mujoco.mj_forward(model, rd)
                         if not np.array_equal(
                             rd.qpos, raw["native_qpos_before"][frame]
@@ -529,7 +608,7 @@ def main():
                         arm=arm,
                         repeat=repeat,
                         raw_hash=digest(path),
-                        controls=horizon,
+                        controls=len(raw_rows),
                         correct_foot_first=post["correct_foot_first"],
                         forbidden=forbidden,
                         clean=bool(post["correct_foot_first"] and not forbidden),
@@ -537,6 +616,18 @@ def main():
                         postcontact=post,
                         strict_recorded_control_replay_exact=True,
                     )
+                    if option:
+                        from rosclaw_soccer.rsi.contact_replication_decision import ball_outcome
+
+                        result.update(
+                            reference_controls=head_controls,
+                            recovery_controls=tail_controls,
+                            first_measured_contact_control=first_contact_frame,
+                        )
+                        result["ball_outcome"] = ball_outcome(result)
+                        result["correct_foot_ball_outcome"] = bool(
+                            result["ball_outcome"] and result["clean"]
+                        )
                     write_once(folder / "result.json", result)
                     results.append(result)
                     print(
@@ -562,16 +653,33 @@ def main():
                 k: sum(bool(r[k]) for r in selected)
                 for k in ("clean", "correct_foot_first", "forbidden", "stable")
             }
+            if option:
+                for key in ("ball_outcome", "correct_foot_ball_outcome"):
+                    summary[arm][key] = sum(bool(r[key]) for r in selected)
         improved = (
             summary["final"]["clean"] > summary["initial"]["clean"]
             and summary["final"]["stable"] >= summary["initial"]["stable"]
             and summary["final"]["forbidden"] <= summary["initial"]["forbidden"]
         )
+        if option:
+            improved = (
+                summary["final"]["correct_foot_ball_outcome"]
+                > summary["initial"]["correct_foot_ball_outcome"]
+                and summary["final"]["clean"] >= summary["initial"]["clean"]
+                and summary["final"]["stable"] >= summary["initial"]["stable"]
+                and summary["final"]["forbidden"] <= summary["initial"]["forbidden"]
+            )
         check_pins(pins)
         write_once(
             a.output / "complete.json",
             dict(
                 status=(
+                    "NATIVE_FINITE_OPTION_GAIN_REQUIRES_FORMAL_EXAM"
+                    if improved
+                    else "NATIVE_FINITE_OPTION_NO_NET_BALL_GAIN"
+                )
+                if option
+                else (
                     "NATIVE_CONTACT24_DEV64_GAIN_REQUIRES_FRESH"
                     if improved
                     else "NATIVE_CONTACT24_DEV64_NO_NET_GAIN"
@@ -592,7 +700,8 @@ def main():
                 replay_native_steps=replay_steps,
                 policy_rows=nn_rows,
                 optimizer_updates=0,
-                all_old_baseline_fields_bitexact=True if not dev else None,
+                all_old_baseline_fields_bitexact=True if not dev and not option else None,
+                old_baseline_reference_prefix_exact=True if option and not dev else None,
                 task_set=a.task_set,
                 all_strict_replays_exact=True,
                 all_representative_repeats_exact=True,
