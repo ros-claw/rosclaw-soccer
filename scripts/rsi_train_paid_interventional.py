@@ -17,6 +17,7 @@ def main():
         p.add_argument("--" + name + "-hash", required=True)
     p.add_argument("--seed", type=int, choices=(0, 1, 2), required=True)
     p.add_argument("--geometry-control", action="store_true")
+    p.add_argument("--generation", type=int, choices=(1, 2), default=1)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -54,7 +55,7 @@ def main():
     a.output.mkdir()
     counts = dict(
         optimizer_updates=0,
-        inherited_optimizer_updates=1024,
+        inherited_optimizer_updates=3072 if a.generation == 2 else 1024,
         canonical_forward_rows=0,
         intervention_forward_rows=0,
         retention_forward_rows=0,
@@ -70,10 +71,13 @@ def main():
         from rosclaw_soccer.rsi.paid_interventional_data import load_interventional_data
         from rosclaw_soccer.rsi.paid_interventional_student import (
             CONTROL_STATUS,
+            REPLANNED_CONTROL_STATUS,
+            REPLANNED_STATUS,
             STUDENT_STATUS,
             data_support,
             learner_config,
             learning_certificate,
+            load_replanned_warm,
             load_warm_state,
             validate_learner_state,
         )
@@ -81,9 +85,15 @@ def main():
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
         policy = next(Path(f) for f in pins if f.endswith("/ckp/policy_30000.onnx"))
-        parent, data, z = load_interventional_data(a.data_root, a.data_hash, policy)
-        warm, wr = load_warm_state(a.warm_root, a.warm_hash, data)
-        config = learner_config(a.seed, control=a.geometry_control)
+        if a.generation == 2:
+            from rosclaw_soccer.rsi.paid_replan_data import load_replanned_data
+
+            parent, data, z = load_replanned_data(a.data_root, a.data_hash, policy)
+            warm, wr = load_replanned_warm(a.warm_root, a.warm_hash, data, policy)
+        else:
+            parent, data, z = load_interventional_data(a.data_root, a.data_hash, policy)
+            warm, wr = load_warm_state(a.warm_root, a.warm_hash, data)
+        config = learner_config(a.seed, control=a.geometry_control, generation=a.generation)
         initial = {
             k.removeprefix("net."): v.clone()
             for k, v in warm["model"].items()
@@ -216,7 +226,7 @@ def main():
 
         state = cpu(
             dict(
-                schema="paid.interventional_dagger_student.v1",
+                schema=f"paid.interventional_dagger_student.v{a.generation}",
                 **identity,
                 declaration_hash=digest(a.output / "declaration.json"),
                 head=head.state_dict(),
@@ -229,7 +239,9 @@ def main():
             )
         )
         receipt = dict(
-            status=CONTROL_STATUS if a.geometry_control else STUDENT_STATUS,
+            status=(REPLANNED_CONTROL_STATUS if a.geometry_control else REPLANNED_STATUS)
+            if a.generation == 2
+            else (CONTROL_STATUS if a.geometry_control else STUDENT_STATUS),
             **identity,
             declaration_hash=state["declaration_hash"],
             input_file_hashes=pins,

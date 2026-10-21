@@ -23,13 +23,17 @@ from rosclaw_soccer.rsi.paid_interventional_data import load_interventional_data
 
 STUDENT_STATUS = "PAID_INTERVENTIONAL_DAGGER_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
 CONTROL_STATUS = "PAID_INTERVENTIONAL_GEOMETRY_ONLY_CONTROL_NOT_PHYSICALLY_QUALIFIED"
+REPLANNED_STATUS = "PAID_REPLANNED_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+REPLANNED_CONTROL_STATUS = "PAID_REPLANNED_INTERVENTIONAL_GEOMETRY_CONTROL_NOT_PHYSICALLY_QUALIFIED"
 
 
-def learner_config(index: int, *, control: bool = False) -> dict[str, Any]:
+def learner_config(index: int, *, control: bool = False, generation: int = 1) -> dict[str, Any]:
     if type(index) is not int or index not in (0, 1, 2):
         raise ValueError("three fixed integer optimization seeds required")
     if type(control) is not bool or control and index != 0:
         raise ValueError("one explicit fixed primary no-update causal control required")
+    if type(generation) is not int or generation not in (1, 2):
+        raise ValueError("explicit bounded learning generation required")
     result = dict(
         protocol="interventional_dagger.warm_contact.v1",
         seed_index=index,
@@ -66,6 +70,16 @@ def learner_config(index: int, *, control: bool = False) -> dict[str, Any]:
             control=True,
             new_steps=0,
             Adam_total_steps=1024,
+        )
+    if generation == 2:
+        result.update(
+            generation=2,
+            protocol="interventional_dagger.replanned_geometry_control.v2"
+            if control
+            else "interventional_dagger.replanned_contact.v2",
+            seed=2026110100 + index,
+            inherited_steps=3072,
+            Adam_total_steps=3072 if control else 5120,
         )
     return result
 
@@ -124,6 +138,40 @@ def data_support(z: dict[str, np.ndarray]) -> CompactTeacherSupport:
     return CompactTeacherSupport(positive, nearest_protected_radii(positive, negative))
 
 
+def load_replanned_warm(
+    root: Path, expected: str, data: dict[str, Any], policy: Path
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reuse the exact current student that generated the new teacher prefixes."""
+    rp = root / "complete.json"
+    if rp.is_symlink() or digest(rp) != expected or expected != data["source_student_hash"]:
+        raise ValueError("exact current-prefix source student must provide warm memory")
+    r = json.loads(rp.read_text())
+    if (
+        r["status"] != STUDENT_STATUS
+        or r["config"] != learner_config(0)
+        or r["data_hash"] != data["previous_hash"]
+        or any(
+            r[k] != data[k] for k in ("body_scene_hash", "parent_hash", "parent_checkpoint_hash")
+        )
+    ):
+        raise ValueError("previous generation primary 3072-step memory required")
+    cp = Path(r["checkpoint_path"])
+    # Fully validate its generation-one data, safe state, Adam, geometry and batch1
+    # certificate before borrowing weights; physical qualification is not inherited.
+    load_interventional_student(
+        policy,
+        checkpoint=cp,
+        checkpoint_hash=r["checkpoint_hash"],
+        training_receipt=rp,
+        training_receipt_hash=expected,
+        scene_hash=data["body_scene_hash"],
+    )
+    if digest(cp) != r["checkpoint_hash"]:
+        raise ValueError("warm checkpoint changed during ancestry validation")
+    state = torch.load(cp, weights_only=True, map_location="cpu")
+    return dict(model=state["head"], optimizer=state["optimizer"]), r
+
+
 def learning_certificate(
     head: CompactSupportedHead,
     z: dict[str, np.ndarray],
@@ -179,21 +227,29 @@ def learning_certificate(
 
 def validate_learner_state(s: dict[str, Any], r: dict[str, Any], warm: dict[str, Any]) -> None:
     control = s.get("config", {}).get("control", False)
-    config = learner_config(s.get("config", {}).get("seed_index"), control=control)
+    generation = s.get("config", {}).get("generation", 1)
+    config = learner_config(
+        s.get("config", {}).get("seed_index"), control=control, generation=generation
+    )
+    status = (
+        (REPLANNED_CONTROL_STATUS if control else REPLANNED_STATUS)
+        if generation == 2
+        else (CONTROL_STATUS if control else STUDENT_STATUS)
+    )
     steps = config["new_steps"]
     counts = dict(
         optimizer_updates=steps,
-        inherited_optimizer_updates=1024,
+        inherited_optimizer_updates=config["inherited_steps"],
         canonical_forward_rows=256 * steps,
         intervention_forward_rows=256 * steps,
         retention_forward_rows=512 * steps,
         nonzero_gradient_steps=steps,
     )
     if (
-        s.get("schema") != "paid.interventional_dagger_student.v1"
+        s.get("schema") != f"paid.interventional_dagger_student.v{generation}"
         or s.get("config") != config
         or r.get("config") != config
-        or r.get("status") != (CONTROL_STATUS if control else STUDENT_STATUS)
+        or r.get("status") != status
         or s.get("counts") != counts
         or r.get("counts") != counts
         or s.get("learning_certificate") != r.get("learning_certificate")
@@ -276,7 +332,7 @@ def validate_learner_state(s: dict[str, Any], r: dict[str, Any], warm: dict[str,
             or step.numel() != 1
             or float(step) != config["Adam_total_steps"]
         ):
-            raise ValueError("1024 inherited plus 2048 actual new Adam steps required")
+            raise ValueError("exact inherited and actual new Adam steps required")
         for k in ("exp_avg", "exp_avg_sq"):
             t = slots[i].get(k)
             if (
@@ -336,8 +392,14 @@ def load_interventional_student(
         )
     ):
         raise ValueError("exact learner declaration differs")
-    parent, data, z = load_interventional_data(Path(d["data_root"]), s["data_hash"], policy)
-    warm, _ = load_warm_state(Path(d["warm_root"]), s["warm_hash"], data)
+    if s.get("config", {}).get("generation", 1) == 2:
+        from rosclaw_soccer.rsi.paid_replan_data import load_replanned_data
+
+        parent, data, z = load_replanned_data(Path(d["data_root"]), s["data_hash"], policy)
+        warm, _ = load_replanned_warm(Path(d["warm_root"]), s["warm_hash"], data, policy)
+    else:
+        parent, data, z = load_interventional_data(Path(d["data_root"]), s["data_hash"], policy)
+        warm, _ = load_warm_state(Path(d["warm_root"]), s["warm_hash"], data)
     validate_learner_state(s, r, warm)
     if any(s[k] != data[k] for k in ("body_scene_hash", "parent_hash", "parent_checkpoint_hash")):
         raise ValueError("interventional ancestry changed")

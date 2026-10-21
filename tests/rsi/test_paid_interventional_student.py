@@ -7,6 +7,8 @@ from test_paid_compact_student import fixture as warm_fixture
 
 from rosclaw_soccer.rsi.paid_interventional_student import (
     CONTROL_STATUS,
+    REPLANNED_CONTROL_STATUS,
+    REPLANNED_STATUS,
     STUDENT_STATUS,
     learner_config,
     learning_certificate,
@@ -14,7 +16,7 @@ from rosclaw_soccer.rsi.paid_interventional_student import (
 )
 
 
-def fixture(control=False):
+def fixture(control=False, generation=1):
     head, p, n, warm, _, _ = warm_fixture()
     initial = {
         k.removeprefix("net."): v.clone() for k, v in warm["model"].items() if k.startswith("net.")
@@ -23,8 +25,8 @@ def fixture(control=False):
         with torch.no_grad():
             head.net[-1].bias.add_(0.001)
     state = dict(
-        schema="paid.interventional_dagger_student.v1",
-        config=learner_config(0, control=control),
+        schema=f"paid.interventional_dagger_student.v{generation}",
+        config=learner_config(0, control=control, generation=generation),
         head=copy.deepcopy(head.state_dict()),
         initial_net=initial,
         optimizer=copy.deepcopy(warm["optimizer"]),
@@ -32,11 +34,12 @@ def fixture(control=False):
         promotion_authorized=False,
     )
     steps = 0 if control else 2048
+    inherited = 3072 if generation == 2 else 1024
     for slot in state["optimizer"]["state"].values():
-        slot["step"].fill_(1024 + steps)
+        slot["step"].fill_(inherited + steps)
     state["counts"] = dict(
         optimizer_updates=steps,
-        inherited_optimizer_updates=1024,
+        inherited_optimizer_updates=inherited,
         canonical_forward_rows=256 * steps,
         intervention_forward_rows=256 * steps,
         retention_forward_rows=512 * steps,
@@ -62,7 +65,9 @@ def fixture(control=False):
     state["learning_certificate"] = learning_certificate(head, z, 1, initial, control=control)
     receipt = copy.deepcopy(state)
     receipt.update(
-        status=CONTROL_STATUS if control else STUDENT_STATUS,
+        status=(REPLANNED_CONTROL_STATUS if control else REPLANNED_STATUS)
+        if generation == 2
+        else (CONTROL_STATUS if control else STUDENT_STATUS),
         parent_parameters_in_optimizer=0,
         base_parameters_in_optimizer=0,
         own_native_steps=0,
@@ -70,6 +75,24 @@ def fixture(control=False):
         DEV_fit_rows=0,
     )
     return state, receipt, warm
+
+
+@pytest.mark.parametrize("control", [False, True])
+def test_replanned_learning_keeps_3072_warm_updates_separate_from_new_steps(control):
+    s, r, w = fixture(control, generation=2)
+    validate_learner_state(s, r, w)
+    assert s["counts"]["inherited_optimizer_updates"] == 3072
+    assert s["config"]["Adam_total_steps"] == (3072 if control else 5120)
+    assert s["config"]["seed"] == 2026110100
+    s["counts"]["inherited_optimizer_updates"] = 1024
+    with pytest.raises(ValueError):
+        validate_learner_state(s, r, w)
+
+
+@pytest.mark.parametrize("generation", [True, 0, 3, "2"])
+def test_learning_generation_is_typed_and_bounded(generation):
+    with pytest.raises(ValueError, match="generation"):
+        learner_config(0, generation=generation)
 
 
 @pytest.mark.parametrize("control", [False, True])
