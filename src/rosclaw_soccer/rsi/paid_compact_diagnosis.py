@@ -106,21 +106,30 @@ def summarize_compact_trace(
         raise ValueError("paired teacher features and desired actions required")
     if teacher_features is not None and teacher_delta is not None:
         if (
-            teacher_features.shape != x.shape
-            or teacher_delta.shape != d.shape
+            teacher_features.ndim != 2
+            or teacher_features.shape[1] != 288
+            or not 1 <= len(teacher_features) <= 300
+            or teacher_delta.shape != (len(teacher_features), 29)
             or any(
                 v.dtype != np.float32 or not np.isfinite(v).all()
                 for v in (teacher_features, teacher_delta)
             )
         ):
-            raise ValueError("same-horizon own-causal TRAIN teacher required")
+            raise ValueError("bounded own-causal TRAIN teacher required")
+        common = min(n, len(teacher_features))
         distance = np.linalg.norm(
-            x.astype(np.float64) - teacher_features.astype(np.float64), axis=1
+            x[:common].astype(np.float64) - teacher_features[:common].astype(np.float64), axis=1
         )
-        error = np.abs(d.astype(np.float64) - teacher_delta.astype(np.float64))
+        error = np.abs(d[:common].astype(np.float64) - teacher_delta[:common].astype(np.float64))
         report["same_index_teacher_comparison"] = dict(
             is_expert_label_on_student_state=False,
-            first_feature_difference_control=first(np.any(x != teacher_features, axis=1)),
+            own_horizon_rows=n,
+            teacher_horizon_rows=len(teacher_features),
+            compared_prefix_rows=common,
+            unobserved_tail_extrapolated=False,
+            first_feature_difference_control=first(
+                np.any(x[:common] != teacher_features[:common], axis=1)
+            ),
             own_feature_distance_quantiles=np.quantile(distance, [0, 0.5, 0.9, 1]).tolist(),
             maximum_joint_action_difference_rad=float(error.max()),
             maximum_joint_action_difference_control=int(error.max(axis=1).argmax()),

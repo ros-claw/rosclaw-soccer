@@ -33,6 +33,18 @@ def test_same_index_teacher_difference_is_not_an_own_state_expert_label():
     assert not s["is_expert_label_on_student_state"]
 
 
+def test_early_failure_or_longer_teacher_preserves_observed_prefix_without_padding():
+    t = trace()
+    teacher = np.zeros((6, 288), np.float32)
+    r = summarize_compact_trace(
+        t, teacher_features=teacher, teacher_delta=np.zeros((6, 29), np.float32)
+    )
+    s = r["same_index_teacher_comparison"]
+    assert s["compared_prefix_rows"] == 4
+    assert s["teacher_horizon_rows"] == 6 and s["own_horizon_rows"] == 4
+    assert not s["unobserved_tail_extrapolated"]
+
+
 @pytest.mark.parametrize("bad", ["nan", "gain", "authority", "shape", "contact", "teacher"])
 def test_invalid_trace_does_not_produce_a_progress_report(bad):
     t = trace()

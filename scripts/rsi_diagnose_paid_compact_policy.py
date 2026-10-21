@@ -76,7 +76,10 @@ def main():
     if digest(sp) != d["student_hash"]:
         raise ValueError("same recorded student identity required")
     student = json.loads(sp.read_text())
-    if student["data_hash"] != a.data_hash:
+    if student["data_hash"] != a.data_hash or student["status"] not in (
+        "PAID_COMPACT_SUPPORT_BATCH1_AUDITED_NOT_PHYSICALLY_QUALIFIED",
+        "PAID_ACTIVE_COMPACT_SUPPORT_AUDITED_NOT_PHYSICALLY_QUALIFIED",
+    ):
         raise ValueError("student and diagnostic TRAIN curriculum differ")
     pins = dict(ar["input_file_hashes"])
     for f in (rp, ap, dp, sp, data_path):
@@ -112,13 +115,13 @@ def main():
             compact_own_trace,
             summarize_compact_trace,
         )
-        from rosclaw_soccer.rsi.paid_compact_student import load_compact_student
         from rosclaw_soccer.rsi.paid_contact_diagnosis import contact_failure_causes
+        from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
 
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
         policy = next(Path(f) for f in pins if f.endswith("/ckp/policy_30000.onnx"))
-        actor, _ = load_compact_student(
+        actor, _ = load_paid_student(
             policy,
             checkpoint=Path(student["checkpoint_path"]),
             checkpoint_hash=student["checkpoint_hash"],
