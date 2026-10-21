@@ -25,10 +25,12 @@ IDENTITIES = (
 FIRST_R2_CASES = [1, 2, 3, 7, 9, 11, 13, 15, 16, 17, 18, 19]
 
 
-def full_entry_config(seed: int) -> dict[str, Any]:
+def full_entry_config(seed: int, *, trajectory_support: bool = False) -> dict[str, Any]:
     if type(seed) is not int or seed not in (0, 1, 2):
         raise ValueError("three predeclared integer seeds required")
-    return dict(
+    if type(trajectory_support) is not bool:
+        raise ValueError("explicit support ablation flag required")
+    result = dict(
         protocol="full-entry-contact.v1",
         seed_index=seed,
         seed=2026102800 + seed,
@@ -51,10 +53,38 @@ def full_entry_config(seed: int) -> dict[str, Any]:
         Fresh_fit_rows=0,
         DEV_fit_rows=0,
     )
+    if trajectory_support:
+        result.update(
+            protocol="full-entry-contact.trajectory-support.v2",
+            trajectory_support=True,
+            gate_positive_support="whole_successful_teacher_trajectory",
+            gate_negative_support="all_protected_acquired_states",
+            head_minibatches="exact_v1_PCG_stream_after512_gate_iterations",
+        )
+    return result
 
 
 def digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def head_rng_after_v1_gate(seed: int, core: np.ndarray, negative_rows: int) -> np.random.Generator:
+    """Exact v1 minibatch state, independent of the ablation's new gate draws."""
+    if (
+        type(seed) is not int
+        or seed not in (2026102800, 2026102801, 2026102802)
+        or core.ndim != 1
+        or not len(core)
+        or core.dtype.kind not in "iu"
+        or type(negative_rows) is not int
+        or negative_rows < 256
+    ):
+        raise ValueError("fixed original seed and actual v1 support sizes required")
+    rng = np.random.default_rng(seed)
+    for _ in range(512):
+        rng.choice(core, 512, replace=True)
+        rng.integers(0, negative_rows, size=256)
+    return rng
 
 
 def validate_full_entry_data(
@@ -251,10 +281,16 @@ def load_full_entry_data(
 
 
 def full_entry_certificate(
-    model: FullEntryContactResidual, arrays: dict[str, np.ndarray]
+    model: FullEntryContactResidual,
+    arrays: dict[str, np.ndarray],
+    *,
+    trajectory_support: bool = False,
 ) -> dict[str, Any]:
+    if type(trajectory_support) is not bool:
+        raise ValueError("explicit gate support protocol required")
+    negative = ~arrays["teacher"] if trajectory_support else ~arrays["active"]
     maximum = -math.inf
-    protected = opened = core_open = 0
+    protected = opened = core_open = teacher_open = 0
     mse = 0.0
     with torch.no_grad():
         for i, row in enumerate(arrays["features"]):
@@ -266,8 +302,10 @@ def full_entry_certificate(
                 score
             ):
                 raise ValueError("frozen own parent or finite gate identity differs")
-            if not arrays["active"][i]:
+            if negative[i]:
                 maximum = max(maximum, score)
+            if arrays["teacher"][i]:
+                teacher_open += int(score >= 0)
             if not arrays["teacher"][i]:
                 protected += 1
                 if not torch.equal(pred, prior):
@@ -279,12 +317,12 @@ def full_entry_certificate(
                     (pred[0] - prior[0] - torch.from_numpy(arrays["target"][i])).square().mean()
                 )
     if maximum > -0.1:
-        raise ValueError("every inactive/support gate must reject in runtime shape")
+        raise ValueError("every declared negative-support gate must reject in runtime shape")
     return dict(
         maximum_negative_logit_CPU=maximum,
         all_protected_predictions_exact_parent=True,
         protected_rows=protected,
-        negative_support_rows=int((~arrays["active"]).sum()),
+        negative_support_rows=int(negative.sum()),
         active_rows=int(arrays["active"].sum()),
         active_gate_open_rows=opened,
         positive_core_open_rows=core_open,
@@ -293,13 +331,21 @@ def full_entry_certificate(
         CPU_parent_forward_rows=2 * len(arrays["features"]),
         CPU_plastic_gate_forward_rows=2 * len(arrays["features"]),
         CPU_plastic_net_forward_rows=len(arrays["features"]),
+        **(
+            dict(teacher_gate_open_rows=teacher_open, gate_support="whole_teacher_trajectory")
+            if trajectory_support
+            else {}
+        ),
     )
 
 
 def validate_full_entry_state(
     state: dict[str, Any], receipt: dict[str, Any], initial: dict[str, torch.Tensor]
 ) -> None:
-    config = full_entry_config(state.get("config", {}).get("seed_index"))
+    config = full_entry_config(
+        state.get("config", {}).get("seed_index"),
+        trajectory_support=state.get("config", {}).get("trajectory_support", False),
+    )
     cert = state.get("retention_certificate", {})
     counts = state.get("counts", {})
     maximum = cert.get("maximum_negative_logit_CPU")
@@ -431,7 +477,10 @@ def load_full_entry_student(
         raise ValueError("exact bounded safe-load artifacts required")
     r = json.loads(training_receipt.read_text())
     s = torch.load(checkpoint, weights_only=True, map_location="cpu")
-    config = full_entry_config(s.get("config", {}).get("seed_index"))
+    config = full_entry_config(
+        s.get("config", {}).get("seed_index"),
+        trajectory_support=s.get("config", {}).get("trajectory_support", False),
+    )
     dp = training_receipt.parent / "declaration.json"
     if (
         digest(dp) != s["declaration_hash"]
@@ -454,6 +503,11 @@ def load_full_entry_student(
         raise ValueError("full-entry data ancestry changed")
     plastic.load_state_dict(s["plastic"], strict=True)
     model = FullEntryContactResidual(parent.residual, plastic).eval()
-    if full_entry_certificate(model, arrays) != s["retention_certificate"]:
+    if (
+        full_entry_certificate(
+            model, arrays, trajectory_support=config.get("trajectory_support", False)
+        )
+        != s["retention_certificate"]
+    ):
         raise ValueError("own runtime-shape CPU retention recomputation differs")
     return FrozenFullEntryActor(parent.base, model, parent.get_buffer("action_scale")).eval(), r

@@ -17,6 +17,7 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--seed", type=int, choices=(0, 1, 2), required=True)
+    p.add_argument("--trajectory-support", action="store_true")
     a = p.parse_args()
     rp = a.data_root / "complete.json"
     if (
@@ -57,6 +58,7 @@ def main():
             FULL_ENTRY_STATUS,
             full_entry_certificate,
             full_entry_config,
+            head_rng_after_v1_gate,
             load_full_entry_data,
             validate_full_entry_state,
         )
@@ -65,7 +67,7 @@ def main():
         torch.set_num_interop_threads(1)
         policy = next(Path(f) for f in pins if f.endswith("/ckp/policy_30000.onnx"))
         parent, data, arrays = load_full_entry_data(a.data_root, a.data_hash, policy)
-        config = full_entry_config(a.seed)
+        config = full_entry_config(a.seed, trajectory_support=a.trajectory_support)
         uuid = os.environ.get("CUDA_VISIBLE_DEVICES", "")
         if (
             not uuid.startswith("GPU-")
@@ -97,9 +99,11 @@ def main():
         # Prior labels were independently recomputed CPU batch1 by the loader.
         # Training uses those exact frozen runtime outputs, not a GPU batched
         # counterfactual whose hard ancestral gate could round differently.
-        negative = features[torch.from_numpy(~arrays["active"]).cuda()]
+        negative_mask = ~arrays["teacher"] if a.trajectory_support else ~arrays["active"]
+        negative = features[torch.from_numpy(negative_mask).cuda()]
         core = np.flatnonzero(np.abs(arrays["target"]).max(axis=1) > 0.005)
         positives, protected = np.flatnonzero(arrays["teacher"]), np.flatnonzero(~arrays["teacher"])
+        gate_positive = positives if a.trajectory_support else core
         declaration = dict(
             config=config,
             source_head=a.expected_head,
@@ -135,7 +139,7 @@ def main():
         for step in range(512):
             with torch.no_grad():
                 hard = plastic.gate(negative)[:, 0].topk(256).indices
-            pi = torch.from_numpy(rng.choice(core, 512, replace=True)).cuda()
+            pi = torch.from_numpy(rng.choice(gate_positive, 512, replace=True)).cuda()
             ni = torch.from_numpy(rng.integers(0, len(negative), size=256)).cuda()
             pl, nl = (
                 plastic.gate(features[pi])[:, 0],
@@ -159,6 +163,10 @@ def main():
                 write_once(a.output / f"gate{step + 1}.json", event)
                 print(json.dumps(event), flush=True)
         calibration = calibrate_router_gate(plastic.gate, negative)
+        if a.trajectory_support:
+            # Isolate support semantics: recover EXACT v1 head minibatch stream.
+            # This consumes no labels beyond the same frozen TRAIN archive.
+            rng = head_rng_after_v1_gate(config["seed"], core, int((~arrays["active"]).sum()))
         plastic.gate.requires_grad_(False).zero_grad(set_to_none=True)
         plastic.net.requires_grad_(True)
         optimizer = torch.optim.Adam(plastic.net.parameters(), lr=config["lr"])
@@ -205,7 +213,9 @@ def main():
             not torch.equal(v, parent_before[k]) for k, v in candidate.parent.state_dict().items()
         ):
             raise ValueError("frozen routed muscle memory changed")
-        certificate = full_entry_certificate(candidate, arrays)
+        certificate = full_entry_certificate(
+            candidate, arrays, trajectory_support=a.trajectory_support
+        )
 
         def cpu(value):
             if isinstance(value, torch.Tensor):

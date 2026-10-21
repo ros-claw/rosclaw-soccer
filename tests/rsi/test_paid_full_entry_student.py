@@ -214,6 +214,73 @@ def test_exact_staged_head_and_gate_state_is_admitted():
     validate_full_entry_state(*state_fixture())
 
 
+def test_v2_changes_support_not_initialization_authority_or_training_budget():
+    old = full_entry_config(0)
+    new = full_entry_config(0, trajectory_support=True)
+    for k in (
+        "seed",
+        "gate_steps",
+        "head_steps",
+        "lr",
+        "batch_rows",
+        "final_bound_rad",
+        "internal_difference_bound_rad",
+        "parent_frozen",
+        "base_frozen",
+    ):
+        assert old[k] == new[k]
+    assert new["protocol"] != old["protocol"] and "trajectory_support" not in old
+
+
+def test_head_minibatch_stream_is_identical_after_the_support_ablation():
+    from rosclaw_soccer.rsi.paid_full_entry_student import head_rng_after_v1_gate
+
+    core = np.arange(188, dtype=np.int64) * 3
+    old = np.random.default_rng(2026102800)
+    for _ in range(512):
+        old.choice(core, 512, replace=True)
+        old.integers(0, 21721, size=256)
+    new = head_rng_after_v1_gate(2026102800, core, 21721)
+    assert np.array_equal(old.choice(3228, 512, replace=True), new.choice(3228, 512, replace=True))
+    assert np.array_equal(
+        old.choice(18694, 512, replace=True), new.choice(18694, 512, replace=True)
+    )
+
+
+def test_whole_teacher_support_can_open_zero_target_prefix_without_weakening_protected_gate():
+    from test_paid_full_entry_contact import model
+
+    from rosclaw_soccer.rsi.paid_full_entry_student import full_entry_certificate
+
+    m = model().eval()
+    with torch.no_grad():
+        g = m.plastic.gate
+        g[0].weight.zero_()
+        g[0].bias.zero_()
+        g[0].weight[0, 0] = 1
+        g[-1].weight.zero_()
+        g[-1].weight[0, 0] = 1
+        g[-1].bias.fill_(-0.2)
+    x = np.zeros((3, 288), np.float32)
+    x[:, 0] = [-1, 1, 2]
+    with torch.no_grad():
+        prior = torch.cat([m.parent(torch.from_numpy(row).reshape(1, 288)) for row in x]).numpy()
+    y = np.zeros((3, 29), np.float32)
+    y[2] = 0.05
+    z = dict(
+        features=x,
+        parent_delta=prior,
+        target=y,
+        teacher=np.array([False, True, True]),
+        active=np.array([False, False, True]),
+    )
+    with pytest.raises(ValueError, match="negative-support"):
+        full_entry_certificate(m, z)
+    cert = full_entry_certificate(m, z, trajectory_support=True)
+    assert cert["negative_support_rows"] == 1 and cert["teacher_gate_open_rows"] == 2
+    assert cert["protected_rows"] == 1 and cert["all_protected_predictions_exact_parent"]
+
+
 @pytest.mark.parametrize(
     "fault",
     [
