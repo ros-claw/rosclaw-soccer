@@ -59,6 +59,7 @@ def main():
         ),
     )
     import torch
+
     from rosclaw_soccer.rsi.paid_trainable_actor import PUBLISHED_HASH, PaidTrainableActor
 
     torch.set_num_threads(1)
