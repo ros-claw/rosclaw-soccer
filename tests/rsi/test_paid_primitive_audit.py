@@ -72,6 +72,34 @@ def test_missing_contact_is_audited_as_failure_not_synthetic_success():
     assert result == dict(native_steps=610, neural_rows=1, quality=False, body_failed=False)
 
 
+def test_declared_hold_checks_no_neural_padding_and_actual_torque():
+    a, z, _ = synthetic_raw()
+    keys = (
+        "target",
+        "native_qpos_before",
+        "native_qvel_before",
+        "qpos",
+        "qvel",
+        "forces",
+        "torque",
+        "body_failed",
+        "time_before",
+    )
+    hold = {k: z[k][:3].copy() for k in keys}
+    hold.update(neural_control=np.zeros(3, bool), post_reference_hold=np.ones(3, bool))
+    entry = {k: z["initial_" + k] for k in ("qpos", "qvel", "time")}
+    assert a.audit_hold(hold, entry, z["target"][0]) == dict(
+        native_steps=30, body_failed=False, settled=True
+    )
+    hold["torque"][0, 0, 0] = 0.1
+    with pytest.raises(ValueError, match="torque"):
+        a.audit_hold(hold, entry, z["target"][0])
+    hold["torque"][0, 0, 0] = 0
+    hold["NN_fake"] = np.array(0.0)
+    with pytest.raises(ValueError, match="padding"):
+        a.audit_hold(hold, entry, z["target"][0])
+
+
 @pytest.mark.parametrize(
     "fault", ["time", "body_reset", "torque", "action", "h", "previous", "reward", "censor"]
 )

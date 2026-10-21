@@ -39,6 +39,52 @@ class PaidPrimitiveAuditor:
             ),
         )
 
+    def audit_hold(
+        self, z: dict[str, np.ndarray], entry: dict[str, np.ndarray], target: np.ndarray
+    ) -> dict[str, Any]:
+        """Declared <=1s physical PD settling, not new NN/reference frames."""
+        n = len(z["target"])
+        if (
+            not 1 <= n <= 50
+            or any(k.startswith("NN_") for k in z)
+            or any(not np.isfinite(v).all() for v in z.values())
+            or z["neural_control"].any()
+            or not z["post_reference_hold"].all()
+            or not np.array_equal(z["target"], np.broadcast_to(target, z["target"].shape))
+        ):
+            raise ValueError("bounded held-target physics, never neural/ref padding, required")
+        qb, vb = self.canonical(z["native_qpos_before"], z["native_qvel_before"])
+        eq, ev = self.canonical(entry["qpos"], entry["qvel"])
+        if (
+            not np.array_equal(qb[0], eq)
+            or not np.array_equal(vb[0], ev)
+            or not np.array_equal(qb[1:], z["qpos"][:-1, -1])
+            or not np.array_equal(vb[1:], z["qvel"][:-1, -1])
+            or not np.isclose(z["time_before"][0], entry["time"], rtol=0, atol=1e-11)
+            or not np.allclose(np.diff(z["time_before"]), 0.02, rtol=0, atol=1e-11)
+        ):
+            raise ValueError("hold body/time must remain physically continuous")
+        jq = np.concatenate((qb[:, None, 7:36], z["qpos"][:, :-1, 7:36]), axis=1)
+        jv = np.concatenate((vb[:, None, 6:35], z["qvel"][:, :-1, 6:35]), axis=1)
+        if not np.array_equal(
+            np.clip(
+                self.kp * (z["target"][:, None] - jq) - self.kd * jv, -self.effort, self.effort
+            ),
+            z["torque"],
+        ):
+            raise ValueError("actual hold bounded PD torque differs")
+        bad = (
+            (z["qpos"][:, :, 2] < 0.65)
+            | (1 - 2 * (z["qpos"][:, :, 4] ** 2 + z["qpos"][:, :, 5] ** 2) < 0.9)
+        ).any(axis=1)
+        if not np.array_equal(bad, z["body_failed"]) or bad[:-1].any():
+            raise ValueError("hold failure must terminate at its first control boundary")
+        return dict(
+            native_steps=n * 10,
+            body_failed=bool(bad.any()),
+            settled=bool(z["qpos"][-1, -1, 38] <= 0.12 and abs(z["qvel"][-1, -1, 37]) <= 0.1),
+        )
+
     def audit(
         self,
         z: dict[str, np.ndarray],
