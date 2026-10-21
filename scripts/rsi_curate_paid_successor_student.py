@@ -15,7 +15,19 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("transfer-hash", "audit-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
+    for name in ("additional-teacher-root", "additional-audit-root"):
+        p.add_argument("--" + name, type=Path)
+    for name in ("additional-teacher-hash", "additional-audit-hash"):
+        p.add_argument("--" + name)
     a = p.parse_args()
+    extension = [
+        a.additional_teacher_root,
+        a.additional_audit_root,
+        a.additional_teacher_hash,
+        a.additional_audit_hash,
+    ]
+    if any(x is not None for x in extension) and not all(x is not None for x in extension):
+        p.error("all additional teacher/audit roots and hashes must be provided together")
     tp, ap = a.transfer_root / "complete.json", a.audit_root / "complete.json"
     if (
         a.output.exists()
@@ -48,6 +60,41 @@ def main():
     ]
     pins = dict(review["input_file_hashes"])
     pins.update({str(tp): a.transfer_hash, str(ap): a.audit_hash})
+    extra = []
+    if a.additional_teacher_root is not None:
+        from rosclaw_soccer.rsi.paid_successor_curriculum import qualified_additional_teacher
+
+        ep, ea = (
+            a.additional_teacher_root / "complete.json",
+            a.additional_audit_root / "complete.json",
+        )
+        if (
+            digest(ep) != a.additional_teacher_hash
+            or digest(ea) != a.additional_audit_hash
+            or (ep.parent / "failed.json").exists()
+            or (ea.parent / "failed.json").exists()
+        ):
+            raise ValueError("exact closed additional TRAIN teacher and independent audit required")
+        er, ev, ed = [json.loads(f.read_text()) for f in (ep, ea, ep.parent / "declaration.json")]
+        if er["declaration_hash"] != digest(ep.parent / "declaration.json"):
+            raise ValueError("additional teacher declaration changed")
+        extra = qualified_additional_teacher(
+            er,
+            ev,
+            ed,
+            report_path=str(ep),
+            report_hash=a.additional_teacher_hash,
+            parent_path=str(root / "complete.json"),
+            parent_hash=digest(root / "complete.json"),
+            cases=pd["cases"],
+        )
+        for path, h in ev["input_file_hashes"].items():
+            if path in pins and pins[path] != h:
+                raise ValueError("additional teacher lineage conflicts with frozen motor/source")
+            pins[path] = h
+        pins.update({str(ep): a.additional_teacher_hash, str(ea): a.additional_audit_hash})
+    teacher_cases = [2, 3, 8, 9, 10, 11] if extra else [2, 3, 10, 11]
+    curriculum_protocol = "successor-six-teacher-v2" if extra else "successor-four-teacher-v1"
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     check_pins(pins)
@@ -57,7 +104,8 @@ def main():
         dict(
             source_head=a.expected_head,
             input_file_hashes=pins,
-            teacher_cases=[2, 3, 10, 11],
+            teacher_cases=teacher_cases,
+            curriculum_protocol=curriculum_protocol,
             protect_successes_only=True,
             protect_first16_second14_third6=True,
             bank="train",
@@ -148,13 +196,15 @@ def main():
             if not w["quality"] or not w["stand"]["stability_observed"] or not w["teacher_applied"]:
                 raise ValueError("actual selected teacher full kick-and-stand success required")
             add(w["kick"], a.transfer_root, case=i, skill=2, teacher=True)
+        for row in extra:
+            add(row["kick"], a.additional_teacher_root, case=row["case"], skill=2, teacher=True)
         protected = [0, 0, 0]
         for i, world in enumerate(parent["worlds"]):
             for k in range(3):
                 if world["quality_by_kick"][k]:
                     add(world["kicks"][k]["result"], root, case=i, skill=k, teacher=False)
                     protected[k] += 1
-        if protected != [16, 14, 6] or len(features) != 40:
+        if protected != [16, 14, 6] or len(features) != 36 + len(teacher_cases):
             raise ValueError("exact complete success-retention curriculum required")
         x, y, role, group = [np.concatenate(items) for items in (features, targets, roles, groups)]
         active = np.abs(y).max(axis=1) > 1e-6
@@ -173,6 +223,8 @@ def main():
                 feature_path=str(path),
                 feature_hash=digest(path),
                 trajectories=declaration_rows,
+                curriculum_protocol=curriculum_protocol,
+                teacher_cases=teacher_cases,
                 rows=neural_rows,
                 CPU_feature_recompute_rows=neural_rows,
                 teacher_rows=int(role.sum()),

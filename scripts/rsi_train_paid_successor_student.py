@@ -30,13 +30,15 @@ def main():
     ):
         raise ValueError("unused output and exact frozen TRAIN curation required")
     data = json.loads(rp.read_text())
+    from rosclaw_soccer.rsi.paid_successor_curriculum import validate_train_curriculum
+
+    validate_train_curriculum(data, json.loads(dp.read_text()))
     if (
         data["status"] != "PAID_SUCCESSOR_TRAIN_FEATURES_CAUSALLY_RECOMPUTED"
         or data["declaration_hash"] != digest(dp)
         or data["bank"] != "train"
         or data["DEV_episodes_fit"] != 0
         or data["protected_successes_by_kick"] != [16, 14, 6]
-        or len(data["trajectories"]) != 40
         or data["CPU_feature_recompute_rows"] != data["rows"]
         or data["optimizer_updates"] != 0
         or data["own_native_steps"] != 0

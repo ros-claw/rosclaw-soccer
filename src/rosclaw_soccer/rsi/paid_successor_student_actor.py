@@ -203,6 +203,9 @@ def load_successor_student(
     if pins.get(str(data_path)) != state["data_hash"] or digest(data_path) != state["data_hash"]:
         raise ValueError("exact causal TRAIN feature curation required")
     data = json.loads(data_path.read_text())
+    from rosclaw_soccer.rsi.paid_successor_curriculum import validate_train_curriculum
+
+    validate_train_curriculum(data, json.loads((data_path.parent / "declaration.json").read_text()))
     archive = Path(data["feature_path"])
     if (
         data["DEV_episodes_fit"] != 0
