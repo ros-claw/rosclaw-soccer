@@ -11,6 +11,41 @@ import subprocess
 from pathlib import Path
 
 
+def state_drift(reference, observed, *, robot_qpos, ball_qpos, joints):
+    """Typed state errors: never describe quaternion/joint differences as metres."""
+    import numpy as np
+
+    if (
+        reference.shape != observed.shape
+        or reference.ndim != 3
+        or reference.shape[-1] != 43
+        or not np.isfinite(reference).all()
+        or not np.isfinite(observed).all()
+    ):
+        raise ValueError("finite aligned actual qpos trajectories required")
+    result = {}
+    for name, index in (("root", robot_qpos), ("ball", ball_qpos)):
+        result[name + "_position_max_distance_m"] = float(
+            np.linalg.norm(
+                reference[..., index : index + 3] - observed[..., index : index + 3], axis=-1
+            ).max()
+        )
+        a = reference[..., index + 3 : index + 7].astype(np.float64)
+        b = observed[..., index + 3 : index + 7].astype(np.float64)
+        na, nb = np.linalg.norm(a, axis=-1), np.linalg.norm(b, axis=-1)
+        if (na < 1e-12).any() or (nb < 1e-12).any():
+            raise ValueError("nonzero measured quaternion norms required")
+        # Normalize copies for a rotation metric, never the physical state.
+        dot = ((a / na[..., None]) * (b / nb[..., None])).sum(axis=-1)
+        result[name + "_rotation_max_geodesic_rad"] = float(
+            (2 * np.arccos(np.clip(np.abs(dot), 0, 1))).max()
+        )
+    result["hinge_position_max_absolute_rad"] = float(
+        np.abs(reference[..., joints] - observed[..., joints]).max()
+    )
+    return result
+
+
 def main():
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -266,6 +301,13 @@ def main():
                 outcomes=outcomes,
                 max_qpos_difference=float(np.abs(arrays["qpos"] - truth["qpos"]).max()),
                 max_qvel_difference=float(np.abs(arrays["qvel"] - truth["qvel"]).max()),
+                typed_state_drift=state_drift(
+                    truth["qpos"],
+                    arrays["qpos"],
+                    robot_qpos=layout.rq,
+                    ball_qpos=layout.bq,
+                    joints=layout.qi,
+                ),
                 correct_foot_label_agreement=sum(
                     x["native_recorded"]["postcontact"]["correct_foot_first"]
                     == x["gpu_recorded"]["postcontact"]["correct_foot_first"]
