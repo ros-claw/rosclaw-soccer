@@ -175,7 +175,19 @@ def main():
                 if digest(path) != row["raw_hash"]:
                     raise ValueError("original physical zero history changed")
                 pins[str(path)] = row["raw_hash"]
-                with np.load(path, allow_pickle=False) as z, torch.no_grad():
+                with np.load(path, allow_pickle=False) as archive:
+                    z = {
+                        k: archive[k].copy()
+                        for k in (
+                            "NN_obs",
+                            "NN_action",
+                            "NN_h_before",
+                            "NN_c_before",
+                            "NN_h_after",
+                            "NN_c_after",
+                        )
+                    }
+                with torch.no_grad():
                     for j, obs in enumerate(z["NN_obs"]):
                         state = tuple(
                             torch.from_numpy(z[k][j].copy()) for k in ("NN_h_before", "NN_c_before")
@@ -199,6 +211,7 @@ def main():
                 obs, nominal, actual = [
                     z[k].copy() for k in ("NN_obs", "NN_nominal_action", "NN_action")
                 ]
+                after_memory = {k: z[k].copy() for k in ("NN_h_after", "NN_c_after")}
                 state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
                 fs = []
                 for j, item in enumerate(obs):
@@ -207,7 +220,7 @@ def main():
                         action, state, hidden = base.forward_with_features(o, state)
                         f = torch.cat([(o - base.mean) / base.denominator, hidden], dim=-1)[0, 0]
                     if not np.array_equal(action[0, 0].numpy(), nominal[j]) or any(
-                        not np.array_equal(x.numpy(), z[k][j])
+                        not np.array_equal(x.numpy(), after_memory[k][j])
                         for x, k in zip(state, ("NN_h_after", "NN_c_after"), strict=True)
                     ):
                         raise ValueError(

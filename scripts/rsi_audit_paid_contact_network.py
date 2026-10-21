@@ -102,7 +102,20 @@ def main():
             pins[str(path)] = row["raw_hash"]
             state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
             gate_probabilities = []
-            with np.load(path, allow_pickle=False) as z, torch.no_grad():
+            with np.load(path, allow_pickle=False) as archive:
+                z = {
+                    k: archive[k].copy()
+                    for k in (
+                        "NN_obs",
+                        "NN_action",
+                        "NN_nominal_action",
+                        "NN_h_before",
+                        "NN_c_before",
+                        "NN_h_after",
+                        "NN_c_after",
+                    )
+                }
+            with torch.no_grad():
                 for j, observation in enumerate(z["NN_obs"]):
                     if any(
                         not np.array_equal(x.numpy(), z[k][j])
