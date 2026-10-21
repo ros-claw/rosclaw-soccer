@@ -31,12 +31,15 @@ def main():
         raise ValueError("exact closed exam/frozen source and unused output required")
     r, d = json.loads(rp.read_text()), json.loads(dp.read_text())
     indices = d.get("exam_candidate_indices", list(range(4)))
+    sequences = d.get("sequence_protocol", False)
     if (
         r["status"] != "PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED"
         or [x["candidate"] for x in r["candidates"]] != indices
         or not indices
         or len(set(indices)) != len(indices)
         or any(i not in range(4) for i in indices)
+        or r.get("sequence_protocol", False) != sequences
+        or (sequences and d.get("entry_controller") != "candidate")
     ):
         raise ValueError("complete declared CPU candidate set required")
     pins = {**r["input_file_hashes"], str(rp): a.hash, str(dp): digest(dp)}
@@ -128,11 +131,17 @@ def main():
     def snap(raw, prefix):
         return {k.removeprefix(prefix): v for k, v in raw.items() if k.startswith(prefix)}
 
-    def audit_row(row, case, previous, artifact=None):
+    def audit_row(row, case, previous, artifact=None, initial_memory=None):
         nonlocal native, neural, episode_count
         z = read(row if artifact is None else artifact)
         motion = motions[case["source"]]
-        checked = auditor.audit(z, row, horizon=len(motion["q"]), previous_action=previous)
+        checked = auditor.audit(
+            z,
+            row,
+            horizon=len(motion["q"]),
+            previous_action=previous,
+            initial_memory=initial_memory,
+        )
         n = len(z["NN_action"])
         if (
             row["source"] != case["source"]
@@ -177,9 +186,15 @@ def main():
                 same(z, second)
         return checks
 
-    def world(row, case, artifacts):
+    def world(row, case, artifacts, memory_handoff="reset"):
         nonlocal native, hold_count, boundary_count
         start_native = native
+        if (
+            memory_handoff not in ("carry", "reset")
+            or row.get("memory_handoff", "reset") != memory_handoff
+            or (not sequences and memory_handoff != "reset")
+        ):
+            raise ValueError("only explicitly trained single-actor memory handoff may carry")
         data = {Path(x["raw_path"]).name: x for x in artifacts}
         if len(data) != len(artifacts):
             raise ValueError("unique named world artifacts required")
@@ -252,7 +267,14 @@ def main():
                 previous = first["NN_action"][-1]
                 if not np.array_equal(previous, boundary["previous_actual_action"]):
                     raise ValueError("actual first kick action history was erased")
-                second, sc = audit_row(row["second"], case, previous, data["second.npz"])
+                memory = (
+                    tuple(first[k][-1] for k in ("NN_h_after", "NN_c_after"))
+                    if memory_handoff == "carry"
+                    else None
+                )
+                second, sc = audit_row(
+                    row["second"], case, previous, data["second.npz"], initial_memory=memory
+                )
                 same(snap(second, "initial_"), {k: after[k] for k in snap(second, "initial_")})
                 terminal(second, read(data["terminal-second.npz"]))
                 if not np.array_equal(first["initial_mocap_pos"], second["initial_mocap_pos"]):
@@ -290,6 +312,22 @@ def main():
         ]
         summaries = []
         for candidate in r["candidates"]:
+            memory_handoff = "reset"
+            if sequences:
+                memory_handoff = d["candidate_memory_handoff"][candidate["candidate"]]
+                expected = "carry" if candidate["candidate"] < 3 else "reset"
+                if candidate.get("memory_handoff") != memory_handoff or memory_handoff != expected:
+                    raise ValueError(
+                        "exact predeclared sequence seed/ablation memory mode required"
+                    )
+                training = Path(d["candidates"][candidate["candidate"]]) / "complete.json"
+                if (
+                    pins.get(str(training)) != candidate["training_receipt_hash"]
+                    or digest(training) != candidate["training_receipt_hash"]
+                    or json.loads(training.read_text())["config"]["memory_handoff"]
+                    != memory_handoff
+                ):
+                    raise ValueError("memory handoff must bind actual completed training")
             contextual = d.get("entry_controller", "candidate") == "qualified-prior"
             if candidate.get("entry_controller", "candidate") != d.get(
                 "entry_controller", "candidate"
@@ -328,8 +366,8 @@ def main():
                         if Path(x["raw_path"]).name == "first.npz"
                     )
                     same(read(actual), read(expected))
-                checked.append(world(row, case, row["artifacts"]))
-                world(row, case, row["repeat_artifacts"])
+                checked.append(world(row, case, row["artifacts"], memory_handoff))
+                world(row, case, row["repeat_artifacts"], memory_handoff)
                 for x, y in zip(row["artifacts"], row["repeat_artifacts"], strict=True):
                     same(read(x), read(y))
             summary = dict(
@@ -349,8 +387,10 @@ def main():
             if any(section[k] != v for k, v in summary.items()):
                 raise ValueError("continuous statistics differ")
             preserved = all(
-                x["quality"] >= 14 and x["stable"] == 16 and not x["regressions"]
-                for x in iso.values()
+                x["quality"] >= (16 if sequences and key == "old16" else 14)
+                and x["stable"] == 16
+                and not x["regressions"]
+                for key, x in iso.items()
             )
             gain = (
                 preserved

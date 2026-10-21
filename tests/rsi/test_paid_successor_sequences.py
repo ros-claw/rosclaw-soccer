@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from rosclaw_soccer.rsi.paid_successor_sequences import paired_arrays, paired_forward
+from scripts.rsi_exam_paid_live_distilled import successor_memory
 
 
 def records():
@@ -74,3 +75,25 @@ def test_carry_has_actual_cross_skill_gradient_reset_ablation_does_not():
 def test_invalid_pair_boundary_rejected(boundary):
     with pytest.raises(ValueError):
         paired_forward(TinyMemory(), torch.zeros(6, 160), boundary, carry=True)
+
+
+def test_inference_handoff_uses_private_actual_first_skill_memory():
+    raw = {k: np.ones((3, 2, 1, 128), np.float32) for k in ("NN_h_after", "NN_c_after")}
+    state = successor_memory(raw, "carry", same_actor=True)
+    assert all(x.shape == (2, 1, 128) for x in state)
+    state[0].zero_()
+    assert raw["NN_h_after"].all()
+    assert successor_memory(raw, "reset", same_actor=False) is None
+
+
+@pytest.mark.parametrize("fault", ["experts", "mode", "nan", "shape"])
+def test_untrained_mixed_or_invalid_memory_handoff_rejected(fault):
+    raw = {k: np.ones((3, 2, 1, 128), np.float32) for k in ("NN_h_after", "NN_c_after")}
+    if fault == "nan":
+        raw["NN_h_after"][-1, 0, 0, 0] = np.nan
+    elif fault == "shape":
+        raw["NN_c_after"] = np.zeros((3, 128), np.float32)
+    with pytest.raises(ValueError):
+        successor_memory(
+            raw, "unknown" if fault == "mode" else "carry", same_actor=fault != "experts"
+        )

@@ -23,6 +23,23 @@ def select_entry_actor(mode: str, candidate: Any, prior: Any) -> Any:
     raise ValueError("unknown initial motor context")
 
 
+def successor_memory(raw, mode, *, same_actor):
+    """Private measured neural memory, never a translation between two experts."""
+    if mode == "reset":
+        return None
+    if mode != "carry" or not same_actor:
+        raise ValueError("trained carry requires the same actor on both skills")
+    import numpy as np
+    import torch
+
+    arrays = [raw[k][-1] for k in ("NN_h_after", "NN_c_after")]
+    if any(
+        x.shape != (2, 1, 128) or x.dtype != np.float32 or not np.isfinite(x).all() for x in arrays
+    ):
+        raise ValueError("actual complete finite per-player recurrent memory required")
+    return tuple(torch.from_numpy(x.copy()) for x in arrays)
+
+
 def main():
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -38,6 +55,8 @@ def main():
         "--entry-controller", choices=("candidate", "qualified-prior"), default="candidate"
     )
     p.add_argument("--candidate-index", type=int, choices=range(4))
+    p.add_argument("--sequence-bank-root", type=Path)
+    p.add_argument("--sequence-bank-hash")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -58,6 +77,14 @@ def main():
         )
     prior, teacher, base = [json.loads(f.read_text()) for f in (xp, tp, bp)]
     declaration = json.loads((a.prior_exam_root / "declaration.json").read_text())
+    sequences = a.sequence_bank_root is not None
+    if sequences != (a.sequence_bank_hash is not None) or (
+        sequences and a.entry_controller != "candidate"
+    ):
+        raise ValueError("paired sequence bank identity and one actor for both skills required")
+    prior_results = (
+        prior["candidates"][0]["isolated"] if sequences else prior["candidates"][0]["results"]
+    )
     pins = {
         **teacher["input_file_hashes"],
         str(tp): a.live_teacher_hash,
@@ -65,8 +92,22 @@ def main():
         str(bp): digest(bp),
         str(a.prior_exam_root / "declaration.json"): digest(a.prior_exam_root / "declaration.json"),
     }
+    if sequences:
+        sp = a.sequence_bank_root / "complete.json"
+        if digest(sp) != a.sequence_bank_hash:
+            raise ValueError("exact completed complete-world training bank required")
+        bank = json.loads(sp.read_text())
+        if (
+            bank["bootstrap_exam_root"] != str(a.prior_exam_root)
+            or bank["base_root"] != str(a.base_root)
+            or bank["base_checkpoint_hash"] != base["final_checkpoint_hash"]
+            or prior["entry_controller"] != "candidate"
+        ):
+            raise ValueError("sequence initialization must match the qualified new baseline")
+        pins.update(bank["input_file_hashes"])
+        pins[str(sp)] = a.sequence_bank_hash
     for key in ("old16", "dev16"):
-        for row in prior["candidates"][0]["results"][key]["results"]:
+        for row in prior_results[key]["results"]:
             pins[str(a.prior_exam_root / row["raw_path"])] = row["raw_hash"]
     for row in teacher["baseline"]:
         pins[str(a.live_teacher_root / row["raw_path"])] = row["raw_hash"]
@@ -82,8 +123,11 @@ def main():
         pins.update(r["input_file_hashes"])
         pins[str(rp)] = h
         pins[str(root / "declaration.json")] = digest(root / "declaration.json")
-        pins[str(root / "live-distilled-epoch256.pt")] = r["final_checkpoint_hash"]
-        pins[str(root / "live-distilled-epoch0.pt")] = r["initial_checkpoint_hash"]
+        stem = "successor" if sequences else "live-distilled"
+        pins[str(root / f"{stem}-epoch256.pt")] = r["final_checkpoint_hash"]
+        pins[str(root / f"{stem}-epoch0.pt")] = r["initial_checkpoint_hash"]
+        if sequences and r["config"]["memory_handoff"] != ("carry" if index < 3 else "reset"):
+            raise ValueError("exact trained memory protocol required for each candidate")
         candidates.append((root, h, r))
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
@@ -95,7 +139,11 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             old_cases=declaration["old_cases"],
-            DEV_cases=declaration["dev_cases"],
+            DEV_cases=declaration["DEV_cases" if sequences else "dev_cases"],
+            sequence_protocol=sequences,
+            candidate_memory_handoff=[
+                x[2]["config"]["memory_handoff"] if sequences else "reset" for x in candidates
+            ],
             candidates=[str(x[0]) for x in candidates],
             independent_repeats=2,
             candidate_owns_both_kicks=a.entry_controller == "candidate",
@@ -112,7 +160,9 @@ def main():
                 else "frozen initial skill; learned live successor; no case-ID routing"
             ),
             robot_resets_per_world=1,
-            reference_and_h_c_reset_explicit=True,
+            reference_and_h_c_reset_explicit=not sequences,
+            reference_clock_reset=True,
+            memory_constant_during_hold_and_drop=True,
             previous_executed_action_always_carried=True,
             IK_executed=False,
             teacher_mixture=False,
@@ -121,6 +171,7 @@ def main():
             minimum_research_second_kick_quality=8,
             full_skill_second_kick_quality=12,
             old_and_DEV_minimum_quality_each=14,
+            old16_minimum_quality=16 if sequences else 14,
             require_no_old_or_DEV_quality_regression=True,
             require_no_continuous_quality_or_stability_regression=True,
             full_continuous_skill_requires_all16_worlds_stable=True,
@@ -143,6 +194,7 @@ def main():
         from rosclaw_soccer.rsi.paid_live_distilled_actor import load_live_distilled_actor
         from rosclaw_soccer.rsi.paid_research_bench import PaidResearchBench
         from rosclaw_soccer.rsi.paid_skill_handoff import practice_ball_drop, snapshot
+        from rosclaw_soccer.rsi.paid_successor_actor import load_successor_actor
         from rosclaw_soccer.rsi.paid_teacher_policy import PaidResearchPolicy
         from rosclaw_soccer.rsi.paid_trainable_actor import PUBLISHED_HASH
         from scripts.rsi_search_paid_foot_contact import contact_rank
@@ -154,18 +206,22 @@ def main():
         if not xmls or len({digest(f) for f in xmls}) != 1:
             raise ValueError("same qualified standard-ball physical body required")
         contract = PaidResearchPolicy(policy, expected_hash=PUBLISHED_HASH, horizon=1)
-        baseline_actor, _ = load_distilled_actor(
+        baseline_loader = load_live_distilled_actor if sequences else load_distilled_actor
+        baseline_actor, _ = baseline_loader(
             policy,
-            checkpoint=a.base_root / "distilled-epoch256.pt",
+            checkpoint=a.base_root
+            / ("live-distilled-epoch256.pt" if sequences else "distilled-epoch256.pt"),
             checkpoint_hash=base["final_checkpoint_hash"],
             training_receipt=bp,
             training_receipt_hash=digest(bp),
             scene_hash=digest(xmls[0]),
         )
+        candidate_loader = load_successor_actor if sequences else load_live_distilled_actor
         actors = [
-            load_live_distilled_actor(
+            candidate_loader(
                 policy,
-                checkpoint=root / "live-distilled-epoch256.pt",
+                checkpoint=root
+                / ("successor-epoch256.pt" if sequences else "live-distilled-epoch256.pt"),
                 checkpoint_hash=r["final_checkpoint_hash"],
                 training_receipt=root / "complete.json",
                 training_receipt_hash=h,
@@ -180,7 +236,10 @@ def main():
         from exp.mujoco_soccer.observations import build_observation
         from exp.mujoco_soccer.scene import MujocoSoccer
 
-        cases, dev = declaration["old_cases"], declaration["dev_cases"]
+        cases, dev = (
+            declaration["old_cases"],
+            declaration["DEV_cases" if sequences else "dev_cases"],
+        )
         names = list(dict.fromkeys(c["source"] for c in cases))
         clips = {
             n: load_motion_clips(policy.parent.parent / "motions/soccer-standard" / n)[0]
@@ -222,16 +281,19 @@ def main():
             row.update(save(path, raw))
             return raw, row
 
-        def world(i, actor, folder, baseline=False):
+        def world(i, actor, folder, baseline=False, memory_handoff="reset"):
             folder.mkdir()
             ep = bench.make(cases[i])
             entry_actor = select_entry_actor(a.entry_controller, actor, baseline_actor)
             raw, first = bench.collect_current(ep, entry_actor)
+            memory = successor_memory(
+                raw, memory_handoff, same_actor=a.entry_controller == "candidate"
+            )
             verify_neural(raw)
             artifacts = [save(folder / "first.npz", raw)]
             first.update(artifacts[-1])
             if baseline or a.entry_controller == "qualified-prior":
-                reference = prior["candidates"][0]["results"]["old16"]["results"][i]
+                reference = prior_results["old16"]["results"][i]
                 with np.load(a.prior_exam_root / reference["raw_path"], allow_pickle=False) as z:
                     same(raw, {k: z[k] for k in z.files})
             artifacts.append(save(folder / "terminal-first.npz", snapshot(ep.env.data)))
@@ -283,7 +345,7 @@ def main():
                                 },
                             )
                         )
-                        raw, second = bench.collect_current(ep, actor)
+                        raw, second = bench.collect_current(ep, actor, initial_state=memory)
                         verify_neural(raw)
                         artifacts.append(save(folder / "second.npz", raw))
                         second.update(artifacts[-1])
@@ -297,7 +359,14 @@ def main():
                         )
                         if baseline:
                             with np.load(
-                                a.live_teacher_root / teacher["baseline"][i]["raw_path"],
+                                (
+                                    a.prior_exam_root
+                                    / prior["candidates"][0]["continuous"]["results"][i]["second"][
+                                        "raw_path"
+                                    ]
+                                    if sequences
+                                    else a.live_teacher_root / teacher["baseline"][i]["raw_path"]
+                                ),
                                 allow_pickle=False,
                             ) as z:
                                 if any(not np.array_equal(raw[k], z[k]) for k in raw):
@@ -314,6 +383,7 @@ def main():
                 second_quality=quality(second),
                 world_stable=status == "TWO_SKILLS_EXECUTED",
                 robot_resets=1,
+                memory_handoff=memory_handoff,
             )
             write_once(folder / "complete.json", result)
             return result
@@ -325,7 +395,7 @@ def main():
             rows = []
             for i, case in enumerate(bank):
                 raw, row = isolated(case, baseline_actor, folder / f"case{i}.npz")
-                old = prior["candidates"][0]["results"][key]["results"][i]
+                old = prior_results[key]["results"][i]
                 with np.load(a.prior_exam_root / old["raw_path"], allow_pickle=False) as z:
                     same(raw, {k: z[k] for k in z.files})
                 rows.append(row)
@@ -373,9 +443,12 @@ def main():
             target = folder / "continuous"
             target.mkdir()
             worlds = []
+            memory_handoff = (
+                candidates[index][2]["config"]["memory_handoff"] if sequences else "reset"
+            )
             for i in range(16):
-                first = world(i, actor, target / f"case{i}-repeat0")
-                other = world(i, actor, target / f"case{i}-repeat1")
+                first = world(i, actor, target / f"case{i}-repeat0", memory_handoff=memory_handoff)
+                other = world(i, actor, target / f"case{i}-repeat1", memory_handoff=memory_handoff)
                 if first["status"] != other["status"] or len(first["artifacts"]) != len(
                     other["artifacts"]
                 ):
@@ -401,8 +474,10 @@ def main():
                 if old["world_stable"] and not new["world_stable"]
             ]
             old_preserved = all(
-                r["quality"] >= 14 and r["stable"] == 16 and not r["regressions"]
-                for r in isolated_results.values()
+                r["quality"] >= (16 if sequences and key == "old16" else 14)
+                and r["stable"] == 16
+                and not r["regressions"]
+                for key, r in isolated_results.items()
             )
             research_gain = (
                 old_preserved
@@ -413,6 +488,7 @@ def main():
             full_skill = research_gain and second_quality >= 12 and stable == 16
             output = dict(
                 candidate=index,
+                memory_handoff=memory_handoff,
                 entry_controller=a.entry_controller,
                 isolated_controller=a.entry_controller,
                 live_successor_controller="candidate",
@@ -469,6 +545,7 @@ def main():
             a.output / "complete.json",
             dict(
                 status="PAID_LIVE_DISTILLED_CPU_FULL_WORLD_EXAM_CLOSED",
+                sequence_protocol=sequences,
                 input_file_hashes=pins,
                 baseline_isolated=old_baselines,
                 baseline_continuous=continuous_baseline,
