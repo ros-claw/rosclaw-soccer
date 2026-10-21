@@ -424,5 +424,12 @@ def load_paid_student(policy: Path, **kwargs: Any) -> tuple[Any, dict[str, Any]]
 
     if status == ROUTER_STATUS:
         return load_ancestral_router_student(policy, **kwargs)
+    from rosclaw_soccer.rsi.paid_full_entry_student import (
+        FULL_ENTRY_STATUS,
+        load_full_entry_student,
+    )
+
+    if status == FULL_ENTRY_STATUS:
+        return load_full_entry_student(policy, **kwargs)
     loader = load_progressive_student if status == TRAINED_STATUS else load_successor_student
     return loader(policy, **kwargs)
