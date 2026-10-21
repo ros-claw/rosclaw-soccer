@@ -36,6 +36,7 @@ def test_learned_residual_is_bounded_in_joint_radians_not_action_units():
     model = FrozenContactResidualActor(base, residual, torch.full((29,), 0.1))
     with torch.no_grad():
         residual.net[-1].bias.fill_(100)
+        residual.gate[-1].bias.fill_(100)
     obs = torch.zeros(1, 1, 160)
     action, _ = model(obs, (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128)))
     assert torch.equal(action, torch.full((1, 1, 29), 2.0))
