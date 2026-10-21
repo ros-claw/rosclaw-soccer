@@ -40,12 +40,12 @@ def main():
         r["status"] != "PAID_SUCCESSOR_CONTACT_TEACHER_CLOSED_PENDING_AUDIT"
         or r["declaration_hash"] != digest(dp)
         or r["source_head"] != d["source_head"]
-        or d["pairs"] != [[2, 3], [10, 11]]
+        or d["pairs"] not in ([[2, 3], [10, 11]], [[8, 9]])
         or d["generations"] != 2
         or d["population"] != 12
         or d["elite_count"] != 4
         or d["random_seed"] not in (20261022, 20261023, 20261024)
-        or r["cem_distribution_updates"] != 4
+        or r["cem_distribution_updates"] != 2 * len(d["pairs"])
         or r["optimizer_updates"] != 0
         or d["optimizer_updates"] != 0
         or any(
@@ -193,7 +193,7 @@ def main():
                 checked.append(result)
             return checked
 
-        if len(r["searches"]) != 2:
+        if len(r["searches"]) != len(d["pairs"]):
             raise ValueError("both searches retained")
         rng = np.random.default_rng(d["random_seed"])
         summaries = []
@@ -282,7 +282,7 @@ def main():
             or counts["native"] != replay.native_steps
             or counts["neural"] != r["actual_neural_rows"]
             or counts["own_neural"] != counts["neural"]
-            or counts["branches"] != 104
+            or counts["branches"] != 52 * len(d["pairs"])
             or visited != {str(f.relative_to(a.root)) for f in a.root.rglob("*.npz")}
         ):
             raise ValueError("complete teacher raw/work/inference coverage differs")

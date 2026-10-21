@@ -22,6 +22,11 @@ def main():
     for name in ("hash", "audit-hash", "replay-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--seed", type=int, choices=(0, 1, 2), required=True)
+    p.add_argument(
+        "--focus",
+        choices=("original-two-pairs", "knee-rebound-source005"),
+        default="original-two-pairs",
+    )
     a = p.parse_args()
     if (
         a.output.exists()
@@ -54,7 +59,7 @@ def main():
         or source["summary"]["stable"] != 16
     ):
         raise ValueError("all16 exact post-first physics replay required before teacher search")
-    indices = [[2, 3], [10, 11]]
+    indices = [[8, 9]] if a.focus == "knee-rebound-source005" else [[2, 3], [10, 11]]
     cases = declaration["cases"]
     if any(cases[i]["source"] != cases[j]["source"] for i, j in indices):
         raise ValueError("two declared same-source TRAIN pairs required")
@@ -76,6 +81,7 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             pairs=indices,
+            focus=a.focus,
             source_cases=cases,
             random_seed=20261022 + a.seed,
             generations=2,
