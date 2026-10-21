@@ -15,10 +15,10 @@ from rosclaw_soccer.rsi.paid_live_distilled_actor import load_live_distilled_act
 from rosclaw_soccer.rsi.paid_trainable_actor import PUBLISHED_HASH, PaidTrainableActor
 
 
-def sequence_config(variant: int) -> dict[str, Any]:
+def sequence_config(variant: int, *, specialist: bool = False) -> dict[str, Any]:
     if type(variant) is not int or variant not in range(4):
         raise ValueError("one predeclared sequence training seed or ablation required")
-    return dict(
+    config = dict(
         protocol="complete-successor-sequences-v1",
         variant=variant,
         seed=20261028 + (variant if variant < 3 else 0),
@@ -41,6 +41,20 @@ def sequence_config(variant: int) -> dict[str, Any]:
         observation_gap="no fabricated neural rows; memory constant during hold/drop",
         loss_units="joint_target_radians_squared",
     )
+    if specialist:
+        config.update(
+            protocol="protected-successor-specialist-v1",
+            seed=20261031 + (variant if variant < 3 else 0),
+            first_weight=3.0 if variant < 3 else 1.0,
+            memory_handoff="reset",
+            full_world_BPTT=False,
+            independent_skill_rehearsal=True,
+            fixed_qualified_entry_actor=True,
+            positive_successor_cases=[i for i in range(16) if i not in (10, 14)],
+            negative_body_only_cases=[10, 14],
+            negative_body_weight=3.0,
+        )
+    return config
 
 
 def validate_successor_state(
@@ -51,10 +65,12 @@ def validate_successor_state(
     declaration_hash: str,
     scene_hash: str,
 ) -> None:
-    config = sequence_config(state.get("config", {}).get("variant"))
+    specialist = state.get("schema") == "soccer.paid_successor_specialist.v1"
+    config = sequence_config(state.get("config", {}).get("variant"), specialist=specialist)
     counts = dict(first_forward_rows=975360, second_forward_rows=975360, optimizer_updates=1024)
     if (
-        state.get("schema") != "soccer.paid_successor_sequences.v1"
+        state.get("schema")
+        not in ("soccer.paid_successor_sequences.v1", "soccer.paid_successor_specialist.v1")
         or state.get("config") != config
         or receipt.get("config") != config
         or state.get("epoch") != 256
@@ -64,7 +80,12 @@ def validate_successor_state(
         or state.get("declaration_hash") != declaration_hash
         or state.get("body_scene_hash") != scene_hash
         or state.get("source_head") != receipt.get("source_head")
-        or receipt.get("status") != "PAID_SUCCESSOR_SEQUENCE_TRAINED_NOT_PHYSICALLY_EXAMINED"
+        or receipt.get("status")
+        != (
+            "PAID_SUCCESSOR_SPECIALIST_TRAINED_NOT_PHYSICALLY_EXAMINED"
+            if specialist
+            else "PAID_SUCCESSOR_SEQUENCE_TRAINED_NOT_PHYSICALLY_EXAMINED"
+        )
         or receipt.get("native_steps") != 0
         or receipt.get("CPU_whole_world_exam_required") is not True
         or any(
@@ -198,9 +219,41 @@ def load_successor_actor(
         scene_hash=scene_hash,
     )
     bank = json.loads(bank_path.read_text())
+    specialist = state.get("schema") == "soccer.paid_successor_specialist.v1"
+    expected_worlds = bank.get("courses")
+    if specialist:
+        zero_hash = declaration.get("zero_bank_hash")
+        zero_paths = [Path(p) for p, h in pins.items() if h == zero_hash]
+        if len(zero_paths) != 1 or digest(zero_paths[0]) != zero_hash:
+            raise ValueError("actual source-bound body-only zero baseline required")
+        zero = json.loads(zero_paths[0].read_text())
+        xp = Path(bank["bootstrap_exam_root"]) / "complete.json"
+        if digest(xp) != pins.get(str(xp)):
+            raise ValueError("fixed learned initial-skill exam must be sealed")
+        prefix = json.loads(xp.read_text())
+        matches = [
+            c for c in prefix["candidates"] if c["checkpoint_hash"] == bank["base_checkpoint_hash"]
+        ]
+        if (
+            len(matches) != 1
+            or zero["first_kick_reference"] != "learned_safe_successor"
+            or len(zero["baseline"]) != 16
+        ):
+            raise ValueError("same qualified learned prefix must define every specialist entry")
+        expected_worlds = []
+        for i, original in enumerate(bank["courses"]):
+            w = matches[0]["continuous"]["results"][i]
+            first = dict(w["first"], path=str(xp.parent / w["first"]["raw_path"]))
+            second = original["second"]
+            role = "positive_contact_demonstration"
+            if i in (10, 14):
+                row = zero["baseline"][i]
+                second = dict(row, path=str(zero_paths[0].parent / row["raw_path"]))
+                role = "body_stability_only_TASK_STILL_FAILED"
+            expected_worlds.append(dict(original, first=first, second=second, role=role))
     if (
         bank.get("schema") != "soccer.audited_successor_sequence_bank.v1"
-        or bank.get("courses") != declaration["worlds"]
+        or expected_worlds != declaration["worlds"]
         or bank.get("base_checkpoint_hash") != state["base_checkpoint_hash"]
         or bank.get("complete_successful_course_coverage") != 16
         or bank.get("body_reset_between_skills") is not False

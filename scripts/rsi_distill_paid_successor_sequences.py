@@ -24,6 +24,11 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--variant", type=int, choices=range(4), required=True)
     p.add_argument("--epochs", type=int, choices=(1, 256), default=256)
+    p.add_argument(
+        "--curriculum", choices=("paired-world", "protected-successor"), default="paired-world"
+    )
+    p.add_argument("--zero-root", type=Path)
+    p.add_argument("--zero-hash")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     bank_path = a.bank_root / "complete.json"
@@ -70,6 +75,42 @@ def main():
         if str(f) in pins and pins[str(f)] != h:
             raise ValueError("inconsistent source commitment")
         pins[str(f)] = h
+    specialist = a.curriculum == "protected-successor"
+    courses = bank["courses"]
+    positive_cases = list(range(16))
+    if specialist:
+        if a.zero_root is None or a.zero_hash is None:
+            raise ValueError("specialist needs actual learned-prefix zero-bank identity")
+        zp = a.zero_root / "complete.json"
+        if digest(zp) != a.zero_hash or pins.get(str(zp)) != a.zero_hash:
+            raise ValueError("zero-bank must already belong to the independently audited bank")
+        zero = json.loads(zp.read_text())
+        from scripts.rsi_search_paid_foot_contact import contact_rank
+
+        if zero["first_kick_reference"] != "learned_safe_successor" or len(zero["baseline"]) != 16:
+            raise ValueError("actual matching learned-entry live baseline required")
+        positive_cases = [i for i in range(16) if i not in (10, 14)]
+        courses = []
+        for i, original in enumerate(bank["courses"]):
+            w = qualified["continuous"]["results"][i]
+            first = dict(w["first"], path=str(xp.parent / w["first"]["raw_path"]))
+            second = original["second"]
+            role = "positive_contact_demonstration"
+            if i not in positive_cases:
+                row = zero["baseline"][i]
+                if row["body_failed"] or contact_rank([row, row])[1] > 0:
+                    raise ValueError("negative anchors must be healthy but TASK_FAILED")
+                second = dict(row, path=str(a.zero_root / row["raw_path"]))
+                role = "body_stability_only_TASK_STILL_FAILED"
+            elif original["origin"].startswith("historical"):
+                raise ValueError("no historical prefix mismatches in specialist positive data")
+            for row in (first, second):
+                if str(row["path"]) in pins and pins[row["path"]] != row["raw_hash"]:
+                    raise ValueError("conflicting original trajectory identity")
+                pins[row["path"]] = row["raw_hash"]
+            courses.append(dict(original, first=first, second=second, role=role))
+    elif a.zero_root is not None or a.zero_hash is not None:
+        raise ValueError("unrelated zero bank may not modify original paired-world protocol")
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     check_pins(pins)
@@ -96,6 +137,19 @@ def main():
         observation_gap="no fabricated neural rows; memory constant during hold/drop",
         loss_units="joint_target_radians_squared",
     )
+    if specialist:
+        config.update(
+            protocol="protected-successor-specialist-v1",
+            seed=20261031 + (a.variant if a.variant < 3 else 0),
+            first_weight=3.0 if a.variant < 3 else 1.0,
+            memory_handoff="reset",
+            full_world_BPTT=False,
+            independent_skill_rehearsal=True,
+            fixed_qualified_entry_actor=True,
+            positive_successor_cases=positive_cases,
+            negative_body_only_cases=[10, 14],
+            negative_body_weight=3.0,
+        )
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -109,7 +163,8 @@ def main():
             initialization_exam_hash=digest(xp),
             initialization_audit_hash=a.bootstrap_audit_hash,
             original160_observation_contract_unchanged=True,
-            worlds=bank["courses"],
+            worlds=courses,
+            **(dict(zero_bank_hash=a.zero_hash) if specialist else {}),
             no_case_id_policy_inputs=True,
             no_runtime_teacher=True,
             CPU_whole_world_exam_required=True,
@@ -171,7 +226,7 @@ def main():
             device="cuda:0",
         )
         worlds = []
-        for c in bank["courses"]:
+        for c in courses:
             if any(pins.get(row["path"]) != row["raw_hash"] for row in (c["first"], c["second"])):
                 raise ValueError("actual paired raw trajectories must already be sealed")
             with (
@@ -179,10 +234,27 @@ def main():
                 np.load(c["second"]["path"], allow_pickle=False) as second,
             ):
                 data = paired_arrays(first, second)
+            if specialist:
+                # Every primary entry is EXACTLY the fixed actor's actual
+                # prefix, unlike the previous heterogeneous whole-world bank.
+                original_first = bank["courses"][c["case"]]["first"]
+                if c["case"] in positive_cases:
+                    with (
+                        np.load(original_first["path"], allow_pickle=False) as teacher_first,
+                        np.load(c["first"]["path"], allow_pickle=False) as entry_first,
+                    ):
+                        if set(teacher_first.files) != set(entry_first.files) or any(
+                            not np.array_equal(teacher_first[k], entry_first[k])
+                            for k in entry_first.files
+                        ):
+                            raise ValueError(
+                                "positive teacher must use EXACT fixed entry trajectory"
+                            )
             boundary = int(data.pop("boundary"))
             worlds.append(
                 dict(
                     boundary=boundary,
+                    second_weight=3.0 if specialist and c["case"] not in positive_cases else 1.0,
                     **{k: torch.from_numpy(v).to("cuda:0") for k, v in data.items()},
                 )
             )
@@ -206,7 +278,9 @@ def main():
             if path.exists():
                 raise ValueError("checkpoint overwrite forbidden")
             state = dict(
-                schema="soccer.paid_successor_sequences.v1",
+                schema="soccer.paid_successor_specialist.v1"
+                if specialist
+                else "soccer.paid_successor_sequences.v1",
                 epoch=epoch,
                 source_head=a.expected_head,
                 declaration_hash=digest(a.output / "declaration.json"),
@@ -261,7 +335,7 @@ def main():
                     errors = ((pred - w["action"]) * scale).square().mean(dim=1)
                     loss = (
                         config["first_weight"] * (errors[:n] * weight[:n]).sum() / weight[:n].sum()
-                        + (errors[n:] * weight[n:]).sum() / weight[n:].sum()
+                        + w["second_weight"] * (errors[n:] * weight[n:]).sum() / weight[n:].sum()
                     ) / 4
                     if not torch.isfinite(loss):
                         raise ValueError("nonfinite full-world loss")
@@ -287,7 +361,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="PAID_SUCCESSOR_SEQUENCE_TRAINED_NOT_PHYSICALLY_EXAMINED",
+                status="PAID_SUCCESSOR_SPECIALIST_TRAINED_NOT_PHYSICALLY_EXAMINED"
+                if specialist
+                else "PAID_SUCCESSOR_SEQUENCE_TRAINED_NOT_PHYSICALLY_EXAMINED",
                 input_file_hashes=pins,
                 source_head=a.expected_head,
                 config=config,

@@ -80,3 +80,24 @@ def test_untrained_incompatible_or_corrupt_sequence_actor_rejected(fault):
         r["hardware_authorized"] = True
     with pytest.raises(ValueError):
         validate_successor_state(s, r, i, declaration_hash="decl", scene_hash="scene")
+
+
+@pytest.mark.parametrize("variant", range(4))
+def test_specialist_protocol_preserves_negative_body_anchors_not_success_labels(variant):
+    s, r, i = sequence_evidence(variant)
+    s.update(
+        schema="soccer.paid_successor_specialist.v1",
+        config=sequence_config(variant, specialist=True),
+    )
+    r.update(
+        status="PAID_SUCCESSOR_SPECIALIST_TRAINED_NOT_PHYSICALLY_EXAMINED",
+        config=copy.deepcopy(s["config"]),
+    )
+    validate_successor_state(s, r, i, declaration_hash="decl", scene_hash="scene")
+    assert len(s["config"]["positive_successor_cases"]) == 14
+    assert s["config"]["negative_body_only_cases"] == [10, 14]
+    assert s["config"]["memory_handoff"] == "reset"
+    s["config"]["positive_successor_cases"].append(10)
+    r["config"] = copy.deepcopy(s["config"])
+    with pytest.raises(ValueError):
+        validate_successor_state(s, r, i, declaration_hash="decl", scene_hash="scene")
