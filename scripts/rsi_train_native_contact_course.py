@@ -15,7 +15,11 @@ def main():
     p.add_argument("--actor-kind", choices=("shared", "bounded-residual"), default="shared")
     p.add_argument("--adapter-proof-root", type=Path)
     p.add_argument("--adapter-proof-hash")
-    p.add_argument("--training-seed", type=int, choices=(7602, 7605, 7606))
+    p.add_argument("--training-seed", type=int, choices=(7602, 7605, 7606, 7607))
+    p.add_argument("--course-kind", choices=("contact24", "contact-recovery"), default="contact24")
+    for key in ("recovery-proof", "recovery-fault"):
+        p.add_argument("--" + key + "-root", type=Path)
+        p.add_argument("--" + key + "-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -52,6 +56,48 @@ def main():
         pins[str(a.qualification_root / f"episode{i}.npz")] = h
     pins[str(a.qualification_root / "fault-fixture.npz")] = qual["fixture_hash"]
     residual = a.actor_kind == "bounded-residual"
+    option = a.course_kind == "contact-recovery"
+    if option and (not residual or a.training_seed not in (None, 7607)):
+        raise ValueError("new finite-option pilot requires frozen residual and fixed seed7607")
+    if not option and a.training_seed == 7607:
+        raise ValueError("seed7607 belongs only to the new finite-option pilot")
+    for key, status in (
+        ("recovery_proof", "NATIVE_CONTACT24_RECOVERY60_PROBE_NOT_LEARNER"),
+        ("recovery_fault", "NATIVE_RECOVERY_FAILED_WORLD_PATHS_QUALIFIED_NOT_SKILL"),
+    ):
+        root, h = getattr(a, key + "_root"), getattr(a, key + "_hash")
+        if option:
+            if root is None or not h or digest(root / "complete.json") != h:
+                raise ValueError("actual continuous recovery and failure qualification required")
+            report = json.loads((root / "complete.json").read_text())
+            checks = (
+                ("prefix_exact", "handoff_state_exact", "repeats_exact", "strict_replays_exact")
+                if key == "recovery_proof"
+                else (
+                    "failed_state_clock_observation_frozen",
+                    "inference_only_active",
+                    "strict_replay_exact",
+                )
+            )
+            if report["status"] != status or any(report.get(k) is not True for k in checks):
+                raise ValueError("recovery evidence must prove all declared invariants")
+            relative = "src/rosclaw_soccer/rsi/native_recovery_tail.py"
+            old_hashes = {
+                v for f, v in report["input_file_hashes"].items() if f.endswith("/" + relative)
+            }
+            if old_hashes != {digest(Path(relative))}:
+                raise ValueError("same actually qualified recovery code required")
+            pins.update(report["input_file_hashes"])
+            pins[str(root / "complete.json")] = h
+            if key == "recovery_proof":
+                for i, raw_hash in enumerate(report["raw_hashes"]):
+                    pins[str(root / f"option{i}.npz")] = raw_hash
+            else:
+                if report["head_failed_worlds"] != [0] or report["tail_failed_worlds"] != [1]:
+                    raise ValueError("actual head and recovery failures must have been observed")
+                pins[str(root / "fault.npz")] = report["raw_hash"]
+        elif root is not None or h:
+            raise ValueError("new recovery evidence cannot relabel the old contact24 pilot")
     if residual:
         if not a.adapter_proof_root or not a.adapter_proof_hash:
             raise ValueError("residual training requires its own actual zero-influence proof")
@@ -109,14 +155,20 @@ def main():
     for root in (Path.cwd() / "src", Path.cwd() / "scripts", a.reference_root / "src"):
         pins.update({str(f): digest(f) for f in root.rglob("*.py")})
     check_pins(pins)
-    seed, actor_lr = ((a.training_seed or 7602), 3e-4) if residual else (7601, 3e-5)
+    seed, actor_lr = (
+        ((a.training_seed or (7607 if option else 7602)), 3e-4) if residual else (7601, 3e-5)
+    )
+    protocol = "native-contact24-recovery60-v1" if option else "native-contact24-v1"
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
         dict(
             source_head=a.expected_head,
             input_file_hashes=pins,
-            protocol="native-contact24-v1",
+            protocol=protocol,
+            recovery_proof_hash=a.recovery_proof_hash,
+            recovery_fault_hash=a.recovery_fault_hash,
+            actual_recovery_controls=60 if option else 0,
             seed=seed,
             actor_kind=a.actor_kind,
             frozen_foundation=residual,
@@ -126,8 +178,9 @@ def main():
             controls=24,
             value_only_episodes=4,
             ppo_episodes=16,
-            maximum_native_steps=153600,
+            maximum_native_steps=537600 if option else 153600,
             maximum_rollout_policy_rows=15360,
+            maximum_recovery_foundation_rows=38400 if option else 0,
             maximum_optimizer_steps=320,
             epochs=4,
             minibatches=4,
@@ -149,7 +202,12 @@ def main():
             rehearsal_mse_coefficient=1.0,
             rehearsal_batch=256,
             true_terminal_bootstrap=False,
-            timeout_bootstrap_from_actual_final_observation=True,
+            timeout_bootstrap_from_actual_final_observation=not option,
+            contact_handoff_from_actual_discounted_recovery_return=option,
+            recovery_finite_terminal_value_zero=option,
+            option_terminal_reward_definition="contact_option_credit.recovery_terminal_reward"
+            if option
+            else None,
             invalid_ended_world_samples_excluded_from_gradient_and_normalization=True,
             checkpoint_episodes=[0, 4, 8, 12, 16, 20],
             require_independent_full_native_exam_before_expansion=True,
@@ -171,6 +229,7 @@ def main():
         kl_skipped_minibatches=0,
     )
     history = []
+    recovery_history = []
     try:
         import math
 
@@ -179,6 +238,8 @@ def main():
         import torch
 
         from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
+        from rosclaw_soccer.rsi.contact_option_credit import contact_option_gae
+        from rosclaw_soccer.rsi.contact_option_rollout import finish_contact_option
         from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
         from rosclaw_soccer.rsi.native_contact_course import NativeContactCourse
         from rosclaw_soccer.rsi.native_contact_ppo import (
@@ -288,13 +349,17 @@ def main():
         def checkpoint(episode):
             file = a.output / f"native-contact-episode{episode}.pt"
             value = dict(
-                schema="soccer.rsi.native_contact24_residual_ppo.v1"
+                schema="soccer.rsi.native_contact24_recovery60_residual_ppo.v1"
+                if option
+                else "soccer.rsi.native_contact24_residual_ppo.v1"
                 if residual
                 else "soccer.rsi.native_contact24_ppo.v1",
                 actor_kind=a.actor_kind,
                 adapter_config=adapter_config,
                 adapter_proof_hash=a.adapter_proof_hash,
-                protocol=env.protocol,
+                protocol=protocol,
+                recovery_proof_hash=a.recovery_proof_hash,
+                recovery_fault_hash=a.recovery_fault_hash,
                 episode_count=episode,
                 value_warmup_episodes=4,
                 ppo_episodes=max(0, episode - 4),
@@ -336,19 +401,42 @@ def main():
         for episode in range(20):
             env.reset()
             history = []
+            recovery_history = []
             while not env.ended.all():
                 obs = torch.from_numpy(env.observation).cuda()
                 with torch.no_grad():
-                    dist = policy.distribution(obs)
-                    action = dist.sample()
-                    logp = dist.log_prob(action).sum(-1)
-                    value = policy.value(obs)
-                counts["rollout_policy_rows"] += env.worlds
-                counts["rollout_critic_rows"] += env.worlds
+                    if option:
+                        ids = np.flatnonzero(~env.ended)
+                        action = torch.zeros((env.worlds, 29), device="cuda")
+                        logp = torch.zeros(env.worlds, device="cuda")
+                        value = torch.zeros(env.worlds, device="cuda")
+                        dist = policy.distribution(obs[ids])
+                        action[ids] = dist.sample()
+                        logp[ids] = dist.log_prob(action[ids]).sum(-1)
+                        value[ids] = policy.value(obs[ids])
+                        infer_rows = len(ids)
+                    else:
+                        dist = policy.distribution(obs)
+                        action = dist.sample()
+                        logp = dist.log_prob(action).sum(-1)
+                        value = policy.value(obs)
+                        infer_rows = env.worlds
+                counts["rollout_policy_rows"] += infer_rows
+                counts["rollout_critic_rows"] += infer_rows
                 result = env.step(action.cpu().numpy().copy())
                 with torch.no_grad():
-                    next_value = policy.value(torch.from_numpy(result["observation"]).cuda())
-                counts["rollout_critic_rows"] += env.worlds
+                    if option:
+                        ids = np.flatnonzero(~result["ended"])
+                        next_value = torch.zeros(env.worlds, device="cuda")
+                        if len(ids):
+                            next_value[ids] = policy.value(
+                                torch.from_numpy(result["observation"][ids]).cuda()
+                            )
+                        next_rows = len(ids)
+                    else:
+                        next_value = policy.value(torch.from_numpy(result["observation"]).cuda())
+                        next_rows = env.worlds
+                counts["rollout_critic_rows"] += next_rows
                 history.append(
                     {
                         **result,
@@ -363,14 +451,35 @@ def main():
             folder.mkdir()
             path = folder / "rollout.npz"
             np.savez_compressed(path, bank_index=env.index, **raw)
-            adv, returns = course_gae(
-                raw["reward"].astype(np.float32),
-                raw["old_value"],
-                raw["next_value"],
-                raw["terminated"],
-                raw["truncated"],
-                raw["valid"],
-            )
+            outcomes = []
+            recovery_hash = None
+            if option:
+                recovery, outcomes, _recovery_rows = finish_contact_option(
+                    env, raw, policy.baseline.base, counters=counts, trace=recovery_history
+                )
+                recovery_path = folder / "recovery.npz"
+                np.savez_compressed(recovery_path, bank_index=env.index, **recovery)
+                recovery_hash = digest(recovery_path)
+                adv, returns = contact_option_gae(
+                    raw["reward"].astype(np.float32),
+                    raw["old_value"],
+                    raw["next_value"],
+                    raw["terminated"],
+                    raw["truncated"],
+                    raw["valid"],
+                    tail_reward=recovery["reward"],
+                    tail_valid=recovery["valid"],
+                    tail_terminal=recovery["terminal"],
+                )
+            else:
+                adv, returns = course_gae(
+                    raw["reward"].astype(np.float32),
+                    raw["old_value"],
+                    raw["next_value"],
+                    raw["terminated"],
+                    raw["truncated"],
+                    raw["valid"],
+                )
             mask = raw["valid"].reshape(-1)
             data = {
                 k: torch.from_numpy(v.reshape((-1, *v.shape[2:]))[mask].copy()).cuda()
@@ -463,6 +572,8 @@ def main():
                 mode="value-only" if warmup else "PPO",
                 valid_samples=int(mask.sum()),
                 raw_hash=digest(path),
+                recovery_raw_hash=recovery_hash,
+                recovery_outcomes=outcomes,
                 reward_sum=float(raw["reward"].sum()),
                 terminations=int(raw["terminated"].sum()),
                 positive_contact_worlds=int((raw["credit_contact"] > 0).any(axis=0).sum()),
@@ -502,7 +613,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="NATIVE_CONTACT24_RESIDUAL_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+                status="NATIVE_CONTACT24_RECOVERY60_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+                if option
+                else "NATIVE_CONTACT24_RESIDUAL_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
                 if residual
                 else "NATIVE_CONTACT24_PPO_CANDIDATE_REQUIRES_FULL_EXAM",
                 actor_kind=a.actor_kind,
@@ -518,7 +631,9 @@ def main():
                 counts=counts,
                 actor_abi=177,
                 critic_abi=177,
-                protocol=env.protocol,
+                protocol=protocol,
+                recovery_proof_hash=a.recovery_proof_hash,
+                recovery_fault_hash=a.recovery_fault_hash,
                 full_native_exam_passed=False,
                 goal_complete=False,
                 promotion_authorized=False,
@@ -539,6 +654,11 @@ def main():
             # failed before its normal episode publication. Never overwrite.
             partial = {k: np.stack([r[k] for r in history]) for k in history[0]}
             np.savez_compressed(a.output / "failed-partial-episode.npz", **partial)
+        if recovery_history:
+            np.savez_compressed(
+                a.output / "failed-recovery-partial.npz",
+                **{k: np.stack([r[k] for r in recovery_history]) for k in recovery_history[0]},
+            )
         raise
     finally:
         if env is not None:
