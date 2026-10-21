@@ -18,7 +18,9 @@ def source_tracking_oracle(course, frames):
     from rosclaw_soccer.rsi.native_course_tracking import TRACKING_BODIES
 
     def tensor(value):
-        return torch.as_tensor(np.asarray(value), dtype=torch.float64)
+        # Source termination functions construct float32 gravity internally.
+        # Use their real training dtype; compare to native64 under declared atol.
+        return torch.as_tensor(np.asarray(value), dtype=torch.float32)
 
     pos, quat, lin, ang, actual_pos, actual_quat, actual_lin, actual_ang, gravity = (
         [],
