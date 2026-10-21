@@ -71,3 +71,22 @@ def test_native_batch_validation_before_physics():
         with pytest.raises(ValueError, match="physical fields"):
             b.advance(q, substeps=1, fields=("qvel", "qvel"))
         assert b.native_steps == 0
+
+
+def test_selected_worlds_freeze_terminal_state_and_clock():
+    m = model()
+    q = np.zeros((3, 1))
+    with NativePhysicsBatch(m, 3) as b:
+        b.restore(qpos=q, qvel=q, previous_ctrl=q, warmstart=q, time=np.zeros(3))
+        inactive = b.data[1].qpos.copy(), b.data[1].qvel.copy(), b.data[1].time
+        result = b.advance(q + 0.3, substeps=5, world_ids=np.array([2, 0], dtype=np.int64))
+        assert result["qpos"].shape == (2, 5, 1)
+        assert b.native_steps == 10
+        assert np.array_equal(b.data[1].qpos, inactive[0])
+        assert np.array_equal(b.data[1].qvel, inactive[1])
+        assert b.data[1].time == inactive[2]
+        assert b.data[0].time == b.data[2].time == 0.01
+        for ids in (np.array([0, 0]), np.array([-1]), np.array([3]), np.array([], dtype=np.int64)):
+            with pytest.raises(ValueError, match="world indices"):
+                b.advance(q, substeps=1, world_ids=ids)
+        assert b.native_steps == 10

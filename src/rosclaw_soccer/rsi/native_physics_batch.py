@@ -69,7 +69,12 @@ class NativePhysicsBatch:
         self._ready = True
 
     def advance(
-        self, ctrl: Any, *, substeps: int, fields: tuple[str, ...] = ("qpos", "qvel")
+        self,
+        ctrl: Any,
+        *,
+        substeps: int,
+        fields: tuple[str, ...] = ("qpos", "qvel"),
+        world_ids: NDArray[np.int64] | None = None,
     ) -> dict[str, NDArray[np.float64]]:
         """Integrate all worlds continuously, recording every declared substep.
 
@@ -92,6 +97,17 @@ class NativePhysicsBatch:
         if not fields or len(set(fields)) != len(fields) or not set(fields) <= allowed:
             raise ValueError("unique declared physical fields required")
         targets = self._array(ctrl, (len(self.data), self.model.nu), "ctrl").copy()
+        ids = np.arange(len(self.data), dtype=np.int64) if world_ids is None else world_ids
+        if (
+            not isinstance(ids, np.ndarray)
+            or ids.dtype != np.int64
+            or ids.ndim != 1
+            or not len(ids)
+            or len(set(ids.tolist())) != len(ids)
+            or (ids < 0).any()
+            or (ids >= len(self.data)).any()
+        ):
+            raise ValueError("unique nonempty explicit native world indices required")
 
         def step_world(i: int) -> tuple[dict[str, list[NDArray[np.float64]]], int, str | None]:
             d = self.data[i]
@@ -114,10 +130,14 @@ class NativePhysicsBatch:
             except Exception as exc:
                 return rows, done, repr(exc)
 
-        results = list(self._pool.map(step_world, range(len(self.data))))
+        # Only selected live worlds are integrated. Unselected terminal states
+        # and their simulation clocks remain untouched; output rows follow ids.
+        results = list(self._pool.map(step_world, ids.tolist()))
         self.native_steps += sum(row[1] for row in results)
         errors = [
-            dict(world=i, error=row[2]) for i, row in enumerate(results) if row[2] is not None
+            dict(world=int(ids[i]), error=row[2])
+            for i, row in enumerate(results)
+            if row[2] is not None
         ]
         if errors:
             self._ready = False
