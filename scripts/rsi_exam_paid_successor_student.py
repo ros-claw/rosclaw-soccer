@@ -86,15 +86,15 @@ def main():
         import torch
 
         from rosclaw_soccer.rsi.paid_continuity_audit import identical
+        from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
         from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
         from rosclaw_soccer.rsi.paid_standing_lifecycle import run_standing_lifecycle
-        from rosclaw_soccer.rsi.paid_successor_student_actor import load_successor_student
         from scripts.rsi_search_paid_foot_contact import contact_rank
 
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
         bench, policy, scene = open_paid_bench(pins, sd["cases"])
-        actor, _ = load_successor_student(
+        actor, _ = load_paid_student(
             policy,
             checkpoint=cp,
             checkpoint_hash=training["checkpoint_hash"],

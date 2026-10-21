@@ -33,7 +33,10 @@ def main():
     p.add_argument("--seed", type=int, choices=(0, 1, 2), required=True)
     p.add_argument("--gpu-uuid", required=True)
     p.add_argument("--decoupled", action="store_true")
+    p.add_argument("--progressive", action="store_true")
     a = p.parse_args()
+    if a.progressive and a.decoupled:
+        p.error("progressive acquired-parent curriculum is not the paired amplitude ablation")
 
     def clean():
         if (
@@ -62,6 +65,7 @@ def main():
             automatic_retry=False,
             hardware_authorized=False,
             promotion_authorized=False,
+            **(dict(progressive=True) if a.progressive else {}),
         )
         path = a.output / "declaration.json"
         if path.exists():
@@ -80,8 +84,13 @@ def main():
         data = json.loads((a.data_root / "complete.json").read_text())
         if (
             data["source_head"] != a.data_source_head
-            or data["status"] != "PAID_SUCCESSOR_TRAIN_FEATURES_CAUSALLY_RECOMPUTED"
-            or data["curriculum_protocol"] != "successor-six-teacher-v2"
+            or data["status"]
+            != (
+                "PAID_PROGRESSIVE_TRAIN_PARENT_FEATURES_CAUSALLY_RECOMPUTED"
+                if a.progressive
+                else "PAID_SUCCESSOR_TRAIN_FEATURES_CAUSALLY_RECOMPUTED"
+            )
+            or (not a.progressive and data["curriculum_protocol"] != "successor-six-teacher-v2")
             or (a.data_root / "failed.json").exists()
         ):
             raise ValueError("declared expanded TRAIN-only feature curation required")
@@ -156,7 +165,9 @@ def main():
 
         student, training = stage(
             "trained",
-            "rsi_train_paid_successor_student",
+            "rsi_train_paid_progressive_student"
+            if a.progressive
+            else "rsi_train_paid_successor_student",
             [
                 "--data-root",
                 str(a.data_root),
@@ -164,10 +175,14 @@ def main():
                 data_hash,
                 "--seed",
                 str(a.seed),
-                "--staged",
+                *([] if a.progressive else ["--staged"]),
                 *(["--decoupled"] if a.decoupled else []),
             ],
-            expected_status="PAID_SUCCESSOR_NEURAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",
+            expected_status=(
+                "PAID_PROGRESSIVE_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+                if a.progressive
+                else "PAID_SUCCESSOR_NEURAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+            ),
             gpu=True,
         )
         if training["data_hash"] != data_hash or training["config"]["seed_index"] != a.seed:

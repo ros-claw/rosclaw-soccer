@@ -86,9 +86,9 @@ def main():
 
         from rosclaw_soccer.rsi.paid_continuity_audit import identical
         from rosclaw_soccer.rsi.paid_neural_stand_audit import StandingObservationAuditor
+        from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
         from rosclaw_soccer.rsi.paid_research_setup import open_paid_auditor
         from rosclaw_soccer.rsi.paid_standing_lifecycle_audit import audit_standing_lifecycle
-        from rosclaw_soccer.rsi.paid_successor_student_actor import load_successor_student
 
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
@@ -98,7 +98,7 @@ def main():
         scene = next(
             h for path, h in pins.items() if path.endswith("/cached-standard/declared-scene.xml")
         )
-        actor, _ = load_successor_student(
+        actor, _ = load_paid_student(
             policy,
             checkpoint=Path(training["checkpoint_path"]),
             checkpoint_hash=training["checkpoint_hash"],

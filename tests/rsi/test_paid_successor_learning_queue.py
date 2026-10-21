@@ -10,14 +10,26 @@ from scripts import rsi_continue_paid_successor_learning as queue
 from scripts.rsi_native_context_recovery_common import digest
 
 
-def fixture(tmp_path, monkeypatch, *, incomplete=False, empty_child=False, changed_source=False):
+def fixture(
+    tmp_path,
+    monkeypatch,
+    *,
+    incomplete=False,
+    empty_child=False,
+    changed_source=False,
+    progressive=False,
+):
     data = tmp_path / "data"
     data.mkdir()
     (data / "complete.json").write_text(
         json.dumps(
             dict(
                 source_head="data-head",
-                status="PAID_SUCCESSOR_TRAIN_FEATURES_CAUSALLY_RECOMPUTED",
+                status=(
+                    "PAID_PROGRESSIVE_TRAIN_PARENT_FEATURES_CAUSALLY_RECOMPUTED"
+                    if progressive
+                    else "PAID_SUCCESSOR_TRAIN_FEATURES_CAUSALLY_RECOMPUTED"
+                ),
                 curriculum_protocol="successor-six-teacher-v2",
             )
         )
@@ -40,6 +52,8 @@ def fixture(tmp_path, monkeypatch, *, incomplete=False, empty_child=False, chang
     ]
     for name in ("train-root", "train-audit-root", "dev-root", "dev-audit-root"):
         args.extend(["--" + name, str(tmp_path / name)])
+    if progressive:
+        args.append("--progressive")
     monkeypatch.setattr(sys, "argv", args)
     state = {"mutated": False}
 
@@ -52,10 +66,12 @@ def fixture(tmp_path, monkeypatch, *, incomplete=False, empty_child=False, chang
     monkeypatch.setattr(queue.subprocess, "check_output", lambda command, **_: check(command))
     calls = []
     training_status = "PAID_SUCCESSOR_NEURAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+    progressive_status = "PAID_PROGRESSIVE_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
     exam_status = "PAID_SUCCESSOR_NEURAL_STUDENT_LIFECYCLE_CLOSED_PENDING_AUDIT"
     audit_status = "PAID_SUCCESSOR_STUDENT_ALL_NATIVE_PRIMITIVES_AND_OWN_NEURAL_AUDIT_PASS"
     statuses = {
         "scripts.rsi_train_paid_successor_student": training_status,
+        "scripts.rsi_train_paid_progressive_student": progressive_status,
         "scripts.rsi_exam_paid_successor_student": exam_status,
         "scripts.rsi_audit_paid_successor_student": audit_status,
     }
@@ -73,7 +89,10 @@ def fixture(tmp_path, monkeypatch, *, incomplete=False, empty_child=False, chang
             hardware_authorized=False,
             promotion_authorized=False,
         )
-        if module.endswith("rsi_train_paid_successor_student"):
+        if module in (
+            "scripts.rsi_train_paid_successor_student",
+            "scripts.rsi_train_paid_progressive_student",
+        ):
             result.update(data_hash=digest(data / "complete.json"), config=dict(seed_index=0))
         (path / "complete.json").write_text(json.dumps(result))
         if changed_source:
@@ -116,3 +135,14 @@ def test_source_mutation_stops_before_allocating_next_stage(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="immutable"):
         queue.main()
     assert len(calls) == 1 and (output / "trained" / "complete.json").exists()
+
+
+def test_progressive_queue_uses_new_curriculum_and_same_full_physics_audits(tmp_path, monkeypatch):
+    calls, output = fixture(tmp_path, monkeypatch, progressive=True)
+    queue.main()
+    assert len(calls) == 5
+    assert "scripts.rsi_train_paid_progressive_student" in calls[0][0]
+    assert "--staged" not in calls[0][0] and "--decoupled" not in calls[0][0]
+    assert json.loads((output / "declaration.json").read_text())["progressive"] is True
+    queue.main()
+    assert len(calls) == 5
