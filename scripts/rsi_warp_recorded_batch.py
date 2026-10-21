@@ -9,26 +9,36 @@ import mujoco_warp as mjw
 import numpy as np
 import torch
 import warp as wp
+from mujoco_warp._src.types import vec5
 
 from scripts.rsi_mjwarp_addressed_contact_force import addressed_contact_force, install
 
 
 @wp.kernel
 def _forces(
-    model: mjw.Model,
-    data: mjw.Data,
+    geom_bodyid: wp.array(dtype=int),
+    geom: wp.array(dtype=wp.vec2i),
+    worldid: wp.array(dtype=int),
+    frame: wp.array(dtype=wp.mat33),
+    friction: wp.array(dtype=vec5),
+    contact_dim: wp.array(dtype=int),
+    efc_address: wp.array2d(dtype=int),
+    efc_force: wp.array2d(dtype=float),
+    nacon: wp.array(dtype=int),
+    njmax: int,
+    cone: int,
     ball: int,
     roles: wp.array(dtype=int),
     out: wp.array2d(dtype=float),
 ):
     ci = wp.tid()
-    if ci >= data.nacon[0]:
+    if ci >= nacon[0]:
         return
-    g = data.contact.geom[ci]
+    g = geom[ci]
     if g[0] < 0 or g[1] < 0:
         return
-    b0 = model.geom_bodyid[g[0]]
-    b1 = model.geom_bodyid[g[1]]
+    b0 = geom_bodyid[g[0]]
+    b1 = geom_bodyid[g[1]]
     other = wp.int32(-1)
     if b0 == ball:
         other = b1
@@ -39,16 +49,16 @@ def _forces(
     role = roles[other]
     if role < 0:
         return
-    world = data.contact.worldid[ci]
+    world = worldid[ci]
     force = addressed_contact_force(
-        model.opt.cone,
-        data.contact.frame,
-        data.contact.friction,
-        data.contact.dim,
-        data.contact.efc_address,
-        data.efc.force,
-        data.njmax,
-        data.nacon,
+        cone,
+        frame,
+        friction,
+        contact_dim,
+        efc_address,
+        efc_force,
+        njmax,
+        nacon,
         world,
         ci,
         False,
@@ -132,7 +142,21 @@ class RecordedWarpBatch:
                 wp.launch(
                     _forces,
                     dim=self.data.naconmax,
-                    inputs=[self.model, self.data, self.ball, self.roles],
+                    inputs=[
+                        self.model.geom_bodyid,
+                        self.data.contact.geom,
+                        self.data.contact.worldid,
+                        self.data.contact.frame,
+                        self.data.contact.friction,
+                        self.data.contact.dim,
+                        self.data.contact.efc_address,
+                        self.data.efc.force,
+                        self.data.nacon,
+                        self.data.njmax,
+                        self.model.opt.cone,
+                        self.ball,
+                        self.roles,
+                    ],
                     outputs=[self.force],
                 )
                 wp.synchronize_device("cuda:0")
