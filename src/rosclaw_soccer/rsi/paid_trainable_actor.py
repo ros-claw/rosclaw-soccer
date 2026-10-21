@@ -6,6 +6,7 @@ independent players must never share recurrent history. No simulator imports.
 """
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -24,6 +25,9 @@ def onnx_to_torch_gates(array: np.ndarray) -> torch.Tensor:
 
 
 class PaidTrainableActor(nn.Module):
+    mean: torch.Tensor
+    denominator: torch.Tensor
+
     def __init__(self, path: Path, *, expected_hash: str) -> None:
         import onnx
 
@@ -74,7 +78,9 @@ class PaidTrainableActor(nn.Module):
                         torch.from_numpy(arrays[f"parent.actor.{index}.{name}"])
                     )
 
-    def forward(self, observation, state):
+    def forward(
+        self, observation: torch.Tensor, state: tuple[torch.Tensor, torch.Tensor]
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         if (
             observation.ndim != 3
             or observation.shape[-1] != 160
@@ -102,7 +108,7 @@ class PaidTorchResearchPolicy(PaidResearchPolicy):
         super().__init__(path, expected_hash=expected_hash, horizon=horizon)
         self.actor = PaidTrainableActor(path, expected_hash=expected_hash).eval()
 
-    def step(self, observation: np.ndarray, *, frame: int):
+    def step(self, observation: np.ndarray, *, frame: int) -> dict[str, Any]:
         if self.faulted:
             raise ValueError("teacher inference fault latched; new episode object required")
         try:

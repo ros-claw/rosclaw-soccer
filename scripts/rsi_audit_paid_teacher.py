@@ -75,7 +75,11 @@ def main():
     if mujoco.get_mjcb_control() is not None:
         raise ValueError("no external control callbacks allowed")
     if (
-        r["status"] != "PAID_RESEARCH_NATIVE_TEACHER_PROBE_NOT_PROMOTED"
+        r["status"]
+        not in (
+            "PAID_RESEARCH_NATIVE_TEACHER_PROBE_NOT_PROMOTED",
+            "PAID_RESEARCH_NATIVE_TORCH_PROBE_NOT_PROMOTED",
+        )
         or r["strict_replays_exact"] is not True
         or r["whole_repeats_exact"] is not True
     ):
