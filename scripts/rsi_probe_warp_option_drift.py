@@ -19,6 +19,9 @@ def main():
     p.add_argument("--native-root", type=Path, required=True)
     p.add_argument("--native-hash", required=True)
     p.add_argument("--controls", type=int, choices=(1, 84), default=84)
+    p.add_argument(
+        "--feedback", action="store_true", help="own GPU state, original177 neural policy"
+    )
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -63,22 +66,29 @@ def main():
             substeps_per_control=10,
             maximum_GPU_world_steps=64 * a.controls * 10,
             new_native_steps=0,
-            neural_rows=0,
+            maximum_neural_rows=64 * a.controls if a.feedback else 0,
+            maximum_native_forward_observation_calls=64 * a.controls if a.feedback else 0,
             optimizer_updates=0,
             source_split="TRAIN diagnostic only, NOT disjoint agreement qualification",
-            fixed_recorded_targets_not_neural_feedback=True,
+            fixed_recorded_targets_not_neural_feedback=not a.feedback,
+            feedback_from_own_GPU_state=a.feedback,
+            CPU_forward_observation_not_integration=a.feedback,
+            all_GPU_training_environment=False,
             no_MDP_reset=True,
             same_original_compiled_model_and_PD=True,
             old_strict_GPU_gate_still_rejected=True,
             no_threshold_widening_or_training_approval=True,
-            continues_recorded_controls_if_body_falls=True,
+            continues_recorded_controls_if_body_falls=not a.feedback,
+            whole_batch_aborts_on_body_guard_if_feedback=a.feedback,
             goal_complete=False,
             promotion_authorized=False,
             hardware_authorized=False,
         ),
     )
     gpu = None
+    feedback = None
     rows = []
+    neural_trace = []
     try:
         import mujoco
         import numpy as np
@@ -137,11 +147,64 @@ def main():
             k: warp.to_torch(getattr(gpu.data, k)).cpu().numpy().copy()
             for k in ("qpos", "qvel", "qacc_warmstart", "ctrl", "time")
         }
+        if a.feedback:
+            import torch
+
+            from rosclaw_soccer.rsi.mjlab_motion_curriculum import TRAIN_MOTION_NAMES
+            from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
+            from scripts.rsi_warp_foundation_feedback import FoundationFeedback
+
+            torch.set_num_threads(1)
+            plans = [
+                load(
+                    pinned(
+                        "/rsi-train-starts-body-bound-index-check-20261021/"
+                        + name.removesuffix(".npz")
+                        + "-plan.npz"
+                    )
+                )
+                for name in TRAIN_MOTION_NAMES
+            ]
+            onnx = pinned("/policy/velocity/v0/exported/policy.onnx")
+            actor = VelocityPriorActor.from_onnx(
+                onnx, expected_hash=pins[str(onnx)], reference_features=79
+            ).eval()
+            state = torch.load(
+                pinned("/ball-aware-update200.pt"), map_location="cpu", weights_only=True
+            )
+            actor.load_state_dict(
+                {k: state["algorithm"]["actor_state_dict"]["mlp." + k] for k in actor.state_dict()},
+                strict=True,
+            )
+            feedback = FoundationFeedback(
+                model=model,
+                layout=layout,
+                params=params,
+                bank=bank,
+                indices=ids,
+                plans=plans,
+                actor=actor,
+            )
         for control in range(a.controls):
+            if feedback is not None:
+                state = {
+                    k: warp.to_torch(getattr(gpu.data, k)).cpu().numpy().copy()
+                    for k in ("qpos", "qvel")
+                }
+                neural_trace.append(feedback.next(state["qpos"], state["qvel"], control))
+                controls[control] = neural_trace[-1]["target"]
             ctrl = np.zeros((64, model.nu))
             ctrl[:, layout.ai] = controls[control]
             for _ in range(10):
                 rows.append(gpu.step(ctrl))
+            if feedback is not None:
+                q = np.stack([row["qpos"] for row in rows[-10:]])
+                if (
+                    q[:, :, layout.rq + 2].min() < 0.65
+                    or (1 - 2 * (q[:, :, layout.rq + 4] ** 2 + q[:, :, layout.rq + 5] ** 2)).min()
+                    < 0.9
+                ):
+                    raise ValueError("whole GPU feedback diagnostic stopped at actual body failure")
             if control % 20 == 0:
                 print(
                     json.dumps(
@@ -156,6 +219,9 @@ def main():
             bank_index=ids,
             processed_targets=controls,
             **{"initial_" + k: v for k, v in initial.items()},
+            **{"neural_" + k: np.stack([row[k] for row in neural_trace]) for k in neural_trace[0]}
+            if neural_trace
+            else {},
             **arrays,
         )
         qids = [*range(layout.rq, layout.rq + 7), *layout.qi, *range(layout.bq, layout.bq + 7)]
@@ -190,7 +256,11 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="GPU_RECORDED_OPTION_DRIFT_DIAGNOSTIC_NOT_TRAINING_QUALIFICATION",
+                status=(
+                    "GPU_FOUNDATION_FEEDBACK_DIAGNOSTIC_NOT_TRAINING_QUALIFICATION"
+                    if a.feedback
+                    else "GPU_RECORDED_OPTION_DRIFT_DIAGNOSTIC_NOT_TRAINING_QUALIFICATION"
+                ),
                 input_file_hashes=pins,
                 raw_hash=digest(path),
                 outcomes=outcomes,
@@ -211,7 +281,8 @@ def main():
                 gpu_world_steps=gpu.completed_steps,
                 gpu_attempted_steps=gpu.attempted_steps,
                 new_native_steps=0,
-                neural_rows=0,
+                neural_rows=feedback.neural_rows if feedback else 0,
+                native_forward_observation_calls=feedback.native_forward_calls if feedback else 0,
                 optimizer_updates=0,
                 old_strict_GPU_gate_still_rejected=True,
                 goal_complete=False,
@@ -232,7 +303,8 @@ def main():
                 gpu_world_steps=gpu.completed_steps if gpu else 0,
                 gpu_attempted_steps=gpu.attempted_steps if gpu else 0,
                 new_native_steps=0,
-                neural_rows=0,
+                neural_rows=feedback.neural_rows if feedback else 0,
+                native_forward_observation_calls=feedback.native_forward_calls if feedback else 0,
                 optimizer_updates=0,
                 hardware_authorized=False,
             ),
