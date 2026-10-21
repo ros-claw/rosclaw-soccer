@@ -24,6 +24,10 @@ class NativeContactSession(LearnedPriorNativeSession):
     checkpoint_schema = "soccer.rsi.native_contact24_ppo.v1"
     inference_schema = "soccer.rsi.native_contact24_inference.v1"
     protocol = "native-contact24-v1"
+    final_episode = 20
+    ppo_episodes = 16
+    max_ppo_steps = 256
+    fresh_optimizer_required = True
     model: Any
 
     def _make_model(self, model: Path, expected_hash: str) -> Any:
@@ -77,9 +81,9 @@ class NativeContactSession(LearnedPriorNativeSession):
             or state.get("actor_observation_dim") != 177
             or state.get("critic_observation_dim") != 177
             or state.get("native_pd_position_targets") != 29
-            or state.get("episode_count") != 20
+            or state.get("episode_count") != self.final_episode
             or state.get("value_warmup_episodes") != 4
-            or state.get("ppo_episodes") != 16
+            or state.get("ppo_episodes") != self.ppo_episodes
             or state.get("parent_checkpoint_hash") != expected_parent_hash
             or state.get("original_onnx_hash") != expected_model_hash
             or state.get("parameter_hash") != expected_config_hash
@@ -87,13 +91,15 @@ class NativeContactSession(LearnedPriorNativeSession):
             or state.get("activation_ceiling") != "SIM_ONLY"
             or state.get("hardware_authorized") is not False
             or state.get("promotion_authorized") is not False
-            or state.get("fresh_optimizer") is not True
+            or state.get("fresh_optimizer") is not self.fresh_optimizer_required
         ):
-            raise ValueError("complete fixed final20 native-contact24 schema/identity required")
+            raise ValueError(
+                f"complete fixed final{self.final_episode} native-contact schema/identity required"
+            )
         self._validate_intent(state)
         counts = state["counts"]
         if (
-            not 0 < counts["ppo_steps"] <= 256
+            not 0 < counts["ppo_steps"] <= self.max_ppo_steps
             or counts["value_only_steps"] != 64
             or counts["optimizer_completed"] != counts["optimizer_attempted"]
             or counts["optimizer_completed"] != counts["ppo_steps"] + 64
@@ -188,6 +194,7 @@ class NativeRecoveryContactSession(NativeResidualContactSession):
     checkpoint_schema = "soccer.rsi.native_contact24_recovery60_residual_ppo.v1"
     inference_schema = "soccer.rsi.native_contact24_recovery60_inference.v1"
     protocol = "native-contact24-recovery60-v1"
+    max_recovery_rows = 38400
 
     def __init__(
         self,
@@ -213,6 +220,55 @@ class NativeRecoveryContactSession(NativeResidualContactSession):
             state.get("recovery_proof_hash") != self._recovery_proof_hash
             or state.get("recovery_fault_hash") != self._recovery_fault_hash
             or state.get("training_seed") != 7607
-            or not 0 < state["counts"].get("recovery_foundation_rows", 0) <= 38400
+            or not 0 < state["counts"].get("recovery_foundation_rows", 0) <= self.max_recovery_rows
         ):
             raise ValueError("actual finite-option recovery intent/counts/qualification required")
+
+
+class NativeContinuedContactSession(NativeRecoveryContactSession):
+    """Only the fixed132 resumed experiment; legacy readers retain their ceiling."""
+
+    checkpoint_schema = "soccer.rsi.native_contact24_recovery60_continuation_ppo.v1"
+    inference_schema = "soccer.rsi.native_contact24_recovery60_continuation_inference.v1"
+    protocol = "native-contact24-recovery60-continuation-v1"
+    final_episode = 132
+    ppo_episodes = 128
+    max_ppo_steps = 2048
+    max_recovery_rows = 253440
+    fresh_optimizer_required = False
+
+    def __init__(
+        self,
+        *args: Any,
+        expected_resume_checkpoint_hash: str,
+        expected_resume_proof_hash: str,
+        expected_resume_source_hash: str,
+        **kwargs: Any,
+    ):
+        self._resume_expected = dict(
+            resume_checkpoint_hash=expected_resume_checkpoint_hash,
+            resume_proof_hash=expected_resume_proof_hash,
+            resume_source_hash=expected_resume_source_hash,
+        )
+        for h in self._resume_expected.values():
+            if (
+                not h.startswith("sha256:")
+                or len(h) != 71
+                or any(c not in "0123456789abcdef" for c in h[7:])
+            ):
+                raise ValueError("explicit actual resume/source/paired-proof hashes required")
+        super().__init__(*args, **kwargs)
+
+    def _validate_intent(self, state: dict[str, Any]) -> None:
+        super()._validate_intent(state)
+        before = state.get("counts_before_resume", {})
+        if (
+            state.get("resume_mode") != "train132"
+            or state.get("optimizer_resumed") is not True
+            or any(state.get(k) != v for k, v in self._resume_expected.items())
+            or before.get("optimizer_completed") != 320
+            or before.get("optimizer_attempted") != 320
+            or before.get("value_only_steps") != 64
+            or before.get("ppo_steps") != 256
+        ):
+            raise ValueError("qualified resumed132 training intent and prior history required")

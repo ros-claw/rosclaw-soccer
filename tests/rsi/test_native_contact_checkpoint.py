@@ -42,7 +42,7 @@ def test_checkpoint_reader_rejects_old_intent_or_posthoc_checkpoint(monkeypatch,
         )
 
 
-@pytest.mark.parametrize("recovery", [False, True])
+@pytest.mark.parametrize("recovery", [False, True, "continued"])
 def test_residual_reader_checks_foundation_intent_and_preserves_initial_function(
     monkeypatch, tmp_path, recovery
 ):
@@ -50,6 +50,8 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
     from torch import nn
 
     from rosclaw_soccer.rsi.native_contact_adapter import NativeResidualContactActor
+
+    continued = recovery == "continued"
 
     class FakeBase(nn.Module):
         reference_features = 79
@@ -80,7 +82,13 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
         parent_path,
     )
     parent_hash = module.file_hash(parent_path)
-    kind = module.NativeRecoveryContactSession if recovery else module.NativeResidualContactSession
+    kind = (
+        module.NativeContinuedContactSession
+        if continued
+        else module.NativeRecoveryContactSession
+        if recovery
+        else module.NativeResidualContactSession
+    )
     state = dict(
         schema=kind.checkpoint_schema,
         protocol=kind.protocol,
@@ -95,9 +103,9 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
             output_dim=29,
         ),
         adapter_proof_hash="sha256:proof",
-        episode_count=20,
+        episode_count=kind.final_episode,
         value_warmup_episodes=4,
-        ppo_episodes=16,
+        ppo_episodes=kind.ppo_episodes,
         actor_observation_dim=177,
         critic_observation_dim=177,
         native_pd_position_targets=29,
@@ -108,7 +116,7 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
         activation_ceiling="SIM_ONLY",
         hardware_authorized=False,
         promotion_authorized=False,
-        fresh_optimizer=True,
+        fresh_optimizer=kind.fresh_optimizer_required,
         counts=dict(
             ppo_steps=16, value_only_steps=64, optimizer_completed=80, optimizer_attempted=80
         ),
@@ -122,6 +130,23 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
             training_seed=7607,
         )
         state["counts"]["recovery_foundation_rows"] = 30000
+    if continued:
+        state.update(
+            resume_mode="train132",
+            optimizer_resumed=True,
+            resume_checkpoint_hash="sha256:" + "c" * 64,
+            resume_proof_hash="sha256:" + "d" * 64,
+            resume_source_hash="sha256:" + "e" * 64,
+            counts_before_resume=dict(
+                optimizer_completed=320, optimizer_attempted=320, value_only_steps=64, ppo_steps=256
+            ),
+        )
+        state["counts"].update(
+            ppo_steps=2048,
+            optimizer_completed=2112,
+            optimizer_attempted=2112,
+            recovery_foundation_rows=200000,
+        )
 
     def reader(reader_kind=None, arm="final"):
         reader_kind = reader_kind or kind
@@ -130,9 +155,15 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
                 expected_recovery_proof_hash="sha256:" + "a" * 64,
                 expected_recovery_fault_hash="sha256:" + "b" * 64,
             )
-            if reader_kind is module.NativeRecoveryContactSession
+            if issubclass(reader_kind, module.NativeRecoveryContactSession)
             else {}
         )
+        if reader_kind is module.NativeContinuedContactSession:
+            extra.update(
+                expected_resume_checkpoint_hash="sha256:" + "c" * 64,
+                expected_resume_proof_hash="sha256:" + "d" * 64,
+                expected_resume_source_hash="sha256:" + "e" * 64,
+            )
         torch.save(state, checkpoint)
         return reader_kind(
             Path("actor.onnx"),
@@ -164,6 +195,13 @@ def test_residual_reader_checks_foundation_intent_and_preserves_initial_function
         with pytest.raises(ValueError, match="finite-option"):
             reader()
         state["recovery_fault_hash"] = "sha256:" + "b" * 64
+    if continued:
+        with pytest.raises(ValueError, match="fixed final20"):
+            reader(module.NativeRecoveryContactSession)
+        state["resume_proof_hash"] = "sha256:" + "f" * 64
+        with pytest.raises(ValueError, match="resumed132"):
+            reader()
+        state["resume_proof_hash"] = "sha256:" + "d" * 64
     state["actor_state_dict"]["base.head.bias"] = state["actor_state_dict"]["base.head.bias"] + 0.01
     with pytest.raises(ValueError, match="immutable foundation"):
         reader()

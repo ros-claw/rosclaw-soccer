@@ -25,7 +25,12 @@ def main():
     p.add_argument("--baseline-reuse-hash")
     p.add_argument(
         "--checkpoint-intent",
-        choices=("shared", "bounded-residual", "bounded-recovery-option"),
+        choices=(
+            "shared",
+            "bounded-residual",
+            "bounded-recovery-option",
+            "bounded-recovery-continuation",
+        ),
         default="shared",
     )
     a = p.parse_args()
@@ -57,7 +62,9 @@ def main():
         pins[str(f)] = h
     learner, starts = reports[:2]
     baseline = {} if dev else reports[2]
-    option = a.checkpoint_intent == "bounded-recovery-option"
+    continued = a.checkpoint_intent == "bounded-recovery-continuation"
+    option = a.checkpoint_intent in ("bounded-recovery-option", "bounded-recovery-continuation")
+    final_episode = 132 if continued else 20
     residual = a.checkpoint_intent != "shared"
     reuse_rows = {}
     if a.baseline_reuse_root or a.baseline_reuse_hash:
@@ -137,7 +144,9 @@ def main():
                 "raw_hash"
             ]
     expected_status = (
-        "NATIVE_CONTACT24_RECOVERY60_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
+        "NATIVE_OPTION_CONTINUATION132_REQUIRES_FULL_EXAM"
+        if continued
+        else "NATIVE_CONTACT24_RECOVERY60_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
         if option
         else "NATIVE_CONTACT24_RESIDUAL_PPO_CANDIDATE_REQUIRES_FULL_EXAM"
         if residual
@@ -148,8 +157,14 @@ def main():
         or learner.get("actor_kind", "shared")
         != ("bounded-residual" if option else a.checkpoint_intent)
         or learner.get("protocol")
-        != ("native-contact24-recovery60-v1" if option else "native-contact24-v1")
-        or len(learner.get("results", [])) != 20
+        != (
+            "native-contact24-recovery60-continuation-v1"
+            if continued
+            else "native-contact24-recovery60-v1"
+            if option
+            else "native-contact24-v1"
+        )
+        or len(learner.get("results", [])) != (112 if continued else 20)
         or learner["counts"]["ppo_steps"] < 1
         or starts.get("ball_placement_protocol") != "body-bound-v1"
         or (
@@ -172,7 +187,9 @@ def main():
         raise ValueError(
             "completed native learner and unchanged full body-bound TRAIN64 source required"
         )
-    checkpoint = next(r for r in learner["checkpoints"] if r["episode"] == 20)
+    if continued and [r["episode"] for r in learner["results"]] != list(range(20, 132)):
+        raise ValueError("complete fixed resumed20..131 learning history required")
+    checkpoint = next(r for r in learner["checkpoints"] if r["episode"] == final_episode)
     cp = a.learner_root / checkpoint["file"]
     pins[str(cp)] = checkpoint["hash"]
     initial_path = a.starts_root / "train-starts.npz"
@@ -205,7 +222,7 @@ def main():
             else "TRAIN evaluation only, DEV untouched",
             task_set=a.task_set,
             worlds=64,
-            checkpoint_selection="fixed final20 vs immutable parent baseline",
+            checkpoint_selection=f"fixed final{final_episode} vs immutable parent baseline",
             checkpoint_intent=a.checkpoint_intent,
             baseline_reused=bool(reuse_rows),
             baseline_reuse_receipt_hash=a.baseline_reuse_hash,
@@ -255,6 +272,7 @@ def main():
         )
         from rosclaw_soccer.rsi.native_contact_checkpoint import (
             NativeContactSession,
+            NativeContinuedContactSession,
             NativeRecoveryContactSession,
             NativeResidualContactSession,
         )
@@ -264,7 +282,9 @@ def main():
 
         torch.set_num_threads(1)
         session_type = (
-            NativeRecoveryContactSession
+            NativeContinuedContactSession
+            if continued
+            else NativeRecoveryContactSession
             if option
             else NativeResidualContactSession
             if residual
@@ -278,6 +298,12 @@ def main():
             if option
             else {}
         )
+        if continued:
+            session_options.update(
+                expected_resume_checkpoint_hash=learner["resume_checkpoint_hash"],
+                expected_resume_source_hash=learner["resume_source_hash"],
+                expected_resume_proof_hash=learner["resume_proof_hash"],
+            )
 
         def pinned(suffix):
             matches = [Path(k) for k in pins if k.endswith(suffix)]

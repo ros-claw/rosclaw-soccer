@@ -23,7 +23,7 @@ def main():
         raise ValueError("unused output and exact completed exam required")
     r = json.loads(receipt.read_text())
     if (
-        r["checkpoint_intent"] != "bounded-recovery-option"
+        r["checkpoint_intent"] not in ("bounded-recovery-option", "bounded-recovery-continuation")
         or r["optimizer_updates"] != 0
         or any(
             r[k] is not True
