@@ -168,7 +168,7 @@ class PrecontactMotionEnv(FootOnlyMotionEnv):
         term._raw_actions[ids] = action
         term._processed_actions[ids] = action * term._scale[ids] + term._offset[ids]
         motion.robot.set_joint_position_target(
-            term._processed_actions[ids], joint_ids=term.target_ids, env_ids=ids
+            term._processed_actions[ids], joint_ids=term.target_ids, env_ids=ids[:, None]
         )
 
     def reset(self, **kwargs):

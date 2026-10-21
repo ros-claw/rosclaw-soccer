@@ -41,3 +41,13 @@ def test_window_termination_is_elapsed_not_absolute_source_phase():
         _course_start_frame=torch.tensor([200, 100, 125]),
     )
     assert curriculum_window_exhausted(env).tolist() == [False, True, False]
+
+
+def test_explicit_environment_joint_cartesian_indices_do_not_touch_other_worlds():
+    target = torch.zeros(8, 29)
+    worlds = torch.tensor([1, 4, 7])
+    joints = torch.arange(29)
+    measured_previous_target = torch.arange(87, dtype=torch.float32).reshape(3, 29)
+    target[worlds[:, None], joints] = measured_previous_target
+    assert torch.equal(target[worlds], measured_previous_target)
+    assert torch.count_nonzero(target[torch.tensor([0, 2, 3, 5, 6])]) == 0
