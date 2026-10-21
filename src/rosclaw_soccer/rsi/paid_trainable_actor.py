@@ -97,7 +97,13 @@ class PaidTrainableActor(nn.Module):
             for x in state
         ) or not all(torch.isfinite(x).all() for x in (observation, *state)):
             raise ValueError("finite explicit per-player recurrent states required")
-        output, state = self.rnn((observation - self.mean) / self.denominator, state)
+        # A per-player slice can have the right values/shape but noncontiguous
+        # strides. cuDNN requires contiguous h/c; copy layout, never crop/pad or
+        # share another player's memory. CPU accepts the same explicit layout.
+        output, state = self.rnn(
+            (observation - self.mean) / self.denominator,
+            (state[0].contiguous(), state[1].contiguous()),
+        )
         return self.actor(output), state
 
 
