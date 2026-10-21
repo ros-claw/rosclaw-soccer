@@ -52,7 +52,7 @@ def main():
         a.reference_root / "source/whole_body_tracking/soccer/assets/unitree_description",
     ):
         for f in root.rglob("*"):
-                if f.is_file() and (f.suffix.lower() in (".py", ".xml", ".stl", ".obj", ".png")):
+            if f.is_file() and (f.suffix.lower() in (".py", ".xml", ".stl", ".obj", ".png")):
                 pins[str(f)] = digest(f)
     for name in TRAIN_MOTION_NAMES:
         file = a.reference_root / "motions/soccer-standard" / name
