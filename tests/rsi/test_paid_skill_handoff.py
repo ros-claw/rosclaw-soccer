@@ -128,7 +128,8 @@ def test_invalid_drop_is_rejected_in_scratch_without_any_live_write():
         np.testing.assert_array_equal(getattr(ep.env.data, k), before[k])
 
 
-def test_collector_restarts_only_neural_memory_and_records_executed_transition_history():
+@pytest.mark.parametrize("carry_memory", [False, True])
+def test_collector_records_executed_transition_history_with_explicit_memory(carry_memory):
     """Unit test of collector plumbing, not a physical rollout or skill proof."""
     from pathlib import Path
     from threading import Lock
@@ -168,11 +169,15 @@ def test_collector_restarts_only_neural_memory_and_records_executed_transition_h
 
     ep.observation, ep.step = observation, step
     previous = ep.last_action.copy()
-    raw, row = bench.collect_current(ep, Actor(), transition_controls=12)
+    memory = (torch.full((2, 1, 128), 3.0), torch.full((2, 1, 128), 5.0)) if carry_memory else None
+    raw, row = bench.collect_current(ep, Actor(), transition_controls=12, initial_state=memory)
     assert bench.neural_rows == 14 and row["composite_teacher"]
     np.testing.assert_array_equal(raw["NN_obs"][0, 125:154], previous)
     np.testing.assert_array_equal(raw["NN_obs"][1:, 125:154], raw["NN_action"][:-1])
-    assert not raw["NN_h_before"][0].any() and not raw["NN_c_before"][0].any()
+    assert np.all(raw["NN_h_before"][0] == (3 if carry_memory else 0))
+    assert np.all(raw["NN_c_before"][0] == (5 if carry_memory else 0))
+    if carry_memory:
+        assert torch.all(memory[0] == 3) and torch.all(memory[1] == 5)
     np.testing.assert_array_equal(raw["NN_h_after"][:-1], raw["NN_h_before"][1:])
     for i in range(12):
         u = (i + 1) / 12
@@ -181,3 +186,39 @@ def test_collector_restarts_only_neural_memory_and_records_executed_transition_h
             raw["NN_action"][i], ((1 - weight) * previous + weight * 0.5).astype(np.float32)
         )
     np.testing.assert_array_equal(raw["NN_action"][12:], raw["NN_nominal_action"][12:])
+
+
+def test_reference_memory_carry_is_explicit_and_never_changes_physical_state():
+    ep = boundary()
+    ep.ref_pos = np.linspace(-1, 1, 29, dtype=np.float32)
+    ep.ref_vel = np.linspace(-2, 2, 29, dtype=np.float32)
+    ep.ref_ang = np.array([0.1, 0.2, 0.3], np.float32)
+    references = [v.copy() for v in (ep.ref_pos, ep.ref_vel, ep.ref_ang)]
+    before = {k: np.array(v, copy=True) for k, v in vars(ep.env.data).items() if k != "warning"}
+    ep.begin_current_state(ep.clip, goal=np.array([6.0, 0, 0.11]), preserve_reference=True)
+    for actual, expected in zip((ep.ref_pos, ep.ref_vel, ep.ref_ang), references, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    for key, value in before.items():
+        np.testing.assert_array_equal(getattr(ep.env.data, key), value)
+
+
+@pytest.mark.parametrize("fault", ["shape", "dtype", "nonfinite", "count", "not_tensor"])
+def test_bad_neural_state_cannot_enter_collection(fault):
+    import torch
+
+    from rosclaw_soccer.rsi.paid_research_bench import PaidResearchBench
+
+    bench = PaidResearchBench.__new__(PaidResearchBench)
+    ep = SimpleNamespace(done=False, frame=0, last_action=np.zeros(29, np.float32))
+    h, c = torch.zeros(2, 1, 128), torch.zeros(2, 1, 128)
+    if fault == "shape":
+        h = torch.zeros(1, 2, 128)
+    if fault == "dtype":
+        h = h.double()
+    if fault == "nonfinite":
+        h[0, 0, 0] = float("nan")
+    if fault == "not_tensor":
+        h = np.zeros((2, 1, 128), np.float32)
+    initial = (h,) if fault == "count" else (h, c)
+    with pytest.raises(ValueError, match="per-player h/c"):
+        bench.collect_current(ep, None, initial_state=initial)

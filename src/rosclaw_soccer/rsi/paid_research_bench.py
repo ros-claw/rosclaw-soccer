@@ -97,11 +97,12 @@ class PaidResearchBench:
         *,
         transform: Any = None,
         transition_controls: int = 0,
+        initial_state: tuple[Any, Any] | None = None,
     ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         """Run an already admitted live-body skill; NEVER reset simulator state.
 
-        Neural h/c starts at zero at this explicit skill boundary, while the
-        previous executed action is carried by the episode. Optional crossfade
+        Neural h/c starts at zero unless the caller explicitly carries its own
+        per-player state. Previous executed action is carried by the episode. Crossfade
         is an explicit composite transition, not a pure-neural policy claim.
         """
         import torch
@@ -111,7 +112,23 @@ class PaidResearchBench:
         if transition_controls and transform is not None:
             raise ValueError("transition and teacher transformations must be separate experiments")
         previous = ep.last_action.copy()
-        state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
+        if initial_state is not None and (
+            len(initial_state) != 2
+            or any(
+                not isinstance(s, torch.Tensor)
+                or s.shape != (2, 1, 128)
+                or s.dtype != torch.float32
+                or s.device.type != "cpu"
+                or not torch.isfinite(s).all()
+                for s in initial_state
+            )
+        ):
+            raise ValueError("explicit finite CPU float32 per-player h/c required")
+        state = (
+            (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
+            if initial_state is None
+            else tuple(s.detach().clone() for s in initial_state)
+        )
         controls, neural, plans = [], [], []
         while not ep.done:
             action = None

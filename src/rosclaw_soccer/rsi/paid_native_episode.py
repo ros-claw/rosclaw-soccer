@@ -101,7 +101,9 @@ class PaidNativeEpisode:
         # Reset only prepares state. Each observation below refreshes native
         # kinematics at the same boundary as the qualified cached-standard arm.
 
-    def begin_current_state(self, clip: Any, *, goal: np.ndarray) -> None:
+    def begin_current_state(
+        self, clip: Any, *, goal: np.ndarray, preserve_reference: bool = False
+    ) -> None:
         """Explicit new reference boundary; do not write ANY mjData field.
 
         Actual last executed action is carried. A caller may explicitly reset
@@ -120,8 +122,18 @@ class PaidNativeEpisode:
         if tuple(int(x.number) for x in self.env.data.warning) != self.warning:
             raise ValueError("prior native warning cannot be hidden by a new skill")
         previous = self.last_action.copy()
+        references = None
+        if preserve_reference:
+            references = (self.ref_pos.copy(), self.ref_vel.copy(), self.ref_ang.copy())
+            if any(
+                x.shape != shape or not np.isfinite(x).all()
+                for x, shape in zip(references, ((29,), (29,), (3,)), strict=True)
+            ):
+                raise ValueError("finite actual cached references required for declared carry")
         self._begin_local(goal, previous)
         self.clip = clip
+        if references is not None:
+            self.ref_pos, self.ref_vel, self.ref_ang = references
 
     def advance_hold(self) -> dict[str, Any]:
         """Advance a separately declared post-reference PD hold, no neural/ref padding."""
