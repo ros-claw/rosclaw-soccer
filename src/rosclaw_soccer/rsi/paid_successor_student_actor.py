@@ -9,13 +9,26 @@ from typing import Any
 import torch
 
 from rosclaw_soccer.rsi.paid_contact_residual import ContactResidual, FrozenContactResidualActor
-from rosclaw_soccer.rsi.paid_successor_features import successor_student_config
+from rosclaw_soccer.rsi.paid_successor_features import (
+    staged_successor_config,
+    successor_student_config,
+)
+
+
+def _config(state: dict[str, Any]) -> dict[str, Any]:
+    seed = state.get("config", {}).get("seed_index")
+    return (
+        staged_successor_config(seed)
+        if state.get("schema") == "soccer.successor_contact_student.v2"
+        else successor_student_config(seed)
+    )
 
 
 def validate_successor_state(
     state: dict[str, Any], receipt: dict[str, Any], template: dict[str, torch.Tensor]
 ) -> None:
-    config = successor_student_config(state.get("config", {}).get("seed_index"))
+    config = _config(state)
+    staged = config["protocol"].endswith("v2")
     counts = state.get("counts", {})
     calls, evaluations = counts.get("projection_calls"), counts.get("projection_gate_evaluations")
     hist = state.get("projection_histogram", {})
@@ -23,23 +36,24 @@ def validate_successor_state(
     certificate = state.get("retention_certificate", {})
     maximum = certificate.get("maximum_negative_logit_CPU")
     if (
-        state.get("schema") != "soccer.successor_contact_student.v1"
+        state.get("schema")
+        not in ("soccer.successor_contact_student.v1", "soccer.successor_contact_student.v2")
         or state.get("config") != config
         or receipt.get("config") != config
         or receipt.get("status") != "PAID_SUCCESSOR_NEURAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
         or receipt.get("counts") != counts
         or receipt.get("projection_histogram") != hist
         or receipt.get("retention_certificate") != certificate
-        or counts.get("optimizer_updates") != 1024
-        or calls != 1024
+        or counts.get("optimizer_updates") != (1536 if staged else 1024)
+        or calls != (0 if staged else 1024)
         or counts.get("positive_forward_rows") != 524288
         or counts.get("retention_forward_rows") != 524288
         or type(evaluations) is not int
-        or not 1024 <= evaluations <= 10240
+        or not (evaluations == 0 if staged else 1024 <= evaluations <= 10240)
         or not isinstance(hist, dict)
         or not set(hist) <= allowed
         or any(type(x) is not int or x < 0 for x in hist.values())
-        or sum(hist.values()) != 1024
+        or sum(hist.values()) != (0 if staged else 1024)
         or type(maximum) not in (int, float)
         or not math.isfinite(maximum)
         or maximum > -0.1 + 1e-5
@@ -86,36 +100,63 @@ def validate_successor_state(
         not torch.equal(state["initial_residual"][key], value) for key, value in template.items()
     ):
         raise ValueError("exact declared-seed zero-head initialization required")
-    optimizer = state.get("optimizer", {})
-    groups = optimizer.get("param_groups", [])
-    if (
-        len(groups) != 1
-        or groups[0].get("params") != list(range(10))
-        or groups[0].get("lr") != config["lr"]
-        or set(optimizer.get("state", {})) != set(range(10))
-    ):
-        raise ValueError("optimizer may contain only ten new residual/gate tensors")
-    for i, expected in enumerate(template.values()):
-        slot = optimizer["state"][i]
-        step = slot.get("step")
+    plans = [(state.get("optimizer", {}), list(template.values()), 1024)]
+    if staged:
+        calibration = state.get("gate_calibration", {})
         if (
-            not isinstance(step, torch.Tensor)
-            or step.device.type != "cpu"
-            or step.numel() != 1
-            or float(step) != 1024
+            calibration != receipt.get("gate_calibration")
+            or calibration.get("all_negative_gate_rejected") is not True
+            or calibration.get("only_output_bias_shifted") is not True
+            or calibration.get("maximum_negative_after_CPU") != maximum
+            or calibration.get("margin") != 0.1
+            or counts.get("head_optimizer_updates") != 1024
+            or counts.get("gate_optimizer_updates") != 512
         ):
-            raise ValueError("actual1024 Adam steps per plastic parameter required")
-        for key in ("exp_avg", "exp_avg_sq"):
-            tensor = slot.get(key)
+            raise ValueError(
+                "explicit staged gate calibration and independent optimizer work required"
+            )
+        plans = [
+            (
+                state.get("optimizer", {}),
+                [v for k, v in template.items() if k.startswith("net.")],
+                1024,
+            ),
+            (
+                state.get("gate_optimizer", {}),
+                [v for k, v in template.items() if k.startswith("gate.")],
+                512,
+            ),
+        ]
+    for optimizer, tensors, steps in plans:
+        groups = optimizer.get("param_groups", [])
+        if (
+            len(groups) != 1
+            or groups[0].get("params") != list(range(len(tensors)))
+            or groups[0].get("lr") != config["lr"]
+            or set(optimizer.get("state", {})) != set(range(len(tensors)))
+        ):
+            raise ValueError("optimizer may contain only declared plastic tensors")
+        for i, expected in enumerate(tensors):
+            slot = optimizer["state"][i]
+            step = slot.get("step")
             if (
-                not isinstance(tensor, torch.Tensor)
-                or tensor.device.type != "cpu"
-                or tensor.dtype != torch.float32
-                or tensor.shape != expected.shape
-                or not torch.isfinite(tensor).all()
-                or (key == "exp_avg_sq" and (tensor < 0).any())
+                not isinstance(step, torch.Tensor)
+                or step.device.type != "cpu"
+                or step.numel() != 1
+                or float(step) != steps
             ):
-                raise ValueError("finite bounded plastic-only Adam moments required")
+                raise ValueError("actual complete Adam step count per plastic parameter required")
+            for key in ("exp_avg", "exp_avg_sq"):
+                tensor = slot.get(key)
+                if (
+                    not isinstance(tensor, torch.Tensor)
+                    or tensor.device.type != "cpu"
+                    or tensor.dtype != torch.float32
+                    or tensor.shape != expected.shape
+                    or not torch.isfinite(tensor).all()
+                    or (key == "exp_avg_sq" and (tensor < 0).any())
+                ):
+                    raise ValueError("finite bounded plastic-only Adam moments required")
 
 
 def load_successor_student(
@@ -146,7 +187,7 @@ def load_successor_student(
         raise ValueError("bounded exact safe-load successor artifacts required")
     receipt = json.loads(training_receipt.read_text())
     state = torch.load(checkpoint, weights_only=True, map_location="cpu")
-    config = successor_student_config(state.get("config", {}).get("seed_index"))
+    config = _config(state)
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])
         residual = ContactResidual()

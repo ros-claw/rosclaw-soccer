@@ -4,12 +4,15 @@ import pytest
 import torch
 
 from rosclaw_soccer.rsi.paid_contact_residual import ContactResidual
-from rosclaw_soccer.rsi.paid_successor_features import successor_student_config
+from rosclaw_soccer.rsi.paid_successor_features import (
+    staged_successor_config,
+    successor_student_config,
+)
 from rosclaw_soccer.rsi.paid_successor_student_actor import validate_successor_state
 
 
-def fixture():
-    config = successor_student_config(0)
+def fixture(*, staged=False):
+    config = staged_successor_config(0) if staged else successor_student_config(0)
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(config["seed"])
         template = ContactResidual().state_dict()
@@ -53,6 +56,40 @@ def fixture():
         "body_scene_hash",
     ):
         state[key] = "fixture"
+    if staged:
+        state["schema"] = "soccer.successor_contact_student.v2"
+        state["counts"].update(
+            optimizer_updates=1536,
+            projection_calls=0,
+            projection_gate_evaluations=0,
+            head_optimizer_updates=1024,
+            gate_optimizer_updates=512,
+        )
+        state["projection_histogram"] = {}
+        state["gate_calibration"] = dict(
+            all_negative_gate_rejected=True,
+            only_output_bias_shifted=True,
+            maximum_negative_after_CPU=-0.2,
+            margin=0.1,
+        )
+
+        def opt(tensors, steps):
+            return dict(
+                param_groups=[dict(params=list(range(len(tensors))), lr=0.0003)],
+                state={
+                    i: dict(
+                        step=torch.tensor(float(steps)),
+                        exp_avg=torch.zeros_like(v),
+                        exp_avg_sq=torch.zeros_like(v),
+                    )
+                    for i, v in enumerate(tensors)
+                },
+            )
+
+        state["optimizer"] = opt([v for k, v in template.items() if k.startswith("net.")], 1024)
+        state["gate_optimizer"] = opt(
+            [v for k, v in template.items() if k.startswith("gate.")], 512
+        )
     receipt = dict(
         state,
         status="PAID_SUCCESSOR_NEURAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",
@@ -65,6 +102,23 @@ def fixture():
 
 def test_complete_new_schema_does_not_require_old_3810_row_protocol():
     validate_successor_state(*fixture())
+
+
+def test_staged_student_has_two_explicit_optimizers_and_frozen_calibrated_gate():
+    validate_successor_state(*fixture(staged=True))
+
+
+@pytest.mark.parametrize("fault", ["gate_steps", "calibration", "shared_optimizer"])
+def test_staged_admission_rejects_missing_independent_stage_work(fault):
+    state, receipt, template = fixture(staged=True)
+    if fault == "gate_steps":
+        state["gate_optimizer"]["state"][0]["step"] = torch.tensor(511.0)
+    elif fault == "calibration":
+        state["gate_calibration"]["all_negative_gate_rejected"] = False
+    else:
+        state["optimizer"]["param_groups"][0]["params"] = list(range(10))
+    with pytest.raises(ValueError):
+        validate_successor_state(state, receipt, template)
 
 
 @pytest.mark.parametrize(

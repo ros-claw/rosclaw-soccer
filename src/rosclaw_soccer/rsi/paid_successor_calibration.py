@@ -45,7 +45,7 @@ def calibrate_successor_gate(
         maximum_negative_after_CPU=final,
         output_bias_shift=shift,
         bias_before=bias_before,
-        bias_after=float(gate[2].bias[0]),
+        bias_after=float(gate[2].bias[0].detach()),
         negative_support_rows=len(x),
         CPU_gate_forward_rows=2 * len(x),
         margin=margin,
