@@ -164,7 +164,19 @@ def main():
         training = Path(d["candidates"][0]) / "declaration.json"
         if pins.get(str(training)) != digest(training):
             raise ValueError("actual sequence training declaration must be sealed")
-        bank_hash = json.loads(training.read_text())["bank_hash"]
+        training_declaration = json.loads(training.read_text())
+        if trained_residual:
+            # Residual data are curated by the audited specialist curriculum;
+            # retain the exact original bank commitment through that layer.
+            curation_hash = training_declaration["curation_hash"]
+            sources = [Path(p) for p, h in pins.items() if h == curation_hash]
+            if len(sources) != 1 or digest(sources[0]) != curation_hash:
+                raise ValueError("one exact source-bound residual curation receipt required")
+            cp = sources[0].parent / "declaration.json"
+            if pins.get(str(cp)) != digest(cp):
+                raise ValueError("original same-prefix curation declaration must be sealed")
+            training_declaration = json.loads(cp.read_text())
+        bank_hash = training_declaration["bank_hash"]
         bank_paths = [Path(p) for p, h in pins.items() if h == bank_hash]
         if len(bank_paths) != 1 or digest(bank_paths[0]) != bank_hash:
             raise ValueError("one exact completed paired-world bank required")
