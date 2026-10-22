@@ -13,6 +13,7 @@ import pytest
         "scripts.rsi_audit_shared_native_motor",
         "scripts.rsi_collect_native_receiving_roles",
         "scripts.rsi_audit_native_receiving_roles",
+        "scripts.rsi_review_receiving_handoff_windows",
     ],
 )
 def test_import_does_not_allocate_workers_or_write_physical_outputs(module, tmp_path, monkeypatch):
