@@ -10,6 +10,16 @@ import json
 from pathlib import Path
 
 
+def verify_json_preflight(expected, recorded):
+    """Compare the exact JSON wire contract, including tuple-valued dimensions.
+
+    Dataclass inertia is a tuple in memory and a list in JSON; normalizing only
+    this serialization representation does not relax any numeric/hash field.
+    """
+    if json.loads(json.dumps(expected, allow_nan=False)) != recorded:
+        raise ValueError("own whole8 distinct initial physical conditions differ")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("root", "output"):
@@ -196,8 +206,7 @@ def main():
             native_steps=0,
             ball_dimensions=setup.ball_dimensions,
         )
-        if expected_pf != pf:
-            raise ValueError("own whole8 distinct initial physical conditions differ")
+        verify_json_preflight(expected_pf, pf)
 
         def equal(actual, saved, index):
             if set(actual) != set(saved) or any(
