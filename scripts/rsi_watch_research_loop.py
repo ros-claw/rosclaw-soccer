@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from rosclaw_soccer.rsi.research_loop_dependencies import annotate_dependencies
+from rosclaw_soccer.rsi.research_loop_dispatch import dispatch_state
 from rosclaw_soccer.rsi.research_loop_watch import assess, collect
 
 
@@ -54,6 +55,7 @@ def main():
         schema="soccer.rsi.multi_campaign_watch.v1",
         time_unix=now,
         campaigns=campaigns,
+        dispatch=dispatch_state(campaigns),
         observer_only=True,
         agent_wakeup_provided_by_this_script=False,
         scientific_successor_automated=False,
