@@ -1,0 +1,194 @@
+"""Reusable own-history replay using ONLY the independent manual native clock.
+
+Shares NN codecs and teacher rule on own states; never imports the producer
+trial collector or executes saved actions/hidden state. No import allocation.
+"""
+
+import json
+from types import SimpleNamespace
+
+import mujoco
+import numpy as np
+
+from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
+from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
+from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
+from rosclaw_soccer.rsi.paid_run_pilot_recovery import stand_from_raw
+from rosclaw_soccer.rsi.pass_transfer_outcome import pass_transfer_outcome
+from rosclaw_soccer.rsi.relay_audit_clock import RelayAuditClock
+from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
+from scripts.rsi_atomic_artifacts import write_once
+from scripts.rsi_stroke_search_common import stroke_action
+
+
+def replay_trial(
+    setup, actor, course, claim, *, raw_root, output, index, counts, prior_initial=None
+):
+    def equal(actual, saved, index):
+        if set(actual) != set(saved) or any(
+            not np.array_equal(v, saved[k][index]) for k, v in actual.items()
+        ):
+            raise ValueError(f"own neural/native trace differs at control{index}")
+
+    def load(claim, key):
+        with np.load(raw_root / claim["artifacts"][key]["path"], allow_pickle=False) as z:
+            return {k: z[k].copy() for k in z.files}
+
+    ep, initial, forward, home, _ = setup.prepare(
+        course["context"],
+        course["side"],
+        ball_planar_offset_world=None
+        if "ball_planar_offset_world" not in course
+        else np.array(course["ball_planar_offset_world"], dtype=np.float64),
+    )
+    w = RelayAuditClock(initial)
+    raw, na, nb, ini = [load(claim, k) for k in ("physical", "A", "B", "initial")]
+    if (
+        set(ini) != {"qpos", "qvel"}
+        or not np.array_equal(ini["qpos"], w.data.qpos)
+        or not np.array_equal(ini["qvel"], w.data.qvel)
+    ):
+        raise ValueError("own pre-physics initial state differs")
+    if index % 2 and any(not np.array_equal(v, prior_initial[k]) for k, v in ini.items()):
+        raise ValueError("paired whole initial states differ")
+    goal = np.array(course["target"])
+    anchor = goal[:2] + 0.25 * forward + 0.12 * np.array([-forward[1], forward[0]])
+    passer = SharedNativeNeuralPlayer(
+        w,
+        "a/",
+        actor,
+        clip=ep.clip,
+        torso_index=ep.torso_index,
+        build_observation=ep.build_observation,
+        goal=goal,
+        offset=ep.offset,
+        scale=ep.scale,
+        order=ep.order,
+    )
+    velocity = ContinuousVelocityStream(
+        setup.velocity_path,
+        setup.velocity_config,
+        expected_model_hash=setup.pins[str(setup.velocity_path)],
+        expected_config_hash=setup.pins[str(setup.velocity_config)],
+        horizon_controls=400,
+    )
+    ready = OnlineReceivingBoundary(w, "b/")
+    physical = []
+    launch, stand_controls = False, 0
+    for step in range(ep.clip.length + 100):
+        mujoco.mj_forward(w.model, w.data)
+        if passer.phase == "MOTION_COMPLETE":
+            passer.begin_standing()
+        standing = passer.phase == "STANDING"
+        target_a, ta = passer.propose(with_reference_evidence=True)
+        action, delta, clipped = ta["NN_action"].copy(), np.zeros(29), False
+        if course["assisted"] and not standing:
+            action, delta, clipped = stroke_action(
+                SimpleNamespace(frame=passer.frame, order=ep.order, scale=ep.scale),
+                action,
+                ta["NN_reference_nominal"],
+                course["center"],
+                np.array(course["latent"]),
+                foot=course["foot"],
+            )
+            target_a = ep.offset + action[ep.order] * ep.scale
+        ta.update(
+            control=np.array(step),
+            executed_action=action.copy(),
+            teacher_delta_HG=delta,
+            teacher_authority_clipped=np.array(clipped),
+            standing=np.array(standing),
+        )
+        equal(ta, na, step)
+        q, v = w.layouts["b/"].canonical(w.data)
+        qw, x, y, z = q[3:7]
+        yaw = float(np.arctan2(2 * (qw * z + x * y), 1 - 2 * (y * y + z * z)))
+        intent = receiving_intent(
+            root_xy=q[:2],
+            yaw=yaw,
+            ball_xy=q[36:38],
+            ball_velocity_xy=v[35:37],
+            home_xy=home,
+            pass_direction=forward,
+            launch_seen=launch,
+            ready_anchor_xy=anchor,
+        )
+        launch = intent.launch_seen
+        command = np.array(intent.command_body, np.float32)
+        target_b = velocity.propose(
+            q, v, w.layouts["b/"].angular_velocity_body(w.data), command, frame=step
+        )
+        equal(
+            dict(
+                obs=velocity.last_observation.copy(),
+                action=velocity.last_action.copy(),
+                command=command,
+                phase=np.array(velocity.phase),
+                control=np.array(step),
+            ),
+            nb,
+            step,
+        )
+        row = w.advance({"a/": target_a, "b/": target_b})
+        counts["native_steps"] += 10
+        counts["actor_calls"] += 2
+        passer.commit(executed_action=action)
+        ready.update()
+        stand_controls += int(standing)
+        own = {k: row[k] for k in ("qpos", "qvel", "torque", "ball_forces")} | dict(
+            body_failed=np.array([row["body_failed"][p] for p in ("a/", "b/")]),
+            target_a=target_a.copy(),
+            target_b=target_b.copy(),
+            time_before=np.array(row["time_before"]),
+        )
+        equal(own, raw, step)
+        physical.append(own)
+        if w.failed:
+            break
+    if any(len(v) != w.control_steps for r in (raw, na, nb) for v in r.values()):
+        raise ValueError("all own controls and complete source rows required")
+    ownraw = {k: np.stack([r[k] for r in physical]) for k in physical[0]}
+    al = w.layouts["a/"]
+    qids = [*range(al.rq, al.rq + 7), *al.qi, *range(al.bq, al.bq + 7)]
+    vids = [*range(al.rv, al.rv + 6), *al.vi, *range(al.bv, al.bv + 6)]
+    recovery = None
+    if stand_controls:
+        recovery = stand_from_raw(
+            dict(
+                qpos=ownraw["qpos"][-stand_controls:, :, qids],
+                qvel=ownraw["qvel"][-stand_controls:, :, vids],
+                body_failed=ownraw["body_failed"][-stand_controls:, 0],
+            )
+        )
+    measure = pass_transfer_outcome(
+        ownraw["qpos"][:, :, al.bq : al.bq + 3].reshape(-1, 3),
+        ownraw["qvel"][:, :, al.bv : al.bv + 3].reshape(-1, 3),
+        ownraw["ball_forces"].reshape(-1, 2, 3),
+        goal,
+        whole_body_healthy=not w.failed,
+        passer_recovery_observed=bool(
+            stand_controls == 100
+            and recovery
+            and recovery["healthy"]
+            and recovery["stability_observed"]
+        ),
+        receiver_first_ready_control=ready.first_ready_control,
+        receiver_excluded_contact=ready.excluded_contact,
+    )
+    result = dict(
+        index=index,
+        course=course,
+        controls=w.control_steps,
+        native_steps=w.native_steps,
+        actor_calls=2 * w.control_steps,
+        stand_controls=stand_controls,
+        A_recovery=recovery,
+        outcome=measure,
+        termination="BODY_FAILURE" if w.failed else "FULL_MOTION_PLUS100NN_RECOVERY",
+        neural_actor_optimizer_updates=0,
+    )
+    if result != {k: v for k, v in claim.items() if k != "artifacts"}:
+        raise ValueError("own recovery/receiving/delivery/whole counters differ")
+    write_once(output / f"trial{index}.json", result)
+    print(json.dumps(result), flush=True)
+    return result, ini
