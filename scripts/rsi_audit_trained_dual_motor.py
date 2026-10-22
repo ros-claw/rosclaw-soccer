@@ -90,8 +90,11 @@ def main():
             root=a.root,
             expected_receipt_hash=a.source_hash,
         )
-        if len(data["records"]) != 22 or len(r["cpu_replay"]) != 22:
-            raise ValueError("all22 source sequences required")
+        expected_sequences = (
+            24 if data["status"] == "DUAL_MOTOR_ACTUAL_DAGGER_SEQUENCES_READY_NOT_TRAINED" else 22
+        )
+        if len(data["records"]) != expected_sequences or len(r["cpu_replay"]) != expected_sequences:
+            raise ValueError("all explicitly declared original/DAgger sequences required")
         outcomes = []
         for source, production in zip(data["records"], r["cpu_replay"], strict=True):
             path = data_paths[0].parent / source["raw_path"]

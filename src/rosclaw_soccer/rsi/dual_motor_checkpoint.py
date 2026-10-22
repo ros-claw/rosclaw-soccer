@@ -33,13 +33,35 @@ def validate_network(network: Any, expected: dict[str, torch.Tensor]) -> None:
         raise ValueError("original qualified normalization must remain immutable")
 
 
+def warm_start_binding(receipt: dict[str, Any], receipt_path: Path) -> tuple[Path, str] | None:
+    config = receipt["config"]
+    warm_hash = config.get("warm_start_receipt_hash")
+    if warm_hash is None:
+        if config.get("protocol") == "dual256.full_history_dagger_adaptation.v2":
+            raise ValueError("DAgger checkpoints cannot omit learned predecessor")
+        return None
+    if config.get("protocol") != "dual256.full_history_dagger_adaptation.v2":
+        raise ValueError("explicit new actual-state DAgger warm-start protocol required")
+    paths = [
+        Path(x)
+        for x, h in receipt["input_file_hashes"].items()
+        if h == warm_hash and x.endswith("/complete.json")
+    ]
+    if len(paths) != 1 or paths[0].resolve() == receipt_path.resolve():
+        raise ValueError("unique separate exact learned predecessor required")
+    return paths[0], warm_hash
+
+
 def load_dual_for_sim_audit(
     parent: FrozenFullEntryActor,
     *,
     parent_lineage_hash: str,
     root: Path,
     expected_receipt_hash: str,
+    _depth: int = 0,
 ) -> tuple[DualRecurrentMotor, dict[str, Any]]:
+    if not 0 <= _depth <= 4:
+        raise ValueError("bounded explicit learned warm-start lineage required")
     rp, dp = root / "complete.json", root / "declaration.json"
     if root.is_symlink() or (root / "failed.json").exists() or digest(rp) != expected_receipt_hash:
         raise ValueError("exact closed research training receipt required")
@@ -88,9 +110,21 @@ def load_dual_for_sim_audit(
     model = DualRecurrentMotor(parent).eval()
     expected = model.plastic.state_dict()
     validate_network(first.get("plastic_network"), expected)
-    if any(not torch.equal(v, expected[k]) for k, v in first["plastic_network"].items()):
+    initial_expected = expected
+    warm = warm_start_binding(r, rp)
+    if warm is not None:
+        warm_path, warm_hash = warm
+        previous, _ = load_dual_for_sim_audit(
+            parent,
+            parent_lineage_hash=parent_lineage_hash,
+            root=warm_path.parent,
+            expected_receipt_hash=warm_hash,
+            _depth=_depth + 1,
+        )
+        initial_expected = previous.plastic.state_dict()
+    if any(not torch.equal(v, initial_expected[k]) for k, v in first["plastic_network"].items()):
         raise ValueError(
-            "warm start must equal actual qualified inherited network, not random weights"
+            "warm start must equal exact declared inherited/learned predecessor network"
         )
     validate_network(last.get("plastic_network"), expected)
     changed = [

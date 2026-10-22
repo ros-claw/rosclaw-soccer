@@ -17,6 +17,8 @@ def main():
     for n in ("data-hash", "expected-head"):
         p.add_argument("--" + n, required=True)
     p.add_argument("--seed-index", type=int, choices=(0, 1, 2), required=True)
+    p.add_argument("--warm-start-root", type=Path)
+    p.add_argument("--warm-start-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -39,8 +41,17 @@ def main():
     ):
         raise ValueError("unused output and exact closed whole-history data required")
     d = json.loads(dp.read_text())
+    dagger = d["status"] == "DUAL_MOTOR_ACTUAL_DAGGER_SEQUENCES_READY_NOT_TRAINED"
+    if bool(a.warm_start_root) != bool(a.warm_start_hash) or dagger != bool(a.warm_start_root):
+        raise ValueError(
+            "new actual-state DAgger protocol requires exact previous learned warm start"
+        )
     if (
-        d["status"] != "DUAL_MOTOR_ACTUAL_HISTORY_SEQUENCES_READY_NOT_TRAINED"
+        d["status"]
+        not in (
+            "DUAL_MOTOR_ACTUAL_HISTORY_SEQUENCES_READY_NOT_TRAINED",
+            "DUAL_MOTOR_ACTUAL_DAGGER_SEQUENCES_READY_NOT_TRAINED",
+        )
         or d["observation_width"] != 160
         or d["learner_hidden_width"] != 256
         or d["teacher_hidden_state_supplied_to_learner"] is not False
@@ -49,11 +60,30 @@ def main():
         or d["Fresh_fit_rows"] != 0
         or d["hardware_authorized"] is not False
         or d["promotion_authorized"] is not False
-        or len(d["records"]) != 22
+        or len(d["records"]) != (24 if dagger else 22)
     ):
         raise ValueError("actual complete sequences and own learner memory required")
     pins = dict(d["input_file_hashes"])
     pins[str(dp)] = a.data_hash
+    if dagger:
+        wp = a.warm_start_root / "complete.json"
+        if pins.get(str(wp)) != a.warm_start_hash or digest(wp) != a.warm_start_hash:
+            raise ValueError(
+                "warm start must be the actual learner that generated admitted corrections"
+            )
+        wr = json.loads(wp.read_text())
+        recovery_paths = [
+            Path(x)
+            for x, h in pins.items()
+            if h == d["recovery_hash"] and x.endswith("/complete.json")
+        ]
+        if (
+            len(recovery_paths) != 1
+            or json.loads(recovery_paths[0].read_text())["training_hash"] != a.warm_start_hash
+        ):
+            raise ValueError("actual failed learner and new warm start must be identical")
+        if wr["parent_lineage_hash"] != d["parent_lineage_hash"]:
+            raise ValueError("same original frozen reference lineage required")
     paths = [
         Path(x)
         for x, h in pins.items()
@@ -76,7 +106,9 @@ def main():
     check_pins(pins)
     a.output.mkdir()
     config = dict(
-        protocol="dual256.full_history_supervised_adaptation.v1",
+        protocol="dual256.full_history_dagger_adaptation.v2"
+        if dagger
+        else "dual256.full_history_supervised_adaptation.v1",
         seed_index=a.seed_index,
         seed=51022 + a.seed_index,
         updates=256,
@@ -93,6 +125,12 @@ def main():
         selected_checkpoint="final_only",
         online_PPO=False,
     )
+    if dagger:
+        config.update(
+            warm_start_receipt_hash=a.warm_start_hash,
+            new_sequence_pool=4,
+            corrections_supervised_only=True,
+        )
     write_once(
         a.output / "declaration.json",
         dict(
@@ -114,6 +152,7 @@ def main():
         import numpy as np
         import torch
 
+        from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
         from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
         from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
         from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
@@ -144,6 +183,14 @@ def main():
             scene_hash=scene,
         )
         model = DualRecurrentMotor(parent).eval()
+        if dagger:
+            model, _ = load_dual_for_sim_audit(
+                parent,
+                parent_lineage_hash=d["parent_lineage_hash"],
+                root=a.warm_start_root,
+                expected_receipt_hash=a.warm_start_hash,
+            )
+            model.plastic.requires_grad_(True)
         frozen = {k: v.detach().cpu().clone() for k, v in parent.state_dict().items()}
         initial = {k: v.detach().cpu().clone() for k, v in model.plastic.state_dict().items()}
         episodes = []
@@ -161,10 +208,12 @@ def main():
             episodes.append(episode)
         positive = [i for i, r in enumerate(d["records"]) if r["role"] == "acquired_parent_skill"]
         novel = [
-            i for i, r in enumerate(d["records"]) if r["source_kind"] == "relative_improvement"
+            i
+            for i, r in enumerate(d["records"])
+            if r["source_kind"] in ("relative_improvement", "actual_state_dagger")
         ]
         negative = [i for i, r in enumerate(d["records"]) if r["role"] == "negative_parent_task"]
-        if len(positive) != 14 or len(novel) != 2 or len(negative) != 6:
+        if len(positive) != 14 or len(novel) != (4 if dagger else 2) or len(negative) != 6:
             raise ValueError("fixed audited positive/negative/partial-skill cohort required")
         model.plastic.to(device).train()
         params = list(model.plastic_parameters())
@@ -202,7 +251,7 @@ def main():
         history = []
         for step in range(256):
             optimizer.zero_grad(set_to_none=True)
-            new_index = novel[step % 2]
+            new_index = novel[step % len(novel)]
             old_index = positive[(step // 2) % 14]
             new_loss, new_mse = losses(new_index)
             old_loss, old_mse = losses(old_index)

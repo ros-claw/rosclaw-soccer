@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from rosclaw_soccer.rsi.dual_motor_checkpoint import validate_network
+from rosclaw_soccer.rsi.dual_motor_checkpoint import validate_network, warm_start_binding
 
 
 def expected():
@@ -29,3 +29,33 @@ def test_bad_weights_or_normalization_rejected(fault):
         y["extra"] = torch.zeros(1)
     with pytest.raises(ValueError):
         validate_network(y, x)
+
+
+def test_warm_start_requires_new_protocol_and_unique_separate_predecessor(tmp_path):
+    previous = tmp_path / "previous" / "complete.json"
+    current = tmp_path / "current" / "complete.json"
+    row = dict(
+        config=dict(
+            protocol="dual256.full_history_dagger_adaptation.v2",
+            warm_start_receipt_hash="sha256:previous",
+        ),
+        input_file_hashes={str(previous): "sha256:previous"},
+    )
+    assert warm_start_binding(row, current) == (previous, "sha256:previous")
+    with pytest.raises(ValueError):
+        warm_start_binding(row, previous)
+    row["input_file_hashes"][str(tmp_path / "other" / "complete.json")] = "sha256:previous"
+    with pytest.raises(ValueError):
+        warm_start_binding(row, current)
+    row["input_file_hashes"] = {str(previous): "sha256:previous"}
+    row["config"]["protocol"] = "dual256.full_history_supervised_adaptation.v1"
+    with pytest.raises(ValueError):
+        warm_start_binding(row, current)
+
+
+def test_original_protocol_has_no_warm_start_but_dagger_cannot_omit_it(tmp_path):
+    row = dict(config=dict(protocol="dual256.full_history_supervised_adaptation.v1"))
+    assert warm_start_binding(row, tmp_path / "complete.json") is None
+    row["config"]["protocol"] = "dual256.full_history_dagger_adaptation.v2"
+    with pytest.raises(ValueError):
+        warm_start_binding(row, tmp_path / "complete.json")

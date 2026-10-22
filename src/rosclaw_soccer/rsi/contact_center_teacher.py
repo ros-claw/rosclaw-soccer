@@ -56,4 +56,4 @@ def current_body_offset(
         raise ValueError("bounded measured offset and current proper body rotation required")
     t = (frame - center) / 24.0
     weight = (1 - t * t) ** 3 if abs(t) < 1 else 0.0
-    return np.r_[pelvis_rotation.T @ world_offset * weight, np.zeros(3)]
+    return np.asarray(np.r_[pelvis_rotation.T @ world_offset * weight, np.zeros(3)])
