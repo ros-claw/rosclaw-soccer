@@ -205,6 +205,7 @@ def main():
             "inherited_base": actor.base,
             "pristine_published_R2": published,
         }[a.motor_reference]
+        standing_actor = published if a.motor_reference == "pristine_published_R2" else actor.base
         write_once(
             a.output / "motor-identity.json",
             dict(
@@ -452,7 +453,7 @@ def main():
 
                         task = NeuralStandingTask(
                             ep,
-                            actor.base,
+                            standing_actor,
                             state=state,
                             memory_mode="carry",
                             count_inference=inference,
