@@ -16,6 +16,8 @@ def main():
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("plan-hash", "velocity-audit-hash", "expected-head"):
         p.add_argument("--" + n, required=True)
+    p.add_argument("--recovery-root", type=Path)
+    p.add_argument("--recovery-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -82,6 +84,31 @@ def main():
     check_pins(pins)
     courses = [dict(backoff_m=1.6, speed_mps=0.8), dict(backoff_m=1.2, speed_mps=0.6)]
     arms = ["standing_current", "run_shadow_current", "run_shadow_taskspace_teacher"]
+    from rosclaw_soccer.rsi.paid_run_pilot_recovery import (
+        contact_quality,
+        recover_first_standing_world,
+    )
+
+    recovered = None
+    reused_steps = 0
+    if a.recovery_root is not None or a.recovery_hash is not None:
+        if (
+            a.recovery_root is None
+            or a.recovery_hash is None
+            or a.output.resolve().is_relative_to(a.recovery_root.resolve())
+        ):
+            raise ValueError(
+                "explicit separate recovery destination and exact source commitment required"
+            )
+        recovered = recover_first_standing_world(
+            a.recovery_root, a.recovery_hash, case, courses, arms
+        )
+        for f, h in recovered[2].items():
+            if f in pins and pins[f] != h:
+                raise ValueError("conflicting recovered first-world provenance")
+            pins[f] = h
+        reused_steps = 3890
+        check_pins(pins)
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -102,6 +129,9 @@ def main():
             maximum_full_neural_queries=6000,
             original_formal_H300_exam=False,
             optimizer_updates=0,
+            reused_native_steps=reused_steps,
+            recovery_root=str(a.recovery_root) if a.recovery_root else None,
+            recovery_hash=a.recovery_hash,
             teacher="fixed_original_source4_taskspace_intent_only_in_explicit_teacher_arm",
             hardware_authorized=False,
             promotion_authorized=False,
@@ -111,6 +141,8 @@ def main():
     ep = None
     physical = []
     counts = dict(velocity=0, R2_shadow=0, R2_applied=0, R2_stand=0, teacher_IK=0)
+    if recovered is not None:
+        counts.update(recovered[3])
     try:
         import mujoco
         import numpy as np
@@ -131,7 +163,6 @@ def main():
             OwnVelocityShadow,
             integrate_velocity_target,
         )
-        from scripts.rsi_search_paid_foot_contact import contact_rank
 
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
@@ -154,6 +185,42 @@ def main():
                     folder = a.output / f"course{ci}-{arm}-repeat{repeat}"
                     folder.mkdir()
                     blobs = {}
+                    if (
+                        recovered is not None
+                        and ci == 0
+                        and arm == "standing_current"
+                        and repeat == 0
+                    ):
+                        import shutil
+
+                        outcome, old_blobs, _, _ = recovered
+                        artifacts = {}
+                        for name in old_blobs:
+                            source = (
+                                a.recovery_root
+                                / "course0-standing_current-repeat0"
+                                / (name + ".npz")
+                            )
+                            target = folder / (name + ".npz")
+                            if target.exists():
+                                raise ValueError("recovered artifact overwrite forbidden")
+                            shutil.copyfile(source, target)
+                            artifacts[name.replace("-", "_")] = dict(
+                                raw_path=str(target.relative_to(a.output)), raw_hash=digest(target)
+                            )
+                        outcome = dict(outcome, artifacts=artifacts)
+                        write_once(folder / "complete.json", outcome)
+                        previous = old_blobs
+                        records.append(outcome)
+                        print(
+                            json.dumps(
+                                dict(
+                                    recovered_world=0, new_native_steps=0, reused_native_steps=3890
+                                )
+                            ),
+                            flush=True,
+                        )
+                        continue
 
                     def store(name, z, folder=folder, blobs=blobs):
                         path = folder / (name + ".npz")
@@ -379,7 +446,7 @@ def main():
                     first_mode = (
                         int(raw["controller"][int(first) // 10]) if first is not None else None
                     )
-                    quality = bool(contact_rank([result, result])[1])
+                    quality = contact_quality(result)
                     outcome = dict(
                         course=ci,
                         arm=arm,
@@ -401,6 +468,8 @@ def main():
                         artifacts=artifacts,
                         official_exam_result=False,
                         learned_player_claim=False,
+                        source_execution_head=a.expected_head,
+                        recovered_without_new_physics=False,
                     )
                     write_once(folder / "complete.json", outcome)
                     if previous is not None:
@@ -427,7 +496,7 @@ def main():
                         flush=True,
                     )
                     if (
-                        bench.native_steps > 55080
+                        bench.native_steps + reused_steps > 55080
                         or sum(
                             counts[k] for k in ("velocity", "R2_shadow", "R2_applied", "R2_stand")
                         )
@@ -445,7 +514,9 @@ def main():
                 declaration_hash=digest(a.output / "declaration.json"),
                 records=records,
                 counts=counts,
-                actual_native_steps=bench.native_steps,
+                actual_native_steps=bench.native_steps + reused_steps,
+                new_native_steps=bench.native_steps,
+                reused_native_steps=reused_steps,
                 optimizer_updates=0,
                 whole_repeats_exact=True,
                 hardware_authorized=False,
@@ -475,7 +546,7 @@ def main():
                 error=repr(error),
                 counts=counts,
                 partial_artifacts=partial,
-                actual_native_steps=bench.native_steps if bench else 0,
+                actual_native_steps=(bench.native_steps if bench else 0) + reused_steps,
                 automatic_retry=False,
                 hardware_authorized=False,
             ),
