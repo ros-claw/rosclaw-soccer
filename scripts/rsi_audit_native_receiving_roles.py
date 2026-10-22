@@ -31,9 +31,16 @@ def main():
     ):
         raise ValueError("unused audit and exact completed receiver course source required")
     s, declaration = [json.loads(p.read_text()) for p in (rp, dp)]
-    capture_study = declaration["protocol"] == "dual256.actual_pass.measured_foot_teacher.v2"
+    prealigned_study = declaration["protocol"] == "dual256.actual_pass.prealigned_foot_teacher.v3"
+    capture_study = (
+        prealigned_study
+        or declaration["protocol"] == "dual256.actual_pass.measured_foot_teacher.v2"
+    )
+    expected_worlds = 32 if prealigned_study else 24
     producer_status = (
-        "ACTUAL_PASS_FOOT_CAPTURE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
+        "PREALIGNED_FOOT_CAPTURE_TEACHER32_COLLECTED_PENDING_OWN_REPLAY"
+        if prealigned_study
+        else "ACTUAL_PASS_FOOT_CAPTURE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
         if capture_study
         else "ACTUAL_PASS_ROLE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
     )
@@ -41,12 +48,13 @@ def main():
         s["status"] != producer_status
         or s["source_head"] != a.source_head
         or s["declaration_hash"] != digest(dp)
-        or len(s["records"]) != 24
-        or len(declaration["courses"]) != 24
+        or len(s["records"]) != expected_worlds
+        or len(declaration["courses"]) != expected_worlds
         or declaration["protocol"]
         not in (
             "dual256.actual_pass.velocity_receiver.teacher_screen.v1",
             "dual256.actual_pass.measured_foot_teacher.v2",
+            "dual256.actual_pass.prealigned_foot_teacher.v3",
         )
     ):
         raise ValueError("exact complete preregistered24 paired worlds required")
@@ -243,6 +251,11 @@ def main():
             }
             goals = {"a/": ep.goal, "b/": np.r_[ep.env.ball_pos[:2] - 3 * forward, 0.11]}
             launch = False
+            ready_anchor = (
+                (q0[36:38] + 4 * forward + 0.12 * np.array([-forward[1], forward[0]]))
+                if (prealigned_study and course["arm"] != "reactive_intercept")
+                else None
+            )
             events = {}
             peak = np.zeros((2, 3))
             run = longest = 0
@@ -263,6 +276,7 @@ def main():
                     home_xy=home,
                     pass_direction=forward,
                     launch_seen=launch,
+                    ready_anchor_xy=ready_anchor,
                 )
                 launch = intent.launch_seen
                 if intent.role_state != raw["receiver_intent_state"][step]:
@@ -464,7 +478,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "ACTUAL_PASS_FOOT_CAPTURE24_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    "PREALIGNED_FOOT_CAPTURE32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    if prealigned_study
+                    else "ACTUAL_PASS_FOOT_CAPTURE24_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
                     if capture_study
                     else "ACTUAL_PASS_ROLE24_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
                 ),
