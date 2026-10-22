@@ -14,10 +14,12 @@ from torch import nn
 FIT_STATUS = "PAID_SOFT_REPLAY_NEURAL_OFFLINE_FIT_NOT_RUNTIME_ADMITTED"
 
 
-def replay_config(index: int) -> dict[str, Any]:
+def replay_config(index: int, *, tail_replay: bool = False) -> dict[str, Any]:
     if type(index) is not int or index not in (0, 1, 2):
         raise ValueError("three fixed neural replication seeds required")
-    return dict(
+    if type(tail_replay) is not bool:
+        raise ValueError("explicit rehearsal protocol required")
+    cfg = dict(
         protocol="paid.own288.soft_replay_neural.v1",
         seed_index=index,
         seed=2026102209 + index,
@@ -46,6 +48,19 @@ def replay_config(index: int) -> dict[str, Any]:
         primary_seed_index=0,
         best_seed_selection_authorized=False,
     )
+    if tail_replay:
+        cfg.update(
+            protocol="paid.own288.tail_replay_neural.v2",
+            tail_replay=True,
+            hard_refresh_every=256,
+            hard_pool_size=512,
+            uniform_rehearsal_batch=256,
+            hard_rehearsal_batch=256,
+            tail_top_rows=32,
+            tail_weight=2.0,
+            retention="uniform_plus_mined_hard_replay_and_topk_final_motor_error",
+        )
+    return cfg
 
 
 class ReplayMotorHead(nn.Module):
@@ -120,8 +135,10 @@ def fit_replay_head(
     index: int,
     device: str,
     progress: Callable[[dict[str, Any]], None],
+    *,
+    tail_replay: bool = False,
 ) -> tuple[ReplayMotorHead, dict[str, torch.Tensor], dict[str, Any], dict[str, Any]]:
-    cfg = replay_config(index)
+    cfg = replay_config(index, tail_replay=tail_replay)
     x, y, parent, active = training_arrays(z)
     # All means and scales derive solely from the reconstructed TRAIN data.
     mean = x.double().mean(0).float()
@@ -139,17 +156,61 @@ def fit_replay_head(
         optimizer, T_max=cfg["updates"], eta_min=cfg["final_lr"]
     )
     nonzero = 0
+    refreshes = 0
+    hard_pool = negatives
+    maximum_pool_error = 0.0
     for step in range(cfg["updates"]):
+        if tail_replay and step % cfg["hard_refresh_every"] == 0:
+            scores = []
+            with torch.no_grad():
+                for start in range(0, len(negatives), 512):
+                    ids = negatives[start : start + 512]
+                    deviation = head.combine(x[ids], parent[ids]) - parent[ids]
+                    scores.append(deviation.abs().amax(dim=1))
+            all_scores = torch.cat(scores)
+            hard_pool = negatives[
+                torch.topk(all_scores, min(len(negatives), cfg["hard_pool_size"])).indices
+            ]
+            maximum_pool_error = float(all_scores.max())
+            refreshes += 1
         pi = positives[
             torch.randint(len(positives), (cfg["active_batch"],), generator=rng, device=device)
         ]
-        ni = negatives[
-            torch.randint(len(negatives), (cfg["rehearsal_batch"],), generator=rng, device=device)
-        ]
+        if tail_replay:
+            ni = torch.cat(
+                (
+                    negatives[
+                        torch.randint(
+                            len(negatives),
+                            (cfg["uniform_rehearsal_batch"],),
+                            generator=rng,
+                            device=device,
+                        )
+                    ],
+                    hard_pool[
+                        torch.randint(
+                            len(hard_pool),
+                            (cfg["hard_rehearsal_batch"],),
+                            generator=rng,
+                            device=device,
+                        )
+                    ],
+                )
+            )
+        else:
+            ni = negatives[
+                torch.randint(
+                    len(negatives), (cfg["rehearsal_batch"],), generator=rng, device=device
+                )
+            ]
         correction = head(x[torch.cat((pi, ni))])
         lp = (correction[: len(pi)] - y[pi]).square().mean()
         ln = correction[len(pi) :].square().mean()
         loss = lp + cfg["rehearsal_weight"] * ln
+        if tail_replay:
+            deviation = (parent[ni] + correction[len(pi) :]).clamp(-0.2, 0.2) - parent[ni]
+            tail = deviation.abs().amax(dim=1).square().topk(cfg["tail_top_rows"]).values.mean()
+            loss = loss + cfg["tail_weight"] * tail
         if not torch.isfinite(loss):
             raise ValueError("nonfinite neural objective; preserve partial fit")
         optimizer.zero_grad(set_to_none=True)
@@ -164,10 +225,19 @@ def fit_replay_head(
             progress(
                 dict(
                     completed_updates=step + 1,
-                    active_loss=float(lp),
-                    rehearsal_loss=float(ln),
+                    active_loss=float(lp.detach()),
+                    rehearsal_loss=float(ln.detach()),
                     gradient_norm=float(norm),
                     learning_rate=optimizer.param_groups[0]["lr"],
+                    **(
+                        dict(
+                            tail_loss=float(tail.detach()),
+                            hard_pool_refreshes=refreshes,
+                            maximum_mined_motor_error_rad=maximum_pool_error,
+                        )
+                        if tail_replay
+                        else {}
+                    ),
                 )
             )
     head = head.cpu().eval()
@@ -183,6 +253,16 @@ def fit_replay_head(
             active_forward_rows=cfg["updates"] * cfg["active_batch"],
             rehearsal_forward_rows=cfg["updates"] * cfg["rehearsal_batch"],
             changed_network_tensors=changed,
+            **(
+                dict(
+                    hard_pool_refreshes=refreshes,
+                    hard_pool_forward_rows=refreshes * len(negatives),
+                    uniform_rehearsal_forward_rows=cfg["updates"] * cfg["uniform_rehearsal_batch"],
+                    hard_rehearsal_forward_rows=cfg["updates"] * cfg["hard_rehearsal_batch"],
+                )
+                if tail_replay
+                else {}
+            ),
         ),
         optimizer.state_dict(),
     )

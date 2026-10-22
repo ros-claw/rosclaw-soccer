@@ -13,6 +13,7 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--seed-index", type=int, choices=(0, 1, 2), required=True)
     p.add_argument("--device", choices=("cpu", "cuda:0"), required=True)
+    p.add_argument("--tail-replay", action="store_true")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
@@ -68,7 +69,7 @@ def main():
         parent, data, z = load_growth_data(a.data_root, a.data_hash, policy)
         before = {k: v.clone() for k, v in parent.state_dict().items()}
         identity = dict(
-            config=replay_config(a.seed_index),
+            config=replay_config(a.seed_index, tail_replay=a.tail_replay),
             source_head=a.expected_head,
             data_hash=a.data_hash,
             **{k: data[k] for k in ("body_scene_hash", "parent_hash", "parent_checkpoint_hash")},
@@ -92,7 +93,9 @@ def main():
             write_once(a.output / f"update-{actual}.json", row)
             print(json.dumps(row), flush=True)
 
-        head, initial, counts, optimizer = fit_replay_head(z, a.seed_index, a.device, progress)
+        head, initial, counts, optimizer = fit_replay_head(
+            z, a.seed_index, a.device, progress, tail_replay=a.tail_replay
+        )
         cert = replay_certificate(head, z)
         if any(not torch.equal(v, before[k]) for k, v in parent.state_dict().items()):
             raise ValueError("frozen motor parent changed")

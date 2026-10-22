@@ -79,6 +79,24 @@ def test_exact_offline_fit_and_optimizer_contract():
     validate_neural_state(*fixture())
 
 
+def test_tail_protocol_counts_are_independently_checked():
+    s, r, t = fixture()
+    s["config"] = r["config"] = replay_config(0, tail_replay=True)
+    s["certificate"] = r["certificate"] = dict(rehearsal_rows=4)
+    counts = dict(
+        s["counts"],
+        hard_pool_refreshes=24,
+        hard_pool_forward_rows=96,
+        uniform_rehearsal_forward_rows=6144 * 256,
+        hard_rehearsal_forward_rows=6144 * 256,
+    )
+    s["counts"] = r["counts"] = counts
+    validate_neural_state(s, r, t)
+    s["counts"] = r["counts"] = dict(counts, hard_pool_forward_rows=95)
+    with pytest.raises(ValueError):
+        validate_neural_state(s, r, t)
+
+
 @pytest.mark.parametrize(
     "bad", ["count", "normalizer", "nan", "initial", "moment", "step", "runtime", "keys"]
 )

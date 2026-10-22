@@ -78,3 +78,43 @@ def test_bad_data_fails_before_training(bad):
         z["target"][0, 0] = 0.5
     with pytest.raises(ValueError):
         training_arrays(z)
+
+
+def test_tail_replay_new_protocol_does_not_reinterpret_old_config():
+    old = replay_config(0)
+    new = replay_config(0, tail_replay=True)
+    assert "tail_replay" not in old and old["protocol"].endswith(".v1")
+    assert new["tail_replay"] and new["protocol"].endswith(".v2")
+    assert new["updates"] == old["updates"] == 6144
+    assert new["uniform_rehearsal_batch"] + new["hard_rehearsal_batch"] == old["rehearsal_batch"]
+    with pytest.raises(ValueError):
+        replay_config(0, tail_replay=1)
+
+
+def test_tail_mining_and_gradients_execute_on_train_only_toy_data(monkeypatch):
+    from rosclaw_soccer.rsi import paid_replay_neural as module
+
+    cfg = replay_config(0, tail_replay=True)
+    # Unit-only tiny loop exercises actual mining/backprop without pretending
+    # to be the unmodified production6144-update protocol.
+    cfg.update(
+        updates=4,
+        active_batch=4,
+        rehearsal_batch=4,
+        uniform_rehearsal_batch=2,
+        hard_rehearsal_batch=2,
+        hard_refresh_every=2,
+        hard_pool_size=4,
+        tail_top_rows=2,
+    )
+    monkeypatch.setattr(module, "replay_config", lambda index, **kwargs: cfg)
+    progress = []
+    _, _, counts, optimizer = module.fit_replay_head(
+        fixture(), 0, "cpu", progress.append, tail_replay=True
+    )
+    assert counts["completed_updates"] == counts["nonzero_gradient_updates"] == 4
+    assert counts["hard_pool_refreshes"] == 2
+    assert counts["hard_pool_forward_rows"] == 2 * 4
+    assert counts["uniform_rehearsal_forward_rows"] == counts["hard_rehearsal_forward_rows"] == 8
+    assert all(float(s["step"]) == 4 for s in optimizer["state"].values())
+    assert progress[0]["tail_loss"] == 0

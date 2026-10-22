@@ -37,7 +37,10 @@ def neural_train_candidate(
     # after looking at its outcome. Its frozen pair remains immutable.
     if plan.get("plan_kind") is not None or plan.get("config") != neighborhood_config():
         raise ValueError("neural candidate only admitted to original consumed TRAIN32 fixture")
-    cfg = replay_config(r.get("config", {}).get("seed_index"))
+    cfg = replay_config(
+        r.get("config", {}).get("seed_index"),
+        tail_replay=r.get("config", {}).get("tail_replay", False),
+    )
     if (
         r.get("status") != AUDITED_STATUS
         or r.get("config") != cfg
@@ -99,4 +102,8 @@ def neural_train_candidate(
         arms=["seed0", "seed1", "seed2"],
         best_seed_selection_authorized=False,
     )
+    if cfg.get("tail_replay", False):
+        config.update(
+            candidate_tail_replay=True, candidate_neural_training_protocol=cfg["protocol"]
+        )
     return dict(root=str(root), hash=expected), config, pins

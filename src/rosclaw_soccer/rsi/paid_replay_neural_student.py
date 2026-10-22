@@ -21,7 +21,10 @@ AUDITED_STATUS = "PAID_SOFT_REPLAY_NEURAL_CPU_VERIFIED_NOT_PHYSICALLY_QUALIFIED"
 def validate_neural_state(
     state: dict[str, Any], receipt: dict[str, Any], template: dict[str, torch.Tensor]
 ) -> None:
-    cfg = replay_config(state.get("config", {}).get("seed_index"))
+    cfg = replay_config(
+        state.get("config", {}).get("seed_index"),
+        tail_replay=state.get("config", {}).get("tail_replay", False),
+    )
     if (
         state.get("schema") != "paid.soft_replay_neural.offline.v1"
         or receipt.get("status") != FIT_STATUS
@@ -77,6 +80,14 @@ def validate_neural_state(
         rehearsal_forward_rows=cfg["updates"] * cfg["rehearsal_batch"],
         changed_network_tensors=changed,
     )
+    if cfg.get("tail_replay", False):
+        refreshes = (cfg["updates"] - 1) // cfg["hard_refresh_every"] + 1
+        counts.update(
+            hard_pool_refreshes=refreshes,
+            hard_pool_forward_rows=refreshes * receipt["certificate"]["rehearsal_rows"],
+            uniform_rehearsal_forward_rows=cfg["updates"] * cfg["uniform_rehearsal_batch"],
+            hard_rehearsal_forward_rows=cfg["updates"] * cfg["hard_rehearsal_batch"],
+        )
     if set(changed) != set(params) or state["counts"] != counts:
         raise ValueError("actual effective neural updates and unchanged normalization required")
     optimizer = state.get("optimizer", {})
@@ -133,7 +144,9 @@ def load_replay_fit(
         or any(d.get(k) is not False for k in ("hardware_authorized", "promotion_authorized"))
     ):
         raise ValueError("confined bounded weights-only artifact and offline declaration required")
-    cfg = replay_config(r["config"]["seed_index"])
+    cfg = replay_config(
+        r["config"]["seed_index"], tail_replay=r["config"].get("tail_replay", False)
+    )
     for k in (
         "config",
         "data_hash",
