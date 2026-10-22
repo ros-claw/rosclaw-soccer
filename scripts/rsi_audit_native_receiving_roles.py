@@ -31,13 +31,23 @@ def main():
     ):
         raise ValueError("unused audit and exact completed receiver course source required")
     s, declaration = [json.loads(p.read_text()) for p in (rp, dp)]
+    capture_study = declaration["protocol"] == "dual256.actual_pass.measured_foot_teacher.v2"
+    producer_status = (
+        "ACTUAL_PASS_FOOT_CAPTURE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
+        if capture_study
+        else "ACTUAL_PASS_ROLE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
+    )
     if (
-        s["status"] != "ACTUAL_PASS_ROLE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
+        s["status"] != producer_status
         or s["source_head"] != a.source_head
         or s["declaration_hash"] != digest(dp)
         or len(s["records"]) != 24
         or len(declaration["courses"]) != 24
-        or declaration["protocol"] != "dual256.actual_pass.velocity_receiver.teacher_screen.v1"
+        or declaration["protocol"]
+        not in (
+            "dual256.actual_pass.velocity_receiver.teacher_screen.v1",
+            "dual256.actual_pass.measured_foot_teacher.v2",
+        )
     ):
         raise ValueError("exact complete preregistered24 paired worlds required")
     pins = dict(s["input_file_hashes"])
@@ -64,10 +74,11 @@ def main():
             input_file_hashes=pins,
             source_actions_executed=False,
             shared_world_or_player_driver_used=False,
+            capture_teacher_function_reused_on_own_states=capture_study,
             hardware_authorized=False,
         ),
     )
-    counts = dict(native_steps=0, neural_calls=0)
+    counts = dict(native_steps=0, neural_calls=0, teacher_ik_iterations=0)
     records = []
     try:
         from types import SimpleNamespace
@@ -79,6 +90,10 @@ def main():
         from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
         from rosclaw_soccer.providers.g1.velocity_policy import G1VelocityPolicy
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
+        from rosclaw_soccer.rsi.measured_foot_capture_teacher import (
+            CaptureTeacherConfig,
+            MeasuredFootCaptureTeacher,
+        )
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
         from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
         from scripts.rsi_stroke_search_common import make_episode, open_motor
@@ -131,6 +146,15 @@ def main():
         paths = [Path(p) for p in pins if p.endswith("/velocity/v0/exported/policy.onnx")]
         configs = [Path(p) for p in pins if p.endswith("/velocity/v0/params/deploy.yaml")]
         episodes = {i: make_episode(bench, contexts[i]) for i in (1, 4, 20, 21)}
+        capture_configs = {
+            key: CaptureTeacherConfig(**value)
+            for key, value in declaration.get("capture_teacher_configs", {}).items()
+        }
+        if capture_study and set(capture_configs) != {
+            "velocity_capture",
+            "velocity_capture_clearance",
+        }:
+            raise ValueError("exact explicit two capture-teacher variants required")
         for claim in s["records"]:
             ci, course = claim["index"], claim["course"]
             ep = episodes[course["context"]]
@@ -173,6 +197,39 @@ def main():
                 gains["b/"] = (
                     np.array(velocity.params.stiffness),
                     np.array(velocity.params.damping),
+                )
+            teacher = teacher_world = None
+            previous_receiver_forces = np.zeros(3)
+            if course["arm"] in capture_configs:
+
+                def canonical(data, *, adr=addresses["b/"]):
+                    return (
+                        np.r_[
+                            data.qpos[adr["rq"] : adr["rq"] + 7],
+                            data.qpos[adr["qi"]],
+                            data.qpos[bq : bq + 7],
+                        ],
+                        np.r_[
+                            data.qvel[adr["rv"] : adr["rv"] + 6],
+                            data.qvel[adr["vi"]],
+                            data.qvel[bv : bv + 6],
+                        ],
+                    )
+
+                br = addresses["b/"]
+                teacher_world = SimpleNamespace(
+                    model=m,
+                    data=d,
+                    control_steps=0,
+                    failed=False,
+                    layouts={
+                        "b/": SimpleNamespace(
+                            pelvis=br["body"], ball=bm, qi=br["qi"], canonical=canonical
+                        )
+                    },
+                )
+                teacher = MeasuredFootCaptureTeacher(
+                    teacher_world, "b/", velocity.params, config=capture_configs[course["arm"]]
                 )
             states = {prefix: actor.initial_state() for prefix in addresses}
             last = {prefix: np.zeros(29, np.float32) for prefix in addresses}
@@ -229,7 +286,7 @@ def main():
                         angular = d.xmat[adr["body"]].reshape(3, 3).T @ (jac @ d.qvel)
                         command = np.array(
                             intent.command_body
-                            if course["arm"] == "velocity_intercept"
+                            if course["arm"] != "velocity_wait"
                             else (0.0, 0.0, 0.0),
                             np.float32,
                         )
@@ -240,6 +297,15 @@ def main():
                             V_command=command,
                             V_phase=np.array(velocity.phase),
                         )
+                        if teacher is not None:
+                            targets[prefix], capture_plan = teacher.propose(
+                                velocity.last_action.copy(),
+                                previous_forces=previous_receiver_forces,
+                            )
+                            evidence.update(
+                                {"CAP_" + key: value for key, value in capture_plan.items()}
+                            )
+                            counts["teacher_ik_iterations"] += capture_plan["teacher_ik_iterations"]
                     else:
                         if step == ep.clip.length:
                             refs[prefix][1:] = [np.zeros(29, np.float32), np.zeros(3, np.float32)]
@@ -291,6 +357,7 @@ def main():
                             raise ValueError(
                                 f"own neural stream differs {ci}:{prefix}:{step}:{key}"
                             )
+                control_peak = np.zeros((2, 3))
                 for sub in range(10):
                     torque = np.zeros(m.nu)
                     for prefix, adr in addresses.items():
@@ -328,6 +395,7 @@ def main():
                                     )
                                     e["peak_force_n"] = max(e["peak_force_n"], force)
                     peak = np.maximum(peak, forces)
+                    control_peak = np.maximum(control_peak, forces)
                     for key, value in dict(
                         qpos=d.qpos, qvel=d.qvel, torque=torque, ball_forces=forces
                     ).items():
@@ -344,6 +412,11 @@ def main():
                         failed[pi] |= root[2] < 0.65 or 1 - 2 * (root[4] ** 2 + root[5] ** 2) < 0.9
                 if not np.array_equal(failed, raw["body_failed"][step]):
                     raise ValueError("source body failure trajectory differs")
+                previous_receiver_forces = control_peak[1].copy()
+                if teacher is not None:
+                    velocity.last_action = capture_plan["teacher_applied_action"].copy()
+                    teacher_world.control_steps = step + 1
+                    teacher_world.failed = bool(failed.any())
                 distance = float(
                     np.linalg.norm(d.qpos[br["rq"] : br["rq"] + 2] - d.qpos[bq : bq + 2])
                 )
@@ -390,7 +463,11 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="ACTUAL_PASS_ROLE24_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS",
+                status=(
+                    "ACTUAL_PASS_FOOT_CAPTURE24_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    if capture_study
+                    else "ACTUAL_PASS_ROLE24_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                ),
                 source_head=a.expected_head,
                 producer_hash=a.source_hash,
                 records=records,
