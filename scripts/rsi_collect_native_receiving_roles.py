@@ -17,6 +17,7 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("frontier-head", "frontier-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--teacher-screen", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -36,7 +37,11 @@ def main():
         raise ValueError("exact pinned existing learned velocity backend required")
     source_pins(pins)
     check_pins(pins)
-    arms = ("forced_kick", "velocity_wait", "velocity_intercept")
+    arms = (
+        ("velocity_intercept", "velocity_capture", "velocity_capture_clearance")
+        if a.teacher_screen
+        else ("forced_kick", "velocity_wait", "velocity_intercept")
+    )
     indices = [1, 4, 20, 21]
     courses = [
         dict(context=i, lateral_m=side, arm=arm)
@@ -45,8 +50,24 @@ def main():
         for arm in arms
     ]
     a.output.mkdir(parents=True)
+    from dataclasses import asdict
+
+    from rosclaw_soccer.rsi.measured_foot_capture_teacher import CaptureTeacherConfig
+
+    teacher_configs = (
+        {
+            "velocity_capture": CaptureTeacherConfig(shin_clearance=False),
+            "velocity_capture_clearance": CaptureTeacherConfig(shin_clearance=True),
+        }
+        if a.teacher_screen
+        else {}
+    )
     declaration = dict(
-        protocol="dual256.actual_pass.velocity_receiver.teacher_screen.v1",
+        protocol=(
+            "dual256.actual_pass.measured_foot_teacher.v2"
+            if a.teacher_screen
+            else "dual256.actual_pass.velocity_receiver.teacher_screen.v1"
+        ),
         source_head=a.expected_head,
         input_file_hashes=pins,
         candidate=candidates[0],
@@ -73,12 +94,15 @@ def main():
         optimizer_updates=0,
         geometry_intent_is_teacher_not_learned_policy=True,
         old100_standing_and_legacy52_not_claimed=True,
+        capture_teacher_configs={key: asdict(value) for key, value in teacher_configs.items()},
+        history_semantics=(
+            "previous velocity action becomes ACTUAL executed target in original float32 units"
+        ),
     )
     write_once(a.output / "declaration.json", declaration)
     counts = dict(native_steps=0, actor_calls=0)
     records = []
     try:
-        from dataclasses import asdict
         from types import SimpleNamespace
 
         import mujoco
@@ -87,6 +111,7 @@ def main():
         from rosclaw_soccer.physics.native_ball_dimensions import inspect_native_ball_dimensions
         from rosclaw_soccer.providers.g1.velocity_policy import G1VelocityPolicy
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
+        from rosclaw_soccer.rsi.measured_foot_capture_teacher import MeasuredFootCaptureTeacher
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
         from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
         from rosclaw_soccer.rsi.shared_native_motor_world import (
@@ -95,6 +120,9 @@ def main():
         )
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
         from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
+        from rosclaw_soccer.sim.contracts import hash_json
+        from rosclaw_soccer.training.native_pass_courses import NativePassCourse
+        from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
         from scripts.rsi_stroke_search_common import make_episode, open_motor
 
         bench, baseline = open_motor(pins, base_hash, {i: contexts[i] for i in indices})
@@ -178,10 +206,26 @@ def main():
             return ep, world, home, forward
 
         # Full paired-course declaration preflight, zero steps before first case.
+        typed_courses = []
+        identities = set()
         for course in courses:
             _, world, _, _ = prepare(course)
             if world.native_steps:
                 raise ValueError("no partial course-bank physics before preflight")
+            key = (course["context"], course["lateral_m"])
+            if key not in identities:
+                identities.add(key)
+                typed_courses.append(
+                    NativePassCourse(
+                        course["context"],
+                        4.0,
+                        course["lateral_m"],
+                        hash_json(
+                            dict(qpos=world.data.qpos.tolist(), qvel=world.data.qvel.tolist())
+                        ),
+                    )
+                )
+        course_binding = preflight_receiving_courses(tuple(typed_courses))
         write_once(
             a.output / "preflight.json",
             dict(
@@ -189,6 +233,8 @@ def main():
                 native_steps=0,
                 all_declared_dimensions_and_initial_contacts_checked=True,
                 compiled_ball_dimensions=asdict(ball_dimensions),
+                typed_course_binding=course_binding,
+                distinct_initial_courses=len(typed_courses),
             ),
         )
 
@@ -234,6 +280,14 @@ def main():
                     expected_config_hash=pins[str(configs[0])],
                 )
             )
+            capture_teacher = (
+                MeasuredFootCaptureTeacher(
+                    world, "b/", velocity.params, config=teacher_configs[course["arm"]]
+                )
+                if course["arm"] in teacher_configs
+                else None
+            )
+            previous_receiver_forces = np.zeros(3)
             raw, states = [], []
             launch_seen, capture_run, longest_capture = False, 0, 0
             max_forces = np.zeros((2, 3))
@@ -264,7 +318,7 @@ def main():
                 else:
                     command = np.array(
                         intent.command_body
-                        if course["arm"] == "velocity_intercept"
+                        if course["arm"] != "velocity_wait"
                         else (0.0, 0.0, 0.0),
                         np.float32,
                     )
@@ -277,12 +331,20 @@ def main():
                         V_command=command,
                         V_phase=np.array(velocity.phase),
                     )
+                    if capture_teacher is not None:
+                        target_b, capture_plan = capture_teacher.propose(
+                            velocity.last_action.copy(), previous_forces=previous_receiver_forces
+                        )
+                        trace_b.update({"CAP_" + key: value for key, value in capture_plan.items()})
                 counts["actor_calls"] += 1
                 row = world.advance({"a/": target_a, "b/": target_b})
                 counts["native_steps"] += 10
                 passer.commit()
                 if receiver:
                     receiver.commit()
+                if capture_teacher is not None:
+                    velocity.last_action = capture_plan["teacher_applied_action"].copy()
+                previous_receiver_forces = row["ball_forces"].max(axis=0)[1].copy()
                 max_forces = np.maximum(max_forces, row["ball_forces"].max(axis=0))
                 q, v = layouts["b/"].canonical(d)
                 distance = float(np.linalg.norm(q[:2] - q[36:38]))
@@ -336,7 +398,11 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="ACTUAL_PASS_ROLE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY",
+                status=(
+                    "ACTUAL_PASS_FOOT_CAPTURE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
+                    if a.teacher_screen
+                    else "ACTUAL_PASS_ROLE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
+                ),
                 source_head=a.expected_head,
                 declaration_hash=digest(a.output / "declaration.json"),
                 records=records,

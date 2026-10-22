@@ -24,6 +24,10 @@ from rosclaw_soccer.training.motion_portfolio_holdout import (
     MotionPortfolioHoldoutCourse,
     preflight_motion_portfolio_holdout,
 )
+from rosclaw_soccer.training.native_pass_courses import (
+    NativePassCourse,
+    preflight_native_pass_courses,
+)
 from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse, receiving_ball_launch
 
 
@@ -42,7 +46,9 @@ def preflight_receiving_courses(
     | tuple[CloseContactCourse, ...]
     | tuple[ExpandedEntryCourse, ...]
     | tuple[MotionPortfolioHoldoutCourse, ...]
-    | tuple[CategoricalMotionHoldoutCourse, ...],
+    | tuple[CategoricalMotionHoldoutCourse, ...]
+    | tuple[NativePassCourse, ...],
+    # NativePassCourse is a separate actual physical pass domain, not an old launcher.
     # Separately named near holdout never coerces the original RSI/legacy domains.
 ) -> str:
     """Return a content binding only after every course passes the launch domain.
@@ -56,6 +62,8 @@ def preflight_receiving_courses(
     """
     if type(courses) is not tuple or not 1 <= len(courses) <= 4096:
         raise ValueError("bounded immutable receiving course bank required")
+    if all(type(course) is NativePassCourse for course in courses):
+        return preflight_native_pass_courses(courses)  # type: ignore[arg-type]
     if all(type(course) is CategoricalMotionHoldoutCourse for course in courses):
         return preflight_categorical_motion_holdout(courses)  # type: ignore[arg-type]
     if all(type(course) is MotionPortfolioHoldoutCourse for course in courses):

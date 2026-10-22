@@ -7,6 +7,7 @@ not the actor's own output or a hardware controller.
 Jacobian pipeline: https://mujoco.readthedocs.io/en/stable/APIreference/APIfunctions.html#mj-jac
 """
 
+import re
 from typing import Any
 
 import numpy as np
@@ -34,21 +35,29 @@ def rotation_vector_matrix(vector: np.ndarray) -> np.ndarray:
 
 
 class FootTaskSpaceIntent:
-    def __init__(self, model: Any, *, foot: str, center: int, latent: np.ndarray) -> None:
+    def __init__(
+        self, model: Any, *, foot: str, center: int, latent: np.ndarray, robot_prefix: str = ""
+    ) -> None:
         import mujoco
 
-        if foot not in ("left", "right") or not 30 <= center <= 200:
+        if (
+            foot not in ("left", "right")
+            or not 30 <= center <= 200
+            or type(robot_prefix) is not str
+            or (robot_prefix and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,31}/", robot_prefix) is None)
+        ):
             raise ValueError("explicit source-planned contact foot/phase required")
         phase_intent(center, center, latent)
         self.model, self.foot, self.center, self.latent = model, foot, center, latent.copy()
+        self.robot_prefix = robot_prefix
         self.kin = mujoco.MjData(model)
         self.risk = mujoco.MjData(model)
-        self.body = model.body(foot + "_ankle_roll_link").id
+        self.body = model.body(robot_prefix + foot + "_ankle_roll_link").id
         names = [
             foot + "_" + s + "_joint"
             for s in ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_pitch", "ankle_roll")
         ]
-        joints = [model.joint(n).id for n in names]
+        joints = [model.joint(robot_prefix + n).id for n in names]
         self.qi = np.array([model.jnt_qposadr[j] for j in joints])
         self.vi = np.array([model.jnt_dofadr[j] for j in joints])
         self.hg = np.array([G1_DDS_JOINT_NAMES.index(n) for n in names])
@@ -126,7 +135,7 @@ class FootTaskSpaceIntent:
         limited = False
         clearance = None
         if shin_clearance:
-            shin_geom = self.model.geom(self.foot + "_shin").id
+            shin_geom = self.model.geom(self.robot_prefix + self.foot + "_shin").id
             shin_body = self.model.geom_bodyid[shin_geom]
             ball_geom = self.model.geom("soccer_ball_geom").id
             if (
