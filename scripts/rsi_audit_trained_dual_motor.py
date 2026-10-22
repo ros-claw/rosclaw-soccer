@@ -9,7 +9,9 @@ from pathlib import Path
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--checkpoint-kind", choices=("supervised", "ar1-actor-critic"), default="supervised"
+        "--checkpoint-kind",
+        choices=("supervised", "ar1-actor-critic", "contact-consolidated"),
+        default="supervised",
     )
     for n in ("root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
@@ -72,10 +74,11 @@ def main():
 
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
+        from rosclaw_soccer.rsi.contact_consolidation_data import context_witness_hash
+
+        witness_hash = context_witness_hash(data, a.checkpoint_kind)
         teacher_path = next(
-            Path(x)
-            for x, h in pins.items()
-            if h == data["teacher_hash"] and x.endswith("/complete.json")
+            Path(x) for x, h in pins.items() if h == witness_hash and x.endswith("/complete.json")
         )
         case = json.loads((teacher_path.parent / "declaration.json").read_text())["source_case"]
         _, policy, scene = open_paid_bench(pins, [case])
@@ -95,7 +98,11 @@ def main():
             checkpoint_kind=a.checkpoint_kind,
         )
         expected_sequences = (
-            24 if data["status"] == "DUAL_MOTOR_ACTUAL_DAGGER_SEQUENCES_READY_NOT_TRAINED" else 22
+            65
+            if a.checkpoint_kind == "contact-consolidated"
+            else 24
+            if data["status"] == "DUAL_MOTOR_ACTUAL_DAGGER_SEQUENCES_READY_NOT_TRAINED"
+            else 22
         )
         if len(data["records"]) != expected_sequences or len(r["cpu_replay"]) != expected_sequences:
             raise ValueError("all explicitly declared original/DAgger sequences required")

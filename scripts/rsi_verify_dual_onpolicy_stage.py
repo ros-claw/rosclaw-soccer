@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 
-def main():
+def main(*, checkpoint_kind="ar1-actor-critic"):
     p = argparse.ArgumentParser(description=__doc__)
     for n in ("training-root", "rehearsal-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
@@ -33,14 +33,27 @@ def main():
     clean()
     tp = a.training_root / "complete.json"
     t = json.loads(tp.read_text())
+    from rosclaw_soccer.rsi.contact_consolidation import STATUS as CONTACT_STATUS
+
+    if checkpoint_kind not in ("ar1-actor-critic", "contact-consolidated"):
+        raise ValueError("explicit separately typed supervised or PPO examination required")
+    contact = checkpoint_kind == "contact-consolidated"
+    phase_ok = (
+        t["status"] == CONTACT_STATUS
+        and t["online_RL_claim"] is False
+        and t["offline_supervised_steps"] == 64
+        and t["PPO_optimizer_steps_this_stage"] == 0
+        if contact
+        else t["status"] == "DUAL_AR1_ACTOR_CRITIC_ACTUALLY_UPDATED_PENDING_PHYSICAL_EXAM"
+        and t["online_RL_claim"] is True
+        and 1 <= t["accepted_optimizer_steps"] <= 4
+    )
     if (
         a.output.exists()
         or tp.is_symlink()
         or (a.training_root / "failed.json").exists()
         or t["source_head"] != a.producer_head
-        or t["status"] != "DUAL_AR1_ACTOR_CRITIC_ACTUALLY_UPDATED_PENDING_PHYSICAL_EXAM"
-        or t["online_RL_claim"] is not True
-        or not 1 <= t["accepted_optimizer_steps"] <= 4
+        or not phase_ok
         or t["hardware_authorized"] is not False
         or t["promotion_authorized"] is not False
     ):
@@ -50,11 +63,13 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="dual256.actual_onpolicy_exam_chain.v1",
+            protocol="dual256.contact_consolidation_exam_chain.v1"
+            if contact
+            else "dual256.actual_onpolicy_exam_chain.v1",
             source_head=a.expected_head,
             training_hash=th,
             producer_head=a.producer_head,
-            checkpoint_kind="ar1-actor-critic",
+            checkpoint_kind=checkpoint_kind,
             stages=["cpu-audit", "native-exam", "native-audit"],
             attempts_per_stage=1,
             automatic_retry=False,
@@ -109,7 +124,7 @@ def main():
                 "--source-hash",
                 th,
                 "--checkpoint-kind",
-                "ar1-actor-critic",
+                checkpoint_kind,
             ],
             "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS",
         )
@@ -130,7 +145,7 @@ def main():
                 "--rehearsal-hash",
                 a.rehearsal_hash,
                 "--checkpoint-kind",
-                "ar1-actor-critic",
+                checkpoint_kind,
             ],
             "DUAL_RECURRENT_NATIVE_TRAIN_EXAM_CLOSED_PENDING_INDEPENDENT_AUDIT",
         )
@@ -144,7 +159,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="AR1_ACTOR_CRITIC_EXAM_CHAIN_CLOSED_NOT_GOAL_COMPLETE",
+                status="CONTACT_CONSOLIDATION_EXAM_CHAIN_CLOSED_NOT_GOAL_COMPLETE"
+                if contact
+                else "AR1_ACTOR_CRITIC_EXAM_CHAIN_CLOSED_NOT_GOAL_COMPLETE",
                 source_head=a.expected_head,
                 completed=completed,
                 training_hash=th,

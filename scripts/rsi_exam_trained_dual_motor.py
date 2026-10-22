@@ -13,7 +13,9 @@ from pathlib import Path
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--checkpoint-kind", choices=("supervised", "ar1-actor-critic"), default="supervised"
+        "--checkpoint-kind",
+        choices=("supervised", "ar1-actor-critic", "contact-consolidated"),
+        default="supervised",
     )
     for n in ("training-root", "cpu-audit-root", "rehearsal-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
@@ -80,10 +82,11 @@ def main():
         raise ValueError("exact training data and frozen parent required")
     data = json.loads(data_paths[0].read_text())
     parent_record = json.loads(parent_paths[0].read_text())
+    from rosclaw_soccer.rsi.contact_consolidation_data import context_witness_hash
+
+    witness_hash = context_witness_hash(data, a.checkpoint_kind)
     teacher_paths = [
-        Path(x)
-        for x, h in pins.items()
-        if h == data["teacher_hash"] and x.endswith("/complete.json")
+        Path(x) for x, h in pins.items() if h == witness_hash and x.endswith("/complete.json")
     ]
     if len(teacher_paths) != 1:
         raise ValueError("exact consumed run-context witness required")

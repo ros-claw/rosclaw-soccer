@@ -71,7 +71,12 @@ def main():
     parent_path, parent_record = bound_receipt(training["parent_lineage_hash"])
     data_path, data = bound_receipt(training["data_hash"])
     baseline_path, baseline = bound_receipt(d["baseline_hash"])
-    tdpath = bound_receipt(data["teacher_hash"])[0].parent / "declaration.json"
+    from rosclaw_soccer.rsi.contact_consolidation_data import context_witness_hash
+
+    tdpath = (
+        bound_receipt(context_witness_hash(data, d.get("checkpoint_kind", "supervised")))[0].parent
+        / "declaration.json"
+    )
     bdpath = baseline_path.parent / "declaration.json"
     if pins.get(str(tdpath)) != digest(tdpath) or pins.get(str(bdpath)) != digest(bdpath):
         raise ValueError("original task declarations must be source-bound")

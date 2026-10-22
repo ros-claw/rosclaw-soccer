@@ -1,6 +1,6 @@
 """Whole-history contact consolidation weights; no privileged inference inputs."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -8,6 +8,17 @@ if TYPE_CHECKING:
     from rosclaw_soccer.rsi.paid_full_entry_student import FrozenFullEntryActor
 
 BANK_STATUS = "STROKE_CONTACT_CONSOLIDATION_BANK65_READY_NOT_TRAINED"
+
+
+def context_witness_hash(data: dict[str, Any], checkpoint_kind: str) -> str:
+    """Keep the original fixed exam fixtures separate from the new training bank."""
+    if checkpoint_kind == "contact-consolidated":
+        if data["status"] != BANK_STATUS:
+            raise ValueError("contact checkpoint requires its actual bank65")
+        return str(data["context_witness_hash"])
+    if checkpoint_kind not in ("supervised", "ar1-actor-critic") or data["status"] == BANK_STATUS:
+        raise ValueError("explicit checkpoint and data protocol required")
+    return str(data["teacher_hash"])
 
 
 def own_reference_sequence(
