@@ -70,9 +70,9 @@ def main():
             raise ValueError(
                 "complete growing candidate arguments, learned arm, no teacher mode required"
             )
-        from rosclaw_soccer.rsi.paid_growth_memory_data import growth_exam_candidate
+        from rosclaw_soccer.rsi.paid_candidate_dispatch import contact_exam_candidate
 
-        override, config, extra = growth_exam_candidate(a.candidate_root, a.candidate_hash, plan)
+        override, config, extra = contact_exam_candidate(a.candidate_root, a.candidate_hash, plan)
         for f, h in extra.items():
             if f in pins and pins[f] != h:
                 raise ValueError("conflicting candidate identity")

@@ -78,9 +78,9 @@ def main():
             or "candidate_hash" not in d
         ):
             raise ValueError("typed growing learned arm without teacher mode required")
-        from rosclaw_soccer.rsi.paid_growth_memory_data import growth_exam_candidate
+        from rosclaw_soccer.rsi.paid_candidate_dispatch import contact_exam_candidate
 
-        spec, config, extra = growth_exam_candidate(
+        spec, config, extra = contact_exam_candidate(
             Path(d["candidate_root"]), d["candidate_hash"], plan
         )
         for f, h in extra.items():
