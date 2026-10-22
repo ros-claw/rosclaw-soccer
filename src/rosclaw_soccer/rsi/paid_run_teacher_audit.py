@@ -31,7 +31,8 @@ def replay_teacher_world(
     hidden_width: int = 128,
     action_adapter: Callable[[Any, np.ndarray, dict[str, Any]], tuple[np.ndarray, int]]
     | None = None,
-) -> None:
+    allow_incomplete_healthy_prefix: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Count actual work even if a later comparison fails; never retry here."""
     import mujoco
 
@@ -54,6 +55,13 @@ def replay_teacher_world(
     model, data = ep.env.model, ep.env.data
     if action_adapter is not None and hidden_width != 256:
         raise ValueError("new action reconstruction cannot reinterpret legacy128 audit controls")
+    if allow_incomplete_healthy_prefix and (
+        hidden_width != 256
+        or action_adapter is None
+        or stand is not None
+        or len(kick["qpos"]) >= ep.clip.length
+    ):
+        raise ValueError("explicit new dual-state interrupted-prefix audit only, never success")
     if contact_observer is not None and model.opt.integrator == mujoco.mjtIntegrator.mjINT_RK4:
         raise ValueError("contact clock diagnostic excludes multi-stage RK4 solver geometry")
     intent = FootTaskSpaceIntent(model, foot=foot, center=center, latent=latent)
@@ -202,7 +210,10 @@ def replay_teacher_world(
                 ep.ready = False
         for k, v in snapshot(data).items():
             equal(v, raw["terminal_" + k], phase + " terminal " + k)
-    if not body_failed and (
-        ep.frame != ep.clip.length or stand is None or len(stand["qpos"]) != 100
+    if (
+        not body_failed
+        and not allow_incomplete_healthy_prefix
+        and (ep.frame != ep.clip.length or stand is None or len(stand["qpos"]) != 100)
     ):
         raise ValueError("healthy world cannot silently omit reference/standing suffix")
+    return state[0], state[1]
