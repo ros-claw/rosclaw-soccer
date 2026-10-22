@@ -44,14 +44,20 @@ def main():
     ):
         raise ValueError("exact closed source and unused audit output required")
     r, d = [json.loads(x.read_text()) for x in (rp, dp)]
-    contextual = d["protocol"] == "paid.TRAIN.inherited_run_actual_state_expert.contextual_v2"
-    total_worlds, rounds, candidates = (134, 4, 16) if contextual else (38, 2, 8)
+    response = d["protocol"] == "paid.TRAIN.inherited_run_actual_state_expert.response_v3"
+    contextual = (
+        response or d["protocol"] == "paid.TRAIN.inherited_run_actual_state_expert.contextual_v2"
+    )
+    total_worlds, rounds, candidates = (
+        (28, 0, 11) if response else (134, 4, 16) if contextual else (38, 2, 8)
+    )
     if (
         r["status"] != "INHERITED_RUN_TRAIN_EXPERT_SEARCH_CLOSED_PENDING_INDEPENDENT_AUDIT"
         or d["protocol"]
         not in (
             "paid.TRAIN.inherited_run_actual_state_expert.v1",
             "paid.TRAIN.inherited_run_actual_state_expert.contextual_v2",
+            "paid.TRAIN.inherited_run_actual_state_expert.response_v3",
         )
         or r["declaration_hash"] != digest(dp)
         or r["input_file_hashes"] != d["input_file_hashes"]
@@ -63,9 +69,9 @@ def main():
         or d["seed"] != 41022
         or d["rounds"] != rounds
         or d["candidates_per_round"] != candidates
-        or d["elite"] != (4 if contextual else 2)
-        or d["initial_std"] != (0.2 if contextual else 0.6)
-        or d["minimum_std"] != (0.03 if contextual else 0.1)
+        or d["elite"] != (0 if response else 4 if contextual else 2)
+        or d["initial_std"] != (None if response else 0.2 if contextual else 0.6)
+        or d["minimum_std"] != (None if response else 0.03 if contextual else 0.1)
         or any(
             v.get(k) is not False
             for v in (r, d)
@@ -90,6 +96,21 @@ def main():
     if len(source_paths) != 1:
         raise ValueError("exact source-bound original two-course witness required")
     original = json.loads(source_paths[0].read_text())
+    response_report = None
+    if response:
+        response_paths = [
+            Path(x)
+            for x, h in pins.items()
+            if h == d["response_hash"] and x.endswith("/complete.json")
+        ]
+        if len(response_paths) != 1:
+            raise ValueError("exact response diagnostic commitment required")
+        response_report = json.loads(response_paths[0].read_text())
+        if (
+            response_report["status"] != "TRAIN_RUN_CONTACT_RESPONSE_DIAGNOSED_NOT_MOTOR_POLICY"
+            or response_report["predicted_success_is_evidence"] is not False
+        ):
+            raise ValueError("physical trials cannot inherit predicted success labels")
     centers = [105, 105]
     if contextual:
         for ci in range(2):
@@ -129,14 +150,19 @@ def main():
             scene_hash=scene,
         )
         actor = wrapper.base
-        expected = (
-            {f"baseline-c{c}" for c in range(2)}
-            | {
+        candidate_tags = (
+            {f"r-n{n}-c{c}" for n in range(11) for c in range(2)}
+            if response
+            else {
                 f"g{g}-n{n}-c{c}"
                 for g in range(rounds)
                 for n in range(candidates)
                 for c in range(2)
             }
+        )
+        expected = (
+            {f"baseline-c{c}" for c in range(2)}
+            | candidate_tags
             | {f"selected-c{c}-repeat{t}" for c in range(2) for t in range(2)}
         )
         if {x["tag"] for x in r["records"]} != expected:
@@ -245,7 +271,18 @@ def main():
                 best_latent = np.zeros((2, 6))
                 context_rng = np.random.default_rng(41022 + ci)
                 context_mean, context_std = np.zeros((2, 6)), np.full((2, 6), 0.2)
-                for g in range(4):
+                if response:
+                    for n, proposed in enumerate(
+                        response_report["contexts"][ci]["proposed_latents"]
+                    ):
+                        row = outcomes[f"r-n{n}-c{ci}"]
+                        latent = np.array(proposed, np.float64)
+                        equal(
+                            latent, np.array(row["latent"]), "preregistered response intervention"
+                        )
+                        if run_teacher_rank(row) > run_teacher_rank(best_row):
+                            best_row, best_latent = row, latent.copy()
+                for g in range(0 if response else 4):
                     trials = []
                     for n in range(16):
                         latent = np.clip(context_rng.normal(context_mean, context_std), -1, 1)
