@@ -47,3 +47,17 @@ def test_backward_ball_does_not_fabricate_pass_and_nonfinite_rejected():
     s["ball_xy"][0] = np.nan
     with pytest.raises(ValueError):
         receiving_intent(**s)
+
+
+def test_communicated_anchor_activates_support_without_fabricating_ball_launch():
+    s = state()
+    anchor = np.array([4.0, 0.12])
+    intent = receiving_intent(**s, ready_anchor_xy=anchor)
+    assert intent.role_state == "MOVE_SUPPORT" and not intent.launch_seen
+    assert intent.target_xy == (4.0, 0.12)
+    assert abs(intent.command_body[1]) > 0.1
+    s["root_xy"] = anchor.copy()
+    ready = receiving_intent(**s, ready_anchor_xy=anchor)
+    assert ready.role_state == "WAIT_PASS" and ready.command_body[:2] == (0.0, 0.0)
+    with pytest.raises(ValueError):
+        receiving_intent(**s, ready_anchor_xy=np.array([float("nan"), 0.0]))

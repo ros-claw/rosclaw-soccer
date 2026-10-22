@@ -1,7 +1,7 @@
 """Paired SIM role study: actual neural passer and physically coupled receiver.
 
-Twenty-four TRAIN worlds: four consumed source entries, two receiver offsets,
-three explicitly declared motor/intent arms. One standard ball is kicked by
+Twenty-four or32 TRAIN worlds: four consumed entries, two receiver offsets,
+three or four declared motor/intent arms. One standard ball is kicked by
 the real passer. No scripted ball flight, hidden resets or saved actions.
 This qualifies a teacher/backend combination, NOT new RL or a team policy.
 """
@@ -18,7 +18,10 @@ def main():
     for key in ("frontier-head", "frontier-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--teacher-screen", action="store_true")
+    p.add_argument("--prealign", action="store_true")
     a = p.parse_args()
+    if a.prealign and not a.teacher_screen:
+        p.error("prealignment is a separately declared foot-teacher protocol")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
@@ -42,6 +45,8 @@ def main():
         if a.teacher_screen
         else ("forced_kick", "velocity_wait", "velocity_intercept")
     )
+    if a.prealign:
+        arms = ("reactive_intercept",) + arms
     indices = [1, 4, 20, 21]
     courses = [
         dict(context=i, lateral_m=side, arm=arm)
@@ -64,7 +69,9 @@ def main():
     )
     declaration = dict(
         protocol=(
-            "dual256.actual_pass.measured_foot_teacher.v2"
+            "dual256.actual_pass.prealigned_foot_teacher.v3"
+            if a.prealign
+            else "dual256.actual_pass.measured_foot_teacher.v2"
             if a.teacher_screen
             else "dual256.actual_pass.velocity_receiver.teacher_screen.v1"
         ),
@@ -78,8 +85,8 @@ def main():
         source_motion_world_rotation_rad=3.141592653589793,
         same_initial_qpos_qvel_for_each_paired_arm=True,
         shared_ball_count=1,
-        maximum_native_steps=72000,
-        maximum_actor_calls=14400,
+        maximum_native_steps=len(courses) * 3000,
+        maximum_actor_calls=len(courses) * 600,
         capture_rule=dict(
             max_horizontal_distance_m=0.65,
             max_relative_speed_mps=0.6,
@@ -95,6 +102,8 @@ def main():
         geometry_intent_is_teacher_not_learned_policy=True,
         old100_standing_and_legacy52_not_claimed=True,
         capture_teacher_configs={key: asdict(value) for key, value in teacher_configs.items()},
+        communicated_ready_anchor_before_launch=a.prealign,
+        ready_anchor_lateral_m=0.12 if a.prealign else None,
         history_semantics=(
             "previous velocity action becomes ACTUAL executed target in original float32 units"
         ),
@@ -229,7 +238,7 @@ def main():
         write_once(
             a.output / "preflight.json",
             dict(
-                courses=24,
+                courses=len(courses),
                 native_steps=0,
                 all_declared_dimensions_and_initial_contacts_checked=True,
                 compiled_ball_dimensions=asdict(ball_dimensions),
@@ -288,6 +297,11 @@ def main():
                 else None
             )
             previous_receiver_forces = np.zeros(3)
+            ready_anchor = (
+                (ep.env.ball_pos[:2] + 4 * forward + 0.12 * np.array([-forward[1], forward[0]]))
+                if (a.prealign and course["arm"] != "reactive_intercept")
+                else None
+            )
             raw, states = [], []
             launch_seen, capture_run, longest_capture = False, 0, 0
             max_forces = np.zeros((2, 3))
@@ -311,6 +325,7 @@ def main():
                     home_xy=home,
                     pass_direction=forward,
                     launch_seen=launch_seen,
+                    ready_anchor_xy=ready_anchor,
                 )
                 launch_seen = intent.launch_seen
                 if receiver:
@@ -399,7 +414,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "ACTUAL_PASS_FOOT_CAPTURE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
+                    "PREALIGNED_FOOT_CAPTURE_TEACHER32_COLLECTED_PENDING_OWN_REPLAY"
+                    if a.prealign
+                    else "ACTUAL_PASS_FOOT_CAPTURE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
                     if a.teacher_screen
                     else "ACTUAL_PASS_ROLE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
                 ),

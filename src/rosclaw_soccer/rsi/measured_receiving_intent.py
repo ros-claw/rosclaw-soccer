@@ -27,6 +27,7 @@ def receiving_intent(
     home_xy: np.ndarray,
     pass_direction: np.ndarray,
     launch_seen: bool,
+    ready_anchor_xy: np.ndarray | None = None,
 ) -> ReceivingIntent:
     for value in (root_xy, ball_xy, ball_velocity_xy, home_xy, pass_direction):
         if value.shape != (2,) or not np.isfinite(value).all():
@@ -37,6 +38,10 @@ def receiving_intent(
         or abs(np.linalg.norm(pass_direction) - 1) > 1e-10
     ):
         raise ValueError("explicit role history, finite yaw and unit pass direction required")
+    if ready_anchor_xy is not None and (
+        ready_anchor_xy.shape != (2,) or not np.isfinite(ready_anchor_xy).all()
+    ):
+        raise ValueError("finite communicated receiving anchor required")
     launch = launch_seen or float(ball_velocity_xy @ pass_direction) > 0.4
     if launch:
         speed2 = float(ball_velocity_xy @ ball_velocity_xy)
@@ -45,7 +50,12 @@ def receiving_intent(
         target = ball_xy + eta * ball_velocity_xy + 0.35 * pass_direction + 0.12 * lateral
         phase = "INTERCEPT" if float((root_xy - ball_xy) @ pass_direction) > 0 else "RECOVER_LOOSE"
     else:
-        target, phase = home_xy.copy(), "WAIT_PASS"
+        target = home_xy.copy() if ready_anchor_xy is None else ready_anchor_xy.copy()
+        phase = (
+            "MOVE_SUPPORT"
+            if ready_anchor_xy is not None and np.linalg.norm(target - root_xy) > 0.12
+            else "WAIT_PASS"
+        )
     velocity = 1.4 * (target - root_xy)
     norm = float(np.linalg.norm(velocity))
     if norm > 1:
