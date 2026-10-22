@@ -46,6 +46,7 @@ def declared_motor_curriculum(d: dict[str, Any]) -> MotorExplorationCurriculum:
     c = motor_curriculum(d.get("curriculum", "run2"))
     if (
         d["protocol"] != c.protocol
+        or d.get("sampling_law", "gaussian-ar1") not in ("gaussian-ar1", "box-truncated-ar1")
         or d["seeds"] != c.seeds(d.get("generation_index", 0))
         or d.get("source_context_ids", list(c.context_ids)) != list(c.context_ids)
         or len(d["contexts"]) != len(c.context_ids)

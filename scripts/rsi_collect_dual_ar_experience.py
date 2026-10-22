@@ -16,6 +16,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--generation-index", type=int, choices=range(100), default=0)
     p.add_argument("--curriculum", choices=("run2", "retention-run64"), default="run2")
+    p.add_argument(
+        "--sampling-law", choices=("gaussian-ar1", "box-truncated-ar1"), default="gaussian-ar1"
+    )
     for n in ("exam-root", "audit-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("audit-hash", "expected-head"):
@@ -76,6 +79,7 @@ def main():
         dict(
             protocol=curriculum.protocol,
             curriculum=curriculum.name,
+            sampling_law=a.sampling_law,
             source_context_ids=list(curriculum.context_ids),
             source_head=a.expected_head,
             input_file_hashes=pins,
@@ -109,8 +113,8 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.correlated_motor_exploration import sample_action
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
+        from rosclaw_soccer.rsi.motor_sampling_law import draw_motor_action
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.paid_neural_stand import NeuralStandingTask
         from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
@@ -163,15 +167,18 @@ def main():
                         mean, after, e = actor.forward_with_evidence(
                             torch.from_numpy(obs).reshape(1, 1, 160), state
                         )
-                        proposal, logp = sample_action(
+                        calls += 1
+                        proposal, logp = draw_motor_action(
+                            a.sampling_law,
                             mean[0, 0],
+                            e["reference_nominal"][0, 0],
+                            torch.from_numpy(scale),
                             log_std,
                             rho=0.9,
                             previous_action=previous_action,
                             previous_mean=previous_mean,
                             generator=rng,
                         )
-                    calls += 1
                     action = proposal.numpy().copy()
                     nominal = mean[0, 0].numpy().copy()
                     ref = e["reference_nominal"][0, 0].numpy().copy()

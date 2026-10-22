@@ -92,8 +92,8 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.correlated_motor_exploration import conditional_logp, sample_action
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
+        from rosclaw_soccer.rsi.motor_sampling_law import draw_motor_action, history_motor_logp
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
         from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
@@ -160,8 +160,11 @@ def main():
                     last_frame, previous_action, previous_mean = history[-1]
                     if actual.frame != last_frame + 1:
                         raise ValueError("sampling history advanced without physical control")
-                proposal, logp = sample_action(
+                proposal, logp = draw_motor_action(
+                    d.get("sampling_law", "gaussian-ar1"),
                     torch.from_numpy(nominal),
+                    torch.from_numpy(ref),
+                    torch.from_numpy(scale),
                     log_std,
                     rho=0.9,
                     previous_action=previous_action,
@@ -195,9 +198,12 @@ def main():
                 )
                 executed += len(kick["qpos"])
                 with torch.no_grad():
-                    probabilities = conditional_logp(
+                    probabilities = history_motor_logp(
+                        d.get("sampling_law", "gaussian-ar1"),
                         torch.from_numpy(kick["NN_nominal_action"]),
                         torch.from_numpy(kick["NN_action"]),
+                        torch.from_numpy(kick["AR_reference_nominal"]),
+                        torch.from_numpy(scale),
                         log_std,
                         rho=0.9,
                     )
@@ -229,8 +235,11 @@ def main():
                     mean, _, e = actor.forward_with_evidence(
                         torch.from_numpy(obs).reshape(1, 1, 160), state
                     )
-                    proposal, logp = sample_action(
+                    proposal, logp = draw_motor_action(
+                        d.get("sampling_law", "gaussian-ar1"),
                         mean[0, 0],
+                        e["reference_nominal"][0, 0],
+                        torch.from_numpy(scale),
                         log_std,
                         rho=0.9,
                         previous_action=history[-1][1] if history else None,
@@ -316,6 +325,7 @@ def main():
             a.output / "complete.json",
             dict(
                 status=curriculum.audit_status,
+                sampling_law=d.get("sampling_law", "gaussian-ar1"),
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 source_hash=a.source_hash,

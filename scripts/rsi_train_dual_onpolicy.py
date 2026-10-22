@@ -50,6 +50,7 @@ def main():
         or r["declaration_hash"] != digest(dp)
         or len(r["records"]) != curriculum.worlds
         or len(ar["results"]) != curriculum.worlds
+        or ar.get("sampling_law", "gaussian-ar1") != d.get("sampling_law", "gaussian-ar1")
         or d["rho"] != 0.9
         or d["sigma_policy_units"] != 0.005
         or any(x["rejected"] for x in ar["results"])
@@ -123,6 +124,7 @@ def main():
         device="cpu",
         source_batch_size=curriculum.worlds,
         source_curriculum=curriculum.name,
+        sampling_law=d.get("sampling_law", "gaussian-ar1"),
         body_failure_terminal_credit=True,
     )
     if continual:
@@ -249,6 +251,9 @@ def main():
                 all_actor_actions_actually_executed=True,
                 authority_rejected=False,
                 natural_terminal_observed=True,
+                sampling_law=d.get("sampling_law", "gaussian-ar1"),
+                reference_nominal=torch.from_numpy(kick["AR_reference_nominal"]),
+                action_scale=model.parent.get_buffer("action_scale").clone(),
             )
             # Recompute the PREDECESSOR critic on the actual policy history.
             # No teacher h/c or future weights enter this fixed old baseline.
@@ -265,6 +270,12 @@ def main():
                     mean, private, e = model.forward_with_evidence(
                         actual.reshape(1, 1, 160), private
                     )
+                    if not np.array_equal(
+                        e["reference_nominal"][0, 0].numpy(), kick["AR_reference_nominal"][i]
+                    ):
+                        raise ValueError(
+                            "cached authority must equal own frozen actual controller history"
+                        )
                     if not np.array_equal(mean[0, 0].numpy(), kick["NN_nominal_action"][i]):
                         raise ValueError("old values must use exact actual behavior weights")
                     values.append(critic(e["critic_features"][:, 0])[0])

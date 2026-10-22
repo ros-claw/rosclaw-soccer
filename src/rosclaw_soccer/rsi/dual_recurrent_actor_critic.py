@@ -10,11 +10,8 @@ from typing import Any, cast
 import torch
 from torch import nn
 
-from rosclaw_soccer.rsi.correlated_motor_exploration import (
-    conditional_logp,
-    conditional_parameters,
-)
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+from rosclaw_soccer.rsi.motor_sampling_law import history_motor_kl, history_motor_logp
 
 
 class MotorCritic(nn.Module):
@@ -39,11 +36,18 @@ def own_history_conditional_kl(
     Neither the likelihood guard nor the trust-region threshold is relaxed.
     """
     means, _ = actor(episode["observations"][:, None], actor.initial_state())
-    location, scale = conditional_parameters(means[:, 0], episode["actions"], log_std, rho=rho)
-    old_location, _ = conditional_parameters(
-        episode["old_means"], episode["actions"], log_std, rho=rho
+    return float(
+        history_motor_kl(
+            episode.get("sampling_law", "gaussian-ar1"),
+            episode["old_means"],
+            means[:, 0],
+            episode["actions"],
+            episode.get("reference_nominal"),
+            episode.get("action_scale"),
+            log_std,
+            rho=rho,
+        )
     )
-    return float(0.5 * ((location - old_location) / scale).square().sum(-1).mean())
 
 
 def own_history_loss(
@@ -97,20 +101,24 @@ def own_history_loss(
     if value_only:
         return value_loss, dict(actor_rows=0, critic_rows=n)
     # Check source likelihood against its own declared actual-action sequence.
+    law = episode.get("sampling_law", "gaussian-ar1")
+    reference, scale = episode.get("reference_nominal"), episode.get("action_scale")
     with torch.no_grad():
-        source_logp = conditional_logp(episode["old_means"], actions, log_std, rho=rho)
+        source_logp = history_motor_logp(
+            law, episode["old_means"], actions, reference, scale, log_std, rho=rho
+        )
         if not torch.allclose(source_logp, episode["old_logp"], atol=1e-4, rtol=1e-6):
             raise ValueError("old AR likelihood must bind actual means/actions, not IID fiction")
-    logp = conditional_logp(means, actions, log_std, rho=rho)
+    logp = history_motor_logp(law, means, actions, reference, scale, log_std, rho=rho)
     ratio_log = logp - episode["old_logp"]
     if not torch.isfinite(ratio_log).all() or ratio_log.abs().max() > 40:
         raise ValueError("invalid whole-history AR likelihood ratio")
     ratio = ratio_log.exp()
     advantage = episode["advantages"]
     policy = -torch.minimum(ratio * advantage, ratio.clamp(0.9, 1.1) * advantage).mean()
-    new_loc, scale = conditional_parameters(means, actions, log_std, rho=rho)
-    old_loc, _ = conditional_parameters(episode["old_means"], actions, log_std, rho=rho)
-    conditional_kl = 0.5 * ((new_loc - old_loc) / scale).square().sum(-1).mean()
+    conditional_kl = history_motor_kl(
+        law, episode["old_means"], means, actions, reference, scale, log_std, rho=rho
+    )
     anchor = evidence["reference_mean"][:, 0]
     anchor_kl = 0.5 * ((means - anchor) / 0.02).square().sum(-1).mean()
     loss = policy + value_loss + 0.02 * anchor_kl

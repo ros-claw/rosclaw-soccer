@@ -23,6 +23,9 @@ def main():
     p.add_argument("--training-producer-head")
     p.add_argument("--generation-index", type=int, choices=range(1, 100), required=True)
     p.add_argument("--curriculum", choices=("run2", "retention-run64"), default="run2")
+    p.add_argument(
+        "--sampling-law", choices=("gaussian-ar1", "box-truncated-ar1"), default="gaussian-ar1"
+    )
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
@@ -92,6 +95,7 @@ def main():
             training_hash=a.training_hash,
             generation_index=a.generation_index,
             curriculum=curriculum.name,
+            sampling_law=a.sampling_law,
             maximum_worlds=curriculum.worlds,
             research_use_of_unpromoted_candidate=True,
             automatic_retry=False,
@@ -124,6 +128,8 @@ def main():
                     str(a.generation_index),
                     "--curriculum",
                     curriculum.name,
+                    "--sampling-law",
+                    a.sampling_law,
                 ],
                 "DUAL_AR1_ACTUAL_CALIBRATION_CLOSED_PENDING_NATIVE_AND_LAW_AUDIT",
             ),

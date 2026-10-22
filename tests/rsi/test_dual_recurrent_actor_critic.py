@@ -87,3 +87,37 @@ def test_large_trial_kl_backtracks_without_relaxing_the_likelihood_guard():
     assert math.isfinite(kl) and kl > 0.015
     with pytest.raises(ValueError, match="invalid whole-history AR likelihood ratio"):
         own_history_loss(actor, critic, row, std, rho=0.9)
+
+
+def test_bounded_ppo_uses_actual_authority_and_normalized_sampling_density():
+    from rosclaw_soccer.rsi.motor_sampling_law import history_motor_logp
+
+    actor, critic, row, std = fixture()
+    with torch.no_grad():
+        actor.plastic.head.bias.add_(0.399)
+        mean, _, e = actor.forward_with_evidence(
+            row["observations"][:, None], actor.initial_state()
+        )
+    row.update(
+        sampling_law="box-truncated-ar1",
+        old_means=mean[:, 0],
+        actions=mean[:, 0] - 0.002,
+        reference_nominal=e["reference_nominal"][:, 0],
+        action_scale=actor.parent.get_buffer("action_scale"),
+    )
+    row["old_logp"] = history_motor_logp(
+        row["sampling_law"],
+        row["old_means"],
+        row["actions"],
+        row["reference_nominal"],
+        row["action_scale"],
+        std,
+        rho=0.9,
+    )
+    loss, info = own_history_loss(actor, critic, row, std, rho=0.9)
+    assert torch.isfinite(loss) and info["conditional_kl"] < 1e-8
+    loss.backward()
+    assert all(p.grad is None or torch.isfinite(p.grad).all() for p in actor.plastic.parameters())
+    row["old_logp"] = conditional_logp(row["old_means"], row["actions"], std, rho=0.9)
+    with pytest.raises(ValueError, match="old AR likelihood"):
+        own_history_loss(actor, critic, row, std, rho=0.9)
