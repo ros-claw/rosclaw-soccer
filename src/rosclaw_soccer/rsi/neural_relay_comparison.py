@@ -15,11 +15,13 @@ def relay_key(row: dict[str, Any]) -> tuple[int, float, int, str]:
     return c["context"], c["lateral_m"], c["arm"]["start"], c["arm"]["memory"]
 
 
-def compare_relay_arms(records: list[dict[str, Any]]) -> dict[str, Any]:
+def compare_relay_arms(
+    records: list[dict[str, Any]], *, team_entry: bool = False
+) -> dict[str, Any]:
     if len(records) != 128:
         raise ValueError("complete128 preregistered trials required")
     by_bridge: dict[int, dict[tuple[int, float, int, str], dict[str, Any]]] = {
-        n: {} for n in (0, 5, 15, 30)
+        n: {} for n in (range(4) if team_entry else (0, 5, 15, 30))
     }
     expected = {
         (i, side, phase, memory)
@@ -30,6 +32,11 @@ def compare_relay_arms(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
     for row in records:
         n = row["course"]["arm"]["reference_bridge_controls"]
+        if team_entry:
+            flags = [row["course"]["arm"][k] for k in ("assigned_receiver_pass", "align_successor")]
+            if any(type(flag) is not bool for flag in flags) or n != 0:
+                raise ValueError("exact bool team-entry arms and reference0 required")
+            n = 2 * int(flags[0]) + int(flags[1])
         key = relay_key(row)
         if n not in by_bridge or key not in expected or key in by_bridge[n]:
             raise ValueError("exact distinct declared matched arms required")
@@ -61,9 +68,38 @@ def compare_relay_arms(records: list[dict[str, Any]]) -> dict[str, Any]:
         ]
         if not all(np.isfinite(x) and x >= 0 for x in errors):
             raise ValueError("finite observed error or explicit unavailable value required")
+        metadata: dict[str, Any] = (
+            dict(assigned_receiver_pass=bool(n // 2), align_successor=bool(n % 2))
+            if team_entry
+            else dict(reference_bridge_controls=n)
+        )
+        if team_entry:
+            events = [r["result"]["incoming_delivery"] for r in arm.values()]
+            incoming = []
+            for event in events:
+                error = event["incoming_target_error_3d_before_B_contact_m"]
+                if (
+                    type(event["incoming_error_observed"]) is not bool
+                    or event["incoming_error_observed"] != (error is not None)
+                    or (error is not None and (not np.isfinite(error) or error < 0))
+                ):
+                    raise ValueError(
+                        "observed finite incoming error or explicit unavailable required"
+                    )
+                if error is not None:
+                    incoming.append(error)
+            metadata.update(
+                incoming_observed=len(incoming),
+                incoming_median_target_error_3d_m=float(np.median(incoming)) if incoming else None,
+                incoming_0p1m_deliveries=sum(e <= 0.1 for e in incoming),
+                B_contact_observed=sum(
+                    e["B_first_ball_contact_substep"] is not None for e in events
+                ),
+                incoming_diagnostics_are_received_pass_qualification=False,
+            )
         summaries.append(
             dict(
-                reference_bridge_controls=n,
+                **metadata,
                 executions=32,
                 distinct_initial_conditions=8,
                 terminations=dict(Counter(r["termination"] for r in arm.values())),

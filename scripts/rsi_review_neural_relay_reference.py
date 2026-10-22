@@ -36,10 +36,16 @@ def main():
     source, audit, prior = reports
     dp = a.source_root / "declaration.json"
     dec = json.loads(dp.read_text())
+    team_entry = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
+    expected_status = (
+        "NEURAL_RELAY_TEAM_ENTRY_COLLECTED_PENDING_OWN_REPLAY"
+        if team_entry
+        else "NEURAL_RELAY_REFERENCE_BRIDGE_COLLECTED_PENDING_OWN_REPLAY"
+    )
     if (
-        source["status"] != "NEURAL_RELAY_REFERENCE_BRIDGE_COLLECTED_PENDING_OWN_REPLAY"
+        source["status"] != expected_status
         or source["declaration_hash"] != digest(dp)
-        or dec["reference_bridge_controls"] != [0, 5, 15, 30]
+        or dec["reference_bridge_controls"] != ([0] if team_entry else [0, 5, 15, 30])
         or dec["prior_closed_relay"]["relay_hash"] != a.prior_hash
         or audit["status"] != "ALL_NEURAL_RELAY_OWN_HISTORY_NATIVE_REPLAY_MATCH"
         or audit["producer_hash"] != a.source_hash
@@ -90,9 +96,24 @@ def main():
             bind(a.source_root, ci, row["handoff"]["boundary"])
         if row["course"]["arm"]["reference_bridge_controls"]:
             continue
+        if team_entry and (
+            row["course"]["arm"]["assigned_receiver_pass"]
+            or row["course"]["arm"]["align_successor"]
+        ):
+            continue
         previous = old[relay_key(row)]
-        if row["result"] != previous["result"] or row["termination"] != previous["termination"]:
+        if (
+            any(row["result"].get(k) != v for k, v in previous["result"].items())
+            or row["termination"] != previous["termination"]
+        ):
             raise ValueError("zero-reference baseline outcome changed")
+        expected_result_keys = set(previous["result"]) | (
+            {"incoming_delivery", "A_requested_pass_goal"} if team_entry else set()
+        )
+        if set(row["result"]) != expected_result_keys:
+            raise ValueError(
+                "exact baseline primary outcomes and declared extra diagnostics required"
+            )
         if set(row["artifacts"]) != set(previous["artifacts"]):
             raise ValueError("zero-reference baseline raw surface changed")
         for key, artifact in row["artifacts"].items():
@@ -109,19 +130,19 @@ def main():
         identity.append(dict(current=ci, original=previous["index"], whole_raw_byte_identical=True))
     if len(identity) != 32:
         raise ValueError("all32 old baseline executions must be retained")
-    result = compare_relay_arms(source["records"])
+    result = compare_relay_arms(source["records"], team_entry=team_entry)
     improved = [r for r in result["summaries"][1:] if r["precise_net_change"] > 0]
     findings = dict(
-        discovered="Local TRAIN reference-conditioning gain"
+        discovered="Local TRAIN full relay gain"
         if improved
-        else "No precise-healthy TRAIN net gain from reference bridge",
+        else "No precise-healthy TRAIN net gain from declared relay teacher",
         ruled_out=(
             "Original zero-bridge baseline unchanged; all32 whole raw streams byte-identical"
         ),
         next_investment="Validate teacher on new perturbations before own-state student learning"
         if improved
         else (
-            "Pivot from reference-only family to successor-state geometry/gain/phase mechanisms; "
+            "Pivot from the tested family to successor-state geometry/gain/phase mechanisms; "
             "do not start blind PPO"
         ),
         falsifier=(
@@ -134,6 +155,7 @@ def main():
         a.output,
         dict(
             schema="soccer.neural_relay_reference_comparison.v1",
+            study_protocol=dec["protocol"],
             source_head=a.expected_head,
             source_hash=a.source_hash,
             audit_hash=a.audit_hash,

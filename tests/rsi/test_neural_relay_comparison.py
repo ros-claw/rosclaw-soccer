@@ -67,3 +67,32 @@ def test_incomplete_or_invalid_data_never_becomes_positive_summary(fault):
         rows[0]["result"]["minimum_return_goal_error_3d_m"] = float("nan")
     with pytest.raises(ValueError):
         compare_relay_arms(rows)
+
+
+def test_team_entry_factorial_distinguishes_delivery_from_successful_return():
+    rows = records()
+    flag_map = {0: (False, False), 5: (False, True), 15: (True, False), 30: (True, True)}
+    for row in rows:
+        arm = row["course"]["arm"]
+        assigned, align = flag_map[arm["reference_bridge_controls"]]
+        arm.update(
+            reference_bridge_controls=0, assigned_receiver_pass=assigned, align_successor=align
+        )
+        row["result"]["incoming_delivery"] = dict(
+            incoming_error_observed=True,
+            incoming_target_error_3d_before_B_contact_m=0.04 if assigned else 1.0,
+            B_first_ball_contact_substep=100 if align else None,
+        )
+        row["result"]["return_0p1m_and_healthy"] = assigned and align
+    result = compare_relay_arms(rows, team_entry=True)
+    base, aligned, delivered, both = result["summaries"]
+    assert (
+        base["precise_healthy"] == aligned["precise_healthy"] == delivered["precise_healthy"] == 0
+    )
+    assert delivered["incoming_0p1m_deliveries"] == 32
+    assert delivered["B_contact_observed"] == 0
+    assert both["precise_healthy"] == 32
+    assert both["clustered_conditions_improved"] == 8
+    assert not both["incoming_diagnostics_are_received_pass_qualification"]
+    assert "reference_bridge_controls" not in both
+    assert both["assigned_receiver_pass"] and both["align_successor"]
