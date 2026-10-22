@@ -39,7 +39,7 @@ def fit_response(x: np.ndarray, y: np.ndarray) -> dict[str, object]:
         train_rmse=np.sqrt(np.mean((y - fitted) ** 2, axis=0)).tolist(),
         leave_one_out_rmse=np.sqrt(np.mean(loo_error**2, axis=0)).tolist(),
         ridge=0.1,
-        labels=["actual_lateral_abs_1p2s_m", "actual_progress_1p2s_m"],
+        labels=["actual_lateral_signed_1p2s_m", "actual_progress_1p2s_m"],
         runtime_motor_policy=False,
         predicted_success_is_evidence=False,
     )
@@ -52,11 +52,11 @@ def bounded_proposals(base: np.ndarray, lateral: float, gradient: np.ndarray) ->
         or not np.isfinite(base).all()
         or not np.isfinite(gradient).all()
         or not np.isfinite(lateral)
-        or lateral < 0
         or (np.abs(base) > 1).any()
     ):
         raise ValueError("finite actual base and response direction required")
-    direction = -gradient * max(0.0, lateral - 0.1) / (0.01 + gradient @ gradient)
+    error = lateral - float(np.clip(lateral, -0.1, 0.1))
+    direction = -gradient * error / (0.01 + gradient @ gradient)
     norm = np.linalg.norm(direction)
     if norm > 0.5:
         direction *= 0.5 / norm

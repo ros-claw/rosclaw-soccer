@@ -35,3 +35,13 @@ def test_nonfinite_data_rejected():
     x[0, 0] = np.nan
     with pytest.raises(ValueError):
         fit_response(x, np.zeros((20, 2)))
+
+
+def test_signed_left_and_right_errors_have_mirrored_response():
+    base = np.zeros(12)
+    gradient = np.ones(12)
+    left = np.array(bounded_proposals(base, 1.0, gradient))
+    right = np.array(bounded_proposals(base, -1.0, gradient))
+    assert np.allclose(left[1:5], -right[1:5])
+    assert (left[4] @ gradient) < 0
+    assert (right[4] @ gradient) > 0
