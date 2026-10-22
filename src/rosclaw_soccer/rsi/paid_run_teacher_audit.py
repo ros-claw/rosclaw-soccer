@@ -5,6 +5,7 @@ Observation and kinematic solver are shared admitted codecs, not independent
 implementations; report this boundary rather than claim algorithmic diversity.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -26,6 +27,7 @@ def replay_teacher_world(
     center: int,
     foot: str,
     counts: dict[str, int],
+    contact_observer: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     """Count actual work even if a later comparison fails; never retry here."""
     import mujoco
@@ -47,6 +49,8 @@ def replay_teacher_world(
         if raw is not None and any(not np.isfinite(v).all() for v in raw.values()):
             raise ValueError("finite raw primitives required")
     model, data = ep.env.model, ep.env.data
+    if contact_observer is not None and model.opt.integrator == mujoco.mjtIntegrator.mjINT_RK4:
+        raise ValueError("contact clock diagnostic excludes multi-stage RK4 solver geometry")
     intent = FootTaskSpaceIntent(model, foot=foot, center=center, latent=latent)
     state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
     body_failed = False
@@ -136,7 +140,30 @@ def replay_teacher_world(
                         wrench = np.zeros(6)
                         mujoco.mj_contactForce(model, data, j, wrench)
                         role = ep.feet.index(other) if other in ep.feet else 2
-                        forces[role] = max(forces[role], np.linalg.norm(wrench[:3]))
+                        norm = float(np.linalg.norm(wrench[:3]))
+                        forces[role] = max(forces[role], norm)
+                        if contact_observer is not None and norm > (1.0 if role == 2 else 10.0):
+                            contact_observer(
+                                dict(
+                                    solver_time_s=clock,
+                                    end_step_time_s=float(data.time),
+                                    reference_frame=ep.frame,
+                                    phase=phase,
+                                    role=role,
+                                    robot_body=mujoco.mj_id2name(
+                                        model, mujoco.mjtObj.mjOBJ_BODY, other
+                                    ),
+                                    geom_names=[
+                                        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(g))
+                                        for g in contact.geom
+                                    ],
+                                    force_norm_N=norm,
+                                    contact_position_world=contact.pos.tolist(),
+                                    ball_solver_center_world=data.xpos[ep.layout.ball].tolist(),
+                                    ball_position_after_step=q[36:39].tolist(),
+                                    ball_velocity_after_step=v[35:38].tolist(),
+                                )
+                            )
                 equal(forces, raw["forces"][frame, sub], "native contacts")
                 bad |= bool(q[2] < 0.65 or 1 - 2 * (q[4] ** 2 + q[5] ** 2) < 0.9)
             equal(bad, raw["body_failed"][frame], "failure boundary")

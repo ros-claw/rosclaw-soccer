@@ -14,6 +14,7 @@ def main():
     p.add_argument("--source-hash")
     p.add_argument("--producer-head")
     p.add_argument("--declaration-hash")
+    p.add_argument("--contact-events", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -169,6 +170,7 @@ def main():
             raise ValueError("all failure/candidate/repeat trials required")
         outcomes = {}
         all_blobs = {}
+        event_artifacts = []
         for rec in r["records"]:
             ci = rec["course"]
             if ci not in (0, 1) or rec["tag"] not in expected:
@@ -196,6 +198,7 @@ def main():
             ] * np.array([np.cos(yaw), np.sin(yaw)])
             mujoco.mj_forward(ep.env.model, ep.env.data)
             before = dict(counts)
+            events = []
             replay_teacher_world(
                 ep,
                 actor,
@@ -205,7 +208,17 @@ def main():
                 center=centers[ci],
                 foot="left" if "left" in d["source_case"]["source"] else "right",
                 counts=counts,
+                contact_observer=events.append if a.contact_events else None,
             )
+            if a.contact_events:
+                from rosclaw_soccer.rsi.run_contact_geometry import summarize_contacts
+
+                path = a.output / (rec["tag"] + "-contacts.json")
+                summary = summarize_contacts(events, ep.goal)
+                write_once(path, dict(events=events, summary=summary))
+                event_artifacts.append(
+                    dict(tag=rec["tag"], path=path.name, hash=digest(path), summary=summary)
+                )
             if (
                 counts["native"] - before["native"] != rec["native_steps"]
                 or counts["neural"] - before["neural"] != rec["neural_rows"]
@@ -354,6 +367,8 @@ def main():
                 counts=counts,
                 worlds=total_worlds,
                 protocol=d["protocol"],
+                contact_events_captured=a.contact_events,
+                contact_event_artifacts=event_artifacts,
                 independent_whole_world_replay=True,
                 shared_observation_codec=True,
                 shared_IK_solver_reexecuted=True,
