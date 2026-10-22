@@ -14,7 +14,12 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--checkpoint-kind",
-        choices=("supervised", "ar1-actor-critic", "contact-consolidated"),
+        choices=(
+            "supervised",
+            "ar1-actor-critic",
+            "contact-consolidated",
+            "contact-consolidated-v2",
+        ),
         default="supervised",
     )
     for n in ("training-root", "cpu-audit-root", "rehearsal-root", "output"):

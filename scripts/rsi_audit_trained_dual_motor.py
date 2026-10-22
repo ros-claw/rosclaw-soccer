@@ -10,7 +10,12 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--checkpoint-kind",
-        choices=("supervised", "ar1-actor-critic", "contact-consolidated"),
+        choices=(
+            "supervised",
+            "ar1-actor-critic",
+            "contact-consolidated",
+            "contact-consolidated-v2",
+        ),
         default="supervised",
     )
     for n in ("root", "output"):
@@ -98,7 +103,9 @@ def main():
             checkpoint_kind=a.checkpoint_kind,
         )
         expected_sequences = (
-            65
+            110
+            if a.checkpoint_kind == "contact-consolidated-v2"
+            else 65
             if a.checkpoint_kind == "contact-consolidated"
             else 24
             if data["status"] == "DUAL_MOTOR_ACTUAL_DAGGER_SEQUENCES_READY_NOT_TRAINED"

@@ -20,9 +20,18 @@ def main():
     p.add_argument("--device", choices=("cuda:0", "cpu"), default="cuda:0")
     p.add_argument("--failed-predecessor-root", type=Path)
     p.add_argument("--failed-predecessor-hash")
+    p.add_argument("--stage", choices=("initial", "own-state-correction"), default="initial")
     a = p.parse_args()
-    from rosclaw_soccer.rsi.contact_consolidation import STATUS, consolidation_config
-    from rosclaw_soccer.rsi.contact_consolidation_data import BANK_STATUS
+    from rosclaw_soccer.rsi.contact_consolidation import (
+        CORRECTION_STATUS,
+        STATUS,
+        consolidation_config,
+    )
+    from rosclaw_soccer.rsi.contact_consolidation_data import (
+        BANK_STATUS,
+        CORRECTION_BANK_STATUS,
+        consolidation_pools,
+    )
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
 
@@ -35,15 +44,18 @@ def main():
             raise ValueError("clean frozen consolidation source required")
 
     clean()
+    correction = a.stage == "own-state-correction"
+    config = consolidation_config(a.seed, a.device, stage=a.stage)
+    initial_actor, final_actor = config["initial_actor_steps"], config["final_actor_steps"]
     dp = a.data_root / "complete.json"
     data = json.loads(dp.read_text())
     if (
         a.output.exists()
         or dp.is_symlink()
         or (a.data_root / "failed.json").exists()
-        or data["status"] != BANK_STATUS
+        or data["status"] != (CORRECTION_BANK_STATUS if correction else BANK_STATUS)
         or data["source_head"] != a.data_producer_head
-        or len(data["records"]) != 65
+        or len(data["records"]) != (110 if correction else 65)
         or data["teacher_hidden_state_supplied_to_learner"] is not False
         or any(
             data[k] != 0
@@ -70,11 +82,15 @@ def main():
             raise ValueError("unique exact warm lineage required")
         return paths[0], json.loads(paths[0].read_text())
 
-    wp, warm = receipt(data["warm_start_hash"])
-    if warm["cumulative_optimizer_steps"] != 16 or warm["cumulative_critic_optimizer_steps"] != 48:
-        raise ValueError("exact W6 actor16 critic48 consolidation predecessor required")
-    legacy_path, legacy = receipt(warm["data_hash"])
-    witness_path, _ = receipt(legacy["teacher_hash"])
+    warm_hash = data["warm_student_hashes"][str(a.seed)] if correction else data["warm_start_hash"]
+    wp, warm = receipt(warm_hash)
+    if (
+        warm["cumulative_optimizer_steps"] != initial_actor
+        or warm["cumulative_critic_optimizer_steps"] != 48
+        or (correction and warm["config"]["seed"] != a.seed)
+    ):
+        raise ValueError("exact independently learned predecessor and persistent critic48 required")
+    witness_path, _ = receipt(data["context_witness_hash"])
     witness = json.loads((witness_path.parent / "declaration.json").read_text())
     for row in data["records"]:
         path = a.data_root / row["raw_path"]
@@ -87,10 +103,14 @@ def main():
         pins[str(path)] = row["raw_hash"]
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(x): digest(x) for x in folder.rglob("*.py")})
-    config = consolidation_config(a.seed, a.device)
+    anchors, teachers, repairs = consolidation_pools(data["records"], correction=correction)
     if bool(a.failed_predecessor_root) != bool(a.failed_predecessor_hash):
         raise ValueError("exact preserved failure binding required")
     if a.failed_predecessor_root is not None:
+        if correction:
+            raise ValueError(
+                "initial container-check recovery cannot be reused as a new learning phase retry"
+            )
         failed = a.failed_predecessor_root / "failed.json"
         prior_decl = a.failed_predecessor_root / "declaration.json"
         if failed.is_symlink() or digest(failed) != a.failed_predecessor_hash:
@@ -103,7 +123,7 @@ def main():
             != "ValueError('exact warm network/moments/counters/rates before schedule required')"
             or prior["config"] != config
             or prior["data_hash"] != digest(dp)
-            or prior["warm_start_hash"] != data["warm_start_hash"]
+            or prior["warm_start_hash"] != warm_hash
         ):
             raise ValueError(
                 "recovery fixes only typed network-container comparison before any update"
@@ -119,7 +139,7 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             data_hash=digest(dp),
-            warm_start_hash=data["warm_start_hash"],
+            warm_start_hash=warm_hash,
             parent_lineage_hash=data["parent_lineage_hash"],
             hardware_authorized=False,
             promotion_authorized=False,
@@ -145,7 +165,10 @@ def main():
         torch.use_deterministic_algorithms(True)
         rng = random.Random(a.seed)
         bench, model = open_motor(
-            pins, data["warm_start_hash"], {0: dict(case=witness["source_case"])}
+            pins,
+            warm_hash,
+            {0: dict(case=witness["source_case"])},
+            checkpoint_kind="contact-consolidated" if correction else "ar1-actor-critic",
         )
         warm_path = Path(warm["checkpoint_path"])
         if digest(warm_path) != warm["checkpoint_hash"]:
@@ -180,21 +203,17 @@ def main():
         for row in data["records"]:
             with np.load(a.data_root / row["raw_path"], allow_pickle=False) as z:
                 episodes.append({k: torch.from_numpy(z[k].copy()).to(a.device) for k in z.files})
-        anchors = [i for i, r in enumerate(data["records"]) if r["role"] == "retained_W6_skill"]
-        teachers = [
-            i
-            for i, r in enumerate(data["records"])
-            if r["bc_weight"] == 1 and r["role"] != "retained_W6_skill"
-        ]
-        if len(anchors) != 14 or len(teachers) != 48:
-            raise ValueError("all14 positive old anchors and48 positive teacher histories required")
-        for _step in range(64):
+        for _step in range(config["steps"]):
             teacher = rng.choice(teachers)
+            repair = rng.choice(repairs) if correction else None
             old = rng.sample(anchors, 4)
             optimizer.zero_grad(set_to_none=True)
             imitation = sequence_loss(model.plastic, episodes[teacher])
             retention = sum(sequence_loss(model.plastic, episodes[i]) for i in old) / 4
             loss = imitation + 2 * retention
+            if correction:
+                repair_loss = sequence_loss(model.plastic, episodes[repair])
+                loss = loss + config["own_state_repair_weight"] * repair_loss
             if not torch.isfinite(loss):
                 raise ValueError("nonfinite consolidation loss")
             loss.backward()
@@ -212,6 +231,8 @@ def main():
                 retention=float(retention.detach()),
                 gradient_norm=float(grad),
             )
+            if correction:
+                entry.update(repair_index=repair, repair_loss=float(repair_loss.detach()))
             history.append(entry)
             write_once(a.output / f"update{steps}.json", entry)
             print(json.dumps(entry), flush=True)
@@ -230,7 +251,7 @@ def main():
 
         final_opt = cpu_tree(optimizer.state_dict())
         validate_adam_slots(
-            final_opt, list(model.plastic.parameters()) + list(critic.parameters()), 80, 48
+            final_opt, list(model.plastic.parameters()) + list(critic.parameters()), final_actor, 48
         )
         critic_ids = final_opt["param_groups"][1]["params"]
         if (
@@ -251,13 +272,15 @@ def main():
         last = a.output / "consolidation-final.pt"
         torch.save(
             dict(
-                schema="soccer.dual_motor.contact_consolidation.v1",
+                schema="soccer.dual_motor.contact_correction.v2"
+                if correction
+                else "soccer.dual_motor.contact_consolidation.v1",
                 plastic_network=final,
                 critic=cpu_tree(critic.state_dict()),
                 optimizer=final_opt,
-                optimizer_updates=dict(actor=80, critic=48),
+                optimizer_updates=dict(actor=final_actor, critic=48),
                 config=config,
-                warm_start_hash=data["warm_start_hash"],
+                warm_start_hash=warm_hash,
                 parent_lineage_hash=data["parent_lineage_hash"],
             ),
             last,
@@ -294,13 +317,13 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status=STATUS,
+                status=CORRECTION_STATUS if correction else STATUS,
                 source_head=a.expected_head,
                 config=config,
                 input_file_hashes=pins,
                 declaration_hash=digest(a.output / "declaration.json"),
                 data_hash=digest(dp),
-                warm_start_hash=data["warm_start_hash"],
+                warm_start_hash=warm_hash,
                 parent_lineage_hash=data["parent_lineage_hash"],
                 initial_checkpoint_path=str(first),
                 initial_checkpoint_hash=digest(first),
@@ -308,9 +331,9 @@ def main():
                 checkpoint_hash=digest(last),
                 changed_parameter_tensors=changed,
                 offline_supervised_steps=steps,
-                cumulative_optimizer_steps=80,
+                cumulative_optimizer_steps=final_actor,
                 cumulative_critic_optimizer_steps=48,
-                initial_optimizer_steps=16,
+                initial_optimizer_steps=initial_actor,
                 initial_critic_optimizer_steps=48,
                 PPO_optimizer_steps_this_stage=0,
                 cumulative_PPO_actor_steps=16,

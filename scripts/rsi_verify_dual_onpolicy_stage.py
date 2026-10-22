@@ -33,15 +33,21 @@ def main(*, checkpoint_kind="ar1-actor-critic"):
     clean()
     tp = a.training_root / "complete.json"
     t = json.loads(tp.read_text())
+    from rosclaw_soccer.rsi.contact_consolidation import CORRECTION_STATUS
     from rosclaw_soccer.rsi.contact_consolidation import STATUS as CONTACT_STATUS
 
-    if checkpoint_kind not in ("ar1-actor-critic", "contact-consolidated"):
+    if checkpoint_kind not in (
+        "ar1-actor-critic",
+        "contact-consolidated",
+        "contact-consolidated-v2",
+    ):
         raise ValueError("explicit separately typed supervised or PPO examination required")
-    contact = checkpoint_kind == "contact-consolidated"
+    contact = checkpoint_kind in ("contact-consolidated", "contact-consolidated-v2")
+    correction = checkpoint_kind == "contact-consolidated-v2"
     phase_ok = (
-        t["status"] == CONTACT_STATUS
+        t["status"] == (CORRECTION_STATUS if correction else CONTACT_STATUS)
         and t["online_RL_claim"] is False
-        and t["offline_supervised_steps"] == 64
+        and t["offline_supervised_steps"] == (32 if correction else 64)
         and t["PPO_optimizer_steps_this_stage"] == 0
         if contact
         else t["status"] == "DUAL_AR1_ACTOR_CRITIC_ACTUALLY_UPDATED_PENDING_PHYSICAL_EXAM"
@@ -63,7 +69,9 @@ def main(*, checkpoint_kind="ar1-actor-critic"):
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="dual256.contact_consolidation_exam_chain.v1"
+            protocol="dual256.contact_correction_exam_chain.v2"
+            if correction
+            else "dual256.contact_consolidation_exam_chain.v1"
             if contact
             else "dual256.actual_onpolicy_exam_chain.v1",
             source_head=a.expected_head,
@@ -159,7 +167,9 @@ def main(*, checkpoint_kind="ar1-actor-critic"):
         write_once(
             a.output / "complete.json",
             dict(
-                status="CONTACT_CONSOLIDATION_EXAM_CHAIN_CLOSED_NOT_GOAL_COMPLETE"
+                status="CONTACT_CORRECTION_EXAM_CHAIN_CLOSED_NOT_GOAL_COMPLETE"
+                if correction
+                else "CONTACT_CONSOLIDATION_EXAM_CHAIN_CLOSED_NOT_GOAL_COMPLETE"
                 if contact
                 else "AR1_ACTOR_CRITIC_EXAM_CHAIN_CLOSED_NOT_GOAL_COMPLETE",
                 source_head=a.expected_head,

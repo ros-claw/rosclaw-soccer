@@ -9,12 +9,17 @@ from rosclaw_soccer.rsi.paid_trainable_actor import PaidTrainableActor
 PROTOCOL = "dual256.contact_weighted_offline_consolidation.v1"
 STATUS = "DUAL_CONTACT_CONSOLIDATED_PENDING_UNASSISTED_PHYSICAL_EXAM"
 KIND = "contact-consolidated"
+CORRECTION_PROTOCOL = "dual256.actual_student_state_correction.v2"
+CORRECTION_STATUS = "DUAL_CONTACT_OWN_STATE_CORRECTED_PENDING_UNASSISTED_PHYSICAL_EXAM"
+CORRECTION_KIND = "contact-consolidated-v2"
 
 
-def consolidation_config(seed: int, device: str) -> dict[str, Any]:
+def consolidation_config(seed: int, device: str, *, stage: str = "initial") -> dict[str, Any]:
     if seed not in (65023, 65024, 65025) or device not in ("cuda:0", "cpu"):
         raise ValueError("three preregistered sample-order seeds and explicit device required")
-    return dict(
+    if stage not in ("initial", "own-state-correction"):
+        raise ValueError("explicit separately versioned consolidation phase required")
+    config = dict(
         protocol=PROTOCOL,
         seed=seed,
         device=device,
@@ -33,6 +38,19 @@ def consolidation_config(seed: int, device: str) -> dict[str, Any]:
         runtime_teacher=False,
         final_only=True,
     )
+    if stage == "own-state-correction":
+        config.update(
+            protocol=CORRECTION_PROTOCOL,
+            steps=32,
+            actor_lr=0.00001,
+            initial_actor_steps=80,
+            final_actor_steps=112,
+            own_state_repair_weight=4.0,
+            retention_anchor_roles=["retained_W6_skill", "retained_new_neural_skill"],
+            warm_checkpoint_kind=KIND,
+            learning_phase="continual_offline_supervised_NOT_PPO",
+        )
+    return config
 
 
 def sequence_loss(plastic: PaidTrainableActor, episode: dict[str, torch.Tensor]) -> torch.Tensor:

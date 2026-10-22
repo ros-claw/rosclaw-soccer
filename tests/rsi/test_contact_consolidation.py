@@ -74,3 +74,19 @@ def test_state_dict_container_canonicalization_keeps_exact_tensors_and_strict_op
     assert same_training_state(dict(network), checkpoint)
     checkpoint["weight"][0] += 0.0001
     assert not same_training_state(dict(network), checkpoint)
+
+
+def test_correction_is_separate_bounded_phase_with_no_ppo_or_critic_counter_reset():
+    from rosclaw_soccer.rsi.contact_consolidation import CORRECTION_PROTOCOL
+
+    first = consolidation_config(65023, "cpu")
+    second = consolidation_config(65023, "cpu", stage="own-state-correction")
+    assert first["steps"] == 64 and first["initial_actor_steps"] == 16
+    assert second["protocol"] == CORRECTION_PROTOCOL and second["steps"] == 32
+    assert second["initial_actor_steps"] == 80 and second["final_actor_steps"] == 112
+    assert second["initial_critic_steps"] == second["final_critic_steps"] == 48
+    assert second["actor_lr"] == 0.00001
+    assert second["warm_checkpoint_kind"] == "contact-consolidated"
+    assert second["runtime_teacher"] is False
+    with pytest.raises(ValueError):
+        consolidation_config(65023, "cpu", stage="silent-same-protocol-new-steps")

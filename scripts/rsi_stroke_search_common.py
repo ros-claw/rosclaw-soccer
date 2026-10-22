@@ -49,7 +49,7 @@ def admit(exam_root, audit_root, audit_hash):
     return pins, d["training_hash"], contexts, centers, e
 
 
-def open_motor(pins, training_hash, contexts):
+def open_motor(pins, training_hash, contexts, *, checkpoint_kind="ar1-actor-critic"):
     import torch
 
     from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
@@ -81,7 +81,7 @@ def open_motor(pins, training_hash, contexts):
         parent_lineage_hash=tr["parent_lineage_hash"],
         root=tp.parent,
         expected_receipt_hash=training_hash,
-        checkpoint_kind="ar1-actor-critic",
+        checkpoint_kind=checkpoint_kind,
     )
     return bench, actor
 

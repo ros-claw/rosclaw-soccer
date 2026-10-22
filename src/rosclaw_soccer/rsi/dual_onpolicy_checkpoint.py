@@ -105,7 +105,7 @@ def load_dual_candidate_for_sim_audit(
 ) -> tuple[DualRecurrentMotor, dict[str, Any]]:
     if not 0 <= _depth < 32:
         raise ValueError("bounded explicit continual actor-critic lineage required")
-    if checkpoint_kind == "contact-consolidated":
+    if checkpoint_kind in ("contact-consolidated", "contact-consolidated-v2"):
         from rosclaw_soccer.rsi.contact_consolidation_checkpoint import load_contact_consolidated
 
         return load_contact_consolidated(
@@ -114,6 +114,9 @@ def load_dual_candidate_for_sim_audit(
             root=root,
             expected_receipt_hash=expected_receipt_hash,
             depth=_depth,
+            stage="own-state-correction"
+            if checkpoint_kind == "contact-consolidated-v2"
+            else "initial",
         )
     if checkpoint_kind == "supervised":
         return load_dual_for_sim_audit(
