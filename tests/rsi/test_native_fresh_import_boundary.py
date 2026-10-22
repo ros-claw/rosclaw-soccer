@@ -9,6 +9,7 @@ import pytest
         "scripts.rsi_seal_native_fresh",
         "scripts.rsi_native_fresh_shard",
         "scripts.rsi_close_native_fresh",
+        "scripts.rsi_qualify_shared_native_motor",
     ],
 )
 def test_import_does_not_allocate_workers_or_write_physical_outputs(module, tmp_path, monkeypatch):

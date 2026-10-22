@@ -13,10 +13,19 @@ from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 
 
 class NativeVelocityLayout:
-    def __init__(self, model: Any, *, robot_prefix: str, ball_body_name: str) -> None:
+    def __init__(
+        self, model: Any, *, robot_prefix: str, ball_body_name: str, player_count: int = 1
+    ) -> None:
         import mujoco
 
-        if (model.nq, model.nv, model.nu) != (43, 41, 29) or model.na or model.neq:
+        if (
+            type(player_count) is not int
+            or not 1 <= player_count <= 8
+            or (model.nq, model.nv, model.nu)
+            != (36 * player_count + 7, 35 * player_count + 6, 29 * player_count)
+            or model.na
+            or model.neq
+        ):
             raise ValueError("explicit activation-free canonical-sized SIM model required")
         self.model = model
         self.robot_prefix = robot_prefix
@@ -41,7 +50,14 @@ class NativeVelocityLayout:
         self.vi = np.array([int(model.jnt_dofadr[j]) for j in self.joints])
         qids = [*range(self.rq, self.rq + 7), *self.qi, *range(self.bq, self.bq + 7)]
         vids = [*range(self.rv, self.rv + 6), *self.vi, *range(self.bv, self.bv + 6)]
-        if sorted(qids) != list(range(43)) or sorted(vids) != list(range(41)):
+        if (
+            len(set(qids)) != 43
+            or len(set(vids)) != 41
+            or min(qids) < 0
+            or max(qids) >= model.nq
+            or min(vids) < 0
+            or max(vids) >= model.nv
+        ):
             raise ValueError("one-to-one complete canonical state mapping required")
         self.ai = []
         for j in self.joints:
@@ -52,8 +68,17 @@ class NativeVelocityLayout:
             if found.shape != (1,):
                 raise ValueError("one actuator per canonical joint required")
             self.ai.append(int(found[0]))
-        if sorted(self.ai) != list(range(29)):
+        if len(set(self.ai)) != 29:
             raise ValueError("bijection to all actual native actuators required")
+        # In a shared model, prefix spelling alone must not assign another
+        # player's joints to this body. The shared-world owner checks complete
+        # and disjoint coverage separately; legacy one-body coverage is exact.
+        for joint in self.joints:
+            body = int(model.jnt_bodyid[joint])
+            while body not in (0, self.pelvis):
+                body = int(model.body_parentid[body])
+            if body != self.pelvis:
+                raise ValueError("all canonical joints must belong to this player's body")
 
     def canonical(self, data: Any) -> tuple[np.ndarray, np.ndarray]:
         q = np.concatenate(

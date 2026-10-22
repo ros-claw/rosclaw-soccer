@@ -1,0 +1,163 @@
+"""Private Dual256 player history over a shared, measured MuJoCo world.
+
+No player advances physics by itself. Proposals are committed only after the
+shared world's next control boundary. Explicit static standing is a new task,
+never padded motion data or a held last action.
+"""
+
+from typing import Any
+
+import numpy as np
+import torch
+
+from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
+
+
+class PlayerObservationView:
+    """Only the measured per-body properties consumed by the pinned160 codec."""
+
+    def __init__(self, world: SharedNativeMotorWorld, prefix: str) -> None:
+        self.world, self.layout = world, world.layouts[prefix]
+
+    @property
+    def joint_pos(self) -> np.ndarray:
+        return np.array(self.world.data.qpos[self.layout.qi], copy=True)
+
+    @property
+    def joint_vel(self) -> np.ndarray:
+        return np.array(self.world.data.qvel[self.layout.vi], copy=True)
+
+    @property
+    def pelvis_pos(self) -> np.ndarray:
+        return np.array(self.world.data.xpos[self.layout.pelvis], copy=True)
+
+    @property
+    def pelvis_quat(self) -> np.ndarray:
+        return np.array(self.world.data.xquat[self.layout.pelvis], copy=True)
+
+    @property
+    def base_ang_vel(self) -> np.ndarray:
+        start = self.layout.rv + 3
+        return np.array(self.world.data.qvel[start : start + 3], copy=True)
+
+    @property
+    def ball_pos(self) -> np.ndarray:
+        return np.array(self.world.data.xpos[self.layout.ball], copy=True)
+
+
+class SharedNativeNeuralPlayer:
+    def __init__(
+        self,
+        world: SharedNativeMotorWorld,
+        prefix: str,
+        actor: DualRecurrentMotor,
+        *,
+        clip: Any,
+        torso_index: int,
+        build_observation: Any,
+        goal: np.ndarray,
+        offset: np.ndarray,
+        scale: np.ndarray,
+        order: np.ndarray,
+    ) -> None:
+        if (
+            type(actor) is not DualRecurrentMotor
+            or actor.training
+            or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
+            or not 1 <= clip.length <= 300
+            or goal.shape != (3,)
+            or not np.isfinite(goal).all()
+            or order.dtype.kind not in ("i", "u")
+            or sorted(order.tolist()) != list(range(29))
+            or any(a.shape != (29,) or not np.isfinite(a).all() for a in (offset, scale))
+            or (scale <= 0).any()
+        ):
+            raise ValueError(
+                "frozen explicit Dual256 motor, real reference and HG29 codec required"
+            )
+        self.world, self.prefix, self.actor, self.clip = world, prefix, actor, clip
+        self.view = PlayerObservationView(world, prefix)
+        self.torso_index, self.build_observation = torso_index, build_observation
+        self.goal, self.offset, self.scale, self.order = (
+            a.copy() for a in (goal, offset, scale, order)
+        )
+        self.state = tuple(t.detach().clone() for t in actor.initial_state())
+        self.last_action = np.zeros(29, np.float32)
+        self.ref_pos, self.ref_vel = np.zeros(29, np.float32), np.zeros(29, np.float32)
+        self.ref_ang = np.zeros(3, np.float32)
+        self.frame, self.decisions = 0, 0
+        self.phase = "MOTION"
+        self.boundary = world.control_steps
+        self.pending: dict[str, Any] | None = None
+
+    def begin_standing(self) -> None:
+        if (
+            self.phase != "MOTION_COMPLETE"
+            or self.pending is not None
+            or self.world.failed
+            or self.boundary != self.world.control_steps
+        ):
+            raise ValueError("actual healthy complete motion boundary required for new stand task")
+        self.ref_vel = np.zeros(29, np.float32)
+        self.ref_ang = np.zeros(3, np.float32)
+        self.phase = "STANDING"
+
+    def propose(self) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+        if (
+            self.pending is not None
+            or self.world.failed
+            or self.boundary != self.world.control_steps
+            or self.phase not in ("MOTION", "STANDING")
+        ):
+            raise ValueError("one own proposal at the current live shared boundary required")
+        obs = self.build_observation(
+            self.view,
+            None,
+            0,
+            self.last_action,
+            self.ref_pos,
+            self.ref_vel,
+            self.ref_ang,
+            self.view.ball_pos,
+            self.goal,
+            self.offset,
+            obs_dim=None,
+        )
+        if obs.shape != (160,) or obs.dtype != np.float32 or not np.isfinite(obs).all():
+            raise ValueError("exact actual per-player160 observation required; no padding")
+        with torch.no_grad():
+            mean, state = self.actor(torch.from_numpy(obs).reshape(1, 1, 160), self.state)
+        if (
+            mean.shape != (1, 1, 29)
+            or not torch.isfinite(mean).all()
+            or any(t.shape != (2, 1, 256) or not torch.isfinite(t).all() for t in state)
+        ):
+            raise ValueError("finite own HG29 action and private Dual256 history required")
+        action = mean[0, 0].numpy().copy()
+        trace = dict(
+            NN_obs=obs.copy(),
+            NN_action=action.copy(),
+            NN_h_before=self.state[0].numpy().copy(),
+            NN_c_before=self.state[1].numpy().copy(),
+            NN_h_after=state[0].numpy().copy(),
+            NN_c_after=state[1].numpy().copy(),
+        )
+        self.pending = dict(action=action, state=tuple(t.detach().clone() for t in state))
+        return self.offset + action[self.order] * self.scale, trace
+
+    def commit(self) -> None:
+        if self.pending is None or self.world.control_steps != self.boundary + 1:
+            raise ValueError("own proposal and exactly one executed shared control required")
+        self.state = self.pending["state"]
+        self.last_action = self.pending["action"]
+        self.pending = None
+        if self.phase == "MOTION":
+            self.ref_pos = self.clip.joint_pos[self.frame].copy()
+            self.ref_vel = self.clip.joint_vel[self.frame].copy()
+            self.ref_ang = self.clip.body_ang_vel_w[self.frame, self.torso_index].copy()
+            self.frame += 1
+            if self.frame == self.clip.length:
+                self.phase = "MOTION_COMPLETE"
+        self.boundary = self.world.control_steps
+        self.decisions += 1
