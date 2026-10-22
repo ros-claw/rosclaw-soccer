@@ -1,7 +1,9 @@
-"""Independent whole-world SIM replay of the fixed published-R2 run pilot.
+"""Independent whole-world replay of the inherited-base run pilot.
 
 Reuses the admitted observation codec, not producer integration/shadow/standing
 controllers. Recomputes every neural call and integrates every native step.
+The legacy producer called actor.base published_R2, but its weights were
+previously distilled. Preserve that receipt and explicitly correct provenance.
 """
 
 import argparse
@@ -74,6 +76,7 @@ def main():
         from rosclaw_soccer.providers.g1.velocity_policy import G1VelocityPolicy
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
+        from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
         from rosclaw_soccer.rsi.paid_run_pilot_recovery import contact_quality, stand_from_raw
         from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
         from rosclaw_soccer.rsi.paid_trainable_actor import PUBLISHED_HASH, PaidTrainableActor
@@ -82,9 +85,33 @@ def main():
         torch.set_num_interop_threads(1)
         if mujoco.__version__ != "3.5.0" or mujoco.get_mjcb_control() is not None:
             raise ValueError("pinned callback-free native engine required")
-        bench, policy, _ = open_paid_bench(pins, [d["case"]])
-        actor = PaidTrainableActor(policy, expected_hash=PUBLISHED_HASH).eval()
-        actor.requires_grad_(False)
+        bench, policy, scene = open_paid_bench(pins, [d["case"]])
+        candidates = []
+        for path in pins:
+            if (
+                path.endswith("/complete.json")
+                and "/rsi-paid-canonical-pipeline-20261022/learned-trained/" in path
+            ):
+                candidates.append(Path(path))
+        if len(candidates) != 1:
+            raise ValueError("unique source-bound canonical motor lineage required")
+        training_path = candidates[0]
+        training = json.loads(training_path.read_text())
+        wrapper, _ = load_paid_student(
+            policy,
+            checkpoint=Path(training["checkpoint_path"]),
+            checkpoint_hash=training["checkpoint_hash"],
+            training_receipt=training_path,
+            training_receipt_hash=pins[str(training_path)],
+            scene_hash=scene,
+        )
+        actor = wrapper.base
+        pristine = PaidTrainableActor(policy, expected_hash=PUBLISHED_HASH).eval()
+        changed_tensors = [
+            k for k, v in actor.state_dict().items() if not torch.equal(v, pristine.state_dict()[k])
+        ]
+        if not changed_tensors:
+            raise ValueError("legacy identity correction must bind the actual distilled motor")
         onnx = next(Path(x) for x in pins if x.endswith("/exported/policy.onnx"))
         cfg = next(Path(x) for x in pins if x.endswith("/params/deploy.yaml"))
 
@@ -309,7 +336,11 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="PUBLISHED_R2_RUN_WHOLE_NATIVE_OWN_NN_AUDIT_PASS",
+                status="INHERITED_BASE_RUN_WHOLE_NATIVE_OWN_NN_AUDIT_PASS",
+                legacy_producer_motor_label="published_R2",
+                actual_motor="previously_distilled_inherited_base_without_outer_residual",
+                pristine_published_R2=False,
+                base_tensors_different_from_published=changed_tensors,
                 source_hash=a.source_hash,
                 source_head=a.expected_head,
                 input_file_hashes=pins,
