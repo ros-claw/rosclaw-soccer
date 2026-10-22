@@ -11,7 +11,7 @@ import torch
 
 
 def collect_parent_reference(
-    ep: Any, actor: Any, *, foot: str
+    ep: Any, actor: Any, *, foot: str, hidden_width: int = 128
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray] | None, dict[str, Any] | None, int]:
     from rosclaw_soccer.rsi.paid_foot_taskspace import FootTaskSpaceIntent
     from rosclaw_soccer.rsi.paid_neural_stand import NeuralStandingTask
@@ -26,7 +26,16 @@ def collect_parent_reference(
     ):
         raise ValueError("fresh declared native world and frozen parent motor required")
     initial = snapshot(ep.env.data)
-    state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
+    if hidden_width == 256:
+        from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+
+        if type(actor) is not DualRecurrentMotor:
+            raise ValueError("explicit typed dual256 motor required")
+        state = actor.initial_state()
+    elif hidden_width == 128:
+        state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
+    else:
+        raise ValueError("explicit known private motor history contract required")
     identity = FootTaskSpaceIntent(
         ep.env.model, foot=foot, center=105, latent=np.zeros((2, 6), np.float64)
     )
@@ -67,6 +76,11 @@ def collect_parent_reference(
             calls += 1
 
         stand, summary = NeuralStandingTask(
-            ep, actor, state=state, memory_mode="carry", count_inference=count
+            ep,
+            actor,
+            state=state,
+            memory_mode="carry",
+            count_inference=count,
+            hidden_width=hidden_width,
         ).collect(100)
     return raw, stand, summary, calls
