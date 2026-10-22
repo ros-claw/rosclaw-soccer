@@ -53,9 +53,24 @@ class FootTaskSpaceIntent:
         self.hg = np.array([G1_DDS_JOINT_NAMES.index(n) for n in names])
 
     def __call__(self, ep: Any, nominal: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+        return self.solve_offset(ep, nominal, phase_intent(ep.frame, self.center, self.latent))
+
+    def solve_offset(
+        self, ep: Any, nominal: np.ndarray, offset: np.ndarray
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Bounded current-body Cartesian proposal, no physical state writes.
+
+        Allows a measured contact-centering teacher without inventing a past
+        pose or changing the original four-iteration/.2rad IK authority.
+        """
         import mujoco
 
-        offset = phase_intent(ep.frame, self.center, self.latent)
+        if (
+            offset.shape != (6,)
+            or not np.isfinite(offset).all()
+            or (np.abs(offset) > 2 * POSE_SCALE + 1e-12).any()
+        ):
+            raise ValueError("finite Cartesian offset inside original phase authority required")
         requested = np.zeros(29)
         if not offset.any():
             return nominal.copy(), dict(

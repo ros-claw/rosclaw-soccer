@@ -29,6 +29,8 @@ def replay_teacher_world(
     counts: dict[str, int],
     contact_observer: Callable[[dict[str, Any]], None] | None = None,
     hidden_width: int = 128,
+    action_adapter: Callable[[Any, np.ndarray, dict[str, Any]], tuple[np.ndarray, int]]
+    | None = None,
 ) -> None:
     """Count actual work even if a later comparison fails; never retry here."""
     import mujoco
@@ -50,6 +52,8 @@ def replay_teacher_world(
         if raw is not None and any(not np.isfinite(v).all() for v in raw.values()):
             raise ValueError("finite raw primitives required")
     model, data = ep.env.model, ep.env.data
+    if action_adapter is not None and hidden_width != 256:
+        raise ValueError("new action reconstruction cannot reinterpret legacy128 audit controls")
     if contact_observer is not None and model.opt.integrator == mujoco.mjtIntegrator.mjINT_RK4:
         raise ValueError("contact clock diagnostic excludes multi-stage RK4 solver geometry")
     intent = FootTaskSpaceIntent(model, foot=foot, center=center, latent=latent)
@@ -102,7 +106,12 @@ def replay_teacher_world(
             for tensor, k in zip(state, ("NN_h_before", "NN_c_before"), strict=True):
                 equal(tensor.numpy(), raw[k][frame], "own " + k)
             with torch.no_grad():
-                mean, state = actor(torch.from_numpy(obs).reshape(1, 1, 160), state)
+                if action_adapter is not None:
+                    mean, state, evidence = actor.forward_with_evidence(
+                        torch.from_numpy(obs).reshape(1, 1, 160), state
+                    )
+                else:
+                    mean, state = actor(torch.from_numpy(obs).reshape(1, 1, 160), state)
             counts["neural"] += 1
             nominal = mean[0, 0].numpy().copy()
             equal(nominal, raw["NN_nominal_action"][frame], "own nominal")
@@ -110,10 +119,16 @@ def replay_teacher_world(
                 equal(tensor.numpy(), raw[k][frame], "own " + k)
             if phase == "kick":
                 before = snapshot(data)
-                action, plan = intent(ep, nominal.copy())
-                counts["kinematic_intent"] += 1
-                for k, value in plan.items():
-                    equal(value, raw["PLAN_" + k][frame], "own IK " + k)
+                if action_adapter is None:
+                    action, plan = intent(ep, nominal.copy())
+                    counts["kinematic_intent"] += 1
+                    for k, value in plan.items():
+                        equal(value, raw["PLAN_" + k][frame], "own IK " + k)
+                else:
+                    action, planner_calls = action_adapter(ep, nominal.copy(), evidence)
+                    if type(planner_calls) is not int or planner_calls not in (0, 1):
+                        raise ValueError("exact bounded actual solver invocation count required")
+                    counts["kinematic_intent"] += planner_calls
                 for k, value in snapshot(data).items():
                     equal(value, before[k], "no IK physical write " + k)
             else:
