@@ -121,7 +121,7 @@ def stroke_action(ep, mean, reference, center, latent):
     return action, delta, info["oracle_authority_clipped"]
 
 
-def score(blobs, goal):
+def score(blobs, goal, *, intended_foot=0):
     import numpy as np
 
     from rosclaw_soccer.rsi.native_contact_window import native_contact_window
@@ -137,7 +137,7 @@ def score(blobs, goal):
         canonical_qpos=raw["qpos"].reshape(-1, 43),
         canonical_qvel=raw["qvel"].reshape(-1, 41),
         goal=goal,
-        intended_foot=0,
+        intended_foot=intended_foot,
     )
     r = dict(
         body_failed=bool(raw["body_failed"].any()),
@@ -149,7 +149,19 @@ def score(blobs, goal):
     return r, ss, bool(contact_quality(r) and ss and ss["healthy"] and ss["stability_observed"])
 
 
-def collect(bench, actor, ctx, center, latent, folder, *, baseline=None):
+def collect(
+    bench,
+    actor,
+    ctx,
+    center,
+    latent,
+    folder,
+    *,
+    baseline=None,
+    shadow_student=None,
+    student_prefix_controls=None,
+    student_source=None,
+):
     import numpy as np
     import torch
 
@@ -160,15 +172,38 @@ def collect(bench, actor, ctx, center, latent, folder, *, baseline=None):
     ep = make_episode(bench, ctx)
     initial = snapshot(ep.env.data)
     private = actor.initial_state()
+    pair = None
+    if shadow_student is not None:
+        from rosclaw_soccer.rsi.same_state_motor_pair import SameStateMotorPair
+
+        if (
+            student_prefix_controls not in (40, 80)
+            or student_source is None
+            or baseline is not None
+        ):
+            raise ValueError("explicit source-bound 40/80-control student prefix required")
+        pair = SameStateMotorPair(shadow_student, actor)
+        pair_state = pair.initial_state()
+        private = pair_state[1]
+    elif student_prefix_controls is not None or student_source is not None:
+        raise ValueError("separate actual student required")
     rows, neural = [], 0
     while not ep.done and ep.frame < ep.clip.length:
         obs = ep.observation()
         before = [t.numpy().copy() for t in private]
-        with torch.no_grad():
-            m, private, evidence = actor.forward_with_evidence(
-                torch.from_numpy(obs).reshape(1, 1, 160), private
+        if pair is not None:
+            student_before = [t.numpy().copy() for t in pair_state[0]]
+            student_mean, m, pair_state, both = pair.observe(
+                torch.from_numpy(obs).reshape(1, 1, 160), pair_state
             )
-        neural += 1
+            private, evidence = pair_state[1], both["teacher"]
+            neural += 2
+        else:
+            with torch.no_grad():
+                m, private, evidence = actor.forward_with_evidence(
+                    torch.from_numpy(obs).reshape(1, 1, 160), private
+                )
+            neural += 1
         mean, ref = m[0, 0].numpy().copy(), evidence["reference_nominal"][0, 0].numpy().copy()
         frame = ep.frame
         if baseline is not None and frame < 80:
@@ -181,7 +216,26 @@ def collect(bench, actor, ctx, center, latent, folder, *, baseline=None):
                 if not np.array_equal(actual, baseline[key][frame]):
                     raise ValueError("actual learner prefix diverged")
         action, delta, clipped = stroke_action(ep, mean, ref, center, latent)
+        if pair is not None and frame < student_prefix_controls:
+            action = student_mean[0, 0].numpy().copy()
+            for value, key in (
+                (obs, "NN_obs"),
+                (action, "NN_action"),
+                (student_before[0], "NN_h_before"),
+                (student_before[1], "NN_c_before"),
+            ):
+                if not np.array_equal(value, student_source[key][frame]):
+                    raise ValueError("actual private student prefix differs from source exam")
         row = ep.step(action)
+        if (
+            pair is not None
+            and frame < student_prefix_controls
+            and any(
+                not np.array_equal(row[k], student_source[k][frame])
+                for k in ("qpos", "qvel", "forces", "torque")
+            )
+        ):
+            raise ValueError("actual student-owned physical prefix differs")
         if (
             baseline is not None
             and frame < 80
@@ -203,6 +257,15 @@ def collect(bench, actor, ctx, center, latent, folder, *, baseline=None):
             STROKE_delta_HG=delta,
             STROKE_authority_clipped=clipped,
         )
+        if pair is not None:
+            row.update(
+                PAIR_student_mean=student_mean[0, 0].numpy().copy(),
+                PAIR_student_h_before=student_before[0],
+                PAIR_student_c_before=student_before[1],
+                PAIR_student_h_after=pair_state[0][0].numpy().copy(),
+                PAIR_student_c_after=pair_state[0][1].numpy().copy(),
+                PAIR_student_executed=frame < student_prefix_controls,
+            )
         rows.append(row)
         if ep.frame == ep.clip.length and not ep.done:
             ep.admit_reference_recovery()
@@ -220,7 +283,9 @@ def collect(bench, actor, ctx, center, latent, folder, *, baseline=None):
             ep, actor, state=private, memory_mode="carry", count_inference=count, hidden_width=256
         ).collect(100)
         blobs["stand"] = stand
-    result, ss, good = score(blobs, ep.goal)
+    result, ss, good = score(
+        blobs, ep.goal, intended_foot=0 if "left" in ctx["case"]["source"] else 1
+    )
     artifacts = {}
     for name, z in blobs.items():
         p = folder / (name + ".npz")
@@ -240,4 +305,9 @@ def collect(bench, actor, ctx, center, latent, folder, *, baseline=None):
         assisted=True,
         PPO_actor_rows=0,
     )
+    if pair is not None:
+        row.update(
+            student_prefix_controls=student_prefix_controls,
+            shadow_student_queries=len(kick["NN_obs"]),
+        )
     return row, blobs
