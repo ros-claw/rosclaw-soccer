@@ -17,6 +17,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("audit-hash", "expected-head", "motor-lineage-hash"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--profile", choices=("paired_v1", "contextual_v2"), default="paired_v1")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -61,11 +62,30 @@ def main():
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(x): digest(x) for x in folder.rglob("*.py")})
     check_pins(pins)
+    contextual = a.profile == "contextual_v2"
+    centers = [105, 105]
+    if contextual:
+        for ci in range(2):
+            witness = next(
+                x
+                for x in source["records"]
+                if x["course"] == ci and x["arm"] == "reference_from_start" and x["repeat"] == 0
+            )
+            first = witness["result"]["postcontact"]["first_foot_contact_substep"]
+            if type(first) is not int or not 30 <= first // 10 <= 200:
+                raise ValueError("actual TRAIN first contact phase required before allocation")
+            centers[ci] = first // 10
+    max_worlds = 134 if contextual else 38
+    max_steps = max_worlds * 3890
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="paid.TRAIN.inherited_run_actual_state_expert.v1",
+            protocol=(
+                "paid.TRAIN.inherited_run_actual_state_expert.contextual_v2"
+                if contextual
+                else "paid.TRAIN.inherited_run_actual_state_expert.v1"
+            ),
             source_head=a.expected_head,
             input_file_hashes=pins,
             source_hash=digest(sp),
@@ -74,21 +94,27 @@ def main():
             source_case=decl["case"],
             courses=decl["courses"],
             center=105,
+            centers=centers,
+            independent_context_search=contextual,
             seed=41022,
-            rounds=2,
-            candidates_per_round=8,
-            elite=2,
-            initial_std=0.6,
-            minimum_std=0.1,
+            rounds=4 if contextual else 2,
+            candidates_per_round=16 if contextual else 8,
+            elite=4 if contextual else 2,
+            initial_std=0.2 if contextual else 0.6,
+            minimum_std=0.03 if contextual else 0.1,
             zero_baseline=True,
             selected_whole_repeats=2,
-            maximum_worlds=38,
-            maximum_native_steps=147820,
+            maximum_worlds=max_worlds,
+            maximum_native_steps=max_steps,
             selection=(
-                "lexicographic paired healthy_quality,correct_foot,no_forbidden,"
-                "observed,negative_lateral,forward_progress"
+                "contextual task_success/useful_stable_forward_kick BEFORE precision"
+                if contextual
+                else (
+                    "lexicographic paired healthy_quality,correct_foot,no_forbidden,"
+                    "observed,negative_lateral,forward_progress"
+                )
             ),
-            maximum_neural_calls=14782,
+            maximum_neural_calls=max_steps // 10,
             DEV_rows=0,
             Fresh_rows=0,
             optimizer_updates=0,
@@ -129,7 +155,7 @@ def main():
 
         def collect(latent, course_index, tag):
             nonlocal nn, ik_calls, worlds
-            if worlds >= 38:
+            if worlds >= max_worlds:
                 raise ValueError("bounded world allocation exceeded")
             folder = a.output / tag
             folder.mkdir()
@@ -146,7 +172,7 @@ def main():
             intent = FootTaskSpaceIntent(
                 ep.env.model,
                 foot="left" if "left" in decl["case"]["source"] else "right",
-                center=105,
+                center=centers[course_index],
                 latent=latent,
             )
             state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
@@ -252,7 +278,7 @@ def main():
                 ),
                 flush=True,
             )
-            if bench.native_steps > 147820 or nn > 14782:
+            if bench.native_steps > max_steps or nn > max_steps // 10:
                 raise ValueError("charged native budget exceeded")
             return outcome, dict(kick=raw, stand=sr)
 
@@ -276,9 +302,50 @@ def main():
 
         baseline = [collect(np.zeros((2, 6)), ci, f"baseline-c{ci}") for ci in range(2)]
         best, best_pair = np.zeros((2, 6)), baseline
+        context_ranks = None
+        if contextual:
+            from rosclaw_soccer.rsi.run_teacher_objective import run_teacher_rank
+
+            context_latents = []
+            context_pairs = []
+            context_ranks = []
+            for ci in range(2):
+                context_best = baseline[ci]
+                context_latent = np.zeros((2, 6))
+                context_rng = np.random.default_rng(41022 + ci)
+                context_mean, context_std = np.zeros((2, 6)), np.full((2, 6), 0.2)
+                for generation in range(4):
+                    trials = []
+                    for candidate in range(16):
+                        latent = np.clip(context_rng.normal(context_mean, context_std), -1, 1)
+                        pair = collect(latent, ci, f"g{generation}-n{candidate}-c{ci}")
+                        score = run_teacher_rank(pair[0])
+                        trials.append((score, candidate, latent))
+                        if score > run_teacher_rank(context_best[0]):
+                            context_best, context_latent = pair, latent.copy()
+                    elites = sorted(trials, key=lambda x: (x[0], -x[1]), reverse=True)[:4]
+                    values = np.stack([x[2] for x in elites])
+                    context_mean = values.mean(axis=0)
+                    context_std = np.maximum(values.std(axis=0), 0.03)
+                    write_once(
+                        a.output / f"course{ci}-generation{generation}.json",
+                        dict(
+                            course=ci,
+                            best_latent=context_latent.tolist(),
+                            best_rank=run_teacher_rank(context_best[0]),
+                            mean=context_mean.tolist(),
+                            std=context_std.tolist(),
+                            native_steps=bench.native_steps,
+                            worlds=worlds,
+                        ),
+                    )
+                context_latents.append(context_latent)
+                context_pairs.append(context_best)
+                context_ranks.append(run_teacher_rank(context_best[0]))
+            best, best_pair = np.stack(context_latents), context_pairs
         rng = np.random.default_rng(41022)
         mean, std = np.zeros((2, 6)), np.full((2, 6), 0.6)
-        for generation in range(2):
+        for generation in range(0 if contextual else 2):
             trials = []
             for candidate in range(8):
                 latent = np.clip(rng.normal(mean, std), -1, 1)
@@ -302,7 +369,9 @@ def main():
             )
         for ci in range(2):
             for repeat in range(2):
-                trial, blobs = collect(best, ci, f"selected-c{ci}-repeat{repeat}")
+                trial, blobs = collect(
+                    best[ci] if contextual else best, ci, f"selected-c{ci}-repeat{repeat}"
+                )
                 for name in blobs:
                     if blobs[name] is None:
                         if best_pair[ci][1][name] is not None:
@@ -320,6 +389,7 @@ def main():
                 declaration_hash=digest(a.output / "declaration.json"),
                 selected_latent=best.tolist(),
                 selected_rank=rank(best_pair),
+                selected_context_ranks=context_ranks,
                 baseline_rank=rank(baseline),
                 selected_whole_repeats_exact=True,
                 records=records,
