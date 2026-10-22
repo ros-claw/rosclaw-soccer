@@ -13,6 +13,7 @@ def replay_stroke_world(
     shadow_student=None,
     prefix_controls=None,
     student_source=None,
+    stroke_foot="left",
 ):
     import numpy as np
     import torch
@@ -30,7 +31,7 @@ def replay_stroke_world(
     def adapter(actual, mean, evidence):
         nonlocal shadow_state
         ref = evidence["reference_nominal"][0, 0].numpy().copy()
-        action, delta, clipped = stroke_action(actual, mean, ref, center, latent)
+        action, delta, clipped = stroke_action(actual, mean, ref, center, latent, foot=stroke_foot)
         if shadow_student is not None:
             observation = evidence["actual_observation"]
             equal(observation, kick["NN_obs"][actual.frame], "one actual causal observation")
