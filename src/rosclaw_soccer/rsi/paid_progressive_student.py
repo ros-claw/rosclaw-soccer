@@ -478,5 +478,10 @@ def load_paid_student(policy: Path, **kwargs: Any) -> tuple[Any, dict[str, Any]]
 
     if status == REPLAY_AUDITED_STATUS:
         return load_replay_student(policy, **kwargs)
+    from rosclaw_soccer.rsi.paid_negative_core import STATUS as NEGATIVE_CORE_STATUS
+    from rosclaw_soccer.rsi.paid_negative_core import load_negative_core_student
+
+    if status == NEGATIVE_CORE_STATUS:
+        return load_negative_core_student(policy, **kwargs)
     loader = load_progressive_student if status == TRAINED_STATUS else load_successor_student
     return loader(policy, **kwargs)

@@ -14,6 +14,10 @@ def contact_exam_candidate(
     if path.is_symlink() or digest(path) != expected or (root / "failed.json").exists():
         raise ValueError("exact closed simulation candidate required")
     r = json.loads(path.read_text())
+    from rosclaw_soccer.rsi.paid_negative_core import STATUS as NEGATIVE_CORE_STATUS
+
+    if r.get("status") == NEGATIVE_CORE_STATUS:
+        return negative_core_train_candidate(root, expected, r, plan)
     from rosclaw_soccer.rsi.paid_replay_neural_student import AUDITED_STATUS
 
     if r.get("status") == AUDITED_STATUS:
@@ -106,4 +110,53 @@ def neural_train_candidate(
         config.update(
             candidate_tail_replay=True, candidate_neural_training_protocol=cfg["protocol"]
         )
+    return dict(root=str(root), hash=expected), config, pins
+
+
+def negative_core_train_candidate(
+    root: Path, expected: str, r: dict[str, Any], plan: dict[str, Any]
+) -> tuple[dict[str, str], dict[str, Any], dict[str, str]]:
+    from rosclaw_soccer.rsi.paid_negative_core import STATUS, negative_core_config
+    from rosclaw_soccer.rsi.paid_neighborhood_study import neighborhood_config
+
+    if plan.get("plan_kind") is not None or plan.get("config") != neighborhood_config():
+        raise ValueError(
+            "new negative-core wrapper only admitted to consumed TRAIN32, never old frozen unseen"
+        )
+    if (
+        r.get("status") != STATUS
+        or r.get("config") != negative_core_config()
+        or r.get("body_scene_hash") != plan["body_scene_hash"]
+        or r.get("parent_hash") != plan["specifications"]["models"]["learned_memory"]["hash"]
+        or r.get("optimizer_updates") != 0
+        or r.get("own_native_steps") != 0
+        or any(r.get(k) is not False for k in ("hardware_authorized", "promotion_authorized"))
+    ):
+        raise ValueError("exact same-body protected-core candidate required")
+    cp = Path(r["checkpoint_path"])
+    if (
+        cp.is_symlink()
+        or cp.parent != root
+        or cp.stat().st_size > 1048576
+        or digest(cp) != r["checkpoint_hash"]
+    ):
+        raise ValueError(
+            "confined metadata commitment and independently loaded neural references required"
+        )
+    config = neighborhood_config()
+    config.update(
+        protocol="paid.contact_neighborhood.negative_core_neural_train_candidate.v6",
+        candidate_kind="negative_core_neural_wrapper",
+        candidate_hash=expected,
+        candidate_seed_index=0,
+        consumed_for_training=True,
+        heldout_generalization_claim=False,
+        maximum_native_steps_per_arm=248960,
+        maximum_native_steps=248960,
+        maximum_episodes=64,
+        arms=["primary0_negative_core"],
+        best_seed_selection_authorized=False,
+    )
+    pins = dict(r["input_file_hashes"])
+    pins.update({str(root / "complete.json"): expected, str(cp): r["checkpoint_hash"]})
     return dict(root=str(root), hash=expected), config, pins
