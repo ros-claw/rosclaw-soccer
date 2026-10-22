@@ -22,6 +22,7 @@ def main():
     p.add_argument("--training-root", type=Path)
     p.add_argument("--training-producer-head")
     p.add_argument("--generation-index", type=int, choices=range(1, 100), required=True)
+    p.add_argument("--curriculum", choices=("run2", "retention-run64"), default="run2")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
@@ -78,6 +79,9 @@ def main():
     ):
         raise ValueError("exact fully examined AR candidate required for research successor")
     a.output.mkdir()
+    from rosclaw_soccer.rsi.motor_exploration_curriculum import motor_curriculum
+
+    curriculum = motor_curriculum(a.curriculum)
     write_once(
         a.output / "declaration.json",
         dict(
@@ -87,6 +91,8 @@ def main():
             native_audit_hash=digest(ap),
             training_hash=a.training_hash,
             generation_index=a.generation_index,
+            curriculum=curriculum.name,
+            maximum_worlds=curriculum.worlds,
             research_use_of_unpromoted_candidate=True,
             automatic_retry=False,
             hardware_authorized=False,
@@ -116,6 +122,8 @@ def main():
                     digest(ap),
                     "--generation-index",
                     str(a.generation_index),
+                    "--curriculum",
+                    curriculum.name,
                 ],
                 "DUAL_AR1_ACTUAL_CALIBRATION_CLOSED_PENDING_NATIVE_AND_LAW_AUDIT",
             ),
@@ -123,7 +131,7 @@ def main():
                 "rsi_audit_dual_ar_experience",
                 "audit",
                 None,
-                "DUAL_AR1_ALL8_OWN_NATIVE_AND_SAMPLING_LAW_AUDIT_PASS_NOT_TRAINED",
+                curriculum.audit_status,
             ),
         ):
             clean()

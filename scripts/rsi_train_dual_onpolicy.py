@@ -39,13 +39,17 @@ def main():
     if a.output.exists() or any(x.is_symlink() for x in (rp, ap, dp)) or digest(ap) != a.audit_hash:
         raise ValueError("exact closed experience and independent own-native/law audit required")
     r, ar, d = [json.loads(x.read_text()) for x in (rp, ap, dp)]
+    from rosclaw_soccer.rsi.motor_exploration_curriculum import declared_motor_curriculum
+
+    curriculum = declared_motor_curriculum(d)
     if (
-        ar["status"] != "DUAL_AR1_ALL8_OWN_NATIVE_AND_SAMPLING_LAW_AUDIT_PASS_NOT_TRAINED"
+        ar["status"] != curriculum.audit_status
         or ar["source_hash"] != digest(rp)
         or ar["counts"]["native"] != r["actual_native_steps"]
         or ar["counts"]["neural"] != r["actual_neural_decisions"]
         or r["declaration_hash"] != digest(dp)
-        or len(r["records"]) != 8
+        or len(r["records"]) != curriculum.worlds
+        or len(ar["results"]) != curriculum.worlds
         or d["rho"] != 0.9
         or d["sigma_policy_units"] != 0.005
         or any(x["rejected"] for x in ar["results"])
@@ -117,6 +121,8 @@ def main():
         source_batch_generations=1,
         reward="coarse_contact_skill_return.v1_NOT_goal_plane_or_team_score",
         device="cpu",
+        source_batch_size=curriculum.worlds,
+        source_curriculum=curriculum.name,
     )
     if continual:
         config.update(
@@ -344,17 +350,16 @@ def main():
 
         def evaluate_kl():
             with torch.no_grad():
-                return (
-                    sum(own_history_conditional_kl(model, ep, log_std, rho=0.9) for ep in episodes)
-                    / 8
-                )
+                return sum(
+                    own_history_conditional_kl(model, ep, log_std, rho=0.9) for ep in episodes
+                ) / len(episodes)
 
         for epoch in range(4):
             optimizer.zero_grad(set_to_none=True)
             losses = []
             for ep in episodes:
                 loss, _ = own_history_loss(model, critic, ep, log_std, rho=0.9)
-                (loss / 8).backward()
+                (loss / len(episodes)).backward()
                 losses.append(float(loss.detach()))
             anchors = []
             for ep in old:
@@ -373,7 +378,7 @@ def main():
             info = dict(
                 epoch=epoch + 1,
                 accepted_steps=accepted,
-                mean_loss=sum(losses) / 8,
+                mean_loss=sum(losses) / len(episodes),
                 old14_anchor=sum(anchors) / 14,
                 actor_gradient=float(ga),
                 critic_gradient=float(gc),

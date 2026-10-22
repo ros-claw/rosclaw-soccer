@@ -15,6 +15,7 @@ from pathlib import Path
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--generation-index", type=int, choices=range(100), default=0)
+    p.add_argument("--curriculum", choices=("run2", "retention-run64"), default="run2")
     for n in ("exam-root", "audit-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("audit-hash", "expected-head"):
@@ -66,17 +67,22 @@ def main():
         pins.update({str(x): digest(x) for x in folder.rglob("*.py")})
     check_pins(pins)
     a.output.mkdir()
-    seeds = [710220 + 1000 * a.generation_index + i for i in range(4)]
+    from rosclaw_soccer.rsi.motor_exploration_curriculum import motor_curriculum
+
+    curriculum = motor_curriculum(a.curriculum)
+    seeds = curriculum.seeds(a.generation_index)
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="dual256.actual_AR1_calibration.TRAIN2x4.v1",
+            protocol=curriculum.protocol,
+            curriculum=curriculum.name,
+            source_context_ids=list(curriculum.context_ids),
             source_head=a.expected_head,
             input_file_hashes=pins,
             source_exam_hash=digest(rp),
             source_audit_hash=a.audit_hash,
             training_hash=d["training_hash"],
-            contexts=[d["contexts"][i] for i in (20, 21)],
+            contexts=[d["contexts"][i] for i in curriculum.context_ids],
             seeds=seeds,
             generation_index=a.generation_index,
             checkpoint_kind=d.get("checkpoint_kind", "supervised"),
@@ -84,9 +90,9 @@ def main():
             sigma_policy_units=0.005,
             noisy_reference_only=True,
             standing_deterministic_neural_carry=True,
-            maximum_worlds=8,
-            maximum_native_steps=32000,
-            maximum_neural_decisions=3200,
+            maximum_worlds=curriculum.worlds,
+            maximum_native_steps=4000 * curriculum.worlds,
+            maximum_neural_decisions=400 * curriculum.worlds,
             online_teacher=False,
             action_clipping=False,
             actor_updates=0,
@@ -114,7 +120,7 @@ def main():
 
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
-        contexts = [d["contexts"][i] for i in (20, 21)]
+        contexts = [d["contexts"][i] for i in curriculum.context_ids]
         bench, policy, scene = open_paid_bench(pins, [x["case"] for x in contexts])
         parent, _ = load_paid_student(
             policy,
@@ -133,7 +139,7 @@ def main():
         )
         scale = actor.parent.get_buffer("action_scale").numpy().copy()
         log_std = torch.full((29,), math.log(0.005), dtype=torch.float32)
-        for context, ctx in zip((20, 21), contexts, strict=True):
+        for context, ctx in zip(curriculum.context_ids, contexts, strict=True):
             for seed in seeds:
                 folder = a.output / f"context{context}-seed{seed}"
                 folder.mkdir()
@@ -289,7 +295,7 @@ def main():
                     ),
                     flush=True,
                 )
-                if bench.native_steps > 32000 or calls > 3200:
+                if bench.native_steps > 4000 * curriculum.worlds or calls > 400 * curriculum.worlds:
                     raise ValueError("bounded on-policy calibration budget exceeded")
         check_pins(pins)
         clean()

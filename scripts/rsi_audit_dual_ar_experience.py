@@ -39,17 +39,16 @@ def main():
     ):
         raise ValueError("exact complete AR experience source required")
     r, d = [json.loads(x.read_text()) for x in (rp, dp)]
+    from rosclaw_soccer.rsi.motor_exploration_curriculum import declared_motor_curriculum
+
+    curriculum = declared_motor_curriculum(d)
     if (
         r["status"] != "DUAL_AR1_ACTUAL_CALIBRATION_CLOSED_PENDING_NATIVE_AND_LAW_AUDIT"
         or r["declaration_hash"] != digest(dp)
         or r["input_file_hashes"] != d["input_file_hashes"]
-        or d["protocol"] != "dual256.actual_AR1_calibration.TRAIN2x4.v1"
-        or type(d.get("generation_index", 0)) is not int
-        or not 0 <= d.get("generation_index", 0) < 100
-        or d["seeds"] != [710220 + 1000 * d.get("generation_index", 0) + i for i in range(4)]
         or d["rho"] != 0.9
         or d["sigma_policy_units"] != 0.005
-        or len(r["records"]) != 8
+        or len(r["records"]) != curriculum.worlds
         or d["online_teacher"] is not False
         or d["action_clipping"] is not False
         or any(
@@ -74,6 +73,13 @@ def main():
 
     tp, training = receipt(d["training_hash"])
     pp, parent_record = receipt(training["parent_lineage_hash"])
+    original_path, original = receipt(d["source_exam_hash"])
+    original_decl = original_path.parent / "declaration.json"
+    if digest(original_decl) != original["declaration_hash"]:
+        raise ValueError("exact original examined TRAIN task commitment required")
+    original_contexts = json.loads(original_decl.read_text())["contexts"]
+    if d["contexts"] != [original_contexts[i] for i in curriculum.context_ids]:
+        raise ValueError("actual curriculum fixtures cannot drift from examined task identities")
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(x): digest(x) for x in folder.rglob("*.py")})
     check_pins(pins)
@@ -115,12 +121,12 @@ def main():
         )
         scale = actor.parent.get_buffer("action_scale").numpy().copy()
         log_std = torch.full((29,), math.log(0.005), dtype=torch.float32)
-        expected = [(c, s) for c in (20, 21) for s in d["seeds"]]
+        expected = [(c, s) for c in curriculum.context_ids for s in d["seeds"]]
         if [(x["context"], x["seed"]) for x in r["records"]] != expected:
             raise ValueError("complete fixed case/seed Cartesian product required")
         for rec in r["records"]:
             context, seed = rec["context"], rec["seed"]
-            ctx = d["contexts"][context - 20]
+            ctx = d["contexts"][curriculum.context_ids.index(context)]
             if rec["assisted"] is not False or rec["actor_training_admitted"] is not False:
                 raise ValueError("no admitted or assisted source allowed")
             blobs = {}
@@ -309,7 +315,7 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="DUAL_AR1_ALL8_OWN_NATIVE_AND_SAMPLING_LAW_AUDIT_PASS_NOT_TRAINED",
+                status=curriculum.audit_status,
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 source_hash=a.source_hash,
