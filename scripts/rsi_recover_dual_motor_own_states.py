@@ -13,6 +13,9 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--teacher-mode", choices=("reference", "measured_contact_center"), default="reference"
+    )
     for n in ("exam-root", "audit-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("audit-hash", "expected-head"):
@@ -53,6 +56,17 @@ def main():
     pins = dict(ar["input_file_hashes"])
     for x in (rp, ap, dp):
         pins[str(x)] = digest(x)
+    contact_inputs = {}
+    if a.teacher_mode == "measured_contact_center":
+        for i in (4, 5, 20, 21):
+            entry = next(
+                x for x in ar["contact_event_artifacts"] if x["context"] == i and x["repeat"] == 0
+            )
+            path = a.audit_root / entry["path"]
+            if path.is_symlink() or path.parent != a.audit_root or digest(path) != entry["hash"]:
+                raise ValueError("exact audited contact geometry required")
+            pins[str(path)] = digest(path)
+            contact_inputs[i] = json.loads(path.read_text())["events"]
 
     def receipt(h):
         paths = [Path(x) for x, v in pins.items() if v == h and x.endswith("/complete.json")]
@@ -78,7 +92,15 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="dual256.TRAIN.actual_failed_state_shared_authority_recovery.v1",
+            protocol="dual256.TRAIN.actual_failed_state_shared_authority_recovery.v1"
+            if a.teacher_mode == "reference"
+            else "dual256.TRAIN.measured_contact_center_on_learner_mean.v2",
+            teacher_mode=a.teacher_mode,
+            centering_geometry=(
+                "actual solver radial minus horizontal goal-directed .11m radial; "
+                "not force direction"
+            ),
+            centering_support_controls=24,
             source_head=a.expected_head,
             input_file_hashes=pins,
             exam_hash=digest(rp),
@@ -109,6 +131,10 @@ def main():
         import numpy as np
         import torch
 
+        from rosclaw_soccer.rsi.contact_center_teacher import (
+            current_body_offset,
+            measured_centering,
+        )
         from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.own_state_motor_assistance import (
@@ -190,7 +216,13 @@ def main():
                     )
                 }
             intent = None
-            if context >= 20:
+            world_offset = center = None
+            if a.teacher_mode == "measured_contact_center":
+                world_offset, center = measured_centering(contact_inputs[context], ep.goal)
+                intent = FootTaskSpaceIntent(
+                    ep.env.model, foot="left", center=center, latent=np.zeros((2, 6))
+                )
+            elif context >= 20:
                 source = next(
                     x for x in teacher["records"] if x["tag"] == f"selected-c{context - 20}-repeat0"
                 )
@@ -229,7 +261,12 @@ def main():
                 action = nominal.copy()
                 if share > 0:
                     physical = snapshot(ep.env.data)
-                    if intent is None:
+                    if a.teacher_mode == "measured_contact_center":
+                        rotation = ep.env.data.xmat[ep.env.pelvis_body_id].reshape(3, 3).copy()
+                        offset = current_body_offset(world_offset, rotation, frame, center)
+                        oracle, ik = intent.solve_offset(ep, nominal.copy(), offset)
+                        intent_calls += 1
+                    elif intent is None:
                         oracle, ik = reference, None
                     else:
                         oracle, ik = intent(ep, ref.copy())
@@ -340,7 +377,9 @@ def main():
                 tag=tag,
                 source_context=context,
                 alpha=alpha,
-                oracle_mode="reference" if intent is None else "reference_with_known_intent",
+                oracle_mode=a.teacher_mode
+                if a.teacher_mode != "reference"
+                else ("reference" if intent is None else "reference_with_known_intent"),
                 result=result,
                 stand=summary,
                 healthy_quality=good,
