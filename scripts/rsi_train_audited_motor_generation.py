@@ -16,6 +16,9 @@ def main():
     p.add_argument("--generation-index", type=int, choices=range(1, 100), required=True)
     p.add_argument("--curriculum", choices=("run2", "retention-run64"), required=True)
     p.add_argument("--critic-regression-steps", type=int, choices=(0, 32), default=0)
+    p.add_argument(
+        "--actor-step-profile", choices=("inherit", "recover-base-lr"), default="inherit"
+    )
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
@@ -62,6 +65,8 @@ def main():
             generation_index=a.generation_index,
             curriculum=c.name,
             worlds=c.worlds,
+            actor_step_profile=a.actor_step_profile,
+            critic_regression_steps=a.critic_regression_steps,
             automatic_retry=False,
             hardware_authorized=False,
         ),
@@ -83,6 +88,8 @@ def main():
             str(a.output),
             "--critic-regression-steps",
             str(a.critic_regression_steps),
+            "--actor-step-profile",
+            a.actor_step_profile,
         ],
         check=True,
     )

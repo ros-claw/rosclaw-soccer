@@ -118,7 +118,8 @@ def load_dual_candidate_for_sim_audit(
     if root.is_symlink() or (root / "failed.json").exists() or digest(rp) != expected_receipt_hash:
         raise ValueError("exact closed actor-critic training receipt required")
     r, d = [json.loads(x.read_text()) for x in (rp, dp)]
-    refit = r["config"].get("protocol") == "dual256.AR1_continual_critic_regression.v3"
+    scheduled = r["config"].get("protocol") == "dual256.AR1_continual_actor_schedule.v4"
+    refit = scheduled or r["config"].get("protocol") == "dual256.AR1_continual_critic_regression.v3"
     continual = refit or r["config"].get("protocol") == "dual256.AR1_continual_actor_critic.v2"
     if (
         r["status"] != "DUAL_AR1_ACTOR_CRITIC_ACTUALLY_UPDATED_PENDING_PHYSICAL_EXAM"
@@ -129,6 +130,7 @@ def load_dual_candidate_for_sim_audit(
             "dual256.AR1_audited_option_actor_critic.v1",
             "dual256.AR1_continual_actor_critic.v2",
             "dual256.AR1_continual_critic_regression.v3",
+            "dual256.AR1_continual_actor_schedule.v4",
         )
         or r["input_file_hashes"] != d["input_file_hashes"]
         or r["parent_lineage_hash"] != parent_lineage_hash
@@ -221,7 +223,9 @@ def load_dual_candidate_for_sim_audit(
             type(x) is not dict
             or x.get("schema")
             != (
-                "soccer.dual_motor.ar1_ppo.v3"
+                "soccer.dual_motor.ar1_ppo.v4"
+                if scheduled
+                else "soccer.dual_motor.ar1_ppo.v3"
                 if refit
                 else "soccer.dual_motor.ar1_ppo.v2"
                 if continual
@@ -288,6 +292,23 @@ def load_dual_candidate_for_sim_audit(
         cumulative_steps,
         cumulative_critic_steps,
     )
+    if scheduled:
+        from rosclaw_soccer.rsi.actor_step_schedule import validate_actor_step_schedule
+
+        if (
+            r["config"]["learning_rates"]
+            != "declared_actor_schedule_after_exact_initial_checkpoint"
+            or last.get("actor_step_schedule") != r.get("actor_step_schedule")
+            or r["config"]["max_conditional_kl"] != 0.015
+        ):
+            raise ValueError("explicit versioned actor rate intervention required")
+        validate_actor_step_schedule(
+            first["optimizer"],
+            last["optimizer"],
+            r["epochs"],
+            r["actor_step_schedule"],
+            r["config"]["actor_step_profile"],
+        )
     model.plastic.load_state_dict(last["plastic_network"], strict=True)
     model.eval().requires_grad_(False)
     return model, r

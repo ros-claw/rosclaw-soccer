@@ -19,6 +19,9 @@ def main():
     p.add_argument("--failed-predecessor-root", type=Path)
     p.add_argument("--failed-predecessor-hash")
     p.add_argument("--critic-regression-steps", type=int, choices=(0, 32), default=0)
+    p.add_argument(
+        "--actor-step-profile", choices=("inherit", "recover-base-lr"), default="inherit"
+    )
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -95,13 +98,21 @@ def main():
 
     wp, warm = receipt(r["training_hash"])
     continual = d.get("checkpoint_kind", "supervised") == "ar1-actor-critic"
+    if a.actor_step_profile != "inherit" and not continual:
+        raise ValueError("actor rate intervention requires an actual continual predecessor")
+    scheduled = continual and (
+        a.actor_step_profile != "inherit"
+        or warm["config"]["protocol"] == "dual256.AR1_continual_actor_schedule.v4"
+    )
     if a.critic_regression_steps and not continual:
         raise ValueError(
             "independent critic refit requires an actual learned actor-critic predecessor"
         )
     refit = continual and (
-        a.critic_regression_steps > 0
-        or warm["config"]["protocol"] == "dual256.AR1_continual_critic_regression.v3"
+        scheduled
+        or a.critic_regression_steps > 0
+        or warm["config"]["protocol"]
+        in ("dual256.AR1_continual_critic_regression.v3", "dual256.AR1_continual_actor_schedule.v4")
     )
     if continual and (
         d.get("generation_index") != warm["config"].get("source_generation_index", 0) + 1
@@ -115,7 +126,9 @@ def main():
     check_pins(pins)
     a.output.mkdir()
     config = dict(
-        protocol="dual256.AR1_continual_critic_regression.v3"
+        protocol="dual256.AR1_continual_actor_schedule.v4"
+        if scheduled
+        else "dual256.AR1_continual_critic_regression.v3"
         if refit
         else "dual256.AR1_continual_actor_critic.v2"
         if continual
@@ -155,6 +168,11 @@ def main():
             critic_fit_seed_slots=3 * curriculum.seeds_per_context // 4,
             critic_only_evaluation_before_PPO=True,
             critic_PPO_lr_restored=True,
+        )
+    if scheduled:
+        config.update(
+            actor_step_profile=a.actor_step_profile,
+            learning_rates="declared_actor_schedule_after_exact_initial_checkpoint",
         )
     write_once(
         a.output / "declaration.json",
@@ -377,7 +395,9 @@ def main():
         first = a.output / "onpolicy-initial.pt"
         torch.save(
             dict(
-                schema="soccer.dual_motor.ar1_ppo.v3"
+                schema="soccer.dual_motor.ar1_ppo.v4"
+                if scheduled
+                else "soccer.dual_motor.ar1_ppo.v3"
                 if refit
                 else "soccer.dual_motor.ar1_ppo.v2"
                 if continual
@@ -443,6 +463,13 @@ def main():
                 flush=True,
             )
 
+        schedule = None
+        if scheduled:
+            from rosclaw_soccer.rsi.actor_step_schedule import apply_actor_step_schedule
+
+            schedule = apply_actor_step_schedule(optimizer, a.actor_step_profile)
+            write_once(a.output / "actor-step-schedule.json", schedule)
+
         def evaluate_kl():
             with torch.no_grad():
                 return sum(
@@ -466,6 +493,7 @@ def main():
             gc = torch.nn.utils.clip_grad_norm_(critic_params, 1.0)
             if not torch.isfinite(ga) or not torch.isfinite(gc):
                 raise ValueError("nonfinite actor/critic gradient")
+            rates_before = [g["lr"] for g in optimizer.param_groups]
             decision = backtracked_adam_update(
                 optimizer, actor_params + critic_params, evaluate_kl, maximum_kl=0.015
             )
@@ -478,6 +506,8 @@ def main():
                 actor_gradient=float(ga),
                 critic_gradient=float(gc),
                 decision=decision,
+                learning_rates_before=rates_before,
+                learning_rates_after=[g["lr"] for g in optimizer.param_groups],
             )
             epochs.append(info)
             write_once(a.output / f"epoch{epoch + 1}.json", info)
@@ -499,7 +529,9 @@ def main():
         last = a.output / "onpolicy-final.pt"
         torch.save(
             dict(
-                schema="soccer.dual_motor.ar1_ppo.v3"
+                schema="soccer.dual_motor.ar1_ppo.v4"
+                if scheduled
+                else "soccer.dual_motor.ar1_ppo.v3"
                 if refit
                 else "soccer.dual_motor.ar1_ppo.v2"
                 if continual
@@ -516,6 +548,7 @@ def main():
                 config=config,
                 warm_start_hash=r["training_hash"],
                 parent_lineage_hash=warm["parent_lineage_hash"],
+                **(dict(actor_step_schedule=schedule) if scheduled else {}),
             ),
             last,
         )
@@ -584,6 +617,7 @@ def main():
                 hardware_authorized=False,
                 promotion_authorized=False,
                 goal_complete=False,
+                **(dict(actor_step_schedule=schedule) if scheduled else {}),
             ),
         )
     except Exception as error:
