@@ -19,6 +19,8 @@ def main():
     p.add_argument(
         "--sampling-law", choices=("gaussian-ar1", "box-truncated-ar1"), default="gaussian-ar1"
     )
+    p.add_argument("--shard-count", type=int, choices=(1, 4), default=1)
+    p.add_argument("--shard-slot", type=int, choices=range(4), default=0)
     for n in ("exam-root", "audit-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("audit-hash", "expected-head"):
@@ -74,6 +76,7 @@ def main():
 
     curriculum = motor_curriculum(a.curriculum)
     seeds = curriculum.seeds(a.generation_index)
+    owned = set(curriculum.shard_pairs(a.generation_index, a.shard_slot, a.shard_count))
     write_once(
         a.output / "declaration.json",
         dict(
@@ -82,6 +85,9 @@ def main():
             sampling_law=a.sampling_law,
             source_context_ids=list(curriculum.context_ids),
             source_head=a.expected_head,
+            shard_count=a.shard_count,
+            shard_slot=a.shard_slot,
+            execution_worlds=len(owned),
             input_file_hashes=pins,
             source_exam_hash=digest(rp),
             source_audit_hash=a.audit_hash,
@@ -145,6 +151,8 @@ def main():
         log_std = torch.full((29,), math.log(0.005), dtype=torch.float32)
         for context, ctx in zip(curriculum.context_ids, contexts, strict=True):
             for seed in seeds:
+                if (context, seed) not in owned:
+                    continue
                 folder = a.output / f"context{context}-seed{seed}"
                 folder.mkdir()
                 ep = bench.make(ctx["case"])
@@ -302,7 +310,7 @@ def main():
                     ),
                     flush=True,
                 )
-                if bench.native_steps > 4000 * curriculum.worlds or calls > 400 * curriculum.worlds:
+                if bench.native_steps > 4000 * len(owned) or calls > 400 * len(owned):
                     raise ValueError("bounded on-policy calibration budget exceeded")
         check_pins(pins)
         clean()
@@ -311,6 +319,7 @@ def main():
             dict(
                 status="DUAL_AR1_ACTUAL_CALIBRATION_CLOSED_PENDING_NATIVE_AND_LAW_AUDIT",
                 source_head=a.expected_head,
+                partial_curriculum_worker=a.shard_count != 1,
                 input_file_hashes=pins,
                 declaration_hash=digest(a.output / "declaration.json"),
                 training_hash=d["training_hash"],

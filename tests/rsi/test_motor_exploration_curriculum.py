@@ -49,3 +49,26 @@ def test_unreviewed_context_or_negative_generation_rejected():
         motor_curriculum("holdout")
     with pytest.raises(ValueError):
         motor_curriculum("run2").seeds(-1)
+
+
+def test_four_workers_partition_full_course_without_duplicates_or_qualification_of_a_shard():
+    c = motor_curriculum("retention-run64")
+    full = c.shard_pairs(3, 0, 1)
+    parts = [c.shard_pairs(3, i, 4) for i in range(4)]
+    assert [len(x) for x in parts] == [16] * 4
+    assert set().union(*(set(x) for x in parts)) == set(full)
+    assert sum(len(x) for x in parts) == len(set(full)) == 64
+    d = dict(
+        curriculum=c.name,
+        protocol=c.protocol,
+        seeds=c.seeds(3),
+        generation_index=3,
+        contexts=[{}] * 4,
+        maximum_worlds=64,
+        maximum_native_steps=256000,
+        maximum_neural_decisions=25600,
+        shard_count=4,
+        shard_slot=0,
+    )
+    with pytest.raises(ValueError):
+        declared_motor_curriculum(d)

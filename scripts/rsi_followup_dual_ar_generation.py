@@ -26,6 +26,8 @@ def main():
     p.add_argument(
         "--sampling-law", choices=("gaussian-ar1", "box-truncated-ar1"), default="gaussian-ar1"
     )
+    p.add_argument("--workers", type=int, choices=(1, 4), default=1)
+    p.add_argument("--linter", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
@@ -39,6 +41,10 @@ def main():
             raise ValueError("clean frozen successor generation required")
 
     clean()
+    if a.workers == 4 and (a.sampling_law != "box-truncated-ar1" or a.linter is None):
+        raise ValueError(
+            "parallel native collection requires bounded law and explicit bootstrap linter"
+        )
     if a.training_hash is None:
         if a.training_root is None or not a.training_producer_head:
             raise ValueError(
@@ -97,6 +103,7 @@ def main():
             curriculum=curriculum.name,
             sampling_law=a.sampling_law,
             maximum_worlds=curriculum.worlds,
+            native_workers=a.workers,
             research_use_of_unpromoted_candidate=True,
             automatic_retry=False,
             hardware_authorized=False,
@@ -115,7 +122,9 @@ def main():
         experience = a.output / "experience"
         for module, name, options, status in (
             (
-                "rsi_collect_dual_ar_experience",
+                "rsi_collect_parallel_motor_experience"
+                if a.workers == 4
+                else "rsi_collect_dual_ar_experience",
                 "experience",
                 [
                     "--exam-root",
@@ -148,6 +157,8 @@ def main():
                     "--source-hash",
                     digest(experience / "complete.json"),
                 ]
+            if name == "experience" and a.workers == 4:
+                options += ["--linter", str(a.linter)]
             argv = [
                 sys.executable,
                 "-m",
