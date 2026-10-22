@@ -101,13 +101,13 @@ def make_episode(bench, ctx):
     return ep
 
 
-def stroke_action(ep, mean, reference, center, latent):
+def stroke_action(ep, mean, reference, center, latent, *, foot="left"):
     import numpy as np
 
     from rosclaw_soccer.rsi.contact_stroke_intent import contact_stroke_delta
     from rosclaw_soccer.rsi.own_state_motor_assistance import blend_actual_motor
 
-    delta = contact_stroke_delta(foot="left", frame=ep.frame, center=center, latent=latent)
+    delta = contact_stroke_delta(foot=foot, frame=ep.frame, center=center, latent=latent)
     if not delta.any():
         return mean.copy(), delta, False
     oracle = mean.copy()
@@ -161,6 +161,7 @@ def collect(
     shadow_student=None,
     student_prefix_controls=None,
     student_source=None,
+    stroke_foot="left",
 ):
     import numpy as np
     import torch
@@ -168,6 +169,8 @@ def collect(
     from rosclaw_soccer.rsi.paid_neural_stand import NeuralStandingTask
     from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
 
+    if stroke_foot not in ("left", "right"):
+        raise ValueError("explicit teacher contact leg required before allocation")
     folder.mkdir()
     ep = make_episode(bench, ctx)
     initial = snapshot(ep.env.data)
@@ -215,7 +218,7 @@ def collect(
             ):
                 if not np.array_equal(actual, baseline[key][frame]):
                     raise ValueError("actual learner prefix diverged")
-        action, delta, clipped = stroke_action(ep, mean, ref, center, latent)
+        action, delta, clipped = stroke_action(ep, mean, ref, center, latent, foot=stroke_foot)
         if pair is not None and frame < student_prefix_controls:
             action = student_mean[0, 0].numpy().copy()
             for value, key in (
