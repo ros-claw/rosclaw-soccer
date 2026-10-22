@@ -64,6 +64,7 @@ class FootTaskSpaceIntent:
         *,
         shin_clearance: bool = False,
         observed_shin_clearance: bool = False,
+        clearance_profile: str = "standard-v1",
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Bounded current-body Cartesian proposal, no physical state writes.
 
@@ -73,6 +74,11 @@ class FootTaskSpaceIntent:
         import mujoco
 
         from rosclaw_soccer.rsi.capsule_clearance import sphere_capsule_clearance
+        from rosclaw_soccer.rsi.shin_clearance_profile import shin_clearance_profile
+
+        horizon, constraint_weight = shin_clearance_profile(clearance_profile)
+        if clearance_profile != "standard-v1" and not observed_shin_clearance:
+            raise ValueError("predictive priority profile requires observed shin clearance")
 
         if observed_shin_clearance and not shin_clearance:
             raise ValueError("observed clearance requires explicit shin constraint")
@@ -169,10 +175,16 @@ class FootTaskSpaceIntent:
                 prediction = clearance
                 if observed_shin_clearance:
                     closing_speed = float(outward @ (sj @ ep.env.data.qvel - ball_velocity))
-                    prediction += 0.04 * min(0.0, closing_speed)
+                    prediction += horizon * min(0.0, closing_speed)
                 if prediction < 0.015:
-                    jac = np.vstack((jac, outward @ sj[:, self.vi]))
-                    error = np.r_[error, 0.015 - prediction]
+                    constraint_row = outward @ sj[:, self.vi]
+                    constraint_error = 0.015 - prediction
+                    if constraint_weight != 1.0:
+                        # Weighted least squares: multiply BOTH sides by sqrt(w).
+                        constraint_row = constraint_row * np.sqrt(constraint_weight)
+                        constraint_error *= np.sqrt(constraint_weight)
+                    jac = np.vstack((jac, constraint_row))
+                    error = np.r_[error, constraint_error]
             delta = jac.T @ np.linalg.solve(jac @ jac.T + 0.02**2 * np.eye(len(error)), error)
             step = np.clip(delta, -0.08, 0.08)
             limited |= bool((step != delta).any())
@@ -203,6 +215,11 @@ class FootTaskSpaceIntent:
             if observed_shin_clearance:
                 information.update(
                     clearance_from_observed_pose_plus_correction=True,
-                    closing_velocity_horizon_s=0.04,
+                    closing_velocity_horizon_s=horizon,
                 )
+                if clearance_profile != "standard-v1":
+                    information.update(
+                        clearance_profile=clearance_profile,
+                        clearance_constraint_weight=constraint_weight,
+                    )
         return action, information

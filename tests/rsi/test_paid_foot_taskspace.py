@@ -93,8 +93,11 @@ def synthetic_episode(with_ball=False):
     )
 
 
-@pytest.mark.parametrize("observed", [False, True])
-def test_shin_clearance_uses_only_scratch_kinematics_and_original_joint_bound(observed):
+@pytest.mark.parametrize(
+    "observed,profile",
+    [(False, "standard-v1"), (True, "standard-v1"), (True, "anticipatory-priority-v1")],
+)
+def test_shin_clearance_uses_only_scratch_kinematics_and_original_joint_bound(observed, profile):
     ep = synthetic_episode(with_ball=True)
     before = (ep.env.data.qpos.copy(), ep.env.data.qvel.copy(), ep.env.data.ctrl.copy())
     intent = FootTaskSpaceIntent(ep.env.model, foot="left", center=104, latent=np.zeros((2, 6)))
@@ -105,6 +108,7 @@ def test_shin_clearance_uses_only_scratch_kinematics_and_original_joint_bound(ob
         np.zeros(6),
         shin_clearance=True,
         observed_shin_clearance=observed,
+        clearance_profile=profile,
     )
     assert np.isfinite(action).all() and abs(action).max() <= 0.200001
     assert plan["requested_shin_surface_margin_m"] == 0.015
@@ -112,12 +116,23 @@ def test_shin_clearance_uses_only_scratch_kinematics_and_original_joint_bound(ob
     assert plan["ik_iterations"] == 4
     if observed:
         assert plan["clearance_from_observed_pose_plus_correction"] is True
-        assert plan["closing_velocity_horizon_s"] == 0.04
+        assert plan["closing_velocity_horizon_s"] == (0.04 if profile == "standard-v1" else 0.08)
+        if profile != "standard-v1":
+            assert plan["clearance_constraint_weight"] == 4.0
     for actual, old in zip(
         (ep.env.data.qpos, ep.env.data.qvel, ep.env.data.ctrl), before, strict=True
     ):
         np.testing.assert_array_equal(actual, old)
     assert ep.env.data.time == 0
+
+
+def test_new_prediction_cannot_be_enabled_without_observed_clearance():
+    ep = synthetic_episode(with_ball=True)
+    intent = FootTaskSpaceIntent(ep.env.model, foot="left", center=104, latent=np.zeros((2, 6)))
+    with pytest.raises(ValueError, match="requires observed"):
+        intent.solve_offset(
+            ep, np.zeros(29, np.float32), np.zeros(6), clearance_profile="anticipatory-priority-v1"
+        )
 
 
 def test_zero_intent_is_bit_exact_and_ik_never_mutates_live_state_or_model():

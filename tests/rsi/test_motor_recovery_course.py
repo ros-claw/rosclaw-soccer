@@ -16,6 +16,13 @@ def test_continual_failed_context_course_has_own_budget_and_audit_identity():
     assert "18_CONTINUAL" in c.audit_status
 
 
+def test_predictive_teacher_is_a_separate_profile_without_more_authority_or_worlds():
+    c = motor_recovery_course("continual-predictive3", "measured_contact_observed_shin")
+    assert c.contexts == (4, 20, 21) and c.worlds == 18
+    assert c.clearance_profile == "anticipatory-priority-v1"
+    assert "18_PREDICTIVE" in c.audit_status
+
+
 @pytest.mark.parametrize(
     "course,mode", [("arbitrary", "reference"), ("continual-failed3", "reference")]
 )

@@ -9,6 +9,7 @@ class MotorRecoveryCourse:
     checkpoint_kind: str
     worlds: int
     audit_status: str
+    clearance_profile: str = "standard-v1"
 
 
 def motor_recovery_course(name: str, mode: str) -> MotorRecoveryCourse:
@@ -22,5 +23,13 @@ def motor_recovery_course(name: str, mode: str) -> MotorRecoveryCourse:
             "ar1-actor-critic",
             18,
             "DUAL_MOTOR_ASSISTED18_CONTINUAL_OWN_NATIVE_AUDIT_PASS",
+        )
+    if name == "continual-predictive3" and mode == "measured_contact_observed_shin":
+        return MotorRecoveryCourse(
+            (4, 20, 21),
+            "ar1-actor-critic",
+            18,
+            "DUAL_MOTOR_ASSISTED18_PREDICTIVE_OWN_NATIVE_AUDIT_PASS",
+            "anticipatory-priority-v1",
         )
     raise ValueError("explicit bounded teacher recovery course and mode required")

@@ -59,7 +59,9 @@ def main():
         mode not in protocols
         or d["protocol"]
         != (
-            "dual256.TRAIN.continual_failed3_observed_shin_recovery.v5"
+            "dual256.TRAIN.continual_predictive_priority_shin_recovery.v6"
+            if course.clearance_profile != "standard-v1"
+            else "dual256.TRAIN.continual_failed3_observed_shin_recovery.v5"
             if course.checkpoint_kind == "ar1-actor-critic"
             else protocols[mode]
         )
@@ -70,6 +72,7 @@ def main():
         or r["input_file_hashes"] != d["input_file_hashes"]
         or d["source_context_ids"] != list(course.contexts)
         or d.get("checkpoint_kind", "supervised") != course.checkpoint_kind
+        or d.get("clearance_profile", "standard-v1") != course.clearance_profile
         or d["alphas"] != [0.25, 0.5, 0.75, 1.0]
         or d["start_control"] != 80
         or d["ramp_controls"] != 8
@@ -91,6 +94,23 @@ def main():
     ):
         raise ValueError("complete explicitly bounded assisted TRAIN recovery required")
     pins = dict(r["input_file_hashes"])
+    if course.clearance_profile != "standard-v1":
+        from rosclaw_soccer.rsi.teacher_pivot_baseline import audited_teacher_baseline
+
+        paths = [
+            Path(x)
+            for x, h in pins.items()
+            if h == d["baseline_teacher_audit_hash"] and x.endswith("/complete.json")
+        ]
+        if len(paths) != 1:
+            raise ValueError("unique audited baseline required for changed teacher prediction")
+        h, baseline_pins = audited_teacher_baseline(
+            paths[0].parent, head=d["baseline_teacher_audit_head"], training_hash=r["training_hash"]
+        )
+        if h != d["baseline_teacher_audit_hash"] or any(
+            pins.get(p) != v for p, v in baseline_pins.items()
+        ):
+            raise ValueError("independent baseline admission disagrees with declared source")
     if course.checkpoint_kind == "ar1-actor-critic":
         readouts = [
             Path(x)
@@ -343,6 +363,7 @@ def main():
                                 "measured_contact_observed_shin",
                             ),
                             observed_shin_clearance=mode == "measured_contact_observed_shin",
+                            clearance_profile=course.clearance_profile,
                         )
                     elif intent is None:
                         oracle, ik = reference, None

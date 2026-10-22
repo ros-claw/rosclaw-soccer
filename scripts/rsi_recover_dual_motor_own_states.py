@@ -27,9 +27,15 @@ def main():
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("audit-hash", "expected-head"):
         p.add_argument("--" + n, required=True)
-    p.add_argument("--recovery-course", choices=("legacy4", "continual-failed3"), default="legacy4")
+    p.add_argument(
+        "--recovery-course",
+        choices=("legacy4", "continual-failed3", "continual-predictive3"),
+        default="legacy4",
+    )
     p.add_argument("--paired-readout-root", type=Path)
     p.add_argument("--paired-readout-head")
+    p.add_argument("--baseline-teacher-audit-root", type=Path)
+    p.add_argument("--baseline-teacher-audit-head")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -70,7 +76,7 @@ def main():
     pins = dict(ar["input_file_hashes"])
     for x in (rp, ap, dp):
         pins[str(x)] = digest(x)
-    if a.recovery_course == "continual-failed3":
+    if course.checkpoint_kind == "ar1-actor-critic":
         if a.paired_readout_root is None or not a.paired_readout_head:
             raise ValueError("continual teacher pivot requires exact completed paired readout")
         path = a.paired_readout_root / "complete.json"
@@ -97,6 +103,22 @@ def main():
         pins[str(path)] = digest(path)
     elif a.paired_readout_root is not None or a.paired_readout_head is not None:
         raise ValueError("legacy recovery cannot imply a continual pivot")
+    baseline_hash = None
+    if a.recovery_course == "continual-predictive3":
+        if a.baseline_teacher_audit_root is None or not a.baseline_teacher_audit_head:
+            raise ValueError("predictive teacher requires independently audited limited baseline")
+        from rosclaw_soccer.rsi.teacher_pivot_baseline import audited_teacher_baseline
+
+        baseline_hash, baseline_pins = audited_teacher_baseline(
+            a.baseline_teacher_audit_root,
+            head=a.baseline_teacher_audit_head,
+            training_hash=d["training_hash"],
+        )
+        if any(p in pins and pins[p] != h for p, h in baseline_pins.items()):
+            raise ValueError("conflicting baseline teacher provenance")
+        pins.update(baseline_pins)
+    elif a.baseline_teacher_audit_root is not None or a.baseline_teacher_audit_head is not None:
+        raise ValueError("baseline teacher intervention belongs only to predictive course")
     contact_inputs = {}
     if a.teacher_mode.startswith("measured_contact_"):
         for i in selected:
@@ -132,7 +154,9 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="dual256.TRAIN.continual_failed3_observed_shin_recovery.v5"
+            protocol="dual256.TRAIN.continual_predictive_priority_shin_recovery.v6"
+            if a.recovery_course == "continual-predictive3"
+            else "dual256.TRAIN.continual_failed3_observed_shin_recovery.v5"
             if a.recovery_course == "continual-failed3"
             else "dual256.TRAIN.actual_failed_state_shared_authority_recovery.v1"
             if a.teacher_mode == "reference"
@@ -148,6 +172,9 @@ def main():
             teacher_mode=a.teacher_mode,
             recovery_course=a.recovery_course,
             checkpoint_kind=course.checkpoint_kind,
+            clearance_profile=course.clearance_profile,
+            baseline_teacher_audit_hash=baseline_hash,
+            baseline_teacher_audit_head=a.baseline_teacher_audit_head,
             paired_readout_hash=digest(a.paired_readout_root / "complete.json")
             if a.paired_readout_root
             else None,
@@ -336,6 +363,7 @@ def main():
                             ),
                             observed_shin_clearance=a.teacher_mode
                             == "measured_contact_observed_shin",
+                            clearance_profile=course.clearance_profile,
                         )
                         intent_calls += 1
                     elif intent is None:
