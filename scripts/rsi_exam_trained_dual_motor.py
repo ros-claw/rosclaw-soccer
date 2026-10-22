@@ -12,6 +12,9 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--checkpoint-kind", choices=("supervised", "ar1-actor-critic"), default="supervised"
+    )
     for n in ("training-root", "cpu-audit-root", "rehearsal-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("training-hash", "cpu-auditor-head", "rehearsal-hash", "expected-head"):
@@ -45,6 +48,7 @@ def main():
     t, ar, r = [json.loads(x.read_text()) for x in (tp, ap, rp)]
     if (
         ar["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
+        or ar.get("checkpoint_kind", "supervised") != a.checkpoint_kind
         or ar["source_head"] != a.cpu_auditor_head
         or ar["source_hash"] != a.training_hash
         or ar["checkpoint_hash"] != t["checkpoint_hash"]
@@ -99,6 +103,7 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol="dual256.unassisted_TRAIN20_and_consumed_run2.v1",
+            checkpoint_kind=a.checkpoint_kind,
             source_head=a.expected_head,
             input_file_hashes=pins,
             training_hash=a.training_hash,
@@ -123,7 +128,7 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
+        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.motor_reference_rollout import collect_parent_reference
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.paid_continuity_audit import identical
@@ -142,11 +147,12 @@ def main():
             training_receipt_hash=t["parent_lineage_hash"],
             scene_hash=scene,
         )
-        actor, _ = load_dual_for_sim_audit(
+        actor, _ = load_dual_candidate_for_sim_audit(
             parent,
             parent_lineage_hash=t["parent_lineage_hash"],
             root=a.training_root,
             expected_receipt_hash=a.training_hash,
+            checkpoint_kind=a.checkpoint_kind,
         )
         records = []
         for index, ctx in enumerate(contexts):

@@ -93,7 +93,7 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
+        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
         from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
@@ -112,11 +112,12 @@ def main():
             training_receipt_hash=training["parent_lineage_hash"],
             scene_hash=scene,
         )
-        actor, _ = load_dual_for_sim_audit(
+        actor, _ = load_dual_candidate_for_sim_audit(
             parent,
             parent_lineage_hash=training["parent_lineage_hash"],
             root=training_path.parent,
             expected_receipt_hash=d["training_hash"],
+            checkpoint_kind=d.get("checkpoint_kind", "supervised"),
         )
         seen = set()
         previous = {}
@@ -255,6 +256,7 @@ def main():
                 input_file_hashes=pins,
                 source_hash=a.source_hash,
                 training_hash=d["training_hash"],
+                checkpoint_kind=d.get("checkpoint_kind", "supervised"),
                 checkpoint_hash=training["checkpoint_hash"],
                 counts=counts,
                 recurrent_branch_queries=2 * counts["neural"],

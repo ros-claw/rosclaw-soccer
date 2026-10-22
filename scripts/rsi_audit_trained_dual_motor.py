@@ -8,6 +8,9 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--checkpoint-kind", choices=("supervised", "ar1-actor-critic"), default="supervised"
+    )
     for n in ("root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("source-hash", "expected-head"):
@@ -63,7 +66,7 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
+        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
         from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
 
@@ -84,11 +87,12 @@ def main():
             training_receipt_hash=r["parent_lineage_hash"],
             scene_hash=scene,
         )
-        model, _ = load_dual_for_sim_audit(
+        model, _ = load_dual_candidate_for_sim_audit(
             parent,
             parent_lineage_hash=r["parent_lineage_hash"],
             root=a.root,
             expected_receipt_hash=a.source_hash,
+            checkpoint_kind=a.checkpoint_kind,
         )
         expected_sequences = (
             24 if data["status"] == "DUAL_MOTOR_ACTUAL_DAGGER_SEQUENCES_READY_NOT_TRAINED" else 22
@@ -159,6 +163,7 @@ def main():
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 source_hash=a.source_hash,
+                checkpoint_kind=a.checkpoint_kind,
                 checkpoint_hash=r["checkpoint_hash"],
                 data_hash=r["data_hash"],
                 results=outcomes,
