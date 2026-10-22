@@ -19,7 +19,9 @@ def main():
     p.add_argument("--recovery-root", type=Path)
     p.add_argument("--recovery-hash")
     p.add_argument(
-        "--motor-reference", choices=("current201", "published_R2"), default="current201"
+        "--motor-reference",
+        choices=("current201", "inherited_base", "pristine_published_R2"),
+        default="current201",
     )
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
@@ -89,10 +91,10 @@ def main():
     arms = ["standing_current", "run_shadow_current", "run_shadow_taskspace_teacher"]
     native_budget, query_budget = 55080, 6000
     protocol = "paid.velocity_actual_shadow_then_reference80.v1"
-    if a.motor_reference == "published_R2":
+    if a.motor_reference != "current201":
         arms = ["reference_from_start", "velocity_shadow_reference"]
         native_budget, query_budget = 36000, 4000
-        protocol = "paid.velocity_actual_shadow_then_reference80.published_R2_v2"
+        protocol = "paid.velocity_actual_shadow_then_reference80." + a.motor_reference + "_v3"
     from rosclaw_soccer.rsi.paid_run_pilot_recovery import (
         contact_quality,
         recover_first_standing_world,
@@ -189,7 +191,36 @@ def main():
             training_receipt_hash=spec["hash"],
             scene_hash=scene,
         )
-        active_actor = actor.base if a.motor_reference == "published_R2" else actor
+        from rosclaw_soccer.rsi.paid_trainable_actor import PUBLISHED_HASH, PaidTrainableActor
+
+        published = PaidTrainableActor(policy, expected_hash=PUBLISHED_HASH).eval()
+        published.requires_grad_(False)
+        base_diff = [
+            k
+            for k, v in actor.base.state_dict().items()
+            if not torch.equal(v, published.state_dict()[k])
+        ]
+        active_actor = {
+            "current201": actor,
+            "inherited_base": actor.base,
+            "pristine_published_R2": published,
+        }[a.motor_reference]
+        write_once(
+            a.output / "motor-identity.json",
+            dict(
+                requested=a.motor_reference,
+                inherited_base_is_pristine=not bool(base_diff),
+                inherited_base_changed_tensors=base_diff,
+                active_is_pristine=all(
+                    torch.equal(v, published.state_dict()[k])
+                    for k, v in active_actor.state_dict().items()
+                )
+                if a.motor_reference != "current201"
+                else False,
+                lineage_receipt_hash=spec["hash"],
+                published_onnx_hash=PUBLISHED_HASH,
+            ),
+        )
         records = []
         for ci, course in enumerate(courses):
             for arm in arms:
@@ -527,6 +558,7 @@ def main():
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 declaration_hash=digest(a.output / "declaration.json"),
+                motor_identity_hash=digest(a.output / "motor-identity.json"),
                 records=records,
                 counts=counts,
                 actual_native_steps=bench.native_steps + reused_steps,
