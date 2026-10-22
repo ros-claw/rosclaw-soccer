@@ -10,8 +10,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for n in ("root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
-    for n in ("source-hash", "expected-head"):
-        p.add_argument("--" + n, required=True)
+    p.add_argument("--expected-head", required=True)
+    p.add_argument("--source-hash")
+    p.add_argument("--producer-head")
+    p.add_argument("--declaration-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -25,6 +27,14 @@ def main():
             raise ValueError("clean pinned independent audit source required")
 
     clean()
+    from rosclaw_soccer.rsi.queued_audit_commitment import bind_complete
+
+    a.source_hash = bind_complete(
+        a.root,
+        complete_hash=a.source_hash,
+        producer_head=a.producer_head,
+        declaration_hash=a.declaration_hash,
+    )
     rp, dp = a.root / "complete.json", a.root / "declaration.json"
     if (
         a.output.exists()
