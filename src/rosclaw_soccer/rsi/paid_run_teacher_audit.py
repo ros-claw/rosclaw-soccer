@@ -133,7 +133,9 @@ def replay_teacher_world(
                     for k, value in plan.items():
                         equal(value, raw["PLAN_" + k][frame], "own IK " + k)
                 else:
-                    action, planner_calls = action_adapter(ep, nominal.copy(), evidence)
+                    action, planner_calls = action_adapter(
+                        ep, nominal.copy(), dict(evidence, actual_observation=obs.copy())
+                    )
                     if type(planner_calls) is not int or planner_calls not in (0, 1):
                         raise ValueError("exact bounded actual solver invocation count required")
                     counts["kinematic_intent"] += planner_calls

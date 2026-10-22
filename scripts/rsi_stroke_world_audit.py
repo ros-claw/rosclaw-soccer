@@ -32,7 +32,8 @@ def replay_stroke_world(
         ref = evidence["reference_nominal"][0, 0].numpy().copy()
         action, delta, clipped = stroke_action(actual, mean, ref, center, latent)
         if shadow_student is not None:
-            observation = actual.observation()
+            observation = evidence["actual_observation"]
+            equal(observation, kick["NN_obs"][actual.frame], "one actual causal observation")
             for t, k in zip(
                 shadow_state, ("PAIR_student_h_before", "PAIR_student_c_before"), strict=True
             ):

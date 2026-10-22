@@ -15,7 +15,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("base-root", "prefix-root", "prefix-audit-root", "output"):
         p.add_argument("--" + key, type=Path, required=True)
-    for key in ("prefix-source-head", "expected-head"):
+    for key in ("prefix-source-head", "prefix-auditor-head", "expected-head"):
         p.add_argument("--" + key, required=True)
     a = p.parse_args()
     from rosclaw_soccer.rsi.contact_consolidation_data import (
@@ -59,7 +59,7 @@ def main():
         or len(base["records"]) != 65
         or source["declaration_hash"] != digest(dp)
         or audit["status"] != "STUDENT_PREFIX36_ALL_OWN_NATIVE_TEACHER_FEASIBILITY_AUDIT_PASS"
-        or audit["source_head"] != a.prefix_source_head
+        or audit["source_head"] != a.prefix_auditor_head
         or source["source_head"] != a.prefix_source_head
         or audit["source_hash"] != digest(rp)
         or audit["worlds"] != 36

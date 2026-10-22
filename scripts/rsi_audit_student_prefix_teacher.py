@@ -12,6 +12,8 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("producer-head", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--failed-predecessor-root", type=Path)
+    p.add_argument("--failed-predecessor-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -72,6 +74,21 @@ def main():
         pins[path] = h
     for path in (rp, dp):
         pins[str(path)] = digest(path)
+    if bool(a.failed_predecessor_root) != bool(a.failed_predecessor_hash):
+        raise ValueError("exact preserved audit failure binding required")
+    if a.failed_predecessor_root is not None:
+        failed = a.failed_predecessor_root / "failed.json"
+        if failed.is_symlink() or digest(failed) != a.failed_predecessor_hash:
+            raise ValueError("exact original zero-native-step audit failure required")
+        failure = json.loads(failed.read_text())
+        if (
+            failure["completed_worlds"] != 0
+            or failure["counts"] != dict(native=0, neural=1, kinematic_intent=0, shadow_neural=0)
+            or failure["error"]
+            != "ValueError('one causal observation per real neural control required')"
+        ):
+            raise ValueError("recovery only fixes duplicate causal observer before physical replay")
+        pins[str(failed)] = a.failed_predecessor_hash
     for row in r["records"]:
         for art in row["artifacts"].values():
             path = a.root / art["path"]
