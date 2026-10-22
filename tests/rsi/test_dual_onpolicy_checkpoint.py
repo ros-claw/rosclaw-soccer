@@ -66,3 +66,16 @@ def test_continual_adam_carries_moments_counters_and_effective_rates():
     changed = copy.deepcopy(previous)
     changed["state"][0]["exp_avg"].add_(0.001)
     assert not same_training_state(changed, previous)
+
+
+def test_separate_critic_updates_have_honest_distinct_step_counters():
+    p, opt = opt_fixture()
+    optimizer = torch.optim.Adam([dict(params=p[:16]), dict(params=p[16:])])
+    optimizer.load_state_dict(opt)
+    optimizer.zero_grad(set_to_none=True)
+    for x in p[16:]:
+        x.grad = torch.ones_like(x)
+    optimizer.step()
+    validate_adam_slots(optimizer.state_dict(), p, 1, 2)
+    with pytest.raises(ValueError):
+        validate_adam_slots(optimizer.state_dict(), p, 1)

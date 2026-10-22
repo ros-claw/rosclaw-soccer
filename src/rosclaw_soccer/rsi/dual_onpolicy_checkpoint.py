@@ -20,9 +20,14 @@ from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
 from rosclaw_soccer.rsi.paid_full_entry_student import FrozenFullEntryActor
 
 
-def validate_adam_slots(opt: Any, parameters: list[torch.Tensor], steps: int) -> None:
+def validate_adam_slots(
+    opt: Any, parameters: list[torch.Tensor], steps: int, critic_steps: int | None = None
+) -> None:
     if type(steps) is not int or not 1 <= steps <= 128 or type(opt) is not dict:
         raise ValueError("bounded accepted actual PPO optimizer steps required")
+    critic_steps = steps if critic_steps is None else critic_steps
+    if type(critic_steps) is not int or not 1 <= critic_steps <= 4096:
+        raise ValueError("bounded separately recorded actual critic optimizer steps required")
     groups, slots = opt.get("param_groups", []), opt.get("state", {})
     if (
         len(groups) != 2
@@ -33,9 +38,10 @@ def validate_adam_slots(opt: Any, parameters: list[torch.Tensor], steps: int) ->
     ids = [i for g in groups for i in g["params"]]
     if len(set(ids)) != 20 or set(ids) != set(slots):
         raise ValueError("all and only20 unique actual Adam slots required")
-    for i, p in zip(ids, parameters, strict=True):
+    for index, (i, p) in enumerate(zip(ids, parameters, strict=True)):
         s = slots[i]
-        if set(s) != {"step", "exp_avg", "exp_avg_sq"} or float(s["step"]) != steps:
+        expected_steps = steps if index < 16 else critic_steps
+        if set(s) != {"step", "exp_avg", "exp_avg_sq"} or float(s["step"]) != expected_steps:
             raise ValueError("accepted actual PPO steps must bind every optimizer slot")
         for name in ("exp_avg", "exp_avg_sq"):
             x = s[name]
@@ -112,7 +118,8 @@ def load_dual_candidate_for_sim_audit(
     if root.is_symlink() or (root / "failed.json").exists() or digest(rp) != expected_receipt_hash:
         raise ValueError("exact closed actor-critic training receipt required")
     r, d = [json.loads(x.read_text()) for x in (rp, dp)]
-    continual = r["config"].get("protocol") == "dual256.AR1_continual_actor_critic.v2"
+    refit = r["config"].get("protocol") == "dual256.AR1_continual_critic_regression.v3"
+    continual = refit or r["config"].get("protocol") == "dual256.AR1_continual_actor_critic.v2"
     if (
         r["status"] != "DUAL_AR1_ACTOR_CRITIC_ACTUALLY_UPDATED_PENDING_PHYSICAL_EXAM"
         or r["declaration_hash"] != digest(dp)
@@ -121,6 +128,7 @@ def load_dual_candidate_for_sim_audit(
         not in (
             "dual256.AR1_audited_option_actor_critic.v1",
             "dual256.AR1_continual_actor_critic.v2",
+            "dual256.AR1_continual_critic_regression.v3",
         )
         or r["input_file_hashes"] != d["input_file_hashes"]
         or r["parent_lineage_hash"] != parent_lineage_hash
@@ -165,12 +173,29 @@ def load_dual_candidate_for_sim_audit(
     )
     initial_steps = 0
     cumulative_steps = steps
+    initial_critic_steps = 0
+    cumulative_critic_steps = steps
     warm_last = None
     if continual:
         initial_steps = predecessor.get(
             "cumulative_optimizer_steps", predecessor["accepted_optimizer_steps"]
         )
         cumulative_steps = initial_steps + steps
+        initial_critic_steps = predecessor.get("cumulative_critic_optimizer_steps", initial_steps)
+        regression_steps = r.get("critic_regression_optimizer_steps", 0) if refit else 0
+        cumulative_critic_steps = initial_critic_steps + regression_steps + steps
+        if refit and (
+            regression_steps not in (0, 32)
+            or r["initial_critic_optimizer_steps"] != initial_critic_steps
+            or r["cumulative_critic_optimizer_steps"] != cumulative_critic_steps
+            or r["config"]["critic_regression_steps"] != regression_steps
+            or len(r["critic_regression_history"]) != regression_steps
+        ):
+            raise ValueError("separate actual critic-only and PPO counter commitments required")
+        if not refit and initial_critic_steps != initial_steps:
+            raise ValueError(
+                "separate critic history cannot be collapsed into a legacy scalar step count"
+            )
         if (
             r["initial_optimizer_steps"] != initial_steps
             or r["cumulative_optimizer_steps"] != cumulative_steps
@@ -195,13 +220,25 @@ def load_dual_candidate_for_sim_audit(
         any(
             type(x) is not dict
             or x.get("schema")
-            != ("soccer.dual_motor.ar1_ppo.v2" if continual else "soccer.dual_motor.ar1_ppo.v1")
+            != (
+                "soccer.dual_motor.ar1_ppo.v3"
+                if refit
+                else "soccer.dual_motor.ar1_ppo.v2"
+                if continual
+                else "soccer.dual_motor.ar1_ppo.v1"
+            )
             or x.get("warm_start_hash") != r["warm_start_hash"]
             or x.get("parent_lineage_hash") != parent_lineage_hash
             for x in (first, last)
         )
-        or first.get("optimizer_updates") != initial_steps
-        or last.get("optimizer_updates") != cumulative_steps
+        or first.get("optimizer_updates")
+        != (dict(actor=initial_steps, critic=initial_critic_steps) if refit else initial_steps)
+        or last.get("optimizer_updates")
+        != (
+            dict(actor=cumulative_steps, critic=cumulative_critic_steps)
+            if refit
+            else cumulative_steps
+        )
         or last.get("config") != r["config"]
     ):
         raise ValueError("separate exact initial/final PPO checkpoint schema required")
@@ -238,6 +275,7 @@ def load_dual_candidate_for_sim_audit(
             first["optimizer"],
             list(model.plastic.parameters()) + list(critic.parameters()),
             initial_steps,
+            initial_critic_steps,
         )
     changed_critic = [
         k for k, v in last["critic"].items() if not torch.equal(v, first["critic"][k])
@@ -248,6 +286,7 @@ def load_dual_candidate_for_sim_audit(
         last["optimizer"],
         list(model.plastic.parameters()) + list(critic.parameters()),
         cumulative_steps,
+        cumulative_critic_steps,
     )
     model.plastic.load_state_dict(last["plastic_network"], strict=True)
     model.eval().requires_grad_(False)

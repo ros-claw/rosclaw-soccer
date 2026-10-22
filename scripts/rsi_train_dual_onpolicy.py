@@ -18,6 +18,7 @@ def main():
         p.add_argument("--" + n, required=True)
     p.add_argument("--failed-predecessor-root", type=Path)
     p.add_argument("--failed-predecessor-hash")
+    p.add_argument("--critic-regression-steps", type=int, choices=(0, 32), default=0)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -92,6 +93,14 @@ def main():
 
     wp, warm = receipt(r["training_hash"])
     continual = d.get("checkpoint_kind", "supervised") == "ar1-actor-critic"
+    if a.critic_regression_steps and not continual:
+        raise ValueError(
+            "independent critic refit requires an actual learned actor-critic predecessor"
+        )
+    refit = continual and (
+        a.critic_regression_steps > 0
+        or warm["config"]["protocol"] == "dual256.AR1_continual_critic_regression.v3"
+    )
     if continual and (
         d.get("generation_index") != warm["config"].get("source_generation_index", 0) + 1
         or a.failed_predecessor_root is not None
@@ -104,7 +113,9 @@ def main():
     check_pins(pins)
     a.output.mkdir()
     config = dict(
-        protocol="dual256.AR1_continual_actor_critic.v2"
+        protocol="dual256.AR1_continual_critic_regression.v3"
+        if refit
+        else "dual256.AR1_continual_actor_critic.v2"
         if continual
         else "dual256.AR1_audited_option_actor_critic.v1",
         epochs=4,
@@ -134,6 +145,14 @@ def main():
             critic_state_carried=True,
             learning_rates="exact_predecessor_effective_rates_not_reset",
         )
+    if refit:
+        config.update(
+            critic_regression_steps=a.critic_regression_steps,
+            critic_regression_lr=0.001,
+            critic_fit_seed_slots=3 * curriculum.seeds_per_context // 4,
+            critic_only_evaluation_before_PPO=True,
+            critic_PPO_lr_restored=True,
+        )
     write_once(
         a.output / "declaration.json",
         dict(
@@ -152,6 +171,9 @@ def main():
         ),
     )
     accepted = 0
+    critic_accepted = 0
+    critic_history = []
+    critic_evaluation = {}
     epochs = []
     queries = 0
     try:
@@ -170,6 +192,7 @@ def main():
             own_history_conditional_kl,
             own_history_loss,
         )
+        from rosclaw_soccer.rsi.motor_critic_regression import regress_motor_critic
         from rosclaw_soccer.rsi.motor_option_credit import (
             contact_skill_return,
             observed_option_tail,
@@ -203,6 +226,7 @@ def main():
         critic = MotorCritic().eval()
         warm_state = None
         initial_steps = 0
+        initial_critic_steps = 0
         if continual:
             warm_path = Path(warm["checkpoint_path"])
             if digest(warm_path) != warm["checkpoint_hash"]:
@@ -210,6 +234,7 @@ def main():
             warm_state = torch.load(warm_path, map_location="cpu", weights_only=True)
             critic.load_state_dict(warm_state["critic"], strict=True)
             initial_steps = warm.get("cumulative_optimizer_steps", warm["accepted_optimizer_steps"])
+            initial_critic_steps = warm.get("cumulative_critic_optimizer_steps", initial_steps)
         log_std = torch.full((29,), math.log(0.005), dtype=torch.float32)
         frozen = {k: v.clone() for k, v in parent.state_dict().items()}
         initial = {k: v.clone() for k, v in model.plastic.state_dict().items()}
@@ -260,6 +285,7 @@ def main():
             with torch.no_grad():
                 private = model.initial_state()
                 values = []
+                features = []
                 for i, actual in enumerate(ep["observations"]):
                     if not np.array_equal(
                         private[0].numpy(), kick["NN_h_before"][i]
@@ -279,6 +305,7 @@ def main():
                     if not np.array_equal(mean[0, 0].numpy(), kick["NN_nominal_action"][i]):
                         raise ValueError("old values must use exact actual behavior weights")
                     values.append(critic(e["critic_features"][:, 0])[0])
+                    features.append(e["critic_features"][0, 0].clone())
                 old_values = torch.stack(values)
                 if not continual and old_values.count_nonzero():
                     raise ValueError("declared initial critic not zero")
@@ -286,6 +313,8 @@ def main():
                     raise ValueError("finite persistent critic baseline required")
             ep["old_values"] = old_values
             ep["advantages"] = ep["returns"] - old_values
+            ep["critic_features"] = torch.stack(features)
+            ep["critic_fit"] = d["seeds"].index(row["seed"]) < 3 * curriculum.seeds_per_context // 4
             episodes.append(ep)
             sources.append(
                 dict(
@@ -345,18 +374,71 @@ def main():
         first = a.output / "onpolicy-initial.pt"
         torch.save(
             dict(
-                schema="soccer.dual_motor.ar1_ppo.v2"
+                schema="soccer.dual_motor.ar1_ppo.v3"
+                if refit
+                else "soccer.dual_motor.ar1_ppo.v2"
                 if continual
                 else "soccer.dual_motor.ar1_ppo.v1",
                 plastic_network=initial,
                 critic=critic_initial,
-                optimizer_updates=initial_steps,
+                optimizer_updates=dict(actor=initial_steps, critic=initial_critic_steps)
+                if refit
+                else initial_steps,
                 optimizer=cpu_tree(optimizer.state_dict()),
                 warm_start_hash=r["training_hash"],
                 parent_lineage_hash=warm["parent_lineage_hash"],
             ),
             first,
         )
+        if a.critic_regression_steps:
+            fit_x = torch.cat([ep["critic_features"] for ep in episodes if ep["critic_fit"]])
+            fit_y = torch.cat([ep["returns"] for ep in episodes if ep["critic_fit"]])
+            eval_x = torch.cat([ep["critic_features"] for ep in episodes if not ep["critic_fit"]])
+            eval_y = torch.cat([ep["returns"] for ep in episodes if not ep["critic_fit"]])
+            with torch.no_grad():
+                critic_evaluation = dict(
+                    fit_rows=len(fit_y),
+                    evaluation_rows=len(eval_y),
+                    initial_fit_MSE=float((critic(fit_x) - fit_y).square().mean()),
+                    initial_evaluation_MSE=float((critic(eval_x) - eval_y).square().mean()),
+                )
+            previous_lr = optimizer.param_groups[1]["lr"]
+            optimizer.param_groups[1]["lr"] = 0.001
+
+            def critic_count(n):
+                nonlocal critic_accepted
+                critic_accepted = n
+
+            critic_history = regress_motor_critic(
+                critic,
+                optimizer,
+                actor_params,
+                fit_x,
+                fit_y,
+                steps=a.critic_regression_steps,
+                on_update=critic_count,
+            )
+            optimizer.param_groups[1]["lr"] = previous_lr
+            with torch.no_grad():
+                critic_evaluation.update(
+                    final_fit_MSE=float((critic(fit_x) - fit_y).square().mean()),
+                    final_evaluation_MSE=float((critic(eval_x) - eval_y).square().mean()),
+                )
+            write_once(
+                a.output / "critic-regression.json",
+                dict(
+                    history=critic_history,
+                    evaluation=critic_evaluation,
+                    actor_weights_and_optimizer_unchanged=True,
+                    critic_updates=critic_accepted,
+                ),
+            )
+            print(
+                json.dumps(
+                    dict(critic_updates=critic_accepted, critic_evaluation=critic_evaluation)
+                ),
+                flush=True,
+            )
 
         def evaluate_kl():
             with torch.no_grad():
@@ -414,13 +496,20 @@ def main():
         last = a.output / "onpolicy-final.pt"
         torch.save(
             dict(
-                schema="soccer.dual_motor.ar1_ppo.v2"
+                schema="soccer.dual_motor.ar1_ppo.v3"
+                if refit
+                else "soccer.dual_motor.ar1_ppo.v2"
                 if continual
                 else "soccer.dual_motor.ar1_ppo.v1",
                 plastic_network=final,
                 critic=critic_final,
                 optimizer=cpu_tree(optimizer.state_dict()),
-                optimizer_updates=initial_steps + accepted,
+                optimizer_updates=dict(
+                    actor=initial_steps + accepted,
+                    critic=initial_critic_steps + critic_accepted + accepted,
+                )
+                if refit
+                else initial_steps + accepted,
                 config=config,
                 warm_start_hash=r["training_hash"],
                 parent_lineage_hash=warm["parent_lineage_hash"],
@@ -473,6 +562,11 @@ def main():
                 accepted_optimizer_steps=accepted,
                 initial_optimizer_steps=initial_steps,
                 cumulative_optimizer_steps=initial_steps + accepted,
+                initial_critic_optimizer_steps=initial_critic_steps,
+                cumulative_critic_optimizer_steps=initial_critic_steps + critic_accepted + accepted,
+                critic_regression_optimizer_steps=critic_accepted,
+                critic_regression_history=critic_history,
+                critic_regression_evaluation=critic_evaluation,
                 epochs=epochs,
                 episode_credit=sources,
                 changed_parameter_tensors=changed,
@@ -495,6 +589,7 @@ def main():
             dict(
                 error=repr(error),
                 accepted_optimizer_steps=accepted,
+                critic_regression_optimizer_steps=critic_accepted,
                 epochs=epochs,
                 cpu_offline_decisions=queries,
                 automatic_retry=False,

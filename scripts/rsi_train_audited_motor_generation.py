@@ -15,6 +15,7 @@ def main():
         p.add_argument("--" + n, required=True)
     p.add_argument("--generation-index", type=int, choices=range(1, 100), required=True)
     p.add_argument("--curriculum", choices=("run2", "retention-run64"), required=True)
+    p.add_argument("--critic-regression-steps", type=int, choices=(0, 32), default=0)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
@@ -80,6 +81,8 @@ def main():
             a.expected_head,
             "--output",
             str(a.output),
+            "--critic-regression-steps",
+            str(a.critic_regression_steps),
         ],
         check=True,
     )
