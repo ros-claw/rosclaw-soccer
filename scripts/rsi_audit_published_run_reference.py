@@ -16,7 +16,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for n in ("root", "output"):
         p.add_argument("--" + n, required=True, type=Path)
-    for n in ("source-hash", "expected-head"):
+    for n in ("source-hash", "expected-head", "motor-lineage-hash"):
         p.add_argument("--" + n, required=True)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
@@ -75,8 +75,8 @@ def main():
         from rosclaw_soccer.physics.g1_velocity_observation import world_command_to_body
         from rosclaw_soccer.providers.g1.velocity_policy import G1VelocityPolicy
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
-        from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
         from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
+        from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
         from rosclaw_soccer.rsi.paid_run_pilot_recovery import contact_quality, stand_from_raw
         from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
         from rosclaw_soccer.rsi.paid_trainable_actor import PUBLISHED_HASH, PaidTrainableActor
@@ -87,11 +87,8 @@ def main():
             raise ValueError("pinned callback-free native engine required")
         bench, policy, scene = open_paid_bench(pins, [d["case"]])
         candidates = []
-        for path in pins:
-            if (
-                path.endswith("/complete.json")
-                and "/rsi-paid-canonical-pipeline-20261022/learned-trained/" in path
-            ):
+        for path, commitment in pins.items():
+            if path.endswith("/complete.json") and commitment == a.motor_lineage_hash:
                 candidates.append(Path(path))
         if len(candidates) != 1:
             raise ValueError("unique source-bound canonical motor lineage required")
