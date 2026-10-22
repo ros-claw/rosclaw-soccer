@@ -18,10 +18,20 @@ from rosclaw_soccer.rsi.paid_interventional_student import data_support
 
 CARDINAL_STATUS = "PAID_CARDINAL_MOTOR_MEMORY_FIT_NOT_PHYSICALLY_QUALIFIED"
 CARDINAL_CONTROL_STATUS = "PAID_CARDINAL_MEMORY_ZERO_COEFFICIENT_CONTROL_NOT_PHYSICALLY_QUALIFIED"
+GROWING_STATUS = "PAID_GROWING_CARDINAL_MEMORY_FIT_NOT_PHYSICALLY_QUALIFIED"
+GROWING_CONTROL_STATUS = "PAID_GROWING_CARDINAL_MEMORY_ZERO_CONTROL_NOT_PHYSICALLY_QUALIFIED"
 
 
-def cardinal_config(*, control: bool = False, canonical_behavior: bool = False) -> dict[str, Any]:
-    if type(control) is not bool or type(canonical_behavior) is not bool:
+def cardinal_config(
+    *, control: bool = False, canonical_behavior: bool = False, growing_memory: bool = False
+) -> dict[str, Any]:
+    if (
+        type(control) is not bool
+        or type(canonical_behavior) is not bool
+        or type(growing_memory) is not bool
+        or canonical_behavior
+        and growing_memory
+    ):
         raise ValueError("typed zero-coefficient control required")
     config = dict(
         protocol="paid.own288.cardinal_muscle_memory_reference.v1",
@@ -51,6 +61,13 @@ def cardinal_config(*, control: bool = False, canonical_behavior: bool = False) 
             protocol="paid.own288.cardinal_canonical_behavior_reference.v2",
             canonical_behavior=True,
             dataset_style="selected_successful_complete_behavior",
+        )
+    if growing_memory:
+        config.update(
+            protocol="paid.own288.growing_cardinal_memory_reference.v3",
+            growing_memory=True,
+            dataset_style="current_parent_and_executed_recovery",
+            frozen_parent_type="canonical_cardinal_memory_v2",
         )
     return config
 
@@ -226,6 +243,22 @@ class FrozenCardinalResidual(torch.nn.Module):
         return self.head.combine(features, self.parent(features))
 
 
+class FrozenGrowingCardinalResidual(torch.nn.Module):
+    """One explicitly typed growth layer; the old ancestral loader stays strict."""
+
+    bound_radians = 0.2
+
+    def __init__(self, parent: FrozenCardinalResidual, head: CardinalMemoryHead) -> None:
+        super().__init__()
+        if type(parent) is not FrozenCardinalResidual or type(head) is not CardinalMemoryHead:
+            raise ValueError("exact current cardinal motor and supervised growth head required")
+        self.parent = parent.requires_grad_(False).eval()
+        self.head = head.requires_grad_(False).eval()
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        return self.head.combine(features, self.parent(features))
+
+
 def load_cardinal_student(
     policy: Path,
     *,
@@ -237,6 +270,7 @@ def load_cardinal_student(
 ) -> tuple[Any, dict[str, Any]]:
     from rosclaw_soccer.rsi.paid_canonical_behavior import load_canonical_data
     from rosclaw_soccer.rsi.paid_full_entry_student import FrozenFullEntryActor, digest
+    from rosclaw_soccer.rsi.paid_growth_memory_data import load_growth_data
     from rosclaw_soccer.rsi.paid_replan_data import load_replanned_data
 
     if (
@@ -254,15 +288,27 @@ def load_cardinal_student(
     s = torch.load(checkpoint, weights_only=True, map_location="cpu")
     control = s.get("config", {}).get("control")
     canonical = s.get("config", {}).get("canonical_behavior", False)
-    config = cardinal_config(control=control, canonical_behavior=canonical)
+    growing = s.get("config", {}).get("growing_memory", False)
+    config = cardinal_config(control=control, canonical_behavior=canonical, growing_memory=growing)
+    schema = (
+        "paid.cardinal_motor_memory.v3"
+        if growing
+        else "paid.cardinal_motor_memory.v2"
+        if canonical
+        else "paid.cardinal_motor_memory.v1"
+    )
+    expected_status = (
+        (GROWING_CONTROL_STATUS if control else GROWING_STATUS)
+        if growing
+        else (CARDINAL_CONTROL_STATUS if control else CARDINAL_STATUS)
+    )
     if (
         dp.is_symlink()
         or digest(dp) != r["declaration_hash"]
-        or s.get("schema")
-        != ("paid.cardinal_motor_memory.v2" if canonical else "paid.cardinal_motor_memory.v1")
+        or s.get("schema") != schema
         or s.get("config") != config
         or r.get("config") != config
-        or r.get("status") != (CARDINAL_CONTROL_STATUS if control else CARDINAL_STATUS)
+        or r.get("status") != expected_status
         or r.get("checkpoint_hash") != checkpoint_hash
         or s.get("body_scene_hash") != scene_hash
         or r.get("optimizer_updates") != 0
@@ -289,7 +335,9 @@ def load_cardinal_student(
     ):
         if s.get(k) != r.get(k) or (k != "declaration_hash" and d.get(k) != s.get(k)):
             raise ValueError("exact declared memory data/body/source identity required")
-    loader = load_canonical_data if canonical else load_replanned_data
+    loader = (
+        load_growth_data if growing else load_canonical_data if canonical else load_replanned_data
+    )
     parent, data, z = loader(Path(d["data_root"]), s["data_hash"], policy)
     if any(data[k] != s[k] for k in ("body_scene_hash", "parent_hash", "parent_checkpoint_hash")):
         raise ValueError("frozen motor lineage changed")
@@ -310,5 +358,9 @@ def load_cardinal_student(
     cert = cardinal_certificate(head, z, control=control)
     if s.get("learning_certificate") != cert or r.get("learning_certificate") != cert:
         raise ValueError("batch1 cardinal precision and ancestral retention certificate differs")
-    residual = FrozenCardinalResidual(parent.residual, head).eval()
+    residual = (
+        FrozenGrowingCardinalResidual(parent.residual, head)
+        if growing
+        else FrozenCardinalResidual(parent.residual, head)
+    ).eval()
     return FrozenFullEntryActor(parent.base, residual, parent.action_scale).eval(), r

@@ -13,10 +13,14 @@ from rosclaw_soccer.rsi.paid_compact_student import FrozenCompactResidual
 
 
 def compact_own_trace(actor: Any, raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    from rosclaw_soccer.rsi.paid_cardinal_memory import FrozenCardinalResidual
+    from rosclaw_soccer.rsi.paid_cardinal_memory import (
+        FrozenCardinalResidual,
+        FrozenGrowingCardinalResidual,
+    )
 
     if (
-        type(actor.residual) not in (FrozenCompactResidual, FrozenCardinalResidual)
+        type(actor.residual)
+        not in (FrozenCompactResidual, FrozenCardinalResidual, FrozenGrowingCardinalResidual)
         or actor.training
     ):
         raise ValueError("verified frozen compact research actor required")

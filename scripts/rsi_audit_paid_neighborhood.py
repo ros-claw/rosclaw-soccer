@@ -69,6 +69,24 @@ def main():
                 raise ValueError("conflicting prefix identity")
             pins[f] = h
     spec = plan["specifications"]["models"]["learned_memory" if current else arm]
+    candidate = "candidate_root" in d or "candidate_hash" in d
+    if candidate:
+        if (
+            current
+            or arm != "learned_memory"
+            or "candidate_root" not in d
+            or "candidate_hash" not in d
+        ):
+            raise ValueError("typed growing learned arm without teacher mode required")
+        from rosclaw_soccer.rsi.paid_growth_memory_data import growth_exam_candidate
+
+        spec, config, extra = growth_exam_candidate(
+            Path(d["candidate_root"]), d["candidate_hash"], plan
+        )
+        for f, h in extra.items():
+            if f in pins and pins[f] != h:
+                raise ValueError("conflicting candidate identity")
+            pins[f] = h
     if (
         r["status"] != "PAID_CONTACT_NEIGHBORHOOD32_ARM_CLOSED_PENDING_AUDIT"
         or r["declaration_hash"] != digest(dp)

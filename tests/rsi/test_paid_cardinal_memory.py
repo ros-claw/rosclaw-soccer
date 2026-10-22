@@ -121,3 +121,52 @@ def test_dirty_fitter_has_no_data_model_or_physics_side_effect(tmp_path, monkeyp
     with pytest.raises(ValueError, match="clean frozen"):
         runner.main()
     assert not (tmp_path / "out").exists()
+
+
+def test_growing_memory_explicitly_preserves_current_cardinal_parent_and_old_loader_types():
+    from test_paid_ancestor_router import parent as ancestor_fixture
+
+    from rosclaw_soccer.rsi.paid_ancestor_router import AncestralResidualRouter
+    from rosclaw_soccer.rsi.paid_cardinal_memory import (
+        FrozenCardinalResidual,
+        FrozenGrowingCardinalResidual,
+    )
+
+    old_head, _ = fit_cardinal_head(dataset())
+    current = FrozenCardinalResidual(AncestralResidualRouter(ancestor_fixture()), old_head)
+    x = np.zeros((5, 288), np.float32)
+    x[:, 0] = (0, 3, 10, 11, 20)
+    with torch.no_grad():
+        p = current(torch.from_numpy(x)).numpy().copy()
+    target = np.zeros((5, 29), np.float32)
+    target[4] = 0.05
+    data = dict(
+        features=x,
+        target=target,
+        parent_delta=p,
+        active=np.array([False, False, False, False, True]),
+    )
+    head, _ = fit_cardinal_head(data)
+    model = FrozenGrowingCardinalResidual(current, head)
+    assert torch.equal(model(torch.from_numpy(x[:4])), current(torch.from_numpy(x[:4])))
+    assert torch.equal(
+        model(torch.from_numpy(x[4:])), (torch.from_numpy(p[4:]) + 0.05).clamp(-0.2, 0.2)
+    )
+    assert not any(v.requires_grad for v in model.parameters())
+    with pytest.raises(ValueError, match="exact frozen ancestor"):
+        FrozenCardinalResidual(current, head)
+    with pytest.raises(ValueError, match="exact current cardinal"):
+        FrozenGrowingCardinalResidual(current.parent, head)
+
+
+def test_growing_protocol_never_silently_changes_v1_or_v2():
+    old = cardinal_config()
+    canonical = cardinal_config(canonical_behavior=True)
+    new = cardinal_config(growing_memory=True)
+    assert "growing_memory" not in old and "growing_memory" not in canonical
+    assert new["growing_memory"] and new["protocol"] not in (old["protocol"], canonical["protocol"])
+    assert new["final_R2_bound_rad"] == old["final_R2_bound_rad"] == 0.2
+    assert not new["neural_SGD"] and not new["online_RL"]
+    for kw in (dict(growing_memory=1), dict(growing_memory=True, canonical_behavior=True)):
+        with pytest.raises(ValueError):
+            cardinal_config(**kw)

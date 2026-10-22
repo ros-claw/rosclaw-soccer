@@ -412,3 +412,59 @@ def load_growth_data(
     ):
         raise ValueError("growing data differ from complete causal source reconstruction")
     return parent, r, z
+
+
+def growth_exam_candidate(
+    root: Path, expected: str, plan: dict[str, Any]
+) -> tuple[dict[str, str], dict[str, Any], dict[str, str]]:
+    """Read-only exact candidate admission for the old consumed32 fixture."""
+    from rosclaw_soccer.rsi.paid_neighborhood_study import neighborhood_config
+
+    rp, dp = root / "complete.json", root / "declaration.json"
+    if (
+        rp.is_symlink()
+        or dp.is_symlink()
+        or digest(rp) != expected
+        or (root / "failed.json").exists()
+    ):
+        raise ValueError("exact closed growing candidate required")
+    r, d = [json.loads(p.read_text()) for p in (rp, dp)]
+    control = r["config"].get("control")
+    if (
+        type(control) is not bool
+        or r["config"].get("growing_memory") is not True
+        or r["status"]
+        != (
+            "PAID_GROWING_CARDINAL_MEMORY_ZERO_CONTROL_NOT_PHYSICALLY_QUALIFIED"
+            if control
+            else "PAID_GROWING_CARDINAL_MEMORY_FIT_NOT_PHYSICALLY_QUALIFIED"
+        )
+        or digest(dp) != r["declaration_hash"]
+        or any(
+            v["body_scene_hash"] != plan["body_scene_hash"]
+            or v["parent_hash"] != plan["specifications"]["models"]["learned_memory"]["hash"]
+            for v in (r, d)
+        )
+        or any(
+            v.get(k) is not False
+            for v in (r, d)
+            for k in ("hardware_authorized", "promotion_authorized")
+        )
+    ):
+        raise ValueError("explicit same-body current-parent growing candidate required")
+    cp = Path(r["checkpoint_path"])
+    if cp.is_symlink() or cp.parent != root or digest(cp) != r["checkpoint_hash"]:
+        raise ValueError("confined growing-memory checkpoint required")
+    pins = dict(r["input_file_hashes"])
+    pins[str(rp)], pins[str(dp)], pins[str(cp)] = expected, digest(dp), r["checkpoint_hash"]
+    config = neighborhood_config()
+    config.update(
+        protocol="paid.contact_neighborhood.growing_motor_candidate.v3",
+        source_design_protocol=neighborhood_config()["protocol"],
+        candidate_hash=expected,
+        frozen_parent_hash=r["parent_hash"],
+        candidate_zero_control=control,
+        consumed_for_training=True,
+        heldout_generalization_claim=False,
+    )
+    return dict(root=str(root), hash=expected), config, pins

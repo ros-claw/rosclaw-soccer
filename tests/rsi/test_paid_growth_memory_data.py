@@ -121,3 +121,39 @@ def test_dirty_growth_curator_cannot_allocate_or_publish(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="frozen"):
         runner.main()
     assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("arm", ["learned_memory", "frozen_parent"])
+def test_incomplete_or_foreign_role_candidate_never_allocates(tmp_path, monkeypatch, arm):
+    import sys
+
+    from rosclaw_soccer.rsi import paid_neighborhood_sources as sources
+    from scripts import rsi_run_paid_neighborhood as runner
+
+    args = [
+        "run",
+        "--plan-root",
+        str(tmp_path),
+        "--plan-hash",
+        "plan",
+        "--arm",
+        arm,
+        "--candidate-root",
+        str(tmp_path),
+        "--expected-head",
+        "frozen",
+        "--output",
+        str(tmp_path / "out"),
+    ]
+    if arm == "frozen_parent":
+        args += ["--candidate-hash", "hash"]
+    monkeypatch.setattr(sys, "argv", args)
+    monkeypatch.setattr(
+        runner.subprocess,
+        "check_output",
+        lambda args, **k: "frozen\n" if "rev-parse" in args else b"",
+    )
+    monkeypatch.setattr(sources, "load_neighborhood_plan", lambda *args: ({}, dict(config={}), {}))
+    with pytest.raises(ValueError, match="growing candidate arguments"):
+        runner.main()
+    assert not (tmp_path / "out").exists()

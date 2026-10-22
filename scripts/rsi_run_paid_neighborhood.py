@@ -21,6 +21,8 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--handoff-control", type=int, choices=(80, 96))
+    p.add_argument("--candidate-root", type=Path)
+    p.add_argument("--candidate-hash")
     for name in ("prefix", "prefix-audit"):
         p.add_argument("--" + name + "-root", type=Path)
         p.add_argument("--" + name + "-hash")
@@ -54,6 +56,25 @@ def main():
     current = any(v is not None for v in prefix_args)
     prefix = None
     config = plan["config"]
+    override = None
+    candidate = a.candidate_root is not None or a.candidate_hash is not None
+    if candidate:
+        if (
+            current
+            or a.arm != "learned_memory"
+            or a.candidate_root is None
+            or a.candidate_hash is None
+        ):
+            raise ValueError(
+                "complete growing candidate arguments, learned arm, no teacher mode required"
+            )
+        from rosclaw_soccer.rsi.paid_growth_memory_data import growth_exam_candidate
+
+        override, config, extra = growth_exam_candidate(a.candidate_root, a.candidate_hash, plan)
+        for f, h in extra.items():
+            if f in pins and pins[f] != h:
+                raise ValueError("conflicting candidate identity")
+            pins[f] = h
     if current:
         if any(v is None for v in prefix_args) or a.arm != "fixed_successful_teacher":
             raise ValueError("all explicit current-prefix commitments and teacher arm required")
@@ -94,7 +115,11 @@ def main():
         bench, policy, scene = open_paid_bench(pins, plan["cases"])
         if scene != plan["body_scene_hash"] or bench.native_steps or bench.neural_rows:
             raise ValueError("all declared cases must preflight before rollout")
-        spec = plan["specifications"]["models"]["learned_memory" if current else a.arm]
+        spec = (
+            override
+            if candidate
+            else plan["specifications"]["models"]["learned_memory" if current else a.arm]
+        )
         rp = Path(spec["root"]) / "complete.json"
         r = json.loads(rp.read_text())
         actor, _ = load_paid_student(
@@ -126,6 +151,8 @@ def main():
                 prefix_audit_root=str(a.prefix_audit_root),
                 prefix_audit_hash=a.prefix_audit_hash,
             )
+        if candidate:
+            common.update(candidate_root=str(a.candidate_root), candidate_hash=a.candidate_hash)
         write_once(
             a.output / "declaration.json",
             dict(**common, base_stand=True, teacher_reoptimized=False),

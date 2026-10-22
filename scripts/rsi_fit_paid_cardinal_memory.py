@@ -15,7 +15,9 @@ def main():
     p.add_argument("--data-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--zero-control", action="store_true")
-    p.add_argument("--canonical-behavior", action="store_true")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--canonical-behavior", action="store_true")
+    mode.add_argument("--growing-memory", action="store_true")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     if (
@@ -44,20 +46,33 @@ def main():
         from rosclaw_soccer.rsi.paid_cardinal_memory import (
             CARDINAL_CONTROL_STATUS,
             CARDINAL_STATUS,
+            GROWING_CONTROL_STATUS,
+            GROWING_STATUS,
             cardinal_certificate,
             cardinal_config,
             fit_cardinal_head,
         )
+        from rosclaw_soccer.rsi.paid_growth_memory_data import load_growth_data
         from rosclaw_soccer.rsi.paid_replan_data import load_replanned_data
 
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
         policy = next(Path(f) for f in pins if f.endswith("/ckp/policy_30000.onnx"))
-        loader = load_canonical_data if a.canonical_behavior else load_replanned_data
+        loader = (
+            load_growth_data
+            if a.growing_memory
+            else load_canonical_data
+            if a.canonical_behavior
+            else load_replanned_data
+        )
         parent, data, z = loader(a.data_root, a.data_hash, policy)
         before = {k: v.clone() for k, v in parent.residual.state_dict().items()}
         identity = dict(
-            config=cardinal_config(control=a.zero_control, canonical_behavior=a.canonical_behavior),
+            config=cardinal_config(
+                control=a.zero_control,
+                canonical_behavior=a.canonical_behavior,
+                growing_memory=a.growing_memory,
+            ),
             source_head=a.expected_head,
             data_hash=a.data_hash,
             **{k: data[k] for k in ("body_scene_hash", "parent_hash", "parent_checkpoint_hash")},
@@ -77,7 +92,9 @@ def main():
         if any(not torch.equal(v, before[k]) for k, v in parent.residual.state_dict().items()):
             raise ValueError("frozen motor ancestor changed during memory fitting")
         state = dict(
-            schema="paid.cardinal_motor_memory.v2"
+            schema="paid.cardinal_motor_memory.v3"
+            if a.growing_memory
+            else "paid.cardinal_motor_memory.v2"
             if a.canonical_behavior
             else "paid.cardinal_motor_memory.v1",
             **identity,
@@ -94,7 +111,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status=CARDINAL_CONTROL_STATUS if a.zero_control else CARDINAL_STATUS,
+                status=(GROWING_CONTROL_STATUS if a.zero_control else GROWING_STATUS)
+                if a.growing_memory
+                else (CARDINAL_CONTROL_STATUS if a.zero_control else CARDINAL_STATUS),
                 **identity,
                 declaration_hash=state["declaration_hash"],
                 input_file_hashes=pins,
