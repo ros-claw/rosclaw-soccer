@@ -1,8 +1,9 @@
 """SIM neural skill-bank relay: actual A kick -> B receive -> B return attempt.
 
-All32 preregistered trials run continuously from one physical initialization.
+Each preregistered trial runs continuously from one physical initialization.
 The role selector is an explicit geometry teacher. Low-level controls are
 neural ONLY: existing velocity98 and Dual256; no Cartesian foot overrides.
+The optional whole128 reference-teacher ablation keeps zero-bridge controls.
 This is a new12s profile, not inherited H300/standing100 or full-game proof.
 """
 
@@ -17,7 +18,14 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("frontier-head", "frontier-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--reference-bridge-controls", nargs="+", type=int, default=[0])
+    for key in ("prior-relay-root", "prior-audit-root"):
+        p.add_argument("--" + key, type=Path)
+    for key in ("prior-relay-hash", "prior-audit-hash"):
+        p.add_argument("--" + key)
     a = p.parse_args()
+    if a.reference_bridge_controls not in ([0], [0, 5, 15, 30]):
+        p.error("entire preregistered reference ablation [0] or [0,5,15,30] required")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
@@ -30,12 +38,47 @@ def main():
     )
     if [c["seed"] for c in candidates] != [65023]:
         raise ValueError("same loss-free frozen neural motor required")
+    prior = None
+    if len(a.reference_bridge_controls) > 1:
+        if not all(
+            (a.prior_relay_root, a.prior_audit_root, a.prior_relay_hash, a.prior_audit_hash)
+        ):
+            raise ValueError("reference teacher requires closed independently replayed first relay")
+        reports = []
+        for root, h in (
+            (a.prior_relay_root, a.prior_relay_hash),
+            (a.prior_audit_root, a.prior_audit_hash),
+        ):
+            path = root / "complete.json"
+            if path.is_symlink() or (root / "failed.json").exists() or digest(path) != h:
+                raise ValueError("exact completed prior relay and own audit required")
+            reports.append(json.loads(path.read_text()))
+            pins[str(path)] = h
+        old, own = reports
+        if (
+            old["status"] != "NEURAL_RELAY32_COLLECTED_PENDING_OWN_REPLAY"
+            or own["status"] != "ALL32_NEURAL_RELAY_OWN_HISTORY_NATIVE_REPLAY_MATCH"
+            or own["producer_hash"] != a.prior_relay_hash
+            or own["counts"] != old["counts"]
+            or len(own["records"]) != 32
+            or len(old["records"]) != 32
+            or any(
+                r[k] is not False
+                for r in reports
+                for k in ("hardware_authorized", "promotion_authorized", "goal_complete")
+            )
+        ):
+            raise ValueError(
+                "all32 unpromoted own replay required before expanding reference teacher"
+            )
+        prior = dict(relay_hash=a.prior_relay_hash, audit_hash=a.prior_audit_hash)
     source_pins(pins)
     check_pins(pins)
     arms = [
-        dict(start=s, memory=memory)
+        dict(start=s, memory=memory, reference_bridge_controls=bridge)
         for s in (0, 80)
         for memory in ("new_skill_zero", "own_shadow_carry")
+        for bridge in a.reference_bridge_controls
     ]
     courses = [
         dict(context=i, lateral_m=side, arm=arm)
@@ -47,16 +90,20 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.neural_relay_chain32.v1",
+            protocol="soccer.neural_relay_reference_bridge.v2",
             source_head=a.expected_head,
             input_file_hashes=pins,
             courses=courses,
             candidate=candidates[0],
             baseline_training_hash=base_hash,
             max_world_controls=600,
-            max_native_steps=192000,
-            maximum_actual_actor_calls=38400,
-            maximum_shadow_actor_calls=9600,
+            max_native_steps=6000 * len(courses),
+            maximum_actual_actor_calls=1200 * len(courses),
+            maximum_shadow_actor_calls=300 * len(courses),
+            reference_bridge_controls=a.reference_bridge_controls,
+            reference_bridge_is_unlearned_teacher=True,
+            prior_closed_relay=prior,
+            joint_targets_remain_actual_neural_outputs=True,
             all_bodies_initialized_once=True,
             no_ball_reposition=True,
             no_future_readiness=True,
@@ -126,11 +173,11 @@ def main():
             ep, w, _, _, _ = setup.prepare(course["context"], course["lateral_m"])
             motion_segment(ep.clip, course["arm"]["start"])
             if w.native_steps:
-                raise ValueError("all32 relay declarations must preflight before physics")
+                raise ValueError("all relay declarations must preflight before physics")
         write_once(
             a.output / "preflight.json",
             dict(
-                worlds=32,
+                worlds=len(courses),
                 initial_conditions=8,
                 course_binding=binding,
                 ball_dimensions=setup.ball_dimensions,
@@ -205,7 +252,9 @@ def main():
                     return_goal = receiving_target_for_player(w, "a/")
                     kick_origin = w.data.qpos[w.layouts["b/"].bq : w.layouts["b/"].bq + 3].copy()
                     receiver = shadow.handoff(
-                        goal=return_goal, carry_memory=course["arm"]["memory"] == "own_shadow_carry"
+                        goal=return_goal,
+                        carry_memory=course["arm"]["memory"] == "own_shadow_carry",
+                        reference_bridge_controls=course["arm"]["reference_bridge_controls"],
                     )
                     handoff = dict(
                         control=step,
@@ -374,7 +423,7 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="NEURAL_RELAY32_COLLECTED_PENDING_OWN_REPLAY",
+                status="NEURAL_RELAY_REFERENCE_BRIDGE_COLLECTED_PENDING_OWN_REPLAY",
                 source_head=a.expected_head,
                 declaration_hash=digest(a.output / "declaration.json"),
                 counts=counts,

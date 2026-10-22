@@ -31,13 +31,25 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
+    reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
+    expected_worlds = 32
+    if reference_study:
+        if dec["reference_bridge_controls"] not in ([0], [0, 5, 15, 30]):
+            raise ValueError("entire declared reference-bridge ablation required")
+        expected_worlds *= len(dec["reference_bridge_controls"])
+    expected_status = (
+        "NEURAL_RELAY_REFERENCE_BRIDGE_COLLECTED_PENDING_OWN_REPLAY"
+        if reference_study
+        else "NEURAL_RELAY32_COLLECTED_PENDING_OWN_REPLAY"
+    )
     if (
-        s["status"] != "NEURAL_RELAY32_COLLECTED_PENDING_OWN_REPLAY"
+        s["status"] != expected_status
         or s["source_head"] != a.source_head
         or s["declaration_hash"] != digest(dp)
-        or dec["protocol"] != "soccer.neural_relay_chain32.v1"
-        or len(s["records"]) != 32
-        or len(dec["courses"]) != 32
+        or dec["protocol"]
+        not in ("soccer.neural_relay_chain32.v1", "soccer.neural_relay_reference_bridge.v2")
+        or len(s["records"]) != expected_worlds
+        or len(dec["courses"]) != expected_worlds
         or dec["optimizer_updates"] != 0
         or any(
             s[k] is not False
@@ -219,7 +231,9 @@ def main():
                     if goal.tolist() != h["return_goal"] or origin.tolist() != h["kick_origin"]:
                         raise ValueError("own current return task differs")
                     receiver = shadow.handoff(
-                        goal=goal, carry_memory=course["arm"]["memory"] == "own_shadow_carry"
+                        goal=goal,
+                        carry_memory=course["arm"]["memory"] == "own_shadow_carry",
+                        reference_bridge_controls=course["arm"].get("reference_bridge_controls", 0),
                     )
                     handoff_control = step
                 if receiver is None and step >= 300:
@@ -371,7 +385,8 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="ALL32_NEURAL_RELAY_OWN_HISTORY_NATIVE_REPLAY_MATCH",
+                status="ALL_NEURAL_RELAY_OWN_HISTORY_NATIVE_REPLAY_MATCH",
+                worlds=expected_worlds,
                 source_head=a.expected_head,
                 producer_hash=a.source_hash,
                 input_file_hashes=pins,

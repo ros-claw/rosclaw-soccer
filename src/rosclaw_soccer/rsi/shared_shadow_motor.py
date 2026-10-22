@@ -127,7 +127,9 @@ class SharedShadowMotor:
         self.boundary = self.world.control_steps
         self.observations += 1
 
-    def handoff(self, *, goal: np.ndarray, carry_memory: bool) -> SharedNativeNeuralPlayer:
+    def handoff(
+        self, *, goal: np.ndarray, carry_memory: bool, reference_bridge_controls: int = 0
+    ) -> SharedNativeNeuralPlayer:
         if (
             self.pending is not None
             or self.world.failed
@@ -152,4 +154,5 @@ class SharedShadowMotor:
             # Both memory arms see the same declared reference goal. Only
             # recurrent history changes in the cold-vs-carry comparison.
             reference_context=self.reference,
+            reference_bridge_controls=reference_bridge_controls,
         )

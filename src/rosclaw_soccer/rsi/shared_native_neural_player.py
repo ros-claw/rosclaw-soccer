@@ -63,6 +63,7 @@ class SharedNativeNeuralPlayer:
         initial_state: tuple[torch.Tensor, torch.Tensor] | None = None,
         previous_action: np.ndarray | None = None,
         reference_context: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
+        reference_bridge_controls: int = 0,
     ) -> None:
         if (
             type(actor) is not DualRecurrentMotor
@@ -117,6 +118,15 @@ class SharedNativeNeuralPlayer:
             raise ValueError("explicit finite static-reference handoff context required")
         self.world, self.prefix, self.actor, self.clip = world, prefix, actor, clip
         self.view = PlayerObservationView(world, prefix)
+        if type(reference_bridge_controls) is not int or not 0 <= reference_bridge_controls <= 50:
+            raise ValueError("explicit bounded0..50 reference teacher controls required")
+        self.reference_bridge = None
+        if reference_bridge_controls:
+            from rosclaw_soccer.rsi.causal_reference_bridge import CausalReferenceBridge
+
+            self.reference_bridge = CausalReferenceBridge(
+                self.view.joint_pos[np.argsort(order)], controls=reference_bridge_controls
+            )
         self.torso_index, self.build_observation = torso_index, build_observation
         self.goal, self.offset, self.scale, self.order = (
             a.copy() for a in (goal, offset, scale, order)
@@ -157,14 +167,15 @@ class SharedNativeNeuralPlayer:
             or self.phase not in ("MOTION", "STANDING")
         ):
             raise ValueError("one own proposal at the current live shared boundary required")
+        reference = (self.ref_pos, self.ref_vel, self.ref_ang)
+        if self.reference_bridge is not None:
+            reference = self.reference_bridge.reference(*reference, frame=self.decisions)
         obs = self.build_observation(
             self.view,
             None,
             0,
             self.last_action,
-            self.ref_pos,
-            self.ref_vel,
-            self.ref_ang,
+            *reference,
             self.view.ball_pos,
             self.goal,
             self.offset,
