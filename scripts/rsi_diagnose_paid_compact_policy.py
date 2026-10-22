@@ -40,8 +40,11 @@ def main():
         p.add_argument("--" + k, required=True)
     p.add_argument("--wait-for-completion", action="store_true")
     p.add_argument("--interventional", action="store_true")
+    p.add_argument("--cardinal-memory", action="store_true")
     p.add_argument("--generation", type=int, choices=(1, 2, 3), default=1)
     a = p.parse_args()
+    if a.cardinal_memory and (a.interventional or a.generation != 1):
+        p.error("cardinal memory is a separate deterministic reference, not an MLP generation")
     if a.generation > 1 and not a.interventional:
         p.error("later generations require explicit interventional mode")
 
@@ -98,13 +101,17 @@ def main():
     if digest(data_path) != a.data_hash:
         raise ValueError("exact original TRAIN curation required")
     data = json.loads(data_path.read_text())
-    reference_data = original_reference_metadata(data) if a.interventional else data
+    reference_data = (
+        original_reference_metadata(data) if a.interventional or a.cardinal_memory else data
+    )
     sp = Path(d["student_root"]) / "complete.json"
     if digest(sp) != d["student_hash"]:
         raise ValueError("same recorded student identity required")
     student = json.loads(sp.read_text())
     statuses = (
-        ("PAID_PRECISION_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",)
+        ("PAID_CARDINAL_MOTOR_MEMORY_FIT_NOT_PHYSICALLY_QUALIFIED",)
+        if a.cardinal_memory
+        else ("PAID_PRECISION_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",)
         if a.generation == 3
         else ("PAID_REPLANNED_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",)
         if a.generation == 2
@@ -135,6 +142,7 @@ def main():
             data_hash=a.data_hash,
             student_hash=digest(sp),
             interventional=a.interventional,
+            cardinal_memory_reference=a.cardinal_memory,
             cases=list(range(20)),
             selected_by_outcome=False,
             Fresh_rows_read=0,

@@ -13,7 +13,12 @@ from rosclaw_soccer.rsi.paid_compact_student import FrozenCompactResidual
 
 
 def compact_own_trace(actor: Any, raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    if type(actor.residual) is not FrozenCompactResidual or actor.training:
+    from rosclaw_soccer.rsi.paid_cardinal_memory import FrozenCardinalResidual
+
+    if (
+        type(actor.residual) not in (FrozenCompactResidual, FrozenCardinalResidual)
+        or actor.training
+    ):
         raise ValueError("verified frozen compact research actor required")
     n = len(raw["NN_action"])
     shapes = dict(

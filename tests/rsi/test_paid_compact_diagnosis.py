@@ -39,6 +39,34 @@ def test_actual_interventional_receipt_has_original_metadata_not_inline_trajecto
         original_reference_metadata(extended)
 
 
+def test_cardinal_diagnostic_flag_still_rejects_dirty_source_before_artifacts(
+    tmp_path, monkeypatch
+):
+    import sys
+
+    from scripts import rsi_diagnose_paid_compact_policy as runner
+
+    args = [
+        "run",
+        "--cardinal-memory",
+        "--expected-head",
+        "frozen",
+        "--producer-head",
+        "producer",
+        "--data-hash",
+        "hash",
+        "--output",
+        str(tmp_path / "out"),
+    ]
+    for name in ("exam-root", "audit-root", "data-root"):
+        args += ["--" + name, str(tmp_path)]
+    monkeypatch.setattr(sys, "argv", args)
+    monkeypatch.setattr(runner.subprocess, "check_output", lambda *a, **k: b"dirty")
+    with pytest.raises(ValueError, match="clean frozen"):
+        runner.main()
+    assert not (tmp_path / "out").exists()
+
+
 def trace():
     return dict(
         features=np.zeros((4, 288), np.float32),
