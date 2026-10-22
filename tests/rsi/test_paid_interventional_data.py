@@ -181,3 +181,40 @@ def test_dirty_curator_cannot_allocate_models_or_write_data(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="frozen"):
         runner.main()
     assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("prefix_fault", [False, True])
+def test_complete_success_labels_actual_student_prefix_not_counterfactual_teacher(prefix_fault):
+    from types import SimpleNamespace
+
+    import torch
+    from test_paid_successor_features import fixture as history_fixture
+
+    from rosclaw_soccer.rsi.paid_interventional_data import successful_behavior_features
+
+    base, raw = history_fixture()
+    raw["NN_action"][1:] = 0.1
+    raw["NN_obs"][2, 125:154] = raw["NN_action"][1]
+    raw.update(
+        NN_nominal_action=raw["NN_action"].copy(),
+        PLAN_R2_nominal_action=np.zeros((3, 29), np.float32),
+        PLAN_teacher_action=raw["NN_action"].copy(),
+        PLAN_teacher_applied=np.array([False, True, True]),
+        PLAN_context_frame=np.arange(3),
+        PLAN_switch_control=np.ones(3, int),
+    )
+    # Never-executed prefix teacher suggestions are not successful labels.
+    raw["PLAN_teacher_action"][0] = 99
+    parent = SimpleNamespace(
+        base=base, action_scale=torch.ones(29), residual=lambda x: torch.full((len(x), 29), 0.02)
+    )
+    if prefix_fault:
+        raw["NN_nominal_action"][0, 0] = 0.1
+        with pytest.raises(ValueError, match="actual executed"):
+            successful_behavior_features(parent, raw, 1)
+    else:
+        z, frames = successful_behavior_features(parent, raw, 1)
+        assert frames == [0, 1, 2]
+        assert np.allclose(z["features"][:, 160], [0.1, 0.2, 0.3])
+        assert np.allclose(z["target"][0], -0.02)
+        assert np.allclose(z["target"][1:], 0.08)

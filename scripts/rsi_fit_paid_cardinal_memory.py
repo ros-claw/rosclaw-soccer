@@ -15,6 +15,7 @@ def main():
     p.add_argument("--data-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--zero-control", action="store_true")
+    p.add_argument("--canonical-behavior", action="store_true")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     if (
@@ -39,6 +40,7 @@ def main():
     try:
         import torch
 
+        from rosclaw_soccer.rsi.paid_canonical_behavior import load_canonical_data
         from rosclaw_soccer.rsi.paid_cardinal_memory import (
             CARDINAL_CONTROL_STATUS,
             CARDINAL_STATUS,
@@ -51,10 +53,11 @@ def main():
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
         policy = next(Path(f) for f in pins if f.endswith("/ckp/policy_30000.onnx"))
-        parent, data, z = load_replanned_data(a.data_root, a.data_hash, policy)
+        loader = load_canonical_data if a.canonical_behavior else load_replanned_data
+        parent, data, z = loader(a.data_root, a.data_hash, policy)
         before = {k: v.clone() for k, v in parent.residual.state_dict().items()}
         identity = dict(
-            config=cardinal_config(control=a.zero_control),
+            config=cardinal_config(control=a.zero_control, canonical_behavior=a.canonical_behavior),
             source_head=a.expected_head,
             data_hash=a.data_hash,
             **{k: data[k] for k in ("body_scene_hash", "parent_hash", "parent_checkpoint_hash")},
@@ -74,7 +77,9 @@ def main():
         if any(not torch.equal(v, before[k]) for k, v in parent.residual.state_dict().items()):
             raise ValueError("frozen motor ancestor changed during memory fitting")
         state = dict(
-            schema="paid.cardinal_motor_memory.v1",
+            schema="paid.cardinal_motor_memory.v2"
+            if a.canonical_behavior
+            else "paid.cardinal_motor_memory.v1",
             **identity,
             declaration_hash=digest(a.output / "declaration.json"),
             memory=head.state_dict(),

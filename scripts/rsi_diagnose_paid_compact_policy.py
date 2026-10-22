@@ -9,7 +9,11 @@ from pathlib import Path
 
 def canonical_teacher_trajectories(data):
     """Full-prefix reference only; intervention segments start at a nonzero frame."""
-    roles = {"novel_first_cartesian_teacher", "canonical_first_R2_teacher"}
+    roles = {
+        "novel_first_cartesian_teacher",
+        "canonical_first_R2_teacher",
+        "canonical_successful_mixed_behavior",
+    }
     return {t["case"]: t for t in data["trajectories"] if t["role"] in roles}
 
 
@@ -26,6 +30,10 @@ def original_reference_metadata(data):
     original = json.loads(path.read_text())
     if original["rows"] != data["original_rows"]:
         raise ValueError("original reference intervals must retain exact prefix offsets")
+    # A canonical replacement has the same offsets but a different complete
+    # successful behavior. Never compare it against the retired teacher style.
+    if data.get("schema") == "paid.canonical_successful_behavior.TRAIN_features.v1":
+        return data
     return original
 
 

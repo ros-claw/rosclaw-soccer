@@ -20,10 +20,10 @@ CARDINAL_STATUS = "PAID_CARDINAL_MOTOR_MEMORY_FIT_NOT_PHYSICALLY_QUALIFIED"
 CARDINAL_CONTROL_STATUS = "PAID_CARDINAL_MEMORY_ZERO_COEFFICIENT_CONTROL_NOT_PHYSICALLY_QUALIFIED"
 
 
-def cardinal_config(*, control: bool = False) -> dict[str, Any]:
-    if type(control) is not bool:
+def cardinal_config(*, control: bool = False, canonical_behavior: bool = False) -> dict[str, Any]:
+    if type(control) is not bool or type(canonical_behavior) is not bool:
         raise ValueError("typed zero-coefficient control required")
-    return dict(
+    config = dict(
         protocol="paid.own288.cardinal_muscle_memory_reference.v1",
         algorithm="inverse_square_distance_cardinal_convex_interpolation",
         deterministic=True,
@@ -46,6 +46,13 @@ def cardinal_config(*, control: bool = False) -> dict[str, Any]:
         Fresh_fit_rows=0,
         DEV_fit_rows=0,
     )
+    if canonical_behavior:
+        config.update(
+            protocol="paid.own288.cardinal_canonical_behavior_reference.v2",
+            canonical_behavior=True,
+            dataset_style="selected_successful_complete_behavior",
+        )
+    return config
 
 
 class CardinalMemoryHead(torch.nn.Module):
@@ -228,6 +235,7 @@ def load_cardinal_student(
     training_receipt_hash: str,
     scene_hash: str,
 ) -> tuple[Any, dict[str, Any]]:
+    from rosclaw_soccer.rsi.paid_canonical_behavior import load_canonical_data
     from rosclaw_soccer.rsi.paid_full_entry_student import FrozenFullEntryActor, digest
     from rosclaw_soccer.rsi.paid_replan_data import load_replanned_data
 
@@ -245,11 +253,13 @@ def load_cardinal_student(
     dp = training_receipt.parent / "declaration.json"
     s = torch.load(checkpoint, weights_only=True, map_location="cpu")
     control = s.get("config", {}).get("control")
-    config = cardinal_config(control=control)
+    canonical = s.get("config", {}).get("canonical_behavior", False)
+    config = cardinal_config(control=control, canonical_behavior=canonical)
     if (
         dp.is_symlink()
         or digest(dp) != r["declaration_hash"]
-        or s.get("schema") != "paid.cardinal_motor_memory.v1"
+        or s.get("schema")
+        != ("paid.cardinal_motor_memory.v2" if canonical else "paid.cardinal_motor_memory.v1")
         or s.get("config") != config
         or r.get("config") != config
         or r.get("status") != (CARDINAL_CONTROL_STATUS if control else CARDINAL_STATUS)
@@ -279,7 +289,8 @@ def load_cardinal_student(
     ):
         if s.get(k) != r.get(k) or (k != "declaration_hash" and d.get(k) != s.get(k)):
             raise ValueError("exact declared memory data/body/source identity required")
-    parent, data, z = load_replanned_data(Path(d["data_root"]), s["data_hash"], policy)
+    loader = load_canonical_data if canonical else load_replanned_data
+    parent, data, z = loader(Path(d["data_root"]), s["data_hash"], policy)
     if any(data[k] != s[k] for k in ("body_scene_hash", "parent_hash", "parent_checkpoint_hash")):
         raise ValueError("frozen motor lineage changed")
     head, counts = fit_cardinal_head(z, control=control)

@@ -30,6 +30,12 @@ def test_actual_interventional_receipt_has_original_metadata_not_inline_trajecto
     )
     assert "trajectories" not in extended
     assert original_reference_metadata(extended) == original
+    canonical = dict(
+        **extended,
+        schema="paid.canonical_successful_behavior.TRAIN_features.v1",
+        trajectories=[dict(case=4, role="canonical_successful_mixed_behavior", start=0, stop=289)],
+    )
+    assert original_reference_metadata(canonical) == canonical
     extended["original_rows"] -= 1
     with pytest.raises(ValueError, match="prefix offsets"):
         original_reference_metadata(extended)

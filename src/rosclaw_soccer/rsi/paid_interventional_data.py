@@ -122,6 +122,19 @@ def admitted_windows(p: dict[str, Any], a: dict[str, Any], expected: str) -> lis
 def executed_features(
     parent: Any, raw: dict[str, np.ndarray], cut: int
 ) -> tuple[dict[str, np.ndarray], list[int]]:
+    return _mixed_features(parent, raw, cut, include_student_prefix=False)
+
+
+def successful_behavior_features(
+    parent: Any, raw: dict[str, np.ndarray], cut: int
+) -> tuple[dict[str, np.ndarray], list[int]]:
+    """Entire externally audited successful behavior; prefix is NOT expert action."""
+    return _mixed_features(parent, raw, cut, include_student_prefix=True)
+
+
+def _mixed_features(
+    parent: Any, raw: dict[str, np.ndarray], cut: int, *, include_student_prefix: bool
+) -> tuple[dict[str, np.ndarray], list[int]]:
     n = len(raw["NN_action"])
     shapes: dict[str, tuple[int, ...]] = dict(
         NN_obs=(n, 160),
@@ -129,6 +142,8 @@ def executed_features(
         PLAN_R2_nominal_action=(n, 29),
         PLAN_teacher_action=(n, 29),
     )
+    if include_student_prefix:
+        shapes["NN_nominal_action"] = (n, 29)
     shapes.update(
         {"NN_" + k: (n, 2, 1, 128) for k in ("h_before", "c_before", "h_after", "c_after")}
     )
@@ -144,6 +159,8 @@ def executed_features(
         or not np.array_equal(raw["PLAN_context_frame"], np.arange(n))
         or not np.array_equal(raw["PLAN_switch_control"], np.full(n, cut))
         or not np.array_equal(raw["NN_action"][cut:], raw["PLAN_teacher_action"][cut:])
+        or include_student_prefix
+        and not np.array_equal(raw["NN_action"][:cut], raw["NN_nominal_action"][:cut])
         or raw["NN_obs"][0, 125:154].any()
         or not np.array_equal(raw["NN_obs"][1:, 125:154], raw["NN_action"][:-1])
     ):
@@ -164,7 +181,7 @@ def executed_features(
                 for t, k in zip(state, ("NN_h_after", "NN_c_after"), strict=True)
             ):
                 raise ValueError("own R2 nominal/after-history differs")
-            if j < cut:
+            if j < cut and not include_student_prefix:
                 continue
             x = torch.cat([(obs - parent.base.mean) / parent.base.denominator, hidden], dim=-1)[
                 0, 0
@@ -183,7 +200,7 @@ def executed_features(
             ys.append(y.numpy().copy())
             ps.append(prior.numpy().copy())
     return dict(features=np.stack(xs), target=np.stack(ys), parent_delta=np.stack(ps)), list(
-        range(cut, n)
+        range(0 if include_student_prefix else cut, n)
     )
 
 
