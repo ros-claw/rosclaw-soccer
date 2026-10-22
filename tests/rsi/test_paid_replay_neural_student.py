@@ -102,3 +102,31 @@ def test_rejects_forged_counts_state_or_admission(bad):
         s["model"]["extra"] = torch.zeros(1)
     with pytest.raises(ValueError):
         validate_neural_state(s, r, t)
+
+
+def test_no_neural_layer_stacking_or_untyped_motor_parent():
+    from rosclaw_soccer.rsi.paid_replay_neural_student import FrozenReplayResidual
+
+    with pytest.raises(ValueError, match="exact current"):
+        FrozenReplayResidual(
+            torch.nn.Identity(), ReplayMotorHead(torch.zeros(288), torch.ones(288))
+        )
+
+
+def test_fit_only_receipt_rejected_before_any_model_load(tmp_path):
+    import json
+
+    from rosclaw_soccer.rsi.paid_canonical_behavior import digest
+    from rosclaw_soccer.rsi.paid_replay_neural_student import load_replay_student
+
+    path = tmp_path / "complete.json"
+    path.write_text(json.dumps(dict(status=FIT_STATUS)))
+    with pytest.raises(ValueError, match="CPU-verified"):
+        load_replay_student(
+            tmp_path / "no-policy",
+            checkpoint=tmp_path / "no-checkpoint",
+            checkpoint_hash="invalid",
+            training_receipt=path,
+            training_receipt_hash=digest(path),
+            scene_hash="body",
+        )

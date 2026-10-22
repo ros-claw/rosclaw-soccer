@@ -471,5 +471,12 @@ def load_paid_student(policy: Path, **kwargs: Any) -> tuple[Any, dict[str, Any]]
 
     if status in (CARDINAL_STATUS, CARDINAL_CONTROL_STATUS, GROWING_STATUS, GROWING_CONTROL_STATUS):
         return load_cardinal_student(policy, **kwargs)
+    from rosclaw_soccer.rsi.paid_replay_neural_student import (
+        AUDITED_STATUS as REPLAY_AUDITED_STATUS,
+    )
+    from rosclaw_soccer.rsi.paid_replay_neural_student import load_replay_student
+
+    if status == REPLAY_AUDITED_STATUS:
+        return load_replay_student(policy, **kwargs)
     loader = load_progressive_student if status == TRAINED_STATUS else load_successor_student
     return loader(policy, **kwargs)

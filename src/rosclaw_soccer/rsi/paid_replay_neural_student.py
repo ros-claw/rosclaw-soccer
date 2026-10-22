@@ -1,4 +1,4 @@
-"""Independent exact offline neural-fit verification; no runtime dispatch yet."""
+"""Independent neural-fit verification and explicitly bounded native SIM loading."""
 
 import json
 from pathlib import Path
@@ -161,3 +161,75 @@ def load_replay_fit(
     if replay_certificate(head, z) != r["certificate"]:
         raise ValueError("independently recomputed all-row CPU batch1 certificate differs")
     return parent, head, r
+
+
+class FrozenReplayResidual(torch.nn.Module):
+    """SIM-only research motor, with unchanged final R2-relative authority."""
+
+    bound_radians = 0.2
+
+    def __init__(self, parent: torch.nn.Module, head: ReplayMotorHead) -> None:
+        from rosclaw_soccer.rsi.paid_cardinal_memory import FrozenCardinalResidual
+
+        super().__init__()
+        if type(parent) is not FrozenCardinalResidual or type(head) is not ReplayMotorHead:
+            raise ValueError("exact current canonical parent and neural replay head required")
+        self.parent = parent.eval().requires_grad_(False)
+        self.head = head.eval().requires_grad_(False)
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        from rosclaw_soccer.rsi.paid_compact_support import check_features
+
+        check_features(features)
+        return self.head.combine(features, self.parent(features))
+
+
+def load_replay_student(
+    policy: Path,
+    *,
+    checkpoint: Path,
+    checkpoint_hash: str,
+    training_receipt: Path,
+    training_receipt_hash: str,
+    scene_hash: str,
+) -> tuple[Any, dict[str, Any]]:
+    """Permit native SIM research only from independently reconstructed fits."""
+    from rosclaw_soccer.rsi.paid_full_entry_student import FrozenFullEntryActor
+
+    if (
+        training_receipt.is_symlink()
+        or digest(training_receipt) != training_receipt_hash
+        or (training_receipt.parent / "failed.json").exists()
+    ):
+        raise ValueError("exact completed independent neural audit required")
+    audit = json.loads(training_receipt.read_text())
+    if (
+        audit.get("status") != AUDITED_STATUS
+        or audit.get("CPU_fit_reconstruction") is not True
+        or audit.get("runtime_admitted") is not False
+        or audit.get("own_native_steps") != 0
+        or audit.get("optimizer_updates") != 0
+        or any(audit.get(k) is not False for k in ("hardware_authorized", "promotion_authorized"))
+        or audit.get("body_scene_hash") != scene_hash
+        or audit.get("checkpoint_path") != str(checkpoint)
+        or audit.get("checkpoint_hash") != checkpoint_hash
+    ):
+        raise ValueError("CPU-verified same-body SIM candidate required, not fit-only admission")
+    parent, head, fitted = load_replay_fit(Path(audit["fit_root"]), audit["fit_hash"], policy)
+    if any(
+        audit.get(k) != fitted.get(k)
+        for k in (
+            "config",
+            "certificate",
+            "counts",
+            "checkpoint_path",
+            "checkpoint_hash",
+            "body_scene_hash",
+            "parent_hash",
+        )
+    ):
+        raise ValueError("independent fit/body/normalization/moment certificate changed")
+    residual = FrozenReplayResidual(parent.residual, head).eval()
+    return FrozenFullEntryActor(
+        parent.base, residual, parent.get_buffer("action_scale")
+    ).eval(), audit
