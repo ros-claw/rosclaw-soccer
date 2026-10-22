@@ -26,16 +26,19 @@ class NeuralStandingTask:
         state: tuple[torch.Tensor, torch.Tensor],
         memory_mode: str,
         count_inference: Callable[[], None],
+        hidden_width: int = 128,
     ) -> None:
         if (
             memory_mode not in ("carry", "reset")
+            or type(hidden_width) is not int
+            or hidden_width not in (128, 256)
             or not ep.done
             or ep.termination_reason != "RECOVERY_ADMITTED"
             or ep.frame != ep.clip.length
             or len(state) != 2
             or any(
                 not isinstance(t, torch.Tensor)
-                or t.shape != (2, 1, 128)
+                or t.shape != (2, 1, hidden_width)
                 or t.dtype != torch.float32
                 or t.device.type != "cpu"
                 or not torch.isfinite(t).all()
@@ -47,6 +50,12 @@ class NeuralStandingTask:
             raise ValueError(
                 "actual reference-end admission and private finite motor context required"
             )
+        if hidden_width == 256:
+            from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+
+            if type(actor) is not DualRecurrentMotor:
+                raise ValueError("new dual256 state requires the explicit research motor contract")
+        self.hidden_width = hidden_width
         self.ep, self.actor, self.memory_mode, self.count_inference = (
             ep,
             actor,
@@ -57,8 +66,8 @@ class NeuralStandingTask:
             tuple(t.detach().clone() for t in state)
             if memory_mode == "carry"
             else (
-                torch.zeros(2, 1, 128, dtype=torch.float32, device="cpu"),
-                torch.zeros(2, 1, 128, dtype=torch.float32, device="cpu"),
+                torch.zeros(2, 1, hidden_width, dtype=torch.float32, device="cpu"),
+                torch.zeros(2, 1, hidden_width, dtype=torch.float32, device="cpu"),
             )
         )
         self.pose = ep.ref_pos.astype(np.float32, copy=True)
@@ -114,7 +123,7 @@ class NeuralStandingTask:
             or len(next_state) != 2
             or any(
                 not isinstance(t, torch.Tensor)
-                or t.shape != (2, 1, 128)
+                or t.shape != (2, 1, self.hidden_width)
                 or t.dtype != torch.float32
                 or t.device.type != "cpu"
                 or not torch.isfinite(t).all()
