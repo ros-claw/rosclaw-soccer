@@ -17,7 +17,7 @@ def main():
         p.add_argument("--" + name + "-hash", required=True)
     p.add_argument("--seed", type=int, choices=(0, 1, 2), required=True)
     p.add_argument("--geometry-control", action="store_true")
-    p.add_argument("--generation", type=int, choices=(1, 2), default=1)
+    p.add_argument("--generation", type=int, choices=(1, 2, 3), default=1)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -55,7 +55,7 @@ def main():
     a.output.mkdir()
     counts = dict(
         optimizer_updates=0,
-        inherited_optimizer_updates=3072 if a.generation == 2 else 1024,
+        inherited_optimizer_updates={1: 1024, 2: 3072, 3: 5120}[a.generation],
         canonical_forward_rows=0,
         intervention_forward_rows=0,
         retention_forward_rows=0,
@@ -70,26 +70,30 @@ def main():
         from rosclaw_soccer.rsi.paid_compact_support import CompactSupportedHead
         from rosclaw_soccer.rsi.paid_interventional_data import load_interventional_data
         from rosclaw_soccer.rsi.paid_interventional_student import (
-            CONTROL_STATUS,
-            REPLANNED_CONTROL_STATUS,
-            REPLANNED_STATUS,
-            STUDENT_STATUS,
             data_support,
             learner_config,
+            learner_status,
             learning_certificate,
+            load_precision_warm,
             load_replanned_warm,
             load_warm_state,
+            precision_imitation_loss,
             validate_learner_state,
         )
 
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
         policy = next(Path(f) for f in pins if f.endswith("/ckp/policy_30000.onnx"))
-        if a.generation == 2:
+        if a.generation in (2, 3):
             from rosclaw_soccer.rsi.paid_replan_data import load_replanned_data
 
             parent, data, z = load_replanned_data(a.data_root, a.data_hash, policy)
-            warm, wr = load_replanned_warm(a.warm_root, a.warm_hash, data, policy)
+            if a.generation == 3:
+                warm, wr = load_precision_warm(
+                    a.warm_root, a.warm_hash, data, policy, data_hash=a.data_hash
+                )
+            else:
+                warm, wr = load_replanned_warm(a.warm_root, a.warm_hash, data, policy)
         else:
             parent, data, z = load_interventional_data(a.data_root, a.data_hash, policy)
             warm, wr = load_warm_state(a.warm_root, a.warm_hash, data)
@@ -177,12 +181,16 @@ def main():
                     ]
                 ).to(device)
                 ni = torch.from_numpy(rng.choice(protected, 512, replace=True)).to(device)
-                pred = head.combine(x[pi], prior[pi], one)
                 kept = head.combine(x[ni], prior[ni], zero)
-                weights = torch.where(active[pi], 5.0, 1.0)
-                loss = (weights[:, None] * (pred - prior[pi] - y[pi]).square()).mean() + 5 * (
-                    kept - prior[ni]
-                ).square().mean()
+                if a.generation == 3:
+                    teacher_loss = precision_imitation_loss(
+                        head.correction(x[pi]), y[pi], active[pi]
+                    )
+                else:
+                    pred = head.combine(x[pi], prior[pi], one)
+                    weights = torch.where(active[pi], 5.0, 1.0)
+                    teacher_loss = (weights[:, None] * (pred - prior[pi] - y[pi]).square()).mean()
+                loss = teacher_loss + 5 * (kept - prior[ni]).square().mean()
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 norm = torch.nn.utils.clip_grad_norm_(head.net.parameters(), 1.0)
@@ -239,9 +247,7 @@ def main():
             )
         )
         receipt = dict(
-            status=(REPLANNED_CONTROL_STATUS if a.geometry_control else REPLANNED_STATUS)
-            if a.generation == 2
-            else (CONTROL_STATUS if a.geometry_control else STUDENT_STATUS),
+            status=learner_status(a.generation, a.geometry_control),
             **identity,
             declaration_hash=state["declaration_hash"],
             input_file_hashes=pins,

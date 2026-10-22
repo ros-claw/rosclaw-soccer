@@ -7,11 +7,11 @@ from test_paid_compact_student import fixture as warm_fixture
 
 from rosclaw_soccer.rsi.paid_interventional_student import (
     CONTROL_STATUS,
-    REPLANNED_CONTROL_STATUS,
-    REPLANNED_STATUS,
     STUDENT_STATUS,
     learner_config,
+    learner_status,
     learning_certificate,
+    precision_imitation_loss,
     validate_learner_state,
 )
 
@@ -34,7 +34,7 @@ def fixture(control=False, generation=1):
         promotion_authorized=False,
     )
     steps = 0 if control else 2048
-    inherited = 3072 if generation == 2 else 1024
+    inherited = {1: 1024, 2: 3072, 3: 5120}[generation]
     for slot in state["optimizer"]["state"].values():
         slot["step"].fill_(inherited + steps)
     state["counts"] = dict(
@@ -65,9 +65,7 @@ def fixture(control=False, generation=1):
     state["learning_certificate"] = learning_certificate(head, z, 1, initial, control=control)
     receipt = copy.deepcopy(state)
     receipt.update(
-        status=(REPLANNED_CONTROL_STATUS if control else REPLANNED_STATUS)
-        if generation == 2
-        else (CONTROL_STATUS if control else STUDENT_STATUS),
+        status=learner_status(generation, control),
         parent_parameters_in_optimizer=0,
         base_parameters_in_optimizer=0,
         own_native_steps=0,
@@ -89,10 +87,46 @@ def test_replanned_learning_keeps_3072_warm_updates_separate_from_new_steps(cont
         validate_learner_state(s, r, w)
 
 
-@pytest.mark.parametrize("generation", [True, 0, 3, "2"])
+@pytest.mark.parametrize("generation", [True, 0, 4, "2"])
 def test_learning_generation_is_typed_and_bounded(generation):
     with pytest.raises(ValueError, match="generation"):
         learner_config(0, generation=generation)
+
+
+@pytest.mark.parametrize("control", [False, True])
+def test_precision_refinement_inherits_all_5120_actual_updates(control):
+    s, r, w = fixture(control, generation=3)
+    validate_learner_state(s, r, w)
+    assert s["config"]["teacher_loss"] == "unclipped_relative_correction_mse"
+    assert s["config"]["Adam_total_steps"] == (5120 if control else 7168)
+    assert s["counts"]["inherited_optimizer_updates"] == 5120
+    s["schema"] = "paid.interventional_dagger_student.v2"
+    with pytest.raises(ValueError):
+        validate_learner_state(s, r, w)
+
+
+def test_precision_loss_has_gradient_where_runtime_clamp_has_none():
+    raw = torch.full((2, 29), 0.3, requires_grad=True)
+    target = torch.full_like(raw, 0.1)
+    old = (raw.clamp(-0.2, 0.2) - target).square().mean()
+    old.backward()
+    assert raw.grad.count_nonzero() == 0
+    raw.grad.zero_()
+    loss = precision_imitation_loss(raw, target, torch.ones(2, dtype=torch.bool))
+    loss.backward()
+    assert (raw.grad > 0).all()
+    assert learner_config(0, generation=3)["relative_scale_floor_rad"] == 0.02
+
+
+def test_precision_loss_protects_small_onset_from_large_action_average():
+    active = torch.ones(1, dtype=torch.bool)
+    quiet = torch.zeros(1, 29)
+    large = torch.full((1, 29), 0.2)
+    early = precision_imitation_loss(quiet + 0.001, quiet, active)
+    later = precision_imitation_loss(large + 0.001, large, active)
+    assert float(early / later) == pytest.approx(100, rel=1e-4)
+    with pytest.raises(ValueError, match="finite"):
+        precision_imitation_loss(quiet.fill_(float("nan")), large, active)
 
 
 @pytest.mark.parametrize("control", [False, True])

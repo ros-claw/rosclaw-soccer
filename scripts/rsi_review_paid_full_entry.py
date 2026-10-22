@@ -14,15 +14,19 @@ def validate_interventional_pair(trained, control):
         if not trained.get(key) or trained[key] != control.get(key):
             raise ValueError("same intervention data, warm ancestor and body required")
     generation = trained["config"].get("generation", 1)
-    if type(generation) is not int or generation not in (1, 2):
+    if type(generation) is not int or generation not in (1, 2, 3):
         raise ValueError("bounded typed interventional generation required")
     learner_protocol = (
-        "interventional_dagger.replanned_contact.v2"
+        "interventional_dagger.precision_refinement.v3"
+        if generation == 3
+        else "interventional_dagger.replanned_contact.v2"
         if generation == 2
         else "interventional_dagger.warm_contact.v1"
     )
     control_protocol = (
-        "interventional_dagger.replanned_geometry_control.v2"
+        "interventional_dagger.precision_no_update_control.v3"
+        if generation == 3
+        else "interventional_dagger.replanned_geometry_control.v2"
         if generation == 2
         else "interventional_dagger.geometry_only_control.v1"
     )
@@ -31,6 +35,7 @@ def validate_interventional_pair(trained, control):
         or trained["config"].get("new_steps") != 2048
         or control["config"].get("protocol") != control_protocol
         or control["config"].get("generation", 1) != generation
+        or type(control["config"].get("generation", 1)) is not int
         or control["config"].get("control") is not True
         or control["config"].get("seed_index") != 0
         or control["config"].get("new_steps") != 0
@@ -53,10 +58,10 @@ def main():
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--compact-support", action="store_true")
     mode.add_argument("--interventional", action="store_true")
-    p.add_argument("--generation", type=int, choices=(1, 2), default=1)
+    p.add_argument("--generation", type=int, choices=(1, 2, 3), default=1)
     a = p.parse_args()
-    if a.generation == 2 and not a.interventional:
-        p.error("second generation requires explicit interventional mode")
+    if a.generation > 1 and not a.interventional:
+        p.error("later generations require explicit interventional mode")
     if (
         re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", a.family_prefix) is None
         or re.fullmatch(r"\d{8}", a.stamp) is None
@@ -167,7 +172,9 @@ def main():
     if a.interventional:
         control = read(
             control_paths["trained"],
-            "PAID_REPLANNED_INTERVENTIONAL_GEOMETRY_CONTROL_NOT_PHYSICALLY_QUALIFIED"
+            "PAID_PRECISION_INTERVENTIONAL_NO_UPDATE_CONTROL_NOT_PHYSICALLY_QUALIFIED"
+            if a.generation == 3
+            else "PAID_REPLANNED_INTERVENTIONAL_GEOMETRY_CONTROL_NOT_PHYSICALLY_QUALIFIED"
             if a.generation == 2
             else "PAID_INTERVENTIONAL_GEOMETRY_ONLY_CONTROL_NOT_PHYSICALLY_QUALIFIED",
         )
@@ -200,7 +207,9 @@ def main():
     for seed, values in paths.items():
         trained = read(
             values["trained"],
-            "PAID_REPLANNED_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+            "PAID_PRECISION_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+            if a.generation == 3
+            else "PAID_REPLANNED_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
             if a.generation == 2
             else "PAID_INTERVENTIONAL_DAGGER_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
             if a.interventional
@@ -213,7 +222,10 @@ def main():
             trained["config"]["seed_index"] != seed
             or trained["source_head"] != a.producer_head
             or (
-                trained["config"].get("protocol") != "interventional_dagger.replanned_contact.v2"
+                trained["config"].get("protocol") != "interventional_dagger.precision_refinement.v3"
+                if a.generation == 3
+                else trained["config"].get("protocol")
+                != "interventional_dagger.replanned_contact.v2"
                 if a.generation == 2
                 else trained["config"].get("protocol") != "interventional_dagger.warm_contact.v1"
                 if a.interventional

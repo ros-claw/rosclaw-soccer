@@ -40,10 +40,10 @@ def main():
         p.add_argument("--" + k, required=True)
     p.add_argument("--wait-for-completion", action="store_true")
     p.add_argument("--interventional", action="store_true")
-    p.add_argument("--generation", type=int, choices=(1, 2), default=1)
+    p.add_argument("--generation", type=int, choices=(1, 2, 3), default=1)
     a = p.parse_args()
-    if a.generation == 2 and not a.interventional:
-        p.error("second generation requires explicit interventional mode")
+    if a.generation > 1 and not a.interventional:
+        p.error("later generations require explicit interventional mode")
 
     def clean():
         if (
@@ -104,7 +104,9 @@ def main():
         raise ValueError("same recorded student identity required")
     student = json.loads(sp.read_text())
     statuses = (
-        ("PAID_REPLANNED_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",)
+        ("PAID_PRECISION_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",)
+        if a.generation == 3
+        else ("PAID_REPLANNED_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",)
         if a.generation == 2
         else ("PAID_INTERVENTIONAL_DAGGER_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED",)
         if a.interventional

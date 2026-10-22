@@ -6,6 +6,7 @@ import sys
 
 import pytest
 
+from rosclaw_soccer.rsi.paid_interventional_student import learner_config, learner_status
 from scripts import rsi_review_paid_full_entry as runner
 
 
@@ -28,7 +29,7 @@ def worlds(n, *, failed=False):
 
 
 @pytest.mark.parametrize("failed_seed", [None, 0, 1, 2])
-@pytest.mark.parametrize("generation", [1, 2])
+@pytest.mark.parametrize("generation", [1, 2, 3])
 def test_all_three_seeds_and_hard_first_cases_remain_required(
     tmp_path, monkeypatch, failed_seed, generation
 ):
@@ -62,26 +63,6 @@ def test_all_three_seeds_and_hard_first_cases_remain_required(
     )
 
     def training(root, seed, control=False):
-        learner_status = (
-            "PAID_REPLANNED_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
-            if generation == 2
-            else "PAID_INTERVENTIONAL_DAGGER_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
-        )
-        control_status = (
-            "PAID_REPLANNED_INTERVENTIONAL_GEOMETRY_CONTROL_NOT_PHYSICALLY_QUALIFIED"
-            if generation == 2
-            else "PAID_INTERVENTIONAL_GEOMETRY_ONLY_CONTROL_NOT_PHYSICALLY_QUALIFIED"
-        )
-        learner_protocol = (
-            "interventional_dagger.replanned_contact.v2"
-            if generation == 2
-            else "interventional_dagger.warm_contact.v1"
-        )
-        control_protocol = (
-            "interventional_dagger.replanned_geometry_control.v2"
-            if generation == 2
-            else "interventional_dagger.geometry_only_control.v1"
-        )
         return save(
             root,
             "complete.json",
@@ -91,14 +72,8 @@ def test_all_three_seeds_and_hard_first_cases_remain_required(
                 warm_hash="warm",
                 body_scene_hash="body",
                 parent_hash="parent",
-                status=control_status if control else learner_status,
-                config=dict(
-                    seed_index=seed,
-                    control=control,
-                    new_steps=0 if control else 2048,
-                    protocol=control_protocol if control else learner_protocol,
-                    generation=generation,
-                ),
+                status=learner_status(generation, control),
+                config=learner_config(seed, control=control, generation=generation),
                 counts=dict(optimizer_updates=0 if control else 2048),
             ),
         )

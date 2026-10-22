@@ -25,6 +25,10 @@ STUDENT_STATUS = "PAID_INTERVENTIONAL_DAGGER_STUDENT_TRAINED_NOT_PHYSICALLY_QUAL
 CONTROL_STATUS = "PAID_INTERVENTIONAL_GEOMETRY_ONLY_CONTROL_NOT_PHYSICALLY_QUALIFIED"
 REPLANNED_STATUS = "PAID_REPLANNED_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
 REPLANNED_CONTROL_STATUS = "PAID_REPLANNED_INTERVENTIONAL_GEOMETRY_CONTROL_NOT_PHYSICALLY_QUALIFIED"
+PRECISION_STATUS = "PAID_PRECISION_INTERVENTIONAL_STUDENT_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+PRECISION_CONTROL_STATUS = (
+    "PAID_PRECISION_INTERVENTIONAL_NO_UPDATE_CONTROL_NOT_PHYSICALLY_QUALIFIED"
+)
 
 
 def learner_config(index: int, *, control: bool = False, generation: int = 1) -> dict[str, Any]:
@@ -32,7 +36,7 @@ def learner_config(index: int, *, control: bool = False, generation: int = 1) ->
         raise ValueError("three fixed integer optimization seeds required")
     if type(control) is not bool or control and index != 0:
         raise ValueError("one explicit fixed primary no-update causal control required")
-    if type(generation) is not int or generation not in (1, 2):
+    if type(generation) is not int or generation not in (1, 2, 3):
         raise ValueError("explicit bounded learning generation required")
     result = dict(
         protocol="interventional_dagger.warm_contact.v1",
@@ -81,7 +85,58 @@ def learner_config(index: int, *, control: bool = False, generation: int = 1) ->
             inherited_steps=3072,
             Adam_total_steps=3072 if control else 5120,
         )
+    if generation == 3:
+        result.update(
+            generation=3,
+            protocol="interventional_dagger.precision_no_update_control.v3"
+            if control
+            else "interventional_dagger.precision_refinement.v3",
+            seed=2026110200 + index,
+            inherited_steps=5120,
+            Adam_total_steps=5120 if control else 7168,
+            teacher_loss="unclipped_relative_correction_mse",
+            relative_scale_floor_rad=0.02,
+            same_curriculum_objective_refinement=True,
+        )
     return result
+
+
+def precision_imitation_loss(
+    raw: torch.Tensor, target: torch.Tensor, active: torch.Tensor
+) -> torch.Tensor:
+    """Train before the runtime clamp, with a fixed relative precision floor.
+
+    Runtime support and final authority are untouched. Correcting an overshoot
+    must have a gradient even when the deployed action would be clipped.
+    """
+    if (
+        raw.ndim != 2
+        or raw.shape[1] != 29
+        or target.shape != raw.shape
+        or active.shape != (len(raw),)
+        or active.dtype != torch.bool
+        or raw.dtype != torch.float32
+        or target.dtype != torch.float32
+        or raw.device != target.device
+        or raw.device != active.device
+        or not torch.isfinite(raw).all()
+        or not torch.isfinite(target).all()
+    ):
+        raise ValueError("finite same-device per-row correction targets and activity required")
+    scale = target.abs().amax(dim=-1).clamp_min(0.02)
+    weights = torch.where(active, 5.0, 1.0)
+    return (weights[:, None] * ((raw - target) / scale[:, None]).square()).mean()
+
+
+def learner_status(generation: int, control: bool) -> str:
+    pairs = {
+        1: (STUDENT_STATUS, CONTROL_STATUS),
+        2: (REPLANNED_STATUS, REPLANNED_CONTROL_STATUS),
+        3: (PRECISION_STATUS, PRECISION_CONTROL_STATUS),
+    }
+    if type(generation) is not int or generation not in pairs or type(control) is not bool:
+        raise ValueError("bounded typed learner status required")
+    return pairs[generation][int(control)]
 
 
 def load_warm_state(
@@ -172,6 +227,38 @@ def load_replanned_warm(
     return dict(model=state["head"], optimizer=state["optimizer"]), r
 
 
+def load_precision_warm(
+    root: Path, expected: str, data: dict[str, Any], policy: Path, *, data_hash: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Same-data loss refinement inherits actual generation-two memory, not admission."""
+    rp = root / "complete.json"
+    if rp.is_symlink() or digest(rp) != expected:
+        raise ValueError("exact precision-refinement warm source required")
+    r = json.loads(rp.read_text())
+    if (
+        r["status"] != REPLANNED_STATUS
+        or r["config"] != learner_config(0, generation=2)
+        or r["data_hash"] != data_hash
+        or any(
+            r[k] != data[k] for k in ("body_scene_hash", "parent_hash", "parent_checkpoint_hash")
+        )
+    ):
+        raise ValueError("same-data previous primary 5120-step memory required")
+    cp = Path(r["checkpoint_path"])
+    load_interventional_student(
+        policy,
+        checkpoint=cp,
+        checkpoint_hash=r["checkpoint_hash"],
+        training_receipt=rp,
+        training_receipt_hash=expected,
+        scene_hash=data["body_scene_hash"],
+    )
+    if digest(cp) != r["checkpoint_hash"]:
+        raise ValueError("precision warm checkpoint changed during validation")
+    state = torch.load(cp, weights_only=True, map_location="cpu")
+    return dict(model=state["head"], optimizer=state["optimizer"]), r
+
+
 def learning_certificate(
     head: CompactSupportedHead,
     z: dict[str, np.ndarray],
@@ -231,11 +318,7 @@ def validate_learner_state(s: dict[str, Any], r: dict[str, Any], warm: dict[str,
     config = learner_config(
         s.get("config", {}).get("seed_index"), control=control, generation=generation
     )
-    status = (
-        (REPLANNED_CONTROL_STATUS if control else REPLANNED_STATUS)
-        if generation == 2
-        else (CONTROL_STATUS if control else STUDENT_STATUS)
-    )
+    status = learner_status(generation, control)
     steps = config["new_steps"]
     counts = dict(
         optimizer_updates=steps,
@@ -392,11 +475,17 @@ def load_interventional_student(
         )
     ):
         raise ValueError("exact learner declaration differs")
-    if s.get("config", {}).get("generation", 1) == 2:
+    generation = s.get("config", {}).get("generation", 1)
+    if generation in (2, 3):
         from rosclaw_soccer.rsi.paid_replan_data import load_replanned_data
 
         parent, data, z = load_replanned_data(Path(d["data_root"]), s["data_hash"], policy)
-        warm, _ = load_replanned_warm(Path(d["warm_root"]), s["warm_hash"], data, policy)
+        if generation == 3:
+            warm, _ = load_precision_warm(
+                Path(d["warm_root"]), s["warm_hash"], data, policy, data_hash=s["data_hash"]
+            )
+        else:
+            warm, _ = load_replanned_warm(Path(d["warm_root"]), s["warm_hash"], data, policy)
     else:
         parent, data, z = load_interventional_data(Path(d["data_root"]), s["data_hash"], policy)
         warm, _ = load_warm_state(Path(d["warm_root"]), s["warm_hash"], data)
