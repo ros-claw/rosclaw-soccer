@@ -12,6 +12,7 @@ def main():
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("geometry-hash", "expected-head"):
         p.add_argument("--" + n, required=True)
+    p.add_argument("--kind", choices=("yaw", "normal"), default="yaw")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -93,12 +94,41 @@ def main():
         if len(bodies) != 1 or bodies[0]["radial_heading_degrees"] is None:
             raise ValueError("one qualified intended foot radial contact measurement required")
         first = row["result"]["postcontact"]["first_foot_contact_substep"]
-        proposals, model = contact_yaw_proposals(
-            np.array(row["latent"], np.float64),
-            center=d["centers"][ci],
-            contact_control=first // 10,
-            radial_heading_degrees=bodies[0]["radial_heading_degrees"],
-        )
+        if a.kind == "yaw":
+            proposals, model = contact_yaw_proposals(
+                np.array(row["latent"], np.float64),
+                center=d["centers"][ci],
+                contact_control=first // 10,
+                radial_heading_degrees=bodies[0]["radial_heading_degrees"],
+            )
+        else:
+            from rosclaw_soccer.rsi.contact_normal_response import (
+                contact_normal_proposals,
+                measured_side_offset,
+            )
+
+            raw_path = a.root / row["artifacts"]["kick"]["path"]
+            if (
+                raw_path.is_symlink()
+                or not raw_path.resolve().is_relative_to(a.root.resolve())
+                or digest(raw_path) != row["artifacts"]["kick"]["hash"]
+            ):
+                raise ValueError("actual body pose history required for contact centering")
+            pins[str(raw_path)] = digest(raw_path)
+            with np.load(raw_path, allow_pickle=False) as z:
+                offset = measured_side_offset(
+                    blob["events"],
+                    goal,
+                    z["qpos"].reshape(-1, 43),
+                    initial_time=float(z["initial_time"]),
+                    role=role,
+                )
+            proposals, model = contact_normal_proposals(
+                np.array(row["latent"], np.float64),
+                center=d["centers"][ci],
+                contact_control=first // 10,
+                local_xy_m=offset,
+            )
         contexts.append(
             dict(
                 course=ci,
@@ -117,7 +147,11 @@ def main():
         a.output / "complete.json",
         dict(
             status="TRAIN_RUN_CONTACT_RESPONSE_DIAGNOSED_NOT_MOTOR_POLICY",
-            generator="measured_contact_radial_yaw_inverse.v1",
+            generator=(
+                "measured_contact_radial_yaw_inverse.v1"
+                if a.kind == "yaw"
+                else "measured_goal_side_contact_centering.v1"
+            ),
             source_head=a.expected_head,
             input_file_hashes=pins,
             source_hash=digest(rp),
