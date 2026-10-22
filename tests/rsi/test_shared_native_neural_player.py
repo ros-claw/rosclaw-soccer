@@ -84,3 +84,74 @@ def test_standing_requires_actual_reference_boundary():
     _, ps = players()
     with pytest.raises(ValueError, match="complete motion"):
         ps["a/"].begin_standing()
+
+
+def test_default_commit_rejects_unexecuted_nominal_without_mutating_history():
+    w, ps = players()
+    targets = {prefix: p.propose()[0] for prefix, p in ps.items()}
+    targets["a/"] = targets["a/"] + 0.01
+    w.advance(targets)
+    a = ps["a/"]
+    before = tuple(t.clone() for t in a.state)
+    with pytest.raises(ValueError, match="ACTUAL executed target"):
+        a.commit()
+    assert a.decisions == 0 and a.pending is not None
+    assert all(x.equal(y) for x, y in zip(before, a.state, strict=True))
+
+
+def test_explicit_teacher_requires_own_reference_evidence():
+    w, ps = players()
+    targets, traces = {}, {}
+    for prefix, p in ps.items():
+        targets[prefix], traces[prefix] = p.propose()
+    w.advance(targets)
+    with pytest.raises(ValueError, match="own reference"):
+        ps["a/"].commit(executed_action=traces["a/"]["NN_action"])
+
+
+def test_teacher_commits_actual_action_not_nominal_and_copies_feedback():
+    w, ps = players()
+    a = ps["a/"]
+    _, trace = a.propose(with_reference_evidence=True)
+    action = (trace["NN_reference_nominal"] + np.float32(0.2)).astype(np.float32)
+    target = a.offset + action[a.order] * a.scale
+    btarget, _ = ps["b/"].propose()
+    w.advance({"a/": target, "b/": btarget})
+    a.commit(executed_action=action)
+    np.testing.assert_array_equal(a.last_action, action)
+    np.testing.assert_array_equal(a.state[0].numpy(), trace["NN_h_after"])
+    assert not np.array_equal(a.last_action, trace["NN_action"])
+    action[:] = 9
+    assert not np.array_equal(a.last_action, action)
+
+
+def test_teacher_authority_and_feedback_shape_are_fail_closed():
+    w, ps = players()
+    a = ps["a/"]
+    target, trace = a.propose(with_reference_evidence=True)
+    btarget, _ = ps["b/"].propose()
+    w.advance({"a/": target, "b/": btarget})
+    for bad in (
+        np.zeros(28, np.float32),
+        np.zeros(29, np.float64),
+        np.full(29, np.nan, np.float32),
+    ):
+        with pytest.raises(ValueError, match="finite actual"):
+            a.commit(executed_action=bad)
+    with pytest.raises(ValueError, match="motor authority"):
+        a.commit(executed_action=trace["NN_reference_nominal"] + np.float32(0.5))
+    assert a.decisions == 0
+    a.commit(executed_action=trace["NN_action"])
+
+
+def test_reference_evidence_mode_preserves_single_forward_action_and_history():
+    _, ps = players()
+    ordinary, evidence = ps["a/"], ps["b/"]
+    # Compare the same measured body; separate private histories remain intact.
+    evidence.view = ordinary.view
+    t0, r0 = ordinary.propose()
+    t1, r1 = evidence.propose(with_reference_evidence=True)
+    np.testing.assert_array_equal(t0, t1)
+    assert "NN_reference_nominal" not in r0
+    for key, value in r0.items():
+        np.testing.assert_array_equal(value, r1[key])

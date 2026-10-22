@@ -131,10 +131,8 @@ class SharedNativeNeuralPlayer:
         self.goal, self.offset, self.scale, self.order = (
             a.copy() for a in (goal, offset, scale, order)
         )
-        self.state = tuple(
-            t.detach().clone()
-            for t in (actor.initial_state() if initial_state is None else initial_state)
-        )
+        initial_h, initial_c = actor.initial_state() if initial_state is None else initial_state
+        self.state = (initial_h.detach().clone(), initial_c.detach().clone())
         self.last_action = (
             np.zeros(29, np.float32) if previous_action is None else previous_action.copy()
         )
@@ -159,7 +157,9 @@ class SharedNativeNeuralPlayer:
         self.ref_ang = np.zeros(3, np.float32)
         self.phase = "STANDING"
 
-    def propose(self) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    def propose(
+        self, *, with_reference_evidence: bool = False
+    ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
         if (
             self.pending is not None
             or self.world.failed
@@ -170,6 +170,8 @@ class SharedNativeNeuralPlayer:
         reference = (self.ref_pos, self.ref_vel, self.ref_ang)
         if self.reference_bridge is not None:
             reference = self.reference_bridge.reference(*reference, frame=self.decisions)
+        if type(with_reference_evidence) is not bool:
+            raise ValueError("explicit simulation teacher evidence mode required")
         obs = self.build_observation(
             self.view,
             None,
@@ -183,8 +185,15 @@ class SharedNativeNeuralPlayer:
         )
         if obs.shape != (160,) or obs.dtype != np.float32 or not np.isfinite(obs).all():
             raise ValueError("exact actual per-player160 observation required; no padding")
+        nominal: np.ndarray | None = None
         with torch.no_grad():
-            mean, state = self.actor(torch.from_numpy(obs).reshape(1, 1, 160), self.state)
+            if with_reference_evidence:
+                mean, state, evidence = self.actor.forward_with_evidence(
+                    torch.from_numpy(obs).reshape(1, 1, 160), self.state
+                )
+                nominal = evidence["reference_nominal"][0, 0].numpy().copy()
+            else:
+                mean, state = self.actor(torch.from_numpy(obs).reshape(1, 1, 160), self.state)
         if (
             mean.shape != (1, 1, 29)
             or not torch.isfinite(mean).all()
@@ -200,14 +209,48 @@ class SharedNativeNeuralPlayer:
             NN_h_after=state[0].numpy().copy(),
             NN_c_after=state[1].numpy().copy(),
         )
-        self.pending = dict(action=action, state=tuple(t.detach().clone() for t in state))
+        if nominal is not None:
+            trace["NN_reference_nominal"] = nominal.copy()
+        self.pending = dict(
+            action=action,
+            state=tuple(t.detach().clone() for t in state),
+            reference_nominal=nominal,
+        )
         return self.offset + action[self.order] * self.scale, trace
 
-    def commit(self) -> None:
+    def commit(self, *, executed_action: np.ndarray | None = None) -> None:
+        """Commit only action feedback bound to this body's ACTUAL last target.
+
+        Explicit teacher actions require own frozen-reference evidence and the
+        unchanged total±.2rad authority. No reverse-normalization rounding or
+        discarded mean is silently substituted for the executed policy action.
+        """
         if self.pending is None or self.world.control_steps != self.boundary + 1:
             raise ValueError("own proposal and exactly one executed shared control required")
+        action = self.pending["action"] if executed_action is None else executed_action
+        if (
+            not isinstance(action, np.ndarray)
+            or action.shape != (29,)
+            or action.dtype != np.float32
+            or not np.isfinite(action).all()
+        ):
+            raise ValueError("finite actual original-unit R2 action required")
+        if executed_action is not None:
+            reference = self.pending["reference_nominal"]
+            if (
+                reference is None
+                or np.max(abs((action - reference) * self.scale[np.argsort(self.order)])) > 0.20002
+            ):
+                raise ValueError(
+                    "explicit own reference and unchanged total motor authority required"
+                )
+        if not np.array_equal(
+            self.offset + action[self.order] * self.scale,
+            self.world.last_applied_target(self.prefix),
+        ):
+            raise ValueError("feedback must reconstruct this body's ACTUAL executed target exactly")
         self.state = self.pending["state"]
-        self.last_action = self.pending["action"]
+        self.last_action = action.copy()
         self.pending = None
         if self.phase == "MOTION":
             self.ref_pos = self.clip.joint_pos[self.frame].copy()
