@@ -32,13 +32,20 @@ def main():
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
     reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
+    team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
     expected_worlds = 32
     if reference_study:
         if dec["reference_bridge_controls"] not in ([0], [0, 5, 15, 30]):
             raise ValueError("entire declared reference-bridge ablation required")
         expected_worlds *= len(dec["reference_bridge_controls"])
+    if team_entry_study:
+        if dec["reference_bridge_controls"] != [0]:
+            raise ValueError("team-entry study must isolate reference0")
+        expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_REFERENCE_BRIDGE_COLLECTED_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_TEAM_ENTRY_COLLECTED_PENDING_OWN_REPLAY"
+        if team_entry_study
+        else "NEURAL_RELAY_REFERENCE_BRIDGE_COLLECTED_PENDING_OWN_REPLAY"
         if reference_study
         else "NEURAL_RELAY32_COLLECTED_PENDING_OWN_REPLAY"
     )
@@ -47,7 +54,11 @@ def main():
         or s["source_head"] != a.source_head
         or s["declaration_hash"] != digest(dp)
         or dec["protocol"]
-        not in ("soccer.neural_relay_chain32.v1", "soccer.neural_relay_reference_bridge.v2")
+        not in (
+            "soccer.neural_relay_chain32.v1",
+            "soccer.neural_relay_reference_bridge.v2",
+            "soccer.neural_relay_team_entry.v3",
+        )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
         or dec["optimizer_updates"] != 0
@@ -101,8 +112,14 @@ def main():
 
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
+        from rosclaw_soccer.rsi.neural_relay_incoming import incoming_delivery
         from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
+        from rosclaw_soccer.rsi.receiving_successor_alignment import (
+            SuccessorAlignmentGate,
+            assigned_receiver_pass_goal,
+            successor_alignment,
+        )
         from rosclaw_soccer.rsi.relay_audit_clock import RelayAuditClock
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
@@ -185,7 +202,14 @@ def main():
                 scale=ep.scale,
                 order=ep.order,
             )
-            passer = SharedNativeNeuralPlayer(w, "a/", actor, clip=ep.clip, goal=ep.goal, **kwargs)
+            pass_goal = (
+                assigned_receiver_pass_goal(anchor, forward)
+                if course["arm"].get("assigned_receiver_pass", False)
+                else ep.goal
+            )
+            passer = SharedNativeNeuralPlayer(
+                w, "a/", actor, clip=ep.clip, goal=pass_goal, **kwargs
+            )
             shadow = SharedShadowMotor(
                 w,
                 "b/",
@@ -196,6 +220,7 @@ def main():
             )
             velocity = setup.velocity()
             readiness = OnlineReceivingBoundary(w, "b/")
+            entry = SuccessorAlignmentGate(enabled=course["arm"].get("align_successor", False))
             receiver = None
             ready = launch = False
             handoff_control = None
@@ -263,6 +288,13 @@ def main():
                     )
                     launch = intent.launch_seen
                     command = np.array(intent.command_body, np.float32)
+                    if entry.active:
+                        command = np.array(
+                            successor_alignment(
+                                q, v, receiving_target_for_player(w, "a/")
+                            ).command_body,
+                            np.float32,
+                        )
                     target_b = velocity.propose(
                         q, v, w.layouts["b/"].angular_velocity_body(w.data), command, frame=step
                     )
@@ -303,7 +335,17 @@ def main():
                 passer.commit()
                 if receiver is None:
                     shadow.commit_actual()
-                    ready = readiness.update()
+                    receiving_ready = readiness.update()
+                    current_q, current_v = w.layouts["b/"].canonical(w.data)
+                    ready = entry.observe(
+                        current_q,
+                        current_v,
+                        receiving_target_for_player(w, "a/"),
+                        control=w.control_steps,
+                        receiving_ready=receiving_ready,
+                        contact_eligible=readiness.contact_seen and not readiness.excluded_contact,
+                        body_healthy=not w.failed,
+                    )
                 else:
                     receiver.commit()
                 if last_target is not None:
@@ -373,6 +415,16 @@ def main():
                             error <= 0.1 and not w.failed and not excluded
                         )
                     result["minimum_return_goal_error_3d_m"] = error
+            if team_entry_study:
+                layout = w.layouts["b/"]
+                all_q = np.stack([r["qpos"] for r in physical]).reshape(-1, w.model.nq)
+                all_forces = np.stack([r["ball_forces"] for r in physical]).reshape(-1, 2, 3)
+                result["incoming_delivery"] = incoming_delivery(
+                    all_q[:, layout.bq : layout.bq + 3],
+                    all_forces,
+                    assigned_receiver_pass_goal(anchor, forward),
+                )
+                result["A_requested_pass_goal"] = pass_goal.tolist()
             if result != claim["result"]:
                 raise ValueError("own return outcome differs")
             records.append(dict(index=ci, course=course, termination=termination, result=result))

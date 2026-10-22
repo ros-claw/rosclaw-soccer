@@ -19,6 +19,7 @@ def main():
     for key in ("frontier-head", "frontier-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--reference-bridge-controls", nargs="+", type=int, default=[0])
+    p.add_argument("--successor-alignment-study", action="store_true")
     for key in ("prior-relay-root", "prior-audit-root"):
         p.add_argument("--" + key, type=Path)
     for key in ("prior-relay-hash", "prior-audit-hash"):
@@ -26,6 +27,8 @@ def main():
     a = p.parse_args()
     if a.reference_bridge_controls not in ([0], [0, 5, 15, 30]):
         p.error("entire preregistered reference ablation [0] or [0,5,15,30] required")
+    if a.successor_alignment_study and a.reference_bridge_controls != [0]:
+        p.error("team-entry ablation must isolate goal/alignment, with reference bridge0")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
@@ -39,7 +42,7 @@ def main():
     if [c["seed"] for c in candidates] != [65023]:
         raise ValueError("same loss-free frozen neural motor required")
     prior = None
-    if len(a.reference_bridge_controls) > 1:
+    if len(a.reference_bridge_controls) > 1 or a.successor_alignment_study:
         if not all(
             (a.prior_relay_root, a.prior_audit_root, a.prior_relay_hash, a.prior_audit_hash)
         ):
@@ -80,6 +83,13 @@ def main():
         for memory in ("new_skill_zero", "own_shadow_carry")
         for bridge in a.reference_bridge_controls
     ]
+    if a.successor_alignment_study:
+        arms = [
+            arm | dict(assigned_receiver_pass=assigned, align_successor=align)
+            for arm in arms
+            for assigned in (False, True)
+            for align in (False, True)
+        ]
     courses = [
         dict(context=i, lateral_m=side, arm=arm)
         for i in (1, 4, 20, 21)
@@ -90,7 +100,11 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.neural_relay_reference_bridge.v2",
+            protocol=(
+                "soccer.neural_relay_team_entry.v3"
+                if a.successor_alignment_study
+                else "soccer.neural_relay_reference_bridge.v2"
+            ),
             source_head=a.expected_head,
             input_file_hashes=pins,
             courses=courses,
@@ -102,6 +116,9 @@ def main():
             maximum_shadow_actor_calls=300 * len(courses),
             reference_bridge_controls=a.reference_bridge_controls,
             reference_bridge_is_unlearned_teacher=True,
+            successor_geometry_teacher=a.successor_alignment_study,
+            assigned_receiver_goal_is_fixed_communicated_forefoot=a.successor_alignment_study,
+            aligned_entry_consecutive_measured_controls=10,
             prior_closed_relay=prior,
             joint_targets_remain_actual_neural_outputs=True,
             all_bodies_initialized_once=True,
@@ -129,8 +146,14 @@ def main():
 
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
+        from rosclaw_soccer.rsi.neural_relay_incoming import incoming_delivery
         from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
+        from rosclaw_soccer.rsi.receiving_successor_alignment import (
+            SuccessorAlignmentGate,
+            assigned_receiver_pass_goal,
+            successor_alignment,
+        )
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
         from rosclaw_soccer.rsi.shared_relay_setup import (
@@ -170,8 +193,13 @@ def main():
                 )
         binding = preflight_receiving_courses(tuple(typed))
         for course in courses:
-            ep, w, _, _, _ = setup.prepare(course["context"], course["lateral_m"])
+            ep, w, forward, _, anchor = setup.prepare(course["context"], course["lateral_m"])
             motion_segment(ep.clip, course["arm"]["start"])
+            SuccessorAlignmentGate(enabled=course["arm"].get("align_successor", False))
+            if type(course["arm"].get("assigned_receiver_pass", False)) is not bool:
+                raise ValueError("explicit assigned-pass experiment arm required before physics")
+            if course["arm"].get("assigned_receiver_pass", False):
+                assigned_receiver_pass_goal(anchor, forward)
             if w.native_steps:
                 raise ValueError("all relay declarations must preflight before physics")
         write_once(
@@ -196,6 +224,11 @@ def main():
         for index, course in enumerate(courses):
             ep, w, forward, home, anchor = setup.prepare(course["context"], course["lateral_m"])
             segment = motion_segment(ep.clip, course["arm"]["start"])
+            pass_goal = (
+                assigned_receiver_pass_goal(anchor, forward)
+                if course["arm"].get("assigned_receiver_pass", False)
+                else ep.goal
+            )
             passer = SharedNativeNeuralPlayer(
                 w,
                 "a/",
@@ -203,7 +236,7 @@ def main():
                 clip=ep.clip,
                 torso_index=ep.torso_index,
                 build_observation=ep.build_observation,
-                goal=ep.goal,
+                goal=pass_goal,
                 offset=ep.offset,
                 scale=ep.scale,
                 order=ep.order,
@@ -222,6 +255,7 @@ def main():
                 order=ep.order,
             )
             readiness = OnlineReceivingBoundary(w, "b/")
+            entry = SuccessorAlignmentGate(enabled=course["arm"].get("align_successor", False))
             receiver = None
             launch = False
             folder = a.output / f"trial{index}"
@@ -297,6 +331,13 @@ def main():
                     )
                     launch = intent.launch_seen
                     command = np.array(intent.command_body, np.float32)
+                    if entry.active:
+                        command = np.array(
+                            successor_alignment(
+                                q, v, receiving_target_for_player(w, "a/")
+                            ).command_body,
+                            np.float32,
+                        )
                     target_b = velocity.propose(
                         q, v, w.layouts["b/"].angular_velocity_body(w.data), command, frame=step
                     )
@@ -318,7 +359,17 @@ def main():
                 passer.commit()
                 if receiver is None:
                     shadow.commit_actual()
-                    ready = readiness.update()
+                    receiving_ready = readiness.update()
+                    current_q, current_v = w.layouts["b/"].canonical(w.data)
+                    ready = entry.observe(
+                        current_q,
+                        current_v,
+                        receiving_target_for_player(w, "a/"),
+                        control=w.control_steps,
+                        receiving_ready=receiving_ready,
+                        contact_eligible=readiness.contact_seen and not readiness.excluded_contact,
+                        body_healthy=not w.failed,
+                    )
                     nn_shadow.append(trace_shadow)
                     nn_v.append(trace_v)
                 else:
@@ -392,6 +443,16 @@ def main():
                         result["return_0p1m_and_healthy"] = bool(
                             error <= 0.1 and not w.failed and not excluded_contacts
                         )
+            if a.successor_alignment_study:
+                layout = w.layouts["b/"]
+                all_q = np.stack([r["qpos"] for r in physical]).reshape(-1, w.model.nq)
+                all_forces = np.stack([r["ball_forces"] for r in physical]).reshape(-1, 2, 3)
+                result["incoming_delivery"] = incoming_delivery(
+                    all_q[:, layout.bq : layout.bq + 3],
+                    all_forces,
+                    assigned_receiver_pass_goal(anchor, forward),
+                )
+                result["A_requested_pass_goal"] = pass_goal.tolist()
             record = dict(
                 index=index,
                 course=course,
@@ -423,7 +484,11 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="NEURAL_RELAY_REFERENCE_BRIDGE_COLLECTED_PENDING_OWN_REPLAY",
+                status=(
+                    "NEURAL_RELAY_TEAM_ENTRY_COLLECTED_PENDING_OWN_REPLAY"
+                    if a.successor_alignment_study
+                    else "NEURAL_RELAY_REFERENCE_BRIDGE_COLLECTED_PENDING_OWN_REPLAY"
+                ),
                 source_head=a.expected_head,
                 declaration_hash=digest(a.output / "declaration.json"),
                 counts=counts,

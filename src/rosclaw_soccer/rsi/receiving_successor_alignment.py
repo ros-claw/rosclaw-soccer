@@ -78,3 +78,53 @@ def assigned_receiver_pass_goal(anchor_xy: np.ndarray, pass_direction: np.ndarra
     lateral = np.array([-pass_direction[1], pass_direction[0]])
     point = anchor_xy - 0.25 * pass_direction - 0.12 * lateral
     return np.array([point[0], point[1], 0.11], np.float64)
+
+
+class SuccessorAlignmentGate:
+    """Causal geometry-teacher phase, advanced once per ACTUAL control.
+
+    Disabled means the original receiving predicate exactly, not a narrower
+    reinterpretation. Enabled waits for original contact/readiness, moves the
+    body using the frozen neural locomotor, then requires10 measured samples.
+    """
+
+    def __init__(self, *, enabled: bool) -> None:
+        if type(enabled) is not bool:
+            raise ValueError("explicit alignment experiment arm required")
+        self.enabled = enabled
+        self.active = False
+        self.consecutive = 0
+        self.last_control = 0
+
+    def observe(
+        self,
+        qpos: np.ndarray,
+        qvel: np.ndarray,
+        return_goal: np.ndarray,
+        *,
+        control: int,
+        receiving_ready: bool,
+        contact_eligible: bool,
+        body_healthy: bool,
+    ) -> bool:
+        if (
+            type(control) is not int
+            or control != self.last_control + 1
+            or any(type(x) is not bool for x in (receiving_ready, contact_eligible, body_healthy))
+        ):
+            raise ValueError("one consecutive actual measured control required")
+        self.last_control = control
+        if not self.enabled:
+            return receiving_ready
+        if receiving_ready:
+            self.active = True
+        if not self.active:
+            return False
+        result = successor_alignment(qpos, qvel, return_goal)
+        if np.linalg.norm(result.ball_body_xy) > 0.8:
+            self.active = False
+            self.consecutive = 0
+            return False
+        good = result.geometry_ready and contact_eligible and body_healthy
+        self.consecutive = self.consecutive + 1 if good else 0
+        return self.consecutive >= 10
