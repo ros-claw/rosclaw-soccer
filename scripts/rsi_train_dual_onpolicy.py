@@ -86,6 +86,12 @@ def main():
         return paths[0], json.loads(paths[0].read_text())
 
     wp, warm = receipt(r["training_hash"])
+    continual = d.get("checkpoint_kind", "supervised") == "ar1-actor-critic"
+    if continual and (
+        d.get("generation_index") != warm["config"].get("source_generation_index", 0) + 1
+        or a.failed_predecessor_root is not None
+    ):
+        raise ValueError("fresh next-generation data required for exact continual warm start")
     pp, parent_record = receipt(warm["parent_lineage_hash"])
     data_path, data = receipt(warm["data_hash"])
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
@@ -93,7 +99,9 @@ def main():
     check_pins(pins)
     a.output.mkdir()
     config = dict(
-        protocol="dual256.AR1_audited_option_actor_critic.v1",
+        protocol="dual256.AR1_continual_actor_critic.v2"
+        if continual
+        else "dual256.AR1_audited_option_actor_critic.v1",
         epochs=4,
         actor_lr=3e-5,
         critic_lr=0.001,
@@ -110,6 +118,13 @@ def main():
         reward="coarse_contact_skill_return.v1_NOT_goal_plane_or_team_score",
         device="cpu",
     )
+    if continual:
+        config.update(
+            source_generation_index=d["generation_index"],
+            optimizer_state_carried=True,
+            critic_state_carried=True,
+            learning_rates="exact_predecessor_effective_rates_not_reset",
+        )
     write_once(
         a.output / "declaration.json",
         dict(
@@ -137,7 +152,10 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
+        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import (
+            load_dual_candidate_for_sim_audit,
+            same_training_state,
+        )
         from rosclaw_soccer.rsi.dual_recurrent_actor_critic import (
             MotorCritic,
             own_history_conditional_kl,
@@ -164,14 +182,24 @@ def main():
             training_receipt_hash=warm["parent_lineage_hash"],
             scene_hash=scene,
         )
-        model, _ = load_dual_for_sim_audit(
+        model, _ = load_dual_candidate_for_sim_audit(
             parent,
             parent_lineage_hash=warm["parent_lineage_hash"],
             root=wp.parent,
             expected_receipt_hash=r["training_hash"],
+            checkpoint_kind=d.get("checkpoint_kind", "supervised"),
         )
         model.plastic.requires_grad_(True)
         critic = MotorCritic().eval()
+        warm_state = None
+        initial_steps = 0
+        if continual:
+            warm_path = Path(warm["checkpoint_path"])
+            if digest(warm_path) != warm["checkpoint_hash"]:
+                raise ValueError("exact validated continual critic/optimizer source required")
+            warm_state = torch.load(warm_path, map_location="cpu", weights_only=True)
+            critic.load_state_dict(warm_state["critic"], strict=True)
+            initial_steps = warm.get("cumulative_optimizer_steps", warm["accepted_optimizer_steps"])
         log_std = torch.full((29,), math.log(0.005), dtype=torch.float32)
         frozen = {k: v.clone() for k, v in parent.state_dict().items()}
         initial = {k: v.clone() for k, v in model.plastic.state_dict().items()}
@@ -217,13 +245,31 @@ def main():
                 authority_rejected=False,
                 natural_terminal_observed=True,
             )
-            # An initial zero-output critic really gives these old values.
+            # Recompute the PREDECESSOR critic on the actual policy history.
+            # No teacher h/c or future weights enter this fixed old baseline.
             with torch.no_grad():
-                _, _, e = model.forward_with_evidence(
-                    ep["observations"][:, None], model.initial_state()
-                )
-                if critic(e["critic_features"][:, 0]).count_nonzero():
+                private = model.initial_state()
+                values = []
+                for i, actual in enumerate(ep["observations"]):
+                    if not np.array_equal(
+                        private[0].numpy(), kick["NN_h_before"][i]
+                    ) or not np.array_equal(private[1].numpy(), kick["NN_c_before"][i]):
+                        raise ValueError(
+                            "own actual old-value history differs from behavior policy"
+                        )
+                    mean, private, e = model.forward_with_evidence(
+                        actual.reshape(1, 1, 160), private
+                    )
+                    if not np.array_equal(mean[0, 0].numpy(), kick["NN_nominal_action"][i]):
+                        raise ValueError("old values must use exact actual behavior weights")
+                    values.append(critic(e["critic_features"][:, 0])[0])
+                old_values = torch.stack(values)
+                if not continual and old_values.count_nonzero():
                     raise ValueError("declared initial critic not zero")
+                if not torch.isfinite(old_values).all():
+                    raise ValueError("finite persistent critic baseline required")
+            ep["old_values"] = old_values
+            ep["advantages"] = ep["returns"] - old_values
             episodes.append(ep)
             sources.append(
                 dict(
@@ -232,12 +278,23 @@ def main():
                     terminal_reward=reward,
                     rows=n,
                     standing_delay=100,
+                    initial_value_mean=float(old_values.mean()),
+                    baseline_recomputed_from_own_behavior_history=True,
                 )
             )
         advantages = torch.cat([ep["advantages"] for ep in episodes])
         av, sd = advantages.mean(), advantages.std(unbiased=False).clamp_min(1e-8)
         for ep in episodes:
             ep["advantages"] = (ep["advantages"] - av) / sd
+        for i, ep in enumerate(episodes):
+            path = a.output / f"credit{i}.npz"
+            np.savez_compressed(
+                path,
+                old_values=ep["old_values"].numpy(),
+                returns=ep["returns"].numpy(),
+                advantages=ep["advantages"].numpy(),
+            )
+            sources[i].update(credit_path=path.name, credit_hash=digest(path))
         old = []
         for row in data["records"]:
             if row["role"] == "acquired_parent_skill":
@@ -253,6 +310,10 @@ def main():
                 dict(params=critic_params, lr=config["critic_lr"]),
             ]
         )
+        if continual:
+            optimizer.load_state_dict(copy.deepcopy(warm_state["optimizer"]))
+            if not same_training_state(optimizer.state_dict(), warm_state["optimizer"]):
+                raise ValueError("optimizer moments/counters/effective LRs did not carry exactly")
 
         def cpu_tree(x):
             if isinstance(x, torch.Tensor):
@@ -268,10 +329,13 @@ def main():
         first = a.output / "onpolicy-initial.pt"
         torch.save(
             dict(
-                schema="soccer.dual_motor.ar1_ppo.v1",
+                schema="soccer.dual_motor.ar1_ppo.v2"
+                if continual
+                else "soccer.dual_motor.ar1_ppo.v1",
                 plastic_network=initial,
                 critic=critic_initial,
-                optimizer_updates=0,
+                optimizer_updates=initial_steps,
+                optimizer=cpu_tree(optimizer.state_dict()),
                 warm_start_hash=r["training_hash"],
                 parent_lineage_hash=warm["parent_lineage_hash"],
             ),
@@ -335,11 +399,13 @@ def main():
         last = a.output / "onpolicy-final.pt"
         torch.save(
             dict(
-                schema="soccer.dual_motor.ar1_ppo.v1",
+                schema="soccer.dual_motor.ar1_ppo.v2"
+                if continual
+                else "soccer.dual_motor.ar1_ppo.v1",
                 plastic_network=final,
                 critic=critic_final,
                 optimizer=cpu_tree(optimizer.state_dict()),
-                optimizer_updates=accepted,
+                optimizer_updates=initial_steps + accepted,
                 config=config,
                 warm_start_hash=r["training_hash"],
                 parent_lineage_hash=warm["parent_lineage_hash"],
@@ -390,6 +456,8 @@ def main():
                 checkpoint_path=str(last),
                 checkpoint_hash=digest(last),
                 accepted_optimizer_steps=accepted,
+                initial_optimizer_steps=initial_steps,
+                cumulative_optimizer_steps=initial_steps + accepted,
                 epochs=epochs,
                 episode_credit=sources,
                 changed_parameter_tensors=changed,

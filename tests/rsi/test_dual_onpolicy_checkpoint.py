@@ -1,7 +1,11 @@
 import pytest
 import torch
 
-from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import validate_adam_slots, validate_critic
+from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import (
+    same_training_state,
+    validate_adam_slots,
+    validate_critic,
+)
 
 
 def opt_fixture():
@@ -39,3 +43,26 @@ def test_bad_ppo_ownership_or_optimizer_moments_rejected(fault):
 def test_non_tensor_critic_is_never_deserialized_as_a_module():
     with pytest.raises(ValueError):
         validate_critic(torch.nn.Linear(2, 1), {})
+
+
+def test_continual_adam_carries_moments_counters_and_effective_rates():
+    import copy
+
+    p, opt = opt_fixture()
+    previous = copy.deepcopy(opt)
+    parameters = [torch.nn.Parameter(x.detach().clone()) for x in p]
+    successor = torch.optim.Adam(
+        [dict(params=parameters[:16]), dict(params=parameters[16:])], lr=0.02
+    )
+    successor.load_state_dict(copy.deepcopy(previous))
+    assert same_training_state(successor.state_dict(), previous)
+    sum(x.sum() for x in parameters).backward()
+    successor.step()
+    validate_adam_slots(successor.state_dict(), parameters, 2)
+    assert not same_training_state(successor.state_dict(), previous)
+    changed = copy.deepcopy(previous)
+    changed["param_groups"][0]["lr"] *= 2
+    assert not same_training_state(changed, previous)
+    changed = copy.deepcopy(previous)
+    changed["state"][0]["exp_avg"].add_(0.001)
+    assert not same_training_state(changed, previous)

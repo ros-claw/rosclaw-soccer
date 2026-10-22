@@ -21,7 +21,7 @@ from rosclaw_soccer.rsi.paid_full_entry_student import FrozenFullEntryActor
 
 
 def validate_adam_slots(opt: Any, parameters: list[torch.Tensor], steps: int) -> None:
-    if type(steps) is not int or not 1 <= steps <= 4 or type(opt) is not dict:
+    if type(steps) is not int or not 1 <= steps <= 128 or type(opt) is not dict:
         raise ValueError("bounded accepted actual PPO optimizer steps required")
     groups, slots = opt.get("param_groups", []), opt.get("state", {})
     if (
@@ -65,6 +65,29 @@ def validate_critic(network: Any, expected: dict[str, torch.Tensor]) -> None:
             raise ValueError("finite exact CPU critic weights required")
 
 
+def same_training_state(actual: Any, expected: Any) -> bool:
+    """Exact critic/Adam carry, including moments, step counters and effective LRs."""
+    if isinstance(actual, torch.Tensor) or isinstance(expected, torch.Tensor):
+        return (
+            isinstance(actual, torch.Tensor)
+            and isinstance(expected, torch.Tensor)
+            and actual.dtype == expected.dtype
+            and actual.shape == expected.shape
+            and torch.equal(actual, expected)
+        )
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(actual, dict):
+        return actual.keys() == expected.keys() and all(
+            same_training_state(actual[k], expected[k]) for k in actual
+        )
+    if isinstance(actual, (tuple, list)):
+        return len(actual) == len(expected) and all(
+            same_training_state(x, y) for x, y in zip(actual, expected, strict=True)
+        )
+    return bool(actual == expected)
+
+
 def load_dual_candidate_for_sim_audit(
     parent: FrozenFullEntryActor,
     *,
@@ -72,7 +95,10 @@ def load_dual_candidate_for_sim_audit(
     root: Path,
     expected_receipt_hash: str,
     checkpoint_kind: str = "supervised",
+    _depth: int = 0,
 ) -> tuple[DualRecurrentMotor, dict[str, Any]]:
+    if not 0 <= _depth < 32:
+        raise ValueError("bounded explicit continual actor-critic lineage required")
     if checkpoint_kind == "supervised":
         return load_dual_for_sim_audit(
             parent,
@@ -86,11 +112,16 @@ def load_dual_candidate_for_sim_audit(
     if root.is_symlink() or (root / "failed.json").exists() or digest(rp) != expected_receipt_hash:
         raise ValueError("exact closed actor-critic training receipt required")
     r, d = [json.loads(x.read_text()) for x in (rp, dp)]
+    continual = r["config"].get("protocol") == "dual256.AR1_continual_actor_critic.v2"
     if (
         r["status"] != "DUAL_AR1_ACTOR_CRITIC_ACTUALLY_UPDATED_PENDING_PHYSICAL_EXAM"
         or r["declaration_hash"] != digest(dp)
         or r["config"] != d["config"]
-        or r["config"]["protocol"] != "dual256.AR1_audited_option_actor_critic.v1"
+        or r["config"]["protocol"]
+        not in (
+            "dual256.AR1_audited_option_actor_critic.v1",
+            "dual256.AR1_continual_actor_critic.v2",
+        )
         or r["input_file_hashes"] != d["input_file_hashes"]
         or r["parent_lineage_hash"] != parent_lineage_hash
         or d["parent_lineage_hash"] != parent_lineage_hash
@@ -111,7 +142,11 @@ def load_dual_candidate_for_sim_audit(
     ):
         raise ValueError("fixed audited pure-learner actor-critic declaration required")
     steps = r["accepted_optimizer_steps"]
-    if steps != sum(int(x["decision"]["applied"]) for x in r["epochs"]):
+    if (
+        type(steps) is not int
+        or not 1 <= steps <= 4
+        or steps != sum(int(x["decision"]["applied"]) for x in r["epochs"])
+    ):
         raise ValueError("truthful accepted/rejected optimizer accounting required")
     paths = [
         Path(x)
@@ -120,12 +155,35 @@ def load_dual_candidate_for_sim_audit(
     ]
     if len(paths) != 1:
         raise ValueError("unique exact learned on-policy predecessor required")
-    model, _ = load_dual_for_sim_audit(
+    model, predecessor = load_dual_candidate_for_sim_audit(
         parent,
         parent_lineage_hash=parent_lineage_hash,
         root=paths[0].parent,
         expected_receipt_hash=r["warm_start_hash"],
+        checkpoint_kind="ar1-actor-critic" if continual else "supervised",
+        _depth=_depth + 1,
     )
+    initial_steps = 0
+    cumulative_steps = steps
+    warm_last = None
+    if continual:
+        initial_steps = predecessor.get(
+            "cumulative_optimizer_steps", predecessor["accepted_optimizer_steps"]
+        )
+        cumulative_steps = initial_steps + steps
+        if (
+            r["initial_optimizer_steps"] != initial_steps
+            or r["cumulative_optimizer_steps"] != cumulative_steps
+            or r["config"]["source_generation_index"]
+            != predecessor["config"].get("source_generation_index", 0) + 1
+            or r["config"].get("optimizer_state_carried") is not True
+            or r["config"].get("critic_state_carried") is not True
+        ):
+            raise ValueError("monotone fresh generation with persistent critic/Adam required")
+        warm_path = Path(predecessor["checkpoint_path"])
+        if digest(warm_path) != predecessor["checkpoint_hash"]:
+            raise ValueError("exact validated predecessor training state required")
+        warm_last = torch.load(warm_path, map_location="cpu", weights_only=True)
     first_path, last_path = Path(r["initial_checkpoint_path"]), Path(r["checkpoint_path"])
     for x, h in ((first_path, r["initial_checkpoint_hash"]), (last_path, r["checkpoint_hash"])):
         if x.parent.resolve() != root.resolve() or digest(x) != h:
@@ -136,13 +194,14 @@ def load_dual_candidate_for_sim_audit(
     if (
         any(
             type(x) is not dict
-            or x.get("schema") != "soccer.dual_motor.ar1_ppo.v1"
+            or x.get("schema")
+            != ("soccer.dual_motor.ar1_ppo.v2" if continual else "soccer.dual_motor.ar1_ppo.v1")
             or x.get("warm_start_hash") != r["warm_start_hash"]
             or x.get("parent_lineage_hash") != parent_lineage_hash
             for x in (first, last)
         )
-        or first.get("optimizer_updates") != 0
-        or last.get("optimizer_updates") != steps
+        or first.get("optimizer_updates") != initial_steps
+        or last.get("optimizer_updates") != cumulative_steps
         or last.get("config") != r["config"]
     ):
         raise ValueError("separate exact initial/final PPO checkpoint schema required")
@@ -161,18 +220,34 @@ def load_dual_candidate_for_sim_audit(
     critic = MotorCritic()
     for x in (first, last):
         validate_critic(x.get("critic"), critic.state_dict())
-    if (
+    if not continual and (
         first["critic"]["net.2.weight"].count_nonzero()
         or first["critic"]["net.2.bias"].count_nonzero()
     ):
         raise ValueError("declared initial zero baseline must really be zero-output")
+    if continual:
+        if (
+            warm_last is None
+            or not same_training_state(first["critic"], warm_last["critic"])
+            or not same_training_state(first.get("optimizer"), warm_last["optimizer"])
+        ):
+            raise ValueError(
+                "critic weights and every optimizer moment/counter/LR must carry exactly"
+            )
+        validate_adam_slots(
+            first["optimizer"],
+            list(model.plastic.parameters()) + list(critic.parameters()),
+            initial_steps,
+        )
     changed_critic = [
         k for k, v in last["critic"].items() if not torch.equal(v, first["critic"][k])
     ]
     if not changed_critic or changed_critic != r["changed_critic_tensors"]:
         raise ValueError("actual learned critic change required")
     validate_adam_slots(
-        last["optimizer"], list(model.plastic.parameters()) + list(critic.parameters()), steps
+        last["optimizer"],
+        list(model.plastic.parameters()) + list(critic.parameters()),
+        cumulative_steps,
     )
     model.plastic.load_state_dict(last["plastic_network"], strict=True)
     model.eval().requires_grad_(False)
