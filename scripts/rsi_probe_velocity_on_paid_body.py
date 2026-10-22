@@ -19,6 +19,7 @@ def main():
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("body-xml-hash", "qualification-hash", "initial-exam-hash", "expected-head"):
         p.add_argument("--" + n, required=True)
+    p.add_argument("--recovery-of", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -77,6 +78,25 @@ def main():
         str(onnx): qual["input_file_hashes"][str(onnx)],
         str(params): qual["input_file_hashes"][str(params)],
     }
+    recovery = {}
+    if a.recovery_of is not None:
+        failure = a.recovery_of / "failed.json"
+        if failure.is_symlink() or (a.recovery_of / "complete.json").exists():
+            raise ValueError("actual failed predecessor required, not a completed repeat")
+        previous = json.loads(failure.read_text())
+        if (
+            previous.get("automatic_retry") is not False
+            or previous.get("hardware_authorized") is not False
+            or type(previous.get("native_steps")) is not int
+            or not 0 <= previous["native_steps"] <= 48000
+        ):
+            raise ValueError("accounted failed execution required")
+        pins[str(failure)] = digest(failure)
+        recovery = dict(
+            recovery_of=str(a.recovery_of),
+            failed_predecessor_native_steps=previous["native_steps"],
+            maximum_cumulative_native_steps_including_failed=48000 + previous["native_steps"],
+        )
     if initial_exam["input_file_hashes"].get(str(a.body_xml)) != a.body_xml_hash:
         raise ValueError("recorded state must belong to exact body, not another MJLab export")
     root = ET.parse(a.body_xml).getroot()
@@ -120,6 +140,7 @@ def main():
             optimizer_updates=0,
             hardware_authorized=False,
             promotion_authorized=False,
+            **recovery,
         ),
     )
     steps, calls = 0, 0
@@ -139,6 +160,7 @@ def main():
             decode_pd_torque,
             require_torque_encoding,
             transfer_cases,
+            world_pulse,
         )
 
         if mujoco.__version__ != "3.5.0" or mujoco.get_mjcb_control() is not None:
@@ -204,7 +226,10 @@ def main():
                 q, _ = layout.canonical(data)
                 w, x, y, z = q[3:7]
                 yaw = float(np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
-                world = (speed * np.cos(yaw), speed * np.sin(yaw), 0.0)
+                world = world_pulse(speed, yaw)
+                # Validate the active pulse BEFORE any native control, not
+                # merely the idle command used in the first 50 frames.
+                world_command_to_body(q, world)
                 warning = tuple(int(w.number) for w in data.warning)
                 rows, phase = [], phase_delta()
                 last = np.zeros(29, np.float32)
@@ -342,6 +367,7 @@ def main():
                 status="VELOCITY_PRIOR_PAID_BODY_TRANSFER_CLOSED_NOT_FOOTBALL_QUALIFIED",
                 source_head=a.expected_head,
                 input_file_hashes=pins,
+                declaration_hash=digest(a.output / "declaration.json"),
                 results=results,
                 compiled_model_hash=binary_hash,
                 compiled_model_path=str(binary),
@@ -353,6 +379,7 @@ def main():
                 hardware_authorized=False,
                 promotion_authorized=False,
                 goal_complete=False,
+                **recovery,
             ),
         )
     except Exception as error:

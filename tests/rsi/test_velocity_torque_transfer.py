@@ -7,6 +7,7 @@ from rosclaw_soccer.rsi.velocity_torque_transfer import (
     decode_pd_torque,
     require_torque_encoding,
     transfer_cases,
+    world_pulse,
 )
 
 
@@ -64,3 +65,15 @@ def test_fixed_complete_transfer_bank_has_idle_and_dynamic_cases():
     assert {i for i, _ in cases} == {"velocity_home", "recorded_paid"}
     assert {s for _, s in cases} == {0.0, 0.3, 0.6, 1.0}
     assert len(cases) * 2 * 300 * 10 == 48000
+
+
+@pytest.mark.parametrize("yaw", [0.0, 1.2, -3.0])
+def test_every_active_command_passes_exact_codec_before_physics(yaw):
+    from rosclaw_soccer.physics.g1_velocity_observation import world_command_to_body
+
+    q = np.zeros(43)
+    q[3:7] = [np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]
+    for _, speed in transfer_cases():
+        world = world_pulse(speed, yaw)
+        assert all(type(v) is float for v in world)
+        assert np.allclose(world_command_to_body(q, world), [speed, 0, 0], atol=1e-7)

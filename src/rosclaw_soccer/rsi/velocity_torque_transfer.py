@@ -61,3 +61,9 @@ def transfer_cases() -> tuple[tuple[str, float], ...]:
         for initial in ("velocity_home", "recorded_paid")
         for speed in (0.0, 0.3, 0.6, 1.0)
     )
+
+
+def world_pulse(speed: float, yaw: float) -> tuple[float, float, float]:
+    if type(speed) is not float or type(yaw) is not float or not np.isfinite([speed, yaw]).all():
+        raise ValueError("explicit finite immutable command scalars required")
+    return (float(speed * np.cos(yaw)), float(speed * np.sin(yaw)), 0.0)
