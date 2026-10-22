@@ -15,6 +15,7 @@ import pytest
         "scripts.rsi_audit_native_receiving_roles",
         "scripts.rsi_review_receiving_handoff_windows",
         "scripts.rsi_collect_neural_relay_chain",
+        "scripts.rsi_audit_neural_relay_chain",
     ],
 )
 def test_import_does_not_allocate_workers_or_write_physical_outputs(module, tmp_path, monkeypatch):
