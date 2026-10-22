@@ -8,15 +8,64 @@ if TYPE_CHECKING:
     from rosclaw_soccer.rsi.paid_full_entry_student import FrozenFullEntryActor
 
 BANK_STATUS = "STROKE_CONTACT_CONSOLIDATION_BANK65_READY_NOT_TRAINED"
+CORRECTION_BANK_STATUS = "STUDENT_PREFIX_CORRECTION_BANK110_READY_NOT_TRAINED"
+
+
+def consolidation_pools(
+    records: list[dict[str, Any]], *, correction: bool = False
+) -> tuple[list[int], list[int], list[int]]:
+    """Keep failed rows in the bank but outside every positive imitation pool."""
+    if len(records) != (110 if correction else 65) or any(
+        type(r["index"]) is not int
+        or r["index"] != i
+        or type(r["bc_weight"]) not in (int, float)
+        or r["bc_weight"] not in (0, 1)
+        or type(r["task_success"]) is not bool
+        or bool(r["bc_weight"]) != r["task_success"]
+        for i, r in enumerate(records)
+    ):
+        raise ValueError(
+            "complete typed whole-history bank and actual positive/negative labels required"
+        )
+    anchors, teachers, repairs = [], [], []
+    for i, r in enumerate(records):
+        if not r["bc_weight"]:
+            continue
+        role = r["role"]
+        if role == "retained_W6_skill" or (correction and role == "retained_new_neural_skill"):
+            anchors.append(i)
+        elif role in ("source_stroke_teacher", "robust_stroke_teacher") or (
+            correction and role == "new_skill_teacher_continuation"
+        ):
+            teachers.append(i)
+        elif correction and role == "retention_own_state_correction":
+            repairs.append(i)
+        else:
+            raise ValueError("explicit positive role required; failed teachers cannot be targets")
+    if (
+        len(anchors) != (23 if correction else 14)
+        or (not correction and (len(teachers) != 48 or repairs))
+        or (correction and (not 48 <= len(teachers) <= 66 or not 6 <= len(repairs) <= 18))
+    ):
+        raise ValueError(
+            "all old/new skill anchors and qualified contact/correction pools required"
+        )
+    return anchors, teachers, repairs
 
 
 def context_witness_hash(data: dict[str, Any], checkpoint_kind: str) -> str:
     """Keep the original fixed exam fixtures separate from the new training bank."""
-    if checkpoint_kind == "contact-consolidated":
-        if data["status"] != BANK_STATUS:
+    if checkpoint_kind in ("contact-consolidated", "contact-consolidated-v2"):
+        expected = (
+            CORRECTION_BANK_STATUS if checkpoint_kind == "contact-consolidated-v2" else BANK_STATUS
+        )
+        if data["status"] != expected:
             raise ValueError("contact checkpoint requires its actual bank65")
         return str(data["context_witness_hash"])
-    if checkpoint_kind not in ("supervised", "ar1-actor-critic") or data["status"] == BANK_STATUS:
+    if checkpoint_kind not in ("supervised", "ar1-actor-critic") or data["status"] in (
+        BANK_STATUS,
+        CORRECTION_BANK_STATUS,
+    ):
         raise ValueError("explicit checkpoint and data protocol required")
     return str(data["teacher_hash"])
 
