@@ -15,7 +15,12 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--teacher-mode",
-        choices=("reference", "measured_contact_center", "measured_contact_shin_clearance"),
+        choices=(
+            "reference",
+            "measured_contact_center",
+            "measured_contact_shin_clearance",
+            "measured_contact_observed_shin",
+        ),
         default="reference",
     )
     for n in ("exam-root", "audit-root", "output"):
@@ -99,7 +104,11 @@ def main():
             else (
                 "dual256.TRAIN.measured_contact_center_on_learner_mean.v2"
                 if a.teacher_mode == "measured_contact_center"
-                else "dual256.TRAIN.measured_contact_center_and_shin_clearance.v3"
+                else (
+                    "dual256.TRAIN.measured_contact_center_and_shin_clearance.v3"
+                    if a.teacher_mode == "measured_contact_shin_clearance"
+                    else "dual256.TRAIN.measured_contact_center_observed_shin_predictive.v4"
+                )
             ),
             teacher_mode=a.teacher_mode,
             centering_geometry=(
@@ -108,7 +117,8 @@ def main():
             ),
             centering_support_controls=24,
             shin_clearance_margin_m=0.015
-            if a.teacher_mode == "measured_contact_shin_clearance"
+            if a.teacher_mode
+            in ("measured_contact_shin_clearance", "measured_contact_observed_shin")
             else None,
             source_head=a.expected_head,
             input_file_hashes=pins,
@@ -277,7 +287,13 @@ def main():
                             ep,
                             nominal.copy(),
                             offset,
-                            shin_clearance=a.teacher_mode == "measured_contact_shin_clearance",
+                            shin_clearance=a.teacher_mode
+                            in (
+                                "measured_contact_shin_clearance",
+                                "measured_contact_observed_shin",
+                            ),
+                            observed_shin_clearance=a.teacher_mode
+                            == "measured_contact_observed_shin",
                         )
                         intent_calls += 1
                     elif intent is None:

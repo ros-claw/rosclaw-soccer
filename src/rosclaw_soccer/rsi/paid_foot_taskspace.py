@@ -42,6 +42,7 @@ class FootTaskSpaceIntent:
         phase_intent(center, center, latent)
         self.model, self.foot, self.center, self.latent = model, foot, center, latent.copy()
         self.kin = mujoco.MjData(model)
+        self.risk = mujoco.MjData(model)
         self.body = model.body(foot + "_ankle_roll_link").id
         names = [
             foot + "_" + s + "_joint"
@@ -56,7 +57,13 @@ class FootTaskSpaceIntent:
         return self.solve_offset(ep, nominal, phase_intent(ep.frame, self.center, self.latent))
 
     def solve_offset(
-        self, ep: Any, nominal: np.ndarray, offset: np.ndarray, *, shin_clearance: bool = False
+        self,
+        ep: Any,
+        nominal: np.ndarray,
+        offset: np.ndarray,
+        *,
+        shin_clearance: bool = False,
+        observed_shin_clearance: bool = False,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Bounded current-body Cartesian proposal, no physical state writes.
 
@@ -66,6 +73,9 @@ class FootTaskSpaceIntent:
         import mujoco
 
         from rosclaw_soccer.rsi.capsule_clearance import sphere_capsule_clearance
+
+        if observed_shin_clearance and not shin_clearance:
+            raise ValueError("observed clearance requires explicit shin constraint")
 
         if (
             offset.shape != (6,)
@@ -91,6 +101,13 @@ class FootTaskSpaceIntent:
         def kinematics() -> tuple[np.ndarray, np.ndarray]:
             mujoco.mj_kinematics(self.model, self.kin)
             mujoco.mj_comPos(self.model, self.kin)
+            if observed_shin_clearance:
+                self.risk.qpos[:] = ep.env.data.qpos
+                # A joint TARGET is not the observed pose. Apply only the
+                # proposed correction to actual joints for obstacle prediction.
+                self.risk.qpos[ep.layout.qi] += self.kin.qpos[ep.layout.qi] - baseline
+                mujoco.mj_kinematics(self.model, self.risk)
+                mujoco.mj_comPos(self.model, self.risk)
             matrix = self.kin.xmat[self.body].reshape(3, 3).copy()
             point = self.kin.xpos[self.body] + matrix @ np.array([0.12, 0, -0.025])
             return np.asarray(point), np.asarray(matrix)
@@ -113,13 +130,17 @@ class FootTaskSpaceIntent:
             ):
                 raise ValueError("unchanged .11m sphere and compiled shin capsule required")
             actual_ball = ep.env.data.xpos[ep.layout.ball].copy()
+            clearance_data = self.risk if observed_shin_clearance else self.kin
+            if observed_shin_clearance:
+                _, actual_velocity = ep.layout.canonical(ep.env.data)
+                ball_velocity = actual_velocity[35:38].copy()
 
             def separation() -> tuple[float, np.ndarray, np.ndarray]:
                 return sphere_capsule_clearance(
                     actual_ball,
                     float(self.model.geom_size[ball_geom, 0]),
-                    self.kin.geom_xpos[shin_geom].copy(),
-                    self.kin.geom_xmat[shin_geom].reshape(3, 3)[:, 2].copy(),
+                    clearance_data.geom_xpos[shin_geom].copy(),
+                    clearance_data.geom_xmat[shin_geom].reshape(3, 3)[:, 2].copy(),
                     float(self.model.geom_size[shin_geom, 1]),
                     float(self.model.geom_size[shin_geom, 0]),
                 )
@@ -143,11 +164,15 @@ class FootTaskSpaceIntent:
             error = np.r_[desired_p - point, 0.15 * angular]
             if shin_clearance:
                 clearance, near, outward = separation()
-                if clearance < 0.015:
-                    sj = np.zeros((3, self.model.nv))
-                    mujoco.mj_jac(self.model, self.kin, sj, None, near, shin_body)
+                sj = np.zeros((3, self.model.nv))
+                mujoco.mj_jac(self.model, clearance_data, sj, None, near, shin_body)
+                prediction = clearance
+                if observed_shin_clearance:
+                    closing_speed = float(outward @ (sj @ ep.env.data.qvel - ball_velocity))
+                    prediction += 0.04 * min(0.0, closing_speed)
+                if prediction < 0.015:
                     jac = np.vstack((jac, outward @ sj[:, self.vi]))
-                    error = np.r_[error, 0.015 - clearance]
+                    error = np.r_[error, 0.015 - prediction]
             delta = jac.T @ np.linalg.solve(jac @ jac.T + 0.02**2 * np.eye(len(error)), error)
             step = np.clip(delta, -0.08, 0.08)
             limited |= bool((step != delta).any())
@@ -175,4 +200,9 @@ class FootTaskSpaceIntent:
                 requested_shin_surface_margin_m=0.015,
                 obstacle_center_actual_world=actual_ball.copy(),
             )
+            if observed_shin_clearance:
+                information.update(
+                    clearance_from_observed_pose_plus_correction=True,
+                    closing_velocity_horizon_s=0.04,
+                )
         return action, information

@@ -48,6 +48,9 @@ def main():
         "measured_contact_shin_clearance": (
             "dual256.TRAIN.measured_contact_center_and_shin_clearance.v3"
         ),
+        "measured_contact_observed_shin": (
+            "dual256.TRAIN.measured_contact_center_observed_shin_predictive.v4"
+        ),
     }
     if (
         mode not in protocols
@@ -291,7 +294,12 @@ def main():
                             actual,
                             nominal.copy(),
                             current_body_offset(world_offset, rotation, frame, center),
-                            shin_clearance=mode == "measured_contact_shin_clearance",
+                            shin_clearance=mode
+                            in (
+                                "measured_contact_shin_clearance",
+                                "measured_contact_observed_shin",
+                            ),
+                            observed_shin_clearance=mode == "measured_contact_observed_shin",
                         )
                     elif intent is None:
                         oracle, ik = reference, None

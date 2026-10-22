@@ -93,17 +93,26 @@ def synthetic_episode(with_ball=False):
     )
 
 
-def test_shin_clearance_uses_only_scratch_kinematics_and_original_joint_bound():
+@pytest.mark.parametrize("observed", [False, True])
+def test_shin_clearance_uses_only_scratch_kinematics_and_original_joint_bound(observed):
     ep = synthetic_episode(with_ball=True)
     before = (ep.env.data.qpos.copy(), ep.env.data.qvel.copy(), ep.env.data.ctrl.copy())
     intent = FootTaskSpaceIntent(ep.env.model, foot="left", center=104, latent=np.zeros((2, 6)))
+    ep.layout.canonical = lambda data: (np.zeros(43), np.zeros(41))
     action, plan = intent.solve_offset(
-        ep, np.zeros(29, np.float32), np.zeros(6), shin_clearance=True
+        ep,
+        np.zeros(29, np.float32),
+        np.zeros(6),
+        shin_clearance=True,
+        observed_shin_clearance=observed,
     )
     assert np.isfinite(action).all() and abs(action).max() <= 0.200001
     assert plan["requested_shin_surface_margin_m"] == 0.015
     assert np.isfinite(plan["shin_clearance_after_scratch_m"])
     assert plan["ik_iterations"] == 4
+    if observed:
+        assert plan["clearance_from_observed_pose_plus_correction"] is True
+        assert plan["closing_velocity_horizon_s"] == 0.04
     for actual, old in zip(
         (ep.env.data.qpos, ep.env.data.qvel, ep.env.data.ctrl), before, strict=True
     ):
