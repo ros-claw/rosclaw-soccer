@@ -87,3 +87,133 @@ def test_dirty_neighborhood_runners_cannot_allocate_or_write(tmp_path, monkeypat
     with pytest.raises(ValueError, match="frozen"):
         module.main()
     assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "audit_hash", "status", "count", "body", "case_order", "claim"]
+)
+def test_all_arm_reader_requires_closed_matched_own_evidence(tmp_path, monkeypatch, fault):
+    import json
+
+    from rosclaw_soccer.rsi import paid_neighborhood_sources as module
+
+    config = neighborhood_config()
+    plan = dict(
+        config=config,
+        body_scene_hash="body",
+        specifications=dict(models={k: dict(hash="model") for k in config["arms"]}),
+    )
+    monkeypatch.setattr(module, "load_neighborhood_plan", lambda *a: ({}, plan, {}))
+    roots, audits = {}, {}
+    for arm in config["arms"]:
+        root, ar = tmp_path / arm, tmp_path / (arm + "-audit")
+        root.mkdir()
+        ar.mkdir()
+        roots[arm] = root
+        audits[arm] = ar
+        common = dict(
+            source_head="producer",
+            arm=arm,
+            plan_hash="plan",
+            config=config,
+            model_hash="model",
+            body_scene_hash="body",
+            hardware_authorized=False,
+            promotion_authorized=False,
+        )
+        d = dict(**common, base_stand=True, teacher_reoptimized=False)
+        dp = root / "declaration.json"
+        dp.write_text(json.dumps(d))
+        rows = [
+            dict(case=i, repeat=j, quality=False, healthy_success=False)
+            for i in range(32)
+            for j in range(2)
+        ]
+        r = dict(
+            **common,
+            status="PAID_CONTACT_NEIGHBORHOOD32_ARM_CLOSED_PENDING_AUDIT",
+            declaration_hash=module.digest(dp),
+            records=copy.deepcopy(rows),
+            episodes=64,
+            repeats_exact=True,
+            actual_native_steps=100,
+            actual_neural_rows=10,
+            optimizer_updates=0,
+            Fresh_rows_read=0,
+            input_file_hashes={},
+        )
+        if arm == "learned_memory" and fault == "body":
+            r["body_scene_hash"] = "other"
+        if arm == "learned_memory" and fault == "case_order":
+            r["records"][0]["case"] = 31
+        rp = root / "complete.json"
+        rp.write_text(json.dumps(r))
+        a = dict(
+            source_head="producer",
+            arm=arm,
+            plan_hash="plan",
+            source_hash=module.digest(rp),
+            status="PAID_CONTACT_NEIGHBORHOOD32_OWN_NN_IK_ALL_NATIVE_AUDIT_PASS",
+            counts=dict(episodes=64),
+            outcomes=copy.deepcopy(rows),
+            repeats_exact=True,
+            own_native_steps=100,
+            own_trajectory_neural_rows=10,
+            hardware_authorized=False,
+            promotion_authorized=False,
+            optimizer_updates=0,
+            Fresh_rows_read=0,
+            input_file_hashes={},
+        )
+        if arm == "learned_memory":
+            if fault == "audit_hash":
+                a["source_hash"] = "other"
+            elif fault == "status":
+                a["status"] = "PENDING"
+            elif fault == "count":
+                a["own_native_steps"] = 90
+            elif fault == "claim":
+                a["outcomes"][0]["quality"] = True
+        (ar / "complete.json").write_text(json.dumps(a))
+    if fault:
+        with pytest.raises(ValueError):
+            module.load_audited_neighborhood_arms(tmp_path, "plan", roots, audits, "producer")
+    else:
+        _, r, pins = module.load_audited_neighborhood_arms(
+            tmp_path, "plan", roots, audits, "producer"
+        )
+        assert set(r) == set(config["arms"]) and len(pins) == 9
+
+
+def test_dirty_support_diagnostic_never_reads_models_or_creates_output(tmp_path, monkeypatch):
+    import sys
+
+    from scripts import rsi_diagnose_paid_neighborhood as runner
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run",
+            "--plan-root",
+            str(tmp_path),
+            "--plan-hash",
+            "plan",
+            "--arm-root",
+            "learned_memory",
+            str(tmp_path),
+            "--audit-root",
+            "learned_memory",
+            str(tmp_path),
+            "--producer-head",
+            "producer",
+            "--expected-head",
+            "frozen",
+            "--output",
+            str(tmp_path / "out"),
+        ],
+    )
+    monkeypatch.setattr(runner.subprocess, "check_output", lambda *a, **k: b"dirty")
+    with pytest.raises(ValueError, match="frozen"):
+        runner.main()
+    assert not (tmp_path / "out").exists()

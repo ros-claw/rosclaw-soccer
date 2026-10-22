@@ -202,3 +202,76 @@ def load_neighborhood_plan(
         pins[str(path)] = link["raw_hash"]
     pins[str(rp)], pins[str(dp)] = expected, digest(dp)
     return r, d, pins
+
+
+def load_audited_neighborhood_arms(
+    plan_root: Path,
+    plan_hash: str,
+    roots: dict[str, Path],
+    audits: dict[str, Path],
+    producer_head: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+    """Authenticate all three complete arms, not just their successful rows."""
+    _, plan, pins = load_neighborhood_plan(plan_root, plan_hash)
+    arms = set(neighborhood_config()["arms"])
+    if set(roots) != arms or set(audits) != arms:
+        raise ValueError("all three predeclared learned/parent/teacher arms required")
+    records = {}
+    for arm in sorted(arms):
+        rp, ap, dp = (
+            roots[arm] / "complete.json",
+            audits[arm] / "complete.json",
+            roots[arm] / "declaration.json",
+        )
+        for path in (rp, ap, dp):
+            if path.is_symlink() or (path.parent / "failed.json").exists():
+                raise ValueError("ordinary closed audited perturbation sources required")
+        r, a, d = [json.loads(p.read_text()) for p in (rp, ap, dp)]
+        if (
+            r["status"] != "PAID_CONTACT_NEIGHBORHOOD32_ARM_CLOSED_PENDING_AUDIT"
+            or a["status"] != "PAID_CONTACT_NEIGHBORHOOD32_OWN_NN_IK_ALL_NATIVE_AUDIT_PASS"
+            or a["source_hash"] != digest(rp)
+            or r["declaration_hash"] != digest(dp)
+            or d.get("base_stand") is not True
+            or d.get("teacher_reoptimized") is not False
+            or any(
+                v["source_head"] != producer_head or v["arm"] != arm or v["plan_hash"] != plan_hash
+                for v in (r, a, d)
+            )
+            or r["config"] != plan["config"]
+            or d["config"] != plan["config"]
+            or any(
+                v["model_hash"] != plan["specifications"]["models"][arm]["hash"]
+                or v["body_scene_hash"] != plan["body_scene_hash"]
+                for v in (r, d)
+            )
+            or r["episodes"] != 64
+            or a["counts"]["episodes"] != 64
+            or r["repeats_exact"] is not True
+            or a["repeats_exact"] is not True
+            or a["own_native_steps"] != r["actual_native_steps"]
+            or a["own_trajectory_neural_rows"] != r["actual_neural_rows"]
+            or any(
+                v.get(k) is not False
+                for v in (r, a, d)
+                for k in ("hardware_authorized", "promotion_authorized")
+            )
+            or any(v.get("optimizer_updates") != 0 or v.get("Fresh_rows_read") != 0 for v in (r, a))
+            or [(v["case"], v["repeat"]) for v in r["records"]]
+            != [(i, j) for i in range(32) for j in range(2)]
+            or [(v["case"], v["repeat"]) for v in a["outcomes"]]
+            != [(i, j) for i in range(32) for j in range(2)]
+        ):
+            raise ValueError("complete same-model ownNN/IK/native evidence required")
+        for row, own in zip(r["records"], a["outcomes"], strict=True):
+            if row["quality"] != own["quality"] or row["healthy_success"] != own["healthy_success"]:
+                raise ValueError("audited per-case outcome differs")
+        for obj in (r, a):
+            for f, h in obj["input_file_hashes"].items():
+                if f in pins and pins[f] != h:
+                    raise ValueError("conflicting all-arm audit provenance")
+                pins[f] = h
+        for path in (rp, ap, dp):
+            pins[str(path)] = digest(path)
+        records[arm] = r
+    return plan, records, pins
