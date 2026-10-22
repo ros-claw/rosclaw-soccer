@@ -61,16 +61,18 @@ class SharedRelaySetup:
         )
 
     def prepare(
-        self, context: int, lateral_m: float
+        self, context: int, lateral_m: float, *, ball_planar_offset_world: np.ndarray | None = None
     ) -> tuple[Any, Any, np.ndarray, np.ndarray, np.ndarray]:
         import mujoco
 
         from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+        from rosclaw_soccer.rsi.pass_transfer_curriculum import initial_ball_offset
         from rosclaw_soccer.rsi.shared_native_motor_world import (
             NativePDParameters,
             SharedNativeMotorWorld,
         )
 
+        ball_offset = initial_ball_offset(ball_planar_offset_world)
         ep = self.episodes[context]
         m = self.model
         layouts = {
@@ -96,6 +98,10 @@ class SharedRelaySetup:
                 d.qvel[layout.rv : layout.rv + 2] *= -1
         al = layouts["a/"]
         d.qpos[al.bq : al.bq + 7], d.qvel[al.bv : al.bv + 6] = q[36:], v[35:]
+        if ball_offset is not None:
+            # Initialization only: B home/anchor and every body state remain
+            # fixed to the source. No active world or controller exists yet.
+            d.qpos[al.bq : al.bq + 2] += ball_offset
         mujoco.mj_forward(m, d)
         for c in d.contact:
             b1, b2 = (int(m.geom_bodyid[g]) for g in c.geom)
