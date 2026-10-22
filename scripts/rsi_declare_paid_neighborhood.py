@@ -11,8 +11,11 @@ def main():
 
     p = argparse.ArgumentParser(description=__doc__)
     for n in ("data", "pipeline"):
-        p.add_argument("--" + n + "-root", type=Path, required=True)
-        p.add_argument("--" + n + "-hash", required=True)
+        p.add_argument("--" + n + "-root", type=Path)
+        p.add_argument("--" + n + "-hash")
+    for n in ("probe-base", "probe-learned", "probe-zero"):
+        p.add_argument("--" + n + "-root", type=Path)
+        p.add_argument("--" + n + "-hash")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -26,9 +29,29 @@ def main():
     from rosclaw_soccer.rsi.paid_neighborhood_sources import load_neighborhood_sources
     from rosclaw_soccer.rsi.paid_neighborhood_study import neighborhood_config
 
-    data, cases, pins, specifications = load_neighborhood_sources(
-        a.data_root, a.data_hash, a.pipeline_root, a.pipeline_hash
-    )
+    probe_args = [
+        getattr(a, k)
+        for n in ("probe_base", "probe_learned", "probe_zero")
+        for k in (n + "_root", n + "_hash")
+    ]
+    legacy = (a.data_root, a.data_hash, a.pipeline_root, a.pipeline_hash)
+    unseen = any(v is not None for v in probe_args)
+    probe = None
+    if unseen:
+        if any(v is None for v in probe_args) or any(v is not None for v in legacy):
+            raise ValueError("one complete unseen probe declaration, no mixed legacy sources")
+        from rosclaw_soccer.rsi.paid_growth_probe import IDENTITIES, prepare_probe
+
+        identity = {k: str(getattr(a, k)) for n in IDENTITIES for k in (n + "_root", n + "_hash")}
+        probe, pins = prepare_probe(identity)
+        data = probe
+        cases, specifications = probe["cases"], probe["specifications"]
+    else:
+        if any(v is None for v in legacy):
+            raise ValueError("complete original data/pipeline declaration required")
+        data, cases, pins, specifications = load_neighborhood_sources(
+            a.data_root, a.data_hash, a.pipeline_root, a.pipeline_hash
+        )
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     check_pins(pins)
@@ -73,12 +96,16 @@ def main():
             hardware_authorized=False,
             promotion_authorized=False,
         )
+        if unseen:
+            common.update(probe)
         write_once(a.output / "declaration.json", common)
         check_pins(pins)
         write_once(
             a.output / "complete.json",
             dict(
-                status="PAID_CONTACT_NEIGHBORHOOD32_PREREGISTERED_NO_ROLLOUT",
+                status="PAID_GROWTH_UNSEEN32_PROBE_PREREGISTERED_NO_ROLLOUT"
+                if unseen
+                else "PAID_CONTACT_NEIGHBORHOOD32_PREREGISTERED_NO_ROLLOUT",
                 **common,
                 declaration_hash=digest(a.output / "declaration.json"),
                 entries=entries,

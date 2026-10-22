@@ -58,6 +58,8 @@ def main():
     config = plan["config"]
     override = None
     candidate = a.candidate_root is not None or a.candidate_hash is not None
+    if plan.get("plan_kind") == "frozen_growth_pair_unseen_local_probe32" and not candidate:
+        raise ValueError("unseen probe requires explicit pre-frozen candidate pair")
     if candidate:
         if (
             current
@@ -256,7 +258,9 @@ def main():
                         identical(first_blobs[k], blobs[k])
                 first_blobs = blobs
                 records.append(row)
-                if bench.native_steps > plan["config"]["maximum_native_steps"] // 3:
+                if bench.native_steps > config.get(
+                    "maximum_native_steps_per_arm", config["maximum_native_steps"] // 3
+                ):
                     raise ValueError("finite per-arm native budget exceeded")
             print(
                 json.dumps(

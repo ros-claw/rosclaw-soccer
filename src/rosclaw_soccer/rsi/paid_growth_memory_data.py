@@ -457,14 +457,23 @@ def growth_exam_candidate(
         raise ValueError("confined growing-memory checkpoint required")
     pins = dict(r["input_file_hashes"])
     pins[str(rp)], pins[str(dp)], pins[str(cp)] = expected, digest(dp), r["checkpoint_hash"]
-    config = neighborhood_config()
+    unseen = plan.get("plan_kind") == "frozen_growth_pair_unseen_local_probe32"
+    if unseen:
+        name = "zero-control" if control else "learned"
+        if plan["locked_models"][name] != {"root": str(root), "hash": expected}:
+            raise ValueError("unseen probe only admits its pre-frozen policy pair")
+    config = copy.deepcopy(plan["config"]) if unseen else neighborhood_config()
     config.update(
-        protocol="paid.contact_neighborhood.growing_motor_candidate.v3",
-        source_design_protocol=neighborhood_config()["protocol"],
+        protocol="paid.contact_neighborhood.growing_unseen_candidate.v4"
+        if unseen
+        else "paid.contact_neighborhood.growing_motor_candidate.v3",
+        source_design_protocol=plan["config"]["protocol"]
+        if unseen
+        else neighborhood_config()["protocol"],
         candidate_hash=expected,
         frozen_parent_hash=r["parent_hash"],
         candidate_zero_control=control,
-        consumed_for_training=True,
+        consumed_for_training=not unseen,
         heldout_generalization_claim=False,
     )
     return dict(root=str(root), hash=expected), config, pins

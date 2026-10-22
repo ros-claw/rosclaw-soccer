@@ -164,6 +164,10 @@ def load_neighborhood_plan(
     ):
         raise ValueError("exact closed neighborhood preflight required")
     r, d = [json.loads(p.read_text()) for p in (rp, dp)]
+    if r.get("status") == "PAID_GROWTH_UNSEEN32_PROBE_PREREGISTERED_NO_ROLLOUT":
+        from rosclaw_soccer.rsi.paid_growth_probe import load_probe_plan
+
+        return load_probe_plan(root, expected)
     if (
         r["status"] != "PAID_CONTACT_NEIGHBORHOOD32_PREREGISTERED_NO_ROLLOUT"
         or r["declaration_hash"] != digest(dp)
