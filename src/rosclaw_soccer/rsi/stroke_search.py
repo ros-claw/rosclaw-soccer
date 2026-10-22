@@ -59,3 +59,71 @@ def update_elites(
     values = np.stack([checked_latent(p) for p in points])
     elite = sorted(range(17), key=lambda i: (ranks[i], -i), reverse=True)[:4]
     return values[elite].mean(0), np.clip(values[elite].std(0), 0.1, 0.4), elite
+
+
+def verify_search_selection(report: dict[str, Any]) -> None:
+    """Recreate all proposals and selection; physical grades need own replay too."""
+    rows: list[dict[str, Any]] = report["records"]
+    if len(rows) != WORLDS or len(report["generations"]) != GENERATIONS:
+        raise ValueError("all declared search, repeat and control worlds required")
+    cursor = 0
+
+    def row(tag: str, context: int, z: np.ndarray) -> dict[str, Any]:
+        nonlocal cursor
+        r = rows[cursor]
+        cursor += 1
+        if (
+            r["tag"] != tag
+            or r["context"] != context
+            or not np.array_equal(checked_latent(r["latent"]), z)
+            or r["assisted"] is not True
+            or r["PPO_actor_rows"] != 0
+        ):
+            raise ValueError("every ordered physical proposal must match the CEM declaration")
+        return r
+
+    def pair(tag: str, z: np.ndarray) -> dict[str, Any]:
+        rr = [row(f"{tag}-context{i}", i, z) for i in CONTEXTS]
+        return dict(tag=tag, latent=z, rank=pair_rank(rr), rows=rr)
+
+    incumbent = pair("baseline", np.zeros((2, 6)))
+    rng = np.random.default_rng(SEED)
+    mean, std = np.zeros((2, 6)), np.full((2, 6), 0.4)
+    for g in range(GENERATIONS):
+        samples, draws = sample_generation(rng, mean, std)
+        values = [incumbent] + [pair(f"g{g}-candidate{k}", z) for k, z in enumerate(samples)]
+        ranks = [v["rank"] for v in values]
+        updated, spread, elite = update_elites([v["latent"] for v in values], ranks)
+        best = max(range(len(values)), key=lambda k: (ranks[k], -k))
+        expected = dict(
+            generation=g,
+            mean_before=mean.tolist(),
+            std_before=std.tolist(),
+            draws=draws,
+            tags=[v["tag"] for v in values],
+            ranks=[list(v) for v in ranks],
+            elite=elite,
+            mean_after=updated.tolist(),
+            std_after=spread.tolist(),
+            selected=values[best]["tag"],
+        )
+        if expected != report["generations"][g]:
+            raise ValueError("own CEM resampling or elite/selection differs")
+        incumbent = values[best]
+        mean, std = updated, spread
+    for i in CONTEXTS:
+        for repeat in range(2):
+            row(f"selected-context{i}-repeat{repeat}", i, incumbent["latent"])
+    control = [
+        row(f"control-context{CONTROL}-repeat{k}", CONTROL, incumbent["latent"]) for k in range(2)
+    ]
+    if (
+        cursor != WORLDS
+        or report["selected_tag"] != incumbent["tag"]
+        or report["selected_latent"] != incumbent["latent"].tolist()
+        or report["selected_rank"] != list(incumbent["rank"])
+        or report["selected_teacher_successes"]
+        != sum(r["healthy_quality"] for r in incumbent["rows"])
+        or report["unsearched_control_quality"] != control[0]["healthy_quality"]
+    ):
+        raise ValueError("complete paired teacher selection accounting required")
