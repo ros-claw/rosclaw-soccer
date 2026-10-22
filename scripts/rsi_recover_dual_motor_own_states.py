@@ -27,6 +27,9 @@ def main():
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("audit-hash", "expected-head"):
         p.add_argument("--" + n, required=True)
+    p.add_argument("--recovery-course", choices=("legacy4", "continual-failed3"), default="legacy4")
+    p.add_argument("--paired-readout-root", type=Path)
+    p.add_argument("--paired-readout-head")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -40,6 +43,10 @@ def main():
             raise ValueError("clean frozen actual-state recovery source required")
 
     clean()
+    from rosclaw_soccer.rsi.motor_recovery_course import motor_recovery_course
+
+    course = motor_recovery_course(a.recovery_course, a.teacher_mode)
+    selected = list(course.contexts)
     rp, ap, dp = (
         a.exam_root / "complete.json",
         a.audit_root / "complete.json",
@@ -63,9 +70,36 @@ def main():
     pins = dict(ar["input_file_hashes"])
     for x in (rp, ap, dp):
         pins[str(x)] = digest(x)
+    if a.recovery_course == "continual-failed3":
+        if a.paired_readout_root is None or not a.paired_readout_head:
+            raise ValueError("continual teacher pivot requires exact completed paired readout")
+        path = a.paired_readout_root / "complete.json"
+        comparison = json.loads(path.read_text())
+        if (
+            path.is_symlink()
+            or comparison["source_head"] != a.paired_readout_head
+            or comparison["schema"] != "soccer.dual_motor.audited_amplitude_comparison.v1"
+            or comparison["hardware_authorized"] is not False
+            or comparison["promotion_authorized"] is not False
+            or len(comparison["proofs"]) != 2
+            or comparison["result"]["next_research_action"]
+            != "PIVOT_TO_TEACHER_STUDENT_DISTRIBUTION_AND_CONTROL_INTERFACE"
+        ):
+            raise ValueError("completed negative exploration intervention required for pivot")
+        for proof in comparison["proofs"]:
+            stage_path = Path(proof["root"]) / "complete.json"
+            if (
+                digest(stage_path) != proof["stage_hash"]
+                or json.loads(stage_path.read_text())["training_hash"] != d["training_hash"]
+            ):
+                raise ValueError("teacher pivot must use the same actually examined candidate")
+            pins[str(stage_path)] = digest(stage_path)
+        pins[str(path)] = digest(path)
+    elif a.paired_readout_root is not None or a.paired_readout_head is not None:
+        raise ValueError("legacy recovery cannot imply a continual pivot")
     contact_inputs = {}
     if a.teacher_mode.startswith("measured_contact_"):
-        for i in (4, 5, 20, 21):
+        for i in selected:
             entry = next(
                 x for x in ar["contact_event_artifacts"] if x["context"] == i and x["repeat"] == 0
             )
@@ -86,7 +120,6 @@ def main():
     _, data = receipt(training["data_hash"])
     teacher_path, teacher = receipt(data["teacher_hash"])
     td = json.loads((teacher_path.parent / "declaration.json").read_text())
-    selected = [4, 5, 20, 21]
     baselines = [
         next(x for x in r["records"] if x["context"] == i and x["repeat"] == 0) for i in selected
     ]
@@ -99,7 +132,9 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="dual256.TRAIN.actual_failed_state_shared_authority_recovery.v1"
+            protocol="dual256.TRAIN.continual_failed3_observed_shin_recovery.v5"
+            if a.recovery_course == "continual-failed3"
+            else "dual256.TRAIN.actual_failed_state_shared_authority_recovery.v1"
             if a.teacher_mode == "reference"
             else (
                 "dual256.TRAIN.measured_contact_center_on_learner_mean.v2"
@@ -111,6 +146,11 @@ def main():
                 )
             ),
             teacher_mode=a.teacher_mode,
+            recovery_course=a.recovery_course,
+            checkpoint_kind=course.checkpoint_kind,
+            paired_readout_hash=digest(a.paired_readout_root / "complete.json")
+            if a.paired_readout_root
+            else None,
             centering_geometry=(
                 "actual solver radial minus horizontal goal-directed .11m radial; "
                 "not force direction"
@@ -125,15 +165,16 @@ def main():
             exam_hash=digest(rp),
             audit_hash=a.audit_hash,
             training_hash=d["training_hash"],
+            paired_readout_head=a.paired_readout_head,
             contexts=[d["contexts"][i] for i in selected],
             source_context_ids=selected,
             alphas=[0.25, 0.5, 0.75, 1.0],
             start_control=80,
             ramp_controls=8,
             ramp_out_before_standing=True,
-            maximum_worlds=24,
-            maximum_native_steps=96000,
-            maximum_actor_decisions=9600,
+            maximum_worlds=course.worlds,
+            maximum_native_steps=course.worlds * 4000,
+            maximum_actor_decisions=course.worlds * 400,
             selected_repeats=2,
             learner_success_claim=False,
             online_PPO_actor_rows=0,
@@ -154,7 +195,7 @@ def main():
             current_body_offset,
             measured_centering,
         )
-        from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
+        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.own_state_motor_assistance import (
             assistance_share,
@@ -179,11 +220,12 @@ def main():
             training_receipt_hash=training["parent_lineage_hash"],
             scene_hash=scene,
         )
-        actor, _ = load_dual_for_sim_audit(
+        actor, _ = load_dual_candidate_for_sim_audit(
             parent,
             parent_lineage_hash=training["parent_lineage_hash"],
             root=training_path.parent,
             expected_receipt_hash=d["training_hash"],
+            checkpoint_kind=course.checkpoint_kind,
         )
         scale = actor.parent.get_buffer("action_scale").numpy().copy()
         records = []
@@ -201,7 +243,7 @@ def main():
 
         def collect(slot, alpha, tag):
             nonlocal calls, intent_calls, worlds
-            if worlds >= 24:
+            if worlds >= course.worlds:
                 raise ValueError("bounded recovery-world budget exceeded")
             context = selected[slot]
             ctx = d["contexts"][context]
@@ -437,12 +479,12 @@ def main():
                 ),
                 flush=True,
             )
-            if bench.native_steps > 96000 or calls > 9600:
+            if bench.native_steps > course.worlds * 4000 or calls > course.worlds * 400:
                 raise ValueError("bounded recovery native/NN budget exceeded")
             return outcome, blobs, plans
 
         selected_trials = []
-        for slot in range(4):
+        for slot in range(len(selected)):
             best = None
             for alpha in (0.25, 0.5, 0.75, 1.0):
                 trial = collect(slot, alpha, f"context{selected[slot]}-alpha{alpha}")

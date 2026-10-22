@@ -42,6 +42,9 @@ def main():
         raise ValueError("exact completed source receipt required")
     r, d = [json.loads(x.read_text()) for x in (rp, dp)]
     mode = d.get("teacher_mode", "reference")
+    from rosclaw_soccer.rsi.motor_recovery_course import motor_recovery_course
+
+    course = motor_recovery_course(d.get("recovery_course", "legacy4"), mode)
     protocols = {
         "reference": "dual256.TRAIN.actual_failed_state_shared_authority_recovery.v1",
         "measured_contact_center": "dual256.TRAIN.measured_contact_center_on_learner_mean.v2",
@@ -54,18 +57,29 @@ def main():
     }
     if (
         mode not in protocols
-        or d["protocol"] != protocols[mode]
+        or d["protocol"]
+        != (
+            "dual256.TRAIN.continual_failed3_observed_shin_recovery.v5"
+            if course.checkpoint_kind == "ar1-actor-critic"
+            else protocols[mode]
+        )
         or r["status"] != "DUAL_MOTOR_ACTUAL_STATE_TEACHER_RECOVERY_CLOSED_PENDING_OWN_AUDIT"
         or r["source_head"] != a.producer_head
         or d["source_head"] != a.producer_head
         or r["declaration_hash"] != digest(dp)
         or r["input_file_hashes"] != d["input_file_hashes"]
-        or d["source_context_ids"] != [4, 5, 20, 21]
+        or d["source_context_ids"] != list(course.contexts)
+        or d.get("checkpoint_kind", "supervised") != course.checkpoint_kind
         or d["alphas"] != [0.25, 0.5, 0.75, 1.0]
         or d["start_control"] != 80
         or d["ramp_controls"] != 8
         or d["selected_repeats"] != 2
-        or len(r["records"]) != 24
+        or len(r["records"]) != course.worlds
+        or d["maximum_worlds"] != course.worlds
+        or d["maximum_native_steps"] != course.worlds * 4000
+        or d["maximum_actor_decisions"] != course.worlds * 400
+        or r["actual_native_steps"] > course.worlds * 4000
+        or r["actual_actor_decisions"] > course.worlds * 400
         or not r["whole_selected_repeats_exact"]
         or any(
             v[k] is not False
@@ -75,8 +89,36 @@ def main():
         or r["PPO_actor_rows"] != 0
         or d["online_PPO_actor_rows"] != 0
     ):
-        raise ValueError("complete explicitly assisted24-world TRAIN recovery required")
+        raise ValueError("complete explicitly bounded assisted TRAIN recovery required")
     pins = dict(r["input_file_hashes"])
+    if course.checkpoint_kind == "ar1-actor-critic":
+        readouts = [
+            Path(x)
+            for x, h in pins.items()
+            if h == d["paired_readout_hash"] and x.endswith("/complete.json")
+        ]
+        if len(readouts) != 1:
+            raise ValueError("unique actual negative paired intervention required")
+        comparison = json.loads(readouts[0].read_text())
+        if (
+            digest(readouts[0]) != d["paired_readout_hash"]
+            or comparison["source_head"] != d["paired_readout_head"]
+            or comparison["schema"] != "soccer.dual_motor.audited_amplitude_comparison.v1"
+            or comparison["hardware_authorized"] is not False
+            or comparison["promotion_authorized"] is not False
+            or len(comparison["proofs"]) != 2
+            or comparison["result"]["next_research_action"]
+            != "PIVOT_TO_TEACHER_STUDENT_DISTRIBUTION_AND_CONTROL_INTERFACE"
+        ):
+            raise ValueError("actual negative paired readout must support this teacher pivot")
+        for proof in comparison["proofs"]:
+            path = Path(proof["root"]) / "complete.json"
+            if (
+                pins.get(str(path)) != proof["stage_hash"]
+                or digest(path) != proof["stage_hash"]
+                or json.loads(path.read_text())["training_hash"] != r["training_hash"]
+            ):
+                raise ValueError("same candidate must bind independent intervention and teacher")
     for x in (rp, dp):
         pins[str(x)] = digest(x)
 
@@ -113,7 +155,7 @@ def main():
             current_body_offset,
             measured_centering,
         )
-        from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
+        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.own_state_motor_assistance import (
             assistance_share,
@@ -152,11 +194,12 @@ def main():
             training_receipt_hash=training["parent_lineage_hash"],
             scene_hash=scene,
         )
-        actor, _ = load_dual_for_sim_audit(
+        actor, _ = load_dual_candidate_for_sim_audit(
             parent,
             parent_lineage_hash=training["parent_lineage_hash"],
             root=tp.parent,
             expected_receipt_hash=r["training_hash"],
+            checkpoint_kind=course.checkpoint_kind,
         )
         scale = actor.parent.get_buffer("action_scale").numpy().copy()
         seen, selected_tags, winners = set(), [], []
@@ -401,12 +444,12 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="DUAL_MOTOR_ASSISTED24_OWN_NATIVE_AUDIT_PASS",
+                status=course.audit_status,
                 source_hash=source_hash,
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 counts=counts,
-                worlds=24,
+                worlds=course.worlds,
                 results=verified,
                 teacher_mode=mode,
                 selected_teacher_successes=r["selected_teacher_successes"],
