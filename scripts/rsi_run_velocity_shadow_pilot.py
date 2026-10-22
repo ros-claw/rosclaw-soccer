@@ -18,6 +18,9 @@ def main():
         p.add_argument("--" + n, required=True)
     p.add_argument("--recovery-root", type=Path)
     p.add_argument("--recovery-hash")
+    p.add_argument(
+        "--motor-reference", choices=("current201", "published_R2"), default="current201"
+    )
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -84,6 +87,12 @@ def main():
     check_pins(pins)
     courses = [dict(backoff_m=1.6, speed_mps=0.8), dict(backoff_m=1.2, speed_mps=0.6)]
     arms = ["standing_current", "run_shadow_current", "run_shadow_taskspace_teacher"]
+    native_budget, query_budget = 55080, 6000
+    protocol = "paid.velocity_actual_shadow_then_reference80.v1"
+    if a.motor_reference == "published_R2":
+        arms = ["reference_from_start", "velocity_shadow_reference"]
+        native_budget, query_budget = 36000, 4000
+        protocol = "paid.velocity_actual_shadow_then_reference80.published_R2_v2"
     from rosclaw_soccer.rsi.paid_run_pilot_recovery import (
         contact_quality,
         recover_first_standing_world,
@@ -92,6 +101,8 @@ def main():
     recovered = None
     reused_steps = 0
     if a.recovery_root is not None or a.recovery_hash is not None:
+        if a.motor_reference != "current201":
+            raise ValueError("never relabel current-motor physics as published R2")
         if (
             a.recovery_root is None
             or a.recovery_hash is None
@@ -118,15 +129,16 @@ def main():
             case=case,
             courses=courses,
             arms=arms,
-            protocol="paid.velocity_actual_shadow_then_reference80.v1",
+            protocol=protocol,
+            motor_reference=a.motor_reference,
             repeats=2,
             prepare_velocity_controls=50,
             run_controls=100,
             shadow_reference_controls=80,
             no_R2_proposal_executed_during_shadow=True,
             body_state_reset_after_start=False,
-            maximum_native_steps=55080,
-            maximum_full_neural_queries=6000,
+            maximum_native_steps=native_budget,
+            maximum_full_neural_queries=query_budget,
             original_formal_H300_exam=False,
             optimizer_updates=0,
             reused_native_steps=reused_steps,
@@ -177,6 +189,7 @@ def main():
             training_receipt_hash=spec["hash"],
             scene_hash=scene,
         )
+        active_actor = actor.base if a.motor_reference == "published_R2" else actor
         records = []
         for ci, course in enumerate(courses):
             for arm in arms:
@@ -247,7 +260,7 @@ def main():
                     velocity_rows = []
                     shadow_queries = []
                     shadow = None
-                    if arm != "standing_current":
+                    if arm not in ("standing_current", "reference_from_start"):
                         velocity = G1VelocityPolicy(
                             onnx,
                             cfg,
@@ -260,7 +273,7 @@ def main():
                             np.array(v, np.float64)
                             for v in (velocity.params.stiffness, velocity.params.damping)
                         ]
-                        shadow = OwnVelocityShadow(ep, actor)
+                        shadow = OwnVelocityShadow(ep, active_actor)
                         pulse = (
                             float(course["speed_mps"] * direction[0]),
                             float(course["speed_mps"] * direction[1]),
@@ -349,7 +362,9 @@ def main():
                         obs = ep.observation()
                         before = [s.numpy().copy() for s in state]
                         with torch.no_grad():
-                            mean, state = actor(torch.from_numpy(obs).reshape(1, 1, 160), state)
+                            mean, state = active_actor(
+                                torch.from_numpy(obs).reshape(1, 1, 160), state
+                            )
                         counts["R2_applied"] += 1
                         nominal = mean[0, 0].numpy().copy()
                         action = nominal.copy()
@@ -496,11 +511,11 @@ def main():
                         flush=True,
                     )
                     if (
-                        bench.native_steps + reused_steps > 55080
+                        bench.native_steps + reused_steps > native_budget
                         or sum(
                             counts[k] for k in ("velocity", "R2_shadow", "R2_applied", "R2_stand")
                         )
-                        > 6000
+                        > query_budget
                     ):
                         raise ValueError("bounded pilot budget exceeded")
         check_pins(pins)
