@@ -461,5 +461,13 @@ def load_paid_student(policy: Path, **kwargs: Any) -> tuple[Any, dict[str, Any]]
         PRECISION_CONTROL_STATUS,
     ):
         return load_interventional_student(policy, **kwargs)
+    from rosclaw_soccer.rsi.paid_cardinal_memory import (
+        CARDINAL_CONTROL_STATUS,
+        CARDINAL_STATUS,
+        load_cardinal_student,
+    )
+
+    if status in (CARDINAL_STATUS, CARDINAL_CONTROL_STATUS):
+        return load_cardinal_student(policy, **kwargs)
     loader = load_progressive_student if status == TRAINED_STATUS else load_successor_student
     return loader(policy, **kwargs)
