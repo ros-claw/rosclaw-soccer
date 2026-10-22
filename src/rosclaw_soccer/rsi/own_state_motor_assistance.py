@@ -69,5 +69,7 @@ def blend_actual_motor(
         oracle_authority_clipped=bool(np.any(oracle_delta != bounded)),
         actual_delta_rad_policy=actual_delta.copy(),
         learned_proposal_executed_without_assistance=share == 0,
-        PPO_actor_update_allowed=share == 0,
+        # A locally unassisted prefix can still receive a future teacher rescue;
+        # this helper never authorizes its return for an on-policy actor update.
+        PPO_actor_update_allowed=False,
     )

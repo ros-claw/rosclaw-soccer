@@ -19,6 +19,7 @@ def test_zero_share_never_roundtrips_and_changes_source_action():
     out, info = blend_actual_motor(action, nominal, nominal, np.ones(29, np.float32), share=0.0)
     assert np.array_equal(out, action)
     assert info["learned_proposal_executed_without_assistance"]
+    assert not info["PPO_actor_update_allowed"]
 
 
 def test_bounded_oracle_blend_not_full_student_success():
