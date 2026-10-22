@@ -1,0 +1,156 @@
+"""Whole-world native replay with own RNN and explicit shared IK recomputation.
+
+No producer integration, shadow state, standing controller or raw-state resets.
+Observation and kinematic solver are shared admitted codecs, not independent
+implementations; report this boundary rather than claim algorithmic diversity.
+"""
+
+from typing import Any
+
+import numpy as np
+import torch
+
+
+def equal(actual: Any, expected: Any, label: str) -> None:
+    if not np.array_equal(actual, expected):
+        raise ValueError("whole-run audit mismatch: " + label)
+
+
+def replay_teacher_world(
+    ep: Any,
+    actor: Any,
+    kick: dict[str, np.ndarray],
+    stand: dict[str, np.ndarray] | None,
+    *,
+    latent: np.ndarray,
+    center: int,
+    foot: str,
+    counts: dict[str, int],
+) -> None:
+    """Count actual work even if a later comparison fails; never retry here."""
+    import mujoco
+
+    from rosclaw_soccer.rsi.paid_foot_taskspace import FootTaskSpaceIntent
+    from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
+
+    if (
+        mujoco.__version__ != "3.5.0"
+        or mujoco.get_mjcb_control() is not None
+        or ep.env.model.opt.timestep != 0.002
+        or actor.training
+        or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
+        or not 1 <= len(kick["qpos"]) <= ep.clip.length
+        or (stand is not None and not 1 <= len(stand["qpos"]) <= 100)
+    ):
+        raise ValueError("bounded native CPU whole-run evidence required")
+    for raw in (kick, stand):
+        if raw is not None and any(not np.isfinite(v).all() for v in raw.values()):
+            raise ValueError("finite raw primitives required")
+    model, data = ep.env.model, ep.env.data
+    intent = FootTaskSpaceIntent(model, foot=foot, center=center, latent=latent)
+    state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
+    body_failed = False
+    for phase, raw in (("kick", kick), ("stand", stand)):
+        if raw is None:
+            continue
+        if phase == "stand" and (body_failed or ep.frame != ep.clip.length):
+            raise ValueError("standing requires uncensored actual reference end")
+        for k, v in snapshot(data).items():
+            equal(v, raw["initial_" + k], phase + " initial " + k)
+        for frame in range(len(raw["qpos"])):
+            if body_failed:
+                raise ValueError("body failure must terminate at first actual control boundary")
+            equal(data.qpos, raw["native_qpos_before"][frame], "q before")
+            equal(data.qvel, raw["native_qvel_before"][frame], "v before")
+            equal(float(data.time), raw["time_before"][frame], "time before")
+            if phase == "kick":
+                obs = ep.observation()
+            else:
+                mujoco.mj_forward(model, data)
+                obs = ep.build_observation(
+                    ep.env,
+                    None,
+                    0,
+                    ep.last_action,
+                    ep.ref_pos.astype(np.float32),
+                    np.zeros(29, np.float32),
+                    np.zeros(3, np.float32),
+                    ep.env.ball_pos,
+                    ep.goal,
+                    ep.offset,
+                    obs_dim=None,
+                )
+                equal(
+                    raw["STAND_reference_pose"][frame], ep.ref_pos.astype(np.float32), "stand pose"
+                )
+                equal(raw["STAND_control"][frame], frame, "stand cursor")
+            equal(obs, raw["NN_obs"][frame], "own observation")
+            for tensor, k in zip(state, ("NN_h_before", "NN_c_before"), strict=True):
+                equal(tensor.numpy(), raw[k][frame], "own " + k)
+            with torch.no_grad():
+                mean, state = actor(torch.from_numpy(obs).reshape(1, 1, 160), state)
+            counts["neural"] += 1
+            nominal = mean[0, 0].numpy().copy()
+            equal(nominal, raw["NN_nominal_action"][frame], "own nominal")
+            for tensor, k in zip(state, ("NN_h_after", "NN_c_after"), strict=True):
+                equal(tensor.numpy(), raw[k][frame], "own " + k)
+            if phase == "kick":
+                before = snapshot(data)
+                action, plan = intent(ep, nominal.copy())
+                counts["kinematic_intent"] += 1
+                for k, value in plan.items():
+                    equal(value, raw["PLAN_" + k][frame], "own IK " + k)
+                for k, value in snapshot(data).items():
+                    equal(value, before[k], "no IK physical write " + k)
+            else:
+                action = nominal
+            equal(action, raw["NN_action"][frame], "applied action")
+            target = ep.offset + action[ep.order] * ep.scale
+            equal(target, raw["target"][frame], "actual target")
+            equal(raw["neural_control"][frame], True, "no neural padding")
+            bad = False
+            for sub in range(10):
+                q, v = ep.layout.canonical(data)
+                torque = np.minimum(
+                    ep.effort, np.maximum(-ep.effort, ep.kp * (target - q[7:36]) - ep.kd * v[6:35])
+                )
+                equal(torque, raw["torque"][frame, sub], "own PD caps")
+                data.ctrl[ep.layout.ai] = torque
+                clock = float(data.time)
+                mujoco.mj_step(model, data)
+                counts["native"] += 1
+                if (
+                    abs(data.time - clock - 0.002) > 1e-10
+                    or tuple(int(w.number) for w in data.warning) != ep.warning
+                ):
+                    raise ValueError("native timing/warning differs")
+                q, v = ep.layout.canonical(data)
+                equal(q, raw["qpos"][frame, sub], "whole physical q")
+                equal(v, raw["qvel"][frame, sub], "whole physical v")
+                equal(data.actuator_force[ep.layout.ai], torque, "actual effort")
+                forces = np.zeros(3)
+                for j, contact in enumerate(data.contact):
+                    b1, b2 = [int(model.geom_bodyid[g]) for g in contact.geom]
+                    other = b2 if b1 == ep.layout.ball else b1 if b2 == ep.layout.ball else -1
+                    if other in ep.robot:
+                        wrench = np.zeros(6)
+                        mujoco.mj_contactForce(model, data, j, wrench)
+                        role = ep.feet.index(other) if other in ep.feet else 2
+                        forces[role] = max(forces[role], np.linalg.norm(wrench[:3]))
+                equal(forces, raw["forces"][frame, sub], "native contacts")
+                bad |= bool(q[2] < 0.65 or 1 - 2 * (q[4] ** 2 + q[5] ** 2) < 0.9)
+            equal(bad, raw["body_failed"][frame], "failure boundary")
+            body_failed = bad
+            ep.last_action = action.copy()
+            if phase == "kick":
+                ep.ref_pos = ep.clip.joint_pos[ep.frame].copy()
+                ep.ref_vel = ep.clip.joint_vel[ep.frame].copy()
+                ep.ref_ang = ep.clip.body_ang_vel_w[ep.frame, ep.torso_index].copy()
+                ep.frame += 1
+                ep.ready = False
+        for k, v in snapshot(data).items():
+            equal(v, raw["terminal_" + k], phase + " terminal " + k)
+    if not body_failed and (
+        ep.frame != ep.clip.length or stand is None or len(stand["qpos"]) != 100
+    ):
+        raise ValueError("healthy world cannot silently omit reference/standing suffix")
