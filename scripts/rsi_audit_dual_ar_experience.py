@@ -44,7 +44,9 @@ def main():
         or r["declaration_hash"] != digest(dp)
         or r["input_file_hashes"] != d["input_file_hashes"]
         or d["protocol"] != "dual256.actual_AR1_calibration.TRAIN2x4.v1"
-        or d["seeds"] != [710220, 710221, 710222, 710223]
+        or type(d.get("generation_index", 0)) is not int
+        or not 0 <= d.get("generation_index", 0) < 100
+        or d["seeds"] != [710220 + 1000 * d.get("generation_index", 0) + i for i in range(4)]
         or d["rho"] != 0.9
         or d["sigma_policy_units"] != 0.005
         or len(r["records"]) != 8
@@ -85,7 +87,7 @@ def main():
         import torch
 
         from rosclaw_soccer.rsi.correlated_motor_exploration import conditional_logp, sample_action
-        from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
+        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
         from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
@@ -104,11 +106,12 @@ def main():
             training_receipt_hash=training["parent_lineage_hash"],
             scene_hash=scene,
         )
-        actor, _ = load_dual_for_sim_audit(
+        actor, _ = load_dual_candidate_for_sim_audit(
             parent,
             parent_lineage_hash=training["parent_lineage_hash"],
             root=tp.parent,
             expected_receipt_hash=d["training_hash"],
+            checkpoint_kind=d.get("checkpoint_kind", "supervised"),
         )
         scale = actor.parent.get_buffer("action_scale").numpy().copy()
         log_std = torch.full((29,), math.log(0.005), dtype=torch.float32)

@@ -14,6 +14,7 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--generation-index", type=int, choices=range(100), default=0)
     for n in ("exam-root", "audit-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("audit-hash", "expected-head"):
@@ -65,6 +66,7 @@ def main():
         pins.update({str(x): digest(x) for x in folder.rglob("*.py")})
     check_pins(pins)
     a.output.mkdir()
+    seeds = [710220 + 1000 * a.generation_index + i for i in range(4)]
     write_once(
         a.output / "declaration.json",
         dict(
@@ -75,7 +77,9 @@ def main():
             source_audit_hash=a.audit_hash,
             training_hash=d["training_hash"],
             contexts=[d["contexts"][i] for i in (20, 21)],
-            seeds=[710220, 710221, 710222, 710223],
+            seeds=seeds,
+            generation_index=a.generation_index,
+            checkpoint_kind=d.get("checkpoint_kind", "supervised"),
             rho=0.9,
             sigma_policy_units=0.005,
             noisy_reference_only=True,
@@ -100,7 +104,7 @@ def main():
         import torch
 
         from rosclaw_soccer.rsi.correlated_motor_exploration import sample_action
-        from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
+        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.paid_neural_stand import NeuralStandingTask
         from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
@@ -120,16 +124,17 @@ def main():
             training_receipt_hash=training["parent_lineage_hash"],
             scene_hash=scene,
         )
-        actor, _ = load_dual_for_sim_audit(
+        actor, _ = load_dual_candidate_for_sim_audit(
             parent,
             parent_lineage_hash=training["parent_lineage_hash"],
             root=tp.parent,
             expected_receipt_hash=d["training_hash"],
+            checkpoint_kind=d.get("checkpoint_kind", "supervised"),
         )
         scale = actor.parent.get_buffer("action_scale").numpy().copy()
         log_std = torch.full((29,), math.log(0.005), dtype=torch.float32)
         for context, ctx in zip((20, 21), contexts, strict=True):
-            for seed in (710220, 710221, 710222, 710223):
+            for seed in seeds:
                 folder = a.output / f"context{context}-seed{seed}"
                 folder.mkdir()
                 ep = bench.make(ctx["case"])
