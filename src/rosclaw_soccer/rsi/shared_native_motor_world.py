@@ -69,6 +69,24 @@ class SharedNativeMotorWorld:
         }
         self.parameters = {p: v.owned_copy() for p, v in players.items()}
         first = next(iter(self.layouts.values()))
+        self.ball = first.ball
+        self.contact_owners: dict[int, tuple[int, int]] = {}
+        for index, (prefix, layout) in enumerate(self.layouts.items()):
+            feet = [
+                int(model.body(prefix + side + "_ankle_roll_link").id)
+                if mujoco.mj_name2id(
+                    model, mujoco.mjtObj.mjOBJ_BODY, prefix + side + "_ankle_roll_link"
+                )
+                >= 0
+                else -1
+                for side in ("left", "right")
+            ]
+            for body in range(1, model.nbody):
+                parent = body
+                while parent not in (0, layout.pelvis):
+                    parent = int(model.body_parentid[parent])
+                if parent == layout.pelvis:
+                    self.contact_owners[body] = (index, feet.index(body) if body in feet else 2)
         ball_geoms = np.flatnonzero(model.geom_bodyid == first.ball)
         if (
             len(ball_geoms) != 1
@@ -178,7 +196,19 @@ class SharedNativeMotorWorld:
             ):
                 self.failed = True
                 raise ValueError("native warning, nonfinite state or changed motor law")
-            samples.append(dict(qpos=d.qpos.copy(), qvel=d.qvel.copy(), torque=all_torques))
+            forces = np.zeros((len(self.layouts), 3))
+            for ci in range(d.ncon):
+                contact = d.contact[ci]
+                b1, b2 = (int(m.geom_bodyid[g]) for g in contact.geom)
+                other = b2 if b1 == self.ball else b1 if b2 == self.ball else -1
+                if other in self.contact_owners:
+                    player, part = self.contact_owners[other]
+                    wrench = np.zeros(6)
+                    mujoco.mj_contactForce(m, d, ci, wrench)
+                    forces[player, part] = max(forces[player, part], np.linalg.norm(wrench[:3]))
+            samples.append(
+                dict(qpos=d.qpos.copy(), qvel=d.qvel.copy(), torque=all_torques, ball_forces=forces)
+            )
         self.control_steps += 1
         self.expected_time = float(d.time)
         raw = {k: np.stack([s[k] for s in samples]) for k in samples[0]}

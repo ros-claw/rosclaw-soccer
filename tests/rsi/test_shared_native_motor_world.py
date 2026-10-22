@@ -63,6 +63,8 @@ def test_two_players_share_ten_steps_and_correct_noncanonical_addresses():
     np.testing.assert_array_equal(d.qpos, own.qpos)
     np.testing.assert_array_equal(d.qvel, own.qvel)
     assert row["body_failed"] == {"a/": False, "b/": False}
+    assert row["ball_forces"].shape == (10, 2, 3)
+    assert not row["ball_forces"].any()
     for layout in w.layouts.values():
         q, v = layout.canonical(d)
         assert q.shape == (43,) and v.shape == (41,)
@@ -94,6 +96,21 @@ def test_force_or_clock_intervention_rejected_without_automatic_reset():
     with pytest.raises(ValueError, match="unmodified"):
         w.advance({p: np.zeros(29) for p in w.layouts})
     assert w.native_steps == 0
+
+
+def test_native_ball_contact_is_owned_by_actual_body_not_nearest_player():
+    import mujoco
+
+    w = world()
+    layout = w.layouts["a/"]
+    w.data.qpos[layout.bq : layout.bq + 3] = [0.12, 0.0, 1.0]
+    mujoco.mj_forward(w.model, w.data)
+    row = w.advance({p: np.zeros(29) for p in w.layouts})
+    # This synthetic body has no ankle-roll links, so its root contact is
+    # correctly NONFOOT. A visually nearby foot must never be credited.
+    assert row["ball_forces"][:, 0, 2].max() > 1
+    assert not row["ball_forces"][:, 0, :2].any()
+    assert not row["ball_forces"][:, 1].any()
 
 
 def test_clone_preserves_shared_floor_assets_and_contact_parameters():
