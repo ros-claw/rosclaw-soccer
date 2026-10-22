@@ -17,6 +17,7 @@ import pytest
         "scripts.rsi_collect_neural_relay_chain",
         "scripts.rsi_audit_neural_relay_chain",
         "scripts.rsi_review_neural_relay_reference",
+        "scripts.rsi_qualify_continuous_velocity",
     ],
 )
 def test_import_does_not_allocate_workers_or_write_physical_outputs(module, tmp_path, monkeypatch):
