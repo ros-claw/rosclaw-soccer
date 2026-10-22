@@ -16,8 +16,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for n in ("exam-stage-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
-    for n in ("exam-stage-head", "training-hash", "expected-head"):
+    for n in ("exam-stage-head", "expected-head"):
         p.add_argument("--" + n, required=True)
+    p.add_argument("--training-hash")
+    p.add_argument("--training-root", type=Path)
+    p.add_argument("--training-producer-head")
     p.add_argument("--generation-index", type=int, choices=range(1, 100), required=True)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
@@ -32,6 +35,25 @@ def main():
             raise ValueError("clean frozen successor generation required")
 
     clean()
+    if a.training_hash is None:
+        if a.training_root is None or not a.training_producer_head:
+            raise ValueError(
+                "exact completed training hash or queued immutable producer binding required"
+            )
+        tp = a.training_root / "complete.json"
+        t = json.loads(tp.read_text())
+        if (
+            tp.is_symlink()
+            or (a.training_root / "failed.json").exists()
+            or t["source_head"] != a.training_producer_head
+            or t["status"] != "DUAL_AR1_ACTOR_CRITIC_ACTUALLY_UPDATED_PENDING_PHYSICAL_EXAM"
+            or t["hardware_authorized"] is not False
+            or t["promotion_authorized"] is not False
+        ):
+            raise ValueError("exact immutable closed queued training producer required")
+        a.training_hash = digest(tp)
+    elif a.training_root is not None or a.training_producer_head is not None:
+        raise ValueError("choose one unambiguous exact training commitment")
     sp = a.exam_stage_root / "complete.json"
     ap = a.exam_stage_root / "native-audit" / "complete.json"
     ep = a.exam_stage_root / "native-exam" / "complete.json"
