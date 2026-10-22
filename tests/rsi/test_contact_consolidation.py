@@ -61,3 +61,16 @@ def test_new_bank_does_not_replace_original_exam_context_witness():
     with pytest.raises(ValueError):
         context_witness_hash(dict(status="old", teacher_hash="old"), "contact-consolidated")
     assert context_witness_hash(dict(status="old", teacher_hash="old"), "supervised") == "old"
+
+
+def test_state_dict_container_canonicalization_keeps_exact_tensors_and_strict_optimizer_check():
+    from collections import OrderedDict
+
+    from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import same_training_state
+
+    network = OrderedDict(weight=torch.ones(2), bias=torch.zeros(1))
+    checkpoint = {k: v.clone() for k, v in network.items()}
+    assert not same_training_state(network, checkpoint)
+    assert same_training_state(dict(network), checkpoint)
+    checkpoint["weight"][0] += 0.0001
+    assert not same_training_state(dict(network), checkpoint)

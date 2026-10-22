@@ -18,6 +18,8 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--seed", type=int, choices=(65023, 65024, 65025), required=True)
     p.add_argument("--device", choices=("cuda:0", "cpu"), default="cuda:0")
+    p.add_argument("--failed-predecessor-root", type=Path)
+    p.add_argument("--failed-predecessor-hash")
     a = p.parse_args()
     from rosclaw_soccer.rsi.contact_consolidation import STATUS, consolidation_config
     from rosclaw_soccer.rsi.contact_consolidation_data import BANK_STATUS
@@ -85,8 +87,30 @@ def main():
         pins[str(path)] = row["raw_hash"]
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(x): digest(x) for x in folder.rglob("*.py")})
-    check_pins(pins)
     config = consolidation_config(a.seed, a.device)
+    if bool(a.failed_predecessor_root) != bool(a.failed_predecessor_hash):
+        raise ValueError("exact preserved failure binding required")
+    if a.failed_predecessor_root is not None:
+        failed = a.failed_predecessor_root / "failed.json"
+        prior_decl = a.failed_predecessor_root / "declaration.json"
+        if failed.is_symlink() or digest(failed) != a.failed_predecessor_hash:
+            raise ValueError("exact preserved zero-update failure required")
+        failure, prior = [json.loads(x.read_text()) for x in (failed, prior_decl)]
+        if (
+            failure["offline_supervised_steps"] != 0
+            or failure["cpu_offline_decisions"] != 0
+            or failure["error"]
+            != "ValueError('exact warm network/moments/counters/rates before schedule required')"
+            or prior["config"] != config
+            or prior["data_hash"] != digest(dp)
+            or prior["warm_start_hash"] != data["warm_start_hash"]
+        ):
+            raise ValueError(
+                "recovery fixes only typed network-container comparison before any update"
+            )
+        pins[str(failed)] = a.failed_predecessor_hash
+        pins[str(prior_decl)] = digest(prior_decl)
+    check_pins(pins)
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -139,7 +163,9 @@ def main():
         optimizer.load_state_dict(copy.deepcopy(warm_state["optimizer"]))
         if not same_training_state(
             optimizer.state_dict(), warm_state["optimizer"]
-        ) or not same_training_state(model.plastic.state_dict(), warm_state["plastic_network"]):
+        ) or not same_training_state(
+            dict(model.plastic.state_dict()), warm_state["plastic_network"]
+        ):
             raise ValueError("exact warm network/moments/counters/rates before schedule required")
         first = a.output / "consolidation-initial.pt"
         torch.save(copy.deepcopy(warm_state), first)
@@ -212,7 +238,7 @@ def main():
                 not same_training_state(final_opt["state"][i], warm_state["optimizer"]["state"][i])
                 for i in critic_ids
             )
-            or not same_training_state(critic.state_dict(), warm_state["critic"])
+            or not same_training_state(dict(critic.state_dict()), warm_state["critic"])
             or not same_training_state(model.parent.state_dict(), frozen)
         ):
             raise ValueError("critic weights/Adam or frozen reference changed during consolidation")
