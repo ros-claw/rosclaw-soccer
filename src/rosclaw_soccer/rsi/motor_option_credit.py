@@ -57,3 +57,43 @@ def terminal_option_returns(
     # nonexistent value bootstrap or artificial time-limit terminal.
     exponents = np.arange(rows - 1, -1, -1) + standing_controls
     return np.asarray(terminal_reward * 0.995**exponents, dtype=np.float32)
+
+
+def observed_option_tail(
+    reference_failed: np.ndarray,
+    standing_failed: np.ndarray | None,
+    *,
+    body_failed: bool,
+    standing_healthy: bool | None,
+) -> int:
+    """Keep failures, never invent their unexecuted recovery or a healthy terminal."""
+    streams = [reference_failed] + ([standing_failed] if standing_failed is not None else [])
+    if type(body_failed) is not bool or any(
+        x.ndim != 1 or x.dtype != np.bool_ or not 1 <= len(x) <= (300 if i == 0 else 100)
+        for i, x in enumerate(streams)
+    ):
+        raise ValueError("actual bounded boolean control-failure streams required")
+    if reference_failed.any():
+        if (
+            not body_failed
+            or not reference_failed[-1]
+            or reference_failed[:-1].any()
+            or standing_failed is not None
+            or standing_healthy is not None
+        ):
+            raise ValueError("reference failure must be the actual first terminal boundary")
+        return 0
+    if standing_failed is None:
+        raise ValueError("healthy reference cannot omit unobserved neural recovery")
+    if standing_failed.any():
+        if (
+            not body_failed
+            or not standing_failed[-1]
+            or standing_failed[:-1].any()
+            or standing_healthy is not False
+        ):
+            raise ValueError("standing failure must be the actual first terminal boundary")
+        return len(standing_failed)
+    if body_failed or len(standing_failed) != 100 or standing_healthy is not True:
+        raise ValueError("healthy terminal requires the whole observed recovery horizon")
+    return 100

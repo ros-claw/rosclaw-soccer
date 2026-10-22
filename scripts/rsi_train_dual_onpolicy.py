@@ -123,6 +123,7 @@ def main():
         device="cpu",
         source_batch_size=curriculum.worlds,
         source_curriculum=curriculum.name,
+        body_failure_terminal_credit=True,
     )
     if continual:
         config.update(
@@ -169,6 +170,7 @@ def main():
         )
         from rosclaw_soccer.rsi.motor_option_credit import (
             contact_skill_return,
+            observed_option_tail,
             terminal_option_returns,
         )
         from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
@@ -227,17 +229,14 @@ def main():
             }
             kick, stand = blobs["kick"], blobs.get("stand")
             n = len(kick["NN_obs"])
-            if (
-                stand is None
-                or len(stand["qpos"]) != 100
-                or kick["body_failed"].any()
-                or not row["stand"]["healthy"]
-            ):
-                raise ValueError(
-                    "pilot requires complete actual option with observed neural standing"
-                )
+            tail = observed_option_tail(
+                kick["body_failed"],
+                stand["body_failed"] if stand is not None else None,
+                body_failed=row["result"]["body_failed"],
+                standing_healthy=row["stand"]["healthy"] if row["stand"] is not None else None,
+            )
             reward = contact_skill_return(row["result"])
-            returns = terminal_option_returns(n, 100, reward)
+            returns = terminal_option_returns(n, tail, reward)
             ep = dict(
                 observations=torch.from_numpy(kick["NN_obs"]),
                 actions=torch.from_numpy(kick["NN_action"]),
@@ -283,7 +282,7 @@ def main():
                     seed=row["seed"],
                     terminal_reward=reward,
                     rows=n,
-                    standing_delay=100,
+                    standing_delay=tail,
                     initial_value_mean=float(old_values.mean()),
                     baseline_recomputed_from_own_behavior_history=True,
                 )
