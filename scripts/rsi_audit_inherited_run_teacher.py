@@ -34,19 +34,28 @@ def main():
     ):
         raise ValueError("exact closed source and unused audit output required")
     r, d = [json.loads(x.read_text()) for x in (rp, dp)]
+    contextual = d["protocol"] == "paid.TRAIN.inherited_run_actual_state_expert.contextual_v2"
+    total_worlds, rounds, candidates = (134, 4, 16) if contextual else (38, 2, 8)
     if (
         r["status"] != "INHERITED_RUN_TRAIN_EXPERT_SEARCH_CLOSED_PENDING_INDEPENDENT_AUDIT"
-        or d["protocol"] != "paid.TRAIN.inherited_run_actual_state_expert.v1"
+        or d["protocol"]
+        not in (
+            "paid.TRAIN.inherited_run_actual_state_expert.v1",
+            "paid.TRAIN.inherited_run_actual_state_expert.contextual_v2",
+        )
         or r["declaration_hash"] != digest(dp)
         or r["input_file_hashes"] != d["input_file_hashes"]
-        or r["worlds"] != 38
-        or len(r["records"]) != 38
+        or r["worlds"] != total_worlds
+        or len(r["records"]) != total_worlds
         or not r["selected_whole_repeats_exact"]
         or r["source_head"] != d["source_head"]
         or d["center"] != 105
         or d["seed"] != 41022
-        or d["rounds"] != 2
-        or d["candidates_per_round"] != 8
+        or d["rounds"] != rounds
+        or d["candidates_per_round"] != candidates
+        or d["elite"] != (4 if contextual else 2)
+        or d["initial_std"] != (0.2 if contextual else 0.6)
+        or d["minimum_std"] != (0.03 if contextual else 0.1)
         or any(
             v.get(k) is not False
             for v in (r, d)
@@ -65,6 +74,23 @@ def main():
     if len(paths) != 1:
         raise ValueError("exact inherited motor lineage required")
     training = json.loads(paths[0].read_text())
+    source_paths = [
+        Path(x) for x, h in pins.items() if h == d["source_hash"] and x.endswith("/complete.json")
+    ]
+    if len(source_paths) != 1:
+        raise ValueError("exact source-bound original two-course witness required")
+    original = json.loads(source_paths[0].read_text())
+    centers = [105, 105]
+    if contextual:
+        for ci in range(2):
+            witness = next(
+                x
+                for x in original["records"]
+                if x["course"] == ci and x["arm"] == "reference_from_start" and x["repeat"] == 0
+            )
+            centers[ci] = witness["result"]["postcontact"]["first_foot_contact_substep"] // 10
+        if d["centers"] != centers or d["independent_context_search"] is not True:
+            raise ValueError("source contact phase and separate context experts required")
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(x): digest(x) for x in folder.rglob("*.py")})
     check_pins(pins)
@@ -95,7 +121,12 @@ def main():
         actor = wrapper.base
         expected = (
             {f"baseline-c{c}" for c in range(2)}
-            | {f"g{g}-n{n}-c{c}" for g in range(2) for n in range(8) for c in range(2)}
+            | {
+                f"g{g}-n{n}-c{c}"
+                for g in range(rounds)
+                for n in range(candidates)
+                for c in range(2)
+            }
             | {f"selected-c{c}-repeat{t}" for c in range(2) for t in range(2)}
         )
         if {x["tag"] for x in r["records"]} != expected:
@@ -135,7 +166,7 @@ def main():
                 kick,
                 stand,
                 latent=np.array(rec["latent"], np.float64),
-                center=105,
+                center=centers[ci],
                 foot="left" if "left" in d["source_case"]["source"] else "right",
                 counts=counts,
             )
@@ -195,9 +226,39 @@ def main():
 
         base = [outcomes[f"baseline-c{c}"] for c in range(2)]
         best_rank, best, best_tags = rank(base), np.zeros((2, 6)), [x["tag"] for x in base]
+        if contextual:
+            from rosclaw_soccer.rsi.run_teacher_objective import run_teacher_rank
+
+            context_latents, context_tags, context_ranks = [], [], []
+            for ci in range(2):
+                best_row = base[ci]
+                best_latent = np.zeros((2, 6))
+                context_rng = np.random.default_rng(41022 + ci)
+                context_mean, context_std = np.zeros((2, 6)), np.full((2, 6), 0.2)
+                for g in range(4):
+                    trials = []
+                    for n in range(16):
+                        latent = np.clip(context_rng.normal(context_mean, context_std), -1, 1)
+                        row = outcomes[f"g{g}-n{n}-c{ci}"]
+                        equal(latent, np.array(row["latent"]), "contextual preregistered CEM")
+                        score = run_teacher_rank(row)
+                        trials.append((score, n, latent))
+                        if score > run_teacher_rank(best_row):
+                            best_row, best_latent = row, latent.copy()
+                    elites = sorted(trials, key=lambda x: (x[0], -x[1]), reverse=True)[:4]
+                    values = np.stack([x[2] for x in elites])
+                    context_mean = values.mean(axis=0)
+                    context_std = np.maximum(values.std(axis=0), 0.03)
+                context_latents.append(best_latent)
+                context_tags.append(best_row["tag"])
+                context_ranks.append(list(run_teacher_rank(best_row)))
+            best, best_tags = np.stack(context_latents), context_tags
+            best_rank = rank([outcomes[tag] for tag in best_tags])
+            if r["selected_context_ranks"] != context_ranks:
+                raise ValueError("context-specific expert selection differs")
         rng = np.random.default_rng(41022)
         mean, std = np.zeros((2, 6)), np.full((2, 6), 0.6)
-        for g in range(2):
+        for g in range(0 if contextual else 2):
             trials = []
             for n in range(8):
                 latent = np.clip(rng.normal(mean, std), -1, 1)
@@ -217,7 +278,11 @@ def main():
         for ci in range(2):
             for t in range(2):
                 tag = f"selected-c{ci}-repeat{t}"
-                equal(np.array(outcomes[tag]["latent"]), best, "repeated selected latent")
+                equal(
+                    np.array(outcomes[tag]["latent"]),
+                    best[ci] if contextual else best,
+                    "repeated selected latent",
+                )
                 for name, blob in all_blobs[tag].items():
                     ref = all_blobs[best_tags[ci]][name]
                     if set(blob) != set(ref):
@@ -240,7 +305,8 @@ def main():
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 counts=counts,
-                worlds=38,
+                worlds=total_worlds,
+                protocol=d["protocol"],
                 independent_whole_world_replay=True,
                 shared_observation_codec=True,
                 shared_IK_solver_reexecuted=True,
