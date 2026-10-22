@@ -102,6 +102,7 @@ class DualRecurrentMotor(nn.Module):
             mean,
             after,
             dict(
+                reference_nominal=nominal,
                 reference_mean=reference_mean,
                 critic_features=torch.cat(
                     ((obs - self.parent.base.mean) / self.parent.base.denominator, learned_hidden),
