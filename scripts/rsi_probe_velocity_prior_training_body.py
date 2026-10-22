@@ -10,6 +10,13 @@ import subprocess
 from pathlib import Path
 
 
+def mobility_cases(authority_sweep: bool):
+    if type(authority_sweep) is not bool:
+        raise ValueError("explicit fixed mobility protocol required")
+    speeds = (0.3, 0.6, 0.8, 1.0) if authority_sweep else (0.0, 0.3)
+    return tuple((home, speed) for home in (True, False) for speed in speeds)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("export-root", "qualification-root", "policy-reference-root", "output"):
@@ -26,7 +33,11 @@ def main():
     p.add_argument("--learned-unit")
     p.add_argument("--learned-hash")
     p.add_argument("--learned-arm", choices=("initial", "final"), default="final")
+    p.add_argument("--authority-sweep", action="store_true")
     a = p.parse_args()
+    cases = mobility_cases(a.authority_sweep)
+    if a.authority_sweep and any((a.learned_root, a.learned_unit, a.learned_hash)):
+        raise ValueError("authority sweep identifies original qualified prior only")
     from rosclaw_soccer.rsi.mjlab_motion_curriculum import motion_checkpoint_filename
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
@@ -107,14 +118,19 @@ def main():
         dict(
             source_head=a.expected_head,
             input_file_hashes=pins,
-            max_native_steps=24000,
-            max_neural_calls=2400,
-            cases=4,
+            max_native_steps=len(cases) * 6000,
+            max_neural_calls=len(cases) * 600,
+            cases=len(cases),
             repeats=2,
             physical_horizon_controls=300,
             pulse_onset=50,
             pulse_frames=100,
-            pulse_speed_mps=0.3,
+            pulse_speed_mps=[0.3, 0.6, 0.8, 1.0] if a.authority_sweep else 0.3,
+            **(
+                dict(protocol="velocity.native_authority_sweep.v1", command_range_unchanged=True)
+                if a.authority_sweep
+                else {}
+            ),
             original_exported_dynamics_unchanged=True,
             not_inherited_old_body_certificate=True,
             new_optimizer_steps=0,
@@ -176,7 +192,7 @@ def main():
             if parent == layout.pelvis:
                 robot_bodies.add(b)
         results = []
-        for case in range(4):
+        for case, (home, speed) in enumerate(cases):
             first_raw = None
             first_result = None
             for repeat in range(2):
@@ -211,7 +227,7 @@ def main():
                 ) or actor.params.contract_hash != qual["parameter_contract_hash"]:
                     raise ValueError("unchanged qualified actor and parameter contract required")
                 data = mujoco.MjData(model)
-                if case < 2:
+                if home:
                     data.qpos[layout.rq : layout.rq + 7] = [0, 0, 0.793, 1, 0, 0, 0]
                     data.qpos[layout.qi] = actor.params.defaults
                     data.qvel[:] = 0
@@ -223,9 +239,7 @@ def main():
                 q, _ = layout.canonical(data)
                 w, x, y, z = q[3:7]
                 yaw = float(np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
-                xy = (
-                    (float(0.3 * np.cos(yaw)), float(0.3 * np.sin(yaw))) if case % 2 else (0.0, 0.0)
-                )
+                xy = (float(speed * np.cos(yaw)), float(speed * np.sin(yaw)))
                 course = LocomotionResponseCourse(case, "new_body_probe", xy, 50)
                 warning = tuple(int(w.number) for w in data.warning)
                 rows = []
@@ -341,7 +355,7 @@ def main():
                 stable = bool(height >= 0.65 and upright.min() >= 0.9 and ball_force <= 1)
                 result = dict(
                     case=case,
-                    initial="policy_home" if case < 2 else "recorded_motion",
+                    initial="policy_home" if home else "recorded_motion",
                     world_pulse=xy,
                     minimum_height_m=height,
                     minimum_upright=float(upright.min()),
@@ -380,7 +394,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="BALL_AWARE_NATIVE_RETENTION_NOT_FOOTBALL_QUALIFIED"
+                status="VELOCITY_PRIOR_NATIVE_AUTHORITY_SWEEP_NOT_FOOTBALL_QUALIFIED"
+                if a.authority_sweep
+                else "BALL_AWARE_NATIVE_RETENTION_NOT_FOOTBALL_QUALIFIED"
                 if learned is not None and learned.get("actor_observation_dim") == 177
                 else "LEARNED_PRIOR_NATIVE_RETENTION_NOT_FOOTBALL_QUALIFIED"
                 if learned is not None
@@ -393,7 +409,14 @@ def main():
                 attempted_native_steps=attempted_steps,
                 new_optimizer_steps=0,
                 unchanged_exported_model=True,
-                all_four_independent_full_repeats_exact=True,
+                **(
+                    dict(
+                        all_eight_independent_full_repeats_exact=True,
+                        protocol="velocity.native_authority_sweep.v1",
+                    )
+                    if a.authority_sweep
+                    else dict(all_four_independent_full_repeats_exact=True)
+                ),
                 football_skill_proven=False,
                 hardware_authorized=False,
                 promotion_authorized=False,
