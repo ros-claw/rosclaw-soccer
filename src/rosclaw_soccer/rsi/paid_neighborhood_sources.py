@@ -275,3 +275,66 @@ def load_audited_neighborhood_arms(
             pins[str(path)] = digest(path)
         records[arm] = r
     return plan, records, pins
+
+
+def load_current_student_prefix(
+    root: Path,
+    expected: str,
+    audit_root: Path,
+    audit_hash: str,
+    plan: dict[str, Any],
+    plan_hash: str,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    paths = (root / "complete.json", audit_root / "complete.json", root / "declaration.json")
+    for p in paths:
+        if p.is_symlink() or (p.parent / "failed.json").exists():
+            raise ValueError("exact independently audited current student prefix required")
+    if digest(paths[0]) != expected or digest(paths[1]) != audit_hash:
+        raise ValueError("exact current student prefix commitments required")
+    r, a, d = [json.loads(p.read_text()) for p in paths]
+    if (
+        r["status"] != "PAID_CONTACT_NEIGHBORHOOD32_ARM_CLOSED_PENDING_AUDIT"
+        or a["status"] != "PAID_CONTACT_NEIGHBORHOOD32_OWN_NN_IK_ALL_NATIVE_AUDIT_PASS"
+        or a["source_hash"] != expected
+        or r["declaration_hash"] != digest(paths[2])
+        or any(v["arm"] != "learned_memory" or v["plan_hash"] != plan_hash for v in (r, a, d))
+        or any(
+            v["config"] != neighborhood_config()
+            or v["model_hash"] != plan["specifications"]["models"]["learned_memory"]["hash"]
+            or v["body_scene_hash"] != plan["body_scene_hash"]
+            for v in (r, d)
+        )
+        or r["episodes"] != 64
+        or a["counts"]["episodes"] != 64
+        or r["repeats_exact"] is not True
+        or a["repeats_exact"] is not True
+        or a["own_native_steps"] != r["actual_native_steps"]
+        or a["own_trajectory_neural_rows"] != r["actual_neural_rows"]
+        or any(
+            v.get(k) is not False
+            for v in (r, a, d)
+            for k in ("hardware_authorized", "promotion_authorized")
+        )
+        or [(v["case"], v["repeat"]) for v in r["records"]]
+        != [(i, j) for i in range(32) for j in range(2)]
+    ):
+        raise ValueError("complete current own-policy evidence required")
+    pins: dict[str, str] = {}
+    for obj in (r, a):
+        for f, h in obj["input_file_hashes"].items():
+            if f in pins and pins[f] != h:
+                raise ValueError("conflicting current-prefix provenance")
+            pins[f] = h
+    for p in paths:
+        pins[str(p)] = digest(p)
+    for row in r["records"]:
+        link = row["kick"]
+        p = root / link["raw_path"]
+        if (
+            p.is_symlink()
+            or not p.resolve().is_relative_to(root.resolve())
+            or pins.get(str(p)) != link["raw_hash"]
+            or digest(p) != link["raw_hash"]
+        ):
+            raise ValueError("bound own-actor raw prefix required")
+    return r, pins

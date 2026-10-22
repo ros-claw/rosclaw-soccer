@@ -107,3 +107,19 @@ def contact_neighborhood_cases(sources: list[dict[str, Any]]) -> list[dict[str, 
     if len(identities) != 32:
         raise ValueError("duplicate physical contexts cannot inflate the declaration")
     return cases
+
+
+def current_prefix_config(control: int) -> dict[str, Any]:
+    if type(control) is not int or control not in (80, 96):
+        raise ValueError("two fixed post-deviation teacher handoff boundaries required")
+    config = neighborhood_config()
+    config.update(
+        protocol="paid.contact_neighborhood.current_student_prefix.v2",
+        source_design_protocol=neighborhood_config()["protocol"],
+        current_student_prefix=True,
+        handoff_control=control,
+        policy_mode="actual_current_student_then_fixed_expert_NOT_learned_policy",
+        prefix_is_expert=False,
+        counterfactual_prefix_labels_admitted=False,
+    )
+    return config

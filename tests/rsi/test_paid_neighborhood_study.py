@@ -217,3 +217,61 @@ def test_dirty_support_diagnostic_never_reads_models_or_creates_output(tmp_path,
     with pytest.raises(ValueError, match="frozen"):
         runner.main()
     assert not (tmp_path / "out").exists()
+
+
+def test_current_prefix_protocol_is_explicit_without_loosening_fixed_reference():
+    from rosclaw_soccer.rsi.paid_neighborhood_study import current_prefix_config
+
+    original = neighborhood_config()
+    for cut in (80, 96):
+        cfg = current_prefix_config(cut)
+        assert cfg["protocol"] != original["protocol"]
+        assert cfg["handoff_control"] == cut and cfg["current_student_prefix"]
+        assert not cfg["prefix_is_expert"] and not cfg["counterfactual_prefix_labels_admitted"]
+        assert cfg["maximum_native_steps"] == original["maximum_native_steps"]
+        assert cfg["optimizer_updates"] == 0
+    assert neighborhood_config() == original and "handoff_control" not in original
+    for invalid in (True, 70, 80.0, 97):
+        with pytest.raises(ValueError):
+            current_prefix_config(invalid)
+
+
+@pytest.mark.parametrize("arm", ["fixed_successful_teacher", "learned_memory"])
+def test_incomplete_or_wrong_arm_prefix_cannot_allocate_physics(tmp_path, monkeypatch, arm):
+    import sys
+
+    from rosclaw_soccer.rsi import paid_neighborhood_sources as sources
+    from scripts import rsi_run_paid_neighborhood as runner
+
+    args = [
+        "run",
+        "--plan-root",
+        str(tmp_path),
+        "--plan-hash",
+        "plan",
+        "--arm",
+        arm,
+        "--handoff-control",
+        "80",
+        "--expected-head",
+        "frozen",
+        "--output",
+        str(tmp_path / "out"),
+    ]
+    if arm == "learned_memory":
+        for key in ("prefix", "prefix-audit"):
+            args += ["--" + key + "-root", str(tmp_path), "--" + key + "-hash", "hash"]
+    monkeypatch.setattr(sys, "argv", args)
+    monkeypatch.setattr(
+        runner.subprocess,
+        "check_output",
+        lambda args, **kw: "frozen\n" if "rev-parse" in args else b"",
+    )
+    monkeypatch.setattr(
+        sources,
+        "load_neighborhood_plan",
+        lambda *args: ({}, dict(config=neighborhood_config()), {}),
+    )
+    with pytest.raises(ValueError, match="all explicit"):
+        runner.main()
+    assert not (tmp_path / "out").exists()

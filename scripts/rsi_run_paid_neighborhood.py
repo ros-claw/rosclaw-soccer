@@ -20,6 +20,10 @@ def main():
     )
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--handoff-control", type=int, choices=(80, 96))
+    for name in ("prefix", "prefix-audit"):
+        p.add_argument("--" + name + "-root", type=Path)
+        p.add_argument("--" + name + "-hash")
     a = p.parse_args()
 
     def clean():
@@ -33,9 +37,39 @@ def main():
     clean()
     if a.output.exists():
         raise ValueError("unused perturbation arm required, no automatic retry")
-    from rosclaw_soccer.rsi.paid_neighborhood_sources import load_neighborhood_plan
+    from rosclaw_soccer.rsi.paid_neighborhood_sources import (
+        load_current_student_prefix,
+        load_neighborhood_plan,
+    )
+    from rosclaw_soccer.rsi.paid_neighborhood_study import current_prefix_config
 
     _, plan, pins = load_neighborhood_plan(a.plan_root, a.plan_hash)
+    prefix_args = (
+        a.handoff_control,
+        a.prefix_root,
+        a.prefix_hash,
+        a.prefix_audit_root,
+        a.prefix_audit_hash,
+    )
+    current = any(v is not None for v in prefix_args)
+    prefix = None
+    config = plan["config"]
+    if current:
+        if any(v is None for v in prefix_args) or a.arm != "fixed_successful_teacher":
+            raise ValueError("all explicit current-prefix commitments and teacher arm required")
+        config = current_prefix_config(a.handoff_control)
+        prefix, extra = load_current_student_prefix(
+            a.prefix_root,
+            a.prefix_hash,
+            a.prefix_audit_root,
+            a.prefix_audit_hash,
+            plan,
+            a.plan_hash,
+        )
+        for f, h in extra.items():
+            if f in pins and pins[f] != h:
+                raise ValueError("conflicting prefix identity")
+            pins[f] = h
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     check_pins(pins)
@@ -60,7 +94,7 @@ def main():
         bench, policy, scene = open_paid_bench(pins, plan["cases"])
         if scene != plan["body_scene_hash"] or bench.native_steps or bench.neural_rows:
             raise ValueError("all declared cases must preflight before rollout")
-        spec = plan["specifications"]["models"][a.arm]
+        spec = plan["specifications"]["models"]["learned_memory" if current else a.arm]
         rp = Path(spec["root"]) / "complete.json"
         r = json.loads(rp.read_text())
         actor, _ = load_paid_student(
@@ -76,13 +110,22 @@ def main():
             arm=a.arm,
             plan_root=str(a.plan_root),
             plan_hash=a.plan_hash,
-            config=plan["config"],
+            config=config,
             model_hash=spec["hash"],
             body_scene_hash=scene,
             input_file_hashes=pins,
             hardware_authorized=False,
             promotion_authorized=False,
         )
+        if current:
+            common.update(
+                current_student_prefix=True,
+                handoff_control=a.handoff_control,
+                prefix_root=str(a.prefix_root),
+                prefix_hash=a.prefix_hash,
+                prefix_audit_root=str(a.prefix_audit_root),
+                prefix_audit_hash=a.prefix_audit_hash,
+            )
         write_once(
             a.output / "declaration.json",
             dict(**common, base_stand=True, teacher_reoptimized=False),
@@ -120,11 +163,31 @@ def main():
                         latent=np.array(target["latent"], np.float64),
                     )
                     teacher = OwnStateTeacherHandoff(
-                        ep, actor.base, intent=intent, switch_control=target["switch_control"]
+                        ep,
+                        actor.base,
+                        intent=intent,
+                        switch_control=a.handoff_control if current else target["switch_control"],
                     )
                 raw, result = bench.collect_current(
                     ep, actor, causal_transform=teacher, stop_at_reference=True
                 )
+                if prefix is not None:
+                    link = prefix["records"][2 * case["case"] + repeat]["kick"]
+                    with np.load(a.prefix_root / link["raw_path"], allow_pickle=False) as z:
+                        for k in (
+                            "NN_obs",
+                            "NN_action",
+                            "NN_h_before",
+                            "NN_c_before",
+                            "NN_h_after",
+                            "NN_c_after",
+                        ):
+                            if not np.array_equal(
+                                raw[k][: a.handoff_control], z[k][: a.handoff_control]
+                            ):
+                                raise ValueError(
+                                    "current student actual prefix/private memory differs"
+                                )
                 row = dict(
                     case=case["case"],
                     source_case=case["source_case"],

@@ -38,7 +38,11 @@ def main():
         if not a.wait_for_completion or time.monotonic() > deadline:
             raise TimeoutError("bounded specific arm wait")
         time.sleep(10)
-    from rosclaw_soccer.rsi.paid_neighborhood_sources import load_neighborhood_plan
+    from rosclaw_soccer.rsi.paid_neighborhood_sources import (
+        load_current_student_prefix,
+        load_neighborhood_plan,
+    )
+    from rosclaw_soccer.rsi.paid_neighborhood_study import current_prefix_config
 
     rp, dp = a.root / "complete.json", a.root / "declaration.json"
     if rp.is_symlink() or dp.is_symlink() or (a.root / "failed.json").exists():
@@ -46,7 +50,25 @@ def main():
     r, d = [json.loads(f.read_text()) for f in (rp, dp)]
     _, plan, pins = load_neighborhood_plan(Path(d["plan_root"]), d["plan_hash"])
     arm = r["arm"]
-    spec = plan["specifications"]["models"][arm]
+    current = d.get("current_student_prefix", False)
+    if type(current) is not bool or current and arm != "fixed_successful_teacher":
+        raise ValueError("typed explicit current-prefix teacher mode required")
+    config = current_prefix_config(d["handoff_control"]) if current else plan["config"]
+    prefix = None
+    if current:
+        prefix, extra = load_current_student_prefix(
+            Path(d["prefix_root"]),
+            d["prefix_hash"],
+            Path(d["prefix_audit_root"]),
+            d["prefix_audit_hash"],
+            plan,
+            d["plan_hash"],
+        )
+        for f, h in extra.items():
+            if f in pins and pins[f] != h:
+                raise ValueError("conflicting prefix identity")
+            pins[f] = h
+    spec = plan["specifications"]["models"]["learned_memory" if current else arm]
     if (
         r["status"] != "PAID_CONTACT_NEIGHBORHOOD32_ARM_CLOSED_PENDING_AUDIT"
         or r["declaration_hash"] != digest(dp)
@@ -54,7 +76,7 @@ def main():
         or d.get("teacher_reoptimized") is not False
         or any(
             v["source_head"] != a.producer_head
-            or v["config"] != plan["config"]
+            or v["config"] != config
             or v["model_hash"] != spec["hash"]
             or v["body_scene_hash"] != plan["body_scene_hash"]
             for v in (r, d)
@@ -170,9 +192,29 @@ def main():
                 latent=np.array(target["latent"], np.float64),
                 pure=not teacher,
                 count_inference=inference,
-                handoff_control=target["switch_control"] if teacher else None,
+                handoff_control=(d["handoff_control"] if current else target["switch_control"])
+                if teacher
+                else None,
                 base_stand=True,
             )
+            if prefix is not None:
+                raw = read(row["kick"])
+                link = prefix["records"][2 * row["case"] + row["repeat"]]["kick"]
+                with np.load(Path(d["prefix_root"]) / link["raw_path"], allow_pickle=False) as z:
+                    for k in (
+                        "NN_obs",
+                        "NN_action",
+                        "NN_h_before",
+                        "NN_c_before",
+                        "NN_h_after",
+                        "NN_c_after",
+                    ):
+                        if not np.array_equal(
+                            raw[k][: d["handoff_control"]], z[k][: d["handoff_control"]]
+                        ):
+                            raise ValueError(
+                                "independent current-student prefix/private memory differs"
+                            )
             healthy = bool(result["quality"] and result["stand_healthy"] and result["stand_stable"])
             if row["quality"] != result["quality"] or row["healthy_success"] != healthy:
                 raise ValueError("independently measured task outcome differs")
