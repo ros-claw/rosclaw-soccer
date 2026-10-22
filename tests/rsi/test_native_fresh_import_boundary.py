@@ -22,6 +22,7 @@ import pytest
         "scripts.rsi_audit_targeted_pass",
         "scripts.rsi_refine_targeted_pass",
         "scripts.rsi_audit_pass_response",
+        "scripts.rsi_collect_pass_transfer",
     ],
 )
 def test_import_does_not_allocate_workers_or_write_physical_outputs(module, tmp_path, monkeypatch):
