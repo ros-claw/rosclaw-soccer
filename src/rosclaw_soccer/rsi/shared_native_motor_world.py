@@ -144,6 +144,68 @@ class SharedNativeMotorWorld:
         self.control_steps = 0
         self.expected_time = float(data.time)
         self.failed = False
+        self._last_targets: dict[str, np.ndarray] = {}
+        self.last_ball_contact_bodies: dict[str, dict[str, float]] = {p: {} for p in players}
+        from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
+
+        self._boundary_snapshot = snapshot(data)
+
+    def _require_current_boundary(self, *, allow_failed: bool = False) -> None:
+        from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
+
+        actual = snapshot(self.data)
+        if (self.failed and not allow_failed) or not all(
+            np.array_equal(value, actual[key]) for key, value in self._boundary_snapshot.items()
+        ):
+            raise ValueError("unchanged healthy actual shared control boundary required")
+
+    def last_applied_target(self, prefix: str) -> np.ndarray:
+        self._require_current_boundary(allow_failed=True)
+        if prefix not in self._last_targets:
+            raise ValueError("actual prior player control required")
+        return self._last_targets[prefix].copy()
+
+    def switch_pd_profile(self, prefix: str, parameters: NativePDParameters) -> dict[str, Any]:
+        """Explicit SIM controller handoff: unchanged body/model, same effort caps.
+
+        Call after the preceding control is fully committed, before advancing
+        or rewriting any physical field. This changes software gains ONLY.
+        It grants no policy promotion, robot authority or future stability.
+        """
+        import mujoco
+
+        from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
+
+        self._require_current_boundary()
+        if prefix not in self.parameters or mujoco.get_mjcb_control() is not None:
+            raise ValueError("own player and callback-free simulation required")
+        new = parameters.owned_copy()
+        old = self.parameters[prefix]
+        if (
+            not np.array_equal(new.effort, old.effort)
+            or (new.stiffness <= 0).any()
+            or (new.damping <= 0).any()
+            or (new.stiffness > 2000).any()
+            or (new.damping > 2000).any()
+        ):
+            raise ValueError(
+                "same original effort caps and positive bounded software gains required"
+            )
+        before = snapshot(self.data)
+        self.parameters[prefix] = new
+        after = snapshot(self.data)
+        if any(not np.array_equal(before[k], after[k]) for k in before):
+            raise ValueError("PD profile handoff changed physics")
+        return dict(
+            prefix=prefix,
+            control_step=self.control_steps,
+            time=float(self.data.time),
+            previous={k: getattr(old, k).tolist() for k in ("stiffness", "damping", "effort")},
+            current={k: getattr(new, k).tolist() for k in ("stiffness", "damping", "effort")},
+            physics_unchanged=True,
+            before=before,
+            after=after,
+        )
 
     def advance(self, targets: Mapping[str, np.ndarray]) -> dict[str, Any]:
         """Integrate exactly ten shared substeps, not ten per player.
@@ -170,6 +232,8 @@ class SharedNativeMotorWorld:
                 raise ValueError("all finite HG29 joint targets required before any physics")
             owned[p] = x.copy()
         samples = []
+        witnesses: dict[str, dict[str, float]] = {p: {} for p in self.layouts}
+        prefixes = list(self.layouts)
         before = float(d.time)
         for _ in range(10):
             all_torques = np.zeros(m.nu)
@@ -205,7 +269,12 @@ class SharedNativeMotorWorld:
                     player, part = self.contact_owners[other]
                     wrench = np.zeros(6)
                     mujoco.mj_contactForce(m, d, ci, wrench)
-                    forces[player, part] = max(forces[player, part], np.linalg.norm(wrench[:3]))
+                    force = float(np.linalg.norm(wrench[:3]))
+                    forces[player, part] = max(forces[player, part], force)
+                    if force > 1:
+                        name = m.body(other).name or prefixes[player] + f"unknown_body_{other}"
+                        seen = witnesses[prefixes[player]]
+                        seen[name] = max(seen.get(name, 0.0), force)
             samples.append(
                 dict(qpos=d.qpos.copy(), qvel=d.qvel.copy(), torque=all_torques, ball_forces=forces)
             )
@@ -219,4 +288,9 @@ class SharedNativeMotorWorld:
                 ((q[:, 2] < 0.65) | (1 - 2 * (q[:, 4] ** 2 + q[:, 5] ** 2) < 0.9)).any()
             )
         self.failed = any(body_failed.values())
+        self._last_targets = {p: x.copy() for p, x in owned.items()}
+        self.last_ball_contact_bodies = witnesses
+        from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
+
+        self._boundary_snapshot = snapshot(d)
         return dict(**raw, time_before=before, body_failed=body_failed)

@@ -60,6 +60,9 @@ class SharedNativeNeuralPlayer:
         offset: np.ndarray,
         scale: np.ndarray,
         order: np.ndarray,
+        initial_state: tuple[torch.Tensor, torch.Tensor] | None = None,
+        previous_action: np.ndarray | None = None,
+        reference_context: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
     ) -> None:
         if (
             type(actor) is not DualRecurrentMotor
@@ -76,16 +79,59 @@ class SharedNativeNeuralPlayer:
             raise ValueError(
                 "frozen explicit Dual256 motor, real reference and HG29 codec required"
             )
+        if initial_state is not None and (
+            len(initial_state) != 2
+            or any(
+                not isinstance(t, torch.Tensor)
+                or t.shape != (2, 1, 256)
+                or t.dtype != torch.float32
+                or t.device.type != "cpu"
+                or not torch.isfinite(t).all()
+                for t in initial_state
+            )
+        ):
+            raise ValueError("explicit finite own CPU Dual256 handoff history required")
+        if previous_action is not None and (
+            previous_action.shape != (29,)
+            or previous_action.dtype != np.float32
+            or not np.isfinite(previous_action).all()
+        ):
+            raise ValueError("finite actual previous R2 action required")
+        if world.control_steps and (
+            previous_action is None
+            or not np.allclose(
+                offset + previous_action[order] * scale,
+                world.last_applied_target(prefix),
+                rtol=0,
+                atol=3e-7,
+            )
+        ):
+            raise ValueError("live skill handoff must carry the ACTUAL last executed target")
+        if reference_context is not None and (
+            len(reference_context) != 3
+            or any(
+                a.shape != shape or a.dtype != np.float32 or not np.isfinite(a).all()
+                for a, shape in zip(reference_context, ((29,), (29,), (3,)), strict=True)
+            )
+        ):
+            raise ValueError("explicit finite static-reference handoff context required")
         self.world, self.prefix, self.actor, self.clip = world, prefix, actor, clip
         self.view = PlayerObservationView(world, prefix)
         self.torso_index, self.build_observation = torso_index, build_observation
         self.goal, self.offset, self.scale, self.order = (
             a.copy() for a in (goal, offset, scale, order)
         )
-        self.state = tuple(t.detach().clone() for t in actor.initial_state())
-        self.last_action = np.zeros(29, np.float32)
+        self.state = tuple(
+            t.detach().clone()
+            for t in (actor.initial_state() if initial_state is None else initial_state)
+        )
+        self.last_action = (
+            np.zeros(29, np.float32) if previous_action is None else previous_action.copy()
+        )
         self.ref_pos, self.ref_vel = np.zeros(29, np.float32), np.zeros(29, np.float32)
         self.ref_ang = np.zeros(3, np.float32)
+        if reference_context is not None:
+            self.ref_pos, self.ref_vel, self.ref_ang = (a.copy() for a in reference_context)
         self.frame, self.decisions = 0, 0
         self.phase = "MOTION"
         self.boundary = world.control_steps
