@@ -124,7 +124,7 @@ def main():
                 )
             },
             scope=(
-                "Exploratory TRAIN next-skill starts only; strict clean-foot failures remain failed. "
+                "TRAIN successor starts only; strict clean-foot failures stay failed. "
                 "No return pass, full skill, IFAB referee or promotion claim."
             ),
             research_sources=[
