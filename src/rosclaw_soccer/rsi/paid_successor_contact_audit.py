@@ -28,9 +28,12 @@ def audit_successor_contact(
     pure: bool,
     count_inference: Any,
     handoff_control: int | None = None,
+    base_stand: bool = False,
 ) -> dict[str, Any]:
     import mujoco
 
+    if type(base_stand) is not bool:
+        raise ValueError("typed explicit base standing ablation required")
     row = record["kick"]
     if handoff_control is not None and pure:
         raise ValueError("causal handoff is always an explicit composite teacher")
@@ -137,7 +140,7 @@ def audit_successor_contact(
         checked = audit_neural_stand(
             auditor,
             observer,
-            actor.base if causal_teacher is not None else actor,
+            actor.base if causal_teacher is not None or base_stand else actor,
             stand,
             sr,
             entry=end,
