@@ -95,6 +95,21 @@ def main():
     if len(paths) != 1:
         raise ValueError("unique canonical parent lineage required")
     training = json.loads(paths[0].read_text())
+    baseline_paths = [
+        Path(f) for f, h in pins.items() if h == q["source_hash"] and f.endswith("/complete.json")
+    ]
+    if len(baseline_paths) != 1:
+        raise ValueError("exact paired prior-physics baseline required")
+    baseline = json.loads(baseline_paths[0].read_text())
+    baseline_decl = baseline_paths[0].parent / "declaration.json"
+    if pins.get(str(baseline_decl)) != digest(baseline_decl):
+        raise ValueError("source-bound baseline fixture required")
+    baseline_fixture = json.loads(baseline_decl.read_text())
+    if (
+        baseline_fixture["case"] != declarations["teacher"]["source_case"]
+        or baseline_fixture["courses"] != declarations["teacher"]["courses"]
+    ):
+        raise ValueError("improvement labels require identical initial fixture and task")
     for folder in (Path.cwd() / "src", Path.cwd() / "scripts"):
         pins.update({str(f): digest(f) for f in folder.rglob("*.py")})
     check_pins(pins)
@@ -125,6 +140,15 @@ def main():
             row = next(x for x in t["records"] if x["tag"] == f"selected-c{ci}-repeat0")
             if not run_teacher_rank(row)[1] or row["result"]["forbidden"]:
                 raise ValueError("novel target must be actually stable useful and no-nonfoot")
+            prior = next(
+                v
+                for v in baseline["records"]
+                if v["course"] == ci and v["arm"] == "reference_from_start" and v["repeat"] == 0
+            )
+            if abs(row["result"]["postcontact"]["goal_lateral_1p2s_m"]) >= abs(
+                prior["result"]["postcontact"]["goal_lateral_1p2s_m"]
+            ):
+                raise ValueError("relative-improvement data must actually improve paired precision")
             episodes.append(("relative_improvement", roots["teacher"], row))
         records = []
         for index, (kind, root, row) in enumerate(episodes):
