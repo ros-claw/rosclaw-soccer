@@ -29,6 +29,23 @@ class MotorCritic(nn.Module):
         return cast(torch.Tensor, self.net(features).squeeze(-1))
 
 
+@torch.no_grad()
+def own_history_conditional_kl(
+    actor: DualRecurrentMotor, episode: dict[str, Any], log_std: torch.Tensor, *, rho: float
+) -> float:
+    """Trial-step KL without exponentiating a large likelihood ratio.
+
+    Large finite trials must backtrack, not crash the stricter PPO loss guard.
+    Neither the likelihood guard nor the trust-region threshold is relaxed.
+    """
+    means, _ = actor(episode["observations"][:, None], actor.initial_state())
+    location, scale = conditional_parameters(means[:, 0], episode["actions"], log_std, rho=rho)
+    old_location, _ = conditional_parameters(
+        episode["old_means"], episode["actions"], log_std, rho=rho
+    )
+    return float(0.5 * ((location - old_location) / scale).square().sum(-1).mean())
+
+
 def own_history_loss(
     actor: DualRecurrentMotor,
     critic: MotorCritic,

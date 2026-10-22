@@ -5,7 +5,11 @@ import torch
 from test_dual_recurrent_motor import model
 
 from rosclaw_soccer.rsi.correlated_motor_exploration import conditional_logp
-from rosclaw_soccer.rsi.dual_recurrent_actor_critic import MotorCritic, own_history_loss
+from rosclaw_soccer.rsi.dual_recurrent_actor_critic import (
+    MotorCritic,
+    own_history_conditional_kl,
+    own_history_loss,
+)
 
 
 def fixture():
@@ -72,4 +76,14 @@ def test_wrong_sampling_likelihood_rejected():
     actor, critic, row, std = fixture()
     row["old_logp"] = conditional_logp(row["old_means"], row["actions"], std, rho=0.0)
     with pytest.raises(ValueError):
+        own_history_loss(actor, critic, row, std, rho=0.9)
+
+
+def test_large_trial_kl_backtracks_without_relaxing_the_likelihood_guard():
+    actor, critic, row, std = fixture()
+    with torch.no_grad():
+        actor.plastic.head.bias.add_(10)
+    kl = own_history_conditional_kl(actor, row, std, rho=0.9)
+    assert math.isfinite(kl) and kl > 0.015
+    with pytest.raises(ValueError, match="invalid whole-history AR likelihood ratio"):
         own_history_loss(actor, critic, row, std, rho=0.9)

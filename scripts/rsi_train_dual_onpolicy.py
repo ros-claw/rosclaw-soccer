@@ -16,6 +16,8 @@ def main():
         p.add_argument("--" + n, type=Path, required=True)
     for n in ("audit-hash", "expected-head"):
         p.add_argument("--" + n, required=True)
+    p.add_argument("--failed-predecessor-root", type=Path)
+    p.add_argument("--failed-predecessor-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -58,6 +60,24 @@ def main():
     pins = dict(ar["input_file_hashes"])
     for x in (rp, ap, dp):
         pins[str(x)] = digest(x)
+    if bool(a.failed_predecessor_root) != bool(a.failed_predecessor_hash):
+        raise ValueError("exact failed-predecessor binding required")
+    if a.failed_predecessor_root is not None:
+        failure_path = a.failed_predecessor_root / "failed.json"
+        if failure_path.is_symlink() or digest(failure_path) != a.failed_predecessor_hash:
+            raise ValueError("exact preserved failed training receipt required")
+        failure = json.loads(failure_path.read_text())
+        if (
+            failure["accepted_optimizer_steps"] != 0
+            or failure["error"] != "ValueError('invalid whole-history AR likelihood ratio')"
+        ):
+            raise ValueError("recovery only fixes the pre-acceptance KL evaluation fault")
+        pins[str(failure_path)] = a.failed_predecessor_hash
+        predecessor_decl = a.failed_predecessor_root / "declaration.json"
+        predecessor = json.loads(predecessor_decl.read_text())
+        if predecessor["experience_audit_hash"] != a.audit_hash:
+            raise ValueError("recovery requires the same still-on-policy actual batch")
+        pins[str(predecessor_decl)] = digest(predecessor_decl)
 
     def receipt(h):
         paths = [Path(x) for x, v in pins.items() if v == h and x.endswith("/complete.json")]
@@ -98,6 +118,7 @@ def main():
             config=config,
             experience_hash=digest(rp),
             experience_audit_hash=a.audit_hash,
+            implementation_recovery_failure_hash=a.failed_predecessor_hash,
             warm_start_hash=r["training_hash"],
             parent_lineage_hash=warm["parent_lineage_hash"],
             data_hash=warm["data_hash"],
@@ -117,7 +138,11 @@ def main():
         import torch
 
         from rosclaw_soccer.rsi.dual_motor_checkpoint import load_dual_for_sim_audit
-        from rosclaw_soccer.rsi.dual_recurrent_actor_critic import MotorCritic, own_history_loss
+        from rosclaw_soccer.rsi.dual_recurrent_actor_critic import (
+            MotorCritic,
+            own_history_conditional_kl,
+            own_history_loss,
+        )
         from rosclaw_soccer.rsi.motor_option_credit import (
             contact_skill_return,
             terminal_option_returns,
@@ -256,14 +281,7 @@ def main():
         def evaluate_kl():
             with torch.no_grad():
                 return (
-                    sum(
-                        float(
-                            own_history_loss(model, critic, ep, log_std, rho=0.9)[1][
-                                "conditional_kl"
-                            ]
-                        )
-                        for ep in episodes
-                    )
+                    sum(own_history_conditional_kl(model, ep, log_std, rho=0.9) for ep in episodes)
                     / 8
                 )
 
