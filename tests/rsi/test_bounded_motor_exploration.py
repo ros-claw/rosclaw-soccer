@@ -66,8 +66,10 @@ def test_samples_stay_inside_authority_without_clipping_and_have_half_normal_mea
     assert np.mean(values) == pytest.approx(0.4 - 0.005 * math.sqrt(2 / math.pi), abs=0.001)
 
 
-def test_online_sampling_and_whole_history_density_match():
+@pytest.mark.parametrize("sigma", [0.005, 0.02])
+def test_online_sampling_and_whole_history_density_match(sigma):
     ref, scale, std = fixture()
+    std = torch.full_like(std, math.log(sigma))
     rng = torch.Generator().manual_seed(41)
     previous = oldmean = None
     means = []

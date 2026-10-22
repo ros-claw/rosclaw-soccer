@@ -42,12 +42,14 @@ def main():
     from rosclaw_soccer.rsi.motor_exploration_curriculum import declared_motor_curriculum
 
     curriculum = declared_motor_curriculum(d)
+    from rosclaw_soccer.rsi.motor_exploration_profile import declared_exploration_sigma
+
+    sigma = declared_exploration_sigma(d)
     if (
         r["status"] != "DUAL_AR1_ACTUAL_CALIBRATION_CLOSED_PENDING_NATIVE_AND_LAW_AUDIT"
         or r["declaration_hash"] != digest(dp)
         or r["input_file_hashes"] != d["input_file_hashes"]
         or d["rho"] != 0.9
-        or d["sigma_policy_units"] != 0.005
         or len(r["records"]) != curriculum.worlds
         or d["online_teacher"] is not False
         or d["action_clipping"] is not False
@@ -120,7 +122,7 @@ def main():
             checkpoint_kind=d.get("checkpoint_kind", "supervised"),
         )
         scale = actor.parent.get_buffer("action_scale").numpy().copy()
-        log_std = torch.full((29,), math.log(0.005), dtype=torch.float32)
+        log_std = torch.full((29,), math.log(sigma), dtype=torch.float32)
         expected = [(c, s) for c in curriculum.context_ids for s in d["seeds"]]
         if [(x["context"], x["seed"]) for x in r["records"]] != expected:
             raise ValueError("complete fixed case/seed Cartesian product required")

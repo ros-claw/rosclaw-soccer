@@ -43,6 +43,9 @@ def main():
     from rosclaw_soccer.rsi.motor_exploration_curriculum import declared_motor_curriculum
 
     curriculum = declared_motor_curriculum(d)
+    from rosclaw_soccer.rsi.motor_exploration_profile import declared_exploration_sigma
+
+    sigma = declared_exploration_sigma(d)
     if (
         ar["status"] != curriculum.audit_status
         or ar["source_hash"] != digest(rp)
@@ -53,7 +56,6 @@ def main():
         or len(ar["results"]) != curriculum.worlds
         or ar.get("sampling_law", "gaussian-ar1") != d.get("sampling_law", "gaussian-ar1")
         or d["rho"] != 0.9
-        or d["sigma_policy_units"] != 0.005
         or any(x["rejected"] for x in ar["results"])
         or any(x["rejection"] is not None or x["assisted"] for x in r["records"])
         or any(
@@ -122,7 +124,8 @@ def main():
         actor_lr=3e-5,
         critic_lr=0.001,
         rho=0.9,
-        sigma_policy=0.005,
+        sigma_policy=sigma,
+        exploration_profile=d.get("exploration_profile", "micro-v1"),
         max_conditional_kl=0.015,
         old14_anchor_weight=0.02,
         seed=74220,
@@ -235,7 +238,7 @@ def main():
             critic.load_state_dict(warm_state["critic"], strict=True)
             initial_steps = warm.get("cumulative_optimizer_steps", warm["accepted_optimizer_steps"])
             initial_critic_steps = warm.get("cumulative_critic_optimizer_steps", initial_steps)
-        log_std = torch.full((29,), math.log(0.005), dtype=torch.float32)
+        log_std = torch.full((29,), math.log(sigma), dtype=torch.float32)
         frozen = {k: v.clone() for k, v in parent.state_dict().items()}
         initial = {k: v.clone() for k, v in model.plastic.state_dict().items()}
         critic_initial = {k: v.clone() for k, v in critic.state_dict().items()}

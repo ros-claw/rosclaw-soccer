@@ -89,10 +89,12 @@ def test_large_trial_kl_backtracks_without_relaxing_the_likelihood_guard():
         own_history_loss(actor, critic, row, std, rho=0.9)
 
 
-def test_bounded_ppo_uses_actual_authority_and_normalized_sampling_density():
+@pytest.mark.parametrize("sigma", [0.005, 0.02])
+def test_bounded_ppo_uses_actual_authority_and_normalized_sampling_density(sigma):
     from rosclaw_soccer.rsi.motor_sampling_law import history_motor_logp
 
     actor, critic, row, std = fixture()
+    std = torch.full_like(std, math.log(sigma))
     with torch.no_grad():
         actor.plastic.head.bias.add_(0.399)
         mean, _, e = actor.forward_with_evidence(

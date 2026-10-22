@@ -27,6 +27,7 @@ def main():
         "--sampling-law", choices=("gaussian-ar1", "box-truncated-ar1"), default="gaussian-ar1"
     )
     p.add_argument("--workers", type=int, choices=(1, 4), default=1)
+    p.add_argument("--exploration-profile", choices=("micro-v1", "contact-v1"), default="micro-v1")
     p.add_argument("--linter", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
@@ -41,6 +42,9 @@ def main():
             raise ValueError("clean frozen successor generation required")
 
     clean()
+    from rosclaw_soccer.rsi.motor_exploration_profile import exploration_sigma
+
+    sigma = exploration_sigma(a.exploration_profile, a.sampling_law)
     if a.workers == 4 and (a.sampling_law != "box-truncated-ar1" or a.linter is None):
         raise ValueError(
             "parallel native collection requires bounded law and explicit bootstrap linter"
@@ -102,6 +106,8 @@ def main():
             generation_index=a.generation_index,
             curriculum=curriculum.name,
             sampling_law=a.sampling_law,
+            exploration_profile=a.exploration_profile,
+            sigma_policy_units=sigma,
             maximum_worlds=curriculum.worlds,
             native_workers=a.workers,
             research_use_of_unpromoted_candidate=True,
@@ -139,6 +145,8 @@ def main():
                     curriculum.name,
                     "--sampling-law",
                     a.sampling_law,
+                    "--exploration-profile",
+                    a.exploration_profile,
                 ],
                 "DUAL_AR1_ACTUAL_CALIBRATION_CLOSED_PENDING_NATIVE_AND_LAW_AUDIT",
             ),

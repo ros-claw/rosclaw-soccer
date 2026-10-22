@@ -40,6 +40,7 @@ def main():
     p.add_argument("--generation-index", type=int, choices=range(100), required=True)
     p.add_argument("--curriculum", choices=("run2", "retention-run64"), default="retention-run64")
     p.add_argument("--sampling-law", choices=("box-truncated-ar1",), default="box-truncated-ar1")
+    p.add_argument("--exploration-profile", choices=("micro-v1", "contact-v1"), default="micro-v1")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -53,6 +54,9 @@ def main():
             raise ValueError("exact frozen clean parallel collector required")
 
     clean()
+    from rosclaw_soccer.rsi.motor_exploration_profile import exploration_sigma
+
+    sigma = exploration_sigma(a.exploration_profile, a.sampling_law)
     if a.output.exists():
         raise ValueError("unused complete parallel course output required")
     ap = a.audit_root / "complete.json"
@@ -89,6 +93,8 @@ def main():
             execution="independent_native_cli_processes",
             pairs=pairs,
             sampling_law="box-truncated-ar1",
+            exploration_profile=a.exploration_profile,
+            sigma_policy_units=sigma,
             maximum_native_steps=4000 * c.worlds,
             maximum_neural_decisions=400 * c.worlds,
             automatic_retry=False,
@@ -157,6 +163,8 @@ def main():
                 c.name,
                 "--sampling-law",
                 "box-truncated-ar1",
+                "--exploration-profile",
+                a.exploration_profile,
                 "--shard-count",
                 "4",
                 "--shard-slot",
@@ -187,6 +195,8 @@ def main():
                 or r["declaration_hash"] != digest(dp)
                 or d["shard_count"] != 4
                 or d["shard_slot"] != slot
+                or d.get("exploration_profile") != a.exploration_profile
+                or d["sigma_policy_units"] != sigma
                 or [(x["context"], x["seed"]) for x in r["records"]] != expected
                 or r["actual_native_steps"] > 4000 * len(expected)
                 or r["actual_neural_decisions"] > 400 * len(expected)

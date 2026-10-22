@@ -20,6 +20,7 @@ def main():
         "--sampling-law", choices=("gaussian-ar1", "box-truncated-ar1"), default="gaussian-ar1"
     )
     p.add_argument("--shard-count", type=int, choices=(1, 4), default=1)
+    p.add_argument("--exploration-profile", choices=("micro-v1", "contact-v1"), default="micro-v1")
     p.add_argument("--shard-slot", type=int, choices=range(4), default=0)
     for n in ("exam-root", "audit-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
@@ -38,6 +39,9 @@ def main():
             raise ValueError("clean frozen on-policy calibration source required")
 
     clean()
+    from rosclaw_soccer.rsi.motor_exploration_profile import exploration_sigma
+
+    sigma = exploration_sigma(a.exploration_profile, a.sampling_law)
     rp, dp, ap = (
         a.exam_root / "complete.json",
         a.exam_root / "declaration.json",
@@ -97,7 +101,8 @@ def main():
             generation_index=a.generation_index,
             checkpoint_kind=d.get("checkpoint_kind", "supervised"),
             rho=0.9,
-            sigma_policy_units=0.005,
+            sigma_policy_units=sigma,
+            exploration_profile=a.exploration_profile,
             noisy_reference_only=True,
             standing_deterministic_neural_carry=True,
             maximum_worlds=curriculum.worlds,
@@ -148,7 +153,7 @@ def main():
             checkpoint_kind=d.get("checkpoint_kind", "supervised"),
         )
         scale = actor.parent.get_buffer("action_scale").numpy().copy()
-        log_std = torch.full((29,), math.log(0.005), dtype=torch.float32)
+        log_std = torch.full((29,), math.log(sigma), dtype=torch.float32)
         for context, ctx in zip(curriculum.context_ids, contexts, strict=True):
             for seed in seeds:
                 if (context, seed) not in owned:
