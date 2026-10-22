@@ -48,7 +48,7 @@ def test_teacher_rank_never_trades_body_failure_for_a_clean_highlight():
     assert contact_rank([grazing, grazing])[1] == 0
 
 
-def synthetic_episode():
+def synthetic_episode(with_ball=False):
     names = list(G1_DDS_JOINT_NAMES)
     leg = [
         "left_" + s + "_joint"
@@ -61,15 +61,23 @@ def synthetic_episode():
         chain += (
             f'<body name="{body}" pos="0 0 -.05">{inertial}<joint name="{name}" axis="{axis}"/>'
         )
+        if with_ball and body == "left_knee_link":
+            chain += '<geom name="left_shin" type="capsule" size=".04" fromto=".02 0 0 .02 0 -.1"/>'
     chain += "</body>" * 6
     others = "".join(
         f'<body name="other{i}">{inertial}<joint name="{name}"/></body>'
         for i, name in enumerate(names)
         if name not in leg
     )
+    ball = (
+        '<body name="ball" pos="-.1 0 .55">'
+        '<geom name="soccer_ball_geom" type="sphere" size=".11"/></body>'
+        if with_ball
+        else ""
+    )
     xml = (
         '<mujoco><worldbody><body name="pelvis" pos="0 0 .8"><freejoint/>'
-        f"{inertial}{chain}{others}</body></worldbody></mujoco>"
+        f"{inertial}{chain}{others}</body>{ball}</worldbody></mujoco>"
     )
     m = mujoco.MjModel.from_xml_string(xml)
     d = mujoco.MjData(m)
@@ -78,11 +86,29 @@ def synthetic_episode():
     return SimpleNamespace(
         frame=108,
         env=SimpleNamespace(model=m, data=d, pelvis_body_id=m.body("pelvis").id),
-        layout=SimpleNamespace(qi=qi),
+        layout=SimpleNamespace(qi=qi, ball=m.body("ball").id if with_ball else -1),
         offset=np.zeros(29, np.float32),
         scale=np.ones(29, np.float32),
         order=np.arange(29),
     )
+
+
+def test_shin_clearance_uses_only_scratch_kinematics_and_original_joint_bound():
+    ep = synthetic_episode(with_ball=True)
+    before = (ep.env.data.qpos.copy(), ep.env.data.qvel.copy(), ep.env.data.ctrl.copy())
+    intent = FootTaskSpaceIntent(ep.env.model, foot="left", center=104, latent=np.zeros((2, 6)))
+    action, plan = intent.solve_offset(
+        ep, np.zeros(29, np.float32), np.zeros(6), shin_clearance=True
+    )
+    assert np.isfinite(action).all() and abs(action).max() <= 0.200001
+    assert plan["requested_shin_surface_margin_m"] == 0.015
+    assert np.isfinite(plan["shin_clearance_after_scratch_m"])
+    assert plan["ik_iterations"] == 4
+    for actual, old in zip(
+        (ep.env.data.qpos, ep.env.data.qvel, ep.env.data.ctrl), before, strict=True
+    ):
+        np.testing.assert_array_equal(actual, old)
+    assert ep.env.data.time == 0
 
 
 def test_zero_intent_is_bit_exact_and_ik_never_mutates_live_state_or_model():

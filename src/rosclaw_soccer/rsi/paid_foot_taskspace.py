@@ -56,7 +56,7 @@ class FootTaskSpaceIntent:
         return self.solve_offset(ep, nominal, phase_intent(ep.frame, self.center, self.latent))
 
     def solve_offset(
-        self, ep: Any, nominal: np.ndarray, offset: np.ndarray
+        self, ep: Any, nominal: np.ndarray, offset: np.ndarray, *, shin_clearance: bool = False
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Bounded current-body Cartesian proposal, no physical state writes.
 
@@ -65,6 +65,8 @@ class FootTaskSpaceIntent:
         """
         import mujoco
 
+        from rosclaw_soccer.rsi.capsule_clearance import sphere_capsule_clearance
+
         if (
             offset.shape != (6,)
             or not np.isfinite(offset).all()
@@ -72,7 +74,7 @@ class FootTaskSpaceIntent:
         ):
             raise ValueError("finite Cartesian offset inside original phase authority required")
         requested = np.zeros(29)
-        if not offset.any():
+        if not offset.any() and not shin_clearance:
             return nominal.copy(), dict(
                 pose_offset=offset,
                 joint_delta_HG=requested,
@@ -99,6 +101,29 @@ class FootTaskSpaceIntent:
         desired_r = rotation_vector_matrix(base @ offset[3:]) @ matrix
         nominal_leg = baseline[self.hg]
         limited = False
+        clearance = None
+        if shin_clearance:
+            shin_geom = self.model.geom(self.foot + "_shin").id
+            shin_body = self.model.geom_bodyid[shin_geom]
+            ball_geom = self.model.geom("soccer_ball_geom").id
+            if (
+                self.model.geom_type[shin_geom] != mujoco.mjtGeom.mjGEOM_CAPSULE
+                or self.model.geom_type[ball_geom] != mujoco.mjtGeom.mjGEOM_SPHERE
+                or abs(self.model.geom_size[ball_geom, 0] - 0.11) > 1e-12
+            ):
+                raise ValueError("unchanged .11m sphere and compiled shin capsule required")
+            actual_ball = ep.env.data.xpos[ep.layout.ball].copy()
+
+            def separation() -> tuple[float, np.ndarray, np.ndarray]:
+                return sphere_capsule_clearance(
+                    actual_ball,
+                    float(self.model.geom_size[ball_geom, 0]),
+                    self.kin.geom_xpos[shin_geom].copy(),
+                    self.kin.geom_xmat[shin_geom].reshape(3, 3)[:, 2].copy(),
+                    float(self.model.geom_size[shin_geom, 1]),
+                    float(self.model.geom_size[shin_geom, 0]),
+                )
+
         for _ in range(4):
             point, matrix = kinematics()
             relative = desired_r @ matrix.T
@@ -116,7 +141,14 @@ class FootTaskSpaceIntent:
             mujoco.mj_jac(self.model, self.kin, jp, jr, point, self.body)
             jac = np.vstack((jp[:, self.vi], 0.15 * jr[:, self.vi]))
             error = np.r_[desired_p - point, 0.15 * angular]
-            delta = jac.T @ np.linalg.solve(jac @ jac.T + 0.02**2 * np.eye(6), error)
+            if shin_clearance:
+                clearance, near, outward = separation()
+                if clearance < 0.015:
+                    sj = np.zeros((3, self.model.nv))
+                    mujoco.mj_jac(self.model, self.kin, sj, None, near, shin_body)
+                    jac = np.vstack((jac, outward @ sj[:, self.vi]))
+                    error = np.r_[error, 0.015 - clearance]
+            delta = jac.T @ np.linalg.solve(jac @ jac.T + 0.02**2 * np.eye(len(error)), error)
             step = np.clip(delta, -0.08, 0.08)
             limited |= bool((step != delta).any())
             leg = self.kin.qpos[self.qi] + step
@@ -129,7 +161,7 @@ class FootTaskSpaceIntent:
         action[ep.order] = (action[ep.order] + requested / ep.scale).astype(np.float32)
         relative = desired_r @ matrix.T
         residual_angle = float(np.arccos(np.clip((np.trace(relative) - 1) / 2, -1, 1)))
-        return action, dict(
+        information = dict(
             pose_offset=offset,
             joint_delta_HG=requested,
             position_residual_m=float(np.linalg.norm(desired_p - point)),
@@ -137,3 +169,10 @@ class FootTaskSpaceIntent:
             increment_limited=limited,
             ik_iterations=4,
         )
+        if shin_clearance:
+            information.update(
+                shin_clearance_after_scratch_m=separation()[0],
+                requested_shin_surface_margin_m=0.015,
+                obstacle_center_actual_world=actual_ball.copy(),
+            )
+        return action, information

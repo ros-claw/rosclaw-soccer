@@ -14,7 +14,9 @@ from pathlib import Path
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--teacher-mode", choices=("reference", "measured_contact_center"), default="reference"
+        "--teacher-mode",
+        choices=("reference", "measured_contact_center", "measured_contact_shin_clearance"),
+        default="reference",
     )
     for n in ("exam-root", "audit-root", "output"):
         p.add_argument("--" + n, type=Path, required=True)
@@ -57,7 +59,7 @@ def main():
     for x in (rp, ap, dp):
         pins[str(x)] = digest(x)
     contact_inputs = {}
-    if a.teacher_mode == "measured_contact_center":
+    if a.teacher_mode.startswith("measured_contact_"):
         for i in (4, 5, 20, 21):
             entry = next(
                 x for x in ar["contact_event_artifacts"] if x["context"] == i and x["repeat"] == 0
@@ -94,13 +96,20 @@ def main():
         dict(
             protocol="dual256.TRAIN.actual_failed_state_shared_authority_recovery.v1"
             if a.teacher_mode == "reference"
-            else "dual256.TRAIN.measured_contact_center_on_learner_mean.v2",
+            else (
+                "dual256.TRAIN.measured_contact_center_on_learner_mean.v2"
+                if a.teacher_mode == "measured_contact_center"
+                else "dual256.TRAIN.measured_contact_center_and_shin_clearance.v3"
+            ),
             teacher_mode=a.teacher_mode,
             centering_geometry=(
                 "actual solver radial minus horizontal goal-directed .11m radial; "
                 "not force direction"
             ),
             centering_support_controls=24,
+            shin_clearance_margin_m=0.015
+            if a.teacher_mode == "measured_contact_shin_clearance"
+            else None,
             source_head=a.expected_head,
             input_file_hashes=pins,
             exam_hash=digest(rp),
@@ -217,7 +226,7 @@ def main():
                 }
             intent = None
             world_offset = center = None
-            if a.teacher_mode == "measured_contact_center":
+            if a.teacher_mode.startswith("measured_contact_"):
                 world_offset, center = measured_centering(contact_inputs[context], ep.goal)
                 intent = FootTaskSpaceIntent(
                     ep.env.model, foot="left", center=center, latent=np.zeros((2, 6))
@@ -261,10 +270,15 @@ def main():
                 action = nominal.copy()
                 if share > 0:
                     physical = snapshot(ep.env.data)
-                    if a.teacher_mode == "measured_contact_center":
+                    if a.teacher_mode.startswith("measured_contact_"):
                         rotation = ep.env.data.xmat[ep.env.pelvis_body_id].reshape(3, 3).copy()
                         offset = current_body_offset(world_offset, rotation, frame, center)
-                        oracle, ik = intent.solve_offset(ep, nominal.copy(), offset)
+                        oracle, ik = intent.solve_offset(
+                            ep,
+                            nominal.copy(),
+                            offset,
+                            shin_clearance=a.teacher_mode == "measured_contact_shin_clearance",
+                        )
                         intent_calls += 1
                     elif intent is None:
                         oracle, ik = reference, None

@@ -45,6 +45,9 @@ def main():
     protocols = {
         "reference": "dual256.TRAIN.actual_failed_state_shared_authority_recovery.v1",
         "measured_contact_center": "dual256.TRAIN.measured_contact_center_on_learner_mean.v2",
+        "measured_contact_shin_clearance": (
+            "dual256.TRAIN.measured_contact_center_and_shin_clearance.v3"
+        ),
     }
     if (
         mode not in protocols
@@ -230,7 +233,7 @@ def main():
                     mujoco.mj_forward(ep.env.model, ep.env.data)
                 intent = None
                 world_offset = center = None
-                if mode == "measured_contact_center":
+                if mode.startswith("measured_contact_"):
                     geo = next(
                         x
                         for x in original_audit["contact_event_artifacts"]
@@ -280,7 +283,7 @@ def main():
                     equal(share, kick["NN_assistance_share"][frame], "declared actual share")
                     if not share:
                         return nominal.copy(), 0
-                    if mode == "measured_contact_center":
+                    if mode.startswith("measured_contact_"):
                         rotation = (
                             actual.env.data.xmat[actual.env.pelvis_body_id].reshape(3, 3).copy()
                         )
@@ -288,6 +291,7 @@ def main():
                             actual,
                             nominal.copy(),
                             current_body_offset(world_offset, rotation, frame, center),
+                            shin_clearance=mode == "measured_contact_shin_clearance",
                         )
                     elif intent is None:
                         oracle, ik = reference, None
