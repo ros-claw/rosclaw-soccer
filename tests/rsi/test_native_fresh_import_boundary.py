@@ -28,6 +28,7 @@ import pytest
         "scripts.rsi_qualify_pass_perturbations",
         "scripts.rsi_pass_transfer_replay_trial",
         "scripts.rsi_audit_pass_perturbations",
+        "scripts.rsi_build_team_pass_bank",
     ],
 )
 def test_import_does_not_allocate_workers_or_write_physical_outputs(module, tmp_path, monkeypatch):
