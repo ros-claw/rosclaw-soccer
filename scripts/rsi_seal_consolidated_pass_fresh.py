@@ -12,6 +12,26 @@ import subprocess
 from pathlib import Path
 
 
+def validate_pass_ancestry(passing, source, declared, trained, cpu_hash):
+    """The own-pass schema binds the model THROUGH its producer, not copied keys."""
+    if (
+        source["status"] != "TEAM_PASS_CANDIDATE80_COLLECTED_PENDING_OWN_NATIVE_AND_RETENTION"
+        or source["checkpoint_kind"] != "consolidated-adapter-v1"
+        or declared["checkpoint_kind"] != "consolidated-adapter-v1"
+        or declared["cpu_audit_hash"] != cpu_hash
+        or any(d["training_hash"] != passing["training_hash"] for d in (source, declared))
+        or source["counts"] != passing["counts"]
+        or len(source["records"]) != 80
+        or len(passing["records"]) != 80
+        or source["summary"] != passing["summary"]
+        or source["comparison"] != passing["comparison"]
+        or trained["checkpoint_kind"] != "consolidated-adapter-v1"
+        or declared["teacher_enabled"] is not False
+        or declared["B_policy_frozen"] is not True
+    ):
+        raise ValueError("own-pass proof must bind its exact declared producer/model/CPU witness")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for k in ("manifest", "core-root", "output"):
@@ -107,14 +127,17 @@ def main():
             "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS",
         )
         tp, trained = receipt(pins, passing["training_hash"])
+        _, pass_source = receipt(pins, passing["producer_hash"])
+        _, pass_declared = receipt_or_declaration(pass_source)
+        validate_pass_ancestry(
+            passing, pass_source, pass_declared, trained, entry["cpu_own"]["hash"]
+        )
         if (
-            passing["checkpoint_kind"] != "consolidated-adapter-v1"
-            or retained["checkpoint_kind"] != "consolidated-adapter-v1"
+            retained["checkpoint_kind"] != "consolidated-adapter-v1"
+            or cpu["checkpoint_kind"] != "consolidated-adapter-v1"
             or retained["training_hash"] != passing["training_hash"]
             or cpu["source_hash"] != passing["training_hash"]
-            or any(
-                d["checkpoint_hash"] != trained["checkpoint_hash"] for d in (passing, retained, cpu)
-            )
+            or any(d["checkpoint_hash"] != trained["checkpoint_hash"] for d in (retained, cpu))
             or trained["config"]["seed"] != entry["seed"]
             or scope(retained)["contexts"] != old_scope["contexts"]
             or retained["old_protected_cases"] != old["old_protected_cases"]
