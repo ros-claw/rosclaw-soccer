@@ -3,7 +3,11 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.two_body_pass_response import measured_response, new_distinct_proposals
+from rosclaw_soccer.rsi.two_body_pass_response import (
+    measured_response,
+    new_distinct_proposals,
+    refinement_rank,
+)
 
 
 def fixture():
@@ -91,3 +95,33 @@ def test_deduplicate_only_controls_without_removing_or_resampling_physical_state
 def test_invalid_local_control_proposals_fail_before_any_physics(z):
     with pytest.raises(ValueError):
         new_distinct_proposals([dict(latent=z.tolist())], [])
+
+
+def test_joint_refinement_cost_does_not_prefer_tiny_error_with_excessive_speed():
+    def row(error, speed, controlled=True, strict=False):
+        return dict(
+            whole_body_healthy=True,
+            passer_full100NNrecovery=True,
+            passer_clean_foot=True,
+            B_legal_functional_receive_before_deadline=controlled,
+            B_excluded_contact=False,
+            combined_precision_and_functional_receive=strict,
+            incoming_arrival_speed_mps=speed,
+            incoming=dict(
+                A_first_foot_strike_substep=100,
+                B_first_ball_contact_substep=200,
+                incoming_target_error_3d_before_B_contact_m=error,
+            ),
+        )
+
+    fast = row(0.008, 3.8)
+    improving = row(0.12, 2.8)
+    assert refinement_rank(improving) > refinement_rank(fast)
+    assert refinement_rank(row(0.09, 2.9, strict=True)) > refinement_rank(improving)
+    assert refinement_rank(row(0.001, 2.8, controlled=False)) < refinement_rank(fast)
+    bad = row(0.01, 2.8)
+    bad["passer_clean_foot"] = False
+    assert refinement_rank(bad) < refinement_rank(fast)
+    bad = row(0.01, float("nan"))
+    with pytest.raises(ValueError):
+        refinement_rank(bad)

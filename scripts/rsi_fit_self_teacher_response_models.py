@@ -16,6 +16,11 @@ def main():
         p.add_argument("--" + k, type=Path, required=True)
     for k in ("pilot-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
+    p.add_argument(
+        "--anchor-rule",
+        choices=("source-selection", "joint-normalized"),
+        default="source-selection",
+    )
     a = p.parse_args()
     from scripts.rsi_native_fresh_common import clean, source_pins
 
@@ -88,7 +93,11 @@ def main():
     import numpy as np
 
     from rosclaw_soccer.rsi.pass_response_model import response_proposals
-    from rosclaw_soccer.rsi.two_body_pass_response import measured_response, new_distinct_proposals
+    from rosclaw_soccer.rsi.two_body_pass_response import (
+        measured_response,
+        new_distinct_proposals,
+        refinement_rank,
+    )
 
     plans = []
     for state, root, s, calroot, cal in sources:
@@ -168,6 +177,8 @@ def main():
                     continue
                 unique[key] = dict(tag=tag, row=row, latent=z, response=response)
             start = next((v for v in unique.values() if v["tag"] == selected), None)
+            if a.anchor_rule == "joint-normalized" and unique:
+                start = max(unique.values(), key=lambda v: refinement_rank(v["row"]["outcome"]))
             if start is None and unique:
                 start = max(unique.values(), key=lambda v: rank(v["row"]))
             if start is None:
@@ -208,6 +219,12 @@ def main():
         a.output / "complete.json",
         dict(
             status="TWO_BODY_SELF_TEACHER_RESPONSE_MODELS_FIT_NOT_PHYSICALLY_VALIDATED",
+            fit_protocol=(
+                "soccer.two_body_response_fit.v2"
+                if a.anchor_rule == "joint-normalized"
+                else "soccer.two_body_response_fit.v1"
+            ),
+            anchor_rule=a.anchor_rule,
             source_head=a.expected_head,
             input_file_hashes=pins,
             pilot_hash=a.pilot_hash,

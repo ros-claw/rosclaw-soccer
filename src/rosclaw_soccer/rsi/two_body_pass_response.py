@@ -9,6 +9,33 @@ from typing import Any
 import numpy as np
 
 
+def refinement_rank(outcome: dict[str, Any]) -> tuple[int, int, int, int, float]:
+    """New optimizer cost, NOT a change to any old physical success label."""
+    from rosclaw_soccer.rsi.pass_transfer_learning import controlled_pass_label
+
+    controlled = controlled_pass_label(outcome)
+    error = outcome["incoming"]["incoming_target_error_3d_before_B_contact_m"]
+    speed = outcome["incoming_arrival_speed_mps"]
+    strict = outcome["combined_precision_and_functional_receive"]
+    if type(strict) is not bool or any(
+        v is not None and (type(v) not in (int, float) or not np.isfinite(v) or v < 0)
+        for v in (error, speed)
+    ):
+        raise ValueError("finite actual error/speed and typed unchanged strict result required")
+    score = -1e6 if error is None or speed is None else -error / 0.1 - max(0.0, speed - 3.0) / 0.2
+    return (
+        int(
+            outcome["whole_body_healthy"]
+            and outcome["passer_full100NNrecovery"]
+            and not outcome["B_excluded_contact"]
+        ),
+        int(outcome["passer_clean_foot"]),
+        int(controlled),
+        int(strict),
+        float(score),
+    )
+
+
 def measured_response(
     positions: np.ndarray,
     velocities: np.ndarray,
