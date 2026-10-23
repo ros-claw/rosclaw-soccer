@@ -86,3 +86,31 @@ def test_nonfinite_inputs_and_head_rejected(bad):
         adapter.head[-1].bias.fill_(bad)
     with pytest.raises(ValueError):
         adapter(torch.zeros_like(obs), adapter.initial_state())
+
+
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_float32_subtract_add_roundoff_cannot_exceed_original_total_boundary(sign):
+    model = ConsolidatedMotorAdapter(learned_memory(), head_bound_rad=0.2)
+    with torch.no_grad():
+        model.head[-1].bias.fill_(sign * 20)
+    old = torch.full((1, 1, 29), sign * 0.03448738902807236)
+    # This represented old value plus its represented remaining budget used
+    # to exceed the represented .2 boundary by one ULP.
+    unprojected = old + sign * (0.2 - old.abs())
+    assert (unprojected.abs() > 0.2).all()
+    _, total = model.adapt_features(torch.zeros(1, 1, 288), old, torch.ones(29))
+    assert (total.abs() <= 0.2).all()
+    assert torch.equal(total, torch.full_like(total, sign * 0.2))
+
+
+def test_executed_mean_uses_the_final_total_projection_not_old_plus_requested_delta():
+    model = ConsolidatedMotorAdapter(learned_memory(), head_bound_rad=0.2)
+    with torch.no_grad():
+        model.head[-1].bias.fill_(20)
+    obs = torch.randn(30, 1, 160)
+    output, _, e = model.forward_with_evidence(obs, model.initial_state())
+    expected = e["reference_nominal"] + e[
+        "final_mean_delta_radians"
+    ] / model.memory.parent.get_buffer("action_scale")
+    assert torch.equal(output, expected)
+    assert (e["final_mean_delta_radians"].abs() <= 0.2).all()

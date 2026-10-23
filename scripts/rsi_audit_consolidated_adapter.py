@@ -82,6 +82,7 @@ def main():
                     z["action_scale"].copy(),
                 )
                 reference = z["reference_nominal"] + z["reference_delta"] / scale
+                original_nominal = z["reference_nominal"].copy()
             with np.load(feature_path, allow_pickle=False) as z:
                 f = {k: z[k].copy() for k in z.files}
             if len(obs) != row["rows"] or proof["source_raw_hash"] != row["raw_hash"]:
@@ -94,12 +95,12 @@ def main():
                     mean, private, e = model.forward_with_evidence(
                         torch.from_numpy(o).reshape(1, 1, 160), private
                     )
-                    added, _ = model.adapt_features(
+                    _, projected_total = model.adapt_features(
                         torch.from_numpy(f["features"][i]).reshape(1, 1, 288),
                         torch.from_numpy(f["memory_delta"][i]).reshape(1, 1, 29),
                         torch.from_numpy(scale),
                     )
-                    other = f["memory_means"][i] + added[0, 0].numpy() / scale
+                    other = original_nominal[i] + projected_total[0, 0].numpy() / scale
                 calls += 1
                 feature_error = max(
                     feature_error,

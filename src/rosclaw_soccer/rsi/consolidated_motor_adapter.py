@@ -94,7 +94,10 @@ class ConsolidatedMotorAdapter(nn.Module):
         # Remaining authority relative to the ORIGINAL nominal motor, not an
         # extra +/-0.2 around the consolidated model. Zero is always admissible.
         added = torch.maximum(torch.minimum(requested, 0.2 - old), -0.2 - old)
-        total = old + added
+        # Subtracting the remaining budget and adding it back is not closed
+        # under float32: e.g. -.034487389 + -.165512621 is -.200000018.
+        # Project the SUM too; do not loosen the original boundary by epsilon.
+        total = torch.clamp(old + added, -0.2, 0.2)
         return added, total
 
     def forward_with_evidence(
@@ -107,16 +110,21 @@ class ConsolidatedMotorAdapter(nn.Module):
             evidence["final_mean_delta_radians"],
             scale,
         )
-        # Do not round-trip old mean via radians: zero head preserves it BITWISE
-        # while retaining nonzero head gradients (no zero-head special branch).
-        result = mean + added / scale
+        # Use the original nominal, not mean+added/scale, so the final sum
+        # projection is actually executed. This is EXACTLY the slow motor's
+        # original arithmetic at zero head: nominal + old_delta / scale.
+        result = evidence["reference_nominal"] + total / scale
         return (
             result,
             after,
             dict(
                 **{k: v for k, v in evidence.items() if k != "final_mean_delta_radians"},
                 consolidated_mean=mean,
-                adapter_delta_radians=added,
+                adapter_delta_radians=total - evidence["final_mean_delta_radians"],
+                adapter_delta_before_roundoff_projection=added,
+                roundoff_projection_delta_radians=(
+                    total - (evidence["final_mean_delta_radians"] + added)
+                ),
                 final_mean_delta_radians=total,
                 physical_retention_proven=False,
             ),
