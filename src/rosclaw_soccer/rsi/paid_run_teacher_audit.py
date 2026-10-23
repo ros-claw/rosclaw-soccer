@@ -17,6 +17,24 @@ def equal(actual: Any, expected: Any, label: str) -> None:
         raise ValueError("whole-run audit mismatch: " + label)
 
 
+def private_replay_state(actor: Any, hidden_width: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Only explicitly admitted motor classes may allocate dual256 history."""
+    if type(hidden_width) is not int or hidden_width not in (128, 256):
+        raise ValueError("known private recurrent context width required")
+    if hidden_width == 256:
+        from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
+        from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+
+        if (
+            type(actor) not in (DualRecurrentMotor, ConsolidatedMotorAdapter)
+            or actor.training
+            or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
+        ):
+            raise ValueError("independent replay requires explicit frozen CPU dual256 motor")
+        return actor.initial_state()
+    return torch.zeros(2, 1, 128), torch.zeros(2, 1, 128)
+
+
 def replay_teacher_world(
     ep: Any,
     actor: Any,
@@ -65,16 +83,7 @@ def replay_teacher_world(
     if contact_observer is not None and model.opt.integrator == mujoco.mjtIntegrator.mjINT_RK4:
         raise ValueError("contact clock diagnostic excludes multi-stage RK4 solver geometry")
     intent = FootTaskSpaceIntent(model, foot=foot, center=center, latent=latent)
-    if hidden_width == 256:
-        from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
-
-        if type(actor) is not DualRecurrentMotor:
-            raise ValueError("independent replay requires explicit new dual256 actor")
-        state = actor.initial_state()
-    elif hidden_width == 128:
-        state = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
-    else:
-        raise ValueError("known private recurrent context width required")
+    state = private_replay_state(actor, hidden_width)
     body_failed = False
     for phase, raw in (("kick", kick), ("stand", stand)):
         if raw is None:
