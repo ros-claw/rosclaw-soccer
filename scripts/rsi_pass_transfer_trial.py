@@ -23,8 +23,19 @@ from scripts.rsi_stroke_search_common import stroke_action
 
 
 def collect_trial(
-    setup, actor, course, *, output, index, counts, student=None, student_prefix_controls=None
+    setup,
+    actor,
+    course,
+    *,
+    output,
+    index,
+    counts,
+    student=None,
+    student_prefix_controls=None,
+    emit_course_rows=True,
 ):
+    if type(emit_course_rows) is not bool:
+        raise ValueError("explicit course log disclosure mode required before physics")
     if (student is None) != (student_prefix_controls is None) or (
         student is not None
         and (type(student_prefix_controls) is not int or student_prefix_controls not in (0, 80))
@@ -252,5 +263,7 @@ def collect_trial(
             PPO_actor_rows=0,
         )
     write_once(folder / "complete.json", result)
-    print(json.dumps({k: v for k, v in result.items() if k != "artifacts"}), flush=True)
+    from rosclaw_soccer.rsi.pass_trial_logging import trial_progress
+
+    print(json.dumps(trial_progress(result, include_course=emit_course_rows)), flush=True)
     return result

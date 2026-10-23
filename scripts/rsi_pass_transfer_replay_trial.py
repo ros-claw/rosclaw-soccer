@@ -34,7 +34,10 @@ def replay_trial(
     prior_initial=None,
     student=None,
     student_prefix_controls=None,
+    emit_course_rows=True,
 ):
+    if type(emit_course_rows) is not bool:
+        raise ValueError("explicit course log disclosure mode required before physics")
     if (student is None) != (student_prefix_controls is None) or (
         student is not None
         and (type(student_prefix_controls) is not int or student_prefix_controls not in (0, 80))
@@ -262,5 +265,7 @@ def replay_trial(
     if result != {k: v for k, v in claim.items() if k != "artifacts"}:
         raise ValueError("own recovery/receiving/delivery/whole counters differ")
     write_once(output / f"trial{index}.json", result)
-    print(json.dumps(result), flush=True)
+    from rosclaw_soccer.rsi.pass_trial_logging import trial_progress
+
+    print(json.dumps(trial_progress(result, include_course=emit_course_rows)), flush=True)
     return result, ini
