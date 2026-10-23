@@ -111,3 +111,67 @@ def test_missing_or_invalid_predecessor_cannot_start_physics(tmp_path, fault):
     p.write_text(json.dumps(c))
     with pytest.raises(ValueError):
         native_command(**args)
+
+
+def audit_arguments(tmp_path, exam="pass80-own"):
+    args = arguments(tmp_path)
+    root = tmp_path / "native"
+    root.mkdir()
+    decl = dict(
+        source_head="head",
+        training_hash=args["training_hash"],
+        checkpoint_kind="consolidated-adapter-v1",
+        hardware_authorized=False,
+        promotion_authorized=False,
+    )
+    dp = root / "declaration.json"
+    dp.write_text(json.dumps(decl))
+    status, n = (
+        ("TEAM_PASS_CANDIDATE80_COLLECTED_PENDING_OWN_NATIVE_AND_RETENTION", 80)
+        if exam == "pass80-own"
+        else ("DUAL_RECURRENT_NATIVE_TRAIN_EXAM_CLOSED_PENDING_INDEPENDENT_AUDIT", 44)
+    )
+    (root / "complete.json").write_text(
+        json.dumps(dict(decl, status=status, records=[{}] * n, declaration_hash=digest(dp)))
+    )
+    args.update(
+        exam=exam, native_root=root, producer_head="head", expected_head="independent-reader"
+    )
+    return args
+
+
+@pytest.mark.parametrize("exam", ["pass80-own", "retention44-own"])
+def test_whole_independent_readback_can_follow_another_pinned_producer(tmp_path, exam):
+    args = audit_arguments(tmp_path, exam)
+    cmd = native_command(**args)
+    assert cmd[3] == (
+        "scripts.rsi_audit_team_pass_motor"
+        if exam == "pass80-own"
+        else "scripts.rsi_audit_dual_motor_native_exam"
+    )
+    assert cmd[cmd.index("--source-hash") + 1] == digest(args["native_root"] / "complete.json")
+    assert cmd[cmd.index("--expected-head") + 1] == "independent-reader"
+
+
+@pytest.mark.parametrize(
+    "fault", ["count", "model", "producer", "declaration", "failed", "missing"]
+)
+def test_incomplete_or_wrong_native_source_cannot_trigger_independent_reexecution(tmp_path, fault):
+    args = audit_arguments(tmp_path)
+    p = args["native_root"] / "complete.json"
+    r = json.loads(p.read_text())
+    if fault == "count":
+        r["records"].pop()
+    elif fault == "model":
+        r["training_hash"] = "other"
+    elif fault == "producer":
+        r["source_head"] = "other"
+    elif fault == "declaration":
+        r["declaration_hash"] = "other"
+    elif fault == "failed":
+        (args["native_root"] / "failed.json").write_text("{}")
+    elif fault == "missing":
+        args["producer_head"] = None
+    p.write_text(json.dumps(r))
+    with pytest.raises(ValueError):
+        native_command(**args)

@@ -24,9 +24,14 @@ def native_command(
     exam: str,
     rehearsal_root: Path | None = None,
     rehearsal_hash: str | None = None,
+    native_root: Path | None = None,
+    producer_head: str | None = None,
 ) -> list[str]:
-    if exam not in ("pass80", "retention44"):
+    if exam not in ("pass80", "retention44", "pass80-own", "retention44-own"):
         raise ValueError("one explicitly declared original native protocol required")
+    own = exam.endswith("-own")
+    if own and (native_root is None or producer_head is None):
+        raise ValueError("exact closed physical predecessor and producer head required")
     tp, cp = training_root / "complete.json", cpu_root / "complete.json"
     if (
         output.exists()
@@ -41,7 +46,7 @@ def native_command(
         or c["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
         or c["checkpoint_kind"] != t["checkpoint_kind"]
         or c["source_hash"] != training_hash
-        or c["source_head"] != expected_head
+        or c["source_head"] != (producer_head if own else expected_head)
         or c["checkpoint_hash"] != t["checkpoint_hash"]
         or c["data_hash"] != t["data_hash"]
         or c["physical_steps_executed"] != 0
@@ -57,6 +62,60 @@ def native_command(
 
     if c["own_actor_decisions"] != expected_cpu_audit_decisions(t, "consolidated-adapter-v1"):
         raise ValueError("incomplete CPU own-history scope cannot launch physics")
+    if own:
+        if native_root is None:
+            raise ValueError("exact physical source required")
+        rp, dp = native_root / "complete.json", native_root / "declaration.json"
+        if (
+            native_root.is_symlink()
+            or any(p.is_symlink() for p in (rp, dp))
+            or (native_root / "failed.json").exists()
+        ):
+            raise ValueError("complete ordinary physical source without a failure required")
+        report, declared = [json.loads(p.read_text()) for p in (rp, dp)]
+        status, count = (
+            ("TEAM_PASS_CANDIDATE80_COLLECTED_PENDING_OWN_NATIVE_AND_RETENTION", 80)
+            if exam == "pass80-own"
+            else ("DUAL_RECURRENT_NATIVE_TRAIN_EXAM_CLOSED_PENDING_INDEPENDENT_AUDIT", 44)
+        )
+        if (
+            report["status"] != status
+            or len(report["records"]) != count
+            or report["declaration_hash"] != digest(dp)
+            or declared["checkpoint_kind"] != "consolidated-adapter-v1"
+            or any(
+                v["training_hash"] != training_hash
+                or v["source_head"] != producer_head
+                or v["hardware_authorized"] is not False
+                or v["promotion_authorized"] is not False
+                for v in (report, declared)
+            )
+        ):
+            raise ValueError("whole source/declared model and original producer must match")
+        args = [
+            sys.executable,
+            "-u",
+            "-m",
+            "scripts.rsi_audit_team_pass_motor"
+            if exam == "pass80-own"
+            else "scripts.rsi_audit_dual_motor_native_exam",
+            "--root",
+            str(native_root),
+            "--source-hash",
+            digest(rp),
+            "--expected-head",
+            expected_head,
+            "--output",
+            str(output),
+        ]
+        if exam == "pass80-own":
+            args += [
+                "--checkpoint-kind",
+                "consolidated-adapter-v1",
+                "--producer-head",
+                str(producer_head),
+            ]
+        return args
     args = [
         sys.executable,
         "-u",
@@ -101,9 +160,13 @@ def main():
         p.add_argument("--" + k, type=Path, required=True)
     for k in ("training-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
-    p.add_argument("--exam", choices=("pass80", "retention44"), required=True)
+    p.add_argument(
+        "--exam", choices=("pass80", "retention44", "pass80-own", "retention44-own"), required=True
+    )
     p.add_argument("--rehearsal-root", type=Path)
     p.add_argument("--rehearsal-hash")
+    p.add_argument("--native-root", type=Path)
+    p.add_argument("--producer-head")
     a = p.parse_args()
     from scripts.rsi_native_fresh_common import clean
 
