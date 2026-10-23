@@ -93,6 +93,22 @@ def test_new_bank_keeps_original_retention_exam_via_bound_inherited_lineage(tmp_
         input_file_hashes={str(old): old_hash, str(warm): warm_hash},
     )
     assert context_witness_hash(data, "team-pass-consolidated-v1") == "sha256:original"
+    from rosclaw_soccer.rsi.team_pass_correction import (
+        CORRECTION_BANK_STATUS as PASS_CORRECTION_BANK,
+    )
+
+    original_pass, original_pass_hash = save("original-pass", data)
+    pass_warm, pass_warm_hash = save(
+        "pass-warm", dict(data_hash=original_pass_hash, parent_lineage_hash="sha256:parent")
+    )
+    new_data = dict(
+        status=PASS_CORRECTION_BANK,
+        base_data_hash=original_pass_hash,
+        warm_start_hash=pass_warm_hash,
+        parent_lineage_hash="sha256:parent",
+        input_file_hashes={str(original_pass): original_pass_hash, str(pass_warm): pass_warm_hash},
+    )
+    assert context_witness_hash(new_data, "team-pass-corrected-v2") == "sha256:original"
     warm.write_text("{}")
     with pytest.raises(ValueError, match="lineage"):
         context_witness_hash(data, "team-pass-consolidated-v1")

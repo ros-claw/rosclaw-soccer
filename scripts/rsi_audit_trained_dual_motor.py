@@ -16,6 +16,7 @@ def main():
             "contact-consolidated",
             "contact-consolidated-v2",
             "team-pass-consolidated-v1",
+            "team-pass-corrected-v2",
         ),
         default="supervised",
     )
@@ -104,7 +105,9 @@ def main():
             checkpoint_kind=a.checkpoint_kind,
         )
         expected_sequences = (
-            177
+            274
+            if a.checkpoint_kind == "team-pass-corrected-v2"
+            else 177
             if a.checkpoint_kind == "team-pass-consolidated-v1"
             else 110
             if a.checkpoint_kind == "contact-consolidated-v2"

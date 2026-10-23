@@ -79,3 +79,17 @@ def test_separate_critic_updates_have_honest_distinct_step_counters():
     validate_adam_slots(optimizer.state_dict(), p, 1, 2)
     with pytest.raises(ValueError):
         validate_adam_slots(optimizer.state_dict(), p, 1)
+
+
+def test_new_bc_counter_schema_does_not_relax_legacy128_budget():
+    p, opt = opt_fixture()
+    # Metadata-validation fixture only, not evidence that192 updates occurred.
+    for i, slot in opt["state"].items():
+        slot["step"].fill_(192 if i < 16 else 48)
+    with pytest.raises(ValueError):
+        validate_adam_slots(opt, p, 192, 48)
+    validate_adam_slots(opt, p, 192, 48, actor_phase="team-pass-corrected-v2")
+    with pytest.raises(ValueError):
+        validate_adam_slots(opt, p, 193, 48, actor_phase="team-pass-corrected-v2")
+    with pytest.raises(ValueError, match="versioned"):
+        validate_adam_slots(opt, p, 192, 48, actor_phase="unbounded")

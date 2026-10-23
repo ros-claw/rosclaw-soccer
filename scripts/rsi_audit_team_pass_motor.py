@@ -11,6 +11,11 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--checkpoint-kind",
+        choices=("team-pass-consolidated-v1", "team-pass-corrected-v2"),
+        default="team-pass-consolidated-v1",
+    )
     for key in ("root", "output"):
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("source-hash", "producer-head", "expected-head"):
@@ -40,7 +45,8 @@ def main():
         or s["preflight_hash"] != digest(paths[2])
         or s["scene_hash"] != digest(paths[3])
         or s["training_hash"] != d["training_hash"]
-        or s["checkpoint_kind"] != "team-pass-consolidated-v1"
+        or s["checkpoint_kind"] != a.checkpoint_kind
+        or d.get("checkpoint_kind", "team-pass-consolidated-v1") != a.checkpoint_kind
         or d["teacher_enabled"] is not False
         or d["maximum_worlds"] != 80
         or d["maximum_native_steps"] != 320000
@@ -70,11 +76,26 @@ def main():
         cpu["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
         or cpu["source_hash"] != d["training_hash"]
         or cpu["checkpoint_hash"] != training["checkpoint_hash"]
-        or bank["status"] != "TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED"
+        or bank["status"]
+        != (
+            "TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED"
+            if a.checkpoint_kind == "team-pass-consolidated-v1"
+            else "TEAM_PASS_ACTUAL_STUDENT_CORRECTION_BANK274_READY_NOT_TRAINED"
+        )
     ):
         raise ValueError("same whole-history independently CPU-checked trained motor required")
+    task_bank = (
+        bank
+        if a.checkpoint_kind == "team-pass-consolidated-v1"
+        else receipt(pins, bank["base_data_hash"])[1]
+    )
+    if (
+        task_bank["status"] != "TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED"
+        or len(task_bank["records"]) != 177
+    ):
+        raise ValueError("original complete physical task witness required")
     baseline = sorted(
-        (r for r in bank["records"] if r["role"] == "new_unassisted"),
+        (r for r in task_bank["records"] if r["role"] == "new_unassisted"),
         key=lambda r: (r["source_course"]["state_id"], r["source_course"]["task"]),
     )
     courses = [r["source_course"] for r in baseline]
@@ -139,7 +160,7 @@ def main():
             pins,
             d["training_hash"],
             {i: contexts[i] for i in (1, 4, 20, 21)},
-            checkpoint_kind="team-pass-consolidated-v1",
+            checkpoint_kind=a.checkpoint_kind,
         )
         setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor)
         if setup.xml != paths[3].read_text():

@@ -55,6 +55,35 @@ def consolidation_pools(
 
 def context_witness_hash(data: dict[str, Any], checkpoint_kind: str) -> str:
     """Keep the original fixed exam fixtures separate from the new training bank."""
+    if checkpoint_kind == "team-pass-corrected-v2":
+        import json
+        from pathlib import Path
+
+        from rosclaw_soccer.rsi.paid_canonical_behavior import digest
+        from rosclaw_soccer.rsi.team_pass_correction import (
+            CORRECTION_BANK_STATUS as PASS_CORRECTION_BANK,
+        )
+
+        if data["status"] != PASS_CORRECTION_BANK:
+            raise ValueError("corrected pass checkpoint requires actual bank274")
+
+        def original(h: str) -> dict[str, Any]:
+            paths = [
+                Path(p)
+                for p, v in data["input_file_hashes"].items()
+                if v == h and p.endswith("/complete.json")
+            ]
+            if len(paths) != 1 or paths[0].is_symlink() or digest(paths[0]) != h:
+                raise ValueError("exact inherited original pass bank lineage required")
+            return dict(json.loads(paths[0].read_text()))
+
+        base, warm = original(data["base_data_hash"]), original(data["warm_start_hash"])
+        if (
+            warm["data_hash"] != data["base_data_hash"]
+            or warm["parent_lineage_hash"] != data["parent_lineage_hash"]
+        ):
+            raise ValueError("unchanged original task and frozen reference lineage required")
+        return context_witness_hash(base, "team-pass-consolidated-v1")
     if checkpoint_kind == "team-pass-consolidated-v1":
         import json
         from pathlib import Path

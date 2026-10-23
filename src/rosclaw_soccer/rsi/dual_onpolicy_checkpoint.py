@@ -21,9 +21,17 @@ from rosclaw_soccer.rsi.paid_full_entry_student import FrozenFullEntryActor
 
 
 def validate_adam_slots(
-    opt: Any, parameters: list[torch.Tensor], steps: int, critic_steps: int | None = None
+    opt: Any,
+    parameters: list[torch.Tensor],
+    steps: int,
+    critic_steps: int | None = None,
+    *,
+    actor_phase: str = "legacy",
 ) -> None:
-    if type(steps) is not int or not 1 <= steps <= 128 or type(opt) is not dict:
+    if actor_phase not in ("legacy", "team-pass-corrected-v2"):
+        raise ValueError("explicit separately versioned actor phase required")
+    limit = 128 if actor_phase == "legacy" else 192
+    if type(steps) is not int or not 1 <= steps <= limit or type(opt) is not dict:
         raise ValueError("bounded accepted actual PPO optimizer steps required")
     critic_steps = steps if critic_steps is None else critic_steps
     if type(critic_steps) is not int or not 1 <= critic_steps <= 4096:
@@ -105,6 +113,16 @@ def load_dual_candidate_for_sim_audit(
 ) -> tuple[DualRecurrentMotor, dict[str, Any]]:
     if not 0 <= _depth < 32:
         raise ValueError("bounded explicit continual actor-critic lineage required")
+    if checkpoint_kind == "team-pass-corrected-v2":
+        from rosclaw_soccer.rsi.team_pass_correction_checkpoint import load_team_pass_correction
+
+        return load_team_pass_correction(
+            parent,
+            parent_lineage_hash=parent_lineage_hash,
+            root=root,
+            expected_receipt_hash=expected_receipt_hash,
+            depth=_depth,
+        )
     if checkpoint_kind == "team-pass-consolidated-v1":
         from rosclaw_soccer.rsi.team_pass_checkpoint import load_team_pass
 

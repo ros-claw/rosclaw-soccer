@@ -13,6 +13,11 @@ from pathlib import Path
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--checkpoint-kind",
+        choices=("team-pass-consolidated-v1", "team-pass-corrected-v2"),
+        default="team-pass-consolidated-v1",
+    )
     for key in ("training-root", "cpu-audit-root", "output"):
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("training-hash", "cpu-audit-hash", "expected-head"):
@@ -36,7 +41,7 @@ def main():
     t, own = [json.loads(x.read_text()) for x in paths]
     if (
         own["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
-        or own["checkpoint_kind"] != "team-pass-consolidated-v1"
+        or own["checkpoint_kind"] != a.checkpoint_kind
         or own["source_hash"] != a.training_hash
         or own["checkpoint_hash"] != t["checkpoint_hash"]
         or own["data_hash"] != t["data_hash"]
@@ -52,12 +57,28 @@ def main():
     pins = dict(own["input_file_hashes"])
     pins.update({str(x): digest(x) for x in paths})
     bp, bank = receipt(pins, t["data_hash"])
-    if (
-        bank["status"] != "TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED"
-        or len(bank["records"]) != 177
+    bank_status = (
+        "TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED"
+        if a.checkpoint_kind == "team-pass-consolidated-v1"
+        else "TEAM_PASS_ACTUAL_STUDENT_CORRECTION_BANK274_READY_NOT_TRAINED"
+    )
+    if bank["status"] != bank_status or len(bank["records"]) != (
+        177 if a.checkpoint_kind == "team-pass-consolidated-v1" else 274
     ):
-        raise ValueError("same all177 whole-history TRAIN data bank required")
-    baseline = [r for r in bank["records"] if r["role"] == "new_unassisted"]
+        raise ValueError("same complete declared whole-history TRAIN data bank required")
+    # v2 original rows were copied from a data bank, not directly from native
+    # trial folders. Resolve the original physical task witness independently.
+    task_bank = (
+        bank
+        if a.checkpoint_kind == "team-pass-consolidated-v1"
+        else receipt(pins, bank["base_data_hash"])[1]
+    )
+    if (
+        task_bank["status"] != "TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED"
+        or len(task_bank["records"]) != 177
+    ):
+        raise ValueError("original independently replayed physical TRAIN task bank required")
+    baseline = [r for r in task_bank["records"] if r["role"] == "new_unassisted"]
     baseline.sort(key=lambda r: (r["source_course"]["state_id"], r["source_course"]["task"]))
     courses = [r["source_course"] for r in baseline]
     if (
@@ -77,6 +98,7 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             training_hash=a.training_hash,
+            checkpoint_kind=a.checkpoint_kind,
             cpu_audit_hash=a.cpu_audit_hash,
             data_hash=t["data_hash"],
             courses=courses,
@@ -118,7 +140,7 @@ def main():
             pins,
             a.training_hash,
             {i: contexts[i] for i in (1, 4, 20, 21)},
-            checkpoint_kind="team-pass-consolidated-v1",
+            checkpoint_kind=a.checkpoint_kind,
         )
         setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor)
         typed = []
@@ -227,7 +249,7 @@ def main():
                 preflight_hash=digest(a.output / "preflight.json"),
                 scene_hash=digest(a.output / "scene.xml"),
                 training_hash=a.training_hash,
-                checkpoint_kind="team-pass-consolidated-v1",
+                checkpoint_kind=a.checkpoint_kind,
                 counts=counts,
                 records=records,
                 comparison=comparison,
