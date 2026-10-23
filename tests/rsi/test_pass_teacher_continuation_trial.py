@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 from test_shared_native_neural_player import players
 
 from scripts.rsi_pass_transfer_trial import collect_trial
@@ -27,6 +28,9 @@ def test_actual_pair_stream_and_contiguous_expert_suffix(tmp_path, monkeypatch, 
     original = ps["a/"]
     actor = original.actor
     student = copy.deepcopy(actor)
+    with torch.no_grad():
+        list(student.plastic.parameters())[2].add_(0.001)
+        list(student.plastic.parameters())[-1].add_(0.001)
     clip = SimpleNamespace(
         length=100,
         joint_pos=np.zeros((100, 29), np.float32),
@@ -80,6 +84,8 @@ def test_actual_pair_stream_and_contiguous_expert_suffix(tmp_path, monkeypatch, 
         assert n == 200
         np.testing.assert_array_equal(z["student_executed"], np.arange(n) < prefix)
         np.testing.assert_array_equal(z["STUDENT_NN_obs"], z["TEACHER_NN_obs"])
+        assert not np.array_equal(z["STUDENT_NN_action"], z["TEACHER_NN_action"])
+        assert not np.array_equal(z["STUDENT_NN_h_after"], z["TEACHER_NN_h_after"])
         np.testing.assert_array_equal(z["NN_obs"][1:, 125:154], z["executed_action"][:-1])
         assert not z["teacher_delta_HG"][:prefix].any()
         np.testing.assert_array_equal(
