@@ -108,3 +108,27 @@ def test_unadmitted_subclass_and_trainable_adapter_do_not_get_a_teacher_pair():
         SameStateMotorPair(subclass, teacher)
     with pytest.raises(ValueError):
         paired_reference(subclass)
+
+
+def test_whole_student_copy_has_identical_nominal_but_separate_actual_history():
+    world, original, a, _ = models()
+    student = ConsolidatedMotorAdapter(a, head_bound_rad=0.2)
+    with torch.no_grad():
+        student.head[-1].bias.add_(0.05)
+    student.requires_grad_(False).eval()
+    teacher = copy.deepcopy(student)
+    p = SharedTeacherPair(
+        make_adapter_player(world, original, student),
+        make_adapter_player(world, original, teacher),
+    )
+    for step in range(2):
+        if step:
+            p.begin_standing()
+        target, s, same, t = p.propose()
+        np.testing.assert_array_equal(target, same)
+        np.testing.assert_array_equal(s["NN_action"], t["NN_action"])
+        np.testing.assert_array_equal(s["NN_h_after"], t["NN_h_after"])
+        assert p.student.state[0].data_ptr() != p.teacher.state[0].data_ptr()
+        world.advance({"a/": target, "b/": np.zeros(29)})
+        p.commit(s["NN_action"])
+    assert world.native_steps == 20
