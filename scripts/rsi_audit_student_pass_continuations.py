@@ -14,8 +14,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("root", "output"):
         p.add_argument("--" + key, type=Path, required=True)
-    for key in ("source-hash", "producer-head", "expected-head"):
+    for key in ("producer-head", "expected-head"):
         p.add_argument("--" + key, required=True)
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--source-hash")
+    group.add_argument("--completed-predecessor", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -25,6 +28,8 @@ def main():
     paths = [
         a.root / n for n in ("complete.json", "declaration.json", "preflight.json", "scene.xml")
     ]
+    if a.completed_predecessor:
+        a.source_hash = digest(paths[0])
     if (
         a.output.exists()
         or any(x.is_symlink() for x in paths)
