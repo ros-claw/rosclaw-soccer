@@ -46,6 +46,13 @@ def main():
     for key in ("bank-hash", "native-own-hash", "retention-own-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--context", type=int, choices=(1, 4, 20, 21), required=True)
+    p.add_argument(
+        "--student-kind",
+        choices=("team-pass-consolidated-v1", "consolidated-adapter-v1"),
+        default="team-pass-consolidated-v1",
+    )
+    p.add_argument("--student-seed", type=int, default=75024)
+    p.add_argument("--preflight-only", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -67,7 +74,7 @@ def main():
         or native_own["status"] != "TEAM_PASS_CANDIDATE80_WHOLE_OWN_NATIVE_REPLAY_MATCH"
         or retained["status"] != "DUAL_RECURRENT_ALL44_WHOLE_NATIVE_OWN_HISTORY_AUDIT_PASS"
         or retained["worlds"] != 44
-        or retained["checkpoint_kind"] != "team-pass-consolidated-v1"
+        or retained["checkpoint_kind"] != a.student_kind
         or retained["training_hash"] != native_own["training_hash"]
         or len(native_own["records"]) != 80
         or any(
@@ -87,11 +94,21 @@ def main():
     tp, training = receipt(pins, retained["training_hash"])
     _, warm = receipt(pins, bank["warm_start_hash"])
     npth, native = receipt(pins, native_own["producer_hash"])
+    from rosclaw_soccer.rsi.adapter_continuation_identity import continuation_protocol
+
+    child_hash = training["data_hash"] if a.student_kind == "consolidated-adapter-v1" else None
+    child_bank = receipt(pins, child_hash)[1] if child_hash is not None else None
+    protocol = continuation_protocol(
+        kind=a.student_kind,
+        seed=a.student_seed,
+        training=training,
+        bank=bank,
+        bank_hash=a.bank_hash,
+        child_bank=child_bank,
+        child_bank_hash=child_hash,
+    )
     if (
-        training["config"]["seed"] != 75024
-        or training["data_hash"] != a.bank_hash
-        or training["warm_start_hash"] != bank["warm_start_hash"]
-        or training["checkpoint_hash"] != retained["checkpoint_hash"]
+        training["checkpoint_hash"] != retained["checkpoint_hash"]
         or len(native["records"]) != 80
         or len(retained["results"]) != 44
     ):
@@ -132,7 +149,9 @@ def main():
     try:
         import numpy as np
 
-        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
+        from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import (
+            load_motor_candidate_for_sim_audit,
+        )
         from rosclaw_soccer.rsi.pass_transfer_learning import controlled_pass_label
         from rosclaw_soccer.rsi.shared_relay_setup import SharedRelaySetup
         from rosclaw_soccer.sim.contracts import hash_json
@@ -150,11 +169,13 @@ def main():
             pins,
             retained["training_hash"],
             {i: contexts[i] for i in (1, 4, 20, 21)},
-            checkpoint_kind="team-pass-consolidated-v1",
+            checkpoint_kind=a.student_kind,
         )
         wp, _ = receipt(pins, bank["warm_start_hash"])
-        teacher, _ = load_dual_candidate_for_sim_audit(
-            student.parent,
+        from rosclaw_soccer.rsi.same_state_motor_pair import paired_reference
+
+        teacher, _ = load_motor_candidate_for_sim_audit(
+            paired_reference(student),
             parent_lineage_hash=warm["parent_lineage_hash"],
             root=wp.parent,
             expected_receipt_hash=bank["warm_start_hash"],
@@ -195,7 +216,10 @@ def main():
         write_once(
             a.output / "declaration.json",
             dict(
-                protocol="soccer.student_actual_prefix_expert_suffix_TRAIN80.v1",
+                protocol=protocol,
+                student_kind=a.student_kind,
+                student_seed=a.student_seed,
+                preflight_only=a.preflight_only,
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 bank_hash=a.bank_hash,
@@ -233,6 +257,62 @@ def main():
             ),
         )
         (a.output / "scene.xml").write_text(setup.xml)
+        if a.preflight_only:
+            from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
+            from rosclaw_soccer.rsi.shared_teacher_pair import SharedTeacherPair
+
+            c = next(c for c in courses if c["context"] == a.context)
+            ep, world, _, _, _ = setup.prepare(
+                c["context"],
+                c["side"],
+                ball_planar_offset_world=np.array(c["ball_planar_offset_world"]),
+            )
+
+            def player(actor):
+                return SharedNativeNeuralPlayer(
+                    world,
+                    "a/",
+                    actor,
+                    clip=ep.clip,
+                    torso_index=ep.torso_index,
+                    build_observation=ep.build_observation,
+                    goal=np.array(c["target"]),
+                    offset=ep.offset,
+                    scale=ep.scale,
+                    order=ep.order,
+                )
+
+            pair = SharedTeacherPair(player(student), player(teacher))
+            pair.propose()
+            if world.native_steps or any(counts.values()):
+                raise ValueError("preflight cannot execute physical steps")
+            check_pins(pins)
+            clean(a.expected_head)
+            write_once(
+                a.output / "complete.json",
+                dict(
+                    status="STUDENT_CONTINUATION_ALL40_PREFLIGHT_PRIVATE_PAIR_NOT_PHYSICS",
+                    source_head=a.expected_head,
+                    input_file_hashes=pins,
+                    declaration_hash=digest(a.output / "declaration.json"),
+                    student_kind=a.student_kind,
+                    student_seed=a.student_seed,
+                    global_initial_conditions=40,
+                    physical_steps=0,
+                    unexecuted_neural_proposals=2,
+                    optimizer_updates=0,
+                    same_actual_observation=True,
+                    borrowed_hidden_state=False,
+                    hardware_authorized=False,
+                    promotion_authorized=False,
+                    goal_complete=False,
+                ),
+            )
+            print(
+                json.dumps(dict(stage="STUDENT_TEACHER_PREFLIGHT", states=40, native_steps=0)),
+                flush=True,
+            )
+            return
         for i, c in enumerate(courses):
             if c["context"] != a.context:
                 continue

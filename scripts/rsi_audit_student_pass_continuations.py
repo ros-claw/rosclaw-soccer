@@ -35,7 +35,11 @@ def main():
     s, d, pf = [json.loads(x.read_text()) for x in paths[:3]]
     if (
         s["status"] != "STUDENT_PASS_CONTINUATION_SHARD_COLLECTED_PENDING_WHOLE_OWN_REPLAY"
-        or d["protocol"] != "soccer.student_actual_prefix_expert_suffix_TRAIN80.v1"
+        or d["protocol"]
+        not in (
+            "soccer.student_actual_prefix_expert_suffix_TRAIN80.v1",
+            "soccer.adapter_actual_prefix_expert_suffix_TRAIN80.v1",
+        )
         or any(r["source_head"] != a.producer_head for r in (s, d))
         or s["declaration_hash"] != digest(paths[1])
         or s["preflight_hash"] != digest(paths[2])
@@ -62,11 +66,22 @@ def main():
     _, bank = receipt(pins, d["bank_hash"])
     tp, training = receipt(pins, d["student_training_hash"])
     wp, warm = receipt(pins, d["teacher_training_hash"])
-    if (
-        training["data_hash"] != d["bank_hash"]
-        or training["warm_start_hash"] != d["teacher_training_hash"]
-        or training["config"]["seed"] != 75024
-    ):
+    from rosclaw_soccer.rsi.adapter_continuation_identity import continuation_protocol
+
+    kind = d.get("student_kind", "team-pass-consolidated-v1")
+    seed = d.get("student_seed", 75024)
+    child_hash = training["data_hash"] if kind == "consolidated-adapter-v1" else None
+    child_bank = receipt(pins, child_hash)[1] if child_hash is not None else None
+    protocol = continuation_protocol(
+        kind=kind,
+        seed=seed,
+        training=training,
+        bank=bank,
+        bank_hash=d["bank_hash"],
+        child_bank=child_bank,
+        child_bank_hash=child_hash,
+    )
+    if protocol != d["protocol"] or d["teacher_training_hash"] != bank["warm_start_hash"]:
         raise ValueError("same frozen research student and retained teacher required")
     courses = d["global_courses"]
     selected = [
@@ -117,7 +132,9 @@ def main():
     try:
         import numpy as np
 
-        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
+        from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import (
+            load_motor_candidate_for_sim_audit,
+        )
         from rosclaw_soccer.rsi.pass_transfer_learning import controlled_pass_label
         from rosclaw_soccer.rsi.shared_relay_setup import SharedRelaySetup
         from rosclaw_soccer.sim.contracts import hash_json
@@ -135,10 +152,12 @@ def main():
             pins,
             d["student_training_hash"],
             {i: contexts[i] for i in (1, 4, 20, 21)},
-            checkpoint_kind="team-pass-consolidated-v1",
+            checkpoint_kind=kind,
         )
-        teacher, _ = load_dual_candidate_for_sim_audit(
-            student.parent,
+        from rosclaw_soccer.rsi.same_state_motor_pair import paired_reference
+
+        teacher, _ = load_motor_candidate_for_sim_audit(
+            paired_reference(student),
             parent_lineage_hash=warm["parent_lineage_hash"],
             root=wp.parent,
             expected_receipt_hash=d["teacher_training_hash"],
