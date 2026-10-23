@@ -8,19 +8,40 @@ from typing import Any
 
 import torch
 
+from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
 
 MotorState = tuple[torch.Tensor, torch.Tensor]
 PairState = tuple[MotorState, MotorState]
+Motor = DualRecurrentMotor | ConsolidatedMotorAdapter
+
+
+def paired_reference(motor: Motor) -> torch.nn.Module:
+    """Explicit class admission; no duck-typed arbitrary policy wrappers."""
+    if type(motor) is ConsolidatedMotorAdapter:
+        return motor.memory.parent
+    if type(motor) is DualRecurrentMotor:
+        return motor.parent
+    raise ValueError("explicit qualified dual motor or consolidated adapter required")
+
+
+def _plastic_storage(motor: Motor) -> set[int]:
+    if type(motor) is ConsolidatedMotorAdapter:
+        params = (*motor.memory.plastic.parameters(), *motor.head.parameters())
+    elif type(motor) is DualRecurrentMotor:
+        params = tuple(motor.plastic.parameters())
+    else:
+        raise ValueError("explicit qualified motor required")
+    return {p.untyped_storage().data_ptr() for p in params}
 
 
 class SameStateMotorPair:
     """No hidden state in this object, no teacher state passed to the student."""
 
-    def __init__(self, student: DualRecurrentMotor, teacher: DualRecurrentMotor) -> None:
+    def __init__(self, student: Motor, teacher: Motor) -> None:
         if (
-            type(student) is not DualRecurrentMotor
-            or type(teacher) is not DualRecurrentMotor
+            type(student) not in (DualRecurrentMotor, ConsolidatedMotorAdapter)
+            or type(teacher) not in (DualRecurrentMotor, ConsolidatedMotorAdapter)
             or student is teacher
             or student.training
             or teacher.training
@@ -31,10 +52,7 @@ class SameStateMotorPair:
             )
         ):
             raise ValueError("two separately admitted frozen CPU dual256 policies required")
-        student_storage = {p.untyped_storage().data_ptr() for p in student.plastic.parameters()}
-        if any(
-            p.untyped_storage().data_ptr() in student_storage for p in teacher.plastic.parameters()
-        ):
+        if _plastic_storage(student) & _plastic_storage(teacher):
             raise ValueError("learner and teacher plastic networks cannot alias")
         self.student, self.teacher = student, teacher
 

@@ -8,7 +8,7 @@ The caller alone selects an action and advances the shared native world.
 import numpy as np
 import torch
 
-from rosclaw_soccer.rsi.same_state_motor_pair import SameStateMotorPair
+from rosclaw_soccer.rsi.same_state_motor_pair import SameStateMotorPair, paired_reference
 from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
 
 
@@ -34,7 +34,10 @@ class SharedTeacherPair:
         ):
             raise ValueError("two fresh private policies on the exact SAME body/task/ABI required")
         SameStateMotorPair(student.actor, teacher.actor)
-        s, t = student.actor.parent.state_dict(), teacher.actor.parent.state_dict()
+        s, t = (
+            paired_reference(student.actor).state_dict(),
+            paired_reference(teacher.actor).state_dict(),
+        )
         if s.keys() != t.keys() or any(not torch.equal(v, t[k]) for k, v in s.items()):
             raise ValueError("identical qualified frozen reference memory required")
         if any(
