@@ -94,6 +94,11 @@ def main():
             "unused review and complete exact pre-registered source/own witnesses required"
         )
     plan, s, own, d = [json.loads(f.read_text()) for f in paths]
+    basis = plan.get("teacher_basis", "retained65023")
+    protocols = {
+        "retained65023": "soccer.adapter_actual_prefix_expert_suffix_TRAIN80.v1",
+        "student": "soccer.adapter_self_based_stroke_TRAIN80.v1",
+    }
     if (
         plan["schema"] != "soccer.adapter_actual_state_distribution_pilot.v1"
         or s["status"] != "STUDENT_PASS_CONTINUATION_SHARD_COLLECTED_PENDING_WHOLE_OWN_REPLAY"
@@ -107,7 +112,9 @@ def main():
         or own["records"]
         != [{k: v for k, v in r.items() if k != "artifacts"} for r in s["records"]]
         or d["student_kind"] != "consolidated-adapter-v1"
-        or d["protocol"] != "soccer.adapter_actual_prefix_expert_suffix_TRAIN80.v1"
+        or basis not in protocols
+        or d.get("teacher_basis", "retained65023") != basis
+        or d["protocol"] != protocols[basis]
         or d["student_seed"] != plan["selection_before_Fresh_results"]["seed"]
         or d["preflight_only"] is not False
         or d["prefixes"] != [0, 80]

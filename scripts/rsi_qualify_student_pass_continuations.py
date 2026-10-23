@@ -52,6 +52,7 @@ def main():
         default="team-pass-consolidated-v1",
     )
     p.add_argument("--student-seed", type=int, default=75024)
+    p.add_argument("--teacher-basis", choices=("retained65023", "student"), default="retained65023")
     p.add_argument("--preflight-only", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
@@ -94,7 +95,10 @@ def main():
     tp, training = receipt(pins, retained["training_hash"])
     _, warm = receipt(pins, bank["warm_start_hash"])
     npth, native = receipt(pins, native_own["producer_hash"])
-    from rosclaw_soccer.rsi.adapter_continuation_identity import continuation_protocol
+    from rosclaw_soccer.rsi.adapter_continuation_identity import (
+        continuation_course,
+        continuation_protocol,
+    )
 
     child_hash = training["data_hash"] if a.student_kind == "consolidated-adapter-v1" else None
     child_bank = receipt(pins, child_hash)[1] if child_hash is not None else None
@@ -106,6 +110,7 @@ def main():
         bank_hash=a.bank_hash,
         child_bank=child_bank,
         child_bank_hash=child_hash,
+        teacher_basis=a.teacher_basis,
     )
     if (
         training["checkpoint_hash"] != retained["checkpoint_hash"]
@@ -174,13 +179,18 @@ def main():
         wp, _ = receipt(pins, bank["warm_start_hash"])
         from rosclaw_soccer.rsi.same_state_motor_pair import paired_reference
 
-        teacher, _ = load_motor_candidate_for_sim_audit(
-            paired_reference(student),
-            parent_lineage_hash=warm["parent_lineage_hash"],
-            root=wp.parent,
-            expected_receipt_hash=bank["warm_start_hash"],
-            checkpoint_kind="contact-consolidated-v2",
-        )
+        if a.teacher_basis == "student":
+            import copy
+
+            teacher = copy.deepcopy(student).requires_grad_(False).eval()
+        else:
+            teacher, _ = load_motor_candidate_for_sim_audit(
+                paired_reference(student),
+                parent_lineage_hash=warm["parent_lineage_hash"],
+                root=wp.parent,
+                expected_receipt_hash=bank["warm_start_hash"],
+                checkpoint_kind="contact-consolidated-v2",
+            )
         setup = SharedRelaySetup(pins, contexts, bench=bench, actor=teacher)
         typed = []
         for i in range(0, 80, 2):
@@ -219,6 +229,7 @@ def main():
                 protocol=protocol,
                 student_kind=a.student_kind,
                 student_seed=a.student_seed,
+                teacher_basis=a.teacher_basis,
                 preflight_only=a.preflight_only,
                 source_head=a.expected_head,
                 input_file_hashes=pins,
@@ -227,7 +238,11 @@ def main():
                 retention_own_hash=a.retention_own_hash,
                 context=a.context,
                 student_training_hash=retained["training_hash"],
-                teacher_training_hash=bank["warm_start_hash"],
+                teacher_training_hash=(
+                    retained["training_hash"]
+                    if a.teacher_basis == "student"
+                    else bank["warm_start_hash"]
+                ),
                 global_courses=courses,
                 prefixes=[0, 80],
                 maximum_worlds=40,
@@ -297,6 +312,7 @@ def main():
                     declaration_hash=digest(a.output / "declaration.json"),
                     student_kind=a.student_kind,
                     student_seed=a.student_seed,
+                    teacher_basis=a.teacher_basis,
                     global_initial_conditions=40,
                     physical_steps=0,
                     unexecuted_neural_proposals=2,
@@ -317,10 +333,11 @@ def main():
             if c["context"] != a.context:
                 continue
             for prefix in (0, 80):
+                actual_course = continuation_course(c, prefix, a.teacher_basis)
                 row = collect_trial(
                     setup,
                     teacher,
-                    c,
+                    actual_course,
                     output=a.output,
                     index=len(records),
                     counts=counts,
@@ -329,7 +346,7 @@ def main():
                 )
                 oldroot, old = (
                     (Path(teachers[i]["source_root"]), originals[i])
-                    if prefix == 0
+                    if prefix == 0 and a.teacher_basis == "retained65023"
                     else (npth.parent, native["records"][i])
                 )
                 fields = compare_trajectory(

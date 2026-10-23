@@ -44,6 +44,7 @@ def main():
         not in (
             "soccer.student_actual_prefix_expert_suffix_TRAIN80.v1",
             "soccer.adapter_actual_prefix_expert_suffix_TRAIN80.v1",
+            "soccer.adapter_self_based_stroke_TRAIN80.v1",
         )
         or any(r["source_head"] != a.producer_head for r in (s, d))
         or s["declaration_hash"] != digest(paths[1])
@@ -71,10 +72,14 @@ def main():
     _, bank = receipt(pins, d["bank_hash"])
     tp, training = receipt(pins, d["student_training_hash"])
     wp, warm = receipt(pins, d["teacher_training_hash"])
-    from rosclaw_soccer.rsi.adapter_continuation_identity import continuation_protocol
+    from rosclaw_soccer.rsi.adapter_continuation_identity import (
+        continuation_course,
+        continuation_protocol,
+    )
 
     kind = d.get("student_kind", "team-pass-consolidated-v1")
     seed = d.get("student_seed", 75024)
+    teacher_basis = d.get("teacher_basis", "retained65023")
     child_hash = training["data_hash"] if kind == "consolidated-adapter-v1" else None
     child_bank = receipt(pins, child_hash)[1] if child_hash is not None else None
     protocol = continuation_protocol(
@@ -85,12 +90,16 @@ def main():
         bank_hash=d["bank_hash"],
         child_bank=child_bank,
         child_bank_hash=child_hash,
+        teacher_basis=teacher_basis,
     )
-    if protocol != d["protocol"] or d["teacher_training_hash"] != bank["warm_start_hash"]:
+    teacher_hash = (
+        d["student_training_hash"] if teacher_basis == "student" else bank["warm_start_hash"]
+    )
+    if protocol != d["protocol"] or d["teacher_training_hash"] != teacher_hash:
         raise ValueError("same frozen research student and retained teacher required")
     courses = d["global_courses"]
     selected = [
-        (i, c, prefix)
+        (i, continuation_course(c, prefix, teacher_basis), prefix)
         for i, c in enumerate(courses)
         if c["context"] == d["context"]
         for prefix in (0, 80)
@@ -161,13 +170,18 @@ def main():
         )
         from rosclaw_soccer.rsi.same_state_motor_pair import paired_reference
 
-        teacher, _ = load_motor_candidate_for_sim_audit(
-            paired_reference(student),
-            parent_lineage_hash=warm["parent_lineage_hash"],
-            root=wp.parent,
-            expected_receipt_hash=d["teacher_training_hash"],
-            checkpoint_kind="contact-consolidated-v2",
-        )
+        if teacher_basis == "student":
+            import copy
+
+            teacher = copy.deepcopy(student).requires_grad_(False).eval()
+        else:
+            teacher, _ = load_motor_candidate_for_sim_audit(
+                paired_reference(student),
+                parent_lineage_hash=warm["parent_lineage_hash"],
+                root=wp.parent,
+                expected_receipt_hash=d["teacher_training_hash"],
+                checkpoint_kind="contact-consolidated-v2",
+            )
         setup = SharedRelaySetup(pins, contexts, bench=bench, actor=teacher)
         if setup.xml != paths[3].read_text():
             raise ValueError("same compiled physical scene required")

@@ -1,6 +1,9 @@
 import pytest
 
-from rosclaw_soccer.rsi.adapter_continuation_identity import continuation_protocol
+from rosclaw_soccer.rsi.adapter_continuation_identity import (
+    continuation_course,
+    continuation_protocol,
+)
 
 
 def legacy():
@@ -88,3 +91,35 @@ def test_new_model_never_enters_through_legacy_kind():
     a["kind"] = "team-pass-consolidated-v1"
     with pytest.raises(ValueError):
         continuation_protocol(**a)
+
+
+def test_self_based_stroke_is_a_separate_new_protocol_not_a_legacy_switch():
+    a = adapter()
+    a["teacher_basis"] = "student"
+    assert continuation_protocol(**a) == "soccer.adapter_self_based_stroke_TRAIN80.v1"
+    a = legacy()
+    a["teacher_basis"] = "student"
+    with pytest.raises(ValueError):
+        continuation_protocol(**a)
+
+
+def test_self_based_calibration_changes_only_control_arm_latent_not_initial_state():
+    c = dict(
+        latent=[[0.2] * 6 for _ in range(2)],
+        side=0.55,
+        context=20,
+        assisted=True,
+        target=[0, 1, 0.11],
+    )
+    assert continuation_course(c, 0, "student")["latent"] == [[0.0] * 6 for _ in range(2)]
+    assert continuation_course(c, 80, "student") == c
+    assert continuation_course(c, 0, "retained65023") == c
+    assert continuation_course(c, 80, "retained65023") == c
+    assert c["latent"][0][0] == 0.2
+    assert {k: v for k, v in continuation_course(c, 0, "student").items() if k != "latent"} == {
+        k: v for k, v in c.items() if k != "latent"
+    }
+    with pytest.raises(ValueError):
+        continuation_course(c, 81, "student")
+    with pytest.raises(ValueError):
+        continuation_course(c, 0, "guessed")
