@@ -98,7 +98,9 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
+        from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import (
+            load_motor_candidate_for_sim_audit,
+        )
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
         from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
@@ -117,7 +119,7 @@ def main():
             training_receipt_hash=training["parent_lineage_hash"],
             scene_hash=scene,
         )
-        actor, _ = load_dual_candidate_for_sim_audit(
+        actor, _ = load_motor_candidate_for_sim_audit(
             parent,
             parent_lineage_hash=training["parent_lineage_hash"],
             root=training_path.parent,

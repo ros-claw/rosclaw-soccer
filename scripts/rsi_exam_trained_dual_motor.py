@@ -22,6 +22,7 @@ def main():
             "team-pass-consolidated-v1",
             "team-pass-corrected-v2",
             "team-pass-selected-v3",
+            "consolidated-adapter-v1",
         ),
         default="supervised",
     )
@@ -42,6 +43,11 @@ def main():
             raise ValueError("clean frozen unassisted native motor exam required")
 
     clean()
+    from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import (
+        expected_cpu_audit_decisions,
+        load_motor_candidate_for_sim_audit,
+    )
+
     tp, ap, rp = (
         a.training_root / "complete.json",
         a.cpu_audit_root / "complete.json",
@@ -63,7 +69,7 @@ def main():
         or ar["source_hash"] != a.training_hash
         or ar["checkpoint_hash"] != t["checkpoint_hash"]
         or ar["data_hash"] != t["data_hash"]
-        or ar["own_actor_decisions"] != t["cpu_offline_decisions"]
+        or ar["own_actor_decisions"] != expected_cpu_audit_decisions(t, a.checkpoint_kind)
         or ar["physical_steps_executed"] != 0
         or r["status"] != "ACTUAL_PARENT_TRAIN20_REHEARSAL_COLLECTED_PENDING_NATIVE_AUDIT"
         or len(r["records"]) != 20
@@ -139,7 +145,6 @@ def main():
         import numpy as np
         import torch
 
-        from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.motor_reference_rollout import collect_parent_reference
         from rosclaw_soccer.rsi.native_contact_window import native_contact_window
         from rosclaw_soccer.rsi.paid_continuity_audit import identical
@@ -158,7 +163,7 @@ def main():
             training_receipt_hash=t["parent_lineage_hash"],
             scene_hash=scene,
         )
-        actor, _ = load_dual_candidate_for_sim_audit(
+        actor, _ = load_motor_candidate_for_sim_audit(
             parent,
             parent_lineage_hash=t["parent_lineage_hash"],
             root=a.training_root,

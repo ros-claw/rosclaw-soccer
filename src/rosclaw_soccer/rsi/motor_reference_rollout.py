@@ -27,9 +27,10 @@ def collect_parent_reference(
         raise ValueError("fresh declared native world and frozen parent motor required")
     initial = snapshot(ep.env.data)
     if hidden_width == 256:
+        from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
         from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
 
-        if type(actor) is not DualRecurrentMotor:
+        if type(actor) not in (DualRecurrentMotor, ConsolidatedMotorAdapter):
             raise ValueError("explicit typed dual256 motor required")
         state = actor.initial_state()
     elif hidden_width == 128:

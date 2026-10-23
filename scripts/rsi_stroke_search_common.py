@@ -52,7 +52,9 @@ def admit(exam_root, audit_root, audit_hash):
 def open_motor(pins, training_hash, contexts, *, checkpoint_kind="ar1-actor-critic"):
     import torch
 
-    from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
+    from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import (
+        load_motor_candidate_for_sim_audit,
+    )
     from rosclaw_soccer.rsi.paid_progressive_student import load_paid_student
     from rosclaw_soccer.rsi.paid_research_setup import open_paid_bench
 
@@ -76,7 +78,7 @@ def open_motor(pins, training_hash, contexts, *, checkpoint_kind="ar1-actor-crit
         training_receipt_hash=tr["parent_lineage_hash"],
         scene_hash=scene,
     )
-    actor, _ = load_dual_candidate_for_sim_audit(
+    actor, _ = load_motor_candidate_for_sim_audit(
         p,
         parent_lineage_hash=tr["parent_lineage_hash"],
         root=tp.parent,

@@ -15,7 +15,12 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--checkpoint-kind",
-        choices=("team-pass-consolidated-v1", "team-pass-corrected-v2", "team-pass-selected-v3"),
+        choices=(
+            "team-pass-consolidated-v1",
+            "team-pass-corrected-v2",
+            "team-pass-selected-v3",
+            "consolidated-adapter-v1",
+        ),
         default="team-pass-consolidated-v1",
     )
     for key in ("training-root", "cpu-audit-root", "output"):
@@ -28,6 +33,8 @@ def main():
     from scripts.rsi_native_fresh_common import clean, receipt, source_pins
 
     clean(a.expected_head)
+    from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import expected_cpu_audit_decisions
+
     paths = [a.training_root / "complete.json", a.cpu_audit_root / "complete.json"]
     if (
         a.output.exists()
@@ -45,7 +52,7 @@ def main():
         or own["source_hash"] != a.training_hash
         or own["checkpoint_hash"] != t["checkpoint_hash"]
         or own["data_hash"] != t["data_hash"]
-        or own["own_actor_decisions"] != t["cpu_offline_decisions"]
+        or own["own_actor_decisions"] != expected_cpu_audit_decisions(t, a.checkpoint_kind)
         or own["physical_steps_executed"] != 0
         or any(
             r[k] is not False
