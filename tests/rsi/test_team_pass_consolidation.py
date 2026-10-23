@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import json
 
 import pytest
 
@@ -64,3 +66,33 @@ def test_fixed_three_seed_bc_phase_carries_monotone_actor_and_frozen_critic():
     for seed, device in ((65023, "cpu"), (True, "cpu"), (75023, "cuda:3")):
         with pytest.raises(ValueError):
             pass_config(seed, device)
+
+
+def test_new_bank_keeps_original_retention_exam_via_bound_inherited_lineage(tmp_path):
+    from rosclaw_soccer.rsi.contact_consolidation_data import (
+        CORRECTION_BANK_STATUS,
+        context_witness_hash,
+    )
+    from rosclaw_soccer.rsi.team_pass_consolidation import BANK_STATUS
+
+    def save(name, value):
+        folder = tmp_path / name
+        folder.mkdir()
+        path = folder / "complete.json"
+        path.write_text(json.dumps(value))
+        return path, "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+    old, old_hash = save(
+        "old-bank", dict(status=CORRECTION_BANK_STATUS, context_witness_hash="sha256:original")
+    )
+    warm, warm_hash = save("warm", dict(data_hash=old_hash, parent_lineage_hash="sha256:parent"))
+    data = dict(
+        status=BANK_STATUS,
+        warm_start_hash=warm_hash,
+        parent_lineage_hash="sha256:parent",
+        input_file_hashes={str(old): old_hash, str(warm): warm_hash},
+    )
+    assert context_witness_hash(data, "team-pass-consolidated-v1") == "sha256:original"
+    warm.write_text("{}")
+    with pytest.raises(ValueError, match="lineage"):
+        context_witness_hash(data, "team-pass-consolidated-v1")

@@ -19,6 +19,7 @@ def main():
             "ar1-actor-critic",
             "contact-consolidated",
             "contact-consolidated-v2",
+            "team-pass-consolidated-v1",
         ),
         default="supervised",
     )
