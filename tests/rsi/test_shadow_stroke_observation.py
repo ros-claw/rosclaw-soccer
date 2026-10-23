@@ -1,10 +1,14 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 
 
-def test_shadow_auditor_consumes_the_single_observation_without_reading_episode_again(monkeypatch):
+@pytest.mark.parametrize("stroke_foot", ["left", "right"])
+def test_shadow_auditor_consumes_the_single_observation_without_reading_episode_again(
+    monkeypatch, stroke_foot
+):
     from test_same_state_motor_pair import pair
 
     import rosclaw_soccer.rsi.paid_run_teacher_audit as audit
@@ -24,7 +28,12 @@ def test_shadow_auditor_consumes_the_single_observation_without_reading_episode_
 
     ep = SimpleNamespace(frame=0, goal=goal, observation=forbidden_second_read)
     monkeypatch.setattr(common, "make_episode", lambda *_: ep)
-    monkeypatch.setattr(common, "stroke_action", lambda ep, mean, *_: (mean, np.zeros(29), False))
+
+    def identity_stroke(actual, mean, *_, foot):
+        assert actual is ep and foot == stroke_foot
+        return mean, np.zeros(29), False
+
+    monkeypatch.setattr(common, "stroke_action", identity_stroke)
     monkeypatch.setattr(common, "score", lambda *_, **kw: ({"test": True}, None, False))
     kick = {
         "NN_obs": observation[None],
@@ -48,7 +57,7 @@ def test_shadow_auditor_consumes_the_single_observation_without_reading_episode_
     replay_stroke_world(
         None,
         p.teacher,
-        dict(case=dict(source="left")),
+        dict(case=dict(source=stroke_foot)),
         103,
         np.zeros((2, 6)),
         dict(kick=kick),
@@ -56,5 +65,6 @@ def test_shadow_auditor_consumes_the_single_observation_without_reading_episode_
         shadow_student=p.student,
         prefix_controls=40,
         student_source=dict(NN_obs=observation[None], NN_action=actual[0].numpy()),
+        stroke_foot=stroke_foot,
     )
     assert counts == dict(neural=1, shadow_neural=1)
