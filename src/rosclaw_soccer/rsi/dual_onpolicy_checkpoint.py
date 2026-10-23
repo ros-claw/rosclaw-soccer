@@ -105,6 +105,16 @@ def load_dual_candidate_for_sim_audit(
 ) -> tuple[DualRecurrentMotor, dict[str, Any]]:
     if not 0 <= _depth < 32:
         raise ValueError("bounded explicit continual actor-critic lineage required")
+    if checkpoint_kind == "team-pass-consolidated-v1":
+        from rosclaw_soccer.rsi.team_pass_checkpoint import load_team_pass
+
+        return load_team_pass(
+            parent,
+            parent_lineage_hash=parent_lineage_hash,
+            root=root,
+            expected_receipt_hash=expected_receipt_hash,
+            depth=_depth,
+        )
     if checkpoint_kind in ("contact-consolidated", "contact-consolidated-v2"):
         from rosclaw_soccer.rsi.contact_consolidation_checkpoint import load_contact_consolidated
 
