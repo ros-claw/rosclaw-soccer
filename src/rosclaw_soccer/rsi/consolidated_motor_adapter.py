@@ -7,6 +7,7 @@ history, never supplied by a teacher or indexed by a course/task identifier.
 """
 
 import copy
+import math
 from typing import Any
 
 import torch
@@ -20,10 +21,17 @@ class ConsolidatedMotorAdapter(nn.Module):
     simulation_only = True
     policy_domain = "research.consolidated_motor_adapter.v1"
 
-    def __init__(self, memory: DualRecurrentMotor) -> None:
+    def __init__(self, memory: DualRecurrentMotor, *, head_bound_rad: float = 0.04) -> None:
         super().__init__()
         if type(memory) is not DualRecurrentMotor:
             raise ValueError("exact learned dual motor memory required")
+        if (
+            type(head_bound_rad) not in (float, int)
+            or not math.isfinite(head_bound_rad)
+            or not 0 < head_bound_rad <= 0.2
+        ):
+            raise ValueError("explicit finite new-head bound within original authority required")
+        self.head_bound_rad = float(head_bound_rad)
         # Do not freeze/mutate the caller's model or alias any of its storage.
         self.memory = copy.deepcopy(memory).requires_grad_(False).eval()
         output = nn.Linear(128, 29)
@@ -81,7 +89,7 @@ class ConsolidatedMotorAdapter(nn.Module):
         logits = self.head(features.detach())
         if not torch.isfinite(logits).all():
             raise ValueError("nonfinite new motor head rejected")
-        requested = 0.04 * torch.tanh(logits)
+        requested = self.head_bound_rad * torch.tanh(logits)
         old = memory_delta.detach()
         # Remaining authority relative to the ORIGINAL nominal motor, not an
         # extra +/-0.2 around the consolidated model. Zero is always admissible.
