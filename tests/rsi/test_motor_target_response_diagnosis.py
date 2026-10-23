@@ -21,6 +21,8 @@ def test_large_target_step_is_not_misreported_as_measured_joint_motion():
     assert r["measured_same_joint_velocity_at_peak_target_rad_s"] == 2.5
     assert r["unavoidable_target_jump_floor_under_pointwise_0p2rad_bound"] == pytest.approx(1.4)
     assert r["physical_smoothness_impossibility_proven"] is False
+    assert r["bound_applies_only_to_recorded_reference_sequence"] is True
+    assert r["closed_loop_future_nominal_can_change_with_actions"] is True
 
 
 @pytest.mark.parametrize("fault", ["shape", "nonfinite", "names", "clock"])

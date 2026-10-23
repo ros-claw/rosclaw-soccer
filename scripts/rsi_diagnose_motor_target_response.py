@@ -51,6 +51,8 @@ def summarize(target, reference, measured, velocity, names, *, dt=0.02):
         ),
         target_step_is_not_actual_motion=True,
         physical_smoothness_impossibility_proven=False,
+        bound_applies_only_to_recorded_reference_sequence=True,
+        closed_loop_future_nominal_can_change_with_actions=True,
     )
 
 
