@@ -91,6 +91,38 @@ def test_actual_pair_stream_and_contiguous_expert_suffix(tmp_path, monkeypatch, 
     assert counts == dict(native_steps=2000, actor_calls=400, shadow_actor_calls=200)
     assert r["total_neural_calls"] == 600 and r["PPO_actor_rows"] == 0
     assert not r["teacher_advice_alone_physically_qualified"]
+    from scripts.rsi_pass_transfer_replay_trial import replay_trial
+
+    monkeypatch.setattr(
+        "scripts.rsi_pass_transfer_replay_trial.ContinuousVelocityStream", FixtureVelocity
+    )
+    audit = tmp_path / "own"
+    audit.mkdir()
+    # Reconstruct the whole toy initial world; the manual clock may not execute
+    # the producer's saved actions or call the producer's world.advance().
+    fresh, _ = players()
+    setup.prepare = lambda *a, **k: (
+        ep,
+        fresh,
+        np.array([1.0, 0.0]),
+        np.array([2.0, 0.0]),
+        np.zeros(2),
+    )
+    own_counts = dict(native_steps=0, actor_calls=0, shadow_actor_calls=0)
+    own, _ = replay_trial(
+        setup,
+        actor,
+        course,
+        r,
+        raw_root=tmp_path,
+        output=audit,
+        index=0,
+        counts=own_counts,
+        student=student,
+        student_prefix_controls=prefix,
+    )
+    assert own_counts == counts
+    assert own == {k: v for k, v in r.items() if k != "artifacts"}
 
 
 @pytest.mark.parametrize(

@@ -22,8 +22,29 @@ from scripts.rsi_stroke_search_common import stroke_action
 
 
 def replay_trial(
-    setup, actor, course, claim, *, raw_root, output, index, counts, prior_initial=None
+    setup,
+    actor,
+    course,
+    claim,
+    *,
+    raw_root,
+    output,
+    index,
+    counts,
+    prior_initial=None,
+    student=None,
+    student_prefix_controls=None,
 ):
+    if (student is None) != (student_prefix_controls is None) or (
+        student is not None
+        and (type(student_prefix_controls) is not int or student_prefix_controls not in (0, 80))
+    ):
+        raise ValueError("explicit separate student and preregistered0/80 control prefix required")
+    if student is not None and (
+        course["assisted"] is not True or "shadow_actor_calls" not in counts
+    ):
+        raise ValueError("explicit continuation mode and separate shadow accounting required")
+
     def equal(actual, saved, index):
         if set(actual) != set(saved) or any(
             not np.array_equal(v, saved[k][index]) for k, v in actual.items()
@@ -65,6 +86,23 @@ def replay_trial(
         scale=ep.scale,
         order=ep.order,
     )
+    pair = None
+    if student is not None:
+        from rosclaw_soccer.rsi.shared_teacher_pair import SharedTeacherPair
+
+        learner = SharedNativeNeuralPlayer(
+            w,
+            "a/",
+            student,
+            clip=ep.clip,
+            torso_index=ep.torso_index,
+            build_observation=ep.build_observation,
+            goal=goal,
+            offset=ep.offset,
+            scale=ep.scale,
+            order=ep.order,
+        )
+        pair = SharedTeacherPair(learner, passer)
     velocity = ContinuousVelocityStream(
         setup.velocity_path,
         setup.velocity_config,
@@ -77,10 +115,15 @@ def replay_trial(
     launch, stand_controls = False, 0
     for step in range(ep.clip.length + 100):
         mujoco.mj_forward(w.model, w.data)
-        if passer.phase == "MOTION_COMPLETE":
-            passer.begin_standing()
+        controller = passer if pair is None else pair
+        if controller.phase == "MOTION_COMPLETE":
+            controller.begin_standing()
         standing = passer.phase == "STANDING"
-        target_a, ta = passer.propose(with_reference_evidence=True)
+        if pair is None:
+            target_a, ta = passer.propose(with_reference_evidence=True)
+        else:
+            _, trace_s, target_a, ta = pair.propose()
+            trace_t = {k: v.copy() for k, v in ta.items()}
         action, delta, clipped = ta["NN_action"].copy(), np.zeros(29), False
         if course["assisted"] and not standing:
             action, delta, clipped = stroke_action(
@@ -92,6 +135,22 @@ def replay_trial(
                 foot=course["foot"],
             )
             target_a = ep.offset + action[ep.order] * ep.scale
+        if pair is not None:
+            advice, advice_delta, advice_clipped = action.copy(), delta.copy(), clipped
+            actual_student = step < student_prefix_controls
+            if actual_student:
+                action = trace_s["NN_action"].copy()
+                target_a = ep.offset + action[ep.order] * ep.scale
+                delta, clipped = np.zeros(29), False
+                ta = {k: v.copy() for k, v in trace_s.items()}
+            ta.update({"STUDENT_" + k: v.copy() for k, v in trace_s.items()})
+            ta.update({"TEACHER_" + k: v.copy() for k, v in trace_t.items()})
+            ta.update(
+                teacher_advice_action=advice,
+                teacher_advice_delta_HG=advice_delta,
+                teacher_advice_clipped=np.array(advice_clipped),
+                student_executed=np.array(actual_student),
+            )
         ta.update(
             control=np.array(step),
             executed_action=action.copy(),
@@ -132,7 +191,11 @@ def replay_trial(
         row = w.advance({"a/": target_a, "b/": target_b})
         counts["native_steps"] += 10
         counts["actor_calls"] += 2
-        passer.commit(executed_action=action)
+        if pair is None:
+            passer.commit(executed_action=action)
+        else:
+            counts["shadow_actor_calls"] += 1
+            pair.commit(action)
         ready.update()
         stand_controls += int(standing)
         own = {k: row[k] for k in ("qpos", "qvel", "torque", "ball_forces")} | dict(
@@ -187,6 +250,15 @@ def replay_trial(
         termination="BODY_FAILURE" if w.failed else "FULL_MOTION_PLUS100NN_RECOVERY",
         neural_actor_optimizer_updates=0,
     )
+    if pair is not None:
+        result.update(
+            student_prefix_controls=student_prefix_controls,
+            shadow_actor_calls=w.control_steps,
+            total_neural_calls=3 * w.control_steps,
+            teacher_advice_alone_physically_qualified=False,
+            learner_hidden_state_borrowed=False,
+            PPO_actor_rows=0,
+        )
     if result != {k: v for k, v in claim.items() if k != "artifacts"}:
         raise ValueError("own recovery/receiving/delivery/whole counters differ")
     write_once(output / f"trial{index}.json", result)
