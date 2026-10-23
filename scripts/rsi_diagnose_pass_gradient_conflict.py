@@ -67,9 +67,11 @@ def main():
     pins.update({str(x): digest(x) for x in paths})
     bp, bank = receipt(pins, trained["data_hash"])
     wp, warm = receipt(pins, trained["warm_start_hash"])
+    from rosclaw_soccer.rsi.single_mode_pass_curriculum import single_mode_pass_curriculum
     from rosclaw_soccer.rsi.team_pass_correction import correction_pools
 
     old, teachers, new = correction_pools(bank["records"])
+    selection = single_mode_pass_curriculum(bank["records"])
     active = sorted(old + teachers + new)
     if len(set(active)) != len(active) or len(active) != 138 or warm["config"]["seed"] != 75024:
         raise ValueError("complete non-overlapping positive training pools required")
@@ -103,7 +105,7 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.local_pass_objective_gradient_tradeoff.v1",
+            protocol="soccer.local_pass_objective_gradient_tradeoff.v2",
             source_head=a.expected_head,
             input_file_hashes=pins,
             training_hash=a.training_hash,
@@ -111,6 +113,7 @@ def main():
             models=[75024, 85023],
             positive_histories=138,
             co_success_pairs=pairs,
+            single_mode_comparison=selection,
             maximum_gradient_queries=276,
             optimizer_updates=0,
             physical_steps=0,
@@ -196,6 +199,19 @@ def main():
                 raise ValueError("read-only gradient diagnosis may not update any tensor or .grad")
             report = dict(
                 seed=seed,
+                single_mode_comparison=dict(
+                    selection_hash=selection["selection_hash"],
+                    fit_histories=len(selection["fit_indices"]),
+                    teacher_histories=len(selection["selected_teacher_indices"]),
+                    teacher_vs_current17=gradient_relation(
+                        np.mean([grads[i] for i in selection["selected_teacher_indices"]], axis=0),
+                        np.mean([grads[i] for i in selection["current17_anchor_indices"]], axis=0),
+                    ),
+                    teacher_vs_baseline23=gradient_relation(
+                        np.mean([grads[i] for i in selection["selected_teacher_indices"]], axis=0),
+                        means["new"],
+                    ),
+                ),
                 teacher_vs_all34_retention=gradient_relation(means["teacher"], means["old"]),
                 teacher_vs_all23_pass_anchors=gradient_relation(means["teacher"], means["new"]),
                 co_success_pairs=co,
@@ -226,7 +242,7 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="PASS_OBJECTIVE_GRADIENT_TRADEOFF_DIAGNOSED_NOT_PHYSICAL_PROOF",
+                status="PASS_CURRICULUM_GRADIENT_TRADEOFF_DIAGNOSED_NOT_PHYSICAL_PROOF",
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 reports=reports,
