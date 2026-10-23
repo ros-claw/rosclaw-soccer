@@ -31,7 +31,8 @@ def private_replay_state(actor: Any, hidden_width: int) -> tuple[torch.Tensor, t
             or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
         ):
             raise ValueError("independent replay requires explicit frozen CPU dual256 motor")
-        return actor.initial_state()
+        admitted: DualRecurrentMotor | ConsolidatedMotorAdapter = actor
+        return admitted.initial_state()
     return torch.zeros(2, 1, 128), torch.zeros(2, 1, 128)
 
 
