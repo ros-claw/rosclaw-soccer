@@ -31,6 +31,7 @@ import pytest
         "scripts.rsi_build_team_pass_bank",
         "scripts.rsi_train_team_pass_motor",
         "scripts.rsi_exam_team_pass_motor",
+        "scripts.rsi_audit_team_pass_motor",
     ],
 )
 def test_import_does_not_allocate_workers_or_write_physical_outputs(module, tmp_path, monkeypatch):
