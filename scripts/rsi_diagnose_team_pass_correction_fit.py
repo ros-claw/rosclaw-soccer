@@ -34,6 +34,11 @@ def weighted_motor_mse(mean, data):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--checkpoint-kind",
+        choices=("team-pass-corrected-v2", "team-pass-selected-v3"),
+        default="team-pass-corrected-v2",
+    )
     for k in ("training-root", "cpu-own-root", "output"):
         p.add_argument("--" + k, type=Path, required=True)
     for k in ("training-hash", "cpu-own-hash", "expected-head"):
@@ -54,7 +59,7 @@ def main():
     trained, own = [json.loads(x.read_text()) for x in paths]
     if (
         own["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
-        or own["checkpoint_kind"] != "team-pass-corrected-v2"
+        or own["checkpoint_kind"] != a.checkpoint_kind
         or own["source_hash"] != a.training_hash
         or own["checkpoint_hash"] != trained["checkpoint_hash"]
         or own["own_actor_decisions"] != trained["cpu_offline_decisions"]
@@ -100,6 +105,11 @@ def main():
             return {k: z[k].copy() for k in z.files}
 
     groups = {}
+    fitted = (
+        set(trained["fit_selection"]["fit_indices"])
+        if a.checkpoint_kind == "team-pass-selected-v3"
+        else {r["index"] for r in bank["records"] if r["task_success"]}
+    )
     for row, prediction in zip(bank["records"], trained["cpu_replay"], strict=True):
         if not row["task_success"]:
             continue
@@ -129,6 +139,7 @@ def main():
         groups.setdefault(row["role"], []).append(
             dict(
                 index=i,
+                fitted=i in fitted,
                 before=weighted_motor_mse(before, data),
                 after=weighted_motor_mse(after, data),
             )
@@ -142,6 +153,10 @@ def main():
             before_weighted_MSE_rad2=before,
             after_weighted_MSE_rad2=after,
             after_before_ratio=None if before == 0 else after / before,
+            fitted_histories=sum(r["fitted"] for r in rows),
+            fitted_after_weighted_MSE_rad2=None
+            if not any(r["fitted"] for r in rows)
+            else float(np.mean([r["after"] for r in rows if r["fitted"]])),
         )
     source_pins(pins)
     check_pins(pins)

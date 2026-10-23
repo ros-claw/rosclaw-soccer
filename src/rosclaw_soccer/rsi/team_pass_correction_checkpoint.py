@@ -36,7 +36,28 @@ def load_team_pass_correction(
     root: Path,
     expected_receipt_hash: str,
     depth: int,
+    stage: str = "all-positive",
 ) -> tuple[DualRecurrentMotor, dict[str, Any]]:
+    if stage not in ("all-positive", "single-mode"):
+        raise ValueError("explicit separately versioned pass correction stage required")
+    config_fn, schedule_fn, kind, status = (
+        correction_config,
+        correction_schedule,
+        CORRECTION_KIND,
+        CORRECTION_STATUS,
+    )
+    schema = "soccer.dual_motor.team_pass_correction.v2"
+    selection_hash: str | None = None
+    if stage == "single-mode":
+        from rosclaw_soccer.rsi.team_pass_single_mode import (
+            KIND,
+            STATUS,
+            selected_config,
+            selected_schedule,
+        )
+
+        config_fn, schedule_fn, kind, status = selected_config, selected_schedule, KIND, STATUS
+        schema = "soccer.dual_motor.team_pass_correction.v3"
     rp, dp = root / "complete.json", root / "declaration.json"
     if (
         root.is_symlink()
@@ -46,9 +67,9 @@ def load_team_pass_correction(
     ):
         raise ValueError("exact complete independently versioned correction phase required")
     r, d = [json.loads(x.read_text()) for x in (rp, dp)]
-    cfg = correction_config(r["config"]["seed"], r["config"]["device"])
+    cfg = config_fn(r["config"]["seed"], r["config"]["device"])
     if (
-        r["status"] != CORRECTION_STATUS
+        r["status"] != status
         or r["config"] != cfg
         or d["config"] != cfg
         or r["declaration_hash"] != digest(dp)
@@ -98,7 +119,16 @@ def load_team_pass_correction(
         or warm["cumulative_critic_optimizer_steps"] != 48
     ):
         raise ValueError("same retained research student and whole actual correction bank required")
-    schedule = correction_schedule(bank["records"], cfg["seed"])
+    if stage == "single-mode":
+        from rosclaw_soccer.rsi.single_mode_pass_curriculum import single_mode_pass_curriculum
+
+        plan = single_mode_pass_curriculum(bank["records"])
+        if r.get("fit_selection") != plan or d.get("fit_selection") != plan:
+            raise ValueError(
+                "exact source-bound coherent fit eligibility required; labels unchanged"
+            )
+        selection_hash = plan["selection_hash"]
+    schedule = schedule_fn(bank["records"], cfg["seed"])
     for entry, expected in zip(r["history"], schedule, strict=True):
         if any(entry[k] != v for k, v in expected.items()) or any(
             type(entry[k]) not in (int, float) or not math.isfinite(entry[k])
@@ -126,7 +156,8 @@ def load_team_pass_correction(
     first, last = [torch.load(x, map_location="cpu", weights_only=True) for x in paths]
     if (
         not same_training_state(first, inherited)
-        or last.get("schema") != "soccer.dual_motor.team_pass_correction.v2"
+        or last.get("schema") != schema
+        or (stage == "single-mode" and last.get("fit_selection_hash") != selection_hash)
         or last.get("config") != cfg
         or last.get("optimizer_updates") != dict(actor=192, critic=48)
         or last.get("warm_start_hash") != r["warm_start_hash"]
@@ -149,7 +180,7 @@ def load_team_pass_correction(
         raise ValueError("all and only16 plastic parameters must actually change")
     parameters = list(model.plastic.parameters()) + list(MotorCritic().parameters())
     validate_adam_slots(first["optimizer"], parameters, 128, 48)
-    validate_adam_slots(last["optimizer"], parameters, 192, 48, actor_phase=CORRECTION_KIND)
+    validate_adam_slots(last["optimizer"], parameters, 192, 48, actor_phase=kind)
     fo, io = last["optimizer"], first["optimizer"]
     if (
         fo["param_groups"][0]["lr"] != cfg["actor_lr"]

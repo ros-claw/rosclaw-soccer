@@ -55,7 +55,7 @@ def consolidation_pools(
 
 def context_witness_hash(data: dict[str, Any], checkpoint_kind: str) -> str:
     """Keep the original fixed exam fixtures separate from the new training bank."""
-    if checkpoint_kind == "team-pass-corrected-v2":
+    if checkpoint_kind in ("team-pass-corrected-v2", "team-pass-selected-v3"):
         import json
         from pathlib import Path
 

@@ -13,7 +13,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--checkpoint-kind",
-        choices=("team-pass-consolidated-v1", "team-pass-corrected-v2"),
+        choices=("team-pass-consolidated-v1", "team-pass-corrected-v2", "team-pass-selected-v3"),
         default="team-pass-consolidated-v1",
     )
     for key in ("root", "output"):

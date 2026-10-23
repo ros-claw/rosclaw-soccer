@@ -2,7 +2,7 @@
 
 Carries the exact research student128/critic48 state and every Adam slot;
 64 actual whole-history actor updates, no critic/PPO/ref update. All positive
-teacher and retention histories are covered by a committed seeded schedule.
+admitted teacher and retention fit histories have a committed seeded schedule.
 No physics here, no online-RL or growth claim before independent native exams.
 """
 
@@ -17,7 +17,12 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("data-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
-    p.add_argument("--seed", type=int, choices=(85023, 85024, 85025), required=True)
+    p.add_argument(
+        "--seed", type=int, choices=(85023, 85024, 85025, 95023, 95024, 95025), required=True
+    )
+    p.add_argument(
+        "--curriculum", choices=("all-positive-v2", "single-mode-v3"), default="all-positive-v2"
+    )
     p.add_argument("--device", choices=("cpu", "cuda:0"), default="cpu")
     a = p.parse_args()
     from rosclaw_soccer.rsi.team_pass_correction import (
@@ -72,6 +77,23 @@ def main():
     ):
         raise ValueError("whole actual unpromoted TRAIN-only bank required")
     pass_pools(data["records"])
+    config_fn, schedule_fn, kind, status = pass_config, correction_schedule, CORRECTION_KIND, STATUS
+    checkpoint_schema = "soccer.dual_motor.team_pass_correction.v2"
+    fit_metadata = {}
+    if a.curriculum == "single-mode-v3":
+        from rosclaw_soccer.rsi.single_mode_pass_curriculum import single_mode_pass_curriculum
+        from rosclaw_soccer.rsi.team_pass_single_mode import KIND as SELECTED_KIND
+        from rosclaw_soccer.rsi.team_pass_single_mode import STATUS as SELECTED_STATUS
+        from rosclaw_soccer.rsi.team_pass_single_mode import selected_config, selected_schedule
+
+        config_fn, schedule_fn, kind, status = (
+            selected_config,
+            selected_schedule,
+            SELECTED_KIND,
+            SELECTED_STATUS,
+        )
+        checkpoint_schema = "soccer.dual_motor.team_pass_correction.v3"
+        fit_metadata = {"fit_selection": single_mode_pass_curriculum(data["records"])}
     pins = dict(data["input_file_hashes"])
     pins[str(dp)] = a.data_hash
     dd = a.data_root / "declaration.json"
@@ -94,7 +116,8 @@ def main():
         ):
             raise ValueError("all274 confined complete actual sequences required")
         pins[str(path)] = row["raw_hash"]
-    config = pass_config(a.seed, a.device)
+    config = config_fn(a.seed, a.device)
+    schedule = schedule_fn(data["records"], a.seed)
     source_pins(pins)
     check_pins(pins)
     a.output.mkdir(parents=True)
@@ -110,6 +133,7 @@ def main():
             goal_complete=False,
             promotion_authorized=False,
             hardware_authorized=False,
+            **fit_metadata,
         ),
     )
     steps, queries = 0, 0
@@ -169,7 +193,7 @@ def main():
         for row in data["records"]:
             with np.load(a.data_root / row["raw_path"], allow_pickle=False) as z:
                 episodes.append({k: torch.from_numpy(z[k].copy()).to(a.device) for k in z.files})
-        for plan in correction_schedule(data["records"], a.seed):
+        for plan in schedule:
             teachers, new_anchor, anchors = (
                 plan["teacher_indices"],
                 plan["new_anchor_index"],
@@ -221,7 +245,7 @@ def main():
             list(model.plastic.parameters()) + list(critic.parameters()),
             192,
             48,
-            actor_phase=CORRECTION_KIND,
+            actor_phase=kind,
         )
         if (
             any(
@@ -239,7 +263,7 @@ def main():
         last = a.output / "pass-final.pt"
         torch.save(
             dict(
-                schema="soccer.dual_motor.team_pass_correction.v2",
+                schema=checkpoint_schema,
                 plastic_network=final,
                 critic=cpu_tree(critic.state_dict()),
                 optimizer=opt,
@@ -247,6 +271,11 @@ def main():
                 config=config,
                 warm_start_hash=data["warm_start_hash"],
                 parent_lineage_hash=data["parent_lineage_hash"],
+                **(
+                    {"fit_selection_hash": fit_metadata["fit_selection"]["selection_hash"]}
+                    if fit_metadata
+                    else {}
+                ),
             ),
             last,
         )
@@ -282,7 +311,7 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status=STATUS,
+                status=status,
                 source_head=a.expected_head,
                 config=config,
                 input_file_hashes=pins,
@@ -311,6 +340,7 @@ def main():
                 goal_complete=False,
                 hardware_authorized=False,
                 promotion_authorized=False,
+                **fit_metadata,
             ),
         )
     except Exception as error:

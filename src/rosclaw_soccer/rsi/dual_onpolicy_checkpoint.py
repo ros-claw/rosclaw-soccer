@@ -28,7 +28,7 @@ def validate_adam_slots(
     *,
     actor_phase: str = "legacy",
 ) -> None:
-    if actor_phase not in ("legacy", "team-pass-corrected-v2"):
+    if actor_phase not in ("legacy", "team-pass-corrected-v2", "team-pass-selected-v3"):
         raise ValueError("explicit separately versioned actor phase required")
     limit = 128 if actor_phase == "legacy" else 192
     if type(steps) is not int or not 1 <= steps <= limit or type(opt) is not dict:
@@ -113,7 +113,7 @@ def load_dual_candidate_for_sim_audit(
 ) -> tuple[DualRecurrentMotor, dict[str, Any]]:
     if not 0 <= _depth < 32:
         raise ValueError("bounded explicit continual actor-critic lineage required")
-    if checkpoint_kind == "team-pass-corrected-v2":
+    if checkpoint_kind in ("team-pass-corrected-v2", "team-pass-selected-v3"):
         from rosclaw_soccer.rsi.team_pass_correction_checkpoint import load_team_pass_correction
 
         return load_team_pass_correction(
@@ -122,6 +122,7 @@ def load_dual_candidate_for_sim_audit(
             root=root,
             expected_receipt_hash=expected_receipt_hash,
             depth=_depth,
+            stage="single-mode" if checkpoint_kind == "team-pass-selected-v3" else "all-positive",
         )
     if checkpoint_kind == "team-pass-consolidated-v1":
         from rosclaw_soccer.rsi.team_pass_checkpoint import load_team_pass

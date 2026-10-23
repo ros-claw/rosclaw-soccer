@@ -21,6 +21,7 @@ def main():
             "contact-consolidated-v2",
             "team-pass-consolidated-v1",
             "team-pass-corrected-v2",
+            "team-pass-selected-v3",
         ),
         default="supervised",
     )
