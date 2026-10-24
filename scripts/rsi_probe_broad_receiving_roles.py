@@ -18,6 +18,7 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--audit-source-root", type=Path)
     p.add_argument("--producer-head")
+    p.add_argument("--global-A-reference", dest="global_reference", action="store_true")
     a = p.parse_args()
     if (a.audit_source_root is None) != (a.producer_head is None):
         p.error("explicit own-native source/head pair required")
@@ -26,6 +27,8 @@ def main():
     import torch
 
     from rosclaw_soccer.rsi.broad_receiving_role import (
+        GLOBAL_OWN,
+        GLOBAL_SOURCE,
         MODES,
         OWN,
         SOURCE,
@@ -47,6 +50,9 @@ def main():
         raise ValueError("unused once-only broad role output required")
     admitted = admit(a)
     pins, scope = admitted[1:3]
+    cfg = config(global_reference=a.global_reference)
+    source_status, own_status = (GLOBAL_SOURCE, GLOBAL_OWN) if a.global_reference else (SOURCE, OWN)
+    actual_training_hash = scope["student_training_hash"] if a.global_reference else a.training_hash
     trained = json.loads((a.training_root / "complete.json").read_text())
     if (
         trained["checkpoint_kind"] != KIND
@@ -64,12 +70,13 @@ def main():
             raise ValueError("ordinary closed broad source required")
         source = json.loads(path.read_text())
         if (
-            source["status"] != SOURCE
-            or source["config"] != config()
+            source["status"] != source_status
+            or source["config"] != cfg
             or source["source_head"] != a.producer_head
             or source["training_hash"] != a.training_hash
             or source["courses"] != courses
             or len(source["records"]) != 32
+            or (a.global_reference and source.get("A_actual_training_hash") != actual_training_hash)
         ):
             raise ValueError("exact entire broad source commitment required")
         for key, value in source["input_file_hashes"].items():
@@ -91,7 +98,21 @@ def main():
     check_pins(pins)
     torch.set_num_threads(1)
     torch.use_deterministic_algorithms(True)
-    setup, _, actor, _, _ = open_models(a, admitted)
+    setup, original_actor, actor, _, _ = open_models(a, admitted)
+    if a.global_reference:
+        from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
+        from scripts.rsi_native_fresh_common import receipt
+
+        _, original = receipt(pins, actual_training_hash)
+        if (
+            type(original_actor) is not RefinementMotorAdapter
+            or original["new_head_steps"] != 2048
+            or original["config"]["seed"] != 115023
+        ):
+            raise ValueError(
+                "exact already qualified global expert, no reset or new policy required"
+            )
+        actor = original_actor
     typed = []
     for course in courses:
         _, w, forward, home, _ = setup.prepare(
@@ -116,11 +137,12 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            config=config(),
+            config=cfg,
             courses=courses,
             source_head=a.expected_head,
             input_file_hashes=pins,
             training_hash=a.training_hash,
+            **(dict(A_actual_training_hash=actual_training_hash) if a.global_reference else {}),
             course_binding=binding,
             ball_dimensions=setup.ball_dimensions,
             hardware_authorized=False,
@@ -187,14 +209,15 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status=SOURCE if source is None else OWN,
-                config=config(),
+                status=source_status if source is None else own_status,
+                config=cfg,
                 source_head=a.expected_head,
                 source_hash=None
                 if source is None
                 else digest(a.audit_source_root / "complete.json"),
                 independent_whole_world_replay=source is not None,
                 training_hash=a.training_hash,
+                **(dict(A_actual_training_hash=actual_training_hash) if a.global_reference else {}),
                 courses=courses,
                 counts=counts,
                 records=records,

@@ -7,6 +7,8 @@ STATES = tuple(10 * c + k for c in range(4) for k in (0, 4, 5, 9))
 MODES = ("pursuit-v1", "projected-capture-v3")
 SOURCE = "BROAD_RECEIVER16_PAIRED_ROLE_SOURCE_PENDING_OWN"
 OWN = "BROAD_RECEIVER16_PAIRED_ROLE_ALL_OWN_MATCH_NOT_TRAINED"
+GLOBAL_SOURCE = "BROAD_GLOBAL_A16_PAIRED_ROLE_SOURCE_PENDING_OWN"
+GLOBAL_OWN = "BROAD_GLOBAL_A16_PAIRED_ROLE_ALL_OWN_MATCH_NOT_TRAINED"
 
 
 def select_courses(courses: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -27,8 +29,10 @@ def select_courses(courses: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [copy.deepcopy(by_state[s]) for s in STATES]
 
 
-def config() -> dict[str, Any]:
-    return dict(
+def config(*, global_reference: bool = False) -> dict[str, Any]:
+    if type(global_reference) is not bool:
+        raise ValueError("explicit global expert control required")
+    value = dict(
         protocol="soccer.broad_receiver16_paired_roles.v1",
         states=list(STATES),
         goal_task=0,
@@ -50,6 +54,14 @@ def config() -> dict[str, Any]:
         Fresh_verified=False,
         goal_complete=False,
     )
+    if global_reference:
+        value.update(
+            protocol="soccer.broad_global_A16_paired_roles.v1",
+            A_fixed_generation=None,
+            A_fixed_actor_steps=None,
+            A_reference="original_global_expert_2048_not_local_theta12",
+        )
+    return value
 
 
 def sampling_seed(state: int) -> int:

@@ -76,3 +76,14 @@ def test_incomplete_mutated_or_teacher_corrected_original_bank_refused(fault):
 def test_non_declared_noise_identity_refused(state):
     with pytest.raises(ValueError):
         sampling_seed(state)
+
+
+def test_global_expert_control_changes_only_A_reference_not_courses_noise_or_budget():
+    local, control = config(), config(global_reference=True)
+    changed = {k for k in local.keys() | control.keys() if local.get(k) != control.get(k)}
+    assert changed == {"protocol", "A_fixed_generation", "A_fixed_actor_steps", "A_reference"}
+    assert control["A_reference"] == "original_global_expert_2048_not_local_theta12"
+    assert control["A_fixed_generation"] is None
+    assert control["maximum_worlds_per_side"] == 32
+    with pytest.raises(ValueError):
+        config(global_reference="yes")
