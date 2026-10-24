@@ -11,17 +11,25 @@ from typing import Any
 import numpy as np
 import torch
 
+from rosclaw_soccer.rsi.private_motor_history import (
+    MotorHistory,
+    clone_history,
+    history_trace,
+    recurrent_history,
+)
+
 
 def equal(actual: Any, expected: Any, label: str) -> None:
     if not np.array_equal(actual, expected):
         raise ValueError("whole-run audit mismatch: " + label)
 
 
-def private_replay_state(actor: Any, hidden_width: int) -> tuple[torch.Tensor, torch.Tensor]:
+def private_replay_state(actor: Any, hidden_width: int) -> MotorHistory:
     """Only explicitly admitted motor classes may allocate dual256 history."""
     if type(hidden_width) is not int or hidden_width not in (128, 256):
         raise ValueError("known private recurrent context width required")
     if hidden_width == 256:
+        from rosclaw_soccer.rsi.committed_neural_motor import CommittedNeuralMotor
         from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
         from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
         from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
@@ -34,6 +42,7 @@ def private_replay_state(actor: Any, hidden_width: int) -> tuple[torch.Tensor, t
                 ConsolidatedMotorAdapter,
                 RefinementMotorAdapter,
                 SupportedRefinementMotor,
+                CommittedNeuralMotor,
             )
             or actor.training
             or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
@@ -44,6 +53,7 @@ def private_replay_state(actor: Any, hidden_width: int) -> tuple[torch.Tensor, t
             | ConsolidatedMotorAdapter
             | RefinementMotorAdapter
             | SupportedRefinementMotor
+            | CommittedNeuralMotor
         ) = actor
         return admitted.initial_state()
     return torch.zeros(2, 1, 128), torch.zeros(2, 1, 128)
@@ -64,7 +74,7 @@ def replay_teacher_world(
     action_adapter: Callable[[Any, np.ndarray, dict[str, Any]], tuple[np.ndarray, int]]
     | None = None,
     allow_incomplete_healthy_prefix: bool = False,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> MotorHistory:
     """Count actual work even if a later comparison fails; never retry here."""
     import mujoco
 
@@ -134,7 +144,12 @@ def replay_teacher_world(
                 )
                 equal(raw["STAND_control"][frame], frame, "stand cursor")
             equal(obs, raw["NN_obs"][frame], "own observation")
-            for tensor, k in zip(state, ("NN_h_before", "NN_c_before"), strict=True):
+            history_before = clone_history(state, hidden_width=hidden_width)
+            for tensor, k in zip(
+                recurrent_history(state, hidden_width=hidden_width),
+                ("NN_h_before", "NN_c_before"),
+                strict=True,
+            ):
                 equal(tensor.numpy(), raw[k][frame], "own " + k)
             with torch.no_grad():
                 if action_adapter is not None:
@@ -146,8 +161,8 @@ def replay_teacher_world(
             counts["neural"] += 1
             nominal = mean[0, 0].numpy().copy()
             equal(nominal, raw["NN_nominal_action"][frame], "own nominal")
-            for tensor, k in zip(state, ("NN_h_after", "NN_c_after"), strict=True):
-                equal(tensor.numpy(), raw[k][frame], "own " + k)
+            for k, value in history_trace(history_before, state, hidden_width=hidden_width).items():
+                equal(value, raw[k][frame], "own " + k)
             if phase == "kick":
                 before = snapshot(data)
                 if action_adapter is None:
@@ -241,4 +256,4 @@ def replay_teacher_world(
         and (ep.frame != ep.clip.length or stand is None or len(stand["qpos"]) != 100)
     ):
         raise ValueError("healthy world cannot silently omit reference/standing suffix")
-    return state[0], state[1]
+    return state

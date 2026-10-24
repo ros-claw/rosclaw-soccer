@@ -11,8 +11,15 @@ from typing import Any
 import numpy as np
 import torch
 
+from rosclaw_soccer.rsi.motor_option_state import MotorOptionState
 from rosclaw_soccer.rsi.paid_balance_recovery import body_feedback
 from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
+from rosclaw_soccer.rsi.private_motor_history import (
+    MotorHistory,
+    clone_history,
+    history_trace,
+    recurrent_history,
+)
 
 
 class NeuralStandingTask:
@@ -23,7 +30,7 @@ class NeuralStandingTask:
         ep: Any,
         actor: Any,
         *,
-        state: tuple[torch.Tensor, torch.Tensor],
+        state: MotorHistory,
         memory_mode: str,
         count_inference: Callable[[], None],
         hidden_width: int = 128,
@@ -35,22 +42,15 @@ class NeuralStandingTask:
             or not ep.done
             or ep.termination_reason != "RECOVERY_ADMITTED"
             or ep.frame != ep.clip.length
-            or len(state) != 2
-            or any(
-                not isinstance(t, torch.Tensor)
-                or t.shape != (2, 1, hidden_width)
-                or t.dtype != torch.float32
-                or t.device.type != "cpu"
-                or not torch.isfinite(t).all()
-                for t in state
-            )
             or ep.ref_pos.shape != (29,)
             or not np.isfinite(ep.ref_pos).all()
         ):
             raise ValueError(
                 "actual reference-end admission and private finite motor context required"
             )
+        recurrent_history(state, hidden_width=hidden_width)
         if hidden_width == 256:
+            from rosclaw_soccer.rsi.committed_neural_motor import CommittedNeuralMotor
             from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
             from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
             from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
@@ -61,8 +61,13 @@ class NeuralStandingTask:
                 ConsolidatedMotorAdapter,
                 RefinementMotorAdapter,
                 SupportedRefinementMotor,
+                CommittedNeuralMotor,
             ):
                 raise ValueError("new dual256 state requires the explicit research motor contract")
+            if (type(actor) is CommittedNeuralMotor) != (type(state) is MotorOptionState):
+                raise ValueError("standing requires actor-bound private history representation")
+            if type(state) is MotorOptionState and state.generation_hash != actor.generation_hash:
+                raise ValueError("standing history belongs to another model generation")
         self.hidden_width = hidden_width
         self.ep, self.actor, self.memory_mode, self.count_inference = (
             ep,
@@ -70,9 +75,11 @@ class NeuralStandingTask:
             memory_mode,
             count_inference,
         )
-        self.state = (
-            tuple(t.detach().clone() for t in state)
+        self.state: MotorHistory = (
+            clone_history(state, hidden_width=hidden_width)
             if memory_mode == "carry"
+            else actor.initial_state()
+            if hidden_width == 256
             else (
                 torch.zeros(2, 1, hidden_width, dtype=torch.float32, device="cpu"),
                 torch.zeros(2, 1, hidden_width, dtype=torch.float32, device="cpu"),
@@ -119,7 +126,7 @@ class NeuralStandingTask:
         )
         if obs.shape != (160,) or obs.dtype != np.float32 or not np.isfinite(obs).all():
             raise ValueError("exact measured160 static-standing observation required")
-        before = tuple(t.numpy().copy() for t in self.state)
+        before = clone_history(self.state, hidden_width=self.hidden_width)
         with torch.no_grad():
             mean, next_state = self.actor(torch.from_numpy(obs).reshape(1, 1, 160), self.state)
         self.count_inference()
@@ -128,17 +135,9 @@ class NeuralStandingTask:
             or mean.dtype != torch.float32
             or mean.device.type != "cpu"
             or not torch.isfinite(mean).all()
-            or len(next_state) != 2
-            or any(
-                not isinstance(t, torch.Tensor)
-                or t.shape != (2, 1, self.hidden_width)
-                or t.dtype != torch.float32
-                or t.device.type != "cpu"
-                or not torch.isfinite(t).all()
-                for t in next_state
-            )
         ):
             raise ValueError("finite own CPU29 mean and next private memory required")
+        private_trace = history_trace(before, next_state, hidden_width=self.hidden_width)
         action = mean[0, 0].numpy().copy()
         ep.target = ep.offset + action[ep.order] * ep.scale
         ep.last_action = action.copy()
@@ -147,14 +146,11 @@ class NeuralStandingTask:
             NN_obs=obs.copy(),
             NN_nominal_action=action.copy(),
             NN_action=action.copy(),
-            NN_h_before=before[0],
-            NN_c_before=before[1],
-            NN_h_after=next_state[0].numpy().copy(),
-            NN_c_after=next_state[1].numpy().copy(),
+            **private_trace,
             STAND_reference_pose=self.pose.copy(),
             STAND_control=self.controls,
         )
-        self.state = tuple(t.detach().clone() for t in next_state)
+        self.state = clone_history(next_state, hidden_width=self.hidden_width)
         self.expected_action = ep.last_action.copy()
         self.expected_time = float(ep.env.data.time)
         self.controls += 1

@@ -7,6 +7,35 @@ import torch
 from rosclaw_soccer.rsi.paid_neural_stand import NeuralStandingTask
 
 
+def test_committed_option_and_generation_survive_neural_standing_handoff(monkeypatch):
+    from test_committed_neural_motor import fixture as option_fixture
+
+    from rosclaw_soccer.rsi.paid_run_teacher_audit import private_replay_state
+
+    ep, _, _ = fixture(monkeypatch)
+    _, _, actor, obs, _ = option_fixture()
+    state = private_replay_state(actor, 256)
+    _, state = actor(obs, state)
+    calls = []
+    task = NeuralStandingTask(
+        ep,
+        actor,
+        state=state,
+        memory_mode="carry",
+        hidden_width=256,
+        count_inference=lambda: calls.append(1),
+    )
+    assert task.state.recurrent[0].data_ptr() != state.recurrent[0].data_ptr()
+    raw, summary = task.collect(3)
+    assert len(calls) == 3 and summary["healthy"]
+    np.testing.assert_array_equal(raw["NN_option_before"], [1, 1, 1])
+    np.testing.assert_array_equal(raw["NN_option_after"], [1, 1, 1])
+    np.testing.assert_array_equal(raw["NN_option_controls_before"], [1, 2, 3])
+    np.testing.assert_array_equal(raw["NN_option_controls_after"], [2, 3, 4])
+    assert raw["NN_option_generation"].shape == (3, 32)
+    assert task.state.generation_hash == actor.generation_hash
+
+
 def fixture(monkeypatch, memory="carry"):
     """Flow-only motor/physics fixture, not learned or physical evidence."""
     import mujoco

@@ -80,6 +80,77 @@ def test_reference_end_cannot_be_silently_padded():
             p.propose()
 
 
+def test_committed_options_keep_private_state_through_actual_commit_and_standing():
+    from test_committed_neural_motor import fixture
+
+    from rosclaw_soccer.rsi.private_motor_history import clone_history
+
+    w, old = players()
+    _, _, actor, obs_a, obs_b = fixture()
+    ps = {}
+    for prefix, observation in zip(w.layouts, (obs_a, obs_b), strict=True):
+        p = old[prefix]
+
+        def observe(*args, value=observation, **kwargs):
+            return value[0, 0].numpy().copy()
+
+        ps[prefix] = SharedNativeNeuralPlayer(
+            w,
+            prefix,
+            actor,
+            clip=p.clip,
+            torso_index=0,
+            build_observation=observe,
+            goal=p.goal,
+            offset=p.offset,
+            scale=p.scale,
+            order=p.order,
+        )
+    for control in range(2):
+        targets, traces = {}, {}
+        for prefix, p in ps.items():
+            targets[prefix], traces[prefix] = p.propose()
+            assert p.state.controls == control  # no commit before actual integration
+            assert traces[prefix]["NN_option_controls_after"] == control + 1
+        w.advance(targets)
+        for prefix, p in ps.items():
+            p.commit()
+            assert p.state.option == (1 if prefix == "a/" else 0)
+            assert p.state.controls == control + 1
+            if control == 0:
+                before = clone_history(p.state)
+                p.begin_standing()
+                assert p.state.option == before.option
+                assert p.state.generation_hash == before.generation_hash
+    assert ps["a/"].state.recurrent[0].data_ptr() != ps["b/"].state.recurrent[0].data_ptr()
+
+
+def test_committed_player_rejects_cross_generation_handoff_before_physics():
+    from dataclasses import replace
+
+    from test_committed_neural_motor import fixture
+
+    w, ps = players()
+    _, _, actor, _, _ = fixture()
+    p = ps["a/"]
+    state = replace(actor.initial_state(), generation_hash="sha256:" + "b" * 64)
+    with pytest.raises(ValueError, match="generation"):
+        SharedNativeNeuralPlayer(
+            w,
+            "a/",
+            actor,
+            clip=p.clip,
+            torso_index=0,
+            build_observation=p.build_observation,
+            goal=p.goal,
+            offset=p.offset,
+            scale=p.scale,
+            order=p.order,
+            initial_state=state,
+        )
+    assert w.native_steps == 0
+
+
 def test_standing_requires_actual_reference_boundary():
     _, ps = players()
     with pytest.raises(ValueError, match="complete motion"):

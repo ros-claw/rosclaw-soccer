@@ -9,6 +9,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from rosclaw_soccer.rsi.private_motor_history import clone_history, history_trace
+
 
 def collect_parent_reference(
     ep: Any, actor: Any, *, foot: str, hidden_width: int = 128
@@ -27,6 +29,7 @@ def collect_parent_reference(
         raise ValueError("fresh declared native world and frozen parent motor required")
     initial = snapshot(ep.env.data)
     if hidden_width == 256:
+        from rosclaw_soccer.rsi.committed_neural_motor import CommittedNeuralMotor
         from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
         from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
         from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
@@ -37,6 +40,7 @@ def collect_parent_reference(
             ConsolidatedMotorAdapter,
             RefinementMotorAdapter,
             SupportedRefinementMotor,
+            CommittedNeuralMotor,
         ):
             raise ValueError("explicit typed dual256 motor required")
         state = actor.initial_state()
@@ -51,7 +55,7 @@ def collect_parent_reference(
     calls = 0
     while not ep.done and ep.frame < ep.clip.length:
         obs = ep.observation()
-        before = [t.numpy().copy() for t in state]
+        before = clone_history(state, hidden_width=hidden_width)
         with torch.no_grad():
             mean, state = actor(torch.from_numpy(obs).reshape(1, 1, 160), state)
         calls += 1
@@ -59,15 +63,13 @@ def collect_parent_reference(
         target, plan = identity(ep, action.copy())
         if not np.array_equal(action, target) or plan["ik_iterations"] != 0:
             raise ValueError("identity record cannot change parent motor control")
+        private_trace = history_trace(before, state, hidden_width=hidden_width)
         row = ep.step(action)
         row.update(
             NN_obs=obs,
             NN_nominal_action=action,
             NN_action=action.copy(),
-            NN_h_before=before[0],
-            NN_c_before=before[1],
-            NN_h_after=state[0].numpy().copy(),
-            NN_c_after=state[1].numpy().copy(),
+            **private_trace,
         )
         row.update({"PLAN_" + k: v for k, v in plan.items()})
         rows.append(row)

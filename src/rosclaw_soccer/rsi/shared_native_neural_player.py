@@ -10,8 +10,16 @@ from typing import Any
 import numpy as np
 import torch
 
+from rosclaw_soccer.rsi.committed_neural_motor import CommittedNeuralMotor
 from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+from rosclaw_soccer.rsi.motor_option_state import MotorOptionState
+from rosclaw_soccer.rsi.private_motor_history import (
+    MotorHistory,
+    clone_history,
+    history_trace,
+    recurrent_history,
+)
 from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
 from rosclaw_soccer.rsi.supported_refinement_motor import SupportedRefinementMotor
@@ -57,7 +65,8 @@ class SharedNativeNeuralPlayer:
         actor: DualRecurrentMotor
         | ConsolidatedMotorAdapter
         | RefinementMotorAdapter
-        | SupportedRefinementMotor,
+        | SupportedRefinementMotor
+        | CommittedNeuralMotor,
         *,
         clip: Any,
         torso_index: int,
@@ -66,7 +75,7 @@ class SharedNativeNeuralPlayer:
         offset: np.ndarray,
         scale: np.ndarray,
         order: np.ndarray,
-        initial_state: tuple[torch.Tensor, torch.Tensor] | None = None,
+        initial_state: MotorHistory | None = None,
         previous_action: np.ndarray | None = None,
         reference_context: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
         reference_bridge_controls: int = 0,
@@ -78,6 +87,7 @@ class SharedNativeNeuralPlayer:
                 ConsolidatedMotorAdapter,
                 RefinementMotorAdapter,
                 SupportedRefinementMotor,
+                CommittedNeuralMotor,
             )
             or actor.training
             or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
@@ -92,18 +102,16 @@ class SharedNativeNeuralPlayer:
             raise ValueError(
                 "frozen explicit Dual256 motor, real reference and HG29 codec required"
             )
-        if initial_state is not None and (
-            len(initial_state) != 2
-            or any(
-                not isinstance(t, torch.Tensor)
-                or t.shape != (2, 1, 256)
-                or t.dtype != torch.float32
-                or t.device.type != "cpu"
-                or not torch.isfinite(t).all()
-                for t in initial_state
-            )
-        ):
-            raise ValueError("explicit finite own CPU Dual256 handoff history required")
+        if initial_state is not None:
+            recurrent_history(initial_state)
+            if (type(actor) is CommittedNeuralMotor) != (type(initial_state) is MotorOptionState):
+                raise ValueError("explicit actor-bound private history representation required")
+            if (
+                type(actor) is CommittedNeuralMotor
+                and type(initial_state) is MotorOptionState
+                and initial_state.generation_hash != actor.generation_hash
+            ):
+                raise ValueError("handoff history belongs to a different model generation")
         if previous_action is not None and (
             previous_action.shape != (29,)
             or previous_action.dtype != np.float32
@@ -143,8 +151,9 @@ class SharedNativeNeuralPlayer:
         self.goal, self.offset, self.scale, self.order = (
             a.copy() for a in (goal, offset, scale, order)
         )
-        initial_h, initial_c = actor.initial_state() if initial_state is None else initial_state
-        self.state = (initial_h.detach().clone(), initial_c.detach().clone())
+        self.state = clone_history(
+            actor.initial_state() if initial_state is None else initial_state
+        )
         self.last_action = (
             np.zeros(29, np.float32) if previous_action is None else previous_action.copy()
         )
@@ -199,8 +208,19 @@ class SharedNativeNeuralPlayer:
             raise ValueError("exact actual per-player160 observation required; no padding")
         nominal: np.ndarray | None = None
         support_activation: np.ndarray | None = None
+        state: MotorHistory
         with torch.no_grad():
-            if with_reference_evidence or type(self.actor) is SupportedRefinementMotor:
+            if isinstance(self.actor, CommittedNeuralMotor):
+                if not isinstance(self.state, MotorOptionState):
+                    raise ValueError("explicit committed model history required")
+                mean, state, evidence = self.actor.forward_with_evidence(
+                    torch.from_numpy(obs).reshape(1, 1, 160), self.state
+                )
+                if with_reference_evidence:
+                    nominal = evidence["reference_nominal"][0, 0].numpy().copy()
+            elif with_reference_evidence or type(self.actor) is SupportedRefinementMotor:
+                if not isinstance(self.state, tuple):
+                    raise ValueError("legacy motor requires explicit two-tensor history")
                 mean, state, evidence = self.actor.forward_with_evidence(
                     torch.from_numpy(obs).reshape(1, 1, 160), self.state
                 )
@@ -217,20 +237,14 @@ class SharedNativeNeuralPlayer:
                     support_activation = activation[0, 0].numpy().copy()
             else:
                 mean, state = self.actor(torch.from_numpy(obs).reshape(1, 1, 160), self.state)
-        if (
-            mean.shape != (1, 1, 29)
-            or not torch.isfinite(mean).all()
-            or any(t.shape != (2, 1, 256) or not torch.isfinite(t).all() for t in state)
-        ):
+        if mean.shape != (1, 1, 29) or not torch.isfinite(mean).all():
             raise ValueError("finite own HG29 action and private Dual256 history required")
+        private_trace = history_trace(self.state, state)
         action = mean[0, 0].numpy().copy()
         trace = dict(
             NN_obs=obs.copy(),
             NN_action=action.copy(),
-            NN_h_before=self.state[0].numpy().copy(),
-            NN_c_before=self.state[1].numpy().copy(),
-            NN_h_after=state[0].numpy().copy(),
-            NN_c_after=state[1].numpy().copy(),
+            **private_trace,
         )
         if nominal is not None:
             trace["NN_reference_nominal"] = nominal.copy()
@@ -238,7 +252,7 @@ class SharedNativeNeuralPlayer:
             trace["NN_support_activation"] = support_activation
         self.pending = dict(
             action=action,
-            state=tuple(t.detach().clone() for t in state),
+            state=clone_history(state),
             reference_nominal=nominal,
         )
         return self.offset + action[self.order] * self.scale, trace

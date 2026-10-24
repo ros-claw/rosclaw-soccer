@@ -8,23 +8,29 @@ from typing import Any
 
 import torch
 
+from rosclaw_soccer.rsi.committed_neural_motor import CommittedNeuralMotor
 from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+from rosclaw_soccer.rsi.motor_option_state import MotorOptionState
+from rosclaw_soccer.rsi.private_motor_history import MotorHistory, recurrent_history
 from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 from rosclaw_soccer.rsi.supported_refinement_motor import SupportedRefinementMotor
 
-MotorState = tuple[torch.Tensor, torch.Tensor]
+MotorState = MotorHistory
 PairState = tuple[MotorState, MotorState]
 Motor = (
     DualRecurrentMotor
     | ConsolidatedMotorAdapter
     | RefinementMotorAdapter
     | SupportedRefinementMotor
+    | CommittedNeuralMotor
 )
 
 
 def paired_reference(motor: Motor) -> torch.nn.Module:
     """Explicit class admission; no duck-typed arbitrary policy wrappers."""
+    if type(motor) is CommittedNeuralMotor:
+        return motor.parent.memory.parent
     if type(motor) is SupportedRefinementMotor:
         return motor.refinement.parent.memory.parent
     if type(motor) is RefinementMotorAdapter:
@@ -37,6 +43,10 @@ def paired_reference(motor: Motor) -> torch.nn.Module:
 
 
 def _plastic_storage(motor: Motor) -> set[int]:
+    if type(motor) is CommittedNeuralMotor:
+        return _plastic_storage(motor.parent) | {
+            p.untyped_storage().data_ptr() for p in motor.heads.parameters()
+        }
     if type(motor) is SupportedRefinementMotor:
         return _plastic_storage(motor.refinement)
     if type(motor) is RefinementMotorAdapter:
@@ -54,6 +64,18 @@ def _plastic_storage(motor: Motor) -> set[int]:
     return {p.untyped_storage().data_ptr() for p in params}
 
 
+def _forward(
+    motor: Motor, obs: torch.Tensor, state: MotorHistory
+) -> tuple[torch.Tensor, MotorHistory, dict[str, Any]]:
+    if isinstance(motor, CommittedNeuralMotor):
+        if not isinstance(state, MotorOptionState):
+            raise ValueError("committed motor requires explicit own option history")
+        return motor.forward_with_evidence(obs, state)
+    if not isinstance(state, tuple):
+        raise ValueError("legacy motor requires explicit own h/c")
+    return motor.forward_with_evidence(obs, state)
+
+
 class SameStateMotorPair:
     """No hidden state in this object, no teacher state passed to the student."""
 
@@ -65,6 +87,7 @@ class SameStateMotorPair:
                 ConsolidatedMotorAdapter,
                 RefinementMotorAdapter,
                 SupportedRefinementMotor,
+                CommittedNeuralMotor,
             )
             or type(teacher)
             not in (
@@ -72,6 +95,7 @@ class SameStateMotorPair:
                 ConsolidatedMotorAdapter,
                 RefinementMotorAdapter,
                 SupportedRefinementMotor,
+                CommittedNeuralMotor,
             )
             or student is teacher
             or student.training
@@ -95,14 +119,16 @@ class SameStateMotorPair:
     ) -> tuple[torch.Tensor, torch.Tensor, PairState, dict[str, Any]]:
         if observation.shape != (1, 1, 160) or observation.device.type != "cpu":
             raise ValueError("one actually observed CPU160 control step required")
-        if len(state) != 2 or any(len(s) != 2 for s in state):
+        if type(state) is not tuple or len(state) != 2:
             raise ValueError("separate student and teacher h/c required")
-        student_storage = {s.untyped_storage().data_ptr() for s in state[0]}
-        if any(s.untyped_storage().data_ptr() in student_storage for s in state[1]):
+        student_storage = {s.untyped_storage().data_ptr() for s in recurrent_history(state[0])}
+        if any(
+            s.untyped_storage().data_ptr() in student_storage for s in recurrent_history(state[1])
+        ):
             raise ValueError("student cannot borrow the teacher recurrent state")
         with torch.no_grad():
-            actual, after_s, se = self.student.forward_with_evidence(observation, state[0])
-            advice, after_t, te = self.teacher.forward_with_evidence(observation, state[1])
+            actual, after_s, se = _forward(self.student, observation, state[0])
+            advice, after_t, te = _forward(self.teacher, observation, state[1])
         return (
             actual,
             advice,

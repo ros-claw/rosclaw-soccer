@@ -6,6 +6,21 @@ import torch
 from rosclaw_soccer.rsi.same_state_motor_pair import SameStateMotorPair
 
 
+def test_option_student_and_parent_advisor_cannot_share_private_history():
+    from test_committed_neural_motor import fixture
+
+    parent, _, student, a, b = fixture()
+    p = SameStateMotorPair(student, parent)
+    states = p.initial_state()
+    for obs in (a, b, b):
+        actual, advice, states, _ = p.observe(obs, states)
+        assert states[0].option == 1
+        assert states[0].recurrent[0].data_ptr() != states[1][0].data_ptr()
+    assert not torch.equal(actual, advice)
+    with pytest.raises(ValueError, match="borrow"):
+        p.observe(a, (states[0], states[0].recurrent))
+
+
 def pair():
     from test_dual_recurrent_motor import model
 
