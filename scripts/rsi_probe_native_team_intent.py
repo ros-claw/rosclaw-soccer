@@ -19,6 +19,9 @@ def main():
         p.add_argument("--" + name, required=True)
     p.add_argument("--intercept-course", action="store_true")
     p.add_argument("--foot-track-course", action="store_true")
+    p.add_argument("--clearance-course", action="store_true")
+    p.add_argument("--foot-reference", type=Path)
+    p.add_argument("--foot-reference-hash")
     p.add_argument("--previous", type=Path)
     p.add_argument("--previous-hash")
     p.add_argument(
@@ -35,6 +38,11 @@ def main():
     a = p.parse_args()
     if a.foot_track_course and not a.intercept_course:
         p.error("foot tracking is an explicit extension of the interception course")
+    if a.clearance_course:
+        if not a.foot_track_course or a.foot_reference is None or a.foot_reference_hash is None:
+            p.error("clearance contrast requires the entire preceding measured-foot course")
+    elif a.foot_reference is not None or a.foot_reference_hash is not None:
+        p.error("foot reference is specific to the explicit clearance contrast")
     if a.ball_course != "outbound-north" and not a.intercept_course:
         p.error("new moving-ball geometry requires explicitly versioned interception course")
     if (a.intercept_course and (a.previous is None or a.previous_hash is None)) or (
@@ -99,6 +107,38 @@ def main():
                 raise ValueError("confined exact preceding baseline arrays required")
             pins[str(path)] = row["artifact"]["hash"]
     pin_active_core(a.core_source_root, a.core_expected_head, pins)
+    foot_predecessor = None
+    if a.clearance_course:
+        path = a.foot_reference / "complete.json"
+        if path.is_symlink() or digest(path) != a.foot_reference_hash:
+            raise ValueError("exact preceding measured-foot course required")
+        foot_predecessor = json.loads(path.read_text())
+        declaration = json.loads((a.foot_reference / "declaration.json").read_text())
+        if (
+            len(foot_predecessor["records"]) != 10
+            or not foot_predecessor["fresh_reexecution_exact"]
+            or declaration["protocol"] != "native8_measured_foot_tracking.v4"
+            or declaration["ball_course"] != a.ball_course
+            or (a.foot_reference / "failed.json").exists()
+        ):
+            raise ValueError("complete same-course physical foot predecessor required")
+        for key, value in foot_predecessor["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting foot-course ancestry")
+            pins[key] = value
+        for file, expected in [(path, a.foot_reference_hash)]:
+            pins[str(file)] = expected
+        path = a.foot_reference / "declaration.json"
+        pins[str(path)] = digest(path)
+        for row in foot_predecessor["records"]:
+            path = a.foot_reference / row["artifact"]["path"]
+            if (
+                path.is_symlink()
+                or path.parent.resolve() != a.foot_reference.resolve()
+                or digest(path) != row["artifact"]["hash"]
+            ):
+                raise ValueError("exact confined predecessor raw arrays required")
+            pins[str(path)] = row["artifact"]["hash"]
     source_pins(pins)
     check_pins(pins)
     from rosclaw_soccer.training.native_team_courses import native_team_course_bank
@@ -114,6 +154,7 @@ def main():
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
     from rosclaw_soccer.rsi.native_team_intent import (
         ROLES,
+        clearance_command,
         command_toward,
         finisher_intercept_target,
         foot_tracking_command,
@@ -148,11 +189,15 @@ def main():
     )
     if a.foot_track_course:
         arms = (*arms, "role-foot-track")
+    if a.clearance_course:
+        arms = ("role-foot-track", "role-foot-clearance")
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native8_measured_foot_tracking.v4"
+            protocol="native8_measured_clearance_contrast.v5"
+            if a.clearance_course
+            else "native8_measured_foot_tracking.v4"
             if a.foot_track_course
             else "native8_coached_intercept_course.v3"
             if a.intercept_course
@@ -193,6 +238,11 @@ def main():
             foot_tracking_gain_per_sec=1.5 if a.foot_track_course else None,
             foot_tracking_world_slew_mps_per_control=0.08 if a.foot_track_course else None,
             nonfoot_contact_counter_is_not_fifa_adjudication=True,
+            actual_interplayer_contacts_measured=a.clearance_course,
+            preceding_foot_course_hash=a.foot_reference_hash,
+            clearance_m=0.6 if a.clearance_course else None,
+            clearance_influence_m=1.2 if a.clearance_course else None,
+            clearance_approach_gain=0.6 if a.clearance_course else None,
             engine_version=mujoco.__version__,
             engine_is_legacy_research_fixture_not_qualified_harness=True,
             publicity_rights_not_established=True,
@@ -258,7 +308,13 @@ def main():
                     0.0,
                 ]
                 mujoco.mj_forward(m, d)
-                w = SharedNativeMotorWorld(m, d, players=params, ball_body_name="soccer_ball")
+                w = SharedNativeMotorWorld(
+                    m,
+                    d,
+                    players=params,
+                    ball_body_name="soccer_ball",
+                    measure_interplayer_contact=a.clearance_course,
+                )
                 metric = mujoco.MjData(m)
                 feet = {
                     prefix: [
@@ -272,6 +328,8 @@ def main():
                     prefix: d.qpos[lo.rq : lo.rq + 3].copy() for prefix, lo in layouts.items()
                 }
                 raw = {key: [] for key in ("qpos", "qvel", "torque", "ball_forces")}
+                if a.clearance_course:
+                    raw["interplayer_contact_forces"] = []
                 controls = {
                     key: [] for key in ("commands", "role_targets", "observations98", "targets29")
                 }
@@ -284,6 +342,8 @@ def main():
                 ) = [], [], []
                 if a.foot_track_course:
                     controls["nearest_foot_relative_speed_mps"] = []
+                if a.clearance_course:
+                    controls["clearance_feasible"], controls["clearance_constrained"] = [], []
                 for frame in range(horizon):
                     if a.foot_track_course:
                         metric.qpos[:] = d.qpos
@@ -291,6 +351,7 @@ def main():
                     ball_xy = d.qpos[layout.bq : layout.bq + 2].copy()
                     commands, targets, goals, observations = [], {}, [], []
                     horizons, reachable_flags = [], []
+                    clearance_feasible, clearance_constrained = [], []
                     for agent_index, (team, role, prefix) in enumerate(agents):
                         lo, stream = layouts[prefix], streams[prefix]
                         q, v = lo.canonical(d)
@@ -301,7 +362,10 @@ def main():
                         )
                         goal = role_target(team, role, ball_xy)
                         ih, ir = 0.0, False
-                        if arm in ("role-intercept", "role-foot-track") and role == "finisher":
+                        if (
+                            arm in ("role-intercept", "role-foot-track", "role-foot-clearance")
+                            and role == "finisher"
+                        ):
                             goal, ih, ir = finisher_intercept_target(
                                 team, q[:2], ball_xy, d.qvel[lo.bv : lo.bv + 2].copy()
                             )
@@ -315,12 +379,18 @@ def main():
                                 ball_xy,
                                 maximum_forward_speed=1.0
                                 if role == "finisher"
-                                and arm in ("role-fast", "role-intercept", "role-foot-track")
+                                and arm
+                                in (
+                                    "role-fast",
+                                    "role-intercept",
+                                    "role-foot-track",
+                                    "role-foot-clearance",
+                                )
                                 else 0.8,
                             )
                         )
                         if (
-                            arm == "role-foot-track"
+                            arm in ("role-foot-track", "role-foot-clearance")
                             and role == "finisher"
                             and frame >= 50
                             and np.linalg.norm(ball_xy - q[:2]) < 1.0
@@ -333,6 +403,23 @@ def main():
                                 d.qvel[lo.bv : lo.bv + 2].copy(),
                                 previous_world_commands[agent_index],
                             )
+                        feasible, constrained = True, False
+                        if arm == "role-foot-clearance" and frame >= 50:
+                            neighbors = np.array(
+                                [
+                                    d.qpos[other.rq : other.rq + 2] - q[:2]
+                                    for other_prefix, other in layouts.items()
+                                    if other_prefix != prefix
+                                ]
+                            )
+                            command, feasible, constrained = clearance_command(
+                                command,
+                                yaw,
+                                neighbors,
+                                maximum_speed_mps=1.0 if role == "finisher" else 0.8,
+                            )
+                        clearance_feasible.append(feasible)
+                        clearance_constrained.append(constrained)
                         c, s = math.cos(yaw), math.sin(yaw)
                         previous_world_commands[agent_index] = [
                             c * command[0] - s * command[1],
@@ -356,6 +443,9 @@ def main():
                     if a.intercept_course:
                         controls["intercept_horizon_sec"].append(horizons)
                         controls["kinematically_reachable"].append(reachable_flags)
+                    if a.clearance_course:
+                        controls["clearance_feasible"].append(clearance_feasible)
+                        controls["clearance_constrained"].append(clearance_constrained)
                     step = w.advance(targets)
                     charged += 10
                     for key in raw:
@@ -407,6 +497,22 @@ def main():
                 arrays.update({k: np.asarray(v) for k, v in controls.items()})
                 own_exact = None
                 legacy_identity = None
+                foot_identity = None
+                if foot_predecessor is not None and arm == "role-foot-track":
+                    old = next(
+                        r
+                        for r in foot_predecessor["records"]
+                        if r["arm"] == arm and r["repeat"] == repeat
+                    )
+                    with np.load(a.foot_reference / old["artifact"]["path"]) as saved:
+                        foot_identity = {
+                            key: bool(np.array_equal(arrays[key], saved[key]))
+                            for key in saved.files
+                        }
+                    if not all(foot_identity.values()):
+                        raise ValueError(
+                            "measuring actual player contacts changed preceding foot dynamics"
+                        )
                 if (
                     predecessor is not None
                     and a.ball_course == "outbound-north"
@@ -483,6 +589,7 @@ def main():
                     body_failed=step["body_failed"],
                     fresh_reexecution_exact=own_exact,
                     legacy_baseline_identity=legacy_identity,
+                    preceding_foot_identity=foot_identity,
                     artifact=artifact,
                 )
                 records.append(row)

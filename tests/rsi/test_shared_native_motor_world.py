@@ -30,16 +30,22 @@ def source_xml():
     )
 
 
-def world():
+def world(*, measure_interplayer_contact=False, separation=2.0):
     import mujoco
 
     xml = shared_native_scene(source_xml(), prefixes=("a/", "b/"))
     m = mujoco.MjModel.from_xml_string(xml)
     d = mujoco.MjData(m)
     b = m.joint("b/root").qposadr[0]
-    d.qpos[b] = 2
+    d.qpos[b] = separation
     params = NativePDParameters(np.full(29, 20.0), np.ones(29), np.full(29, 25.0))
-    w = SharedNativeMotorWorld(m, d, players={"a/": params, "b/": params}, ball_body_name="ball")
+    w = SharedNativeMotorWorld(
+        m,
+        d,
+        players={"a/": params, "b/": params},
+        ball_body_name="ball",
+        measure_interplayer_contact=measure_interplayer_contact,
+    )
     return w
 
 
@@ -137,3 +143,18 @@ def test_hidden_scene_section_and_duplicate_player_rejected():
         shared_native_scene(
             source_xml().replace("</mujoco>", "<equality/></mujoco>"), prefixes=("a/",)
         )
+
+
+def test_interplayer_contact_measurement_is_symmetric_owned_and_physics_readonly():
+    plain = world(separation=0.08)
+    measured = world(measure_interplayer_contact=True, separation=0.08)
+    targets = {p: np.zeros(29) for p in plain.layouts}
+    baseline, actual = plain.advance(targets), measured.advance(targets)
+    for key in ("qpos", "qvel", "torque", "ball_forces"):
+        np.testing.assert_array_equal(actual[key], baseline[key])
+    forces = actual["interplayer_contact_forces"]
+    assert forces.shape == (10, 2, 2)
+    assert forces[:, 0, 1].max() > 1
+    np.testing.assert_array_equal(forces[:, 0, 1], forces[:, 1, 0])
+    assert not forces[:, 0, 0].any() and not forces[:, 1, 1].any()
+    assert "interplayer_contact_forces" not in baseline

@@ -3,6 +3,7 @@ import pytest
 
 from rosclaw_soccer.rsi.native_team_intent import (
     ROLES,
+    clearance_command,
     command_toward,
     finisher_intercept_target,
     foot_tracking_command,
@@ -96,3 +97,32 @@ def test_foot_tracking_refuses_invalid_state_instead_of_sanitizing_it():
         foot_tracking_command(
             np.zeros(2), 0.0, np.zeros((2, 2)), np.zeros(2), np.zeros(2), np.ones(2)
         )
+
+
+def test_clearance_reuses_world_projection_and_preserves_tangential_run():
+    command, feasible, constrained = clearance_command(
+        np.array([0.8, 0.3, 0.4]), 0.0, np.array([[0.5, 0.0]]), maximum_speed_mps=1.0
+    )
+    assert feasible and constrained
+    assert command[0] <= -0.06 + 1e-6
+    assert abs(command[1] - 0.3) < 1e-6
+    assert abs(command[2] - 0.4) < 1e-6
+
+
+def test_clearance_halfplanes_keep_body_domain_without_postprojection_clipping():
+    for yaw in (0.0, 0.7, np.pi):
+        cmd, feasible, _ = clearance_command(
+            np.array([1.0, 0.5, 1.0]), yaw, np.array([[0.4, 0.0]]), maximum_speed_mps=1.0
+        )
+        assert feasible
+        assert -0.5 - 1e-6 <= cmd[0] <= 1.0 + 1e-6
+        assert abs(cmd[1]) <= 0.5 + 1e-6
+        assert np.linalg.norm(cmd[:2]) <= 1.0 + 1e-6
+
+
+def test_clearance_infeasible_symmetric_squeeze_is_explicit_zero_not_fake_safe():
+    cmd, feasible, constrained = clearance_command(
+        np.array([0.8, 0.0, 0.8]), 0.0, np.array([[-0.3, 0.0], [0.3, 0.0]]), maximum_speed_mps=1.0
+    )
+    assert not feasible and constrained
+    np.testing.assert_array_equal(cmd, np.zeros(3))

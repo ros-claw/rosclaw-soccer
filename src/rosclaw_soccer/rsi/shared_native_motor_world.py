@@ -47,11 +47,13 @@ class SharedNativeMotorWorld:
         *,
         players: Mapping[str, NativePDParameters],
         ball_body_name: str,
+        measure_interplayer_contact: bool = False,
     ) -> None:
         import mujoco
 
         if (
-            not 1 <= len(players) <= 8
+            type(measure_interplayer_contact) is not bool
+            or not 1 <= len(players) <= 8
             or any(not isinstance(p, str) for p in players)
             or mujoco.get_mjcb_control() is not None
             or float(model.opt.timestep) != 0.002
@@ -61,6 +63,7 @@ class SharedNativeMotorWorld:
         ):
             raise ValueError("callback-free native2ms world and bounded explicit players required")
         self.model, self.data = model, data
+        self.measure_interplayer_contact = measure_interplayer_contact
         self.layouts = {
             p: NativeVelocityLayout(
                 model, robot_prefix=p, ball_body_name=ball_body_name, player_count=len(players)
@@ -300,9 +303,24 @@ class SharedNativeMotorWorld:
                     self.failed = True
                     raise
             forces = np.zeros((len(self.layouts), 3))
+            if self.measure_interplayer_contact:
+                interplayer_forces = np.zeros((len(self.layouts), len(self.layouts)))
             for ci in range(d.ncon):
                 contact = d.contact[ci]
                 b1, b2 = (int(m.geom_bodyid[g]) for g in contact.geom)
+                if (
+                    self.measure_interplayer_contact
+                    and b1 in self.contact_owners
+                    and b2 in self.contact_owners
+                    and self.contact_owners[b1][0] != self.contact_owners[b2][0]
+                ):
+                    i, j = self.contact_owners[b1][0], self.contact_owners[b2][0]
+                    wrench = np.zeros(6)
+                    mujoco.mj_contactForce(m, d, ci, wrench)
+                    force = float(np.linalg.norm(wrench[:3]))
+                    interplayer_forces[i, j] = interplayer_forces[j, i] = max(
+                        interplayer_forces[i, j], force
+                    )
                 other = b2 if b1 == self.ball else b1 if b2 == self.ball else -1
                 if other in self.contact_owners:
                     player, part = self.contact_owners[other]
@@ -320,6 +338,8 @@ class SharedNativeMotorWorld:
             if layers:
                 sample["parent_torque"] = parent_torques
                 sample["applied_torque_change"] = all_torques - parent_torques
+            if self.measure_interplayer_contact:
+                sample["interplayer_contact_forces"] = interplayer_forces
             samples.append(sample)
         self.control_steps += 1
         self.expected_time = float(d.time)

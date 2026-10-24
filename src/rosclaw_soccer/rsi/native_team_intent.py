@@ -148,3 +148,42 @@ def foot_tracking_command(
     # Store the actual domain-clipped command, not an unapplied proposal.
     actual_world = np.array([c * command[0] - s * command[1], s * command[0] + c * command[1]])
     return command, actual_world
+
+
+def clearance_command(
+    command: np.ndarray,
+    yaw: float,
+    neighbor_offsets_xy: np.ndarray,
+    *,
+    maximum_speed_mps: float,
+) -> tuple[np.ndarray, bool, bool]:
+    """Reuse simultaneous world halfplanes, including the original body domain.
+
+    No physical clearance guarantee: native gait/inertia and contacts still
+    decide the outcome. Does not assign possession or freeze an opponent.
+    """
+    from rosclaw_soccer.world.player_clearance import propose_clearance_velocity
+
+    cmd = np.asarray(command, dtype=np.float64)
+    if cmd.shape != (3,) or not np.isfinite(cmd).all() or not math.isfinite(yaw):
+        raise ValueError("finite actual body command and yaw required")
+    c, s = math.cos(yaw), math.sin(yaw)
+    forward, lateral = np.array([c, s]), np.array([-s, c])
+    planes = np.array(
+        [[*forward, -0.5], [*(-forward), -1.0], [*lateral, -0.5], [*(-lateral), -0.5]]
+    )
+    nominal = forward * cmd[0] + lateral * cmd[1]
+    proposal = propose_clearance_velocity(
+        nominal,
+        np.asarray(neighbor_offsets_xy, dtype=np.float64),
+        maximum_speed_mps=maximum_speed_mps,
+        clearance_m=0.6,
+        influence_m=1.2,
+        approach_gain=0.6,
+        additional_halfplanes=planes,
+    )
+    world = np.asarray(proposal.velocity_mps)
+    result = np.array([world @ forward, world @ lateral, cmd[2]], dtype=np.float32)
+    if not proposal.feasible:
+        result[:] = 0.0
+    return result, proposal.feasible, proposal.constrained
