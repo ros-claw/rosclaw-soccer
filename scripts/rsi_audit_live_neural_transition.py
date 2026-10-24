@@ -29,7 +29,10 @@ def main():
     source = json.loads((a.source / "complete.json").read_text())
     declaration = json.loads((a.source / "declaration.json").read_text())
     release = declaration.get("contact_release", False)
-    torque_trial = declaration["protocol"] == "robonaldo.native_learned_torque_trial.v1"
+    proposal_capture = declaration["protocol"] == "robonaldo.native_guarded_proposal_trace.v1"
+    torque_trial = (
+        proposal_capture or declaration["protocol"] == "robonaldo.native_learned_torque_trial.v1"
+    )
     aim_probe = declaration["protocol"] == "robonaldo.neural_aim_reachability.v1"
     aim_y = declaration.get("neural_aim_input_y_m", 0.0)
     if (
@@ -39,7 +42,11 @@ def main():
         or declaration["duration_controls"] != 20
         or declaration["protocol"]
         != (
-            "robonaldo.native_learned_torque_trial.v1"
+            (
+                "robonaldo.native_guarded_proposal_trace.v1"
+                if proposal_capture
+                else "robonaldo.native_learned_torque_trial.v1"
+            )
             if torque_trial
             else (
                 "robonaldo.neural_aim_reachability.v1"
@@ -80,6 +87,16 @@ def main():
             ):
                 raise ValueError("exact confined neural observation/action episode required")
             pins[str(ep_path)] = entry["hash"]
+            if proposal_capture:
+                trace = entry["guarded_proposal_trace"]
+                path = a.source / trace["path"]
+                if (
+                    path.parent.resolve() != a.source.resolve()
+                    or path.is_symlink()
+                    or digest(path) != trace["hash"]
+                ):
+                    raise ValueError("exact confined raw proposal trace required")
+                pins[str(path)] = trace["hash"]
     source_pins(pins)
     check_pins(pins)
     if torque_trial:
@@ -286,6 +303,19 @@ def main():
             }
             if torque_trial:
                 raw["parent_torque"], raw["applied_torque_change"] = [], []
+            proposal_raw = {
+                key: []
+                for key in (
+                    "actor_proposals",
+                    "actor_proposal_valid",
+                    "guarded_actions",
+                    "applied_actions",
+                    "parent_actions",
+                    "used_parent",
+                    "fallback_reasons",
+                    "intervention_fractions",
+                )
+            }
             foot_seen, last_contact, clear = False, False, 0
             start = None if release else 285
             stopped = False
@@ -388,6 +418,9 @@ def main():
                         )
                         ids = primary["ai"]
                         proposal = neural.command(cf, parent_torque[ids].copy())
+                        if proposal_capture:
+                            raw_actor = neural.pending_actor_proposal
+                            decision = neural.pending_projection
                         fraction = declaration["torque_intervention_fraction"]
                         torque[ids] = parent_torque[ids] if fraction == 0 else proposal
                         if not np.isfinite(torque).all() or np.any(np.abs(torque[ids]) > cap):
@@ -399,6 +432,19 @@ def main():
                     if neural is not None:
                         if not np.array_equal(d.actuator_force, torque):
                             raise ValueError("manual actual actuator forces differ from command")
+                        if proposal_capture:
+                            values = (
+                                np.zeros(29) if raw_actor is None else raw_actor.copy(),
+                                raw_actor is not None,
+                                proposal.copy(),
+                                torque[primary["ai"]].copy(),
+                                parent_torque[primary["ai"]].copy(),
+                                decision.used_parent,
+                                decision.reason or "",
+                                fraction,
+                            )
+                            for key, value in zip(proposal_raw, values, strict=True):
+                                proposal_raw[key].append(value)
                         neural.note_applied(d.actuator_force[primary["ai"]].copy())
                         native_index += 1
                         raw["parent_torque"].append(parent_torque)
@@ -445,6 +491,7 @@ def main():
             if "transition_start" in row and start != row["transition_start"]:
                 raise ValueError("independent release event differs from source")
             neural_exact = None
+            proposal_exact = None
             if neural is not None:
                 entry = row["torque_execution_artifacts"]["a/"]
                 ep_path = a.source / entry["path"]
@@ -461,14 +508,23 @@ def main():
                         key: bool(np.array_equal(getattr(ep, key), saved[key]))
                         for key in ("observations", "actions", "parent_actions")
                     }
+                if proposal_capture:
+                    entry = entry["guarded_proposal_trace"]
+                    with np.load(a.source / entry["path"]) as saved:
+                        proposal_exact = {
+                            key: bool(np.array_equal(np.asarray(values), saved[key]))
+                            for key, values in proposal_raw.items()
+                        }
             artifact = a.output / f"{row['arm']}-{row['index']}.npz"
             np.savez_compressed(artifact, **arrays)
             result = dict(
                 arm=row["arm"],
                 index=row["index"],
                 all_exact=all(exact.values())
-                and (neural_exact is None or all(neural_exact.values())),
+                and (neural_exact is None or all(neural_exact.values()))
+                and (proposal_exact is None or all(proposal_exact.values())),
                 neural_episode_exact=neural_exact,
+                guarded_proposal_exact=proposal_exact,
                 exact=exact,
                 max_abs_error=errors,
                 native_steps=row["controls"] * 10,
