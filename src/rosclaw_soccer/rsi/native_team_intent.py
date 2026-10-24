@@ -97,3 +97,54 @@ def finisher_intercept_target(
         horizon, reachable = 0.2, False
     offset = 0.25 if team == "red" else -0.25
     return np.asarray(predicted - np.array([offset, 0.0]), dtype=np.float64), horizon, reachable
+
+
+def foot_tracking_command(
+    root_xy: np.ndarray,
+    yaw: float,
+    foot_positions_xy: np.ndarray,
+    ball_xy: np.ndarray,
+    ball_velocity_xy: np.ndarray,
+    previous_world_command: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Near-ball coached velocity proposal using actual feet, not root standoff.
+
+    Reuses the bounded planar interception primitive. No simulator writes,
+    learned skill or possession assertion. Clock owned by caller:20ms.
+    """
+    import torch
+
+    from rosclaw_soccer.skills.planar_interception import (
+        PlanarInterceptionConfig,
+        propose_planar_interception,
+    )
+
+    root, feet, ball, velocity, previous = (
+        np.asarray(x, dtype=np.float64)
+        for x in (root_xy, foot_positions_xy, ball_xy, ball_velocity_xy, previous_world_command)
+    )
+    if (
+        feet.shape != (2, 2)
+        or any(x.shape != (2,) for x in (root, ball, velocity, previous))
+        or any(not np.isfinite(x).all() for x in (root, feet, ball, velocity, previous))
+        or not math.isfinite(yaw)
+        or np.linalg.norm(previous) > 1.0 + 1e-6
+    ):
+        raise ValueError("finite actual feet, ball and bounded previous world command required")
+    foot = feet[int(np.argmin(np.linalg.norm(feet - ball, axis=1)))]
+    proposed = propose_planar_interception(
+        target_position_xy=torch.tensor(ball, dtype=torch.float32),
+        target_velocity_xy=torch.tensor(velocity, dtype=torch.float32),
+        effector_position_xy=torch.tensor(foot, dtype=torch.float32),
+        previous_velocity_xy=torch.tensor(previous, dtype=torch.float32),
+        config=PlanarInterceptionConfig((0.0, 0.0), 1.5, 1.0, 0.08),
+    ).numpy()
+    c, s = math.cos(yaw), math.sin(yaw)
+    vx = float(np.clip(c * proposed[0] + s * proposed[1], -0.5, 1.0))
+    vy = float(np.clip(-s * proposed[0] + c * proposed[1], -0.5, 0.5))
+    desired = math.atan2(float(proposed[1]), float(proposed[0]))
+    error = math.atan2(math.sin(desired - yaw), math.cos(desired - yaw))
+    command = np.array([vx, vy, np.clip(2 * error, -1.0, 1.0)], dtype=np.float32)
+    # Store the actual domain-clipped command, not an unapplied proposal.
+    actual_world = np.array([c * command[0] - s * command[1], s * command[0] + c * command[1]])
+    return command, actual_world

@@ -18,6 +18,7 @@ def main():
     for name in ("parent-hash", "own-hash", "core-expected-head", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--intercept-course", action="store_true")
+    p.add_argument("--foot-track-course", action="store_true")
     p.add_argument("--previous", type=Path)
     p.add_argument("--previous-hash")
     p.add_argument(
@@ -32,6 +33,8 @@ def main():
         default="outbound-north",
     )
     a = p.parse_args()
+    if a.foot_track_course and not a.intercept_course:
+        p.error("foot tracking is an explicit extension of the interception course")
     if a.ball_course != "outbound-north" and not a.intercept_course:
         p.error("new moving-ball geometry requires explicitly versioned interception course")
     if (a.intercept_course and (a.previous is None or a.previous_hash is None)) or (
@@ -113,6 +116,7 @@ def main():
         ROLES,
         command_toward,
         finisher_intercept_target,
+        foot_tracking_command,
         role_target,
     )
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
@@ -142,11 +146,15 @@ def main():
         if a.intercept_course
         else ("zero", "role-reactive")
     )
+    if a.foot_track_course:
+        arms = (*arms, "role-foot-track")
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native8_coached_intercept_course.v3"
+            protocol="native8_measured_foot_tracking.v4"
+            if a.foot_track_course
+            else "native8_coached_intercept_course.v3"
             if a.intercept_course
             else "native8_coached_ball_intent_baseline.v1",
             source_head=a.expected_head,
@@ -181,6 +189,10 @@ def main():
             not_a_match_or_skill_qualification=True,
             postcontact_metrics_are_not_possession_qualification=True,
             metric_forward_kinematics_uses_separate_snapshot=True,
+            foot_tracking_activation_root_gap_m=1.0 if a.foot_track_course else None,
+            foot_tracking_gain_per_sec=1.5 if a.foot_track_course else None,
+            foot_tracking_world_slew_mps_per_control=0.08 if a.foot_track_course else None,
+            nonfoot_contact_counter_is_not_fifa_adjudication=True,
             engine_version=mujoco.__version__,
             engine_is_legacy_research_fixture_not_qualified_harness=True,
             publicity_rights_not_established=True,
@@ -255,6 +267,7 @@ def main():
                     for prefix in prefixes
                 }
                 touched = np.zeros(8, np.bool_)
+                previous_world_commands = np.zeros((8, 2))
                 initial = {
                     prefix: d.qpos[lo.rq : lo.rq + 3].copy() for prefix, lo in layouts.items()
                 }
@@ -269,11 +282,16 @@ def main():
                     controls["postcontact_near_slow"],
                     controls["ball_speed_after_mps"],
                 ) = [], [], []
+                if a.foot_track_course:
+                    controls["nearest_foot_relative_speed_mps"] = []
                 for frame in range(horizon):
+                    if a.foot_track_course:
+                        metric.qpos[:] = d.qpos
+                        mujoco.mj_kinematics(m, metric)
                     ball_xy = d.qpos[layout.bq : layout.bq + 2].copy()
                     commands, targets, goals, observations = [], {}, [], []
                     horizons, reachable_flags = [], []
-                    for team, role, prefix in agents:
+                    for agent_index, (team, role, prefix) in enumerate(agents):
                         lo, stream = layouts[prefix], streams[prefix]
                         q, v = lo.canonical(d)
                         quat = q[3:7]
@@ -283,7 +301,7 @@ def main():
                         )
                         goal = role_target(team, role, ball_xy)
                         ih, ir = 0.0, False
-                        if arm == "role-intercept" and role == "finisher":
+                        if arm in ("role-intercept", "role-foot-track") and role == "finisher":
                             goal, ih, ir = finisher_intercept_target(
                                 team, q[:2], ball_xy, d.qvel[lo.bv : lo.bv + 2].copy()
                             )
@@ -296,10 +314,30 @@ def main():
                                 goal,
                                 ball_xy,
                                 maximum_forward_speed=1.0
-                                if role == "finisher" and arm in ("role-fast", "role-intercept")
+                                if role == "finisher"
+                                and arm in ("role-fast", "role-intercept", "role-foot-track")
                                 else 0.8,
                             )
                         )
+                        if (
+                            arm == "role-foot-track"
+                            and role == "finisher"
+                            and frame >= 50
+                            and np.linalg.norm(ball_xy - q[:2]) < 1.0
+                        ):
+                            command, _ = foot_tracking_command(
+                                q[:2],
+                                yaw,
+                                metric.xpos[feet[prefix], :2].copy(),
+                                ball_xy,
+                                d.qvel[lo.bv : lo.bv + 2].copy(),
+                                previous_world_commands[agent_index],
+                            )
+                        c, s = math.cos(yaw), math.sin(yaw)
+                        previous_world_commands[agent_index] = [
+                            c * command[0] - s * command[1],
+                            s * command[0] + c * command[1],
+                        ]
                         targets[prefix] = stream.propose(
                             q, v, lo.angular_velocity_body(d), command, frame=frame
                         )
@@ -324,6 +362,27 @@ def main():
                         raw[key].append(step[key])
                     metric.qpos[:] = d.qpos
                     mujoco.mj_kinematics(m, metric)
+                    if a.foot_track_course:
+                        metric.qvel[:] = d.qvel
+                        mujoco.mj_comPos(m, metric)
+                        relative_speeds = []
+                        for prefix in prefixes:
+                            nearest = min(
+                                feet[prefix],
+                                key=lambda f: np.linalg.norm(
+                                    metric.xpos[f] - d.qpos[layout.bq : layout.bq + 3]
+                                ),
+                            )
+                            jac = np.zeros((3, m.nv))
+                            mujoco.mj_jacBody(m, metric, jac, None, nearest)
+                            relative_speeds.append(
+                                float(
+                                    np.linalg.norm(
+                                        jac @ metric.qvel - d.qvel[layout.bv : layout.bv + 3]
+                                    )
+                                )
+                            )
+                        controls["nearest_foot_relative_speed_mps"].append(relative_speeds)
                     foot_gaps = np.array(
                         [
                             min(
