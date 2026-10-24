@@ -4,22 +4,28 @@ from typing import Any
 
 LEGACY = "pure-refinement-stochastic-native-v1"
 FULL = "pure-refinement-full-recovery-stochastic-native-v2"
+DIAGNOSTIC = "receiver-role-stochastic-diagnostic-native-v3"
 
 
-def validate_actor_clock(episode: dict[str, Any], n: int) -> bool:
+def validate_actor_clock(
+    episode: dict[str, Any], n: int, *, allow_diagnostic: bool = False
+) -> bool:
     """Return full-coverage mode after checking the observed terminal clock.
 
     The formal motion deadline remains 300; at most 100 recovery controls
     follow. A failed episode stops at its actual last control in either phase.
     """
     kind = episode.get("controller_kind")
-    full = kind == FULL
+    if type(allow_diagnostic) is not bool:
+        raise ValueError("explicit diagnostic-only clock scope required")
+    kinds = (LEGACY, FULL, DIAGNOSTIC) if allow_diagnostic else (LEGACY, FULL)
+    full = kind in (FULL, DIAGNOSTIC)
     motion = episode.get("motion_reference_controls")
     tail = episode.get("observed_recovery_controls")
     total = episode.get("total_observed_controls")
     terminal = episode.get("termination")
     if (
-        kind not in (LEGACY, FULL)
+        kind not in kinds
         or type(n) is not int
         or not 1 <= n <= (400 if full else 300)
         or type(motion) is not int

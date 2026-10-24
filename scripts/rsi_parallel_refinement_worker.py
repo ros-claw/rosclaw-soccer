@@ -79,6 +79,8 @@ def run_pair(pair):
                 sampling_seed=row["sampling_seed"],
                 sampling_profile=cfg["sampling_profile"],
                 sampling_include_recovery=cfg.get("sampling_include_recovery", False),
+                receiver_intent_mode=cfg.get("receiver_intent_mode", "pursuit-v1"),
+                receiver_role_ablation=cfg.get("receiver_role_ablation", False),
             )
             if s["source"] is None:
                 from scripts.rsi_pass_transfer_trial import collect_trial

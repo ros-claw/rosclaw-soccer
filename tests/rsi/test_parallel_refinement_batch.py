@@ -67,6 +67,41 @@ def test_full_coverage_new_version_seeds_and_all_recovery_rows():
         verify_parallel_batch(r, courses)
 
 
+def test_parallel_role_intervention_uses_same_noise_new_environment_not_old_PPO_protocol():
+    from rosclaw_soccer.rsi.refinement_actor_clock import DIAGNOSTIC
+
+    r, _ = fixture()
+    cfg = parallel_config(26, 32, full_recovery=True, receiver_role_ablation=True)
+    r["config"] = cfg
+    courses = [r["records"][i]["course"] | dict(state_id=26) for i in (0, 32, 64)]
+    for pair in range(48):
+        for plan in pair_plan(cfg, courses, pair):
+            r["records"][plan["index"]].update(
+                plan,
+                controller_kind=DIAGNOSTIC,
+                stochastic_controls=389,
+                deterministic_recovery_excluded_from_actor_rows=False,
+                receiver_intent_mode="anchor-plane-v2",
+                receiver_role_ablation=True,
+            )
+    verify_parallel_batch(r, courses)
+    assert cfg["seeds"] == parallel_config(26, 32, full_recovery=True)["seeds"]
+    assert cfg["noise_is_new"] is False and cfg["factual_worlds_reexecuted"] == 0
+    old = copy.deepcopy(r)
+    old["config"] = parallel_config(26, 32, full_recovery=True)
+    with pytest.raises(ValueError):
+        verify_parallel_batch(old, courses)
+    r["records"][0]["receiver_intent_mode"] = "pursuit-v1"
+    with pytest.raises(ValueError):
+        verify_parallel_batch(r, courses)
+
+
+@pytest.mark.parametrize("state,full", [(25, True), (26, False)])
+def test_role_variant_requires_explicit_preregistered_model_and_full_clock(state, full):
+    with pytest.raises(ValueError):
+        parallel_config(state, 32, full_recovery=full, receiver_role_ablation=True)
+
+
 @pytest.mark.parametrize("fault", ["missing", "seed", "count", "PPO", "law", "arm", "tail"])
 def test_invalid_partial_or_authority_data_cannot_train(fault):
     r, courses = fixture()

@@ -49,3 +49,14 @@ def test_full_returns_preserve_motion_credit_and_add_direct_recovery_credit_no_d
     assert full[-1] == -3.0 and len(full[289:]) == 100
     assert full[289] == np.float32(-3 * 0.995**99)
     assert full_actor_terminal_returns(338, -3.0)[-1] == -3.0
+
+
+def test_diagnostic_clock_requires_opt_in_and_never_implicitly_becomes_PPO():
+    from rosclaw_soccer.rsi.refinement_actor_clock import DIAGNOSTIC
+
+    e = clock() | dict(controller_kind=DIAGNOSTIC)
+    with pytest.raises(ValueError):
+        validate_actor_clock(e, 389)
+    assert validate_actor_clock(e, 389, allow_diagnostic=True)
+    with pytest.raises(ValueError):
+        validate_actor_clock(e, 389, allow_diagnostic=1)

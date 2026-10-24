@@ -24,11 +24,14 @@ def main():
     p.add_argument("--seeds-per-initial", type=int, choices=(4, 32), required=True)
     p.add_argument("--workers", type=int, choices=(1, 2, 4), required=True)
     p.add_argument("--full-recovery", action="store_true")
+    p.add_argument("--receiver-role-ablation", action="store_true")
     p.add_argument("--audit-source-root", type=Path)
     p.add_argument("--producer-head")
     p.add_argument("--calibration-own-root", type=Path)
     p.add_argument("--calibration-producer-head")
     a = p.parse_args()
+    if a.receiver_role_ablation and (not a.full_recovery or a.state_id != 26):
+        p.error("separate full-recovery state26 receiver-role protocol required")
     if (a.audit_source_root is None) != (a.producer_head is None):
         p.error("own audit requires exact source root/head")
     if (a.calibration_own_root is None) != (a.calibration_producer_head is None) or (
@@ -38,6 +41,8 @@ def main():
     from rosclaw_soccer.rsi.parallel_refinement_batch import (
         FULL_OWN,
         FULL_SOURCE,
+        ROLE_OWN,
+        ROLE_SOURCE,
         parallel_config,
         verify_parallel_batch,
     )
@@ -52,7 +57,12 @@ def main():
     clean(a.expected_head)
     if a.output.exists():
         raise ValueError("unused once-only parallel output required")
-    cfg = parallel_config(a.state_id, a.seeds_per_initial, full_recovery=a.full_recovery)
+    cfg = parallel_config(
+        a.state_id,
+        a.seeds_per_initial,
+        full_recovery=a.full_recovery,
+        receiver_role_ablation=a.receiver_role_ablation,
+    )
     source_status = (
         FULL_SOURCE
         if a.full_recovery
@@ -61,6 +71,8 @@ def main():
     own_status = (
         FULL_OWN if a.full_recovery else "GEN1_PARALLEL_OWN_POLICY_BATCH_ALL_NATIVE_LAW_MATCH"
     )
+    if a.receiver_role_ablation:
+        source_status, own_status = ROLE_SOURCE, ROLE_OWN
     admitted = admit(a)
     pins = admitted[1]
     training = json.loads((a.training_root / "complete.json").read_text())
@@ -95,7 +107,13 @@ def main():
             cal["status"] != own_status
             or cal["source_head"] != a.calibration_producer_head
             or cal["training_hash"] != a.training_hash
-            or cal["config"] != parallel_config(a.state_id, 4, full_recovery=a.full_recovery)
+            or cal["config"]
+            != parallel_config(
+                a.state_id,
+                4,
+                full_recovery=a.full_recovery,
+                receiver_role_ablation=a.receiver_role_ablation,
+            )
             or cal["independent_whole_world_replay"] is not True
             or cal["sampling_law_audit_passed"] is not True
         ):
