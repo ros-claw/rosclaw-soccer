@@ -39,7 +39,7 @@ def main():
         or plan["courses"] != [c.course_id for c in courses]
         or plan["course_bank_hash"] != bank_hash
         or plan["hardware_authorized"] is not False
-        or plan["training_expected_updates"] != 512
+        or plan["training_expected_updates"] not in (512, 1024)
     ):
         raise ValueError("complete fixed five-course SIM-only exam family required")
     a.output.mkdir(parents=True, exist_ok=True)
@@ -105,6 +105,7 @@ def main():
                 or fitted["plan_hash"] != plan["training_plan_hash"]
                 or fitted["seed"] != a.seed
                 or fitted["actual_BC_actor_optimizer_updates"] != 512
+                or fitted["optimizer_updates"] != plan["training_expected_updates"]
                 or fitted["fresh_physical_task_gain_not_claimed"] is not True
             ):
                 raise ValueError("completed training differs from exact family commitment")
@@ -201,7 +202,7 @@ def main():
                     results=results,
                     native_steps=sum(row["native_steps"] for row in results),
                     optimizer_updates=0,
-                    imported_BC_updates=512,
+                    imported_BC_updates=plan["training_expected_updates"],
                     hardware_authorized=False,
                     promotion_authorized=False,
                     goal_complete=False,

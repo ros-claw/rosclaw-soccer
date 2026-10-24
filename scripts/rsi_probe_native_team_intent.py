@@ -122,7 +122,11 @@ def main():
             raise ValueError("exact completed command training required")
         trained = json.loads(path.read_text())
         if (
-            trained["status"] != "NATIVE_ROLE_COMMAND_BC_TRAINED_NOT_PHYSICALLY_EVALUATED"
+            trained["status"]
+            not in (
+                "NATIVE_ROLE_COMMAND_BC_TRAINED_NOT_PHYSICALLY_EVALUATED",
+                "NATIVE_ROLE_COMMAND_DAGGER_TRAINED_NOT_PHYSICALLY_EVALUATED",
+            )
             or trained["actual_BC_actor_optimizer_updates"] != 512
             or trained["hardware_authorized"] is not False
         ):
@@ -281,7 +285,7 @@ def main():
             coached_reference_arm_always_included=True,
             optimizer_updates=0,
             imported_command_training_hash=a.command_training_hash,
-            imported_BC_updates=512 if trained is not None else 0,
+            imported_BC_updates=trained["optimizer_updates"] if trained is not None else 0,
             physical_evaluation_performs_no_optimizer_updates=True,
             no_parent_torque_artifact_body_hash_rebinding=True,
             no_saved_action_replay=True,

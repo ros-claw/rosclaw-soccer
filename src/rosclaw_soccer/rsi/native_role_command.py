@@ -107,8 +107,11 @@ class NativeRoleCommandPolicy:
             or value["observation_dim"] != ROLE_COMMAND_OBSERVATION_DIM
             or value["action_semantics"] != "ABSOLUTE_BODY_VELOCITY_COMMAND_BEFORE_CLEARANCE"
             or value["hardware_authorized"] is not False
-            or value["optimizer_updates"] != 512
-            or value["training_kind"] != "PUBLIC_COURSE_COACHED_BEHAVIOR_CLONING"
+            or (value["optimizer_updates"], value["training_kind"])
+            not in (
+                (512, "PUBLIC_COURSE_COACHED_BEHAVIOR_CLONING"),
+                (1024, "PUBLIC_COURSE_DAGGER_CONTINUATION"),
+            )
         ):
             raise ValueError("explicit bound SIM command model semantics required")
         shapes = {

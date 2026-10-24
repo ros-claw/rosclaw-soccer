@@ -72,6 +72,17 @@ def test_model_binding_and_bytes_are_both_checked(tmp_path):
         )
 
 
+def test_dagger_continuation_requires_the_explicit_update_kind_pair(tmp_path):
+    path, digest = model_file(
+        tmp_path, optimizer_updates=1024, training_kind="PUBLIC_COURSE_DAGGER_CONTINUATION"
+    )
+    policy = NativeRoleCommandPolicy(path, expected_hash=digest, expected_binding="test-binding")
+    assert policy.metadata["optimizer_updates"] == 1024
+    path, digest = model_file(tmp_path, optimizer_updates=1024)
+    with pytest.raises(ValueError):
+        NativeRoleCommandPolicy(path, expected_hash=digest, expected_binding="test-binding")
+
+
 def test_observation_uses_previous_command_but_never_current_control_label():
     q, v = np.zeros(295), np.zeros(286)
     layouts, body_names = {}, {}
