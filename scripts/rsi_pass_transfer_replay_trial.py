@@ -46,7 +46,13 @@ def replay_trial(
     receiver_command_actor=None,
 ):
     from rosclaw_soccer.rsi.receiving_initialization_protocol import KIND as RECEIVING_KIND
+    from rosclaw_soccer.rsi.receiving_task_command_actor import ReceivingTaskCommandActor
     from rosclaw_soccer.rsi.shared_native_receiving_command_player import KIND as COMMAND_KIND
+    from rosclaw_soccer.rsi.shared_native_receiving_command_player import TASK_KIND
+
+    task_conditioned = type(receiver_command_actor) is ReceivingTaskCommandActor
+    if claim.get("receiver_command_task_conditioned", False) is not task_conditioned:
+        raise ValueError("exact explicit task-conditioned command replay required")
 
     if (claim.get("receiver_command_neural", False) is True) != (
         receiver_command_actor is not None
@@ -133,7 +139,7 @@ def replay_trial(
             or claim.get("sampling_law") != "box-truncated-ar1"
             or claim.get("controller_kind")
             != (
-                COMMAND_KIND
+                (TASK_KIND if task_conditioned else COMMAND_KIND)
                 if receiver_command_actor is not None
                 else RECEIVING_KIND
                 if receiver_motor is not None
@@ -293,7 +299,11 @@ def replay_trial(
             )
 
             receiving_player = SharedNativeReceivingCommandPlayer(
-                receiving_player, receiver_command_actor, home_xy=home, pass_direction=forward
+                receiving_player,
+                receiver_command_actor,
+                home_xy=home,
+                pass_direction=forward,
+                capture_goal_world=goal if task_conditioned else None,
             )
     calls_per_control = (
         5 if receiver_command_actor is not None else 4 if receiving_player is not None else 2
@@ -504,7 +514,7 @@ def replay_trial(
     if receiver_command_actor is not None:
         from rosclaw_soccer.rsi.shared_native_receiving_command_player import command_metadata
 
-        result.update(command_metadata(w.control_steps))
+        result.update(command_metadata(w.control_steps, task_conditioned=task_conditioned))
     if result != {k: v for k, v in claim.items() if k != "artifacts"}:
         raise ValueError("own recovery/receiving/delivery/whole counters differ")
     write_once(output / f"trial{index}.json", result)

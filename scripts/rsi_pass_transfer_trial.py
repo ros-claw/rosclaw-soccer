@@ -43,6 +43,9 @@ def collect_trial(
     receiver_motor=None,
     receiver_command_actor=None,
 ):
+    from rosclaw_soccer.rsi.receiving_task_command_actor import ReceivingTaskCommandActor
+
+    task_conditioned = type(receiver_command_actor) is ReceivingTaskCommandActor
     if receiver_command_actor is not None:
         from rosclaw_soccer.rsi.shared_native_receiving_command_player import admit_command_actor
 
@@ -236,7 +239,11 @@ def collect_trial(
             )
 
             receiving_player = SharedNativeReceivingCommandPlayer(
-                receiving_player, receiver_command_actor, home_xy=home, pass_direction=forward
+                receiving_player,
+                receiver_command_actor,
+                home_xy=home,
+                pass_direction=forward,
+                capture_goal_world=goal if task_conditioned else None,
             )
     calls_per_control = (
         5 if receiver_command_actor is not None else 4 if receiving_player is not None else 2
@@ -451,7 +458,7 @@ def collect_trial(
     if receiver_command_actor is not None:
         from rosclaw_soccer.rsi.shared_native_receiving_command_player import command_metadata
 
-        result.update(command_metadata(w.control_steps))
+        result.update(command_metadata(w.control_steps, task_conditioned=task_conditioned))
     write_once(folder / "complete.json", result)
     from rosclaw_soccer.rsi.pass_trial_logging import trial_progress
 

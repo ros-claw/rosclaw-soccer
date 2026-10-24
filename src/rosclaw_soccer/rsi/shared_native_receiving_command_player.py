@@ -9,14 +9,19 @@ import numpy as np
 import torch
 
 from rosclaw_soccer.rsi.receiving_command_actor import ReceivingCommandActor, command_inputs
+from rosclaw_soccer.rsi.receiving_task_command_actor import (
+    ReceivingTaskCommandActor,
+    receiving_task_context6,
+)
 from rosclaw_soccer.rsi.shared_native_receiving_player import SharedNativeReceivingPlayer
 
 KIND = "receiving-neural-command-bc-native-v1"
+TASK_KIND = "receiving-neural-task-command-dagger-native-v2"
 
 
-def admit_command_actor(actor: ReceivingCommandActor) -> None:
+def admit_command_actor(actor: ReceivingCommandActor | ReceivingTaskCommandActor) -> None:
     if (
-        type(actor) is not ReceivingCommandActor
+        type(actor) not in (ReceivingCommandActor, ReceivingTaskCommandActor)
         or actor.training
         or any(
             p.requires_grad
@@ -35,12 +40,25 @@ class SharedNativeReceivingCommandPlayer:
     def __init__(
         self,
         motor: SharedNativeReceivingPlayer,
-        actor: ReceivingCommandActor,
+        actor: ReceivingCommandActor | ReceivingTaskCommandActor,
         *,
         home_xy: np.ndarray,
         pass_direction: np.ndarray,
+        capture_goal_world: np.ndarray | None = None,
     ) -> None:
         admit_command_actor(actor)
+        if type(actor) is ReceivingTaskCommandActor:
+            if (
+                capture_goal_world is None
+                or capture_goal_world.shape != (3,)
+                or capture_goal_world.dtype != np.float64
+                or not np.isfinite(capture_goal_world).all()
+            ):
+                raise ValueError(
+                    "explicit communicated capture goal for task-conditioned actor required"
+                )
+        elif capture_goal_world is not None:
+            raise ValueError("legacy112 actor cannot implicitly consume a task goal")
         if (
             type(motor) is not SharedNativeReceivingPlayer
             or motor.decisions != 0
@@ -58,6 +76,7 @@ class SharedNativeReceivingCommandPlayer:
             )
         self.motor, self.actor = motor, actor
         self.home_xy, self.pass_direction = home_xy.copy(), pass_direction.copy()
+        self.capture_goal_world = None if capture_goal_world is None else capture_goal_world.copy()
         self.launch_seen = False
         self.pending_launch: bool | None = None
         self.neural_command_calls = 0
@@ -95,8 +114,15 @@ class SharedNativeReceivingCommandPlayer:
             ):
                 raise ValueError("current own pursuit proposal required, never teacher command")
             self.neural_command_calls += 1
+            policy_inputs = features
+            task_context = None
+            if self.capture_goal_world is not None:
+                task_context = receiving_task_context6(
+                    q[:7], self.capture_goal_world, self.pass_direction
+                )
+                policy_inputs = np.r_[features, task_context]
             with torch.no_grad():
-                command = self.actor(torch.from_numpy(features[None]))[0].numpy().copy()
+                command = self.actor(torch.from_numpy(policy_inputs[None]))[0].numpy().copy()
             target, trace = body.propose(command, anchor_world, frame=frame)
             if next_phase != trace["phase"]:
                 raise ValueError("role proposal and actual motor share one original phase clock")
@@ -107,6 +133,11 @@ class SharedNativeReceivingCommandPlayer:
                 command_launch_seen_before=np.array(self.launch_seen),
                 command_launch_seen_proposed=np.array(launched),
             )
+            if task_context is not None:
+                trace.update(
+                    command_inputs118=policy_inputs.copy(),
+                    command_task_context6=task_context.copy(),
+                )
             self.pending_launch = launched
             return target, trace
         except Exception:
@@ -127,14 +158,19 @@ class SharedNativeReceivingCommandPlayer:
             raise
 
 
-def command_metadata(controls: int) -> dict[str, str | int | bool]:
-    if type(controls) is not int or not 1 <= controls <= 400:
+def command_metadata(
+    controls: int, *, task_conditioned: bool = False
+) -> dict[str, str | int | bool]:
+    if type(controls) is not int or not 1 <= controls <= 400 or type(task_conditioned) is not bool:
         raise ValueError("bounded actual neural role controls required")
-    return dict(
-        controller_kind=KIND,
+    result: dict[str, str | int | bool] = dict(
+        controller_kind=TASK_KIND if task_conditioned else KIND,
         receiver_command_neural=True,
         receiver_command_neural_calls=controls,
         receiver_command_updates_during_episode=0,
         receiver_command_teacher_actions_executed=False,
         receiver_command_own_body_and_actual_feedback=True,
     )
+    if task_conditioned:
+        result["receiver_command_task_conditioned"] = True
+    return result

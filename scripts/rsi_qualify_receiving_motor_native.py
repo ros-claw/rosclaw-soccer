@@ -44,6 +44,7 @@ def main():
     p.add_argument("--motor-own-root", type=Path)
     p.add_argument("--motor-own-hash")
     p.add_argument("--untrained-command-reference", action="store_true")
+    p.add_argument("--command-stage", choices=("bc-v1", "task-dagger-v2"), default="bc-v1")
     a = p.parse_args()
     role_args = (
         a.command_training_root,
@@ -53,6 +54,9 @@ def main():
         a.motor_own_hash,
     )
     command_mode = any(v is not None for v in role_args)
+    task_mode = a.command_stage == "task-dagger-v2"
+    if task_mode and (not command_mode or a.untrained_command_reference):
+        p.error("task DAgger needs an explicit trained snapshot, not a BC initialization reference")
     if command_mode and any(v is None for v in role_args):
         p.error(
             "neural command pilot requires training root/hash/seed and physical motor own root/hash"
@@ -70,6 +74,10 @@ def main():
         source_status = "RECEIVING_COMMAND_UNTRAINED_REFERENCE_PENDING_OWN"
         own_status = "RECEIVING_COMMAND_UNTRAINED_REFERENCE_ALL_OWN_MATCH"
         role_binding["command_reference_untrained"] = True
+    if task_mode:
+        source_status = "RECEIVING_TASK_COMMAND_DAGGER_PILOT_PENDING_OWN"
+        own_status = "RECEIVING_TASK_COMMAND_DAGGER_PILOT_ALL_OWN_MATCH"
+        role_binding["command_stage"] = "task-dagger-v2"
     if (a.audit_source_root is None) != (a.producer_head is None):
         p.error("exact independent producer root/head pair required")
     a.state_id = 26
@@ -154,12 +162,18 @@ def main():
             raise ValueError("exact own-native zero-identity receiving motor proof required")
         bc = read(a.command_training_root, a.command_training_hash)
         if (
-            bc["status"] != "RECEIVING_COMMAND_BC_THREE_SEEDS_TRAINED_PENDING_OWN_NATIVE"
+            bc["status"]
+            != (
+                "RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE"
+                if task_mode
+                else "RECEIVING_COMMAND_BC_THREE_SEEDS_TRAINED_PENDING_OWN_NATIVE"
+            )
             or bc["optimizer_updates"] != 1200
             or bc["new_physical_steps"] != 0
             or [r["seed"] for r in bc["candidates"]] != [732023, 732024, 732025]
             or any(
-                r["optimizer_updates"] != 400 or len(r["changed_parameter_tensors"]) != 6
+                r["optimizer_updates"] != 400
+                or len(r["changed_parameter_tensors"]) != (7 if task_mode else 6)
                 for r in bc["candidates"]
             )
         ):
@@ -255,7 +269,7 @@ def main():
     motor.eval().requires_grad_(False)
     admit_motor(motor)
     command_actor = None
-    if command_mode:
+    if command_mode and not task_mode:
         from rosclaw_soccer.rsi.receiving_command_actor import ReceivingCommandActor
         from rosclaw_soccer.rsi.shared_native_receiving_command_player import admit_command_actor
 
@@ -307,6 +321,22 @@ def main():
             )
         command_actor.eval().requires_grad_(False)
         admit_command_actor(command_actor)
+    elif task_mode:
+        from rosclaw_soccer.rsi.receiving_task_command_checkpoint import load_task_command
+        from scripts.rsi_native_fresh_common import receipt
+
+        _, parent_bc = receipt(pins, bc["parent_bc_hash"])
+        parent_candidate = next(r for r in parent_bc["candidates"] if r["seed"] == a.command_seed)
+        parent_cp = Path(parent_candidate["checkpoint_path"])
+        if (
+            pins.get(str(parent_cp)) != parent_candidate["checkpoint_hash"]
+            or file_hash(parent_cp) != candidate["parent_checkpoint_hash"]
+        ):
+            raise ValueError("exact admitted parent command snapshot required")
+        parent = torch.load(parent_cp, map_location="cpu", weights_only=True)
+        command_actor = load_task_command(
+            torch.load(command_cp, map_location="cpu", weights_only=True), bc, candidate, parent
+        )
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",

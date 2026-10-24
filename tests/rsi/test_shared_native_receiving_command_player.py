@@ -111,3 +111,37 @@ def test_command_actor_requires_explicit_qualified_motor_before_allocation(repla
             )
         else:
             collect_trial(None, None, dict(assisted=False), **kwargs)
+
+
+def test_task_conditioned_command_uses_explicit_own_frame_goal_without_changing_parent_initially(
+    monkeypatch,
+):
+    from rosclaw_soccer.rsi.receiving_task_command_actor import (
+        ReceivingTaskCommandActor,
+        receiving_task_context6,
+    )
+
+    w, p = fixture(monkeypatch)
+    goal = np.array([3.0, 0.0, 0.11])
+    anchor = np.array([3.25, 0.12, 0.11])
+    child = (
+        ReceivingTaskCommandActor(p.actor, torch.zeros(6), torch.ones(6))
+        .eval()
+        .requires_grad_(False)
+    )
+    player = SharedNativeReceivingCommandPlayer(
+        p.motor, child, home_xy=p.home_xy, pass_direction=p.pass_direction, capture_goal_world=goal
+    )
+    features, command = base(p, anchor)
+    q, _ = p.motor.layout.canonical(w.data)
+    target, trace = player.propose(command, anchor, frame=0)
+    np.testing.assert_array_equal(trace["command_inputs118"][:112], features)
+    np.testing.assert_array_equal(
+        trace["command_task_context6"], receiving_task_context6(q[:7], goal, p.pass_direction)
+    )
+    with torch.no_grad():
+        expected = p.actor(torch.from_numpy(features[None]))[0].numpy()
+    np.testing.assert_array_equal(trace["command_policy_action3"], expected)
+    w.advance({"a/": np.zeros(29), "b/": target})
+    player.commit()
+    assert player.motor.decisions == 1
