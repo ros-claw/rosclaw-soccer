@@ -1,4 +1,4 @@
-"""Admit a predeclared closed peer-PPO producer, then run the paired native exam.
+"""Admit a closed peer/gen1 PPO producer, then run the paired native exam.
 
 Receipt hash is derived only after the exact producer closes. Output remains
 once-only and the downstream strict loader checks actual checkpoint/data/state.
@@ -15,9 +15,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, add_help=False)
     p.add_argument("--training-root", type=Path, required=True)
     p.add_argument("--training-producer-head", required=True)
+    p.add_argument("--continual", action="store_true")
     a, rest = p.parse_known_args()
     if "--training-hash" in rest:
         p.error("derived exact predeclared producer hash must not be overridden")
+    from rosclaw_soccer.rsi import refinement_continual_checkpoint as continual
     from rosclaw_soccer.rsi.refinement_onpolicy_checkpoint import file_hash
     from rosclaw_soccer.rsi.refinement_onpolicy_learning import PEER_KIND, STATUS
     from scripts.rsi_run_refinement_paired_exam import main as exam
@@ -29,8 +31,8 @@ def main():
     trained = json.loads(tp.read_text())
     if (
         trained["source_head"] != a.training_producer_head
-        or trained["checkpoint_kind"] != PEER_KIND
-        or trained["status"] != STATUS
+        or trained["checkpoint_kind"] != (continual.KIND if a.continual else PEER_KIND)
+        or trained["status"] != (continual.STATUS if a.continual else STATUS)
         or trained["new_actor_steps"] < 1
     ):
         raise ValueError("exact actually updated peer-PPO producer required")

@@ -23,11 +23,11 @@ def main():
         p.error("own replay requires exact predeclared producer head/root")
     from rosclaw_soccer.rsi.refinement_onpolicy_checkpoint import (
         file_hash,
-        load_onpolicy_refinement,
     )
     from rosclaw_soccer.rsi.refinement_paired_exam import exam_config, verify_exam
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_joint_delivery_pilot_common import local_preflight
+    from scripts.rsi_learned_refinement_common import open_learned_model
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
     from scripts.rsi_refinement_onpolicy_data import admit
@@ -118,12 +118,7 @@ def main():
         from scripts.rsi_self_teacher_search_common import open_setup
 
         setup, old = open_setup(scope, pf, pins, bank, behavior_root / "scene.xml")
-        learned, _ = load_onpolicy_refinement(
-            old,
-            behavior_training_hash=scope["student_training_hash"],
-            root=a.training_root,
-            expected_receipt_hash=a.training_hash,
-        )
+        learned, _ = open_learned_model(old, a, pins, scope)
         baseline = next(r for r in experience["records"] if r["index"] == 0)
         pre_cfg = dict(unsearched_TRAIN_offsets_forward_m=[-0.005, 0.005])
         # Baseline initial primitives belong to the stochastic source, not its ancestor.

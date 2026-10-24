@@ -1,6 +1,8 @@
 """One bounded generation1 actor/critic/Adam continuation; research only."""
 
 import copy
+import json
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -134,3 +136,120 @@ def validate_continual_checkpoint(
         or rng.shape != torch.get_rng_state().shape
     ):
         raise ValueError("valid continued CPU RNG state required")
+
+
+def load_continual_refinement(
+    behavior: RefinementMotorAdapter,
+    prior_critic: MotorCritic,
+    prior_optimizer: dict[str, Any],
+    *,
+    prior_training_hash: str,
+    root: Path,
+    expected_receipt_hash: str,
+) -> tuple[RefinementMotorAdapter, dict[str, Any]]:
+    from rosclaw_soccer.rsi.refinement_onpolicy_checkpoint import file_hash
+
+    rp, dp = root / "complete.json", root / "declaration.json"
+    if (
+        root.is_symlink()
+        or (root / "failed.json").exists()
+        or file_hash(rp) != expected_receipt_hash
+    ):
+        raise ValueError("exact complete generation1 training required")
+    r, d = [json.loads(x.read_text()) for x in (rp, dp)]
+    cfg = continual_config(r["config"]["state_id"])
+    if (
+        r["status"] != STATUS
+        or r["checkpoint_kind"] != KIND
+        or r["config"] != cfg
+        or d["config"] != cfg
+        or r["prior_training_hash"] != prior_training_hash
+        or r["declaration_hash"] != file_hash(dp)
+        or any(
+            r[k] != d[k]
+            for k in (
+                "input_file_hashes",
+                "prior_training_hash",
+                "prepared_hash",
+                "frozen_parent_hash",
+                "source_head",
+            )
+        )
+        or r["new_actor_steps"] != r["new_critic_steps"]
+        or r["cumulative_actor_steps"] != 4 + r["new_actor_steps"]
+        or r["cumulative_critic_steps"] != 4 + r["new_critic_steps"]
+        or r["old_arm_rows_used"] != 0
+        or r["new_policy_rollout_worlds"] != 24
+        or r["physical_steps_executed"] != 0
+        or any(
+            r[k] is not True
+            for k in (
+                "trained_prior_critic_used",
+                "prior_adam_moments_carried",
+                "learning_rate_rebased",
+                "two_generation_parameter_continuity_verified",
+            )
+        )
+        or any(
+            r[k] is not False
+            for k in (
+                "hardware_authorized",
+                "promotion_authorized",
+                "goal_complete",
+                "continuous_learning_proven",
+                "physical_retention_proven",
+            )
+        )
+        or len(r["history"]) != 4
+        or sum(h["update"]["applied"] for h in r["history"]) != r["new_actor_steps"]
+    ):
+        raise ValueError("exact new-policy generation1 continuity contract required")
+    for i, h in enumerate(r["history"], start=1):
+        if (
+            h["epoch"] != i
+            or type(h["update"]["applied"]) is not bool
+            or not 1 <= len(h["update"]["attempts"]) <= 8
+        ):
+            raise ValueError("all bounded actual generation1 update history required")
+        if h["update"]["applied"] and (
+            not h["update"]["attempts"][-1]["accepted"]
+            or not 0 <= h["update"]["attempts"][-1]["kl"] <= 0.015
+        ):
+            raise ValueError("all accepted continuation steps must satisfy trust region")
+    paths = [
+        Path(p)
+        for p, v in r["input_file_hashes"].items()
+        if v == r["prepared_hash"] and p.endswith("/complete.json")
+    ]
+    if len(paths) != 1 or file_hash(paths[0]) != r["prepared_hash"]:
+        raise ValueError("exact unique independently prepared learned-arm batch required")
+    prepared = json.loads(paths[0].read_text())
+    if (
+        prepared["status"] != "CONTINUAL_NEW_LEARNED_ARM24_AND_TRAINED_CRITIC_PREPARED_NOT_UPDATED"
+        or prepared["config"] != cfg
+        or prepared["prior_training_hash"] != prior_training_hash
+        or prepared["selected_indices"] != list(range(1, 48, 2))
+        or prepared["old_arm_rows_used"] != 0
+    ):
+        raise ValueError("only actual new learned-arm experience can train a successor")
+    cp = Path(r["checkpoint_path"])
+    if (
+        cp.resolve().parent != root.resolve()
+        or file_hash(cp, maximum=16 * 1024 * 1024) != r["checkpoint_hash"]
+    ):
+        raise ValueError("confined exact tensor-only generation1 checkpoint required")
+    state = torch.load(cp, map_location="cpu", weights_only=True)
+    validate_continual_checkpoint(
+        state,
+        behavior,
+        prior_critic,
+        prior_optimizer,
+        config=cfg,
+        commitments={
+            k: r[k] for k in ("prior_training_hash", "prepared_hash", "frozen_parent_hash")
+        },
+        steps=r["new_actor_steps"],
+    )
+    result = copy.deepcopy(behavior).eval().requires_grad_(False)
+    result.head.load_state_dict(state["head"], strict=True)
+    return result, r
