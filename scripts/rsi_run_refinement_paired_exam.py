@@ -18,6 +18,7 @@ def main():
     p.add_argument("--state-id", type=int, choices=(25, 26), required=True)
     p.add_argument("--audit-source-root", type=Path)
     p.add_argument("--producer-head")
+    p.add_argument("--receiver-role-study", action="store_true")
     a = p.parse_args()
     if (a.audit_source_root is None) != (a.producer_head is None):
         p.error("own replay requires exact predeclared producer head/root")
@@ -35,7 +36,17 @@ def main():
     clean(a.expected_head)
     if a.output.exists():
         raise ValueError("unused once-only physical exam output required")
-    cfg = exam_config(a.state_id)
+    cfg = exam_config(a.state_id, receiver_role_study=a.receiver_role_study)
+    source_status = (
+        "RECEIVER_ROLE_PAIRED12_COLLECTED_PENDING_OWN_NATIVE"
+        if a.receiver_role_study
+        else "PPO_PAIRED_MEAN12_COLLECTED_PENDING_OWN_NATIVE"
+    )
+    own_status = (
+        "RECEIVER_ROLE_PAIRED12_ALL_OWN_NATIVE_MATCH"
+        if a.receiver_role_study
+        else "PPO_PAIRED_MEAN12_ALL_OWN_NATIVE_MATCH"
+    )
     experience, _, pins, scope, bank, pf, behavior_root = admit(
         a.experience_root, a.own_root, a.own_hash, a.state_id
     )
@@ -45,6 +56,16 @@ def main():
     trained = json.loads(tp.read_text())
     if trained["config"]["state_id"] != a.state_id:
         raise ValueError("training state differs from preregistered exam")
+    if a.receiver_role_study:
+        from rosclaw_soccer.rsi.continuing_refinement_contract import KIND
+
+        if (
+            trained["checkpoint_kind"] != KIND
+            or trained["config"]["generation_index"] != 2
+            or trained["cumulative_actor_steps"] != 12
+            or trained["cumulative_critic_steps"] != 12
+        ):
+            raise ValueError("fixed actual generation2 A behavior required for receiver ablation")
     for k, v in trained["input_file_hashes"].items():
         if k in pins and pins[k] != v:
             raise ValueError("conflicting learned ancestry")
@@ -59,7 +80,7 @@ def main():
         sp, dp = root / "complete.json", root / "declaration.json"
         source, declaration = [json.loads(f.read_text()) for f in (sp, dp)]
         if (
-            source["status"] != "PPO_PAIRED_MEAN12_COLLECTED_PENDING_OWN_NATIVE"
+            source["status"] != source_status
             or source["config"] != cfg
             or declaration["config"] != cfg
             or source["source_head"] != a.producer_head
@@ -132,17 +153,20 @@ def main():
                 for arm in cfg["arms"]:
                     r = collect_trial(
                         setup,
-                        old if arm == "old" else learned,
+                        old if arm == "old" and not a.receiver_role_study else learned,
                         course,
                         output=a.output,
                         index=len(records),
                         counts=counts,
                         emit_course_rows=False,
+                        receiver_intent_mode="anchor-plane-v2"
+                        if arm == "anchor_plane"
+                        else "pursuit-v1",
                     )
                     r["arm"] = arm
                     records.append(r)
                     write_once(a.output / f"record{r['index']}.json", r)
-            status = "PPO_PAIRED_MEAN12_COLLECTED_PENDING_OWN_NATIVE"
+            status = source_status
         else:
             from scripts.rsi_pass_transfer_replay_trial import replay_trial
 
@@ -155,7 +179,7 @@ def main():
                 bare = {k: v for k, v in claim.items() if k != "arm"}
                 r, prior = replay_trial(
                     setup,
-                    old if arm == "old" else learned,
+                    old if arm == "old" and not a.receiver_role_study else learned,
                     claim["course"],
                     bare,
                     raw_root=a.audit_source_root,
@@ -164,6 +188,9 @@ def main():
                     counts=counts,
                     prior_initial=prior,
                     emit_course_rows=False,
+                    receiver_intent_mode="anchor-plane-v2"
+                    if arm == "anchor_plane"
+                    else "pursuit-v1",
                 )
                 r["arm"] = arm
                 records.append(r)
@@ -173,7 +200,7 @@ def main():
                 or counts != source["counts"]
             ):
                 raise ValueError("all paired own-native results must match")
-            status = "PPO_PAIRED_MEAN12_ALL_OWN_NATIVE_MATCH"
+            status = own_status
         verify_exam(dict(config=cfg, records=records, counts=counts), courses)
         check_pins(pins)
         clean(a.expected_head)

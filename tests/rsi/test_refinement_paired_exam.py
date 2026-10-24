@@ -33,6 +33,35 @@ def test_exact_complete_finite_paired_exam():
     verify_exam(report, courses)
 
 
+def test_receiver_role_is_distinct_fixed_A_protocol_and_legacy_cannot_admit_it():
+    report, courses = fixture()
+    cfg = exam_config(25, receiver_role_study=True)
+    report["config"] = cfg
+    for i, row in enumerate(report["records"]):
+        row["arm"] = cfg["arms"][i % 4]
+        if row["arm"] == "anchor_plane":
+            row["receiver_intent_mode"] = "anchor-plane-v2"
+    verify_exam(report, courses)
+    assert cfg["fixed_A_behavior"] and not cfg["receiver_learned"]
+    assert cfg["maximum_native_steps"] == 48000
+    bad = copy.deepcopy(report)
+    bad["records"][1].pop("receiver_intent_mode")
+    with pytest.raises(ValueError):
+        verify_exam(bad, courses)
+    bad = copy.deepcopy(report)
+    bad["config"] = exam_config(25)
+    with pytest.raises(ValueError):
+        verify_exam(bad, courses)
+
+
+def test_old_protocol_cannot_silently_change_B_role_even_if_all_repeats_match():
+    report, courses = fixture()
+    for row in report["records"]:
+        row["receiver_intent_mode"] = "anchor-plane-v2"
+    with pytest.raises(ValueError):
+        verify_exam(report, courses)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

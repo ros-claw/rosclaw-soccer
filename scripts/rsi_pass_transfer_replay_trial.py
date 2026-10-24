@@ -40,7 +40,23 @@ def replay_trial(
     sampling_seed=None,
     sampling_profile=None,
     sampling_include_recovery=False,
+    receiver_intent_mode="pursuit-v1",
 ):
+    if (
+        type(receiver_intent_mode) is not str
+        or receiver_intent_mode not in ("pursuit-v1", "anchor-plane-v2")
+        or claim.get("receiver_intent_mode", "pursuit-v1") != receiver_intent_mode
+        or (
+            receiver_intent_mode != "pursuit-v1"
+            and (
+                sampling_seed is not None
+                or feedback_variant is not None
+                or student is not None
+                or course["assisted"] is not False
+            )
+        )
+    ):
+        raise ValueError("exact separate receiver-role replay mode required before physics")
     if type(sampling_include_recovery) is not bool or (
         sampling_include_recovery and sampling_seed is None
     ):
@@ -263,6 +279,7 @@ def replay_trial(
             pass_direction=forward,
             launch_seen=launch,
             ready_anchor_xy=anchor,
+            mode=receiver_intent_mode,
         )
         launch = intent.launch_seen
         command = np.array(intent.command_body, np.float32)
@@ -354,6 +371,8 @@ def replay_trial(
         result["feedback_variant"] = feedback_variant
         if feedback_anticipation_seconds:
             result["feedback_anticipation_seconds"] = feedback_anticipation_seconds
+    if receiver_intent_mode != "pursuit-v1":
+        result["receiver_intent_mode"] = receiver_intent_mode
     if sampling is not None:
         result.update(
             sampling.metadata(reference_controls=ep.clip.length, recovery_controls=stand_controls)

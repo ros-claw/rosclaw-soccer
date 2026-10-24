@@ -28,7 +28,14 @@ def receiving_intent(
     pass_direction: np.ndarray,
     launch_seen: bool,
     ready_anchor_xy: np.ndarray | None = None,
+    mode: str = "pursuit-v1",
 ) -> ReceivingIntent:
+    if (
+        type(mode) is not str
+        or mode not in ("pursuit-v1", "anchor-plane-v2")
+        or (mode == "anchor-plane-v2" and ready_anchor_xy is None)
+    ):
+        raise ValueError("explicit receiving mode and communicated anchor for plane mode required")
     for value in (root_xy, ball_xy, ball_velocity_xy, home_xy, pass_direction):
         if value.shape != (2,) or not np.isfinite(value).all():
             raise ValueError("finite measured planar receiving state required")
@@ -49,6 +56,14 @@ def receiving_intent(
         lateral = np.array([-pass_direction[1], pass_direction[0]])
         target = ball_xy + eta * ball_velocity_xy + 0.35 * pass_direction + 0.12 * lateral
         phase = "INTERCEPT" if float((root_xy - ball_xy) @ pass_direction) > 0 else "RECOVER_LOOSE"
+        if mode == "anchor-plane-v2":
+            # Keep the longitudinal ROLE destination instead of chasing a slow
+            # pass upstream. Lateral prediction, actual ball-facing, gains and
+            # all velocity limits remain unchanged. This is a geometric
+            # teacher ablation, NOT a learned receiver or proof of a catch.
+            assert ready_anchor_xy is not None
+            target = target + float((ready_anchor_xy - target) @ pass_direction) * pass_direction
+            phase = "TRACK_RECEIVING_PLANE"
     else:
         target = home_xy.copy() if ready_anchor_xy is None else ready_anchor_xy.copy()
         phase = (

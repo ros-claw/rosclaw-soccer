@@ -61,3 +61,60 @@ def test_communicated_anchor_activates_support_without_fabricating_ball_launch()
     assert ready.role_state == "WAIT_PASS" and ready.command_body[:2] == (0.0, 0.0)
     with pytest.raises(ValueError):
         receiving_intent(**s, ready_anchor_xy=np.array([float("nan"), 0.0]))
+
+
+def test_plane_role_keeps_communicated_longitudinal_destination_and_original_lateral_prediction():
+    s = state()
+    s.update(ball_xy=np.array([1.0, 0.1]), ball_velocity_xy=np.array([1.5, 0.2]))
+    anchor = np.array([4.25, 0.12])
+    old = receiving_intent(**s, ready_anchor_xy=anchor)
+    new = receiving_intent(**s, ready_anchor_xy=anchor, mode="anchor-plane-v2")
+    assert old.target_xy[0] < 3.0 and new.target_xy[0] == 4.25
+    assert old.target_xy[1] == new.target_xy[1]
+    assert new.role_state == "TRACK_RECEIVING_PLANE" and new.launch_seen
+    assert new.command_body[2] == old.command_body[2]
+    for mode in ("pursuit-v1", "anchor-plane-v2"):
+        s["ball_velocity_xy"][:] = 0
+        s["launch_seen"] = False
+        before = receiving_intent(**s, ready_anchor_xy=anchor, mode=mode)
+        assert before.target_xy == tuple(anchor) and not before.launch_seen
+
+
+@pytest.mark.parametrize("mode", [None, True, "unknown", "anchor-plane-v2"])
+def test_unknown_mode_or_missing_plane_anchor_rejected(mode):
+    with pytest.raises(ValueError):
+        receiving_intent(**state(), mode=mode)
+
+
+def test_rotated_plane_projection_uses_pass_axis_not_world_x():
+    s = state()
+    s.update(
+        pass_direction=np.array([0.0, 1.0]),
+        ball_xy=np.array([0.0, 1.0]),
+        ball_velocity_xy=np.array([0.1, 2.0]),
+    )
+    anchor = np.array([0.12, 4.25])
+    new = receiving_intent(**s, ready_anchor_xy=anchor, mode="anchor-plane-v2")
+    assert new.target_xy[1] == 4.25
+
+
+@pytest.mark.parametrize("name", ["rsi_pass_transfer_trial", "rsi_pass_transfer_replay_trial"])
+def test_receiver_role_study_cannot_stack_sampling_or_replay_implicitly(name):
+    import importlib
+    from types import SimpleNamespace
+
+    module = importlib.import_module("scripts." + name)
+    setup = SimpleNamespace(prepare=lambda *a, **k: pytest.fail("preallocation rejection required"))
+    kwargs = dict(
+        output=None,
+        index=0,
+        counts={},
+        receiver_intent_mode="anchor-plane-v2",
+        sampling_seed=1,
+        sampling_profile="contact-v1",
+    )
+    with pytest.raises(ValueError):
+        if name.endswith("replay_trial"):
+            module.replay_trial(setup, None, dict(assisted=False), {}, raw_root=None, **kwargs)
+        else:
+            module.collect_trial(setup, None, dict(assisted=False), **kwargs)
