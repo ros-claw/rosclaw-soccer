@@ -12,6 +12,8 @@ BC_SOURCE = "RECEIVING_NEURAL_COMMAND_BC_PILOT_PENDING_OWN"
 BC_OWN = "RECEIVING_NEURAL_COMMAND_BC_PILOT_ALL_OWN_MATCH"
 TASK_SOURCE = "RECEIVING_TASK_COMMAND_DAGGER_PILOT_PENDING_OWN"
 TASK_OWN = "RECEIVING_TASK_COMMAND_DAGGER_PILOT_ALL_OWN_MATCH"
+SECOND_SOURCE = "RECEIVING_TASK_COMMAND_DAGGER_SECOND_PILOT_PENDING_OWN"
+SECOND_OWN = "RECEIVING_TASK_COMMAND_DAGGER_SECOND_PILOT_ALL_OWN_MATCH"
 
 
 def _digest(value: Any) -> bool:
@@ -31,6 +33,7 @@ def admit_pair(
     training_hash: str,
     seed: int,
     task: bool,
+    task_round: int = 1,
 ) -> list[dict[str, Any]]:
     """Require a complete exact independent manual-clock replay, not its claim alone.
 
@@ -41,10 +44,14 @@ def admit_pair(
         seed not in SEEDS
         or type(seed) is not int
         or type(task) is not bool
+        or type(task_round) is not int
+        or task_round not in (1, 2)
+        or (not task and task_round != 1)
         or not _digest(source_hash)
         or not _digest(training_hash)
-        or source.get("status") != (TASK_SOURCE if task else BC_SOURCE)
-        or own.get("status") != (TASK_OWN if task else BC_OWN)
+        or source.get("status")
+        != (SECOND_SOURCE if task_round == 2 else TASK_SOURCE if task else BC_SOURCE)
+        or own.get("status") != (SECOND_OWN if task_round == 2 else TASK_OWN if task else BC_OWN)
         or source.get("source_hash") is not None
         or own.get("source_hash") != source_hash
         or source.get("independent_whole_world_replay") is not False
@@ -69,7 +76,11 @@ def admit_pair(
             )
             or report.get("optimizer_updates") != 0
             or report.get("all_actual_native_zero_identity") is not False
-            or (task and report.get("command_stage") != "task-dagger-v2")
+            or (
+                task
+                and report.get("command_stage")
+                != ("task-dagger-v3" if task_round == 2 else "task-dagger-v2")
+            )
             or (not task and report.get("command_reference_untrained", False) is not False)
             or type(report.get("records")) is not list
             or len(report["records"]) != 12

@@ -21,7 +21,8 @@ def publish(root, report):
 
 
 @pytest.mark.parametrize("fault", [None, "lineage", "checkpoint", "own", "initial", "repeat"])
-def test_once_only_readback_all_three_then_no_simulator(tmp_path, monkeypatch, fault):
+@pytest.mark.parametrize("second_round", [False, True])
+def test_once_only_readback_all_three_then_no_simulator(tmp_path, monkeypatch, fault, second_round):
     from scripts import rsi_review_receiving_task_dagger as runner
 
     proot, croot = tmp_path / "parent-training", tmp_path / "child-training"
@@ -36,7 +37,7 @@ def test_once_only_readback_all_three_then_no_simulator(tmp_path, monkeypatch, f
             dict(
                 seed=seed,
                 optimizer_updates=400,
-                changed_parameter_tensors=list(range(6)),
+                changed_parameter_tensors=list(range(7 if second_round else 6)),
                 checkpoint_path=str(pc),
                 checkpoint_hash=digest(pc),
             )
@@ -50,30 +51,40 @@ def test_once_only_readback_all_three_then_no_simulator(tmp_path, monkeypatch, f
                 checkpoint_hash=digest(cc),
                 parent_checkpoint_hash=digest(pc),
                 exact_parent_function_before_updates=True,
-                cumulative_prior_steps=800,
-                optimizer_parameter_steps=[800.0] * 6 + [400.0],
+                cumulative_prior_steps=1200 if second_round else 800,
+                optimizer_parameter_steps=[1200.0] * 6 + [800.0]
+                if second_round
+                else [800.0] * 6 + [400.0],
             )
         )
     pd = dict(
-        status="RECEIVING_COMMAND_BC_THREE_SEEDS_TRAINED_PENDING_OWN_NATIVE",
+        status="RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE"
+        if second_round
+        else "RECEIVING_COMMAND_BC_THREE_SEEDS_TRAINED_PENDING_OWN_NATIVE",
         optimizer_updates=1200,
         new_physical_steps=0,
         candidates=pcs,
         input_file_hashes={},
     )
+    if second_round:
+        pd["parent_bc_hash"] = "sha256:" + "9" * 64
     pp = proot / "complete.json"
     pp.write_text(json.dumps(pd))
     ph = digest(pp)
     cd = dict(
-        status="RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE",
+        status="RECEIVING_TASK_COMMAND_DAGGER_SECOND_ROUND_PENDING_NATIVE"
+        if second_round
+        else "RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE",
         optimizer_updates=1200,
         new_physical_steps=0,
         candidates=ccs,
         parent_bc_hash=ph,
         input_file_hashes={},
     )
+    if second_round:
+        cd.update(parent_training_hash=ph, parent_bc_hash=pd["parent_bc_hash"])
     if fault == "lineage":
-        cd["parent_bc_hash"] = "sha256:" + "e" * 64
+        cd["parent_training_hash" if second_round else "parent_bc_hash"] = "sha256:" + "e" * 64
     cp = croot / "complete.json"
     cp.write_text(json.dumps(cd))
     ch = digest(cp)
@@ -92,10 +103,20 @@ def test_once_only_readback_all_three_then_no_simulator(tmp_path, monkeypatch, f
         "--output",
         str(tmp_path / "output"),
     ]
+    if second_round:
+        args.append("--second-round")
     for seed in (732023, 732024, 732025):
         roots = []
         for task in (False, True):
-            s, o = pair(task)
+            s, o = pair(task or second_round)
+            if second_round and task:
+                from rosclaw_soccer.rsi.receiving_command_comparison import (
+                    SECOND_OWN,
+                    SECOND_SOURCE,
+                )
+
+                s.update(status=SECOND_SOURCE, command_stage="task-dagger-v3")
+                o.update(status=SECOND_OWN, command_stage="task-dagger-v3")
             sr, ownroot = tmp_path / f"source-{seed}-{task}", tmp_path / f"own-{seed}-{task}"
             sr.mkdir()
             for row in s["records"]:

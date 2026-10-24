@@ -21,6 +21,7 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("parent-training-hash", "child-training-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--second-round", action="store_true")
     p.add_argument(
         "--cohort",
         nargs=6,
@@ -64,9 +65,21 @@ def main():
     parent, _ = read(a.parent_training_root, a.parent_training_hash)
     child, _ = read(a.child_training_root, a.child_training_hash)
     if (
-        parent["status"] != "RECEIVING_COMMAND_BC_THREE_SEEDS_TRAINED_PENDING_OWN_NATIVE"
-        or child["status"] != "RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE"
-        or child["parent_bc_hash"] != a.parent_training_hash
+        parent["status"]
+        != (
+            "RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE"
+            if a.second_round
+            else "RECEIVING_COMMAND_BC_THREE_SEEDS_TRAINED_PENDING_OWN_NATIVE"
+        )
+        or child["status"]
+        != (
+            "RECEIVING_TASK_COMMAND_DAGGER_SECOND_ROUND_PENDING_NATIVE"
+            if a.second_round
+            else "RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE"
+        )
+        or child["parent_training_hash" if a.second_round else "parent_bc_hash"]
+        != a.parent_training_hash
+        or (a.second_round and child["parent_bc_hash"] != parent["parent_bc_hash"])
         or parent["optimizer_updates"] != 1200
         or child["optimizer_updates"] != 1200
         or any(d["new_physical_steps"] != 0 for d in (parent, child))
@@ -77,12 +90,13 @@ def main():
         if (
             pc["optimizer_updates"] != 400
             or cc["optimizer_updates"] != 400
-            or len(pc["changed_parameter_tensors"]) != 6
+            or len(pc["changed_parameter_tensors"]) != (7 if a.second_round else 6)
             or len(cc["changed_parameter_tensors"]) != 7
             or cc["parent_checkpoint_hash"] != pc["checkpoint_hash"]
             or cc["exact_parent_function_before_updates"] is not True
-            or cc["cumulative_prior_steps"] != 800
-            or cc["optimizer_parameter_steps"] != [800.0] * 6 + [400.0]
+            or cc["cumulative_prior_steps"] != (1200 if a.second_round else 800)
+            or cc["optimizer_parameter_steps"]
+            != ([1200.0] * 6 + [800.0] if a.second_round else [800.0] * 6 + [400.0])
         ):
             raise ValueError("actual parent-preserving seven-tensor continuation required")
         for root, candidate in ((a.parent_training_root, pc), (a.child_training_root, cc)):
@@ -122,10 +136,21 @@ def main():
         cs, csh = read(csroot)
         co, coh = read(coroot)
         pr = admit_pair(
-            ps, po, source_hash=psh, training_hash=a.parent_training_hash, seed=seed, task=False
+            ps,
+            po,
+            source_hash=psh,
+            training_hash=a.parent_training_hash,
+            seed=seed,
+            task=a.second_round,
         )
         cr = admit_pair(
-            cs, co, source_hash=csh, training_hash=a.child_training_hash, seed=seed, task=True
+            cs,
+            co,
+            source_hash=csh,
+            training_hash=a.child_training_hash,
+            seed=seed,
+            task=True,
+            task_round=2 if a.second_round else 1,
         )
         if any(ps[key] != cs[key] for key in ("training_hash", "initialization_hash")):
             raise ValueError("fixed A theta12 and fixed zero-correction lower B motor required")
@@ -150,7 +175,9 @@ def main():
     clean(a.expected_head)
     report = dict(
         schema="soccer.receiving_task_command.paired_local_review.v1",
-        status="THREE_SEED_TASK_DAGGER_NATIVE_REVIEWED_NOT_PROMOTED",
+        status="THREE_SEED_TASK_DAGGER_SECOND_NATIVE_REVIEWED_NOT_PROMOTED"
+        if a.second_round
+        else "THREE_SEED_TASK_DAGGER_NATIVE_REVIEWED_NOT_PROMOTED",
         source_head=a.expected_head,
         parent_training_hash=a.parent_training_hash,
         child_training_hash=a.child_training_hash,

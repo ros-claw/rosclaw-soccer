@@ -44,7 +44,9 @@ def main():
     p.add_argument("--motor-own-root", type=Path)
     p.add_argument("--motor-own-hash")
     p.add_argument("--untrained-command-reference", action="store_true")
-    p.add_argument("--command-stage", choices=("bc-v1", "task-dagger-v2"), default="bc-v1")
+    p.add_argument(
+        "--command-stage", choices=("bc-v1", "task-dagger-v2", "task-dagger-v3"), default="bc-v1"
+    )
     a = p.parse_args()
     role_args = (
         a.command_training_root,
@@ -54,7 +56,8 @@ def main():
         a.motor_own_hash,
     )
     command_mode = any(v is not None for v in role_args)
-    task_mode = a.command_stage == "task-dagger-v2"
+    task_mode = a.command_stage in ("task-dagger-v2", "task-dagger-v3")
+    second_round = a.command_stage == "task-dagger-v3"
     if task_mode and (not command_mode or a.untrained_command_reference):
         p.error("task DAgger needs an explicit trained snapshot, not a BC initialization reference")
     if command_mode and any(v is None for v in role_args):
@@ -75,9 +78,17 @@ def main():
         own_status = "RECEIVING_COMMAND_UNTRAINED_REFERENCE_ALL_OWN_MATCH"
         role_binding["command_reference_untrained"] = True
     if task_mode:
-        source_status = "RECEIVING_TASK_COMMAND_DAGGER_PILOT_PENDING_OWN"
-        own_status = "RECEIVING_TASK_COMMAND_DAGGER_PILOT_ALL_OWN_MATCH"
-        role_binding["command_stage"] = "task-dagger-v2"
+        source_status = (
+            "RECEIVING_TASK_COMMAND_DAGGER_SECOND_PILOT_PENDING_OWN"
+            if second_round
+            else "RECEIVING_TASK_COMMAND_DAGGER_PILOT_PENDING_OWN"
+        )
+        own_status = (
+            "RECEIVING_TASK_COMMAND_DAGGER_SECOND_PILOT_ALL_OWN_MATCH"
+            if second_round
+            else "RECEIVING_TASK_COMMAND_DAGGER_PILOT_ALL_OWN_MATCH"
+        )
+        role_binding["command_stage"] = a.command_stage
     if (a.audit_source_root is None) != (a.producer_head is None):
         p.error("exact independent producer root/head pair required")
     a.state_id = 26
@@ -164,7 +175,9 @@ def main():
         if (
             bc["status"]
             != (
-                "RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE"
+                "RECEIVING_TASK_COMMAND_DAGGER_SECOND_ROUND_PENDING_NATIVE"
+                if second_round
+                else "RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE"
                 if task_mode
                 else "RECEIVING_COMMAND_BC_THREE_SEEDS_TRAINED_PENDING_OWN_NATIVE"
             )
@@ -325,7 +338,9 @@ def main():
         from rosclaw_soccer.rsi.receiving_task_command_checkpoint import load_task_command
         from scripts.rsi_native_fresh_common import receipt
 
-        _, parent_bc = receipt(pins, bc["parent_bc_hash"])
+        _, parent_bc = receipt(
+            pins, bc["parent_training_hash"] if second_round else bc["parent_bc_hash"]
+        )
         parent_candidate = next(r for r in parent_bc["candidates"] if r["seed"] == a.command_seed)
         parent_cp = Path(parent_candidate["checkpoint_path"])
         if (
@@ -334,6 +349,23 @@ def main():
         ):
             raise ValueError("exact admitted parent command snapshot required")
         parent = torch.load(parent_cp, map_location="cpu", weights_only=True)
+        if second_round:
+            _, original = receipt(pins, bc["parent_bc_hash"])
+            original_candidate = next(
+                r for r in original["candidates"] if r["seed"] == a.command_seed
+            )
+            original_cp = Path(original_candidate["checkpoint_path"])
+            if (
+                pins.get(str(original_cp)) != original_candidate["checkpoint_hash"]
+                or file_hash(original_cp) != original_candidate["checkpoint_hash"]
+            ):
+                raise ValueError("exact original BC400 ancestor required")
+            load_task_command(
+                parent,
+                parent_bc,
+                parent_candidate,
+                torch.load(original_cp, map_location="cpu", weights_only=True),
+            )
         command_actor = load_task_command(
             torch.load(command_cp, map_location="cpu", weights_only=True), bc, candidate, parent
         )

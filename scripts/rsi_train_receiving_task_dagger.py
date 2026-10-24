@@ -20,6 +20,10 @@ def main():
         p.add_argument("--" + k, type=Path, required=True)
     for k in ("bc-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
+    p.add_argument("--continuation-root", type=Path)
+    p.add_argument("--continuation-hash")
+    p.add_argument("--paired-review-root", type=Path)
+    p.add_argument("--paired-review-hash")
     p.add_argument(
         "--student-pair",
         nargs=3,
@@ -30,6 +34,27 @@ def main():
     a = p.parse_args()
     if len(a.student_pair) != 3:
         p.error("all three predeclared learner source/own pairs required")
+    continuation = any(
+        v is not None
+        for v in (
+            a.continuation_root,
+            a.continuation_hash,
+            a.paired_review_root,
+            a.paired_review_hash,
+        )
+    )
+    if continuation and any(
+        v is None
+        for v in (
+            a.continuation_root,
+            a.continuation_hash,
+            a.paired_review_root,
+            a.paired_review_hash,
+        )
+    ):
+        p.error(
+            "second round needs exact first-round training and complete three-seed paired review"
+        )
     import mujoco
     import numpy as np
     import torch
@@ -106,7 +131,7 @@ def main():
         seed = source["command_seed"]
         if (
             seed not in SEEDS
-            or seed in cohorts
+            or (0, seed) in cohorts
             or source["status"] != "RECEIVING_NEURAL_COMMAND_BC_PILOT_PENDING_OWN"
             or own["status"] != "RECEIVING_NEURAL_COMMAND_BC_PILOT_ALL_OWN_MATCH"
             or source["command_training_hash"] != a.bc_hash
@@ -126,7 +151,50 @@ def main():
                 or r["sampling_seed"] != teacher["records"][CASES[i // 2]]["sampling_seed"]
             ):
                 raise ValueError("same predeclared original initial/goal/private A seed required")
-        cohorts[seed] = (root, source)
+        cohorts[(0, seed)] = (root, source)
+    parents = bc
+    if continuation:
+        from rosclaw_soccer.rsi.receiving_command_comparison import admit_pair
+        from scripts.rsi_native_fresh_common import receipt
+
+        parents = read(a.continuation_root, a.continuation_hash)
+        review = read(a.paired_review_root, a.paired_review_hash)
+        if (
+            parents["status"] != "RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE"
+            or parents["parent_bc_hash"] != a.bc_hash
+            or parents["optimizer_updates"] != 1200
+            or [r["seed"] for r in parents["candidates"]] != list(SEEDS)
+            or review["status"] != "THREE_SEED_TASK_DAGGER_NATIVE_REVIEWED_NOT_PROMOTED"
+            or review["parent_training_hash"] != a.bc_hash
+            or review["child_training_hash"] != a.continuation_hash
+            or [r["seed"] for r in review["cohorts"]] != list(SEEDS)
+            or review["goal_complete"] is not False
+            or review["promotion_authorized"] is not False
+        ):
+            raise ValueError(
+                "complete paired first-round physics and all three actual parents required"
+            )
+        for group in review["cohorts"]:
+            sp, source = receipt(pins, group["child_source_hash"])
+            _, own = receipt(pins, group["child_own_hash"])
+            admit_pair(
+                source,
+                own,
+                source_hash=group["child_source_hash"],
+                training_hash=a.continuation_hash,
+                seed=group["seed"],
+                task=True,
+            )
+            cohorts[(1, group["seed"])] = (sp.parent, source)
+        for candidate in parents["candidates"]:
+            cp = Path(candidate["checkpoint_path"])
+            if (
+                cp.is_symlink()
+                or cp.resolve().parent != a.continuation_root.resolve()
+                or file_hash(cp) != candidate["checkpoint_hash"]
+            ):
+                raise ValueError("exact first-round weights required")
+            pins[str(cp)] = candidate["checkpoint_hash"]
     if pins.get(str(a.scene)) != file_hash(a.scene):
         raise ValueError("original body layout required")
     source_pins(pins)
@@ -151,14 +219,27 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             parent_bc_hash=a.bc_hash,
+            **(
+                dict(
+                    parent_training_hash=a.continuation_hash,
+                    paired_review_hash=a.paired_review_hash,
+                    continuation_round=2,
+                )
+                if continuation
+                else {}
+            ),
             seeds=list(SEEDS),
             updates_per_seed=400,
-            old_adam400_continues=True,
+            **(
+                dict(prior_adam800_task400_continues=True, normalization_unchanged=True)
+                if continuation
+                else dict(old_adam400_continues=True)
+            ),
             private_batch_rng_carried=True,
             minibatch_old=128,
             minibatch_own_critical=64,
             minibatch_own_all=64,
-            own_worlds=18,
+            own_worlds=36 if continuation else 18,
             repeats_not_training_rows=True,
             new_physical_steps=0,
             advice_not_executed_in_student_world=True,
@@ -213,8 +294,7 @@ def main():
             )
         old_x118 = np.c_[old_x, np.stack(old_tasks)].astype(np.float32)
         own_x, own_y, critical, kinds, provenance = [], [], [], [], []
-        for seed in SEEDS:
-            root, source = cohorts[seed]
+        for (generation, seed), (root, source) in sorted(cohorts.items()):
             for row in source["records"][::2]:
                 raw = primitives(root, row, ("initial", "physical", "B"))
                 n = row["controls"]
@@ -262,10 +342,18 @@ def main():
                     own_x.append(
                         np.r_[b["command_inputs112"][t], receiving_task_context6(pose, goal, f)]
                     )
+                    if generation == 1 and not np.array_equal(own_x[-1], b["command_inputs118"][t]):
+                        raise ValueError(
+                            "new student task context must equal actual executed inputs"
+                        )
                     own_y.append(label)
                     critical.append(important)
                     kinds.append(kind)
-                    provenance.append((seed, row["source_case_index"], t))
+                    provenance.append(
+                        (generation, seed, row["source_case_index"], t)
+                        if continuation
+                        else (seed, row["source_case_index"], t)
+                    )
         own_x = np.stack(own_x).astype(np.float32)
         own_y = np.stack(own_y).astype(np.float32)
         critical = np.array(critical, dtype=bool)
@@ -286,15 +374,23 @@ def main():
         tensors = [
             torch.from_numpy(x) for x in (old_x118, old_y, old_tr, old_va, own_x, own_y, critical)
         ]
-        for parent in bc["candidates"]:
+        for parent in parents["candidates"]:
             seed = parent["seed"]
             state = torch.load(parent["checkpoint_path"], map_location="cpu", weights_only=True)
             if (
-                state["bank_hash"] != bc["bank_hash"]
+                state["bank_hash"] != parents["bank_hash"]
                 or state["seed"] != seed
                 or state["optimizer_updates"] != 400
             ):
                 raise ValueError("exact actual parent state/RNG/Adam required")
+            if continuation:
+                from rosclaw_soccer.rsi.receiving_task_command_checkpoint import load_task_command
+
+                original = next(c for c in bc["candidates"] if c["seed"] == seed)
+                original_state = torch.load(
+                    original["checkpoint_path"], map_location="cpu", weights_only=True
+                )
+                load_task_command(state, parents, parent, original_state)
 
             def observe(step, loss, norm, current_seed=seed):
                 nonlocal total_steps
@@ -307,20 +403,29 @@ def main():
                         flush=True,
                     )
 
-            fitted = continue_task_command(state, *tensors, steps=400, on_step=observe)
+            fitted = continue_task_command(
+                state,
+                *tensors,
+                steps=400,
+                continuation_round=2 if continuation else 1,
+                on_step=observe,
+            )
             actor = fitted["actor"]
             cp = a.output / f"task-command-seed{seed}.pt"
             torch.save(
                 dict(
-                    schema="soccer.receiving_task_command_dagger.v2",
+                    schema="soccer.receiving_task_command_dagger.v3"
+                    if continuation
+                    else "soccer.receiving_task_command_dagger.v2",
                     actor=actor.state_dict(),
                     optimizer=fitted["optimizer"],
                     batch_rng=fitted["batch_rng"],
                     seed=seed,
                     optimizer_updates=400,
-                    cumulative_prior_steps=800,
+                    cumulative_prior_steps=1200 if continuation else 800,
                     parent_checkpoint_hash=parent["checkpoint_hash"],
                     parent_bc_hash=a.bc_hash,
+                    **(dict(parent_training_hash=a.continuation_hash) if continuation else {}),
                     bank_hash=data_hash,
                     policy_domain=actor.policy_domain,
                 ),
@@ -329,7 +434,15 @@ def main():
             restored = torch.load(cp, map_location="cpu", weights_only=True)
             from rosclaw_soccer.rsi.receiving_command_actor import ReceivingCommandActor
 
-            pw = state["actor"]
+            pw = (
+                {
+                    k.removeprefix("prior."): v
+                    for k, v in state["actor"].items()
+                    if k.startswith("prior.")
+                }
+                if continuation
+                else state["actor"]
+            )
             pr = ReceivingCommandActor(pw["observation_mean"], pw["observation_scale"])
             pr.load_state_dict(pw, strict=True)
             replica = ReceivingTaskCommandActor(
@@ -366,14 +479,25 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE",
+                status="RECEIVING_TASK_COMMAND_DAGGER_SECOND_ROUND_PENDING_NATIVE"
+                if continuation
+                else "RECEIVING_TASK_COMMAND_DAGGER_THREE_SEEDS_PENDING_NATIVE",
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 parent_bc_hash=a.bc_hash,
+                **(
+                    dict(
+                        parent_training_hash=a.continuation_hash,
+                        paired_review_hash=a.paired_review_hash,
+                        continuation_round=2,
+                    )
+                    if continuation
+                    else {}
+                ),
                 bank_hash=data_hash,
                 candidates=candidates,
                 optimizer_updates=total_steps,
-                own_unique_worlds=18,
+                own_unique_worlds=36 if continuation else 18,
                 old_rows=len(old_x118),
                 own_rows=len(own_x),
                 own_critical_rows=int(critical.sum()),

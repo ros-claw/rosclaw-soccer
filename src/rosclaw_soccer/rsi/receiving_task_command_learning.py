@@ -26,6 +26,7 @@ def continue_task_command(
     own_critical: torch.Tensor,
     *,
     steps: int = 400,
+    continuation_round: int = 1,
     on_step: Callable[[int, float, float], None] | None = None,
 ) -> dict[str, Any]:
     for x, y in ((old_x, old_y), (own_x, own_advice)):
@@ -46,7 +47,9 @@ def continue_task_command(
         ):
             raise ValueError("finite own118 states and original bounded3 command labels required")
     if (
-        parent_state["optimizer_updates"] != 400
+        type(continuation_round) is not int
+        or continuation_round not in (1, 2)
+        or parent_state["optimizer_updates"] != 400
         or any(
             m.shape != (len(old_x),) or m.dtype != torch.bool or m.device.type != "cpu"
             for m in (old_training, old_validation)
@@ -67,33 +70,51 @@ def continue_task_command(
     train_ids = torch.nonzero(old_training, as_tuple=True)[0]
     val_ids = torch.nonzero(old_validation, as_tuple=True)[0]
     critical_ids = torch.nonzero(own_critical, as_tuple=True)[0]
-    task_training = torch.cat((old_x[train_ids, 112:], own_x[:, 112:]))
-    task_mean = task_training.mean(0)
-    task_scale = torch.maximum(
-        task_training.std(0, unbiased=False), torch.tensor([0.25] * 3 + [0.2] * 3)
-    )
     weights = parent_state["actor"]
+    prior: ReceivingCommandActor | ReceivingTaskCommandActor
     with torch.random.fork_rng(devices=[]):
-        prior = ReceivingCommandActor(weights["observation_mean"], weights["observation_scale"])
-        prior.load_state_dict(weights, strict=True)
-        prior.eval().requires_grad_(False)
-        actor = ReceivingTaskCommandActor(prior, task_mean, task_scale)
+        if continuation_round == 1:
+            task_training = torch.cat((old_x[train_ids, 112:], own_x[:, 112:]))
+            task_mean = task_training.mean(0)
+            task_scale = torch.maximum(
+                task_training.std(0, unbiased=False), torch.tensor([0.25] * 3 + [0.2] * 3)
+            )
+            prior = ReceivingCommandActor(weights["observation_mean"], weights["observation_scale"])
+            prior.load_state_dict(weights, strict=True)
+            prior.eval().requires_grad_(False)
+            actor = ReceivingTaskCommandActor(prior, task_mean, task_scale)
+        else:
+            if (
+                parent_state.get("schema") != "soccer.receiving_task_command_dagger.v2"
+                or parent_state.get("cumulative_prior_steps") != 800
+                or parent_state.get("policy_domain") != ReceivingTaskCommandActor.policy_domain
+            ):
+                raise ValueError("bounded second DAgger round needs exact actual first task parent")
+            base = ReceivingCommandActor(
+                weights["prior.observation_mean"], weights["prior.observation_scale"]
+            )
+            actor = ReceivingTaskCommandActor(base, weights["task_mean"], weights["task_scale"])
+            actor.load_state_dict(weights, strict=True)
+            prior = copy.deepcopy(actor).eval().requires_grad_(False)
     # No optimizer update until EVERY consumed old/own state proves identity.
     with torch.no_grad():
         for x in (old_x, own_x):
             for start in range(0, len(x), 2048):
                 part = x[start : start + 2048]
-                if not torch.equal(actor(part), prior(part[:, :112])):
-                    raise ValueError("zero-task adapter must preserve parent outputs exactly")
+                reference = prior(part[:, :112]) if continuation_round == 1 else prior(part)
+                if not torch.equal(actor(part), reference):
+                    raise ValueError("continuation must preserve parent outputs exactly before updates")
     original = {k: v.clone() for k, v in actor.named_parameters()}
     inherited = copy.deepcopy(parent_state["optimizer"])
+    previous_steps = [400] * 6 if continuation_round == 1 else [800] * 6 + [400]
+    previous_tensors = len(previous_steps)
     if (
         len(inherited["param_groups"]) != 1
-        or inherited["param_groups"][0]["params"] != list(range(6))
-        or set(inherited["state"]) != set(range(6))
-        or any(float(v["step"]) != 400 for v in inherited["state"].values())
+        or inherited["param_groups"][0]["params"] != list(range(previous_tensors))
+        or set(inherited["state"]) != set(range(previous_tensors))
+        or [float(inherited["state"][i]["step"]) for i in range(previous_tensors)] != previous_steps
     ):
-        raise ValueError("all six original BC400 Adam histories required; no optimizer reset")
+        raise ValueError("all exact parent Adam histories required; no optimizer reset")
     inherited["param_groups"][0]["params"] = list(range(7))
     optimizer = torch.optim.Adam(actor.parameters(), lr=0.0003)
     optimizer.load_state_dict(inherited)
@@ -146,12 +167,13 @@ def continue_task_command(
     final_optimizer = optimizer.state_dict()
     observed_steps = [float(final_optimizer["state"][i]["step"]) for i in range(7)]
     if (
-        observed_steps != [400 + steps] * 6 + [steps]
+        observed_steps
+        != [400 * continuation_round + steps] * 6 + [400 * (continuation_round - 1) + steps]
         or len(changed) != 7
         or any(not torch.isfinite(v).all() for v in actor.parameters())
     ):
         raise ValueError(
-            "all7 tensors must update; old6 histories continue400->new and task history starts0"
+            "all7 tensors must update with the declared inherited Adam counters"
         )
     return dict(
         actor=actor,
@@ -159,7 +181,7 @@ def continue_task_command(
         batch_rng=generator.get_state(),
         initial_batch_rng=rng_initial,
         optimizer_updates=steps,
-        cumulative_prior_steps=400 + steps,
+        cumulative_prior_steps=400 * continuation_round + steps,
         optimizer_parameter_steps=observed_steps,
         changed_parameter_tensors=changed,
         exact_parent_function_before_updates=True,
