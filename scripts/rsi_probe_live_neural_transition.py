@@ -152,8 +152,16 @@ def main():
             raise ValueError("exact trained Core torque candidate required")
         trained = json.loads(training_path.read_text())
         if (
-            trained["status"] != "CORE_TORQUE_ACTOR_BC_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+            trained["status"]
+            not in {
+                "CORE_TORQUE_ACTOR_BC_TRAINED_NOT_PHYSICALLY_QUALIFIED",
+                "CORE_TORQUE_ACTOR_RL_TRAINED_NOT_PHYSICALLY_QUALIFIED",
+            }
             or trained["actual_BC_actor_optimizer_updates"] <= 0
+            or (
+                trained["status"] == "CORE_TORQUE_ACTOR_RL_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+                and trained.get("actual_SAC_actor_optimizer_updates", 0) <= 0
+            )
         ):
             raise ValueError("actual BC optimizer updates required, not an initialized model")
         for path, expected in trained["input_file_hashes"].items():
