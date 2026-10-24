@@ -148,6 +148,7 @@ class SharedNativeMotorWorld:
         # Private state ownership for software skills that declare it. This
         # registry never changes physics or gives a player its own clock.
         self._private_policy_owners: dict[str, tuple[int, int, int]] = {}
+        self._torque_layer_owners: dict[str, Any] = {}
         self.last_ball_contact_bodies: dict[str, dict[str, float]] = {p: {} for p in players}
         from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
 
@@ -210,7 +211,9 @@ class SharedNativeMotorWorld:
             after=after,
         )
 
-    def advance(self, targets: Mapping[str, np.ndarray]) -> dict[str, Any]:
+    def advance(
+        self, targets: Mapping[str, np.ndarray], *, torque_layers: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Integrate exactly ten shared substeps, not ten per player.
 
         Input HG29 targets are joint positions, not normalized policy actions.
@@ -219,6 +222,25 @@ class SharedNativeMotorWorld:
         import mujoco
 
         m, d = self.model, self.data
+        layers = dict(torque_layers or {})
+        if layers:
+            from rosclaw_soccer.rsi.shared_native_torque_layer import SharedNativeTorqueLayer
+
+            if any(
+                type(layer) is not SharedNativeTorqueLayer
+                or layer.world is not self
+                or layer.prefix != prefix
+                or prefix not in self._torque_layer_owners
+                or self._torque_layer_owners[prefix] is not layer
+                or layer.failed
+                or layer.pending
+                or layer.next_native_step != self.native_steps
+                or layer.horizon_native_steps < self.native_steps + 10
+                for prefix, layer in layers.items()
+            ):
+                raise ValueError("bound private live Core torque layers required before physics")
+        if set(layers) != set(self._torque_layer_owners):
+            raise ValueError("all registered torque layers must participate; no silent bypass")
         if (
             self.failed
             or mujoco.get_mjcb_control() is not None
@@ -240,6 +262,7 @@ class SharedNativeMotorWorld:
         before = float(d.time)
         for _ in range(10):
             all_torques = np.zeros(m.nu)
+            parent_torques = np.zeros(m.nu)
             for p, layout in self.layouts.items():
                 param = self.parameters[p]
                 torque = np.clip(
@@ -251,6 +274,13 @@ class SharedNativeMotorWorld:
                 if not np.isfinite(torque).all():
                     self.failed = True
                     raise ValueError("nonfinite PD torque; no state repair")
+                parent_torques[layout.ai] = torque
+                if p in layers:
+                    try:
+                        torque = layers[p].command(torque.astype(np.float64, copy=True))
+                    except BaseException:
+                        self.failed = True
+                        raise
                 all_torques[layout.ai] = torque
             d.ctrl[:] = all_torques
             mujoco.mj_step(m, d)
@@ -263,6 +293,12 @@ class SharedNativeMotorWorld:
             ):
                 self.failed = True
                 raise ValueError("native warning, nonfinite state or changed motor law")
+            for prefix, layer in layers.items():
+                try:
+                    layer.note_applied(d.actuator_force[self.layouts[prefix].ai].copy())
+                except BaseException:
+                    self.failed = True
+                    raise
             forces = np.zeros((len(self.layouts), 3))
             for ci in range(d.ncon):
                 contact = d.contact[ci]
@@ -278,9 +314,13 @@ class SharedNativeMotorWorld:
                         name = m.body(other).name or prefixes[player] + f"unknown_body_{other}"
                         seen = witnesses[prefixes[player]]
                         seen[name] = max(seen.get(name, 0.0), force)
-            samples.append(
-                dict(qpos=d.qpos.copy(), qvel=d.qvel.copy(), torque=all_torques, ball_forces=forces)
+            sample = dict(
+                qpos=d.qpos.copy(), qvel=d.qvel.copy(), torque=all_torques, ball_forces=forces
             )
+            if layers:
+                sample["parent_torque"] = parent_torques
+                sample["applied_torque_change"] = all_torques - parent_torques
+            samples.append(sample)
         self.control_steps += 1
         self.expected_time = float(d.time)
         raw = {k: np.stack([s[k] for s in samples]) for k in samples[0]}

@@ -22,6 +22,11 @@ def main():
     parser.add_argument("--contact-release", action="store_true")
     parser.add_argument("--aim-y", type=float, default=0.0)
     parser.add_argument("--single-player-only", action="store_true")
+    parser.add_argument("--torque-teacher", action="store_true")
+    parser.add_argument("--identity-reference", type=Path)
+    parser.add_argument("--identity-reference-hash")
+    parser.add_argument("--identity-own", type=Path)
+    parser.add_argument("--identity-own-hash")
     a = parser.parse_args()
     if not math.isfinite(a.aim_y) or abs(a.aim_y) > 1.2:
         parser.error("finite qualified neural aim input in [-1.2,1.2] required")
@@ -30,6 +35,35 @@ def main():
     ):
         parser.error(
             "new aim reachability protocol requires contact release and single-player-only"
+        )
+    if a.torque_teacher:
+        if (
+            not a.contact_release
+            or a.aim_y != 0.0
+            or any(
+                value is None
+                for value in (
+                    a.identity_reference,
+                    a.identity_reference_hash,
+                    a.identity_own,
+                    a.identity_own_hash,
+                )
+            )
+        ):
+            parser.error(
+                "teacher requires unchanged zero-aim contact release and exact identity source/own"
+            )
+    elif any(
+        value is not None
+        for value in (
+            a.identity_reference,
+            a.identity_reference_hash,
+            a.identity_own,
+            a.identity_own_hash,
+        )
+    ):
+        parser.error(
+            "identity reference options belong only to the declared torque teacher protocol"
         )
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -63,6 +97,32 @@ def main():
         a.source_hash,
         a.own_hash,
     )
+    identity_source = None
+    if a.torque_teacher:
+        for root, expected in (
+            (a.identity_reference, a.identity_reference_hash),
+            (a.identity_own, a.identity_own_hash),
+        ):
+            if digest(root / "complete.json") != expected:
+                raise ValueError("exact zero-intervention physical identity reference required")
+            pins[str(root / "complete.json")] = expected
+        identity_source = json.loads((a.identity_reference / "complete.json").read_text())
+        identity_own = json.loads((a.identity_own / "complete.json").read_text())
+        if (
+            identity_source["status"] != "LIVE_NEURAL_TRANSITION_DIAGNOSED_NOT_PROMOTED"
+            or len(identity_source["records"]) != 8
+            or not identity_own["all_exact"]
+            or identity_own["source_hash"] != a.identity_reference_hash
+        ):
+            raise ValueError("entire independently replayed eight-case identity parent required")
+        for record in identity_source["records"]:
+            path = a.identity_reference / record["artifact"]["path"]
+            if (
+                path.parent.resolve() != a.identity_reference.resolve()
+                or digest(path) != record["artifact"]["hash"]
+            ):
+                raise ValueError("confined exact raw identity parent required")
+            pins[str(path)] = record["artifact"]["hash"]
     source_pins(pins)
     check_pins(pins)
     import mujoco
@@ -205,17 +265,40 @@ def main():
             prepared.append(
                 (arm, index, world, state, output, kick, recorder, stream, other, oldpd, newpd)
             )
+    torque_layers = {}
+    if a.torque_teacher:
+        from rosclaw.simforge.g1_neural_torque import G1TeacherTorqueCollector
+
+        from rosclaw_soccer.rsi.shared_native_torque_layer import SharedNativeTorqueLayer
+
+        for entry in prepared:
+            world = entry[2]
+            torque_layers[id(world)] = {
+                prefix: SharedNativeTorqueLayer(
+                    world,
+                    prefix,
+                    G1TeacherTorqueCollector(),
+                    target_y_m=0.0,
+                    target_z_m=0.11,
+                    horizon_controls=652,
+                )
+                for prefix in world.layouts
+            }
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
             protocol=(
-                "robonaldo.neural_aim_reachability.v1"
-                if a.single_player_only
+                "robonaldo.native_torque_teacher.v1"
+                if a.torque_teacher
                 else (
-                    "robonaldo.contact_release_blend.v1"
-                    if a.contact_release
-                    else "robonaldo.live_neural_blend.v1"
+                    "robonaldo.neural_aim_reachability.v1"
+                    if a.single_player_only
+                    else (
+                        "robonaldo.contact_release_blend.v1"
+                        if a.contact_release
+                        else "robonaldo.live_neural_blend.v1"
+                    )
                 )
             ),
             source_head=a.expected_head,
@@ -239,6 +322,8 @@ def main():
             live_incoming_proposals=True,
             actual_history_both_ABIs=True,
             same_effort_caps=True,
+            torque_teacher=a.torque_teacher,
+            teacher_motion_recovery_not_precision_qualified=a.torque_teacher,
             physics_retuned=False,
             optimizer_updates=0,
             hardware_authorized=False,
@@ -251,6 +336,9 @@ def main():
     try:
         for arm, index, w, state, output, kick, recorder, stream, other, oldpd, newpd in prepared:
             raw = {key: [] for key in ("qpos", "qvel", "torque", "ball_forces")}
+            layers = torque_layers.get(id(w))
+            if layers:
+                raw["parent_torque"], raw["applied_torque_change"] = [], []
             controls = {
                 key: []
                 for key in (
@@ -354,7 +442,7 @@ def main():
                 )
                 for key, value in zip(controls, values, strict=True):
                     controls[key].append(value)
-                result = w.advance(proposals)
+                result = w.advance(proposals, torque_layers=layers)
                 steps += 10
                 if weight < 1.0:
                     stream.last_action = policy_action_from_hg_target(
@@ -397,6 +485,38 @@ def main():
                 )
             artifact = a.output / f"{arm}-{index}.npz"
             np.savez_compressed(artifact, **arrays)
+            teacher_artifacts = {}
+            full_identity = None
+            if layers:
+                assert identity_source is not None
+                identity = next(
+                    row
+                    for row in identity_source["records"]
+                    if row["arm"] == arm and row["index"] == index
+                )
+                with np.load(a.identity_reference / identity["artifact"]["path"]) as ref:
+                    full_identity = {
+                        key: bool(np.array_equal(arrays[key], ref[key])) for key in ref.files
+                    }
+                if not all(full_identity.values()) or np.any(arrays["applied_torque_change"]):
+                    raise ValueError("pass-through teacher changed parent physics or controls")
+                for prefix, layer in layers.items():
+                    episode = layer.policy.episode()
+                    path = a.output / f"teacher-{arm}-{index}-{prefix.rstrip('/')}.npz"
+                    np.savez_compressed(
+                        path,
+                        observations=episode.observations,
+                        actions=episode.actions,
+                        parent_actions=episode.parent_actions,
+                    )
+                    teacher_artifacts[prefix] = dict(
+                        path=path.name,
+                        hash=digest(path),
+                        body_hash=layer.body_hash,
+                        observations=len(episode.observations),
+                        commands=layer.commands,
+                        applied=layer.applied,
+                    )
             baseline = next(
                 row
                 for row in source["records"]
@@ -418,6 +538,8 @@ def main():
             row = dict(
                 arm=arm,
                 index=index,
+                torque_teacher_artifacts=teacher_artifacts,
+                zero_intervention_full_identity=full_identity,
                 neural_aim_input_y_m=a.aim_y,
                 actual_goal_plane=plane,
                 illegal_body_ball_contact=bool(np.any(arrays["ball_forces"][:, 0, 2] > 1.0)),
