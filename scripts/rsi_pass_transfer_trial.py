@@ -33,7 +33,14 @@ def collect_trial(
     student=None,
     student_prefix_controls=None,
     emit_course_rows=True,
+    feedback_variant=None,
 ):
+    if feedback_variant is not None:
+        from rosclaw_soccer.rsi.causal_foot_ball_feedback import feedback_parameters
+
+        feedback_parameters(feedback_variant)
+        if student is not None or course["assisted"] is not False:
+            raise ValueError("separate unassisted current NN basis required for feedback study")
     if type(emit_course_rows) is not bool:
         raise ValueError("explicit course log disclosure mode required before physics")
     if (student is None) != (student_prefix_controls is None) or (
@@ -70,6 +77,12 @@ def collect_trial(
             if not np.array_equal(initial_q, z["qpos"]) or not np.array_equal(initial_v, z["qvel"]):
                 raise ValueError("paired teacher/control arms must start in identical physics")
     goal = np.array(course["target"])
+    feedback = None
+    feedback_rows = []
+    if feedback_variant is not None:
+        from rosclaw_soccer.rsi.causal_foot_ball_feedback import CausalFootBallFeedback
+
+        feedback = CausalFootBallFeedback(w, ep, goal=goal, variant=feedback_variant)
     lateral = np.array([-forward[1], forward[0]])
     anchor = goal[:2] + 0.25 * forward + 0.12 * lateral
     passer = SharedNativeNeuralPlayer(
@@ -133,6 +146,12 @@ def collect_trial(
                 foot=course["foot"],
             )
             target_a = ep.offset + action[ep.order] * ep.scale
+        if feedback is not None:
+            action, delta, clipped, fb = feedback.apply(
+                action, ta["NN_reference_nominal"], frame=step, standing=standing
+            )
+            target_a = ep.offset + action[ep.order] * ep.scale
+            feedback_rows.append(dict(measured_feedback=fb))
         if pair is not None:
             advice, advice_delta, advice_clipped = action.copy(), delta.copy(), clipped
             actual_student = step < student_prefix_controls
@@ -213,6 +232,8 @@ def collect_trial(
         "A": store(folder, "A", nn_a),
         "B": store(folder, "B", nn_b),
     }
+    if feedback is not None:
+        artifacts["feedback"] = store(folder, "feedback", feedback_rows)
     al = w.layouts["a/"]
     qids = [*range(al.rq, al.rq + 7), *al.qi, *range(al.bq, al.bq + 7)]
     vids = [*range(al.rv, al.rv + 6), *al.vi, *range(al.bv, al.bv + 6)]
@@ -253,6 +274,8 @@ def collect_trial(
         artifacts=artifacts,
         neural_actor_optimizer_updates=0,
     )
+    if feedback is not None:
+        result["feedback_variant"] = feedback_variant
     if pair is not None:
         result.update(
             student_prefix_controls=student_prefix_controls,

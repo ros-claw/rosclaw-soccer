@@ -35,7 +35,20 @@ def replay_trial(
     student=None,
     student_prefix_controls=None,
     emit_course_rows=True,
+    feedback_variant=None,
 ):
+    if feedback_variant is not None:
+        from rosclaw_soccer.rsi.causal_foot_ball_feedback import feedback_parameters
+
+        feedback_parameters(feedback_variant)
+        if (
+            student is not None
+            or course["assisted"] is not False
+            or claim.get("feedback_variant") != feedback_variant
+        ):
+            raise ValueError("same explicit unassisted-NN feedback configuration required")
+    elif "feedback_variant" in claim:
+        raise ValueError("feedback source requires independent causal rule replay")
     if type(emit_course_rows) is not bool:
         raise ValueError("explicit course log disclosure mode required before physics")
     if (student is None) != (student_prefix_controls is None) or (
@@ -76,6 +89,12 @@ def replay_trial(
     if index % 2 and any(not np.array_equal(v, prior_initial[k]) for k, v in ini.items()):
         raise ValueError("paired whole initial states differ")
     goal = np.array(course["target"])
+    feedback, feedback_trace = None, None
+    if feedback_variant is not None:
+        from rosclaw_soccer.rsi.causal_foot_ball_feedback import CausalFootBallFeedback
+
+        feedback = CausalFootBallFeedback(w, ep, goal=goal, variant=feedback_variant)
+        feedback_trace = load(claim, "feedback")
     anchor = goal[:2] + 0.25 * forward + 0.12 * np.array([-forward[1], forward[0]])
     passer = SharedNativeNeuralPlayer(
         w,
@@ -138,6 +157,12 @@ def replay_trial(
                 foot=course["foot"],
             )
             target_a = ep.offset + action[ep.order] * ep.scale
+        if feedback is not None:
+            action, delta, clipped, fb = feedback.apply(
+                action, ta["NN_reference_nominal"], frame=step, standing=standing
+            )
+            target_a = ep.offset + action[ep.order] * ep.scale
+            equal(dict(measured_feedback=fb), feedback_trace, step)
         if pair is not None:
             advice, advice_delta, advice_clipped = action.copy(), delta.copy(), clipped
             actual_student = step < student_prefix_controls
@@ -213,6 +238,10 @@ def replay_trial(
             break
     if any(len(v) != w.control_steps for r in (raw, na, nb) for v in r.values()):
         raise ValueError("all own controls and complete source rows required")
+    if feedback_trace is not None and any(
+        len(v) != w.control_steps for v in feedback_trace.values()
+    ):
+        raise ValueError("all own causal feedback observations required")
     ownraw = {k: np.stack([r[k] for r in physical]) for k in physical[0]}
     al = w.layouts["a/"]
     qids = [*range(al.rq, al.rq + 7), *al.qi, *range(al.bq, al.bq + 7)]
@@ -253,6 +282,8 @@ def replay_trial(
         termination="BODY_FAILURE" if w.failed else "FULL_MOTION_PLUS100NN_RECOVERY",
         neural_actor_optimizer_updates=0,
     )
+    if feedback is not None:
+        result["feedback_variant"] = feedback_variant
     if pair is not None:
         result.update(
             student_prefix_controls=student_prefix_controls,
