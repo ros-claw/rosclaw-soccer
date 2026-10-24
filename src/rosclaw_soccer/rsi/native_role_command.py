@@ -144,4 +144,4 @@ class NativeRoleCommandPolicy:
         command = latent * np.array([0.75, 0.5, 1], np.float32) + np.array([0.25, 0, 0], np.float32)
         if not np.isfinite(command).all():
             raise FloatingPointError("nonfinite command inference")
-        return command.copy()
+        return np.asarray(command, dtype=np.float32).copy()
