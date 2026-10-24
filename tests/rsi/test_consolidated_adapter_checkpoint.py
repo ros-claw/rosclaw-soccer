@@ -167,3 +167,37 @@ def test_legacy_dispatch_does_not_reinterpret_original_checkpoint_kind(monkeypat
         checkpoint_kind="team-pass-selected-v3",
     )
     assert actor is memory and seen[0]["checkpoint_kind"] == "team-pass-selected-v3"
+
+
+def test_refinement_data_identity_cannot_be_aliased_to_legacy_bank():
+    kind = "consolidated-refinement-v1"
+    bank = "sha256:" + "a" * 64
+    assert admission.training_data_hash(dict(bank_hash=bank), kind) == bank
+    with pytest.raises(ValueError, match="contradictory"):
+        admission.training_data_hash(dict(bank_hash=bank, data_hash="old274"), kind)
+    with pytest.raises(ValueError, match="commitment"):
+        admission.training_data_hash(dict(bank_hash="short"), kind)
+
+
+def test_refinement_cpu_scope_comes_from_hash_bound_whole_feature_witness(tmp_path):
+    from rosclaw_soccer.rsi.refinement_motor_learning import FEATURE_STATUS
+
+    root = tmp_path / "features"
+    root.mkdir()
+    path = root / "complete.json"
+    feature = dict(
+        status=FEATURE_STATUS,
+        bank_hash="bank62",
+        own_feature_decisions=23241,
+        records=[dict(rows=375)] * 61 + [dict(rows=23241 - 375 * 61)],
+    )
+    path.write_text(json.dumps(feature))
+    training = dict(
+        bank_hash="bank62",
+        feature_hash=digest(path),
+        input_file_hashes={str(path): digest(path)},
+    )
+    assert admission.expected_cpu_audit_decisions(training, "consolidated-refinement-v1") == 23241
+    training["bank_hash"] = "old274"
+    with pytest.raises(ValueError, match="scope"):
+        admission.expected_cpu_audit_decisions(training, "consolidated-refinement-v1")
