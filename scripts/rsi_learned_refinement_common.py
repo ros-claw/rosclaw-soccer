@@ -43,16 +43,24 @@ def open_models(args, admitted):
     return setup, old, learned, [baseline["course"], *variants], preflight
 
 
-def open_learned_model(old, args, pins, scope):
+def open_learned_model(old, args, pins, scope, *, _depth=0):
+    from types import SimpleNamespace
+
     import torch
 
+    from rosclaw_soccer.rsi import continuing_refinement_contract as continuing
     from rosclaw_soccer.rsi.dual_recurrent_actor_critic import MotorCritic
     from rosclaw_soccer.rsi.refinement_continual_checkpoint import KIND, load_continual_refinement
-    from rosclaw_soccer.rsi.refinement_onpolicy_checkpoint import load_onpolicy_refinement
+    from rosclaw_soccer.rsi.refinement_onpolicy_checkpoint import (
+        file_hash,
+        load_onpolicy_refinement,
+    )
     from scripts.rsi_native_fresh_common import receipt
 
+    if _depth > 16 or file_hash(args.training_root / "complete.json") != args.training_hash:
+        raise ValueError("bounded exact model ancestry required")
     trained = json.loads((args.training_root / "complete.json").read_text())
-    if trained["checkpoint_kind"] != KIND:
+    if trained["checkpoint_kind"] not in (KIND, continuing.KIND):
         return load_onpolicy_refinement(
             old,
             behavior_training_hash=scope["student_training_hash"],
@@ -60,11 +68,16 @@ def open_learned_model(old, args, pins, scope):
             expected_receipt_hash=args.training_hash,
         )
     prior_path, prior = receipt(pins, trained["prior_training_hash"])
-    behavior, _ = load_onpolicy_refinement(
+    if trained["config"]["parent_generation_index"] != prior["config"]["generation_index"]:
+        raise ValueError("model generation chain cannot skip or reset a parent")
+    behavior, _ = open_learned_model(
         old,
-        behavior_training_hash=scope["student_training_hash"],
-        root=prior_path.parent,
-        expected_receipt_hash=trained["prior_training_hash"],
+        SimpleNamespace(
+            training_root=prior_path.parent, training_hash=trained["prior_training_hash"]
+        ),
+        pins,
+        scope,
+        _depth=_depth + 1,
     )
     state = torch.load(Path(prior["checkpoint_path"]), map_location="cpu", weights_only=True)
     with torch.random.fork_rng(devices=[]):
@@ -80,3 +93,14 @@ def open_learned_model(old, args, pins, scope):
         root=args.training_root,
         expected_receipt_hash=args.training_hash,
     )
+
+
+def base_behavior_hash(pins, trained):
+    from scripts.rsi_native_fresh_common import receipt
+
+    current = trained
+    for _ in range(17):
+        if "behavior_training_hash" in current:
+            return current["behavior_training_hash"]
+        _, current = receipt(pins, current["prior_training_hash"])
+    raise ValueError("bounded original behavior ancestry required")

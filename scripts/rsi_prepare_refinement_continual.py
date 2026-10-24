@@ -25,11 +25,18 @@ def main():
     for k in ("own-hash", "training-hash", "new-own-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
     p.add_argument("--state-id", type=int, choices=(25, 26), required=True)
+    p.add_argument("--parallel-batch", action="store_true")
     a = p.parse_args()
     import math
 
     import torch
 
+    from rosclaw_soccer.rsi import refinement_continual_checkpoint as prior_continual
+    from rosclaw_soccer.rsi.continuing_refinement_contract import (
+        continuing_config,
+        contract_for,
+        select_parallel_experience,
+    )
     from rosclaw_soccer.rsi.dual_recurrent_actor_critic import MotorCritic
     from rosclaw_soccer.rsi.refinement_actor_critic import refinement_own_history_loss
     from rosclaw_soccer.rsi.refinement_continual_batch import continual_config, select_learned_arm
@@ -47,7 +54,7 @@ def main():
     admitted = admit(a)
     pins = admitted[1]
     prior = json.loads((a.training_root / "complete.json").read_text())
-    if (
+    if not a.parallel_batch and (
         prior["checkpoint_kind"] != KIND
         or prior["new_actor_steps"] != 4
         or prior["new_critic_steps"] != 4
@@ -55,6 +62,16 @@ def main():
         raise ValueError(
             "exact trained generation0 actual new-rollout behavior required, not peer branch"
         )
+    if a.parallel_batch:
+        if (
+            prior["config"]["generation_index"] != 1
+            or prior["checkpoint_kind"] != prior_continual.KIND
+        ):
+            raise ValueError("current parallel96 source is generation1 only")
+        cfg = continuing_config(a.state_id, 2, prior["cumulative_actor_steps"])
+    else:
+        cfg = continual_config(a.state_id)
+    contract = contract_for(cfg)
     reports = []
     for root in (a.new_source_root, a.new_own_root):
         if root.is_symlink() or (root / "failed.json").exists():
@@ -76,10 +93,13 @@ def main():
         reports.append(r)
     if file_hash(a.new_own_root / "complete.json") != a.new_own_hash:
         raise ValueError("exact independently audited new-policy batch required")
-    selected = select_learned_arm(
+    select = select_parallel_experience if a.parallel_batch else select_learned_arm
+    extra = dict(state=a.state_id) if a.parallel_batch else {}
+    selected = select(
         *reports,
         source_hash=file_hash(a.new_source_root / "complete.json"),
         training_hash=a.training_hash,
+        **extra,
     )
     if reports[0]["config"]["state_id"] != a.state_id:
         raise ValueError("same exact behavior/state required")
@@ -97,7 +117,6 @@ def main():
     source_pins(pins)
     check_pins(pins)
     a.output.mkdir()
-    cfg = continual_config(a.state_id)
     write_once(
         a.output / "declaration.json",
         dict(
@@ -117,7 +136,8 @@ def main():
     )
     try:
         setup, _, actor, courses, preflight = open_models(a, admitted)
-        if courses != [reports[0]["records"][i]["course"] for i in (0, 16, 32)]:
+        course_indices = (0, 32, 64) if a.parallel_batch else (0, 16, 32)
+        if courses != [reports[0]["records"][i]["course"] for i in course_indices]:
             raise ValueError(
                 "all new-policy physical initial courses must bind inherited preflight"
             )
@@ -160,7 +180,10 @@ def main():
             ]
         )
         optimizer.load_state_dict(copy.deepcopy(cp["optimizer"]))
-        if any(float(v["step"]) != 4 for v in optimizer.state_dict()["state"].values()):
+        if any(
+            float(v["step"]) != contract.prior_steps
+            for v in optimizer.state_dict()["state"].values()
+        ):
             raise ValueError("actual generation0 four-step Adam counters required")
         old_rates = [g["lr"] for g in optimizer.param_groups]
         for group, rate in zip(
@@ -190,7 +213,7 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="CONTINUAL_NEW_LEARNED_ARM24_AND_TRAINED_CRITIC_PREPARED_NOT_UPDATED",
+                status=contract.prepared_status,
                 source_head=a.expected_head,
                 config=cfg,
                 input_file_hashes=pins,
@@ -199,13 +222,13 @@ def main():
                 new_own_hash=a.new_own_hash,
                 selected_indices=[r["index"] for r in selected],
                 old_arm_rows_used=0,
-                actual_new_rollout_worlds=24,
+                actual_new_rollout_worlds=contract.worlds,
                 actor_rows=sum(len(ep["observations"]) for ep in batch),
                 old_values_nonzero_rows=sum(int(ep["old_values"].ne(0).sum()) for ep in batch),
                 prior_actor_weights_hash=actor_before,
                 prior_critic_weights_hash=critic_before,
-                prior_adam_steps=4,
-                optimizer_steps=4,
+                prior_adam_steps=contract.prior_steps,
+                optimizer_steps=contract.prior_steps,
                 new_optimizer_steps=0,
                 prior_learning_rates=old_rates,
                 rebased_learning_rates=[g["lr"] for g in optimizer.param_groups],

@@ -1,4 +1,4 @@
-"""Generation1 PPO on NEW own-policy trajectories with trained critic/Adam carry.
+"""Versioned PPO on NEW own-policy trajectories with trained critic/Adam carry.
 
 No native physics here. Final learned weights remain unpromoted until separate
 whole native exams, retention and disjoint Fresh. This is not end-to-end torque RL.
@@ -8,6 +8,7 @@ import argparse
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def main():
@@ -21,27 +22,24 @@ def main():
 
     import torch
 
+    from rosclaw_soccer.rsi.continuing_refinement_contract import contract_for
     from rosclaw_soccer.rsi.dual_recurrent_actor_critic import MotorCritic
     from rosclaw_soccer.rsi.paid_recurrent_ppo import backtracked_adam_update
     from rosclaw_soccer.rsi.refinement_actor_critic import (
         refinement_conditional_kl,
         refinement_own_history_loss,
     )
-    from rosclaw_soccer.rsi.refinement_continual_batch import continual_config
     from rosclaw_soccer.rsi.refinement_continual_checkpoint import (
-        KIND,
-        SCHEMA,
-        STATUS,
         rebased_adam,
         same_nested,
         validate_continual_checkpoint,
     )
     from rosclaw_soccer.rsi.refinement_onpolicy_checkpoint import (
         file_hash,
-        load_onpolicy_refinement,
     )
     from rosclaw_soccer.rsi.refinement_onpolicy_learning import tensor_state_hash
     from scripts.rsi_atomic_artifacts import write_once
+    from scripts.rsi_learned_refinement_common import base_behavior_hash, open_learned_model
     from scripts.rsi_native_context_recovery_common import check_pins
     from scripts.rsi_native_fresh_common import clean, receipt, source_pins
     from scripts.rsi_stroke_search_common import open_motor
@@ -51,11 +49,13 @@ def main():
     if a.output.exists() or root.is_symlink() or (root / "failed.json").exists():
         raise ValueError("unused output and complete ordinary predeclared preparation required")
     rp, dp, bp = root / "complete.json", root / "declaration.json", root / "prepared_batch.pt"
-    ph, dh, bh = file_hash(rp), file_hash(dp), file_hash(bp, maximum=32 * 1024 * 1024)
+    ph, dh = file_hash(rp), file_hash(dp)
     r, d = [json.loads(x.read_text()) for x in (rp, dp)]
-    cfg = continual_config(r["config"]["state_id"])
+    cfg = r["config"]
+    contract = contract_for(cfg)
+    bh = file_hash(bp, maximum=(32 if contract.worlds == 24 else 64) * 1024 * 1024)
     if (
-        r["status"] != "CONTINUAL_NEW_LEARNED_ARM24_AND_TRAINED_CRITIC_PREPARED_NOT_UPDATED"
+        r["status"] != contract.prepared_status
         or r["source_head"] != a.prepared_producer_head
         or d["source_head"] != a.prepared_producer_head
         or r["config"] != cfg
@@ -64,12 +64,12 @@ def main():
         or r["prepared_batch_hash"] != bh
         or r["input_file_hashes"] != d["input_file_hashes"]
         or r["prior_training_hash"] != d["prior_training_hash"]
-        or r["selected_indices"] != list(range(1, 48, 2))
+        or r["selected_indices"] != list(contract.selected_indices)
         or r["old_arm_rows_used"] != 0
-        or r["actual_new_rollout_worlds"] != 24
+        or r["actual_new_rollout_worlds"] != contract.worlds
         or r["new_optimizer_steps"] != 0
-        or r["prior_adam_steps"] != 4
-        or r["optimizer_steps"] != 4
+        or r["prior_adam_steps"] != contract.prior_steps
+        or r["optimizer_steps"] != contract.prior_steps
         or any(
             r[k] is not False
             for k in (
@@ -89,7 +89,13 @@ def main():
     accepted, history = 0, []
     try:
         prior_path, prior = receipt(pins, r["prior_training_hash"])
-        _, bc = receipt(pins, prior["behavior_training_hash"])
+        if (
+            prior["config"]["generation_index"] != cfg["parent_generation_index"]
+            or prior.get("cumulative_actor_steps", prior["new_actor_steps"]) != contract.prior_steps
+        ):
+            raise ValueError("actual parent generation and cumulative optimizer steps must match")
+        base_hash = base_behavior_hash(pins, prior)
+        _, bc = receipt(pins, base_hash)
         _, bank = receipt(pins, bc["bank_hash"])
         contexts = (
             {int(k): v for k, v in bank["contexts"].items()}
@@ -98,15 +104,17 @@ def main():
         )
         _, base = open_motor(
             pins,
-            prior["behavior_training_hash"],
+            base_hash,
             {i: contexts[i] for i in (1, 4, 20, 21)},
             checkpoint_kind="consolidated-refinement-v1",
         )
-        behavior, _ = load_onpolicy_refinement(
+        behavior, _ = open_learned_model(
             base,
-            behavior_training_hash=prior["behavior_training_hash"],
-            root=prior_path.parent,
-            expected_receipt_hash=r["prior_training_hash"],
+            SimpleNamespace(
+                training_root=prior_path.parent, training_hash=r["prior_training_hash"]
+            ),
+            pins,
+            dict(student_training_hash=base_hash),
         )
         parent_cp = torch.load(
             Path(prior["checkpoint_path"]), map_location="cpu", weights_only=True
@@ -127,7 +135,7 @@ def main():
         ):
             raise ValueError("actual prior head/critic/Adam state must carry into generation1")
         batch = prepared["episodes"]
-        if len(batch) != 24 or [e["index"] for e in batch] != r["selected_indices"]:
+        if len(batch) != contract.worlds or [e["index"] for e in batch] != r["selected_indices"]:
             raise ValueError("all24 independently audited new-policy trajectories required")
         std = torch.full((29,), math.log(0.02), dtype=torch.float32)
         with torch.no_grad():
@@ -182,11 +190,33 @@ def main():
         for epoch in range(1, 5):
             optimizer.zero_grad(set_to_none=True)
             loss_value = 0.0
+            pg_acc, ag_acc = ([torch.zeros_like(p) for p in hp] for _ in range(2))
             for e in batch:
-                loss, _ = refinement_own_history_loss(actor, critic, e, std, rho=0.9)
+                loss, info = refinement_own_history_loss(
+                    actor, critic, e, std, rho=0.9, expose_actor_components=epoch == 1
+                )
                 w = len(e["observations"]) / rows
+                if epoch == 1:
+                    pg = torch.autograd.grad(info["policy_term"] * w, hp, retain_graph=True)
+                    ag = torch.autograd.grad(info["anchor_term"] * w, hp, retain_graph=True)
+                    for acc, grad in ((pg_acc, pg), (ag_acc, ag)):
+                        for value, g in zip(acc, grad, strict=True):
+                            value.add_(g.detach())
                 (loss * w).backward()
                 loss_value += float(loss.detach()) * w
+            diagnostic = None
+            if epoch == 1:
+                pg, ag = [torch.cat([p.flatten() for p in acc]) for acc in (pg_acc, ag_acc)]
+                actual = torch.cat([p.grad.detach().flatten() for p in hp])
+                diagnostic = dict(
+                    policy_norm=float(pg.norm()),
+                    anchor_norm=float(ag.norm()),
+                    cosine=float(torch.nn.functional.cosine_similarity(pg[None], ag[None])),
+                    combined_norm=float((pg + ag).norm()),
+                    actual_backward_norm=float(actual.norm()),
+                    maximum_component_sum_error=float((actual - pg - ag).abs().max()),
+                    extra_optimizer_updates=0,
+                )
             an, vn = [float(torch.nn.utils.clip_grad_norm_(x, 1.0)) for x in (hp, vp)]
             if not all(math.isfinite(x) for x in (loss_value, an, vn)):
                 raise ValueError("finite continued actor/critic gradients required")
@@ -206,7 +236,8 @@ def main():
                 critic_gradient_norm=vn,
                 update=update,
                 accepted_steps=accepted,
-                cumulative_steps=4 + accepted,
+                cumulative_steps=contract.prior_steps + accepted,
+                actor_objective_components=diagnostic,
             )
             history.append(row)
             write_once(a.output / f"epoch{epoch}.json", row)
@@ -214,8 +245,8 @@ def main():
         if not accepted:
             raise ValueError("all generation1 steps rejected; no trained successor")
         state = dict(
-            schema=SCHEMA,
-            kind=KIND,
+            schema=contract.schema,
+            kind=contract.kind,
             config=cfg,
             commitments=commitments,
             initial_head=dict(behavior.head.state_dict()),
@@ -227,8 +258,8 @@ def main():
             rng_state=torch.get_rng_state(),
             new_actor_steps=accepted,
             new_critic_steps=accepted,
-            actor_steps=4 + accepted,
-            critic_steps=4 + accepted,
+            actor_steps=contract.prior_steps + accepted,
+            critic_steps=contract.prior_steps + accepted,
         )
         validate_continual_checkpoint(
             state,
@@ -255,8 +286,8 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status=STATUS,
-                checkpoint_kind=KIND,
+                status=contract.status,
+                checkpoint_kind=contract.kind,
                 **declared,
                 checkpoint_path=str(cp),
                 checkpoint_hash=file_hash(cp),
@@ -264,10 +295,10 @@ def main():
                 history=history,
                 new_actor_steps=accepted,
                 new_critic_steps=accepted,
-                cumulative_actor_steps=4 + accepted,
-                cumulative_critic_steps=4 + accepted,
+                cumulative_actor_steps=contract.prior_steps + accepted,
+                cumulative_critic_steps=contract.prior_steps + accepted,
                 actor_rows_per_epoch=rows,
-                new_policy_rollout_worlds=24,
+                new_policy_rollout_worlds=contract.worlds,
                 old_arm_rows_used=0,
                 trained_prior_critic_used=True,
                 prior_adam_moments_carried=True,
@@ -285,7 +316,7 @@ def main():
                 error=repr(error),
                 accepted_actor_steps=accepted,
                 accepted_critic_steps=accepted,
-                cumulative_actor_steps=4 + accepted,
+                cumulative_actor_steps=contract.prior_steps + accepted,
                 history=history,
                 physical_steps_executed=0,
                 hardware_authorized=False,

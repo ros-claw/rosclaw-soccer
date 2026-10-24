@@ -5,6 +5,7 @@ import pytest
 import torch
 from test_refinement_actor_critic import fixture as motor_fixture
 
+from rosclaw_soccer.rsi.continuing_refinement_contract import continuing_config, contract_for
 from rosclaw_soccer.rsi.refinement_continual_batch import continual_config
 from rosclaw_soccer.rsi.refinement_continual_checkpoint import (
     KIND,
@@ -16,10 +17,13 @@ from rosclaw_soccer.rsi.refinement_continual_checkpoint import (
 from rosclaw_soccer.rsi.refinement_onpolicy_learning import tensor_state_hash
 
 
-def fixture():
+def fixture(prior_steps=4, generation=1):
     """Adam-continuity UNIT fixture, NOT physical or RL-performance evidence."""
     actor, critic, _, _ = motor_fixture()
-    cfg = continual_config(25)
+    cfg = (
+        continual_config(25) if generation == 1 else continuing_config(25, generation, prior_steps)
+    )
+    contract = contract_for(cfg)
     parameters = [*actor.head.parameters(), *critic.parameters()]
     optimizer = torch.optim.Adam(
         [
@@ -33,7 +37,7 @@ def fixture():
         sum((p + 0.1).square().sum() for p in parameters).backward()
         optimizer.step()
 
-    for _ in range(4):
+    for _ in range(prior_steps):
         step()
     behavior, value = copy.deepcopy(actor).eval(), copy.deepcopy(critic).eval()
     prior = copy.deepcopy(optimizer.state_dict())
@@ -48,8 +52,8 @@ def fixture():
         frozen_parent_hash=tensor_state_hash(dict(behavior.parent.state_dict())),
     )
     state = dict(
-        schema=SCHEMA,
-        kind=KIND,
+        schema=contract.schema,
+        kind=contract.kind,
         config=cfg,
         commitments=ids,
         initial_head=copy.deepcopy(dict(behavior.head.state_dict())),
@@ -61,8 +65,8 @@ def fixture():
         rng_state=torch.get_rng_state(),
         new_actor_steps=1,
         new_critic_steps=1,
-        actor_steps=5,
-        critic_steps=5,
+        actor_steps=prior_steps + 1,
+        critic_steps=prior_steps + 1,
     )
     return state, behavior, value, prior, cfg, ids
 
@@ -80,6 +84,17 @@ def test_actual_adam_continuation_and_explicit_lr_rebase():
 def test_safe_prepared_state_dict_mapping_order_is_not_weight_drift():
     assert same_nested(OrderedDict(weight=torch.ones(2)), dict(weight=torch.ones(2)))
     assert not same_nested(OrderedDict(weight=torch.ones(2)), dict(weight=torch.zeros(2)))
+
+
+@pytest.mark.parametrize("generation,prior_steps", [(2, 8), (2, 5), (3, 12), (3, 7)])
+def test_later_generations_use_actual_cumulative_moments_without_reset(generation, prior_steps):
+    s, b, c, p, cfg, ids = fixture(prior_steps, generation)
+    validate_continual_checkpoint(s, b, c, p, config=cfg, commitments=ids, steps=1)
+    assert s["kind"] != KIND and s["schema"] != SCHEMA
+    assert float(s["optimizer"]["state"][0]["step"]) == prior_steps + 1
+    s["optimizer"]["state"][0]["step"].fill_(5)
+    with pytest.raises(ValueError):
+        validate_continual_checkpoint(s, b, c, p, config=cfg, commitments=ids, steps=1)
 
 
 @pytest.mark.parametrize(

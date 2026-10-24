@@ -1,4 +1,4 @@
-"""One bounded generation1 actor/critic/Adam continuation; research only."""
+"""Versioned bounded actor/critic/Adam continuation; research only."""
 
 import copy
 import json
@@ -7,8 +7,8 @@ from typing import Any
 
 import torch
 
+from rosclaw_soccer.rsi.continuing_refinement_contract import contract_for
 from rosclaw_soccer.rsi.dual_recurrent_actor_critic import MotorCritic
-from rosclaw_soccer.rsi.refinement_continual_batch import continual_config
 from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 from rosclaw_soccer.rsi.refinement_onpolicy_learning import tensor_state_hash, validate_tensor_map
 
@@ -50,10 +50,10 @@ def validate_continual_checkpoint(
     commitments: dict[str, str],
     steps: int,
 ) -> None:
+    contract = contract_for(config)
     if (
-        config != continual_config(config["state_id"])
-        or state.get("schema") != SCHEMA
-        or state.get("kind") != KIND
+        state.get("schema") != contract.schema
+        or state.get("kind") != contract.kind
         or state.get("config") != config
         or state.get("commitments") != commitments
         or set(commitments) != {"prior_training_hash", "prepared_hash", "frozen_parent_hash"}
@@ -61,8 +61,8 @@ def validate_continual_checkpoint(
         or not 1 <= steps <= 4
         or state.get("new_actor_steps") != steps
         or state.get("new_critic_steps") != steps
-        or state.get("actor_steps") != 4 + steps
-        or state.get("critic_steps") != 4 + steps
+        or state.get("actor_steps") != contract.prior_steps + steps
+        or state.get("critic_steps") != contract.prior_steps + steps
         or tensor_state_hash(dict(behavior.parent.state_dict()))
         != commitments["frozen_parent_hash"]
     ):
@@ -83,7 +83,7 @@ def validate_continual_checkpoint(
         raise ValueError("unchanged weights are not an actor/critic continuation")
     expected_initial = rebased_adam(prior_optimizer, config)
     if set(prior_optimizer["state"]) != set(range(8)) or any(
-        float(s["step"]) != 4 for s in prior_optimizer["state"].values()
+        float(s["step"]) != contract.prior_steps for s in prior_optimizer["state"].values()
     ):
         raise ValueError("actual prior generation four-step Adam state required")
     if not same_nested(state.get("initial_optimizer"), expected_initial):
@@ -102,7 +102,7 @@ def validate_continual_checkpoint(
             set(s) != {"step", "exp_avg", "exp_avg_sq"}
             or not isinstance(s["step"], torch.Tensor)
             or s["step"].numel() != 1
-            or float(s["step"]) != 4 + steps
+            or float(s["step"]) != contract.prior_steps + steps
         ):
             raise ValueError("continued Adam counters must advance from4, not reset")
         for k in ("exp_avg", "exp_avg_sq"):
@@ -157,10 +157,11 @@ def load_continual_refinement(
     ):
         raise ValueError("exact complete generation1 training required")
     r, d = [json.loads(x.read_text()) for x in (rp, dp)]
-    cfg = continual_config(r["config"]["state_id"])
+    cfg = r["config"]
+    contract = contract_for(cfg)
     if (
-        r["status"] != STATUS
-        or r["checkpoint_kind"] != KIND
+        r["status"] != contract.status
+        or r["checkpoint_kind"] != contract.kind
         or r["config"] != cfg
         or d["config"] != cfg
         or r["prior_training_hash"] != prior_training_hash
@@ -176,10 +177,10 @@ def load_continual_refinement(
             )
         )
         or r["new_actor_steps"] != r["new_critic_steps"]
-        or r["cumulative_actor_steps"] != 4 + r["new_actor_steps"]
-        or r["cumulative_critic_steps"] != 4 + r["new_critic_steps"]
+        or r["cumulative_actor_steps"] != contract.prior_steps + r["new_actor_steps"]
+        or r["cumulative_critic_steps"] != contract.prior_steps + r["new_critic_steps"]
         or r["old_arm_rows_used"] != 0
-        or r["new_policy_rollout_worlds"] != 24
+        or r["new_policy_rollout_worlds"] != contract.worlds
         or r["physical_steps_executed"] != 0
         or any(
             r[k] is not True
@@ -225,10 +226,10 @@ def load_continual_refinement(
         raise ValueError("exact unique independently prepared learned-arm batch required")
     prepared = json.loads(paths[0].read_text())
     if (
-        prepared["status"] != "CONTINUAL_NEW_LEARNED_ARM24_AND_TRAINED_CRITIC_PREPARED_NOT_UPDATED"
+        prepared["status"] != contract.prepared_status
         or prepared["config"] != cfg
         or prepared["prior_training_hash"] != prior_training_hash
-        or prepared["selected_indices"] != list(range(1, 48, 2))
+        or prepared["selected_indices"] != list(contract.selected_indices)
         or prepared["old_arm_rows_used"] != 0
     ):
         raise ValueError("only actual new learned-arm experience can train a successor")

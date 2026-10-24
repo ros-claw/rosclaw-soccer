@@ -79,6 +79,25 @@ def test_new_head_and_critic_get_gradients_but_entire_acquired_parent_does_not()
     assert not info["physical_retention_proven"] and info["optimizer_steps_executed"] == 0
 
 
+def test_actor_gradient_components_reproduce_actual_backward_without_updates():
+    actor, critic, ep, std = fixture()
+    parameters = list(actor.head.parameters())
+    before = [p.detach().clone() for p in parameters]
+    loss, info = refinement_own_history_loss(
+        actor, critic, ep, std, rho=0.9, expose_actor_components=True
+    )
+    pg = torch.autograd.grad(info["policy_term"], parameters, retain_graph=True)
+    ag = torch.autograd.grad(info["anchor_term"], parameters, retain_graph=True)
+    loss.backward()
+    for p, x, y, old in zip(parameters, pg, ag, before, strict=True):
+        assert torch.allclose(p.grad, x + y, atol=1e-4, rtol=1e-3)
+        assert torch.equal(p, old)
+    with pytest.raises(ValueError):
+        refinement_own_history_loss(
+            actor, critic, ep, std, rho=0.9, value_only=True, expose_actor_components=True
+        )
+
+
 def test_value_only_cannot_update_motor_weights():
     actor, critic, ep, std = fixture()
     loss, info = refinement_own_history_loss(actor, critic, ep, std, rho=0.9, value_only=True)

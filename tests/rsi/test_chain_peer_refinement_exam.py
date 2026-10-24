@@ -65,6 +65,33 @@ def test_generation1_successor_needs_explicit_continual_mode(tmp_path, monkeypat
     assert len(calls) == 1 and "--continual" not in calls[0]
 
 
+def test_later_generation_successor_uses_new_explicit_family(tmp_path, monkeypatch):
+    from rosclaw_soccer.rsi import continuing_refinement_contract as continuing
+
+    (tmp_path / "complete.json").write_text(
+        json.dumps(
+            dict(
+                source_head="h",
+                checkpoint_kind=continuing.KIND,
+                status=continuing.STATUS,
+                new_actor_steps=4,
+            )
+        )
+    )
+    argv = ["chain", "--training-root", str(tmp_path), "--training-producer-head", "h"]
+    calls = []
+    monkeypatch.setattr(downstream, "main", lambda: calls.append(list(sys.argv)))
+    monkeypatch.setattr(sys, "argv", [*argv, "--continual"])
+    with pytest.raises(ValueError):
+        chain.main()
+    monkeypatch.setattr(sys, "argv", [*argv, "--continuing"])
+    chain.main()
+    assert len(calls) == 1 and "--continuing" not in calls[0]
+    monkeypatch.setattr(sys, "argv", [*argv, "--continuing", "--continual"])
+    with pytest.raises(SystemExit):
+        chain.main()
+
+
 @pytest.mark.parametrize("fault", ["head", "kind", "status", "zero", "failed"])
 def test_ineligible_producer_never_enters_exam(tmp_path, monkeypatch, fault):
     d = dict(source_head="declared", checkpoint_kind=PEER_KIND, status=STATUS, new_actor_steps=4)

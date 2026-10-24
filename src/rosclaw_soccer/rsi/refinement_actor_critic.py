@@ -136,6 +136,7 @@ def refinement_own_history_loss(
     *,
     rho: float,
     value_only: bool = False,
+    expose_actor_components: bool = False,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
     """No optimizer step. Failures remain learnable; teacher rescues do not.
 
@@ -145,6 +146,8 @@ def refinement_own_history_loss(
     """
     if type(value_only) is not bool:
         raise ValueError("explicit actor/critic update scope required")
+    if type(expose_actor_components) is not bool or (value_only and expose_actor_components):
+        raise ValueError("explicit actor-only gradient diagnostics require actor mode")
     with torch.set_grad_enabled(not value_only):
         means, evidence, n = _replay(actor, episode, log_std)
     values = critic(evidence["critic_features"][:, 0].detach())
@@ -197,7 +200,7 @@ def refinement_own_history_loss(
     loss = policy + value_loss + 0.02 * anchor_penalty
     if not torch.isfinite(loss):
         raise ValueError("finite separate-head actor/critic loss required")
-    return loss, dict(
+    metrics = dict(
         actor_rows=n,
         critic_rows=n,
         conditional_kl=kl.detach(),
@@ -207,3 +210,6 @@ def refinement_own_history_loss(
         physical_retention_proven=False,
         optimizer_steps_executed=0,
     )
+    if expose_actor_components:
+        metrics.update(policy_term=policy, anchor_term=0.02 * anchor_penalty)
+    return loss, metrics
