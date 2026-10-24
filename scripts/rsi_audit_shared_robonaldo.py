@@ -19,6 +19,7 @@ def main():
     p.add_argument("--producer-head", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--velocity-recovery", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -32,10 +33,20 @@ def main():
     declaration = json.loads((a.source / "declaration.json").read_text())
     if (
         source["source_head"] != a.producer_head
-        or source["status"] != "ROBONALDO_SHARED_TEAM_SCENE_DIAGNOSED_NOT_PROMOTED"
-        or len(source["records"]) != 8
+        or source["status"]
+        != (
+            "ROBONALDO_NEURAL_VELOCITY_HANDOFF_DIAGNOSED_NOT_PROMOTED"
+            if a.velocity_recovery
+            else "ROBONALDO_SHARED_TEAM_SCENE_DIAGNOSED_NOT_PROMOTED"
+        )
+        or len(source["records"]) != (12 if a.velocity_recovery else 8)
         or source["optimizer_updates"] != 0
-        or declaration["protocol"] != "robonaldo.actual_team_scene.v1"
+        or declaration["protocol"]
+        != (
+            "robonaldo.velocity_recovery.v1"
+            if a.velocity_recovery
+            else "robonaldo.actual_team_scene.v1"
+        )
     ):
         raise ValueError("entire fixed eight-case actual team-scene source required")
     pins = dict(source["input_file_hashes"])
@@ -53,6 +64,7 @@ def main():
     from rosclaw.simforge.backends.unitree_mujoco_backend import _load_robonaldo
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
+    from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
     from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 
@@ -65,6 +77,24 @@ def main():
         raise ValueError("one exact team scene and qualified RoboNaldo root required")
     root = roots.pop()
     state_type, output_type, policy_type, mapping = _load_robonaldo(root)
+    velocity_paths = [
+        Path(key) for key in pins if key.endswith("/velocity/v0/exported/policy.onnx")
+    ]
+    velocity_configs = [
+        Path(key) for key in pins if key.endswith("/velocity/v0/params/deploy.yaml")
+    ]
+    if a.velocity_recovery and (len(velocity_paths) != 1 or len(velocity_configs) != 1):
+        raise ValueError("one qualified exact recovery velocity policy required")
+
+    def velocity():
+        return ContinuousVelocityStream(
+            velocity_paths[0],
+            velocity_configs[0],
+            expected_model_hash=pins[str(velocity_paths[0])],
+            expected_config_hash=pins[str(velocity_configs[0])],
+            horizon_controls=652,
+        )
+
     with np.load(root / "policy/robonaldo/model/freekick_motion.npz") as motion:
         root_pos, root_quat = motion["body_pos_w"][0, 0].copy(), motion["body_quat_w"][0, 0].copy()
         joints = motion["joint_pos"][0][mapping].copy()
@@ -78,8 +108,9 @@ def main():
             manual_control_clock=True,
             independent_physics_engine=False,
             saved_action_playback=False,
-            worlds=8,
-            native_step_ceiling=52160,
+            worlds=12 if a.velocity_recovery else 8,
+            native_step_ceiling=78240 if a.velocity_recovery else 52160,
+            velocity_recovery=a.velocity_recovery,
             optimizer_updates=0,
             hardware_authorized=False,
         ),
@@ -87,7 +118,10 @@ def main():
     results, steps = [], 0
     try:
         for row in source["records"]:
-            prefixes = ("a/",) if row["group"] == "single" else ("a/", "b/")
+            group = row["arm"] if a.velocity_recovery else row["group"]
+            prefixes = (
+                ("a/", "b/") if group in ("two-separated", "heterogeneous-shadow") else ("a/",)
+            )
             m = mujoco.MjModel.from_xml_string(
                 shared_native_scene(scenes[0].read_text(), prefixes=prefixes)
             )
@@ -121,8 +155,17 @@ def main():
                     vi=vi,
                     ai=ai,
                     torso=m.body(prefix + "torso_link").id,
+                    pelvis=pelvis,
+                    velocity=velocity() if a.velocity_recovery else None,
                 )
-            d.qpos[bq : bq + 3] = (*row["ball_initial_xy"], 0.11)
+                if a.velocity_recovery and prefix == "b/":
+                    d.qpos[qi] = np.array(players[prefix]["velocity"].params.defaults)
+            ball_xy = (
+                declaration["starts"][row["index"]]
+                if a.velocity_recovery
+                else row["ball_initial_xy"]
+            )
+            d.qpos[bq : bq + 3] = (*ball_xy, 0.11)
             d.qpos[bq + 3 : bq + 7] = (1.0, 0.0, 0.0, 0.0)
             mujoco.mj_forward(m, d)
 
@@ -151,16 +194,58 @@ def main():
             with np.load(a.source / row["artifact"]["path"]) as ref:
                 for frame in range(row["controls"]):
                     targets = []
-                    for player in players.values():
-                        observe(player)
-                        with contextlib.redirect_stdout(io.StringIO()):
-                            player["policy"].run()
-                        targets.append(np.array(player["output"].actions, dtype=np.float64))
+                    for prefix, player in players.items():
+                        stream = player["velocity"]
+                        use_velocity = a.velocity_recovery and (prefix == "b/" or frame >= 285)
+                        shadow = (
+                            a.velocity_recovery
+                            and prefix == "a/"
+                            and group != "cold"
+                            and frame < 285
+                        )
+                        vt = None
+                        if use_velocity or shadow:
+                            rq, rv = player["rq"], player["rv"]
+                            q = np.concatenate(
+                                (d.qpos[rq : rq + 7], d.qpos[player["qi"]], d.qpos[bq : bq + 7])
+                            )
+                            v = np.concatenate(
+                                (d.qvel[rv : rv + 6], d.qvel[player["vi"]], d.qvel[bv : bv + 6])
+                            )
+                            jac = np.zeros((3, m.nv))
+                            mujoco.mj_jacBody(m, d, None, jac, player["pelvis"])
+                            angular = d.xmat[player["pelvis"]].reshape(3, 3).T @ (jac @ d.qvel)
+                            vt = stream.propose(
+                                q,
+                                v,
+                                angular.copy(),
+                                np.zeros(3, np.float32),
+                                frame=stream.next_frame,
+                            )
+                        if use_velocity:
+                            target = vt
+                        else:
+                            observe(player)
+                            with contextlib.redirect_stdout(io.StringIO()):
+                                player["policy"].run()
+                            target = np.array(player["output"].actions, dtype=np.float64)
+                        targets.append(target)
                     actual["joint_targets"].append(np.stack(targets))
                     for _ in range(10):
                         torques = np.zeros(m.nu)
                         for player, target in zip(players.values(), targets, strict=True):
-                            kp, kd = np.array(player["output"].kps), np.array(player["output"].kds)
+                            if a.velocity_recovery and (
+                                player is players.get("b/") or frame >= 285
+                            ):
+                                kp, kd = (
+                                    np.array(player["velocity"].params.stiffness),
+                                    np.array(player["velocity"].params.damping),
+                                )
+                            else:
+                                kp, kd = (
+                                    np.array(player["output"].kps),
+                                    np.array(player["output"].kds),
+                                )
                             cap = 0.85 * np.array(G1_HARD_TORQUE_LIMITS)
                             torques[player["ai"]] = np.clip(
                                 kp * (target - d.qpos[player["qi"]]) - kd * d.qvel[player["vi"]],
@@ -180,6 +265,12 @@ def main():
                         )
                     if stop and frame != row["controls"] - 1:
                         raise ValueError("own native body failed earlier than source")
+                    if a.velocity_recovery and group != "cold" and frame < 285:
+                        stream = players["a/"]["velocity"]
+                        stream.last_action = (
+                            (targets[0] - np.array(stream.params.action_offset))
+                            / np.array(stream.params.action_scale)
+                        ).astype(np.float32)
                 arrays = {key: np.asarray(values) for key, values in actual.items()}
                 exact = {
                     key: bool(np.array_equal(values, ref[key])) for key, values in arrays.items()
@@ -187,10 +278,10 @@ def main():
                 error = {
                     key: float(np.max(np.abs(values - ref[key]))) for key, values in arrays.items()
                 }
-            out = a.output / f"{row['group']}-{row['index']}.npz"
+            out = a.output / f"{group}-{row['index']}.npz"
             np.savez_compressed(out, **arrays)
             result = dict(
-                group=row["group"],
+                group=group,
                 index=row["index"],
                 all_exact=all(exact.values()),
                 exact=exact,
@@ -201,13 +292,17 @@ def main():
                 artifact=dict(path=out.name, hash=digest(out)),
             )
             results.append(result)
-            write_once(a.output / f"record-{row['group']}-{row['index']}.json", result)
+            write_once(a.output / f"record-{group}-{row['index']}.json", result)
             print(json.dumps(result), flush=True)
         check_pins(pins)
         write_once(
             a.output / "complete.json",
             dict(
-                status="SHARED_ROBONALDO_MANUAL_CLOCK_REVIEWED_NOT_PROMOTED",
+                status=(
+                    "ROBONALDO_VELOCITY_RECOVERY_MANUAL_CLOCK_REVIEWED_NOT_PROMOTED"
+                    if a.velocity_recovery
+                    else "SHARED_ROBONALDO_MANUAL_CLOCK_REVIEWED_NOT_PROMOTED"
+                ),
                 records=results,
                 all_exact=all(row["all_exact"] for row in results),
                 native_steps=steps,
