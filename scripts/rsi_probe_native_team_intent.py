@@ -20,7 +20,20 @@ def main():
     p.add_argument("--intercept-course", action="store_true")
     p.add_argument("--previous", type=Path)
     p.add_argument("--previous-hash")
+    p.add_argument(
+        "--ball-course",
+        choices=(
+            "outbound-north",
+            "incoming-north",
+            "incoming-south",
+            "incoming-east",
+            "incoming-west",
+        ),
+        default="outbound-north",
+    )
     a = p.parse_args()
+    if a.ball_course != "outbound-north" and not a.intercept_course:
+        p.error("new moving-ball geometry requires explicitly versioned interception course")
     if (a.intercept_course and (a.previous is None or a.previous_hash is None)) or (
         not a.intercept_course and (a.previous is not None or a.previous_hash is not None)
     ):
@@ -85,6 +98,12 @@ def main():
     pin_active_core(a.core_source_root, a.core_expected_head, pins)
     source_pins(pins)
     check_pins(pins)
+    from rosclaw_soccer.training.native_team_courses import native_team_course_bank
+    from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
+
+    course_bank = native_team_course_bank()
+    course_bank_hash = preflight_receiving_courses(course_bank)
+    course = next(item for item in course_bank if item.course_id == a.ball_course)
     import mujoco
     import numpy as np
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
@@ -117,6 +136,7 @@ def main():
     xml = shared_native_scene(scenes[0].read_text(), prefixes=prefixes)
     horizon = 600
     starts = ((-8.0, 0.0), (-4.0, -1.5), (-2.0, 2.5), (-1.5, 0.0))
+    ball_start, ball_velocity = course.ball_xy, course.ball_velocity_xy
     arms = (
         ("zero", "role-reactive", "role-fast", "role-intercept")
         if a.intercept_course
@@ -126,7 +146,7 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native8_coached_intercept_course.v2"
+            protocol="native8_coached_intercept_course.v3"
             if a.intercept_course
             else "native8_coached_ball_intent_baseline.v1",
             source_head=a.expected_head,
@@ -134,7 +154,10 @@ def main():
             agents=agents,
             starts_red_m=starts,
             blue_starts_halfturn_of_red=True,
-            ball_initial_linear_velocity_mps=[0.0, 0.8, 0.0],
+            ball_course=a.ball_course,
+            entire_course_bank_preflight_hash=course_bank_hash,
+            ball_initial_xy_m=ball_start,
+            ball_initial_linear_velocity_mps=[*ball_velocity, 0.0],
             initial_angular_velocity_is_rolling=True,
             control_hz=50,
             native_hz=500,
@@ -156,6 +179,8 @@ def main():
             no_applied_external_forces=True,
             independent_controller_replay=False,
             not_a_match_or_skill_qualification=True,
+            postcontact_metrics_are_not_possession_qualification=True,
+            metric_forward_kinematics_uses_separate_snapshot=True,
             engine_version=mujoco.__version__,
             engine_is_legacy_research_fixture_not_qualified_harness=True,
             publicity_rights_not_established=True,
@@ -212,10 +237,24 @@ def main():
                     or abs(float(m.body_mass[ball]) - 0.43) > 1e-12
                 ):
                     raise ValueError("actual standard sphere .11m/.43kg required")
-                d.qpos[layout.bq : layout.bq + 7] = [0.0, 0.0, 0.11, 1.0, 0.0, 0.0, 0.0]
-                d.qvel[layout.bv : layout.bv + 6] = [0.0, 0.8, 0.0, -0.8 / 0.11, 0.0, 0.0]
+                d.qpos[layout.bq : layout.bq + 7] = [*ball_start, 0.11, 1.0, 0.0, 0.0, 0.0]
+                d.qvel[layout.bv : layout.bv + 6] = [
+                    *ball_velocity,
+                    0.0,
+                    -ball_velocity[1] / 0.11,
+                    ball_velocity[0] / 0.11,
+                    0.0,
+                ]
                 mujoco.mj_forward(m, d)
                 w = SharedNativeMotorWorld(m, d, players=params, ball_body_name="soccer_ball")
+                metric = mujoco.MjData(m)
+                feet = {
+                    prefix: [
+                        m.body(prefix + side + "_ankle_roll_link").id for side in ("left", "right")
+                    ]
+                    for prefix in prefixes
+                }
+                touched = np.zeros(8, np.bool_)
                 initial = {
                     prefix: d.qpos[lo.rq : lo.rq + 3].copy() for prefix, lo in layouts.items()
                 }
@@ -225,6 +264,11 @@ def main():
                 }
                 if a.intercept_course:
                     controls["intercept_horizon_sec"], controls["kinematically_reachable"] = [], []
+                (
+                    controls["foot_gap_after_m"],
+                    controls["postcontact_near_slow"],
+                    controls["ball_speed_after_mps"],
+                ) = [], [], []
                 for frame in range(horizon):
                     ball_xy = d.qpos[layout.bq : layout.bq + 2].copy()
                     commands, targets, goals, observations = [], {}, [], []
@@ -278,13 +322,37 @@ def main():
                     charged += 10
                     for key in raw:
                         raw[key].append(step[key])
+                    metric.qpos[:] = d.qpos
+                    mujoco.mj_kinematics(m, metric)
+                    foot_gaps = np.array(
+                        [
+                            min(
+                                np.linalg.norm(
+                                    metric.xpos[foot] - d.qpos[layout.bq : layout.bq + 3]
+                                )
+                                for foot in feet[prefix]
+                            )
+                            for prefix in prefixes
+                        ]
+                    )
+                    touched |= np.max(step["ball_forces"][:, :, :2], axis=(0, 2)) > 1.0
+                    ball_speed = float(np.linalg.norm(d.qvel[layout.bv : layout.bv + 3]))
+                    controls["foot_gap_after_m"].append(foot_gaps)
+                    controls["postcontact_near_slow"].append(
+                        touched & (foot_gaps < 0.35) & (ball_speed < 0.5)
+                    )
+                    controls["ball_speed_after_mps"].append(ball_speed)
                     if w.failed:
                         break
                 arrays = {k: np.concatenate(v) for k, v in raw.items()}
                 arrays.update({k: np.asarray(v) for k, v in controls.items()})
                 own_exact = None
                 legacy_identity = None
-                if predecessor is not None and arm in ("zero", "role-reactive"):
+                if (
+                    predecessor is not None
+                    and a.ball_course == "outbound-north"
+                    and arm in ("zero", "role-reactive")
+                ):
                     old = next(
                         r
                         for r in predecessor["records"]
@@ -337,6 +405,12 @@ def main():
                                 np.count_nonzero(
                                     np.linalg.norm(arrays["commands"][:, i], axis=1) > 0
                                 )
+                            ),
+                            minimum_measured_foot_gap_m=float(
+                                arrays["foot_gap_after_m"][:, i].min()
+                            ),
+                            postcontact_near_slow_controls=int(
+                                arrays["postcontact_near_slow"][:, i].sum()
                             ),
                         )
                     )
