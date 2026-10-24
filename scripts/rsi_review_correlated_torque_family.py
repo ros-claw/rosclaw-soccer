@@ -101,6 +101,9 @@ def main():
                     "entire independently replayed body/proposal/RNG identity required"
                 )
             ep = row["torque_execution_artifacts"]["a/"]
+            if ep["policy_receipt"]["artifact_hash"] != plan["model_hash"]:
+                raise ValueError("exploration must retain the preregistered BC weights")
+            artifact(own_root, proof["artifact"])
             for entry in (row["artifact"], ep, ep["guarded_proposal_trace"], ep["exploration_rng"]):
                 artifact(root, entry)
         reports.append((pair, source, declaration))
