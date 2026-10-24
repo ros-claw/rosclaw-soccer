@@ -1,4 +1,9 @@
-"""Collect or whole-own replay10 bounded causal foot/ball feedback TRAIN worlds."""
+"""Collect or whole-own replay10 bounded causal foot/ball feedback TRAIN worlds.
+
+The legacy course.assisted flag disables the old fixed-phase pulse; it does
+NOT make a feedback_variant>0 rollout unassisted NN evidence. Every such
+trajectory is an external-teacher execution, never an on-policy PPO actor row.
+"""
 
 import argparse
 import json
@@ -15,8 +20,11 @@ def main():
     p.add_argument("--preflight-only", action="store_true")
     p.add_argument("--source-root", type=Path)
     p.add_argument("--source-hash")
+    p.add_argument("--producer-head")
     if_missing = "audit requires both source root/hash and is not preflight-only"
     a = p.parse_args()
+    if a.producer_head is not None and a.source_root is None:
+        p.error("producer head requires an audit source")
     if (a.source_root is None) != (a.source_hash is None) or (
         a.source_root is not None and a.preflight_only
     ):
@@ -57,7 +65,7 @@ def main():
             source["status"] != "CAUSAL_FOOT_BALL_TRAIN10_COLLECTED_PENDING_OWN"
             or source["config"] != cfg
             or source["expert_own_hash"] != a.expert_own_hash
-            or source["source_head"] != a.expected_head
+            or source["source_head"] != (a.producer_head or a.expected_head)
             or source["declaration_hash"] != digest(dp)
             or source["input_file_hashes"] != declaration["input_file_hashes"]
             or declaration["config"] != cfg
