@@ -113,6 +113,27 @@ def main():
                 a.output / "training-bound.json",
                 dict(root=str(training), hash=training_hash, policy=fitted["policy"]),
             )
+            residual = None
+            if "residual_initializations" in plan:
+                item = plan["residual_initializations"][str(a.seed)]
+                root = Path(item["root"])
+                path = root / "complete.json"
+                if path.is_symlink() or digest(path) != item["hash"]:
+                    raise ValueError("exact explicit residual initialization required")
+                residual = json.loads(path.read_text())
+                if (
+                    residual["training_hash"] != training_hash
+                    or residual["optimizer_updates"] != 0
+                    or residual["seed"] != a.seed
+                ):
+                    raise ValueError("own encoder and zero-initialized head required")
+                residual_path = root / residual["policy"]["path"]
+                if (
+                    residual_path.is_symlink()
+                    or residual_path.parent.resolve() != root.resolve()
+                    or digest(residual_path) != residual["policy"]["hash"]
+                ):
+                    raise ValueError("exact confined residual head required")
             results = []
             for course in courses:
                 output = a.output / course.course_id
@@ -134,6 +155,13 @@ def main():
                     "--output",
                     str(output),
                 ]
+                if residual is not None:
+                    command += [
+                        "--command-residual",
+                        str(residual_path),
+                        "--command-residual-hash",
+                        residual["policy"]["hash"],
+                    ]
                 for option, key in (
                     ("core-source-root", "core_root"),
                     ("core-expected-head", "core_head"),
@@ -163,7 +191,12 @@ def main():
                     report["source_head"] != a.expected_head
                     or len(report["records"]) != 4
                     or not report["fresh_reexecution_exact"]
-                    or declaration["protocol"] != "native8_learned_role_command_contrast.v6"
+                    or declaration["protocol"]
+                    != (
+                        "native8_parent_role_residual_contrast.v7"
+                        if residual is not None
+                        else "native8_learned_role_command_contrast.v6"
+                    )
                     or declaration["imported_command_training_hash"] != training_hash
                     or declaration["ball_course"] != course.course_id
                 ):
@@ -180,6 +213,12 @@ def main():
                         row["preceding_clearance_identity"].values()
                     ):
                         raise ValueError("baseline identity failed; successor prohibited")
+                    if (
+                        residual is not None
+                        and row["arm"] == "role-command-residual"
+                        and not all(row["zero_residual_parent_identity"].values())
+                    ):
+                        raise ValueError("zero residual identity failed; next course prohibited")
                 result = dict(
                     course=course.course_id,
                     source_hash=digest(complete),

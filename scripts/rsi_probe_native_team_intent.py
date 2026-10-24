@@ -24,6 +24,9 @@ def main():
     p.add_argument("--foot-reference-hash")
     p.add_argument("--command-training", type=Path)
     p.add_argument("--command-training-hash")
+    p.add_argument("--command-residual", type=Path)
+    p.add_argument("--command-residual-hash")
+    p.add_argument("--residual-exploration-seed", type=int)
     p.add_argument("--previous", type=Path)
     p.add_argument("--previous-hash")
     p.add_argument(
@@ -38,6 +41,14 @@ def main():
         default="outbound-north",
     )
     a = p.parse_args()
+    if (a.command_residual is None) != (a.command_residual_hash is None) or (
+        a.command_residual is not None and a.command_training is None
+    ):
+        p.error("explicit residual head requires the exact retained encoder training")
+    if a.residual_exploration_seed is not None and (
+        a.command_residual is None or not 0 <= a.residual_exploration_seed < 2**32
+    ):
+        p.error("bounded explicit residual exploration seed and model required")
     if (a.command_training is None) != (a.command_training_hash is None) or (
         a.command_training is not None and not a.clearance_course
     ):
@@ -160,6 +171,10 @@ def main():
             raise ValueError("exact confined trained command model required")
         pins[str(path)] = trained["policy"]["hash"]
     foot_predecessor = None
+    if a.command_residual is not None:
+        if a.command_residual.is_symlink() or digest(a.command_residual) != a.command_residual_hash:
+            raise ValueError("exact separate residual head required")
+        pins[str(a.command_residual)] = a.command_residual_hash
     if a.clearance_course:
         path = a.foot_reference / "complete.json"
         if path.is_symlink() or digest(path) != a.foot_reference_hash:
@@ -245,11 +260,15 @@ def main():
         arms = ("role-foot-track", "role-foot-clearance")
     if trained is not None:
         arms = ("role-foot-clearance", "role-command-learned")
+    if a.command_residual is not None:
+        arms = ("role-foot-clearance", "role-command-residual")
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native8_learned_role_command_contrast.v6"
+            protocol="native8_parent_role_residual_contrast.v7"
+            if a.command_residual is not None
+            else "native8_learned_role_command_contrast.v6"
             if trained is not None
             else "native8_measured_clearance_contrast.v5"
             if a.clearance_course
@@ -286,6 +305,15 @@ def main():
             optimizer_updates=0,
             imported_command_training_hash=a.command_training_hash,
             imported_BC_updates=trained["optimizer_updates"] if trained is not None else 0,
+            separate_residual_hash=a.command_residual_hash,
+            residual_exploration_seed=a.residual_exploration_seed,
+            residual_exploration_rho=0.95 if a.residual_exploration_seed is not None else None,
+            residual_exploration_stationary_latent_std=0.35
+            if a.residual_exploration_seed is not None
+            else None,
+            residual_legacy_role_actor_commands_are_nominal_pre_parent_clearance=a.command_residual
+            is not None,
+            residual_legacy_clearance_flags_describe_parent=a.command_residual is not None,
             physical_evaluation_performs_no_optimizer_updates=True,
             no_parent_torque_artifact_body_hash_rebinding=True,
             no_saved_action_replay=True,
@@ -387,6 +415,10 @@ def main():
                 previous_world_commands = np.zeros((8, 2))
                 previous_body_commands = np.zeros((8, 3), np.float32)
                 command_policy = None
+                residual_policy = None
+                residual_calls = 0
+                exploration_rng = np.random.default_rng(a.residual_exploration_seed)
+                exploration_state = np.zeros((8, 3))
                 if trained is not None:
                     from rosclaw_soccer.rsi.native_role_command import (
                         NativeRoleCommandPolicy,
@@ -414,6 +446,22 @@ def main():
                         expected_hash=trained["policy"]["hash"],
                         expected_binding=binding,
                     )
+                    if a.command_residual is not None:
+                        from rosclaw_soccer.rsi.native_role_residual import (
+                            ROLE_COMMAND_LIMITS,
+                            NativeRoleResidualPolicy,
+                            guard_role_residual,
+                            qualified_role_parent_hash,
+                        )
+
+                        residual_policy = NativeRoleResidualPolicy(
+                            a.command_residual,
+                            expected_hash=a.command_residual_hash,
+                            encoder=command_policy,
+                            expected_encoder_hash=trained["policy"]["hash"],
+                            expected_binding=binding,
+                            expected_parent_hash=qualified_role_parent_hash(),
+                        )
                 initial = {
                     prefix: d.qpos[lo.rq : lo.rq + 3].copy() for prefix, lo in layouts.items()
                 }
@@ -436,6 +484,19 @@ def main():
                     controls["clearance_feasible"], controls["clearance_constrained"] = [], []
                 if trained is not None:
                     controls["role_observations118"], controls["role_actor_commands"] = [], []
+                residual_keys = (
+                    "residual_context121",
+                    "residual_features131",
+                    "residual_normalized_actions",
+                    "residual_deltas",
+                    "residual_parent_commands",
+                    "residual_raw_commands",
+                    "residual_model_valid",
+                    "residual_final_guard_changed",
+                    "residual_latent_noise",
+                )
+                if residual_policy is not None:
+                    controls.update({key: [] for key in residual_keys})
                 for frame in range(horizon):
                     if a.foot_track_course:
                         metric.qpos[:] = d.qpos
@@ -445,6 +506,16 @@ def main():
                     horizons, reachable_flags = [], []
                     clearance_feasible, clearance_constrained = [], []
                     role_observations, role_actor_commands = [], []
+                    residual_values = {key: [] for key in residual_keys}
+                    if (
+                        residual_policy is not None
+                        and arm == "role-command-residual"
+                        and frame >= 50
+                        and a.residual_exploration_seed is not None
+                    ):
+                        exploration_state = 0.95 * exploration_state + math.sqrt(
+                            1 - 0.95**2
+                        ) * 0.35 * exploration_rng.normal(size=(8, 3))
                     for agent_index, (team, role, prefix) in enumerate(agents):
                         lo, stream = layouts[prefix], streams[prefix]
                         q, v = lo.canonical(d)
@@ -456,7 +527,13 @@ def main():
                         goal = role_target(team, role, ball_xy)
                         ih, ir = 0.0, False
                         if (
-                            arm in ("role-intercept", "role-foot-track", "role-foot-clearance")
+                            arm
+                            in (
+                                "role-intercept",
+                                "role-foot-track",
+                                "role-foot-clearance",
+                                "role-command-residual",
+                            )
                             and role == "finisher"
                         ):
                             goal, ih, ir = finisher_intercept_target(
@@ -478,12 +555,14 @@ def main():
                                     "role-intercept",
                                     "role-foot-track",
                                     "role-foot-clearance",
+                                    "role-command-residual",
                                 )
                                 else 0.8,
                             )
                         )
                         if (
-                            arm in ("role-foot-track", "role-foot-clearance")
+                            arm
+                            in ("role-foot-track", "role-foot-clearance", "role-command-residual")
                             and role == "finisher"
                             and frame >= 50
                             and np.linalg.norm(ball_xy - q[:2]) < 1.0
@@ -510,7 +589,15 @@ def main():
                                 command = command_policy.propose(observation)
                             role_actor_commands.append(command.copy())
                         feasible, constrained = True, False
-                        if arm in ("role-foot-clearance", "role-command-learned") and frame >= 50:
+                        if (
+                            arm
+                            in (
+                                "role-foot-clearance",
+                                "role-command-learned",
+                                "role-command-residual",
+                            )
+                            and frame >= 50
+                        ):
                             neighbors = np.array(
                                 [
                                     d.qpos[other.rq : other.rq + 2] - q[:2]
@@ -524,6 +611,61 @@ def main():
                                 neighbors,
                                 maximum_speed_mps=1.0 if role == "finisher" else 0.8,
                             )
+                        if residual_policy is not None:
+                            from rosclaw.control.parent_residual import parent_context
+
+                            parent_command = command.copy()
+                            context = parent_context(
+                                observation, parent_command, ROLE_COMMAND_LIMITS
+                            )
+                            features, action, delta = (
+                                np.zeros(131, np.float32),
+                                np.zeros(3),
+                                np.zeros(3),
+                            )
+                            raw_command, changed, valid = (
+                                parent_command.astype(np.float64),
+                                False,
+                                False,
+                            )
+                            noise = np.zeros(3)
+                            if arm == "role-command-residual" and frame >= 50:
+                                noise = exploration_state[agent_index].copy()
+                                proposal = residual_policy.propose(
+                                    observation, parent_command, latent_noise=noise
+                                )
+                                residual_calls += 1
+                                valid = True
+                                features, action, delta, raw_command = (
+                                    proposal.features131,
+                                    proposal.normalized_action,
+                                    proposal.delta,
+                                    proposal.raw_command,
+                                )
+                                # Separate final guard: legacy flags above remain the
+                                # parent's, never falsely called candidate projection.
+                                command, _, changed = guard_role_residual(
+                                    proposal,
+                                    yaw,
+                                    neighbors,
+                                    maximum_speed_mps=1.0 if role == "finisher" else 0.8,
+                                )
+                            for key, value in zip(
+                                residual_keys,
+                                (
+                                    context,
+                                    features,
+                                    action,
+                                    delta,
+                                    parent_command,
+                                    raw_command,
+                                    valid,
+                                    changed,
+                                    noise,
+                                ),
+                                strict=True,
+                            ):
+                                residual_values[key].append(value)
                         clearance_feasible.append(feasible)
                         clearance_constrained.append(constrained)
                         previous_body_commands[agent_index] = command
@@ -556,6 +698,9 @@ def main():
                     if trained is not None:
                         controls["role_observations118"].append(role_observations)
                         controls["role_actor_commands"].append(role_actor_commands)
+                    if residual_policy is not None:
+                        for key in residual_keys:
+                            controls[key].append(residual_values[key])
                     step = w.advance(targets)
                     charged += 10
                     for key in raw:
@@ -609,6 +754,20 @@ def main():
                 legacy_identity = None
                 foot_identity = None
                 command_identity = None
+                residual_identity = None
+                if (
+                    arm == "role-command-residual"
+                    and residual_policy.metadata["update_index"] == 0
+                    and a.residual_exploration_seed is None
+                ):
+                    with np.load(a.output / f"role-foot-clearance-{repeat}.npz") as original:
+                        residual_identity = {
+                            key: bool(np.array_equal(arrays[key], original[key]))
+                            for key in original.files
+                            if not key.startswith("residual_")
+                        }
+                    if not all(residual_identity.values()):
+                        raise ValueError("zero residual changed the qualified native parent")
                 if command_predecessor is not None and arm == "role-foot-clearance":
                     old = next(
                         r
@@ -715,6 +874,11 @@ def main():
                     legacy_baseline_identity=legacy_identity,
                     preceding_foot_identity=foot_identity,
                     preceding_clearance_identity=command_identity,
+                    zero_residual_parent_identity=residual_identity,
+                    actual_residual_model_calls=residual_calls,
+                    residual_update_index=residual_policy.metadata["update_index"]
+                    if residual_policy is not None
+                    else None,
                     actual_command_model_calls=8 * max(0, w.control_steps - 50)
                     if arm == "role-command-learned"
                     else 0,

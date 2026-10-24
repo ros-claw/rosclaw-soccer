@@ -101,6 +101,7 @@ class NativeRoleCommandPolicy:
         if "sha256:" + hashlib.sha256(payload).hexdigest() != expected_hash:
             raise ValueError("exact command model required")
         value = json.loads(payload)
+        self.artifact_hash = expected_hash
         if (
             value["schema"] != ROLE_COMMAND_SCHEMA
             or value["binding_hash"] != expected_binding
@@ -135,7 +136,8 @@ class NativeRoleCommandPolicy:
             raise ValueError("positive trained observation scale required")
         self.metadata = {key: item for key, item in value.items() if key != "tensors"}
 
-    def propose(self, observation: np.ndarray) -> np.ndarray:
+    def encode(self, observation: np.ndarray) -> np.ndarray:
+        """Owned retained representation; never evaluate the old absolute head."""
         observation = np.asarray(observation)
         if observation.shape != (118,) or not np.isfinite(observation).all():
             raise ValueError("finite pre-action command context required")
@@ -143,6 +145,11 @@ class NativeRoleCommandPolicy:
         x = np.clip((observation.astype(np.float32) - a["mean"]) / a["std"], -10, 10)
         for layer in (0, 1):
             x = np.tanh(a[f"w{layer}"] @ x + a[f"b{layer}"])
+        return np.asarray(x, dtype=np.float32).copy()
+
+    def propose(self, observation: np.ndarray) -> np.ndarray:
+        a = self.arrays
+        x = self.encode(observation)
         latent = np.tanh(a["w2"] @ x + a["b2"])
         command = latent * np.array([0.75, 0.5, 1], np.float32) + np.array([0.25, 0, 0], np.float32)
         if not np.isfinite(command).all():
