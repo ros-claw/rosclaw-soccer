@@ -17,7 +17,14 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("parent-hash", "own-hash", "core-expected-head", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--intercept-course", action="store_true")
+    p.add_argument("--previous", type=Path)
+    p.add_argument("--previous-hash")
     a = p.parse_args()
+    if (a.intercept_course and (a.previous is None or a.previous_hash is None)) or (
+        not a.intercept_course and (a.previous is not None or a.previous_hash is not None)
+    ):
+        p.error("interception course requires entire exact preceding8-body baseline")
     from scripts.rsi_active_core_source import pin_active_core
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -48,6 +55,33 @@ def main():
         raise ValueError(
             "complete healthy independently replayed native asset predecessor required"
         )
+    predecessor = None
+    if a.intercept_course:
+        path = a.previous / "complete.json"
+        if path.is_symlink() or digest(path) != a.previous_hash:
+            raise ValueError("exact completed baseline required")
+        predecessor = json.loads(path.read_text())
+        if (
+            predecessor["status"] != "NATIVE8_COACHED_ROLE_BASELINE_MEASURED_NOT_A_MATCH"
+            or len(predecessor["records"]) != 4
+            or not predecessor["fresh_reexecution_exact"]
+            or not all(r["healthy_full_horizon"] for r in predecessor["records"])
+        ):
+            raise ValueError("entire healthy baseline/reexecution required")
+        for key, value in predecessor["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting baseline ancestry")
+            pins[key] = value
+        pins[str(path)] = a.previous_hash
+        for row in predecessor["records"]:
+            path = a.previous / row["artifact"]["path"]
+            if (
+                path.is_symlink()
+                or path.parent.resolve() != a.previous.resolve()
+                or digest(path) != row["artifact"]["hash"]
+            ):
+                raise ValueError("confined exact preceding baseline arrays required")
+            pins[str(path)] = row["artifact"]["hash"]
     pin_active_core(a.core_source_root, a.core_expected_head, pins)
     source_pins(pins)
     check_pins(pins)
@@ -56,7 +90,12 @@ def main():
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
-    from rosclaw_soccer.rsi.native_team_intent import ROLES, command_toward, role_target
+    from rosclaw_soccer.rsi.native_team_intent import (
+        ROLES,
+        command_toward,
+        finisher_intercept_target,
+        role_target,
+    )
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.shared_native_motor_world import (
         NativePDParameters,
@@ -78,11 +117,18 @@ def main():
     xml = shared_native_scene(scenes[0].read_text(), prefixes=prefixes)
     horizon = 600
     starts = ((-8.0, 0.0), (-4.0, -1.5), (-2.0, 2.5), (-1.5, 0.0))
+    arms = (
+        ("zero", "role-reactive", "role-fast", "role-intercept")
+        if a.intercept_course
+        else ("zero", "role-reactive")
+    )
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native8_coached_ball_intent_baseline.v1",
+            protocol="native8_coached_intercept_course.v2"
+            if a.intercept_course
+            else "native8_coached_ball_intent_baseline.v1",
             source_head=a.expected_head,
             input_file_hashes=pins,
             agents=agents,
@@ -94,8 +140,12 @@ def main():
             native_hz=500,
             horizon_controls=horizon,
             warmup_zero_velocity_controls=50,
-            maximum_world_executions=4,
-            maximum_native_steps=24000,
+            maximum_world_executions=2 * len(arms),
+            maximum_native_steps=2 * len(arms) * horizon * 10,
+            arms=arms,
+            interception_uses_existing_ground_intercept_model=a.intercept_course,
+            preselected_slow_ball_root_speed_mps=0.95 if a.intercept_course else None,
+            original8body_baseline_hash=a.previous_hash,
             trained_velocity_model_reused=True,
             independent_private_policy_instances=8,
             high_level_role_law_is_coached_not_learned=True,
@@ -115,7 +165,7 @@ def main():
     )
     records, charged = [], 0
     try:
-        for arm in ("zero", "role-reactive"):
+        for arm in arms:
             reference = None
             for repeat in (0, 1):
                 m = mujoco.MjModel.from_xml_string(xml)
@@ -173,9 +223,12 @@ def main():
                 controls = {
                     key: [] for key in ("commands", "role_targets", "observations98", "targets29")
                 }
+                if a.intercept_course:
+                    controls["intercept_horizon_sec"], controls["kinematically_reachable"] = [], []
                 for frame in range(horizon):
                     ball_xy = d.qpos[layout.bq : layout.bq + 2].copy()
                     commands, targets, goals, observations = [], {}, [], []
+                    horizons, reachable_flags = [], []
                     for team, role, prefix in agents:
                         lo, stream = layouts[prefix], streams[prefix]
                         q, v = lo.canonical(d)
@@ -185,10 +238,23 @@ def main():
                             1 - 2 * (quat[2] ** 2 + quat[3] ** 2),
                         )
                         goal = role_target(team, role, ball_xy)
+                        ih, ir = 0.0, False
+                        if arm == "role-intercept" and role == "finisher":
+                            goal, ih, ir = finisher_intercept_target(
+                                team, q[:2], ball_xy, d.qvel[lo.bv : lo.bv + 2].copy()
+                            )
                         command = (
                             np.zeros(3, np.float32)
                             if arm == "zero" or frame < 50
-                            else command_toward(q[:2], yaw, goal, ball_xy)
+                            else command_toward(
+                                q[:2],
+                                yaw,
+                                goal,
+                                ball_xy,
+                                maximum_forward_speed=1.0
+                                if role == "finisher" and arm in ("role-fast", "role-intercept")
+                                else 0.8,
+                            )
                         )
                         targets[prefix] = stream.propose(
                             q, v, lo.angular_velocity_body(d), command, frame=frame
@@ -196,6 +262,8 @@ def main():
                         commands.append(command)
                         goals.append(goal)
                         observations.append(stream.last_observation.copy())
+                        horizons.append(ih)
+                        reachable_flags.append(ir)
                     for key, value in (
                         ("commands", commands),
                         ("role_targets", goals),
@@ -203,6 +271,9 @@ def main():
                         ("targets29", [targets[p] for p in prefixes]),
                     ):
                         controls[key].append(np.asarray(value).copy())
+                    if a.intercept_course:
+                        controls["intercept_horizon_sec"].append(horizons)
+                        controls["kinematically_reachable"].append(reachable_flags)
                     step = w.advance(targets)
                     charged += 10
                     for key in raw:
@@ -212,6 +283,20 @@ def main():
                 arrays = {k: np.concatenate(v) for k, v in raw.items()}
                 arrays.update({k: np.asarray(v) for k, v in controls.items()})
                 own_exact = None
+                legacy_identity = None
+                if predecessor is not None and arm in ("zero", "role-reactive"):
+                    old = next(
+                        r
+                        for r in predecessor["records"]
+                        if r["arm"] == arm and r["repeat"] == repeat
+                    )
+                    with np.load(a.previous / old["artifact"]["path"]) as saved:
+                        legacy_identity = {
+                            key: bool(np.array_equal(arrays[key], saved[key]))
+                            for key in saved.files
+                        }
+                    if not all(legacy_identity.values()):
+                        raise ValueError("unchanged8-body baselines differ under course extension")
                 if repeat:
                     with np.load(a.output / reference["path"]) as previous:
                         own_exact = {
@@ -264,6 +349,7 @@ def main():
                     healthy_full_horizon=w.control_steps == horizon and not w.failed,
                     body_failed=step["body_failed"],
                     fresh_reexecution_exact=own_exact,
+                    legacy_baseline_identity=legacy_identity,
                     artifact=artifact,
                 )
                 records.append(row)

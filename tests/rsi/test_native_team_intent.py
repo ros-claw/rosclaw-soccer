@@ -1,7 +1,12 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.native_team_intent import ROLES, command_toward, role_target
+from rosclaw_soccer.rsi.native_team_intent import (
+    ROLES,
+    command_toward,
+    finisher_intercept_target,
+    role_target,
+)
 
 
 @pytest.mark.parametrize("role", ROLES)
@@ -23,3 +28,22 @@ def test_unknown_role_or_nonfinite_state_is_not_silently_coached():
         role_target("red", "nobody", np.zeros(2))
     with pytest.raises(ValueError):
         command_toward(np.zeros(2), float("nan"), np.ones(2), np.ones(2))
+
+
+def test_interception_leads_measured_motion_and_preserves_team_symmetry():
+    root, ball, velocity = np.array([-1.5, 0.0]), np.zeros(2), np.array([0.0, 0.8])
+    target, horizon, reachable = finisher_intercept_target("red", root, ball, velocity)
+    opposite, oh, oreach = finisher_intercept_target("blue", -root, -ball, -velocity)
+    np.testing.assert_allclose(target, -opposite, atol=1e-12)
+    assert horizon == oh and reachable == oreach
+    assert 0 < horizon <= 2.0 and target[1] > 0.8
+
+
+def test_fast_ball_is_not_clipped_into_slow_model_domain():
+    target, horizon, reachable = finisher_intercept_target(
+        "red", np.zeros(2), np.array([1.0, 0.0]), np.array([2.0, 0.0])
+    )
+    assert horizon == 0.2 and not reachable
+    assert abs(target[0] - (1.0 + 0.4 - 0.25)) < 1e-12
+    with pytest.raises(ValueError):
+        command_toward(np.zeros(2), 0.0, np.ones(2), np.ones(2), maximum_forward_speed=1.01)
