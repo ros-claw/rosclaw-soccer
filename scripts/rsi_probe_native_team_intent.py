@@ -22,6 +22,8 @@ def main():
     p.add_argument("--clearance-course", action="store_true")
     p.add_argument("--foot-reference", type=Path)
     p.add_argument("--foot-reference-hash")
+    p.add_argument("--command-training", type=Path)
+    p.add_argument("--command-training-hash")
     p.add_argument("--previous", type=Path)
     p.add_argument("--previous-hash")
     p.add_argument(
@@ -36,6 +38,10 @@ def main():
         default="outbound-north",
     )
     a = p.parse_args()
+    if (a.command_training is None) != (a.command_training_hash is None) or (
+        a.command_training is not None and not a.clearance_course
+    ):
+        p.error("learned command contrast requires exact training and clearance course")
     if a.foot_track_course and not a.intercept_course:
         p.error("foot tracking is an explicit extension of the interception course")
     if a.clearance_course:
@@ -107,6 +113,48 @@ def main():
                 raise ValueError("confined exact preceding baseline arrays required")
             pins[str(path)] = row["artifact"]["hash"]
     pin_active_core(a.core_source_root, a.core_expected_head, pins)
+    trained = None
+    command_predecessor = None
+    command_reference = None
+    if a.command_training is not None:
+        path = a.command_training / "complete.json"
+        if path.is_symlink() or digest(path) != a.command_training_hash:
+            raise ValueError("exact completed command training required")
+        trained = json.loads(path.read_text())
+        if (
+            trained["status"] != "NATIVE_ROLE_COMMAND_BC_TRAINED_NOT_PHYSICALLY_EVALUATED"
+            or trained["actual_BC_actor_optimizer_updates"] != 512
+            or trained["hardware_authorized"] is not False
+        ):
+            raise ValueError("explicit supervised command training required")
+        for key, value in trained["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting training ancestry")
+            pins[key] = value
+        pins[str(path)] = a.command_training_hash
+        plans = [Path(k) for k, v in pins.items() if v == trained["plan_hash"]]
+        if len(plans) != 1:
+            raise ValueError("exact unique training plan required")
+        plan = json.loads(plans[0].read_text())
+        reference = next(item for item in plan["sources"] if item["course"] == a.ball_course)
+        command_reference = Path(reference["root"])
+        path = command_reference / "complete.json"
+        if pins.get(str(path)) != reference["hash"] or digest(path) != reference["hash"]:
+            raise ValueError("same-course measured clearance baseline required")
+        command_predecessor = json.loads(path.read_text())
+        for row in command_predecessor["records"]:
+            path = command_reference / row["artifact"]["path"]
+            if path.is_symlink() or digest(path) != row["artifact"]["hash"]:
+                raise ValueError("exact preceding clearance arrays required")
+            pins[str(path)] = row["artifact"]["hash"]
+        path = a.command_training / trained["policy"]["path"]
+        if (
+            path.parent.resolve() != a.command_training.resolve()
+            or path.is_symlink()
+            or digest(path) != trained["policy"]["hash"]
+        ):
+            raise ValueError("exact confined trained command model required")
+        pins[str(path)] = trained["policy"]["hash"]
     foot_predecessor = None
     if a.clearance_course:
         path = a.foot_reference / "complete.json"
@@ -191,11 +239,15 @@ def main():
         arms = (*arms, "role-foot-track")
     if a.clearance_course:
         arms = ("role-foot-track", "role-foot-clearance")
+    if trained is not None:
+        arms = ("role-foot-clearance", "role-command-learned")
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native8_measured_clearance_contrast.v5"
+            protocol="native8_learned_role_command_contrast.v6"
+            if trained is not None
+            else "native8_measured_clearance_contrast.v5"
             if a.clearance_course
             else "native8_measured_foot_tracking.v4"
             if a.foot_track_course
@@ -226,6 +278,9 @@ def main():
             independent_private_policy_instances=8,
             high_level_role_law_is_coached_not_learned=True,
             optimizer_updates=0,
+            imported_command_training_hash=a.command_training_hash,
+            imported_BC_updates=512 if trained is not None else 0,
+            physical_evaluation_performs_no_optimizer_updates=True,
             no_parent_torque_artifact_body_hash_rebinding=True,
             no_saved_action_replay=True,
             no_state_writes_after_initialization=True,
@@ -324,6 +379,35 @@ def main():
                 }
                 touched = np.zeros(8, np.bool_)
                 previous_world_commands = np.zeros((8, 2))
+                previous_body_commands = np.zeros((8, 3), np.float32)
+                command_policy = None
+                if trained is not None:
+                    from rosclaw_soccer.rsi.native_role_command import (
+                        NativeRoleCommandPolicy,
+                        role_command_observation,
+                    )
+
+                    gait = {
+                        k: v
+                        for k, v in pins.items()
+                        if k.endswith(
+                            ("/velocity/v0/exported/policy.onnx", "/velocity/v0/params/deploy.yaml")
+                        )
+                    }
+                    binding = hash_json(
+                        dict(
+                            agents=[
+                                dict(team=t, role=r, body_hash=hash_json(layouts[prefix].profile()))
+                                for t, r, prefix in agents
+                            ],
+                            gait=gait,
+                        )
+                    )
+                    command_policy = NativeRoleCommandPolicy(
+                        a.command_training / trained["policy"]["path"],
+                        expected_hash=trained["policy"]["hash"],
+                        expected_binding=binding,
+                    )
                 initial = {
                     prefix: d.qpos[lo.rq : lo.rq + 3].copy() for prefix, lo in layouts.items()
                 }
@@ -344,6 +428,8 @@ def main():
                     controls["nearest_foot_relative_speed_mps"] = []
                 if a.clearance_course:
                     controls["clearance_feasible"], controls["clearance_constrained"] = [], []
+                if trained is not None:
+                    controls["role_observations118"], controls["role_actor_commands"] = [], []
                 for frame in range(horizon):
                     if a.foot_track_course:
                         metric.qpos[:] = d.qpos
@@ -352,6 +438,7 @@ def main():
                     commands, targets, goals, observations = [], {}, [], []
                     horizons, reachable_flags = [], []
                     clearance_feasible, clearance_constrained = [], []
+                    role_observations, role_actor_commands = [], []
                     for agent_index, (team, role, prefix) in enumerate(agents):
                         lo, stream = layouts[prefix], streams[prefix]
                         q, v = lo.canonical(d)
@@ -403,8 +490,21 @@ def main():
                                 d.qvel[lo.bv : lo.bv + 2].copy(),
                                 previous_world_commands[agent_index],
                             )
+                        if command_policy is not None:
+                            observation = role_command_observation(
+                                d,
+                                metric,
+                                layouts,
+                                team=team,
+                                role=role,
+                                previous_body_command=previous_body_commands[agent_index],
+                            )
+                            role_observations.append(observation)
+                            if arm == "role-command-learned" and frame >= 50:
+                                command = command_policy.propose(observation)
+                            role_actor_commands.append(command.copy())
                         feasible, constrained = True, False
-                        if arm == "role-foot-clearance" and frame >= 50:
+                        if arm in ("role-foot-clearance", "role-command-learned") and frame >= 50:
                             neighbors = np.array(
                                 [
                                     d.qpos[other.rq : other.rq + 2] - q[:2]
@@ -420,6 +520,7 @@ def main():
                             )
                         clearance_feasible.append(feasible)
                         clearance_constrained.append(constrained)
+                        previous_body_commands[agent_index] = command
                         c, s = math.cos(yaw), math.sin(yaw)
                         previous_world_commands[agent_index] = [
                             c * command[0] - s * command[1],
@@ -446,6 +547,9 @@ def main():
                     if a.clearance_course:
                         controls["clearance_feasible"].append(clearance_feasible)
                         controls["clearance_constrained"].append(clearance_constrained)
+                    if trained is not None:
+                        controls["role_observations118"].append(role_observations)
+                        controls["role_actor_commands"].append(role_actor_commands)
                     step = w.advance(targets)
                     charged += 10
                     for key in raw:
@@ -498,6 +602,20 @@ def main():
                 own_exact = None
                 legacy_identity = None
                 foot_identity = None
+                command_identity = None
+                if command_predecessor is not None and arm == "role-foot-clearance":
+                    old = next(
+                        r
+                        for r in command_predecessor["records"]
+                        if r["arm"] == arm and r["repeat"] == repeat
+                    )
+                    with np.load(command_reference / old["artifact"]["path"]) as saved:
+                        command_identity = {
+                            key: bool(np.array_equal(arrays[key], saved[key]))
+                            for key in saved.files
+                        }
+                    if not all(command_identity.values()):
+                        raise ValueError("command observations changed preceding clearance physics")
                 if foot_predecessor is not None and arm == "role-foot-track":
                     old = next(
                         r
@@ -590,6 +708,7 @@ def main():
                     fresh_reexecution_exact=own_exact,
                     legacy_baseline_identity=legacy_identity,
                     preceding_foot_identity=foot_identity,
+                    preceding_clearance_identity=command_identity,
                     artifact=artifact,
                 )
                 records.append(row)

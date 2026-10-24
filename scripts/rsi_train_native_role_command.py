@@ -137,12 +137,13 @@ def main():
         if expected != [hash_json(layouts[prefix].profile()) for _, _, prefix in agents]:
             raise ValueError("dataset body binding differs from actual compiled world")
         with np.load(root / row["artifact"]["path"]) as raw:
-            if len(raw["commands"]) != 600 or len(raw["qpos"]) != 6000:
+            raw_qpos, raw_qvel, raw_commands = (raw[key] for key in ("qpos", "qvel", "commands"))
+            if len(raw_commands) != 600 or len(raw_qpos) != 6000:
                 raise ValueError("complete12sec teacher required")
             for frame in range(50, 600):
                 # State before command(frame), not state after its own effect.
-                metric.qpos[:] = raw["qpos"][frame * 10 - 1]
-                metric.qvel[:] = raw["qvel"][frame * 10 - 1]
+                metric.qpos[:] = raw_qpos[frame * 10 - 1]
+                metric.qvel[:] = raw_qvel[frame * 10 - 1]
                 mujoco.mj_kinematics(model, metric)
                 for i, (team, role, _prefix) in enumerate(agents):
                     observations.append(
@@ -152,10 +153,10 @@ def main():
                             layouts,
                             team=team,
                             role=role,
-                            previous_body_command=raw["commands"][frame - 1, i],
+                            previous_body_command=raw_commands[frame - 1, i],
                         )
                     )
-                    commands.append(raw["commands"][frame, i].copy())
+                    commands.append(raw_commands[frame, i].copy())
                     train.append(course in plan["train_courses"])
                     ids.append((course_index, frame, i))
     x, y, mask = np.array(observations), np.array(commands), np.array(train)
