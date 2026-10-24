@@ -29,13 +29,24 @@ def main():
     source = json.loads((a.source / "complete.json").read_text())
     declaration = json.loads((a.source / "declaration.json").read_text())
     release = declaration.get("contact_release", False)
+    aim_probe = declaration["protocol"] == "robonaldo.neural_aim_reachability.v1"
+    aim_y = declaration.get("neural_aim_input_y_m", 0.0)
     if (
         source["status"] != "LIVE_NEURAL_TRANSITION_DIAGNOSED_NOT_PROMOTED"
-        or len(source["records"]) != 8
+        or len(source["records"]) != (4 if aim_probe else 8)
         or source["source_head"] != a.producer_head
         or declaration["duration_controls"] != 20
         or declaration["protocol"]
-        != ("robonaldo.contact_release_blend.v1" if release else "robonaldo.live_neural_blend.v1")
+        != (
+            "robonaldo.neural_aim_reachability.v1"
+            if aim_probe
+            else (
+                "robonaldo.contact_release_blend.v1"
+                if release
+                else "robonaldo.live_neural_blend.v1"
+            )
+        )
+        or (aim_probe and (not release or not -1.2 <= aim_y <= 1.2))
     ):
         raise ValueError("entire exact fixed eight-case live transition protocol required")
     pins = dict(source["input_file_hashes"])
@@ -90,8 +101,8 @@ def main():
             source_hash=a.source_hash,
             source_head=a.expected_head,
             input_file_hashes=pins,
-            worlds=8,
-            native_step_ceiling=52160,
+            worlds=4 if aim_probe else 8,
+            native_step_ceiling=26080 if aim_probe else 52160,
             independent_clock=True,
             independent_gate_and_blend=True,
             independent_physics_engine=False,
@@ -134,7 +145,7 @@ def main():
             state, output = state_type(29), output_type(29)
             with contextlib.redirect_stdout(io.StringIO()):
                 kick = policy_type(state, output)
-            kick.target_pos_w = np.array([5.0, 0.0, 0.11], np.float32)
+            kick.target_pos_w = np.array([5.0, aim_y, 0.11], np.float32)
             cached = {}
             build = kick._build_obs
 

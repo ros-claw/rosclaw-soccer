@@ -9,6 +9,7 @@ import argparse
 import contextlib
 import io
 import json
+import math
 from pathlib import Path
 
 
@@ -19,7 +20,17 @@ def main():
     for name in ("source-hash", "own-hash", "expected-head"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--contact-release", action="store_true")
+    parser.add_argument("--aim-y", type=float, default=0.0)
+    parser.add_argument("--single-player-only", action="store_true")
     a = parser.parse_args()
+    if not math.isfinite(a.aim_y) or abs(a.aim_y) > 1.2:
+        parser.error("finite qualified neural aim input in [-1.2,1.2] required")
+    if (a.single_player_only or a.aim_y != 0.0) and not (
+        a.single_player_only and a.contact_release
+    ):
+        parser.error(
+            "new aim reachability protocol requires contact release and single-player-only"
+        )
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -72,6 +83,7 @@ def main():
         SharedNativeMotorWorld,
     )
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
+    from rosclaw_soccer.training.directed_plane_crossing import first_directed_plane_crossing
 
     roots = {Path(key).parents[2] for key in pins if key.endswith("/policy/robonaldo/FreeKick.py")}
     scenes = [Path(key) for key in pins if key.endswith("/cached-standard/declared-scene.xml")]
@@ -141,7 +153,12 @@ def main():
 
     starts = [(x, y) for x in (0.97, 1.03) for y in (-0.03, 0.03)]
     prepared = []
-    for arm, prefixes in (("single", ("a/",)), ("heterogeneous", ("a/", "b/"))):
+    arms = (
+        (("single", ("a/",)),)
+        if a.single_player_only
+        else (("single", ("a/",)), ("heterogeneous", ("a/", "b/")))
+    )
+    for arm, prefixes in arms:
         model = mujoco.MjModel.from_xml_string(
             shared_native_scene(scenes[0].read_text(), prefixes=prefixes)
         )
@@ -153,7 +170,7 @@ def main():
                 kick = policy_type(state, output)
             recorder = RecordSession(kick.ort_session)
             kick.ort_session = recorder
-            kick.target_pos_w = np.array([5.0, 0.0, 0.11], np.float32)
+            kick.target_pos_w = np.array([5.0, a.aim_y, 0.11], np.float32)
             cap = 0.85 * np.array(G1_HARD_TORQUE_LIMITS)
             oldpd = NativePDParameters(np.array(kick.kps), np.array(kick.kds), cap).owned_copy()
             newpd = NativePDParameters(
@@ -193,17 +210,24 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "robonaldo.contact_release_blend.v1"
-                if a.contact_release
-                else "robonaldo.live_neural_blend.v1"
+                "robonaldo.neural_aim_reachability.v1"
+                if a.single_player_only
+                else (
+                    "robonaldo.contact_release_blend.v1"
+                    if a.contact_release
+                    else "robonaldo.live_neural_blend.v1"
+                )
             ),
             source_head=a.expected_head,
             source_hash=a.source_hash,
             own_hash=a.own_hash,
             input_file_hashes=pins,
             starts=starts,
-            worlds=8,
-            native_step_ceiling=52160,
+            worlds=4 if a.single_player_only else 8,
+            native_step_ceiling=26080 if a.single_player_only else 52160,
+            neural_aim_input_y_m=a.aim_y,
+            evaluation_target_world_m=[5.0, 0.0, 0.11],
+            aim_input_is_not_evaluation_target=True,
             horizon_controls=652,
             start_control=None if a.contact_release else 285,
             duration_controls=20,
@@ -353,6 +377,24 @@ def main():
                     break
             arrays = {key: np.concatenate(value) for key, value in raw.items()}
             arrays.update({key: np.asarray(value) for key, value in controls.items()})
+            primary_layout = w.layouts["a/"]
+            ball_positions = arrays["qpos"][:, primary_layout.bq : primary_layout.bq + 3]
+            crossing = first_directed_plane_crossing(
+                ball_positions[:, :2][:, None, :],
+                origin=np.array([5.0, 0.0]),
+                forward=np.array([1.0, 0.0]),
+            )
+            plane = None
+            if bool(crossing.crossed[0]):
+                ci, fraction = int(crossing.segment_index[0]), float(crossing.fraction[0])
+                point = ball_positions[ci] + fraction * (
+                    ball_positions[ci + 1] - ball_positions[ci]
+                )
+                plane = dict(
+                    y_m=float(point[1]),
+                    z_m=float(point[2]),
+                    error_to_fixed_target_m=float(np.linalg.norm(point[1:] - [0.0, 0.11])),
+                )
             artifact = a.output / f"{arm}-{index}.npz"
             np.savez_compressed(artifact, **arrays)
             baseline = next(
@@ -361,7 +403,7 @@ def main():
                 if row["arm"] == "actual-shadow" and row["index"] == index
             )
             prefix_exact = None
-            if arm == "single":
+            if arm == "single" and a.aim_y == 0.0:
                 with np.load(a.source / baseline["artifact"]["path"]) as ref:
                     prefix_end = (
                         min(285, transition_start if transition_start is not None else 285) * 10
@@ -376,6 +418,9 @@ def main():
             row = dict(
                 arm=arm,
                 index=index,
+                neural_aim_input_y_m=a.aim_y,
+                actual_goal_plane=plane,
+                illegal_body_ball_contact=bool(np.any(arrays["ball_forces"][:, 0, 2] > 1.0)),
                 controls=w.control_steps,
                 native_steps=w.native_steps,
                 healthy_full_horizon=w.control_steps == 652 and not w.failed,
