@@ -4,13 +4,16 @@ from test_dual_recurrent_motor import model
 
 from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
 from rosclaw_soccer.rsi.paid_run_teacher_audit import private_replay_state
+from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 
 
-@pytest.mark.parametrize("adapter", [False, True])
+@pytest.mark.parametrize("adapter", [0, 1, 2])
 def test_replay_allocates_own_zero_context_for_each_explicit_frozen_cpu_motor(adapter):
     _, actor = model()
     if adapter:
         actor = ConsolidatedMotorAdapter(actor)
+    if adapter == 2:
+        actor = RefinementMotorAdapter(actor)
     actor.eval().requires_grad_(False)
     h, c = private_replay_state(actor, 256)
     other = private_replay_state(actor, 256)
@@ -38,6 +41,10 @@ def test_replay_does_not_silently_admit_trainable_or_duck_typed_motor():
     fake = ForeignSubclass(motor).eval().requires_grad_(False)
     with pytest.raises(ValueError):
         private_replay_state(fake, 256)
+
+    refined = RefinementMotorAdapter(ConsolidatedMotorAdapter(motor))
+    with pytest.raises(ValueError):
+        private_replay_state(refined, 256)
 
 
 @pytest.mark.parametrize("width", [True, 256.0, 0, 129, 512])

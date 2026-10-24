@@ -24,14 +24,16 @@ def private_replay_state(actor: Any, hidden_width: int) -> tuple[torch.Tensor, t
     if hidden_width == 256:
         from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
         from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+        from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 
         if (
-            type(actor) not in (DualRecurrentMotor, ConsolidatedMotorAdapter)
+            type(actor)
+            not in (DualRecurrentMotor, ConsolidatedMotorAdapter, RefinementMotorAdapter)
             or actor.training
             or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
         ):
             raise ValueError("independent replay requires explicit frozen CPU dual256 motor")
-        admitted: DualRecurrentMotor | ConsolidatedMotorAdapter = actor
+        admitted: DualRecurrentMotor | ConsolidatedMotorAdapter | RefinementMotorAdapter = actor
         return admitted.initial_state()
     return torch.zeros(2, 1, 128), torch.zeros(2, 1, 128)
 
