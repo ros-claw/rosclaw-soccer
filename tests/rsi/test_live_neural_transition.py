@@ -1,13 +1,57 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.live_neural_transition import blend_live_targets, quintic_weight
+from rosclaw_soccer.rsi.live_neural_transition import (
+    ContactReleaseGate,
+    blend_live_targets,
+    quintic_weight,
+)
 from rosclaw_soccer.rsi.paid_velocity_shadow import policy_action_from_hg_target
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 
 
 def pd(stiffness=20.0, effort=25.0):
     return NativePDParameters(np.full(29, stiffness), np.ones(29), np.full(29, effort))
+
+
+def test_release_requires_real_contact_clearance_and_outgoing_motion():
+    gate = ContactReleaseGate()
+    for i in range(5):
+        assert gate.observe(i, foot_contact=False, distance_m=1.0, separation_mps=5.0) is None
+    assert gate.observe(5, foot_contact=True, distance_m=0.1, separation_mps=1.0) is None
+    assert gate.observe(6, foot_contact=False, distance_m=0.4, separation_mps=1.0) is None
+    assert gate.observe(7, foot_contact=False, distance_m=0.5, separation_mps=1.0) is None
+    assert gate.observe(8, foot_contact=False, distance_m=0.6, separation_mps=1.0) == 8
+    assert gate.observe(9, foot_contact=True, distance_m=0.1, separation_mps=-1.0) == 8
+
+
+@pytest.mark.parametrize("distance,speed", [(0.35, 2.0), (0.6, 0.5), (0.6, -2.0)])
+def test_release_does_not_fire_for_near_ball_or_nonseparating_contact(distance, speed):
+    gate = ContactReleaseGate()
+    gate.observe(0, foot_contact=True, distance_m=0.1, separation_mps=0.0)
+    for i in range(1, 10):
+        assert (
+            gate.observe(i, foot_contact=False, distance_m=distance, separation_mps=speed) is None
+        )
+
+
+def test_new_contact_resets_required_clear_duration():
+    gate = ContactReleaseGate()
+    for i, contact in enumerate((True, False, False, True, False, False)):
+        assert gate.observe(i, foot_contact=contact, distance_m=0.6, separation_mps=2.0) is None
+    assert gate.observe(6, foot_contact=False, distance_m=0.6, separation_mps=2.0) == 6
+
+
+@pytest.mark.parametrize(
+    "control,distance,speed",
+    [(1, 0.4, 1.0), (0, float("nan"), 1.0), (0, 0.4, float("inf")), (0, -0.1, 1.0)],
+)
+def test_invalid_release_observation_is_latched(control, distance, speed):
+    gate = ContactReleaseGate()
+    with pytest.raises(ValueError):
+        gate.observe(control, foot_contact=False, distance_m=distance, separation_mps=speed)
+    with pytest.raises(ValueError):
+        gate.observe(0, foot_contact=True, distance_m=0.6, separation_mps=1.0)
 
 
 def test_schedule_is_monotone_with_exact_endpoints():

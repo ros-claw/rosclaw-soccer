@@ -13,6 +13,49 @@ import numpy as np
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 
 
+class ContactReleaseGate:
+    """Measured right-foot release event, not a learned success classifier.
+
+    Require real contact then three clear controls, >.35m distance and >.5m/s
+    outward speed. Observations must be actual contact/kinematics, not a timer
+    or predicted flight. Once started the event cannot restart or erase history.
+    """
+
+    def __init__(self) -> None:
+        self.next_control = 0
+        self.foot_seen = False
+        self.clear_controls = 0
+        self.started_at: int | None = None
+        self.failed = False
+
+    def observe(
+        self, control: int, *, foot_contact: bool, distance_m: float, separation_mps: float
+    ) -> int | None:
+        if (
+            self.failed
+            or type(control) is not int
+            or control != self.next_control
+            or type(foot_contact) is not bool
+            or not math.isfinite(distance_m)
+            or distance_m < 0
+            or not math.isfinite(separation_mps)
+        ):
+            self.failed = True
+            raise ValueError("own consecutive measured finite release observations required")
+        self.next_control += 1
+        self.foot_seen |= foot_contact
+        self.clear_controls = 0 if foot_contact else self.clear_controls + 1
+        if (
+            self.started_at is None
+            and self.foot_seen
+            and self.clear_controls >= 3
+            and distance_m > 0.35
+            and separation_mps > 0.5
+        ):
+            self.started_at = control
+        return self.started_at
+
+
 def quintic_weight(control: int, *, start: int, duration: int) -> float:
     """Zero at start, one at start+duration; no phase/body reset is implied."""
     if (

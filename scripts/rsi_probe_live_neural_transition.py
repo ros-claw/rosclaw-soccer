@@ -18,6 +18,7 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     for name in ("source-hash", "own-hash", "expected-head"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--contact-release", action="store_true")
     a = parser.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -59,7 +60,11 @@ def main():
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
-    from rosclaw_soccer.rsi.live_neural_transition import blend_live_targets, quintic_weight
+    from rosclaw_soccer.rsi.live_neural_transition import (
+        ContactReleaseGate,
+        blend_live_targets,
+        quintic_weight,
+    )
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.paid_velocity_shadow import policy_action_from_hg_target
     from rosclaw_soccer.rsi.shared_native_motor_world import (
@@ -187,7 +192,11 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="robonaldo.live_neural_blend.v1",
+            protocol=(
+                "robonaldo.contact_release_blend.v1"
+                if a.contact_release
+                else "robonaldo.live_neural_blend.v1"
+            ),
             source_head=a.expected_head,
             source_hash=a.source_hash,
             own_hash=a.own_hash,
@@ -196,10 +205,12 @@ def main():
             worlds=8,
             native_step_ceiling=52160,
             horizon_controls=652,
-            start_control=285,
+            start_control=None if a.contact_release else 285,
             duration_controls=20,
-            outgoing_active_until_control_exclusive=305,
+            outgoing_active_until_control_exclusive=None if a.contact_release else 305,
             retired_outgoing_zero_padding_not_training_data=True,
+            contact_release=a.contact_release,
+            release_condition=dict(clear_controls=3, distance_m_gt=0.35, separation_mps_gt=0.5),
             live_outgoing_proposals=True,
             live_incoming_proposals=True,
             actual_history_both_ABIs=True,
@@ -230,12 +241,40 @@ def main():
                     "velocity_proposed_action",
                     "kick_proposed_target",
                     "velocity_proposed_target",
+                    "release_distance_m",
+                    "release_separation_mps",
+                    "release_foot_contact",
+                    "release_clear_controls",
                 )
             }
             prefixes = tuple(w.layouts)
             foot = None
+            gate = ContactReleaseGate()
+            transition_start = None if a.contact_release else 285
+            previous_weight = 0.0
             for frame in range(652):
-                weight = quintic_weight(frame, start=285, duration=20)
+                distance, speed, foot_contact = 0.0, 0.0, False
+                if a.contact_release:
+                    layout = w.layouts["a/"]
+                    foot_body = w.model.body("a/right_ankle_roll_link").id
+                    separation = w.data.xpos[layout.ball] - w.data.xpos[foot_body]
+                    distance = float(np.linalg.norm(separation))
+                    jac = np.zeros((3, w.model.nv))
+                    mujoco.mj_jacBody(w.model, w.data, jac, None, foot_body)
+                    relative_velocity = w.data.qvel[layout.bv : layout.bv + 3] - jac @ w.data.qvel
+                    speed = float(np.dot(separation, relative_velocity) / max(1e-12, distance))
+                    foot_contact = "a/right_ankle_roll_link" in w.last_ball_contact_bodies["a/"]
+                    transition_start = gate.observe(
+                        frame,
+                        foot_contact=foot_contact,
+                        distance_m=distance,
+                        separation_mps=speed,
+                    )
+                weight = (
+                    0.0
+                    if transition_start is None
+                    else quintic_weight(frame, start=transition_start, duration=20)
+                )
                 layout = w.layouts["a/"]
                 q, v = layout.canonical(w.data)
                 incoming = stream.propose(
@@ -257,10 +296,9 @@ def main():
                     ):
                         raise ValueError("original outgoing gains changed")
                 target, pd = blend_live_targets(outgoing, incoming, oldpd, newpd, weight=weight)
-                if weight > 0.0 and weight != quintic_weight(
-                    max(0, frame - 1), start=285, duration=20
-                ):
+                if weight > 0.0 and weight != previous_weight:
                     w.switch_pd_profile("a/", pd)
+                previous_weight = weight
                 proposals = {"a/": target}
                 if other is not None:
                     other_layout = w.layouts["b/"]
@@ -285,6 +323,10 @@ def main():
                     stream.last_action.copy(),
                     outgoing.copy(),
                     incoming.copy(),
+                    distance,
+                    speed,
+                    foot_contact,
+                    gate.clear_controls,
                 )
                 for key, value in zip(controls, values, strict=True):
                     controls[key].append(value)
@@ -321,11 +363,15 @@ def main():
             prefix_exact = None
             if arm == "single":
                 with np.load(a.source / baseline["artifact"]["path"]) as ref:
+                    prefix_end = (
+                        min(285, transition_start if transition_start is not None else 285) * 10
+                    )
                     prefix_exact = {
-                        key: bool(np.array_equal(arrays[key][:2850], ref[key][:2850]))
+                        key: bool(np.array_equal(arrays[key][:prefix_end], ref[key][:prefix_end]))
                         for key in ("qpos", "qvel", "torque")
                     }
-            window = arrays["targets"][284:307, 0]
+            start = transition_start if transition_start is not None else 285
+            window = arrays["targets"][max(0, start - 1) : start + 22, 0]
             jump = float(np.max(np.abs(np.diff(window, axis=0)))) if len(window) > 1 else None
             row = dict(
                 arm=arm,
@@ -335,6 +381,8 @@ def main():
                 healthy_full_horizon=w.control_steps == 652 and not w.failed,
                 body_failed=result["body_failed"],
                 actual_foot_contact_control=foot,
+                transition_start=transition_start,
+                contact_release_gate=a.contact_release,
                 prehandoff_prefix_exact=prefix_exact,
                 max_target_step_in_transition_window_rad=jump,
                 actual_kick_NN_calls=recorder.calls,
