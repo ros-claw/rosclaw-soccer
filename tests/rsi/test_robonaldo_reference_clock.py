@@ -117,3 +117,31 @@ def test_clock_candidate_cannot_reuse_unbound_slow_parent(tmp_path):
     assert result.returncode == 2
     assert "exact independent fast parent pair" in result.stderr
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "extra", [[], ["--torque-candidate-root=missing", "--torque-candidate-hash=unused"]]
+)
+def test_residual_zero_flag_cannot_silently_reinterpret_old_policy(tmp_path, extra):
+    output = tmp_path / "must-not-exist"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_probe_live_neural_transition",
+            "--source=missing",
+            "--source-hash=unused",
+            "--own=missing",
+            "--own-hash=unused",
+            "--expected-head=unused",
+            "--output=" + str(output),
+            "--parent-residual-zero-head",
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert "zero residual head requires" in result.stderr
+    assert not output.exists()

@@ -33,11 +33,17 @@ class SharedNativeTorqueLayer:
         import mujoco
         from rosclaw.simforge.g1_neural_torque import G1NeuralTorquePolicy, G1TeacherTorqueCollector
 
+        neural_types: tuple[type[G1NeuralTorquePolicy], ...] = (G1NeuralTorquePolicy,)
+        if type(policy).__module__ == "rosclaw.simforge.g1_parent_residual_torque":
+            from rosclaw.simforge.g1_parent_residual_torque import G1ParentResidualTorquePolicy
+
+            neural_types = (*neural_types, G1ParentResidualTorquePolicy)
+
         world._require_current_boundary()
         if (
             world.native_steps != 0
             or prefix not in world.layouts
-            or type(policy) not in (G1NeuralTorquePolicy, G1TeacherTorqueCollector)
+            or type(policy) not in (*neural_types, G1TeacherTorqueCollector)
             or type(horizon_controls) is not int
             or not 1 <= horizon_controls <= 6000
             or not np.isfinite([target_y_m, target_z_m]).all()
@@ -52,7 +58,7 @@ class SharedNativeTorqueLayer:
             or (
                 capture_actor_proposals
                 and (
-                    type(policy) is not G1NeuralTorquePolicy
+                    type(policy) not in neural_types
                     or not hasattr(type(policy), "pending_actor_proposal")
                 )
             )
@@ -65,7 +71,7 @@ class SharedNativeTorqueLayer:
         from rosclaw_soccer.sim.contracts import hash_json
 
         self.body_hash = hash_json(self.layout.profile())
-        if type(policy) is G1NeuralTorquePolicy and (
+        if type(policy) in neural_types and (
             policy.artifact.body_hash != self.body_hash
             or expected_parent_policy_hash is None
             or policy.artifact.parent_policy_hash != expected_parent_policy_hash

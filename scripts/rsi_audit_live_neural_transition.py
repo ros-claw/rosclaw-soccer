@@ -38,11 +38,16 @@ def main():
     torque_trial = proposal_capture or declaration["protocol"] in (
         "robonaldo.native_learned_torque_trial.v1",
         "robonaldo.reference_clock_learned_torque.v1",
+        "robonaldo.reference_clock_parent_residual_identity.v1",
     )
     aim_probe = declaration["protocol"] == "robonaldo.neural_aim_reachability.v1"
     clock_probe = declaration["protocol"] in (
         "robonaldo.reference_clock_authority.v1",
         "robonaldo.reference_clock_learned_torque.v1",
+        "robonaldo.reference_clock_parent_residual_identity.v1",
+    )
+    parent_residual = (
+        declaration["protocol"] == "robonaldo.reference_clock_parent_residual_identity.v1"
     )
     if a.capture_clock_teacher and (not clock_probe or torque_trial):
         raise ValueError("teacher capture belongs only to independently replayed clock protocol")
@@ -68,7 +73,9 @@ def main():
         raise ValueError("entire declared clock domain required")
     expected_protocol = (
         (
-            "robonaldo.reference_clock_learned_torque.v1"
+            "robonaldo.reference_clock_parent_residual_identity.v1"
+            if parent_residual
+            else "robonaldo.reference_clock_learned_torque.v1"
             if torque_trial
             else "robonaldo.reference_clock_authority.v1"
         )
@@ -202,11 +209,38 @@ def main():
             or str(policy_path) not in pins
         ):
             raise ValueError("exact confined pinned trained torque binary required")
-        torque_artifact = load_g1_neural_torque_artifact(
-            policy_path,
-            expected_hash=trained["policy"]["hash"],
-            expected_body_hash=trained["body_hash"],
-        )
+        if parent_residual:
+            from rosclaw.simforge.g1_parent_residual_torque import (
+                G1ParentResidualTorquePolicy,
+                load_parent_residual_head,
+            )
+
+            encoder_path = training_paths[0].parent / trained["encoder"]["path"]
+            if (
+                encoder_path.parent != training_paths[0].parent
+                or encoder_path.is_symlink()
+                or digest(encoder_path) != trained["encoder"]["hash"]
+                or str(encoder_path) not in pins
+            ):
+                raise ValueError("exact confined residual encoder required")
+            encoder = load_g1_neural_torque_artifact(
+                encoder_path,
+                expected_hash=trained["encoder"]["hash"],
+                expected_body_hash=trained["body_hash"],
+            )
+            torque_artifact = load_parent_residual_head(
+                policy_path,
+                encoder=encoder,
+                expected_hash=trained["policy"]["hash"],
+                expected_body_hash=trained["body_hash"],
+                expected_parent_policy_hash=trained["parent_policy_hash"],
+            )
+        else:
+            torque_artifact = load_g1_neural_torque_artifact(
+                policy_path,
+                expected_hash=trained["policy"]["hash"],
+                expected_body_hash=trained["body_hash"],
+            )
 
     roots = {
         Path(path).parents[2] for path in pins if path.endswith("/policy/robonaldo/FreeKick.py")
@@ -313,8 +347,12 @@ def main():
             neural = None
             teacher = G1TeacherTorqueCollector() if a.capture_clock_teacher else None
             if torque_trial:
-                neural = G1NeuralTorquePolicy(
+                neural_type = (
+                    G1ParentResidualTorquePolicy if parent_residual else G1NeuralTorquePolicy
+                )
+                neural = neural_type(
                     torque_artifact,
+                    **({"encoder": encoder} if parent_residual else {}),
                     expected_body_hash=trained["body_hash"],
                     expected_parent_policy_hash=trained["parent_policy_hash"],
                     **({"exploration": exploration_config} if exploration else {}),
@@ -601,6 +639,7 @@ def main():
             neural_exact = None
             proposal_exact = None
             exploration_exact = None
+            parent_residual_exact = None
             if neural is not None:
                 entry = row["torque_execution_artifacts"]["a/"]
                 ep_path = a.source / entry["path"]
@@ -617,6 +656,22 @@ def main():
                         key: bool(np.array_equal(getattr(ep, key), saved[key]))
                         for key in ("observations", "actions", "parent_actions")
                     }
+                if parent_residual:
+                    residual_entry = entry["parent_residual_episode"]
+                    residual_path = a.source / residual_entry["path"]
+                    if (
+                        residual_path.parent.resolve() != a.source.resolve()
+                        or residual_path.is_symlink()
+                        or digest(residual_path) != residual_entry["hash"]
+                    ):
+                        raise ValueError("exact recorded131-column residual episode required")
+                    pins[str(residual_path)] = residual_entry["hash"]
+                    with np.load(residual_path) as saved:
+                        values = neural.residual_episode()
+                        parent_residual_exact = {
+                            key: bool(np.array_equal(value, saved[key]))
+                            for key, value in values.items()
+                        }
                 if proposal_capture:
                     trace_entry = entry["guarded_proposal_trace"]
                     with np.load(a.source / trace_entry["path"]) as saved:
@@ -662,7 +717,9 @@ def main():
                 all_exact=all(exact.values())
                 and (neural_exact is None or all(neural_exact.values()))
                 and (proposal_exact is None or all(proposal_exact.values()))
-                and (exploration_exact is None or exploration_exact),
+                and (exploration_exact is None or exploration_exact)
+                and (parent_residual_exact is None or all(parent_residual_exact.values())),
+                parent_residual_episode_exact=parent_residual_exact,
                 # RNG evidence is additional to, never a substitute for, the
                 # actual trajectory/action/observation equality above.
                 neural_episode_exact=neural_exact,
@@ -686,7 +743,14 @@ def main():
             dict(
                 status="LIVE_NEURAL_TRANSITION_MANUAL_CLOCK_REVIEWED_NOT_PROMOTED",
                 records=records,
-                all_exact=all(row["all_exact"] for row in records),
+                all_exact=all(
+                    row["all_exact"]
+                    and (
+                        row["parent_residual_episode_exact"] is None
+                        or all(row["parent_residual_episode_exact"].values())
+                    )
+                    for row in records
+                ),
                 native_steps=steps,
                 input_file_hashes=pins,
                 source_head=a.expected_head,

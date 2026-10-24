@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--torque-teacher", action="store_true")
     parser.add_argument("--torque-candidate-root", type=Path)
     parser.add_argument("--torque-candidate-hash")
+    parser.add_argument("--parent-residual-zero-head", action="store_true")
     parser.add_argument("--torque-intervention-fraction", type=float, default=1.0)
     parser.add_argument("--core-source-root", type=Path)
     parser.add_argument("--core-expected-head")
@@ -49,6 +50,17 @@ def main():
     if (a.core_source_root is None) != (a.core_expected_head is None):
         parser.error("explicit Core source root and commit must be provided together")
     candidate_mode = a.torque_candidate_root is not None
+    if a.parent_residual_zero_head and (
+        not candidate_mode
+        or not a.clock_authority
+        or a.reference_rate != 1.18
+        or a.torque_intervention_fraction != 1.0
+        or a.capture_torque_proposals
+        or a.torque_exploration_seed is not None
+    ):
+        parser.error(
+            "zero residual head requires isolated full-authority fast-clock identity protocol"
+        )
     explore = a.torque_exploration_seed is not None
     if explore != (a.torque_exploration_scale is not None) or (
         explore
@@ -278,7 +290,17 @@ def main():
         if digest(training_path) != a.torque_candidate_hash:
             raise ValueError("exact trained Core torque candidate required")
         trained = json.loads(training_path.read_text())
-        if (
+        if a.parent_residual_zero_head:
+            if (
+                trained["status"] != "CORE_PARENT_RESIDUAL_ZERO_INITIALIZED_NOT_TRAINED"
+                or trained["new_residual_head_optimizer_updates"] != 0
+                or trained["optimizer_updates"] != 0
+                or trained["effective_observation_dim"] != 131
+            ):
+                raise ValueError(
+                    "explicit zero131 head, not a trained or old absolute actor required"
+                )
+        elif (
             trained["status"]
             not in {
                 "CORE_TORQUE_ACTOR_BC_TRAINED_NOT_PHYSICALLY_QUALIFIED",
@@ -309,6 +331,15 @@ def main():
         ):
             raise ValueError("confined exact learned Core torque binary required")
         pins[str(policy_path)] = trained["policy"]["hash"]
+        if a.parent_residual_zero_head:
+            encoder_path = a.torque_candidate_root / trained["encoder"]["path"]
+            if (
+                encoder_path.parent.resolve() != a.torque_candidate_root.resolve()
+                or encoder_path.is_symlink()
+                or digest(encoder_path) != trained["encoder"]["hash"]
+            ):
+                raise ValueError("confined exact pretrained encoder required")
+            pins[str(encoder_path)] = trained["encoder"]["hash"]
     if explore:
         if a.exploration_plan.is_symlink() or digest(a.exploration_plan) != a.exploration_plan_hash:
             raise ValueError("exact ordinary predeclared exploration family plan required")
@@ -541,17 +572,46 @@ def main():
                 policy = G1TeacherTorqueCollector()
                 if candidate_mode:
                     assert trained is not None
-                    artifact = load_g1_neural_torque_artifact(
-                        policy_path,
-                        expected_hash=trained["policy"]["hash"],
-                        expected_body_hash=trained["body_hash"],
-                    )
-                    policy = G1NeuralTorquePolicy(
-                        artifact,
-                        expected_body_hash=trained["body_hash"],
-                        expected_parent_policy_hash=trained["parent_policy_hash"],
-                        **({"exploration": exploration_config} if explore else {}),
-                    )
+                    if a.parent_residual_zero_head:
+                        from rosclaw.simforge.g1_parent_residual_torque import (
+                            G1ParentResidualTorquePolicy,
+                            load_parent_residual_head,
+                        )
+
+                        encoder = load_g1_neural_torque_artifact(
+                            encoder_path,
+                            expected_hash=trained["encoder"]["hash"],
+                            expected_body_hash=trained["body_hash"],
+                        )
+                        artifact = load_parent_residual_head(
+                            policy_path,
+                            encoder=encoder,
+                            expected_hash=trained["policy"]["hash"],
+                            expected_body_hash=trained["body_hash"],
+                            expected_parent_policy_hash=trained["parent_policy_hash"],
+                        )
+                        if np.any(artifact.head_weight) or np.any(artifact.head_bias):
+                            raise ValueError(
+                                "initial zero identity must not load a learned correction"
+                            )
+                        policy = G1ParentResidualTorquePolicy(
+                            artifact,
+                            encoder=encoder,
+                            expected_body_hash=trained["body_hash"],
+                            expected_parent_policy_hash=trained["parent_policy_hash"],
+                        )
+                    else:
+                        artifact = load_g1_neural_torque_artifact(
+                            policy_path,
+                            expected_hash=trained["policy"]["hash"],
+                            expected_body_hash=trained["body_hash"],
+                        )
+                        policy = G1NeuralTorquePolicy(
+                            artifact,
+                            expected_body_hash=trained["body_hash"],
+                            expected_parent_policy_hash=trained["parent_policy_hash"],
+                            **({"exploration": exploration_config} if explore else {}),
+                        )
                     counts = dict(gru_calls=0, head_calls=0)
                     advance_hidden, infer = policy._advance_hidden, policy._infer_normalized
 
@@ -599,7 +659,9 @@ def main():
         dict(
             protocol=(
                 (
-                    "robonaldo.reference_clock_learned_torque.v1"
+                    "robonaldo.reference_clock_parent_residual_identity.v1"
+                    if a.parent_residual_zero_head
+                    else "robonaldo.reference_clock_learned_torque.v1"
                     if candidate_mode
                     else "robonaldo.reference_clock_authority.v1"
                 )
@@ -662,6 +724,7 @@ def main():
             same_effort_caps=True,
             torque_teacher=a.torque_teacher,
             capture_actor_proposals=a.capture_torque_proposals,
+            parent_residual_zero_head=a.parent_residual_zero_head,
             exploration_config=__import__("dataclasses").asdict(exploration_config)
             if explore
             else None,
@@ -875,9 +938,11 @@ def main():
                     full_identity = {
                         key: bool(np.array_equal(arrays[key], ref[key])) for key in ref.files
                     }
-                if (a.torque_teacher or a.torque_intervention_fraction == 0.0) and (
-                    not all(full_identity.values()) or np.any(arrays["applied_torque_change"])
-                ):
+                if (
+                    a.torque_teacher
+                    or a.torque_intervention_fraction == 0.0
+                    or a.parent_residual_zero_head
+                ) and (not all(full_identity.values()) or np.any(arrays["applied_torque_change"])):
                     raise ValueError("pass-through teacher changed parent physics or controls")
                 for prefix, layer in layers.items():
                     episode = layer.policy.episode()
@@ -901,6 +966,17 @@ def main():
                         else None,
                         actual_NN_call_counts=torque_nn_counts[id(w)].get(prefix),
                     )
+                    if a.parent_residual_zero_head:
+                        residual_path = (
+                            a.output / f"parent-residual-{arm}-{index}-{prefix.rstrip('/')}.npz"
+                        )
+                        np.savez_compressed(residual_path, **layer.policy.residual_episode())
+                        teacher_artifacts[prefix]["parent_residual_episode"] = {
+                            "path": residual_path.name,
+                            "hash": digest(residual_path),
+                            "observation_dim": 131,
+                            "receipt": layer.policy.residual_receipt(),
+                        }
                     if layer.decision_trace is not None:
                         trace = layer.decision_trace
                         if trace.count != layer.applied:
