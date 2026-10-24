@@ -12,6 +12,8 @@ import pytest
         "rsi_run_native_command_family.py",
         "rsi_train_native_role_command.py",
         "rsi_query_native_role_teacher.py",
+        "rsi_initialize_native_role_residual.py",
+        "rsi_collect_native_role_residual.py",
     ],
 )
 def test_command_family_bootstrap_does_not_train_or_allocate_physics(script, tmp_path, monkeypatch):
