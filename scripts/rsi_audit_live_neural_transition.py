@@ -19,6 +19,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("source-hash", "producer-head", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--capture-clock-teacher", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -39,6 +40,8 @@ def main():
     )
     aim_probe = declaration["protocol"] == "robonaldo.neural_aim_reachability.v1"
     clock_probe = declaration["protocol"] == "robonaldo.reference_clock_authority.v1"
+    if a.capture_clock_teacher and not clock_probe:
+        raise ValueError("teacher capture belongs only to independently replayed clock protocol")
     clock_rate = declaration.get("reference_rate", 1.0)
     if clock_probe and (
         not 1 <= clock_rate <= 1.2
@@ -152,6 +155,15 @@ def main():
     from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 
+    if a.capture_clock_teacher:
+        from rosclaw.simforge.g1_neural_torque import (
+            G1TeacherTorqueCollector,
+            G1TorqueControlFrame,
+        )
+
+        from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+        from rosclaw_soccer.sim.contracts import hash_json
+
     trained = None
     exploration_config = None
     if exploration:
@@ -229,6 +241,7 @@ def main():
             independent_clock=True,
             independent_gate_and_blend=True,
             independent_physics_engine=False,
+            capture_clock_teacher=a.capture_clock_teacher,
             optimizer_updates=0,
             hardware_authorized=False,
         ),
@@ -289,6 +302,7 @@ def main():
             primary = layouts["a/"]
             torso, foot_body = m.body("a/torso_link").id, m.body("a/right_ankle_roll_link").id
             neural = None
+            teacher = G1TeacherTorqueCollector() if a.capture_clock_teacher else None
             if torque_trial:
                 neural = G1NeuralTorquePolicy(
                     torque_artifact,
@@ -297,6 +311,7 @@ def main():
                     **({"exploration": exploration_config} if exploration else {}),
                 )
                 neural.reset()
+            if torque_trial or a.capture_clock_teacher:
                 foot_ids = [
                     m.body("a/" + side + "_ankle_roll_link").id for side in ("left", "right")
                 ]
@@ -462,7 +477,7 @@ def main():
                             cap,
                         )
                     parent_torque = torque.copy()
-                    if neural is not None:
+                    if neural is not None or teacher is not None:
                         contact = [False, False]
                         for point in d.contact:
                             bodies = {int(m.geom_bodyid[g]) for g in point.geom}
@@ -484,6 +499,11 @@ def main():
                             right_contact=bool(contact[1]),
                         )
                         ids = primary["ai"]
+                    if teacher is not None:
+                        teacher_command = teacher.command(cf, parent_torque[ids].copy())
+                        if not np.array_equal(teacher_command, parent_torque[ids]):
+                            raise ValueError("observation-only teacher changed manual torque")
+                    if neural is not None:
                         proposal = neural.command(cf, parent_torque[ids].copy())
                         if proposal_capture:
                             raw_actor = neural.pending_actor_proposal
@@ -496,6 +516,11 @@ def main():
                             )
                     d.ctrl[:] = torque
                     mujoco.mj_step(m, d)
+                    if teacher is not None:
+                        if not np.array_equal(d.actuator_force, torque):
+                            raise ValueError("teacher actual forces differ from manual PD command")
+                        teacher.note_applied(d.actuator_force[ids].copy())
+                        native_index += 1
                     if neural is not None:
                         if not np.array_equal(d.actuator_force, torque):
                             raise ValueError("manual actual actuator forces differ from command")
@@ -593,6 +618,28 @@ def main():
                         )
             artifact = a.output / f"{row['arm']}-{row['index']}.npz"
             np.savez_compressed(artifact, **arrays)
+            teacher_artifact = None
+            if teacher is not None:
+                episode = teacher.episode()
+                teacher_path = a.output / f"teacher-{row['arm']}-{row['index']}.npz"
+                np.savez_compressed(
+                    teacher_path,
+                    observations=episode.observations,
+                    actions=episode.actions,
+                    parent_actions=episode.parent_actions,
+                )
+                teacher_artifact = dict(
+                    path=teacher_path.name,
+                    hash=digest(teacher_path),
+                    body_hash=hash_json(
+                        NativeVelocityLayout(
+                            m, robot_prefix="a/", ball_body_name="soccer_ball"
+                        ).profile()
+                    ),
+                    native_observations=len(episode.observations),
+                    source_raw_hash=row["artifact"]["hash"],
+                    actual_actions_are_pass_through=True,
+                )
             result = dict(
                 arm=row["arm"],
                 index=row["index"],
@@ -612,6 +659,7 @@ def main():
                 own_failed=stopped,
                 source_failed=any(row["body_failed"].values()),
                 artifact=dict(path=artifact.name, hash=digest(artifact)),
+                native_clock_teacher=teacher_artifact,
             )
             records.append(result)
             write_once(a.output / f"record-{row['arm']}-{row['index']}.json", result)
