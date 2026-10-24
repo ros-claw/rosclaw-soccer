@@ -45,7 +45,12 @@ def native_command(
 
     kind = t["checkpoint_kind"]
     if (
-        kind not in ("consolidated-adapter-v1", "consolidated-refinement-v1")
+        kind
+        not in (
+            "consolidated-adapter-v1",
+            "consolidated-refinement-v1",
+            "support-masked-refinement-v1",
+        )
         or c["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
         or c["checkpoint_kind"] != t["checkpoint_kind"]
         or c["source_hash"] != training_hash

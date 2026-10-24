@@ -11,14 +11,22 @@ import torch
 from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
 from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
+from rosclaw_soccer.rsi.supported_refinement_motor import SupportedRefinementMotor
 
 MotorState = tuple[torch.Tensor, torch.Tensor]
 PairState = tuple[MotorState, MotorState]
-Motor = DualRecurrentMotor | ConsolidatedMotorAdapter | RefinementMotorAdapter
+Motor = (
+    DualRecurrentMotor
+    | ConsolidatedMotorAdapter
+    | RefinementMotorAdapter
+    | SupportedRefinementMotor
+)
 
 
 def paired_reference(motor: Motor) -> torch.nn.Module:
     """Explicit class admission; no duck-typed arbitrary policy wrappers."""
+    if type(motor) is SupportedRefinementMotor:
+        return motor.refinement.parent.memory.parent
     if type(motor) is RefinementMotorAdapter:
         return motor.parent.memory.parent
     if type(motor) is ConsolidatedMotorAdapter:
@@ -29,6 +37,8 @@ def paired_reference(motor: Motor) -> torch.nn.Module:
 
 
 def _plastic_storage(motor: Motor) -> set[int]:
+    if type(motor) is SupportedRefinementMotor:
+        return _plastic_storage(motor.refinement)
     if type(motor) is RefinementMotorAdapter:
         params = (
             *motor.parent.memory.plastic.parameters(),
@@ -50,9 +60,19 @@ class SameStateMotorPair:
     def __init__(self, student: Motor, teacher: Motor) -> None:
         if (
             type(student)
-            not in (DualRecurrentMotor, ConsolidatedMotorAdapter, RefinementMotorAdapter)
+            not in (
+                DualRecurrentMotor,
+                ConsolidatedMotorAdapter,
+                RefinementMotorAdapter,
+                SupportedRefinementMotor,
+            )
             or type(teacher)
-            not in (DualRecurrentMotor, ConsolidatedMotorAdapter, RefinementMotorAdapter)
+            not in (
+                DualRecurrentMotor,
+                ConsolidatedMotorAdapter,
+                RefinementMotorAdapter,
+                SupportedRefinementMotor,
+            )
             or student is teacher
             or student.training
             or teacher.training

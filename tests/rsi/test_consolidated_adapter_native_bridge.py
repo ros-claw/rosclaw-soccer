@@ -62,3 +62,38 @@ def test_new_class_does_not_enable_duck_typed_or_trainable_native_actor():
     with pytest.raises(ValueError):
         make_adapter_player(world, original["a/"], actor)
     assert world.native_steps == 0
+
+
+def test_supported_neural_actor_records_own_activation_and_keeps_actual_pd_targets():
+    from rosclaw_soccer.rsi.feature_support_gate import FeatureSupportGate
+    from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
+    from rosclaw_soccer.rsi.supported_refinement_motor import SupportedRefinementMotor
+
+    world, original = players()
+    masked, targets = {}, {}
+    for prefix, player in original.items():
+        learned = RefinementMotorAdapter(ConsolidatedMotorAdapter(player.actor))
+        with torch.no_grad():
+            learned.head[-1].bias.fill_(2)
+        gate = FeatureSupportGate(
+            torch.full((1, 288), 100.0),
+            torch.ones(288, dtype=torch.float64),
+            torch.full((1,), 0.01, dtype=torch.float64),
+        )
+        masked[prefix] = make_adapter_player(world, player, SupportedRefinementMotor(learned, gate))
+        expected, _ = player.propose()
+        actual, trace = masked[prefix].propose(with_reference_evidence=True)
+        assert np.array_equal(expected, actual)
+        assert trace["NN_support_activation"].shape == (1,)
+        assert trace["NN_support_activation"].item() == 0
+        targets[prefix] = actual
+    world.advance(targets)
+    for player in masked.values():
+        player.commit()
+        before = tuple(t.clone() for t in player.state)
+        player.begin_standing()
+        assert all(torch.equal(x, y) for x, y in zip(before, player.state, strict=True))
+    world.advance({prefix: player.propose()[0] for prefix, player in masked.items()})
+    for player in masked.values():
+        player.commit()
+    assert world.native_steps == 20

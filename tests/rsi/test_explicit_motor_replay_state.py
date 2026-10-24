@@ -7,13 +7,19 @@ from rosclaw_soccer.rsi.paid_run_teacher_audit import private_replay_state
 from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 
 
-@pytest.mark.parametrize("adapter", [0, 1, 2])
+@pytest.mark.parametrize("adapter", [0, 1, 2, 3])
 def test_replay_allocates_own_zero_context_for_each_explicit_frozen_cpu_motor(adapter):
     _, actor = model()
     if adapter:
         actor = ConsolidatedMotorAdapter(actor)
-    if adapter == 2:
+    if adapter >= 2:
         actor = RefinementMotorAdapter(actor)
+    if adapter == 3:
+        from test_feature_support_gate import gate
+
+        from rosclaw_soccer.rsi.supported_refinement_motor import SupportedRefinementMotor
+
+        actor = SupportedRefinementMotor(actor, gate()[0])
     actor.eval().requires_grad_(False)
     h, c = private_replay_state(actor, 256)
     other = private_replay_state(actor, 256)

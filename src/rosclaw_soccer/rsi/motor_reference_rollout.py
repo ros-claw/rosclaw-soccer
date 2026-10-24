@@ -30,11 +30,13 @@ def collect_parent_reference(
         from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
         from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
         from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
+        from rosclaw_soccer.rsi.supported_refinement_motor import SupportedRefinementMotor
 
         if type(actor) not in (
             DualRecurrentMotor,
             ConsolidatedMotorAdapter,
             RefinementMotorAdapter,
+            SupportedRefinementMotor,
         ):
             raise ValueError("explicit typed dual256 motor required")
         state = actor.initial_state()

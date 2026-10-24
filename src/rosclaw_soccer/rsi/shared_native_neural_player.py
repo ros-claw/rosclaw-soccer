@@ -14,6 +14,7 @@ from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapt
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
 from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
+from rosclaw_soccer.rsi.supported_refinement_motor import SupportedRefinementMotor
 
 
 class PlayerObservationView:
@@ -53,7 +54,10 @@ class SharedNativeNeuralPlayer:
         self,
         world: SharedNativeMotorWorld,
         prefix: str,
-        actor: DualRecurrentMotor | ConsolidatedMotorAdapter | RefinementMotorAdapter,
+        actor: DualRecurrentMotor
+        | ConsolidatedMotorAdapter
+        | RefinementMotorAdapter
+        | SupportedRefinementMotor,
         *,
         clip: Any,
         torso_index: int,
@@ -69,7 +73,12 @@ class SharedNativeNeuralPlayer:
     ) -> None:
         if (
             type(actor)
-            not in (DualRecurrentMotor, ConsolidatedMotorAdapter, RefinementMotorAdapter)
+            not in (
+                DualRecurrentMotor,
+                ConsolidatedMotorAdapter,
+                RefinementMotorAdapter,
+                SupportedRefinementMotor,
+            )
             or actor.training
             or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
             or not 1 <= clip.length <= 300
@@ -189,12 +198,23 @@ class SharedNativeNeuralPlayer:
         if obs.shape != (160,) or obs.dtype != np.float32 or not np.isfinite(obs).all():
             raise ValueError("exact actual per-player160 observation required; no padding")
         nominal: np.ndarray | None = None
+        support_activation: np.ndarray | None = None
         with torch.no_grad():
-            if with_reference_evidence:
+            if with_reference_evidence or type(self.actor) is SupportedRefinementMotor:
                 mean, state, evidence = self.actor.forward_with_evidence(
                     torch.from_numpy(obs).reshape(1, 1, 160), self.state
                 )
-                nominal = evidence["reference_nominal"][0, 0].numpy().copy()
+                if with_reference_evidence:
+                    nominal = evidence["reference_nominal"][0, 0].numpy().copy()
+                if type(self.actor) is SupportedRefinementMotor:
+                    activation = evidence["support_activation"]
+                    if (
+                        activation.shape != (1, 1, 1)
+                        or not torch.isfinite(activation).all()
+                        or ((activation < 0) | (activation > 1)).any()
+                    ):
+                        raise ValueError("finite own-state applicability evidence required")
+                    support_activation = activation[0, 0].numpy().copy()
             else:
                 mean, state = self.actor(torch.from_numpy(obs).reshape(1, 1, 160), self.state)
         if (
@@ -214,6 +234,8 @@ class SharedNativeNeuralPlayer:
         )
         if nominal is not None:
             trace["NN_reference_nominal"] = nominal.copy()
+        if support_activation is not None:
+            trace["NN_support_activation"] = support_activation
         self.pending = dict(
             action=action,
             state=tuple(t.detach().clone() for t in state),

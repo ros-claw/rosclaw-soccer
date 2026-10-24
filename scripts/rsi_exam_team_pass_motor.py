@@ -21,6 +21,7 @@ def main():
             "team-pass-selected-v3",
             "consolidated-adapter-v1",
             "consolidated-refinement-v1",
+            "support-masked-refinement-v1",
         ),
         default="team-pass-consolidated-v1",
     )

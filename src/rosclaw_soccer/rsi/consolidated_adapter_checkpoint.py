@@ -27,6 +27,7 @@ from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
 from rosclaw_soccer.rsi.paid_full_entry_student import FrozenFullEntryActor
 from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 from rosclaw_soccer.rsi.refinement_motor_learning import KIND as REFINEMENT_KIND
+from rosclaw_soccer.rsi.supported_refinement_motor import SupportedRefinementMotor
 
 
 def load_consolidated_adapter(
@@ -158,7 +159,22 @@ def load_motor_candidate_for_sim_audit(
     root: Path,
     expected_receipt_hash: str,
     checkpoint_kind: str = "supervised",
-) -> tuple[DualRecurrentMotor | ConsolidatedMotorAdapter | RefinementMotorAdapter, dict[str, Any]]:
+) -> tuple[
+    DualRecurrentMotor
+    | ConsolidatedMotorAdapter
+    | RefinementMotorAdapter
+    | SupportedRefinementMotor,
+    dict[str, Any],
+]:
+    if checkpoint_kind == "support-masked-refinement-v1":
+        from rosclaw_soccer.rsi.supported_motor_checkpoint import load_supported_motor
+
+        return load_supported_motor(
+            parent,
+            parent_lineage_hash=parent_lineage_hash,
+            root=root,
+            expected_receipt_hash=expected_receipt_hash,
+        )
     if checkpoint_kind == REFINEMENT_KIND:
         from rosclaw_soccer.rsi.refinement_motor_checkpoint import load_refinement_motor
 
@@ -190,6 +206,10 @@ def expected_cpu_audit_decisions(training: dict[str, Any], checkpoint_kind: str)
     New-head training does NOT claim recurrent CPU replay. Its separate audit
     must cover the full independently qualified input bank instead.
     """
+    if checkpoint_kind == "support-masked-refinement-v1":
+        from rosclaw_soccer.rsi.supported_motor_checkpoint import support_cpu_scope
+
+        return support_cpu_scope(training)
     if checkpoint_kind == REFINEMENT_KIND:
         from rosclaw_soccer.rsi.refinement_motor_learning import FEATURE_STATUS as REF_FEATURE
 
@@ -237,11 +257,10 @@ def expected_cpu_audit_decisions(training: dict[str, Any], checkpoint_kind: str)
 
 def training_data_hash(training: dict[str, Any], checkpoint_kind: str) -> str:
     """New training data stays bank62, never mislabeled as the old task witness."""
-    value = training["bank_hash"] if checkpoint_kind == REFINEMENT_KIND else training["data_hash"]
-    if type(value) is not str or (
-        checkpoint_kind == REFINEMENT_KIND and (not value.startswith("sha256:") or len(value) != 71)
-    ):
+    new = checkpoint_kind in (REFINEMENT_KIND, "support-masked-refinement-v1")
+    value = training["bank_hash"] if new else training["data_hash"]
+    if type(value) is not str or (new and (not value.startswith("sha256:") or len(value) != 71)):
         raise ValueError("explicit exact training-data commitment required")
-    if checkpoint_kind == REFINEMENT_KIND and training.get("data_hash", value) != value:
+    if new and training.get("data_hash", value) != value:
         raise ValueError("contradictory new bank identity")
     return value

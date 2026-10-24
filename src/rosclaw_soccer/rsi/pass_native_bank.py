@@ -7,7 +7,7 @@ from typing import Any
 def original_pass_bank(
     data: dict[str, Any], kind: str, resolve: Callable[[str], dict[str, Any]]
 ) -> dict[str, Any]:
-    if kind == "consolidated-refinement-v1":
+    if kind in ("consolidated-refinement-v1", "support-masked-refinement-v1"):
         if (
             data["status"] != "QUALIFIED_RESCUE_REFINEMENT_BANK_READY_PENDING_OWN_FEATURE_AUDIT"
             or len(data["records"]) != data["fit_plan"]["fit_histories"]
