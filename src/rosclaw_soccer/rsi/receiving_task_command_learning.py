@@ -103,7 +103,9 @@ def continue_task_command(
                 part = x[start : start + 2048]
                 reference = prior(part[:, :112]) if continuation_round == 1 else prior(part)
                 if not torch.equal(actor(part), reference):
-                    raise ValueError("continuation must preserve parent outputs exactly before updates")
+                    raise ValueError(
+                        "continuation must preserve parent outputs exactly before updates"
+                    )
     original = {k: v.clone() for k, v in actor.named_parameters()}
     inherited = copy.deepcopy(parent_state["optimizer"])
     previous_steps = [400] * 6 if continuation_round == 1 else [800] * 6 + [400]
@@ -172,9 +174,7 @@ def continue_task_command(
         or len(changed) != 7
         or any(not torch.isfinite(v).all() for v in actor.parameters())
     ):
-        raise ValueError(
-            "all7 tensors must update with the declared inherited Adam counters"
-        )
+        raise ValueError("all7 tensors must update with the declared inherited Adam counters")
     return dict(
         actor=actor,
         optimizer=final_optimizer,
