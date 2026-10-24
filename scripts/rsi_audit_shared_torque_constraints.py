@@ -35,11 +35,25 @@ def main():
         reports[name] = report
     for name in ("zero", "full"):
         report = reports[name]
+        declaration_path = getattr(a, name) / "declaration.json"
+        declaration = json.loads(declaration_path.read_text())
+        pins[str(declaration_path)] = digest(declaration_path)
+        count = len(report["records"])
         if (
             report["status"] != "LIVE_NEURAL_TRANSITION_DIAGNOSED_NOT_PROMOTED"
-            or len(report["records"]) != 4
+            or count not in (4, 16)
+            or count != len(reports["zero"]["records"])
+            or (
+                count == 16
+                and (
+                    declaration["protocol"] != "robonaldo.reference_clock_learned_torque.v1"
+                    or declaration["worlds"] != 16
+                    or len(declaration["starts"]) != 16
+                    or declaration["torque_candidate_hash"] != a.training_hash
+                )
+            )
         ):
-            raise ValueError("four complete torque trial rows required")
+            raise ValueError("entire paired four-case or declared16-clock torque domain required")
         for row in report["records"]:
             for artifact in (row["artifact"], row["torque_execution_artifacts"]["a/"]):
                 path = getattr(a, name) / artifact["path"]

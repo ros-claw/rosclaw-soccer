@@ -6,6 +6,7 @@ of saved actions and not permission to rewrite the robot's state.
 """
 
 import math
+from collections.abc import Mapping
 from fractions import Fraction
 
 import numpy as np
@@ -47,7 +48,7 @@ def retimed_reference_velocity(original: np.ndarray, *, rate: float) -> np.ndarr
     return result
 
 
-def declared_clock_starts(plan: dict) -> list[tuple[float, float]]:
+def declared_clock_starts(plan: Mapping[str, object]) -> list[tuple[float, float]]:
     """Four legacy anchors first; expanded public development domain is explicit."""
     value = np.asarray(plan["starts_m"], dtype=np.float64)
     original = np.array([[x, y] for x in (0.97, 1.03) for y in (-0.03, 0.03)])
