@@ -8,6 +8,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from rosclaw_soccer.rsi.research_loop_continuity import continuity_state
 from rosclaw_soccer.rsi.research_loop_dependencies import annotate_dependencies
 from rosclaw_soccer.rsi.research_loop_dispatch import dispatch_state
 from rosclaw_soccer.rsi.research_loop_watch import assess, collect
@@ -51,11 +52,13 @@ def main():
         raw = path.read_bytes()
         plan_hash = "sha256:" + hashlib.sha256(raw).hexdigest()
         campaigns = annotate_dependencies(campaigns, json.loads(raw))
+    dispatch = dispatch_state(campaigns)
     report = dict(
         schema="soccer.rsi.multi_campaign_watch.v1",
         time_unix=now,
         campaigns=campaigns,
-        dispatch=dispatch_state(campaigns),
+        dispatch=dispatch,
+        continuity=continuity_state(dispatch, previous.get("continuity"), now=now),
         observer_only=True,
         agent_wakeup_provided_by_this_script=False,
         scientific_successor_automated=False,
