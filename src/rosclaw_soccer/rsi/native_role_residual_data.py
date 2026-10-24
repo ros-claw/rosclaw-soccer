@@ -13,6 +13,24 @@ from typing import Any
 import numpy as np
 
 
+def causal_gait_memory(observations98: np.ndarray, phase: np.float32) -> np.ndarray:
+    if (
+        observations98.ndim != 2
+        or observations98.shape[1] != 98
+        or observations98.dtype != np.float32
+        or not np.isfinite(observations98).all()
+        or type(phase) is not np.float32
+        or not 0 <= phase < 1
+    ):
+        raise ValueError("finite observed gait codec and actual float32 prior phase required")
+    clock = np.array(
+        [math.sin(float(phase) * 2 * math.pi), math.cos(float(phase) * 2 * math.pi)], np.float32
+    )
+    return np.concatenate(
+        (observations98[:, 69:98], np.tile(clock, (len(observations98), 1))), axis=1
+    )
+
+
 def build_role_residual_episode(
     root: Path, row: dict[str, Any], pins: dict[str, str]
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
@@ -43,8 +61,6 @@ def build_role_residual_episode(
     import json
 
     metadata = json.loads(heads[0].read_text())
-    if metadata["update_index"] != 0:
-        raise ValueError("this exploration bank requires the qualified zero-head parent")
     encoders = [
         Path(k)
         for k, v in pins.items()
@@ -84,8 +100,20 @@ def build_role_residual_episode(
     ):
         raise ValueError("complete aligned active controller snapshots required")
     action = raw["residual_normalized_actions"]
-    if not np.array_equal(action[50:], np.tanh(raw["residual_latent_noise"][50:])):
-        raise ValueError("recorded zero-head exploration action differs from declared latent noise")
+    weight = np.asarray(metadata["head_weight"], np.float32)
+    bias = np.asarray(metadata["head_bias"], np.float32)
+    expected = np.stack(
+        [
+            np.tanh((weight @ features + bias).astype(np.float64) + noise)
+            for features, noise in zip(
+                raw["residual_features131"][50:].reshape(-1, 131),
+                raw["residual_latent_noise"][50:].reshape(-1, 3),
+                strict=True,
+            )
+        ]
+    ).reshape(action[50:].shape)
+    if not np.array_equal(action[50:], expected):
+        raise ValueError("recorded residual action differs from the actual head and latent noise")
     if not np.allclose(
         raw["residual_deltas"],
         action * ROLE_COMMAND_LIMITS * metadata["maximum_ratio"],
@@ -116,12 +144,7 @@ def build_role_residual_episode(
     phase = phase_delta()
     gait_memory = []
     for frame in range(count):
-        clock = np.array(
-            [math.sin(float(phase) * 2 * math.pi), math.cos(float(phase) * 2 * math.pi)], np.float32
-        )
-        gait_memory.append(
-            np.concatenate((raw["observations98"][frame, :, 69:98], np.tile(clock, (8, 1))), axis=1)
-        )
+        gait_memory.append(causal_gait_memory(raw["observations98"][frame], phase))
         phase = np.float32(np.fmod(np.float32(phase + phase_delta()), np.float32(1)))
     # Actual next controller memory: recompute just the final frozen ONNX
     # inference and require its HG29 targets to equal the executed targets.
